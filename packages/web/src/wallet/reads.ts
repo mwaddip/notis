@@ -51,7 +51,7 @@ export function spendableCreditBoxes(
 /** The locked complement of `spendableCreditBoxes` — the sum of values not yet
  *  spendable and the latest `lockedUntilBlock` among them; null when nothing is
  *  locked at this height. Feeds the row's *N $NOTIS more unlock by block H*
- *  hint (WEB_INTERFACE → The profile window). */
+ *  hint (WEB_INTERFACE → The wallet window → "The `balance` row"). */
 export function lockedCreditSummary(
   boxes: readonly CreditBoxRow[],
   height: number,

@@ -13,10 +13,9 @@ import { karmaResult } from './karma-fixture';
 import { contentHashHex } from '../src/integrity';
 import { prefs } from '../src/prefs';
 
-// The $NOTIS row driven through the App (WEB_INTERFACE → The profile window):
-// the deferred-write pattern of app-usernames.test.ts. Every ctx a row is
-// rendered against is one the App produces — the state a fabricated ctx would
-// hide (WEB-HANDOFF → Method, #214).
+// The balance and send rows driven through the App (WEB_INTERFACE → The wallet
+// window): every ctx the row is rendered against is one the App produces — the
+// state a fabricated ctx would hide.
 
 const ME = 'aa'.repeat(32);
 const REC = 'cd'.repeat(32);
@@ -33,6 +32,8 @@ let sendResp: (() => SendSubmitResult | Rejection) | null;
 let sendDefer: { resolve: (v: SendSubmitResult | Rejection) => void } | null;
 let signResp: 'signed' | 'declined' | 'locked' | 'refused';
 let faucetCredits: (() => CreditGrant | Rejection) | null;
+let creditsCalls: string[];
+let creditsDefer: { resolve: (v: CreditsResult) => void } | null;
 const last = (): string => signCalls[signCalls.length - 1]!;
 
 function post(id: string, author: string): PostJson {
@@ -79,7 +80,13 @@ function fakeApi(): Api {
       if (name.toLowerCase() === 'bob') return { name: 'bob', owner: REC, boxId: 'c'.repeat(32), claimedAtBlock: 1 };
       return null;
     },
-    credits: async (key) => key === ME ? creditsSelf : creditsRecipient,
+    credits: async (key) => {
+      creditsCalls.push(key);
+      if (creditsDefer && key === ME) {
+        return new Promise<CreditsResult>((r) => { creditsDefer = { resolve: r }; });
+      }
+      return key === ME ? creditsSelf : creditsRecipient;
+    },
   };
 }
 
@@ -115,9 +122,9 @@ function fakeIdentity(opts: { withPolicy?: boolean } = {}): AppIdentity {
     backedUp: () => true,
   };
   // The extension arm — the proxy exposes policy/setPolicy; the in-page
-  // module does not (WEB_INTERFACE → The profile window). ctx.confirmInRow
-  // reads on `!this.idm.policy`, so the presence of the method here is what
-  // turns the confirm row off.
+  // module does not (WEB_INTERFACE → The wallet window → "The `send` row").
+  // ctx.confirmInRow reads on `!this.idm.policy`, so the presence of the method
+  // here is what turns the confirm row off.
   if (opts.withPolicy) {
     base.policy = (): 'silent' | 'ask' => 'silent';
     base.setPolicy = async (_p: 'silent' | 'ask'): Promise<void> => {};
@@ -132,13 +139,13 @@ interface Drive {
   askFaucetCredits(): Promise<void>;
   pollTick(): Promise<void>;
   ledger: { all(): Array<{ kind: string; postId: string; txId: string; send?: { boxId: string } }>; size: number };
-  profileCredits: CreditsResult | null;
+  walletCredits: CreditsResult | null;
   creditGrantView: unknown;
   sendFlight: { stage: string; reason?: string | null } | null;
   faucetClient: { askCredits: (key: string) => Promise<CreditGrant | Rejection> };
 }
 
-function harness(opts: { withPolicy?: boolean } = {}) {
+function harness(opts: { withPolicy?: boolean; requestFaucetOrigin?: (o: string) => Promise<boolean> } = {}) {
   idState = { pubKeyHex: ME, locked: false };
   blockHeight = 100;
   signCalls = [];
@@ -146,6 +153,8 @@ function harness(opts: { withPolicy?: boolean } = {}) {
   sendDefer = null;
   signResp = 'signed';
   faucetCredits = null;
+  creditsCalls = [];
+  creditsDefer = null;
   creditsSelf = {
     userId: ME, total: '10000000000',
     boxes: [{ boxId: CBOX, value: '10000000000' }],
@@ -153,7 +162,7 @@ function harness(opts: { withPolicy?: boolean } = {}) {
   };
   creditsRecipient = { userId: REC, total: '0', boxes: [], boxCount: 0, next: null };
 
-  const app = new App(fakeApi(), fakeWrite(), fakeIdentity(opts));
+  const app = new App(fakeApi(), fakeWrite(), fakeIdentity(opts), undefined, undefined, opts.requestFaucetOrigin);
   // Swap the faucet client for a controllable one, so tests drive the credits
   // grant without touching fetch.
   (app as unknown as { faucetClient: unknown }).faucetClient = {
@@ -244,8 +253,8 @@ describe('the send flow', () => {
     expect(h.drive.ledger.all().find((e) => e.kind === 'send')).toBeUndefined();
     expect(h.drive.sendFlight?.stage).toBe('landed');
     // The sender's /credits reflect the move — the row's balance updates in place.
-    expect(h.drive.profileCredits?.boxes[0]?.boxId).toBe(CHANGE_BOX);
-    expect(h.drive.profileCredits?.boxes[0]?.value).toBe('9900000000');
+    expect(h.drive.walletCredits?.boxes[0]?.boxId).toBe(CHANGE_BOX);
+    expect(h.drive.walletCredits?.boxes[0]?.value).toBe('9900000000');
   });
 
   it('a send expiry sets sendFlight expired', async () => {
@@ -261,6 +270,93 @@ describe('the send flow', () => {
     await flush();
     expect(h.drive.ledger.all().find((e) => e.kind === 'send' && e.txId === entry.txId)).toBeUndefined();
     expect(h.drive.sendFlight?.stage).toBe('expired');
+  });
+});
+
+// WEB_INTERFACE → The faucet step → "In the extension the press asks the
+// browser for the faucet's origin first" — the extension arm carries the
+// permission hook; the web arm carries none.
+describe('the App faucet permission — the extension arm ($NOTIS step)', () => {
+  const FAUCET_ORIGIN = 'https://faucet.example';
+
+  async function pressAskCredits(h: ReturnType<typeof harness>): Promise<HTMLButtonElement> {
+    // No credits yet — the wallet's step shows.
+    creditsSelf = { userId: ME, total: '0', boxes: [], boxCount: 0, next: null };
+    prefs.faucet = FAUCET_ORIGIN;
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
+    await flush();
+    const btn = [...document.querySelectorAll<HTMLButtonElement>('.winbody .row .word')]
+      .find((b) => b.textContent === 'ask the faucet for $NOTIS')!;
+    return btn;
+  }
+
+  it('the hook is invoked synchronously from the ask press, before any await; the faucet request has not left when the hook is held', async () => {
+    const hookCalls: string[] = [];
+    const hook = (o: string): Promise<boolean> => {
+      hookCalls.push(o);
+      return new Promise(() => {}); // held for ever
+    };
+    const h = harness({ requestFaucetOrigin: hook });
+    let creditsAskCalls = 0;
+    (h.app as unknown as { faucetClient: { askCredits: (k: string) => Promise<unknown> } }).faucetClient = {
+      askCredits: async () => { creditsAskCalls++; return { txId: '11'.repeat(32), status: 'pending', expiresAtHeight: 820, boxId: GRANT_BOX }; },
+    };
+    const btn = await pressAskCredits(h);
+    btn.click();
+    expect(hookCalls).toEqual([FAUCET_ORIGIN]);
+    expect(creditsAskCalls).toBe(0);
+    await flush();
+    await flush();
+    expect(creditsAskCalls).toBe(0);
+  });
+
+  it('a refused permission reports on the wallet window and no faucet request leaves', async () => {
+    const h = harness({ requestFaucetOrigin: async () => false });
+    let creditsAskCalls = 0;
+    (h.app as unknown as { faucetClient: { askCredits: (k: string) => Promise<unknown> } }).faucetClient = {
+      askCredits: async () => { creditsAskCalls++; return { txId: '11'.repeat(32), status: 'pending', expiresAtHeight: 820, boxId: GRANT_BOX }; },
+    };
+    const btn = await pressAskCredits(h);
+    btn.click();
+    await flush();
+    await flush();
+    expect(creditsAskCalls).toBe(0);
+    // The report line is the wallet column's — "the browser refused access to
+    // that origin." — rendered as the .report node of the focused column.
+    const report = document.querySelector('.report');
+    expect(report?.textContent).toContain('the browser refused access to that origin.');
+  });
+
+  it('a granted permission lets the faucet request leave and the ledger holds the creditGrant', async () => {
+    const h = harness({ requestFaucetOrigin: async () => true });
+    let creditsAskCalls = 0;
+    (h.app as unknown as { faucetClient: { askCredits: (k: string) => Promise<unknown> } }).faucetClient = {
+      askCredits: async () => { creditsAskCalls++; return { txId: '11'.repeat(32), status: 'pending', expiresAtHeight: 820, boxId: GRANT_BOX }; },
+    };
+    const btn = await pressAskCredits(h);
+    btn.click();
+    await flush();
+    await flush();
+    expect(creditsAskCalls).toBe(1);
+    const entry = h.drive.ledger.all().find((e) => e.kind === 'creditGrant');
+    expect(entry).toBeDefined();
+    expect(entry!.postId).toBe(GRANT_BOX);
+  });
+
+  it('with no hook (the web build), the ask leaves as today', async () => {
+    const h = harness(); // no requestFaucetOrigin
+    let creditsAskCalls = 0;
+    (h.app as unknown as { faucetClient: { askCredits: (k: string) => Promise<unknown> } }).faucetClient = {
+      askCredits: async () => { creditsAskCalls++; return { txId: '11'.repeat(32), status: 'pending', expiresAtHeight: 820, boxId: GRANT_BOX }; },
+    };
+    const btn = await pressAskCredits(h);
+    btn.click();
+    await flush();
+    await flush();
+    expect(creditsAskCalls).toBe(1);
+    expect(h.drive.ledger.all().find((e) => e.kind === 'creditGrant')).toBeDefined();
   });
 });
 
@@ -283,7 +379,7 @@ describe('the faucet credits step', () => {
     await flush();
     expect(h.drive.ledger.all().find((e) => e.kind === 'creditGrant')).toBeUndefined();
     expect(h.drive.creditGrantView).toBeNull();
-    expect(h.drive.profileCredits?.boxes[0]?.boxId).toBe(GRANT_BOX);
+    expect(h.drive.walletCredits?.boxes[0]?.boxId).toBe(GRANT_BOX);
   });
 
   it('a 202 whose box never lists expires past expiresAtHeight', async () => {
@@ -309,10 +405,10 @@ describe('the row after a landed send', () => {
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
-    // The @profile window is mounted — reach the credits row through the DOM.
-    (h.app as unknown as { openProfile: () => void }).openProfile();
+    // The @wallet window is mounted — reach the credits row through the DOM.
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
     await flush();
-    // The App has rendered the profile window; the credits row's field exists.
+    // The App has rendered the wallet window; the credits row's field exists.
     const field = document.querySelector<HTMLElement>('.credits-field');
     expect(field).not.toBeNull();
     // Submit a send.
@@ -336,13 +432,43 @@ describe('the row after a landed send', () => {
     expect(gold?.textContent).toBe('99');
   });
 
+  // WEB_INTERFACE → The wallet window → "The `send` row": the row stands
+  // while a send's own line stands, so a send of the whole balance still reads
+  // its ending — *sent* visible in a visible row even at zero balance.
+  it('a whole-balance send lands with the send row visible and *sent* readable at zero balance', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
+    await flush();
+    // Send the whole balance: 100 $NOTIS = 10_000_000_000 base units.
+    await h.drive.send(REC, 'bob', 10_000_000_000n);
+    await flush();
+    const entry = h.drive.ledger.all().find((e) => e.kind === 'send')!;
+    creditsRecipient = { userId: REC, total: '10000000000', boxes: [{ boxId: entry.send!.boxId, value: '10000000000' }], boxCount: 1, next: null };
+    // The sender's /credits now hold no box — the whole balance is out.
+    creditsSelf = { userId: ME, total: '0', boxes: [], boxCount: 0, next: null };
+    blockHeight = 101;
+    await h.drive.pollTick();
+    await flush();
+    const field = document.querySelector<HTMLElement>('.credits-field')!;
+    const sendRow = field.querySelector<HTMLElement>(':scope > .send-row')!;
+    expect(sendRow.hidden).toBe(false);
+    const flight = document.querySelector<HTMLElement>('.credits-flight');
+    expect(flight?.textContent).toBe('sent');
+    // The balance line reads the zero-branch — no spendable box, no faucet.
+    const gold = document.querySelector<HTMLElement>('.credits-line .mono.gold');
+    expect(gold).toBeNull();
+  });
+
   it('a declined send leaves both inputs holding their values and the flight reads *send not sent.* (READ-1 defect 3)', async () => {
     const h = harness();
     signResp = 'declined';
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
-    (h.app as unknown as { openProfile: () => void }).openProfile();
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
     await flush();
     // Fill the form.
     const form = document.querySelector<HTMLFormElement>('form.credits-form')!;
@@ -371,7 +497,7 @@ describe('the row after a landed send', () => {
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
-    (h.app as unknown as { openProfile: () => void }).openProfile();
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
     await flush();
     const form = document.querySelector<HTMLFormElement>('form.credits-form')!;
     const inputs = form.querySelectorAll<HTMLInputElement>('input');
@@ -397,7 +523,7 @@ describe('the row after a landed send', () => {
 // ---------------------------------------------------------------------------
 // The extension arm — the App builds ctx with confirmInRow: false when the
 // identity module implements `policy`, so no .pf-confirm renders and the send
-// fires at once (WEB_INTERFACE → The profile window → "The `$NOTIS` row").
+// fires at once (WEB_INTERFACE → The wallet window → "in the extension there is no confirm row").
 // ---------------------------------------------------------------------------
 
 describe('the send flow — the extension arm (confirmInRow: false)', () => {
@@ -412,7 +538,7 @@ describe('the send flow — the extension arm (confirmInRow: false)', () => {
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
-    (h.app as unknown as { openProfile: () => void }).openProfile();
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
     await flush();
     const form = document.querySelector<HTMLFormElement>('form.credits-form')!;
     const inputs = form.querySelectorAll<HTMLInputElement>('input');
@@ -442,7 +568,7 @@ describe('the send flow — the extension arm (confirmInRow: false)', () => {
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
-    (h.app as unknown as { openProfile: () => void }).openProfile();
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
     await flush();
     const form = document.querySelector<HTMLFormElement>('form.credits-form')!;
     const inputs = form.querySelectorAll<HTMLInputElement>('input');
@@ -466,5 +592,113 @@ describe('the send flow — the extension arm (confirmInRow: false)', () => {
     const clearKey = clearForm.querySelector<HTMLElement>('.resolved-key');
     expect(clearKey?.hidden).toBe(true);
     expect(clearKey?.textContent).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The wallet's reads — the wallet window owns /credits, and the profile's ↻
+// re-reads /karma and the reader's name (WEB_INTERFACE → The profile window,
+// → The wallet window).
+// ---------------------------------------------------------------------------
+
+describe('the wallet reads', () => {
+  it('identity load reads no /credits — the wallet owns the read (WEB_INTERFACE → The wallet window)', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    expect(creditsCalls.filter((k) => k === ME).length).toBe(0);
+  });
+
+  it('a fresh wallet open reads /credits; a raise does not (WEB_INTERFACE → The wallet window)', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    // First open — a fresh window mounts and /credits is read.
+    (h.app as unknown as { openWallet: () => void }).openWallet();
+    await flush();
+    const afterOpen = creditsCalls.filter((k) => k === ME).length;
+    expect(afterOpen).toBe(1);
+    // Second open — the raise; no new /credits call.
+    (h.app as unknown as { openWallet: () => void }).openWallet();
+    await flush();
+    expect(creditsCalls.filter((k) => k === ME).length).toBe(afterOpen);
+  });
+
+  it("openWallet fires and moves at once — the window is mounted and the view moved BEFORE /credits answers", async () => {
+    // Hold the /credits read open by hand: the fake defers the promise until
+    // the test resolves it. If openWallet awaited it, the window would not
+    // mount and the view would not move before release (WEB_INTERFACE → The
+    // wallet window; openProfile's pattern for /karma).
+    const h = harness();
+    creditsDefer = { resolve: () => {} }; // seat the defer before openWallet fires
+    let moved: string | null = null;
+    (h.app as unknown as { moveView: (id: string) => void }).moveView = (id: string) => { moved = id; };
+    (h.app as unknown as { openWallet: () => void }).openWallet();
+    await flush();
+    // The /credits read fired (the counter rose) but has not answered yet
+    // (creditsDefer holds the promise). The wallet's bar is in the DOM and
+    // the App's moveView was called with '@wallet' — the press moved on.
+    expect(creditsCalls.filter((k) => k === ME).length).toBe(1);
+    const bar = document.querySelector('.bars .bar .bar-label .name');
+    expect(bar?.textContent).toBe('wallet');
+    expect(moved).toBe('@wallet');
+    // Release the read — the balance lands in place, nothing else moves.
+    creditsDefer!.resolve({ userId: ME, total: '10000000000', boxes: [{ boxId: CBOX, value: '10000000000' }], boxCount: 1, next: null });
+    creditsDefer = null;
+    await flush();
+    await flush();
+    expect(h.drive.walletCredits?.boxes[0]?.boxId).toBe(CBOX);
+  });
+
+  it("the wallet's ↻ re-reads /credits and moves the balance in place", async () => {
+    const h = harness();
+    creditsSelf = { userId: ME, total: '10000000000', boxes: [{ boxId: CBOX, value: '10000000000' }], boxCount: 1, next: null };
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    (h.app as unknown as { openWallet: () => void }).openWallet();
+    await flush();
+    await flush();
+    const before = creditsCalls.filter((k) => k === ME).length;
+    // The node's answer changes: fewer $NOTIS.
+    creditsSelf = { userId: ME, total: '500000000', boxes: [{ boxId: 'dd'.repeat(32), value: '500000000' }], boxCount: 1, next: null };
+    await (h.app as unknown as { refreshWalletCredits: () => Promise<void> }).refreshWalletCredits();
+    await flush();
+    expect(creditsCalls.filter((k) => k === ME).length).toBe(before + 1);
+    // The balance moves in place — the gold reads the new spendable sum (5 $NOTIS).
+    const gold = document.querySelector<HTMLElement>('.credits-line .mono.gold');
+    expect(gold?.textContent).toBe('5');
+  });
+
+  it("the profile's ↻ (refreshProfileKarma) issues no /credits request", async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    const before = creditsCalls.filter((k) => k === ME).length;
+    await (h.app as unknown as { refreshProfileKarma: () => Promise<void> }).refreshProfileKarma();
+    await flush();
+    expect(creditsCalls.filter((k) => k === ME).length).toBe(before);
+  });
+
+  it('a send landing with the wallet closed reconciles the ledger and throws nothing', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    // The wallet is not opened — .credits-field is absent from the DOM.
+    expect(document.querySelector('.credits-field')).toBeNull();
+    await h.drive.send(REC, 'bob', 100_000_000n);
+    await flush();
+    const entry = h.drive.ledger.all().find((e) => e.kind === 'send')!;
+    expect(entry).toBeDefined();
+    // The recipient's /credits now lists the payment box; the sender's /credits shows the change.
+    creditsRecipient = { userId: REC, total: '100000000', boxes: [{ boxId: entry.send!.boxId, value: '100000000' }], boxCount: 1, next: null };
+    creditsSelf = { userId: ME, total: '9900000000', boxes: [{ boxId: CHANGE_BOX, value: '9900000000' }], boxCount: 1, next: null };
+    blockHeight = 101;
+    // The landing must not throw when the wallet has no field mounted.
+    await h.drive.pollTick();
+    await flush();
+    expect(h.drive.ledger.all().find((e) => e.kind === 'send')).toBeUndefined();
+    expect(h.drive.sendFlight?.stage).toBe('landed');
+    // The App still updated walletCredits — a later open renders the moved balance.
+    expect(h.drive.walletCredits?.boxes[0]?.boxId).toBe(CHANGE_BOX);
   });
 });

@@ -97,7 +97,7 @@ describe('app.css — touch by the pointer', () => {
     expect(coarse).not.toBe('');
     for (const sel of [
       '.ctl', '.feed-head .ctl', '.bar', '.meta', '.stage', '.karma-field',
-      '.btn', '.theme-btn',
+      '.btn', '.theme-btn', '.hdr-word',
       '.composer-foot select', '.word', '.authorbtn', '.composer textarea', '.composer input', '.winbody input',
     ]) {
       expect(coarse).toContain(sel);
@@ -117,8 +117,83 @@ describe('app.css — the one-column header', () => {
     expect(one).toMatch(/\.hdr-glyph \{[^}]*flex: 0 0 44px/); // the glyph button, 44 wide
     expect(one).toMatch(/\.hdr-glyph svg \{[^}]*width: 20px/); // the svg at 20px
   });
+  it('the one-column header centres every child on one axis', () => {
+    // Every child is a box at one column — the arrows, the lockup, the glyphs —
+    // and the bar centres them on one axis (WEB_INTERFACE → The workspace →
+    // "The header's children share one axis"). The base rule at tiling is
+    // align-items: baseline, so this override is the switch to axis-centred.
+    const one = mediaBlock('@media (max-width: 955px) {');
+    expect(one).toMatch(/header \{[^}]*align-items: center/);
+  });
   it('the base header .ctl.none reserves its space at tiling', () => {
     expect(css).toMatch(/header \.ctl\.none \{[^}]*visibility: hidden/);
+  });
+  it('.hdr-word wears the outlined ghost look — transparent, ink, borderStrong', () => {
+    // The tiling profile and settings words share one class: outlined, transparent,
+    // beside the filled theme word (HOUSE_STYLE → Colour, → Interaction).
+    const blocks = css.match(/\.hdr-word\s*\{[^}]*\}/g) ?? [];
+    const base = blocks.find((b) => b.includes('background: transparent'));
+    expect(base).toBeDefined();
+    expect(base!).toContain('color: var(--ink)');
+    expect(base!).toContain('border: 1px solid var(--borderStrong)');
+  });
+});
+
+describe('app.css — the mark and wordmark lockup', () => {
+  // The lockup shares its baseline with the header's other words: .brand is an
+  // inline formatting context whose baseline is the h1's text baseline, and the
+  // mark hangs on that line as an inline-block with a fixed vertical-align so
+  // its centre lands on the words' box centre (WEB_INTERFACE → The workspace →
+  // "The header's children share one axis"). The lockup keeps one baseline
+  // whether or not the h1 is displayed — under 372px the h1 hides, the mark
+  // stays and the same inline-block rule still centres it.
+  it('.brand is display: inline-block, so its baseline is the wordmark line box', () => {
+    expect(css).toMatch(/\.brand \{[^}]*display: inline-block/);
+    // No flex or align-items on .brand — the interior is inline formatting.
+    const blocks = css.match(/\.brand \{[^}]*\}/g) ?? [];
+    const base = blocks[0]!;
+    expect(base).not.toContain('display: flex');
+    expect(base).not.toContain('align-items:');
+  });
+  it('.mark is display: inline-block with a fixed vertical-align lift', () => {
+    // The lift is a fixed pixel value (a fraction of the mark's height, not an
+    // em); the self-hosted face makes it exact.
+    expect(css).toMatch(/\.mark \{[^}]*display: inline-block[^}]*vertical-align: -\d+(\.\d+)?px/);
+    expect(css).toMatch(/\.mark \{[^}]*margin-right: 8px/); // the lockup gap
+  });
+  it('the wordmark is display: inline so it shares its line with the mark', () => {
+    expect(css).toMatch(/header h1 \{[^}]*display: inline/);
+  });
+});
+
+describe('app.css — the arrows carry an optical lift, expressed in em', () => {
+  // A typographic arrow is centred by its ink, not by its em box: the glyph is
+  // lifted by a fixed fraction of its size, which the self-hosted face makes
+  // exact (WEB_INTERFACE → The workspace → "The header's children share one
+  // axis"). Padding-bottom on the button shrinks the content-area from the
+  // bottom and, with flex align-items: center, lifts the character in place
+  // without growing the 44 × 36 hit box on a phone or the 24 × 24 one at tiling.
+  it('header .ctl carries padding-bottom in em', () => {
+    expect(css).toMatch(/header \.ctl \{[^}]*padding-bottom: \.\d+em/);
+  });
+});
+
+describe('app.css — under 372px the workspace header wordmark yields', () => {
+  it('the max-width: 371px block hides header.hdr-workspace h1, so the standalone bar keeps its wordmark', () => {
+    const under = mediaBlock('@media (max-width: 371px) {');
+    expect(under).not.toBe('');
+    expect(under).toMatch(/header\.hdr-workspace h1\s*\{[^}]*display: none/);
+  });
+  it('the hdr-workspace class name appears in no selector but the 371px rule, so no other rule catches the workspace header', () => {
+    // The strip scroller already owns `.workspace`; a header class that shares
+    // that name would grow the bar and take the scroller's padding and snap.
+    // The hazard is that any second selector targeting .hdr-workspace would
+    // re-open the same collision under a different name. Comments naming the
+    // class are fine — the check is on selectors.
+    const under = mediaBlock('@media (max-width: 371px) {');
+    expect(under).toContain('hdr-workspace');
+    const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(withoutComments.replace(under, '')).not.toContain('hdr-workspace');
   });
 });
 
@@ -213,6 +288,29 @@ describe('app.css — the status corner', () => {
     for (const block of (css.match(/\.corner[^\{]*\{[^}]*\}/g) ?? [])) {
       expect(block).not.toContain('transition');
     }
+  });
+});
+
+describe('app.css — the key as a copy control', () => {
+  it('.key-copy pins font-size 12.5px and text-align left (WEB_INTERFACE → The profile window → "The key is a control, and a press copies it")', () => {
+    const block = css.match(/\.key-copy\s*\{[^}]*\}/)?.[0];
+    expect(block).toBeDefined();
+    expect(block!).toContain('font-size: 12.5px');
+    expect(block!).toContain('text-align: left');
+  });
+  it('.key-copy-note is inkmute in the sans face and never breaks between its letters', () => {
+    const block = css.match(/\.key-copy-note\s*\{[^}]*\}/)?.[0];
+    expect(block).toBeDefined();
+    expect(block!).toContain('color: var(--inkMute)');
+    expect(block!).toContain('font-family: var(--sans)');
+    expect(block!).toContain('word-break: normal');
+  });
+});
+
+describe('app.css — the username claim form', () => {
+  it('.username-form .name-row is a flex row with the input taking the width (WEB_INTERFACE → The username row → "Holding none, nothing pending, a rep box to spend")', () => {
+    expect(css).toMatch(/\.username-form \.name-row\s*\{[^}]*display: flex/);
+    expect(css).toMatch(/\.username-form \.name-row input\s*\{[^}]*flex: 1 1 auto/);
   });
 });
 

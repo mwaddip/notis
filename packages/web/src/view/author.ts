@@ -1,9 +1,8 @@
 import { el, shortHex } from '../dom';
 import { unlockForm } from './passphrase';
 import { card, stageLine, listCardOpts } from './card';
-import { standing } from './profile';
 import type { Flight } from './card';
-import type { KarmaResult, VouchesTargetResult, UsernameResult, PostJson } from '../api/dto';
+import type { VouchesTargetResult, UsernameResult, PostJson } from '../api/dto';
 import type { FeedState } from '../model/state';
 import type { Origin } from '../model/workspace';
 
@@ -36,10 +35,8 @@ export type YourVouch =
 export interface AuthorCtx {
   authorKey: string;
   origin: Origin;                       // where this window's children open — the placement rule
-  karma: KarmaResult | null;            // /karma/:key, null while loading
   endorsers: VouchesTargetResult | null; // GET /vouches?target, null while loading
   endorsersNext: boolean;               // a `more` control follows `next`
-  membershipBars: { memberBar: number; memberLikesBar: number } | null; // /status, the resident line
   writeEnabled: boolean;                // an identity is loaded
   ownKey: string | null;
   locked: boolean;
@@ -97,13 +94,6 @@ export function authorBody(handlers: AuthorHandlers, ctx: AuthorCtx): HTMLElemen
     } else {
       field.appendChild(el('span', 'inkmute', 'no name'));
     }
-    b.appendChild(r);
-  }
-
-  // standing — the node's word, the same function the profile renders.
-  {
-    const { row: r, field } = row('standing');
-    standing(field, ctx.karma, ctx.membershipBars);
     b.appendChild(r);
   }
 

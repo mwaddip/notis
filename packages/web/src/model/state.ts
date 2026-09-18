@@ -71,7 +71,6 @@ export interface RenderCtx {
   openSet: Set<string>;
   thread: (id: string) => ThreadState | undefined;
   post: (id: string) => PostJson | undefined;
-  arrangement: string; // the workspace as #r1,r2|r5 text, for @profile
   // The width class — the client shows one column at a time below the breakpoint,
   // the same value as the stylesheet's media query (WEB_INTERFACE → The workspace).
   oneColumn: boolean;
@@ -88,14 +87,13 @@ export interface RenderCtx {
   // <postId>:<index in document order> (WEB_INTERFACE → Content).
   expandedImages: ReadonlySet<string>;
   // Profile window (WEB_INTERFACE → The profile window). identity carries the lock
-  // state; karma and membershipBars come from the node; grant is a faucet grant in
-  // flight or one that lapsed. These inline shapes structurally match
-  // view/profile.ts's ProfileCtx, so one contract serves both.
+  // state; karma is the loaded key's /karma; grant is a faucet grant in flight or
+  // one that lapsed. These inline shapes structurally match view/profile.ts's
+  // ProfileCtx, so one contract serves both.
   identity: { pubKeyHex: string; locked: boolean } | null;
   backedUp: boolean;
   karma: KarmaResult | null;
   grant: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
-  membershipBars: { memberBar: number; memberLikesBar: number } | null;
   // Membership actions (WEB_INTERFACE → The identity display).
   member: boolean;
   // The your-vouch row's state for an identity — the App derives it from the
@@ -126,20 +124,22 @@ export interface RenderCtx {
   pendingUsername: { kind: 'claim' | 'burn'; name: string } | null;
   canSignClaim: boolean;
   canAffordBurn: boolean;
-  // The $NOTIS row (WEB_INTERFACE → The profile window). credits is the reader's
-  // own /credits, null before the first read; creditGrant is a faucet transfer
-  // in flight or one that lapsed; sendFlight is the transient ending; pendingSend
-  // is the ledger's own send entry — the durable line that survives a reload.
-  // status is the last /status the App holds — its blockHeight is the tip the
-  // row's spendable-at-height filter reads (WEB_INTERFACE → The wallet).
+  // The wallet window (WEB_INTERFACE → The wallet window). credits is the
+  // reader's own /credits, null before the first read; creditGrant is a faucet
+  // transfer in flight or one that lapsed; sendFlight is the transient ending;
+  // pendingSend is the ledger's own send entry — the durable line that survives
+  // a reload. status is the last /status the App holds — its blockHeight is the
+  // tip the balance row's spendable-at-height filter reads (WEB_INTERFACE → The
+  // wallet).
   status: StatusResult | null;
   credits: CreditsResult | null;
   creditGrant: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
   sendFlight: Flight | null;
   pendingSend: { toHex: string; toName: string | null; amount: bigint } | null;
-  // The $NOTIS row's confirm — true on the web build (the confirm row stands),
-  // false in the extension (the prompt is the one confirmation). WEB_INTERFACE
-  // → The profile window → "The `$NOTIS` row". The App fills it
+  // The wallet's send row confirm — true on the web build (the confirm row
+  // stands), false in the extension (the prompt is the one confirmation —
+  // WEB_INTERFACE → The wallet window → "in the web build, the confirm row",
+  // → "in the extension there is no confirm row"). The App fills it
   // `!this.idm.policy`, the same predicate the policy row reads on.
   confirmInRow: boolean;
   // WEB_INTERFACE → Links
@@ -148,7 +148,6 @@ export interface RenderCtx {
 
 /** One open author window's reads and flight (WEB_INTERFACE → The author window). */
 export interface AuthorWindowData {
-  karma: KarmaResult | null;
   endorsers: VouchesTargetResult | null;
   endorsersNext: boolean;
   flight: Flight | null;
@@ -162,7 +161,10 @@ export interface Handlers {
   refreshFeed: () => void;
   loadOlder: () => void;
   openProfile: () => void;
+  openSettings: () => void; // the header's `settings` control (WEB_INTERFACE → The settings window)
+  openWallet: () => void; // the header's `wallet` control (WEB_INTERFACE → The wallet window)
   refreshProfile: () => void; // the @profile window's ↻ re-reads /karma
+  refreshWallet: () => void; // the @wallet window's ↻ re-reads /credits
   // region / window
   focus: (id: string) => void;
   refreshThread: (id: string) => void;
@@ -174,7 +176,6 @@ export interface Handlers {
   setTheme: (t: Theme) => void;
   setIdTint: (m: IdTint) => void;
   setNode: (origin: string) => void;
-  setFaucet: (origin: string) => void;
   // identity operations (WEB_INTERFACE → The profile window)
   inspectFile: (text: string) => Promise<{ kind: 'clear' | 'encrypted'; pubKeyHex: string }>;
   draftIdentity: () => Promise<{ pubKeyHex: string }>;
@@ -198,7 +199,7 @@ export interface Handlers {
   vouch: (key: string) => void;                    // + at once, no confirmation
   unvouch: (key: string) => void;                  // from the author window, the box resolved at the press
   openAuthor: (key: string, origin: Origin) => void;
-  refreshAuthor: (key: string) => void;            // the author window's ↻ — re-reads /karma and the endorsers
+  refreshAuthor: (key: string) => void;            // the author window's ↻ — re-reads the endorsers page and the subject's name
   openAuthorPosts: (key: string, origin: Origin) => void;
   refreshAuthorPosts: (key: string) => void;       // the posts window's ↻ — reports what it did
   authorPostsMore: (key: string) => void;          // the posts window's `more`, following next
@@ -208,20 +209,18 @@ export interface Handlers {
   // The username row (WEB_INTERFACE → The username row).
   claimUsername: (name: string) => void;
   burnUsername: () => void;
-  // The $NOTIS row (WEB_INTERFACE → The profile window). resolveRecipient is
-  // the handle → holder read the row's send form runs at the press; send is
-  // the credits transfer; askFaucetCredits is the faucet's $NOTIS step.
+  // The wallet's send row (WEB_INTERFACE → The wallet window → "The `send`
+  // row"). resolveRecipient is the handle → holder read the row's send form
+  // runs at the press; send is the credits transfer; askFaucetCredits is the
+  // faucet's $NOTIS step (→ The faucet step).
   resolveRecipient: (name: string) => Promise<{ key: string; name: string | null } | { refusal: string }>;
   send: (toHex: string, toName: string | null, amount: bigint) => void;
   askFaucetCredits: () => void;
-  // The extension's binary sign policy (WEB_INTERFACE → The profile window).
-  // Defined only in the extension build — the profile row renders only when
-  // both are present.
+  // The extension's binary sign policy (WEB_INTERFACE → The settings window).
+  // Defined only in the extension build — the row renders only when both are
+  // present.
   policy?: () => 'silent' | 'ask';
   setPolicy?: (p: 'silent' | 'ask') => Promise<void>;
-  // The extension's faucet-origin permission gate — the faucet row's `set`
-  // requests it from the press (WEB_INTERFACE → The profile window).
-  requestFaucetOrigin?: (origin: string) => Promise<boolean>;
 }
 
 /** What the App calls on the identity module — the single reference it holds

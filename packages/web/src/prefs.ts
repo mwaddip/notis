@@ -1,8 +1,10 @@
-// Persisted preferences: theme, identity tint, and which node and faucet the
-// client reaches. Stored in localStorage and restored painted, not transitioned
+// Persisted preferences: theme, identity tint, and which node the client
+// reaches. Stored in localStorage and restored painted, not transitioned
 // (HOUSE_STYLE → Motion). The theme's first-paint flip is handled inline in
 // index.html's <head>; this module re-applies on load and owns every later
 // change. Every read and write is guarded — storage is absent in private mode.
+// The faucet's base is the shell's `notis-faucet` value, never a preference
+// (WEB_INTERFACE → "A faucet is a fact of the deployment, not of the network").
 
 export type Theme = 'light' | 'dark';
 export type IdTint = 'spine' | 'wash' | 'both' | 'off';
@@ -10,7 +12,6 @@ export type IdTint = 'spine' | 'wash' | 'both' | 'off';
 const KEY_THEME = 'notis.theme';
 const KEY_IDTINT = 'notis.idtint';
 export const KEY_NODE = 'notis.node';
-const KEY_FAUCET = 'notis.faucet';
 export const KEY_LAYOUT = 'notis.layout';
 
 // The deployment reads — five tags in the shell's head, read once at load
@@ -106,7 +107,7 @@ export function removeStore(key: string): void {
  *  the stored preference ?? the first entry of the build's seed list ?? the
  *  same-origin `notis-api` (WEB_INTERFACE → "The client is served from the
  *  node's own origin"). When none can serve, the App reports it and asks the
- *  reader to set one in `@profile`. */
+ *  reader to set one in the settings window. */
 function initialNode(): string {
   const stored = readStore(KEY_NODE);
   if (stored) return stored;
@@ -121,7 +122,7 @@ export const prefs = {
     return v === 'wash' || v === 'both' || v === 'off' ? v : 'spine';
   })(),
   node: initialNode(),
-  faucet: readStore(KEY_FAUCET) ?? BUILD_FAUCET_BASE,
+  faucet: BUILD_FAUCET_BASE,
 };
 
 const root = document.documentElement;
@@ -165,17 +166,5 @@ export function setNode(origin: string): void {
     // Cleared — reset to the first of the seed list or the same-origin default.
     prefs.node = BUILD_NODES[0] ?? BUILD_BASE;
     removeStore(KEY_NODE);
-  }
-}
-
-export function setFaucet(origin: string): void {
-  const trimmed = origin.trim();
-  if (trimmed) {
-    prefs.faucet = trimmed;
-    writeStore(KEY_FAUCET, trimmed);
-  } else {
-    // Cleared — reset to the build default (empty means no faucet).
-    prefs.faucet = BUILD_FAUCET_BASE;
-    removeStore(KEY_FAUCET);
   }
 }

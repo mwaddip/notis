@@ -374,7 +374,7 @@ and this one is an implementation of the API's client side that another may be w
 It is a static bundle served beside the node's API by default: on notis.fun nginx fronts both, the API
 under `/testnet/api/` and the client under `/web/`. The node answers any origin — every answer carries
 `Access-Control-Allow-Origin: *` — so the client can be served from another host and pointed at any
-node, and the profile window's `node` preference can name a node on the reader's own machine; Chrome
+node, and the settings window's `node` preference can name a node on the reader's own machine; Chrome
 gates that last case behind its local-network permission. The faucet answers its own origin only.
 
 **Get it from a release** — `notis-web-<ver>.zip` — or build the same zip yourself with
@@ -399,7 +399,7 @@ no faucet button — a JSON list of API bases the client tries in order when no 
 (empty on the web), the origin and base a copied post link should carry (empty means the page's own), and
 the preview picture's absolute URL (`<origin><base>og.png`). A host with another layout edits those six
 values and nothing else: every reference in the bundle is relative to the base. A reader can still point their own
-browser at another node or faucet from the profile window's preferences.
+browser at another node from the settings window; the faucet is the build's value alone.
 
 Serve `web/` as static files with no SPA fallback — a path that is not a file is a 404. The one path
 the client owns beyond its files is a post's standalone page, `<base>p/<post id>`, which opens that
@@ -428,8 +428,9 @@ and `-firefox.zip` in each release, or `bash packages/web/scripts/build-extensio
 extension's own page (the toolbar button opens it), the identity lives in the extension's background — the
 encrypted envelope at rest, the unlocked key in session memory that ends with the browser — and every write
 is signed there. Sending `$NOTIS` always asks in a prompt window; rep actions sign silently while unlocked,
-or ask too if you choose so in the profile. The extension needs no hosted page and calls no home: it talks
-only to the node(s) you configure, starting from the seed list built into it. Load the Chrome zip unpacked
+or ask too if you choose so in settings. The extension needs no hosted page and calls no home: it talks
+only to the node(s) you configure, starting from the seed list built into it — and to the testnet faucet when you
+ask it, after the browser grants that one origin at the press. Load the Chrome zip unpacked
 in developer mode, the Firefox zip as a temporary add-on from `about:debugging`; store listings are a
 separate step.
 

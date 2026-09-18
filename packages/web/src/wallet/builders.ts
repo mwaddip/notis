@@ -61,7 +61,7 @@ export class InsufficientKarma extends Error {
 }
 
 /** Not enough $NOTIS for the send — the credit-side twin of `InsufficientKarma`,
- *  so the copy differs (WEB_INTERFACE → The profile window). */
+ *  so the copy differs (WEB_INTERFACE → The wallet window → "The `send` row"). */
 export class InsufficientCredits extends Error {
   constructor(
     readonly required: bigint,

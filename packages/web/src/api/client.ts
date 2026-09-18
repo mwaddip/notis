@@ -42,7 +42,8 @@ export interface Api {
   bonds(key: string, page?: Page): Promise<BondsResult>;
   usernameByOwner(key: string): Promise<UsernameResult | null>;
   // The handle → holder resolution the send form runs at the press; a leading
-  // `@` is stripped, a 404 answers null (WEB_INTERFACE → The profile window).
+  // `@` is stripped, a 404 answers null (WEB_INTERFACE → The wallet window →
+  // "The `send` row").
   usernameByName(name: string): Promise<UsernameResult | null>;
 }
 

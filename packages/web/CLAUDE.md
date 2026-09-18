@@ -26,8 +26,8 @@ withdrawal is the author's only act over a post. TypeScript, pnpm workspaces, No
 The **browser client**. Built in slices: the **read surface** (the feed, threads, a tiling workspace of
 columns, both themes, the identity spine), the **write surface's first slice** — the identity
 machinery, the composer for a root and a reply, and like, on transactions the browser builds and signs —
-the **identity interface's first unit**: the `@profile` window (identity, standing, karma, the
-faucet step, the preferences), create / import / export / forget / lock / unlock as forms in place, the
+the **identity interface's first unit**: the `@profile` window (the key's own rows — the username, the key as a
+copy control, rep as a number with the faucet step, invites), create / import / export / forget / lock / unlock as forms in place, the
 identity encrypted at rest, the reader's own cards marked `· you` — and the **membership actions**: the
 identity display standard (the prefix, `· you`) wherever an identity renders, the `@author:<key>` and
 `@posts:<key>` windows, vouch and unvouch from the author window's `your vouch` row, invite from the profile's `invites` row with the standing bonds — and the
@@ -41,9 +41,11 @@ screen shows K columns of the strip, K from the width, the feed pinned at two or
 strip below 955px, where a phone shows one screen at a time; the view moves to the column acted on by an
 instant scroll; the header's `‹` `›`; the one-column bar `↻ ✕`; hit size follows `pointer: coarse` and every
 hover rule sits under `hover: hover`. **On a phone the header's arrows take the strip's glyph and never
-shrink, and its two controls are a person and a sun or moon** (`src/view/glyphs.ts`, faceted polygons in the
-house technique, `HOUSE_STYLE → Illustration`) — the two icons the interface carries; iconography opens
-nowhere else — and **the standalone thread** (`WEB_INTERFACE → The standalone thread`): `/p/<id>` boots the
+shrink, and its three window controls are a person, a wallet and a gear** (`src/view/glyphs.ts`, faceted polygons
+and `M`/`L`/`Z` paths in the house technique, `HOUSE_STYLE → Illustration`) — no theme control there, since the
+theme is the settings window's first row, and under 372px the wordmark yields to the mark alone
+(`WEB_INTERFACE → The workspace`); with the standalone page's sun or moon and the card's copy glyph they are the
+five icons the interface carries, and iconography opens nowhere else — and **the standalone thread** (`WEB_INTERFACE → The standalone thread`): `/p/<id>` boots the
 same App on one never-persisted window with no feed, every card control an identity brings, the strip
 re-rooting the page with a history entry; `add to workspace` hands the thread to the workspace tab that
 holds the Web Lock `notis.workspace` — the one writer of the arrangement and the one receiver on the
@@ -54,8 +56,12 @@ absolute URL (`WEB_INTERFACE → Links`). Behind nginx `/web/p/<id>` is answered
 say how to serve it. **At one column the screens are history** (`WEB_INTERFACE → The workspace`): a tap that
 changes the screen pushes an entry, a move back onto the previous screen consumes it by the arrow or by a swipe,
 a swipe elsewhere is no entry. **A word control wears no box** (`HOUSE_STYLE → Interaction`): the word alone,
-as the identity prefix renders; a box marks a commit pair and a surface's primary action — the composer's `post` and `cancel`, the extension prompt's `sign` and `cancel`, the feed's `new post` (`HOUSE_STYLE → Interaction`); the copy glyph is
-the interface's third icon. **The username surface** (`WEB_INTERFACE → The username row`): the `@profile`
+as the identity prefix renders; a box marks a commit pair and a surface's primary action — the composer's `post` and `cancel`, the extension prompt's `sign` and `cancel`, the feed's `new post`, the wallet's `send`, the username row's `claim` (`HOUSE_STYLE → Interaction`). **The three windows**
+(`WEB_INTERFACE → The profile window`, `→ The wallet window`, `→ The settings window`): the header opens
+`@profile`, `@wallet` and `@settings` — words at tiling, glyphs on a phone; the profile holds the key's own rows,
+the wallet everything `$NOTIS`, the settings window theme, the identity tint with its two sample bars, node and
+the extension's policy row; no window renders standing; the faucet's base is the build's value and no
+preference. **The username surface** (`WEB_INTERFACE → The username row`): the `@profile`
 window's `username` row claims a name and burns it, in place, with the flight in the row; **the handle `@Name`
 stands where a row carries a name** — the who row, the bars, the header, the standalone title — in the page face
 at 600, the same control the prefix is (`WEB_INTERFACE → The identity display`). **The extension**
@@ -65,9 +71,9 @@ unlocked seed in `storage.session`, never a worker global), every write signed t
 `Signer` seam's proxy; credits always prompted in the prompt window, rep silent while unlocked unless the
 *sign each rep action* row says ask; the `notSigned` arm and the fourth ending — the composer still open;
 the shell's `notis-nodes` seed list and `notis-public` link origin; one manifest template → two zips. **The credits
-send** (`WEB_INTERFACE → The profile window`, `→ The wallet`, `→ The faucet step`): the `@profile` window's `$NOTIS`
-row — the balance in gold, a send to a key or an `@handle` resolved at the press, the confirm row, the flight in the
-row — on a `buildSend` frozen like the others, the ledger's two views split by kind; the faucet's `$NOTIS` step
+send** (`WEB_INTERFACE → The wallet window`, `→ The wallet`, `→ The faucet step`): the `@wallet` window's `balance`
+and `send` rows — the balance in gold, a send to a key or an `@handle` resolved at the press, the confirm row, the
+flight in the row, the row standing while a send's own line stands — on a `buildSend` frozen like the others, the ledger's two views split by kind; the faucet's `$NOTIS` step
 beside the rep step; a credits amount is $NOTIS on the face and base units on the wire, through one module the
 extension's prompt reads too.
 
@@ -172,7 +178,9 @@ to hold. `API_PATHS` in `vite.config.ts` proxies
 client calls that is not in the table returns the HTML shell, not the API. `/faucet` is proxied to
 `NOTIS_FAUCET` only when it is set, with the `/faucet` prefix stripped (http-proxy prepends the target's
 own path). The client's faucet base is `/faucet` in development and the shell's `notis-faucet` meta on a deploy, written from `VITE_FAUCET_BASE`;
-empty means no faucet and no button. **The faucet must relay `expiresAtHeight`** — the client refuses a
+empty means no faucet and no button, and no preference overrides it. In the extension the `ask the faucet` press asks
+the browser for that origin first, inside the press and before any other asynchronous work
+(`WEB_INTERFACE → The faucet step`). **The faucet must relay `expiresAtHeight`** — the client refuses a
 202 without it — so a faucet that does not relay it answers the honest refusal, not a grant.
 
 **Every transaction spends real testnet karma:** a thread 5, a reply 3, a like 1, a vouch 1 staked, an
@@ -279,7 +287,7 @@ intended values and every `href` and `src` is relative — `build-release.sh` ch
 
 ```bash
 bash packages/web/scripts/build-extension.sh          # notis-extension-<ver>-chrome.zip and -firefox.zip in the repo root
-VITE_NODES='["http://localhost:3300"]' VITE_PUBLIC='' bash packages/web/scripts/build-extension.sh   # devnet values, for the proof
+VITE_NODES='["http://localhost:3300"]' VITE_FAUCET_BASE='http://localhost:3103/faucet' VITE_PUBLIC='' bash packages/web/scripts/build-extension.sh   # devnet values, for the proof
 ```
 
 Two Vite builds — the pages (`index.html`, `prompt.html`) through `vite.extension.config.ts`, the background
@@ -297,12 +305,14 @@ carries no `chrome.` reference. **The extension's source lives in `src/extension
 
 **The proof** is `scripts/extension-check/run.mjs`: headless Chromium over raw CDP (the cached Chrome for
 Testing; no Playwright) loading the unpacked Chrome build, driving the twelve steps of the extension section
-through the real UI — the composer, the like word, the profile rows, the prompt window — the twelfth in four
-measured parts (the faucet's `$NOTIS` step, a send approved at the prompt, a send declined, a send from a locked
-identity) — against a local
+through the real UI — the composer, the like word, the profile and wallet rows, the prompt window — the eleventh
+the wallet's faucet press asking the browser for the origin and refused, the twelfth in four measured parts (the
+same press granted and the faucet's `$NOTIS` step, a send approved at the prompt, a send declined, a send after a
+lock pressed in the profile) — against a local
 devnet: `node packages/node/scripts/dev.mjs`, `tools/faucet/dist` with the devnet faucet key
 (`tools/e2e/src/identities.ts`, devnet-only and public by design), `promote.mjs` for a throwaway member,
-the extension built with devnet values. Step 8 lets the worker die by a ≥ 30 s idle wait — `chrome.runtime.reload`
+the extension built with devnet values, the faucet's base among them — the harness refuses to run when the built
+shell's `notis-faucet` differs from `--faucet`. Step 8 lets the worker die by a ≥ 30 s idle wait — `chrome.runtime.reload`
 clears `storage.session` and proves nothing — and the worker target is the one whose URL ends in
 `/background.js` (Chrome ships a built-in Hangouts worker first). Ports above 19000. The throwaway's key file
 and the faucet's live under a scratch path, never in the repo, a log or a report. The faucet runs from the

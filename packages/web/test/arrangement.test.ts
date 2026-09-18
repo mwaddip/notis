@@ -2,13 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { serialise, parse, isWindowId, authorWindowId, postsWindowId, windowSubject } from '../src/model/arrangement';
 import { newWorkspace, newColumn } from '../src/model/workspace';
 
-// 64-hex post ids and the one @-window kind.
+// 64-hex post ids and the fixed @-window ids.
 const A = 'a'.repeat(64);
 const B = 'b'.repeat(64);
 const C = 'c'.repeat(64);
 const D = 'd'.repeat(64);
-const P = '@profile'; // the one @-window kind
-const S = '@settings'; // the retired id, mapped to @profile on parse
+const P = '@profile';
+const S = '@settings';
+const W = '@wallet';
 const AUTHOR = '@author:' + 'e'.repeat(64);
 const POSTS = '@posts:' + 'f'.repeat(64);
 
@@ -46,11 +47,16 @@ describe('arrangement codec', () => {
     expect(serialise(parse(`${A}/${B}|${C}/${D}`))).toBe(`${A},${B}|${C},${D}`);
   });
 
-  it('a stored @settings maps to @profile, so a saved workspace survives the rename', () => {
-    expect(serialise(parse(S))).toBe(P);
-    expect(serialise(parse(`${A},${S}|${B}`))).toBe(`${A},${P}|${B}`);
-    // A / joins the two into one column, @settings mapped to @profile.
-    expect(serialise(parse(`${S}/${P}`))).toBe(`${P},${P}`);
+  it('@settings and @wallet round-trip as live ids', () => {
+    expect(serialise(parse(S))).toBe(S);
+    expect(serialise(parse(`${A},${S}|${B}`))).toBe(`${A},${S}|${B}`);
+    // A / joins the two into one column — the settings window can stack with
+    // the profile window like any other pair.
+    expect(serialise(parse(`${S}/${P}`))).toBe(`${S},${P}`);
+    // @wallet joins the three fixed @-windows.
+    expect(serialise(parse(W))).toBe(W);
+    expect(serialise(parse(`${P},${W},${S}`))).toBe(`${P},${W},${S}`);
+    expect(serialise(parse(`${W}/${P}`))).toBe(`${W},${P}`);
   });
 
   it('drops tokens that are not well-formed window ids', () => {
@@ -60,10 +66,11 @@ describe('arrangement codec', () => {
     expect(serialise(parse(`#${A}`))).toBe(A); // a leading # (URL-hash form) is stripped
   });
 
-  it('recognises exactly 64-hex ids and @profile; @settings is mapped, not a live id', () => {
+  it('recognises exactly 64-hex ids, @profile, @settings and @wallet — the three fixed @-windows', () => {
     expect(isWindowId(A)).toBe(true);
     expect(isWindowId(P)).toBe(true);
-    expect(isWindowId(S)).toBe(false); // @settings is rewritten on parse, never a live window id
+    expect(isWindowId(S)).toBe(true); // @settings is a live window id (WEB_INTERFACE → The settings window)
+    expect(isWindowId(W)).toBe(true); // @wallet is a live window id (WEB_INTERFACE → The wallet window)
     expect(isWindowId('a'.repeat(63))).toBe(false);
     expect(isWindowId('g'.repeat(64))).toBe(false); // g is not hex
   });
@@ -89,5 +96,7 @@ describe('arrangement codec', () => {
     // Not an @author/@posts window → null.
     expect(windowSubject(A)).toBeNull();
     expect(windowSubject(P)).toBeNull();
+    expect(windowSubject(S)).toBeNull();
+    expect(windowSubject(W)).toBeNull();
   });
 });

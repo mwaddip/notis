@@ -1,10 +1,14 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { App } from '../src/app';
 import type { Api } from '../src/api/client';
 import type { FeedResult, ThreadResult, PostJson } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
 import { contentHashHex } from '../src/integrity';
+
+const appCss = readFileSync(resolve(process.cwd(), 'src/style/app.css'), 'utf8');
 
 // happy-dom computes no layout, so a scroll offset is the rendered proof's to pin.
 // What a unit test can pin is the App's own seam: after an open it calls
@@ -101,6 +105,28 @@ describe('the view moves to the column the reader acted on', () => {
   });
 });
 
+describe('the header carries the lockup as an inline formatting context', () => {
+  it('.brand holds the mark and the h1 in that order — the stylesheet keys on this shape', () => {
+    // The lockup is the mark inside .brand, followed by the wordmark h1 — both
+    // rendered inline so their line box shares a baseline (the h1's text
+    // baseline), the mark hung on it as an inline-block with a fixed
+    // vertical-align (WEB_INTERFACE → The workspace → "The header's children
+    // share one axis"). The App owes this DOM shape wherever it renders the
+    // header — the workspace bar and the standalone one.
+    const { appbar } = mountApp();
+    const brand = appbar.querySelector<HTMLElement>('.brand')!;
+    expect(brand).not.toBeNull();
+    const first = brand.firstElementChild!;
+    const second = brand.lastElementChild!;
+    expect(first.tagName.toLowerCase()).toBe('svg');
+    expect(first.classList.contains('mark')).toBe(true);
+    expect(second.tagName.toLowerCase()).toBe('h1');
+    expect(second.textContent).toBe('Notis');
+    // No extra siblings — the h1 is the last child.
+    expect(brand.children.length).toBe(2);
+  });
+});
+
 describe('the header carries the arrows at every width', () => {
   it('a left and a right arrow, each a .ctl, with their labels and glyphs', () => {
     const { appbar } = mountApp();
@@ -165,28 +191,97 @@ describe('the bar carries the handle where the root row carries a name', () => {
 interface WidthDrive { onWidthClassChange(matches: boolean): void; }
 
 describe('the header at one column', () => {
-  it('the two controls are SVG glyph buttons with the labels, no .theme-btn, the arrows carry none', () => {
+  it('the profile, wallet and settings controls are SVG glyph buttons; no theme control, no .theme-btn', () => {
     const { app, appbar } = mountApp();
     (app as unknown as WidthDrive).onWidthClassChange(true); // cross the breakpoint
 
-    // No word buttons at one column — the two controls are glyphs
-    // (WEB_INTERFACE → The workspace → "What differs at one column, and nothing else does").
+    // No word buttons at one column — the workspace controls are glyphs, and
+    // no theme control renders here (WEB_INTERFACE → The workspace →
+    // "What differs at one column, and nothing else does"; → The settings
+    // window: the theme is the settings window's first row).
     expect(appbar.querySelectorAll('.theme-btn').length).toBe(0);
+    expect(appbar.querySelector('button[aria-label^="switch to "]')).toBeNull();
 
-    // The profile control is a person glyph, the theme control the moon (Sand) or
-    // the sun (Bistre); each a .hdr-glyph button holding one svg, with the label the
-    // word carries. happy-dom keeps createElementNS svgs queryable (test/mark.test.ts).
+    // The profile control is a person glyph, the wallet control a wallet, the
+    // settings control a gear; each a .hdr-glyph button holding one svg, with
+    // the label the word carries. happy-dom keeps createElementNS svgs
+    // queryable (test/mark.test.ts).
     const profile = appbar.querySelector<HTMLElement>('button[aria-label="open profile"]')!;
-    const theme = appbar.querySelector<HTMLElement>('button[aria-label^="switch to "]')!;
+    const wallet = appbar.querySelector<HTMLElement>('button[aria-label="open wallet"]')!;
+    const settings = appbar.querySelector<HTMLElement>('button[aria-label="open settings"]')!;
     expect(profile.classList.contains('hdr-glyph')).toBe(true);
-    expect(theme.classList.contains('hdr-glyph')).toBe(true);
+    expect(wallet.classList.contains('hdr-glyph')).toBe(true);
+    expect(settings.classList.contains('hdr-glyph')).toBe(true);
     expect(profile.querySelectorAll('svg').length).toBe(1);
-    expect(theme.querySelectorAll('svg').length).toBe(1);
+    expect(wallet.querySelectorAll('svg').length).toBe(1);
+    expect(settings.querySelectorAll('svg').length).toBe(1);
+    // The three glyphs are the only header controls between the arrows.
+    expect(appbar.querySelectorAll('.hdr-glyph').length).toBe(3);
 
     // An empty workspace has nothing either way, so both arrows carry `none`
     // (the stylesheet makes it absent at one column, space-reserved at tiling).
     const arrows = appbar.querySelectorAll<HTMLElement>('.ctl');
     expect(arrows.length).toBe(2);
     for (const a of arrows) expect(a.classList.contains('none')).toBe(true);
+  });
+
+  it('the tiling header carries three .hdr-word controls — profile, wallet, settings — beside the theme word', () => {
+    const { appbar } = mountApp();
+    // Default happy-dom is wide (1024) so oneColumn is false; the three word
+    // controls stand together beside the filled theme word.
+    const words = [...appbar.querySelectorAll<HTMLElement>('.hdr-word')];
+    expect(words.length).toBe(3);
+    const labels = words.map((w) => w.getAttribute('aria-label'));
+    expect(labels).toEqual(['open profile', 'open wallet', 'open settings']);
+    // The wallet word reads `wallet` and its class is .hdr-word (WEB_INTERFACE
+    // → The profile window → "Three header controls open the three windows — profile, wallet, settings — at the right of the app bar, the theme toggle after them at tiling").
+    expect(words[1]!.textContent).toBe('wallet');
+    // The filled theme word stands after them.
+    expect(appbar.querySelectorAll<HTMLElement>('.theme-btn').length).toBe(1);
+  });
+
+  it('the workspace bar carries a .hdr-workspace class the standalone bar does not', () => {
+    // One header element serves both bars, so the class is set by the
+    // workspace render and cleared by the standalone one (WEB_INTERFACE → The
+    // workspace → "What differs at one column, and nothing else does",
+    // → The standalone thread → "The header"). The under-372px stylesheet
+    // rule keys on this class to hide the workspace wordmark alone.
+    const { appbar } = mountApp();
+    expect(appbar.classList.contains('hdr-workspace')).toBe(true);
+
+    document.body.innerHTML = '';
+    const ab = document.createElement('header');
+    const ws = document.createElement('div'); ws.className = 'workspace';
+    const feed = document.createElement('section'); feed.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    ws.append(feed, panes);
+    document.body.append(ab, ws);
+    const app = new App(fakeApi());
+    const P = 'a'.repeat(64);
+    app.mount(ab, feed, panes, { kind: 'standalone', id: P, base: '/' });
+    expect(ab.classList.contains('hdr-workspace')).toBe(false);
+  });
+
+  it('with the class on the header, getComputedStyle reads the header rule — flex-grow 0 and gap 16px, not the .workspace scroller\'s grow and 24px gap', () => {
+    // A class named `.workspace` on the header would inherit the strip
+    // scroller's rules — flex 1 1 auto (grow), gap 24px, and at one column
+    // overflow-x auto with scroll-snap-type. The hazard fires here as a
+    // rendered-style read (card.test.ts's pattern): with the CSS injected and
+    // the class on the header, the header's own type rule stays in force. The
+    // header rule's padding shorthand uses max() and var(--gutter), which
+    // happy-dom does not resolve — flex-grow and gap are literal values it
+    // does read.
+    const style = document.createElement('style');
+    style.textContent = appCss;
+    document.head.appendChild(style);
+    try {
+      const { appbar } = mountApp();
+      expect(appbar.classList.contains('hdr-workspace')).toBe(true);
+      const s = window.getComputedStyle(appbar);
+      expect(s.flexGrow).toBe('0');
+      expect(s.gap).toBe('16px');
+    } finally {
+      document.head.removeChild(style);
+    }
   });
 });

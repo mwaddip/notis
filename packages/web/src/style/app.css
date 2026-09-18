@@ -51,15 +51,24 @@ header {
 }
 /* The header arrows sit at its edges; updateHeaderArrows toggles `none` from the
    active scroller's position, and at tiling `none` hides the arrow with its space
-   reserved so the header's geometry never shifts (WEB_INTERFACE → The workspace). */
-header .ctl { align-self: center; }
+   reserved so the header's geometry never shifts (WEB_INTERFACE → The workspace).
+   A small padding-bottom in em is the arrows' optical lift, sized so the ink's
+   centre lands on the bar's axis (WEB_INTERFACE → The workspace → "The header's
+   children share one axis"). */
+header .ctl { align-self: center; padding-bottom: .3em; }
 header .ctl.none { visibility: hidden; }
-header h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .01em; }
+header h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .01em; display: inline; }
 header .spacer { flex: 1 1 auto; }
-/* The mark + wordmark lockup: a 24px micro-tier mark beside the 15px wordmark.
-   The mark stays inline SVG so --notis-green / --notis-keyline reach it. */
-.brand { display: flex; align-items: center; gap: 8px; }
-.mark { width: 24px; height: 24px; display: block; flex: 0 0 auto; }
+/* The mark + wordmark lockup: the mark sits as an inline box on the wordmark's
+   line inside .brand. .brand's inline formatting context reports the wordmark's
+   text baseline as its own, so header's baseline row aligns the wordmark with
+   .hdr-word text baselines (HOUSE_STYLE → Typography → "Rows mixing mono with
+   proportional type align on the baseline, never centred"). The mark's fixed
+   vertical-align lands its centre on the words' box centre, and the lockup
+   keeps one baseline whether or not the h1 is displayed (WEB_INTERFACE → The
+   workspace → "The header's children share one axis"). */
+.brand { display: inline-block; }
+.mark { width: 24px; height: 24px; display: inline-block; vertical-align: -7px; margin-right: 8px; }
 .theme-btn {
   font-family: var(--sans); font-size: 12.5px; padding: 4px 12px; cursor: pointer;
   border: 1px solid transparent; border-radius: 4px;
@@ -67,6 +76,18 @@ header .spacer { flex: 1 1 auto; }
   transition: opacity .15s ease-out;
 }
 .theme-btn:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
+
+/* The tiling profile and settings words wear .hdr-word — the outlined
+   counterpart of the filled theme word: transparent background, ink text and a
+   borderStrong outline that stands as its sole boundary at 3:1
+   (HOUSE_STYLE → Colour, → Interaction). */
+.hdr-word {
+  font-family: var(--sans); font-size: 12.5px; padding: 4px 12px; cursor: pointer;
+  border: 1px solid var(--borderStrong); border-radius: 4px;
+  background: transparent; color: var(--ink);
+  transition: opacity .15s ease-out;
+}
+.hdr-word:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 
 /* ---------- workspace ---------- */
 .workspace {
@@ -433,10 +454,14 @@ header .spacer { flex: 1 1 auto; }
 /* The theme control sizes to its label rather than stretching the field. */
 .winbody .theme-btn { align-self: flex-start; }
 .winbody .hint { font-size: 11.5px; color: var(--inkMute); }
-.winbody .arr { font-family: var(--mono); font-size: 12px; color: var(--ink);
-                word-break: break-all; padding: 5px 8px;
-                border: 1px solid var(--border); border-radius: 4px; background: var(--surface); }
-.winbody .arr.empty { color: var(--inkMute); }
+/* The settings window's identity-tint preview — two sample title bars stacked
+   above the four words, one focused and one not, each with a fixed --idh. The
+   samples inherit the .bar rules, so a change to the tint applies to them
+   exactly as it applies to a real title bar; they carry no .win class since
+   the tint is the shape a thread bar wears (WEB_INTERFACE → The settings
+   window). Inert display: aria-hidden and pointer-events off. */
+.tint-preview { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; pointer-events: none; }
+.tint-preview .bar { min-height: 22px; }
 
 /* A segmented control (identity tint). Each value is a word; the chosen one in
    ink, the rest inkMute, aria-pressed as today — no fill, no group border
@@ -445,14 +470,15 @@ header .spacer { flex: 1 1 auto; }
 .seg .word { color: var(--inkMute); }
 .seg .word[aria-pressed="true"] { color: var(--ink); }
 
-/* ---------- profile window — identity, standing, karma, the forms ---------- */
+/* ---------- profile window — identity, karma, the forms ---------- */
 .winrule { border: 0; border-top: 1px solid var(--border); margin: 6px 0 18px; }
 .mono { font-family: var(--mono); }
 .winbody .inkmute { color: var(--inkMute); }
 .winbody .standing { color: var(--greenText); }
 /* Gold means credits and nothing else (HOUSE_STYLE → "Gold means credits and
-   nothing else"): the $NOTIS row's balance number. The token is defined per
-   theme on :root; the class carries it to a run of text. */
+   nothing else"): the wallet's balance number (WEB_INTERFACE → The wallet
+   window → "The `balance` row"). The token is defined per theme on :root; the
+   class carries it to a run of text. */
 .gold { color: var(--gold); }
 /* The key row's full hex wraps within the 660px cap rather than overflowing. */
 .winbody .field .mono { word-break: break-all; }
@@ -479,15 +505,32 @@ header .spacer { flex: 1 1 auto; }
 .pf-refusal { font-size: 11.5px; color: var(--clay); }
 .pf-confirm { display: flex; flex-direction: column; gap: 6px; }
 
-/* The $NOTIS row's send form — the amount and the boxed send share one line,
-   the amount a short field since an amount is never long — 12345.12345678 fits
-   and the row never wraps at the narrowest window (a phone at 390 with the
-   16px gutters). The box is the primary action's, the same the composer's
-   `post` and the feed's `new post` wear (WEB_INTERFACE → The profile window
-   → "The `$NOTIS` row", HOUSE_STYLE → Interaction → "A box marks a commit pair
-   and a surface's primary action"). */
+/* The wallet's send form — the amount and the boxed send share one line, the
+   amount a short field since an amount is never long — 12345.12345678 fits and
+   the row never wraps at the narrowest window (a phone at 390 with the 16px
+   gutters). The box is the primary action's, the same the composer's `post` and
+   the feed's `new post` wear (WEB_INTERFACE → The wallet window → "The `send`
+   row", HOUSE_STYLE → Interaction → "A box marks a commit pair and a surface's
+   primary action"). */
 .credits-form .amount-row { display: flex; gap: 8px; align-items: center; }
 .credits-form .amount-row input { flex: 0 1 12ch; min-width: 8ch; }
+
+/* The username's claim form — the input and the boxed `claim` on one line, the
+   wallet's send-row pattern; the input takes the width since a name is not
+   short (WEB_INTERFACE → The username row → "Holding none, nothing pending, a
+   rep box to spend", HOUSE_STYLE → Interaction → "A box marks a commit pair
+   and a surface's primary action"). */
+.username-form .name-row { display: flex; gap: 8px; align-items: center; }
+.username-form .name-row input { flex: 1 1 auto; min-width: 0; }
+
+/* The key as a copy control (WEB_INTERFACE → The profile window → "The key is
+   a control, and a press copies it"): the whole 64 hex at the labels' size,
+   mono, wrapping by break-all through `.winbody .field .mono`, left-aligned
+   so the wrapped hex reads from the field's edge. The muted `copied` follower
+   stays inside the button until the window is next built — no timer — and
+   never wraps between its letters (HOUSE_STYLE → Motion). */
+.key-copy { font-size: 12.5px; text-align: left; }
+.key-copy-note { font-family: var(--sans); color: var(--inkMute); word-break: normal; }
 
 /* A card by the loaded key reads · you after the prefix — muted ink, text only, no
    colour, since identity colour may never identify anyone (HOUSE_STYLE → Identity colour). */
@@ -555,8 +598,10 @@ header .spacer { flex: 1 1 auto; }
      8px; the arrows take the strip's glyph — 20px at weight 600 in ink — and never
      shrink, the way back drawn as the way in; a `none` arrow is absent, not
      space-reserved, since the header is per screen here (WEB_INTERFACE → The
-     workspace). */
-  header { gap: 8px; }
+     workspace). Every child is a box here — the arrows, the lockup, the glyphs —
+     so the bar centres them on one axis (WEB_INTERFACE → The workspace → "The
+     header's children share one axis"). */
+  header { gap: 8px; align-items: center; }
   header .ctl { flex: 0 0 44px; font-size: 20px; font-weight: 600; color: var(--ink); }
   header .ctl.none { display: none; }
   /* The profile and theme controls are glyphs at the header's control size — a
@@ -582,6 +627,18 @@ header .spacer { flex: 1 1 auto; }
 @media (max-width: 389px) {
   .who { gap: 4px; }
   .who .hex, .who .when { font-size: 10px; }
+}
+
+/* Under 372px the workspace header's wordmark yields and the mark stands alone,
+   so the six controls of the phone header — ‹, the mark, the three glyphs, › —
+   still fit at 44px each without a shrink (WEB_INTERFACE → The workspace
+   → "What differs at one column, and nothing else does"). The standalone bar
+   carries no .hdr-workspace class, so its wordmark stays at every width
+   (→ The standalone thread → "The header"). The name is .hdr-workspace, not
+   .workspace: the strip scroller already owns .workspace and a class beats the
+   `header` type selector. */
+@media (max-width: 371px) {
+  header.hdr-workspace h1 { display: none; }
 }
 
 /* ---------- the extension's prompt window ---------- */
@@ -612,6 +669,8 @@ main#prompt .unlock-in-prompt { margin-top: 12px; }
    hover (WEB_INTERFACE → The workspace, HOUSE_STYLE → Interaction). */
 @media (hover: hover) {
   .theme-btn:hover { opacity: .85; }
+  .hdr-word:hover { background: rgba(0,0,0,.05); }
+  :root[data-t="dark"] .hdr-word:hover { background: rgba(255,255,255,.06); }
   .strip:hover { background: rgba(0,0,0,.05); color: var(--ink); }
   :root[data-t="dark"] .strip:hover { background: rgba(255,255,255,.06); }
   .card.open .strip:hover { background: color-mix(in srgb, var(--greenText) 22%, transparent); }
@@ -649,7 +708,7 @@ main#prompt .unlock-in-prompt { margin-top: 12px; }
   .meta, .stage { height: 36px; }
   .karma-field { min-height: 36px; }
   /* The boxed controls and the select to a 36px minimum. */
-  .btn, .theme-btn, .composer-foot select { min-height: 36px; }
+  .btn, .theme-btn, .hdr-word, .composer-foot select { min-height: 36px; }
   /* A word control's hit box grows by padding a negative margin absorbs, so the
      row's geometry is unchanged (HOUSE_STYLE → Interaction → "A word is a
      control, and it wears no box", WEB_INTERFACE → The workspace). */

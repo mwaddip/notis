@@ -2,8 +2,9 @@
 // reaches the face in $NOTIS (WEB_INTERFACE → The wallet). Base units are 10⁻⁸
 // of a credit (TYPES_INTERFACE → Denomination); @dagsocial/types exports no name
 // for the scale, so the module holds it here with that citation. One module
-// serves every surface — the $NOTIS row, its confirm and flight lines, the
-// extension's prompt — so a formatting change moves in one place.
+// serves every surface — the wallet's balance and send rows, the send's confirm
+// and flight lines, the extension's prompt — so a formatting change moves in
+// one place.
 
 /** 10⁻⁸ of a credit. TYPES_INTERFACE → Denomination states the scale;
  *  @dagsocial/types does not export a name for it. */

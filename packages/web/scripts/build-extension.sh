@@ -10,9 +10,10 @@ set -euo pipefail
 # WEB_INTERFACE → "The extension".
 #
 # Env overrides (dev/proof harnesses):
-#   VITE_NODES        JSON array of API bases the shell carries as notis-nodes
-#   VITE_PUBLIC       origin+base for shareable links (empty by default)
-#   NOTIS_EXTENSION_KEY   Chrome extension public key for a stable id
+#   VITE_NODES         JSON array of API bases the shell carries as notis-nodes
+#   VITE_FAUCET_BASE   absolute base for the shell's notis-faucet
+#   VITE_PUBLIC        origin+base for shareable links (empty by default)
+#   NOTIS_EXTENSION_KEY    Chrome extension public key for a stable id
 # ---------------------------------------------------------------------------
 
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -30,7 +31,7 @@ cd packages/web
 # Testnet defaults; the proof and dev harnesses override via the environment.
 export VITE_WEB_BASE=/
 export VITE_API_BASE=""
-export VITE_FAUCET_BASE=""
+export VITE_FAUCET_BASE=${VITE_FAUCET_BASE:-https://notis.fun/testnet/faucet}
 export VITE_PUBLIC_ORIGIN=${VITE_PUBLIC_ORIGIN:-https://notis.fun}
 export VITE_NODES=${VITE_NODES:-'["https://notis.fun/testnet/api"]'}
 export VITE_PUBLIC=${VITE_PUBLIC:-https://notis.fun/web/}
@@ -92,11 +93,13 @@ for target in "$CHROME_DIR" "$FIREFOX_DIR"; do
   grep -q '<base href="/">' "$shell" \
     || { echo "FAIL: <base href='/'> missing in $shell"; exit 1; }
 
-  # The two new metas carry the extension's build values.
+  # The three build-time metas carry the extension's values.
   grep -Fq "name=\"notis-nodes\" content='$VITE_NODES'" "$shell" \
     || { echo "FAIL: notis-nodes meta wrong in $shell (expected $VITE_NODES)"; exit 1; }
   grep -Fq "name=\"notis-public\" content=\"$VITE_PUBLIC\"" "$shell" \
     || { echo "FAIL: notis-public meta wrong in $shell (expected $VITE_PUBLIC)"; exit 1; }
+  grep -Fq "name=\"notis-faucet\" content=\"$VITE_FAUCET_BASE\"" "$shell" \
+    || { echo "FAIL: notis-faucet meta wrong in $shell (expected $VITE_FAUCET_BASE)"; exit 1; }
 
   # background.js is one classic file with no `import` — WEB_INTERFACE →
   # "The background is one classic file with no `import`".

@@ -5,11 +5,11 @@ import type { Mode } from './mode';
 import type { Tabs } from './tabs';
 import { el, shortHex, preservingScroll } from './dom';
 import { contentHashHex } from './integrity';
-import { prefs, setTheme, setIdTint, setNode, setFaucet, writeStore, readStore, BUILD_NODES, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
+import { prefs, setTheme, setIdTint, setNode, writeStore, readStore, BUILD_NODES, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
 import { renderFeedInto, replaceFeedCard } from './view/feed';
 import { renderPanesInto, renderRegionElement, renderBars } from './view/panes';
 import { makeComposer, type ComposerController } from './view/composer';
-import { personGlyph, sunGlyph, moonGlyph } from './view/glyphs';
+import { personGlyph, sunGlyph, moonGlyph, gearGlyph, walletGlyph } from './view/glyphs';
 import { MARK } from './view/mark';
 import { serialise, parse, authorWindowId, postsWindowId, windowSubject } from './model/arrangement';
 import { reconcileNewer, isLivePost } from './model/feed-reconcile';
@@ -25,7 +25,8 @@ import type { PendingEntry } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps } from './wallet/submit';
 import { identity as identitySingleton } from './identity/identity';
-import { renderKarmaField, renderInvitesRow, renderUsernameRow, renderCreditsRow, resetCreditsSendForm, type ResolvedRecipient } from './view/profile';
+import { renderKarmaField, renderInvitesRow, renderUsernameRow } from './view/profile';
+import { renderCreditsRow, resetCreditsSendForm, type ResolvedRecipient } from './view/wallet';
 import { cornerState, renderCorner, CORNER_POLL_MS, type CornerState } from './view/corner';
 import type { Flight } from './view/card';
 import type { YourVouch } from './view/author';
@@ -237,18 +238,20 @@ export class App {
   private ownNameLoaded = false;
   private usernameFlight: Flight | null = null;
   private usernameInFlight: { kind: 'claim' | 'burn'; name: string } | null = null;
-  // The $NOTIS row (WEB_INTERFACE → The profile window). profileCredits is the
-  // reader's own /credits read at the profile open, the ↻, an identity change
-  // and each landing that moves the balance; creditGrantView is a faucet
-  // transfer in flight or one that lapsed; sendFlight is the transient ending
-  // for the row (the pending state lives in the ledger).
-  private profileCredits: CreditsResult | null = null;
+  // The wallet window (WEB_INTERFACE → The wallet window). walletCredits is the
+  // reader's own /credits, read at the wallet open, the wallet's ↻, an identity
+  // change while the wallet is open, and each landing that moves the balance;
+  // creditGrantView is a faucet transfer in flight or one that lapsed; sendFlight
+  // is the transient ending for the row (the pending state lives in the ledger).
+  private walletCredits: CreditsResult | null = null;
   private creditGrantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null = null;
   private sendFlight: Flight | null = null;
 
-  // Optional in the extension build — the faucet row's `set` requests host
-  // permission for the origin before storing (WEB_INTERFACE → The profile
-  // window). Absent, the row stores without a permission check.
+  // Optional in the extension build — the App's own hook, called synchronously
+  // from `askFaucet` / `askFaucetCredits` before any await, so the browser's
+  // user-input window is still open when the permission request leaves
+  // (WEB_INTERFACE → The faucet step → "In the extension the press asks the
+  // browser for the faucet's origin first"). Absent on the web build.
   private readonly requestFaucetOrigin: ((origin: string) => Promise<boolean>) | null;
 
   // Every dependency is injectable so a test can drive the App over fakes.
@@ -283,7 +286,10 @@ export class App {
       refreshFeed: () => void this.refreshFeed(),
       loadOlder: () => void this.loadOlder(),
       openProfile: () => this.openProfile(),
+      openSettings: () => this.openSettings(),
+      openWallet: () => this.openWallet(),
       refreshProfile: () => void this.refreshProfileKarma(),
+      refreshWallet: () => void this.refreshWalletCredits(),
       focus: (id) => this.focus(id),
       refreshThread: (id) => void this.refreshThread(id),
       threadMore: (id) => void this.threadMore(id),
@@ -293,7 +299,6 @@ export class App {
       setTheme: (t) => this.changeTheme(t),
       setIdTint: (m) => this.changeIdTint(m),
       setNode: (origin) => void this.changeNode(origin),
-      setFaucet: (origin) => this.changeFaucet(origin),
       inspectFile: (text) => this.idm.inspectFile(text),
       draftIdentity: () => this.idm.draft(),
       createIdentity: async (p) => { await this.idm.create(p); },
@@ -324,9 +329,10 @@ export class App {
       moreBonds: () => void this.moreBonds(),
       claimUsername: (name) => void this.claimUsername(name),
       burnUsername: () => void this.burnUsername(),
-      // The $NOTIS row (WEB_INTERFACE → The profile window). resolveRecipient
-      // is the handle → holder read the form runs at the press; send is the
-      // credits transfer flow; askFaucetCredits is the faucet's $NOTIS step.
+      // The wallet's send row (WEB_INTERFACE → The wallet window → "The `send`
+      // row"). resolveRecipient is the handle → holder read the form runs at
+      // the press; send is the credits transfer flow; askFaucetCredits is the
+      // faucet's $NOTIS step (→ The faucet step).
       resolveRecipient: (name) => this.resolveRecipient(name),
       send: (toHex, toName, amount) => void this.send(toHex, toName, amount),
       askFaucetCredits: () => void this.askFaucetCredits(),
@@ -338,11 +344,8 @@ export class App {
       ...(this.idm.policy && this.idm.setPolicy
         ? {
             policy: () => this.idm.policy!(),
-            setPolicy: async (p) => { await this.idm.setPolicy!(p); this.renderRegionsFor('@profile'); },
+            setPolicy: async (p) => { await this.idm.setPolicy!(p); this.renderRegionsFor('@settings'); },
           }
-        : {}),
-      ...(this.requestFaucetOrigin
-        ? { requestFaucetOrigin: (origin: string) => this.requestFaucetOrigin!(origin) }
         : {}),
     };
   }
@@ -508,7 +511,6 @@ export class App {
       openSet: openSet(this.state.workspace),
       thread: (id) => this.state.threads.get(id),
       post: (id) => this.state.posts.get(id),
-      arrangement: serialise(this.state.workspace),
       oneColumn: this.oneColumn,
       standalone: this.standalone,
       writeEnabled: cur !== null,
@@ -523,7 +525,6 @@ export class App {
       backedUp: this.idm.backedUp(),
       karma: this.profileKarma,
       grant: this.grantView,
-      membershipBars: this.state.status?.membership ?? null,
       member: this.isMember(),
       yourVouch: (key) => this.yourVouchFor(key),
       author: this.authorData,
@@ -542,10 +543,11 @@ export class App {
       pendingUsername: this.usernameInFlight ?? pendingUsernameEntry(this.ledger.all()),
       canSignClaim: this.canSignWithdraw(), // same predicate — a spendable box
       canAffordBurn: this.canAffordBurn(),
-      // The $NOTIS row (WEB_INTERFACE → The profile window). status carries the
-      // tip the row's spendable-at-height filter reads (WEB_INTERFACE → The wallet).
+      // The wallet's balance row (WEB_INTERFACE → The wallet window → "The
+      // `balance` row"). status carries the tip the row's spendable-at-height
+      // filter reads (WEB_INTERFACE → The wallet).
       status: this.state.status,
-      credits: this.profileCredits,
+      credits: this.walletCredits,
       creditGrant: this.creditGrantView,
       sendFlight: this.sendFlight,
       pendingSend: pendingSendEntries(this.ledger.all())[0] ?? null,
@@ -602,6 +604,13 @@ export class App {
       this.renderStandaloneHeader(bar);
       return;
     }
+    // One header element serves both bars — set on the workspace render, cleared
+    // on the standalone one, so the width-class rule that hides the workspace
+    // wordmark leaves the standalone one alone (WEB_INTERFACE → The workspace
+    // → "What differs at one column, and nothing else does", → The standalone
+    // thread → "The header"). The name is not `.workspace`: that class owns the
+    // strip scroller (`header` type would lose to it and the bar would grow).
+    bar.classList.add('hdr-workspace');
 
     // ‹ at the left edge scrolls the view one column that way. When no column lies
     // left it carries `none` — space-reserved at tiling, absent at one column
@@ -619,15 +628,13 @@ export class App {
     bar.appendChild(brand);
     bar.appendChild(el('span', 'spacer'));
 
-    // The profile and theme controls. The theme control names and shows the theme
-    // it would switch TO (HOUSE_STYLE → Colour); the profile control shows a person
-    // or the key prefix. At one column both are glyphs at the header's control
-    // size — a person, and the moon on Sand / the sun on Bistre — inline SVG in
-    // currentColor drawn in the house technique, the same for every reader and for
-    // none since the window says who (WEB_INTERFACE → The profile window,
-    // HOUSE_STYLE → Colour → "On a phone the theme control is a sun or a moon",
-    // HOUSE_STYLE → Illustration). At tiling they are words: 'profile' or the key
-    // prefix in mono, and the theme's word; no avatar, no identity colour
+    // The profile, wallet, settings and theme controls. At one column the
+    // workspace carries no theme control — the theme is the settings window's
+    // first row (WEB_INTERFACE → The workspace, → The settings window); the
+    // three glyphs are a person, a wallet and a gear, inline SVG in currentColor
+    // drawn in the house technique (HOUSE_STYLE → Illustration). At tiling
+    // `profile`, `wallet` and `settings` wear one outlined class — .hdr-word —
+    // beside the filled `theme` word; no avatar and no identity colour
     // (WEB_INTERFACE → The profile window; HOUSE_STYLE → Identity colour).
     const target: Theme = prefs.theme === 'dark' ? 'light' : 'dark';
     if (this.oneColumn) {
@@ -637,17 +644,20 @@ export class App {
       profile.addEventListener('click', () => this.openProfile());
       bar.appendChild(profile);
 
-      const theme = el('button', 'hdr-glyph');
-      theme.setAttribute('aria-label', `switch to ${target} theme`);
-      theme.appendChild(target === 'dark' ? moonGlyph() : sunGlyph());
-      theme.addEventListener('click', () => this.changeTheme(target));
-      bar.appendChild(theme);
+      const wallet = el('button', 'hdr-glyph');
+      wallet.setAttribute('aria-label', 'open wallet');
+      wallet.appendChild(walletGlyph());
+      wallet.addEventListener('click', () => this.openWallet());
+      bar.appendChild(wallet);
+
+      const settings = el('button', 'hdr-glyph');
+      settings.setAttribute('aria-label', 'open settings');
+      settings.appendChild(gearGlyph());
+      settings.addEventListener('click', () => this.openSettings());
+      bar.appendChild(settings);
     } else {
       const cur = this.idm.current();
-      const profile = el('button', 'theme-btn');
-      profile.style.background = 'transparent';
-      profile.style.color = 'var(--ink)';
-      profile.style.border = '1px solid var(--borderStrong)';
+      const profile = el('button', 'hdr-word');
       if (cur === null) {
         profile.textContent = 'profile';
       } else if (this.ownName) {
@@ -660,6 +670,16 @@ export class App {
       profile.setAttribute('aria-label', 'open profile');
       profile.addEventListener('click', () => this.openProfile());
       bar.appendChild(profile);
+
+      const wallet = el('button', 'hdr-word', 'wallet');
+      wallet.setAttribute('aria-label', 'open wallet');
+      wallet.addEventListener('click', () => this.openWallet());
+      bar.appendChild(wallet);
+
+      const settings = el('button', 'hdr-word', 'settings');
+      settings.setAttribute('aria-label', 'open settings');
+      settings.addEventListener('click', () => this.openSettings());
+      bar.appendChild(settings);
 
       const theme = el('button', 'theme-btn', target);
       theme.setAttribute('aria-label', `switch to ${target} theme`);
@@ -679,6 +699,7 @@ export class App {
 
   // WEB_INTERFACE → The standalone thread — no arrows, no profile control.
   private renderStandaloneHeader(bar: HTMLElement): void {
+    bar.classList.remove('hdr-workspace');
     const brand = el('div', 'brand');
     brand.innerHTML = MARK;
     brand.appendChild(el('h1', null, 'Notis'));
@@ -1061,7 +1082,7 @@ export class App {
           return;
         }
         feed.loading = false;
-        feed.error = 'no node answered — set one in @profile';
+        feed.error = 'no node answered — set one in settings';
       } else {
         feed.loading = false;
         feed.error = msg(e);
@@ -1241,6 +1262,49 @@ export class App {
     this.moveView('@profile');
   }
 
+  private openSettings(): void {
+    // No node read is owed: the settings window is preferences only
+    // (WEB_INTERFACE → The settings window).
+    const res = openWindow(this.state.workspace, '@settings', { from: 'feed' });
+    this.saveLayout();
+    if (res.raised) {
+      this.renderRegion(res.column.uid);
+    } else {
+      this.renderPanes();
+    }
+    this.moveView('@settings');
+  }
+
+  private openWallet(): void {
+    const res = openWindow(this.state.workspace, '@wallet', { from: 'feed' });
+    this.saveLayout();
+    if (res.raised) {
+      this.renderRegion(res.column.uid);
+    } else {
+      this.renderPanes();
+      // A fresh open fires /credits and moves the view at once — the read
+      // lands in place through renderCreditsRowInPlace; a raise brings the
+      // existing window forward (WEB_INTERFACE → The wallet window). Fire-
+      // and-move: the view never waits on the network, so a hanging /credits
+      // does not strand the press (openProfile's pattern for /karma).
+      void this.refreshWalletCredits();
+    }
+    this.moveView('@wallet');
+  }
+
+  /** Re-read /credits and move the balance in place — the wallet window's ↻ and
+   *  the fresh-open read (WEB_INTERFACE → The wallet window). */
+  private async refreshWalletCredits(): Promise<void> {
+    const cur = this.idm.current();
+    if (cur === null) return;
+    try {
+      this.walletCredits = await this.readOwnCredits(cur.pubKeyHex);
+    } catch {
+      return; // a failed read leaves the last-known state; the next ↻ retries
+    }
+    this.renderCreditsRowInPlace();
+  }
+
   private focus(id: string): void {
     const column = focusWindow(this.state.workspace, id);
     if (column) {
@@ -1394,12 +1458,15 @@ export class App {
   private changeTheme(t: Theme): void {
     setTheme(t);
     this.renderHeader();
-    this.renderRegionsFor('@profile');
+    this.renderRegionsFor('@settings');
   }
 
   private changeIdTint(m: IdTint): void {
-    setIdTint(m); // the bars follow the CSS custom properties — no re-render needed
-    this.renderRegionsFor('@profile');
+    // The tint is :root's data-idtint and custom properties (src/prefs.ts
+    // applyIdTint); the seg's own click moves the four words' pressed state in
+    // place (WEB_INTERFACE → The settings window → "The identity tint shows
+    // what it sets"), so no region re-render is owed.
+    setIdTint(m);
   }
 
   private async changeNode(origin: string): Promise<void> {
@@ -1407,15 +1474,10 @@ export class App {
     // Everything loaded came from the old node; drop it and re-read.
     this.state.threads.clear();
     this.state.posts.clear();
-    this.renderRegionsFor('@profile');
+    this.renderRegionsFor('@settings');
     this.renderPanes();
     await this.loadFeed();
     for (const id of openSet(this.state.workspace)) if (!isWin(id)) void this.fetchThread(id);
-  }
-
-  private changeFaucet(origin: string): void {
-    setFaucet(origin);
-    this.renderRegionsFor('@profile'); // the faucet row shows the new base, the step its availability
   }
 
   // -------------------------------------------------------------------------
@@ -1449,7 +1511,7 @@ export class App {
     this.ownNameLoaded = false;
     this.usernameFlight = null;
     this.usernameInFlight = null;
-    this.profileCredits = null;
+    this.walletCredits = null;
     this.creditGrantView = null;
     this.sendFlight = null;
     this.ledger = new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
@@ -1460,6 +1522,11 @@ export class App {
     for (const id of openSet(this.state.workspace)) if (!isWin(id)) void this.fetchThread(id);
     // The vouch set, member flag and escrow for the new key, then the marks re-render.
     if (this.idm.current() !== null) void this.loadMembershipState();
+    // The wallet is per-identity too — re-read /credits when the wallet is open
+    // (WEB_INTERFACE → The wallet window).
+    if (this.idm.current() !== null && openSet(this.state.workspace).has('@wallet')) {
+      void this.refreshWalletCredits();
+    }
   }
 
   /** A fresh sealed file for the reader to keep. Needs the seed, so the profile
@@ -1480,10 +1547,27 @@ export class App {
 
   /** Ask the faucet — a 202 rides the bounded poll as a grant entry; a rejection is
    *  one register line (WEB_INTERFACE → The faucet step). The request carries only
-   *  the public key, so a locked identity can ask. */
+   *  the public key, so a locked identity can ask. In the extension the hook is
+   *  called synchronously from the press before any await, so the browser's
+   *  user-input window is still open (WEB_INTERFACE → The faucet step → "In the
+   *  extension the press asks the browser for the faucet's origin first"). */
   private async askFaucet(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
+    // The hook is invoked synchronously here — an `await` in front of the
+    // request loses the user-input window in Firefox.
+    const permission = this.requestFaucetOrigin ? this.requestFaucetOrigin(prefs.faucet) : null;
+    if (permission !== null) {
+      const granted = await permission;
+      if (!granted) {
+        const region = this.regionFocusedOn('@profile');
+        if (region) {
+          region.report = 'the browser refused access to that origin.';
+          this.renderRegion(region.uid);
+        }
+        return;
+      }
+    }
     const res = await this.faucetClient.askKarma(cur.pubKeyHex);
     if ('message' in res) {
       const region = this.regionFocusedOn('@profile');
@@ -1893,15 +1977,15 @@ export class App {
   }
 
   /** Read the reader's membership state — /karma (member, the floor, the tip), the
-   *  vouch set, the escrow, and the $NOTIS row's /credits — at identity load and
-   *  the profile's ↻ (WEB_INTERFACE → The identity display, → The profile window). */
+   *  vouch set, the escrow, /status, the bonds and the reader's own name — at
+   *  identity load and the profile's ↻. /credits is the wallet's own read
+   *  (WEB_INTERFACE → The profile window, → The wallet window). */
   private async loadMembershipState(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
     try {
-      const [karma, credits, status, vouched, escrow, bonds, ownName] = await Promise.all([
+      const [karma, status, vouched, escrow, bonds, ownName] = await Promise.all([
         this.client.karma(cur.pubKeyHex),
-        this.readOwnCredits(cur.pubKeyHex),
         this.client.status(),
         this.readVouchSet(cur.pubKeyHex),
         this.readEscrow(cur.pubKeyHex),
@@ -1909,7 +1993,6 @@ export class App {
         this.client.usernameByOwner(cur.pubKeyHex),
       ]);
       this.profileKarma = karma;
-      this.profileCredits = credits;
       this.state.status = status; // vouchCooldownBlocks + the bond range for the invites row
       this.bumpTip(status.blockHeight);
       this.bumpTip(karma.height);
@@ -2075,7 +2158,7 @@ export class App {
   // ---- the author window and the author-posts window ----
 
   private ensureAuthorData(key: string): string {
-    if (!this.authorData.has(key)) this.authorData.set(key, { karma: null, endorsers: null, endorsersNext: false, flight: null, username: null, usernameLoaded: false });
+    if (!this.authorData.has(key)) this.authorData.set(key, { endorsers: null, endorsersNext: false, flight: null, username: null, usernameLoaded: false });
     return key;
   }
 
@@ -2099,13 +2182,11 @@ export class App {
     const d = this.authorData.get(key);
     if (!d) return;
     try {
-      const [karma, endorsers, username] = await Promise.all([this.client.karma(key), this.client.vouchesByTarget(key), this.client.usernameByOwner(key)]);
-      d.karma = karma;
+      const [endorsers, username] = await Promise.all([this.client.vouchesByTarget(key), this.client.usernameByOwner(key)]);
       d.endorsers = endorsers;
       d.endorsersNext = endorsers.next !== null;
       d.username = username;
       d.usernameLoaded = true;
-      this.bumpTip(karma.height);
     } catch {
       return; // leave the window's last data; the ↻ retries
     }
@@ -2322,7 +2403,7 @@ export class App {
     if (field) renderUsernameRow(field, this.handlers, this.ctx());
   }
 
-  // ---- the $NOTIS row (WEB_INTERFACE → The profile window) ----
+  // ---- the wallet window's send row (WEB_INTERFACE → The wallet window) ----
 
   /** Resolve an @handle to its holder — the row's send form calls this at the
    *  press, the way the composer resolves nothing (a post has no recipient) and
@@ -2339,9 +2420,9 @@ export class App {
   }
 
   /** Submit a credits send: the transient flight is submitting, then the ledger
-   *  entry carries the pending line across a reload (WEB_INTERFACE → The
-   *  profile window). A rejection is the row's flight line; a landing re-reads
-   *  /credits and moves the balance in place. */
+   *  entry carries the pending line across a reload (WEB_INTERFACE → The wallet
+   *  window → "The `send` row"). A rejection is the row's flight line; a
+   *  landing re-reads /credits and moves the balance in place. */
   private async send(toHex: string, toName: string | null, amount: bigint): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
@@ -2374,13 +2455,30 @@ export class App {
   /** Ask the faucet for $NOTIS: a repeatable grant (NODE_INTERFACE → Faucet).
    *  A 202 rides the ledger as a `creditGrant` entry whose subject is the box
    *  id the faucet named, so the poll runs while it stands (WEB_INTERFACE → The
-   *  faucet step). */
+   *  faucet step). In the extension the hook is called synchronously from the
+   *  press before any await, so the browser's user-input window is still open
+   *  (WEB_INTERFACE → The faucet step → "In the extension the press asks the
+   *  browser for the faucet's origin first"). */
   private async askFaucetCredits(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
+    // The hook is invoked synchronously here — an `await` in front of the
+    // request loses the user-input window in Firefox.
+    const permission = this.requestFaucetOrigin ? this.requestFaucetOrigin(prefs.faucet) : null;
+    if (permission !== null) {
+      const granted = await permission;
+      if (!granted) {
+        const region = this.regionFocusedOn('@wallet');
+        if (region) {
+          region.report = 'the browser refused access to that origin.';
+          this.renderRegion(region.uid);
+        }
+        return;
+      }
+    }
     const res = await this.faucetClient.askCredits(cur.pubKeyHex);
     if ('message' in res) {
-      const region = this.regionFocusedOn('@profile');
+      const region = this.regionFocusedOn('@wallet');
       if (region) {
         region.report = faucetLine(res, 'credits');
         this.renderRegion(region.uid);
@@ -2694,8 +2792,8 @@ export class App {
    *  payment box (`computeCandidateBoxId`, exact) among their spendable boxes;
    *  on landing re-read the reader's own /credits and record the landed flight
    *  so the row's flight slot reads *sent* on the same render as the balance
-   *  moves in place (WEB_INTERFACE → The profile window). Returns true when
-   *  the balance moved. */
+   *  moves in place (WEB_INTERFACE → The wallet window). Returns true when the
+   *  balance moved. */
   private async reconcileSendEntry(entry: PendingEntry, tip: number, meKey: string): Promise<boolean> {
     const recipient = entry.postId; // a send's subject is the recipient's key
     let recipientBoxes;
@@ -2709,11 +2807,11 @@ export class App {
     this.ledger.remove(entry.txId);
     if (outcome === 'landed') {
       // The row renders *sent* directly from this stage; stageLine has no
-      // `landed` case (WEB_INTERFACE → The profile window).
+      // `landed` case (WEB_INTERFACE → The wallet window → "The `send` row").
       this.sendFlight = { stage: 'landed' };
       // Re-read the reader's own /credits so the row's balance moves in place.
       try {
-        this.profileCredits = await this.readOwnCredits(meKey);
+        this.walletCredits = await this.readOwnCredits(meKey);
       } catch {
         // Leaves the last-known state; the ↻ retries.
       }
@@ -2743,7 +2841,7 @@ export class App {
     if (outcome === 'pending') return false;
     this.ledger.remove(entry.txId);
     if (outcome === 'landed') {
-      this.profileCredits = credits;
+      this.walletCredits = credits;
       this.creditGrantView = null;
     } else {
       this.creditGrantView = { state: 'expired', atHeight: entry.expiresAtHeight };

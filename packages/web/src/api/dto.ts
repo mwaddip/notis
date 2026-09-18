@@ -98,9 +98,10 @@ export interface KarmaBoxRow {
 
 /** `GET /karma/:userId` — the spendable view's confirmed boxes, paged by `next`.
  *  A box row carries no `createdAtBlock`, which is why the wallet reads `/status`
- *  after the boxes. The membership and decay fields are the profile window's
- *  standing row; the node derives every predicate and the client evaluates none
- *  of it (NODE_INTERFACE → UTXO queries). */
+ *  after the boxes. `member` is the node's derived predicate the vouch gate reads;
+ *  `invitesAvailable` distinguishes root (`null`) from member (`≥0`) for the
+ *  invites row's line; every other membership and decay field is the node's own
+ *  bookkeeping (NODE_INTERFACE → UTXO queries). */
 export interface KarmaResult {
   userId: string;
   total: string;

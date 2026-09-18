@@ -5,7 +5,7 @@ import { newWorkspace, newColumn, type Workspace } from './workspace';
 // `serialise` and `parse` are inverses (WEB_INTERFACE → The workspace).
 
 const HEX64 = /^[0-9a-f]{64}$/i;
-const WINDOW_IDS = new Set<string>(['@profile']);
+const WINDOW_IDS = new Set<string>(['@profile', '@settings', '@wallet']);
 // `@author:<64hex>` and `@posts:<64hex>` — the two membership windows
 // (WEB_INTERFACE → The author window). The `:` and `@` cannot collide with a
 // 64-hex post id.
@@ -26,16 +26,10 @@ export function postsWindowId(key: string): string {
 }
 
 /** The kind and 64-hex key an `@author:`/`@posts:` window names, or null for any
- *  other token (a thread id, `@profile`). */
+ *  other token (a thread id, `@profile`, `@settings`, `@wallet`). */
 export function windowSubject(k: string): { kind: 'author' | 'posts'; key: string } | null {
   const m = AT_SUBJECT.exec(k);
   return m ? { kind: m[1]!.toLowerCase() as 'author' | 'posts', key: m[2]!.toLowerCase() } : null;
-}
-
-/** A stored arrangement naming the retired `@settings` maps to `@profile`, so a
- *  saved workspace survives the rename (WEB_INTERFACE → The profile window). */
-function mapRetired(k: string): string {
-  return k === '@settings' ? '@profile' : k;
 }
 
 export function serialise(ws: Workspace): string {
@@ -52,10 +46,9 @@ export function parse(spec: string): Workspace {
   const s = spec.replace(/^#/, '').trim();
   if (!s) return ws;
   for (const colSpec of s.split('|')) {
-    // A stored `/` reads as a `,`, so the stacks it separated join in order —
-    // the courtesy the parser extends to the retired @settings
+    // A stored `/` reads as a `,`, so the stacks it separated join in order
     // (WEB_INTERFACE → The workspace).
-    const wins = colSpec.replace(/\//g, ',').split(',').map((x) => x.trim()).map(mapRetired).filter(isWindowId);
+    const wins = colSpec.replace(/\//g, ',').split(',').map((x) => x.trim()).filter(isWindowId);
     if (wins.length) ws.columns.push(newColumn(wins));
   }
   return ws;

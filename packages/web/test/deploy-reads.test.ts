@@ -138,3 +138,29 @@ describe('prefs.node — the initial node resolution', () => {
     expect(p.prefs.node).toBe('/testnet/api');
   });
 });
+
+describe('prefs.faucet — the build\'s value alone', () => {
+  // WEB_INTERFACE → The faucet step → "A faucet is a fact of the deployment,
+  // not of the network" — the faucet's base is the shell's notis-faucet, and
+  // no preference overrides it (user, 2026-09-18).
+  it('reads the notis-faucet meta at load', async () => {
+    setMeta('notis-faucet', 'https://faucet.example');
+    const p = await importPrefs();
+    expect(p.prefs.faucet).toBe('https://faucet.example');
+  });
+
+  it('a stored notis.faucet is never read — the field takes the build\'s value', async () => {
+    setMeta('notis-faucet', 'https://faucet.example');
+    localStorage.setItem('notis.faucet', 'https://poisoned.example');
+    const p = await importPrefs();
+    expect(p.prefs.faucet).toBe('https://faucet.example');
+    // The stored key still exists — the client just does not read it.
+    expect(localStorage.getItem('notis.faucet')).toBe('https://poisoned.example');
+  });
+
+  it('an empty notis-faucet answers empty — the *no faucet, no button* state', async () => {
+    setMeta('notis-faucet', '');
+    const p = await importPrefs();
+    expect(p.prefs.faucet).toBe('');
+  });
+});

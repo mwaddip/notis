@@ -129,9 +129,9 @@ export function reconcileGrant(entry: PendingEntry, karma: KarmaResult, tip: num
 
 /** A pending send is landed when the recipient's `/credits` lists the payment
  *  box the client predicted (`send.boxId`), expired past `expiresAtHeight`, else
- *  pending (WEB_INTERFACE → The wallet, → The profile window). The list is one
- *  page the caller has already followed to the end, so the presence check is
- *  O(n). */
+ *  pending (WEB_INTERFACE → The wallet, → The wallet window → "The `send` row").
+ *  The list is one page the caller has already followed to the end, so the
+ *  presence check is O(n). */
 export function reconcileSend(
   entry: PendingEntry,
   recipientBoxes: ReadonlyArray<{ boxId: string }>,

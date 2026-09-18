@@ -1,6 +1,8 @@
 import { el, reportNode, shortHex } from '../dom';
 import { card, submissionToPost, flightFor, listCardOpts, type CardOpts } from './card';
 import { profileBody } from './profile';
+import { settingsBody } from './settings';
+import { walletBody } from './wallet';
 import { authorBody, authorPostsBody, type AuthorCtx, type PostsCtx } from './author';
 import { flattenThread } from '../model/thread';
 import { identityHue } from '../model/identity';
@@ -82,12 +84,31 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
         sub.kind === 'author' ? handlers.refreshAuthor(sub.key) : handlers.refreshAuthorPosts(sub.key),
       ),
     );
-  } else if (win) {
+  } else if (k === '@profile') {
     label.setAttribute('aria-label', 'show this window');
     label.appendChild(el('span', 'name', 'profile'));
-    // The profile window's ↻ re-reads standing and karma — the first window with
-    // something to refresh (WEB_INTERFACE → The profile window).
-    ctl.appendChild(ctlBtn('↻', 'refresh standing and rep', () => handlers.refreshProfile()));
+    // The profile window's ↻ re-reads /karma/:key and the reader's name
+    // (WEB_INTERFACE → The profile window).
+    ctl.appendChild(ctlBtn('↻', 'refresh rep', () => handlers.refreshProfile()));
+  } else if (k === '@settings') {
+    label.setAttribute('aria-label', 'show this window');
+    label.appendChild(el('span', 'name', 'settings'));
+    // A control that does not apply renders disabled, never absent — nothing
+    // here is read from the node (WEB_INTERFACE → The workspace,
+    // → The settings window).
+    ctl.appendChild(ctlBtn('↻', 'refresh — nothing to re-read', null, true));
+  } else if (k === '@wallet') {
+    label.setAttribute('aria-label', 'show this window');
+    label.appendChild(el('span', 'name', 'wallet'));
+    // The wallet window's ↻ re-reads /credits/:key
+    // (WEB_INTERFACE → The wallet window).
+    ctl.appendChild(ctlBtn('↻', 'refresh the balance', () => handlers.refreshWallet()));
+  } else if (win) {
+    // An @-window neither arm knows: the bar shell without a label, so the
+    // close and move controls still apply. isWindowId filters on parse, so a
+    // stored token that reaches here is a build seam, not a shipped state
+    // (WEB_INTERFACE → The workspace).
+    label.setAttribute('aria-label', 'show this window');
   } else {
     const m = threadLabel(k, ctx);
     // The spine: a 4px OKLCH edge from the author key. Set even while the thread
@@ -166,10 +187,8 @@ function authorCtxFrom(key: string, ci: number, ctx: RenderCtx): AuthorCtx {
   return {
     authorKey: key,
     origin: { from: 'pane', ci },
-    karma: d?.karma ?? null,
     endorsers: d?.endorsers ?? null,
     endorsersNext: d?.endorsersNext ?? false,
-    membershipBars: ctx.membershipBars,
     writeEnabled: ctx.writeEnabled,
     ownKey: ctx.ownKey,
     locked: ctx.identity?.locked ?? false,
@@ -205,8 +224,21 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
     body.appendChild(authorPostsBody(handlers, postsCtxFrom(sub.key, ci, ctx)));
     return;
   }
-  if (isWin(focusedK)) {
+  if (focusedK === '@profile') {
     body.appendChild(profileBody(handlers, ctx, { from: 'pane', ci }));
+    return;
+  }
+  if (focusedK === '@settings') {
+    body.appendChild(settingsBody(handlers));
+    return;
+  }
+  if (focusedK === '@wallet') {
+    body.appendChild(walletBody(handlers, ctx));
+    return;
+  }
+  if (isWin(focusedK)) {
+    // An @-window neither arm knows renders nothing rather than the profile
+    // (WEB_INTERFACE → The workspace).
     return;
   }
   const t = ctx.thread(focusedK);
