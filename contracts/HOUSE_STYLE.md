@@ -78,9 +78,15 @@ moon on Sand and a sun on Bistre, drawn in the house technique (→ Illustration
 straight-edged, a little wobble in the angles, no smooth curves) as inline SVG in `currentColor`, no
 fill, at the header's control size, carrying the label the word carries elsewhere. A once-used
 control styled as the inverse ground is the loudest thing on a phone screen, and the sun and the
-moon need no learning (user, 2026-09-07). With the phone's profile glyph, a person
+moon need no learning (user, 2026-09-07). **The workspace's phone header carries no theme control** — its three
+glyphs open the three windows, and the theme is the settings window's first row (user, 2026-09-18;
+`WEB_INTERFACE → The settings window`) — so the sun or moon stands on the standalone page's phone header alone
+(`WEB_INTERFACE → The standalone thread`). With the phone header's person, coin and gear
 (`WEB_INTERFACE → The profile window`) and the card's copy glyph (`WEB_INTERFACE → Links`), it is one of the
-three icons the interface carries; the ruling opens iconography nowhere else (→ Deliberately not decided).
+five icons the interface carries; the rulings open iconography nowhere else (→ Deliberately not decided).
+
+> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — the workspace's phone header carries the sun or moon
+> beside one other glyph, a person; no coin and no gear exist.
 
 ### Light — Sand
 
@@ -364,15 +370,21 @@ it for anything.
   is not waste, it is a control surface.
 - **The control is the click target, never the container.** Cards and rows are not buttons.
   Text stays selectable and the pointer can be parked on it. This also removes the
-  accidental-click pattern that quietly inflates engagement figures.
+  accidental-click pattern that quietly inflates engagement figures. A value a reader comes to take away — the
+  profile's key — may itself be the control: a press copies it, and where the clipboard refuses it is selectable
+  text again (`WEB_INTERFACE → The profile window`).
 
 - **A word is a control, and it wears no box.** Every action that is a word renders as the word alone — no
   border, no fill, no padding beyond its hit box, the row's own face; `ink` at rest, `inkMute` when it cannot
   act; the pointer cursor and the focus ring; under `hover: hover` an underline and nothing else. The identity
   prefix set the pattern (`WEB_INTERFACE → The identity display`) and every word follows it. **A box marks a
   commit pair and a surface's primary action** — the composer's `post` and `cancel`, the extension prompt's
-  `sign` and `cancel`, the feed's `new post`, and the `$NOTIS` row's `send` (user, 2026-09-08, 2026-09-16 and
-  2026-09-17); the inverse-filled header words are fills, not boxes, and stay.
+  `sign` and `cancel`, the feed's `new post`, the wallet's `send` and the username row's `claim` (user,
+  2026-09-08, 2026-09-16, 2026-09-17 and 2026-09-18); the inverse-filled header words are fills, not boxes, and
+  stay.
+
+  > ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — the profile's key is selectable text, `claim` is a word,
+  > and `send` is a row of the profile window.
 - **Nothing is fetched from a third party without the reader's act.** An image, a title, a
   preview — nothing the page renders on its own reaches beyond the origin, because every such
   request tells that party who is reading and when. What a reader chooses to load, they load
@@ -461,9 +473,9 @@ Not preachy. The visual register avoids the manifesto; the copy has to as well.
 
 - **A grid or layout system.** Owned by each surface.
 - **Iconography.** Whether the illustration technique scales down to UI icons at 16–24px is
-  untested and may need a separate, plainer treatment. Three icons exist — the phone's theme glyph
-  (→ Colour), its profile glyph (`WEB_INTERFACE → The profile window`) and the card's copy glyph
-  (`WEB_INTERFACE → Links`), drawn in the technique at 20px and 16px — and they are the test, not the
+  untested and may need a separate, plainer treatment. Five icons exist — the standalone page's theme glyph
+  (→ Colour), the phone header's person, coin and gear (`WEB_INTERFACE → The profile window`) and the card's
+  copy glyph (`WEB_INTERFACE → Links`), drawn in the technique at 20px and 16px — and they are the test, not the
   decision.
 - **Data visualisation.** Nothing here covers charts. The only categorical palette this contract
   defines is the identity arc, and it is bounded by the hues that already carry meaning — see
