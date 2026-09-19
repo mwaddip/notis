@@ -1,9 +1,10 @@
 import { applyPrefs, BUILD_PUBLIC, WEB_BASE } from './prefs';
 import { App } from './app';
 import { decideMode } from './mode';
-import { createTabs } from './tabs';
+import { createTabs, type Tabs } from './tabs';
 import { identity } from './identity/identity';
 import { bootstrapProxy } from './extension/proxy';
+import { wrapTabs } from './extension/handover';
 import type { AppIdentity } from './model/state';
 
 // Theme is already on <html> from the head's theme.js; this re-applies it and
@@ -30,7 +31,11 @@ const requestFaucetOrigin = isExtension
   : undefined;
 
 const mode = decideMode(location.pathname, WEB_BASE);
-new App(undefined, undefined, idm, undefined, createTabs(), requestFaucetOrigin).start(appbar, feed, panes, mode);
+// WEB_INTERFACE → The extension → "Links into the extension" — the extension build wraps the tabs
+// seam with the handover, so the holder asks the background for waiting threads; the static
+// `isExtension` keeps `handover.ts` out of the web bundle (build-release.sh's `chrome.` check).
+const tabs: Tabs = isExtension ? wrapTabs(createTabs(), chrome) : createTabs();
+new App(undefined, undefined, idm, undefined, tabs, requestFaucetOrigin).start(appbar, feed, panes, mode);
 
 // Restoring a stored preference is painted, not transitioned: drop the
 // transition-suppressing class only after the first paint (HOUSE_STYLE → Motion).
