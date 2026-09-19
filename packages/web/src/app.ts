@@ -347,6 +347,17 @@ export class App {
             setPolicy: async (p) => { await this.idm.setPolicy!(p); this.renderRegionsFor('@settings'); },
           }
         : {}),
+      // The extension's identity exposes both links and setLinks when the
+      // build's `notis-public` is not empty; the in-page module implements
+      // neither, and the settings row renders only when both are present
+      // (WEB_INTERFACE → The settings window, → The extension → "Links into
+      // the extension").
+      ...(this.idm.links && this.idm.setLinks
+        ? {
+            links: () => this.idm.links!(),
+            setLinks: async (v) => { await this.idm.setLinks!(v); this.renderRegionsFor('@settings'); },
+          }
+        : {}),
     };
   }
 

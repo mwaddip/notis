@@ -221,6 +221,11 @@ export interface Handlers {
   // present.
   policy?: () => 'silent' | 'ask';
   setPolicy?: (p: 'silent' | 'ask') => Promise<void>;
+  // The extension's links preference (WEB_INTERFACE → The settings window).
+  // Defined only in an extension build whose `notis-public` is not empty — the
+  // row renders only when both are present.
+  links?: () => 'site' | 'here';
+  setLinks?: (v: 'site' | 'here') => Promise<void>;
 }
 
 /** What the App calls on the identity module — the single reference it holds
@@ -251,4 +256,9 @@ export interface AppIdentity {
    *  only when both are present. */
   policy?(): 'silent' | 'ask';
   setPolicy?(p: 'silent' | 'ask'): Promise<void>;
+  /** The extension's links preference (WEB_INTERFACE → The settings window).
+   *  Absent on the in-page module and on an extension build whose `notis-public`
+   *  is empty — the settings row renders only when both are present. */
+  links?(): 'site' | 'here';
+  setLinks?(v: 'site' | 'here'): Promise<void>;
 }

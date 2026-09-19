@@ -4,10 +4,12 @@ import { stopHue } from '../model/identity';
 
 // The @settings window — WEB_INTERFACE → The settings window. The client's
 // preferences in the .winbody/.row/label/.field pattern, no identity read, its
-// ↻ disabled. The tint row carries two sample title bars above the four words —
-// WEB_INTERFACE → The settings window → "The identity tint shows what it sets"
-// — each a fixed stop of the identity arc, aria-hidden, no handler, not `.win`
-// since the samples are thread bars, the shape the tint applies to. The tint is
+// ↻ disabled. The rows: theme; identity tint (two sample title bars above the
+// four words — WEB_INTERFACE → The settings window → "The identity tint shows
+// what it sets" — each a fixed stop of the identity arc, aria-hidden, no
+// handler, not `.win` since the samples are thread bars, the shape the tint
+// applies to); node; sign each rep action (extension only); a Notis link opens
+// (extension only, in a build whose `notis-public` is not empty). The tint is
 // :root's attribute and custom properties (src/prefs.ts applyIdTint), so a
 // press moves the samples with no re-render. No `faucet` row: the faucet's base
 // is the build's value (WEB_INTERFACE → The settings window → "No `faucet` row
@@ -24,6 +26,11 @@ export interface SettingsHandlers {
   // are present (WEB_INTERFACE → The settings window; the extension's proxy).
   policy?: () => 'silent' | 'ask';
   setPolicy?: (p: 'silent' | 'ask') => Promise<void>;
+  // The extension's links preference — the row renders only when both hooks
+  // are present (WEB_INTERFACE → The settings window; the extension's proxy,
+  // in a build whose `notis-public` is not empty).
+  links?: () => 'site' | 'here';
+  setLinks?: (v: 'site' | 'here') => Promise<void>;
 }
 
 const ID_TINTS: IdTint[] = ['spine', 'wash', 'both', 'off'];
@@ -122,6 +129,26 @@ export function settingsBody(handlers: SettingsHandlers): HTMLElement {
     }
     field.appendChild(seg);
     field.appendChild(el('div', 'hint', 'sending $NOTIS always asks. rep is silent while unlocked unless you ask.'));
+    b.appendChild(r);
+  }
+
+  // The extension's links preference — visible only when both hooks are
+  // present. A build's `notis-public` gates the proxy's members, so the row
+  // stands only in an extension build wired to a public origin
+  // (WEB_INTERFACE → The settings window, → The extension → "Links into the
+  // extension").
+  if (handlers.links && handlers.setLinks) {
+    const { row: r, field } = row('a Notis link opens');
+    const current = handlers.links();
+    const seg = el('div', 'seg');
+    for (const [label, value] of [['on the site', 'site'], ['here', 'here']] as const) {
+      const btn = el('button', 'word', label);
+      btn.setAttribute('aria-pressed', current === value ? 'true' : 'false');
+      btn.addEventListener('click', () => { void handlers.setLinks?.(value); });
+      seg.appendChild(btn);
+    }
+    field.appendChild(seg);
+    field.appendChild(el('div', 'hint', 'a link that opens a tab of its own lands in this workspace. a link followed inside a page stays there — its add to workspace brings it here.'));
     b.appendChild(r);
   }
 

@@ -1,4 +1,4 @@
-import { applyPrefs, WEB_BASE } from './prefs';
+import { applyPrefs, BUILD_PUBLIC, WEB_BASE } from './prefs';
 import { App } from './app';
 import { decideMode } from './mode';
 import { createTabs } from './tabs';
@@ -20,7 +20,7 @@ if (!appbar || !feed || !panes) throw new Error('missing app shell elements');
 // substitution renders this a static false, so Rollup dead-code-eliminates
 // bootstrapProxy and the extension module never enters the bundle.
 const isExtension = import.meta.env.VITE_IDENTITY === 'extension';
-const idm: AppIdentity = isExtension ? await bootstrapProxy(chrome) : identity;
+const idm: AppIdentity = isExtension ? await bootstrapProxy(chrome, { publicBase: BUILD_PUBLIC }) : identity;
 // The extension asks the browser to grant access to the faucet's origin from
 // within the press's own call stack, before any other asynchronous work
 // (WEB_INTERFACE → The faucet step → "In the extension the press asks the

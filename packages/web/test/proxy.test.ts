@@ -28,7 +28,7 @@ describe('bootstrapProxy — the snapshot from the background', () => {
   it('current() reads the pubKeyHex and lock state from the fetched snapshot', async () => {
     const c = fakeChrome();
     wireBackground(c, { state: { pubKeyHex: PUB, locked: false, backedUp: true, policy: 'silent' } });
-    const proxy = await bootstrapProxy(c.api);
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
     expect(proxy.current()).toEqual({ pubKeyHex: PUB, locked: false });
     expect(proxy.backedUp()).toBe(true);
     expect(proxy.policy?.()).toBe('silent');
@@ -37,7 +37,7 @@ describe('bootstrapProxy — the snapshot from the background', () => {
   it('current() is null when the background answers null', async () => {
     const c = fakeChrome();
     wireBackground(c, { state: null });
-    const proxy = await bootstrapProxy(c.api);
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
     expect(proxy.current()).toBeNull();
     expect(proxy.backedUp()).toBe(false);
   });
@@ -51,7 +51,7 @@ describe('proxy.sign — the SignResult vocabulary', () => {
   it('a signature answer becomes { signature }', async () => {
     const c = fakeChrome();
     wireBackground(c, { state: null, sign: { signature: 'ab'.repeat(64) } as SignAnswer });
-    const proxy = await bootstrapProxy(c.api);
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
     const r = await proxy.sign(new Uint8Array([1, 2, 3]), 'cd'.repeat(32));
     expect(r).toEqual({ signature: 'ab'.repeat(64) });
   });
@@ -59,7 +59,7 @@ describe('proxy.sign — the SignResult vocabulary', () => {
   it('a locked answer becomes { locked: true }', async () => {
     const c = fakeChrome();
     wireBackground(c, { state: null, sign: { locked: true } as SignAnswer });
-    const proxy = await bootstrapProxy(c.api);
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
     const r = await proxy.sign(new Uint8Array(), 'cd'.repeat(32));
     expect(r).toEqual({ locked: true });
   });
@@ -67,7 +67,7 @@ describe('proxy.sign — the SignResult vocabulary', () => {
   it('a refused answer becomes { refused: <kind> }', async () => {
     const c = fakeChrome();
     wireBackground(c, { state: null, sign: { refused: 'busy' } as SignAnswer });
-    const proxy = await bootstrapProxy(c.api);
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
     const r = await proxy.sign(new Uint8Array(), 'cd'.repeat(32));
     expect(r).toEqual({ refused: 'busy' });
   });
@@ -79,7 +79,7 @@ describe('proxy.sign — the SignResult vocabulary', () => {
       sign: { pending: 'abcd1234abcd1234abcd1234abcd1234' } as SignAnswer,
       ack: 'ok',
     });
-    const proxy = await bootstrapProxy(c.api);
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
     // Start the sign; it awaits a pending resolution.
     const signPromise = proxy.sign(new Uint8Array(), 'cd'.repeat(32));
     // The background then writes the record's result to session storage.
@@ -107,7 +107,7 @@ describe('proxy.sign — the SignResult vocabulary', () => {
       sign: { pending: 'aabb' + '00'.repeat(14) } as SignAnswer,
       ack: 'ok',
     });
-    const proxy = await bootstrapProxy(c.api);
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
     const p = proxy.sign(new Uint8Array(), 'cd'.repeat(32));
     const key = 'notis.sign.aabb' + '00'.repeat(14);
     const record: SignRecord = {
@@ -129,7 +129,7 @@ describe('proxy.sign — the SignResult vocabulary', () => {
     // Even for a huge scenario, the answer set never includes `pending`.
     const c = fakeChrome();
     wireBackground(c, { state: null, sign: { pending: 'x' + '0'.repeat(31) } as SignAnswer });
-    const proxy = await bootstrapProxy(c.api);
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
     // Pre-populate a record with a result so the wait resolves at once.
     const key = 'notis.sign.x' + '0'.repeat(31);
     const record: SignRecord = {
@@ -160,7 +160,7 @@ describe('proxy.onChange — identity delta only', () => {
       if ((m as { kind?: string }).kind === 'state') return state;
       return { error: 'unexpected' };
     }) as typeof chrome.runtime.sendMessage;
-    const proxy = await bootstrapProxy(c.api);
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
     const events: Array<{ pubKeyHex: string } | null> = [];
     proxy.onChange((id) => events.push(id));
     // The background flips state to a fresh key and fires onChanged.
@@ -177,7 +177,7 @@ describe('proxy.onChange — identity delta only', () => {
       if ((m as { kind?: string }).kind === 'state') return state;
       return { error: 'unexpected' };
     }) as typeof chrome.runtime.sendMessage;
-    const proxy = await bootstrapProxy(c.api);
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
     const events: Array<{ pubKeyHex: string } | null> = [];
     proxy.onChange((id) => events.push(id));
     state = null;
@@ -195,7 +195,7 @@ describe('proxy.onChange — identity delta only', () => {
       }
       return { error: 'unexpected' };
     }) as typeof chrome.runtime.sendMessage;
-    const proxy = await bootstrapProxy(c.api);
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
     const events: Array<{ pubKeyHex: string } | null> = [];
     proxy.onChange((id) => events.push(id));
     expect(proxy.current()).toEqual({ pubKeyHex: PUB, locked: false });
@@ -226,7 +226,7 @@ describe('proxy — ack the record after reading a result', () => {
       if (msg.kind === 'sign') return { pending: 'de' + '00'.repeat(15) } as SignAnswer;
       return 'ok';
     }) as typeof chrome.runtime.sendMessage;
-    const proxy = await bootstrapProxy(c.api);
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
     const p = proxy.sign(new Uint8Array(), 'cd'.repeat(32));
     const key = 'notis.sign.de' + '00'.repeat(15);
     const record: SignRecord = {
@@ -268,7 +268,7 @@ describe('proxy — mutating calls refresh the snapshot before resolving', () =>
       if (kind === 'lock') { locked = true; return 'ok'; }
       return { error: 'unexpected' };
     }) as typeof chrome.runtime.sendMessage;
-    const proxy = await bootstrapProxy(c.api);
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
     expect(proxy.current()?.locked).toBe(true);
     await proxy.unlock('pw');
     expect(proxy.current()?.locked).toBe(false);
@@ -285,7 +285,7 @@ describe('proxy — mutating calls refresh the snapshot before resolving', () =>
       if (kind === 'forget') { cur = null; return 'ok'; }
       return { error: 'unexpected' };
     }) as typeof chrome.runtime.sendMessage;
-    const proxy = await bootstrapProxy(c.api);
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
     expect(proxy.current()).not.toBeNull();
     await proxy.forget();
     expect(proxy.current()).toBeNull();
@@ -300,7 +300,7 @@ describe('proxy — mutating calls refresh the snapshot before resolving', () =>
       if (kind === 'policy') { policy = (m as { karma: 'silent' | 'ask' }).karma; return 'ok'; }
       return { error: 'unexpected' };
     }) as typeof chrome.runtime.sendMessage;
-    const proxy = await bootstrapProxy(c.api);
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
     expect(proxy.policy?.()).toBe('silent');
     await proxy.setPolicy!('ask');
     expect(proxy.policy?.()).toBe('ask');
@@ -315,7 +315,7 @@ describe('proxy — mutating calls refresh the snapshot before resolving', () =>
       if (kind === 'exportFile') { backed = true; return { text: '{}' }; }
       return { error: 'unexpected' };
     }) as typeof chrome.runtime.sendMessage;
-    const proxy = await bootstrapProxy(c.api);
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
     expect(proxy.backedUp()).toBe(false);
     await proxy.exportFile('pw');
     expect(proxy.backedUp()).toBe(true);
@@ -351,5 +351,121 @@ describe('proxy — the pass-through operations reach the background', () => {
     c.api.runtime.sendMessage = (async () => ({ error: 'no drafted key to create.' })) as typeof chrome.runtime.sendMessage;
     const proxy = new ExtensionProxy(c.api, null);
     await expect(proxy.create('pw')).rejects.toThrow(/no drafted key/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The links preference — WEB_INTERFACE → The extension → "Links into the
+// extension". Read from storage.local at bootstrap and on every local change
+// carrying notis.links; set through the `links` message; carried on the proxy
+// only when the build's publicBase is not empty.
+// ---------------------------------------------------------------------------
+
+const PUBLIC = 'https://notis.fun/web/';
+
+describe('proxy.links — the preference read from storage.local', () => {
+  it('bootstrap with nothing stored answers here (the default)', async () => {
+    const c = fakeChrome();
+    wireBackground(c, { state: null });
+    const proxy = await bootstrapProxy(c.api, { publicBase: PUBLIC });
+    expect(proxy.links?.()).toBe('here');
+  });
+
+  it('bootstrap with "site" stored answers site', async () => {
+    const c = fakeChrome();
+    c.storage.local.set('notis.links', 'site');
+    wireBackground(c, { state: null });
+    const proxy = await bootstrapProxy(c.api, { publicBase: PUBLIC });
+    expect(proxy.links?.()).toBe('site');
+  });
+
+  it('bootstrap with a junk value stored answers here (the default)', async () => {
+    const c = fakeChrome();
+    c.storage.local.set('notis.links', 'nonsense');
+    wireBackground(c, { state: null });
+    const proxy = await bootstrapProxy(c.api, { publicBase: PUBLIC });
+    expect(proxy.links?.()).toBe('here');
+  });
+
+  it('with no identity and a non-empty publicBase, links() still answers the stored value', async () => {
+    const c = fakeChrome();
+    c.storage.local.set('notis.links', 'site');
+    wireBackground(c, { state: null });
+    const proxy = await bootstrapProxy(c.api, { publicBase: PUBLIC });
+    expect(proxy.current()).toBeNull();
+    expect(proxy.links?.()).toBe('site');
+  });
+
+  it('with an empty publicBase both members are undefined — the settings row keys on their presence', async () => {
+    const c = fakeChrome();
+    wireBackground(c, { state: null });
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
+    expect(proxy.links).toBeUndefined();
+    expect(proxy.setLinks).toBeUndefined();
+  });
+});
+
+describe('proxy.setLinks — sends the links message, then holds the new value', () => {
+  it('setLinks("site") sends { kind: "links", opens: "site" } and moves links() to site', async () => {
+    const c = fakeChrome();
+    const sent: unknown[] = [];
+    c.api.runtime.sendMessage = (async (m: unknown) => {
+      sent.push(m);
+      if ((m as { kind: string }).kind === 'state') return null;
+      if ((m as { kind: string }).kind === 'links') return 'ok';
+      return { error: 'unexpected' };
+    }) as typeof chrome.runtime.sendMessage;
+    const proxy = await bootstrapProxy(c.api, { publicBase: PUBLIC });
+    expect(proxy.links?.()).toBe('here');
+    await proxy.setLinks!('site');
+    // Exactly the one links message the setter emitted — the state fetch is a
+    // bootstrap read, filtered out here.
+    const linksMsgs = sent.filter((m) => (m as { kind?: string }).kind === 'links');
+    expect(linksMsgs).toEqual([{ kind: 'links', opens: 'site' }]);
+    expect(proxy.links?.()).toBe('site');
+  });
+
+  it('a refused setLinks rejects and leaves links() as it was', async () => {
+    const c = fakeChrome();
+    c.api.runtime.sendMessage = (async (m: unknown) => {
+      if ((m as { kind: string }).kind === 'state') return null;
+      if ((m as { kind: string }).kind === 'links') return { error: 'nope' };
+      return { error: 'unexpected' };
+    }) as typeof chrome.runtime.sendMessage;
+    const proxy = await bootstrapProxy(c.api, { publicBase: PUBLIC });
+    expect(proxy.links?.()).toBe('here');
+    await expect(proxy.setLinks!('site')).rejects.toThrow(/nope/);
+    expect(proxy.links?.()).toBe('here');
+  });
+});
+
+describe('proxy — a storage.onChanged on local carrying notis.links moves the value silently', () => {
+  it('the held value flips from the change\'s newValue, with NO message sent', async () => {
+    const c = fakeChrome();
+    const sent: unknown[] = [];
+    c.api.runtime.sendMessage = (async (m: unknown) => {
+      sent.push(m);
+      if ((m as { kind: string }).kind === 'state') return null;
+      return { error: 'unexpected' };
+    }) as typeof chrome.runtime.sendMessage;
+    const proxy = await bootstrapProxy(c.api, { publicBase: PUBLIC });
+    expect(proxy.links?.()).toBe('here');
+    sent.length = 0; // clear the bootstrap `state` read
+    c.storage.fireChange('local', 'notis.links', undefined, 'site');
+    await new Promise((r) => setImmediate(r));
+    expect(proxy.links?.()).toBe('site');
+    // No refresh — the preference lives in storage, not in the state answer.
+    expect(sent).toEqual([]);
+  });
+
+  it('a junk newValue collapses to the default (here)', async () => {
+    const c = fakeChrome();
+    c.storage.local.set('notis.links', 'site');
+    wireBackground(c, { state: null });
+    const proxy = await bootstrapProxy(c.api, { publicBase: PUBLIC });
+    expect(proxy.links?.()).toBe('site');
+    c.storage.fireChange('local', 'notis.links', 'site', 'garbage');
+    await new Promise((r) => setImmediate(r));
+    expect(proxy.links?.()).toBe('here');
   });
 });

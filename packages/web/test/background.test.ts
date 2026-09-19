@@ -696,7 +696,8 @@ describe('background — takeOpen', () => {
     const c = bridgeChrome();
     c.storage.session.set('notis.open.' + HEX, { raise: true });
     // An extension-origin URL that is not the App page — the outer guard
-    // passes, isFromPageURL refuses; the standing record survives untouched.
+    // passes, takeOpen's own URL prefix check against getURL('index.html')
+    // refuses; the standing record survives untouched.
     const answer = await c.send(
       { kind: 'takeOpen' },
       { id: c.api.runtime.id, url: c.origin + 'prompt.html' },

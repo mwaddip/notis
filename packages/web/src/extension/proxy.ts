@@ -2,6 +2,7 @@ import type { AppIdentity } from '../model/state';
 import type { SignResult } from '../wallet/submit';
 import { toHex } from '../identity/envelope';
 import type { Message, AppSnapshot, SignAnswer, SignHint, SignRecord } from './protocol';
+import { K_LINKS, LINKS_DEFAULT, readLinksPref, type LinksPref } from './links';
 
 // The page-side identity — WEB_INTERFACE → The extension. It never holds a
 // seed; every operation is a message to the background, and change
@@ -16,22 +17,58 @@ const K_POLICY = 'notis.signPolicy';
 const K_SEED = 'notis.seed';
 const K_SIGN_PREFIX = 'notis.sign.';
 
-/** Bootstrap the proxy: read the snapshot the App renders against, then
- *  return an instance wired to storage.onChanged. The App receives it before
- *  it constructs, so current() is synchronous from the first frame. */
-export async function bootstrapProxy(api: typeof chrome): Promise<ExtensionProxy> {
-  const snapshot = await sendMessage(api, { kind: 'state' }) as AppSnapshot | null;
-  return new ExtensionProxy(api, snapshot);
+/** The build-time configuration the proxy carries — WEB_INTERFACE → The
+ *  extension → "Links into the extension". `publicBase` is the shell's
+ *  `notis-public`; an empty one leaves `links`/`setLinks` off the proxy, so
+ *  the settings row does not render. */
+export interface ProxyConfig {
+  publicBase: string;
+}
+
+/** Bootstrap the proxy: read the snapshot the App renders against and the
+ *  links preference from storage, then return an instance wired to
+ *  storage.onChanged. The App receives it before it constructs, so current()
+ *  is synchronous from the first frame. The preference is read from storage,
+ *  not from `state`: `state` answers `null` where no identity is loaded, and
+ *  a reader needs no identity to follow a link (WEB_INTERFACE → The extension
+ *  → "Links into the extension"). */
+export async function bootstrapProxy(api: typeof chrome, config: ProxyConfig): Promise<ExtensionProxy> {
+  const [snapshot, stored] = await Promise.all([
+    sendMessage(api, { kind: 'state' }) as Promise<AppSnapshot | null>,
+    api.storage.local.get(K_LINKS),
+  ]);
+  return new ExtensionProxy(api, snapshot, config, readLinksPref(stored[K_LINKS]));
 }
 
 export class ExtensionProxy implements AppIdentity {
   private snapshot: AppSnapshot | null;
   private lastPubKeyHex: string | null;
   private listeners: Array<(id: { pubKeyHex: string } | null) => void> = [];
+  private linksHeld: LinksPref = LINKS_DEFAULT;
+  // The two links members are assigned only when the build carries a
+  // `publicBase` — so with an empty one both read `undefined` and the settings
+  // row keys on their presence, as the policy row keys on `policy`
+  // (WEB_INTERFACE → The settings window, → The extension → "Links into the
+  // extension").
+  readonly links?: () => LinksPref;
+  readonly setLinks?: (v: LinksPref) => Promise<void>;
 
-  constructor(private readonly api: typeof chrome, snapshot: AppSnapshot | null) {
+  constructor(
+    private readonly api: typeof chrome,
+    snapshot: AppSnapshot | null,
+    config: ProxyConfig = { publicBase: '' },
+    initialLinks: LinksPref = LINKS_DEFAULT,
+  ) {
     this.snapshot = snapshot;
     this.lastPubKeyHex = snapshot?.pubKeyHex ?? null;
+    this.linksHeld = initialLinks;
+    if (config.publicBase !== '') {
+      this.links = (): LinksPref => this.linksHeld;
+      this.setLinks = async (v: LinksPref): Promise<void> => {
+        await sendMessage(this.api, { kind: 'links', opens: v });
+        this.linksHeld = v;
+      };
+    }
     api.storage.onChanged.addListener((changes, area) => {
       void this.onStorageChanged(changes, area);
     });
@@ -186,8 +223,11 @@ export class ExtensionProxy implements AppIdentity {
   }
 
   /** A storage change may indicate a new identity, a lock flip, a backedUp
-   *  flip, or a policy change. Refresh the snapshot and, if the pubKeyHex
-   *  actually moved, fire onChange. Lock/backedUp/policy updates the snapshot
+   *  flip, a policy change, or a links-preference change. The identity and
+   *  policy paths refresh the snapshot; the links change moves the held value
+   *  in place and fires no message and no snapshot refresh — the preference
+   *  lives in storage, not in the state answer (WEB_INTERFACE → The extension
+   *  → "Links into the extension"). Lock/backedUp/policy updates the snapshot
    *  silently; render surfaces read them via current()/backedUp()/policy() on
    *  their next draw. */
   private async onStorageChanged(
@@ -195,6 +235,9 @@ export class ExtensionProxy implements AppIdentity {
     area: 'local' | 'session' | 'sync' | 'managed',
   ): Promise<void> {
     if (area !== 'local' && area !== 'session') return;
+    if (area === 'local' && K_LINKS in changes) {
+      this.linksHeld = readLinksPref(changes[K_LINKS]!.newValue);
+    }
     const relevant =
       (area === 'local' && (K_ENVELOPE in changes || K_BACKEDUP in changes || K_POLICY in changes)) ||
       (area === 'session' && K_SEED in changes);
