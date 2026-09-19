@@ -8,6 +8,8 @@ export interface Tabs {
   heldElsewhere(): Promise<boolean>;
   announce(id: string): void;
   onOpen(cb: (id: string) => void): void;
+  // WEB_INTERFACE → The way into the workspace → "The page offers the thread to an extension first"
+  offer(id: string): boolean;
 }
 
 export function createTabs(): Tabs {
@@ -61,6 +63,13 @@ export function createTabs(): Tabs {
 
     onOpen(cb: (id: string) => void): void {
       listeners.push(cb);
+    },
+
+    // WEB_INTERFACE → The way into the workspace → "The page offers the thread to an extension first"
+    offer(id: string): boolean {
+      if (typeof document === 'undefined') return false;
+      const ev = new CustomEvent('notis:open', { detail: id, cancelable: true });
+      return !document.dispatchEvent(ev);
     },
   };
 }

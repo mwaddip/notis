@@ -1171,24 +1171,37 @@ export class App {
     this.renderFeed();
   }
 
-  // WEB_INTERFACE → The way into the workspace
-  private async wayIn(): Promise<void> {
+  // WEB_INTERFACE → The way into the workspace → "The page offers the thread to an extension first"
+  private wayIn(): void {
     const id = this.state.workspace.columns[0]?.wins[0];
     if (!id || !this.tabs) {
       this.toWorkspace(id ?? '');
       return;
     }
-    const elsewhere = await this.tabs.heldElsewhere();
+    // The offer runs synchronously in the press — before any await — so the
+    // browser's transient user activation still stands when a listener takes it.
+    if (this.tabs.offer(id)) { this.handedOver(); return; }
+    void this.wayInAsync(id);
+  }
+
+  private async wayInAsync(id: string): Promise<void> {
+    const elsewhere = await this.tabs!.heldElsewhere();
     if (elsewhere) {
-      this.tabs.announce(id);
-      const col = this.state.workspace.columns[0];
-      if (col) { col.report = 'added to your workspace'; this.renderPanes(); }
-      // WEB_INTERFACE → The way into the workspace — close only while the history
-      // holds one entry, so the page never tries and fails.
-      if (history.length === 1) window.close();
+      this.tabs!.announce(id);
+      this.handedOver();
     } else {
       this.toWorkspace(id);
     }
+  }
+
+  // The report and the close both handed-over arms end with, so the offer arm
+  // and the lock-held-elsewhere arm run identical closing steps
+  // (WEB_INTERFACE → The way into the workspace). The close's history guard
+  // reads history.length before the attempt, so the page never tries and fails.
+  private handedOver(): void {
+    const col = this.state.workspace.columns[0];
+    if (col) { col.report = 'added to your workspace'; this.renderPanes(); }
+    if (history.length === 1) window.close();
   }
 
   private toWorkspace(id: string): void {

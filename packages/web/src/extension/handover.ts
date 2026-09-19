@@ -10,9 +10,9 @@ import { K_OPEN_PREFIX } from './links';
 
 const HEX64_LOWER = /^[0-9a-f]{64}$/;
 
-/** Wrap a `Tabs` with the extension-side handover. `holds`, `heldElsewhere`, `announce` delegate
- *  untouched; `onOpen(cb)` registers `cb` with the inner tabs — for a channel delivery — and keeps
- *  it in the wrapper's own list — for waiting threads — so an id reaches a listener once, not
+/** Wrap a `Tabs` with the extension-side handover. `holds`, `heldElsewhere`, `announce`, `offer`
+ *  delegate untouched; `onOpen(cb)` registers `cb` with the inner tabs — for a channel delivery — and
+ *  keeps it in the wrapper's own list — for waiting threads — so an id reaches a listener once, not
  *  twice. The wrapper carries the ask semantics: one in flight at a time, no retry loop, no timer,
  *  no swallowed error. */
 export function wrapTabs(inner: Tabs, api: typeof chrome): Tabs {
@@ -86,5 +86,6 @@ export function wrapTabs(inner: Tabs, api: typeof chrome): Tabs {
       inner.onOpen(cb);
       listeners.push(cb);
     },
+    offer: (id: string) => inner.offer(id),
   };
 }
