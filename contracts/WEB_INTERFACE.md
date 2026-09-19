@@ -325,7 +325,7 @@ inherits the prompt with nothing to add.
 
 **The messages** — page to background, promise-returning, each answering a plain result or `{ error }`,
 the background reloading its state from storage on every one: `state` (the proxy's snapshot, with the
-policy and the links preference), `draft`, `discardDraft`, `create { passphrase }`, `inspectFile { text }`, `importFile { text,
+policy), `draft`, `discardDraft`, `create { passphrase }`, `inspectFile { text }`, `importFile { text,
 passphrase }`, `exportFile { password }` (the envelope text; the page makes the download), `unlock {
 passphrase }`, `lock`, `forget`, `policy { karma }`, `links { opens }`, `takeOpen`, `sign { txBytes, txIdHex, hint }` — `hint` is `{ content? }`, and
 the post flow alone passes it — `ack { id }`;
@@ -337,7 +337,7 @@ presence, the backed-up flag, the policy and the links preference, `session` for
 *is* `locked`, and for a thread waiting to be opened (→ "Links into the extension", below).
 
 > ⚠ **AHEAD OF CODE (2026-09-19, links into the extension)** — the message set has no `links`, `takeOpen`,
-> `arrived` or `offered`, and `state` carries no links preference.
+> `arrived` or `offered`, and the page listens for no links preference and no waiting thread.
 
 **`sign`, in the background, in order.** `txBytes` is `encodeTx` of the unsigned transaction; `hint` is
 `{ content? }`, a post's body, shown only when it verifies.
@@ -384,8 +384,9 @@ transaction carries a `fee` box (→ The wallet, the denomination rule).
 **Links into the extension.** A post's link is the website's (→ Links), and a reader who runs the extension
 follows it into the extension's workspace — without being asked where the preference says so, by the website's
 own control otherwise. **The preference is the background's**, `notis.links` in `storage.local`: `here` — the
-default, and what an absent value reads as — or `site`; set through `links`, carried by `state`, the settings
-window's row (→ The settings window).
+default, and what an absent value reads as — or `site`; set through `links`, and read from `storage.local` by the
+page as the bridge reads it, since `state` answers nothing where no identity is loaded and a reader needs none
+to follow a link; the settings window's row (→ The settings window).
 
 **A takeover needs a tab created for the link.** On a public thread page the bridge reads the post id from the
 path as the client's own mode rule does (→ The standalone thread) and sends `arrived { id }` only when all of
@@ -1165,9 +1166,9 @@ and re-reads it from the new node (→ The client is served from the node's own 
 each rep action: don't ask · ask*, is the background's policy (→ The extension), read through `state` and set
 through `policy`; it renders only when the identity module implements `policy` — the extension's proxy — so the
 web build has no such row. **The links row**, *a Notis link opens: on the site · here*, is the background's links
-preference (→ The extension), read through `state` and set through `links`; it renders only when the identity
-module implements `links` — the extension's proxy, in a build whose `notis-public` is not empty — so the web
-build has no such row either. Its hint: *a link that opens a tab of its own lands in this workspace. a link
+preference (→ The extension), read from `storage.local` and set through `links`, with or without an identity; it
+renders only when the identity module implements `links` — the extension's proxy, in a build whose `notis-public`
+is not empty — so the web build has no such row either. Its hint: *a link that opens a tab of its own lands in this workspace. a link
 followed inside a page stays there — its `add to workspace` brings it here.*
 
 > ⚠ **AHEAD OF CODE (2026-09-19, links into the extension)** — the window has no links row.
