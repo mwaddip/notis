@@ -14,7 +14,9 @@ the way into the workspace, `link` on a card — and the **username surface** �
 `@profile` window, the handle `@Name` where a row carries a name — and the **extension** — the same client as
 the extension's own page, the key held by the extension's background, credits signed by hand and rep silently
 (→ The extension) — and the **three windows** — `@profile`, `@wallet` and `@settings`, a header control for each
-(→ The profile window, → The wallet window, → The settings window) — are implemented
+(→ The profile window, → The wallet window, → The settings window) — and **links into the extension** — a
+Notis link taken into the extension's workspace by the bridge, the links preference, and the website's control
+offering a thread to an extension first (→ The extension, → The way into the workspace) — are implemented
 **Protocol version:** read from the node, never held — see Invariants
 
 
@@ -87,7 +89,9 @@ second renderer, and with no identity loaded it is the read surface exactly.
 write signed there.** The property it serves: after install, Notis needs no hosted page, no server-held
 key, no server that signs, and no call home — the only traffic is to the node(s) the reader configured.
 It is the App in a second build, not a second client: with no identity loaded it is the read surface
-exactly, and with one it is the write surface with its signing moved out of the page (→ The extension).
+exactly, and with one it is the write surface with its signing moved out of the page (→ The extension). A post's link
+still names the website (→ Links): a reader who follows one is brought from that page into the extension, and
+the extension itself sends the website nothing.
 
 ## The browser reaches `@dagsocial/types` through a build-time shim
 
@@ -225,9 +229,6 @@ thread from the background — the two extra pages, the bridge and the shell's v
 property it serves is stated in the Scope (→ The extension slice): no hosted page, no server-held key, no
 server that signs, no call home.
 
-> ⚠ **AHEAD OF CODE (2026-09-19, links into the extension)** — the extension build has no bridge, and the App is
-> handed the lock-and-channel pair as the web build's.
-
 **The contexts, and what each may hold.**
 
 - **The page** is the App at the extension's own origin (`chrome-extension://<id>/`,
@@ -265,9 +266,6 @@ server that signs, no call home.
   and sends the background two messages, each carrying a post id (→ "Links into the extension", below). It
   runs at `document_start`, in the top frame, and does nothing in a private window.
 
-> ⚠ **AHEAD OF CODE (2026-09-19, links into the extension)** — there is no bridge: a link to a post followed
-> from outside lands on the website, and nothing brings the thread to the extension's page.
-
 **The action button opens or focuses the page** — `action.onClicked` finds a tab at the page's URL and
 raises it, else creates one. No `default_popup`, since one suppresses `onClicked`.
 
@@ -282,9 +280,6 @@ install, by the bridge's match** — `<notis-public>p/*` with the port dropped, 
 takes none and a pattern without one matches every port in both browsers — shown by the browser at install,
 revocable by the reader, and revoked it leaves the website behaving as it does for anyone. No `update_url`.
 
-> ⚠ **AHEAD OF CODE (2026-09-19, links into the extension)** — the manifest declares no content script and the
-> install carries no host.
-
 **The manifest** is one template and two emitted files. Common: Manifest V3, the repository's version,
 the action with no popup, the permissions above, the bridge as the one `content_scripts` entry — emitted when
 the build's `notis-public` is not empty, absent otherwise — the mark at 16, 32, 48 and 128 px as PNG
@@ -297,9 +292,6 @@ granted at install.
 **The background is one classic file with no `import`**, built in lib mode, so both browsers run it as
 they are; the bridge is built the same way.
 
-> ⚠ **AHEAD OF CODE (2026-09-19, links into the extension)** — the emitter writes no `content_scripts`, no
-> `bridge.js` is built, and Firefox's minimum is 121.
-
 **The seed list and the faucet's base** are the per-network facts the build carries, both in the shell (→ The
 client is served from the node's own origin): `notis-nodes`, testnet `["https://notis.fun/testnet/api"]`, mainnet
 `[]` until there is one; and `notis-faucet`, testnet `https://notis.fun/testnet/faucet`, mainnet empty —
@@ -308,9 +300,6 @@ configuration, never in `@dagsocial/types`. **The build's `notis-public`** — t
 `VITE_PUBLIC` overriding it — is the origin `link` copies from, the one the bridge is declared for, and the
 prefix the background checks the bridge's sender against; an empty one builds an extension with no bridge and
 no links row.
-
-> ⚠ **AHEAD OF CODE (2026-09-19, links into the extension)** — the shell alone reads `notis-public`: neither
-> the background nor the emitter takes `VITE_PUBLIC`.
 
 **The policy.** The ledger a transaction moves is read from its outputs: **any output with `boxType`
 `credit` or `fee` is a credits transaction; otherwise karma.** Inputs are ids only
@@ -327,20 +316,19 @@ inherits the prompt with nothing to add.
 the background reloading its state from storage on every one: `state` (the proxy's snapshot, with the
 policy), `draft`, `discardDraft`, `create { passphrase }`, `inspectFile { text }`, `importFile { text,
 passphrase }`, `exportFile { password }` (the envelope text; the page makes the download), `unlock {
-passphrase }`, `lock`, `forget`, `policy { karma }`, `links { opens }`, `takeOpen`, `sign { txBytes, txIdHex, hint }` — `hint` is `{ content? }`, and
+passphrase }`, `lock`, `forget`, `policy { karma }`, `links { opens }`, `sign { txBytes, txIdHex, hint }` — `hint` is `{ content? }`, and
 the post flow alone passes it — `ack { id }`;
-from the prompt page only, checked by the sender's URL, `approve { id }` and `decline { id }`; and from the
+from the App's page only, `takeOpen`, and from the prompt page only, `approve { id }` and `decline { id }`, each
+checked by the sender's URL; and from the
 bridge only, checked by the sender — this extension's id, a tab, and a URL opening with `<notis-public>p/` —
 `arrived { id }` and `offered { id }`. **Every other message is taken from the extension's own pages alone**,
-checked first, by the sender's URL as the browser reports it: the bridge runs in a web page's process, so a
+checked first, by the sender as the browser reports it — this extension's id and a URL under the extension's own
+origin: the bridge runs in a web page's process, so a
 message that says it comes from the bridge is a claim, and nothing the background does for a page — a signature
 above all — is reachable from there. Change
 notification is not a message: the page listens to `storage.onChanged` — `local` for the envelope's
 presence, the backed-up flag, the policy and the links preference, `session` for the seed's presence, which
 *is* `locked`, and for a thread waiting to be opened (→ "Links into the extension", below).
-
-> ⚠ **AHEAD OF CODE (2026-09-19, links into the extension)** — the page listens for no links preference and no
-> waiting thread.
 
 **`sign`, in the background, in order.** `txBytes` is `encodeTx` of the unsigned transaction; `hint` is
 `{ content? }`, a post's body, shown only when it verifies.
@@ -428,18 +416,11 @@ once per tab the reader opened on one of its links. **Nothing crosses the bridge
 one is acted on, and nothing flows back but the event's cancellation** — no key, no signature, no identity, no
 preference.
 
-> ⚠ **AHEAD OF CODE (2026-09-19, links into the extension)** — none of it exists: the background holds no links
-> preference, writes no pending record and answers no `takeOpen`, and the page takes a thread from the channel
-> alone.
-
 **The build check that keeps the web bundle honest:** the web build's assets contain no `chrome.`
 reference. `build-release.sh` checks it; `build-extension.sh` checks the extension's shell has no inline
 script, its background and its bridge have no `import`, its manifests parse, their one content-script match is
 the pattern the build's `notis-public` derives — and an empty `notis-public` emits no `content_scripts` and no
 `bridge.js` — and `web-ext lint` is clean.
-
-> ⚠ **AHEAD OF CODE (2026-09-19, links into the extension)** — `build-extension.sh` checks no bridge and no
-> content-script match.
 
 ## Reading the feed and threads
 
@@ -678,9 +659,6 @@ without an extension, for whom nothing here is visible. **The event is a convent
 implement on either side**; this client's extension implements the listener (→ The extension). The page names no
 extension and carries no `chrome.` reference for it, and the event carries the id and nothing else.
 
-> ⚠ **AHEAD OF CODE (2026-09-19, links into the extension)** — the press dispatches no event: it asks about the
-> lock at once.
-
 **The standalone page asks whether the lock is held**, by a request with `ifAvailable` released at once;
 a lock held or waited for answers held.
 
@@ -715,9 +693,6 @@ word `copied` until the card next renders — a swap in a fixed slot, no timer (
 **A link is the website's in every build.** The extension copies `<notis-public>p/<id>` (→ The client is served
 from the node's own origin): a plain `https` URL that opens for a reader without the extension and previews in a
 chat app, and a reader with the extension is brought from that page into it (→ The extension).
-
-> ⚠ **AHEAD OF CODE (2026-09-19, links into the extension)** — a reader with the extension who follows a link
-> stays on the website.
 
 **Where the clipboard API is absent** — an insecure context, such as a phone reaching the dev server over a
 LAN address on `http` — or a write is refused, the press mounts a row under the meta, where the unlock row
@@ -1175,8 +1150,6 @@ renders only when the identity module implements `links` — the extension's pro
 is not empty — so the web build has no such row either. Its hint: *a link that opens a tab of its own lands in this workspace. a link
 followed inside a page stays there — its `add to workspace` brings it here.*
 
-> ⚠ **AHEAD OF CODE (2026-09-19, links into the extension)** — the window has no links row.
-
 **No `faucet` row and no `arrangement` row.** The faucet's base is the build's value (→ The faucet step), and the
 arrangement is persisted text with no row of its own (→ The workspace).
 
@@ -1461,10 +1434,6 @@ client that expects to announce itself first is built against an endpoint that d
   extension's own pages alone, so a web page's process reaches no signature (→ The extension). *(extension)*
 - **The website shows a reader without the extension nothing of it.** The offer is a DOM event inside the
   press, cancelled or not; the page names no extension (→ The way into the workspace). *(extension)*
-
-  > ⚠ **AHEAD OF CODE (2026-09-19, links into the extension)** — there is no bridge and the press dispatches no
-  > event, so these two invariants bind nothing yet.
-
 - **Every read carries the viewer's key once an identity is loaded, and none does before.** *(write
   surface)*
 - **A consensus constant is imported; a per-network number is read.** `POST_PRICE_THREAD`,
