@@ -114,4 +114,10 @@ declare namespace chrome {
     function request(perms: { origins?: string[]; permissions?: string[] }): Promise<boolean>;
     function contains(perms: { origins?: string[]; permissions?: string[] }): Promise<boolean>;
   }
+
+  namespace extension {
+    // WEB_INTERFACE → The extension → "A takeover needs a tab created for the link"
+    // — the bridge does nothing in a private window.
+    const inIncognitoContext: boolean;
+  }
 }

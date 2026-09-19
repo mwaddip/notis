@@ -257,6 +257,9 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
       },
       async contains() { return false; },
     },
+    extension: {
+      inIncognitoContext: false,
+    },
   };
 
   state.api = api;
