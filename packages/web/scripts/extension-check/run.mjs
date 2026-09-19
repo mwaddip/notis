@@ -148,12 +148,18 @@ function contentTypeFor(p) {
 
 const HEX64 = /^[0-9a-f]{64}$/i;
 let webServer = null;
+// Every request the web server answers, in the order it arrives — path and
+// arrival time. Step 14 reads the slice around a run to show how far the
+// hosted page got, measured from outside the browser
+// (WEB_INTERFACE → The extension → "Links into the extension").
+const webRequests = [];
 async function startWebServer() {
   if (PUBLIC === null) return;
   webServer = createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', publicOrigin);
       const p = url.pathname;
+      webRequests.push({ path: (req.url ?? '/'), at: Date.now() });
       if (p === '/link.html') {
         const idQ = url.searchParams.get('id') ?? '';
         const safe = HEX64.test(idQ) ? idQ : '';
@@ -310,7 +316,11 @@ async function openBrowserSession() {
   s.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
     if (m.id && p.has(m.id)) { p.get(m.id)(m); p.delete(m.id); }
-    if (m.method) events.push(m);
+    // A method event carries its own arrival stamp — the run's clock in ms
+    // (WEB_INTERFACE → The extension → "Links into the extension"), so a
+    // wait taking an index AFTER the event still reports when the event
+    // arrived. Read as `ev.__at` alongside `ev.method`/`ev.params`.
+    if (m.method) { m.__at = Date.now(); events.push(m); }
   };
   const CALL_TIMEOUT_MS = 60000;
   const call = (method, params = {}) => new Promise((res, rej) => {
@@ -367,8 +377,8 @@ async function waitForTargetGone(id, ms = 20000) {
 }
 
 // Set the extension's links preference through the settings window's real
-// row (WEB_INTERFACE → The settings window → "The extension's links
-// preference"). Never writes storage directly, per the proof's rules.
+// row (WEB_INTERFACE → The settings window → "The links row"). Never writes
+// storage directly, per the proof's rules.
 async function setLinksPrefViaUi(cx, value) {
   const label = value === 'site' ? 'on the site' : 'here';
   await cx.eval(`document.querySelector('[aria-label="open settings"]').click()`, true);
@@ -382,8 +392,16 @@ async function setLinksPrefViaUi(cx, value) {
     const btn = [...row.querySelectorAll('button.word')].find(b => b.textContent.trim() === ${JSON.stringify(label)});
     btn.click();
   })()`, true);
-  await sleep(300);
-  const applied = await cx.eval(`(async () => (await chrome.storage.local.get('notis.links'))['notis.links'] ?? 'here')()`);
+  // The click stashes through `chrome.storage.local.set` — wait on the read
+  // to observe the stored value, capped at 5 s. Any wait for the write is
+  // the value's arrival, not a sleep.
+  const t0 = Date.now();
+  let applied = null;
+  while (Date.now() - t0 < 5000) {
+    applied = await cx.eval(`(async () => (await chrome.storage.local.get('notis.links'))['notis.links'] ?? 'here')()`);
+    if (applied === value) return applied;
+    await sleep(50);
+  }
   return applied;
 }
 
@@ -392,9 +410,11 @@ async function setLinksPrefViaUi(cx, value) {
 // them under R). WEB_INTERFACE → Reading the feed and threads — the answer's
 // rows sit under `posts` on this endpoint.
 async function pickOwnRootPostId() {
+  // `GET /posts` answers `{ posts, next, pending, pendingCount }`
+  // (NODE_INTERFACE → Posts).
   const r = await fetch(`${NODE}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=1`);
   const j = await r.json();
-  const rows = Array.isArray(j?.posts) ? j.posts : Array.isArray(j?.items) ? j.items : Array.isArray(j) ? j : [];
+  const rows = Array.isArray(j?.posts) ? j.posts : [];
   const first = rows[0];
   if (!first || typeof first.id !== 'string') return null;
   return first.id;
@@ -564,10 +584,10 @@ async function main() {
   if (prompt5) {
     const cxp = await openSession(prompt5.webSocketDebuggerUrl);
     await cxp.waitFor(`!!document.querySelector('.prompt .line.what')`, 'prompt first line');
-    // The new markup — no `.ask` heading. Every line is a `.line` div with a
-    // second class (`.what`, `.amount`, `.target`, `.fee`, `.content`), a
-    // `.target` line carrying its `.target-label` and `.target-value` spans
-    // (WEB_INTERFACE → The extension → "The prompt reads as three lines").
+    // The markup: every line is a `.line` div with a second class (`.what`,
+    // `.amount`, `.target`, `.fee`, `.content`), a `.target` line carrying
+    // its `.target-label` and `.target-value` spans (WEB_INTERFACE → The
+    // extension → "The prompt reads as three lines: what, how much, to whom").
     const promptShape = await cxp.eval(`(() => {
       return [...document.querySelectorAll('.prompt .line')].map((l) => ({
         cls: [...l.classList].filter((c) => c !== 'line').join(' '),
@@ -1088,14 +1108,21 @@ async function main() {
     })()`);
   }
 
-  async function waitForDestroyEvent(targetId, ms) {
+  // Wait for `Target.targetDestroyed` for a given target from a caller-passed
+  // start index. The index must be taken BEFORE the target is created — a
+  // destruction fired inside the microseconds between `Target.createTarget`
+  // and the caller's own wait would otherwise sit at an index BEFORE `bcx.events.length`
+  // at wait time, and a wait taking its own index in-body would step past it
+  // (WEB_INTERFACE → The extension → "Links into the extension"). Returns the
+  // event's arrival stamp (from `ev.__at`), so wall time is a difference in
+  // that clock.
+  async function waitForDestroyEvent(targetId, startIdx, ms) {
     const t0 = Date.now();
-    const startIdx = bcx.events.length;
     while (Date.now() - t0 < ms) {
       for (let i = startIdx; i < bcx.events.length; i++) {
         const ev = bcx.events[i];
         if (ev.method === 'Target.targetDestroyed' && ev.params?.targetId === targetId) {
-          return Date.now();
+          return ev.__at ?? Date.now();
         }
       }
       await sleep(50);
@@ -1103,13 +1130,44 @@ async function main() {
     return null;
   }
 
-  // ------- Step 13 — pref `on the site` — the button and the uncancelled arm.
+  // The raw event sequence for one target from the browser-session, between
+  // two indices — `Target.targetCreated`, `Target.targetInfoChanged*`,
+  // `Target.targetDestroyed`, each with its arrival stamp and the URL it
+  // carried at the time.
+  function collectTargetEvents(targetId, startIdx, endIdx) {
+    const end = endIdx ?? bcx.events.length;
+    const out = [];
+    for (let i = startIdx; i < end; i++) {
+      const ev = bcx.events[i];
+      const info = ev.params?.targetInfo;
+      const idHere = ev.method === 'Target.targetDestroyed' ? ev.params?.targetId : info?.targetId;
+      if (idHere !== targetId) continue;
+      if (ev.method !== 'Target.targetCreated'
+          && ev.method !== 'Target.targetInfoChanged'
+          && ev.method !== 'Target.targetDestroyed') continue;
+      out.push({
+        method: ev.method,
+        at: ev.__at ?? null,
+        url: info?.url ?? null,
+        openerId: info?.openerId ?? null,
+      });
+    }
+    return out;
+  }
+
+  // ------- Step 13 — pref `on the site`, the button arm. The browser-context
+  // arm ("13-uncancelled") is run AFTER step 16: `Target.createBrowserContext`
+  // + `Target.disposeBrowserContext` has been observed to freeze the next CDP
+  // call in a same-browser session, so it runs last where a freeze cannot
+  // shadow the other steps.
   const step13Prefs = await setLinksPrefViaUi(cx10, 'site');
   if (step13Prefs !== 'site') {
     record(13, false, `pref did not take: notis.links=${step13Prefs}`);
   } else {
-    // Fresh target on the post's public link — Target.createTarget in the
-    // default browser context (the extension is loaded).
+    // Fresh target on the post's public link — the destruction event may
+    // arrive before this line returns, so the browser event index is taken
+    // BEFORE the call.
+    const startIdx13 = bcx.events.length;
     const created13 = await bcx.call('Target.createTarget', { url: publicLink });
     const hostedId13 = created13.targetId;
     const hostedInfo13 = await findTargetById(hostedId13, 15000);
@@ -1120,9 +1178,6 @@ async function main() {
     let firstColumnHasThread13 = false;
     let extActive13 = false;
     let noOpen13 = false;
-    let arm13url = null;
-    let arm13takenover = false;
-    let arm13bridgeAbsent = false;
     if (!hostedInfo13) {
       record(13, false, `hosted target ${hostedId13.slice(0, 8)}… never appeared in /json/list`);
     } else {
@@ -1141,7 +1196,7 @@ async function main() {
       try { await trustedClickAt(cxH13, '[aria-label="add this thread to your workspace"]'); }
       catch (e) { clickErr13 = String(e); }
       // The hosted target destroyed; the extension page's first column holds the thread.
-      const destAt13 = await waitForDestroyEvent(hostedId13, 15000);
+      const destAt13 = await waitForDestroyEvent(hostedId13, startIdx13, 15000);
       destroyed13ok = destAt13 !== null;
       try {
         await cx10.waitFor(`!!document.querySelector('#panes .col .card[data-post-id="${postId}"]')`, 'first column holds thread 13', 15000);
@@ -1155,70 +1210,69 @@ async function main() {
       const openKeysAfter13 = await readNotisOpenKeys(cx10);
       // The offer left no pending record — takeOpen consumed it, so the
       // count returns to what it was before (WEB_INTERFACE → The extension →
-      // "Both messages end in one act").
+      // "Both messages end in one act, landing the thread in the workspace").
       noOpen13 = openKeysAfter13.length === openKeysBefore13.length && openKeysAfter13.length === 0;
       try { cxH13.s.close(); } catch {}
       console.log(`step 13 button: url@boot=${url13boot}, click=${clickErr13 ?? 'ok'}, dest@ms=${destAt13 ?? 'null'}, firstCol=${firstColumnHasThread13}, extActive=${extActive13}, openKeys before=${JSON.stringify(openKeysBefore13)} after=${JSON.stringify(openKeysAfter13)}`);
 
-      // Uncancelled arm — a Target.createBrowserContext context, where the
-      // extension does not load (per --load-extension's default profile
-      // scope). Assert the bridge did not run there by measuring that no new
-      // notis.open. key appeared, then take the press.
-      const openBeforeArm = await readNotisOpenKeys(cx10);
-      let bctxId = null;
-      try {
-        const ctxRes = await bcx.call('Target.createBrowserContext', {});
-        bctxId = ctxRes.browserContextId;
-        const arm = await bcx.call('Target.createTarget', { url: publicLink, browserContextId: bctxId });
-        const armId = arm.targetId;
-        const armInfo = await findTargetById(armId, 15000);
-        if (!armInfo) {
-          record(13, false, `uncancelled arm: fresh target in browser context never appeared`);
-        } else {
-          const cxArm = await openSession(armInfo.webSocketDebuggerUrl);
-          try {
-            await cxArm.waitFor(`!!document.querySelector('.card[data-post-id="${postId}"]')`, 'arm root card', 30000);
-          } catch {}
-          // Assert bridge did not run: no notis.open. key appeared. If it
-          // did, the browser-context claim is refuted — try the next method
-          // (a second browser without --load-extension) before reading this
-          // as a finding on the product.
-          const openMid = await readNotisOpenKeys(cx10);
-          const bridgeAbsentPreClick = openMid.length === openBeforeArm.length;
-          // Trusted press on `add to workspace`.
-          let armClickErr = null;
-          try { await trustedClickAt(cxArm, '[aria-label="add this thread to your workspace"]'); }
-          catch (e) { armClickErr = String(e); }
-          await sleep(2000);
-          arm13url = await cxArm.eval(`location.href`);
-          arm13takenover = arm13url === baseUrl;
-          const openAfterArm = await readNotisOpenKeys(cx10);
-          arm13bridgeAbsent = bridgeAbsentPreClick && openAfterArm.length === openBeforeArm.length;
-          console.log(`step 13 uncancelled arm: click=${armClickErr ?? 'ok'}, url@after=${arm13url}, in-place=${arm13takenover}, bridge absent (no new notis.open.)=${arm13bridgeAbsent}`);
-          try { cxArm.s.close(); } catch {}
-          await bcx.call('Target.closeTarget', { targetId: armId }).catch(() => {});
-        }
-      } finally {
-        if (bctxId) await bcx.call('Target.disposeBrowserContext', { browserContextId: bctxId }).catch(() => {});
-      }
-
-      stepStatus13 = boot13ok && takeoverDidNotFire13 && destroyed13ok && firstColumnHasThread13 && extActive13 && noOpen13 && arm13takenover && arm13bridgeAbsent;
+      stepStatus13 = boot13ok && takeoverDidNotFire13 && destroyed13ok && firstColumnHasThread13 && extActive13 && noOpen13;
       record(13, stepStatus13,
-        `boot=${boot13ok} (url ${url13boot}), takeover-did-not-fire=${takeoverDidNotFire13}, hosted destroyed=${destroyed13ok} (@${destAt13 ?? 'null'}ms), first column has thread=${firstColumnHasThread13}, ext tab active=${extActive13}, no notis.open. key=${noOpen13}; uncancelled arm url=${arm13url} in-place=${arm13takenover}, bridge absent=${arm13bridgeAbsent}`);
+        `boot=${boot13ok} (url ${url13boot}), takeover-did-not-fire=${takeoverDidNotFire13}, hosted destroyed=${destroyed13ok} (@${destAt13 ?? 'null'}ms), first column has thread=${firstColumnHasThread13}, ext tab active=${extActive13}, no notis.open. key=${noOpen13}`);
     }
   }
 
   // ------- Step 14 — pref `here`, a workspace tab open, three runs incl. cold.
-  // Reopen cx10 on the extension page — step 13's browser-context work
-  // sometimes leaves the previous session's DevTools deadlocked on the next
-  // call. The CDP call timeout would surface it as a FAIL, but a fresh
-  // session avoids the wait and keeps the step's assertions clean.
-  try { cx10.s.close(); } catch {}
-  const p14 = await findExt('index.html');
-  if (p14) cx10 = await openSession(p14.webSocketDebuggerUrl);
+  // The step probes cx10 at start — a short evaluate against a 5 s race,
+  // /json/list for the extension page, `document.visibilityState`,
+  // `document.hasFocus()` — and calls `Target.activateTarget` on the page if
+  // its visibility is hidden. The bridge-less arm's browser-context work is
+  // deferred to run AFTER step 16, so cx10 is expected to be responsive here.
+  const probeAt14 = {
+    listHasExt: null,
+    probeMs: null,
+    probeValue: null,
+    visibility: null,
+    hasFocus: null,
+    activateTried: false,
+    activateAfterProbe: null,
+  };
+  {
+    const t0p = Date.now();
+    const listNow = await jsonList();
+    const extPageNow = listNow.find((t) => t.type === 'page' && t.url.startsWith(`chrome-extension://${EXT_ID}/`));
+    probeAt14.listHasExt = !!extPageNow;
+    const probeP = (async () => {
+      try { return await cx10.eval(`1+1`); } catch (e) { return { error: String(e) }; }
+    })();
+    const raceP = new Promise((res) => setTimeout(() => res({ timeout: true }), 5000));
+    const probeR = await Promise.race([probeP, raceP]);
+    probeAt14.probeMs = Date.now() - t0p;
+    probeAt14.probeValue = probeR;
+    try {
+      probeAt14.visibility = await Promise.race([
+        cx10.eval(`document.visibilityState`),
+        new Promise((res) => setTimeout(() => res(null), 3000)),
+      ]);
+      probeAt14.hasFocus = await Promise.race([
+        cx10.eval(`document.hasFocus()`),
+        new Promise((res) => setTimeout(() => res(null), 3000)),
+      ]);
+    } catch {}
+    if (extPageNow && (probeR?.timeout === true || probeAt14.visibility === 'hidden')) {
+      probeAt14.activateTried = true;
+      try { await bcx.call('Target.activateTarget', { targetId: extPageNow.targetId }); } catch {}
+      const probeAgain = await Promise.race([
+        (async () => { try { return await cx10.eval(`1+1`); } catch (e) { return { error: String(e) }; } })(),
+        new Promise((res) => setTimeout(() => res({ timeout: true }), 5000)),
+      ]);
+      probeAt14.activateAfterProbe = probeAgain;
+    }
+    console.log(`step 14 probe: listHasExt=${probeAt14.listHasExt}, probeMs=${probeAt14.probeMs}, probe=${JSON.stringify(probeAt14.probeValue)}, visibility=${probeAt14.visibility}, hasFocus=${probeAt14.hasFocus}, activateTried=${probeAt14.activateTried}, afterActivate=${JSON.stringify(probeAt14.activateAfterProbe)}`);
+  }
+
   const step14Prefs = await setLinksPrefViaUi(cx10, 'here');
   if (step14Prefs !== 'here') {
-    record(14, false, `pref did not take: notis.links=${step14Prefs}`);
+    record(14, false, `pref did not take: notis.links=${step14Prefs}; probe=${JSON.stringify(probeAt14)}`);
   } else {
     const runs14 = [];
     for (let r = 0; r < 3; r++) {
@@ -1229,6 +1283,11 @@ async function main() {
         await sleep(32000);
       }
       const openKeysBefore14 = await readNotisOpenKeys(cx10);
+      // Index into the browser session's events and the static server's
+      // request log, taken BEFORE the createTarget so a destruction that
+      // fires inside the first microseconds is still visible to the wait.
+      const evStart14 = bcx.events.length;
+      const reqStart14 = webRequests.length;
       const t0 = Date.now();
       const created14 = await bcx.call('Target.createTarget', { url: publicLink });
       const tid14 = created14.targetId;
@@ -1240,7 +1299,10 @@ async function main() {
           cxT14 = await openSession(info14.webSocketDebuggerUrl);
           // Poll `#appbar` children — record whether the hosted App mounted
           // before the destruction. Bail out on any eval error (a destroying
-          // target rejects Runtime.evaluate).
+          // target rejects Runtime.evaluate). Recorded, never asserted — a
+          // CDP session attached to a tab that lives tens of milliseconds is
+          // a race the harness loses; the static server's request log is the
+          // measurement from outside.
           const t1 = Date.now();
           while (Date.now() - t1 < 15000) {
             const has = await cxT14.eval(`(document.querySelector('#appbar')?.children.length ?? 0) > 0`).catch(() => 'gone');
@@ -1250,9 +1312,16 @@ async function main() {
           }
         } catch {}
       }
-      const destAt14 = await waitForDestroyEvent(tid14, 20000);
+      const destAt14 = await waitForDestroyEvent(tid14, evStart14, 20000);
       const elapsed14 = destAt14 === null ? null : destAt14 - t0;
       try { if (cxT14) cxT14.s.close(); } catch {}
+      // Read /json/list AFTER the wait — the arriving target absent AND
+      // exactly one extension page target — that count tells the close arm
+      // from the re-point arm.
+      const listAfter14 = await jsonList();
+      const arrivedGone14 = !listAfter14.find((t) => t.id === tid14);
+      const extPagesAfter14 = listAfter14.filter((t) => t.type === 'page' && t.url.startsWith(`chrome-extension://${EXT_ID}/`));
+      const extPageCount14 = extPagesAfter14.length;
       // First column has the thread; extension tab is active. The record was
       // consumed by takeOpen — no `notis.open.` key remains.
       let firstColOk = false;
@@ -1267,23 +1336,44 @@ async function main() {
       })()`);
       const openKeysAfter14 = await readNotisOpenKeys(cx10);
       const noOpen14 = openKeysAfter14.length === openKeysBefore14.length;
-      const run = { cold, tid: tid14.slice(0, 8), mounted: mounted14, elapsedMs: elapsed14, firstCol: firstColOk, extActive: extActive14, noOpen: noOpen14 };
+      // The arriving target's own event sequence — targetCreated →
+      // targetInfoChanged* → targetDestroyed — each with its ms since t0.
+      const targetEvents14 = collectTargetEvents(tid14, evStart14, bcx.events.length).map((e) => ({
+        method: e.method,
+        ms: e.at === null ? null : e.at - t0,
+        url: e.url,
+      }));
+      // The static server's request log for this run — from t0 to 500 ms
+      // after the destroyed event (or 15 s after t0 if no destruction). The
+      // shell alone, or the bundle, the stylesheet, the fonts — how far the
+      // hosted page got, measured from outside.
+      const reqWindowEnd14 = destAt14 !== null ? destAt14 + 500 : t0 + 15000;
+      const reqLog14 = webRequests.slice(reqStart14).filter((q) => q.at <= reqWindowEnd14).map((q) => ({ path: q.path, ms: q.at - t0 }));
+      const run = {
+        cold, tid: tid14.slice(0, 8), mounted: mounted14, elapsedMs: elapsed14,
+        firstCol: firstColOk, extActive: extActive14, noOpen: noOpen14,
+        arrivedGone: arrivedGone14, extPageCount: extPageCount14,
+        targetEvents: targetEvents14, reqLog: reqLog14,
+      };
       runs14.push(run);
-      console.log(`step 14 run ${r + 1}${cold ? ' (cold)' : ''}: dest@${elapsed14 ?? 'null'}ms, appbarMountedBeforeDestroy=${mounted14 ?? 'unobserved'}, firstCol=${firstColOk}, extActive=${extActive14}, noOpen=${noOpen14}`);
+      console.log(`step 14 run ${r + 1}${cold ? ' (cold)' : ''}: dest@${elapsed14 ?? 'null'}ms, arrivedGone=${arrivedGone14}, extPages=${extPageCount14}, appbarMountedBeforeDestroy=${mounted14 ?? 'unobserved'}, firstCol=${firstColOk}, extActive=${extActive14}, noOpen=${noOpen14}`);
+      console.log(`step 14 run ${r + 1} events for tid=${tid14.slice(0, 8)}: ${JSON.stringify(targetEvents14)}`);
+      console.log(`step 14 run ${r + 1} static server: ${JSON.stringify(reqLog14)}`);
     }
     const allDestroyed14 = runs14.every((r) => r.elapsedMs !== null);
+    const allArrivedGone14 = runs14.every((r) => r.arrivedGone === true);
+    const allOneExtPage14 = runs14.every((r) => r.extPageCount === 1);
     const allFirstCol14 = runs14.every((r) => r.firstCol);
     const allExtActive14 = runs14.every((r) => r.extActive);
     const allNoOpen14 = runs14.every((r) => r.noOpen);
-    record(14, allDestroyed14 && allFirstCol14 && allExtActive14 && allNoOpen14,
-      `three runs: destroyed=${allDestroyed14}, first col holds thread=${allFirstCol14}, ext tab active=${allExtActive14}, no notis.open. key remained=${allNoOpen14}; timings ms=${JSON.stringify(runs14.map((r) => ({ cold: r.cold, ms: r.elapsedMs, mounted: r.mounted })))}`);
+    record(14, allDestroyed14 && allArrivedGone14 && allOneExtPage14 && allFirstCol14 && allExtActive14 && allNoOpen14,
+      `three runs: destroyed=${allDestroyed14}, arrivedGone=${allArrivedGone14}, extPageCount==1=${allOneExtPage14}, first col holds thread=${allFirstCol14}, ext tab active=${allExtActive14}, no notis.open. key remained=${allNoOpen14}; timings ms=${JSON.stringify(runs14.map((r) => ({ cold: r.cold, ms: r.elapsedMs, extPages: r.extPageCount, mounted: r.mounted })))}`);
   }
 
   // ------- Step 15 — pref `here`, no workspace tab. Close the extension's tab
   //         first; a fresh target on the link should have its URL become the
-  //         extension page.
-  //         (WEB_INTERFACE → "None open: an arriving tab is pointed at the
-  //         page and becomes the workspace")
+  //         extension page (WEB_INTERFACE → The extension → "Both messages
+  //         end in one act, landing the thread in the workspace").
   {
     // Find and close cx10's target.
     const extPage = await findExt('index.html');
@@ -1316,7 +1406,16 @@ async function main() {
     let firstColOk15 = false;
     let noOpen15 = false;
     let backUrl15 = null;
+    let backCount15 = 0;
+    let backReached15 = false;
     let backStays15 = false;
+    let backHostedCard15 = false;
+    let backHistoryLen15Ok = false;
+    let backHistoryLen15Value = null;
+    let backHistoryLen15SingleEntry = false;
+    let initialHist15 = null;
+    let initialWidth15 = null;
+    const backSteps15 = [];
     if (cx15) {
       try {
         await cx15.waitFor(`!!document.querySelector('#panes .col .card[data-post-id="${postId}"]')`, 'first col 15', 30000);
@@ -1326,13 +1425,60 @@ async function main() {
       noOpen15 = openKeysAfter15.length === 0;
       console.log(`step 15: closed=${closed15}, becameExtension=${becameExtension15}, firstCol=${firstColOk15}, notis.open. keys=${JSON.stringify(openKeysAfter15)}`);
 
-      // Step 16(c): history.back() on this tab reaches the hosted page.
-      await cx15.eval(`history.back()`);
-      await sleep(2500);
-      backUrl15 = await cx15.eval(`location.href`);
-      const cardShown16c = await cx15.eval(`!!document.querySelector('.card[data-post-id="${postId}"]')`);
-      backStays15 = backUrl15 === publicLink && cardShown16c === true;
-      console.log(`step 16(c) history.back: url=${backUrl15}, hosted card shown=${cardShown16c}, stays=${backStays15}`);
+      // Step 16(c) — history.back on the re-pointed tab. The workspace
+      // pushes a screen entry when a thread opens under one column, so
+      // reaching the hosted URL may take more than one back. Log innerWidth,
+      // history.length and history.state BEFORE every back; iterate at most
+      // three; wait after each on a settle condition — the URL or the state
+      // changing, never a bare sleep — and stop when the URL is the hosted
+      // link. If `history.length` reads 1 in the re-pointed tab right after
+      // its boot, `tabs.update({ url })` replaced the hosted entry and back
+      // cannot reach the website at all — record that and do not iterate.
+      initialHist15 = await cx15.eval(`history.length`);
+      const initialUrl15 = await cx15.eval(`location.href`);
+      initialWidth15 = await cx15.eval(`innerWidth`);
+      const initialState15 = await cx15.eval(`JSON.stringify(history.state)`);
+      backSteps15.push({ before: 'initial', width: initialWidth15, historyLength: initialHist15, historyState: initialState15, url: initialUrl15 });
+      if (initialHist15 === 1) {
+        backHistoryLen15SingleEntry = true;
+        console.log(`step 16(c) history.length=1 on the re-pointed tab: tabs.update({ url }) replaced the hosted entry — no back can reach the website.`);
+      } else {
+        for (let attempt = 0; attempt < 3 && !backReached15; attempt++) {
+          const before = {
+            attempt,
+            width: await cx15.eval(`innerWidth`),
+            historyLength: await cx15.eval(`history.length`),
+            historyState: await cx15.eval(`JSON.stringify(history.state)`),
+            url: await cx15.eval(`location.href`),
+          };
+          backSteps15.push({ before: 'before back ' + attempt, ...before });
+          const priorUrl = before.url;
+          const priorState = before.historyState;
+          await cx15.eval(`history.back()`);
+          backCount15 += 1;
+          const t0b = Date.now();
+          while (Date.now() - t0b < 5000) {
+            const urlNow = await cx15.eval(`location.href`).catch(() => priorUrl);
+            const stateNow = await cx15.eval(`JSON.stringify(history.state)`).catch(() => priorState);
+            if (urlNow !== priorUrl || stateNow !== priorState) break;
+            await sleep(50);
+          }
+          const urlAfter = await cx15.eval(`location.href`).catch(() => priorUrl);
+          const stateAfter = await cx15.eval(`JSON.stringify(history.state)`).catch(() => priorState);
+          backSteps15.push({ before: 'after back ' + attempt, url: urlAfter, historyState: stateAfter });
+          if (urlAfter === publicLink) { backReached15 = true; break; }
+        }
+        if (backReached15) {
+          try { await cx15.waitFor(`!!document.querySelector('.card[data-post-id="${postId}"]')`, '16c hosted card', 15000); } catch {}
+          backHostedCard15 = await cx15.eval(`!!document.querySelector('.card[data-post-id="${postId}"]')`);
+          await sleep(2000);
+          backUrl15 = await cx15.eval(`location.href`);
+          backStays15 = backUrl15 === publicLink;
+          backHistoryLen15Value = await cx15.eval(`history.length`);
+          backHistoryLen15Ok = typeof backHistoryLen15Value === 'number' && backHistoryLen15Value >= 2;
+        }
+      }
+      console.log(`step 16(c) history.back: initial history.length=${initialHist15}, attempts=${backCount15}, reached=${backReached15}, urlAfter=${backUrl15}, stays=${backStays15}, hosted card=${backHostedCard15}, history.length on hosted=${backHistoryLen15Value}, singleEntry=${backHistoryLen15SingleEntry}, steps=${JSON.stringify(backSteps15)}`);
     }
     record(15, closed15 && becameExtension15 && firstColOk15 && noOpen15,
       `ext tab closed=${closed15}, fresh target URL becomes extension=${becameExtension15}, first col holds thread=${firstColOk15}, no notis.open. key=${noOpen15}`);
@@ -1380,82 +1526,203 @@ async function main() {
     console.log(`step 16(a) same-tab: url=${same16a_url}, history.length=${same16a_hist}, stays=${same16a_stays}`);
     console.log(`step 16(b) reload:   url=${reload16b_url}, stays=${reload16b_stays}`);
 
-    // (d): open a fresh plain page, trusted click on #blank. A new target
-    // opens on the hosted link. Bridge fires arrived, extension is open (from
-    // step 15), openInWorkspace closes the arriving target.
-    const createdD = await bcx.call('Target.createTarget', { url: plainLink });
-    const tidD = createdD.targetId;
-    const infoD = await findTargetById(tidD, 15000);
+    // (d): open a fresh plain page, trusted click on #blank. The tab opens
+    // by `_blank`; its precondition is that zero extension page targets are
+    // open, so the takeover arm is the redirect (no destruction), and the
+    // measured expectation is the new tab's URL becomes the extension page,
+    // the thread in the first column, no `notis.open.` key left, and exactly
+    // one extension page target — never asserted as a union.
+
+    // Close step 15's tab so no live extension page target stands.
+    let cx15Closed16d = false;
+    if (cx15) {
+      try { cx15.s.close(); } catch {}
+      cx15 = null;
+      try { await bcx.call('Target.closeTarget', { targetId: tid15 }); } catch {}
+      cx15Closed16d = await waitForTargetGone(tid15, 15000);
+    }
+    const listPre16d = await jsonList();
+    const extPagesPre16d = listPre16d.filter((t) => t.type === 'page' && t.url.startsWith(`chrome-extension://${EXT_ID}/`));
+
     let blank16d_newTargetId = null;
+    let blank16d_openerIdPresent = null;
+    let blank16d_urlSeen = null;
     let blank16d_becameExtension = false;
     let blank16d_takenOver = false;
-    if (infoD) {
-      const cxD = await openSession(infoD.webSocketDebuggerUrl);
-      try { await cxD.waitFor(`!!document.querySelector('#blank')`, 'plain page d-blank', 10000); } catch {}
-      // Watch for the new target that will open. Use the browser session's
-      // events, which see every target across every context.
-      const startIdx = bcx.events.length;
-      try { await trustedClickAt(cxD, '#blank'); } catch {}
-      const t0d = Date.now();
-      while (Date.now() - t0d < 15000 && !blank16d_newTargetId) {
-        for (let i = startIdx; i < bcx.events.length; i++) {
-          const ev = bcx.events[i];
-          if (ev.method === 'Target.targetCreated' && typeof ev.params?.targetInfo?.url === 'string' && ev.params.targetInfo.url.startsWith(publicLink)) {
-            blank16d_newTargetId = ev.params.targetInfo.targetId;
+    let blank16d_noOpenKey = false;
+    let blank16d_extPageCount = null;
+    if (extPagesPre16d.length !== 0) {
+      // Precondition failed — the takeover arm this step controls for is not
+      // the arm that would run; report and skip.
+      record(16, false,
+        `precondition failed for (d): after cx15 tab close, /json/list still has ${extPagesPre16d.length} extension page target(s); (a) stays=${same16a_stays}, (b) stays=${reload16b_stays}, (c) reached=${backReached15}, stays=${backStays15}, url ${backUrl15}, history.length ${backHistoryLen15Value}, singleEntry=${backHistoryLen15SingleEntry}, steps=${JSON.stringify(backSteps15)}`);
+    } else {
+      const createdD = await bcx.call('Target.createTarget', { url: plainLink });
+      const tidD = createdD.targetId;
+      const infoD = await findTargetById(tidD, 15000);
+      if (infoD) {
+        const cxD = await openSession(infoD.webSocketDebuggerUrl);
+        try { await cxD.waitFor(`!!document.querySelector('#blank')`, 'plain page d-blank', 10000); } catch {}
+        // Known page target ids taken BEFORE the click — anything opening
+        // after with a fresh id and (when the runtime carries it) an
+        // `openerId` of `tidD` is the popup this click created; else fall
+        // back to the first fresh page id.
+        const listBeforeClick = await jsonList();
+        const knownIds = new Set(listBeforeClick.filter((t) => t.type === 'page').map((t) => t.id));
+        const startIdx = bcx.events.length;
+        try { await trustedClickAt(cxD, '#blank'); } catch {}
+        // Discover the new target by openerId first, else by any fresh page
+        // id — never by URL, because `Target.targetCreated` for a link-opened
+        // tab announces with an empty URL, and the real URL arrives in a
+        // later `Target.targetInfoChanged`.
+        const t0d = Date.now();
+        while (Date.now() - t0d < 15000 && !blank16d_newTargetId) {
+          for (let i = startIdx; i < bcx.events.length; i++) {
+            const ev = bcx.events[i];
+            if (ev.method !== 'Target.targetCreated') continue;
+            const info = ev.params?.targetInfo;
+            if (!info || info.type !== 'page') continue;
+            if (info.openerId === tidD) {
+              blank16d_newTargetId = info.targetId;
+              blank16d_openerIdPresent = true;
+              break;
+            }
+          }
+          if (blank16d_newTargetId) break;
+          for (let i = startIdx; i < bcx.events.length; i++) {
+            const ev = bcx.events[i];
+            if (ev.method !== 'Target.targetCreated') continue;
+            const info = ev.params?.targetInfo;
+            if (!info || info.type !== 'page') continue;
+            if (info.targetId === tidD) continue;
+            if (knownIds.has(info.targetId)) continue;
+            blank16d_newTargetId = info.targetId;
+            blank16d_openerIdPresent = false;
             break;
           }
+          if (!blank16d_newTargetId) await sleep(100);
         }
-        if (!blank16d_newTargetId) await sleep(100);
-      }
-      if (blank16d_newTargetId) {
-        // Taken over either as destruction (a live extension page tab
-        // absorbed the offer) or as an in-place redirect to the extension
-        // page (no live tab, the arrived tab becomes the page).
-        const destPromise = waitForDestroyEvent(blank16d_newTargetId, 15000);
-        const redirectPromise = (async () => {
+        if (blank16d_newTargetId) {
+          // Follow `Target.targetInfoChanged` for the URL; the takeover ends
+          // with the extension page URL (no live workspace tab existed at
+          // the click). `/json/list` is polled as a second reader in case a
+          // changed event is missed.
           const t1 = Date.now();
-          while (Date.now() - t1 < 15000) {
+          let extInfo = null;
+          while (Date.now() - t1 < 20000) {
+            for (let i = startIdx; i < bcx.events.length; i++) {
+              const ev = bcx.events[i];
+              if (ev.method !== 'Target.targetInfoChanged') continue;
+              const info = ev.params?.targetInfo;
+              if (info?.targetId !== blank16d_newTargetId) continue;
+              if (typeof info.url === 'string' && info.url.startsWith(`chrome-extension://${EXT_ID}/`)) {
+                blank16d_urlSeen = info.url;
+                break;
+              }
+            }
+            if (blank16d_urlSeen) break;
             const list = await jsonList();
             const t = list.find((x) => x.id === blank16d_newTargetId);
-            if (!t) return null; // gone — destruction won
-            if (typeof t.url === 'string' && t.url.startsWith(`chrome-extension://${EXT_ID}/`)) return t;
+            if (t && typeof t.url === 'string' && t.url.startsWith(`chrome-extension://${EXT_ID}/`)) {
+              blank16d_urlSeen = t.url;
+              extInfo = t;
+              break;
+            }
             await sleep(150);
           }
-          return null;
-        })();
-        const [destAt, redirected] = await Promise.all([destPromise, redirectPromise]);
-        blank16d_destroyed = destAt !== null;
-        blank16d_becameExtension = redirected !== null;
-        // Cx15 navigated to hosted in step 16(c), so no live extension tab
-        // stands — the takeover arm is the redirect, not destruction; the
-        // measured expectation is `becameExtension`. `destroyed` is logged
-        // as an observation, never or'd into the verdict.
-        blank16d_takenOver = blank16d_becameExtension;
-        // First col holds the thread — either in cx15 (the still-alive
-        // extension tab) or in the redirected new tab.
-        if (blank16d_becameExtension && !blank16d_destroyed) {
-          const cxNew = await openSession(redirected.webSocketDebuggerUrl);
-          try {
-            await cxNew.waitFor(`!!document.querySelector('#panes .col .card[data-post-id="${postId}"]')`, 'first col 16d new tab', 15000);
-            blank16d_firstCol = true;
-          } catch {}
-          try { cxNew.s.close(); } catch {}
-        } else if (cx15) {
-          try {
-            await cx15.waitFor(`!!document.querySelector('#panes .col .card[data-post-id="${postId}"]')`, 'first col 16d cx15', 15000);
-            blank16d_firstCol = true;
-          } catch {}
+          blank16d_becameExtension = blank16d_urlSeen !== null;
+          blank16d_takenOver = blank16d_becameExtension;
+          // First col holds the thread — in the redirected new tab, and the
+          // ledger's `notis.open.` key was consumed.
+          if (blank16d_becameExtension) {
+            if (!extInfo) {
+              const list = await jsonList();
+              extInfo = list.find((x) => x.id === blank16d_newTargetId);
+            }
+            if (extInfo?.webSocketDebuggerUrl) {
+              const cxNew = await openSession(extInfo.webSocketDebuggerUrl);
+              try {
+                await cxNew.waitFor(`!!document.querySelector('#panes .col .card[data-post-id="${postId}"]')`, 'first col 16d new tab', 15000);
+                blank16d_firstCol = true;
+              } catch {}
+              try {
+                const remaining = await readNotisOpenKeys(cxNew);
+                blank16d_noOpenKey = remaining.length === 0;
+              } catch {}
+              try { cxNew.s.close(); } catch {}
+            }
+            const listEnd = await jsonList();
+            blank16d_extPageCount = listEnd.filter((t) => t.type === 'page' && t.url.startsWith(`chrome-extension://${EXT_ID}/`)).length;
+          }
         }
+        try { cxD.s.close(); } catch {}
+        await bcx.call('Target.closeTarget', { targetId: tidD }).catch(() => {});
       }
-      try { cxD.s.close(); } catch {}
-      await bcx.call('Target.closeTarget', { targetId: tidD }).catch(() => {});
-    }
-    console.log(`step 16(d) target=_blank: newTarget=${blank16d_newTargetId ? blank16d_newTargetId.slice(0, 8) + '…' : 'null'}, destroyed=${blank16d_destroyed}, becameExtension=${blank16d_becameExtension}, first col has thread=${blank16d_firstCol}`);
+      console.log(`step 16(d) target=_blank: cx15Closed=${cx15Closed16d}, extPagesPre=${extPagesPre16d.length}, newTarget=${blank16d_newTargetId ? blank16d_newTargetId.slice(0, 8) + '…' : 'null'}, openerIdPresent=${blank16d_openerIdPresent}, urlSeen=${blank16d_urlSeen}, becameExtension=${blank16d_becameExtension}, firstCol=${blank16d_firstCol}, noOpenKey=${blank16d_noOpenKey}, extPageCount=${blank16d_extPageCount}`);
 
-    record(16, same16a_stays && reload16b_stays && backStays15 && blank16d_takenOver && blank16d_firstCol,
-      `(a) same-tab stays=${same16a_stays} (url ${same16a_url}, history.length ${same16a_hist}); (b) reload stays=${reload16b_stays} (url ${reload16b_url}); (c) history.back stays=${backStays15} (url ${backUrl15}); (d) target=_blank taken over=${blank16d_takenOver} (destroyed=${blank16d_destroyed}, becameExtension=${blank16d_becameExtension}), first col=${blank16d_firstCol}`);
+      const step16Pass = same16a_stays && reload16b_stays
+        && backReached15 && backStays15 && backHostedCard15 && backHistoryLen15Ok
+        && blank16d_takenOver && blank16d_firstCol && blank16d_noOpenKey && blank16d_extPageCount === 1;
+      record(16, step16Pass,
+        `(a) same-tab stays=${same16a_stays} (url ${same16a_url}, history.length ${same16a_hist}); (b) reload stays=${reload16b_stays} (url ${reload16b_url}); (c) history.back reached=${backReached15} in ${backCount15} back(s) (initialWidth=${initialWidth15}, initialHistoryLen=${initialHist15}, singleEntry=${backHistoryLen15SingleEntry}), stays=${backStays15} (url ${backUrl15}, hostedCard=${backHostedCard15}, history.length=${backHistoryLen15Value}, ≥2=${backHistoryLen15Ok}), steps=${JSON.stringify(backSteps15)}; (d) precondition extPagesPre=${extPagesPre16d.length}, cx15Closed=${cx15Closed16d}, openerIdPresent=${blank16d_openerIdPresent}, becameExtension=${blank16d_becameExtension}, first col=${blank16d_firstCol}, noOpenKey=${blank16d_noOpenKey}, extPageCount=${blank16d_extPageCount}`);
+    }
 
     try { if (cx15) cx15.s.close(); } catch {}
+  }
+
+  // ------- Step 13-uncancelled — the browser-context arm, run after step 16.
+  // The extension does not load in a `Target.createBrowserContext` context
+  // (per `--load-extension`'s default profile scope), so the bridge cannot
+  // send `arrived` and no `notis.open.` key appears. `Target.disposeBrowserContext`
+  // has been observed to freeze the next CDP call in a same-browser session,
+  // and running the arm here keeps that risk out of steps 14–16.
+  {
+    let extPageAfter16 = await findExt('index.html');
+    let cxObserver = null;
+    let openBeforeArm = null;
+    try {
+      if (extPageAfter16?.webSocketDebuggerUrl) {
+        cxObserver = await openSession(extPageAfter16.webSocketDebuggerUrl);
+        openBeforeArm = await readNotisOpenKeys(cxObserver);
+      }
+      let bctxId = null;
+      try {
+        const ctxRes = await bcx.call('Target.createBrowserContext', {});
+        bctxId = ctxRes.browserContextId;
+        const arm = await bcx.call('Target.createTarget', { url: publicLink, browserContextId: bctxId });
+        const armId = arm.targetId;
+        const armInfo = await findTargetById(armId, 15000);
+        if (!armInfo) {
+          record('13-uncancelled', false, `fresh target in browser context never appeared`);
+        } else {
+          const cxArm = await openSession(armInfo.webSocketDebuggerUrl);
+          try {
+            await cxArm.waitFor(`!!document.querySelector('.card[data-post-id="${postId}"]')`, 'arm root card', 30000);
+          } catch {}
+          const openMid = cxObserver ? await readNotisOpenKeys(cxObserver) : null;
+          const bridgeAbsentPreClick = openMid !== null && openBeforeArm !== null && openMid.length === openBeforeArm.length;
+          let armClickErr = null;
+          try { await trustedClickAt(cxArm, '[aria-label="add this thread to your workspace"]'); }
+          catch (e) { armClickErr = String(e); }
+          await sleep(2000);
+          const armUrl = await cxArm.eval(`location.href`).catch(() => null);
+          const armInPlace = armUrl === baseUrl;
+          const openAfterArm = cxObserver ? await readNotisOpenKeys(cxObserver) : null;
+          const armBridgeAbsent = bridgeAbsentPreClick && openAfterArm !== null && openBeforeArm !== null && openAfterArm.length === openBeforeArm.length;
+          console.log(`step 13-uncancelled: click=${armClickErr ?? 'ok'}, url@after=${armUrl}, in-place=${armInPlace}, bridge absent (no new notis.open.)=${armBridgeAbsent}, extPageAfter16=${!!extPageAfter16}`);
+          record('13-uncancelled', armInPlace && armBridgeAbsent,
+            `url=${armUrl} in-place=${armInPlace}, bridge absent=${armBridgeAbsent} (openBefore=${JSON.stringify(openBeforeArm)}, openAfter=${JSON.stringify(openAfterArm)}); observer extPage=${!!extPageAfter16}`);
+          try { cxArm.s.close(); } catch {}
+          await bcx.call('Target.closeTarget', { targetId: armId }).catch(() => {});
+        }
+      } finally {
+        if (bctxId) await bcx.call('Target.disposeBrowserContext', { browserContextId: bctxId }).catch(() => {});
+      }
+    } catch (e) {
+      record('13-uncancelled', false, `error: ${String(e)}`);
+    } finally {
+      try { if (cxObserver) cxObserver.s.close(); } catch {}
+    }
   }
 
   try { bcx.s.close(); } catch {}
