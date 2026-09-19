@@ -417,9 +417,10 @@ workspace; for `offered` a page tab is created. In the page, the tab that holds 
 other — answers a standing record with `takeOpen`: the background reads and removes every pending record in one
 step, answers their ids, and raises the asking tab, its window focused, when any said so; the page opens each id
 by the placement rule from the feed, exactly as it opens an id from the channel (→ The way into the workspace).
-A thread lands in one place, and a worker killed between the record and the landing loses nothing. Back from a
-tab that became the workspace reaches the website's page as one entry among two, which the predicate leaves
-alone.
+A thread lands in one place, and a worker killed between the record and the landing loses nothing. A tab that
+became the workspace keeps the website's page beneath it in its history: back reaches it — past the workspace's
+own screen entries, where one column makes the screens history (→ The workspace) — as one entry among several,
+which the predicate leaves alone.
 
 **What the public origin can make the extension do** is open a thread by its id and raise the page — for
 `offered` only inside a reader's press on that page, and only from the active tab of its window; for `arrived`
