@@ -35,11 +35,12 @@ describe('isMessage — every known kind passes, everything else is refused', ()
 });
 
 describe('KNOWN_KINDS — the full set of what the dispatcher understands', () => {
-  it('is exactly the 15 kinds the contract lists', () => {
+  it('is exactly the 19 kinds the contract lists', () => {
     const expected: Array<Message['kind']> = [
       'state', 'draft', 'discardDraft', 'create', 'inspectFile',
       'importFile', 'exportFile', 'unlock', 'lock', 'forget',
-      'policy', 'sign', 'ack', 'approve', 'decline',
+      'policy', 'links', 'takeOpen', 'arrived', 'offered',
+      'sign', 'ack', 'approve', 'decline',
     ];
     expect(KNOWN_KINDS.size).toBe(expected.length);
     for (const k of expected) expect(KNOWN_KINDS.has(k)).toBe(true);

@@ -1,3 +1,5 @@
+import type { LinksPref } from './links';
+
 // The page↔background wire, WEB_INTERFACE → The extension. Message shapes are
 // closed at the type level; unknown messages are refused (`REFUSED_UNKNOWN`),
 // the shape of an unrecognised name never being trusted at run time.
@@ -95,6 +97,10 @@ export type Message =
   | { kind: 'lock' }
   | { kind: 'forget' }
   | { kind: 'policy'; karma: 'silent' | 'ask' }
+  | { kind: 'links'; opens: LinksPref }
+  | { kind: 'takeOpen' }
+  | { kind: 'arrived'; id: string }
+  | { kind: 'offered'; id: string }
   | { kind: 'sign'; txBytesHex: string; txIdHex: string; hint?: SignHint }
   | { kind: 'ack'; id: string }
   | { kind: 'approve'; id: string }
@@ -106,8 +112,9 @@ export type MessageKind = Message['kind'];
  *  answered with the `REFUSED_UNKNOWN` `{ error }` shape. */
 export const KNOWN_KINDS: ReadonlySet<MessageKind> = new Set<MessageKind>([
   'state', 'draft', 'discardDraft', 'create', 'inspectFile', 'importFile',
-  'exportFile', 'unlock', 'lock', 'forget', 'policy', 'sign', 'ack',
-  'approve', 'decline',
+  'exportFile', 'unlock', 'lock', 'forget', 'policy',
+  'links', 'takeOpen', 'arrived', 'offered',
+  'sign', 'ack', 'approve', 'decline',
 ]);
 
 /** The refusal shape the background answers when it cannot honour a message —
@@ -133,7 +140,8 @@ export type Answer<K extends MessageKind> =
   : K extends 'inspectFile' ? { kind: 'clear' | 'encrypted'; pubKeyHex: string }
   : K extends 'exportFile' ? { text: string }
   : K extends 'sign' ? SignAnswer
-  : K extends 'discardDraft' | 'unlock' | 'lock' | 'forget' | 'policy' | 'ack' | 'approve' | 'decline' ? 'ok'
+  : K extends 'takeOpen' ? { ids: string[] }
+  : K extends 'discardDraft' | 'unlock' | 'lock' | 'forget' | 'policy' | 'links' | 'arrived' | 'offered' | 'ack' | 'approve' | 'decline' ? 'ok'
   : never;
 
 /** A `Message` guard the dispatcher uses to close over the input. `unknown`
