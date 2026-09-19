@@ -430,9 +430,13 @@ encrypted envelope at rest, the unlocked key in session memory that ends with th
 is signed there. Sending `$NOTIS` always asks in a prompt window; rep actions sign silently while unlocked,
 or ask too if you choose so in settings. The extension needs no hosted page and calls no home: it talks
 only to the node(s) you configure, starting from the seed list built into it — and to the testnet faucet when you
-ask it, after the browser grants that one origin at the press. Load the Chrome zip unpacked
-in developer mode, the Firefox zip as a temporary add-on from `about:debugging`; store listings are a
-separate step.
+ask it, after the browser grants that one origin at the press. **A Notis link lands in the extension**: a post's
+link stays a plain `https` link to the website, and one that opens a tab of its own is taken into the extension's
+workspace — the setting *a Notis link opens: on the site · here* turns that off — while a link followed inside a
+page stays on the site, where `add to workspace` hands the thread over. For that the extension asks, at install,
+for the site's post pages (`https://notis.fun/web/p/*`) and nothing else; its one script there holds no key and
+passes on a post id. Load the Chrome zip unpacked in developer mode, the Firefox zip (Firefox 128 or later) as a
+temporary add-on from `about:debugging`; store listings are a separate step.
 
 ### Light client
 
