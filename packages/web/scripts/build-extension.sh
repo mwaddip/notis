@@ -12,7 +12,13 @@ set -euo pipefail
 # Env overrides (dev/proof harnesses):
 #   VITE_NODES         JSON array of API bases the shell carries as notis-nodes
 #   VITE_FAUCET_BASE   absolute base for the shell's notis-faucet
-#   VITE_PUBLIC        origin+base for shareable links (empty by default)
+#   VITE_PUBLIC        origin+base the shell carries as `notis-public` — the
+#                      absolute URL a copied post link is composed against, the
+#                      base the bridge's content-script match is derived from,
+#                      and the base the background checks the bridge's sender
+#                      against. Unset takes the notis.fun default below; an
+#                      explicit empty value builds an extension with no bridge
+#                      and no `content_scripts`.
 #   NOTIS_EXTENSION_KEY    Chrome extension public key for a stable id
 # ---------------------------------------------------------------------------
 
@@ -34,7 +40,10 @@ export VITE_API_BASE=""
 export VITE_FAUCET_BASE=${VITE_FAUCET_BASE:-https://notis.fun/testnet/faucet}
 export VITE_PUBLIC_ORIGIN=${VITE_PUBLIC_ORIGIN:-https://notis.fun}
 export VITE_NODES=${VITE_NODES:-'["https://notis.fun/testnet/api"]'}
-export VITE_PUBLIC=${VITE_PUBLIC:-https://notis.fun/web/}
+# `-` (not `:-`): only unset falls back to the default; an explicit empty
+# string reaches the emitter as the empty base, so no bridge and no
+# `content_scripts` (WEB_INTERFACE → "The build's `notis-public`").
+export VITE_PUBLIC=${VITE_PUBLIC-https://notis.fun/web/}
 export VITE_IDENTITY=extension
 
 # Staging: a fresh temp dir every build — the 216-2 append trap is impossible
@@ -43,19 +52,26 @@ CHROME_DIR="${STAGE}/chrome"
 FIREFOX_DIR="${STAGE}/firefox"
 mkdir -p "$CHROME_DIR" "$FIREFOX_DIR"
 
-# Two Vite builds share output into a scratch — pages first, background lib
-# next. Copied to both staging dirs.
+# Three Vite builds share output into a scratch — pages first, background
+# lib next, then the bridge lib when a public base is set. The bridge is one
+# classic IIFE file with no `import`, so both browsers inject it at
+# `document_start` as they are (WEB_INTERFACE → The extension → "The manifest").
 SCRATCH=$(mktemp -d)
 NOTIS_EXT_OUTDIR="$SCRATCH" npx vite build --config vite.extension.config.ts
 NOTIS_EXT_OUTDIR="$SCRATCH" npx vite build --config vite.background.config.ts
+if [ -n "$VITE_PUBLIC" ]; then
+  NOTIS_EXT_OUTDIR="$SCRATCH" npx vite build --config vite.bridge.config.ts
+fi
 
 # Copy the built assets to both staging dirs.
 for target in "$CHROME_DIR" "$FIREFOX_DIR"; do
   cp -r "$SCRATCH"/* "$target/"
 done
 
-# Manifests — one template, two per-browser overlays.
-node extension/emit-manifests.mjs "$VERSION" "$CHROME_DIR" "$FIREFOX_DIR"
+# Manifests — one template, two per-browser overlays. The public base
+# derives the bridge's match pattern; the empty string emits no
+# `content_scripts` (WEB_INTERFACE → The extension → "The build's `notis-public`").
+node extension/emit-manifests.mjs "$VERSION" "$CHROME_DIR" "$FIREFOX_DIR" "$VITE_PUBLIC"
 
 # Icons — the four PNGs the manifest names.
 for target in "$CHROME_DIR" "$FIREFOX_DIR"; do
@@ -69,6 +85,12 @@ done
 # ---------------------------------------------------------------------------
 
 echo "==> Running extension build checks"
+
+# The bridge's expected match pattern is computed from the same module the
+# emitter uses — never a second implementation in shell. An empty
+# `notis-public` prints an empty line, and the check below reads that as
+# `no bridge, no content_scripts`.
+EXPECTED_PATTERN=$(node -e "import('./extension/match-pattern.mjs').then(m => process.stdout.write(m.matchPatternFor(process.argv[1]) ?? ''))" "$VITE_PUBLIC")
 
 for target in "$CHROME_DIR" "$FIREFOX_DIR"; do
   shell="$target/index.html"
@@ -113,6 +135,36 @@ for target in "$CHROME_DIR" "$FIREFOX_DIR"; do
   # The manifest parses and names the version.
   mv=$(node -p "JSON.parse(require('fs').readFileSync('$target/manifest.json','utf8')).version")
   [ "$mv" = "$VERSION" ] || { echo "FAIL: manifest version $mv != $VERSION"; exit 1; }
+
+  # The bridge and its content-script entry — WEB_INTERFACE → "The manifest".
+  # A non-empty `notis-public` builds the bridge and pins one entry whose
+  # `matches` is the pattern the module gives, whose `js` is `bridge.js`,
+  # whose `run_at` is `document_start`; an empty `notis-public` builds
+  # neither the file nor the key.
+  bridge="$target/bridge.js"
+  if [ -n "$VITE_PUBLIC" ]; then
+    [ -f "$bridge" ] || { echo "FAIL: $bridge missing"; exit 1; }
+    if grep -qE '^import |[^A-Za-z_]import[ (][^ ]' "$bridge"; then
+      echo "FAIL: \`import\` in $bridge — the IIFE build must not import at runtime"
+      exit 1
+    fi
+    # The build-time replacement placed the literal `notis-public` value into
+    # the built file. `grep -c 0 exits 1` is a `set -e` trap — read the count
+    # into a variable first.
+    grep_count=$(grep -Fc "$VITE_PUBLIC" "$bridge" || true)
+    [ "$grep_count" -gt 0 ] || { echo "FAIL: literal VITE_PUBLIC ($VITE_PUBLIC) missing in $bridge"; exit 1; }
+    if grep -Fq 'import.meta' "$bridge"; then
+      echo "FAIL: \`import.meta\` remains in $bridge — the build-time replacement did not happen"
+      exit 1
+    fi
+    cs=$(node -e "process.stdout.write(JSON.stringify(JSON.parse(require('fs').readFileSync('$target/manifest.json','utf8')).content_scripts ?? null))")
+    expected_cs=$(node -e "process.stdout.write(JSON.stringify([{matches:[process.argv[1]],js:['bridge.js'],run_at:'document_start'}]))" "$EXPECTED_PATTERN")
+    [ "$cs" = "$expected_cs" ] || { echo "FAIL: $target/manifest.json content_scripts = $cs, expected $expected_cs"; exit 1; }
+  else
+    [ ! -f "$bridge" ] || { echo "FAIL: $bridge present under an empty VITE_PUBLIC"; exit 1; }
+    cs=$(node -e "const m = JSON.parse(require('fs').readFileSync('$target/manifest.json','utf8')); process.stdout.write('content_scripts' in m ? 'present' : 'absent')")
+    [ "$cs" = 'absent' ] || { echo "FAIL: $target/manifest.json carries content_scripts under an empty VITE_PUBLIC"; exit 1; }
+  fi
 
   # Every href/src is relative — the <base> alone decides where they resolve.
   if grep -En 'href="/[^"]*"|src="/[^"]*"' "$shell" | grep -v '<base '; then

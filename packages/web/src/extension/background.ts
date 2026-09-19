@@ -8,16 +8,17 @@ import {
   type AppSnapshot, type SignAnswer, type SignHint, type SignRecord,
 } from './protocol';
 import { summarise, classifyLedger } from './policy';
+import { K_LINKS, K_OPEN_PREFIX, readLinksPref, type LinksPref } from './links';
 
 // The extension's identity service — WEB_INTERFACE → The extension. It holds
 // the envelope in `storage.local` and the unlocked seed in `storage.session`,
 // reloads what it needs from storage on every call, and never keeps state in a
 // worker global. Records the prompt page reads live in `storage.session`, so a
 // worker killed while the human reads the prompt loses nothing
-// (WEB_INTERFACE → "Three contexts, and what each may hold").
+// (WEB_INTERFACE → "The contexts, and what each may hold").
 
 // ---------------------------------------------------------------------------
-// Storage keys — WEB_INTERFACE → "Three contexts, and what each may hold".
+// Storage keys — WEB_INTERFACE → "The contexts, and what each may hold".
 // ---------------------------------------------------------------------------
 
 const K_ENVELOPE = 'notis.identity';
@@ -28,6 +29,14 @@ const K_DRAFT = 'notis.draft';
 const K_SIGN_PREFIX = 'notis.sign.';
 
 const HEX64 = /^[0-9a-f]{64}$/;
+const HEX64_ANYCASE = /^[0-9a-fA-F]{64}$/;
+
+/** The build's per-install shape — WEB_INTERFACE → The extension. `publicBase`
+ *  is the shell's `notis-public`, empty for a build with no bridge, checked
+ *  against the sender's URL for `arrived` and `offered`. */
+export interface BackgroundConfig {
+  publicBase: string;
+}
 
 // The prompt window's size — WEB_INTERFACE → The extension → "The prompt window".
 const PROMPT_WIDTH = 360;
@@ -43,9 +52,9 @@ const PROMPT_TOP = 80;    // the drop under the toolbar
 /** Wire the identity service into a `chrome`-shaped surface. `install()` is
  *  called at module load; the service reads back what it needs from storage on
  *  every message, so a worker restart mid-conversation is safe. */
-export function install(api: typeof chrome): void {
+export function install(api: typeof chrome, config: BackgroundConfig): void {
   api.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    void handle(api, message, sender).then((answer) => sendResponse(answer));
+    void handle(api, config, message, sender).then((answer) => sendResponse(answer));
     return true; // keep the channel open until the async handler resolves
   });
   api.runtime.onInstalled.addListener(() => { void sweepOrphanedRecords(api); });
@@ -56,8 +65,15 @@ export function install(api: typeof chrome): void {
 
 /** Dispatch one message to the identity service. `unknown` from the wire, so
  *  every branch reads from `Message`'s typed shape after `isMessage`. */
-async function handle(api: typeof chrome, message: unknown, sender: chrome.runtime.MessageSender): Promise<unknown> {
+async function handle(api: typeof chrome, config: BackgroundConfig, message: unknown, sender: chrome.runtime.MessageSender): Promise<unknown> {
   if (!isMessage(message)) return REFUSED_UNKNOWN;
+  // WEB_INTERFACE → The extension → "The messages" — every kind but the
+  // bridge's two is taken from the extension's own pages alone, checked first.
+  // A content script runs in the web page's process, so a message that claims
+  // to come from one is refused before it reaches its branch.
+  if (message.kind !== 'arrived' && message.kind !== 'offered' && !isFromExtensionPage(api, sender)) {
+    return { error: 'this kind of message is only accepted from the extension\'s own pages' };
+  }
   switch (message.kind) {
     case 'state': return await stateSnapshot(api);
     case 'draft': return await draft(api);
@@ -70,6 +86,10 @@ async function handle(api: typeof chrome, message: unknown, sender: chrome.runti
     case 'lock': return await lock(api);
     case 'forget': return await forget(api);
     case 'policy': return await setPolicy(api, message.karma);
+    case 'links': return await setLinksPref(api, message.opens);
+    case 'takeOpen': return await takeOpen(api, sender);
+    case 'arrived': return await arrived(api, config, message.id, sender);
+    case 'offered': return await offered(api, config, message.id, sender);
     case 'sign': return await signMessage(api, message.txBytesHex, message.txIdHex, message.hint ?? {});
     case 'ack': return await ack(api, message.id);
     case 'approve': return await approve(api, message.id, sender);
@@ -217,6 +237,103 @@ async function readPolicy(api: typeof chrome): Promise<'silent' | 'ask'> {
 async function setPolicy(api: typeof chrome, karma: 'silent' | 'ask'): Promise<'ok'> {
   await api.storage.local.set({ [K_POLICY]: karma });
   return 'ok';
+}
+
+// ---------------------------------------------------------------------------
+// Links into the extension — WEB_INTERFACE → "Links into the extension".
+// ---------------------------------------------------------------------------
+
+async function setLinksPref(api: typeof chrome, opens: unknown): Promise<'ok' | { error: string }> {
+  if (opens !== 'site' && opens !== 'here') return { error: 'links.opens must be "site" or "here"' };
+  await api.storage.local.set({ [K_LINKS]: opens });
+  return 'ok';
+}
+
+async function readStoredLinksPref(api: typeof chrome): Promise<LinksPref> {
+  const got = await api.storage.local.get(K_LINKS);
+  return readLinksPref(got[K_LINKS]);
+}
+
+/** The sender checks the bridge must pass — WEB_INTERFACE → The extension → "Links into the extension".
+ *  Returns the lower-cased id on success, or null on any failure. */
+function checkBridgeSender(
+  api: typeof chrome,
+  config: BackgroundConfig,
+  id: string,
+  sender: chrome.runtime.MessageSender,
+): string | null {
+  if (config.publicBase === '') return null;
+  if (sender.id !== api.runtime.id) return null;
+  if (typeof sender.tab?.id !== 'number') return null;
+  const url = typeof sender.url === 'string' ? sender.url : '';
+  if (!url.startsWith(config.publicBase + 'p/')) return null;
+  if (typeof id !== 'string' || !HEX64_ANYCASE.test(id)) return null;
+  return id.toLowerCase();
+}
+
+async function arrived(api: typeof chrome, config: BackgroundConfig, rawId: string, sender: chrome.runtime.MessageSender): Promise<'ok' | { error: string }> {
+  const id = checkBridgeSender(api, config, rawId, sender);
+  if (id === null) return { error: 'arrived is only accepted from the bridge' };
+  const pref = await readStoredLinksPref(api);
+  if (pref !== 'here') return 'ok'; // the bridge checked; the background is the authority
+  const raise = sender.tab?.active === true;
+  await openInWorkspace(api, id, raise, sender.tab!.id!);
+  return 'ok';
+}
+
+async function offered(api: typeof chrome, config: BackgroundConfig, rawId: string, sender: chrome.runtime.MessageSender): Promise<'ok' | { error: string }> {
+  const id = checkBridgeSender(api, config, rawId, sender);
+  if (id === null) return { error: 'offered is only accepted from the bridge' };
+  if (sender.tab?.active !== true) return { error: 'offered is only accepted from an active tab' };
+  await openInWorkspace(api, id, true, null);
+  return 'ok';
+}
+
+/** WEB_INTERFACE → "Both messages end in one act, landing the thread in the
+ *  workspace". A record rides `storage.session` under `notis.open.<id>`, so a
+ *  worker killed between record and landing loses nothing; the arrived tab is
+ *  filtered from the live page tabs. */
+async function openInWorkspace(api: typeof chrome, id: string, raise: boolean, arrivedTabId: number | null): Promise<void> {
+  const key = K_OPEN_PREFIX + id;
+  await api.storage.session.set({ [key]: { raise } });
+  const pageUrl = api.runtime.getURL('index.html');
+  const tabs = await api.tabs.query({ url: pageUrl + '*' });
+  const live = tabs.filter((t) => t.discarded !== true && t.id !== arrivedTabId);
+  if (live.length > 0) {
+    if (arrivedTabId !== null) await api.tabs.remove(arrivedTabId);
+    return; // for offered the record's appearance is the page's notice
+  }
+  if (arrivedTabId !== null) {
+    await api.tabs.update(arrivedTabId, { url: pageUrl });
+  } else {
+    await api.tabs.create({ url: pageUrl });
+  }
+}
+
+/** WEB_INTERFACE → "Links into the extension" — the tab holding
+ *  `notis.workspace` reads every pending record in one step, and the raise
+ *  happens on the sender's tab and window when any record said so. */
+async function takeOpen(api: typeof chrome, sender: chrome.runtime.MessageSender): Promise<{ ids: string[] } | { error: string }> {
+  const url = typeof sender.url === 'string' ? sender.url : '';
+  if (!url.startsWith(api.runtime.getURL('index.html'))) {
+    return { error: 'takeOpen is only accepted from the extension page' };
+  }
+  const all = await api.storage.session.get(null);
+  const keys: string[] = [];
+  const ids: string[] = [];
+  let anyRaise = false;
+  for (const [k, v] of Object.entries(all)) {
+    if (!k.startsWith(K_OPEN_PREFIX)) continue;
+    keys.push(k);
+    ids.push(k.substring(K_OPEN_PREFIX.length));
+    if (typeof v === 'object' && v !== null && (v as { raise?: unknown }).raise === true) anyRaise = true;
+  }
+  if (keys.length > 0) await api.storage.session.remove(keys);
+  if (anyRaise && sender.tab && typeof sender.tab.id === 'number' && typeof sender.tab.windowId === 'number') {
+    await api.tabs.update(sender.tab.id, { active: true });
+    await api.windows.update(sender.tab.windowId, { focused: true });
+  }
+  return { ids };
 }
 
 // ---------------------------------------------------------------------------
@@ -418,6 +535,14 @@ function isFromPromptPage(api: typeof chrome, sender: chrome.runtime.MessageSend
   return url.startsWith(api.runtime.getURL('prompt.html'));
 }
 
+/** WEB_INTERFACE → The extension → "The messages" — the extension's own
+ *  origin, `index.html` and `prompt.html` alike, with this extension's id. */
+function isFromExtensionPage(api: typeof chrome, sender: chrome.runtime.MessageSender): boolean {
+  if (sender.id !== api.runtime.id) return false;
+  const url = typeof sender.url === 'string' ? sender.url : '';
+  return url.startsWith(api.runtime.getURL(''));
+}
+
 // WEB_INTERFACE → The extension → "The prompt window" — top-right of the
 // last-focused browser window, under the toolbar; unplaced when the geometry
 // is unknown (a missing or non-numeric field).
@@ -455,9 +580,11 @@ function errorMessage(e: unknown): string {
 
 // Auto-install at module load — the background is loaded by the browser's own
 // runtime, so listeners must register before the first event. Tests build the
-// module through a fake `chrome` and call install(api) themselves; the guard
-// keeps them from double-installing here.
+// module through a fake `chrome` and call install(api, config) themselves; the
+// guard keeps them from double-installing here.
 if (typeof globalThis !== 'undefined' && typeof (globalThis as { chrome?: unknown }).chrome !== 'undefined') {
-  install((globalThis as unknown as { chrome: typeof chrome }).chrome);
+  install((globalThis as unknown as { chrome: typeof chrome }).chrome, {
+    publicBase: import.meta.env.VITE_PUBLIC ?? '',
+  });
 }
 

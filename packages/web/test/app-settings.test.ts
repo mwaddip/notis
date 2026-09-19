@@ -7,6 +7,7 @@ import type {
 } from '../src/api/dto';
 import { KEY_LAYOUT, prefs, setTheme } from '../src/prefs';
 import { karmaResult } from './karma-fixture';
+import type { AppIdentity } from '../src/model/state';
 
 // The @settings window driven from the App — the header control opens it, its
 // bar reads `settings` with a disabled ↻, its body holds the theme row, a raise
@@ -148,6 +149,59 @@ describe('the App settings control', () => {
     expect(wordsAfter.map((w) => w.getAttribute('aria-pressed'))).toEqual(['false', 'false', 'false', 'true']);
     expect(document.activeElement).toBe(off);
     expect(document.documentElement.getAttribute('data-idtint')).toBe('off');
+  });
+
+  // WEB_INTERFACE → The settings window → "The links row" — an identity carrying
+  // both hooks makes the row stand; a press reaches idm.setLinks; a re-render
+  // shows the new pressed word. Driven from the App over a fake identity whose
+  // setLinks really moves what links() answers, so the ctx path is exercised.
+  it('an identity carrying both links hooks: the row stands, a press reaches idm.setLinks, and the re-render shows the new pressed word', async () => {
+    document.body.innerHTML = '';
+    const appbar = document.createElement('header');
+    const workspace = document.createElement('div'); workspace.className = 'workspace';
+    const feed = document.createElement('section'); feed.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    workspace.append(feed, panes);
+    document.body.append(appbar, workspace);
+    let stored: 'site' | 'here' = 'here';
+    const idm: AppIdentity = {
+      current: () => null,
+      sign: async () => ({ signature: '' }),
+      draft: async () => ({ pubKeyHex: '' }),
+      create: async () => ({ pubKeyHex: '' }),
+      discardDraft: () => {},
+      inspectFile: async () => ({ kind: 'clear', pubKeyHex: '' }),
+      importFile: async () => ({ pubKeyHex: '' }),
+      exportFile: async () => '',
+      unlock: async () => {},
+      lock: async () => {},
+      forget: async () => {},
+      backedUp: () => false,
+      onChange: () => {},
+      links: () => stored,
+      setLinks: async (v) => { stored = v; },
+    };
+    const app = new App(fakeApi(), undefined, idm);
+    app.mount(appbar, feed, panes);
+    appbar.querySelector<HTMLElement>('button[aria-label="open settings"]')!.click();
+    await flush();
+
+    // The row stands, its two words with the "here" default pressed.
+    const linksRow = (): HTMLElement | undefined => [...panes.querySelectorAll<HTMLElement>('.winbody .row')]
+      .find((r) => r.querySelector('label')?.textContent === 'a Notis link opens');
+    expect(linksRow()).toBeDefined();
+    const initialButtons = [...linksRow()!.querySelectorAll<HTMLButtonElement>('.seg .word')];
+    expect(initialButtons.map((b) => b.textContent?.trim())).toEqual(['on the site', 'here']);
+    expect(initialButtons.map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'true']);
+
+    // A press on "on the site" reaches idm.setLinks, which moves the stored
+    // value that links() reads.
+    initialButtons[0]!.click();
+    await flush();
+    expect(stored).toBe('site');
+    // The App re-rendered @settings, and the row now reads the new pressed word.
+    const afterButtons = [...linksRow()!.querySelectorAll<HTMLButtonElement>('.seg .word')];
+    expect(afterButtons.map((b) => b.getAttribute('aria-pressed'))).toEqual(['true', 'false']);
   });
 
   it('notis.layout holds @settings after an open, and a fresh App restores the window', async () => {

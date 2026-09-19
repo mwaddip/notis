@@ -644,10 +644,10 @@ header .spacer { flex: 1 1 auto; }
 /* ---------- the extension's prompt window ---------- */
 /* WEB_INTERFACE → The extension → "The prompt window": a padded column filling
    the popup — the lines at the top in the page face, the commit pair bottom-
-   aligned right (HOUSE_STYLE → Interaction → "A box marks a commit pair"). The
-   first line is a `<div>`, not an `<h1>` — the App's heading rules must not
-   apply. The target's key or id renders whole, in mono, wrapped, so a look-
-   alike prefix cannot pass unnoticed. */
+   aligned right (HOUSE_STYLE → Interaction → "A box marks a commit pair and a
+   surface's primary action"). The first line is a `<div>`, not an `<h1>` — the
+   App's heading rules must not apply. The target's key or id renders whole, in
+   mono, wrapped, so a look-alike prefix cannot pass unnoticed. */
 main#prompt {
   display: flex; flex-direction: column;
   min-height: 100vh; box-sizing: border-box;

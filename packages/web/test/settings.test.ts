@@ -213,6 +213,80 @@ describe('settings window — the sign-each-rep-action row', () => {
   });
 });
 
+describe('settings window — the a-Notis-link-opens row', () => {
+  it('is absent when links/setLinks are — the in-page module (the web build)', () => {
+    expect(rowField(settingsBody(handlers()), 'a Notis link opens')).toBeNull();
+  });
+
+  it('one hook alone does not render the row', () => {
+    const l = vi.fn(() => 'here' as const);
+    const withGet = settingsBody(handlers({ links: l }));
+    expect(rowField(withGet, 'a Notis link opens')).toBeNull();
+    const sl = vi.fn(async () => {});
+    const withSet = settingsBody(handlers({ setLinks: sl }));
+    expect(rowField(withSet, 'a Notis link opens')).toBeNull();
+  });
+
+  it('renders when both are present, with the label, the two words and the hint', () => {
+    const l = vi.fn(() => 'here' as const);
+    const sl = vi.fn(async () => {});
+    const body = settingsBody(handlers({ links: l, setLinks: sl }));
+    const field = rowField(body, 'a Notis link opens');
+    expect(field).not.toBeNull();
+    const buttons = [...(field?.querySelectorAll('button') ?? [])];
+    expect(buttons.map((b) => b.textContent?.trim())).toEqual(['on the site', 'here']);
+    const hint = field?.querySelector('.hint');
+    expect(hint?.textContent).toBe(
+      'a link that opens a tab of its own lands in this workspace. a link followed inside a page stays there — its add to workspace brings it here.',
+    );
+  });
+
+  it('aria-pressed follows links(): "here" pressed by default, "site" pressed after', () => {
+    let stored: 'site' | 'here' = 'here';
+    const l = (): 'site' | 'here' => stored;
+    const sl = async (v: 'site' | 'here'): Promise<void> => { stored = v; };
+    const first = settingsBody(handlers({ links: l, setLinks: sl }));
+    const b1 = [...rowField(first, 'a Notis link opens')!.querySelectorAll('button')];
+    expect(b1[0]!.getAttribute('aria-pressed')).toBe('false');
+    expect(b1[1]!.getAttribute('aria-pressed')).toBe('true');
+    stored = 'site';
+    const next = settingsBody(handlers({ links: l, setLinks: sl }));
+    const b2 = [...rowField(next, 'a Notis link opens')!.querySelectorAll('button')];
+    expect(b2[0]!.getAttribute('aria-pressed')).toBe('true');
+    expect(b2[1]!.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('a press on each word calls setLinks with site / here', () => {
+    const l = vi.fn(() => 'here' as const);
+    const sl = vi.fn(async () => {});
+    const body = settingsBody(handlers({ links: l, setLinks: sl }));
+    const buttons = [...rowField(body, 'a Notis link opens')!.querySelectorAll('button')];
+    buttons[0]!.click();
+    expect(sl).toHaveBeenLastCalledWith('site');
+    buttons[1]!.click();
+    expect(sl).toHaveBeenLastCalledWith('here');
+  });
+
+  it('stands AFTER the policy row when both render, and last when the policy row is absent', () => {
+    // Both hooks present — the links row follows the policy row in DOM order.
+    const withBoth = settingsBody(handlers({
+      policy: () => 'silent',
+      setPolicy: async () => {},
+      links: () => 'here',
+      setLinks: async () => {},
+    }));
+    const labelsBoth = [...withBoth.querySelectorAll<HTMLElement>('.row label')].map((l) => l.textContent);
+    const policyAt = labelsBoth.indexOf('sign each rep action');
+    const linksAt = labelsBoth.indexOf('a Notis link opens');
+    expect(policyAt).toBeGreaterThan(-1);
+    expect(linksAt).toBeGreaterThan(policyAt);
+    // Only the links hooks — the links row is the last row.
+    const linksOnly = settingsBody(handlers({ links: () => 'here', setLinks: async () => {} }));
+    const labelsOnly = [...linksOnly.querySelectorAll<HTMLElement>('.row label')].map((l) => l.textContent);
+    expect(labelsOnly[labelsOnly.length - 1]).toBe('a Notis link opens');
+  });
+});
+
 describe('settings window — no faucet row', () => {
   // The faucet's base is the build's value, never a preference
   // (WEB_INTERFACE → The settings window → "No `faucet` row and no `arrangement`

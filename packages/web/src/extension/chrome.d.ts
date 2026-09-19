@@ -8,7 +8,7 @@ declare namespace chrome {
   namespace runtime {
     interface MessageSender {
       url?: string;
-      tab?: { id?: number };
+      tab?: { id?: number; active?: boolean; windowId?: number };
       id?: string;
     }
     interface OnMessageEvent {
@@ -63,10 +63,13 @@ declare namespace chrome {
       id?: number;
       url?: string;
       windowId?: number;
+      discarded?: boolean;
+      active?: boolean;
     }
     function query(info: { url?: string | string[] }): Promise<Tab[]>;
-    function update(tabId: number, props: { active?: boolean }): Promise<Tab>;
+    function update(tabId: number, props: { active?: boolean; url?: string }): Promise<Tab>;
     function create(props: { url: string; active?: boolean }): Promise<Tab>;
+    function remove(tabId: number): Promise<void>;
     interface OnRemovedEvent {
       addListener(listener: (tabId: number) => void): void;
     }
@@ -110,5 +113,11 @@ declare namespace chrome {
   namespace permissions {
     function request(perms: { origins?: string[]; permissions?: string[] }): Promise<boolean>;
     function contains(perms: { origins?: string[]; permissions?: string[] }): Promise<boolean>;
+  }
+
+  namespace extension {
+    // WEB_INTERFACE → The extension → "A takeover needs a tab created for the link"
+    // — the bridge does nothing in a private window.
+    const inIncognitoContext: boolean;
   }
 }

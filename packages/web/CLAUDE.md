@@ -70,7 +70,22 @@ App as the extension's own page, the identity held by the background (the envelo
 unlocked seed in `storage.session`, never a worker global), every write signed there through the
 `Signer` seam's proxy; credits always prompted in the prompt window, rep silent while unlocked unless the
 *sign each rep action* row says ask; the `notSigned` arm and the fourth ending — the composer still open;
-the shell's `notis-nodes` seed list and `notis-public` link origin; one manifest template → two zips. **The credits
+the shell's `notis-nodes` seed list and `notis-public` link origin; one manifest template → two zips. **Links into
+the extension** (`WEB_INTERFACE → The extension → "Links into the extension"`, `→ The way into the workspace`): a
+post's link stays the website's, and a reader who runs the extension follows it into the extension's workspace. **The
+bridge** (`src/extension/bridge.ts`, built as `bridge.js`) is the extension's one content script, declared for
+`<notis-public>p/*` with the port dropped; it holds nothing and sends the background two messages. `arrived { id }`
+leaves when a Notis link opened a tab of its own — `history.length === 1`, a `navigate` entry, outside a private
+window — and the preference *a Notis link opens* reads `here` (the default; `notis.links` in `storage.local`, the
+settings window's row, read from storage by the page and by the bridge, never from `state`). `offered { id }` leaves
+when the hosted page's `add to workspace` offers the thread: `Tabs.offer` dispatches a cancelable `notis:open` event on
+`document`, synchronously in the press and before any `await`, and the bridge cancels it under the browser's user
+activation — a reader without the extension sees no difference. Both end in the background's `openInWorkspace`: a
+pending record `notis.open.<id>` in `storage.session`, the arriving tab closed when a page tab is open and pointed
+at the page when none is; the page's lock holder takes the waiting ids through `takeOpen`
+(`src/extension/handover.ts` wraps the injected `Tabs`) and opens each by the placement rule from the feed. **The
+background takes every message but `arrived` and `offered` from the extension's own pages alone**, checked first —
+the bridge runs in a web page's process. **The credits
 send** (`WEB_INTERFACE → The wallet window`, `→ The wallet`, `→ The faucet step`): the `@wallet` window's `balance`
 and `send` rows — the balance in gold, a send to a key or an `@handle` resolved at the press, the confirm row, the
 flight in the row, the row standing while a send's own line stands — on a `buildSend` frozen like the others, the ledger's two views split by kind; the faucet's `$NOTIS` step
@@ -287,28 +302,53 @@ intended values and every `href` and `src` is relative — `build-release.sh` ch
 
 ```bash
 bash packages/web/scripts/build-extension.sh          # notis-extension-<ver>-chrome.zip and -firefox.zip in the repo root
-VITE_NODES='["http://localhost:3300"]' VITE_FAUCET_BASE='http://localhost:3103/faucet' VITE_PUBLIC='' bash packages/web/scripts/build-extension.sh   # devnet values, for the proof
+VITE_NODES='["http://127.0.0.1:19740"]' VITE_FAUCET_BASE='http://127.0.0.1:19750/faucet' VITE_PUBLIC='http://localhost:19760/web/' VITE_PUBLIC_ORIGIN='' bash packages/web/scripts/build-extension.sh   # devnet values, for the proof
 ```
 
-Two Vite builds — the pages (`index.html`, `prompt.html`) through `vite.extension.config.ts`, the background
-as one IIFE file through `vite.background.config.ts` — then `extension/emit-manifests.mjs` writes each
-browser's `manifest.json` from `extension/manifest.template.json`, the icons under `extension/icons/` are
-copied in, the checks run (no inline `<script>`, `<base href="/">`, the two metas at the build's values, no
-`import` in `background.js`, the manifests parse, every reference relative, `web-ext lint` clean on the Firefox
-stage — its two `innerHTML` warnings are the static inline mark), and the two zips are made from a fresh
+`VITE_PUBLIC` falls back to `https://notis.fun/web/` only when it is **unset**; an explicit `VITE_PUBLIC=''` builds
+an extension with no bridge, no `content_scripts` and no links row.
+
+Three Vite builds — the pages (`index.html`, `prompt.html`) through `vite.extension.config.ts`, the background
+as one IIFE file through `vite.background.config.ts`, and, when `VITE_PUBLIC` is not empty, the bridge as one IIFE
+file through `vite.bridge.config.ts` — then `extension/emit-manifests.mjs <version> <chrome-outdir>
+<firefox-outdir> <public-base>` writes each browser's `manifest.json` from `extension/manifest.template.json`, the
+bridge's one `content_scripts` entry among it — its match from `extension/match-pattern.mjs`, the port dropped,
+since Firefox silently drops a match that carries one — the icons under `extension/icons/` are
+copied in, the checks run (no inline `<script>`, `<base href="/">`, the metas at the build's values, no
+`import` in `background.js` or `bridge.js`, the literal `notis-public` in `bridge.js`, the manifests parse, their
+one content-script match equal to the pattern the same module derives — and neither file nor key under an empty
+`VITE_PUBLIC` — every reference relative, `web-ext lint` clean on the Firefox
+stage — its three warnings are the static inline mark's two `innerHTML` and the data-collection-permissions
+notice), and the two zips are made from a fresh
 stage. The Chrome manifest's `key` is the tracked RSA public key in the emitter, so the extension id is stable
-(`kafmnekclgkjnkhnbafdoefnlllboddm`); `NOTIS_EXTENSION_KEY` overrides it. `main.ts` takes the identity
-implementation from `VITE_IDENTITY` (`page` | `extension`), and `build-release.sh` checks the web bundle
+(`kafmnekclgkjnkhnbafdoefnlllboddm`); `NOTIS_EXTENSION_KEY` overrides it; Firefox's minimum is 128. `main.ts` takes
+the identity implementation from `VITE_IDENTITY` (`page` | `extension`) and wraps the `Tabs` it hands the App in the
+extension build alone, and `build-release.sh` checks the web bundle
 carries no `chrome.` reference. **The extension's source lives in `src/extension/`** — `background.ts`,
-`proxy.ts`, `protocol.ts`, `policy.ts`, `prompt.ts`, `chrome.d.ts` (the `chrome.*` surface used, no
-`@types/chrome`) — with `test/fake-chrome.ts` for the Node tests.
+`bridge.ts`, `handover.ts`, `links.ts`, `proxy.ts`, `protocol.ts`, `policy.ts`, `prompt.ts`, `prompt-summary.ts`,
+`chrome.d.ts` (the `chrome.*` surface used, no `@types/chrome`) — with `test/fake-chrome.ts` and `test/fake-tabs.ts`
+for the Node tests.
 
 **The proof** is `scripts/extension-check/run.mjs`: headless Chromium over raw CDP (the cached Chrome for
 Testing; no Playwright) loading the unpacked Chrome build, driving the twelve steps of the extension section
 through the real UI — the composer, the like word, the profile and wallet rows, the prompt window — the eleventh
 the wallet's faucet press asking the browser for the origin and refused, the twelfth in four measured parts (the
 same press granted and the faucet's `$NOTIS` step, a send approved at the prompt, a send declined, a send after a
-lock pressed in the profile) — against a local
+lock pressed in the profile) — **and, with `--public <origin+base>` and `--web-dist <dir>`, the four steps of links
+into the extension**: the harness serves a web build made for that base itself (`<base>p/<64 hex>` answering the
+shell, a plain page with a same-tab and a `target="_blank"` link), refuses a shell whose `notis-public` or a manifest
+whose one match differs from `--public`, sets the preference through the settings row, and presses with
+`Input.dispatchMouseEvent` — the bridge takes an offer only under the browser's user activation. 13 the button
+under `on the site`; 14 the takeover with a workspace tab open, three runs, one after a ≥ 32 s idle — the arriving
+tab destroyed (the event index taken **before** `Target.createTarget`: the tab is gone in tens of milliseconds),
+exactly one extension page left, the static server's request log as the outside measure of how far the hosted page
+got; 15 the takeover with none open, the tab becoming the workspace; 16 left alone — a same-tab link, a reload, back
+from the tab that became the workspace (two backs at one column: the workspace's own screen entry first), and a
+`target="_blank"` link as the control, found by its `openerId`; last, the bridge-less arm in a
+`Target.createBrowserContext` context, where the press switches the hosted page in place. Without the two flags
+13–16 read `NOT RUN`. The web build for it: `VITE_WEB_BASE=/web/ VITE_API_BASE=<the devnet node's origin>
+VITE_FAUCET_BASE='' VITE_NODES='[]' VITE_PUBLIC='' VITE_PUBLIC_ORIGIN='' npx vite build --outDir <scratch>`; the
+extension with `VITE_PUBLIC=<--public>`. All of it against a local
 devnet: `node packages/node/scripts/dev.mjs`, `tools/faucet/dist` with the devnet faucet key
 (`tools/e2e/src/identities.ts`, devnet-only and public by design), `promote.mjs` for a throwaway member,
 the extension built with devnet values, the faucet's base among them — the harness refuses to run when the built
@@ -325,9 +365,11 @@ the throwaway's rep to last the run.
 
 ⛔ **A proof stack is stopped by PID, never by name.** This machine's `dagsocial-miner` user unit runs the same
 `packages/node/scripts/miner.mjs` against testnet, and `pkill -f miner.mjs` kills it — it did, twice on 2026-09-17,
-stalling the chain for an hour and three quarters and then for forty minutes. Resolve the stack's pids from the ports
-the recipe names (`ss -ltnp`) and `kill` those; after the last run, `systemctl --user is-active dagsocial-miner` must
-print `active`. ⚠ Devnet's storage rent period is a hundred blocks: a box that sits through it is charged
+stalling the chain for an hour and three quarters and then for forty minutes. Start each process of the stack with
+`nohup … < /dev/null & echo $! > <name>.pid; disown %+`, check the pidfile names the process you mean
+(`tr '\0' ' ' < /proc/<pid>/cmdline`) and `kill` from the pidfiles; a listener left on a port the recipe owns is
+resolved with `ss -ltnp`. Never `pkill`, never `pgrep -f`, never a grep over `/proc/*/environ`. After the last run,
+`systemctl --user is-active dagsocial-miner` must print `active`. ⚠ Devnet's storage rent period is a hundred blocks: a box that sits through it is charged
 `STORAGE_RENT_PER_BYTE` per record byte at the producer's next collection, so a long run at a fast pace shows a
 throwaway's grant shrunk — keep a run short, and start the faucet with `FAUCET_CREDIT_AMOUNT=10000000000` (100
 $NOTIS, what step 12a reads) and `FAUCET_BOND_AMOUNT=250`.

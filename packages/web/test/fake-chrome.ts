@@ -36,6 +36,7 @@ export interface FakeChrome {
   windows: {
     created: chrome.windows.CreateProps[];
     removed: number[];
+    focused: Array<[number, { focused?: boolean }]>;
     setNextId(id: number): void;
     /** The Window returned by `getLastFocused` — a plain object with any of
      *  `left`, `top`, `width`, `height` set (missing or non-numeric ⇒ the
@@ -45,8 +46,9 @@ export interface FakeChrome {
   };
   tabs: {
     queried: Array<{ url?: string | string[] }>;
-    updated: Array<[number, { active?: boolean }]>;
+    updated: Array<[number, { active?: boolean; url?: string }]>;
     created: Array<{ url: string }>;
+    removed: number[];
     setQueryResult(result: chrome.tabs.Tab[]): void;
   };
   permissions: {
@@ -60,6 +62,9 @@ export interface FakeChrome {
 /** Build a fake chrome API. Two instances built with the same `fixture` share
  *  storage — the worker-restart scenario. */
 export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-extension://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/'): FakeChrome {
+  // The one runtime id both the api and every default sender read — the guard
+  // WEB_INTERFACE → The extension → "The messages" fires on `sender.id`.
+  const runtimeId = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
   const state: FakeChrome = {
     api: {} as unknown as typeof chrome,
     storage: {
@@ -68,7 +73,7 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
       fireChange: (area, key, oldValue, newValue) => fireChange(fixture, area, key, oldValue, newValue),
     },
     send: async (message, sender) => {
-      const s: chrome.runtime.MessageSender = sender ?? {};
+      const s: chrome.runtime.MessageSender = sender ?? { id: runtimeId, url: origin + 'index.html' };
       for (const listener of messageListeners) {
         const r = await new Promise<unknown>((resolve) => {
           let responded = false;
@@ -91,6 +96,7 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
     windows: {
       created: [],
       removed: [],
+      focused: [],
       setNextId: (id) => { nextWindowId = id; },
       setLastFocused: (win) => { lastFocused = win; },
     },
@@ -98,6 +104,7 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
       queried: [],
       updated: [],
       created: [],
+      removed: [],
       setQueryResult: (result) => { queryResult = result; },
     },
     permissions: {
@@ -183,7 +190,7 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
       } as unknown as chrome.runtime.OnStartupEvent,
       async sendMessage(_message: unknown) { return undefined; },
       getURL(path: string) { return origin + path.replace(/^\/+/, ''); },
-      id: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+      id: runtimeId,
     },
     storage: {
       local: storageArea(fixture.local, 'local'),
@@ -215,6 +222,9 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
         state.tabs.created.push({ url: props.url });
         return { id: nextWindowId++, url: props.url };
       },
+      async remove(tabId) {
+        state.tabs.removed.push(tabId);
+      },
       onRemoved: {
         addListener(listener: (tabId: number) => void) { onTabRemovedListeners.push(listener); },
       } as unknown as chrome.tabs.OnRemovedEvent,
@@ -225,7 +235,7 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
         const id = nextWindowId++;
         return { id };
       },
-      async update(_id, _props) { return {}; },
+      async update(id, props) { state.windows.focused.push([id, props]); return {}; },
       async remove(id) { state.windows.removed.push(id); },
       async getLastFocused() {
         if (lastFocused === null) throw new Error('no last-focused window');
@@ -246,6 +256,9 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
         return nextRequestOutcome;
       },
       async contains() { return false; },
+    },
+    extension: {
+      inIncognitoContext: false,
     },
   };
 

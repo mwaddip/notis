@@ -420,3 +420,181 @@ describe('the way in — tabs', () => {
     expect(JSON.stringify(drive.state.workspace.columns.map((c) => c.wins))).toBe(before);
   });
 });
+
+describe('the way in — the extension offer', () => {
+  it('offer taken: the report reads, no announce, no heldElsewhere, no switch in place', async () => {
+    const { appbar, feed, panes } = mountShell();
+    const { fakeTabs } = await import('./fake-tabs');
+    const tabs = fakeTabs();
+    tabs.setOffer(true);
+    const app = new App(fakeApi(), undefined, undefined, undefined, tabs);
+    app.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
+    await flush();
+    await flush();
+    const urlBefore = location.pathname;
+
+    const button = appbar.querySelector('[aria-label="add this thread to your workspace"]') as HTMLButtonElement;
+    const origClose = window.close.bind(window);
+    let closes = 0;
+    window.close = () => { closes += 1; };
+    try {
+      button.click();
+    } finally {
+      window.close = origClose;
+    }
+
+    expect(tabs.offered).toEqual([P1]);
+    expect(tabs.calls).toEqual(['offer']);
+    expect(tabs.announced).toEqual([]);
+    const report = panes.querySelector('.report');
+    expect(report?.textContent).toContain('added to your workspace');
+    // The page did not switch in place: the workspace stays standalone and the URL is unchanged.
+    expect(panes.closest('.workspace')?.classList.contains('standalone')).toBe(true);
+    expect(location.pathname).toBe(urlBefore);
+    // history.length is 1 in this fresh mount, so close was called.
+    if (history.length === 1) expect(closes).toBe(1);
+  });
+
+  it('offer taken with history.length > 1: window.close is not called', async () => {
+    const { appbar, feed, panes } = mountShell();
+    const { fakeTabs } = await import('./fake-tabs');
+    const tabs = fakeTabs();
+    tabs.setOffer(true);
+    const app = new App(fakeApi(), undefined, undefined, undefined, tabs);
+    app.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
+    await flush();
+    await flush();
+    // Push a second entry so history.length is at least 2 at the click.
+    history.pushState({ id: P1 }, '', location.href);
+    expect(history.length).toBeGreaterThan(1);
+
+    const button = appbar.querySelector('[aria-label="add this thread to your workspace"]') as HTMLButtonElement;
+    const origClose = window.close.bind(window);
+    let closes = 0;
+    window.close = () => { closes += 1; };
+    try {
+      button.click();
+    } finally {
+      window.close = origClose;
+    }
+
+    expect(tabs.offered).toEqual([P1]);
+    expect(closes).toBe(0);
+    // Report still stands.
+    const report = panes.querySelector('.report');
+    expect(report?.textContent).toContain('added to your workspace');
+  });
+
+  it('the offer runs inside the press — synchronously, before heldElsewhere', async () => {
+    const { appbar, feed, panes } = mountShell();
+    const { fakeTabs } = await import('./fake-tabs');
+    const tabs = fakeTabs();
+    tabs.setOffer(false);
+    tabs.setHeldElsewhere(true);
+    const app = new App(fakeApi(), undefined, undefined, undefined, tabs);
+    app.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
+    await flush();
+    await flush();
+
+    const button = appbar.querySelector('[aria-label="add this thread to your workspace"]') as HTMLButtonElement;
+    const origClose = window.close.bind(window);
+    window.close = () => {};
+    try {
+      button.click();
+      // Synchronously after the press, before any await in the test: the fake
+      // has already recorded the offer with the id.
+      expect(tabs.offered).toEqual([P1]);
+      // The offer is recorded before heldElsewhere.
+      const iOffer = tabs.calls.indexOf('offer');
+      const iHeld = tabs.calls.indexOf('heldElsewhere');
+      expect(iOffer).toBeGreaterThanOrEqual(0);
+      if (iHeld !== -1) expect(iOffer).toBeLessThan(iHeld);
+    } finally {
+      window.close = origClose;
+    }
+    await flush();
+    await flush();
+  });
+
+  it('the offered id is the current root — after a strip re-root, the new root', async () => {
+    const { appbar, feed, panes } = mountShell();
+    const { fakeTabs } = await import('./fake-tabs');
+    const tabs = fakeTabs();
+    tabs.setOffer(false);
+    const app = new App(fakeApi(), undefined, undefined, undefined, tabs);
+    const drive = app as unknown as {
+      start(a: HTMLElement, b: HTMLElement, c: HTMLElement, m: { kind: 'standalone'; id: string; base: string }): void;
+      openThread(id: string, origin: { from: 'pane'; ci: number }): void;
+    };
+    drive.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
+    await flush();
+    await flush();
+
+    drive.openThread(R1, { from: 'pane', ci: 0 });
+    await flush();
+
+    const button = appbar.querySelector('[aria-label="add this thread to your workspace"]') as HTMLButtonElement;
+    const origClose = window.close.bind(window);
+    window.close = () => {};
+    try {
+      button.click();
+    } finally {
+      window.close = origClose;
+    }
+
+    expect(tabs.offered).toEqual([R1]);
+  });
+
+  it('with no Tabs injected: nothing is offered and the press switches in place', async () => {
+    const { appbar, feed, panes } = mountShell();
+    const app = new App(fakeApi());
+    app.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
+    await flush();
+    await flush();
+
+    const button = appbar.querySelector('[aria-label="add this thread to your workspace"]') as HTMLButtonElement;
+    button.click();
+    await flush();
+    await flush();
+
+    // No tabs to observe; the switch in place is asserted by the workspace class dropping.
+    expect(panes.closest('.workspace')?.classList.contains('standalone')).toBe(false);
+    expect(appbar.classList.contains('hdr-workspace')).toBe(true);
+  });
+
+  it('real DOM — a document listener stands in for the bridge, cancels notis:open with the id, the press hands over', async () => {
+    const { appbar, feed, panes } = mountShell();
+    // The real createTabs — no fake, so the offer path goes through the real
+    // document.dispatchEvent and the bridge stand-in listens for it.
+    const { createTabs } = await import('../src/tabs');
+    const tabs = createTabs();
+    const app = new App(fakeApi(), undefined, undefined, undefined, tabs);
+    app.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
+    await flush();
+    await flush();
+
+    const details: unknown[] = [];
+    const bridge = (e: Event): void => {
+      const ce = e as CustomEvent<unknown>;
+      details.push(ce.detail);
+      e.preventDefault();
+    };
+    document.addEventListener('notis:open', bridge);
+
+    const button = appbar.querySelector('[aria-label="add this thread to your workspace"]') as HTMLButtonElement;
+    const origClose = window.close.bind(window);
+    window.close = () => {};
+    try {
+      button.click();
+    } finally {
+      window.close = origClose;
+      document.removeEventListener('notis:open', bridge);
+    }
+
+    expect(details).toEqual([P1]);
+    // The handover ran — the bar's report reads and the workspace stays standalone.
+    const report = panes.querySelector('.report');
+    expect(report?.textContent).toContain('added to your workspace');
+    expect(panes.closest('.workspace')?.classList.contains('standalone')).toBe(true);
+  });
+});
