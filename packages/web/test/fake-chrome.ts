@@ -62,6 +62,9 @@ export interface FakeChrome {
 /** Build a fake chrome API. Two instances built with the same `fixture` share
  *  storage — the worker-restart scenario. */
 export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-extension://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/'): FakeChrome {
+  // The one runtime id both the api and every default sender read — the guard
+  // WEB_INTERFACE → The extension → "The messages" fires on `sender.id`.
+  const runtimeId = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
   const state: FakeChrome = {
     api: {} as unknown as typeof chrome,
     storage: {
@@ -70,7 +73,7 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
       fireChange: (area, key, oldValue, newValue) => fireChange(fixture, area, key, oldValue, newValue),
     },
     send: async (message, sender) => {
-      const s: chrome.runtime.MessageSender = sender ?? {};
+      const s: chrome.runtime.MessageSender = sender ?? { id: runtimeId, url: origin + 'index.html' };
       for (const listener of messageListeners) {
         const r = await new Promise<unknown>((resolve) => {
           let responded = false;
@@ -187,7 +190,7 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
       } as unknown as chrome.runtime.OnStartupEvent,
       async sendMessage(_message: unknown) { return undefined; },
       getURL(path: string) { return origin + path.replace(/^\/+/, ''); },
-      id: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+      id: runtimeId,
     },
     storage: {
       local: storageArea(fixture.local, 'local'),

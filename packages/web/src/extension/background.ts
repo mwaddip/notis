@@ -67,6 +67,13 @@ export function install(api: typeof chrome, config: BackgroundConfig): void {
  *  every branch reads from `Message`'s typed shape after `isMessage`. */
 async function handle(api: typeof chrome, config: BackgroundConfig, message: unknown, sender: chrome.runtime.MessageSender): Promise<unknown> {
   if (!isMessage(message)) return REFUSED_UNKNOWN;
+  // WEB_INTERFACE → The extension → "The messages" — every kind but the
+  // bridge's two is taken from the extension's own pages alone, checked first.
+  // A content script runs in the web page's process, so a message that claims
+  // to come from one is refused before it reaches its branch.
+  if (message.kind !== 'arrived' && message.kind !== 'offered' && !isFromExtensionPage(api, sender)) {
+    return { error: 'this kind of message is only accepted from the extension\'s own pages' };
+  }
   switch (message.kind) {
     case 'state': return await stateSnapshot(api);
     case 'draft': return await draft(api);
@@ -526,6 +533,14 @@ function isRecord(v: unknown): v is SignRecord {
 function isFromPromptPage(api: typeof chrome, sender: chrome.runtime.MessageSender): boolean {
   const url = typeof sender.url === 'string' ? sender.url : '';
   return url.startsWith(api.runtime.getURL('prompt.html'));
+}
+
+/** WEB_INTERFACE → The extension → "The messages" — the extension's own
+ *  origin, `index.html` and `prompt.html` alike, with this extension's id. */
+function isFromExtensionPage(api: typeof chrome, sender: chrome.runtime.MessageSender): boolean {
+  if (sender.id !== api.runtime.id) return false;
+  const url = typeof sender.url === 'string' ? sender.url : '';
+  return url.startsWith(api.runtime.getURL(''));
 }
 
 // WEB_INTERFACE → The extension → "The prompt window" — top-right of the

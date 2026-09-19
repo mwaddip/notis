@@ -6,7 +6,8 @@ import type { UtxoTransaction } from '@dagsocial/types';
 import { buildPost, buildLike, type BuildContext } from '../src/wallet/builders';
 import { install } from '../src/extension/background';
 import { fakeChrome, freshFixture, type FakeChrome } from './fake-chrome';
-import type { SignRecord } from '../src/extension/protocol';
+import type { SignRecord, Message } from '../src/extension/protocol';
+import { KNOWN_KINDS } from '../src/extension/protocol';
 import { toHex, hexToBytes } from '../src/identity/envelope';
 
 // The background reloads state from storage on every call. Every `storage.local`
@@ -272,13 +273,16 @@ describe('background — sign prompt path (ask or credits)', () => {
     expect(record.result).toEqual({ declined: true });
   });
 
-  it('approve from a non-prompt sender is refused', async () => {
+  it('approve from an extension page that is not the prompt page is refused', async () => {
     const c = await bootstrappedChrome();
     await c.send({ kind: 'policy', karma: 'ask' });
     const { txBytesHex, txIdHex } = unsignedThreadTx(await pubKey(c));
     const first = await c.send({ kind: 'sign', txBytesHex, txIdHex }) as { pending: string };
-    // A sender whose URL is not the prompt page — refused.
-    const answer = await c.send({ kind: 'approve', id: first.pending }, { url: 'https://evil.example/' });
+    // The App's page passes the outer guard; the narrower isFromPromptPage refuses.
+    const answer = await c.send(
+      { kind: 'approve', id: first.pending },
+      { id: c.api.runtime.id, url: c.origin + 'index.html' },
+    );
     expect(answer).toMatchObject({ error: expect.stringContaining('prompt page') });
   });
 
@@ -432,7 +436,7 @@ function bridgeSender(
 }
 
 function pageSender(c: FakeChrome, tabId = 200, windowId = 500): chrome.runtime.MessageSender {
-  return { url: c.origin + 'index.html', tab: { id: tabId, windowId } };
+  return { id: c.api.runtime.id, url: c.origin + 'index.html', tab: { id: tabId, windowId } };
 }
 
 /** After a refusal, no `notis.open.<id>` write and no tab call must have
@@ -610,6 +614,8 @@ describe('background — openInWorkspace outcomes', () => {
     c.tabs.setQueryResult([{ id: 99, url: c.origin + 'index.html', discarded: false }]);
     await c.send({ kind: 'arrived', id: HEX }, bridgeSender(c, 42));
     expect(c.storage.session.get('notis.open.' + HEX)).toEqual({ raise: true });
+    // The query is narrowed to the App's own pages — no unrelated tab is fetched.
+    expect(c.tabs.queried).toEqual([{ url: c.origin + 'index.html*' }]);
     expect(c.tabs.removed).toEqual([42]);
     expect(c.tabs.updated).toEqual([]);
     expect(c.tabs.created).toEqual([]);
@@ -686,10 +692,17 @@ describe('background — openInWorkspace outcomes', () => {
 });
 
 describe('background — takeOpen', () => {
-  it('takeOpen from a non-page sender is refused', async () => {
+  it('takeOpen from a non-page sender is refused and the standing record survives', async () => {
     const c = bridgeChrome();
-    const answer = await c.send({ kind: 'takeOpen' }, { url: 'https://evil.example/' });
+    c.storage.session.set('notis.open.' + HEX, { raise: true });
+    // An extension-origin URL that is not the App page — the outer guard
+    // passes, isFromPageURL refuses; the standing record survives untouched.
+    const answer = await c.send(
+      { kind: 'takeOpen' },
+      { id: c.api.runtime.id, url: c.origin + 'prompt.html' },
+    );
     expect(answer).toMatchObject({ error: expect.any(String) });
+    expect(c.storage.session.get('notis.open.' + HEX)).toEqual({ raise: true });
   });
 
   it('takeOpen answers every id and leaves no notis.open. key behind', async () => {
@@ -728,6 +741,110 @@ describe('background — takeOpen', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The extension-page guard — WEB_INTERFACE → The extension → "The messages".
+// Every kind but arrived and offered is taken from the extension's own pages
+// alone, checked first; a bridge-shaped sender, an absent url, or a foreign
+// id refuses each and leaves the storage byte-for-byte untouched.
+// ---------------------------------------------------------------------------
+
+const KINDS_GUARDED = Array.from(KNOWN_KINDS).filter((k) => k !== 'arrived' && k !== 'offered');
+
+async function buildMessageTable(c: FakeChrome): Promise<Record<string, Message>> {
+  const { txBytesHex, txIdHex } = unsignedThreadTx(await pubKey(c));
+  const HEX32 = 'a'.repeat(32);
+  return {
+    state: { kind: 'state' },
+    draft: { kind: 'draft' },
+    discardDraft: { kind: 'discardDraft' },
+    create: { kind: 'create', passphrase: 'pw' },
+    inspectFile: { kind: 'inspectFile', text: '{}' },
+    importFile: { kind: 'importFile', text: '{}', passphrase: 'pw' },
+    exportFile: { kind: 'exportFile', password: 'pw' },
+    unlock: { kind: 'unlock', passphrase: 'pw' },
+    lock: { kind: 'lock' },
+    forget: { kind: 'forget' },
+    policy: { kind: 'policy', karma: 'ask' },
+    links: { kind: 'links', opens: 'here' },
+    takeOpen: { kind: 'takeOpen' },
+    sign: { kind: 'sign', txBytesHex, txIdHex },
+    ack: { kind: 'ack', id: HEX32 },
+    approve: { kind: 'approve', id: HEX32 },
+    decline: { kind: 'decline', id: HEX32 },
+  };
+}
+
+function snapshotStorage(c: FakeChrome): { local: Array<[string, unknown]>; session: Array<[string, unknown]> } {
+  return {
+    local: Array.from(c.storage.local.entries()).map(([k, v]) => [k, JSON.parse(JSON.stringify(v ?? null))]),
+    session: Array.from(c.storage.session.entries()).map(([k, v]) => [k, JSON.parse(JSON.stringify(v ?? null))]),
+  };
+}
+
+describe('background — a non-bridge kind from an outside sender refuses with no trace', () => {
+  it('the message table covers every KNOWN_KINDS entry but arrived and offered', async () => {
+    const c = await bootstrappedChrome();
+    const table = await buildMessageTable(c);
+    const kinds = new Set(Object.keys(table));
+    // A missing kind in the table trips this size assertion; a stray extra one trips it too.
+    expect(kinds.size).toBe(KNOWN_KINDS.size - 2);
+    for (const k of KINDS_GUARDED) expect(kinds.has(k)).toBe(true);
+  });
+
+  // WEB_INTERFACE → The extension → "The messages". The bridge sends only arrived
+  // and offered; any other kind arriving under a bridge-shaped sender is refused.
+  it.each(KINDS_GUARDED)('a bridge-shaped sender: %s refuses and touches nothing', async (kind) => {
+    const c = await bootstrappedChrome();
+    const table = await buildMessageTable(c);
+    const before = snapshotStorage(c);
+    const bridge: chrome.runtime.MessageSender = {
+      id: c.api.runtime.id,
+      tab: { id: 42, active: true, windowId: 500 } as chrome.tabs.Tab,
+      url: 'https://notis.fun/web/p/' + HEX,
+    };
+    const answer = await c.send(table[kind]!, bridge);
+    expect(answer).toMatchObject({ error: expect.any(String) });
+    // sign under a silent unlocked identity would be signed without the guard —
+    // the answer must carry no signature.
+    if (kind === 'sign') expect('signature' in (answer as object)).toBe(false);
+    expect(snapshotStorage(c)).toEqual(before);
+    expect(c.windows.created).toEqual([]);
+    expect(c.tabs.created).toEqual([]);
+    expect(c.tabs.updated).toEqual([]);
+    expect(c.tabs.removed).toEqual([]);
+  });
+
+  it.each(KINDS_GUARDED)('a sender with no url: %s refuses and touches nothing', async (kind) => {
+    const c = await bootstrappedChrome();
+    const table = await buildMessageTable(c);
+    const before = snapshotStorage(c);
+    const noUrl: chrome.runtime.MessageSender = { id: c.api.runtime.id };
+    const answer = await c.send(table[kind]!, noUrl);
+    expect(answer).toMatchObject({ error: expect.any(String) });
+    if (kind === 'sign') expect('signature' in (answer as object)).toBe(false);
+    expect(snapshotStorage(c)).toEqual(before);
+    expect(c.windows.created).toEqual([]);
+    expect(c.tabs.created).toEqual([]);
+    expect(c.tabs.updated).toEqual([]);
+    expect(c.tabs.removed).toEqual([]);
+  });
+
+  it.each(KINDS_GUARDED)('a foreign sender.id with an extension-page URL: %s refuses and touches nothing', async (kind) => {
+    const c = await bootstrappedChrome();
+    const table = await buildMessageTable(c);
+    const before = snapshotStorage(c);
+    const foreign: chrome.runtime.MessageSender = { id: 'not-this-extension', url: c.origin + 'index.html' };
+    const answer = await c.send(table[kind]!, foreign);
+    expect(answer).toMatchObject({ error: expect.any(String) });
+    if (kind === 'sign') expect('signature' in (answer as object)).toBe(false);
+    expect(snapshotStorage(c)).toEqual(before);
+    expect(c.windows.created).toEqual([]);
+    expect(c.tabs.created).toEqual([]);
+    expect(c.tabs.updated).toEqual([]);
+    expect(c.tabs.removed).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Helpers.
 // ---------------------------------------------------------------------------
 
@@ -753,7 +870,7 @@ function promptRecords(c: FakeChrome): Array<[string, SignRecord]> {
 }
 
 function promptSender(c: FakeChrome): chrome.runtime.MessageSender {
-  return { url: c.origin + 'prompt.html?id=xxx' };
+  return { id: c.api.runtime.id, url: c.origin + 'prompt.html?id=xxx' };
 }
 
 /** Every value in storage.local must NOT contain a 64-hex seed — the seed
