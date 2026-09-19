@@ -390,11 +390,12 @@ window's row (→ The settings window).
 **A takeover needs a tab created for the link.** On a public thread page the bridge reads the post id from the
 path as the client's own mode rule does (→ The standalone thread) and sends `arrived { id }` only when all of
 this holds: the preference is `here`; the page is the tab's only history entry — `history.length === 1`, the
-rule the website's page closes itself by (→ The way into the workspace); the navigation is a fresh one — its
-entry's type `navigate`, not a reload, a traversal or a restored session; the document is not prerendering; the
-window is not private. The bridge reads the preference from storage itself, so a page opened under `site` wakes
-no worker. **Everything else is left to the website**: a link followed inside a tab the reader was using, a
-reload, a back or forward onto a thread page. The predicate fails closed — whatever it does not recognise as a
+rule the website's page closes itself by (→ The way into the workspace); the navigation entry's type is
+`navigate`; the document is not prerendering — `document.prerendering` is `true` only where a browser defines
+it; the window is not private. The bridge reads the preference from storage itself, so a page opened under
+`site` wakes no worker. **Everything else is left to the website**: a link followed inside a tab the reader was
+using and a back or forward onto a thread page, each by the history's length — a browser may report a traversal's
+type as `navigate` — and a reload, by its type. The predicate fails closed — whatever it does not recognise as a
 tab created for the link is the website behaving as it does for anyone, its `add to workspace` one press away.
 
 **The website's control offers the thread to the extension** (→ The way into the workspace): the bridge takes
