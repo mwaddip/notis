@@ -1,8 +1,8 @@
 // The extension's one content script — WEB_INTERFACE → The extension →
 // "Links into the extension". Injected at document_start into the top frame
 // of the build's public thread pages. It holds nothing: no key, no seed, no
-// identity, no state between pages. It imports only pure modules — the next
-// window builds it as one classic file with no `import`.
+// identity, no state between pages. It imports only pure modules, so it
+// builds as one classic file with no `import`.
 //
 // Written as one exported function over its environment, so the tests drive
 // the function over fakes and happy-dom; the auto-run at the foot mirrors
@@ -62,8 +62,12 @@ export function bridge(env: BridgeEnv): void {
     const rid: unknown = chromeApi.runtime?.id;
     if (typeof rid !== 'string') return;
     if (!event.cancelable) return;
-    if (!(event instanceof CustomEvent)) return;
-    const detail: unknown = event.detail;
+    // `instanceof CustomEvent` was not measured to hold across a content
+    // script's world boundary — a page's event may reach the listener as a
+    // wrapper that presents a `detail` and a `cancelable`, and the type check
+    // reads the detail. A plain `Event`'s detail is `undefined`, which the
+    // typeof arm below refuses.
+    const detail: unknown = (event as { detail?: unknown }).detail;
     if (typeof detail !== 'string') return;
     if (!HEX64_ANYCASE.test(detail)) return;
     // The reader's press is the browser's transient user activation, which a

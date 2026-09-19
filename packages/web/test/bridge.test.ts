@@ -327,6 +327,24 @@ describe('bridge — on the offer', () => {
     expect(b.messages.slice(before)).toEqual([{ kind: 'offered', id: HEX_B }]);
   });
 
+  it('an Event carrying a 64-hex detail (not a CustomEvent instance): offered, id lower-cased', async () => {
+    const b = build({ userActivationIsActive: true, pref: 'here' });
+    bridge(b.env);
+    await flush();
+    await flush();
+    const before = b.messages.length;
+    // The cross-world shape: a `cancelable` Event whose `detail` is a 64-hex
+    // string, without CustomEvent as its constructor — the wrapper a page's
+    // CustomEvent may present to a content script.
+    const ev = new Event('notis:open', { cancelable: true });
+    Object.defineProperty(ev, 'detail', { value: HEX_UPPER, configurable: true });
+    expect(ev instanceof CustomEvent).toBe(false);
+    b.doc.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    await flush();
+    expect(b.messages.slice(before)).toEqual([{ kind: 'offered', id: HEX }]);
+  });
+
   it('the preference does not gate the offer: under "site" the offer is taken', async () => {
     const b = build({ userActivationIsActive: true, pref: 'site' });
     bridge(b.env);
