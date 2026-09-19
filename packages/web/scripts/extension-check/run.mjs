@@ -20,8 +20,11 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
+import { matchPatternFor } from '../../extension/match-pattern.mjs';
 
 const args = new Map();
 for (let i = 2; i < process.argv.length; i++) {
@@ -33,10 +36,38 @@ const R_KEY = args.get('r-key');
 const NODE = args.get('node') ?? 'http://localhost:3300';
 const FAUCET = args.get('faucet') ?? 'http://localhost:3103';
 const EXT_ID = args.get('extension-id') ?? 'kafmnekclgkjnkhnbafdoefnlllboddm';
+const PUBLIC = args.get('public') ?? null;
+const WEB_DIST = args.get('web-dist') ?? null;
 const PASSPHRASE = 'proof-pass';
 
 if (!EXT_DIR || !existsSync(EXT_DIR)) { console.error('missing --extension-dir'); process.exit(2); }
 if (!R_KEY || !existsSync(R_KEY)) { console.error('missing --r-key'); process.exit(2); }
+
+// --public and --web-dist come together — pass both or neither. Without them
+// the twelve run as today and steps 13–16 are reported NOT RUN by name
+// (WEB_INTERFACE → The extension → "Links into the extension").
+if ((PUBLIC === null) !== (WEB_DIST === null)) {
+  console.error('--public and --web-dist come together — pass both or neither');
+  process.exit(2);
+}
+let publicOrigin = null;
+let publicBase = null;
+let publicPort = null;
+let webDistAbs = null;
+if (PUBLIC !== null) {
+  let u;
+  try { u = new URL(PUBLIC); } catch { console.error(`--public must be a URL, got: ${PUBLIC}`); process.exit(2); }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') { console.error('--public must be http:/https:'); process.exit(2); }
+  if (!u.pathname.endsWith('/')) { console.error('--public must end with \'/\''); process.exit(2); }
+  if (u.search !== '' || u.hash !== '') { console.error('--public must carry no query or fragment'); process.exit(2); }
+  if (u.port === '') { console.error('--public must name a port'); process.exit(2); }
+  publicOrigin = u.origin;
+  publicBase = u.pathname;
+  publicPort = Number(u.port);
+  if (!existsSync(WEB_DIST)) { console.error(`--web-dist not found: ${WEB_DIST}`); process.exit(2); }
+  webDistAbs = resolve(WEB_DIST);
+  if (!existsSync(join(webDistAbs, 'index.html'))) { console.error(`--web-dist has no index.html: ${webDistAbs}`); process.exit(2); }
+}
 
 // Grant two loopback origins on the *unpacked* manifest — CDP cannot drive the
 // browser's permission dialog, so the App's fetch to the faucet is refused at
@@ -64,6 +95,102 @@ if (shellFaucet !== FAUCET) {
   process.exit(2);
 }
 console.log(`shell notis-faucet=${shellFaucet} matches --faucet`);
+
+// The build's public base is the shell's `notis-public` — WEB_INTERFACE →
+// The extension → "Links into the extension". When --public is passed, the
+// shell must carry it exactly, and the manifest's one content_scripts entry
+// must be the port-less pattern derived from --public (via the module the
+// emitter uses; never a second implementation here — the faucet check's
+// shape, for the same reason).
+if (PUBLIC !== null) {
+  const publicMetaMatch = shellHtml.match(/<meta[^>]+name="notis-public"[^>]+content="([^"]*)"[^>]*>/);
+  const shellPublic = publicMetaMatch ? publicMetaMatch[1] : null;
+  if (shellPublic !== PUBLIC) {
+    console.error(`FAIL: shell notis-public="${shellPublic}" != --public="${PUBLIC}"`);
+    console.error(`      rebuild with VITE_PUBLIC=${PUBLIC} bash packages/web/scripts/build-extension.sh`);
+    process.exit(2);
+  }
+  console.log(`shell notis-public=${shellPublic} matches --public`);
+  const expectedPattern = matchPatternFor(PUBLIC);
+  const cs = manifest.content_scripts;
+  if (!Array.isArray(cs) || cs.length !== 1) {
+    console.error(`FAIL: manifest content_scripts must have one entry, got: ${JSON.stringify(cs)}`);
+    process.exit(2);
+  }
+  const csMatches = cs[0].matches;
+  if (!Array.isArray(csMatches) || csMatches.length !== 1 || csMatches[0] !== expectedPattern) {
+    console.error(`FAIL: manifest content_scripts[0].matches != [${JSON.stringify(expectedPattern)}] — got: ${JSON.stringify(csMatches)}`);
+    process.exit(2);
+  }
+  console.log(`manifest content_scripts[0].matches=${csMatches[0]} matches expected pattern (port-less)`);
+}
+
+// The web server for --web-dist — WEB_INTERFACE → The extension → "Links into
+// the extension". The files under the base's path; <base>p/<64 hex> answers
+// the shell (index.html), as the node's GET /shell/:id does behind nginx.
+// The plain page (/link.html?id=<hex>, outside the base — the bridge is
+// declared only for <base>p/*, so this page runs with no bridge) links to a
+// thread twice, once same-tab and once target="_blank", the two arms step 16
+// measures. Content types cover only what a Vite web build serves.
+function contentTypeFor(p) {
+  if (p.endsWith('.html')) return 'text/html; charset=utf-8';
+  if (p.endsWith('.js') || p.endsWith('.mjs')) return 'application/javascript; charset=utf-8';
+  if (p.endsWith('.css')) return 'text/css; charset=utf-8';
+  if (p.endsWith('.json')) return 'application/json; charset=utf-8';
+  if (p.endsWith('.png')) return 'image/png';
+  if (p.endsWith('.svg')) return 'image/svg+xml';
+  if (p.endsWith('.woff2')) return 'font/woff2';
+  if (p.endsWith('.woff')) return 'font/woff';
+  if (p.endsWith('.ico')) return 'image/x-icon';
+  if (p.endsWith('.txt')) return 'text/plain; charset=utf-8';
+  return 'application/octet-stream';
+}
+
+const HEX64 = /^[0-9a-f]{64}$/i;
+let webServer = null;
+async function startWebServer() {
+  if (PUBLIC === null) return;
+  webServer = createServer(async (req, res) => {
+    try {
+      const url = new URL(req.url ?? '/', publicOrigin);
+      const p = url.pathname;
+      if (p === '/link.html') {
+        const idQ = url.searchParams.get('id') ?? '';
+        const safe = HEX64.test(idQ) ? idQ : '';
+        const href = publicOrigin + publicBase + 'p/' + safe;
+        const html = `<!doctype html><html><head><meta charset="utf-8"><title>plain</title>` +
+          `</head><body><a id="same" href="${href}">follow same-tab</a> ` +
+          `<a id="blank" href="${href}" target="_blank" rel="noopener">follow new-tab</a></body></html>`;
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        res.end(html);
+        return;
+      }
+      if (!p.startsWith(publicBase)) { res.writeHead(404); res.end('outside base'); return; }
+      const rel = p.substring(publicBase.length);
+      if (/^p\/[0-9a-f]{64}$/i.test(rel)) {
+        const shell = await readFile(join(webDistAbs, 'index.html'));
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        res.end(shell);
+        return;
+      }
+      const relClean = rel === '' ? 'index.html' : rel;
+      const abs = resolve(webDistAbs, relClean);
+      if (abs !== webDistAbs && !abs.startsWith(webDistAbs + sep)) { res.writeHead(403); res.end('escape'); return; }
+      let buf;
+      try { buf = await readFile(abs); } catch { res.writeHead(404); res.end('not found'); return; }
+      res.writeHead(200, { 'content-type': contentTypeFor(relClean), 'cache-control': 'no-store' });
+      res.end(buf);
+    } catch (e) {
+      res.writeHead(500); res.end(String(e));
+    }
+  });
+  await new Promise((res, rej) => {
+    webServer.on('error', rej);
+    webServer.listen(publicPort, '127.0.0.1', () => res());
+  });
+  console.log(`web server: ${webDistAbs} served on ${publicOrigin}${publicBase} (port ${publicPort})`);
+}
+await startWebServer();
 
 const R_TEXT = readFileSync(R_KEY, 'utf8');
 const R_JSON = JSON.parse(R_TEXT);
@@ -119,8 +246,11 @@ async function openSession(wsUrl) {
     if (m.id && p.has(m.id)) { p.get(m.id)(m); p.delete(m.id); }
     if (m.method) events.push(m);
   };
+  const CALL_TIMEOUT_MS = 60000;
   const call = (method, params = {}) => new Promise((res, rej) => {
-    const id = ++n; p.set(id, (m) => m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result));
+    const id = ++n;
+    const timer = setTimeout(() => { p.delete(id); rej(new Error(`CDP timeout ${CALL_TIMEOUT_MS}ms on ${method}`)); }, CALL_TIMEOUT_MS);
+    p.set(id, (m) => { clearTimeout(timer); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result); });
     s.send(JSON.stringify({ id, method, params }));
   });
   await call('Page.enable');
@@ -163,6 +293,111 @@ async function findExt(pathSuffix) {
 async function findWorker() {
   const list = await jsonList();
   return list.find((t) => (t.type === 'service_worker' || t.type === 'worker') && t.url.endsWith('/background.js'));
+}
+
+// The browser-level CDP session — the only one that can `Target.createTarget`,
+// `Target.closeTarget`, `Target.createBrowserContext`, and see `targetCreated`
+// / `targetDestroyed` events at the browser scope. Distinct from a per-target
+// session opened via `openSession(wsUrl)` (WEB_INTERFACE → The extension →
+// "Links into the extension" — the browser-scope moves the tabs).
+async function openBrowserSession() {
+  const bv = await browserVersion();
+  const s = new WebSocket(bv.webSocketDebuggerUrl);
+  await new Promise((res, rej) => { s.onopen = res; s.onerror = rej; });
+  let n = 0;
+  const p = new Map();
+  const events = [];
+  s.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.id && p.has(m.id)) { p.get(m.id)(m); p.delete(m.id); }
+    if (m.method) events.push(m);
+  };
+  const CALL_TIMEOUT_MS = 60000;
+  const call = (method, params = {}) => new Promise((res, rej) => {
+    const id = ++n;
+    const timer = setTimeout(() => { p.delete(id); rej(new Error(`CDP timeout ${CALL_TIMEOUT_MS}ms on ${method}`)); }, CALL_TIMEOUT_MS);
+    p.set(id, (m) => { clearTimeout(timer); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result); });
+    s.send(JSON.stringify({ id, method, params }));
+  });
+  await call('Target.setDiscoverTargets', { discover: true });
+  return { s, call, events };
+}
+
+// A trusted click — CDP `Input.dispatchMouseEvent` on the control's measured
+// centre, so the page reads the browser's transient user activation (which a
+// page cannot forge). The offer listener inside the bridge takes the event
+// only under this activation (WEB_INTERFACE → The extension → "The website's
+// control offers the thread to the extension"); `element.click()` through
+// `Runtime.evaluate` reads as synthetic there. Returns the coordinates.
+async function trustedClickAt(cx, selector) {
+  const box = await cx.eval(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return null;
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  })()`);
+  if (!box) throw new Error(`trustedClickAt: no element for ${selector}`);
+  await cx.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: box.x, y: box.y, button: 'left', buttons: 1, clickCount: 1 });
+  await cx.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: box.x, y: box.y, button: 'left', buttons: 0, clickCount: 1 });
+  return box;
+}
+
+// Wait for a target from `/json/list` matching a predicate (typically by id).
+async function findTargetById(id, ms = 20000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    const list = await jsonList();
+    const t = list.find((x) => x.id === id);
+    if (t && t.webSocketDebuggerUrl) return t;
+    await sleep(150);
+  }
+  return null;
+}
+
+// Wait for a target to disappear from `/json/list` (destroyed).
+async function waitForTargetGone(id, ms = 20000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    const list = await jsonList();
+    if (!list.find((x) => x.id === id)) return true;
+    await sleep(100);
+  }
+  return false;
+}
+
+// Set the extension's links preference through the settings window's real
+// row (WEB_INTERFACE → The settings window → "The extension's links
+// preference"). Never writes storage directly, per the proof's rules.
+async function setLinksPrefViaUi(cx, value) {
+  const label = value === 'site' ? 'on the site' : 'here';
+  await cx.eval(`document.querySelector('[aria-label="open settings"]').click()`, true);
+  await cx.waitFor(`(() => {
+    const rows = [...document.querySelectorAll('.row')];
+    return rows.some(r => r.querySelector('label')?.textContent === 'a Notis link opens');
+  })()`, 'settings links row', 10000);
+  await cx.eval(`(() => {
+    const rows = [...document.querySelectorAll('.row')];
+    const row = rows.find(r => r.querySelector('label')?.textContent === 'a Notis link opens');
+    const btn = [...row.querySelectorAll('button.word')].find(b => b.textContent.trim() === ${JSON.stringify(label)});
+    btn.click();
+  })()`, true);
+  await sleep(300);
+  const applied = await cx.eval(`(async () => (await chrome.storage.local.get('notis.links'))['notis.links'] ?? 'here')()`);
+  return applied;
+}
+
+// Read a root post id authored by R from the node — a post the run itself
+// made (step 3, or promote.mjs's earlier ones — the run itself made all of
+// them under R). WEB_INTERFACE → Reading the feed and threads — the answer's
+// rows sit under `posts` on this endpoint.
+async function pickOwnRootPostId() {
+  const r = await fetch(`${NODE}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=1`);
+  const j = await r.json();
+  const rows = Array.isArray(j?.posts) ? j.posts : Array.isArray(j?.items) ? j.items : Array.isArray(j) ? j : [];
+  const first = rows[0];
+  if (!first || typeof first.id !== 'string') return null;
+  return first.id;
 }
 
 async function pollKarma(target = 20, ms = 25000) {
@@ -515,7 +750,7 @@ async function main() {
   await cx2.call('Page.reload');
   await sleep(3000);
   const p10 = await findExt('index.html');
-  const cx10 = await openSession(p10.webSocketDebuggerUrl);
+  let cx10 = await openSession(p10.webSocketDebuggerUrl);
   await cx10.waitFor(`document.querySelector('#feed')`, 'feed after reload');
   await sleep(1500);
   const state10 = await cx10.eval(`chrome.runtime.sendMessage({ kind: 'state' })`);
@@ -811,6 +1046,419 @@ async function main() {
   record('12d',
     lockedSession12d === null && unlockMounted12d && noConfirmLocked12d && !promptSeen12d && !transferSeen12dLocked && !!prompt12dFirst && !unlockMounted12dSecond && noConfirmSecond12d && !!prompt12dSecond,
     `session empty=${lockedSession12d === null}, unlock under form=${unlockMounted12d}, no .pf-confirm under lock=${noConfirmLocked12d}, no prompt under lock=${!promptSeen12d}, no /credits/transfer under lock=${!transferSeen12dLocked}, first-send prompt after unlock=${!!prompt12dFirst}, second-send .card-unlock absent=${!unlockMounted12dSecond}, second-send .pf-confirm absent=${noConfirmSecond12d}, second-send prompt seen=${!!prompt12dSecond}`);
+
+  // -------------------------------------------------------------------------
+  // Steps 13–16 — WEB_INTERFACE → The extension → "Links into the extension".
+  // Without --public and --web-dist the four are reported NOT RUN by name,
+  // never PASS, never silently absent.
+  // -------------------------------------------------------------------------
+  if (PUBLIC === null) {
+    record(13, 'NOT RUN', 'no --public / --web-dist — the harness serves no hosted origin');
+    record(14, 'NOT RUN', 'no --public / --web-dist');
+    record(15, 'NOT RUN', 'no --public / --web-dist');
+    record(16, 'NOT RUN', 'no --public / --web-dist');
+    return;
+  }
+
+  const postId = await pickOwnRootPostId();
+  if (postId === null) {
+    record(13, false, 'no confirmed root post authored by R — nothing to link to');
+    record(14, false, 'no confirmed root post authored by R');
+    record(15, false, 'no confirmed root post authored by R');
+    record(16, false, 'no confirmed root post authored by R');
+    return;
+  }
+  console.log(`steps 13-16 link target = <public>p/${postId.slice(0, 8)}…`);
+
+  const bcx = await openBrowserSession();
+  const publicLink = publicOrigin + publicBase + 'p/' + postId;
+  const plainLink = publicOrigin + '/link.html?id=' + postId;
+  const baseUrl = publicOrigin + publicBase;
+
+  // The bridge's user-activation check reads navigator.userActivation.isActive.
+  // Headless Chromium's window is 0×0 unless a viewport is set — a click at
+  // (0,0) hits the browser chrome, not the page. Set a viewport now so
+  // Input.dispatchMouseEvent lands inside the page for every hosted target.
+  await bcx.call('Target.setAutoAttach', { autoAttach: false, waitForDebuggerOnStart: false }).catch(() => {});
+
+  async function readNotisOpenKeys(cxToUse) {
+    return await cxToUse.eval(`(async () => {
+      const all = await chrome.storage.session.get(null);
+      return Object.keys(all).filter(k => k.startsWith('notis.open.'));
+    })()`);
+  }
+
+  async function waitForDestroyEvent(targetId, ms) {
+    const t0 = Date.now();
+    const startIdx = bcx.events.length;
+    while (Date.now() - t0 < ms) {
+      for (let i = startIdx; i < bcx.events.length; i++) {
+        const ev = bcx.events[i];
+        if (ev.method === 'Target.targetDestroyed' && ev.params?.targetId === targetId) {
+          return Date.now();
+        }
+      }
+      await sleep(50);
+    }
+    return null;
+  }
+
+  // ------- Step 13 — pref `on the site` — the button and the uncancelled arm.
+  const step13Prefs = await setLinksPrefViaUi(cx10, 'site');
+  if (step13Prefs !== 'site') {
+    record(13, false, `pref did not take: notis.links=${step13Prefs}`);
+  } else {
+    // Fresh target on the post's public link — Target.createTarget in the
+    // default browser context (the extension is loaded).
+    const created13 = await bcx.call('Target.createTarget', { url: publicLink });
+    const hostedId13 = created13.targetId;
+    const hostedInfo13 = await findTargetById(hostedId13, 15000);
+    let stepStatus13 = false;
+    let boot13ok = false;
+    let takeoverDidNotFire13 = false;
+    let destroyed13ok = false;
+    let firstColumnHasThread13 = false;
+    let extActive13 = false;
+    let noOpen13 = false;
+    let arm13url = null;
+    let arm13takenover = false;
+    let arm13bridgeAbsent = false;
+    if (!hostedInfo13) {
+      record(13, false, `hosted target ${hostedId13.slice(0, 8)}… never appeared in /json/list`);
+    } else {
+      const cxH13 = await openSession(hostedInfo13.webSocketDebuggerUrl);
+      // Wait for the App to boot to the standalone thread.
+      try {
+        await cxH13.waitFor(`!!document.querySelector('.card[data-post-id="${postId}"]')`, 'hosted root card 13', 30000);
+        boot13ok = true;
+      } catch {}
+      const url13boot = await cxH13.eval(`location.href`);
+      // The takeover did not fire — the tab was not redirected under `site`.
+      takeoverDidNotFire13 = url13boot === publicLink;
+      const openKeysBefore13 = await readNotisOpenKeys(cx10);
+      // Trusted press on `add to workspace`.
+      let clickErr13 = null;
+      try { await trustedClickAt(cxH13, '[aria-label="add this thread to your workspace"]'); }
+      catch (e) { clickErr13 = String(e); }
+      // The hosted target destroyed; the extension page's first column holds the thread.
+      const destAt13 = await waitForDestroyEvent(hostedId13, 15000);
+      destroyed13ok = destAt13 !== null;
+      try {
+        await cx10.waitFor(`!!document.querySelector('#panes .col .card[data-post-id="${postId}"]')`, 'first column holds thread 13', 15000);
+        firstColumnHasThread13 = true;
+      } catch {}
+      extActive13 = await cx10.eval(`(async () => {
+        const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        const me = tabs.find(t => typeof t.url === 'string' && t.url.startsWith('chrome-extension://'));
+        return !!me;
+      })()`);
+      const openKeysAfter13 = await readNotisOpenKeys(cx10);
+      // The offer left no pending record — takeOpen consumed it, so the
+      // count returns to what it was before (WEB_INTERFACE → The extension →
+      // "Both messages end in one act").
+      noOpen13 = openKeysAfter13.length === openKeysBefore13.length && openKeysAfter13.length === 0;
+      try { cxH13.s.close(); } catch {}
+      console.log(`step 13 button: url@boot=${url13boot}, click=${clickErr13 ?? 'ok'}, dest@ms=${destAt13 ?? 'null'}, firstCol=${firstColumnHasThread13}, extActive=${extActive13}, openKeys before=${JSON.stringify(openKeysBefore13)} after=${JSON.stringify(openKeysAfter13)}`);
+
+      // Uncancelled arm — a Target.createBrowserContext context, where the
+      // extension does not load (per --load-extension's default profile
+      // scope). Assert the bridge did not run there by measuring that no new
+      // notis.open. key appeared, then take the press.
+      const openBeforeArm = await readNotisOpenKeys(cx10);
+      let bctxId = null;
+      try {
+        const ctxRes = await bcx.call('Target.createBrowserContext', {});
+        bctxId = ctxRes.browserContextId;
+        const arm = await bcx.call('Target.createTarget', { url: publicLink, browserContextId: bctxId });
+        const armId = arm.targetId;
+        const armInfo = await findTargetById(armId, 15000);
+        if (!armInfo) {
+          record(13, false, `uncancelled arm: fresh target in browser context never appeared`);
+        } else {
+          const cxArm = await openSession(armInfo.webSocketDebuggerUrl);
+          try {
+            await cxArm.waitFor(`!!document.querySelector('.card[data-post-id="${postId}"]')`, 'arm root card', 30000);
+          } catch {}
+          // Assert bridge did not run: no notis.open. key appeared. If it
+          // did, the browser-context claim is refuted — try the next method
+          // (a second browser without --load-extension) before reading this
+          // as a finding on the product.
+          const openMid = await readNotisOpenKeys(cx10);
+          const bridgeAbsentPreClick = openMid.length === openBeforeArm.length;
+          // Trusted press on `add to workspace`.
+          let armClickErr = null;
+          try { await trustedClickAt(cxArm, '[aria-label="add this thread to your workspace"]'); }
+          catch (e) { armClickErr = String(e); }
+          await sleep(2000);
+          arm13url = await cxArm.eval(`location.href`);
+          arm13takenover = arm13url === baseUrl;
+          const openAfterArm = await readNotisOpenKeys(cx10);
+          arm13bridgeAbsent = bridgeAbsentPreClick && openAfterArm.length === openBeforeArm.length;
+          console.log(`step 13 uncancelled arm: click=${armClickErr ?? 'ok'}, url@after=${arm13url}, in-place=${arm13takenover}, bridge absent (no new notis.open.)=${arm13bridgeAbsent}`);
+          try { cxArm.s.close(); } catch {}
+          await bcx.call('Target.closeTarget', { targetId: armId }).catch(() => {});
+        }
+      } finally {
+        if (bctxId) await bcx.call('Target.disposeBrowserContext', { browserContextId: bctxId }).catch(() => {});
+      }
+
+      stepStatus13 = boot13ok && takeoverDidNotFire13 && destroyed13ok && firstColumnHasThread13 && extActive13 && noOpen13 && arm13takenover && arm13bridgeAbsent;
+      record(13, stepStatus13,
+        `boot=${boot13ok} (url ${url13boot}), takeover-did-not-fire=${takeoverDidNotFire13}, hosted destroyed=${destroyed13ok} (@${destAt13 ?? 'null'}ms), first column has thread=${firstColumnHasThread13}, ext tab active=${extActive13}, no notis.open. key=${noOpen13}; uncancelled arm url=${arm13url} in-place=${arm13takenover}, bridge absent=${arm13bridgeAbsent}`);
+    }
+  }
+
+  // ------- Step 14 — pref `here`, a workspace tab open, three runs incl. cold.
+  // Reopen cx10 on the extension page — step 13's browser-context work
+  // sometimes leaves the previous session's DevTools deadlocked on the next
+  // call. The CDP call timeout would surface it as a FAIL, but a fresh
+  // session avoids the wait and keeps the step's assertions clean.
+  try { cx10.s.close(); } catch {}
+  const p14 = await findExt('index.html');
+  if (p14) cx10 = await openSession(p14.webSocketDebuggerUrl);
+  const step14Prefs = await setLinksPrefViaUi(cx10, 'here');
+  if (step14Prefs !== 'here') {
+    record(14, false, `pref did not take: notis.links=${step14Prefs}`);
+  } else {
+    const runs14 = [];
+    for (let r = 0; r < 3; r++) {
+      const cold = r === 2;
+      if (cold) {
+        // Let any live worker die by a ≥ 32 s idle wait — step 8's rule.
+        console.log(`step 14 run 3: idle-waiting 32s for MV3 SW termination…`);
+        await sleep(32000);
+      }
+      const openKeysBefore14 = await readNotisOpenKeys(cx10);
+      const t0 = Date.now();
+      const created14 = await bcx.call('Target.createTarget', { url: publicLink });
+      const tid14 = created14.targetId;
+      const info14 = await findTargetById(tid14, 15000);
+      let mounted14 = null;
+      let cxT14 = null;
+      if (info14) {
+        try {
+          cxT14 = await openSession(info14.webSocketDebuggerUrl);
+          // Poll `#appbar` children — record whether the hosted App mounted
+          // before the destruction. Bail out on any eval error (a destroying
+          // target rejects Runtime.evaluate).
+          const t1 = Date.now();
+          while (Date.now() - t1 < 15000) {
+            const has = await cxT14.eval(`(document.querySelector('#appbar')?.children.length ?? 0) > 0`).catch(() => 'gone');
+            if (has === true) { mounted14 = true; break; }
+            if (has === 'gone') { break; }
+            await sleep(50);
+          }
+        } catch {}
+      }
+      const destAt14 = await waitForDestroyEvent(tid14, 20000);
+      const elapsed14 = destAt14 === null ? null : destAt14 - t0;
+      try { if (cxT14) cxT14.s.close(); } catch {}
+      // First column has the thread; extension tab is active. The record was
+      // consumed by takeOpen — no `notis.open.` key remains.
+      let firstColOk = false;
+      try {
+        await cx10.waitFor(`!!document.querySelector('#panes .col .card[data-post-id="${postId}"]')`, 'first col 14', 15000);
+        firstColOk = true;
+      } catch {}
+      const extActive14 = await cx10.eval(`(async () => {
+        const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        const me = tabs.find(t => typeof t.url === 'string' && t.url.startsWith('chrome-extension://'));
+        return !!me;
+      })()`);
+      const openKeysAfter14 = await readNotisOpenKeys(cx10);
+      const noOpen14 = openKeysAfter14.length === openKeysBefore14.length;
+      const run = { cold, tid: tid14.slice(0, 8), mounted: mounted14, elapsedMs: elapsed14, firstCol: firstColOk, extActive: extActive14, noOpen: noOpen14 };
+      runs14.push(run);
+      console.log(`step 14 run ${r + 1}${cold ? ' (cold)' : ''}: dest@${elapsed14 ?? 'null'}ms, appbarMountedBeforeDestroy=${mounted14 ?? 'unobserved'}, firstCol=${firstColOk}, extActive=${extActive14}, noOpen=${noOpen14}`);
+    }
+    const allDestroyed14 = runs14.every((r) => r.elapsedMs !== null);
+    const allFirstCol14 = runs14.every((r) => r.firstCol);
+    const allExtActive14 = runs14.every((r) => r.extActive);
+    const allNoOpen14 = runs14.every((r) => r.noOpen);
+    record(14, allDestroyed14 && allFirstCol14 && allExtActive14 && allNoOpen14,
+      `three runs: destroyed=${allDestroyed14}, first col holds thread=${allFirstCol14}, ext tab active=${allExtActive14}, no notis.open. key remained=${allNoOpen14}; timings ms=${JSON.stringify(runs14.map((r) => ({ cold: r.cold, ms: r.elapsedMs, mounted: r.mounted })))}`);
+  }
+
+  // ------- Step 15 — pref `here`, no workspace tab. Close the extension's tab
+  //         first; a fresh target on the link should have its URL become the
+  //         extension page.
+  //         (WEB_INTERFACE → "None open: an arriving tab is pointed at the
+  //         page and becomes the workspace")
+  {
+    // Find and close cx10's target.
+    const extPage = await findExt('index.html');
+    const extPageId = extPage?.id ?? null;
+    try { cx10.s.close(); } catch {}
+    let closed15 = false;
+    if (extPageId) {
+      await bcx.call('Target.closeTarget', { targetId: extPageId }).catch(() => {});
+      closed15 = await waitForTargetGone(extPageId, 15000);
+    }
+    await sleep(1500);
+    const openKeysBefore15 = null; // no ext page to read from yet
+    const created15 = await bcx.call('Target.createTarget', { url: publicLink });
+    const tid15 = created15.targetId;
+    // The extension redirects the tab in place. Wait for the target's URL to
+    // become the extension page.
+    let becameExtension15 = false;
+    let cx15 = null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 20000) {
+      const list = await jsonList();
+      const t = list.find((x) => x.id === tid15);
+      if (t && typeof t.url === 'string' && t.url.startsWith(`chrome-extension://${EXT_ID}/`)) {
+        becameExtension15 = true;
+        cx15 = await openSession(t.webSocketDebuggerUrl);
+        break;
+      }
+      await sleep(150);
+    }
+    let firstColOk15 = false;
+    let noOpen15 = false;
+    let backUrl15 = null;
+    let backStays15 = false;
+    if (cx15) {
+      try {
+        await cx15.waitFor(`!!document.querySelector('#panes .col .card[data-post-id="${postId}"]')`, 'first col 15', 30000);
+        firstColOk15 = true;
+      } catch {}
+      const openKeysAfter15 = await readNotisOpenKeys(cx15);
+      noOpen15 = openKeysAfter15.length === 0;
+      console.log(`step 15: closed=${closed15}, becameExtension=${becameExtension15}, firstCol=${firstColOk15}, notis.open. keys=${JSON.stringify(openKeysAfter15)}`);
+
+      // Step 16(c): history.back() on this tab reaches the hosted page.
+      await cx15.eval(`history.back()`);
+      await sleep(2500);
+      backUrl15 = await cx15.eval(`location.href`);
+      const cardShown16c = await cx15.eval(`!!document.querySelector('.card[data-post-id="${postId}"]')`);
+      backStays15 = backUrl15 === publicLink && cardShown16c === true;
+      console.log(`step 16(c) history.back: url=${backUrl15}, hosted card shown=${cardShown16c}, stays=${backStays15}`);
+    }
+    record(15, closed15 && becameExtension15 && firstColOk15 && noOpen15,
+      `ext tab closed=${closed15}, fresh target URL becomes extension=${becameExtension15}, first col holds thread=${firstColOk15}, no notis.open. key=${noOpen15}`);
+
+    // ------- Step 16 — pref `here`, left alone. (a) same-tab click on the
+    // plain page's link → hosted page boots and stays; (b) reload of a hosted
+    // thread page → stays; (c) history.back() in step 15's tab → hosted page,
+    // stays (measured above); (d) target="_blank" from the plain page → taken
+    // over — the control for (a).
+    let same16a_url = null, same16a_hist = null, same16a_stays = false;
+    let reload16b_url = null, reload16b_stays = false;
+    let blank16d_destroyed = false, blank16d_firstCol = false;
+    // (a): open a fresh target on the plain page, click #same, then wait.
+    const createdA = await bcx.call('Target.createTarget', { url: plainLink });
+    const tidA = createdA.targetId;
+    const infoA = await findTargetById(tidA, 15000);
+    if (infoA) {
+      const cxA = await openSession(infoA.webSocketDebuggerUrl);
+      try { await cxA.waitFor(`!!document.querySelector('#same')`, 'plain page a-same', 10000); } catch {}
+      // Trusted click on the same-tab link.
+      try { await trustedClickAt(cxA, '#same'); } catch {}
+      // Wait for the navigation to land on the hosted post URL.
+      const t0a = Date.now();
+      while (Date.now() - t0a < 15000) {
+        const u = await cxA.eval(`location.href`).catch(() => null);
+        if (u === publicLink) break;
+        await sleep(150);
+      }
+      same16a_url = await cxA.eval(`location.href`);
+      try { await cxA.waitFor(`!!document.querySelector('.card[data-post-id="${postId}"]')`, '16a hosted card', 20000); } catch {}
+      // Sleep 2s and assert it stays.
+      await sleep(2000);
+      const url16aAfter = await cxA.eval(`location.href`);
+      same16a_hist = await cxA.eval(`history.length`);
+      same16a_stays = url16aAfter === publicLink && same16a_hist === 2;
+      // (b): reload this hosted page.
+      await cxA.call('Page.reload');
+      await sleep(3000);
+      try { await cxA.waitFor(`!!document.querySelector('.card[data-post-id="${postId}"]')`, '16b hosted card', 20000); } catch {}
+      reload16b_url = await cxA.eval(`location.href`);
+      reload16b_stays = reload16b_url === publicLink && (await cxA.eval(`!!document.querySelector('.card[data-post-id="${postId}"]')`)) === true;
+      try { cxA.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: tidA }).catch(() => {});
+    }
+    console.log(`step 16(a) same-tab: url=${same16a_url}, history.length=${same16a_hist}, stays=${same16a_stays}`);
+    console.log(`step 16(b) reload:   url=${reload16b_url}, stays=${reload16b_stays}`);
+
+    // (d): open a fresh plain page, trusted click on #blank. A new target
+    // opens on the hosted link. Bridge fires arrived, extension is open (from
+    // step 15), openInWorkspace closes the arriving target.
+    const createdD = await bcx.call('Target.createTarget', { url: plainLink });
+    const tidD = createdD.targetId;
+    const infoD = await findTargetById(tidD, 15000);
+    let blank16d_newTargetId = null;
+    let blank16d_becameExtension = false;
+    let blank16d_takenOver = false;
+    if (infoD) {
+      const cxD = await openSession(infoD.webSocketDebuggerUrl);
+      try { await cxD.waitFor(`!!document.querySelector('#blank')`, 'plain page d-blank', 10000); } catch {}
+      // Watch for the new target that will open. Use the browser session's
+      // events, which see every target across every context.
+      const startIdx = bcx.events.length;
+      try { await trustedClickAt(cxD, '#blank'); } catch {}
+      const t0d = Date.now();
+      while (Date.now() - t0d < 15000 && !blank16d_newTargetId) {
+        for (let i = startIdx; i < bcx.events.length; i++) {
+          const ev = bcx.events[i];
+          if (ev.method === 'Target.targetCreated' && typeof ev.params?.targetInfo?.url === 'string' && ev.params.targetInfo.url.startsWith(publicLink)) {
+            blank16d_newTargetId = ev.params.targetInfo.targetId;
+            break;
+          }
+        }
+        if (!blank16d_newTargetId) await sleep(100);
+      }
+      if (blank16d_newTargetId) {
+        // Taken over either as destruction (a live extension page tab
+        // absorbed the offer) or as an in-place redirect to the extension
+        // page (no live tab, the arrived tab becomes the page).
+        const destPromise = waitForDestroyEvent(blank16d_newTargetId, 15000);
+        const redirectPromise = (async () => {
+          const t1 = Date.now();
+          while (Date.now() - t1 < 15000) {
+            const list = await jsonList();
+            const t = list.find((x) => x.id === blank16d_newTargetId);
+            if (!t) return null; // gone — destruction won
+            if (typeof t.url === 'string' && t.url.startsWith(`chrome-extension://${EXT_ID}/`)) return t;
+            await sleep(150);
+          }
+          return null;
+        })();
+        const [destAt, redirected] = await Promise.all([destPromise, redirectPromise]);
+        blank16d_destroyed = destAt !== null;
+        blank16d_becameExtension = redirected !== null;
+        // Cx15 navigated to hosted in step 16(c), so no live extension tab
+        // stands — the takeover arm is the redirect, not destruction; the
+        // measured expectation is `becameExtension`. `destroyed` is logged
+        // as an observation, never or'd into the verdict.
+        blank16d_takenOver = blank16d_becameExtension;
+        // First col holds the thread — either in cx15 (the still-alive
+        // extension tab) or in the redirected new tab.
+        if (blank16d_becameExtension && !blank16d_destroyed) {
+          const cxNew = await openSession(redirected.webSocketDebuggerUrl);
+          try {
+            await cxNew.waitFor(`!!document.querySelector('#panes .col .card[data-post-id="${postId}"]')`, 'first col 16d new tab', 15000);
+            blank16d_firstCol = true;
+          } catch {}
+          try { cxNew.s.close(); } catch {}
+        } else if (cx15) {
+          try {
+            await cx15.waitFor(`!!document.querySelector('#panes .col .card[data-post-id="${postId}"]')`, 'first col 16d cx15', 15000);
+            blank16d_firstCol = true;
+          } catch {}
+        }
+      }
+      try { cxD.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: tidD }).catch(() => {});
+    }
+    console.log(`step 16(d) target=_blank: newTarget=${blank16d_newTargetId ? blank16d_newTargetId.slice(0, 8) + '…' : 'null'}, destroyed=${blank16d_destroyed}, becameExtension=${blank16d_becameExtension}, first col has thread=${blank16d_firstCol}`);
+
+    record(16, same16a_stays && reload16b_stays && backStays15 && blank16d_takenOver && blank16d_firstCol,
+      `(a) same-tab stays=${same16a_stays} (url ${same16a_url}, history.length ${same16a_hist}); (b) reload stays=${reload16b_stays} (url ${reload16b_url}); (c) history.back stays=${backStays15} (url ${backUrl15}); (d) target=_blank taken over=${blank16d_takenOver} (destroyed=${blank16d_destroyed}, becameExtension=${blank16d_becameExtension}), first col=${blank16d_firstCol}`);
+
+    try { if (cx15) cx15.s.close(); } catch {}
+  }
+
+  try { bcx.s.close(); } catch {}
 }
 
 let exitCode = 0;
@@ -834,4 +1482,5 @@ console.log(JSON.stringify({ measured, pass, fail, skipped, findings }, null, 2)
 if (fail > 0) exitCode = 1;
 
 proc.kill();
+if (webServer) await new Promise((r) => webServer.close(() => r()));
 process.exit(exitCode);
