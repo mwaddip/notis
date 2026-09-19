@@ -135,8 +135,7 @@ export function settingsBody(handlers: SettingsHandlers): HTMLElement {
   // The extension's links preference — visible only when both hooks are
   // present. A build's `notis-public` gates the proxy's members, so the row
   // stands only in an extension build wired to a public origin
-  // (WEB_INTERFACE → The settings window, → The extension → "Links into the
-  // extension").
+  // (WEB_INTERFACE → The settings window, → The extension → "Links into the extension").
   if (handlers.links && handlers.setLinks) {
     const { row: r, field } = row('a Notis link opens');
     const current = handlers.links();

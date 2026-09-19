@@ -254,8 +254,8 @@ async function readStoredLinksPref(api: typeof chrome): Promise<LinksPref> {
   return readLinksPref(got[K_LINKS]);
 }
 
-/** The sender checks the bridge must pass — WEB_INTERFACE → "Links into the
- *  extension". Returns the lower-cased id on success, or null on any failure. */
+/** The sender checks the bridge must pass — WEB_INTERFACE → The extension → "Links into the extension".
+ *  Returns the lower-cased id on success, or null on any failure. */
 function checkBridgeSender(
   api: typeof chrome,
   config: BackgroundConfig,

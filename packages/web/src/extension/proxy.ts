@@ -48,8 +48,7 @@ export class ExtensionProxy implements AppIdentity {
   // The two links members are assigned only when the build carries a
   // `publicBase` — so with an empty one both read `undefined` and the settings
   // row keys on their presence, as the policy row keys on `policy`
-  // (WEB_INTERFACE → The settings window, → The extension → "Links into the
-  // extension").
+  // (WEB_INTERFACE → The settings window, → The extension → "Links into the extension").
   readonly links?: () => LinksPref;
   readonly setLinks?: (v: LinksPref) => Promise<void>;
 

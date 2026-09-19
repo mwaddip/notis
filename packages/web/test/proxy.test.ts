@@ -355,10 +355,10 @@ describe('proxy — the pass-through operations reach the background', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The links preference — WEB_INTERFACE → The extension → "Links into the
-// extension". Read from storage.local at bootstrap and on every local change
-// carrying notis.links; set through the `links` message; carried on the proxy
-// only when the build's publicBase is not empty.
+// The links preference — WEB_INTERFACE → The extension → "Links into the extension".
+// Read from storage.local at bootstrap and on every local change carrying notis.links;
+// set through the `links` message; carried on the proxy only when the build's
+// publicBase is not empty.
 // ---------------------------------------------------------------------------
 
 const PUBLIC = 'https://notis.fun/web/';

@@ -408,10 +408,10 @@ describe('background — unknown messages are refused', () => {
 });
 
 // ---------------------------------------------------------------------------
-// links / arrived / offered / takeOpen — WEB_INTERFACE → "Links into the
-// extension". The bridge sends `arrived` and `offered`; the page sends
-// `takeOpen`; the background writes `notis.open.<id>` under `storage.session`
-// and lands the thread in the workspace.
+// links / arrived / offered / takeOpen — WEB_INTERFACE → The extension → "Links into the extension".
+// The bridge sends `arrived` and `offered`; the page sends `takeOpen`; the
+// background writes `notis.open.<id>` under `storage.session` and lands the
+// thread in the workspace.
 // ---------------------------------------------------------------------------
 
 const HEX = 'a'.repeat(64);
