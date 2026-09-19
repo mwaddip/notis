@@ -331,13 +331,17 @@ passphrase }`, `lock`, `forget`, `policy { karma }`, `links { opens }`, `takeOpe
 the post flow alone passes it — `ack { id }`;
 from the prompt page only, checked by the sender's URL, `approve { id }` and `decline { id }`; and from the
 bridge only, checked by the sender — this extension's id, a tab, and a URL opening with `<notis-public>p/` —
-`arrived { id }` and `offered { id }`. Change
+`arrived { id }` and `offered { id }`. **Every other message is taken from the extension's own pages alone**,
+checked first, by the sender's URL as the browser reports it: the bridge runs in a web page's process, so a
+message that says it comes from the bridge is a claim, and nothing the background does for a page — a signature
+above all — is reachable from there. Change
 notification is not a message: the page listens to `storage.onChanged` — `local` for the envelope's
 presence, the backed-up flag, the policy and the links preference, `session` for the seed's presence, which
 *is* `locked`, and for a thread waiting to be opened (→ "Links into the extension", below).
 
-> ⚠ **AHEAD OF CODE (2026-09-19, links into the extension)** — the message set has no `links`, `takeOpen`,
-> `arrived` or `offered`, and the page listens for no links preference and no waiting thread.
+> ⚠ **AHEAD OF CODE (2026-09-19, links into the extension)** — the page listens for no links preference and no
+> waiting thread, and the background reads the sender for `approve`, `decline`, `takeOpen`, `arrived` and
+> `offered` only: every other kind is answered whoever sends it.
 
 **`sign`, in the background, in order.** `txBytes` is `encodeTx` of the unsigned transaction; `hint` is
 `{ content? }`, a post's body, shown only when it verifies.
@@ -1453,7 +1457,8 @@ client that expects to announce itself first is built against an endpoint that d
   builds (→ The extension). *(extension)*
 - **Nothing crosses the bridge but a post id.** The bridge holds nothing, only a 64-hex id is acted on, nothing
   flows back to the page but its event's cancellation, and the background takes the bridge's two messages from
-  this extension's own content script on a public thread page alone (→ The extension). *(extension)*
+  this extension's own content script on a public thread page alone — and every other message from the
+  extension's own pages alone, so a web page's process reaches no signature (→ The extension). *(extension)*
 - **The website shows a reader without the extension nothing of it.** The offer is a DOM event inside the
   press, cancelled or not; the page names no extension (→ The way into the workspace). *(extension)*
 
