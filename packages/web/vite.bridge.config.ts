@@ -5,8 +5,7 @@ import { resolve } from 'node:path';
 // so the browser injects it at `document_start` as a classic content script.
 // WEB_INTERFACE → "The background is one classic file with no `import`" — the
 // bridge is built the same way. The bridge imports only pure modules; it needs
-// neither the `crypto` alias nor the `Buffer` inject, and a build that
-// disagrees is a finding.
+// neither the `crypto` alias nor the `Buffer` inject.
 
 export default defineConfig({
   build: {

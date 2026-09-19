@@ -62,11 +62,10 @@ export function bridge(env: BridgeEnv): void {
     const rid: unknown = chromeApi.runtime?.id;
     if (typeof rid !== 'string') return;
     if (!event.cancelable) return;
-    // `instanceof CustomEvent` was not measured to hold across a content
-    // script's world boundary — a page's event may reach the listener as a
-    // wrapper that presents a `detail` and a `cancelable`, and the type check
-    // reads the detail. A plain `Event`'s detail is `undefined`, which the
-    // typeof arm below refuses.
+    // The listener reads the detail's type, not the event's constructor —
+    // a page's event reaches a content script across a world boundary, where
+    // the constructor is not the listener's own. A plain `Event` carries no
+    // `detail`, which the `typeof` arm below refuses.
     const detail: unknown = (event as { detail?: unknown }).detail;
     if (typeof detail !== 'string') return;
     if (!HEX64_ANYCASE.test(detail)) return;

@@ -12,7 +12,13 @@ set -euo pipefail
 # Env overrides (dev/proof harnesses):
 #   VITE_NODES         JSON array of API bases the shell carries as notis-nodes
 #   VITE_FAUCET_BASE   absolute base for the shell's notis-faucet
-#   VITE_PUBLIC        origin+base for shareable links (empty by default)
+#   VITE_PUBLIC        origin+base the shell carries as `notis-public` — the
+#                      absolute URL a copied post link is composed against, the
+#                      base the bridge's content-script match is derived from,
+#                      and the base the background checks the bridge's sender
+#                      against. Unset takes the notis.fun default below; an
+#                      explicit empty value builds an extension with no bridge
+#                      and no `content_scripts`.
 #   NOTIS_EXTENSION_KEY    Chrome extension public key for a stable id
 # ---------------------------------------------------------------------------
 
