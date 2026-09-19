@@ -340,8 +340,7 @@ presence, the backed-up flag, the policy and the links preference, `session` for
 *is* `locked`, and for a thread waiting to be opened (→ "Links into the extension", below).
 
 > ⚠ **AHEAD OF CODE (2026-09-19, links into the extension)** — the page listens for no links preference and no
-> waiting thread, and the background reads the sender for `approve`, `decline`, `takeOpen`, `arrived` and
-> `offered` only: every other kind is answered whoever sends it.
+> waiting thread.
 
 **`sign`, in the background, in order.** `txBytes` is `encodeTx` of the unsigned transaction; `hint` is
 `{ content? }`, a post's body, shown only when it verifies.
