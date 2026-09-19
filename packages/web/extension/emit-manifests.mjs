@@ -6,18 +6,27 @@
 // an event-page background and its own gecko settings.
 //
 // Usage:
-//   emit-manifests.mjs <version> <chrome-outdir> <firefox-outdir>
+//   emit-manifests.mjs <version> <chrome-outdir> <firefox-outdir> <public-base>
+//
+// The public base is the build's `notis-public` — the empty string emits no
+// `content_scripts` key and ships no bridge; a non-empty value derives the
+// bridge's match pattern (WEB_INTERFACE → The extension → "The manifest").
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { matchPatternFor } from './match-pattern.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const [, , version, chromeDir, firefoxDir] = process.argv;
-if (!version || !chromeDir || !firefoxDir) {
-  console.error('usage: emit-manifests.mjs <version> <chrome-outdir> <firefox-outdir>');
+const [, , version, chromeDir, firefoxDir, publicBase] = process.argv;
+if (!version || !chromeDir || !firefoxDir || publicBase === undefined) {
+  console.error('usage: emit-manifests.mjs <version> <chrome-outdir> <firefox-outdir> <public-base>');
   process.exit(2);
 }
+const bridgePattern = matchPatternFor(publicBase);
+const contentScripts = bridgePattern
+  ? [{ matches: [bridgePattern], js: ['bridge.js'], run_at: 'document_start' }]
+  : null;
 
 const tpl = JSON.parse(readFileSync(join(HERE, 'manifest.template.json'), 'utf8'));
 tpl.version = version;
@@ -36,14 +45,20 @@ const chrome = {
   ...tpl,
   background: { service_worker: 'background.js' },
   minimum_chrome_version: '112',
+  ...(contentScripts ? { content_scripts: contentScripts } : {}),
   key: chromeKey,
 };
 
+// Firefox 128 is the first release with `optional_host_permissions` (which
+// the template already carries) and past 127, from which a manifest's
+// content-script hosts are granted at install — WEB_INTERFACE → The
+// extension → "The manifest".
 const firefox = {
   ...tpl,
   background: { scripts: ['background.js'] },
+  ...(contentScripts ? { content_scripts: contentScripts } : {}),
   browser_specific_settings: {
-    gecko: { id: 'extension@notis.fun', strict_min_version: '121.0' },
+    gecko: { id: 'extension@notis.fun', strict_min_version: '128.0' },
   },
 };
 
