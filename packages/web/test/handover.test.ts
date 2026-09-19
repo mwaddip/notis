@@ -269,6 +269,58 @@ describe('wrapTabs — the holder asks the background for waiting threads', () =
     await flush();
     expect(received).toEqual([HEX_A]);
   });
+
+  // The wrapper's .catch handles only the sendMessage failure. A listener's
+  // exception is not the wrapper's to catch — Node's unhandledRejection fires,
+  // and the flight's cleanup has already run, so a later record is still asked
+  // for and delivered to a healthy listener.
+  it('a throwing onOpen listener: the exception is observable; a later record still asks and delivers', async () => {
+    const c = fakeChrome();
+    c.storage.session.set('notis.open.' + HEX_A, { raise: true });
+    const inner = fakeTabs();
+    const wire = wireTakeOpen(c);
+    wire.push({ ids: [HEX_A] });
+    wire.push({ ids: [HEX_B] });
+    const wrap = wrapTabs(inner, c.api);
+    wrap.onOpen((id) => {
+      if (id === HEX_A) throw new Error('boom-on-first-id');
+    });
+    const received: string[] = [];
+    wrap.onOpen((id) => received.push(id));
+
+    const unhandled: unknown[] = [];
+    const handler = (reason: unknown): void => { unhandled.push(reason); };
+    const proc = (globalThis as { process?: unknown }).process as {
+      on(event: string, handler: (reason: unknown) => void): void;
+      removeListener(event: string, handler: (reason: unknown) => void): void;
+      listeners(event: string): Array<(reason: unknown) => void>;
+      removeAllListeners(event: string): void;
+    };
+    // Take vitest's own unhandledRejection listener out of the way for the
+    // window in which the exception surfaces — its default is to fail the run,
+    // and this test is checking exactly that the exception surfaces.
+    const saved = proc.listeners('unhandledRejection');
+    proc.removeAllListeners('unhandledRejection');
+    proc.on('unhandledRejection', handler);
+    try {
+      inner.setHolding(true);
+      await wrap.claim();
+      await flush();
+      await flush();
+      await c.api.storage.session.set({ ['notis.open.' + HEX_B]: { raise: true } });
+      await flush();
+      await flush();
+      // A macrotask so Node's microtask queue drains and unhandledRejection fires.
+      await new Promise((r) => setTimeout(r, 20));
+    } finally {
+      proc.removeListener('unhandledRejection', handler);
+      for (const l of saved) proc.on('unhandledRejection', l);
+    }
+    expect(wire.count()).toBe(2);
+    expect(received).toEqual([HEX_B]);
+    expect(unhandled).toHaveLength(1);
+    expect((unhandled[0] as Error).message).toBe('boom-on-first-id');
+  });
 });
 
 // ---------------------------------------------------------------------------

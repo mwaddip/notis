@@ -31,22 +31,22 @@ export function wrapTabs(inner: Tabs, api: typeof chrome): Tabs {
 
   // The ask is `{ kind: 'takeOpen' }` — the background reads and removes every pending record in
   // one step and answers `{ ids }` (WEB_INTERFACE → The extension → "Both messages end in one act, landing the thread in the workspace").
-  // A refused or failed ask surfaces the way proxy.ts's `fireAndForget` does: the promise is caught
-  // and the records stand, no retry loop — the next appearing record or the next `claim()` is the
-  // next ask. `requeue` collapses every record that appears during a flight into exactly one
-  // follow-up, so a pair of concurrent asks is impossible.
+  // A refused or failed ask is caught here and the records stand — no retry loop; the next
+  // appearing record or the next `claim()` is the next ask. The flight's cleanup — `inFlight`
+  // and the one follow-up — runs before delivery, so a throwing listener neither wedges the
+  // flight nor loses the follow-up; a listener's exception is not the wrapper's to catch and
+  // propagates as an unhandled rejection.
   const ask = (): void => {
     if (inFlight) { requeue = true; return; }
     inFlight = true;
-    api.runtime.sendMessage({ kind: 'takeOpen' }).then((answer) => {
-      if (answer !== null && typeof answer === 'object' && 'ids' in answer) {
-        deliver((answer as { ids: unknown }).ids);
-      }
-    }).catch(() => { /* records stand; no retry */ }).then(() => {
+    api.runtime.sendMessage({ kind: 'takeOpen' }).catch(() => null).then((answer) => {
       inFlight = false;
       const follow = requeue;
       requeue = false;
       if (follow && inner.holds()) ask();
+      if (answer !== null && typeof answer === 'object' && 'ids' in answer) {
+        deliver((answer as { ids: unknown }).ids);
+      }
     });
   };
 
