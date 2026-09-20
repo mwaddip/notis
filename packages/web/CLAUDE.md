@@ -344,8 +344,15 @@ release's own `notis-extension-<ver>-firefox.zip`, rebuilds it from `git archive
 `extension/REVIEWERS.md` names (build-time variables unset), refuses unless the contents are equal file for file,
 and sends them with the source archive to addons.mozilla.org's unlisted channel through `web-ext sign`, pinned at an
 exact version because that process holds the credentials; `--dry-run` runs everything short of the submission, and
-only there are `--rev` and `--zip` accepted. `entry <ver> <xpi>` checks a signed xpi against the zip — equal outside
-`META-INF/` — lands it in the repo root and prints the update-manifest entry, `--into <updates.json>` appending it;
+only there are `--rev` and `--zip` accepted. **A version is signed once**: the moment a signed file comes back,
+`submit` copies it to `notis-extension-<ver>-firefox.unverified.xpi` in the repo root, before any check of it can
+refuse, and removes that copy only after `cmp` proves the verified file landed; a refusal keeps it and names it, and
+a leftover of that name refuses the next `submit` of the version. The verify step runs in a subshell with errexit
+armed and never as a condition operand — a condition context switches `set -e` off in everything it calls.
+`entry <ver> <xpi>` checks a signed xpi against the zip — every file outside `META-INF/` equal, `manifest.json` by
+its parsed content (`extension/manifest-content.mjs`, `sameManifestContent`: Mozilla's signing re-serialises it and
+the closing newline goes), every other file byte for byte — lands it in the repo root and prints the
+update-manifest entry, `--into <updates.json>` appending it;
 `published <ver>` reads the live update manifest, the link and the hash back. Exit 3 means no signed file came
 back: the version waits for a review, the signed file comes from the developer hub later and `entry` finishes —
 never a second `submit` of one number. All JSON work is `extension/update-manifest.mjs` (`compareVersions`,
