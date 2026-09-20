@@ -11,10 +11,13 @@
 //
 // Pure ESM so both the emitter and vitest import it from the same source.
 
-function checkSchemeAndParts(fn, url) {
+function checkScheme(fn, url) {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error(`${fn}: unsupported protocol ${url.protocol}`);
   }
+}
+
+function checkNoQueryOrFragment(fn, url) {
   if (url.search !== '' || url.hash !== '') {
     throw new Error(`${fn}: base must carry no query or fragment`);
   }
@@ -27,17 +30,19 @@ function checkSchemeAndParts(fn, url) {
 export function matchPatternFor(publicBase) {
   if (publicBase === '') return null;
   const url = new URL(publicBase);
-  checkSchemeAndParts('matchPatternFor', url);
+  checkScheme('matchPatternFor', url);
   if (!url.pathname.endsWith('/')) {
     throw new Error(`matchPatternFor: base must end with '/'`);
   }
+  checkNoQueryOrFragment('matchPatternFor', url);
   return `${url.protocol}//${url.hostname}${url.pathname}p/*`;
 }
 
 /** Return the optional-host match pattern for the build's faucet base, or
  *  `null` when the base is empty (an empty base declares no optional host).
  *  Drops the path and the port: the origin plus `/*`. Throws on a base that
- *  is not `http:` / `https:`, or carries a query or a fragment. */
+ *  is not an absolute URL, is not `http:` / `https:`, or carries a query or
+ *  a fragment. */
 export function originPatternFor(base) {
   if (base === '') return null;
   let url;
@@ -46,6 +51,7 @@ export function originPatternFor(base) {
   } catch {
     throw new Error(`originPatternFor: invalid URL`);
   }
-  checkSchemeAndParts('originPatternFor', url);
+  checkScheme('originPatternFor', url);
+  checkNoQueryOrFragment('originPatternFor', url);
   return `${url.protocol}//${url.hostname}/*`;
 }

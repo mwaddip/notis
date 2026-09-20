@@ -36,6 +36,20 @@ describe('matchPatternFor', () => {
   it('throws on a base carrying a fragment', () => {
     expect(() => matchPatternFor('https://notis.fun/web/#top')).toThrow();
   });
+
+  it("a base with both a missing '/' and a query throws the closing-slash text", () => {
+    expect(() => matchPatternFor('https://notis.fun/web?x=1')).toThrow(
+      /must end with '\/'/,
+    );
+  });
+
+  it("the scheme throw names matchPatternFor", () => {
+    expect(() => matchPatternFor('file:///web/')).toThrow(/matchPatternFor/);
+  });
+
+  it("the query throw names matchPatternFor", () => {
+    expect(() => matchPatternFor('https://notis.fun/web/?x=1')).toThrow(/matchPatternFor/);
+  });
 });
 
 // WEB_INTERFACE → The extension → "The manifest" —
@@ -68,16 +82,16 @@ describe('originPatternFor', () => {
     expect(() => originPatternFor('/faucet')).toThrow(/originPatternFor/);
   });
 
-  it('throws on a non-http(s) scheme', () => {
-    expect(() => originPatternFor('file:///faucet')).toThrow();
+  it('throws on a non-http(s) scheme, and the message names originPatternFor', () => {
+    expect(() => originPatternFor('file:///faucet')).toThrow(/originPatternFor/);
   });
 
-  it('throws on a base carrying a query', () => {
-    expect(() => originPatternFor('https://notis.fun/faucet?x=1')).toThrow();
+  it('throws on a base carrying a query, and the message names originPatternFor', () => {
+    expect(() => originPatternFor('https://notis.fun/faucet?x=1')).toThrow(/originPatternFor/);
   });
 
-  it('throws on a base carrying a fragment', () => {
-    expect(() => originPatternFor('https://notis.fun/faucet#top')).toThrow();
+  it('throws on a base carrying a fragment, and the message names originPatternFor', () => {
+    expect(() => originPatternFor('https://notis.fun/faucet#top')).toThrow(/originPatternFor/);
   });
 
   it('http://[::1]:3000/faucet → http://[::1]/* (IPv6 literal, brackets kept)', () => {
