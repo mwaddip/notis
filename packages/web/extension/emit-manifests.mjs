@@ -6,27 +6,42 @@
 // an event-page background and its own gecko settings.
 //
 // Usage:
-//   emit-manifests.mjs <version> <chrome-outdir> <firefox-outdir> <public-base>
+//   emit-manifests.mjs <version> <chrome-outdir> <firefox-outdir> <public-base> <faucet-base>
 //
 // The public base is the build's `notis-public` — the empty string emits no
 // `content_scripts` key and ships no bridge; a non-empty value derives the
 // bridge's match pattern (WEB_INTERFACE → The extension → "The manifest").
+//
+// The faucet base is the build's `notis-faucet` — the empty string emits no
+// `optional_host_permissions` key on either manifest; a non-empty value
+// derives the one host (origin only, port dropped) that both manifests
+// declare (WEB_INTERFACE → The extension → "The manifest").
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { matchPatternFor } from './match-pattern.mjs';
+import { matchPatternFor, originPatternFor } from './match-pattern.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const [, , version, chromeDir, firefoxDir, publicBase] = process.argv;
-if (!version || !chromeDir || !firefoxDir || publicBase === undefined) {
-  console.error('usage: emit-manifests.mjs <version> <chrome-outdir> <firefox-outdir> <public-base>');
+const [, , version, chromeDir, firefoxDir, publicBase, faucetBase] = process.argv;
+if (
+  !version ||
+  !chromeDir ||
+  !firefoxDir ||
+  publicBase === undefined ||
+  faucetBase === undefined
+) {
+  console.error(
+    'usage: emit-manifests.mjs <version> <chrome-outdir> <firefox-outdir> <public-base> <faucet-base>',
+  );
   process.exit(2);
 }
 const bridgePattern = matchPatternFor(publicBase);
 const contentScripts = bridgePattern
   ? [{ matches: [bridgePattern], js: ['bridge.js'], run_at: 'document_start' }]
   : null;
+const optionalHost = originPatternFor(faucetBase);
+const optionalHosts = optionalHost ? [optionalHost] : null;
 
 const tpl = JSON.parse(readFileSync(join(HERE, 'manifest.template.json'), 'utf8'));
 tpl.version = version;
@@ -46,19 +61,35 @@ const chrome = {
   background: { service_worker: 'background.js' },
   minimum_chrome_version: '112',
   ...(contentScripts ? { content_scripts: contentScripts } : {}),
+  ...(optionalHosts ? { optional_host_permissions: optionalHosts } : {}),
   key: chromeKey,
 };
 
-// Firefox 128 is the first release with `optional_host_permissions` (which
-// the template already carries) and past 127, from which a manifest's
-// content-script hosts are granted at install — WEB_INTERFACE → The
-// extension → "The manifest".
+// Firefox 140 is the first release with the built-in consent screen for
+// `data_collection_permissions`; an add-on installable below it owes a
+// consent screen of its own. 142 is the same release on Android, stated
+// so the desktop floor admits no Android build without it — the extension
+// supports no Android. `optional_host_permissions` (from 128) and
+// content-script hosts granted at install (past 127) both hold at 140.
+// The id and the `update_url` are constants of this overlay, the same in
+// every build: an installed copy reads the `update_url` it was installed
+// with and learns no other.
+// WEB_INTERFACE → The extension → "The manifest".
 const firefox = {
   ...tpl,
   background: { scripts: ['background.js'] },
   ...(contentScripts ? { content_scripts: contentScripts } : {}),
+  ...(optionalHosts ? { optional_host_permissions: optionalHosts } : {}),
   browser_specific_settings: {
-    gecko: { id: 'extension@notis.fun', strict_min_version: '128.0' },
+    gecko: {
+      id: 'extension@notis.fun',
+      strict_min_version: '140.0',
+      update_url: 'https://raw.githubusercontent.com/mwaddip/notis/updates/firefox/updates.json',
+      data_collection_permissions: {
+        required: ['personalCommunications', 'financialAndPaymentInfo'],
+      },
+    },
+    gecko_android: { strict_min_version: '142.0' },
   },
 };
 

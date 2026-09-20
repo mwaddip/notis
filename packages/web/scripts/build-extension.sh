@@ -11,7 +11,11 @@ set -euo pipefail
 #
 # Env overrides (dev/proof harnesses):
 #   VITE_NODES         JSON array of API bases the shell carries as notis-nodes
-#   VITE_FAUCET_BASE   absolute base for the shell's notis-faucet
+#   VITE_FAUCET_BASE   absolute base for the shell's notis-faucet — the origin
+#                      the emitter derives the one optional host from, on both
+#                      manifests; an explicit empty value builds a faucet-less
+#                      extension and declares no optional host
+#                      (WEB_INTERFACE → The extension → "The manifest").
 #   VITE_PUBLIC        origin+base the shell carries as `notis-public` — the
 #                      absolute URL a copied post link is composed against, the
 #                      base the bridge's content-script match is derived from,
@@ -28,6 +32,10 @@ cd "$REPO_ROOT"
 VERSION=$(node -p "require('./package.json').version")
 STAGE=$(mktemp -d)
 
+# One variable pins the linter's major — web-ext@10 is the release measured
+# against the emitted manifests.
+WEBEXT_MAJOR=10
+
 echo "==> Building notis-extension-${VERSION}"
 
 pnpm --filter '@dagsocial/web^...' build
@@ -37,7 +45,11 @@ cd packages/web
 # Testnet defaults; the proof and dev harnesses override via the environment.
 export VITE_WEB_BASE=/
 export VITE_API_BASE=""
-export VITE_FAUCET_BASE=${VITE_FAUCET_BASE:-https://notis.fun/testnet/faucet}
+# `-` (not `:-`): only unset falls back to the default; an explicit empty
+# string reaches the emitter as the empty faucet base, so no
+# `optional_host_permissions` on either manifest (WEB_INTERFACE → The
+# extension → "The manifest").
+export VITE_FAUCET_BASE=${VITE_FAUCET_BASE-https://notis.fun/testnet/faucet}
 export VITE_PUBLIC_ORIGIN=${VITE_PUBLIC_ORIGIN:-https://notis.fun}
 export VITE_NODES=${VITE_NODES:-'["https://notis.fun/testnet/api"]'}
 # `-` (not `:-`): only unset falls back to the default; an explicit empty
@@ -69,9 +81,10 @@ for target in "$CHROME_DIR" "$FIREFOX_DIR"; do
 done
 
 # Manifests — one template, two per-browser overlays. The public base
-# derives the bridge's match pattern; the empty string emits no
-# `content_scripts` (WEB_INTERFACE → The extension → "The build's `notis-public`").
-node extension/emit-manifests.mjs "$VERSION" "$CHROME_DIR" "$FIREFOX_DIR" "$VITE_PUBLIC"
+# derives the bridge's match pattern; the faucet base derives the one
+# optional host; the empty string on either drops the corresponding key
+# (WEB_INTERFACE → The extension → "The manifest").
+node extension/emit-manifests.mjs "$VERSION" "$CHROME_DIR" "$FIREFOX_DIR" "$VITE_PUBLIC" "$VITE_FAUCET_BASE"
 
 # Icons — the four PNGs the manifest names.
 for target in "$CHROME_DIR" "$FIREFOX_DIR"; do
@@ -91,6 +104,28 @@ echo "==> Running extension build checks"
 # `notis-public` prints an empty line, and the check below reads that as
 # `no bridge, no content_scripts`.
 EXPECTED_PATTERN=$(node -e "import('./extension/match-pattern.mjs').then(m => process.stdout.write(m.matchPatternFor(process.argv[1]) ?? ''))" "$VITE_PUBLIC")
+
+# The one optional host both manifests declare, computed from the same
+# module the emitter uses. An empty `VITE_FAUCET_BASE` prints an empty line,
+# and the check below reads that as `no key on either manifest`.
+EXPECTED_OPTIONAL_HOST=$(node -e "import('./extension/match-pattern.mjs').then(m => process.stdout.write(m.originPatternFor(process.argv[1]) ?? ''))" "$VITE_FAUCET_BASE")
+
+# Firefox's `browser_specific_settings` — the whole object stated literally
+# here, a second statement of the contract's object on purpose: a check that
+# reads the emitter's own constant proves nothing. Deep-equality by
+# canonical JSON, both sides run through `JSON.parse` and `JSON.stringify`
+# so key order and whitespace do not decide the comparison.
+EXPECTED_BSS='{
+  "gecko": {
+    "id": "extension@notis.fun",
+    "strict_min_version": "140.0",
+    "update_url": "https://raw.githubusercontent.com/mwaddip/notis/updates/firefox/updates.json",
+    "data_collection_permissions": {
+      "required": ["personalCommunications", "financialAndPaymentInfo"]
+    }
+  },
+  "gecko_android": { "strict_min_version": "142.0" }
+}'
 
 for target in "$CHROME_DIR" "$FIREFOX_DIR"; do
   shell="$target/index.html"
@@ -166,6 +201,18 @@ for target in "$CHROME_DIR" "$FIREFOX_DIR"; do
     [ "$cs" = 'absent' ] || { echo "FAIL: $target/manifest.json carries content_scripts under an empty VITE_PUBLIC"; exit 1; }
   fi
 
+  # The one optional host both manifests declare — the pattern computed
+  # through the module (EXPECTED_OPTIONAL_HOST) — or the key absent under an
+  # empty faucet base (WEB_INTERFACE → The extension → "The manifest").
+  if [ -n "$VITE_FAUCET_BASE" ]; then
+    ohp=$(node -e "process.stdout.write(JSON.stringify(JSON.parse(require('fs').readFileSync('$target/manifest.json','utf8')).optional_host_permissions ?? null))")
+    expected_ohp=$(node -e "process.stdout.write(JSON.stringify([process.argv[1]]))" "$EXPECTED_OPTIONAL_HOST")
+    [ "$ohp" = "$expected_ohp" ] || { echo "FAIL: $target/manifest.json optional_host_permissions = $ohp, expected $expected_ohp"; exit 1; }
+  else
+    ohp=$(node -e "const m = JSON.parse(require('fs').readFileSync('$target/manifest.json','utf8')); process.stdout.write('optional_host_permissions' in m ? 'present' : 'absent')")
+    [ "$ohp" = 'absent' ] || { echo "FAIL: $target/manifest.json carries optional_host_permissions under an empty VITE_FAUCET_BASE"; exit 1; }
+  fi
+
   # Every href/src is relative — the <base> alone decides where they resolve.
   if grep -En 'href="/[^"]*"|src="/[^"]*"' "$shell" | grep -v '<base '; then
     echo "FAIL: root-absolute href or src in $shell (above)"
@@ -182,14 +229,30 @@ for target in "$CHROME_DIR" "$FIREFOX_DIR"; do
   done
 done
 
-# web-ext lint on the Firefox stage — the extension's own manifest linter.
+# Firefox's `browser_specific_settings` deep-equals the object stated
+# literally above (EXPECTED_BSS) — a second statement of the contract on
+# purpose (WEB_INTERFACE → The extension → "The manifest").
+actual_bss=$(node -e "process.stdout.write(JSON.stringify(JSON.parse(require('fs').readFileSync('$FIREFOX_DIR/manifest.json','utf8')).browser_specific_settings))")
+canonical_bss=$(node -e "process.stdout.write(JSON.stringify(JSON.parse(process.argv[1])))" "$EXPECTED_BSS")
+[ "$actual_bss" = "$canonical_bss" ] \
+  || { echo "FAIL: $FIREFOX_DIR/manifest.json browser_specific_settings differs from the object in this script"; echo "  actual:   $actual_bss"; echo "  expected: $canonical_bss"; exit 1; }
+
+# Chrome's manifest carries no `browser_specific_settings` key.
+chrome_bss=$(node -e "const m = JSON.parse(require('fs').readFileSync('$CHROME_DIR/manifest.json','utf8')); process.stdout.write('browser_specific_settings' in m ? 'present' : 'absent')")
+[ "$chrome_bss" = 'absent' ] || { echo "FAIL: $CHROME_DIR/manifest.json carries browser_specific_settings"; exit 1; }
+
+# web-ext lint on the Firefox stage — the extension's own manifest linter,
+# major pinned above. `--self-hosted` reads the manifest as a self-hosted
+# add-on's, where an `update_url` is legitimate; without it the lint errors
+# on `MANIFEST_UPDATE_URL` (WEB_INTERFACE → "The build check that keeps the
+# web bundle honest").
 echo "==> web-ext lint (Firefox stage)"
-npx --yes web-ext lint --source-dir "$FIREFOX_DIR"
+npx --yes -p "web-ext@${WEBEXT_MAJOR}" web-ext lint --source-dir "$FIREFOX_DIR" --self-hosted
 
 echo "==> Build checks passed"
 
 # ---------------------------------------------------------------------------
-# Zip. `zip -r -X` — no extended attributes, so the archive is byte-stable.
+# Zip. `zip -r -X` — no extended attributes.
 # ---------------------------------------------------------------------------
 cd "$STAGE"
 CHROME_ZIP="notis-extension-${VERSION}-chrome.zip"
