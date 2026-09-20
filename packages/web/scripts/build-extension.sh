@@ -47,8 +47,8 @@ export VITE_WEB_BASE=/
 export VITE_API_BASE=""
 # `-` (not `:-`): only unset falls back to the default; an explicit empty
 # string reaches the emitter as the empty faucet base, so no
-# `optional_host_permissions` on either manifest (WEB_INTERFACE → The
-# extension → "The manifest").
+# `optional_host_permissions` on either manifest
+# (WEB_INTERFACE → The extension → "The manifest").
 export VITE_FAUCET_BASE=${VITE_FAUCET_BASE-https://notis.fun/testnet/faucet}
 export VITE_PUBLIC_ORIGIN=${VITE_PUBLIC_ORIGIN:-https://notis.fun}
 export VITE_NODES=${VITE_NODES:-'["https://notis.fun/testnet/api"]'}
@@ -113,8 +113,9 @@ EXPECTED_OPTIONAL_HOST=$(node -e "import('./extension/match-pattern.mjs').then(m
 # Firefox's `browser_specific_settings` — the whole object stated literally
 # here, a second statement of the contract's object on purpose: a check that
 # reads the emitter's own constant proves nothing. Deep-equality by
-# canonical JSON, both sides run through `JSON.parse` and `JSON.stringify`
-# so key order and whitespace do not decide the comparison.
+# canonical JSON: object keys sorted recursively (arrays keep their order —
+# `required`'s order is content), then `JSON.stringify`, so key order and
+# whitespace do not decide the comparison.
 EXPECTED_BSS='{
   "gecko": {
     "id": "extension@notis.fun",
@@ -231,9 +232,13 @@ done
 
 # Firefox's `browser_specific_settings` deep-equals the object stated
 # literally above (EXPECTED_BSS) — a second statement of the contract on
-# purpose (WEB_INTERFACE → The extension → "The manifest").
-actual_bss=$(node -e "process.stdout.write(JSON.stringify(JSON.parse(require('fs').readFileSync('$FIREFOX_DIR/manifest.json','utf8')).browser_specific_settings))")
-canonical_bss=$(node -e "process.stdout.write(JSON.stringify(JSON.parse(process.argv[1])))" "$EXPECTED_BSS")
+# purpose (WEB_INTERFACE → The extension → "The manifest"). One
+# canonicaliser applied to each side: object keys sorted recursively,
+# arrays kept in order (`required`'s order is content).
+CANON_JS='const c = v => Array.isArray(v) ? v.map(c) : (v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map(k => [k, c(v[k])])) : v); process.stdout.write(JSON.stringify(c(JSON.parse(process.argv[1]))));'
+actual_bss_raw=$(node -e "process.stdout.write(JSON.stringify(JSON.parse(require('fs').readFileSync('$FIREFOX_DIR/manifest.json','utf8')).browser_specific_settings))")
+actual_bss=$(node -e "$CANON_JS" "$actual_bss_raw")
+canonical_bss=$(node -e "$CANON_JS" "$EXPECTED_BSS")
 [ "$actual_bss" = "$canonical_bss" ] \
   || { echo "FAIL: $FIREFOX_DIR/manifest.json browser_specific_settings differs from the object in this script"; echo "  actual:   $actual_bss"; echo "  expected: $canonical_bss"; exit 1; }
 
@@ -244,8 +249,8 @@ chrome_bss=$(node -e "const m = JSON.parse(require('fs').readFileSync('$CHROME_D
 # web-ext lint on the Firefox stage — the extension's own manifest linter,
 # major pinned above. `--self-hosted` reads the manifest as a self-hosted
 # add-on's, where an `update_url` is legitimate; without it the lint errors
-# on `MANIFEST_UPDATE_URL` (WEB_INTERFACE → "The build check that keeps the
-# web bundle honest").
+# on `MANIFEST_UPDATE_URL`
+# (WEB_INTERFACE → "The build check that keeps the web bundle honest").
 echo "==> web-ext lint (Firefox stage)"
 npx --yes -p "web-ext@${WEBEXT_MAJOR}" web-ext lint --source-dir "$FIREFOX_DIR" --self-hosted
 

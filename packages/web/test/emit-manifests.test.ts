@@ -44,13 +44,14 @@ interface Emitted {
   cleanup: () => void;
 }
 
-function emit(argv: readonly string[]): Emitted {
+function emit(argv: readonly string[], envOverrides: Record<string, string> = {}): Emitted {
   const chromeDir = mkdtempSync(join(tmpdir(), 'notis-emit-chrome-'));
   const firefoxDir = mkdtempSync(join(tmpdir(), 'notis-emit-firefox-'));
   // Strip NOTIS_EXTENSION_KEY so every case runs against the default key —
   // one case below overrides on purpose.
   const env = { ...process.env };
   delete env.NOTIS_EXTENSION_KEY;
+  Object.assign(env, envOverrides);
   const r = spawnSync('node', [EMITTER, VERSION, chromeDir, firefoxDir, ...argv], {
     encoding: 'utf8',
     env,
@@ -75,9 +76,7 @@ function emit(argv: readonly string[]): Emitted {
 }
 
 function assertTemplateCoverage(manifest: Record<string, unknown>): void {
-  // Every key the (post-window-2) template carries appears in the output —
-  // the one this window removes (`optional_host_permissions`) is not a
-  // template key any more, so no exception is needed.
+  // Every key of the template appears in the output.
   for (const k of TEMPLATE_KEYS) {
     expect(manifest, `template key ${k} missing`).toHaveProperty(k);
   }
@@ -189,6 +188,24 @@ describe('emit-manifests — empty public base', () => {
     const expected = ['https://notis.fun/*'];
     expect(m.chrome.optional_host_permissions).toEqual(expected);
     expect(m.firefox.optional_host_permissions).toEqual(expected);
+  });
+
+  m.cleanup();
+});
+
+describe('emit-manifests — NOTIS_EXTENSION_KEY override', () => {
+  const overrideKey = 'test-override-key-value';
+  const m = emit(
+    ['https://notis.fun/web/', 'https://notis.fun/testnet/faucet'],
+    { NOTIS_EXTENSION_KEY: overrideKey },
+  );
+
+  it("chrome carries the override under `key`", () => {
+    expect(m.chrome.key).toBe(overrideKey);
+  });
+
+  it("firefox carries no `key`", () => {
+    expect('key' in m.firefox).toBe(false);
   });
 
   m.cleanup();
