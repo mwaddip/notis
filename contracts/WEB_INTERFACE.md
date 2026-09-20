@@ -16,7 +16,10 @@ the extension's own page, the key held by the extension's background, credits si
 (→ The extension) — and the **three windows** — `@profile`, `@wallet` and `@settings`, a header control for each
 (→ The profile window, → The wallet window, → The settings window) — and **links into the extension** — a
 Notis link taken into the extension's workspace by the bridge, the links preference, and the website's control
-offering a thread to an extension first (→ The extension, → The way into the workspace) — are implemented
+offering a thread to an extension first (→ The extension, → The way into the workspace) — and the **signed
+Firefox build** — the extension signed through addons.mozilla.org's unlisted channel, the xpi on the release, an
+installed copy updating itself from the branch `updates` (→ "The Firefox build ships signed as well") — are
+implemented
 **Protocol version:** read from the node, never held — see Invariants
 
 
@@ -164,21 +167,22 @@ unpacked (Chrome) or as a temporary add-on (Firefox) as they are. Never an insta
 
 **The Firefox build ships signed as well.** Each release carries **`notis-extension-<ver>-firefox.xpi`** — the
 Firefox zip's contents signed by Mozilla through addons.mozilla.org's unlisted channel, so a release Firefox
-installs it and no listing exists; every file outside `META-INF/` equals the zip's. It is attached to the release
-after the workflow by `packages/web/scripts/sign-extension.sh`, which signs the release's own zip and refuses
-unless a clean build from the tag's `git archive` has the same contents — the build a reviewer at Mozilla repeats
-from `packages/web/extension/REVIEWERS.md`. The signing credentials are the publisher's own, read from the
-environment, and live in no tracked file. **An installed copy updates itself:** the manifest's `update_url` names
+installs it and no listing exists; every file outside `META-INF/` equals the zip's. After the workflow,
+`packages/web/scripts/sign-extension.sh` signs the release's own zip — it refuses unless a clean build from the
+tag's `git archive` has the same contents, the build a reviewer at Mozilla repeats from
+`packages/web/extension/REVIEWERS.md` — and the xpi it returns is attached to the release. The signing step runs
+`web-ext` at one exact version, because that process holds the credentials; they are the publisher's own, kept in
+a file outside the repository that the signing step alone reads, and live in no tracked file. **An installed copy
+updates itself:** the manifest's `update_url` names
 `https://raw.githubusercontent.com/mwaddip/notis/updates/firefox/updates.json` — the file `firefox/updates.json`
-on the repository's branch `updates`, one entry per release carrying the version, the release asset's URL and its
-sha256 — and **that URL is permanent**, because an installed copy reads the `update_url` it was installed with and
-learns no other. The branch holds the update manifest and nothing of the tree; a release appends its entry once
-the signed asset is up. The version is the repository's
+on the repository's branch `updates`, one entry per release carrying the version, the release asset's URL, its
+sha256 and the Firefox minimum — and **that URL is permanent**, because an installed copy reads the `update_url`
+it was installed with and learns no other. The branch holds the update manifest and nothing of the tree; a release
+appends its entry once the signed asset is up. The entry is built, appended and read back through
+`packages/web/extension/update-manifest.mjs`, which takes the id, the minimum and the repository from the signed
+build's own `manifest.json` and restates none of them. The version is the repository's
 (`ARCHITECTURE → Deploy gate → "The release version counts resets and milestones"`), and a number Mozilla has
 seen is spent: a re-publish is the next release.
-
-> ⚠ **AHEAD OF CODE (2026-09-20, the signed Firefox build)** — no release carries an xpi, `sign-extension.sh` and
-> `REVIEWERS.md` do not exist, the manifest names no `update_url` and the repository has no `updates` branch.
 
 **The deployment is five tags in the shell's head, and nothing in the bundle's bytes.** `web/index.html`
 opens its head with
@@ -299,13 +303,11 @@ under an empty faucet base; **one host granted at
 install, by the bridge's match** — `<notis-public>p/*` with the port dropped, since a Firefox match pattern
 takes none and a pattern without one matches every port in both browsers — shown by the browser at install,
 revocable by the reader, and revoked it leaves the website behaving as it does for anyone; **what the reader
-sends, declared to Firefox** — `personalCommunications` for a post or a reply and `financialAndPaymentInfo` for a
-credits send, both required, and nothing else leaves the browser: no telemetry, no error report, and the secret
-key never. An `update_url` in Firefox's manifest alone (→ "The Firefox build ships signed as well").
-
-> ⚠ **AHEAD OF CODE (2026-09-20, the signed Firefox build)** — the template declares `https://*/*` and
-> `http://*/*` as optional hosts whatever the faucet base, and the manifest declares no data collection and no
-> `update_url`.
+sends, declared to Firefox** — `personalCommunications` for what the reader publishes, a post or a reply and the
+signed acts around them (a like, a vouch, an invite, a withdrawal, a name), and `financialAndPaymentInfo` for a
+credits send, both required; the public key rides each of them, each read as `viewer` and the faucet's request,
+and beyond that nothing leaves the browser: no telemetry, no error report, and the secret key never. An
+`update_url` in Firefox's manifest alone (→ "The Firefox build ships signed as well").
 
 **The manifest** is one template and two emitted files. Common: Manifest V3, the repository's version,
 the action with no popup, the permissions above, the bridge as the one `content_scripts` entry — emitted when
@@ -326,9 +328,6 @@ origin with the port dropped and `/*`, by the module that derives the bridge's m
 base.
 **The background is one classic file with no `import`**, built in lib mode, so both browsers run it as
 they are; the bridge is built the same way.
-
-> ⚠ **AHEAD OF CODE (2026-09-20, the signed Firefox build)** — the emitter writes the id and a minimum of 128 and
-> nothing else under `browser_specific_settings`, and `optional_host_permissions` is the template's two wildcards.
 
 **The seed list and the faucet's base** are the per-network facts the build carries, both in the shell (→ The
 client is served from the node's own origin): `notis-nodes`, testnet `["https://notis.fun/testnet/api"]`, mainnet
@@ -462,9 +461,6 @@ the pattern the build's `notis-public` derives — and an empty `notis-public` e
 carries none, both manifests' `optional_host_permissions` is the pattern the build's faucet base derives — the key
 absent under an empty base — and `web-ext lint --self-hosted` is clean; without the flag the lint reads the
 manifest as a listed add-on's, where an `update_url` is an error.
-
-> ⚠ **AHEAD OF CODE (2026-09-20, the signed Firefox build)** — the script checks neither the gecko block nor the
-> optional hosts, and lints without `--self-hosted`.
 
 ## Reading the feed and threads
 
