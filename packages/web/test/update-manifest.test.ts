@@ -370,6 +370,33 @@ describe('appendEntry', () => {
       appendEntry(emptyManifest(), ID, { version: 1 } as unknown as Parameters<typeof appendEntry>[2]),
     ).toThrow(/appendEntry/);
   });
+
+  it('throws naming appendEntry on an entry with no update_link', () => {
+    const bad = { version: '0.3.1' } as unknown as Parameters<typeof appendEntry>[2];
+    expect(() => appendEntry(emptyManifest(), ID, bad)).toThrow(/appendEntry/);
+  });
+
+  it('throws naming appendEntry on an entry with an http: update_link', () => {
+    const bad: Parameters<typeof appendEntry>[2] = {
+      version: '0.3.1',
+      update_link:
+        'http://github.com/mwaddip/notis/releases/download/v0.3.1/notis-extension-0.3.1-firefox.xpi',
+      update_hash: `sha256:${HEX64_A}`,
+      applications: { gecko: { strict_min_version: '140.0' } },
+    };
+    expect(() => appendEntry(emptyManifest(), ID, bad)).toThrow(/appendEntry/);
+  });
+
+  it('throws naming appendEntry on an entry with a malformed update_hash', () => {
+    const bad: Parameters<typeof appendEntry>[2] = {
+      version: '0.3.1',
+      update_link:
+        'https://github.com/mwaddip/notis/releases/download/v0.3.1/notis-extension-0.3.1-firefox.xpi',
+      update_hash: 'sha256:zz',
+      applications: { gecko: { strict_min_version: '140.0' } },
+    };
+    expect(() => appendEntry(emptyManifest(), ID, bad)).toThrow(/appendEntry/);
+  });
 });
 
 describe('whole path — empty → 0.3.1 → 0.3.2 → checkManifest → refusals', () => {

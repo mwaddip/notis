@@ -175,10 +175,11 @@ export function checkManifest(text, { id, version, owner, repo }) {
 
 /** Return the manifest text with `entry` appended to `addons[id].updates`.
  *  Two-space JSON, one closing newline. Runs the structural check on the
- *  incoming text (see `structuralCheck`); throws when the entry's version
- *  is not strictly greater than the last entry's — so a duplicate and a
- *  downgrade are both refused. An `updates: []` manifest takes its first
- *  entry. */
+ *  incoming text and on its own output (see `structuralCheck`), so an
+ *  entry with no `update_link`, an `http:` link or a malformed
+ *  `update_hash` is refused; throws when the entry's version is not
+ *  strictly greater than the last entry's — a duplicate and a downgrade
+ *  are both refused. An `updates: []` manifest takes its first entry. */
 export function appendEntry(text, id, entry) {
   const updates = structuralCheck('appendEntry', text, id, null);
   if (!entry || typeof entry.version !== 'string') {
@@ -193,5 +194,7 @@ export function appendEntry(text, id, entry) {
   }
   const obj = JSON.parse(text);
   obj.addons[id].updates.push(entry);
-  return JSON.stringify(obj, null, 2) + '\n';
+  const out = JSON.stringify(obj, null, 2) + '\n';
+  structuralCheck('appendEntry', out, id, null);
+  return out;
 }
