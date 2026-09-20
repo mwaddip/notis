@@ -36,6 +36,7 @@ set -euo pipefail
 CALLER_PWD="$(pwd -P)"
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 UPDATE_MJS="$REPO_ROOT/packages/web/extension/update-manifest.mjs"
+MANIFEST_CONTENT_MJS="$REPO_ROOT/packages/web/extension/manifest-content.mjs"
 BUILD_EXT_SH="$REPO_ROOT/packages/web/scripts/build-extension.sh"
 
 # Resolve a possibly-relative caller-supplied path against the caller's own
@@ -305,6 +306,15 @@ built per packages/web/extension/REVIEWERS.md."
     require('fs').writeFileSync(process.argv[1], JSON.stringify({ version: { approval_notes: process.argv[2] } }));
   " "$metadata_file" "$approval_notes"
 
+  # A version can be signed once. A leftover `.unverified.xpi` from an
+  # unfinished signing of that version is not overwritten silently — refuse
+  # before the submission starts.
+  # WEB_INTERFACE → "The Firefox build ships signed as well".
+  local unverified="$REPO_ROOT/notis-extension-$ver-firefox.unverified.xpi"
+  if [ -e "$unverified" ]; then
+    fail "$unverified exists from an unfinished signing of $ver; run \`entry $ver $unverified\` after the cause is fixed, or remove it before retrying"
+  fi
+
   mkdir -p "$SCRATCH/signed"
   echo "==> web-ext@${WEBEXT_EXACT} sign (unlisted)"
   (
@@ -330,7 +340,21 @@ EOF
     exit 3
   fi
 
-  _publish_signed "$ver" "$signed_xpi" "$zip_path"
+  # The signed file is kept before any check can refuse — a version is
+  # signed once, and the scratch directory the signer wrote into goes with
+  # the EXIT trap. A refusal below leaves `.unverified.xpi` in place and
+  # names it in the last line; success removes it, since `_publish_signed`
+  # has landed the verified name.
+  # WEB_INTERFACE → "The Firefox build ships signed as well".
+  cp "$signed_xpi" "$unverified"
+
+  if ( _publish_signed "$ver" "$signed_xpi" "$zip_path" ); then
+    rm -f "$unverified"
+  else
+    local rc=$?
+    echo "the signed file is kept at $unverified; after the cause is fixed, run \`entry $ver $unverified\`" >&2
+    exit "$rc"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -358,10 +382,14 @@ _publish_signed() {
   xpi_ver=$(read_manifest_version "$xpi_mf")
   [ "$xpi_ver" = "$ver" ] || fail "$xpi manifest.json version $xpi_ver != $ver"
 
-  # Compare after copying the xpi contents into a scratch dir with the
-  # top-level META-INF/ removed — an exact exclusion, unlike `diff -x` which
-  # matches any depth (the extension has no nested META-INF today, and this
-  # is the ceiling).
+  # Every file of the xpi outside META-INF/ equals the zip's — manifest.json
+  # by its parsed content, since Mozilla's signing re-serialises it and the
+  # closing newline goes; every other file byte for byte.
+  # WEB_INTERFACE → "The Firefox build ships signed as well".
+  #
+  # The META-INF/ exclusion is an exact top-level match, unlike `diff -x`
+  # which matches any depth (the extension has no nested META-INF today, and
+  # this is the ceiling).
   local xpi_cmp="$SCRATCH/entry_xpi_cmp"
   rm -rf "$xpi_cmp"
   mkdir -p "$xpi_cmp"
@@ -373,10 +401,40 @@ _publish_signed() {
       cp -a "$entry_name" "$xpi_cmp/"
     done
   )
-  if ! diff -r "$xpi_cmp" "$zip_dir" > "$SCRATCH/entry_diff.out"; then
-    echo "FAIL: xpi contents outside META-INF/ differ from $asset:" >&2
-    cat "$SCRATCH/entry_diff.out" >&2
-    exit 1
+  local diff_q="$SCRATCH/entry_diff_q.out"
+  if ! diff -rq "$xpi_cmp" "$zip_dir" > "$diff_q"; then
+    # The one allowed difference is the top-level manifest.json at
+    # different bytes but deep-equal parsed content. Any other file
+    # differing, or manifest.json content differing, refuses.
+    local expected_mf_line="Files $xpi_cmp/manifest.json and $zip_dir/manifest.json differ"
+    local only_manifest=1
+    local line
+    while IFS= read -r line; do
+      [ "$line" = "$expected_mf_line" ] || { only_manifest=0; break; }
+    done < "$diff_q"
+    if [ "$only_manifest" -eq 1 ]; then
+      local mf_verdict
+      mf_verdict=$(node -e "
+        import(process.argv[3]).then(m => {
+          const fs = require('fs');
+          const a = fs.readFileSync(process.argv[1], 'utf8');
+          const b = fs.readFileSync(process.argv[2], 'utf8');
+          process.stdout.write(m.sameManifestContent(a, b) ? 'equal' : 'differ');
+        }).catch(e => { console.error(e.message); process.exit(2); });
+      " "$xpi_cmp/manifest.json" "$zip_dir/manifest.json" "$MANIFEST_CONTENT_MJS") \
+        || fail "sameManifestContent refused the two manifest.json texts"
+      if [ "$mf_verdict" = "equal" ]; then
+        echo "manifest.json re-serialised by the signer — content equal"
+      else
+        echo "FAIL: xpi manifest.json content differs from $asset:" >&2
+        diff -u "$xpi_cmp/manifest.json" "$zip_dir/manifest.json" >&2 || true
+        exit 1
+      fi
+    else
+      echo "FAIL: xpi contents outside META-INF/ differ from $asset:" >&2
+      diff -r "$xpi_cmp" "$zip_dir" >&2 || true
+      exit 1
+    fi
   fi
 
   # xpi's sha256 — the target file's guard.
