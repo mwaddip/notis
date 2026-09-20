@@ -1,7 +1,18 @@
 {
   "addons": {
     "extension@notis.fun": {
-      "updates": []
+      "updates": [
+        {
+          "version": "0.3.1",
+          "update_link": "https://github.com/mwaddip/notis/releases/download/v0.3.1/notis-extension-0.3.1-firefox.xpi",
+          "update_hash": "sha256:b8885e24446f07b76c07de6003da342837fecb32fc7bc1fbe4bfaee42f104ee3",
+          "applications": {
+            "gecko": {
+              "strict_min_version": "140.0"
+            }
+          }
+        }
+      ]
     }
   }
 }
