@@ -343,18 +343,32 @@ EOF
   # The signed file is kept before any check can refuse — a version is
   # signed once, and the scratch directory the signer wrote into goes with
   # the EXIT trap. A refusal below leaves `.unverified.xpi` in place and
-  # names it in the last line; success removes it, since `_publish_signed`
-  # has landed the verified name.
+  # names it in the last line; success removes it only after cmp -s proves
+  # the verified file landed against the kept copy.
   # WEB_INTERFACE → "The Firefox build ships signed as well".
   cp "$signed_xpi" "$unverified"
 
-  if ( _publish_signed "$ver" "$signed_xpi" "$zip_path" ); then
-    rm -f "$unverified"
-  else
-    local rc=$?
+  # A command list in an if/&&/||/! operand disables errexit inside the
+  # subshell and every function it calls. Arm errexit in a subshell around
+  # the call and branch on the captured status.
+  local rc=0
+  set +e
+  ( set -e; _publish_signed "$ver" "$signed_xpi" "$zip_path" )
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
     echo "the signed file is kept at $unverified; after the cause is fixed, run \`entry $ver $unverified\`" >&2
     exit "$rc"
   fi
+
+  # The kept copy is removed once cmp -s proves the verified file landed
+  # against it — the hazard is an assertion, not a hope.
+  local target="$REPO_ROOT/notis-extension-$ver-firefox.xpi"
+  if [ ! -f "$target" ] || ! cmp -s "$unverified" "$target"; then
+    echo "the signed file is kept at $unverified; the verified file did not land — run \`entry $ver $unverified\` after the cause is fixed" >&2
+    exit 1
+  fi
+  rm -f "$unverified"
 }
 
 # ---------------------------------------------------------------------------
@@ -401,8 +415,10 @@ _publish_signed() {
       cp -a "$entry_name" "$xpi_cmp/"
     done
   )
+  # LC_ALL=C pins the "Files … and … differ" line the loop below matches;
+  # under another locale the wording is translated and a good xpi is refused.
   local diff_q="$SCRATCH/entry_diff_q.out"
-  if ! diff -rq "$xpi_cmp" "$zip_dir" > "$diff_q"; then
+  if ! LC_ALL=C diff -rq "$xpi_cmp" "$zip_dir" > "$diff_q"; then
     # The one allowed difference is the top-level manifest.json at
     # different bytes but deep-equal parsed content. Any other file
     # differing, or manifest.json content differing, refuses.
