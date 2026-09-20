@@ -435,8 +435,15 @@ link stays a plain `https` link to the website, and one that opens a tab of its 
 workspace — the setting *a Notis link opens: on the site · here* turns that off — while a link followed inside a
 page stays on the site, where `add to workspace` hands the thread over. For that the extension asks, at install,
 for the site's post pages (`https://notis.fun/web/p/*`) and nothing else; its one script there holds no key and
-passes on a post id. Load the Chrome zip unpacked in developer mode, the Firefox zip (Firefox 128 or later) as a
-temporary add-on from `about:debugging`; store listings are a separate step.
+passes on a post id. **Firefox (140 or later) installs the signed `notis-extension-<ver>-firefox.xpi` from a
+release with a click, and the installed copy updates itself**: Mozilla signs it through addons.mozilla.org's
+unlisted channel, so it has no store page, and the browser checks this repository's `updates` branch for a newer
+version — the one request made on the extension's behalf that you did not press. At install Firefox shows what
+the extension sends: what you publish and your `$NOTIS` sends, under your public key; there is no telemetry, and
+the secret key never leaves the browser. The Firefox zip
+still loads as a temporary add-on from `about:debugging`, the Chrome zip unpacked in developer mode; store
+listings are a separate step. `packages/web/extension/REVIEWERS.md` says how the signed build is reproduced
+from source, file for file.
 
 ### Light client
 

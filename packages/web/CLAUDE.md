@@ -306,28 +306,56 @@ VITE_NODES='["http://127.0.0.1:19740"]' VITE_FAUCET_BASE='http://127.0.0.1:19750
 ```
 
 `VITE_PUBLIC` falls back to `https://notis.fun/web/` only when it is **unset**; an explicit `VITE_PUBLIC=''` builds
-an extension with no bridge, no `content_scripts` and no links row.
+an extension with no bridge, no `content_scripts` and no links row. `VITE_FAUCET_BASE` behaves the same way: unset
+takes testnet's faucet, an explicit `VITE_FAUCET_BASE=''` builds a faucet-less extension whose manifests declare no
+optional host.
 
 Three Vite builds — the pages (`index.html`, `prompt.html`) through `vite.extension.config.ts`, the background
 as one IIFE file through `vite.background.config.ts`, and, when `VITE_PUBLIC` is not empty, the bridge as one IIFE
 file through `vite.bridge.config.ts` — then `extension/emit-manifests.mjs <version> <chrome-outdir>
-<firefox-outdir> <public-base>` writes each browser's `manifest.json` from `extension/manifest.template.json`, the
-bridge's one `content_scripts` entry among it — its match from `extension/match-pattern.mjs`, the port dropped,
-since Firefox silently drops a match that carries one — the icons under `extension/icons/` are
+<firefox-outdir> <public-base> <faucet-base>` writes each browser's `manifest.json` from
+`extension/manifest.template.json`, the bridge's one `content_scripts` entry among it and **the one optional host,
+the faucet's origin** — both patterns from `extension/match-pattern.mjs` (`matchPatternFor`, `originPatternFor`), the
+port dropped, since Firefox silently drops a match that carries one — and Firefox's `browser_specific_settings`: the
+id, a minimum of 140, the `update_url`, the two required data categories, and an Android floor of 142
+(`WEB_INTERFACE → The extension → "The manifest"`). The icons under `extension/icons/` are
 copied in, the checks run (no inline `<script>`, `<base href="/">`, the metas at the build's values, no
 `import` in `background.js` or `bridge.js`, the literal `notis-public` in `bridge.js`, the manifests parse, their
 one content-script match equal to the pattern the same module derives — and neither file nor key under an empty
-`VITE_PUBLIC` — every reference relative, `web-ext lint` clean on the Firefox
-stage — its three warnings are the static inline mark's two `innerHTML` and the data-collection-permissions
-notice), and the two zips are made from a fresh
-stage. The Chrome manifest's `key` is the tracked RSA public key in the emitter, so the extension id is stable
-(`kafmnekclgkjnkhnbafdoefnlllboddm`); `NOTIS_EXTENSION_KEY` overrides it; Firefox's minimum is 128. `main.ts` takes
+`VITE_PUBLIC` — Firefox's `browser_specific_settings` deep-equal to the object the script states literally, none in
+Chrome's manifest, both manifests' `optional_host_permissions` equal to the pattern the module derives from the
+faucet base and absent under an empty one, every reference relative, `web-ext@10 lint --self-hosted` clean on the
+Firefox stage — without the flag the `update_url` is a lint error; its two warnings are the static inline mark's
+two `innerHTML`), and the two zips are made from a fresh stage — their contents are reproducible file for file,
+the zips themselves differ by their entries' timestamps. `test/emit-manifests.test.ts` spawns the emitter and reads
+both manifests, so the gate sees them too. The Chrome manifest's `key` is the tracked RSA public key in the
+emitter, so the extension id is stable
+(`kafmnekclgkjnkhnbafdoefnlllboddm`); `NOTIS_EXTENSION_KEY` overrides it. `main.ts` takes
 the identity implementation from `VITE_IDENTITY` (`page` | `extension`) and wraps the `Tabs` it hands the App in the
 extension build alone, and `build-release.sh` checks the web bundle
 carries no `chrome.` reference. **The extension's source lives in `src/extension/`** — `background.ts`,
 `bridge.ts`, `handover.ts`, `links.ts`, `proxy.ts`, `protocol.ts`, `policy.ts`, `prompt.ts`, `prompt-summary.ts`,
 `chrome.d.ts` (the `chrome.*` surface used, no `@types/chrome`) — with `test/fake-chrome.ts` and `test/fake-tabs.ts`
 for the Node tests.
+
+**The signed Firefox build** (`WEB_INTERFACE → "The Firefox build ships signed as well"`): after the release
+workflow has attached the zips, `scripts/sign-extension.sh` publishes the Firefox one. `submit <ver>` takes the
+release's own `notis-extension-<ver>-firefox.zip`, rebuilds it from `git archive v<ver>` by the two commands
+`extension/REVIEWERS.md` names (build-time variables unset), refuses unless the contents are equal file for file,
+and sends them with the source archive to addons.mozilla.org's unlisted channel through `web-ext sign`, pinned at an
+exact version because that process holds the credentials; `--dry-run` runs everything short of the submission, and
+only there are `--rev` and `--zip` accepted. `entry <ver> <xpi>` checks a signed xpi against the zip — equal outside
+`META-INF/` — lands it in the repo root and prints the update-manifest entry, `--into <updates.json>` appending it;
+`published <ver>` reads the live update manifest, the link and the hash back. Exit 3 means no signed file came
+back: the version waits for a review, the signed file comes from the developer hub later and `entry` finishes —
+never a second `submit` of one number. All JSON work is `extension/update-manifest.mjs` (`compareVersions`,
+`repoFromUpdateUrl`, `entryFor`, `checkManifest`, `appendEntry`), pure and tested, every fact read from the signed
+build's own `manifest.json`. The update manifest is `firefox/updates.json` on the branch `updates` — deployment
+state, never part of this tree. ⛔ **The signing credentials live in a mode-600 file outside the repo
+(`$NOTIS_AMO_ENV`, default `~/.config/dagsocial/amo.env`) and never enter the repo, a test, a commit, a log, a
+report or a brief**; a proof uses a scratch file with fake values. `extension/REVIEWERS.md` is what Mozilla's
+reviewer builds from: when the pnpm this machine builds with moves, that file moves with it — `submit` refuses
+otherwise.
 
 **The proof** is `scripts/extension-check/run.mjs`: headless Chromium over raw CDP (the cached Chrome for
 Testing; no Playwright) loading the unpacked Chrome build, driving the twelve steps of the extension section
