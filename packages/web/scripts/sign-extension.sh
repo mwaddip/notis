@@ -49,9 +49,14 @@ resolve_path() {
 
 cd "$REPO_ROOT"
 
-# The pinned web-ext major — must match build-extension.sh's WEBEXT_MAJOR
+# The exact web-ext version this script signs under. `web-ext sign` runs
+# `npx` with the AMO API credentials in its environment, so pinning the
+# exact version is the guarantee they reach a release the operator meant.
+# The derived major must match build-extension.sh's WEBEXT_MAJOR, whose
+# `web-ext lint` carries no secret and stays on the major
 # (WEB_INTERFACE → "The build check that keeps the web bundle honest").
-WEBEXT_MAJOR=10
+WEBEXT_EXACT=10.6.0
+WEBEXT_MAJOR=${WEBEXT_EXACT%%.*}
 
 usage() {
   cat <<'EOF' >&2
@@ -176,9 +181,14 @@ do_submit() {
     zip_path=$(resolve_path "$zip_arg")
     [ -f "$zip_path" ] || fail "--zip $zip_arg does not exist"
   else
-    gh release download "v$ver" -p "$asset" --dir "$SCRATCH" >/dev/null 2>&1 || true
+    local gh_err="$SCRATCH/gh_err.log"
+    gh release download "v$ver" -p "$asset" --dir "$SCRATCH" >/dev/null 2>"$gh_err" || true
     zip_path="$SCRATCH/$asset"
-    [ -f "$zip_path" ] || fail "release v$ver carries no $asset"
+    if [ ! -f "$zip_path" ]; then
+      echo "FAIL: release v$ver carries no $asset" >&2
+      [ -s "$gh_err" ] && sed 's/^/  gh: /' "$gh_err" >&2
+      exit 1
+    fi
   fi
 
   # Source archive of the revision.
@@ -286,21 +296,22 @@ built per packages/web/extension/REVIEWERS.md."
     exit 0
   fi
 
-  # Real submission. The AMO metadata JSON — reference reads the shape from
-  # its update page; a first submission may refuse this shape, in which case
-  # the developer hub takes the notes by hand (see this script's header).
+  # Real submission. The AMO metadata JSON carries the approval notes under
+  # `version.approval_notes`. If addons.mozilla.org refuses this shape on a
+  # first submission, submit without --amo-metadata and enter the notes in
+  # the developer hub.
   local metadata_file="$SCRATCH/amo-metadata.json"
   node -e "
     require('fs').writeFileSync(process.argv[1], JSON.stringify({ version: { approval_notes: process.argv[2] } }));
   " "$metadata_file" "$approval_notes"
 
   mkdir -p "$SCRATCH/signed"
-  echo "==> web-ext sign (unlisted)"
+  echo "==> web-ext@${WEBEXT_EXACT} sign (unlisted)"
   (
     # shellcheck disable=SC1090
     . "$keys_file"
     export WEB_EXT_API_KEY WEB_EXT_API_SECRET
-    npx --yes -p "web-ext@${WEBEXT_MAJOR}" web-ext sign \
+    npx --yes -p "web-ext@${WEBEXT_EXACT}" web-ext sign \
       --channel unlisted \
       --source-dir "$zip_contents" \
       --upload-source-code "$archive" \
@@ -319,42 +330,18 @@ EOF
     exit 3
   fi
 
-  do_entry "$ver" "$signed_xpi" --zip "$zip_path"
+  _publish_signed "$ver" "$signed_xpi" "$zip_path"
 }
 
 # ---------------------------------------------------------------------------
-# entry
+# _publish_signed — shared entry work. `do_entry` resolves zip_path from
+# --zip or a gh download and prints the local-zip warning where it applies;
+# `do_submit` passes the release's own zip and skips the warning.
 # ---------------------------------------------------------------------------
 
-do_entry() {
-  local ver="${1:-}" xpi="${2:-}"
-  { [ -n "$ver" ] && [ -n "$xpi" ]; } || usage
-  shift 2
-  local zip_arg="" into=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --zip) [ -n "${2:-}" ] || usage; zip_arg="$2"; shift 2 ;;
-      --into) [ -n "${2:-}" ] || usage; into="$2"; shift 2 ;;
-      *) usage ;;
-    esac
-  done
-
-  require_tools git gh node unzip diff sha256sum
-  xpi=$(resolve_path "$xpi")
-  [ -f "$xpi" ] || fail "xpi does not exist"
-  [ -z "$into" ] || into=$(resolve_path "$into")
-
+_publish_signed() {
+  local ver="$1" xpi="$2" zip_path="$3" into="${4:-}"
   local asset="notis-extension-$ver-firefox.zip"
-  local zip_path
-  if [ -n "$zip_arg" ]; then
-    zip_path=$(resolve_path "$zip_arg")
-    [ -f "$zip_path" ] || fail "--zip $zip_arg does not exist"
-    echo "==> comparing against the local zip $zip_arg (no gh release download)"
-  else
-    gh release download "v$ver" -p "$asset" --dir "$SCRATCH" >/dev/null 2>&1 || true
-    zip_path="$SCRATCH/$asset"
-    [ -f "$zip_path" ] || fail "release v$ver carries no $asset"
-  fi
 
   # Extract xpi and zip into fresh dirs.
   local xpi_dir="$SCRATCH/entry_xpi"
@@ -441,6 +428,48 @@ do_entry() {
       || fail "appendEntry refused the entry against $into"
     echo "==> $into updated"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# entry
+# ---------------------------------------------------------------------------
+
+do_entry() {
+  local ver="${1:-}" xpi="${2:-}"
+  { [ -n "$ver" ] && [ -n "$xpi" ]; } || usage
+  shift 2
+  local zip_arg="" into=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --zip) [ -n "${2:-}" ] || usage; zip_arg="$2"; shift 2 ;;
+      --into) [ -n "${2:-}" ] || usage; into="$2"; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+
+  require_tools git gh node unzip diff sha256sum
+  xpi=$(resolve_path "$xpi")
+  [ -f "$xpi" ] || fail "xpi does not exist"
+  [ -z "$into" ] || into=$(resolve_path "$into")
+
+  local asset="notis-extension-$ver-firefox.zip"
+  local zip_path
+  if [ -n "$zip_arg" ]; then
+    zip_path=$(resolve_path "$zip_arg")
+    [ -f "$zip_path" ] || fail "--zip $zip_arg does not exist"
+    echo "==> comparing against the local zip $zip_arg (no gh release download)"
+  else
+    local gh_err="$SCRATCH/gh_err.log"
+    gh release download "v$ver" -p "$asset" --dir "$SCRATCH" >/dev/null 2>"$gh_err" || true
+    zip_path="$SCRATCH/$asset"
+    if [ ! -f "$zip_path" ]; then
+      echo "FAIL: release v$ver carries no $asset" >&2
+      [ -s "$gh_err" ] && sed 's/^/  gh: /' "$gh_err" >&2
+      exit 1
+    fi
+  fi
+
+  _publish_signed "$ver" "$xpi" "$zip_path" "$into"
 }
 
 # ---------------------------------------------------------------------------
