@@ -16,7 +16,10 @@ the extension's own page, the key held by the extension's background, credits si
 (→ The extension) — and the **three windows** — `@profile`, `@wallet` and `@settings`, a header control for each
 (→ The profile window, → The wallet window, → The settings window) — and **links into the extension** — a
 Notis link taken into the extension's workspace by the bridge, the links preference, and the website's control
-offering a thread to an extension first (→ The extension, → The way into the workspace) — are implemented
+offering a thread to an extension first (→ The extension, → The way into the workspace) — and the **signed
+Firefox build** — the extension signed through addons.mozilla.org's unlisted channel, the xpi on the release, an
+installed copy updating itself from the branch `updates` (→ "The Firefox build ships signed as well") — are
+implemented
 **Protocol version:** read from the node, never held — see Invariants
 
 
@@ -160,7 +163,26 @@ and **`notis-extension-<ver>-firefox.zip`** — the same client built as an exte
 extension), each zip a directory holding the bundle, the background script, the prompt page, the icons
 and that browser's `manifest.json`, built by `packages/web/scripts/build-extension.sh`, which the release
 workflow's linux job runs after `build-release.sh`. A store listing is a separate act; the zips load
-unpacked (Chrome) or as a temporary add-on (Firefox) as they are. Never an installer, and no `update_url`.
+unpacked (Chrome) or as a temporary add-on (Firefox) as they are. Never an installer.
+
+**The Firefox build ships signed as well.** Each release carries **`notis-extension-<ver>-firefox.xpi`** — the
+Firefox zip's contents signed by Mozilla through addons.mozilla.org's unlisted channel, so a release Firefox
+installs it and no listing exists; every file outside `META-INF/` equals the zip's. After the workflow,
+`packages/web/scripts/sign-extension.sh` signs the release's own zip — it refuses unless a clean build from the
+tag's `git archive` has the same contents, the build a reviewer at Mozilla repeats from
+`packages/web/extension/REVIEWERS.md` — and the xpi it returns is attached to the release. The signing step runs
+`web-ext` at one exact version, because that process holds the credentials; they are the publisher's own, kept in
+a file outside the repository that the signing step alone reads, and live in no tracked file. **An installed copy
+updates itself:** the manifest's `update_url` names
+`https://raw.githubusercontent.com/mwaddip/notis/updates/firefox/updates.json` — the file `firefox/updates.json`
+on the repository's branch `updates`, one entry per release carrying the version, the release asset's URL, its
+sha256 and the Firefox minimum — and **that URL is permanent**, because an installed copy reads the `update_url`
+it was installed with and learns no other. The branch holds the update manifest and nothing of the tree; a release
+appends its entry once the signed asset is up. The entry is built, appended and read back through
+`packages/web/extension/update-manifest.mjs`, which takes the id, the minimum and the repository from the signed
+build's own `manifest.json` and restates none of them. The version is the repository's
+(`ARCHITECTURE → Deploy gate → "The release version counts resets and milestones"`), and a number Mozilla has
+seen is spent: a re-publish is the next release.
 
 **The deployment is five tags in the shell's head, and nothing in the bundle's bytes.** `web/index.html`
 opens its head with
@@ -275,10 +297,17 @@ an inline script, in both builds; **no host permission for the node**, because e
 origin (`NODE_INTERFACE → Cross-origin requests`) and an extension page fetches under CORS like any page;
 **one optional host permission, for the build's faucet origin** — the faucet sends no CORS header
 (`NODE_INTERFACE → Faucet`) and an extension context bypasses CORS only for a host it was granted, so the
-`ask the faucet` press requests it before the request leaves (→ The faucet step); **one host granted at
+`ask the faucet` press requests it before the request leaves (→ The faucet step); the manifest declares that
+origin and no other, the port dropped — `https://notis.fun/*` in testnet's build — and declares no optional host
+under an empty faucet base; **one host granted at
 install, by the bridge's match** — `<notis-public>p/*` with the port dropped, since a Firefox match pattern
 takes none and a pattern without one matches every port in both browsers — shown by the browser at install,
-revocable by the reader, and revoked it leaves the website behaving as it does for anyone. No `update_url`.
+revocable by the reader, and revoked it leaves the website behaving as it does for anyone; **what the reader
+sends, declared to Firefox** — `personalCommunications` for what the reader publishes, a post or a reply and the
+signed acts around them (a like, a vouch, an invite, a withdrawal, a name), and `financialAndPaymentInfo` for a
+credits send, both required; the public key rides each of them, each read as `viewer` and the faucet's request,
+and beyond that nothing leaves the browser: no telemetry, no error report, and the secret key never. An
+`update_url` in Firefox's manifest alone (→ "The Firefox build ships signed as well").
 
 **The manifest** is one template and two emitted files. Common: Manifest V3, the repository's version,
 the action with no popup, the permissions above, the bridge as the one `content_scripts` entry — emitted when
@@ -286,9 +315,17 @@ the build's `notis-public` is not empty, absent otherwise — the mark at 16, 32
 (`HOUSE_STYLE → Where the artwork lives`: the files are tracked, the pipeline is not). Chrome: a
 service-worker background, a minimum of Chrome 112, and a pinned `key` — the RSA public key tracked in the
 manifest emitter's Chrome overlay, public by nature — so the extension id is stable and derived from the key.
-Firefox: an event-page background and `browser_specific_settings.gecko` with a minimum of Firefox 128 — the
-first release with `optional_host_permissions`, and past 127, from which a manifest's content-script hosts are
-granted at install.
+Firefox: an event-page background and `browser_specific_settings` — under `gecko` the id `extension@notis.fun`,
+a minimum of Firefox 140, the `update_url` (→ "The Firefox build ships signed as well") and
+`data_collection_permissions` with `personalCommunications` and `financialAndPaymentInfo` required; under
+`gecko_android` a minimum of 142. **140 is the first Firefox with the built-in consent for declared data**, and an
+add-on installable below it owes a consent screen of its own; 142 is the same release on Android, stated so that
+the desktop floor admits no Android build without it — the extension supports no Android.
+`optional_host_permissions` (from 128) and content-script hosts granted at install (past 127) both hold at 140.
+The id and the `update_url` are constants of the emitter's Firefox overlay, the same in every build.
+**`optional_host_permissions` is written by the emitter**, for both browsers, from the build's faucet base: the
+origin with the port dropped and `/*`, by the module that derives the bridge's match, and no key under an empty
+base.
 **The background is one classic file with no `import`**, built in lib mode, so both browsers run it as
 they are; the bridge is built the same way.
 
@@ -420,7 +457,10 @@ preference.
 reference. `build-release.sh` checks it; `build-extension.sh` checks the extension's shell has no inline
 script, its background and its bridge have no `import`, its manifests parse, their one content-script match is
 the pattern the build's `notis-public` derives — and an empty `notis-public` emits no `content_scripts` and no
-`bridge.js` — and `web-ext lint` is clean.
+`bridge.js` — Firefox's `browser_specific_settings` is the object → "The manifest" states and Chrome's manifest
+carries none, both manifests' `optional_host_permissions` is the pattern the build's faucet base derives — the key
+absent under an empty base — and `web-ext lint --self-hosted` is clean; without the flag the lint reads the
+manifest as a listed add-on's, where an `update_url` is an error.
 
 ## Reading the feed and threads
 

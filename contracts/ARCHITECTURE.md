@@ -1508,6 +1508,15 @@ row for such a change says so, and **the proof is a run, not an argument** — t
 against a copy of the live store, opening it, holding the tip and applying the next block — before any
 package reaches the box.
 
+**The release version counts resets and milestones.** The repository carries one version, the root
+`package.json`'s, and every distributable of a release carries it — the node's packages, the web client's zip
+and the extension (`WEB_INTERFACE → "The client ships as its own product"`). A release that ships a reset moves
+the minor; a milestone release that owes none moves the patch. It is not `protocolVersion`, which the chain
+schedules by height (→ Protocol Versioning) and no release number moves.
+
+> ⚠ **UNENFORCED — verified 2026-09-20.** Nothing checks a bump against this register. The four tags conform:
+> `v0.1.1` shipped without a reset, `v0.2.0` and `v0.3.0` each with one.
+
 > ⚠ **Wiping the AVL store alone is a fork trigger. Wipe chain and AVL store together, always.**
 >
 > The reasoning was corrected on 2026-08-07 and the correction matters. This used to be justified by
