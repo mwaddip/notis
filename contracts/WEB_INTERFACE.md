@@ -167,10 +167,14 @@ unpacked (Chrome) or as a temporary add-on (Firefox) as they are. Never an insta
 
 **The Firefox build ships signed as well.** Each release carries **`notis-extension-<ver>-firefox.xpi`** — the
 Firefox zip's contents signed by Mozilla through addons.mozilla.org's unlisted channel, so a release Firefox
-installs it and no listing exists; every file outside `META-INF/` equals the zip's. After the workflow,
+installs it and no listing exists; every file outside `META-INF/` equals the zip's — `manifest.json` by its parsed
+content, because Mozilla's signing re-serialises it and the closing newline goes; every other file byte for byte.
+After the workflow,
 `packages/web/scripts/sign-extension.sh` signs the release's own zip — it refuses unless a clean build from the
 tag's `git archive` has the same contents, the build a reviewer at Mozilla repeats from
-`packages/web/extension/REVIEWERS.md` — and the xpi it returns is attached to the release. The signing step runs
+`packages/web/extension/REVIEWERS.md` — and the xpi it returns is attached to the release. **A version is signed
+once**, so the script lands the signed file in the repository's root before any check of it can refuse: a refusal
+leaves `notis-extension-<ver>-firefox.unverified.xpi` there and names it. The signing step runs
 `web-ext` at one exact version, because that process holds the credentials; they are the publisher's own, kept in
 a file outside the repository that the signing step alone reads, and live in no tracked file. **An installed copy
 updates itself:** the manifest's `update_url` names
@@ -183,6 +187,9 @@ appends its entry once the signed asset is up. The entry is built, appended and 
 build's own `manifest.json` and restates none of them. The version is the repository's
 (`ARCHITECTURE → Deploy gate → "The release version counts resets and milestones"`), and a number Mozilla has
 seen is spent: a re-publish is the next release.
+
+> ⚠ **AHEAD OF CODE (2026-09-20, the signed manifest)** — `sign-extension.sh` compares `manifest.json` byte for
+> byte, and a refusal after the signing removes the scratch directory with the only local copy of the signed file.
 
 **The deployment is five tags in the shell's head, and nothing in the bundle's bytes.** `web/index.html`
 opens its head with
