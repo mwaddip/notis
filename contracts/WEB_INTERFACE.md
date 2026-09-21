@@ -108,10 +108,16 @@ knows the difference, and when those packages stop depending on Node the shim is
 migrated.
 
 **The shim carries only what the client's own module graph reaches, and nothing on speculation.**
-`createPublicKey` and `verify` are `@dagsocial/validation`'s, and the client does not depend on that
-package; they arrive with the code that calls them. An unreached primitive cannot be pinned by any
+The extension's verifier brings `@dagsocial/validation` into the graph (→ The extension → "The verified tip"), and
+that package's one module imports `createPublicKey` and `verify` by name beside `createHash` — so the shim names
+both, **as functions that throw one fixed sentence**, and no bundle carries either: nothing the verifier reaches
+calls them, tree-shaking drops them whole, and `build-extension.sh` refuses assets that contain the sentence. They
+arrive as implementations with the code that calls them. An unreached primitive cannot be pinned by any
 test that runs, and an unpinned consensus-critical primitive is a liability rather than a
 convenience — which is the whole argument against a hand-rolled copy, applied to the shim itself.
+
+> ⚠ **AHEAD OF CODE (2026-09-21, the verified tip)** — the shim exports neither name, the client does not depend on
+> `@dagsocial/validation`, and no build check reads the assets for the sentence.
 
 ⛔ **The shim's hashing must be byte-identical to `createHash('blake2b512')`, and that must be
 pinned.** Every id in the protocol is a blake2b-512 digest truncated to 32 bytes; a shim that
