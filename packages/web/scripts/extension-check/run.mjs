@@ -952,7 +952,23 @@ async function bringUpNodeB() {
   return { bDbPath };
 }
 
-async function verifiedTipSteps(cx) {
+async function verifiedTipSteps(cx, targetId = 'unknown') {
+  // ---- Liveness probe on the session — a few-second wall around `1+1`
+  // before any block work; a session with no live target records every step
+  // FAIL with the reason, in place of `openSession`'s 60-second CDP wall
+  // (WEB_INTERFACE → The extension → "The verified tip").
+  const alive = await (async () => {
+    const timeout = new Promise((_, rej) =>
+      setTimeout(() => rej(new Error('liveness timeout')), 3000));
+    try { return (await Promise.race([cx.eval(`1+1`), timeout])) === 2; }
+    catch { return false; }
+  })();
+  if (!alive) {
+    const reason = `the verified-tip block's session is not live: ${targetId}`;
+    for (const s of VERIFIED_TIP_STEPS) record(s, false, reason);
+    return;
+  }
+
   // ---- pre-flight — A is up. A's miner is the operator's, running at whatever
   // pace the operator has set (WEB_INTERFACE → The extension → "The verified
   // tip"). The harness never signals A or its miner.
@@ -1492,7 +1508,7 @@ async function main() {
       record(s, 'NOT RUN', 'no --r-key — the links steps do not run');
     }
     if (VERIFIED_TIP) {
-      await verifiedTipSteps(cx);
+      await verifiedTipSteps(cx, page.id);
     } else {
       markVerifiedTipNotRun('no --verified-tip');
     }
@@ -2707,10 +2723,22 @@ async function main() {
   // The verified-tip block after the 1–16 pass and before the browser-context
   // arm — 17a's D is fresh and isolated, so its readings hold whatever A's
   // height is by now. 17b's press train runs under A's live miner; 19b makes
-  // its own fork on C; 19c uses D's own miner past 30. WEB_INTERFACE → The
-  // extension → "The verified tip".
+  // its own fork on C; 19c uses D's own miner past 30. The block runs on the
+  // extension page live at this moment — 16(d)'s bridge takeover leaves one;
+  // where none is open, `Target.createTarget` a fresh `index.html`, the way
+  // the harness opens every other extension page (WEB_INTERFACE → The
+  // extension → "The verified tip").
   if (VERIFIED_TIP) {
-    await verifiedTipSteps(cx);
+    let vtPage = await findExt('index.html');
+    if (!vtPage) {
+      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
+      await sleep(2000);
+      vtPage = await findExt('index.html');
+    }
+    if (!vtPage) throw new Error('verified-tip block: no extension page');
+    const vtCx = await openSession(vtPage.webSocketDebuggerUrl);
+    await verifiedTipSteps(vtCx, vtPage.id);
+    try { vtCx.s.close(); } catch {}
   } else {
     markVerifiedTipNotRun('no --verified-tip');
   }
