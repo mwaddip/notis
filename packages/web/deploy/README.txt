@@ -35,8 +35,7 @@ Seven values in web/index.html control where the client looks:
 
   <meta name="notis-network" content="">
     The network the build is for — testnet, devnet, mainnet, or empty.
-    Empty for the web release, since the hosted client is handed no
-    verifier — a name a page's host chose is not one the page can trust.
+    Empty for the web release: the hosted client carries no verifier.
 
   <meta property="og:image" content="https://notis.fun/web/og.png">
     The picture's absolute URL, <origin><base>og.png.

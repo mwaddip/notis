@@ -11,6 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@dagsocial/nipopow-client": "workspace:*",
     "@dagsocial/types": "workspace:*",
     "@noble/ciphers": "^2.2.0",
     "@noble/curves": "^2.2.0",

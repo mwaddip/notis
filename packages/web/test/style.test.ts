@@ -273,6 +273,15 @@ describe('app.css — the status corner', () => {
     expect(css).toMatch(/\.corner \.led\.stale\s*\{[^}]*background: var\(--clay\)/);
     expect(css).toMatch(/\.corner \.led\.down, \.corner \.led\.none\s*\{[^}]*background: var\(--inkMute\)/);
   });
+  it('the verified-tip states colour the dot: thin and refused clay, checking muted; a refused tip goes clay too', () => {
+    // WEB_INTERFACE → The status corner — one hue at two weights: the dot is
+    // clay for a heads-up and for the full rule alike; at the full rule the
+    // height beside it is clay too. HOUSE_STYLE → Gold and clay are not
+    // interchangeable.
+    expect(css).toMatch(/\.corner \.led\.thin, \.corner \.led\.refused\s*\{[^}]*background: var\(--clay\)/);
+    expect(css).toMatch(/\.corner \.led\.checking\s*\{[^}]*background: var\(--inkMute\)/);
+    expect(css).toMatch(/\.corner \.tip\.clay\s*\{[^}]*color: var\(--clay\)/);
+  });
   it('the corner\'s hover rule sits inside the hover block (HOUSE_STYLE → Interaction)', () => {
     const hover = mediaBlock('@media (hover: hover) {');
     expect(hover).toContain('.corner:hover');
