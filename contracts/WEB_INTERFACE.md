@@ -699,7 +699,8 @@ last ten minutes — blocks progress; **clay** when the node answers but the hei
 chain stands; **muted** when the last read failed, or none has run — the number then the last known tip, or `—`. The
 corner reads `GET /blocks/current` every thirty seconds while the tab is visible (`document.visibilityState`) and
 stops while it is hidden: one request per half minute per visible tab, and the bounded landing poll is untouched
-(→ The wallet). Every height the corner reads feeds `viewerTip`, as every read does (→ The identity display). **A
+(→ The wallet). Every height the corner reads feeds `viewerTip`, as every read does (→ The identity display). **A change of the node being read drops the corner's tip and its rise with everything else
+loaded, and reads the new node at once** — the number beside the dot is never another node's. **A
 press re-reads at once** — the corner is a control at the size the pointer needs (`HOUSE_STYLE → Interaction`), and
 the read it makes is the refresh it reports: the number moves in place, never animates, and no other surface
 changes. Its `title` names the state in words — *blocks progressing · tip 2295*, *no new block for 12 minutes · tip
@@ -721,8 +722,8 @@ tip 7766* · *the nodes share no block to compare · tip 7766* · *this node's p
 live read — the verified height is rendered nowhere — and a press re-reads the tip and runs a verification. **A build
 with no verifier keeps the rule of the paragraph above, word for word**: the web build's corner has nothing to fail.
 
-> ⚠ **AHEAD OF CODE (2026-09-21, the verified tip)** — `cornerState` knows the four states of the first paragraph
-> and no verdict; the stylesheet colours the dot alone.
+> ⚠ **AHEAD OF CODE (2026-09-21, the verified tip)** — a change of the node being read leaves the corner's tip and
+> rise standing until the next thirty-second read.
 
 ## The standalone thread
 
