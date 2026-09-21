@@ -1,16 +1,14 @@
 #!/usr/bin/env node
 // The extension proof — the twelve steps of WEB_INTERFACE → The extension
 // plus the four links-into-the-extension steps and the verified-tip block
-// (17a · 17 · 17b · 18 · 19a · 19b · 19c · 20, and 17b-old-tree for the false
-// alarm), each read verbatim, over raw CDP against a live devnet stack.
-// Drives the App's real UI on the extension's own page: the composer, the
-// like word, the profile window's rows, and the prompt window found by its
-// `prompt.html?id=` URL. The verified-tip block runs against a second stack
-// the harness owns — node B (server, bootstrapped from A), node C (used for
-// the real-fork test in 19b), node D (isolated, 17a's too-short and 19c's
-// share-no-block), the lying relay (19a) and, for 17b-old-tree, a second
-// Chromium loading an extension built from OLD_TREE_COMMIT in a scratch
-// worktree.
+// (17a · 17 · 17b · 18 · 19a · 19b · 19c · 20), each read verbatim, over raw
+// CDP against a live devnet stack. Drives the App's real UI on the
+// extension's own page: the composer, the like word, the profile window's
+// rows, and the prompt window found by its `prompt.html?id=` URL. The
+// verified-tip block runs against a second stack the harness owns — node B
+// (server, bootstrapped from A), node C (used for the real-fork test in
+// 19b), node D (isolated, 17a's too-short and 19c's share-no-block) and the
+// lying relay (19a).
 //
 // Preconditions:
 //  1. `node packages/node/dist/index.js` running as `NETWORK_TYPE=devnet`
@@ -25,8 +23,8 @@
 //     (VITE_NODES points at [A, B]).
 //
 // Modes:
-//   --verified-tip alone: 1–16 read NOT RUN, 17a–20 and 17b-old-tree run.
-//   --r-key and --verified-tip: 1–16 and 17a–20 and 17b-old-tree all run.
+//   --verified-tip alone: 1–16 read NOT RUN, 17a–20 run.
+//   --r-key and --verified-tip: 1–16 and 17a–20 all run.
 //   Neither: every step reads NOT RUN by name.
 //
 // Usage:
@@ -66,8 +64,8 @@ const WEB_DIST = args.get('web-dist') ?? null;
 const PASSPHRASE = 'proof-pass';
 
 // The verified-tip block — WEB_INTERFACE → The extension → "The verified tip",
-// steps 17a · 17 · 18 · 19a · 19b · 20. Absent, the six read NOT RUN by name,
-// as 13–16 do without --public / --web-dist.
+// steps 17a · 17 · 17b · 18 · 19a · 19b · 19c · 20. Absent, they read NOT RUN
+// by name, as 13–16 do without --public / --web-dist.
 const VERIFIED_TIP = args.get('verified-tip') === true;
 const NODE_DIST = args.get('node-dist') ?? null;
 const MINER_SCRIPT = args.get('miner') ?? null;
@@ -96,12 +94,6 @@ const D_HTTP_PORT = 19795;
 const D_ADMIN_PORT = 19796;
 const D_P2P_PORT = 19797;
 const D_ORIGIN = `http://127.0.0.1:${D_HTTP_PORT}`;
-// The old-tree 17b stage — a second Chromium loading an extension built from
-// commit a3da5bea, so the false alarm the tip's rule prevents fires again and
-// step 17b is proven to be able to fail.
-const OLD_TREE_COMMIT = 'a3da5bea';
-const OLD_PRESS_TARGET = 30;
-const OLD_PRESS_CEILING = 100;
 
 if (!EXT_DIR || !existsSync(EXT_DIR)) { console.error('missing --extension-dir'); process.exit(2); }
 // --r-key is optional. Without it, steps 1–16 read NOT RUN by name and 17–20
@@ -355,10 +347,8 @@ if (!CHROME) { console.error('no Chromium found'); process.exit(2); }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // A Chromium instance the harness owns — its own DevTools port, its own user
-// data dir, and the single extension it loads. The tip build's stage takes
-// the extension at --extension-dir; the old-tree stage takes an extension
-// built from OLD_TREE_COMMIT in a scratch worktree (WEB_INTERFACE → The
-// extension → "The verified tip"; the false alarm that proves step 17b can fail).
+// data dir, and the single extension it loads at --extension-dir
+// (WEB_INTERFACE → The extension → "The verified tip").
 async function launchChromium(extensionDir) {
   const chromePort = 19200 + Math.floor(Math.random() * 500);
   const profileDir = mkdtempSync(join(tmpdir(), 'notis-ext-proof-'));
@@ -380,8 +370,8 @@ async function launchChromium(extensionDir) {
   throw new Error(`chrome DevTools never appeared on port ${chromePort}`);
 }
 
-// The primary Chromium — loaded with the extension at --extension-dir. Every
-// step but the old-tree 17b runs against this instance's DevTools port.
+// The Chromium — loaded with the extension at --extension-dir. Every step
+// runs against this instance's DevTools port.
 const primary = await launchChromium(EXT_DIR);
 const proc = primary.proc;
 const port = primary.port;
@@ -873,17 +863,35 @@ async function waitForVerifierRun(cx, sinceIdx, atLeast, ms = 30000, quietMs = 1
   return proofRequestsSince(cx.events, sinceIdx);
 }
 
+// Parse the `tip N` integer out of a corner title (WEB_INTERFACE → The
+// status corner). Returns null if the title carries no such tip.
+function tipFromTitle(title) {
+  const m = /tip (\d+)/.exec(title ?? '');
+  return m ? parseInt(m[1], 10) : null;
+}
+
+// The tip in the corner's title is the reading node's, within a few blocks
+// of that node's /blocks/current at the time of the read — a change of the
+// reading node drops the tip and reads at once (WEB_INTERFACE → The status
+// corner → node change drops the tip). The fetches sit close in time, so
+// a small tolerance covers the fold's own delay and A's live pace.
+async function titleTipNearReadingNode(readingOrigin, reading, tolerance = 5) {
+  const tipTitle = tipFromTitle(reading.title);
+  const nodeHeight = await currentHeight(readingOrigin);
+  const near = typeof tipTitle === 'number'
+    && typeof nodeHeight === 'number'
+    && Math.abs(nodeHeight - tipTitle) <= tolerance;
+  return { tipTitle, nodeHeight, near };
+}
+
 // ---------------------------------------------------------------------------
-// The verified-tip block — steps 17a · 17 · 17b · 18 · 19a · 19b · 19c · 20,
-// and, when the harness owns a second Chromium for it, 17b-old-tree.
+// The verified-tip block — steps 17a · 17 · 17b · 18 · 19a · 19b · 19c · 20.
 // ---------------------------------------------------------------------------
 
 const VERIFIED_TIP_STEPS = ['17a', 17, '17b', 18, '19a', '19b', '19c', 20];
-const OLD_TREE_STEP = '17b-old-tree';
 
 function markVerifiedTipNotRun(reason) {
   for (const s of VERIFIED_TIP_STEPS) record(s, 'NOT RUN', reason);
-  record(OLD_TREE_STEP, 'NOT RUN', reason);
 }
 
 // Press the corner and wait for its next verdict — one press, one verifier
@@ -1010,26 +1018,27 @@ async function verifiedTipSteps(cx) {
   }
   console.log(`[vt] node D up at ${D_ORIGIN}, height ${await currentHeight(D_ORIGIN)}`);
 
-  // ---- Step 17a — too-short, on node D.
+  // ---- Step 17a — too-short, on node D. D is isolated with no miner script,
+  // so its height stays at 0 (genesis). A change of the reading node drops
+  // the tip and reads the new node at once (WEB_INTERFACE → The status
+  // corner → node change drops the tip): the corner's tip is D's own, 0.
   {
     const hD = await currentHeight(D_ORIGIN);
     const hAnow = await currentHeight(NODE);
-    // D is isolated and its miner has not started; its height is 0 or a small
-    // number under the m + k threshold. The row is set to D, the verdict is
-    // read, and the row is blanked back so 17 starts from a verified corner.
     const {
       applied, stored, reached, reading, proofs,
     } = await changeNodeAndAwait(
       cx, D_ORIGIN,
-      (c) => c.ledClass === 'led thin' && /the chain is too short to check yet · tip \d+/.test(c.title ?? ''),
-      'led thin + "too short to check yet · tip N"',
+      (c) => c.ledClass === 'led thin' && c.tipText === '0' && c.title === 'the chain is too short to check yet · tip 0',
+      'led thin + "too short to check yet · tip 0"',
       60000);
     const ok = !reached.timedOut
       && applied === D_ORIGIN
       && stored === D_ORIGIN
       && reading.ledClass === 'led thin'
       && reading.tipClass === 'tip mono'
-      && /the chain is too short to check yet · tip \d+/.test(reading.title ?? '');
+      && reading.tipText === '0'
+      && reading.title === 'the chain is too short to check yet · tip 0';
     record('17a', ok,
       `applied=${JSON.stringify(applied)}, stored=${JSON.stringify(stored)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, tipText=${reading.tipText}, proof requests=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))}), heights D=${hD} A=${hAnow}`);
     const post = await blankNodeAndAwaitVerified(cx);
@@ -1058,18 +1067,48 @@ async function verifiedTipSteps(cx) {
       `led=${first.reading.ledClass}, tip=${first.reading.tipClass}, title=${JSON.stringify(first.reading.title)}, first-press proof requests=${first.proofs.length} (${JSON.stringify(first.proofs.map(p => p.url))}), idle-20s proof requests=${idleProofs.length}, second-press proof requests=${second.proofs.length}`);
   }
 
-  // ---- Step 17b — 30 presses one second apart under A's live miner. Every
-  // reading is `led fresh` + *verified across 2 nodes*; not one is `led
-  // refused` (WEB_INTERFACE → The extension → "The verified tip" — a winner
-  // elsewhere whose suffix carries the reading node's tip reads verified).
-  const step17bReadings = await pressCornerRepeatedly(cx, 30);
-  const allFresh17b = step17bReadings.every((r) => r.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(r.title ?? ''));
-  const refused17b = step17bReadings.findIndex((r) => r.ledClass === 'led refused');
-  const totalProofs17b = step17bReadings.reduce((n, r) => n + r.proofs, 0);
-  record('17b', allFresh17b,
-    `presses=${step17bReadings.length}, all led fresh + verified=${allFresh17b}, first led-refused press=${refused17b === -1 ? 'none' : refused17b + 1}, proof requests total=${totalProofs17b}, per-press led counts=${JSON.stringify(tallyLeds(step17bReadings))}`);
-  // The full list is only useful to the REPORT; print it out of the summary.
-  console.log(`[vt] 17b tip-build readings: ${JSON.stringify(step17bReadings)}`);
+  // ---- Step 17b — 30 presses one second apart in each direction under A's
+  // live miner. Every one of the sixty readings is `led fresh` + *verified
+  // across 2 nodes*; not one is `led refused` (WEB_INTERFACE → The extension
+  // → "The verified tip" — a winner elsewhere whose suffix carries the
+  // reading node's tip reads verified). The B direction is the case the
+  // reader of a follower stands in: B's gossip lag from A widens the gap
+  // between the extension's two proof fetches, so a block landing on A
+  // between B's answer and A's is the false alarm the rule prevents.
+  const hA17bAStart = await currentHeight(NODE);
+  const step17bAReadings = await pressCornerRepeatedly(cx, 30);
+  const hA17bAEnd = await currentHeight(NODE);
+  const allFresh17bA = step17bAReadings.every((r) => r.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(r.title ?? ''));
+  const refused17bAIdx = step17bAReadings.findIndex((r) => r.ledClass === 'led refused');
+  const totalProofs17bA = step17bAReadings.reduce((n, r) => n + r.proofs, 0);
+  console.log(`[vt] 17b A-direction readings: ${JSON.stringify(step17bAReadings)}`);
+
+  // The `node` row is set to B. The change drops the tip and reads B at
+  // once (WEB_INTERFACE → The status corner). Wait for a first verified
+  // reading on B before starting the count so the corner has settled on
+  // B's tip and the transitional post-change fetches are not counted here.
+  const switchToB = await changeNodeAndAwait(
+    cx, B_ORIGIN,
+    (c) => c.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(c.title ?? ''),
+    'led fresh + verified across N nodes (after switch to B)',
+    60000);
+  console.log(`[vt] 17b switch to B: applied=${JSON.stringify(switchToB.applied)}, stored=${JSON.stringify(switchToB.stored)}, led=${switchToB.reading.ledClass}, title=${JSON.stringify(switchToB.reading.title)}`);
+  const hA17bBStart = await currentHeight(NODE);
+  const step17bBReadings = await pressCornerRepeatedly(cx, 30);
+  const hA17bBEnd = await currentHeight(NODE);
+  const allFresh17bB = step17bBReadings.every((r) => r.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(r.title ?? ''));
+  const refused17bBIdx = step17bBReadings.findIndex((r) => r.ledClass === 'led refused');
+  const totalProofs17bB = step17bBReadings.reduce((n, r) => n + r.proofs, 0);
+  console.log(`[vt] 17b B-direction readings: ${JSON.stringify(step17bBReadings)}`);
+
+  // Blank the row so subsequent steps start on the seed-list default (A).
+  const post17b = await blankNodeAndAwaitVerified(cx);
+  console.log(`[vt] 17b post-blank: applied=${JSON.stringify(post17b.applied)}, stored=${JSON.stringify(post17b.stored)}, led=${post17b.reading.ledClass}, title=${JSON.stringify(post17b.reading.title)}`);
+
+  const refusedDesc = (readings, idx) => idx === -1 ? 'none' : `#${idx + 1} title=${JSON.stringify(readings[idx].title)}`;
+  const ok17b = allFresh17bA && allFresh17bB;
+  record('17b', ok17b,
+    `direction A (reading ${NODE}): presses=${step17bAReadings.length}, all led fresh + verified=${allFresh17bA}, first led-refused press=${refusedDesc(step17bAReadings, refused17bAIdx)}, proof requests total=${totalProofs17bA}, per-press led counts=${JSON.stringify(tallyLeds(step17bAReadings))}, A height first=${hA17bAStart} last=${hA17bAEnd}; direction B (reading ${B_ORIGIN}): presses=${step17bBReadings.length}, all led fresh + verified=${allFresh17bB}, first led-refused press=${refusedDesc(step17bBReadings, refused17bBIdx)}, proof requests total=${totalProofs17bB}, per-press led counts=${JSON.stringify(tallyLeds(step17bBReadings))}, A height first=${hA17bBStart} last=${hA17bBEnd}`);
 
   // ---- Step 18 — thin (B stopped), then verified again (B started).
   {
@@ -1136,15 +1175,17 @@ async function verifiedTipSteps(cx) {
       60000);
     const feedCards = await cx.eval(`document.querySelectorAll('#feed .card').length`);
     const feedContainer = await cx.eval(`!!document.querySelector('#feed')`);
+    const tipCheck = await titleTipNearReadingNode(RELAY_ORIGIN, reading);
     const ok = !reached.timedOut
       && stored === RELAY_ORIGIN
       && applied === RELAY_ORIGIN
       && reading.ledClass === 'led refused'
       && reading.tipClass === 'tip mono clay'
       && /^this node's proof did not verify · tip \d+$/.test(reading.title ?? '')
+      && tipCheck.near
       && feedContainer;
     record('19a', ok,
-      `prefs.node stored=${JSON.stringify(stored)}, applied=${JSON.stringify(applied)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, feed container present=${feedContainer}, feed .card count=${feedCards}, proof requests during change=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))}), relay flips=${relay.flips.total}`);
+      `prefs.node stored=${JSON.stringify(stored)}, applied=${JSON.stringify(applied)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, title tip=${tipCheck.tipTitle} vs relay height=${tipCheck.nodeHeight} near=${tipCheck.near}, feed container present=${feedContainer}, feed .card count=${feedCards}, proof requests during change=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))}), relay flips=${relay.flips.total}`);
     const post = await blankNodeAndAwaitVerified(cx);
     console.log(`[vt] 19a post-blank: applied=${JSON.stringify(post.applied)}, stored=${JSON.stringify(post.stored)}, led=${post.reading.ledClass}, title=${JSON.stringify(post.reading.title)}`);
   }
@@ -1268,14 +1309,16 @@ async function verifiedTipSteps(cx) {
               `led refused + "${aHostForTitle} holds more work than this node · tip N"`,
               60000);
             const titleRe = new RegExp(`^${aHostForTitle.replace(/\./g, '\\.')} holds more work than this node · tip \\d+$`);
+            const tipCheck = await titleTipNearReadingNode(C_ORIGIN, reading);
             const ok = !reached.timedOut
               && applied === C_ORIGIN
               && stored === C_ORIGIN
               && reading.ledClass === 'led refused'
               && reading.tipClass === 'tip mono clay'
-              && titleRe.test(reading.title ?? '');
+              && titleRe.test(reading.title ?? '')
+              && tipCheck.near;
             record('19b', ok,
-              `prefs.node stored=${JSON.stringify(stored)}, applied=${JSON.stringify(applied)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, C peers_connected=${cPeers}, hA=${hAnow}, hC=${hCnow}, C.block@${forkH}.sig=${cSig.slice(0, 12)}…, A.block@${forkH}.sig=${aSig.slice(0, 12)}…, proof requests=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))})`);
+              `prefs.node stored=${JSON.stringify(stored)}, applied=${JSON.stringify(applied)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, title tip=${tipCheck.tipTitle} vs C height=${tipCheck.nodeHeight} near=${tipCheck.near}, C peers_connected=${cPeers}, hA=${hAnow}, hC=${hCnow}, C.block@${forkH}.sig=${cSig.slice(0, 12)}…, A.block@${forkH}.sig=${aSig.slice(0, 12)}…, proof requests=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))})`);
           }
           const post = await blankNodeAndAwaitVerified(cx);
           console.log(`[vt] 19b post-blank: applied=${JSON.stringify(post.applied)}, stored=${JSON.stringify(post.stored)}, led=${post.reading.ledClass}, title=${JSON.stringify(post.reading.title)}`);
@@ -1306,14 +1349,16 @@ async function verifiedTipSteps(cx) {
         (c) => c.ledClass === 'led thin' && /^the nodes share no block to compare · tip \d+$/.test(c.title ?? ''),
         'led thin + "the nodes share no block to compare · tip N"',
         60000);
+      const tipCheck = await titleTipNearReadingNode(D_ORIGIN, reading);
       const ok = !reached.timedOut
         && applied === D_ORIGIN
         && stored === D_ORIGIN
         && reading.ledClass === 'led thin'
         && reading.tipClass === 'tip mono'
-        && /^the nodes share no block to compare · tip \d+$/.test(reading.title ?? '');
+        && /^the nodes share no block to compare · tip \d+$/.test(reading.title ?? '')
+        && tipCheck.near;
       record('19c', ok,
-        `prefs.node stored=${JSON.stringify(stored)}, applied=${JSON.stringify(applied)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, hD=${hDafter}, proof requests=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))})`);
+        `prefs.node stored=${JSON.stringify(stored)}, applied=${JSON.stringify(applied)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, title tip=${tipCheck.tipTitle} vs D height=${tipCheck.nodeHeight} near=${tipCheck.near}, hD=${hDafter}, proof requests=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))})`);
     }
     const post = await blankNodeAndAwaitVerified(cx);
     console.log(`[vt] 19c post-blank: applied=${JSON.stringify(post.applied)}, stored=${JSON.stringify(post.stored)}, led=${post.reading.ledClass}, title=${JSON.stringify(post.reading.title)}`);
@@ -1367,12 +1412,6 @@ async function verifiedTipSteps(cx) {
     try { bcx.s.close(); } catch {}
   }
 
-  // ---- The old-tree 17b stage — a second Chromium, an extension built from
-  // OLD_TREE_COMMIT (the tree before the rule changed). Expected: at least
-  // one `led refused` within the presses. Runs against the same A/B stack;
-  // no state on the tip Chromium is disturbed.
-  await runOldTree17b();
-
   // ---- Cleanup — every child by its handle, and the lying relay's server.
   console.log(`[vt] cleanup: stopping all children by handle`);
   await stopAllChildren();
@@ -1411,153 +1450,6 @@ function tallyLeds(readings) {
   const out = {};
   for (const r of readings) out[r.ledClass ?? 'null'] = (out[r.ledClass ?? 'null'] ?? 0) + 1;
   return out;
-}
-
-// Spawn a synchronous child and wait for its exit. Standard node:child_process
-// with stdio piped to the given log path (or inherited when no scratch). A
-// non-zero exit rejects with the command's tail — the caller records the
-// old-tree stage as SKIPPED and moves on.
-async function runProcess(cmd, argv, cwd, env, logPath) {
-  return new Promise((resolve, reject) => {
-    const stdio = logPath ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'inherit', 'inherit'];
-    const child = spawn(cmd, argv, { cwd, env: { ...process.env, ...env }, stdio });
-    if (logPath) {
-      import('node:fs').then(({ createWriteStream }) => {
-        const w = createWriteStream(logPath, { flags: 'a' });
-        w.write(`\n$ ${cmd} ${argv.map((a) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)).join(' ')}\n`);
-        child.stdout?.pipe(w);
-        child.stderr?.pipe(w);
-      }).catch(() => {});
-    }
-    child.on('exit', (code, sig) => {
-      if (code === 0 && !sig) resolve();
-      else reject(new Error(`${cmd} exited code=${code} signal=${sig}`));
-    });
-    child.on('error', reject);
-  });
-}
-
-// The false-alarm proof — a second Chromium loading an extension built from
-// OLD_TREE_COMMIT (the tree before the rule at contract 66c85f7d). Same A/B
-// stack, same 30-press shape as 17b. At least one `led refused` proves the
-// step can fail; if 30 do not, extend to OLD_PRESS_CEILING before reporting.
-// Worktree removed by `git worktree remove <path>` on the way out, never by
-// `prune`; the built zips live in the worktree root and go with it.
-async function runOldTree17b() {
-  const scriptDir = dirname(new URL(import.meta.url).pathname);
-  // packages/web/scripts/extension-check → repo root is four ..'s up.
-  const repoRoot = resolve(scriptDir, '..', '..', '..', '..');
-  const worktreeDir = join(SCRATCH, 'wt-old');
-  const buildLog = join(SCRATCH, 'wt-old-build.log');
-  const nodeExpected = NODE.replace(/\/+$/, '');
-  const nodesJson = JSON.stringify([nodeExpected, B_ORIGIN]);
-
-  console.log(`[vt] 17b-old-tree: adding worktree at ${OLD_TREE_COMMIT} → ${worktreeDir}`);
-  try {
-    try { rmSync(worktreeDir, { recursive: true, force: true }); } catch {}
-    await runProcess('git', ['-C', repoRoot, 'worktree', 'add', '--detach', worktreeDir, OLD_TREE_COMMIT], repoRoot, {}, buildLog);
-  } catch (e) {
-    record(OLD_TREE_STEP, false, `git worktree add failed: ${String(e)}`);
-    return;
-  }
-
-  let cleanupWorktree = true;
-  let oldChrome = null;
-  try {
-    console.log(`[vt] 17b-old-tree: pnpm install --prefer-offline --frozen-lockfile`);
-    await runProcess('pnpm', ['install', '--prefer-offline', '--frozen-lockfile'], worktreeDir, {}, buildLog);
-    console.log(`[vt] 17b-old-tree: pnpm --filter @dagsocial/types build (build-extension depends on types)`);
-    // The old tree has no dist/ under any package until built; the extension
-    // build imports @dagsocial/types at build time through the vite alias, so
-    // types must be present (dist or transpiled). A -r build costs more but
-    // is what a fresh worktree needs.
-    await runProcess('pnpm', ['-r', 'build'], worktreeDir, {}, buildLog);
-    console.log(`[vt] 17b-old-tree: bash packages/web/scripts/build-extension.sh (devnet values)`);
-    await runProcess('bash', ['packages/web/scripts/build-extension.sh'], worktreeDir, {
-      VITE_NETWORK: 'devnet',
-      VITE_NODES: nodesJson,
-      VITE_FAUCET_BASE: '',
-      VITE_PUBLIC: '',
-      VITE_PUBLIC_ORIGIN: '',
-    }, buildLog);
-    // The zip is a version-named file at the worktree root; unzip it into a
-    // stage the second Chromium loads with --load-extension.
-    const oldStageDir = join(SCRATCH, 'ext-old-stage');
-    try { rmSync(oldStageDir, { recursive: true, force: true }); } catch {}
-    const zipCandidates = readdirSync(worktreeDir).filter((n) => /^notis-extension-.*-chrome\.zip$/.test(n));
-    if (zipCandidates.length === 0) {
-      record(OLD_TREE_STEP, false, `no notis-extension-*-chrome.zip in worktree ${worktreeDir}`);
-      return;
-    }
-    const zipPath = join(worktreeDir, zipCandidates[0]);
-    console.log(`[vt] 17b-old-tree: unzip ${zipPath} → ${oldStageDir}`);
-    await runProcess('unzip', ['-q', zipPath, '-d', oldStageDir], repoRoot, {}, buildLog);
-
-    // Grant the loopback origins on the unpacked manifest, the same reason
-    // the primary extension is patched above the top-level launch.
-    const oldManifestPath = join(oldStageDir, 'manifest.json');
-    const oldManifest = JSON.parse(readFileSync(oldManifestPath, 'utf8'));
-    oldManifest.host_permissions = [...new Set([...(oldManifest.host_permissions ?? []), ...LOOPBACKS])];
-    writeFileSync(oldManifestPath, JSON.stringify(oldManifest, null, 2) + '\n');
-
-    console.log(`[vt] 17b-old-tree: launching a second Chromium with the old-tree extension`);
-    oldChrome = await launchChromium(oldStageDir);
-    // Open the extension's index.html on the second Chromium.
-    const br = new WebSocket(oldChrome.version.webSocketDebuggerUrl);
-    await new Promise((res, rej) => { br.onopen = res; br.onerror = rej; });
-    br.send(JSON.stringify({
-      id: 1, method: 'Target.createTarget',
-      params: { url: `chrome-extension://${EXT_ID}/index.html` },
-    }));
-    await sleep(2000);
-    br.close();
-
-    const oldPage = await findExt('index.html', oldChrome.port);
-    if (!oldPage) {
-      record(OLD_TREE_STEP, false, 'no extension page on the second Chromium (id may have shifted; extension may have failed to load)');
-      return;
-    }
-    await sleep(4000);
-    const cxOld = await openSession(oldPage.webSocketDebuggerUrl);
-    await cxOld.waitFor(`!!document.querySelector('#feed')`, 'feed root (old)', 30000);
-    await sleep(2000);
-    await cxOld.waitFor(`!!document.querySelector('.corner')`, 'corner mounted (old)', 30000);
-
-    console.log(`[vt] 17b-old-tree: pressing ${OLD_PRESS_TARGET} times, one second apart`);
-    let readings = await pressCornerRepeatedly(cxOld, OLD_PRESS_TARGET);
-    let refusedIdx = readings.findIndex((r) => r.ledClass === 'led refused');
-    if (refusedIdx === -1) {
-      const extra = OLD_PRESS_CEILING - OLD_PRESS_TARGET;
-      console.log(`[vt] 17b-old-tree: no refused in ${OLD_PRESS_TARGET} presses; extending by ${extra}`);
-      const more = await pressCornerRepeatedly(cxOld, extra);
-      // Re-number the extras so `press` reads 31…100 for the full list.
-      for (let i = 0; i < more.length; i++) more[i].press = OLD_PRESS_TARGET + i + 1;
-      readings = readings.concat(more);
-      refusedIdx = readings.findIndex((r) => r.ledClass === 'led refused');
-    }
-    const anyRefused = refusedIdx !== -1;
-    const totalProofs = readings.reduce((n, r) => n + r.proofs, 0);
-    record(OLD_TREE_STEP, anyRefused,
-      `worktree=${OLD_TREE_COMMIT}, presses=${readings.length}, first led-refused press=${anyRefused ? refusedIdx + 1 : 'none'}, proof requests total=${totalProofs}, per-press led counts=${JSON.stringify(tallyLeds(readings))}`);
-    console.log(`[vt] 17b-old-tree readings: ${JSON.stringify(readings)}`);
-    try { cxOld.s.close(); } catch {}
-  } catch (e) {
-    record(OLD_TREE_STEP, false, `error: ${String(e)}`);
-  } finally {
-    if (oldChrome) {
-      try { oldChrome.proc.kill(); } catch {}
-      try { rmSync(oldChrome.profile, { recursive: true, force: true }); } catch {}
-    }
-    if (cleanupWorktree) {
-      try {
-        console.log(`[vt] 17b-old-tree: git worktree remove ${worktreeDir}`);
-        await runProcess('git', ['-C', repoRoot, 'worktree', 'remove', '--force', worktreeDir], repoRoot, {}, buildLog);
-      } catch (e) {
-        console.log(`[vt] 17b-old-tree: git worktree remove failed: ${String(e)} — falling back to rm -rf on the tree; the worktree list is the operator's to prune with 'git worktree list'`);
-        try { rmSync(worktreeDir, { recursive: true, force: true }); } catch {}
-      }
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
