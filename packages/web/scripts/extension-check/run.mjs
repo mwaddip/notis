@@ -873,7 +873,7 @@ function tipFromTitle(title) {
 // The tip in the corner's title is the reading node's, within a few blocks
 // of that node's /blocks/current at the time of the read — a change of the
 // reading node drops the tip and reads at once (WEB_INTERFACE → The status
-// corner → node change drops the tip). The fetches sit close in time, so
+// corner). The fetches sit close in time, so
 // a small tolerance covers the fold's own delay and A's live pace.
 async function titleTipNearReadingNode(readingOrigin, reading, tolerance = 5) {
   const tipTitle = tipFromTitle(reading.title);
@@ -1021,7 +1021,7 @@ async function verifiedTipSteps(cx) {
   // ---- Step 17a — too-short, on node D. D is isolated with no miner script,
   // so its height stays at 0 (genesis). A change of the reading node drops
   // the tip and reads the new node at once (WEB_INTERFACE → The status
-  // corner → node change drops the tip): the corner's tip is D's own, 0.
+  // corner): the corner's tip is D's own, 0.
   {
     const hD = await currentHeight(D_ORIGIN);
     const hAnow = await currentHeight(NODE);
