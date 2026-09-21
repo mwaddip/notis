@@ -228,6 +228,20 @@ for target in "$CHROME_DIR" "$FIREFOX_DIR"; do
   for size in 16 32 48 128; do
     [ -f "$target/icons/${size}.png" ] || { echo "FAIL: $target/icons/${size}.png missing"; exit 1; }
   done
+
+  # No .js file carries the shim's signature-primitive sentence — the shim
+  # names createPublicKey and verify as functions that throw it, and
+  # tree-shaking must drop them from every asset. The day some unit's code
+  # reaches a signature path without bringing an implementation, this check
+  # says so — not a browser at run time (WEB_INTERFACE → "The shim carries
+  # only what the client's own module graph reaches, and nothing on
+  # speculation").
+  while IFS= read -r -d '' jsfile; do
+    if grep -Fq 'the crypto shim carries no signature primitive' "$jsfile"; then
+      echo "FAIL: $jsfile carries the shim's signature-primitive sentence — a signature path reached without an implementation"
+      exit 1
+    fi
+  done < <(find "$target" -type f -name '*.js' -print0)
 done
 
 # Firefox's `browser_specific_settings` deep-equals the object stated

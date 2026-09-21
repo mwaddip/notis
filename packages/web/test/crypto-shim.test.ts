@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createHash as nodeCreateHash, createPublicKey as nodeCreatePublicKey, verify as nodeVerify } from 'node:crypto';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { Buffer } from 'buffer';
-import { createHash, generateKeyPairSync } from '../src/shim/crypto';
+import { createHash, generateKeyPairSync, createPublicKey, verify, PublicKeyObject } from '../src/shim/crypto';
 
 // The shim is a BUILD-TIME substitution: under Node the real `crypto` is present
 // and the substitution never happens, so this suite cannot prove the shim is
@@ -92,5 +92,21 @@ describe('crypto shim — generateKeyPairSync yields Node-compatible Ed25519 DER
     const signature = ed25519.sign(message, seed);
     const nodeKey = nodeCreatePublicKey({ key: spki, format: 'der', type: 'spki' });
     expect(nodeVerify(null, message, nodeKey, signature)).toBe(true);
+  });
+});
+
+// WEB_INTERFACE → "The shim carries only what the client's own module graph reaches, and nothing on speculation"
+describe('crypto shim — createPublicKey and verify throw one fixed sentence', () => {
+  const SENTENCE = 'the crypto shim carries no signature primitive';
+
+  it('createPublicKey throws exactly the sentence', () => {
+    expect(() => createPublicKey({ key: new Uint8Array(44), format: 'der', type: 'spki' }))
+      .toThrow(new Error(SENTENCE));
+  });
+
+  it('verify throws exactly the sentence', () => {
+    const key = new PublicKeyObject(new Uint8Array(32));
+    expect(() => verify(null, new Uint8Array(32), key, new Uint8Array(64)))
+      .toThrow(new Error(SENTENCE));
   });
 });

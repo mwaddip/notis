@@ -15,7 +15,7 @@
     "@noble/ciphers": "^2.2.0",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
-    "buffer": "^5.7.1"
+    "buffer": "^6.0.3"
   },
   "devDependencies": {
     "@rollup/plugin-inject": "^5.0.5",
