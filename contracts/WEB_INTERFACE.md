@@ -373,17 +373,23 @@ asks `GET /nipopow/proof/6/20` (`NODE_INTERFACE → Nipopow`) of the reading nod
 dropped, one after another, each under the tool's ten-second timeout — and needs no host permission, since every node
 answers every origin. **The reading node is asked first, so the fold's own rule gives the comparison its meaning**: a
 tie keeps the first, and a winner at index `0` says the reading node holds the best chain or ties for it
-(`NIPOPOW_INTERFACE → compareProofs`). **The verdict** is a pure function of the result, the first row that holds:
+(`NIPOPOW_INTERFACE → compareProofs`). **A winner elsewhere says the reading node is behind, not that it is wrong**:
+the nodes answer one after another, so a block that lands between two answers makes the later proof the longer one.
+The reading node is outworked only when the winner's suffix — its last `k` headers — does not carry the reading node's
+tip: it stands on another chain, or further behind than the suffix reaches. The tool answers this as each verified
+node's `behind` — the count of blocks from its tip to the winner's where the winner's suffix carries that tip, `0` for
+the winner and for a node on the same tip, `null` where it does not. **The verdict** is a pure function of the result,
+the first row that holds:
 
 | The reading node | Verdict |
 |---|---|
 | answered with no proof in the body, or with one that does not decode or does not verify | `refused` · *invalid-proof* |
 | answered that its chain is shorter than `m + k` | `thin` · *too-short* |
 | gave no answer to read — a transport failure, or any other status | `thin` · *no-proof* |
-| verified, and another node's chain won the comparison | `refused` · *outworked*, naming the winner |
+| verified, another node's chain won, and the winner's suffix does not carry the reading node's tip (`behind` is `null`) | `refused` · *outworked*, naming the winner |
 | verified, and shares no block with another node's proof | `thin` · *split* |
 | verified, and no other node did | `thin` · *one-node* |
-| verified, best or tied, with at least one other verified | `verified`, with the count |
+| verified — best, tied, or behind on the winner's own chain — with at least one other verified | `verified`, with the count |
 
 **The verdict is total by itself**: the last four rows hold only for a reading node the result marks verified, beside
 the result's own tip. A reading node left unverified under no code, or a verified one beside no tip, reads `refused` ·
@@ -397,9 +403,8 @@ says is the trust model's and no more: headers and work, never a body; nothing a
 page shows; nothing with fewer than two nodes answering; and two nodes under one operator and one DNS zone answer for
 one box lying, not for the operator.
 
-> ⚠ **AHEAD OF CODE (2026-09-21, the verified tip)** — no verifier exists: `main.ts` hands the App none,
-> `@dagsocial/nipopow-client` answers as a command line alone and its result carries no `refuseCode`, testnet's seed list
-> names one base, and the shell has no `notis-network`.
+> ⚠ **AHEAD OF CODE (2026-09-21, the verified tip)** — the tool's result carries no `behind`, and `tipVerdict` reads
+> every winner but index `0` as *outworked*.
 
 **The policy.** The ledger a transaction moves is read from its outputs: **any output with `boxType`
 `credit` or `fee` is a credits transaction; otherwise karma.** Inputs are ids only
