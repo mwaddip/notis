@@ -1275,13 +1275,34 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
           const hCafterSettle = await currentHeight(C_ORIGIN);
           console.log(`[vt] 19b phase 3: C reached height=${hCafterSettle} after +3 mine`);
 
-          // Assertions — peers_connected=0 on C, C's block at hCnow ≠ A's,
-          // A > C. The block-at-height read (`/blocks/:height`,
-          // NODE_INTERFACE → Blocks) carries the full header; two different
-          // ordering blocks always differ in header (utxoTxRoot, stateRoot,
-          // powNonce, validatorSignature), so a header hash off it is the
-          // block's identity for a compare.
-          const cAdminOrigin = `http://127.0.0.1:${C_ADMIN_PORT}`;
+          // Phase 4 — wait for A to stand above C. A paced A-miner does not
+          // necessarily overtake C's three fresh blocks by the moment C stops
+          // mining (`CLAUDE.md → "The proof"` — *"a few blocks a minute"*);
+          // the three assertions below read A > C and stand only once the
+          // pace has carried A past hCafterSettle. A five-minute bound is
+          // plenty at that pace; its expiry is a FAIL of 19b that names both
+          // heights.
+          const hAoverC = await (async () => {
+            const t0 = Date.now();
+            while (Date.now() - t0 < 300000) {
+              const h = await currentHeight(NODE);
+              if (typeof h === 'number' && typeof hCafterSettle === 'number' && h > hCafterSettle) return h;
+              await sleep(500);
+            }
+            return null;
+          })();
+          if (hAoverC === null) {
+            const hAlast = await currentHeight(NODE);
+            record('19b', false, `A did not overtake C within 5 minutes (hC=${hCafterSettle}, hA=${hAlast}); A's miner may be paced too slowly`);
+          } else {
+            console.log(`[vt] 19b phase 4: A overtook C at hA=${hAoverC} (hC=${hCafterSettle})`);
+            // Assertions — peers_connected=0 on C, C's block at hCnow ≠ A's,
+            // A > C. The block-at-height read (`/blocks/:height`,
+            // NODE_INTERFACE → Blocks) carries the full header; two different
+            // ordering blocks always differ in header (utxoTxRoot, stateRoot,
+            // powNonce, validatorSignature), so a header hash off it is the
+            // block's identity for a compare.
+            const cAdminOrigin = `http://127.0.0.1:${C_ADMIN_PORT}`;
           const cHealth = await fetch(`${cAdminOrigin}/health`).then((r) => r.json()).catch(() => null);
           const cPeers = cHealth?.peers_connected ?? null;
           const hAnow = await currentHeight(NODE);
@@ -1335,6 +1356,7 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
               && tipCheck.near;
             record('19b', ok,
               `prefs.node stored=${JSON.stringify(stored)}, applied=${JSON.stringify(applied)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, title tip=${tipCheck.tipTitle} vs C height=${tipCheck.nodeHeight} near=${tipCheck.near}, C peers_connected=${cPeers}, hA=${hAnow}, hC=${hCnow}, C.block@${forkH}.sig=${cSig.slice(0, 12)}…, A.block@${forkH}.sig=${aSig.slice(0, 12)}…, proof requests=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))})`);
+          }
           }
           const post = await blankNodeAndAwaitVerified(cx);
           console.log(`[vt] 19b post-blank: applied=${JSON.stringify(post.applied)}, stored=${JSON.stringify(post.stored)}, led=${post.reading.ledClass}, title=${JSON.stringify(post.reading.title)}`);
