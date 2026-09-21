@@ -70,7 +70,9 @@ App as the extension's own page, the identity held by the background (the envelo
 unlocked seed in `storage.session`, never a worker global), every write signed there through the
 `Signer` seam's proxy; credits always prompted in the prompt window, rep silent while unlocked unless the
 *sign each rep action* row says ask; the `notSigned` arm and the fourth ending — the composer still open;
-the shell's `notis-nodes` seed list and `notis-public` link origin; one manifest template → two zips. **Links into
+the shell's `notis-nodes` seed list and `notis-public` link origin; one manifest template → two zips; **the
+chain it reads checked by NiPoPoW proofs from the seed list's nodes, the verdict folded into the status corner**
+(`WEB_INTERFACE → The extension → "The verified tip"`). **Links into
 the extension** (`WEB_INTERFACE → The extension → "Links into the extension"`, `→ The way into the workspace`): a
 post's link stays the website's, and a reader who runs the extension follows it into the extension's workspace. **The
 bridge** (`src/extension/bridge.ts`, built as `bridge.js`) is the extension's one content script, declared for
@@ -104,7 +106,8 @@ extension's prompt reads too.
 reads (`GET /vouches` by target, by voucher, the cooldown arm; `GET /invites/:userId`) and the name read
 (`GET /usernames?owner=`), a handle's holder (`GET /usernames/:name`) and the balance (`GET /credits/:userId`) are `GET`s in it.
 
-**It hashes only through `@dagsocial/types`**, reached by the build-time shim — the wallet builders type
+**It hashes only through `@dagsocial/types`** — and, in the extension's tip verifier, `@dagsocial/validation`'s
+header hash and PoW check, through `@dagsocial/nipopow-client` — reached by the build-time shim — the wallet builders type
 their box candidates and compute every id through the shared implementation, never a copy, which is why
 no mirror test applies. **If you find yourself hand-writing an encoder or a hash, you have left the
 slice — stop and report, do not implement it.**
@@ -272,21 +275,24 @@ page), and asserts each live post's recomputed `computeContentHash` equals the
 (`CHROME=…`, else Playwright's cached one). Not in `pnpm test` by design — it
 needs a browser and a node.
 
-## Building for a deployment — six values, written by the build and editable after
+## Building for a deployment — seven values, written by the build and editable after
 
-**The deployment is six values in the shell's head** (`WEB_INTERFACE → The client is served from the
+**The deployment is seven values in the shell's head** (`WEB_INTERFACE → The client is served from the
 node's own origin`): `<base href>` — the path the client's own files are served under, opening and
 closing with `/`; `notis-api` — the API's path on the same origin, no trailing slash; `notis-faucet` —
 the faucet's path, empty for no faucet and no `ask the faucet for karma` button; `notis-nodes` — a JSON
 array of API bases tried in order when no node preference is stored, `[]` on the web; `notis-public` — the
-origin and base a copied link carries, empty for the page's own; the `og:image` content — the picture's
-absolute URL, `<origin><base>og.png`. The build writes them from `VITE_WEB_BASE`, `VITE_API_BASE`,
-`VITE_FAUCET_BASE`, `VITE_NODES`, `VITE_PUBLIC` and `VITE_PUBLIC_ORIGIN` — `/`, empty, empty, `[]`, empty
-and empty under `pnpm dev`, where the dev server proxies the bare API paths — and the client reads them
-from the DOM at load (`readBase`, `readMeta`, `readNodesMeta` and `readPublicMeta` in `src/prefs.ts`). Vite's `base` is `./` for a build,
+origin and base a copied link carries, empty for the page's own; `notis-network` — the network the build is
+for, `testnet` · `devnet` · `mainnet`, empty on the web: the extension's tip verifier takes its proof-of-work
+profile from it and **never from a node's `/status`**, and empty (or a name no profile answers to) is a build
+with no verifier; the `og:image` content — the picture's absolute URL, `<origin><base>og.png`. The build writes
+them from `VITE_WEB_BASE`, `VITE_API_BASE`, `VITE_FAUCET_BASE`, `VITE_NODES`, `VITE_PUBLIC`, `VITE_NETWORK` and
+`VITE_PUBLIC_ORIGIN` — `/`, empty, empty, `[]`, empty, empty and empty under `pnpm dev`, where the dev server
+proxies the bare API paths — and the client reads them from the DOM at load (`readBase`, `readMeta`,
+`readNodesMeta`, `readPublicMeta` and `readNetworkMeta` in `src/prefs.ts`). Vite's `base` is `./` for a build,
 so every reference in the built shell is relative and the `<base>` alone decides where the files resolve;
 `public/fonts/fonts.css` names its files beside itself for the same reason. A host with another layout
-edits the six values in `web/index.html` after unzipping.
+edits the seven values in `web/index.html` after unzipping.
 
 ```bash
 bash packages/web/scripts/build-release.sh   # notis.fun's values → notis-web-<ver>.zip in the repo root
@@ -295,20 +301,42 @@ cd packages/web && VITE_PUBLIC_ORIGIN=<origin> VITE_WEB_BASE=<client path>/ VITE
 
 Run vite directly rather than through `pnpm --filter`, so no variable has to survive pnpm's argument
 passing. ⚠ **Getting `<base href>` wrong yields a blank page, not an error.** The HTML loads, every asset
-404s, and nothing in the console names the cause. Check the built `index.html`: the six values carry the
+404s, and nothing in the console names the cause. Check the built `index.html`: the seven values carry the
 intended values and every `href` and `src` is relative — `build-release.sh` checks exactly that.
 
 ## The extension — the second build target
 
 ```bash
 bash packages/web/scripts/build-extension.sh          # notis-extension-<ver>-chrome.zip and -firefox.zip in the repo root
-VITE_NODES='["http://127.0.0.1:19740"]' VITE_FAUCET_BASE='http://127.0.0.1:19750/faucet' VITE_PUBLIC='http://localhost:19760/web/' VITE_PUBLIC_ORIGIN='' bash packages/web/scripts/build-extension.sh   # devnet values, for the proof
+VITE_NETWORK=devnet VITE_NODES='["http://127.0.0.1:19740","http://127.0.0.1:19770"]' VITE_FAUCET_BASE='http://127.0.0.1:19750/faucet' VITE_PUBLIC='http://localhost:19760/web/' VITE_PUBLIC_ORIGIN='' bash packages/web/scripts/build-extension.sh   # devnet values, for the proof
 ```
 
 `VITE_PUBLIC` falls back to `https://notis.fun/web/` only when it is **unset**; an explicit `VITE_PUBLIC=''` builds
 an extension with no bridge, no `content_scripts` and no links row. `VITE_FAUCET_BASE` behaves the same way: unset
 takes testnet's faucet, an explicit `VITE_FAUCET_BASE=''` builds a faucet-less extension whose manifests declare no
-optional host.
+optional host. `VITE_NETWORK` too: unset is `testnet`, an explicit `VITE_NETWORK=''` builds an extension with no tip
+verifier, and a name no network profile answers to refuses the build. ⚠ **A build for a devnet stack needs
+`VITE_NETWORK=devnet`** — left unset it verifies devnet's proofs against testnet's profile and every one reads
+*this node's proof did not verify*. `VITE_NODES` defaults to testnet's two nodes, `notis.fun` first.
+
+**The verified tip** (`WEB_INTERFACE → The extension → "The verified tip"`, `→ The status corner`): the extension
+checks the chain it reads. `src/extension/tip-verifier.ts` (`createTipVerifier`) asks the reading node first and then
+every other base of the seed list for `GET /nipopow/proof/6/20` through `resolveTip` of `@dagsocial/nipopow-client` —
+the code the command-line light client runs, never a second implementation — with the profile of the build's
+`notis-network`, **never a node's `/status`**; `src/model/tip-verdict.ts` (`tipVerdict`, pure) reads the result into
+`verified` · `thin` · `refused`, deciding for itself (an unverified reading node never reads `verified`, whatever
+code stands beside it; a `behind` that is not a non-negative integer is `null`); the App runs it at start, on a press
+of the corner and every ten minutes while visible, one run at a time, a generation dropping a run made for the node
+before; the corner is green only while blocks progress **and** the verdict is `verified`. **A reading node that lost
+the comparison is outworked only when the winner's suffix does not carry its tip** (the tool's `behind` is `null`) —
+the nodes answer one after another, so a follower one block behind loses the fold at every block it lags. `main.ts`
+hands the verifier to the App in the extension build alone, and only under a non-empty `notis-network`; the web
+build is handed none and `build-release.sh` refuses `nipopow/proof` in its assets. The shim names
+`createPublicKey` and `verify` — `@dagsocial/validation` imports them — **as functions that throw**: nothing the
+verifier reaches calls them, tree-shaking drops them, and `build-extension.sh` refuses assets that carry their
+sentence. The `Buffer` polyfill is `buffer` 6 (`validation`'s PoW check writes with `writeBigUInt64LE`); **the
+polyfill sits under every byte the browser build signs and `pnpm test` cannot see it** — the binding check and the
+proof's write steps are its only proof.
 
 Three Vite builds — the pages (`index.html`, `prompt.html`) through `vite.extension.config.ts`, the background
 as one IIFE file through `vite.background.config.ts`, and, when `VITE_PUBLIC` is not empty, the bridge as one IIFE
@@ -381,11 +409,33 @@ got; 15 the takeover with none open, the tab becoming the workspace; 16 left alo
 from the tab that became the workspace (two backs at one column: the workspace's own screen entry first), and a
 `target="_blank"` link as the control, found by its `openerId`; last, the bridge-less arm in a
 `Target.createBrowserContext` context, where the press switches the hosted page in place. Without the two flags
-13–16 read `NOT RUN`. The web build for it: `VITE_WEB_BASE=/web/ VITE_API_BASE=<the devnet node's origin>
+13–16 read `NOT RUN`. **With `--verified-tip` (and `--node-dist`, `--miner`, `--scratch`, `--node-p2p`) the
+verified-tip block**, for which the harness owns every node but A — a peer **B** of A, an in-process **relay** that
+serves A's reads and flips one byte of its proof, a node **C** that syncs from A and is then restarted cut off
+(`MAX_PEERS=0`, an empty bootstrap, a new listen port) to mine three blocks of its own, and a fresh isolated **D**
+— each step asserting the rendered corner (the dot's class, the tip span's classes, the `title`, the tip in it
+being the reading node's own) and counting `/nipopow/proof/` requests from CDP: **17a** the `node` row on D at
+height 0 — *the chain is too short to check yet · tip 0*; **17** *verified across 2 nodes*, one proof request per
+node per press, none unasked in twenty seconds; **17b** thirty presses reading A and thirty reading B under A's
+live miner, every one green; **18** B stopped — *only one node could be checked* — and green again once it
+rejoins; **19a** the row on the relay — *this node's proof did not verify*, the height clay, the feed still
+rendering; **19b** the row on C once A stands above it — *127.0.0.1:19740 holds more work than this node*; **19c**
+the row on D mined past 30 — *the nodes share no block to compare*; **20** the hosted web build — the first
+paragraph's title and no `/nipopow/` request. In a full run the block runs after step 16 on a session opened on
+the extension page live at that moment (step 15 closes the first one), and the browser-context arm runs last. The
+extension for it is built with `VITE_NETWORK=devnet` and `VITE_NODES` naming A then B; the harness refuses
+otherwise. **The ten-minute timer and the visibility rule are the unit tests'**, not the proof's. ⚠ **17b guards a
+race that is wide only for a follower under a fast miner**: reading B at about three blocks a second, a build
+whose verdict read every lost comparison as *outworked* showed the alarm on 24 of 30 presses; under the paced
+miner of a full run the two fetches mostly see one height. The web build for it: `VITE_WEB_BASE=/web/ VITE_API_BASE=<the devnet node's origin>
 VITE_FAUCET_BASE='' VITE_NODES='[]' VITE_PUBLIC='' VITE_PUBLIC_ORIGIN='' npx vite build --outDir <scratch>`; the
 extension with `VITE_PUBLIC=<--public>`. All of it against a local
-devnet: `node packages/node/scripts/dev.mjs`, `tools/faucet/dist` with the devnet faucet key
-(`tools/e2e/src/identities.ts`, devnet-only and public by design), `promote.mjs` for a throwaway member,
+devnet **started by hand on ports above 19000** — `packages/node/dist/index.js` with `NETWORK_TYPE=devnet
+NODE_ROLE=miner BOOTSTRAP_PEERS=""` and its own `miner.mjs`; ⚠ `packages/node/scripts/dev.mjs` cannot serve a proof:
+it binds node 1 to port 3000 and stops every child when one exits — `tools/faucet/dist` with the devnet faucet key
+(`tools/e2e/src/identities.ts`, devnet-only and public by design; `FAUCET_KEY_PATH` is a mode-600 file holding the
+PKCS8 DER as hex), `promote.mjs` for a throwaway member (`--r-key` is a file `{ pubKeyHex, privKeyBase64 }`, the
+base64 of the 48-byte PKCS8 DER `promote.mjs` prints as hex),
 the extension built with devnet values, the faucet's base among them — the harness refuses to run when the built
 shell's `notis-faucet` differs from `--faucet`. Step 8 lets the worker die by a ≥ 30 s idle wait — `chrome.runtime.reload`
 clears `storage.session` and proves nothing — and the worker target is the one whose URL ends in
@@ -395,8 +445,11 @@ tree's `tools/faucet` with `FAUCET_CREDIT_AMOUNT` set, and `--faucet` names its 
 the service routes under. At start the harness adds the two loopback origins to the unpacked manifest's
 `host_permissions`, since CDP cannot drive the browser's permission dialog — the tracked template and the packed
 manifest are untouched, and the granted path is the hand pass. Devnet's decay outruns the harness at full mining
-speed, so the miner is paced from outside — a stop-and-continue loop around its PID, a few blocks a minute — for
-the throwaway's rep to last the run.
+speed, so the miner is paced from outside — a stop-and-continue loop around its PID, a few blocks a minute
+(`kill -STOP`, forty seconds, `kill -CONT`, three seconds measured about three a minute here), **started before
+`promote.mjs` and kept to the end** — for the throwaway's rep to last the run: unpaced at about four blocks a second
+the throwaway fell from 240 rep to 4 before its second post. The loop has a pidfile of its own, and ⚠ **a
+`SIGSTOP`-ed miner does not die on `SIGTERM` until it is continued** — stop the loop, `kill -CONT`, then `kill`.
 
 ⛔ **A proof stack is stopped by PID, never by name.** This machine's `dagsocial-miner` user unit runs the same
 `packages/node/scripts/miner.mjs` against testnet, and `pkill -f miner.mjs` kills it — it did, twice on 2026-09-17,
@@ -404,7 +457,9 @@ stalling the chain for an hour and three quarters and then for forty minutes. St
 `nohup … < /dev/null & echo $! > <name>.pid; disown %+`, check the pidfile names the process you mean
 (`tr '\0' ' ' < /proc/<pid>/cmdline`) and `kill` from the pidfiles; a listener left on a port the recipe owns is
 resolved with `ss -ltnp`. Never `pkill`, never `pgrep -f`, never a grep over `/proc/*/environ`. After the last run,
-`systemctl --user is-active dagsocial-miner` must print `active`. ⚠ Devnet's storage rent period is a hundred blocks: a box that sits through it is charged
+`systemctl --user is-active dagsocial-miner` must print `active`, **and no headless Chromium of the run may be left**
+(`ps -eo pid,args`, read for the cached Chrome's path — a smoke run once left one verifying testnet every ten minutes
+for two hours). ⚠ Devnet's storage rent period is a hundred blocks: a box that sits through it is charged
 `STORAGE_RENT_PER_BYTE` per record byte at the producer's next collection, so a long run at a fast pace shows a
 throwaway's grant shrunk — keep a run short, and start the faucet with `FAUCET_CREDIT_AMOUNT=10000000000` (100
 $NOTIS, what step 12a reads) and `FAUCET_BOND_AMOUNT=250`.

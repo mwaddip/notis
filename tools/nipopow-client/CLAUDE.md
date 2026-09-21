@@ -39,6 +39,18 @@ comparison, and then — for a public key — proves that key's karma and credit
 `stateRoot` of the proof's `suffixHead`, a header under its own verified PoW. Bytes in, verdict out,
 exit.
 
+**It answers twice: as a command line (`dist/index.js`, the package's `bin`) and as a library
+(`src/lib.ts` → `dist/lib.js`, the package's `exports`)** — `resolveTip`, `proveBoxes`, `verifierProfile` and
+their types, re-exports with no side effect at import. **The web client's extension build is the library's
+caller**: its tip verifier runs `resolveTip` in the page with the browser's `fetch`
+(`WEB_INTERFACE → The extension → "The verified tip"`). Each `NodeTipResult` carries two fields a caller decides
+on without parsing a sentence: **`refuseCode`** — `unreachable` · `too-short` (the route's documented 404, by its
+JSON `error`) · `http` · `invalid` · `null` — and **`behind`** — the blocks from a verified node's tip to the
+winner's where the winner's suffix carries that tip by `blockHash`, `0` for the winner, `null` on another chain or
+beyond the suffix. ⚠ **The nodes are asked one after another**, so a follower loses the fold at every block it
+lags: *lost the comparison* is not *outworked* — `behind` is what tells them apart. The library runs in a
+browser bundle: it may import no Node builtin and read no `process` (the command line's `index.ts` alone does).
+
 - **Owns:** `src/*`, `test/*`, this package's `package.json` and configs.
 - **Does NOT own:** anything in `packages/`, `contracts/`, or `tools/e2e` (the acceptance case that
   runs this tool against a real mesh lives there and is a separate dispatch). Cross-cutting changes —
