@@ -268,6 +268,183 @@ describe('the App status corner — a timer independent of the bounded poll', ()
     // The two timers hold distinct handles.
     expect(h.drive.pollTimer).not.toBe(h.drive.cornerTimer);
   });
+
+  // A node change drops the corner's tip and its rise, and reads the new node
+  // at once, in every build — the reset must not sit behind the verifier's
+  // early return (WEB_INTERFACE → The status corner).
+
+  it('changeNode drops the corner\'s tip to `—`, then reads the new node at once — a lower height than before is shown as it is', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    // Mount tick — the corner starts at the harness default 6001.
+    await Promise.resolve(); await Promise.resolve();
+    // The node before answers 2972 on the next tick.
+    h.setHeight(2972);
+    vi.advanceTimersByTime(CORNER_POLL_MS);
+    await Promise.resolve(); await Promise.resolve();
+    const btn = h.drive.cornerEl!;
+    expect(h.drive.cornerLastTip).toBe(2972);
+    expect(btn.querySelector('.tip')!.textContent).toBe('2972');
+    const preCount = h.currentBlockCalls.length;
+
+    // The new node answers 0 — a lower height. Change the reading node.
+    h.setHeight(0);
+    void (h.app as unknown as { changeNode(o: string): Promise<void> }).changeNode('https://new.example');
+
+    // Sync phase: the fields are cleared, the corner reads `—` and
+    // *no tip yet*, and one currentBlock call has been made — the tick runs
+    // at once, with no timer advance.
+    expect(h.drive.cornerLastTip).toBeNull();
+    expect(h.drive.cornerLastRiseAt).toBeNull();
+    expect(h.drive.cornerLastReadOk).toBeNull();
+    expect(btn.querySelector('.tip')!.textContent).toBe('—');
+    expect(btn.getAttribute('title')).toBe('no tip yet');
+    expect(h.currentBlockCalls.length).toBe(preCount + 1);
+
+    // Let cornerTick resolve. The new node's height is shown as it is — a
+    // lower number replaces the higher one.
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    expect(h.drive.cornerLastTip).toBe(0);
+    expect(btn.querySelector('.tip')!.textContent).toBe('0');
+    expect(btn.getAttribute('title')).toBe('blocks progressing · tip 0');
+  });
+
+  it('after changeNode the title never carries the node before\'s tip — neither in the sync reset nor after the read', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    await Promise.resolve(); await Promise.resolve();
+    h.setHeight(2972);
+    vi.advanceTimersByTime(CORNER_POLL_MS);
+    await Promise.resolve(); await Promise.resolve();
+    const btn = h.drive.cornerEl!;
+    expect(btn.getAttribute('title')).toContain('2972');
+
+    h.setHeight(0);
+    void (h.app as unknown as { changeNode(o: string): Promise<void> }).changeNode('https://new.example');
+    // Sync: no `2972` in the title.
+    expect(btn.getAttribute('title')).not.toContain('2972');
+    // After the tick resolves: no `2972` in the title.
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    expect(btn.getAttribute('title')).not.toContain('2972');
+  });
+
+  it('the reset runs through the seed adoption path — onReadingNodeChanged is the shared method walkSeedList and changeNode both call', async () => {
+    // walkSeedList and changeNode share `onReadingNodeChanged` (grep:
+    // `this.onReadingNodeChanged()` in `src/app.ts` — two call sites). The
+    // shared method carries the reset, so both paths see the same behaviour.
+    vi.useFakeTimers();
+    const h = harness();
+    await Promise.resolve(); await Promise.resolve();
+    h.setHeight(2972);
+    vi.advanceTimersByTime(CORNER_POLL_MS);
+    await Promise.resolve(); await Promise.resolve();
+    const btn = h.drive.cornerEl!;
+    expect(h.drive.cornerLastTip).toBe(2972);
+    const preCount = h.currentBlockCalls.length;
+
+    // Invoke the shared method directly, as `walkSeedList` does after adopting
+    // a seed: the fields drop, the corner reads `—`, one currentBlock call is
+    // made at once.
+    h.setHeight(0);
+    (h.app as unknown as { onReadingNodeChanged(): void }).onReadingNodeChanged();
+    expect(h.drive.cornerLastTip).toBeNull();
+    expect(h.drive.cornerLastRiseAt).toBeNull();
+    expect(h.drive.cornerLastReadOk).toBeNull();
+    expect(btn.querySelector('.tip')!.textContent).toBe('—');
+    expect(h.currentBlockCalls.length).toBe(preCount + 1);
+
+    await Promise.resolve(); await Promise.resolve();
+    expect(h.drive.cornerLastTip).toBe(0);
+    expect(btn.querySelector('.tip')!.textContent).toBe('0');
+  });
+
+  it('a cornerTick in flight for the node before drops its answer after the change — no field, no bumpTip, no render', async () => {
+    // A manual-resolve `currentBlock`: the tick started at mount can be held
+    // pending until the reading node changes, so its late answer arrives after
+    // the reset. `cornerGen` guards against it — the answer touches no field,
+    // no `bumpTip`, no render.
+    const identity: AppIdentity = {
+      current: () => null,
+      sign: async () => ({ signature: 'ab'.repeat(64) }),
+      draft: async () => ({ pubKeyHex: PUB }),
+      create: async () => ({ pubKeyHex: PUB }),
+      discardDraft: () => {},
+      inspectFile: async () => ({ kind: 'clear', pubKeyHex: PUB }),
+      importFile: async () => ({ pubKeyHex: PUB }),
+      exportFile: async () => '{}',
+      unlock: async () => {},
+      lock: async () => {},
+      forget: async () => {},
+      backedUp: () => false,
+      onChange: () => {},
+    };
+    const pending: { resolve: (b: BlockCurrent) => void }[] = [];
+    const fakeApi: Api = {
+      feed: async (): Promise<FeedResult> => ({ posts: [], next: null, pending: [], pendingCount: 0 }),
+      thread: async () => null,
+      post: async (id) => confirmedPost(id),
+      status: async () => statusResult(),
+      currentBlock: (): Promise<BlockCurrent> => new Promise((resolve) => { pending.push({ resolve }); }),
+      karma: async (): Promise<KarmaResult> => karmaResult({ userId: PUB, total: '0', effective: '0', boxes: [], boxCount: 0, height: 6000 }),
+      vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
+      vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
+      vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
+      bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
+      usernameByOwner: async () => null,
+      credits: async () => ({ userId: '', total: '0', boxes: [], boxCount: 0, next: null }),
+      usernameByName: async () => null,
+    };
+    const writeClient = {} as unknown as WriteClient;
+    const ledger = new PendingLedger(PUB);
+    const app = new App(fakeApi, writeClient, identity, ledger);
+    const appbar = document.createElement('div');
+    const feed = document.createElement('section'); feed.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    const workspace = document.createElement('div'); workspace.className = 'workspace';
+    workspace.append(feed, panes);
+    document.body.append(appbar, workspace);
+    app.mount(appbar, feed, panes);
+
+    // The mount fired one cornerTick — its promise is pending.
+    await Promise.resolve();
+    expect(pending.length).toBe(1);
+    const inFlight = pending[0]!;
+    const inner = app as unknown as {
+      cornerLastTip: number | null;
+      cornerLastRiseAt: number | null;
+      cornerLastReadOk: boolean | null;
+      viewerTip: number;
+      changeNode(o: string): Promise<void>;
+    };
+
+    // Change the reading node while the mount tick is still pending. The
+    // reset is synchronous, and onReadingNodeChanged queues a fresh tick.
+    void inner.changeNode('https://new.example');
+    await Promise.resolve();
+    expect(inner.cornerLastTip).toBeNull();
+    expect(pending.length).toBe(2);
+
+    // The mid-flight tick resolves with the node before's height. Its gen is
+    // stale, so the continuation touches nothing.
+    inFlight.resolve({ height: 2972, hash: null });
+    await Promise.resolve(); await Promise.resolve();
+    expect(inner.cornerLastTip).toBeNull();
+    expect(inner.cornerLastRiseAt).toBeNull();
+    expect(inner.cornerLastReadOk).toBeNull();
+    // `viewerTip` was 0 at construction and no `bumpTip` was called under the
+    // stale gen — a `bumpTip(2972)` would have raised it (monotonic).
+    expect(inner.viewerTip).toBe(0);
+    const btn = document.querySelector('button.corner')!;
+    expect(btn.querySelector('.tip')!.textContent).toBe('—');
+    expect(btn.getAttribute('title')).toBe('no tip yet');
+
+    // The fresh tick lands — the new node answers 0.
+    pending[1]!.resolve({ height: 0, hash: null });
+    await Promise.resolve(); await Promise.resolve();
+    expect(inner.cornerLastTip).toBe(0);
+    expect(inner.cornerLastReadOk).toBe(true);
+    expect(btn.querySelector('.tip')!.textContent).toBe('0');
+  });
 });
 
 // The verified tip (WEB_INTERFACE → The extension → "The verified tip") — the
@@ -498,6 +675,30 @@ describe('the App verified tip — construction and the reading-base run', () =>
     h.runs[1]!.resolve(verified(2, 222));
     await Promise.resolve(); await Promise.resolve();
     expect(h.drive.tipVerdict).toEqual({ kind: 'verified', nodes: 2, height: 222 });
+  });
+
+  it('changeNode drops the corner\'s tip too — the reset is not behind the verifier\'s early return (WEB_INTERFACE → The status corner)', async () => {
+    setNode('https://a.example');
+    const h = verifierHarness();
+    await Promise.resolve(); await Promise.resolve();
+    const btn = h.drive.cornerEl!;
+    const inner = h.app as unknown as {
+      cornerLastTip: number | null;
+      cornerLastRiseAt: number | null;
+      cornerLastReadOk: boolean | null;
+      changeNode(o: string): Promise<void>;
+    };
+    // The mount tick has landed — the corner carries the node before's height.
+    expect(inner.cornerLastTip).toBe(6001);
+
+    // Change the reading node. In the sync phase the corner fields drop and
+    // the corner reads *no tip yet*, tip `—`.
+    void inner.changeNode('https://b.example');
+    expect(inner.cornerLastTip).toBeNull();
+    expect(inner.cornerLastRiseAt).toBeNull();
+    expect(inner.cornerLastReadOk).toBeNull();
+    expect(btn.querySelector('.tip')!.textContent).toBe('—');
+    expect(btn.getAttribute('title')).toBe('no tip yet');
   });
 
   it('a throwing verifier → the verdict stays null (checking), one console.error, the next trigger runs again', async () => {

@@ -220,6 +220,11 @@ export class App {
   private cornerLastTip: number | null = null;
   private cornerLastRiseAt: number | null = null;
   private cornerLastReadOk: boolean | null = null;
+  // A change of the reading node bumps `cornerGen`; a `cornerTick` captures
+  // it at the top and drops its answer when a later change has moved it, so
+  // an in-flight read never writes the node before's height back into
+  // `cornerLastTip` (WEB_INTERFACE → The status corner).
+  private cornerGen = 0;
   private cornerVisHandler: (() => void) | null = null;
   // The verified tip (WEB_INTERFACE → The extension → "The verified tip") —
   // the extension build hands in a verifier; the web build hands in none, and
@@ -1136,8 +1141,10 @@ export class App {
       try {
         const res = await probe.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true);
         prefs.node = base; // session only — no writeStore.
-        // The verified tip is per reading node (WEB_INTERFACE → The extension
-        // → "The verified tip"): the seed adoption changes it too.
+        // The corner's tip and, where the build carries one, the verified tip
+        // are per reading node (WEB_INTERFACE → The status corner, → The
+        // extension → "The verified tip"): the shared method drops them and
+        // reads the adopted node at once.
         this.onReadingNodeChanged();
         return { base, res };
       } catch {
@@ -1523,8 +1530,10 @@ export class App {
     // Everything loaded came from the old node; drop it and re-read.
     this.state.threads.clear();
     this.state.posts.clear();
-    // The verified tip is per reading node (WEB_INTERFACE → The extension →
-    // "The verified tip"): drop the verdict, bump the generation, run again.
+    // The corner's tip and, where the build carries one, the verified tip are
+    // per reading node (WEB_INTERFACE → The status corner, → The extension →
+    // "The verified tip"): the shared method drops them and reads the new
+    // node at once.
     this.onReadingNodeChanged();
     this.renderRegionsFor('@settings');
     this.renderPanes();
@@ -2707,27 +2716,42 @@ export class App {
   }
 
   /** The reading node changed — the settings row's `changeNode`, and the seed
-   *  adoption at start (WEB_INTERFACE → The extension → "The verified tip").
-   *  A run in flight for the previous node is dropped by its older generation;
-   *  the verdict returns to `null` (checking), the flag is cleared so the new
-   *  run can start, and it does. */
+   *  adoption at start. Runs in every build, verifier or not: the corner's tip,
+   *  rise and last-read flag drop, so the number beside the dot is never
+   *  another node's; `cornerGen` bumps so a tick in flight for the node before
+   *  drops its answer when it resolves; the corner re-renders (*no tip yet*,
+   *  tip `—`) and reads the new node at once (WEB_INTERFACE → The status
+   *  corner). Where the build carries a verifier, a run in flight for the
+   *  previous node is dropped by its older generation, the verdict returns to
+   *  `null` (checking), the flag is cleared so the new run can start, and it
+   *  does (WEB_INTERFACE → The extension → "The verified tip"). */
   private onReadingNodeChanged(): void {
-    if (this.verifier === null) return;
-    this.verifyGen += 1;
-    this.verifyInFlight = false;
-    this.tipVerdict = null;
+    this.cornerGen += 1;
+    this.cornerLastTip = null;
+    this.cornerLastRiseAt = null;
+    this.cornerLastReadOk = null;
+    if (this.verifier !== null) {
+      this.verifyGen += 1;
+      this.verifyInFlight = false;
+      this.tipVerdict = null;
+    }
     this.renderCornerNow();
-    this.startVerification();
+    void this.cornerTick();
+    if (this.verifier !== null) this.startVerification();
   }
 
   /** Read /blocks/current, update the corner's state, feed viewerTip. The first
    *  answering read is treated as a rise, so a page opens fresh — the corner
    *  never opens clay on load for a chain the client has not yet observed
    *  (WEB_INTERFACE → The status corner). A failed read keeps the last known
-   *  tip and turns the dot muted. */
+   *  tip and turns the dot muted. The gen is captured at the top and checked
+   *  after the await: an answer under a stale gen — a read in flight when the
+   *  reading node changed — touches no field, no `bumpTip`, no render. */
   private async cornerTick(): Promise<void> {
+    const gen = this.cornerGen;
     try {
       const b = await this.client.currentBlock();
+      if (gen !== this.cornerGen) return;
       const now = Date.now();
       if (this.cornerLastTip === null || b.height > this.cornerLastTip) {
         this.cornerLastRiseAt = now;
@@ -2736,6 +2760,7 @@ export class App {
       this.cornerLastReadOk = true;
       this.bumpTip(b.height);
     } catch {
+      if (gen !== this.cornerGen) return;
       this.cornerLastReadOk = false;
     }
     this.renderCornerNow();
