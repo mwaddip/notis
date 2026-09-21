@@ -2189,10 +2189,11 @@ async function main() {
   }
 
   // ------- Step 13 — pref `on the site`, the button arm. The browser-context
-  // arm ("13-uncancelled") is run AFTER step 16: `Target.createBrowserContext`
-  // + `Target.disposeBrowserContext` has been observed to freeze the next CDP
-  // call in a same-browser session, so it runs last where a freeze cannot
-  // shadow the other steps.
+  // arm ("13-uncancelled") is the last thing the harness does with the
+  // browser, after the verified-tip block: `Target.createBrowserContext` +
+  // `Target.disposeBrowserContext` has been observed to freeze the next CDP
+  // call in a same-browser session, so the arm sits last where a freeze
+  // cannot shadow any other step.
   const step13Prefs = await setLinksPrefViaUi(cx10, 'site');
   if (step13Prefs !== 'site') {
     record(13, false, `pref did not take: notis.links=${step13Prefs}`);
@@ -2703,12 +2704,24 @@ async function main() {
     try { if (cx15) cx15.s.close(); } catch {}
   }
 
-  // ------- Step 13-uncancelled — the browser-context arm, run after step 16.
-  // The extension does not load in a `Target.createBrowserContext` context
-  // (per `--load-extension`'s default profile scope), so the bridge cannot
-  // send `arrived` and no `notis.open.` key appears. `Target.disposeBrowserContext`
-  // has been observed to freeze the next CDP call in a same-browser session,
-  // and running the arm here keeps that risk out of steps 14–16.
+  // The verified-tip block after the 1–16 pass and before the browser-context
+  // arm — 17a's D is fresh and isolated, so its readings hold whatever A's
+  // height is by now. 17b's press train runs under A's live miner; 19b makes
+  // its own fork on C; 19c uses D's own miner past 30. WEB_INTERFACE → The
+  // extension → "The verified tip".
+  if (VERIFIED_TIP) {
+    await verifiedTipSteps(cx);
+  } else {
+    markVerifiedTipNotRun('no --verified-tip');
+  }
+
+  // ------- Step 13-uncancelled — the browser-context arm, last after the
+  // verified-tip block. The extension does not load in a
+  // `Target.createBrowserContext` context (per `--load-extension`'s default
+  // profile scope), so the bridge cannot send `arrived` and no `notis.open.`
+  // key appears. `Target.disposeBrowserContext` has been observed to freeze
+  // the next CDP call in a same-browser session, so the arm sits last where
+  // a freeze cannot shadow any other step.
   {
     let extPageAfter16 = await findExt('index.html');
     let cxObserver = null;
@@ -2756,16 +2769,6 @@ async function main() {
     } finally {
       try { if (cxObserver) cxObserver.s.close(); } catch {}
     }
-  }
-
-  // The verified-tip block after the 1–16 pass — 17a's D is fresh and
-  // isolated, so its readings hold whatever A's height is by now. 17b's press
-  // train runs under A's live miner; 19b makes its own fork on C; 19c uses
-  // D's own miner past 30. WEB_INTERFACE → The extension → "The verified tip".
-  if (VERIFIED_TIP) {
-    await verifiedTipSteps(cx);
-  } else {
-    markVerifiedTipNotRun('no --verified-tip');
   }
 
   try { bcx.s.close(); } catch {}
