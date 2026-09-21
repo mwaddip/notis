@@ -23,6 +23,10 @@ set -euo pipefail
 #                      against. Unset takes the notis.fun default below; an
 #                      explicit empty value builds an extension with no bridge
 #                      and no `content_scripts`.
+#   VITE_NETWORK       name of the network the build is for — testnet, devnet,
+#                      mainnet, or empty (a build with no verifier). Unset
+#                      takes testnet; an explicit empty value stays empty
+#                      (WEB_INTERFACE → "The three later tags").
 #   NOTIS_EXTENSION_KEY    Chrome extension public key for a stable id
 # ---------------------------------------------------------------------------
 
@@ -56,6 +60,10 @@ export VITE_NODES=${VITE_NODES:-'["https://notis.fun/testnet/api"]'}
 # string reaches the emitter as the empty base, so no bridge and no
 # `content_scripts` (WEB_INTERFACE → "The build's `notis-public`").
 export VITE_PUBLIC=${VITE_PUBLIC-https://notis.fun/web/}
+# `-` (not `:-`): only unset falls back to the default; an explicit empty
+# string reaches the shell as the empty network name — a build with no
+# verifier (WEB_INTERFACE → "The three later tags").
+export VITE_NETWORK=${VITE_NETWORK-testnet}
 export VITE_IDENTITY=extension
 
 # Staging: a fresh temp dir every build — the 216-2 append trap is impossible
@@ -110,6 +118,19 @@ EXPECTED_PATTERN=$(node -e "import('./extension/match-pattern.mjs').then(m => pr
 # and the check below reads that as `no key on either manifest`.
 EXPECTED_OPTIONAL_HOST=$(node -e "import('./extension/match-pattern.mjs').then(m => process.stdout.write(m.originPatternFor(process.argv[1]) ?? ''))" "$VITE_FAUCET_BASE")
 
+# The network names a profile answers to, read from `@dagsocial/types` — never
+# a list typed into the script (WEB_INTERFACE → "The three later tags").
+# A non-empty $VITE_NETWORK that is not one of these refuses below.
+NETWORK_NAMES=$(node -e "import('@dagsocial/types').then(t => process.stdout.write(Object.keys(t.NETWORK_PROFILES).join(' ')))")
+if [ -n "$VITE_NETWORK" ]; then
+  matched=0
+  for n in $NETWORK_NAMES; do
+    [ "$VITE_NETWORK" = "$n" ] && matched=1 && break
+  done
+  [ "$matched" = 1 ] \
+    || { echo "FAIL: VITE_NETWORK=$VITE_NETWORK is not one of the network names ($NETWORK_NAMES)"; exit 1; }
+fi
+
 # Firefox's `browser_specific_settings` — the whole object stated literally
 # here, a second statement of the contract's object on purpose: a check that
 # reads the emitter's own constant proves nothing. Deep-equality by
@@ -151,13 +172,15 @@ for target in "$CHROME_DIR" "$FIREFOX_DIR"; do
   grep -q '<base href="/">' "$shell" \
     || { echo "FAIL: <base href='/'> missing in $shell"; exit 1; }
 
-  # The three build-time metas carry the extension's values.
+  # The four build-time metas carry the extension's values.
   grep -Fq "name=\"notis-nodes\" content='$VITE_NODES'" "$shell" \
     || { echo "FAIL: notis-nodes meta wrong in $shell (expected $VITE_NODES)"; exit 1; }
   grep -Fq "name=\"notis-public\" content=\"$VITE_PUBLIC\"" "$shell" \
     || { echo "FAIL: notis-public meta wrong in $shell (expected $VITE_PUBLIC)"; exit 1; }
   grep -Fq "name=\"notis-faucet\" content=\"$VITE_FAUCET_BASE\"" "$shell" \
     || { echo "FAIL: notis-faucet meta wrong in $shell (expected $VITE_FAUCET_BASE)"; exit 1; }
+  grep -Fq "name=\"notis-network\" content=\"$VITE_NETWORK\"" "$shell" \
+    || { echo "FAIL: notis-network meta wrong in $shell (expected $VITE_NETWORK)"; exit 1; }
 
   # background.js is one classic file with no `import` — WEB_INTERFACE →
   # "The background is one classic file with no `import`".

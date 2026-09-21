@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { NETWORK_PROFILES } from '@dagsocial/types';
 
-// The five deployment reads — the shell head's <base> and four <meta> tags,
+// The six deployment reads — the shell head's <base> and five <meta> tags,
 // parsed once at load (WEB_INTERFACE → "The client is served from the node's
 // own origin"). These are the values a host edits after unzipping.
 
@@ -113,6 +114,56 @@ describe('readPublicMeta — the origin+base a link should carry', () => {
   it('a missing meta answers empty', async () => {
     const p = await importPrefs();
     expect(p.readPublicMeta()).toBe('');
+  });
+});
+
+describe('readNetworkMeta — the network the build is for', () => {
+  it('each network name a profile answers to reads as itself', async () => {
+    const p = await importPrefs();
+    for (const name of Object.keys(NETWORK_PROFILES)) {
+      document.head.innerHTML = '';
+      setMeta('notis-network', name);
+      expect(p.readNetworkMeta()).toBe(name);
+    }
+  });
+
+  it('an empty value reads as null — the build with no verifier', async () => {
+    setMeta('notis-network', '');
+    const p = await importPrefs();
+    expect(p.readNetworkMeta()).toBeNull();
+  });
+
+  it('whitespace reads as null — content is trimmed', async () => {
+    setMeta('notis-network', '   ');
+    const p = await importPrefs();
+    expect(p.readNetworkMeta()).toBeNull();
+  });
+
+  it('an unknown name reads as null', async () => {
+    setMeta('notis-network', 'nonsense');
+    const p = await importPrefs();
+    expect(p.readNetworkMeta()).toBeNull();
+  });
+
+  it('a missing meta reads as null', async () => {
+    const p = await importPrefs();
+    expect(p.readNetworkMeta()).toBeNull();
+  });
+
+  it('the accepted set is Object.keys(NETWORK_PROFILES), read not typed', async () => {
+    const p = await importPrefs();
+    for (const name of Object.keys(NETWORK_PROFILES)) {
+      document.head.innerHTML = '';
+      setMeta('notis-network', name);
+      expect(p.readNetworkMeta()).not.toBeNull();
+    }
+    // A name absent from NETWORK_PROFILES is refused. `__proto__` covers the
+    // prototype-key trap: `in` would answer true, `hasOwn` answers false.
+    for (const bad of ['', ' ', 'unknown', 'MAINNET', '__proto__', 'toString']) {
+      document.head.innerHTML = '';
+      setMeta('notis-network', bad);
+      expect(p.readNetworkMeta()).toBeNull();
+    }
   });
 });
 

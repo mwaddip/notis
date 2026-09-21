@@ -6,6 +6,8 @@
 // The faucet's base is the shell's `notis-faucet` value, never a preference
 // (WEB_INTERFACE → "A faucet is a fact of the deployment, not of the network").
 
+import { NETWORK_PROFILES, type NetworkType } from '@dagsocial/types';
+
 export type Theme = 'light' | 'dark';
 export type IdTint = 'spine' | 'wash' | 'both' | 'off';
 
@@ -14,7 +16,7 @@ const KEY_IDTINT = 'notis.idtint';
 export const KEY_NODE = 'notis.node';
 export const KEY_LAYOUT = 'notis.layout';
 
-// The deployment reads — five tags in the shell's head, read once at load
+// The deployment reads — six tags in the shell's head, read once at load
 // (WEB_INTERFACE → "The client is served from the node's own origin").
 
 export function readBase(): string {
@@ -63,11 +65,24 @@ export function readPublicMeta(): string {
   return v.endsWith('/') ? v : v + '/';
 }
 
+/** Read `notis-network` — the network the build is for
+ *  (WEB_INTERFACE → "The three later tags"). Empty, or a name no profile
+ *  answers to, is a build with no verifier and reads as `null`; the accepted
+ *  set is `Object.keys(NETWORK_PROFILES)`, never a list typed here. */
+export function readNetworkMeta(): NetworkType | null {
+  const el = document.querySelector<HTMLMetaElement>('meta[name="notis-network"]');
+  if (!el) return null;
+  const v = el.content.trim();
+  if (v === '') return null;
+  return Object.hasOwn(NETWORK_PROFILES, v) ? (v as NetworkType) : null;
+}
+
 export const WEB_BASE = readBase();
 export const BUILD_BASE = readMeta('notis-api');
 export const BUILD_FAUCET_BASE = readMeta('notis-faucet');
 export const BUILD_NODES = readNodesMeta();
 export const BUILD_PUBLIC = readPublicMeta();
+export const BUILD_NETWORK = readNetworkMeta();
 
 // The wash percentages are large because the wash colour sits at the ground's
 // own lightness — the mix controls how much hue comes through and nothing else,

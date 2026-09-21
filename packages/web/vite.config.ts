@@ -39,6 +39,7 @@ if (!process.env['VITE_WEB_BASE']) process.env['VITE_WEB_BASE'] = '/';
 if (!process.env['VITE_API_BASE']) process.env['VITE_API_BASE'] = '';
 if (!process.env['VITE_FAUCET_BASE']) process.env['VITE_FAUCET_BASE'] = '';
 if (!process.env['VITE_PUBLIC_ORIGIN']) process.env['VITE_PUBLIC_ORIGIN'] = '';
+if (!process.env['VITE_NETWORK']) process.env['VITE_NETWORK'] = '';
 
 // The API paths mounted bare on the node, proxied so the client's same-origin
 // default holds in development

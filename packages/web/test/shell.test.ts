@@ -23,6 +23,15 @@ describe('shell deploy tags', () => {
   it('carries the notis-public meta with the VITE_PUBLIC placeholder — the origin+base a shareable link carries', () => {
     expect(html).toContain('<meta name="notis-public" content="%VITE_PUBLIC%">');
   });
+  it('carries the notis-network meta with the VITE_NETWORK placeholder — the network the build is for', () => {
+    expect(html).toContain('<meta name="notis-network" content="%VITE_NETWORK%">');
+  });
+  it('notis-network follows notis-public', () => {
+    const pub = html.indexOf('<meta name="notis-public"');
+    const net = html.indexOf('<meta name="notis-network"');
+    expect(pub).toBeGreaterThan(-1);
+    expect(net).toBeGreaterThan(pub);
+  });
   it('<base> precedes every URL-bearing element', () => {
     const basePos = html.indexOf('<base ');
     expect(basePos).toBeGreaterThan(-1);
