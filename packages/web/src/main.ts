@@ -1,11 +1,12 @@
-import { applyPrefs, BUILD_PUBLIC, WEB_BASE } from './prefs';
+import { applyPrefs, BUILD_NODES, BUILD_NETWORK, BUILD_PUBLIC, WEB_BASE } from './prefs';
 import { App } from './app';
 import { decideMode } from './mode';
 import { createTabs, type Tabs } from './tabs';
 import { identity } from './identity/identity';
 import { bootstrapProxy } from './extension/proxy';
 import { wrapTabs } from './extension/handover';
-import type { AppIdentity } from './model/state';
+import { createTipVerifier } from './extension/tip-verifier';
+import type { AppIdentity, TipVerifier } from './model/state';
 
 // Theme is already on <html> from the head's theme.js; this re-applies it and
 // sets the identity tint before the first render, while transitions are still
@@ -35,7 +36,20 @@ const mode = decideMode(location.pathname, WEB_BASE);
 // seam with the handover, so the holder asks the background for waiting threads; the static
 // `isExtension` keeps `handover.ts` out of the web bundle (build-release.sh's `chrome.` check).
 const tabs: Tabs = isExtension ? wrapTabs(createTabs(), chrome) : createTabs();
-new App(undefined, undefined, idm, undefined, tabs, requestFaucetOrigin).start(appbar, feed, panes, mode);
+// WEB_INTERFACE → The extension → "The verified tip" — the verifier is handed
+// to the App by the extension build alone; an extension with an empty
+// `notis-network` is handed none, exactly as the web build. The static
+// `isExtension` keeps `tip-verifier.ts` out of the web bundle
+// (build-release.sh's `nipopow/proof` check).
+const verifier: TipVerifier | undefined = isExtension && BUILD_NETWORK !== null
+  ? createTipVerifier({
+      network: BUILD_NETWORK,
+      nodes: BUILD_NODES,
+      fetch: fetch.bind(globalThis),
+      now: Date.now,
+    })
+  : undefined;
+new App(undefined, undefined, idm, undefined, tabs, requestFaucetOrigin, verifier).start(appbar, feed, panes, mode);
 
 // Restoring a stored preference is painted, not transitioned: drop the
 // transition-suppressing class only after the first paint (HOUSE_STYLE → Motion).

@@ -55,7 +55,7 @@ export VITE_API_BASE=""
 # (WEB_INTERFACE → The extension → "The manifest").
 export VITE_FAUCET_BASE=${VITE_FAUCET_BASE-https://notis.fun/testnet/faucet}
 export VITE_PUBLIC_ORIGIN=${VITE_PUBLIC_ORIGIN:-https://notis.fun}
-export VITE_NODES=${VITE_NODES:-'["https://notis.fun/testnet/api"]'}
+export VITE_NODES=${VITE_NODES:-'["https://notis.fun/testnet/api","https://node02.notis.fun/testnet/api"]'}
 # `-` (not `:-`): only unset falls back to the default; an explicit empty
 # string reaches the emitter as the empty base, so no bridge and no
 # `content_scripts` (WEB_INTERFACE → "The build's `notis-public`").

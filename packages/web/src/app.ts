@@ -28,6 +28,7 @@ import { identity as identitySingleton } from './identity/identity';
 import { renderKarmaField, renderInvitesRow, renderUsernameRow } from './view/profile';
 import { renderCreditsRow, resetCreditsSendForm, type ResolvedRecipient } from './view/wallet';
 import { cornerState, renderCorner, CORNER_POLL_MS, type CornerState } from './view/corner';
+import type { TipVerdict } from './model/tip-verdict';
 import type { Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
@@ -36,7 +37,7 @@ import {
 } from './model/workspace';
 import {
   FEED_COMPOSER_KEY, type AppState, type ThreadState, type RenderCtx, type Handlers, type Submission,
-  type FlightStage, type AppIdentity, type AuthorWindowData, type FeedState,
+  type FlightStage, type AppIdentity, type AuthorWindowData, type FeedState, type TipVerifier,
 } from './model/state';
 import { decideMove, type ScreenEntry } from './history';
 
@@ -45,6 +46,11 @@ const THREAD_LIMIT = 50;
 const REFRESH_PAGE_CAP = 40; // a refresh re-reads a whole thread; this bounds the loop
 const POLL_MS = 15000;       // the bounded landing poll, only while own submissions are pending
 const FEED_COMPOSER = FEED_COMPOSER_KEY;
+/** The verifier's own cadence — every ten minutes while the tab is visible; a
+ *  tab that becomes visible again runs one only when none has returned yet or
+ *  the last began this long ago or more (WEB_INTERFACE → The extension →
+ *  "The verified tip"). */
+const VERIFY_INTERVAL_MS = 600_000;
 /** The one-column line: below it the feed and one column at the floor no longer
  *  fit, so the feed joins the strip and the screen shows one member at a time.
  *  The stylesheet's @media reads the same number, pinned equal by style.test.ts
@@ -215,6 +221,17 @@ export class App {
   private cornerLastRiseAt: number | null = null;
   private cornerLastReadOk: boolean | null = null;
   private cornerVisHandler: (() => void) | null = null;
+  // The verified tip (WEB_INTERFACE → The extension → "The verified tip") —
+  // the extension build hands in a verifier; the web build hands in none, and
+  // the corner reads today's rule word for word. The verdict is `undefined`
+  // with no verifier and `null` until the first run returns; a run in flight
+  // is dropped by a later generation.
+  private verifier: TipVerifier | null;
+  private tipVerdict: TipVerdict | null | undefined;
+  private verifyTimer: ReturnType<typeof setInterval> | null = null;
+  private lastVerifyBeganAt: number | null = null;
+  private verifyInFlight = false;
+  private verifyGen = 0;
   // The loaded key's /karma, read on the profile window's open and its ↻, and a
   // faucet grant in flight or one that lapsed — both feed the profile window's ctx.
   private profileKarma: KarmaResult | null = null;
@@ -262,12 +279,18 @@ export class App {
     ledger?: PendingLedger,
     tabs?: Tabs,
     requestFaucetOrigin?: (origin: string) => Promise<boolean>,
+    verifier?: TipVerifier | null,
   ) {
     this.client = client ?? new NodeClient(() => prefs.node);
     this.writeClient = writeClient ?? new WriteClient(() => prefs.node);
     this.idm = identity ?? identitySingleton;
     this.faucetClient = new FaucetClient(() => prefs.faucet);
     this.requestFaucetOrigin = requestFaucetOrigin ?? null;
+    this.verifier = verifier ?? null;
+    // With no verifier the verdict stays `undefined` — the corner reads the
+    // first paragraph of the status corner, word for word (WEB_INTERFACE →
+    // The status corner, → The extension → "The verified tip").
+    this.tipVerdict = this.verifier === null ? undefined : null;
     // The ledger is for the identity loaded at construction; a change of identity
     // rebuilds it at once through onChange (WEB_INTERFACE → "An identity change
     // takes effect at once").
@@ -1113,6 +1136,9 @@ export class App {
       try {
         const res = await probe.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true);
         prefs.node = base; // session only — no writeStore.
+        // The verified tip is per reading node (WEB_INTERFACE → The extension
+        // → "The verified tip"): the seed adoption changes it too.
+        this.onReadingNodeChanged();
         return { base, res };
       } catch {
         // try the next entry
@@ -1497,6 +1523,9 @@ export class App {
     // Everything loaded came from the old node; drop it and re-read.
     this.state.threads.clear();
     this.state.posts.clear();
+    // The verified tip is per reading node (WEB_INTERFACE → The extension →
+    // "The verified tip"): drop the verdict, bump the generation, run again.
+    this.onReadingNodeChanged();
     this.renderRegionsFor('@settings');
     this.renderPanes();
     await this.loadFeed();
@@ -2537,10 +2566,15 @@ export class App {
     if (this.cornerEl !== null) return;
     const btn = document.createElement('button');
     btn.type = 'button';
-    renderCorner(btn, this.currentCornerState(), this.cornerLastTip);
+    renderCorner(btn, this.currentCornerState(), this.cornerLastTip, this.tipVerdict);
     // A press re-reads at once — the corner is a control (WEB_INTERFACE → The
-    // status corner, HOUSE_STYLE → Interaction).
-    btn.addEventListener('click', () => void this.cornerTick());
+    // status corner, HOUSE_STYLE → Interaction). Where the build carries a
+    // verifier, the press runs a verification too (WEB_INTERFACE → The
+    // extension → "The verified tip").
+    btn.addEventListener('click', () => {
+      void this.cornerTick();
+      this.startVerification();
+    });
     document.body.appendChild(btn);
     this.cornerEl = btn;
     // Visibility drives the timer: stop while hidden, an immediate read on
@@ -2550,6 +2584,13 @@ export class App {
     if (this.cornerVisible()) {
       void this.cornerTick();
       this.startCornerPoll();
+      // The verifier's timer and its first run — the first run only when the
+      // build carries a verifier (WEB_INTERFACE → The extension → "The
+      // verified tip").
+      if (this.verifier !== null) {
+        this.startVerifyTimer();
+        this.startVerification();
+      }
     }
   }
 
@@ -2572,25 +2613,109 @@ export class App {
     if (this.cornerVisible()) {
       void this.cornerTick();
       this.startCornerPoll();
+      // A tab that becomes visible again runs a verification only when none
+      // has returned yet or the last began ten minutes ago or more — never on
+      // every tab switch (WEB_INTERFACE → The extension → "The verified tip").
+      if (this.verifier !== null) {
+        this.startVerifyTimer();
+        if (this.shouldVerifyOnBecomeVisible()) this.startVerification();
+      }
     } else {
       this.stopCornerPoll();
+      this.stopVerifyTimer();
     }
   }
 
   /** cornerState over the App's own held state — the last tip, the last rise's
-   *  time, whether the last read answered (WEB_INTERFACE → The status corner). */
+   *  time, whether the last read answered, and the verdict where the build
+   *  carries a verifier (WEB_INTERFACE → The status corner, → The extension
+   *  → "The verified tip"). */
   private currentCornerState(): CornerState {
     return cornerState({
       lastTip: this.cornerLastTip,
       lastRiseAt: this.cornerLastRiseAt,
       lastReadOk: this.cornerLastReadOk,
       now: Date.now(),
+      verdict: this.tipVerdict,
     });
   }
 
   private renderCornerNow(): void {
     if (this.cornerEl === null) return;
-    renderCorner(this.cornerEl, this.currentCornerState(), this.cornerLastTip);
+    renderCorner(this.cornerEl, this.currentCornerState(), this.cornerLastTip, this.tipVerdict);
+  }
+
+  // ---- the verified tip (WEB_INTERFACE → The extension → "The verified tip") ----
+  // The seam the corner's mount, press, ten-minute timer, visibility handler
+  // and node-change hook share. A run reads `prefs.node` at the moment it
+  // starts; a generation stamps the run so a change of the reading node drops
+  // its late verdict rather than rendering it.
+
+  private startVerifyTimer(): void {
+    if (this.verifier === null) return;
+    if (this.verifyTimer !== null) return;
+    this.verifyTimer = setInterval(() => this.startVerification(), VERIFY_INTERVAL_MS);
+  }
+
+  private stopVerifyTimer(): void {
+    if (this.verifyTimer === null) return;
+    clearInterval(this.verifyTimer);
+    this.verifyTimer = null;
+  }
+
+  private shouldVerifyOnBecomeVisible(): boolean {
+    if (this.lastVerifyBeganAt === null) return true;
+    return Date.now() - this.lastVerifyBeganAt >= VERIFY_INTERVAL_MS;
+  }
+
+  /** Start a verifier run, or drop the trigger. One run at a time: a trigger
+   *  during a run is that run (WEB_INTERFACE → The extension → "The verified
+   *  tip"). An empty reading base runs nothing; a hidden tab runs nothing.
+   *  The gen stamps the run so a late verdict under an older generation is
+   *  dropped and never touches the flag or the render. */
+  private startVerification(): void {
+    if (this.verifier === null) return;
+    if (!this.cornerVisible()) return;
+    if (this.verifyInFlight) return;
+    const readingBase = prefs.node;
+    if (readingBase === '') return;
+    const gen = this.verifyGen;
+    this.lastVerifyBeganAt = Date.now();
+    this.verifyInFlight = true;
+    const verifier = this.verifier;
+    void verifier.run(readingBase).then(
+      (verdict) => {
+        // A late verdict under an older generation never touches the flag or
+        // the render — the new run's own resolver owns them.
+        if (gen !== this.verifyGen) return;
+        this.verifyInFlight = false;
+        this.tipVerdict = verdict;
+        this.renderCornerNow();
+      },
+      (e) => {
+        // A run that throws leaves the verdict at `null` and console.errors
+        // once — never a fabricated reason, never green. The next trigger
+        // tries again.
+        console.error(e);
+        if (gen !== this.verifyGen) return;
+        this.verifyInFlight = false;
+        this.renderCornerNow();
+      },
+    );
+  }
+
+  /** The reading node changed — the settings row's `changeNode`, and the seed
+   *  adoption at start (WEB_INTERFACE → The extension → "The verified tip").
+   *  A run in flight for the previous node is dropped by its older generation;
+   *  the verdict returns to `null` (checking), the flag is cleared so the new
+   *  run can start, and it does. */
+  private onReadingNodeChanged(): void {
+    if (this.verifier === null) return;
+    this.verifyGen += 1;
+    this.verifyInFlight = false;
+    this.tipVerdict = null;
+    this.renderCornerNow();
+    this.startVerification();
   }
 
   /** Read /blocks/current, update the corner's state, feed viewerTip. The first
