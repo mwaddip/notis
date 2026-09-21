@@ -189,7 +189,7 @@ build's own `manifest.json` and restates none of them. The version is the reposi
 (`ARCHITECTURE → Deploy gate → "The release version counts resets and milestones"`), and a number Mozilla has
 seen is spent: a re-publish is the next release.
 
-**The deployment is five tags in the shell's head, and nothing in the bundle's bytes.** `web/index.html`
+**The deployment is six tags in the shell's head, and nothing in the bundle's bytes.** `web/index.html`
 opens its head with
 
 ```html
@@ -198,6 +198,7 @@ opens its head with
 <meta name="notis-faucet" content="/testnet/faucet">
 <meta name="notis-nodes" content="[]">
 <meta name="notis-public" content="">
+<meta name="notis-network" content="">
 ```
 
 — the path the client's own files are served under, opening and closing with `/`; the API's path on the
@@ -205,10 +206,10 @@ same origin, or any node's absolute origin, no trailing slash; the faucet's on t
 no faucet (→ The faucet step). Every reference the
 built shell makes is relative, and so is every reference inside `public/` — the fonts stylesheet names its
 files beside itself — so the `<base>` alone decides where the client's files resolve, on the workspace page
-and on a standalone page alike. The build writes the five from `VITE_WEB_BASE`, `VITE_API_BASE`,
-`VITE_FAUCET_BASE`, `VITE_NODES` and `VITE_PUBLIC` — `/`, empty, empty, `[]` and empty under the dev server
-and in the web release; the extension build's values are its own (→ The extension) — and a
-host with another layout edits those five values, and the picture's URL below, in one file. The client reads them once, at load: the
+and on a standalone page alike. The build writes the six from `VITE_WEB_BASE`, `VITE_API_BASE`,
+`VITE_FAUCET_BASE`, `VITE_NODES`, `VITE_PUBLIC` and `VITE_NETWORK` — `/`, empty, empty, `[]`, empty and empty under
+the dev server and in the web release; the extension build's values are its own (→ The extension) — and a
+host with another layout edits those six values, and the picture's URL below, in one file. The client reads them once, at load: the
 `<base>`'s `href` resolved against the page, its path with a trailing `/` (`/` when the element is absent),
 is the base `decideMode` takes (→ The standalone thread); each meta's content, trimmed, one trailing `/`
 stripped, is the value the client uses — `notis-api` the default the stored `node` preference overrides
@@ -217,19 +218,27 @@ read takes the element's attribute through the URL constructor, never `document.
 `notis-api` behaves exactly as one in the `node` preference does: the node answers any origin. A foreign origin in
 `notis-faucet` works only where the browser grants the host — the extension (→ The faucet step).
 
-**The two later tags.** `notis-nodes` is a JSON array of API bases — the build's **seed list**, one per
+> ⚠ **AHEAD OF CODE (2026-09-21, the verified tip)** — the shell opens with five tags and carries no
+> `notis-network`; nothing reads `VITE_NETWORK`.
+
+**The three later tags.** `notis-nodes` is a JSON array of API bases — the build's **seed list**, one per
 network, the extension build's way of naming a node without a hosted page (→ The extension); anything
 that is not a JSON array of strings reads as `[]`. `notis-public` is an origin and base, opening with a
 scheme and closing with `/`, or empty — the URL `link` copies from (→ Links): a page whose own location
 is not shareable, an extension page, needs one; the web build leaves it empty and `link` copies the
-page's own location, as before. **The node the client talks to resolves in one order:** the stored
+page's own location, as before. `notis-network` names the network the build is for — `testnet`, `devnet`,
+`mainnet`, or empty — and is where the extension's verifier takes its profile
+(→ The extension → "The verified tip"): `profileFor` of the name (`TYPES_INTERFACE → Network profiles`), **never the
+`networkType` a node reports** — a verifier that took its profile from the node it checks would hold a lying node to
+whatever target that node named. Empty, or a name no profile answers to, is a build with no verifier; the web release
+writes it empty. **The node the client talks to resolves in one order:** the stored
 `node` preference, else the first entry of `notis-nodes`, else `notis-api`. At start, when `GET /status`
 fails and the list has more entries, the App adopts the next one that answers — for the session, not
 stored, so the list keeps governing; when none answers, the feed's own report line says *no node
 answered — set one in settings*, and the settings window's `node` row is where one is typed. No first-run screen.
 
-**The shell carries the site's preview card, and the picture's URL is the fourth configured value.** After the
-three tags the head carries `description`, `og:type` website, `og:site_name` Notis, `og:title` Notis,
+**The shell carries the site's preview card, and the picture's URL is the seventh configured value.** After the
+six tags the head carries `description`, `og:type` website, `og:site_name` Notis, `og:title` Notis,
 `og:description`, `og:image` with `og:image:type` image/png, `og:image:width` 1200, `og:image:height` 630 and
 `og:image:alt`, and `twitter:card` summary_large_image — the words *Reputation not for sale*; the picture `og.png` beside the client's files, 1200×630: the full-tier mark
 (`HOUSE_STYLE → Tiers`) with its colours baked in as literals, Fern `#5E8C3A` on keyline `#1B2A12`, centred on Sand
@@ -237,7 +246,7 @@ three tags the head carries `description`, `og:type` website, `og:site_name` Not
 (`HOUSE_STYLE → Where the artwork lives`). A scraper runs no script and most refuse a relative image, and the base
 is a path, so the build composes `og:image` as `<origin><base>og.png` from `VITE_PUBLIC_ORIGIN` — empty under the
 dev server, `https://notis.fun` in the release — and a host under another origin or base edits that value with the
-other three; `build-release.sh` checks it. No `og:url` on the root: a scraper takes the page's own. A post's page
+other six; `build-release.sh` checks it. No `og:url` on the root: a scraper takes the page's own. A post's page
 carries none of this block — the node removes it before injecting the post's tags (`NODE_INTERFACE → Link previews`).
 
 ⚠ **A `<base>` element resolves every relative URL in the document, fragments included.** A same-document
@@ -334,14 +343,51 @@ base.
 **The background is one classic file with no `import`**, built in lib mode, so both browsers run it as
 they are; the bridge is built the same way.
 
-**The seed list and the faucet's base** are the per-network facts the build carries, both in the shell (→ The
-client is served from the node's own origin): `notis-nodes`, testnet `["https://notis.fun/testnet/api"]`, mainnet
-`[]` until there is one; and `notis-faucet`, testnet `https://notis.fun/testnet/faucet`, mainnet empty —
-`VITE_FAUCET_BASE` overriding it as `VITE_NODES` overrides the list. They live in the extension's build
+**The seed list, the faucet's base and the network's name** are the per-network facts the build carries, all in the
+shell (→ The client is served from the node's own origin): `notis-nodes`, testnet `["https://notis.fun/testnet/api",
+"https://node02.notis.fun/testnet/api"]`, mainnet `[]` until there is one; `notis-faucet`, testnet
+`https://notis.fun/testnet/faucet`, mainnet empty; and `notis-network`, the network's own name — `VITE_FAUCET_BASE`
+and `VITE_NETWORK` overriding theirs as `VITE_NODES` overrides the list. They live in the extension's build
 configuration, never in `@dagsocial/types`. **The build's `notis-public`** — testnet `https://notis.fun/web/`,
 `VITE_PUBLIC` overriding it — is the origin `link` copies from, the one the bridge is declared for, and the
 prefix the background checks the bridge's sender against; an empty one builds an extension with no bridge and
 no links row.
+
+**The verified tip.** The extension checks the chain it reads: a NiPoPoW proof from the node it reads and from every
+other base of the seed list, each verified against the build's own profile and the best kept
+(`NIPOPOW_INTERFACE → The trust model`). The verifier is `resolveTip` of `@dagsocial/nipopow-client` — the code the
+command-line light client runs, never a second implementation of a trust decision — handed to the App by the extension
+build alone, as the identity proxy is; **the web build is handed none**, since a verifier served by the host it checks
+says nothing about that host. It runs in the page: at start, on a press of the status corner, and every ten minutes
+while the tab is visible; one run at a time; a change of the `node` preference runs it again; nothing is stored. A run
+asks `GET /nipopow/proof/6/20` (`NODE_INTERFACE → Nipopow`) of the reading node first and then of the others, duplicates
+dropped, one after another, each under the tool's ten-second timeout — and needs no host permission, since every node
+answers every origin. **The reading node is asked first, so the fold's own rule gives the comparison its meaning**: a
+tie keeps the first, and a winner at index `0` says the reading node holds the best chain or ties for it
+(`NIPOPOW_INTERFACE → compareProofs`). **The verdict** is a pure function of the result, the first row that holds:
+
+| The reading node | Verdict |
+|---|---|
+| answered with no proof in the body, or with one that does not decode or does not verify | `refused` · *invalid-proof* |
+| answered that its chain is shorter than `m + k` | `thin` · *too-short* |
+| gave no answer to read — a transport failure, or any other status | `thin` · *no-proof* |
+| verified, and another node's chain won the comparison | `refused` · *outworked*, naming the winner |
+| verified, and shares no block with another node's proof | `thin` · *split* |
+| verified, and no other node did | `thin` · *one-node* |
+| verified, best or tied, with at least one other verified | `verified`, with the count |
+
+Another node's bad proof never refuses the reading node — it thins the verdict, since the second witness is gone.
+Which of these a node's failure is comes from the result's `refuseCode` — `unreachable`, `too-short`, `http`,
+`invalid`, a closed set the tool fills from the route's documented answers (`NODE_INTERFACE → Nipopow`) — never
+parsed out of the sentence beside it. **It warns and nothing more**: no read is blocked, no write, and the reading node is never switched — the reader's remedy is the
+settings window's `node` row, and the status corner is where the verdict shows (→ The status corner). What a verdict
+says is the trust model's and no more: headers and work, never a body; nothing about a balance, a name or a post the
+page shows; nothing with fewer than two nodes answering; and two nodes under one operator and one DNS zone answer for
+one box lying, not for the operator.
+
+> ⚠ **AHEAD OF CODE (2026-09-21, the verified tip)** — no verifier exists: `main.ts` hands the App none,
+> `@dagsocial/nipopow-client` answers as a command line alone and its result carries no `refuseCode`, testnet's seed list
+> names one base, and the shell has no `notis-network`.
 
 **The policy.** The ledger a transaction moves is read from its outputs: **any output with `boxType`
 `credit` or `fee` is a credits transaction; otherwise karma.** Inputs are ids only
@@ -459,13 +505,19 @@ one is acted on, and nothing flows back but the event's cancellation** — no ke
 preference.
 
 **The build check that keeps the web bundle honest:** the web build's assets contain no `chrome.`
-reference. `build-release.sh` checks it; `build-extension.sh` checks the extension's shell has no inline
+reference and no `nipopow/proof` — the verifier's one request path, in a build that is handed no verifier.
+`build-release.sh` checks both, and that the shell's `notis-network` is empty; `build-extension.sh` checks the
+extension's shell has no inline
 script, its background and its bridge have no `import`, its manifests parse, their one content-script match is
 the pattern the build's `notis-public` derives — and an empty `notis-public` emits no `content_scripts` and no
 `bridge.js` — Firefox's `browser_specific_settings` is the object → "The manifest" states and Chrome's manifest
 carries none, both manifests' `optional_host_permissions` is the pattern the build's faucet base derives — the key
 absent under an empty base — and `web-ext lint --self-hosted` is clean; without the flag the lint reads the
-manifest as a listed add-on's, where an `update_url` is an error.
+manifest as a listed add-on's, where an `update_url` is an error. It checks the shell's `notis-network` at the build's
+value too, and refuses a name no network profile answers to.
+
+> ⚠ **AHEAD OF CODE (2026-09-21, the verified tip)** — neither script reads the assets for `nipopow/proof` or the
+> shell for `notis-network`.
 
 ## Reading the feed and threads
 
@@ -636,6 +688,23 @@ the read it makes is the refresh it reports: the number moves in place, never an
 changes. Its `title` names the state in words — *blocks progressing · tip 2295*, *no new block for 12 minutes · tip
 2295*, *the node did not answer · last tip 2295*. At one column it sits clear of the bar and of every control; in the
 standalone mode it is present, since the page reads the same node; with no node answering at start it reads `—`.
+
+**Where the build carries a verifier, green means nothing is wrong — and a chain nobody checked is something wrong**
+(→ The extension → "The verified tip"). The dot is **green** while the height rose within the last ten minutes *and*
+the last verdict reads `verified`; **clay with the height muted** — the heads-up — when the node answers and the chain
+stands, or the verdict reads `thin`; **clay with the height clay too** — the full rule — when the verdict reads
+`refused`, which outranks everything but a failed read; **muted** when the last read failed, when none has run, and
+until the first verdict returns. One hue at two weights, as `HOUSE_STYLE → Gold and clay are not interchangeable`
+separates a heads-up from the full rule; on a dot this small the weight is the height's beside it. The `title` names
+the case, a node by its host and never by a URL (`HOUSE_STYLE → Voice`): *verified across 2 nodes · tip 7766* · *only
+one node could be checked · tip 7766* · *the chain is too short to check yet · tip 12* · *this node served no proof ·
+tip 7766* · *the nodes share no block to compare · tip 7766* · *this node's proof did not verify · tip 7766* ·
+*node02.notis.fun holds more work than this node · tip 7766* · *checking the chain · tip 7766*. The number stays the
+live read — the verified height is rendered nowhere — and a press re-reads the tip and runs a verification. **A build
+with no verifier keeps the rule of the paragraph above, word for word**: the web build's corner has nothing to fail.
+
+> ⚠ **AHEAD OF CODE (2026-09-21, the verified tip)** — `cornerState` knows the four states of the first paragraph
+> and no verdict; the stylesheet colours the dot alone.
 
 ## The standalone thread
 
@@ -1447,8 +1516,19 @@ client that expects to announce itself first is built against an endpoint that d
   primitive the read surface lacks. The identity envelope's scrypt and ChaCha20-Poly1305 are the same
   family — `@noble/hashes` and `@noble/ciphers` — and its randomness is `getRandomValues`, which no
   secure context gates (→ The identity module).
+- **The `Buffer` polyfill is `buffer` 6**, the release that carries the BigInt methods Node's `Buffer` has — the PoW
+  check in `@dagsocial/validation` writes its nonce with `writeBigUInt64LE`. The polyfill encodes every byte the
+  browser build signs, and the package's tests run under Node's own `Buffer`: a change of it is proven in a real
+  browser — the binding check, the extension proof's writes — never by the test run.
+- **In the workspace the client depends on `@dagsocial/types`, and on `@dagsocial/nipopow-client` for the extension's
+  verifier**, which brings `@dagsocial/nipopow` and `@dagsocial/validation` with it; tree-shaking keeps `validation`'s
+  signature path out of every bundle, and the web build's assets carry none of the three (→ The extension, the build
+  check).
 - **Manifest V3, and nothing added.** The `chrome.*` surface the extension uses is declared in the
   package's own `chrome.d.ts`; `@types/chrome` is not a dependency, and no polyfill is (→ The extension).
+
+> ⚠ **AHEAD OF CODE (2026-09-21, the verified tip)** — the polyfill is `buffer` 5.7.1, and `@dagsocial/types` is the
+> package's one workspace dependency.
 
 ## Preconditions
 
