@@ -76,9 +76,32 @@ describe('createTipVerifier — the seam the App knows', () => {
     await v.run('https://a.example');
 
     expect(observed).toHaveLength(1);
-    // The reading base — as passed — is the first entry; the trailing-slash
-    // twin and its exact repeat are both dropped, and only one `b.example`
-    // reaches `resolve`.
+    // The trailing-slash twin and its exact repeat are both dropped, and only
+    // one `b.example` reaches `resolve`. Every entry reaches `resolve` with
+    // one trailing `/` stripped.
+    expect(observed[0]).toEqual(['https://a.example', 'https://b.example']);
+  });
+
+  it('a trailing-slash reading base reaches `resolve` stripped', async () => {
+    // The tool asks `${url}/nipopow/proof/6/20`, so a base ending in `/` would
+    // ask `…//nipopow/proof/6/20`; the verifier strips one trailing `/` before
+    // handing bases in.
+    const observed: string[][] = [];
+    const resolve = (async (urls: string[]): Promise<TipResult> => {
+      observed.push([...urls]);
+      return verifiedResult(urls);
+    }) as typeof import('@dagsocial/nipopow-client').resolveTip;
+
+    const v = createTipVerifier({
+      network: 'testnet',
+      nodes: ['https://b.example'],
+      fetch: (async () => new Response('')) as typeof fetch,
+      now: () => 0,
+      resolve,
+    });
+    await v.run('https://a.example/');
+
+    expect(observed).toHaveLength(1);
     expect(observed[0]).toEqual(['https://a.example', 'https://b.example']);
   });
 

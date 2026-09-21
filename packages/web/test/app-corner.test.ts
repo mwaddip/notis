@@ -522,6 +522,41 @@ describe('the App verified tip — construction and the reading-base run', () =>
     }
   });
 
+  it('a rejection under the current generation drops the verdict — never leaves the old verdict standing', async () => {
+    setNode('https://a.example');
+    const origError = console.error;
+    console.error = (): void => {};
+    try {
+      const h = verifierHarness();
+      await Promise.resolve(); await Promise.resolve();
+      // Run 1 resolves verified — the corner's title reads *verified across 2
+      // nodes*, the dot is `led fresh`.
+      h.runs[0]!.resolve(verified(2, 7766));
+      await Promise.resolve(); await Promise.resolve();
+      expect(h.drive.tipVerdict).toEqual({ kind: 'verified', nodes: 2, height: 7766 });
+      const btn = h.drive.cornerEl!;
+      expect(btn.querySelector('.led')!.className).toBe('led fresh');
+      expect(btn.getAttribute('title')).toContain('verified across 2 nodes');
+
+      // A press starts run 2.
+      btn.dispatchEvent(new Event('click'));
+      await Promise.resolve(); await Promise.resolve();
+      expect(h.runs.length).toBe(2);
+
+      // Run 2 rejects — tipVerdict is `null`, the title reads *checking the
+      // chain · tip N*, the dot is `led checking`. Asserted on the rendered
+      // corner, not only on the field (WEB_INTERFACE → The extension → "The
+      // verified tip").
+      h.runs[1]!.reject(new Error('boom'));
+      await Promise.resolve(); await Promise.resolve();
+      expect(h.drive.tipVerdict).toBeNull();
+      expect(btn.querySelector('.led')!.className).toBe('led checking');
+      expect(btn.getAttribute('title')).toBe('checking the chain · tip 6001');
+    } finally {
+      console.error = origError;
+    }
+  });
+
   it('an empty prefs.node runs nothing — the empty base is not asked', async () => {
     // The describe's beforeEach reset prefs.node to '' via setNode(''); the
     // App is constructed while that empty base holds.

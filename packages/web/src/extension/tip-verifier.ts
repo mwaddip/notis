@@ -11,8 +11,9 @@ import { tipVerdict } from '../model/tip-verdict';
 import type { TipVerdict } from '../model/tip-verdict';
 import type { TipVerifier } from '../model/state';
 
-// NIPOPOW_INTERFACE → The trust model — `m` common headers and `k` suffix; the
-// route serves the same pair (NODE_INTERFACE → Nipopow, `GET /nipopow/proof/6/20`).
+// NIPOPOW_INTERFACE → NipopowProof — `m` is the security parameter and `k` the
+// suffix length; the pair `6, 20` is WEB_INTERFACE → The extension → "The
+// verified tip"'s, and NODE_INTERFACE → Nipopow serves the same route.
 const M = 6;
 const K = 20;
 
@@ -46,7 +47,7 @@ export function createTipVerifier(opts: TipVerifierOptions): TipVerifier {
         const key = normaliseBase(base);
         if (seen.has(key)) return;
         seen.add(key);
-        urls.push(base);
+        urls.push(key);
       };
       addIfNew(readingBase);
       for (const b of opts.nodes) addIfNew(b);

@@ -223,9 +223,9 @@ export class App {
   private cornerVisHandler: (() => void) | null = null;
   // The verified tip (WEB_INTERFACE → The extension → "The verified tip") —
   // the extension build hands in a verifier; the web build hands in none, and
-  // the corner reads today's rule word for word. The verdict is `undefined`
-  // with no verifier and `null` until the first run returns; a run in flight
-  // is dropped by a later generation.
+  // the corner reads the first paragraph of the status corner, word for word.
+  // The verdict is `undefined` with no verifier and `null` until the first run
+  // returns; a run in flight is dropped by a later generation.
   private verifier: TipVerifier | null;
   private tipVerdict: TipVerdict | null | undefined;
   private verifyTimer: ReturnType<typeof setInterval> | null = null;
@@ -2693,12 +2693,14 @@ export class App {
         this.renderCornerNow();
       },
       (e) => {
-        // A run that throws leaves the verdict at `null` and console.errors
-        // once — never a fabricated reason, never green. The next trigger
-        // tries again.
+        // A run that throws clears the verdict to `null` under the current
+        // generation, so the corner reads *checking* (WEB_INTERFACE → The
+        // extension → "The verified tip"). One console.error; a stale
+        // rejection touches nothing but the log.
         console.error(e);
         if (gen !== this.verifyGen) return;
         this.verifyInFlight = false;
+        this.tipVerdict = null;
         this.renderCornerNow();
       },
     );
