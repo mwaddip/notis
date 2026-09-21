@@ -700,7 +700,8 @@ standalone mode it is present, since the page reads the same node; with no node 
 the last verdict reads `verified`; **clay with the height muted** — the heads-up — when the node answers and the chain
 stands, or the verdict reads `thin`; **clay with the height clay too** — the full rule — when the verdict reads
 `refused`, which outranks everything but a failed read; **muted** when the last read failed, when none has run, and
-until the first verdict returns. One hue at two weights, as `HOUSE_STYLE → Gold and clay are not interchangeable`
+until the first verdict returns. **Where more than one holds, the first of these decides the dot and the title:** a
+failed read · no read yet · `refused` · the first verdict not returned · `thin` · the chain standing · green. One hue at two weights, as `HOUSE_STYLE → Gold and clay are not interchangeable`
 separates a heads-up from the full rule; on a dot this small the weight is the height's beside it. The `title` names
 the case, a node by its host and never by a URL (`HOUSE_STYLE → Voice`): *verified across 2 nodes · tip 7766* · *only
 one node could be checked · tip 7766* · *the chain is too short to check yet · tip 12* · *this node served no proof ·
