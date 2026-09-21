@@ -18,10 +18,11 @@ the extension's own page, the key held by the extension's background, credits si
 Notis link taken into the extension's workspace by the bridge, the links preference, and the website's control
 offering a thread to an extension first (→ The extension, → The way into the workspace) — and the **signed
 Firefox build** — the extension signed through addons.mozilla.org's unlisted channel, the xpi on the release, an
-installed copy updating itself from the branch `updates` (→ "The Firefox build ships signed as well") — are
+installed copy updating itself from the branch `updates` (→ "The Firefox build ships signed as well") — and the
+**verified tip** — the extension checking the chain it reads by NiPoPoW proofs from the seed list's nodes, the verdict
+in the status corner (→ The extension → "The verified tip", → The status corner) — are
 implemented
 **Protocol version:** read from the node, never held — see Invariants
-
 
 > **This client is a standalone product.** The node serves no client (`NODE_INTERFACE → The node serves no client`):
 > this is one implementation of the client side of the node's contract, a static bundle any host serves
@@ -90,7 +91,8 @@ second renderer, and with no identity loaded it is the read surface exactly.
 
 **The client bundled as a browser extension, the identity held by the extension's background, and every
 write signed there.** The property it serves: after install, Notis needs no hosted page, no server-held
-key, no server that signs, and no call home — the only traffic is to the node(s) the reader configured.
+key, no server that signs, and no call home — the only traffic is to the node(s) the reader configured — and
+the chain it reads is checked, not taken on one node's word (→ The extension → "The verified tip").
 It is the App in a second build, not a second client: with no identity loaded it is the read surface
 exactly, and with one it is the write surface with its signing moved out of the page (→ The extension). A post's link
 still names the website (→ Links): a reader who follows one is brought from that page into the extension, and
@@ -115,9 +117,6 @@ calls them, tree-shaking drops them whole, and `build-extension.sh` refuses asse
 arrive as implementations with the code that calls them. An unreached primitive cannot be pinned by any
 test that runs, and an unpinned consensus-critical primitive is a liability rather than a
 convenience — which is the whole argument against a hand-rolled copy, applied to the shim itself.
-
-> ⚠ **AHEAD OF CODE (2026-09-21, the verified tip)** — the shim exports neither name, the client does not depend on
-> `@dagsocial/validation`, and no build check reads the assets for the sentence.
 
 ⛔ **The shim's hashing must be byte-identical to `createHash('blake2b512')`, and that must be
 pinned.** Every id in the protocol is a blake2b-512 digest truncated to 32 bytes; a shim that
@@ -224,15 +223,12 @@ read takes the element's attribute through the URL constructor, never `document.
 `notis-api` behaves exactly as one in the `node` preference does: the node answers any origin. A foreign origin in
 `notis-faucet` works only where the browser grants the host — the extension (→ The faucet step).
 
-> ⚠ **AHEAD OF CODE (2026-09-21, the verified tip)** — the shell opens with five tags and carries no
-> `notis-network`; nothing reads `VITE_NETWORK`.
-
 **The three later tags.** `notis-nodes` is a JSON array of API bases — the build's **seed list**, one per
 network, the extension build's way of naming a node without a hosted page (→ The extension); anything
 that is not a JSON array of strings reads as `[]`. `notis-public` is an origin and base, opening with a
 scheme and closing with `/`, or empty — the URL `link` copies from (→ Links): a page whose own location
 is not shareable, an extension page, needs one; the web build leaves it empty and `link` copies the
-page's own location, as before. `notis-network` names the network the build is for — `testnet`, `devnet`,
+page's own location. `notis-network` names the network the build is for — `testnet`, `devnet`,
 `mainnet`, or empty — and is where the extension's verifier takes its profile
 (→ The extension → "The verified tip"): `profileFor` of the name (`TYPES_INTERFACE → Network profiles`), **never the
 `networkType` a node reports** — a verifier that took its profile from the node it checks would hold a lying node to
@@ -393,7 +389,8 @@ the first row that holds:
 
 **The verdict is total by itself**: the last four rows hold only for a reading node the result marks verified, beside
 the result's own tip. A reading node left unverified under no code, or a verified one beside no tip, reads `refused` ·
-*invalid-proof* — decided here, never on what the tool is known to fill.
+*invalid-proof* — decided here, never on what the tool is known to fill. A `behind` that is not a non-negative
+integer reads as `null`, by the same rule.
 Another node's bad proof never refuses the reading node — it thins the verdict, since the second witness is gone.
 Which of these a node's failure is comes from the result's `refuseCode` — `unreachable`, `too-short`, `http`,
 `invalid`, a closed set the tool fills from the route's documented answers (`NODE_INTERFACE → Nipopow`) — never
@@ -402,9 +399,6 @@ settings window's `node` row, and the status corner is where the verdict shows (
 says is the trust model's and no more: headers and work, never a body; nothing about a balance, a name or a post the
 page shows; nothing with fewer than two nodes answering; and two nodes under one operator and one DNS zone answer for
 one box lying, not for the operator.
-
-> ⚠ **AHEAD OF CODE (2026-09-21, the verified tip)** — the tool's result carries no `behind`, and `tipVerdict` reads
-> every winner but index `0` as *outworked*.
 
 **The policy.** The ledger a transaction moves is read from its outputs: **any output with `boxType`
 `credit` or `fee` is a credits transaction; otherwise karma.** Inputs are ids only
@@ -532,9 +526,6 @@ carries none, both manifests' `optional_host_permissions` is the pattern the bui
 absent under an empty base — and `web-ext lint --self-hosted` is clean; without the flag the lint reads the
 manifest as a listed add-on's, where an `update_url` is an error. It checks the shell's `notis-network` at the build's
 value too, and refuses a name no network profile answers to.
-
-> ⚠ **AHEAD OF CODE (2026-09-21, the verified tip)** — neither script reads the assets for `nipopow/proof` or the
-> shell for `notis-network`.
 
 ## Reading the feed and threads
 
@@ -718,12 +709,11 @@ separates a heads-up from the full rule; on a dot this small the weight is the h
 the case, a node by its host and never by a URL (`HOUSE_STYLE → Voice`): *verified across 2 nodes · tip 7766* · *only
 one node could be checked · tip 7766* · *the chain is too short to check yet · tip 12* · *this node served no proof ·
 tip 7766* · *the nodes share no block to compare · tip 7766* · *this node's proof did not verify · tip 7766* ·
-*node02.notis.fun holds more work than this node · tip 7766* · *checking the chain · tip 7766*. The number stays the
+*node02.notis.fun holds more work than this node · tip 7766* · *checking the chain · tip 7766*. A winner whose address
+does not parse reads *another node holds more work than this node*, and a state that reaches the title without its
+verdict *the chain could not be checked*. The number stays the
 live read — the verified height is rendered nowhere — and a press re-reads the tip and runs a verification. **A build
 with no verifier keeps the rule of the paragraph above, word for word**: the web build's corner has nothing to fail.
-
-> ⚠ **AHEAD OF CODE (2026-09-21, the verified tip)** — a change of the node being read leaves the corner's tip and
-> rise standing until the next thirty-second read.
 
 ## The standalone thread
 
@@ -1545,9 +1535,6 @@ client that expects to announce itself first is built against an endpoint that d
   check).
 - **Manifest V3, and nothing added.** The `chrome.*` surface the extension uses is declared in the
   package's own `chrome.d.ts`; `@types/chrome` is not a dependency, and no polyfill is (→ The extension).
-
-> ⚠ **AHEAD OF CODE (2026-09-21, the verified tip)** — the polyfill is `buffer` 5.7.1, and `@dagsocial/types` is the
-> package's one workspace dependency.
 
 ## Preconditions
 
