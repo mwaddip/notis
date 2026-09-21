@@ -11,7 +11,7 @@ import { profileFor } from '@dagsocial/types';
 // answers `tipVerdict(result)`. `resolve` is an optional injection point for
 // these tests, defaulting to the tool's real function.
 
-function verifiedNode(url: string): NodeTipResult {
+function verifiedNode(url: string, behind: NodeTipResult['behind'] = 0): NodeTipResult {
   return {
     url,
     verified: true,
@@ -19,6 +19,7 @@ function verifiedNode(url: string): NodeTipResult {
     verifyResult: null,
     refuseReason: null,
     refuseCode: null,
+    behind,
   };
 }
 
@@ -156,11 +157,15 @@ describe('createTipVerifier — the seam the App knows', () => {
     expect(profileSeen).toBe(profileFor(network));
   });
 
-  it('the answer is tipVerdict of what resolve returned — an outworked verdict names the winner\'s URL', async () => {
-    // Set up a result where the second node wins; `tipVerdict` reads
+  it("the answer is tipVerdict of what resolve returned — an outworked verdict (the winner's suffix does not carry the reading node's tip) names the winner's URL", async () => {
+    // Set up a result where the second node wins and the reading node's tip
+    // is not on the winner's chain (`behind: null`); `tipVerdict` reads
     // `refused: outworked` and names the winner's URL as `by`.
     const resolve = (async (urls: string[]): Promise<TipResult> => {
-      const nodes = urls.map(verifiedNode);
+      const nodes: NodeTipResult[] = [
+        verifiedNode(urls[0]!, null),
+        ...urls.slice(1).map((u) => verifiedNode(u)),
+      ];
       return {
         winner: nodes[1]!,
         winnerIndex: 1,

@@ -1,9 +1,10 @@
 // The verdict — a pure function over the tool's TipResult
 // (WEB_INTERFACE → The extension → "The verified tip"). The reading node is at
 // index 0 of the tool's `nodes` array, so the fold's own rule gives the
-// comparison its meaning: `winnerIndex === 0` says the reading node holds the
-// best chain or ties for it (NIPOPOW_INTERFACE → compareProofs). The rows are
-// the contract's table, the first that holds.
+// comparison its meaning: a winner at another index says the reading node is
+// behind; it is outworked only when `behind` is `null` — the winner's suffix
+// does not carry the reading node's tip. The rows are the contract's table,
+// the first that holds.
 
 import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
 
@@ -42,9 +43,16 @@ export function tipVerdict(result: TipResult): TipVerdict {
     return { kind: 'refused', reason: 'invalid-proof', by: null, height };
   }
 
-  // Row 4 — another node's chain won the comparison; name its host by the
-  // winner's `url` (the corner reads the host from it).
-  if (result.winnerIndex !== 0) {
+  // Totality on `behind`, in the same spirit as the gate above: the contract
+  // defines it as a non-negative integer or null, so any other shape reads
+  // as null — not on the winner's chain (WEB_INTERFACE → The extension →
+  // "The verdict is total by itself").
+  const behind = normalizeBehind(reading.behind);
+
+  // Row 4 — another node's chain won and the winner's suffix does not carry
+  // the reading node's tip; name its host by the winner's `url` (the corner
+  // reads the host from it).
+  if (result.winnerIndex !== 0 && behind === null) {
     const winner = result.nodes[result.winnerIndex];
     return {
       kind: 'refused',
@@ -72,4 +80,12 @@ export function tipVerdict(result: TipResult): TipVerdict {
 
   // Row 7 — verified, best or tied, at least one other verified.
   return { kind: 'verified', nodes: verifiedCount, height: result.tip.height };
+}
+
+function normalizeBehind(value: NodeTipResult['behind']): number | null {
+  if (value === null) return null;
+  if (typeof value !== 'number') return null;
+  if (!Number.isInteger(value)) return null;
+  if (value < 0) return null;
+  return value;
 }
