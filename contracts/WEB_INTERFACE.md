@@ -365,7 +365,10 @@ other base of the seed list, each verified against the build's own profile and t
 command-line light client runs, never a second implementation of a trust decision — handed to the App by the extension
 build alone, as the identity proxy is; **the web build is handed none**, since a verifier served by the host it checks
 says nothing about that host. It runs in the page: at start, on a press of the status corner, and every ten minutes
-while the tab is visible; one run at a time; a change of the `node` preference runs it again; nothing is stored. A run
+while the tab is visible — a tab that becomes visible again runs one only when the last began ten minutes ago or more;
+one run at a time, a trigger during a run being that run; a change of the node being read drops the verdict and any
+run still in flight for the node before, and runs again; a run that ends without a verdict leaves the corner where
+none has returned; nothing is stored. A run
 asks `GET /nipopow/proof/6/20` (`NODE_INTERFACE → Nipopow`) of the reading node first and then of the others, duplicates
 dropped, one after another, each under the tool's ten-second timeout — and needs no host permission, since every node
 answers every origin. **The reading node is asked first, so the fold's own rule gives the comparison its meaning**: a
