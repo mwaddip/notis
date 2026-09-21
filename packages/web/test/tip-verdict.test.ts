@@ -237,9 +237,9 @@ describe('tipVerdict — edges', () => {
       suffixHead: null,
       splits: [{ indexA: 2, indexB: 0, reason: 'incomparable' }],
     };
-    // This shape does not arise from the fold today (indexA carries the running
+    // This shape does not arise from the fold (indexA carries the running
     // best), but the check widens to indexB per the contract's language and
-    // stays correct.
+    // stays correct in either shape.
     expect(tipVerdict(r)).toEqual({ kind: 'thin', reason: 'split', height: 80 });
   });
 
@@ -247,5 +247,60 @@ describe('tipVerdict — edges', () => {
   it('the verified-fixture builder yields row 7', () => {
     const r = verified('n0', [nodeOk('n1')], 42);
     expect(tipVerdict(r)).toEqual({ kind: 'verified', nodes: 2, height: 42 });
+  });
+});
+
+// The totality gate: rows 4–7 hold only for a reading node the result marks
+// verified, beside the result's own tip; anything else reads refused ·
+// invalid-proof (WEB_INTERFACE → The extension → "The verdict is total by
+// itself"). These fixtures are shapes the tool does not build — the verdict
+// decides for itself, never on what another package is known to fill.
+
+function nodeUnverifiedNoCode(url: string): NodeTipResult {
+  return {
+    url,
+    verified: false,
+    proof: null,
+    verifyResult: null,
+    refuseReason: null,
+    refuseCode: null,
+  };
+}
+
+describe('tipVerdict — the totality gate', () => {
+  it('reading.verified false under a null refuseCode → refused invalid-proof, never verified', () => {
+    const r: TipResult = {
+      winner: nodeOk('n1'),
+      winnerIndex: 0,
+      nodes: [nodeUnverifiedNoCode('n0'), nodeOk('n1')],
+      tip: header(500),
+      suffixHead: null,
+      splits: [],
+    };
+    expect(tipVerdict(r)).toEqual({ kind: 'refused', reason: 'invalid-proof', by: null, height: 500 });
+  });
+
+  it("reading.verified false, winnerIndex 1 → refused invalid-proof, not outworked (the reading node's state decides before the comparison)", () => {
+    const r: TipResult = {
+      winner: nodeOk('https://node02.notis.fun/testnet/api'),
+      winnerIndex: 1,
+      nodes: [nodeUnverifiedNoCode('n0'), nodeOk('https://node02.notis.fun/testnet/api')],
+      tip: header(500),
+      suffixHead: null,
+      splits: [],
+    };
+    expect(tipVerdict(r)).toEqual({ kind: 'refused', reason: 'invalid-proof', by: null, height: 500 });
+  });
+
+  it('a verified reading node beside a null tip → refused invalid-proof', () => {
+    const r: TipResult = {
+      winner: nodeOk('n0'),
+      winnerIndex: 0,
+      nodes: [nodeOk('n0'), nodeOk('n1')],
+      tip: null,
+      suffixHead: null,
+      splits: [],
+    };
+    expect(tipVerdict(r)).toEqual({ kind: 'refused', reason: 'invalid-proof', by: null, height: null });
   });
 });

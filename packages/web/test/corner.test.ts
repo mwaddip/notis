@@ -96,10 +96,10 @@ describe('renderCorner — the button holds a dot and a height', () => {
 });
 
 // The verified-tip rule (WEB_INTERFACE → The status corner, → The extension →
-// "The verified tip"): a build with no verifier keeps today's rule word for
-// word; a build with a verifier folds the verdict in beside the read. The
-// order — a failed read · no read yet · refused · not returned · thin · stale
-// · fresh — is pinned here.
+// "The verified tip"): a build with no verifier keeps the first paragraph of
+// the status corner word for word; a build with a verifier folds the verdict
+// in beside the read. The order — a failed read · no read yet · refused · not
+// returned · thin · stale · fresh — is pinned here.
 
 const RISE = { lastTip: 100, lastRiseAt: 0, lastReadOk: true, now: 60_000 } as const;
 const NO_RISE = { lastTip: 100, lastRiseAt: 0, lastReadOk: true, now: CORNER_STALE_MS + 1 } as const;
@@ -117,7 +117,7 @@ const REFUSED_OUTWORKED: TipVerdict = {
   by: 'https://node02.notis.fun/testnet/api', height: 7766,
 };
 
-describe('cornerState — verdict: undefined reproduces today\'s four states', () => {
+describe('cornerState — verdict: undefined reproduces the first paragraph\'s four states', () => {
   it('rise inside the window → fresh', () => {
     expect(cornerState({ ...RISE, verdict: undefined })).toBe('fresh');
   });
@@ -166,7 +166,7 @@ describe('cornerState — verdict folds in, first row that holds', () => {
 });
 
 describe('cornerTitle — verdict-aware titles, word for word', () => {
-  it('verdict: undefined keeps today\'s four titles exactly', () => {
+  it('verdict: undefined keeps the first paragraph\'s four titles exactly', () => {
     expect(cornerTitle('fresh', 2295)).toBe('blocks progressing · tip 2295');
     expect(cornerTitle('stale', 2295)).toBe('no new block for 10 minutes · tip 2295');
     expect(cornerTitle('down', 2295)).toBe('the node did not answer · last tip 2295');
@@ -176,7 +176,7 @@ describe('cornerTitle — verdict-aware titles, word for word', () => {
   it('fresh under a verified verdict names the count', () => {
     expect(cornerTitle('fresh', 7766, VERIFIED)).toBe('verified across 2 nodes · tip 7766');
   });
-  it('stale keeps today\'s wording even when a verified verdict holds', () => {
+  it('stale keeps the first paragraph\'s wording even when a verified verdict holds', () => {
     expect(cornerTitle('stale', 7766, VERIFIED)).toBe('no new block for 10 minutes · tip 7766');
   });
   it('checking says checking the chain', () => {

@@ -30,9 +30,9 @@ export interface CornerInput {
   /** The clock the state is judged against. */
   now: number;
   /** The verifier's last verdict — `undefined` is a build with no verifier and
-   *  the rule is today's, word for word; `null` is a verifier whose first
-   *  verdict has not returned; a verdict folds in beside the read
-   *  (WEB_INTERFACE → The status corner). */
+   *  reads by the first paragraph of the status corner, word for word; `null`
+   *  is a verifier whose first verdict has not returned; a verdict folds in
+   *  beside the read (WEB_INTERFACE → The status corner). */
   verdict?: TipVerdict | null;
 }
 
@@ -44,8 +44,8 @@ export function cornerState(input: CornerInput): CornerState {
   if (input.lastReadOk === null) return 'none';
   // The last read failed — outranks the verdict.
   if (input.lastReadOk === false) return 'down';
-  // A build with no verifier follows today's rule: the four states of the
-  // first paragraph, no verdict.
+  // A build with no verifier follows the first paragraph of the status corner:
+  // the four states, no verdict.
   if (input.verdict === undefined) {
     if (input.lastRiseAt !== null && input.now - input.lastRiseAt <= CORNER_STALE_MS) return 'fresh';
     return 'stale';
@@ -56,7 +56,8 @@ export function cornerState(input: CornerInput): CornerState {
   if (input.verdict === null) return 'checking';
   // A thin verdict — the heads-up.
   if (input.verdict.kind === 'thin') return 'thin';
-  // A verified verdict, freshness by the rise the same as today.
+  // A verified verdict, freshness by the rise from the first paragraph of the
+  // status corner.
   if (input.lastRiseAt !== null && input.now - input.lastRiseAt <= CORNER_STALE_MS) return 'fresh';
   return 'stale';
 }
