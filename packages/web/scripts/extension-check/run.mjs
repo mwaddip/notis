@@ -1,22 +1,39 @@
 #!/usr/bin/env node
-// The extension proof — the twelve steps of WEB_INTERFACE → The extension,
-// verbatim, over raw CDP against a live devnet stack. Drives the App's real
-// UI on the extension's own page: the composer, the like word, the profile
-// window's rows, and the prompt window found by its `prompt.html?id=` URL.
+// The extension proof — the twelve steps of WEB_INTERFACE → The extension
+// plus the four links-into-the-extension steps and the verified-tip block
+// (17a · 17 · 17b · 18 · 19a · 19b · 19c · 20, and 17b-old-tree for the false
+// alarm), each read verbatim, over raw CDP against a live devnet stack.
+// Drives the App's real UI on the extension's own page: the composer, the
+// like word, the profile window's rows, and the prompt window found by its
+// `prompt.html?id=` URL. The verified-tip block runs against a second stack
+// the harness owns — node B (server, bootstrapped from A), node C (used for
+// the real-fork test in 19b), node D (isolated, 17a's too-short and 19c's
+// share-no-block), the lying relay (19a) and, for 17b-old-tree, a second
+// Chromium loading an extension built from OLD_TREE_COMMIT in a scratch
+// worktree.
 //
 // Preconditions:
 //  1. `node packages/node/dist/index.js` running as `NETWORK_TYPE=devnet`
-//     with a miner, or `packages/node/scripts/dev.mjs`.
-//  2. The faucet running against that node with the devnet key.
+//     with a miner, or `packages/node/scripts/dev.mjs`. Its miner is the
+//     operator's; the harness never signals it.
+//  2. The faucet running against that node with the devnet key (only when
+//     --r-key is given).
 //  3. `promote.mjs` has printed R's public and pkcs8-hex; R's clear file
 //     (`{ pubKeyHex, privKeyBase64 }`) lives in a scratch path outside the
 //     repo and never enters a commit, a log or the REPORT.
 //  4. The extension was built via build-extension.sh with devnet values
-//     (VITE_NODES points at this run's node).
+//     (VITE_NODES points at [A, B]).
+//
+// Modes:
+//   --verified-tip alone: 1–16 read NOT RUN, 17a–20 and 17b-old-tree run.
+//   --r-key and --verified-tip: 1–16 and 17a–20 and 17b-old-tree all run.
+//   Neither: every step reads NOT RUN by name.
 //
 // Usage:
 //   node scripts/extension-check/run.mjs \
-//     --extension-dir <path> --r-key <path> --node <origin> --faucet <origin>
+//     --extension-dir <path> [--r-key <path>] --node <origin> --faucet <origin> \
+//     [--verified-tip --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
+//     [--public <origin+base> --web-dist <dir>]
 
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -24,7 +41,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { matchPatternFor } from '../../extension/match-pattern.mjs';
 
 // Boolean flags — never consume the next argument. Without this the parser
@@ -55,9 +72,8 @@ const VERIFIED_TIP = args.get('verified-tip') === true;
 const NODE_DIST = args.get('node-dist') ?? null;
 const MINER_SCRIPT = args.get('miner') ?? null;
 const SCRATCH = args.get('scratch') ?? null;
-const NODE_P2P = args.get('node-p2p') ?? null; // A's p2p multiaddr — the bootstrap for B
-const MINING_SECRET = args.get('mining-secret') ?? null; // A's mining secret — the harness starts A's miner
-// The harness's own ports for its spawned children (17-20's stack). Kept
+const NODE_P2P = args.get('node-p2p') ?? null; // A's p2p multiaddr — the bootstrap for B and for C's first life
+// The harness's own ports for its spawned children (17–20's stack). Kept
 // clear of Chrome's debugger range (19200–19699), the e2e range (11000–12899)
 // and the dagsocial-miner unit's testnet ports.
 const B_HTTP_PORT = 19770;
@@ -69,7 +85,23 @@ const RELAY_ORIGIN = `http://127.0.0.1:${RELAY_PORT}`;
 const C_HTTP_PORT = 19790;
 const C_ADMIN_PORT = 19791;
 const C_P2P_PORT = 19792;
+// C's second life listens on a fresh port, cut off from A: A's peer store
+// carries C's first-life address, so a new port makes that stale and A cannot
+// reach C — combined with MAX_PEERS=0 and BOOTSTRAP_PEERS="" on C, the three
+// assertions of step 19b then read peers_connected=0.
+const C_P2P_PORT_ISOLATED = 19793;
 const C_ORIGIN = `http://127.0.0.1:${C_HTTP_PORT}`;
+// Node D — the isolated helper for 17a (too-short) and 19c (no shared block).
+const D_HTTP_PORT = 19795;
+const D_ADMIN_PORT = 19796;
+const D_P2P_PORT = 19797;
+const D_ORIGIN = `http://127.0.0.1:${D_HTTP_PORT}`;
+// The old-tree 17b stage — a second Chromium loading an extension built from
+// commit a3da5bea, so the false alarm the tip's rule prevents fires again and
+// step 17b is proven to be able to fail.
+const OLD_TREE_COMMIT = 'a3da5bea';
+const OLD_PRESS_TARGET = 30;
+const OLD_PRESS_CEILING = 100;
 
 if (!EXT_DIR || !existsSync(EXT_DIR)) { console.error('missing --extension-dir'); process.exit(2); }
 // --r-key is optional. Without it, steps 1–16 read NOT RUN by name and 17–20
@@ -79,7 +111,8 @@ if (!EXT_DIR || !existsSync(EXT_DIR)) { console.error('missing --extension-dir')
 if (R_KEY && !existsSync(R_KEY)) { console.error(`--r-key not found: ${R_KEY}`); process.exit(2); }
 
 // --verified-tip requires the four lifecycle arguments — the harness owns node
-// B, node C and the lying relay, and paces node A's miner.
+// B, node C, node D, the lying relay and every miner it starts; A itself and
+// A's miner are the operator's (WEB_INTERFACE → The extension → "The verified tip").
 if (VERIFIED_TIP) {
   if (!NODE_DIST || !existsSync(NODE_DIST)) {
     console.error('--verified-tip requires --node-dist <packages/node/dist/index.js>');
@@ -99,10 +132,6 @@ if (VERIFIED_TIP) {
   }
   if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
     console.error('--verified-tip requires --node-p2p <multiaddr> — A\'s p2p bootstrap, e.g. /ip4/127.0.0.1/tcp/19742');
-    process.exit(2);
-  }
-  if (!MINING_SECRET || !/^[0-9a-f]{64}$/i.test(MINING_SECRET)) {
-    console.error('--verified-tip requires --mining-secret <64-hex> — A\'s MINING_SECRET so the harness can start A\'s miner (WEB_INTERFACE → The extension → "The verified tip"; the operator starts A without a miner)');
     process.exit(2);
   }
 }
@@ -323,29 +352,50 @@ const findChrome = () => {
 const CHROME = findChrome();
 if (!CHROME) { console.error('no Chromium found'); process.exit(2); }
 
-const port = 19200 + Math.floor(Math.random() * 500);
-const profile = mkdtempSync(join(tmpdir(), 'notis-ext-proof-'));
-const proc = spawn(CHROME, [
-  '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
-  `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
-  `--load-extension=${EXT_DIR}`, `--disable-extensions-except=${EXT_DIR}`,
-  'about:blank',
-], { stdio: ['ignore', 'pipe', 'pipe'] });
-proc.stderr.on('data', () => {}); // absorb chrome's noise
-proc.stdout.on('data', () => {});
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function browserVersion() {
+// A Chromium instance the harness owns — its own DevTools port, its own user
+// data dir, and the single extension it loads. The tip build's stage takes
+// the extension at --extension-dir; the old-tree stage takes an extension
+// built from OLD_TREE_COMMIT in a scratch worktree (WEB_INTERFACE → The
+// extension → "The verified tip"; the false alarm that proves step 17b can fail).
+async function launchChromium(extensionDir) {
+  const chromePort = 19200 + Math.floor(Math.random() * 500);
+  const profileDir = mkdtempSync(join(tmpdir(), 'notis-ext-proof-'));
+  const chromeProc = spawn(CHROME, [
+    '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
+    `--remote-debugging-port=${chromePort}`, `--user-data-dir=${profileDir}`,
+    `--load-extension=${extensionDir}`, `--disable-extensions-except=${extensionDir}`,
+    'about:blank',
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+  chromeProc.stderr.on('data', () => {}); // absorb chrome's noise
+  chromeProc.stdout.on('data', () => {});
   for (let i = 0; i < 200; i++) {
-    try { const r = await fetch(`http://127.0.0.1:${port}/json/version`); if (r.ok) return r.json(); } catch {}
+    try {
+      const r = await fetch(`http://127.0.0.1:${chromePort}/json/version`);
+      if (r.ok) return { proc: chromeProc, port: chromePort, profile: profileDir, version: await r.json() };
+    } catch {}
     await sleep(100);
   }
-  throw new Error('chrome DevTools never appeared');
+  throw new Error(`chrome DevTools never appeared on port ${chromePort}`);
 }
-await browserVersion();
 
-async function jsonList() { return (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()); }
+// The primary Chromium — loaded with the extension at --extension-dir. Every
+// step but the old-tree 17b runs against this instance's DevTools port.
+const primary = await launchChromium(EXT_DIR);
+const proc = primary.proc;
+const port = primary.port;
+const profile = primary.profile;
+
+async function browserVersion(chromePort = port) {
+  const r = await fetch(`http://127.0.0.1:${chromePort}/json/version`);
+  if (!r.ok) throw new Error(`browserVersion: ${r.status}`);
+  return r.json();
+}
+
+async function jsonList(chromePort = port) {
+  return (await (await fetch(`http://127.0.0.1:${chromePort}/json/list`)).json());
+}
 
 // A CDP session over one target — Page, Runtime, Network enabled; window.__btn
 // is the byName helper the precedent used.
@@ -394,9 +444,9 @@ const record = (step, status, detail) => {
   console.log(`step ${step}: ${s} — ${detail}`);
 };
 
-async function findExt(pathSuffix) {
+async function findExt(pathSuffix, chromePort = port) {
   for (let i = 0; i < 100; i++) {
-    const list = await jsonList();
+    const list = await jsonList(chromePort);
     const p = list.find((t) => t.type === 'page' && t.url.startsWith(`chrome-extension://${EXT_ID}/`) && (pathSuffix ? t.url.includes(pathSuffix) : true));
     if (p?.webSocketDebuggerUrl) return p;
     await sleep(200);
@@ -404,8 +454,8 @@ async function findExt(pathSuffix) {
   return null;
 }
 
-async function findWorker() {
-  const list = await jsonList();
+async function findWorker(chromePort = port) {
+  const list = await jsonList(chromePort);
   return list.find((t) => (t.type === 'service_worker' || t.type === 'worker') && t.url.endsWith('/background.js'));
 }
 
@@ -414,8 +464,8 @@ async function findWorker() {
 // / `targetDestroyed` events at the browser scope. Distinct from a per-target
 // session opened via `openSession(wsUrl)` (WEB_INTERFACE → The extension →
 // "Links into the extension" — the browser-scope moves the tabs).
-async function openBrowserSession() {
-  const bv = await browserVersion();
+async function openBrowserSession(chromePort = port) {
+  const bv = await browserVersion(chromePort);
   const s = new WebSocket(bv.webSocketDebuggerUrl);
   await new Promise((res, rej) => { s.onopen = res; s.onerror = rej; });
   let n = 0;
@@ -824,30 +874,60 @@ async function waitForVerifierRun(cx, sinceIdx, atLeast, ms = 30000, quietMs = 1
 }
 
 // ---------------------------------------------------------------------------
-// The verified-tip block — steps 17a · 17 · 18 · 19a · 19b · 20.
+// The verified-tip block — steps 17a · 17 · 17b · 18 · 19a · 19b · 19c · 20,
+// and, when the harness owns a second Chromium for it, 17b-old-tree.
 // ---------------------------------------------------------------------------
 
+const VERIFIED_TIP_STEPS = ['17a', 17, '17b', 18, '19a', '19b', '19c', 20];
+const OLD_TREE_STEP = '17b-old-tree';
+
 function markVerifiedTipNotRun(reason) {
-  for (const s of ['17a', 17, 18, '19a', '19b', 20]) record(s, 'NOT RUN', reason);
+  for (const s of VERIFIED_TIP_STEPS) record(s, 'NOT RUN', reason);
+  record(OLD_TREE_STEP, 'NOT RUN', reason);
 }
 
-async function verifiedTipSteps(cx) {
-  // ---- pre-flight — the operator's node is up, and A has no miner yet.
-  const aUp = await waitForHttpUp(NODE, 15000);
-  if (!aUp) {
-    markVerifiedTipNotRun(`node A did not answer /blocks/current at ${NODE}`);
-    return;
-  }
-  const preHeightA = await currentHeight(NODE);
-  console.log(`[vt] pre-flight: A height=${preHeightA} at ${NODE}`);
-  // 17a needs *too-short*: height < m + k = 26. The operator must have started
-  // A without a miner — a fresh store. A pre-existing chain past 26 can only
-  // read step 17a as FAIL; the rest still run.
+// Press the corner and wait for its next verdict — one press, one verifier
+// run, one reading. The App keeps the previous verdict rendered *through* the
+// next run (WEB_INTERFACE → The extension → "The verified tip"), so the
+// request pair is the observable that the new run happened; the reading is
+// what the corner shows once the pair settles.
+async function pressAndReadVerdict(cx, opts = {}) {
+  const startIdx = cx.events.length;
+  await pressCorner(cx);
+  const proofs = await waitForVerifierRun(
+    cx, startIdx, opts.atLeast ?? 2, opts.ms ?? 30000, opts.quietMs ?? 1500);
+  await sleep(200);
+  return { proofs, reading: await readCorner(cx) };
+}
 
-  // ---- Spawn node B — server, bootstrapped from A's p2p.
+// Set the node row, then wait for the verifier's run driven by the change to
+// reach one of the caller's readings. Blanking the row is its own call, with
+// the verified-across-N-nodes predicate. Records the intermediate values so
+// the caller can build the step's detail line.
+async function changeNodeAndAwait(cx, origin, predicate, description, ms = 60000) {
+  const applied = await setNodeViaUi(cx, origin);
+  const stored = await readPrefsNode(cx);
+  const startIdx = cx.events.length;
+  // changeNode drops the verdict and starts a new run; nothing to press.
+  const reached = await waitForCornerState(cx, predicate, description, ms);
+  const reading = reached.last ?? await readCorner(cx);
+  const proofs = proofRequestsSince(cx.events, startIdx);
+  return { applied, stored, reached, reading, proofs };
+}
+
+async function blankNodeAndAwaitVerified(cx, ms = 60000) {
+  return changeNodeAndAwait(
+    cx, '',
+    (c) => c.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(c.title ?? ''),
+    'led fresh + verified across N nodes (after blank)',
+    ms);
+}
+
+// Bring node B up, bootstrapped from A. B's role is server; its store is
+// fresh; it waits for one peer (A) before returning. Answers with the sync
+// heights the caller records.
+async function bringUpNodeB() {
   const bDbPath = join(SCRATCH, 'b.db');
-  // Fresh B — a stale store from a prior run points at another chain, so
-  // remove any leftover db files before spawning.
   for (const suffix of ['', '-shm', '-wal']) {
     try { rmSync(bDbPath + suffix, { force: true }); } catch {}
   }
@@ -861,128 +941,142 @@ async function verifiedTipSteps(cx) {
     BOOTSTRAP_PEERS: NODE_P2P,
     DB_PATH: bDbPath,
   });
-  const bUp = await waitForHttpUp(B_ORIGIN, 30000);
-  if (!bUp) {
+  return { bDbPath };
+}
+
+async function verifiedTipSteps(cx) {
+  // ---- pre-flight — A is up. A's miner is the operator's, running at whatever
+  // pace the operator has set (WEB_INTERFACE → The extension → "The verified
+  // tip"). The harness never signals A or its miner.
+  const aUp = await waitForHttpUp(NODE, 15000);
+  if (!aUp) {
+    markVerifiedTipNotRun(`node A did not answer /blocks/current at ${NODE}`);
+    return;
+  }
+  const preHeightA = await currentHeight(NODE);
+  console.log(`[vt] pre-flight: A height=${preHeightA} at ${NODE}`);
+
+  // ---- Spawn node B — server, bootstrapped from A's p2p. Step 17 and step 18
+  // need a second verified node; the other steps switch the reading node to
+  // one that shows a different verdict and blank the row back afterward.
+  const { bDbPath } = await bringUpNodeB();
+  if (!await waitForHttpUp(B_ORIGIN, 30000)) {
     markVerifiedTipNotRun(`node B did not come up at ${B_ORIGIN}`);
     return;
   }
   console.log(`[vt] node B up at ${B_ORIGIN}`);
-  // Wait for B to connect to A — one peer suffices before 17a; both are
-  // pre-miner so heights are 0 or near-zero.
   const bAdminOrigin = `http://127.0.0.1:${B_ADMIN_PORT}`;
   const bPeers = await waitForPeers(bAdminOrigin, 1, 60000);
   console.log(`[vt] node B peers_connected=${bPeers}`);
+  // B catches up to A within a couple of blocks so step 17's reading is the
+  // rule's own — a live-miner tip fluctuates by one block, and the reading
+  // node is verified while the winner's suffix carries its tip (contract
+  // → "A winner elsewhere says the reading node is behind, not that it is
+  // wrong").
+  const abSynced = await waitForHeightsClose(NODE, B_ORIGIN, 2, 300000);
+  if (abSynced === null) {
+    const hA = await currentHeight(NODE);
+    const hB = await currentHeight(B_ORIGIN);
+    markVerifiedTipNotRun(`B never caught up to A within 5 minutes (A=${hA}, B=${hB})`);
+    return;
+  }
+  console.log(`[vt] A/B synced: ${JSON.stringify(abSynced)}`);
 
-  // Wait for the extension App to reach the corner — a mountCorner has run.
   await cx.waitFor(`!!document.querySelector('.corner')`, 'corner mounted', 30000);
 
-  // ---- Step 17a — too-short.
-  {
-    const hA = await currentHeight(NODE);
-    const hB = await currentHeight(B_ORIGIN);
-    if (hA === null || hB === null || hA >= 26 || hB >= 26) {
-      record('17a', false, `pre-miner precondition failed: A=${hA}, B=${hB} (both must be < 26). The operator's node must be started without a miner and with a fresh store.`);
-    } else {
-      // Trigger a verifier run through a press so we do not race the boot
-      // timing. The reading is the corner after the run.
-      const startIdx = cx.events.length;
-      await pressCorner(cx);
-      const reached = await waitForCornerState(cx,
-        (c) => c.ledClass === 'led thin' && (c.title || '').includes('too short'),
-        'led thin + title contains "too short"',
-        45000);
-      const proofReqs = proofRequestsSince(cx.events, startIdx);
-      const reading = reached.last ?? await readCorner(cx);
-      const ok = !reached.timedOut
-        && reading.ledClass === 'led thin'
-        && reading.tipClass === 'tip mono'
-        && /the chain is too short to check yet/.test(reading.title ?? '');
-      record('17a', ok,
-        `led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, tipText=${reading.tipText}, proof requests during press=${proofReqs.length} (urls=${JSON.stringify(proofReqs.map(p => p.url))}), heights A=${hA} B=${hB}`);
-    }
+  // ---- Spawn node D — isolated, miner role with its own secret, no miner
+  // script yet. D serves 17a's *too-short* at height 0 and, later, 19c's
+  // *share no block* once its own miner runs it past 30. The secret is random
+  // and per-run — nothing of it lands in the tree.
+  const dDbPath = join(SCRATCH, 'd.db');
+  for (const suffix of ['', '-shm', '-wal']) {
+    try { rmSync(dDbPath + suffix, { force: true }); } catch {}
   }
-
-  // ---- Start A's miner. MINER_PCT=25 lands blocks fast on devnet — a devnet
-  // solve fits inside one duty window. The miner is SIGSTOP-ed once A is past
-  // 120 (well above node C's later mining ceiling of 30), so the tip is stable
-  // through 17–19b and 19b's `C < A` precondition holds. Without the freeze,
-  // an unpaced devnet miner lands blocks between the verifier's sequential
-  // fetches of A and B — B gets the block via gossip inside the request pair,
-  // so B ends up carrying more work than A, and step 17 reads *outworked*
-  // rather than *verified*.
-  console.log(`[vt] starting A's miner: NODE_URL=${NODE}`);
-  const aMinerRec = spawnDaemon('a-miner', MINER_SCRIPT, {
-    NODE_URL: NODE,
-    MINING_SECRET: MINING_SECRET,
-    MINER_PCT: '25',
+  const dSecret = randomBytes(32).toString('hex');
+  console.log(`[vt] spawning node D: port=${D_HTTP_PORT} admin=${D_ADMIN_PORT} p2p=${D_P2P_PORT} db=${dDbPath} isolated`);
+  spawnDaemon('d', NODE_DIST, {
+    NETWORK_TYPE: 'devnet',
+    NODE_ROLE: 'miner',
+    PORT: String(D_HTTP_PORT),
+    ADMIN_PORT: String(D_ADMIN_PORT),
+    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${D_P2P_PORT}`,
+    BOOTSTRAP_PEERS: '',
+    DB_PATH: dDbPath,
+    MINING_SECRET: dSecret,
   });
-  const aHeight120 = await waitForHeight(NODE, 120, 300000);
-  if (aHeight120 === null) {
-    markVerifiedTipNotRun('A never reached height 120 within 5 minutes after starting its miner');
+  if (!await waitForHttpUp(D_ORIGIN, 30000)) {
+    markVerifiedTipNotRun(`node D did not come up at ${D_ORIGIN}`);
     return;
   }
-  console.log(`[vt] A reached height ${aHeight120}`);
-  // Wait for B to catch up to A within a couple of blocks. Freeze A's miner
-  // first, then let B settle: A stops producing, B receives what is in flight,
-  // the pair converges within a few hundred ms and stays converged.
-  try { aMinerRec.child.kill('SIGSTOP'); } catch {}
-  console.log(`[vt] A's miner SIGSTOP-ed`);
-  const settled = await waitForHeightsClose(NODE, B_ORIGIN, 0, 60000);
-  if (settled === null) {
-    const hA = await currentHeight(NODE);
-    const hB = await currentHeight(B_ORIGIN);
-    markVerifiedTipNotRun(`B never converged to A after freeze (A=${hA}, B=${hB}) within 60 s`);
-    return;
-  }
-  console.log(`[vt] A/B settled: ${JSON.stringify(settled)}`);
+  console.log(`[vt] node D up at ${D_ORIGIN}, height ${await currentHeight(D_ORIGIN)}`);
 
-  // ---- Step 17 — verified.
+  // ---- Step 17a — too-short, on node D.
   {
-    // The App keeps the previous verdict rendered through the next run — a
-    // press on an already-`verified` corner does not clear the title while
-    // the new run is in flight, so a poll on `readCorner` cannot tell an
-    // in-flight second run from a completed one. The proof-request pair is
-    // the observable signal that the new run happened, so we wait for it
-    // (waitForVerifierRun) and then read the corner.
-    const startIdx = cx.events.length;
-    await pressCorner(cx);
-    const proofReqs1 = await waitForVerifierRun(cx, startIdx, 2, 60000, 2000);
-    const reached = await waitForCornerState(cx,
-      (c) => c.ledClass === 'led fresh' && /verified across \d+ nodes/.test(c.title ?? ''),
-      'led fresh + verified across N nodes',
-      10000);
-    const reading = reached.last ?? await readCorner(cx);
-    // Wait 20 s — no further proof request may arrive without a user press.
-    // VERIFY_INTERVAL_MS is 10 minutes (app.ts), so 20 s is safely under.
+    const hD = await currentHeight(D_ORIGIN);
+    const hAnow = await currentHeight(NODE);
+    // D is isolated and its miner has not started; its height is 0 or a small
+    // number under the m + k threshold. The row is set to D, the verdict is
+    // read, and the row is blanked back so 17 starts from a verified corner.
+    const {
+      applied, stored, reached, reading, proofs,
+    } = await changeNodeAndAwait(
+      cx, D_ORIGIN,
+      (c) => c.ledClass === 'led thin' && /the chain is too short to check yet · tip \d+/.test(c.title ?? ''),
+      'led thin + "too short to check yet · tip N"',
+      60000);
+    const ok = !reached.timedOut
+      && applied === D_ORIGIN
+      && stored === D_ORIGIN
+      && reading.ledClass === 'led thin'
+      && reading.tipClass === 'tip mono'
+      && /the chain is too short to check yet · tip \d+/.test(reading.title ?? '');
+    record('17a', ok,
+      `applied=${JSON.stringify(applied)}, stored=${JSON.stringify(stored)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, tipText=${reading.tipText}, proof requests=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))}), heights D=${hD} A=${hAnow}`);
+    const post = await blankNodeAndAwaitVerified(cx);
+    console.log(`[vt] 17a post-blank: applied=${JSON.stringify(post.applied)}, stored=${JSON.stringify(post.stored)}, led=${post.reading.ledClass}, title=${JSON.stringify(post.reading.title)}`);
+  }
+
+  // ---- Step 17 — verified. A press hits both nodes; a 20 s idle window sits
+  // under VERIFY_INTERVAL_MS so no run fires unasked; a second press hits
+  // both nodes again — the fold's cost is deterministic.
+  {
+    const first = await pressAndReadVerdict(cx, { atLeast: 2, ms: 60000, quietMs: 2000 });
+    const reachedTitleOk = /^verified across \d+ nodes · tip \d+$/.test(first.reading.title ?? '');
     const idleStart = cx.events.length;
     await sleep(20000);
     const idleProofs = proofRequestsSince(cx.events, idleStart);
-    // A second press makes exactly one more per node — the fold's cost is
-    // deterministic (WEB_INTERFACE → The extension → "The verified tip").
-    const secondStart = cx.events.length;
-    await pressCorner(cx);
-    const proofReqs2 = await waitForVerifierRun(cx, secondStart, 2, 60000, 2000);
-    const reading2 = await readCorner(cx);
-    const ok = !reached.timedOut
-      && reading.ledClass === 'led fresh'
-      && reading.tipClass === 'tip mono'
-      && /verified across \d+ nodes/.test(reading.title ?? '')
-      && reading2.ledClass === 'led fresh'
-      && /verified across \d+ nodes/.test(reading2.title ?? '')
-      && proofReqs1.length === 2
+    const second = await pressAndReadVerdict(cx, { atLeast: 2, ms: 60000, quietMs: 2000 });
+    const ok = reachedTitleOk
+      && first.reading.ledClass === 'led fresh'
+      && first.reading.tipClass === 'tip mono'
+      && second.reading.ledClass === 'led fresh'
+      && /^verified across \d+ nodes · tip \d+$/.test(second.reading.title ?? '')
+      && first.proofs.length === 2
       && idleProofs.length === 0
-      && proofReqs2.length === 2;
+      && second.proofs.length === 2;
     record(17, ok,
-      `led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, first-press proof requests=${proofReqs1.length} (${JSON.stringify(proofReqs1.map(p => p.url))}), idle-20s proof requests=${idleProofs.length}, second-press proof requests=${proofReqs2.length}`);
+      `led=${first.reading.ledClass}, tip=${first.reading.tipClass}, title=${JSON.stringify(first.reading.title)}, first-press proof requests=${first.proofs.length} (${JSON.stringify(first.proofs.map(p => p.url))}), idle-20s proof requests=${idleProofs.length}, second-press proof requests=${second.proofs.length}`);
   }
+
+  // ---- Step 17b — 30 presses one second apart under A's live miner. Every
+  // reading is `led fresh` + *verified across 2 nodes*; not one is `led
+  // refused` (WEB_INTERFACE → The extension → "The verified tip" — a winner
+  // elsewhere whose suffix carries the reading node's tip reads verified).
+  const step17bReadings = await pressCornerRepeatedly(cx, 30);
+  const allFresh17b = step17bReadings.every((r) => r.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(r.title ?? ''));
+  const refused17b = step17bReadings.findIndex((r) => r.ledClass === 'led refused');
+  const totalProofs17b = step17bReadings.reduce((n, r) => n + r.proofs, 0);
+  record('17b', allFresh17b,
+    `presses=${step17bReadings.length}, all led fresh + verified=${allFresh17b}, first led-refused press=${refused17b === -1 ? 'none' : refused17b + 1}, proof requests total=${totalProofs17b}, per-press led counts=${JSON.stringify(tallyLeds(step17bReadings))}`);
+  // The full list is only useful to the REPORT; print it out of the summary.
+  console.log(`[vt] 17b tip-build readings: ${JSON.stringify(step17bReadings)}`);
 
   // ---- Step 18 — thin (B stopped), then verified again (B started).
   {
     console.log(`[vt] stopping node B by its handle`);
     await stopChild('b');
-    // The stop is observed in A's own /health: peers_connected drops. Wait for
-    // the disconnection so the assertion below reads a real *only one node*,
-    // not a race that still had B answering.
+    // B's stop is observed through B's own HTTP going silent; the assertion
+    // then reads *only one node could be checked* without racing gossip.
     const bGone = await (async () => {
       const t0 = Date.now();
       while (Date.now() - t0 < 20000) {
@@ -993,20 +1087,19 @@ async function verifiedTipSteps(cx) {
       return false;
     })();
 
-    const startIdx = cx.events.length;
-    await pressCorner(cx);
-    const reached = await waitForCornerState(cx,
-      (c) => c.ledClass === 'led thin' && /only one node could be checked/.test(c.title ?? ''),
-      'led thin + only one node',
+    const stopped = await pressAndReadVerdict(cx, { atLeast: 1, ms: 60000, quietMs: 2000 });
+    // Wait for the corner to settle on the one-node title even if the poll
+    // above races the verdict render.
+    const reachedStopped = await waitForCornerState(cx,
+      (c) => c.ledClass === 'led thin' && /^only one node could be checked · tip \d+$/.test(c.title ?? ''),
+      'led thin + "only one node could be checked · tip N"',
       60000);
-    const proofReqs = proofRequestsSince(cx.events, startIdx);
-    const readingStopped = reached.last ?? await readCorner(cx);
-    const stoppedOk = !reached.timedOut
+    const readingStopped = reachedStopped.last ?? stopped.reading;
+    const stoppedOk = !reachedStopped.timedOut
       && readingStopped.ledClass === 'led thin'
-      && readingStopped.tipClass === 'tip mono'  // no clay
-      && /only one node could be checked/.test(readingStopped.title ?? '');
+      && readingStopped.tipClass === 'tip mono'
+      && /^only one node could be checked · tip \d+$/.test(readingStopped.title ?? '');
 
-    // Start B again on the same store, wait to catch up, press → verified.
     console.log(`[vt] spawning node B again on the same store: ${bDbPath}`);
     spawnDaemon('b', NODE_DIST, {
       NETWORK_TYPE: 'devnet',
@@ -1018,23 +1111,15 @@ async function verifiedTipSteps(cx) {
       DB_PATH: bDbPath,
     });
     const bBackUp = await waitForHttpUp(B_ORIGIN, 30000);
-    const synced2 = bBackUp ? await waitForHeightsClose(NODE, B_ORIGIN, 2, 180000) : null;
+    const synced2 = bBackUp ? await waitForHeightsClose(NODE, B_ORIGIN, 2, 300000) : null;
 
-    const startIdx2 = cx.events.length;
-    await pressCorner(cx);
-    const reached2 = await waitForCornerState(cx,
-      (c) => c.ledClass === 'led fresh' && /verified across \d+ nodes/.test(c.title ?? ''),
-      'led fresh + verified (after B restart)',
-      60000);
-    const proofReqs2 = proofRequestsSince(cx.events, startIdx2);
-    const readingBack = reached2.last ?? await readCorner(cx);
-    const backOk = !reached2.timedOut
-      && readingBack.ledClass === 'led fresh'
-      && readingBack.tipClass === 'tip mono'
-      && /verified across \d+ nodes/.test(readingBack.title ?? '');
+    const back = await pressAndReadVerdict(cx, { atLeast: 2, ms: 60000, quietMs: 2000 });
+    const backOk = back.reading.ledClass === 'led fresh'
+      && back.reading.tipClass === 'tip mono'
+      && /^verified across \d+ nodes · tip \d+$/.test(back.reading.title ?? '');
 
     record(18, stoppedOk && backOk && bGone,
-      `B gone=${bGone}; stopped-press led=${readingStopped.ledClass}, tip=${readingStopped.tipClass} (no clay), title=${JSON.stringify(readingStopped.title)}, stopped proof requests=${proofReqs.length}; restarted synced=${synced2 !== null ? JSON.stringify(synced2) : 'null'}; restart-press led=${readingBack.ledClass}, tip=${readingBack.tipClass}, title=${JSON.stringify(readingBack.title)}, restart proof requests=${proofReqs2.length}`);
+      `B gone=${bGone}; stopped-press led=${readingStopped.ledClass}, tip=${readingStopped.tipClass}, title=${JSON.stringify(readingStopped.title)}, stopped proof requests=${stopped.proofs.length}; restarted synced=${synced2 !== null ? JSON.stringify(synced2) : 'null'}; restart-press led=${back.reading.ledClass}, tip=${back.reading.tipClass}, title=${JSON.stringify(back.reading.title)}, restart proof requests=${back.proofs.length}`);
   }
 
   // ---- Step 19a — refused, a bad proof (via the lying relay).
@@ -1042,50 +1127,44 @@ async function verifiedTipSteps(cx) {
   {
     console.log(`[vt] starting lying relay: :${RELAY_PORT} → ${NODE}`);
     relay = await startLyingRelay(NODE);
-    // Set the reading node UI to the relay, assert it took.
-    const applied = await setNodeViaUi(cx, RELAY_ORIGIN);
-    const stored = await readPrefsNode(cx);
-    // Bump onReadingNodeChanged clears the verdict and starts a new run.
-    const startIdx = cx.events.length;
-    // The changeNode handler starts a run itself; nothing to press.
-    const reached = await waitForCornerState(cx,
-      (c) => c.ledClass === 'led refused' && /did not verify/.test(c.title ?? ''),
-      'led refused + did not verify',
+    const {
+      applied, stored, reached, reading, proofs,
+    } = await changeNodeAndAwait(
+      cx, RELAY_ORIGIN,
+      (c) => c.ledClass === 'led refused' && /^this node's proof did not verify · tip \d+$/.test(c.title ?? ''),
+      'led refused + "this node\'s proof did not verify · tip N"',
       60000);
-    const proofReqs = proofRequestsSince(cx.events, startIdx);
-    const reading = reached.last ?? await readCorner(cx);
-    // The feed still renders — the relay serves every non-proof GET.
     const feedCards = await cx.eval(`document.querySelectorAll('#feed .card').length`);
-    const feedRendered = typeof feedCards === 'number' && feedCards >= 0; // renders even at zero cards; #feed exists
     const feedContainer = await cx.eval(`!!document.querySelector('#feed')`);
     const ok = !reached.timedOut
       && stored === RELAY_ORIGIN
       && applied === RELAY_ORIGIN
       && reading.ledClass === 'led refused'
       && reading.tipClass === 'tip mono clay'
-      && /this node's proof did not verify/.test(reading.title ?? '')
+      && /^this node's proof did not verify · tip \d+$/.test(reading.title ?? '')
       && feedContainer;
     record('19a', ok,
-      `prefs.node stored=${JSON.stringify(stored)}, applied=${JSON.stringify(applied)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, feed container present=${feedContainer}, feed .card count=${feedCards}, proof requests during change=${proofReqs.length} (${JSON.stringify(proofReqs.map(p => p.url))}), relay flips=${relay.flips.total}`);
+      `prefs.node stored=${JSON.stringify(stored)}, applied=${JSON.stringify(applied)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, feed container present=${feedContainer}, feed .card count=${feedCards}, proof requests during change=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))}), relay flips=${relay.flips.total}`);
+    const post = await blankNodeAndAwaitVerified(cx);
+    console.log(`[vt] 19a post-blank: applied=${JSON.stringify(post.applied)}, stored=${JSON.stringify(post.stored)}, led=${post.reading.ledClass}, title=${JSON.stringify(post.reading.title)}`);
   }
 
-  // ---- Step 19b — refused (outworked) OR thin (split). The run decides.
-  let step19bOutcome = null;
+  // ---- Step 19b — refused (outworked), by a real fork on node C.
   {
-    // Node C, isolated, its own secret. Mine until height passes 30, then stop.
+    const cSecret = randomBytes(32).toString('hex');
     const cDbPath = join(SCRATCH, 'c.db');
     for (const suffix of ['', '-shm', '-wal']) {
       try { rmSync(cDbPath + suffix, { force: true }); } catch {}
     }
-    const cSecret = randomBytes(32).toString('hex');
-    console.log(`[vt] spawning node C: port=${C_HTTP_PORT} admin=${C_ADMIN_PORT} p2p=${C_P2P_PORT} db=${cDbPath}`);
+    // Phase 1 — C boots as A's peer, syncs to A's tip. No miner script yet.
+    console.log(`[vt] 19b phase 1: spawning C bootstrapped from A: port=${C_HTTP_PORT} admin=${C_ADMIN_PORT} p2p=${C_P2P_PORT}`);
     spawnDaemon('c', NODE_DIST, {
       NETWORK_TYPE: 'devnet',
       NODE_ROLE: 'miner',
       PORT: String(C_HTTP_PORT),
       ADMIN_PORT: String(C_ADMIN_PORT),
       LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${C_P2P_PORT}`,
-      BOOTSTRAP_PEERS: '',
+      BOOTSTRAP_PEERS: NODE_P2P,
       DB_PATH: cDbPath,
       MINING_SECRET: cSecret,
     });
@@ -1093,67 +1172,151 @@ async function verifiedTipSteps(cx) {
     if (!cUp) {
       record('19b', false, `node C did not come up at ${C_ORIGIN}`);
     } else {
-      console.log(`[vt] node C up; starting C's miner`);
-      spawnDaemon('c-miner', MINER_SCRIPT, {
-        NODE_URL: C_ORIGIN,
-        MINING_SECRET: cSecret,
-        MINER_PCT: '100',
-      });
-      const cHeight30 = await waitForHeight(C_ORIGIN, 30, 300000);
-      if (cHeight30 === null) {
-        record('19b', false, 'node C never reached height 30 within 5 minutes');
+      // Wait for C to sync to A's tip within 2 blocks, and for its own height
+      // to reach ≥ 40 so the winner's `k`-header suffix is well past genesis.
+      const cSync = await waitForHeightsClose(NODE, C_ORIGIN, 2, 600000);
+      const hCsync = await currentHeight(C_ORIGIN);
+      if (cSync === null || hCsync === null || hCsync < 40) {
+        record('19b', false, `C never synced to A within 2 blocks and reached ≥ 40 (hC=${hCsync}, sync=${JSON.stringify(cSync)}). A's miner may be paced too slowly.`);
       } else {
-        // Stop C's miner so C's chain stays behind A's.
-        await stopChild('c-miner');
-        const hA_before19b = await currentHeight(NODE);
-        const hC_before19b = await currentHeight(C_ORIGIN);
-        console.log(`[vt] heights before 19b: A=${hA_before19b} C=${hC_before19b}`);
-        if (hC_before19b !== null && hA_before19b !== null && hC_before19b >= hA_before19b) {
-          record('19b', false, `precondition failed: C (${hC_before19b}) is not below A (${hA_before19b}) — the miner was not paced fast enough on A, or C's mining ran too long`);
+        console.log(`[vt] 19b phase 1: C synced at ${hCsync} (A=${(await currentHeight(NODE))})`);
+        // Phase 2 — stop C, restart on the same store, cut off from A. New
+        // listen port so A's cached address for C is stale (packages/net/src/
+        // peerdb.ts stores the old address); MAX_PEERS=0 and empty
+        // BOOTSTRAP_PEERS block C's outbound; the three assertions read
+        // peers_connected=0 to prove it.
+        await stopChild('c');
+        console.log(`[vt] 19b phase 2: restarting C isolated (BOOTSTRAP_PEERS='', MAX_PEERS=0, p2p=${C_P2P_PORT_ISOLATED})`);
+        spawnDaemon('c', NODE_DIST, {
+          NETWORK_TYPE: 'devnet',
+          NODE_ROLE: 'miner',
+          PORT: String(C_HTTP_PORT),
+          ADMIN_PORT: String(C_ADMIN_PORT),
+          LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${C_P2P_PORT_ISOLATED}`,
+          BOOTSTRAP_PEERS: '',
+          DB_PATH: cDbPath,
+          MINING_SECRET: cSecret,
+          MAX_PEERS: '0',
+        });
+        const cBackUp = await waitForHttpUp(C_ORIGIN, 30000);
+        if (!cBackUp) {
+          record('19b', false, `C did not come back up at ${C_ORIGIN} after restart`);
         } else {
-          const applied = await setNodeViaUi(cx, C_ORIGIN);
-          const stored = await readPrefsNode(cx);
-          const startIdx = cx.events.length;
-          // Wait for either outcome to render — the run decides between
-          // outworked (refused + clay tip) and split (thin, no clay).
-          const reached = await waitForCornerState(cx,
-            (c) => (c.ledClass === 'led refused' && /holds more work than this node/.test(c.title ?? ''))
-                || (c.ledClass === 'led thin' && /share no block to compare/.test(c.title ?? '')),
-            'led refused + outworked  OR  led thin + split',
-            60000);
-          const proofReqs = proofRequestsSince(cx.events, startIdx);
-          const reading = reached.last ?? await readCorner(cx);
-          let outcome = 'timedOut';
-          let ok = false;
-          if (!reached.timedOut && reading.ledClass === 'led refused' && /holds more work than this node/.test(reading.title ?? '')) {
-            outcome = 'refused:outworked';
-            ok = reading.tipClass === 'tip mono clay';
-          } else if (!reached.timedOut && reading.ledClass === 'led thin' && /share no block to compare/.test(reading.title ?? '')) {
-            outcome = 'thin:split';
-            ok = reading.tipClass === 'tip mono';
-          }
-          step19bOutcome = outcome;
-          record('19b', ok,
-            `prefs.node stored=${JSON.stringify(stored)}, applied=${JSON.stringify(applied)}, outcome=${outcome}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, heights A=${hA_before19b}, C=${hC_before19b}, proof requests=${proofReqs.length} (${JSON.stringify(proofReqs.map(p => p.url))})`);
+          // Phase 3 — mine 3 blocks on C while A mines on. Stop C's miner as
+          // soon as C is +3 above its sync height.
+          const hCbeforeMine = await currentHeight(C_ORIGIN);
+          console.log(`[vt] 19b phase 3: C isolated at height=${hCbeforeMine}, starting C's miner for ~3 blocks`);
+          spawnDaemon('c-miner', MINER_SCRIPT, {
+            NODE_URL: C_ORIGIN,
+            MINING_SECRET: cSecret,
+            MINER_PCT: '100',
+          });
+          const hCafterMine = await waitForHeight(C_ORIGIN, hCbeforeMine + 3, 600000);
+          await stopChild('c-miner');
+          // C may land one more block already in flight after the miner stops.
+          await sleep(1500);
+          const hCafterSettle = await currentHeight(C_ORIGIN);
+          console.log(`[vt] 19b phase 3: C reached height=${hCafterSettle} after +3 mine`);
 
-          // Blank the row → step 17's readings again (verified across 2 nodes).
-          const cleared = await setNodeViaUi(cx, '');
-          const clearedStored = await readPrefsNode(cx);
-          const reached3 = await waitForCornerState(cx,
-            (c) => c.ledClass === 'led fresh' && /verified across \d+ nodes/.test(c.title ?? ''),
-            'led fresh + verified (after blank)',
-            60000);
-          const readingCleared = reached3.last ?? await readCorner(cx);
-          const clearedOk = !reached3.timedOut
-            && readingCleared.ledClass === 'led fresh'
-            && readingCleared.tipClass === 'tip mono'
-            && /verified across \d+ nodes/.test(readingCleared.title ?? '')
-            && (clearedStored === null || clearedStored === '');
-          // Fold the "blanked → verified again" observation into 19b's record.
-          console.log(`[vt] 19b post: blanked applied=${JSON.stringify(cleared)}, stored=${JSON.stringify(clearedStored)}, led=${readingCleared.ledClass}, tip=${readingCleared.tipClass}, title=${JSON.stringify(readingCleared.title)}, cleared verified again=${clearedOk}`);
+          // Assertions — peers_connected=0 on C, C's block at hCnow ≠ A's,
+          // A > C. The block-at-height read (`/blocks/:height`,
+          // NODE_INTERFACE → Blocks) carries the full header; two different
+          // ordering blocks always differ in header (utxoTxRoot, stateRoot,
+          // powNonce, validatorSignature), so a header hash off it is the
+          // block's identity for a compare.
+          const cAdminOrigin = `http://127.0.0.1:${C_ADMIN_PORT}`;
+          const cHealth = await fetch(`${cAdminOrigin}/health`).then((r) => r.json()).catch(() => null);
+          const cPeers = cHealth?.peers_connected ?? null;
+          const hAnow = await currentHeight(NODE);
+          const hCnow = await currentHeight(C_ORIGIN);
+          const forkH = Math.min(hAnow ?? 0, hCnow ?? 0);
+          const cBlockAtFork = forkH > 0
+            ? await fetch(`${C_ORIGIN}/blocks/${forkH}`).then((r) => r.json()).catch(() => null)
+            : null;
+          const aBlockAtFork = forkH > 0
+            ? await fetch(`${NODE}/blocks/${forkH}`).then((r) => r.json()).catch(() => null)
+            : null;
+          const blockSig = (b) => {
+            if (!b || typeof b !== 'object' || !b.header) return null;
+            return createHash('sha256').update(JSON.stringify(b.header)).digest('hex');
+          };
+          const cSig = blockSig(cBlockAtFork);
+          const aSig = blockSig(aBlockAtFork);
+          const forkOk = cPeers === 0
+            && typeof cSig === 'string'
+            && typeof aSig === 'string'
+            && cSig !== aSig
+            && typeof hAnow === 'number' && typeof hCnow === 'number' && hAnow > hCnow;
+          console.log(`[vt] 19b assertions: peers_connected=${cPeers}, hA=${hAnow}, hC=${hCnow}, forkH=${forkH}, cBlock.sig=${cSig?.slice(0, 12) ?? 'null'}…, aBlock.sig=${aSig?.slice(0, 12) ?? 'null'}…, fork=${forkOk}`);
+          if (!forkOk) {
+            record('19b', false,
+              `fork preconditions failed: C peers_connected=${cPeers}, hA=${hAnow}, hC=${hCnow}, C.block@${forkH}.sig=${cSig?.slice(0, 12) ?? 'null'}…, A.block@${forkH}.sig=${aSig?.slice(0, 12) ?? 'null'}…`);
+          } else {
+            // The outworked title names the WINNER (contract → "the host with
+            // its port, never the URL"), not the reading node — A holds more
+            // work than C, so the title reads A's host beside the reading
+            // node's own tip. The tip is C's tip (contract → the last four
+            // rows are beside the result's own tip).
+            const aHostForTitle = `127.0.0.1:${new URL(NODE).port}`;
+            const {
+              applied, stored, reached, reading, proofs,
+            } = await changeNodeAndAwait(
+              cx, C_ORIGIN,
+              (c) => c.ledClass === 'led refused'
+                  && /holds more work than this node · tip \d+/.test(c.title ?? '')
+                  && (c.title ?? '').includes(aHostForTitle),
+              `led refused + "${aHostForTitle} holds more work than this node · tip N"`,
+              60000);
+            const titleRe = new RegExp(`^${aHostForTitle.replace(/\./g, '\\.')} holds more work than this node · tip \\d+$`);
+            const ok = !reached.timedOut
+              && applied === C_ORIGIN
+              && stored === C_ORIGIN
+              && reading.ledClass === 'led refused'
+              && reading.tipClass === 'tip mono clay'
+              && titleRe.test(reading.title ?? '');
+            record('19b', ok,
+              `prefs.node stored=${JSON.stringify(stored)}, applied=${JSON.stringify(applied)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, C peers_connected=${cPeers}, hA=${hAnow}, hC=${hCnow}, C.block@${forkH}.sig=${cSig.slice(0, 12)}…, A.block@${forkH}.sig=${aSig.slice(0, 12)}…, proof requests=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))})`);
+          }
+          const post = await blankNodeAndAwaitVerified(cx);
+          console.log(`[vt] 19b post-blank: applied=${JSON.stringify(post.applied)}, stored=${JSON.stringify(post.stored)}, led=${post.reading.ledClass}, title=${JSON.stringify(post.reading.title)}`);
         }
       }
     }
+  }
+
+  // ---- Step 19c — thin (split), on fresh isolated D with its own miner past 30.
+  {
+    console.log(`[vt] 19c: starting D's miner until D passes height 30`);
+    spawnDaemon('d-miner', MINER_SCRIPT, {
+      NODE_URL: D_ORIGIN,
+      MINING_SECRET: dSecret,
+      MINER_PCT: '100',
+    });
+    const dHeight = await waitForHeight(D_ORIGIN, 31, 600000);
+    await stopChild('d-miner');
+    await sleep(1500);
+    const hDafter = await currentHeight(D_ORIGIN);
+    if (dHeight === null) {
+      record('19c', false, `node D never reached height 31 within 10 minutes (last=${hDafter})`);
+    } else {
+      const {
+        applied, stored, reached, reading, proofs,
+      } = await changeNodeAndAwait(
+        cx, D_ORIGIN,
+        (c) => c.ledClass === 'led thin' && /^the nodes share no block to compare · tip \d+$/.test(c.title ?? ''),
+        'led thin + "the nodes share no block to compare · tip N"',
+        60000);
+      const ok = !reached.timedOut
+        && applied === D_ORIGIN
+        && stored === D_ORIGIN
+        && reading.ledClass === 'led thin'
+        && reading.tipClass === 'tip mono'
+        && /^the nodes share no block to compare · tip \d+$/.test(reading.title ?? '');
+      record('19c', ok,
+        `prefs.node stored=${JSON.stringify(stored)}, applied=${JSON.stringify(applied)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, hD=${hDafter}, proof requests=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))})`);
+    }
+    const post = await blankNodeAndAwaitVerified(cx);
+    console.log(`[vt] 19c post-blank: applied=${JSON.stringify(post.applied)}, stored=${JSON.stringify(post.stored)}, led=${post.reading.ledClass}, title=${JSON.stringify(post.reading.title)}`);
   }
 
   // ---- Step 20 — no verifier, on the hosted origin.
@@ -1204,6 +1367,12 @@ async function verifiedTipSteps(cx) {
     try { bcx.s.close(); } catch {}
   }
 
+  // ---- The old-tree 17b stage — a second Chromium, an extension built from
+  // OLD_TREE_COMMIT (the tree before the rule changed). Expected: at least
+  // one `led refused` within the presses. Runs against the same A/B stack;
+  // no state on the tip Chromium is disturbed.
+  await runOldTree17b();
+
   // ---- Cleanup — every child by its handle, and the lying relay's server.
   console.log(`[vt] cleanup: stopping all children by handle`);
   await stopAllChildren();
@@ -1211,8 +1380,184 @@ async function verifiedTipSteps(cx) {
     try { relay.server.close(); } catch {}
   }
   console.log(`[vt] cleanup done; live children left=${vtChildren.size}`);
-  // step 19b's outcome is already recorded; the summary line names both.
-  console.log(`[vt] step 19b outcome: ${step19bOutcome}`);
+}
+
+// Press the corner N times, one second apart, waiting for the verifier's run
+// after each press. Returns the readings in press order.
+async function pressCornerRepeatedly(cx, presses, opts = {}) {
+  const readings = [];
+  for (let i = 1; i <= presses; i++) {
+    const startIdx = cx.events.length;
+    await pressCorner(cx);
+    const proofs = await waitForVerifierRun(
+      cx, startIdx, opts.atLeast ?? 2, opts.ms ?? 30000, opts.quietMs ?? 1500);
+    await sleep(200);
+    const r = await readCorner(cx);
+    readings.push({
+      press: i,
+      ledClass: r.ledClass,
+      tipClass: r.tipClass,
+      tipText: r.tipText,
+      title: r.title,
+      proofs: proofs.length,
+      proofUrls: proofs.map((p) => p.url),
+    });
+    if (i < presses) await sleep(1000);
+  }
+  return readings;
+}
+
+function tallyLeds(readings) {
+  const out = {};
+  for (const r of readings) out[r.ledClass ?? 'null'] = (out[r.ledClass ?? 'null'] ?? 0) + 1;
+  return out;
+}
+
+// Spawn a synchronous child and wait for its exit. Standard node:child_process
+// with stdio piped to the given log path (or inherited when no scratch). A
+// non-zero exit rejects with the command's tail — the caller records the
+// old-tree stage as SKIPPED and moves on.
+async function runProcess(cmd, argv, cwd, env, logPath) {
+  return new Promise((resolve, reject) => {
+    const stdio = logPath ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'inherit', 'inherit'];
+    const child = spawn(cmd, argv, { cwd, env: { ...process.env, ...env }, stdio });
+    if (logPath) {
+      import('node:fs').then(({ createWriteStream }) => {
+        const w = createWriteStream(logPath, { flags: 'a' });
+        w.write(`\n$ ${cmd} ${argv.map((a) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)).join(' ')}\n`);
+        child.stdout?.pipe(w);
+        child.stderr?.pipe(w);
+      }).catch(() => {});
+    }
+    child.on('exit', (code, sig) => {
+      if (code === 0 && !sig) resolve();
+      else reject(new Error(`${cmd} exited code=${code} signal=${sig}`));
+    });
+    child.on('error', reject);
+  });
+}
+
+// The false-alarm proof — a second Chromium loading an extension built from
+// OLD_TREE_COMMIT (the tree before the rule at contract 66c85f7d). Same A/B
+// stack, same 30-press shape as 17b. At least one `led refused` proves the
+// step can fail; if 30 do not, extend to OLD_PRESS_CEILING before reporting.
+// Worktree removed by `git worktree remove <path>` on the way out, never by
+// `prune`; the built zips live in the worktree root and go with it.
+async function runOldTree17b() {
+  const scriptDir = dirname(new URL(import.meta.url).pathname);
+  // packages/web/scripts/extension-check → repo root is four ..'s up.
+  const repoRoot = resolve(scriptDir, '..', '..', '..', '..');
+  const worktreeDir = join(SCRATCH, 'wt-old');
+  const buildLog = join(SCRATCH, 'wt-old-build.log');
+  const nodeExpected = NODE.replace(/\/+$/, '');
+  const nodesJson = JSON.stringify([nodeExpected, B_ORIGIN]);
+
+  console.log(`[vt] 17b-old-tree: adding worktree at ${OLD_TREE_COMMIT} → ${worktreeDir}`);
+  try {
+    try { rmSync(worktreeDir, { recursive: true, force: true }); } catch {}
+    await runProcess('git', ['-C', repoRoot, 'worktree', 'add', '--detach', worktreeDir, OLD_TREE_COMMIT], repoRoot, {}, buildLog);
+  } catch (e) {
+    record(OLD_TREE_STEP, false, `git worktree add failed: ${String(e)}`);
+    return;
+  }
+
+  let cleanupWorktree = true;
+  let oldChrome = null;
+  try {
+    console.log(`[vt] 17b-old-tree: pnpm install --prefer-offline --frozen-lockfile`);
+    await runProcess('pnpm', ['install', '--prefer-offline', '--frozen-lockfile'], worktreeDir, {}, buildLog);
+    console.log(`[vt] 17b-old-tree: pnpm --filter @dagsocial/types build (build-extension depends on types)`);
+    // The old tree has no dist/ under any package until built; the extension
+    // build imports @dagsocial/types at build time through the vite alias, so
+    // types must be present (dist or transpiled). A -r build costs more but
+    // is what a fresh worktree needs.
+    await runProcess('pnpm', ['-r', 'build'], worktreeDir, {}, buildLog);
+    console.log(`[vt] 17b-old-tree: bash packages/web/scripts/build-extension.sh (devnet values)`);
+    await runProcess('bash', ['packages/web/scripts/build-extension.sh'], worktreeDir, {
+      VITE_NETWORK: 'devnet',
+      VITE_NODES: nodesJson,
+      VITE_FAUCET_BASE: '',
+      VITE_PUBLIC: '',
+      VITE_PUBLIC_ORIGIN: '',
+    }, buildLog);
+    // The zip is a version-named file at the worktree root; unzip it into a
+    // stage the second Chromium loads with --load-extension.
+    const oldStageDir = join(SCRATCH, 'ext-old-stage');
+    try { rmSync(oldStageDir, { recursive: true, force: true }); } catch {}
+    const zipCandidates = readdirSync(worktreeDir).filter((n) => /^notis-extension-.*-chrome\.zip$/.test(n));
+    if (zipCandidates.length === 0) {
+      record(OLD_TREE_STEP, false, `no notis-extension-*-chrome.zip in worktree ${worktreeDir}`);
+      return;
+    }
+    const zipPath = join(worktreeDir, zipCandidates[0]);
+    console.log(`[vt] 17b-old-tree: unzip ${zipPath} → ${oldStageDir}`);
+    await runProcess('unzip', ['-q', zipPath, '-d', oldStageDir], repoRoot, {}, buildLog);
+
+    // Grant the loopback origins on the unpacked manifest, the same reason
+    // the primary extension is patched above the top-level launch.
+    const oldManifestPath = join(oldStageDir, 'manifest.json');
+    const oldManifest = JSON.parse(readFileSync(oldManifestPath, 'utf8'));
+    oldManifest.host_permissions = [...new Set([...(oldManifest.host_permissions ?? []), ...LOOPBACKS])];
+    writeFileSync(oldManifestPath, JSON.stringify(oldManifest, null, 2) + '\n');
+
+    console.log(`[vt] 17b-old-tree: launching a second Chromium with the old-tree extension`);
+    oldChrome = await launchChromium(oldStageDir);
+    // Open the extension's index.html on the second Chromium.
+    const br = new WebSocket(oldChrome.version.webSocketDebuggerUrl);
+    await new Promise((res, rej) => { br.onopen = res; br.onerror = rej; });
+    br.send(JSON.stringify({
+      id: 1, method: 'Target.createTarget',
+      params: { url: `chrome-extension://${EXT_ID}/index.html` },
+    }));
+    await sleep(2000);
+    br.close();
+
+    const oldPage = await findExt('index.html', oldChrome.port);
+    if (!oldPage) {
+      record(OLD_TREE_STEP, false, 'no extension page on the second Chromium (id may have shifted; extension may have failed to load)');
+      return;
+    }
+    await sleep(4000);
+    const cxOld = await openSession(oldPage.webSocketDebuggerUrl);
+    await cxOld.waitFor(`!!document.querySelector('#feed')`, 'feed root (old)', 30000);
+    await sleep(2000);
+    await cxOld.waitFor(`!!document.querySelector('.corner')`, 'corner mounted (old)', 30000);
+
+    console.log(`[vt] 17b-old-tree: pressing ${OLD_PRESS_TARGET} times, one second apart`);
+    let readings = await pressCornerRepeatedly(cxOld, OLD_PRESS_TARGET);
+    let refusedIdx = readings.findIndex((r) => r.ledClass === 'led refused');
+    if (refusedIdx === -1) {
+      const extra = OLD_PRESS_CEILING - OLD_PRESS_TARGET;
+      console.log(`[vt] 17b-old-tree: no refused in ${OLD_PRESS_TARGET} presses; extending by ${extra}`);
+      const more = await pressCornerRepeatedly(cxOld, extra);
+      // Re-number the extras so `press` reads 31…100 for the full list.
+      for (let i = 0; i < more.length; i++) more[i].press = OLD_PRESS_TARGET + i + 1;
+      readings = readings.concat(more);
+      refusedIdx = readings.findIndex((r) => r.ledClass === 'led refused');
+    }
+    const anyRefused = refusedIdx !== -1;
+    const totalProofs = readings.reduce((n, r) => n + r.proofs, 0);
+    record(OLD_TREE_STEP, anyRefused,
+      `worktree=${OLD_TREE_COMMIT}, presses=${readings.length}, first led-refused press=${anyRefused ? refusedIdx + 1 : 'none'}, proof requests total=${totalProofs}, per-press led counts=${JSON.stringify(tallyLeds(readings))}`);
+    console.log(`[vt] 17b-old-tree readings: ${JSON.stringify(readings)}`);
+    try { cxOld.s.close(); } catch {}
+  } catch (e) {
+    record(OLD_TREE_STEP, false, `error: ${String(e)}`);
+  } finally {
+    if (oldChrome) {
+      try { oldChrome.proc.kill(); } catch {}
+      try { rmSync(oldChrome.profile, { recursive: true, force: true }); } catch {}
+    }
+    if (cleanupWorktree) {
+      try {
+        console.log(`[vt] 17b-old-tree: git worktree remove ${worktreeDir}`);
+        await runProcess('git', ['-C', repoRoot, 'worktree', 'remove', '--force', worktreeDir], repoRoot, {}, buildLog);
+      } catch (e) {
+        console.log(`[vt] 17b-old-tree: git worktree remove failed: ${String(e)} — falling back to rm -rf on the tree; the worktree list is the operator's to prune with 'git worktree list'`);
+        try { rmSync(worktreeDir, { recursive: true, force: true }); } catch {}
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1243,10 +1588,10 @@ async function main() {
   await cx.waitFor(`!!document.querySelector('#feed')`, 'feed root', 30000);
   await sleep(2000);
 
-  // With no --r-key the write steps and the links steps read NOT RUN by name.
-  // With --verified-tip on top, the harness runs 17a · 17 · 18 · 19a · 19b ·
-  // 20 alone (WEB_INTERFACE → The extension → "The verified tip": the corner
-  // needs no identity). Without the flag, 17–20 also read NOT RUN.
+  // With no --r-key the write steps and the links steps read NOT RUN by name;
+  // the verified-tip block (WEB_INTERFACE → The extension → "The verified
+  // tip": the corner needs no identity) runs on the flag alone and reads NOT
+  // RUN without it.
   if (!R_KEY) {
     for (const s of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
       record(s, 'NOT RUN', 'no --r-key — the write steps do not run');
@@ -2521,15 +2866,12 @@ async function main() {
     }
   }
 
-  // The verified-tip block after the 1–16 pass. The 7b run — 17a before A's
-  // miner, 17–19 while it paces, 20 last — is not this unit's, since 17a needs
-  // height < 26 and the 1–12 pass has driven A far past that. Absent the flag,
-  // record 17a–20 NOT RUN; present with --r-key, record them NOT RUN with the
-  // reason and point at the verified-tip-only mode this unit does implement.
+  // The verified-tip block after the 1–16 pass — 17a's D is fresh and
+  // isolated, so its readings hold whatever A's height is by now. 17b's press
+  // train runs under A's live miner; 19b makes its own fork on C; 19c uses
+  // D's own miner past 30. WEB_INTERFACE → The extension → "The verified tip".
   if (VERIFIED_TIP) {
-    for (const s of ['17a', 17, 18, '19a', '19b', 20]) {
-      record(s, 'NOT RUN', 'the full sixteen-step + 17–20 run is unit 7b — this unit implements the 17–20 block; run this harness with --verified-tip alone (no --r-key) to prove 17a–20');
-    }
+    await verifiedTipSteps(cx);
   } else {
     markVerifiedTipNotRun('no --verified-tip');
   }
