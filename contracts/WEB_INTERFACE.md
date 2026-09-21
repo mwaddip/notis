@@ -382,6 +382,9 @@ tie keeps the first, and a winner at index `0` says the reading node holds the b
 | verified, and no other node did | `thin` · *one-node* |
 | verified, best or tied, with at least one other verified | `verified`, with the count |
 
+**The verdict is total by itself**: the last four rows hold only for a reading node the result marks verified, beside
+the result's own tip. A reading node left unverified under no code, or a verified one beside no tip, reads `refused` ·
+*invalid-proof* — decided here, never on what the tool is known to fill.
 Another node's bad proof never refuses the reading node — it thins the verdict, since the second witness is gone.
 Which of these a node's failure is comes from the result's `refuseCode` — `unreachable`, `too-short`, `http`,
 `invalid`, a closed set the tool fills from the route's documented answers (`NODE_INTERFACE → Nipopow`) — never
