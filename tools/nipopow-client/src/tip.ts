@@ -11,6 +11,8 @@ export interface NodeTipResult {
   proof: NipopowProof | null;
   verifyResult: VerifyResult | null;
   refuseReason: string | null;
+  // NODE_INTERFACE → Nipopow — the route's documented answers, one code per class
+  refuseCode: 'unreachable' | 'too-short' | 'http' | 'invalid' | null;
 }
 
 export interface TipResult {
@@ -45,6 +47,7 @@ export async function resolveTip(
         proof: null,
         verifyResult: null,
         refuseReason: res.status === 0 ? `unreachable: ${res.body}` : `HTTP ${res.status}: ${res.body}`,
+        refuseCode: classifyNonOk(res.status, res.body),
       });
       continue;
     }
@@ -55,6 +58,7 @@ export async function resolveTip(
         proof: null,
         verifyResult: null,
         refuseReason: 'response missing proof field',
+        refuseCode: 'invalid',
       });
       continue;
     }
@@ -69,6 +73,7 @@ export async function resolveTip(
         proof: null,
         verifyResult: null,
         refuseReason: 'proof decode failed',
+        refuseCode: 'invalid',
       });
       continue;
     }
@@ -81,6 +86,7 @@ export async function resolveTip(
         proof,
         verifyResult: vr,
         refuseReason: `verify failed: ${vr.reason}${vr.index !== undefined ? ` at index ${vr.index}` : ''}`,
+        refuseCode: 'invalid',
       });
       continue;
     }
@@ -91,6 +97,7 @@ export async function resolveTip(
       proof,
       verifyResult: vr,
       refuseReason: null,
+      refuseCode: null,
     });
   }
 
@@ -130,6 +137,27 @@ export async function resolveTip(
     suffixHead: vr.suffixHead,
     splits,
   };
+}
+
+// NODE_INTERFACE → Nipopow — 404 with `{ error: 'chain too short' }` is the route's
+// answer while the chain is below `m + k`; any other 404 body (a proxy page, an older
+// node's `Cannot GET`) is a generic HTTP failure, never parsed as a chain state.
+function classifyNonOk(status: number, body: string): 'unreachable' | 'too-short' | 'http' {
+  if (status === 0) return 'unreachable';
+  if (status === 404) {
+    try {
+      const parsed: unknown = JSON.parse(body);
+      if (
+        parsed !== null && typeof parsed === 'object'
+        && (parsed as { error?: unknown }).error === 'chain too short'
+      ) {
+        return 'too-short';
+      }
+    } catch {
+      // fall through
+    }
+  }
+  return 'http';
 }
 
 function hexToBytes(hex: string): Uint8Array {
