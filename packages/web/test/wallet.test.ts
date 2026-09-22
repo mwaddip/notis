@@ -853,6 +853,44 @@ describe('wallet — the verified-figures line beneath the balance', () => {
     expect(f.querySelector<HTMLElement>('.mono.gold')!.classList.contains('clay')).toBe(false);
   });
 
+  it('a wallet whose boxes are all locked still renders the verified-figures line — a fake locked box reads clay', () => {
+    // No spendable box (all locked past height); c.boxCount > 0. The row falls
+    // through the no-spendable branch (no gold figure) and appendFiguresLine
+    // runs with shown = 0n. An unproven credit box reads the clay hint just as
+    // it does in the spendable branch — the row now says what the run could
+    // not prove (WEB_INTERFACE → The extension → "The verified figures" —
+    // "a wallet whose boxes are all locked shows the faucet step … and no
+    // line, so a fake locked box passes unremarked" — the finding this test
+    // pins the fix for).
+    const c = creditsCtx({
+      status: statusAt(1000),
+      credits: creditsResult({
+        boxes: [{ boxId: 'b'.repeat(64), value: '900000000', lockedUntilBlock: 20_000 }],
+        boxCount: 1,
+      }),
+      verdict: VERIFIED,
+      figures: figuresView({
+        boxes: [figBox({
+          boxClass: 'credit',
+          status: 'unproven',
+          value: 900_000_000n,
+          lockedUntilBlock: 20_000,
+        })],
+        credits: { ...EMPTY_SUMS },
+      }),
+    });
+    const f = creditsField(render(handlers(), c))!;
+    // No gold figure — the row is in the no-spendable branch.
+    expect(f.querySelector('.mono.gold')).toBeNull();
+    // The locked hint stands, and the verified-figures clay hint stands
+    // beside it.
+    const hints = f.querySelectorAll<HTMLElement>('.credits-line .hint');
+    expect(hints.length).toBe(2);
+    expect(hints[0]!.textContent).toContain('$NOTIS more unlock by block');
+    expect(hints[1]!.textContent).toBe("this node's proof of the balance did not verify");
+    expect(hints[1]!.classList.contains('clay')).toBe(true);
+  });
+
   it('the locked hint stands beside the verified-figures hint when both fire', () => {
     // A spendable box + a locked box + a verified figure with a young remainder:
     // both the locked hint and the verified hint sit inside .credits-line.

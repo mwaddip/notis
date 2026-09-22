@@ -30,6 +30,7 @@ import { renderCreditsRow, resetCreditsSendForm, type ResolvedRecipient } from '
 import { cornerState, renderCorner, CORNER_POLL_MS, type CornerState } from './view/corner';
 import type { TipVerdict } from './model/tip-verdict';
 import type { Anchor } from './model/state';
+import type { Listing } from '@dagsocial/nipopow-client';
 import type { Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
@@ -38,7 +39,8 @@ import {
 } from './model/workspace';
 import {
   FEED_COMPOSER_KEY, type AppState, type ThreadState, type RenderCtx, type Handlers, type Submission,
-  type FlightStage, type AppIdentity, type AuthorWindowData, type FeedState, type TipVerifier,
+  type FlightStage, type AppIdentity, type AuthorWindowData, type FeedState, type FiguresView,
+  type TipVerifier, type FiguresVerifier,
 } from './model/state';
 import { decideMove, type ScreenEntry } from './history';
 
@@ -237,13 +239,23 @@ export class App {
   // The reading node's own verified headers (WEB_INTERFACE → The extension →
   // "The verified figures"). Non-null when and only when tipVerdict is
   // `verified`; every other verdict — and every run before its first return —
-  // leaves this null. Written beside tipVerdict, cleared beside it. Read from
-  // outside the class only; ctx() does not carry it.
-  tipAnchor: Anchor | null = null;
+  // leaves this null. Written beside tipVerdict, cleared beside it, and read by
+  // startFigures when a run has an identity, an anchor and a listing.
+  private tipAnchor: Anchor | null = null;
   private verifyTimer: ReturnType<typeof setInterval> | null = null;
   private lastVerifyBeganAt: number | null = null;
   private verifyInFlight = false;
   private verifyGen = 0;
+  // The verified figures (WEB_INTERFACE → The extension → "The verified
+  // figures") — the seam runs proveFigures over the App's own listing and
+  // hands the reading node's verified headers on. Non-null only in the
+  // extension build; single flight, marks one more run when a trigger fires
+  // during one, drops a result whose listing or generation has moved.
+  private figuresVerifier: FiguresVerifier | null;
+  private figures: FiguresView | null = null;
+  private figuresGen = 0;
+  private figuresInFlight = false;
+  private figuresDirty = false;
   // The loaded key's /karma, read on the profile window's open and its ↻, and a
   // faucet grant in flight or one that lapsed — both feed the profile window's ctx.
   private profileKarma: KarmaResult | null = null;
@@ -292,6 +304,7 @@ export class App {
     tabs?: Tabs,
     requestFaucetOrigin?: (origin: string) => Promise<boolean>,
     verifier?: TipVerifier | null,
+    figuresVerifier?: FiguresVerifier | null,
   ) {
     this.client = client ?? new NodeClient(() => prefs.node);
     this.writeClient = writeClient ?? new WriteClient(() => prefs.node);
@@ -299,6 +312,7 @@ export class App {
     this.faucetClient = new FaucetClient(() => prefs.faucet);
     this.requestFaucetOrigin = requestFaucetOrigin ?? null;
     this.verifier = verifier ?? null;
+    this.figuresVerifier = figuresVerifier ?? null;
     // With no verifier the verdict stays `undefined` — the corner reads the
     // first paragraph of the status corner, word for word (WEB_INTERFACE →
     // The status corner, → The extension → "The verified tip").
@@ -606,9 +620,11 @@ export class App {
       // verifier, null while none has returned, else the corner's own value.
       // The pure `figuresLine` reads it for rows 1 and 3 (WEB_INTERFACE →
       // The extension → "The verified figures"). `figures` stands beside it
-      // — null in this unit; unit 7 fills it after every run.
+      // — the latest verified-figures run's result, held with the anchor it
+      // was proven against; null until a run has returned for the identity,
+      // anchor and listing the App now holds.
       verdict: this.tipVerdict,
-      figures: null,
+      figures: this.figures,
       // notis-public names the origin + base a shareable link should carry;
       // empty means the current location, which is the web build's default
       // (WEB_INTERFACE → "The client is served from the node's own origin").
@@ -1363,7 +1379,9 @@ export class App {
   }
 
   /** Re-read /credits and move the balance in place — the wallet window's ↻ and
-   *  the fresh-open read (WEB_INTERFACE → The wallet window). */
+   *  the fresh-open read (WEB_INTERFACE → The wallet window). A fresh listing
+   *  triggers a figures verifier run (WEB_INTERFACE → The extension → "The
+   *  verified figures"). */
   private async refreshWalletCredits(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
@@ -1373,6 +1391,7 @@ export class App {
       return; // a failed read leaves the last-known state; the next ↻ retries
     }
     this.renderCreditsRowInPlace();
+    this.startFigures();
   }
 
   private focus(id: string): void {
@@ -1589,6 +1608,14 @@ export class App {
     this.walletCredits = null;
     this.creditGrantView = null;
     this.sendFlight = null;
+    // The verified figures are per identity, and a late result under an
+    // older generation must not touch the new key's surface
+    // (WEB_INTERFACE → The extension → "The verified figures"). The dirty
+    // flag is cleared here too — its trigger belonged to the previous
+    // identity's listings.
+    this.figures = null;
+    this.figuresGen += 1;
+    this.figuresDirty = false;
     this.ledger = new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
     this.startPoll(); // the new key's restored ledger may hold entries; guarded on empty
     this.renderHeader();
@@ -1682,6 +1709,9 @@ export class App {
     if (outcome === 'landed') {
       this.profileKarma = karma;
       this.grantView = null;
+      // A fresh listing triggers a figures verifier run
+      // (WEB_INTERFACE → The extension → "The verified figures").
+      this.startFigures();
     } else {
       this.grantView = { state: 'expired', atHeight: entry.expiresAtHeight };
     }
@@ -2082,6 +2112,9 @@ export class App {
     this.renderHeader();
     this.renderFeed();
     this.renderPanes();
+    // A fresh karma listing triggers a figures verifier run
+    // (WEB_INTERFACE → The extension → "The verified figures").
+    this.startFigures();
   }
 
   /** Read the whole /credits for a key, following `next` to the end. The
@@ -2752,19 +2785,35 @@ export class App {
         this.tipVerdict = run.verdict;
         this.tipAnchor = run.anchor;
         this.renderCornerNow();
+        // WEB_INTERFACE → The extension → "The verified figures" — a fresh
+        // anchor is where `absent` is exact. A `verified` run triggers a
+        // figures run at once; every other verdict drops the last result so
+        // no stale proof rides an unverified chain (figuresLine's row 3
+        // reads the verdict).
+        if (run.anchor !== null) {
+          this.startFigures();
+        } else {
+          this.figures = null;
+          this.renderCreditsRowInPlace();
+          this.renderProfileKarma();
+        }
       },
       (e) => {
         // A run that throws clears the verdict to `null` under the current
         // generation, so the corner reads *checking* (WEB_INTERFACE → The
         // extension → "The verified tip"). One console.error; a stale
         // rejection touches nothing but the log. The anchor drops with the
-        // verdict (→ "The verified figures").
+        // verdict, and with them the last figures result (→ "The verified
+        // figures").
         console.error(e);
         if (gen !== this.verifyGen) return;
         this.verifyInFlight = false;
         this.tipVerdict = null;
         this.tipAnchor = null;
         this.renderCornerNow();
+        this.figures = null;
+        this.renderCreditsRowInPlace();
+        this.renderProfileKarma();
       },
     );
   }
@@ -2790,9 +2839,97 @@ export class App {
       this.tipVerdict = null;
       this.tipAnchor = null;
     }
+    if (this.figuresVerifier !== null) {
+      // The figures verifier's generation moves with the reading node too, so
+      // a run in flight for the previous node's anchor never lands its result
+      // — a late result under an older generation is dropped
+      // (WEB_INTERFACE → The extension → "The verified figures").
+      this.figuresGen += 1;
+      this.figures = null;
+      this.renderCreditsRowInPlace();
+      this.renderProfileKarma();
+    }
     this.renderCornerNow();
     void this.cornerTick();
     if (this.verifier !== null) this.startVerification();
+  }
+
+  // ---- the verified figures (WEB_INTERFACE → The extension → "The verified
+  // figures") ----
+  // The App runs the figures verifier when it has an identity, an anchor and a
+  // karma listing; the credits listing is passed empty until the wallet has
+  // read it (its row is not on screen). Single flight: a trigger during a run
+  // marks one more run; a listing that moved during a run drops the result and
+  // runs again; a result under an older generation is dropped.
+
+  /** Start a figures verifier run, or drop the trigger. Runs only when the App
+   *  holds every input the tool needs. Object identity of `profileKarma` and
+   *  `walletCredits` is the "listing moved" check — every write assigns a
+   *  fresh object from readOwnKarma / readOwnCredits, so a captured pair
+   *  identical to the field pair is the pair the run proved. */
+  private startFigures(): void {
+    if (this.figuresVerifier === null) return;
+    const cur = this.idm.current();
+    if (cur === null) return;
+    const anchor = this.tipAnchor;
+    if (anchor === null) return;
+    const capturedKarma = this.profileKarma;
+    if (capturedKarma === null) return;
+    if (this.figuresInFlight) {
+      this.figuresDirty = true;
+      return;
+    }
+    const capturedCredits = this.walletCredits;
+    const listing: Listing = {
+      karma: {
+        boxes: capturedKarma.boxes,
+        height: capturedKarma.height,
+        effective: capturedKarma.effective,
+      },
+      credits: {
+        // A listing the App has not read is passed empty, its row not on
+        // screen (WEB_INTERFACE → The extension → "The verified figures" —
+        // "a listing the App has not read is passed empty").
+        boxes: capturedCredits?.boxes ?? [],
+      },
+    };
+    const gen = this.figuresGen;
+    this.figuresInFlight = true;
+    const verifier = this.figuresVerifier;
+    void verifier.run(prefs.node, cur.pubKeyHex, listing, anchor).then(
+      (result) => {
+        if (gen !== this.figuresGen) return;
+        this.figuresInFlight = false;
+        if (this.profileKarma !== capturedKarma || this.walletCredits !== capturedCredits) {
+          // The listing moved during the run — the result belongs to the
+          // listing that has passed; run again against the one the App now
+          // holds. The dirty flag is cleared implicitly by the fresh call.
+          this.figuresDirty = false;
+          this.startFigures();
+          return;
+        }
+        this.figures = { result, anchor };
+        this.renderCreditsRowInPlace();
+        this.renderProfileKarma();
+        if (this.figuresDirty) {
+          this.figuresDirty = false;
+          this.startFigures();
+        }
+      },
+      (e) => {
+        // A run that throws leaves `figures` alone — a run in flight keeps
+        // the line it had (WEB_INTERFACE → The extension → "The verified
+        // figures" — "a run in flight keeps the line it had"). One
+        // console.error; a stale rejection touches nothing but the log.
+        console.error(e);
+        if (gen !== this.figuresGen) return;
+        this.figuresInFlight = false;
+        if (this.figuresDirty) {
+          this.figuresDirty = false;
+          this.startFigures();
+        }
+      },
+    );
   }
 
   /** Read /blocks/current, update the corner's state, feed viewerTip. The first
@@ -2930,7 +3067,12 @@ export class App {
         if (outcome === 'landed') {
           // The line re-reads /karma for the new invitesAvailable, in place.
           this.inviteFlight = null;
-          if (cur !== null) this.profileKarma = await this.readOwnKarma(cur.pubKeyHex);
+          if (cur !== null) {
+            this.profileKarma = await this.readOwnKarma(cur.pubKeyHex);
+            // A fresh listing triggers a figures verifier run
+            // (WEB_INTERFACE → The extension → "The verified figures").
+            this.startFigures();
+          }
         } else {
           this.inviteFlight = { stage: 'expired', expiresAtHeight: entry.expiresAtHeight };
         }
@@ -2947,7 +3089,12 @@ export class App {
           this.ownName = held;
           this.ownNameLoaded = true;
           this.usernameFlight = null;
-          if (cur !== null) this.profileKarma = await this.readOwnKarma(cur.pubKeyHex);
+          if (cur !== null) {
+            this.profileKarma = await this.readOwnKarma(cur.pubKeyHex);
+            // A fresh listing triggers a figures verifier run
+            // (WEB_INTERFACE → The extension → "The verified figures").
+            this.startFigures();
+          }
         } else {
           this.usernameFlight = {
             stage: 'expired',
@@ -3042,6 +3189,9 @@ export class App {
       // Re-read the reader's own /credits so the row's balance moves in place.
       try {
         this.walletCredits = await this.readOwnCredits(meKey);
+        // A fresh listing triggers a figures verifier run
+        // (WEB_INTERFACE → The extension → "The verified figures").
+        this.startFigures();
       } catch {
         // Leaves the last-known state; the ↻ retries.
       }
@@ -3073,6 +3223,9 @@ export class App {
     if (outcome === 'landed') {
       this.walletCredits = credits;
       this.creditGrantView = null;
+      // A fresh listing triggers a figures verifier run
+      // (WEB_INTERFACE → The extension → "The verified figures").
+      this.startFigures();
     } else {
       this.creditGrantView = { state: 'expired', atHeight: entry.expiresAtHeight };
     }

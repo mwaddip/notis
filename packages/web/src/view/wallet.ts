@@ -149,6 +149,38 @@ function sumValues(boxes: readonly { value: string }[]): bigint {
   return s;
 }
 
+/** Append the verified-figures line beneath the balance figure — a `div.hint`,
+ *  clay under the full rule (WEB_INTERFACE → The extension → "The verified
+ *  figures", HOUSE_STYLE → Gold and clay are not interchangeable). `goldSpan`
+ *  is the gold figure whose ink flips clay under the full rule; a locked-
+ *  wallet branch has no gold to flip and passes null. */
+function appendFiguresLine(
+  line: HTMLElement,
+  ctx: WalletCtx,
+  boxCount: number,
+  height: number,
+  shown: bigint,
+  goldSpan: HTMLElement | null,
+): void {
+  const fLine = figuresLine({
+    ledger: 'credits',
+    verdict: ctx.verdict,
+    result: ctx.figures?.result ?? null,
+    shown,
+    suffixHeight: ctx.figures?.anchor.suffixHead.header.height ?? null,
+    boxCount,
+    height,
+  });
+  if (fLine === null) return;
+  const hint = el('div', 'hint');
+  hint.textContent = fLine.text;
+  if (fLine.weight === 'clay') {
+    hint.classList.add('clay');
+    if (goldSpan !== null) goldSpan.classList.add('clay');
+  }
+  line.appendChild(hint);
+}
+
 /** Toggle the `.send-row` — walletBody starts it hidden and updateCredits
  *  shows or hides it as the spendable side changes. Selects by class, so
  *  the geometry of the credits-field wrapper does not decide the row's
@@ -188,27 +220,7 @@ function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: Wallet
       hint.append(mono(formatCredits(locked.value)), ' $NOTIS more unlock by block ', mono(String(locked.height)), '.');
       line.appendChild(hint);
     }
-    const fLine = figuresLine({
-      ledger: 'credits',
-      verdict: ctx.verdict,
-      result: ctx.figures?.result ?? null,
-      shown: spendable,
-      suffixHeight: ctx.figures?.anchor.suffixHead.header.height ?? null,
-      boxCount: c.boxCount,
-      height,
-    });
-    if (fLine !== null) {
-      const hint = el('div', 'hint');
-      hint.textContent = fLine.text;
-      if (fLine.weight === 'clay') {
-        // The full rule — HOUSE_STYLE → Gold and clay are not interchangeable.
-        // The hint AND the gold figure both go clay; gold gives way to clay
-        // only while the node's own proof of the balance fails.
-        hint.classList.add('clay');
-        goldSpan.classList.add('clay');
-      }
-      line.appendChild(hint);
-    }
+    appendFiguresLine(line, ctx, c.boxCount, height, spendable, goldSpan);
   } else {
     // No spendable box → the faucet step when a faucet is set, else "no $NOTIS yet."
     // The locked hint still stands so the reader knows what is on its way.
@@ -234,6 +246,11 @@ function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: Wallet
       hint.append(mono(formatCredits(locked.value)), ' $NOTIS more unlock by block ', mono(String(locked.height)), '.');
       line.appendChild(hint);
     }
+    // A wallet whose boxes are all locked shows no gold; the figures line
+    // still stands so a fake locked box does not pass unremarked
+    // (WEB_INTERFACE → The extension → "The verified figures"; `shown` is 0
+    // here, so row 6 answers null when every box is proven — silence).
+    if (c.boxCount > 0) appendFiguresLine(line, ctx, c.boxCount, height, 0n, null);
     // No spendable box means the form has nothing to spend — drop it.
     formSlot.replaceChildren();
   }

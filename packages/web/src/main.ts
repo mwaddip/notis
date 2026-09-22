@@ -6,7 +6,8 @@ import { identity } from './identity/identity';
 import { bootstrapProxy } from './extension/proxy';
 import { wrapTabs } from './extension/handover';
 import { createTipVerifier } from './extension/tip-verifier';
-import type { AppIdentity, TipVerifier } from './model/state';
+import { createFiguresVerifier } from './extension/figures-verifier';
+import type { AppIdentity, TipVerifier, FiguresVerifier } from './model/state';
 
 // Theme is already on <html> from the head's theme.js; this re-applies it and
 // sets the identity tint before the first render, while transitions are still
@@ -49,7 +50,18 @@ const verifier: TipVerifier | undefined = isExtension && BUILD_NETWORK !== null
       now: Date.now,
     })
   : undefined;
-new App(undefined, undefined, idm, undefined, tabs, requestFaucetOrigin, verifier).start(appbar, feed, panes, mode);
+// WEB_INTERFACE → The extension → "The verified figures" — the figures verifier
+// is handed to the App under the same static condition as the tip verifier, so
+// the web build's substitution renders this a static false and Rollup dead-
+// code-eliminates createFiguresVerifier (build-release.sh's `api/v1/proof`
+// check).
+const figuresVerifier: FiguresVerifier | undefined = isExtension && BUILD_NETWORK !== null
+  ? createFiguresVerifier({
+      network: BUILD_NETWORK,
+      fetch: fetch.bind(globalThis),
+    })
+  : undefined;
+new App(undefined, undefined, idm, undefined, tabs, requestFaucetOrigin, verifier, figuresVerifier).start(appbar, feed, panes, mode);
 
 // Restoring a stored preference is painted, not transitioned: drop the
 // transition-suppressing class only after the first paint (HOUSE_STYLE → Motion).

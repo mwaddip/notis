@@ -5,7 +5,7 @@ import type { Flight } from '../view/card';
 import type { YourVouch } from '../view/author';
 import type { SignResult } from '../wallet/submit';
 import type { TipVerdict } from './tip-verdict';
-import type { Anchor, FiguresResult } from '@dagsocial/nipopow-client';
+import type { Anchor, FiguresResult, Listing } from '@dagsocial/nipopow-client';
 export type { Anchor };
 
 /** What the App holds when a figures verifier run has returned — the tool's
@@ -305,4 +305,15 @@ export interface TipRun {
 }
 export interface TipVerifier {
   run(readingBase: string): Promise<TipRun>;
+}
+
+/** The extension proves the two figures the reading node serves for the loaded
+ *  key — the wallet's balance and the profile's rep — against the state the
+ *  verified chain committed (WEB_INTERFACE → The extension → "The verified
+ *  figures"). The App holds an implementation only in the extension build; the
+ *  web build is handed none. `run` proves the App's own listing against the
+ *  reading node's own verified headers, both captured at the moment the
+ *  trigger fires. */
+export interface FiguresVerifier {
+  run(readingBase: string, user: string, listing: Listing, anchor: Anchor): Promise<FiguresResult>;
 }
