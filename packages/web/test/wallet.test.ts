@@ -6,6 +6,10 @@ import { walletBody, renderCreditsRow, resetCreditsSendForm, type WalletHandlers
 import { prefs } from '../src/prefs';
 import { shortHex } from '../src/dom';
 import type { CreditsResult, StatusResult } from '../src/api/dto';
+import type { FiguresView } from '../src/model/state';
+import type { TipVerdict } from '../src/model/tip-verdict';
+import type { FiguresResult, FigureBox, LedgerSums, RecordResult, Anchor } from '@dagsocial/nipopow-client';
+import type { BlockHeader, IdentityRecord, UserId } from '@dagsocial/types';
 
 const appCss = readFileSync(resolve(process.cwd(), 'src/style/app.css'), 'utf8');
 
@@ -60,6 +64,10 @@ function ctx(over: Partial<WalletCtx> = {}): WalletCtx {
     // tests override this to false and cover the flow the prompt confirms
     // (WEB_INTERFACE → The wallet window → "in the web build, the confirm row").
     confirmInRow: true,
+    // The web arm's default — no verifier, so `figuresLine` reads row 1 and
+    // renders nothing beneath the figure. The extension arm's tests override
+    // both (WEB_INTERFACE → The extension → "The verified figures").
+    verdict: undefined, figures: null,
     ...over,
   };
 }
@@ -704,5 +712,191 @@ describe('wallet — the send flow, extension arm (confirmInRow: false)', () => 
     expect(inputs[1]!.value).toBe('');
     expect(key.textContent).toBe('');
     expect(key.hidden).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The verified-figures line beneath the balance (WEB_INTERFACE → The
+// extension → "The verified figures", → The wallet window → "The `balance`
+// row"). The pure model's rows are pinned in test/figures-line.test.ts; these
+// tests pin the row's plumbing: the hint element renders under the figure,
+// and under the full rule (row 4) the gold figure gains `.clay` alongside the
+// hint. HOUSE_STYLE → Gold and clay are not interchangeable — gold gives way
+// to clay only while the node's own proof of the balance fails.
+// ---------------------------------------------------------------------------
+
+const EMPTY_SUMS: LedgerSums = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n };
+const RECORD: IdentityRecord = {
+  lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0,
+  lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+  memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+};
+function stubHeader(over: Partial<BlockHeader> = {}): BlockHeader {
+  return {
+    protocolVersion: 1, height: 9020, prevBlockHash: '00'.repeat(32),
+    utxoTxRoot: '00'.repeat(32), stateRoot: '00'.repeat(32),
+    validatorId: new Uint8Array(32) as UserId, powNonce: 0, powTargetBits: 0,
+    createdAt: 0, interlinkRoot: '00'.repeat(32),
+    ...over,
+  };
+}
+function anchor(suffixHeight = 9005, tipHeight = 9020): Anchor {
+  return {
+    tip: stubHeader({ height: tipHeight }),
+    suffixHead: { header: stubHeader({ height: suffixHeight }), interlinks: [] },
+  };
+}
+function figBox(over: Partial<FigureBox> & Pick<FigureBox, 'boxClass' | 'status'>): FigureBox {
+  return { boxId: 'a'.repeat(64), value: 0n, lockedUntilBlock: null, verdict: 'test', ...over };
+}
+function figuresView(result: Partial<FiguresResult> = {}, suffixHeight = 9005): FiguresView {
+  return {
+    result: {
+      boxes: [],
+      record: { status: 'proven', record: RECORD } as RecordResult,
+      karma: { ...EMPTY_SUMS, effective: 0n },
+      credits: { ...EMPTY_SUMS },
+      heightAfter: 9020,
+      failed: false,
+      ...result,
+    },
+    anchor: anchor(suffixHeight),
+  };
+}
+const VERIFIED: TipVerdict = { kind: 'verified', nodes: 2, height: 9020 };
+const THIN: TipVerdict = { kind: 'thin', reason: 'no-proof', height: null };
+
+describe('wallet — the verified-figures line beneath the balance', () => {
+  const SPENDABLE_BOX = { boxId: 'a'.repeat(64), value: '1250000000' }; // 12.5 $NOTIS
+  const spendableCtx = (over: Partial<WalletCtx> = {}): WalletCtx => creditsCtx({
+    credits: creditsResult({ boxes: [SPENDABLE_BOX], boxCount: 1 }),
+    ...over,
+  });
+
+  it('the default web ctx (no verifier) renders no verified-figures hint', () => {
+    // Rows 1 — verdict === undefined — is silence. The gold figure carries no
+    // .clay, and no .hint sits beneath the credits-line.
+    const f = creditsField(render(handlers(), spendableCtx()))!;
+    const gold = f.querySelector<HTMLElement>('.mono.gold')!;
+    expect(gold.classList.contains('clay')).toBe(false);
+    expect(f.querySelector('.credits-line .hint')).toBeNull();
+  });
+
+  it('a verified verdict + a proven+young result renders a muted hint, no .clay on the figure (row 7)', () => {
+    // 12.5 shown, 8.75 proven + 3.75 young.
+    const fv = figuresView({
+      boxes: [
+        figBox({ boxClass: 'credit', status: 'proven', value: 875_000_000n }),
+        figBox({ boxClass: 'credit', status: 'young',  value: 375_000_000n }),
+      ],
+      credits: { proven: 875_000_000n, young: 375_000_000n, unchecked: 0n, absent: 0n },
+    });
+    const c = spendableCtx({ verdict: VERIFIED, figures: fv });
+    const f = creditsField(render(handlers(), c))!;
+    const hint = f.querySelector<HTMLElement>('.credits-line .hint');
+    expect(hint).not.toBeNull();
+    expect(hint!.textContent).toBe('8.75 $NOTIS proven at block 9005 · 3.75 $NOTIS landed since');
+    expect(hint!.classList.contains('clay')).toBe(false);
+    const gold = f.querySelector<HTMLElement>('.mono.gold')!;
+    expect(gold.classList.contains('clay')).toBe(false);
+    // The figure itself is unchanged.
+    expect(gold.textContent).toBe('12.5');
+  });
+
+  it('an unproven credit box → the full rule: clay hint AND clay class on the gold figure (row 4)', () => {
+    const fv = figuresView({
+      boxes: [figBox({ boxClass: 'credit', status: 'unproven', value: 1_250_000_000n })],
+      credits: { ...EMPTY_SUMS },
+    });
+    const c = spendableCtx({ verdict: VERIFIED, figures: fv });
+    const f = creditsField(render(handlers(), c))!;
+    const hint = f.querySelector<HTMLElement>('.credits-line .hint');
+    expect(hint).not.toBeNull();
+    expect(hint!.textContent).toBe("this node's proof of the balance did not verify");
+    expect(hint!.classList.contains('clay')).toBe(true);
+    const gold = f.querySelector<HTMLElement>('.mono.gold')!;
+    expect(gold.classList.contains('clay')).toBe(true);
+    // The figure itself never changes.
+    expect(gold.textContent).toBe('12.5');
+  });
+
+  it('an absent credit sum → clay "the node lists N $NOTIS the chain does not hold"', () => {
+    const fv = figuresView({
+      boxes: [figBox({ boxClass: 'credit', status: 'absent', value: 1_250_000_000n })],
+      credits: { ...EMPTY_SUMS, absent: 1_250_000_000n },
+    });
+    const c = spendableCtx({ verdict: VERIFIED, figures: fv });
+    const f = creditsField(render(handlers(), c))!;
+    const hint = f.querySelector<HTMLElement>('.credits-line .hint');
+    expect(hint?.textContent).toBe('the node lists 12.5 $NOTIS the chain does not hold');
+    expect(hint?.classList.contains('clay')).toBe(true);
+    expect(f.querySelector<HTMLElement>('.mono.gold')!.classList.contains('clay')).toBe(true);
+  });
+
+  it('a thin verdict with no figures back → the unverified line (row 3), muted, no clay on the figure', () => {
+    const c = spendableCtx({ verdict: THIN, figures: null });
+    const f = creditsField(render(handlers(), c))!;
+    const hint = f.querySelector<HTMLElement>('.credits-line .hint');
+    expect(hint?.textContent).toBe('not checked — the chain is not verified');
+    expect(hint?.classList.contains('clay')).toBe(false);
+    expect(f.querySelector<HTMLElement>('.mono.gold')!.classList.contains('clay')).toBe(false);
+  });
+
+  it('every proven and the number reproduces → no hint (row 6 silence)', () => {
+    const fv = figuresView({
+      boxes: [figBox({ boxClass: 'credit', status: 'proven', value: 1_250_000_000n })],
+      credits: { ...EMPTY_SUMS, proven: 1_250_000_000n },
+    });
+    const c = spendableCtx({ verdict: VERIFIED, figures: fv });
+    const f = creditsField(render(handlers(), c))!;
+    expect(f.querySelector('.credits-line .hint')).toBeNull();
+    expect(f.querySelector<HTMLElement>('.mono.gold')!.classList.contains('clay')).toBe(false);
+  });
+
+  it('the locked hint stands beside the verified-figures hint when both fire', () => {
+    // A spendable box + a locked box + a verified figure with a young remainder:
+    // both the locked hint and the verified hint sit inside .credits-line.
+    const c = creditsCtx({
+      credits: creditsResult({
+        boxes: [
+          { boxId: 'a'.repeat(64), value: '1250000000' },
+          { boxId: 'b'.repeat(64), value: '500000000', lockedUntilBlock: 20_000 },
+        ],
+        boxCount: 2,
+      }),
+      verdict: VERIFIED,
+      figures: figuresView({
+        boxes: [
+          figBox({ boxClass: 'credit', status: 'proven', value: 875_000_000n }),
+          figBox({ boxClass: 'credit', status: 'young',  value: 375_000_000n }),
+        ],
+        credits: { proven: 875_000_000n, young: 375_000_000n, unchecked: 0n, absent: 0n },
+      }),
+    });
+    const f = creditsField(render(handlers(), c))!;
+    const hints = f.querySelectorAll<HTMLElement>('.credits-line .hint');
+    expect(hints.length).toBe(2);
+    // The locked hint is first (it renders before the verified line) —
+    // WEB_INTERFACE → The wallet window → "The `balance` row".
+    expect(hints[0]!.textContent).toContain('$NOTIS more unlock by block');
+    expect(hints[1]!.textContent).toContain('proven at block 9005');
+  });
+});
+
+describe('app.css — the verified-figures clay rules', () => {
+  // Read the stylesheet the same way test/style.test.ts does — lexical pins,
+  // no computed style (happy-dom has no CSSOM). One rule per line.
+  it('.winbody .hint.clay reads clay from --clay', () => {
+    expect(appCss).toMatch(/\.winbody \.hint\.clay\s*\{[^}]*color: var\(--clay\)/);
+  });
+  it('.mono.clay reads clay from --clay', () => {
+    expect(appCss).toMatch(/\.mono\.clay\s*\{[^}]*color: var\(--clay\)/);
+  });
+  it('.mono.clay is declared AFTER .gold so .mono.gold.clay renders clay (hypothesis 2)', () => {
+    const goldIdx = appCss.indexOf('.gold { color: var(--gold);');
+    const clayIdx = appCss.indexOf('.mono.clay { color: var(--clay);');
+    expect(goldIdx).toBeGreaterThan(-1);
+    expect(clayIdx).toBeGreaterThan(-1);
+    expect(clayIdx).toBeGreaterThan(goldIdx);
   });
 });

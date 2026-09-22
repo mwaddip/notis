@@ -5,6 +5,9 @@ import { stageLine, type Flight } from './card';
 import { isValidUsernameBytes } from '@dagsocial/types';
 import { formatCredits, parseCredits } from '../model/credits';
 import { spendableCreditBoxes, lockedCreditSummary } from '../wallet/reads';
+import { figuresLine } from '../model/figures-line';
+import type { FiguresView } from '../model/state';
+import type { TipVerdict } from '../model/tip-verdict';
 import type { CreditsResult, StatusResult } from '../api/dto';
 
 // The @wallet window — WEB_INTERFACE → The wallet window. Everything $NOTIS
@@ -50,6 +53,15 @@ export interface WalletCtx {
   // WEB_INTERFACE → The wallet window → "The `send` row"). The App fills it
   // `!this.idm.policy`: the in-page module has no policy, the proxy has.
   confirmInRow: boolean;
+  // The extension's verified-figures run — WEB_INTERFACE → The extension →
+  // "The verified figures". `verdict === undefined` when the build has no
+  // verifier, `null` while none has returned; `figures` is null until a run's
+  // result lands. The pure `figuresLine` reads the three fields together and
+  // the balance row renders the muted line beneath the figure, adding `clay`
+  // to the hint and to the gold span under the full rule (→ "The `balance`
+  // row").
+  verdict: TipVerdict | null | undefined;
+  figures: FiguresView | null;
 }
 
 function row(label: string): { row: HTMLElement; field: HTMLElement } {
@@ -165,12 +177,36 @@ function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: Wallet
     formSlot.replaceChildren();
   } else if (spendable > 0n) {
     // Balance in gold + "$NOTIS"; the locked-hint beneath names only what is
-    // above the current height (WEB_INTERFACE → The wallet window).
-    line.append(el('span', 'mono gold', formatCredits(spendable)), ' $NOTIS');
+    // above the current height (WEB_INTERFACE → The wallet window). The
+    // extension's verified-figures line follows, muted or clay by the pure
+    // model's row (→ "The verified figures").
+    const goldSpan = el('span', 'mono gold', formatCredits(spendable));
+    line.append(goldSpan, ' $NOTIS');
     const locked = lockedCreditSummary(c.boxes, height);
     if (locked) {
       const hint = el('div', 'hint');
       hint.append(mono(formatCredits(locked.value)), ' $NOTIS more unlock by block ', mono(String(locked.height)), '.');
+      line.appendChild(hint);
+    }
+    const fLine = figuresLine({
+      ledger: 'credits',
+      verdict: ctx.verdict,
+      result: ctx.figures?.result ?? null,
+      shown: spendable,
+      suffixHeight: ctx.figures?.anchor.suffixHead.header.height ?? null,
+      boxCount: c.boxCount,
+      height,
+    });
+    if (fLine !== null) {
+      const hint = el('div', 'hint');
+      hint.textContent = fLine.text;
+      if (fLine.weight === 'clay') {
+        // The full rule — HOUSE_STYLE → Gold and clay are not interchangeable.
+        // The hint AND the gold figure both go clay; gold gives way to clay
+        // only while the node's own proof of the balance fails.
+        hint.classList.add('clay');
+        goldSpan.classList.add('clay');
+      }
       line.appendChild(hint);
     }
   } else {

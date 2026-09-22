@@ -602,6 +602,13 @@ export class App {
       // the confirm row stands where policy is absent, and yields to the
       // prompt where policy is defined.
       confirmInRow: !this.idm.policy,
+      // The extension's tip verifier's latest verdict — undefined without a
+      // verifier, null while none has returned, else the corner's own value.
+      // The pure `figuresLine` reads it for rows 1 and 3 (WEB_INTERFACE →
+      // The extension → "The verified figures"). `figures` stands beside it
+      // — null in this unit; unit 7 fills it after every run.
+      verdict: this.tipVerdict,
+      figures: null,
       // notis-public names the origin + base a shareable link should carry;
       // empty means the current location, which is the web build's default
       // (WEB_INTERFACE → "The client is served from the node's own origin").

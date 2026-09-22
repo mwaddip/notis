@@ -5,8 +5,21 @@ import type { Flight } from '../view/card';
 import type { YourVouch } from '../view/author';
 import type { SignResult } from '../wallet/submit';
 import type { TipVerdict } from './tip-verdict';
-import type { Anchor } from '@dagsocial/nipopow-client';
+import type { Anchor, FiguresResult } from '@dagsocial/nipopow-client';
 export type { Anchor };
+
+/** What the App holds when a figures verifier run has returned — the tool's
+ *  full result and the anchor it was proven against. The anchor's
+ *  `suffixHead.header.height` is the height the *proven at block N* clause
+ *  names; the anchor's presence beside the result lets a later run drop a
+ *  result that no longer belongs to the anchor the App now holds
+ *  (WEB_INTERFACE → The extension → "The verified figures"). Null while no
+ *  run has returned for this identity/anchor/listing generation — unit 7
+ *  fills the field; this unit passes null. */
+export interface FiguresView {
+  result: FiguresResult;
+  anchor: Anchor;
+}
 
 // The read surface's runtime state, and the handler contract the pure view
 // modules render against. Types only — no cycle between controller and views.
@@ -145,6 +158,19 @@ export interface RenderCtx {
   // → "in the extension there is no confirm row"). The App fills it
   // `!this.idm.policy`, the same predicate the policy row reads on.
   confirmInRow: boolean;
+  // The extension's tip verifier's latest verdict, the pure `figuresLine` model's
+  // rows 1 and 3 read it (WEB_INTERFACE → The extension → "The verified
+  // figures"). undefined: the build has no verifier — nothing beneath the
+  // figure. null: the verifier is present but no result stands — silence too,
+  // unless the verdict is `thin` or `refused`, when the line names the
+  // unverified chain.
+  verdict: TipVerdict | null | undefined;
+  // The verified-figures run's result and the anchor it was proven against —
+  // the wallet's balance row and the profile's rep row read it through the
+  // pure `figuresLine` model (WEB_INTERFACE → The extension → "The verified
+  // figures"). Null while no run has returned; the App passes null in this
+  // unit, and unit 7 fills the field.
+  figures: FiguresView | null;
   // WEB_INTERFACE → Links
   linkUrl: (id: string) => string;
 }
