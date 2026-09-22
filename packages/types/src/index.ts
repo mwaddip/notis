@@ -153,6 +153,24 @@ export { icbrt, membershipBar, memberLikesBar } from './membership.js';
 export { postWithdrawFieldBytes } from './post-withdraw.js';
 export type { PostWithdrawCommit } from './post-withdraw.js';
 
+// Identity record — TYPES_INTERFACE → Identity record and karma valuation
+export {
+  identityRecordKey,
+  identityRecordBytes,
+  identityRecordFromBytes,
+  IDENTITY_RECORD_TAG,
+} from './identity-record.js';
+export type { IdentityRecord } from './identity-record.js';
+
+// Karma valuation — TYPES_INTERFACE → Identity record and karma valuation
+export {
+  decayCfgFor,
+  isIdentityStale,
+  owedPeriods,
+  effectiveKarma,
+} from './karma-valuation.js';
+export type { DecayCfg } from './karma-valuation.js';
+
 // Interlinks — TYPES_INTERFACE → Interlink vector
 export {
   INTERLINK_DOMAIN,
