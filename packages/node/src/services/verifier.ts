@@ -1,18 +1,21 @@
 import {
   POST_PRICE_THREAD,
   POST_PRICE_REPLY,
+  effectiveKarma,
   protocolVersionAt,
 } from '@dagsocial/types';
-import type { PostCommit, ProtocolEra } from '@dagsocial/types';
+import type {
+  DecayCfg,
+  IdentityRecord,
+  PostCommit,
+  ProtocolEra,
+} from '@dagsocial/types';
 import type { StoredPost } from '../store/posts.js';
 import {
   verifyParentRefsCount,
   verifyProtocolVersion,
   verifyPostCommitDomains,
 } from '@dagsocial/validation';
-import { effectiveKarma } from './decay.js';
-import type { DecayCfg } from './decay.js';
-import type { IdentityRecord } from '../store/identity-records.js';
 
 // ---------------------------------------------------------------------------
 // Dependency interface

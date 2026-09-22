@@ -4,11 +4,8 @@ import { randomBytes } from 'node:crypto';
 import {
   serializeBox,
   deserializeBox,
-  serializeIdentityRecord,
-  deserializeIdentityRecord,
   deserializeAvlValue,
   serializeNetworkRecord,
-  IDENTITY_RECORD_TAG,
   NETWORK_RECORD_TAG,
 } from '../../src/state/serialize-box.js';
 import {
@@ -16,9 +13,8 @@ import {
   applyBlockMutations,
   type RecordPut,
 } from '../../src/state/avl-prover.js';
-import { BOX_TYPE_TAGS } from '@dagsocial/types';
-import type { KarmaBox, AnyBox } from '@dagsocial/types';
-import type { IdentityRecord } from '../../src/store/identity-records.js';
+import { identityRecordBytes } from '@dagsocial/types';
+import type { IdentityRecord, KarmaBox, AnyBox } from '@dagsocial/types';
 import { fixtureProvenance, openAvlDb } from '../helpers.js';
 
 /**
@@ -45,12 +41,10 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
   beforeEach(() => { db = openAvlDb(); db2 = openAvlDb(); });
   afterEach(() => { db.close(); db2.close(); });
 
-  // --- serialization: both kinds round-trip, neither decodes as the other ---
-
-  it('an identity record round-trips', () => {
-    const bytes = serializeIdentityRecord(REC);
-    expect(deserializeIdentityRecord(bytes)).toEqual(REC);
-  });
+  // Round-trip and codec-refusal cases live in `@dagsocial/types`'
+  // `identity-record.test.ts`. The cases below prove that a record REACHES the
+  // AVL tree and dispatches correctly against every box type — the
+  // integration surface node owns.
 
   it('a box still round-trips unchanged', () => {
     const box = makeKarmaBox('aa'.repeat(32));
@@ -111,57 +105,23 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
   });
 
   it('a record is not mistaken for any box type', () => {
-    const bytes = serializeIdentityRecord(REC);
+    const bytes = identityRecordBytes(REC);
     const val = deserializeAvlValue(bytes);
     expect(val.kind).toBe('record');
-    // And the record's tag byte is not one any box can emit. ⛔ **The set is
-    // read from `BOX_TYPE_TAGS` rather than written down**: a hand-kept set
-    // that understates the range still passes, because 0x80 is in neither, so
-    // nothing here would fail when a tag is added.
-    const boxTags = new Set<number>(Object.values(BOX_TYPE_TAGS));
-    expect(boxTags.has(bytes[0]!)).toBe(false);
-  });
-
-  it('the record tag is outside the box-type range, with the high bit set', () => {
-    expect(IDENTITY_RECORD_TAG).toBe(0x80);
-    // "box" vs "not a box" is a single bit test, and the whole assigned range
-    // below the high bit stays open to `BOX_TYPE_TAGS`.
-    expect(IDENTITY_RECORD_TAG & 0x80).toBe(0x80);
-    expect(IDENTITY_RECORD_TAG).toBeGreaterThan(Math.max(...Object.values(BOX_TYPE_TAGS)));
-    expect(serializeIdentityRecord(REC)[0]).toBe(IDENTITY_RECORD_TAG);
   });
 
   it('deserializeBox REJECTS a record rather than mis-decoding it', () => {
-    const bytes = serializeIdentityRecord(REC);
+    const bytes = identityRecordBytes(REC);
     expect(() => deserializeBox(bytes)).toThrow(/identity record, not a box/i);
-  });
-
-  it('deserializeIdentityRecord rejects a box', () => {
-    const bytes = serializeBox(makeKarmaBox('bb'.repeat(32)));
-    expect(() => deserializeIdentityRecord(bytes)).toThrow(/not an identity record/i);
   });
 
   it('the kind-dispatching decoder handles either value', () => {
     const boxVal = deserializeAvlValue(serializeBox(makeKarmaBox('cc'.repeat(32))));
     expect(boxVal.kind).toBe('box');
 
-    const recVal = deserializeAvlValue(serializeIdentityRecord(REC));
+    const recVal = deserializeAvlValue(identityRecordBytes(REC));
     expect(recVal.kind).toBe('record');
     if (recVal.kind === 'record') expect(recVal.record).toEqual(REC);
-  });
-
-  it('a record with a zero clock round-trips as zero', () => {
-    const zero: IdentityRecord = { lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 };
-    expect(deserializeIdentityRecord(serializeIdentityRecord(zero))).toEqual(zero);
-  });
-
-  it('record value bytes are a pure function of the record', () => {
-    const a = serializeIdentityRecord({ lastActivityBlock: 3, lastDecayBlock: 4, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
-    const b = serializeIdentityRecord({ lastActivityBlock: 3, lastDecayBlock: 4, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
-    expect(Buffer.from(a).toString('hex')).toBe(Buffer.from(b).toString('hex'));
-
-    const c = serializeIdentityRecord({ lastActivityBlock: 4, lastDecayBlock: 3, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
-    expect(Buffer.from(c).toString('hex')).not.toBe(Buffer.from(a).toString('hex'));
   });
 
   // --- the record must actually reach the digest --------------------------
@@ -294,120 +254,17 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The always-present fields in the record's AVL value encoding
-// (NODE_INTERFACE → Layout — IdentityRecord).
-//
-// The record holds nine fields — four original (two heights, the claim height,
-// the lifetime like counter) and five membership fields (memberSinceBlock,
-// memberBar, memberVouches, memberLikes, invitesUsed). The AVL value encodes
-// all nine after a `0x80` tag byte. The vectors below pin the positional
-// layout byte by byte.
+// Record puts reaching the digest — the AVL-level side of TYPES_INTERFACE →
+// Layout — IdentityRecord. The codec, its goldens and its refusals live in
+// `@dagsocial/types`' `identity-record.test.ts`.
 // ---------------------------------------------------------------------------
 
-describe('the always-present fields in the record encoding', () => {
+describe('record puts reaching the digest', () => {
   let db: Database.Database;
   let db2: Database.Database;
 
   beforeEach(() => { db = openAvlDb(); db2 = openAvlDb(); });
   afterEach(() => { db.close(); db2.close(); });
-
-  it('a non-zero like counter round-trips as bigint', () => {
-    const rec: IdentityRecord = { lastActivityBlock: 42, lastDecayBlock: 7, invitedAtBlock: 0, lifetimeLikesReceived: 3n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 };
-    const back = deserializeIdentityRecord(serializeIdentityRecord(rec));
-    expect(back).toEqual(rec);
-    expect(typeof back.lifetimeLikesReceived).toBe('bigint');
-  });
-
-  it('a zero counter round-trips as 0n, not dropped and not a number', () => {
-    const back = deserializeIdentityRecord(serializeIdentityRecord(REC));
-    expect(back.lifetimeLikesReceived).toBe(0n);
-    expect(typeof back.lifetimeLikesReceived).toBe('bigint');
-  });
-
-  // Golden bytes for NODE_INTERFACE → Layout — IdentityRecord, byte by byte:
-  //
-  //   80   u8 tag
-  //   2a   vlqU(lastActivityBlock = 42)
-  //   07   vlqU(lastDecayBlock = 7)
-  //   00   vlqU(invitedAtBlock = 0)
-  //   00   vlqU64(lifetimeLikesReceived = 0n)
-  //   00   vlqU(memberSinceBlock = 0)
-  //   00   vlqU(memberBar = 0)
-  //   00   vlqU(memberVouches = 0)
-  //   00   vlqU64(memberLikes = 0n)
-  //   00   vlqU(invitesUsed = 0)
-  const GOLDEN_ZERO = '802a0700000000000000';
-  const GOLDEN_INVITED = '802a070b000000000000';
-  const GOLDEN_LIKED = '802a070b070000000000';
-  /** The same layout with a trailing field absent — a shape a reader must reject. */
-  const GOLDEN_SHORT = '802a070b0000000000';
-
-  it('golden bytes: every counter present at zero, none omitted', () => {
-    expect(Buffer.from(serializeIdentityRecord(REC)).toString('hex')).toBe(GOLDEN_ZERO);
-  });
-
-  it('golden bytes: an invited identity differs in the fourth byte alone', () => {
-    const bytes = serializeIdentityRecord({ lastActivityBlock: 42, lastDecayBlock: 7, invitedAtBlock: 11, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
-    expect(Buffer.from(bytes).toString('hex')).toBe(GOLDEN_INVITED);
-    expect(GOLDEN_INVITED.slice(0, 6)).toBe(GOLDEN_ZERO.slice(0, 6));
-    expect(GOLDEN_INVITED.slice(8)).toBe(GOLDEN_ZERO.slice(8));
-    expect(GOLDEN_INVITED.slice(6, 8)).not.toBe(GOLDEN_ZERO.slice(6, 8));
-  });
-
-  // ⚠ `lifetimeLikesReceived` is `vlqU64`, so its width tracks its MAGNITUDE.
-  // Two records whose counters encode to the same length say nothing about the
-  // field — below 128 every value is one byte, and an assertion resting on that
-  // reads as a structural rule while pinning a coincidence. The rows below make
-  // the width change explicit instead of leaving it to be discovered by a fork.
-  it('the like counter is variable-width under vlqU64 — equal length below 128 is not a rule', () => {
-    const len = (likes: bigint): number =>
-      serializeIdentityRecord({ lastActivityBlock: 42, lastDecayBlock: 7, invitedAtBlock: 0, lifetimeLikesReceived: likes, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 }).length;
-
-    expect(len(0n)).toBe(len(3n));      // both single-byte VLQ — a coincidence, not structure
-    expect(len(127n)).toBe(len(0n));    // last single-byte value
-    expect(len(128n)).toBe(len(0n) + 1); // first two-byte value: the width moves
-  });
-
-  it('golden bytes: the like counter differs in its byte alone', () => {
-    const bytes = serializeIdentityRecord({
-      lastActivityBlock: 42, lastDecayBlock: 7, invitedAtBlock: 11, lifetimeLikesReceived: 7n,
-      memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
-    });
-    expect(Buffer.from(bytes).toString('hex')).toBe(GOLDEN_LIKED);
-    // The prefix through invitedAtBlock (4 bytes = 8 hex chars) is identical.
-    expect(GOLDEN_LIKED.slice(0, 8)).toBe(GOLDEN_INVITED.slice(0, 8));
-    // The suffix from memberSinceBlock onward (5 bytes = 10 hex chars) is identical.
-    expect(GOLDEN_LIKED.slice(10)).toBe(GOLDEN_INVITED.slice(10));
-    // The lifetime field itself (byte 4) differs.
-    expect(GOLDEN_LIKED.slice(8, 10)).not.toBe(GOLDEN_INVITED.slice(8, 10));
-  });
-
-  it('the encoding is exactly the ten declared fields, no more', () => {
-    // Tag + 9 fields, one byte each at these values.
-    expect(serializeIdentityRecord(REC).length).toBe(10);
-  });
-
-  it('bytes missing a trailing field are REJECTED, not defaulted', () => {
-    // A record value without a field must fail loudly: a silent 0 default would
-    // mask exactly the fork the always-present rule exists to prevent. Under the
-    // positional layout the reader simply runs out of input — the fields are not
-    // optional, so there is nothing to be absent.
-    for (const truncated of [GOLDEN_SHORT, '802a07', '802a']) {
-      expect(() => deserializeIdentityRecord(Buffer.from(truncated, 'hex')), truncated)
-        .toThrow();
-    }
-  });
-
-  it('trailing bytes and non-minimal VLQ are both rejected (boundary check 2 and 3)', () => {
-    // `decodeStruct` gives the record the same four-step boundary check the box
-    // arm gets. Without the minimality step two distinct byte strings decode to
-    // one record — two AVL values for one state, which is a fork with no
-    // producer disagreement behind it.
-    expect(() => deserializeIdentityRecord(Buffer.from(GOLDEN_ZERO + 'ff', 'hex'))).toThrow();
-    // invitedAtBlock 0 in non-minimal two-byte VLQ (0x80 0x00) instead of one byte (0x00),
-    // with the remaining fields at zero to reach the full 11-byte length.
-    expect(() => deserializeIdentityRecord(Buffer.from('802a078000000000000000', 'hex'))).toThrow();
-  });
 
   it('two provers fed the same record put agree on the digest', () => {
     const { prover: p1 } = createAvlProver(db);

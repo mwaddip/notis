@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
 import type { UserId } from '@dagsocial/types';
-import type { IdentityRecord } from '../../src/store/identity-records.js';
+import type { IdentityRecord } from '@dagsocial/types';
 
 /**
  * The identity record store — the per-identity activity and decay clock
@@ -248,8 +248,9 @@ describe('getAllIdentityRecords (Spec G phase D)', () => {
     const { putIdentityRecord, getAllIdentityRecords } = await importAllFresh();
     initDb(':memory:');
 
-    // `.safeIntegers()` hands back bigints; a bigint reaching `serializeIdentityRecord`
-    // would CBOR-encode differently and move the digest.
+    // `.safeIntegers()` hands back bigints; the two heights carry `number`, so
+    // the store's row hand-back has to narrow them (TYPES_INTERFACE → Layout —
+    // IdentityRecord).
     putIdentityRecord(uidBytes(), { lastActivityBlock: 5, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     const [entry] = getAllIdentityRecords();

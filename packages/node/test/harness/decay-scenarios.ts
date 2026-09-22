@@ -1,4 +1,5 @@
-import type { DecayCfg, Scenario } from './decay-timeline.js';
+import type { DecayCfg } from '@dagsocial/types';
+import type { Scenario } from './decay-timeline.js';
 
 /**
  * The timelines the golden decay fixtures are captured from.

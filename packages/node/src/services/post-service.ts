@@ -2,11 +2,17 @@ import {
   computePostId,
   MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
-import type { PostCommit, KarmaBox, UtxoTransaction, AnyBox, ProtocolEra } from '@dagsocial/types';
+import type {
+  DecayCfg,
+  IdentityRecord,
+  PostCommit,
+  KarmaBox,
+  UtxoTransaction,
+  AnyBox,
+  ProtocolEra,
+} from '@dagsocial/types';
 import type { StoredPost } from '../store/posts.js';
 import type { VerifierDeps, VerificationResult } from './verifier.js';
-import type { DecayCfg } from './decay.js';
-import type { IdentityRecord } from '../store/identity-records.js';
 import { verifyPostBody } from '@dagsocial/validation';
 import { ClientError } from './client-error.js';
 import { emitPostReceived, emitPostValidated, emitPostIndexed } from '../journal.js';

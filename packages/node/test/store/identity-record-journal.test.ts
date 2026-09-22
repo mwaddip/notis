@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
-import { randomBytes, createHash } from 'node:crypto';
-import { IDENTITY_KEY_DOMAIN } from '@dagsocial/types';
-import type { UserId } from '@dagsocial/types';
+import { randomBytes } from 'node:crypto';
+import { identityRecordKey as identityRecordKeyFn } from '@dagsocial/types';
+import type { IdentityRecord, UserId } from '@dagsocial/types';
 import type { BlockJournal, RecordMutation } from '../../src/store/journal.js';
-import type { IdentityRecord } from '../../src/store/identity-records.js';
 
 /**
  * Identity records in the block journal, and their rollback
@@ -36,12 +35,12 @@ async function importJournalFresh() {
 }
 
 async function importRecordsFresh() {
-  return (await import('../../src/store/identity-records.js')) as {
+  const store = (await import('../../src/store/identity-records.js')) as {
     getIdentityRecord: (id: UserId) => IdentityRecord | null;
     putIdentityRecord: (id: UserId, r: IdentityRecord) => void;
     deleteIdentityRecord: (id: UserId) => void;
-    identityRecordKey: (id: UserId) => string;
   };
+  return { ...store, identityRecordKey: identityRecordKeyFn };
 }
 
 function uidBytes(): UserId {
@@ -121,24 +120,8 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
     expect(m.replaced).toEqual({ lastActivityBlock: 5, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
   });
 
-  it('the AVL key is the domain-tagged hash, not the raw identity bytes', async () => {
-    const { initDb } = await importDbFresh();
-    const { identityRecordKey } = await importRecordsFresh();
-    initDb(':memory:');
-
-    const id = uidBytes();
-    const expected = createHash('blake2b512')
-      .update(IDENTITY_KEY_DOMAIN)
-      .update(id)
-      .digest()
-      .subarray(0, 32)
-      .toString('hex');
-
-    expect(identityRecordKey(id)).toBe(expected);
-    // Raw bytes would let an attacker grind a pubkey colliding with a box id.
-    expect(identityRecordKey(id)).not.toBe(Buffer.from(id).toString('hex'));
-    expect(identityRecordKey(id)).toHaveLength(64);
-  });
+  // The AVL key's shape is pinned in `@dagsocial/types`' `identity-record.test.ts`
+  // (TYPES_INTERFACE → Identity record and karma valuation).
 
   it('deleteIdentityRecord never records, even with a journal open', async () => {
     const { initDb } = await importDbFresh();

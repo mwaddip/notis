@@ -139,7 +139,7 @@ async function importUtxo() {
 
 async function importIdentityRecords() {
   return (await import('../../src/store/identity-records.js')) as {
-    putIdentityRecord: (id: Uint8Array, record: import('../../src/store/identity-records.js').IdentityRecord) => void;
+    putIdentityRecord: (id: Uint8Array, record: import('@dagsocial/types').IdentityRecord) => void;
   };
 }
 

@@ -1,10 +1,9 @@
 import {
   MIN_FEE_RATE_PER_BYTE,
-  KARMA_DECAY_AMOUNT,
-  KARMA_MINIMUM,
   AVL_KEY_LENGTH,
   MAX_BLOCK_BODY_BYTES,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
+  decayCfgFor,
   profileFor,
 } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType, ProtocolEra } from '@dagsocial/types';
@@ -125,6 +124,10 @@ export function loadConfig(): Readonly<Config> {
   // onto a network it was not pointed at.
   const profile = profileFor((process.env['NETWORK_TYPE'] ?? 'testnet') as NetworkType);
 
+  // The karma decay cfg — the one derivation from the profile and the two
+  // universal constants (TYPES_INTERFACE → Identity record and karma valuation).
+  const decay = decayCfgFor(profile);
+
   const cfg: Config = {
     port: parseInt(process.env['PORT'] ?? '3000', 10),
     adminPort: parseInt(process.env['ADMIN_PORT'] ?? '3001', 10),
@@ -160,13 +163,12 @@ export function loadConfig(): Readonly<Config> {
     faucetPublicKey: profile.faucetPublicKey,
     inviteBondMin: profile.inviteBondMin,
     inviteBondMax: profile.inviteBondMax,
-    // Karma decay — per-network timescale from the profile, universal economics
-    // from the constants (ARCHITECTURE → Network Identity). None of these is
-    // readable from the environment.
-    karmaStaleThresholdBlocks: profile.karmaStaleThresholdBlocks,
-    karmaDecayIntervalBlocks: profile.karmaDecayIntervalBlocks,
-    karmaDecayAmount: KARMA_DECAY_AMOUNT,
-    karmaMinimum: KARMA_MINIMUM,
+    // Karma decay — the numbers `decay` above holds; none is readable from the
+    // environment.
+    karmaStaleThresholdBlocks: decay.staleThresholdBlocks,
+    karmaDecayIntervalBlocks: decay.decayIntervalBlocks,
+    karmaDecayAmount: decay.decayAmount,
+    karmaMinimum: decay.karmaMinimum,
     storageRentPeriodBlocks: profile.storageRentPeriodBlocks,
     maxReorgDepth: profile.maxReorgDepth,
     protocolVersionSchedule: profile.protocolVersionSchedule,

@@ -39,7 +39,7 @@ import type {
   AnyBox,
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
-import type { IdentityRecord } from '../../src/store/identity-records.js';
+import type { IdentityRecord } from '@dagsocial/types';
 import { config } from '../../src/config.js';
 
 // ---------------------------------------------------------------------------

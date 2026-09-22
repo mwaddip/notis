@@ -24,7 +24,8 @@ import {
   makeApplicableBlock,
   type Stored,
 } from '../helpers.js';
-import type { IdentityRecord } from '../../src/store/identity-records.js';
+import { identityRecordKey } from '@dagsocial/types';
+import type { IdentityRecord } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 
 type DbModule = {
@@ -168,7 +169,7 @@ describe('membership cascade across blocks', () => {
     utxo.insertBox(sock1Karma);
 
     const recordPuts = [root, sock1, sock2].map((id) => ({
-      key: records.identityRecordKey(id.userId),
+      key: identityRecordKey(id.userId),
       record: records.getIdentityRecord(id.userId)!,
     }));
     await activateProverOverStore(recordPuts);
@@ -245,7 +246,7 @@ describe('membership cascade across blocks', () => {
     utxo.insertBox(vouchBToC);
 
     const recordPuts = [a, b, c].map((id) => ({
-      key: records.identityRecordKey(id.userId),
+      key: identityRecordKey(id.userId),
       record: records.getIdentityRecord(id.userId)!,
     }));
     await activateProverOverStore(recordPuts);
@@ -313,7 +314,7 @@ describe('membership cascade across blocks', () => {
     utxo.insertBox(vouch);
 
     const recordPuts = [root, lapsed, target].map((id) => ({
-      key: records.identityRecordKey(id.userId),
+      key: identityRecordKey(id.userId),
       record: records.getIdentityRecord(id.userId)!,
     }));
     await activateProverOverStore(recordPuts);
@@ -375,7 +376,7 @@ describe('membership cascade across blocks', () => {
     utxo.insertBox(vouch);
 
     const recordPuts = [root, requalifier, target].map((id) => ({
-      key: records.identityRecordKey(id.userId),
+      key: identityRecordKey(id.userId),
       record: records.getIdentityRecord(id.userId)!,
     }));
     await activateProverOverStore(recordPuts);
@@ -419,7 +420,7 @@ describe('membership cascade across blocks', () => {
     utxo.insertBox(rootKarma);
 
     const recordPuts = [root, candidate].map((id) => ({
-      key: records.identityRecordKey(id.userId),
+      key: identityRecordKey(id.userId),
       record: records.getIdentityRecord(id.userId)!,
     }));
     await activateProverOverStore(recordPuts);

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { hexToBuf, profileFor } from '@dagsocial/types';
+import { hexToBuf, identityRecordKey, profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
 import { makeTestConfig, mineNextBlock, openAvlDb } from '../helpers.js';
 
@@ -148,7 +148,7 @@ describe('seedGenesisState', () => {
 
     const boxes = s.utxo.getUnspentBoxes();
     const records = s.records.getAllIdentityRecords().map((r) => ({
-      key: s.records.identityRecordKey(r.identityId),
+      key: identityRecordKey(r.identityId),
       record: r.record,
     }));
 
@@ -169,7 +169,7 @@ describe('seedGenesisState', () => {
     const boxes = s.utxo.getUnspentBoxes();
     expect(boxes.length).toBeGreaterThan(1);
     const records = s.records.getAllIdentityRecords().map((r) => ({
-      key: s.records.identityRecordKey(r.identityId),
+      key: identityRecordKey(r.identityId),
       record: r.record,
     }));
     const nr = s.records.getNetworkRecord();
@@ -433,7 +433,7 @@ describe('seedGenesisState — a store that is not empty', () => {
     const { root, s } = await seededRoot(':memory:');
     const boxes = s.utxo.getUnspentBoxes();
     const records = s.records.getAllIdentityRecords().map((r) => ({
-      key: s.records.identityRecordKey(r.identityId),
+      key: identityRecordKey(r.identityId),
       record: r.record,
     }));
     // devnet: karma, credit, proof, emission, karma_pool, plus backer stakes

@@ -1,9 +1,9 @@
 import { getDb } from './db.js';
 import { encode, decode } from 'cbor-x';
-import type { AnyBox, UserId } from '@dagsocial/types';
+import type { AnyBox, IdentityRecord, UserId } from '@dagsocial/types';
 // Type-only: erased at compile time, so this does not create a runtime cycle
 // with identity-records.ts, which imports the recording hook below.
-import type { IdentityRecord, NetworkRecord } from './identity-records.js';
+import type { NetworkRecord } from './identity-records.js';
 import type { UsernameRow, HolderRecord } from './usernames.js';
 
 // ---------------------------------------------------------------------------

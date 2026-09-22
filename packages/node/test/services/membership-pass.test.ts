@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import type Database from 'better-sqlite3';
-import { PROTOCOL_VERSION, VOUCH_KARMA_AMOUNT } from '@dagsocial/types';
+import { PROTOCOL_VERSION, VOUCH_KARMA_AMOUNT, identityRecordKey } from '@dagsocial/types';
 import type { UtxoTransaction, VouchBox } from '@dagsocial/types';
 import {
   makeTestIdentity,
@@ -260,7 +260,7 @@ describe('a root\'s invitee, for life', () => {
     utxo.insertBox(vouch);
 
     const recordPuts = [voucher, conferred].map((id) => ({
-      key: records.identityRecordKey(id.userId),
+      key: identityRecordKey(id.userId),
       record: records.getIdentityRecord(id.userId)!,
     }));
     await activateProverOverStore(recordPuts);
@@ -309,7 +309,7 @@ describe('a root\'s invitee, for life', () => {
     utxo.insertBox(karma);
 
     const recordPuts = [{
-      key: records.identityRecordKey(root.userId),
+      key: identityRecordKey(root.userId),
       record: records.getIdentityRecord(root.userId)!,
     }];
     await activateProverOverStore(recordPuts);

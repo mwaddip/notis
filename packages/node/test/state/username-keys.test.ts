@@ -2,7 +2,8 @@
 // other key for the same bytes.
 import { describe, it, expect } from 'vitest';
 import { usernameRecordKey, holderRecordKey } from '../../src/state/avl-prover.js';
-import { identityRecordKey, networkRecordKey } from '../../src/store/identity-records.js';
+import { networkRecordKey } from '../../src/store/identity-records.js';
+import { identityRecordKey } from '@dagsocial/types';
 
 describe('username AVL keys', () => {
   const sameBytes = Buffer.alloc(32, 0xaa);

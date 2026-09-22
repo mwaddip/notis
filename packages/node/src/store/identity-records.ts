@@ -1,116 +1,24 @@
 import { createHash } from 'node:crypto';
-import { IDENTITY_KEY_DOMAIN, NETWORK_KEY_DOMAIN } from '@dagsocial/types';
+import { NETWORK_KEY_DOMAIN, identityRecordKey } from '@dagsocial/types';
 import { getDb } from './db.js';
 import { isBlockJournalOpen, recordIdentityRecordPut, recordNetworkRecordPut } from './journal.js';
-import type { UserId } from '@dagsocial/types';
+import type { UserId, IdentityRecord } from '@dagsocial/types';
 
 /**
- * The per-identity decay clock — the second committed entity alongside boxes
- * (Spec G D4). Neither height that meets `insertBox` may feed it: a box's
- * `createdAtBlock` is creator-declared, so a backdated box would backdate its
- * owner's clock, and the `created_at_block` column is uncommitted
- * (NODE_INTERFACE → Populating the record). So the clock lives in committed
- * state:
- *
- *   stale       = (height − lastActivityBlock) >= staleThresholdBlocks
- *   owedPeriods = floor( (height − max(lastActivityBlock, lastDecayBlock)) / interval )
- *
- * `>=`, not `>`: an identity last active at `A` is stale iff
- * `A <= height − threshold`, i.e. `height − A >= threshold`. A `>` is off by
- * one; `decay.ts` carries the full argument.
+ * SQL and journal for the identity record (TYPES_INTERFACE → Identity record
+ * and karma valuation for the type, the AVL key and the codec).
  *
  * **Who populates this.** `recordKarmaActivity` bumps `lastActivityBlock`
  * from the open journal's height when a post transaction applies — the
  * transaction carries a `post` commit (NODE_INTERFACE → Populating the
- * record); `commitDecayClocks` bumps
- * `lastDecayBlock` when decay fires; and `ensureSystemKarmaBox` writes
- * genesis's own record, since it runs outside block application where the
- * choke point has no height to read.
+ * record); `commitDecayClocks` bumps `lastDecayBlock` when decay fires; and
+ * `ensureSystemKarmaBox` writes genesis's own record, since it runs outside
+ * block application where the choke point has no height to read.
  *
- * **Key type is `UserId`** — the raw 32 Ed25519 public-key bytes, and there is
- * deliberately no separate identity type. Box `owner`/`likerId`/`inviterId`/
- * `voucherId` are the same pubkey and all `UserId`, so key rotation would have
- * to move box ownership too: the two move together or not at all, and branding
- * two semantically identical things buys no safety while costing a cast at
- * every boundary.
- *
- * The SQL table keys on those raw bytes; the **AVL** key is derived from them
- * (see `identityRecordKey`). Both are total functions of the identity, so the
- * two representations cannot drift.
+ * The SQL table keys on the raw identity bytes (`UserId`); the AVL key is
+ * derived from them by `identityRecordKey` in `@dagsocial/types`. Both are
+ * total functions of the identity, so the two representations cannot drift.
  */
-export interface IdentityRecord {
-  /** u32 — bumped when the owner's post transaction applies. */
-  lastActivityBlock: number;
-  /** u32 — bumped when decay fires. */
-  lastDecayBlock: number;
-  /**
-   * u32 — the height an invite claim applied for this identity. `0` = never
-   * invited.
-   *
-   * **The probation clock, and only that.** The paired bond settles at
-   * `invitedAtBlock + INVITE_PROBATION_BLOCKS`, which is the whole of what this
-   * field decides — a bond therefore carries no probation fields of its own
-   * (NODE_INTERFACE → Identity Records). It is **not** the invite bar: an invite
-   * may only name a key that is not already an account, and *that* test is the
-   * existence of this record, not the value of this field.
-   *
-   * `0` stays reachable and stays meaningful — every identity that received
-   * karma without being invited carries it, the genesis committee and the
-   * faucet identity included — so the settlement sweep must exclude it rather than
-   * treat it as an ordinary height.
-   *
-   * Written ONLY by block application when a claim applies. Every other writer
-   * of this record carries the stored value through unchanged.
-   */
-  invitedAtBlock: number;
-  /**
-   * Likes this identity has received over its whole life — the bond settlement's
-   * only input, `min(floor(n / INVITE_BOND_VEST_PER_LIKES), bond.value)`.
-   *
-   * **Monotonic: incremented by per-block like settlement and decremented by
-   * nothing.** `like_records` is deliberately outside the `stateRoot`
-   * (NODE_INTERFACE → Like-records), so a consensus-critical settlement input
-   * cannot be sourced from it; the counter is the committed value instead. A
-   * withdrawal of the reply that earned the likes empties its content but
-   * leaves its like-records in place, so the counter is unaffected either way.
-   *
-   * `bigint` for the same two reasons the counter is: the value is consensus
-   * input to bigint arithmetic, and the row boundary (`safeIntegers`) hands back
-   * bigint — so no `Number()` coercion can appear in a settlement path. It takes
-   * `vlqU64`, which throws outside `[0, 2⁶⁴)` rather than colliding on a
-   * sentinel.
-   */
-  lifetimeLikesReceived: bigint;
-  /** u32 — 0 = never a member; else the height the bar was first met — the AGE, never reset. */
-  memberSinceBlock: number;
-  /** u32 — D(N) at first set, never reset; 0 on a root. */
-  memberBar: number;
-  /** u32 — live counted vouches naming this identity. */
-  memberVouches: number;
-  /** Likes received from members; never decremented. */
-  memberLikes: bigint;
-  /** u32 — bonds this identity has created; never decremented. */
-  invitesUsed: number;
-}
-
-/**
- * The record's **AVL** key: `blake2b512(IDENTITY_KEY_DOMAIN ‖ identityId)[0:32]`,
- * hex — never the raw `identityId`.
- *
- * Records and boxes share one 32-byte AVL keyspace, and an `identityId` is 32
- * *attacker-chosen* bytes (a public key): used raw, someone could grind a
- * keypair whose pubkey equals a live box id and collide the five entity kinds in
- * the tree. Hashing under a domain tag makes that infeasible, and is what makes
- * the kinds provably disjoint — by domain separation, not by luck.
- */
-export function identityRecordKey(identityId: UserId): string {
-  return createHash('blake2b512')
-    .update(IDENTITY_KEY_DOMAIN)
-    .update(identityId)
-    .digest()
-    .subarray(0, 32)
-    .toString('hex');
-}
 
 /** The record for an identity, or null if it has none yet. */
 export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
