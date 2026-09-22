@@ -15,8 +15,11 @@ import {
   identityRecordBytes,
   identityRecordFromBytes,
   identityRecordKey,
+  IDENTITY_RECORD_TAG,
   type IdentityRecord,
 } from '../src/identity-record.js';
+import { BOX_TYPE_TAGS, boxRecordBytes } from '../src/utxo.js';
+import type { CandidateOf, KarmaBox } from '../src/utxo.js';
 
 const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 
@@ -71,6 +74,47 @@ describe('identityRecordBytes / identityRecordFromBytes', () => {
 
     it('every field zero', () => {
       expect(hex(identityRecordBytes(ZERO))).toBe('80000000000000000000');
+    });
+
+    // The base record { 42, 7, 0, 0n, 0, 0, 0, 0n, 0 } is `802a0700000000000000`;
+    // toggling one field at a time isolates the byte it lives at, so a shift in
+    // field order would move that byte and this vector would notice
+    // (TYPES_INTERFACE → Layout — IdentityRecord).
+    const BASE: IdentityRecord = {
+      lastActivityBlock: 42,
+      lastDecayBlock: 7,
+      invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
+    };
+    const BASE_HEX = '802a0700000000000000';
+
+    it('invitedAtBlock 11 changes byte 3 alone against the base record', () => {
+      expect(hex(identityRecordBytes(BASE))).toBe(BASE_HEX);
+      const bytes = hex(identityRecordBytes({ ...BASE, invitedAtBlock: 11 }));
+      expect(bytes).toBe('802a070b000000000000');
+      expect(bytes.slice(0, 6)).toBe(BASE_HEX.slice(0, 6));   // bytes 0–2
+      expect(bytes.slice(6, 8)).toBe('0b');                    // byte 3
+      expect(bytes.slice(8, 20)).toBe(BASE_HEX.slice(8, 20)); // bytes 4–9
+    });
+
+    it('with invitedAtBlock 11, lifetimeLikesReceived 7n changes byte 4 alone', () => {
+      const bytes = hex(
+        identityRecordBytes({
+          ...BASE,
+          invitedAtBlock: 11,
+          lifetimeLikesReceived: 7n,
+        }),
+      );
+      expect(bytes).toBe('802a070b070000000000');
+      expect(bytes.slice(0, 6)).toBe(BASE_HEX.slice(0, 6));    // bytes 0–2
+      expect(bytes.slice(6, 8)).toBe('0b');                     // byte 3
+      expect(bytes.slice(8, 10)).toBe('07');                    // byte 4
+      expect(bytes.slice(10, 20)).toBe(BASE_HEX.slice(10, 20)); // bytes 5–9
     });
   });
 
@@ -136,6 +180,83 @@ describe('identityRecordBytes / identityRecordFromBytes', () => {
       const overflow: IdentityRecord = { ...ZERO, lifetimeLikesReceived: 1n << 64n };
       expect(() => identityRecordBytes(overflow)).toThrow();
     });
+
+    it('bytes missing a trailing field are refused, never defaulted', () => {
+      // Under the positional layout the reader runs out of input on a short
+      // record and throws (TYPES_INTERFACE → Layout — IdentityRecord). A silent
+      // `0` default would mask the always-written rule: two byte strings would
+      // decode to one record, which is two AVL values for one state — exactly
+      // the fork the four-part boundary check closes.
+      //
+      //  802a070b0000000000 — tag + eight fields, missing `invitesUsed`
+      //  802a07             — tag + two fields, then out of input
+      //  802a               — tag + one field, then out of input
+      for (const bytesHex of ['802a070b0000000000', '802a07', '802a']) {
+        expect(() =>
+          identityRecordFromBytes(new Uint8Array(Buffer.from(bytesHex, 'hex'))),
+        ).toThrow();
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The tag — outside the box-type range, high bit set
+  // -------------------------------------------------------------------------
+
+  it('IDENTITY_RECORD_TAG is 0x80 — outside the box-type range, high bit set, refuses a box record', () => {
+    // "Box" versus "not a box" is a single-bit test, and the range below the
+    // high bit stays open to `BOX_TYPE_TAGS` (NODE_INTERFACE → Entity kinds;
+    // TYPES_INTERFACE → Layout — Boxes). The tag is field 1 of the record's
+    // layout (TYPES_INTERFACE → Layout — IdentityRecord), so it is the first
+    // byte a decoder sees and the discriminator between the two kinds.
+    expect(IDENTITY_RECORD_TAG).toBe(0x80);
+    expect(IDENTITY_RECORD_TAG & 0x80).toBe(0x80);
+    expect(IDENTITY_RECORD_TAG).toBeGreaterThan(
+      Math.max(...Object.values(BOX_TYPE_TAGS)),
+    );
+    expect(identityRecordBytes(FULL)[0]).toBe(IDENTITY_RECORD_TAG);
+
+    // A karma-box record — `boxRecordBytes` of any karma candidate — begins with
+    // `enum8('karma') = 0x00`, which is below the high bit. The identity
+    // decoder rejects it as not an identity record.
+    const karma: CandidateOf<KarmaBox> = {
+      boxType: 'karma',
+      value: 100n,
+      createdAtBlock: 300,
+      owner: new Uint8Array(32).fill(0xaa),
+    };
+    const boxBytes = boxRecordBytes(karma, 'e'.repeat(64), 0);
+    expect(boxBytes[0]).toBe(BOX_TYPE_TAGS.karma);
+    expect(() => identityRecordFromBytes(boxBytes)).toThrow(
+      /not an identity record/i,
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // `lifetimeLikesReceived` — `vlqU64` is variable-width
+  // -------------------------------------------------------------------------
+
+  it('lifetimeLikesReceived is variable-width under vlqU64 — equal length below 128 is not a rule', () => {
+    // A width tracks the value's magnitude, and an assertion resting on equal
+    // lengths below 128 would pin a coincidence: `vlqU64` uses one byte for
+    // `[0, 128)` and grows a byte at every 2^7 step (TYPES_INTERFACE → Layout —
+    // IdentityRecord). The record's length is the sum of every field's width,
+    // so any goldens that compare lengths must state the values they hold at.
+    const len = (likes: bigint): number =>
+      identityRecordBytes({
+        lastActivityBlock: 42,
+        lastDecayBlock: 7,
+        invitedAtBlock: 0,
+        lifetimeLikesReceived: likes,
+        memberSinceBlock: 0,
+        memberBar: 0,
+        memberVouches: 0,
+        memberLikes: 0n,
+        invitesUsed: 0,
+      }).length;
+    expect(len(0n)).toBe(len(3n));
+    expect(len(127n)).toBe(len(0n));
+    expect(len(128n)).toBe(len(0n) + 1);
   });
 });
 
