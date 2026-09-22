@@ -2174,6 +2174,14 @@ pool — with the trigger being **touch**, never a per-block walk. See
 `decay.ts`. The read API reports the same valuation: `GET /karma/:userId` carries it as
 `effective` (→ UTXO queries).
 
+> ⚠ **AHEAD OF CODE (2026-09-22, the verified figures)** — the valuation function and its two helpers are
+> `services/decay.ts`' own today. **They are `@dagsocial/types`'** — `effectiveKarma`, `isIdentityStale`,
+> `owedPeriods`, `DecayCfg` and `decayCfgFor` (`TYPES_INTERFACE → Identity record and karma valuation`) — and
+> `decay.ts` keeps the execution alone: `deriveKarmaDecay`, the deps, the leg. `loadConfig` builds its `DecayCfg`
+> through `decayCfgFor(profile)` and the four sites that pass a cfg on pass the one it built. **One implementation**:
+> the engine, the read API and a light client reproducing `effective` from a proven face total and a proven record
+> call the same function, and an inline copy anywhere is the mirror defect class.
+
 The clock is the `IdentityRecord` (Store Interface → Identity Records):
 
 ```
@@ -3208,6 +3216,13 @@ read neither height that meets `insertBox` — a box's `createdAtBlock` is
 creator-declared, so a backdated box would backdate its owner's clock, and the
 `created_at_block` column is uncommitted. So the clock lives in committed state.
 
+> ⚠ **AHEAD OF CODE (2026-09-22, the verified figures)** — the type `IdentityRecord` and the key function
+> `identityRecordKey` are `store/identity-records.ts`' own today. **They are `@dagsocial/types`'**
+> (`TYPES_INTERFACE → Identity record and karma valuation`), as the layout is (`TYPES_INTERFACE → Layout —
+> IdentityRecord`), so that a light client derives the key it asks a proof for and decodes the value it is served with
+> the code the node runs. This section keeps what is the store's: the table, its functions, the writers, the
+> lifecycle, and what the fields mean — `store/identity-records.ts` imports the type and the key from `types`.
+
 ```
 IdentityRecord {
   lastActivityBlock: number     // u32 — starts at the claim height that creates the record; advanced when block application applies the owner's post transaction, thread or reply
@@ -3291,55 +3306,17 @@ functions of the identity, so the two representations cannot drift.
 
 #### Layout — IdentityRecord
 
-> **It lives here rather than in `TYPES_INTERFACE` because `IdentityRecord` is a `node` type
-> and `state/serialize-box.ts` is its only encoder** — but it uses the same writer vocabulary,
-> and `TYPES_INTERFACE` → Layout — Boxes governs the box arm of the same tree.
+> ⚠ **AHEAD OF CODE (2026-09-22, the verified figures)** — the layout's table and its domains stood here, with the
+> argument that `IdentityRecord` was a `node` type and `state/serialize-box.ts` its only encoder. **The layout is
+> `TYPES_INTERFACE → Layout — IdentityRecord`** and the encoder is `identityRecordBytes` / `identityRecordFromBytes` of
+> `@dagsocial/types` — byte for byte what `serializeIdentityRecord` / `deserializeIdentityRecord` write and read today —
+> so that a light client decodes a proven record with the code the node runs. `state/serialize-box.ts` keeps the
+> network, name and holder records and dispatches the identity kind (`0x80`, → Entity kinds) to types' codec.
 
-| # | Field | Encoding |
-|---|---|---|
-| 1 | tag | `u8` — **`0x80`**, the record discriminator (see "Entity kinds") |
-| 2 | `lastActivityBlock` | `vlqU` |
-| 3 | `lastDecayBlock` | `vlqU` |
-| 4 | `invitedAtBlock` | `vlqU` |
-| 5 | `lifetimeLikesReceived` | `vlqU64` |
-| 6 | `memberSinceBlock` | `vlqU` |
-| 7 | `memberBar` | `vlqU` |
-| 8 | `memberVouches` | `vlqU` |
-| 9 | `memberLikes` | `vlqU64` |
-| 10 | `invitesUsed` | `vlqU` |
-
-**The tag is part of the layout, not a wrapper around it** — the box arm works the same way, where
-`enum8(boxType)` is field 1 of `boxContentBytes` rather than a prefix bolted on outside it. One
-encoder, one byte string, no composition step where a caller could disagree about ordering.
-
-**Domains, and where they are established.** `lastActivityBlock`, `lastDecayBlock`,
-`invitedAtBlock` and `memberSinceBlock` are `u32` block heights, `memberBar`, `memberVouches` and
-`invitesUsed` are `u32` counts; `vlqU` is total *by sentinel*, so an out-of-domain value cannot
-panic the encoder — it **collides**, exactly as `createdAt` did in the header before 1f.
-`lifetimeLikesReceived` and `memberLikes` are `vlqU64` and `writeVlqU64OrThrow` **throws**
-outside `[0, 2⁶⁴)`; the domain belongs upstream of the encoder — the like counters are their only
-writers, they are unbounded by design and bounded only by the writer's `2⁶⁴`. One like per block for the life of the chain does not
-approach that, and the field is a **count**, never an amount — a saturating or wrapping write
-here would silently re-price every bond that settles afterwards. **A domain check at the encoder
-would be the band-aid; if the field ever gains a second writer, that writer owns the domain.**
-
-> ⚠ **The same encodable-versus-storable gap that narrowed box values applies here, one field over.**
-> `lifetimeLikesReceived` is `vlqU64` into a SQLite `INTEGER`, which is **signed**, so its real
-> ceiling is `2⁶³ − 1` and not the `2⁶⁴` above (TYPES_INTERFACE → "Box value domain"). **Left
-> unnarrowed deliberately**: it is a count bounded by like traffic rather than a value bounded by
-> conservation, so the unreachability argument is stronger here than it ever was for box values.
-> Recorded because the *reasoning* differs, not because the gap does.
-
-⚠ **Two cbor-era hazards on this record are retired by construction, and the field discipline is
-NOT.** Conditional presence and key order were both consensus-visible under cbor-x (§1a, §1b). A
-positional layout has no keys and no map header, so neither is expressible. **Every field from
-`invitedAtBlock` on must still always be written, zero included** — not because absence would
-fork the bytes any more, but because the fields are part of the record and a layout writes every
-field. Likewise `bigint` stays the type of `lifetimeLikesReceived` and `memberLikes`: under
-`vlqU64` a `number` and a
-`bigint` of equal value encode identically, so the type no longer guards the *bytes* — it guards
-the `safeIntegers` row boundary against a silent `Number()` coercion, which is a different and
-still-live reason.
+The AVL value is `identityRecordBytes(record)` — no wrapper, no tag of this package's own: the tag is field 1 of the
+layout, as `enum8(boxType)` is field 1 of a box record, and the four-part boundary check applies on the read
+(`TYPES_INTERFACE → The boundary check`). Every field is always written, zero included; the domains and the
+encodable-versus-storable gap on `lifetimeLikesReceived` are stated with the layout.
 
 | Function | Signature |
 |----------|-----------|
