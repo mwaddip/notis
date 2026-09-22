@@ -381,7 +381,7 @@ gates that last case behind its local-network permission. The faucet answers its
 `bash packages/web/scripts/build-release.sh`. Inside, `web/` is the bundle, `nginx.example.conf` a
 complete vhost excerpt, and `README.txt` the serving note.
 
-**The deployment is six values in the head of `web/index.html`**, and the release ships them set
+**The deployment is seven values in the head of `web/index.html`**, and the release ships them set
 for notis.fun's layout:
 
 ```html
@@ -390,15 +390,16 @@ for notis.fun's layout:
 <meta name="notis-faucet" content="/testnet/faucet">
 <meta name="notis-nodes" content='[]'>
 <meta name="notis-public" content="">
+<meta name="notis-network" content="">
 <meta property="og:image" content="https://notis.fun/web/og.png">
 ```
 
 They name the path the client is served under (opening and closing with `/`), the API's path on the
 same origin or any node's absolute origin, the faucet's on the same origin — empty for no faucet and
 no faucet button — a JSON list of API bases the client tries in order when no node preference is stored
-(empty on the web), the origin and base a copied post link should carry (empty means the page's own), and
-the preview picture's absolute URL (`<origin><base>og.png`). A host with another layout edits those six
-values and nothing else: every reference in the bundle is relative to the base. A reader can still point their own
+(empty on the web), the origin and base a copied post link should carry (empty means the page's own), the
+network the build is for (empty on the web — the hosted client carries no verifier), and the preview picture's
+absolute URL (`<origin><base>og.png`). A host with another layout edits those seven values and nothing else: every reference in the bundle is relative to the base. A reader can still point their own
 browser at another node from the settings window; the faucet is the build's value alone.
 
 Serve `web/` as static files with no SPA fallback — a path that is not a file is a 404. The one path
@@ -430,7 +431,12 @@ encrypted envelope at rest, the unlocked key in session memory that ends with th
 is signed there. Sending `$NOTIS` always asks in a prompt window; rep actions sign silently while unlocked,
 or ask too if you choose so in settings. The extension needs no hosted page and calls no home: it talks
 only to the node(s) you configure, starting from the seed list built into it — and to the testnet faucet when you
-ask it, after the browser grants that one origin at the press. **A Notis link lands in the extension**: a post's
+ask it, after the browser grants that one origin at the press. **It checks the chain it reads**: a NiPoPoW proof
+from the node you read and from the other nodes of the seed list — testnet's names two, `notis.fun` and
+`node02.notis.fun` — each verified against the network's own proof-of-work profile and compared. The dot in the
+corner is green only while blocks progress and that check holds; clay says what is wrong — one node could not be
+checked, a proof did not verify, another node's chain holds more work than the one you read. It warns and changes
+nothing: the node you read is yours to set. **A Notis link lands in the extension**: a post's
 link stays a plain `https` link to the website, and one that opens a tab of its own is taken into the extension's
 workspace — the setting *a Notis link opens: on the site · here* turns that off — while a link followed inside a
 page stays on the site, where `add to workspace` hands the thread over. For that the extension asks, at install,

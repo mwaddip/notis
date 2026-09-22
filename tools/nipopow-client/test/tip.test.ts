@@ -236,3 +236,168 @@ describe('tip resolution', () => {
     expect(oneEra.nodes[0]!.refuseReason).toContain('version');
   });
 });
+
+// WEB_INTERFACE → The extension → "The verified tip" — losing the comparison is not being
+// outworked; standing on another chain is. `behind` names the distance on the winner's chain.
+describe('NodeTipResult.behind', () => {
+  const profile = devnetProfile();
+
+  it('two nodes on one chain, same tip → both behind: 0', async () => {
+    const chain = buildMinedChain({ count: CHAIN_LEN });
+    const now = clockAfterChain(chain);
+    const nodeA = createFakeNode({ url: 'http://a:3000', chain, m: M, k: K });
+    const nodeB = createFakeNode({ url: 'http://b:3001', chain, m: M, k: K });
+
+    const combinedFetch = async (url: string) => {
+      if (url.startsWith('http://a:3000')) return nodeA.fetch(url);
+      return nodeB.fetch(url);
+    };
+
+    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, now, combinedFetch);
+    expect(result.nodes[0]!.behind).toBe(0);
+    expect(result.nodes[1]!.behind).toBe(0);
+  });
+
+  it('the first reads behind: d when it stands d = 1 blocks behind on the same chain', async () => {
+    const d = 1;
+    const chainFull = buildMinedChain({ count: CHAIN_LEN });
+    const chainShort = buildMinedChain({ count: CHAIN_LEN - d });
+    const now = clockAfterChain(chainFull);
+    const shortProofHex = proofHexForChain(chainShort, M, K);
+    const nodeA = createFakeNode({ url: 'http://a:3000', chain: chainShort, m: M, k: K, overrideProofHex: shortProofHex });
+    const nodeB = createFakeNode({ url: 'http://b:3001', chain: chainFull, m: M, k: K });
+
+    const combinedFetch = async (url: string) => {
+      if (url.startsWith('http://a:3000')) return nodeA.fetch(url);
+      return nodeB.fetch(url);
+    };
+
+    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, now, combinedFetch);
+    expect(result.winnerIndex).toBe(1);
+    expect(result.nodes[0]!.behind).toBe(d);
+    expect(result.nodes[1]!.behind).toBe(0);
+  });
+
+  it('the first reads behind: k − 1 when it stands the deepest a suffix reaches on the same chain', async () => {
+    const d = K - 1;
+    const chainFull = buildMinedChain({ count: CHAIN_LEN });
+    const chainShort = buildMinedChain({ count: CHAIN_LEN - d });
+    const now = clockAfterChain(chainFull);
+    const shortProofHex = proofHexForChain(chainShort, M, K);
+    const nodeA = createFakeNode({ url: 'http://a:3000', chain: chainShort, m: M, k: K, overrideProofHex: shortProofHex });
+    const nodeB = createFakeNode({ url: 'http://b:3001', chain: chainFull, m: M, k: K });
+
+    const combinedFetch = async (url: string) => {
+      if (url.startsWith('http://a:3000')) return nodeA.fetch(url);
+      return nodeB.fetch(url);
+    };
+
+    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, now, combinedFetch);
+    expect(result.winnerIndex).toBe(1);
+    expect(result.nodes[0]!.behind).toBe(d);
+    expect(result.nodes[1]!.behind).toBe(0);
+  });
+
+  it('the first reads behind: null when it stands k blocks behind — the suffix no longer reaches its tip', async () => {
+    const d = K;
+    const chainFull = buildMinedChain({ count: CHAIN_LEN });
+    const chainShort = buildMinedChain({ count: CHAIN_LEN - d });
+    const now = clockAfterChain(chainFull);
+    const shortProofHex = proofHexForChain(chainShort, M, K);
+    const nodeA = createFakeNode({ url: 'http://a:3000', chain: chainShort, m: M, k: K, overrideProofHex: shortProofHex });
+    const nodeB = createFakeNode({ url: 'http://b:3001', chain: chainFull, m: M, k: K });
+
+    const combinedFetch = async (url: string) => {
+      if (url.startsWith('http://a:3000')) return nodeA.fetch(url);
+      return nodeB.fetch(url);
+    };
+
+    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, now, combinedFetch);
+    expect(result.winnerIndex).toBe(1);
+    expect(result.nodes[0]!.behind).toBeNull();
+    expect(result.nodes[1]!.behind).toBe(0);
+  });
+
+  it('a node standing on another chain reads behind: null though the winner has more work', async () => {
+    const valA = new Uint8Array(32);
+    valA[0] = 1;
+    const valB = new Uint8Array(32);
+    valB[0] = 2;
+    // A is asked first, so a compareProofs 'incomparable' verdict keeps A as best; A carries the
+    // longer chain to make the "more work" branch of the property meaningful.
+    const chainA = buildMinedChain({ count: CHAIN_LEN + 5, validatorId: valA });
+    const chainB = buildMinedChain({ count: CHAIN_LEN, validatorId: valB });
+    const tipA = chainA.headers[chainA.headers.length - 1]!.createdAt;
+    const tipB = chainB.headers[chainB.headers.length - 1]!.createdAt;
+    const now = () => Math.max(tipA, tipB) + 1;
+
+    const nodeA = createFakeNode({ url: 'http://a:3000', chain: chainA, m: M, k: K });
+    const nodeB = createFakeNode({ url: 'http://b:3001', chain: chainB, m: M, k: K });
+
+    const combinedFetch = async (url: string) => {
+      if (url.startsWith('http://a:3000')) return nodeA.fetch(url);
+      return nodeB.fetch(url);
+    };
+
+    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, now, combinedFetch);
+    expect(result.winner).not.toBeNull();
+    expect(result.nodes[0]!.behind).toBe(0);
+    expect(result.nodes[1]!.behind).toBeNull();
+  });
+
+  it('an unverified node reads behind: null; with no verified node every behind is null', async () => {
+    const chain = buildMinedChain({ count: CHAIN_LEN });
+    const now = clockAfterChain(chain);
+    const nodeA = createFakeNode({ url: 'http://a:3000', chain, m: M, k: K });
+
+    const combinedFetch = async (url: string) => {
+      if (url.startsWith('http://a:3000')) return nodeA.fetch(url);
+      throw new TypeError('fetch failed');
+    };
+
+    const mixed = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, now, combinedFetch);
+    expect(mixed.nodes[0]!.behind).toBe(0);
+    expect(mixed.nodes[1]!.verified).toBe(false);
+    expect(mixed.nodes[1]!.behind).toBeNull();
+
+    const allDown = async (_url: string) => {
+      throw new TypeError('fetch failed');
+    };
+    const none = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, Date.now, allDown);
+    expect(none.winner).toBeNull();
+    expect(none.nodes.every(n => n.behind === null)).toBe(true);
+  });
+
+  it('a three-node fold measures each behind against the FINAL winner, not the interim best', async () => {
+    // The fold walks first → best = first; second is longer → best = second; third is longer → best = third.
+    // The first was folded out while second was best, but its `behind` is set against the third.
+    const d1 = 3;
+    const d2 = 1;
+    const chainFull = buildMinedChain({ count: CHAIN_LEN });
+    const chainD1 = buildMinedChain({ count: CHAIN_LEN - d1 });
+    const chainD2 = buildMinedChain({ count: CHAIN_LEN - d2 });
+    const now = clockAfterChain(chainFull);
+    const nodeA = createFakeNode({
+      url: 'http://a:3000', chain: chainD1, m: M, k: K, overrideProofHex: proofHexForChain(chainD1, M, K),
+    });
+    const nodeB = createFakeNode({
+      url: 'http://b:3001', chain: chainD2, m: M, k: K, overrideProofHex: proofHexForChain(chainD2, M, K),
+    });
+    const nodeC = createFakeNode({ url: 'http://c:3002', chain: chainFull, m: M, k: K });
+
+    const combinedFetch = async (url: string) => {
+      if (url.startsWith('http://a:3000')) return nodeA.fetch(url);
+      if (url.startsWith('http://b:3001')) return nodeB.fetch(url);
+      return nodeC.fetch(url);
+    };
+
+    const result = await resolveTip(
+      ['http://a:3000', 'http://b:3001', 'http://c:3002'],
+      M, K, profile, now, combinedFetch,
+    );
+    expect(result.winnerIndex).toBe(2);
+    expect(result.nodes[0]!.behind).toBe(d1);
+    expect(result.nodes[1]!.behind).toBe(d2);
+    expect(result.nodes[2]!.behind).toBe(0);
+  });
+});

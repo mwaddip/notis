@@ -1,6 +1,7 @@
 import { verifyProof, compareProofs, decodeNipopowProof } from '@dagsocial/nipopow';
 import type { NipopowProof, VerifyResult, CompareResult, PoPowHeader } from '@dagsocial/nipopow';
 import type { BlockHeader, NetworkProfile } from '@dagsocial/types';
+import { blockHash } from '@dagsocial/validation';
 import type { HttpFetch } from './http.js';
 import { fetchJson } from './http.js';
 import { verifierProfile } from './config.js';
@@ -11,6 +12,12 @@ export interface NodeTipResult {
   proof: NipopowProof | null;
   verifyResult: VerifyResult | null;
   refuseReason: string | null;
+  // NODE_INTERFACE → Nipopow — the route's documented answers, one code per class
+  refuseCode: 'unreachable' | 'too-short' | 'http' | 'invalid' | null;
+  // WEB_INTERFACE → The extension → "The verified tip" — blocks from this node's tip
+  // to the winner's on the winner's own chain; null on another chain, further back than
+  // the suffix reaches, or without a verified verdict.
+  behind: number | null;
 }
 
 export interface TipResult {
@@ -45,6 +52,8 @@ export async function resolveTip(
         proof: null,
         verifyResult: null,
         refuseReason: res.status === 0 ? `unreachable: ${res.body}` : `HTTP ${res.status}: ${res.body}`,
+        refuseCode: classifyNonOk(res.status, res.body),
+        behind: null,
       });
       continue;
     }
@@ -55,6 +64,8 @@ export async function resolveTip(
         proof: null,
         verifyResult: null,
         refuseReason: 'response missing proof field',
+        refuseCode: 'invalid',
+        behind: null,
       });
       continue;
     }
@@ -69,6 +80,8 @@ export async function resolveTip(
         proof: null,
         verifyResult: null,
         refuseReason: 'proof decode failed',
+        refuseCode: 'invalid',
+        behind: null,
       });
       continue;
     }
@@ -81,6 +94,8 @@ export async function resolveTip(
         proof,
         verifyResult: vr,
         refuseReason: `verify failed: ${vr.reason}${vr.index !== undefined ? ` at index ${vr.index}` : ''}`,
+        refuseCode: 'invalid',
+        behind: null,
       });
       continue;
     }
@@ -91,6 +106,8 @@ export async function resolveTip(
       proof,
       verifyResult: vr,
       refuseReason: null,
+      refuseCode: null,
+      behind: null,
     });
   }
 
@@ -122,6 +139,17 @@ export async function resolveTip(
   }
 
   const vr = best.verifyResult as VerifyResult & { ok: true };
+
+  // WEB_INTERFACE → The extension → "The verified tip" — measure each verified node's tip
+  // against the WINNER's suffix, not against the interim best; the suffix is the winner's
+  // last k headers, `[suffixHead.header, ...suffixTail]`.
+  const winnerSuffix: BlockHeader[] = [best.proof!.suffixHead.header, ...best.proof!.suffixTail];
+  for (const node of nodes) {
+    if (!node.verified) continue;
+    const nvr = node.verifyResult as VerifyResult & { ok: true };
+    node.behind = behindOnWinnerSuffix(nvr.tip, winnerSuffix);
+  }
+
   return {
     winner: best,
     winnerIndex: bestIdx,
@@ -130,6 +158,44 @@ export async function resolveTip(
     suffixHead: vr.suffixHead,
     splits,
   };
+}
+
+// WEB_INTERFACE → The extension → "The verified tip" — height narrows the suffix headers
+// to hash; the match is equal blockHash at that height, which is what puts the node's tip
+// on the winner's chain, and the count is the last suffix index minus the index found. A
+// null hash on either side is no match.
+function behindOnWinnerSuffix(nodeTip: BlockHeader, suffix: BlockHeader[]): number | null {
+  const nodeTipHash = blockHash(nodeTip);
+  if (nodeTipHash === null) return null;
+  for (let i = 0; i < suffix.length; i++) {
+    const h = suffix[i]!;
+    if (h.height !== nodeTip.height) continue;
+    const suffixHash = blockHash(h);
+    if (suffixHash === null) continue;
+    if (suffixHash === nodeTipHash) return suffix.length - 1 - i;
+  }
+  return null;
+}
+
+// NODE_INTERFACE → Nipopow — 404 with `{ error: 'chain too short' }` is the route's
+// answer while the chain is below `m + k`; any other 404 body (a proxy page, an older
+// node's `Cannot GET`) is a generic HTTP failure, never parsed as a chain state.
+function classifyNonOk(status: number, body: string): 'unreachable' | 'too-short' | 'http' {
+  if (status === 0) return 'unreachable';
+  if (status === 404) {
+    try {
+      const parsed: unknown = JSON.parse(body);
+      if (
+        parsed !== null && typeof parsed === 'object'
+        && (parsed as { error?: unknown }).error === 'chain too short'
+      ) {
+        return 'too-short';
+      }
+    } catch {
+      // fall through
+    }
+  }
+  return 'http';
 }
 
 function hexToBytes(hex: string): Uint8Array {

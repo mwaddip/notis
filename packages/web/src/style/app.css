@@ -438,7 +438,10 @@ header .spacer { flex: 1 1 auto; }
 .corner .led.fresh { background: var(--greenText); }
 .corner .led.stale { background: var(--clay); }
 .corner .led.down, .corner .led.none { background: var(--inkMute); }
+.corner .led.checking { background: var(--inkMute); }
+.corner .led.thin, .corner .led.refused { background: var(--clay); }
 .corner .tip { color: var(--inkMute); }
+.corner .tip.clay { color: var(--clay); }
 
 /* ---------- window body — the profile window's rows ---------- */
 .winbody { max-width: 660px; }

@@ -23,7 +23,7 @@ echo "==> Building $PKG.zip"
 pnpm --filter '@dagsocial/web^...' build
 
 cd packages/web
-VITE_PUBLIC_ORIGIN=https://notis.fun VITE_WEB_BASE=/web/ VITE_API_BASE=/testnet/api VITE_FAUCET_BASE=/testnet/faucet VITE_NODES="[]" VITE_PUBLIC="" npx vite build
+VITE_PUBLIC_ORIGIN=https://notis.fun VITE_WEB_BASE=/web/ VITE_API_BASE=/testnet/api VITE_FAUCET_BASE=/testnet/faucet VITE_NODES="[]" VITE_PUBLIC="" VITE_NETWORK="" npx vite build
 
 # ---------------------------------------------------------------------------
 # Check the build
@@ -40,6 +40,8 @@ grep -q "name=\"notis-nodes\" content='\[\]'" "$SHELL_FILE" \
   || { echo "FAIL: notis-nodes meta missing or wrong (web build: empty JSON array)"; exit 1; }
 grep -q 'name="notis-public" content=""' "$SHELL_FILE" \
   || { echo "FAIL: notis-public meta missing or wrong (web build: empty)"; exit 1; }
+grep -q 'name="notis-network" content=""' "$SHELL_FILE" \
+  || { echo "FAIL: notis-network meta missing or wrong (web build: empty — no verifier)"; exit 1; }
 grep -q 'property="og:image" content="https://notis.fun/web/og.png"' "$SHELL_FILE" \
   || { echo "FAIL: og:image meta missing or wrong"; exit 1; }
 [ -f dist/og.png ] || { echo "FAIL: dist/og.png missing"; exit 1; }
@@ -68,6 +70,16 @@ fi
 if grep -Fnq "chrome." dist/assets/*.js; then
   echo "FAIL: chrome.* reference found in the web bundle (extension code leaked into the zip)"
   grep -Fn "chrome." dist/assets/*.js | head -5
+  exit 1
+fi
+
+# The web bundle is handed no verifier — WEB_INTERFACE → "The build check
+# that keeps the web bundle honest". `nipopow/proof` is the verifier's one
+# request path (NODE_INTERFACE → Nipopow), so a stray chunk that pulled the
+# verifier into the page script surfaces as a hit here.
+if grep -Fnq "nipopow/proof" dist/assets/*.js; then
+  echo "FAIL: nipopow/proof reference found in the web bundle (a verifier leaked into the zip)"
+  grep -Fn "nipopow/proof" dist/assets/*.js | head -5
   exit 1
 fi
 

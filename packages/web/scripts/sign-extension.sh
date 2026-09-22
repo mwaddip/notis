@@ -218,11 +218,11 @@ do_submit() {
 
   # Clean build from the archive: the two commands REVIEWERS.md names,
   # with the caller's build-time variables unset — VITE_NODES, VITE_FAUCET_BASE,
-  # VITE_PUBLIC, VITE_PUBLIC_ORIGIN and NOTIS_EXTENSION_KEY.
+  # VITE_PUBLIC, VITE_PUBLIC_ORIGIN, VITE_NETWORK and NOTIS_EXTENSION_KEY.
   echo "==> Clean build from $archive_root"
   (
     cd "$archive_root"
-    unset VITE_NODES VITE_FAUCET_BASE VITE_PUBLIC VITE_PUBLIC_ORIGIN NOTIS_EXTENSION_KEY
+    unset VITE_NODES VITE_FAUCET_BASE VITE_PUBLIC VITE_PUBLIC_ORIGIN VITE_NETWORK NOTIS_EXTENSION_KEY
     pnpm install --frozen-lockfile --filter '@dagsocial/web...'
     bash packages/web/scripts/build-extension.sh
   )
