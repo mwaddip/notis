@@ -2,7 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 
 // The exported types are checked at compile time by this file's own import.
 import type {
-  TipResult, NodeTipResult, BoxesResult, BoxVerdict, BoxClass, BoxStatus,
+  TipResult, NodeTipResult,
+  ListedBox, Listing, ListingResult,
+  Anchor, FigureStatus, FigureBox, RecordResult, LedgerSums, FiguresResult,
   HttpFetch, VerifyProfile,
 } from '../src/lib.js';
 
@@ -18,9 +20,15 @@ describe('library entry', () => {
     expect(stderrSpy).not.toHaveBeenCalled();
     expect(argvGet).not.toHaveBeenCalled();
 
-    // The runtime exports are exactly these three; the eight types above are checked
-    // at compile time and carry no runtime name.
-    expect(Object.keys(lib).sort()).toEqual(['proveBoxes', 'resolveTip', 'verifierProfile']);
+    // Runtime exports — the value names, sorted. The 12 types above are
+    // checked at compile time and carry no runtime name.
+    expect(Object.keys(lib).sort()).toEqual([
+      'fetchListing',
+      'proveBoxes',
+      'proveFigures',
+      'resolveTip',
+      'verifierProfile',
+    ]);
 
     exitSpy.mockRestore();
     stderrSpy.mockRestore();
@@ -28,17 +36,24 @@ describe('library entry', () => {
   });
 
   it('the exported types are usable from outside', () => {
-    // A no-op that exists to reference every type in a value position, so tsc verifies
-    // the export list against tip.ts, boxes.ts, config.ts, http.ts.
+    // A no-op that exists to reference every type in a value position, so tsc
+    // verifies the export list against tip.ts, boxes.ts, config.ts, http.ts.
     const _t: TipResult | null = null;
     const _n: NodeTipResult | null = null;
-    const _b: BoxesResult | null = null;
-    const _v: BoxVerdict | null = null;
-    const _c: BoxClass | null = null;
-    const _s: BoxStatus | null = null;
+    const _lb: ListedBox | null = null;
+    const _l: Listing | null = null;
+    const _lr: ListingResult | null = null;
+    const _a: Anchor | null = null;
+    const _fs: FigureStatus | null = null;
+    const _fb: FigureBox | null = null;
+    const _rr: RecordResult | null = null;
+    const _ls: LedgerSums | null = null;
+    const _fr: FiguresResult | null = null;
     const _f: HttpFetch | null = null;
     const _p: VerifyProfile | null = null;
-    void _t; void _n; void _b; void _v; void _c; void _s; void _f; void _p;
+    void _t; void _n; void _lb; void _l; void _lr; void _a;
+    void _fs; void _fb; void _rr; void _ls; void _fr;
+    void _f; void _p;
     expect(true).toBe(true);
   });
 });
