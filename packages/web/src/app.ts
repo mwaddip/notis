@@ -29,6 +29,7 @@ import { renderKarmaField, renderInvitesRow, renderUsernameRow } from './view/pr
 import { renderCreditsRow, resetCreditsSendForm, type ResolvedRecipient } from './view/wallet';
 import { cornerState, renderCorner, CORNER_POLL_MS, type CornerState } from './view/corner';
 import type { TipVerdict } from './model/tip-verdict';
+import type { Anchor } from './model/state';
 import type { Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
@@ -233,6 +234,12 @@ export class App {
   // returns; a run in flight is dropped by a later generation.
   private verifier: TipVerifier | null;
   private tipVerdict: TipVerdict | null | undefined;
+  // The reading node's own verified headers (WEB_INTERFACE → The extension →
+  // "The verified figures"). Non-null when and only when tipVerdict is
+  // `verified`; every other verdict — and every run before its first return —
+  // leaves this null. Written beside tipVerdict, cleared beside it. Read from
+  // outside the class only; ctx() does not carry it.
+  tipAnchor: Anchor | null = null;
   private verifyTimer: ReturnType<typeof setInterval> | null = null;
   private lastVerifyBeganAt: number | null = null;
   private verifyInFlight = false;
@@ -1658,7 +1665,7 @@ export class App {
   private async reconcileGrantEntry(entry: PendingEntry, tip: number): Promise<void> {
     let karma;
     try {
-      karma = await this.client.karma(entry.postId);
+      karma = await this.readOwnKarma(entry.postId);
     } catch {
       return; // a failed read keeps the entry; the next tick retries
     }
@@ -2046,7 +2053,7 @@ export class App {
     if (cur === null) return;
     try {
       const [karma, status, vouched, escrow, bonds, ownName] = await Promise.all([
-        this.client.karma(cur.pubKeyHex),
+        this.readOwnKarma(cur.pubKeyHex),
         this.client.status(),
         this.readVouchSet(cur.pubKeyHex),
         this.readEscrow(cur.pubKeyHex),
@@ -2084,6 +2091,43 @@ export class App {
       after = page.next;
     }
     return { userId: first.userId, total: first.total, boxes, boxCount: boxes.length, next: null };
+  }
+
+  /** Read the whole /karma for a key, following `next` to the end
+   *  (WEB_INTERFACE → "Paging is keyset, never offset"). The row's number is
+   *  the first page's `effective`; the figures verifier will prove the whole
+   *  listing (WEB_INTERFACE → The extension → "The verified figures"). Every
+   *  field but `boxes` / `boxCount` / `next` is the identity's, the same on
+   *  every page (NODE_INTERFACE → UTXO queries), so the first page's values
+   *  stand. */
+  private async readOwnKarma(key: string): Promise<KarmaResult> {
+    const first: KarmaResult = await this.client.karma(key, {});
+    const boxes = [...first.boxes];
+    let after: string | null = first.next;
+    while (after !== null) {
+      const page: KarmaResult = await this.client.karma(key, { after });
+      for (const b of page.boxes) boxes.push(b);
+      after = page.next;
+    }
+    return {
+      userId: first.userId,
+      total: first.total,
+      effective: first.effective,
+      boxes,
+      boxCount: boxes.length,
+      next: null,
+      lastActivityBlock: first.lastActivityBlock,
+      lastDecayBlock: first.lastDecayBlock,
+      lifetimeLikesReceived: first.lifetimeLikesReceived,
+      memberSinceBlock: first.memberSinceBlock,
+      memberBar: first.memberBar,
+      memberVouches: first.memberVouches,
+      memberLikes: first.memberLikes,
+      invitesUsed: first.invitesUsed,
+      member: first.member,
+      invitesAvailable: first.invitesAvailable,
+      height: first.height,
+    };
   }
 
   /** The mark's gates read `viewerTip`, so it must follow every height the client
@@ -2693,23 +2737,26 @@ export class App {
     this.verifyInFlight = true;
     const verifier = this.verifier;
     void verifier.run(readingBase).then(
-      (verdict) => {
-        // A late verdict under an older generation never touches the flag or
+      (run) => {
+        // A late run under an older generation never touches the flag or
         // the render — the new run's own resolver owns them.
         if (gen !== this.verifyGen) return;
         this.verifyInFlight = false;
-        this.tipVerdict = verdict;
+        this.tipVerdict = run.verdict;
+        this.tipAnchor = run.anchor;
         this.renderCornerNow();
       },
       (e) => {
         // A run that throws clears the verdict to `null` under the current
         // generation, so the corner reads *checking* (WEB_INTERFACE → The
         // extension → "The verified tip"). One console.error; a stale
-        // rejection touches nothing but the log.
+        // rejection touches nothing but the log. The anchor drops with the
+        // verdict (→ "The verified figures").
         console.error(e);
         if (gen !== this.verifyGen) return;
         this.verifyInFlight = false;
         this.tipVerdict = null;
+        this.tipAnchor = null;
         this.renderCornerNow();
       },
     );
@@ -2734,6 +2781,7 @@ export class App {
       this.verifyGen += 1;
       this.verifyInFlight = false;
       this.tipVerdict = null;
+      this.tipAnchor = null;
     }
     this.renderCornerNow();
     void this.cornerTick();
@@ -2875,7 +2923,7 @@ export class App {
         if (outcome === 'landed') {
           // The line re-reads /karma for the new invitesAvailable, in place.
           this.inviteFlight = null;
-          if (cur !== null) this.profileKarma = await this.client.karma(cur.pubKeyHex);
+          if (cur !== null) this.profileKarma = await this.readOwnKarma(cur.pubKeyHex);
         } else {
           this.inviteFlight = { stage: 'expired', expiresAtHeight: entry.expiresAtHeight };
         }
@@ -2892,7 +2940,7 @@ export class App {
           this.ownName = held;
           this.ownNameLoaded = true;
           this.usernameFlight = null;
-          if (cur !== null) this.profileKarma = await this.client.karma(cur.pubKeyHex);
+          if (cur !== null) this.profileKarma = await this.readOwnKarma(cur.pubKeyHex);
         } else {
           this.usernameFlight = {
             stage: 'expired',

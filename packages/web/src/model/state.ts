@@ -5,6 +5,8 @@ import type { Flight } from '../view/card';
 import type { YourVouch } from '../view/author';
 import type { SignResult } from '../wallet/submit';
 import type { TipVerdict } from './tip-verdict';
+import type { Anchor } from '@dagsocial/nipopow-client';
+export type { Anchor };
 
 // The read surface's runtime state, and the handler contract the pure view
 // modules render against. Types only — no cycle between controller and views.
@@ -268,7 +270,13 @@ export interface AppIdentity {
  *  and the other bases of the seed list (WEB_INTERFACE → The extension →
  *  "The verified tip"). The App holds an implementation only in the extension
  *  build; the web build is handed none. `run` takes the reading base at the
- *  moment the trigger fires and answers a verdict. */
+ *  moment the trigger fires and answers a verdict and — under `verified`
+ *  alone — the reading node's own headers, for the figures verifier to prove
+ *  boxes against (→ "The verified figures"). */
+export interface TipRun {
+  verdict: TipVerdict;
+  anchor: Anchor | null;
+}
 export interface TipVerifier {
-  run(readingBase: string): Promise<TipVerdict>;
+  run(readingBase: string): Promise<TipRun>;
 }
