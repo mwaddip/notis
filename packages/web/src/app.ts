@@ -1,5 +1,5 @@
 import { NodeClient, type Api } from './api/client';
-import type { PostJson, WithdrawnJson, FeedRow, PostResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
+import type { PostJson, WithdrawnJson, FeedRow, FeedResult, PostResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
 import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE } from '@dagsocial/types';
 import type { Mode } from './mode';
 import type { Tabs } from './tabs';
@@ -166,6 +166,17 @@ function emptyFeedState(): FeedState {
   return { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null };
 }
 
+/** The rows a ↻ lands on. One that reconnected puts its new rows on top of the
+ *  rows standing as it lands, deduped, so a landing or a `more` that wrote
+ *  during its pages keeps what it wrote; one that never reconnected answers its
+ *  own window, and its cursor with it (reconcileNewer). */
+function landRefresh(standing: PostJson[], r: { posts: PostJson[]; next: string | null | undefined; newCount: number }): PostJson[] {
+  if (r.next !== undefined) return r.posts;
+  const fresh = r.posts.slice(0, r.newCount);
+  const have = new Set(fresh.map((p) => p.id));
+  return [...fresh, ...standing.filter((p) => !have.has(p.id))];
+}
+
 /** When a read of the reader's own listing began: the anchor sequence then, and
  *  whether an anchor stood. A run proves a listing read after its anchor and
  *  never one read before it (WEB_INTERFACE → The extension → "The verified
@@ -174,6 +185,11 @@ interface ListingStamp {
   seq: number;
   anchored: boolean;
 }
+
+/** The pieces of the reader's own state, each held with the order the read that
+ *  answered it began in: the two listings, /status, the vouch set with its
+ *  escrow, the bonds and the reader's own name. */
+type ReaderPiece = 'karma' | 'credits' | 'status' | 'vouches' | 'bonds' | 'name';
 
 export class App {
   private state: AppState;
@@ -282,8 +298,30 @@ export class App {
   // (dropReaderState) and move the generation. Every read of it captures the
   // generation before its first await and writes nothing once it has moved, so
   // an answer for the node or the key before never lands after the drop
-  // (WEB_INTERFACE → The settings window, → The identity module).
+  // (WEB_INTERFACE → The settings window, → The identity module). The feed,
+  // thread and author-posts reads capture it as well: a node change drops their
+  // rows, and an identity change reads them again with the new viewer.
   private readerGen = 0;
+  // The order reads of the reader's own state began in, and for each piece of it
+  // the read whose answer it holds: an answer whose read began before the held
+  // answer's read never replaces it, whichever lands last. The anchor stamp
+  // decides what a figures run may prove; this decides which answer a row holds.
+  // dropReaderState forgets the held reads with the answers.
+  private readsBegun = 0;
+  private heldRead = new Map<ReaderPiece, number>();
+  // The posts whose withdrawal the client has seen land, each with the marker
+  // the landing read. A withdrawal is final, the author's one act over a post
+  // (ARCHITECTURE → Withdrawal), so an answer that shows one of these live is
+  // older than the landing, whatever it is: every write of rows keeps such a
+  // root out of a list and renders such a reply as its withdrawn card
+  // (WEB_INTERFACE → The withdrawn state). Kept across a node or an identity
+  // change, bounded by the session's own withdrawals.
+  private withdrawnSeen = new Map<string, WithdrawnJson>();
+  // A like's landing is not final: it stamps the row it wrote with the order it
+  // landed in, and a read that began before it keeps that row over its answer's
+  // (keeper).
+  private landings = 0;
+  private landedAt = new WeakMap<FeedRow, number>();
   // Membership state (WEB_INTERFACE → The identity display). The reader's vouch
   // set read from the node, the escrow gate, the optimistic overlay before a
   // vouch's 2xx, the tip the gates read, and the two window kinds' data. The
@@ -1101,16 +1139,17 @@ export class App {
   }
 
   // -------------------------------------------------------------------------
-  // Row intake — the post index (author lookup for a pane's spine) and the
-  // vouch-count cache: every rendered row carries its author's count, live or
-  // withdrawn, so the cache fills as pages land, no per-author read
-  // (WEB_INTERFACE → The identity display).
+  // Row intake — the post index, every live row a read has answered, by id, from
+  // which a thread window's bar takes its author while the thread loads; a
+  // fetched row put in place of the one the client holds, wherever it holds it;
+  // and what every write of rows keeps: a withdrawal the client saw land, and a
+  // like that landed after the read began.
   // -------------------------------------------------------------------------
 
   private indexRows(rows: Array<PostJson | WithdrawnJson | null>): void {
     for (const row of rows) {
       if (!row) continue;
-      if (!('kind' in row)) this.state.posts.set(row.id, row);
+      if (!('kind' in row) && !this.withdrawnSeen.has(row.id)) this.state.posts.set(row.id, row);
     }
   }
 
@@ -1119,6 +1158,7 @@ export class App {
    *  surface that re-renders next draws the node's row, not the stale one. */
   private applyFetchedRow(fetched: PostResult | null): void {
     if (!fetched || 'kind' in fetched) return;
+    this.stampLanding(fetched);
     const id = fetched.id;
     this.state.posts.set(id, fetched);
     const fi = this.state.feed.posts.findIndex((p) => p.id === id);
@@ -1136,6 +1176,35 @@ export class App {
     }
   }
 
+  /** A like's landing wrote this row where the client holds it: stamp it with
+   *  the order it landed in, which a read that began before it keeps (keeper). */
+  private stampLanding(row: FeedRow): void {
+    this.landings += 1;
+    this.landedAt.set(row, this.landings);
+  }
+
+  /** A list page's rows the list may hold: live, and none whose withdrawal the
+   *  client saw land — a list holds live rows only (WEB_INTERFACE → The
+   *  withdrawn state). */
+  private liveRows(rows: FeedRow[]): PostJson[] {
+    return rows.filter(isLivePost).filter((r) => !this.withdrawnSeen.has(r.id));
+  }
+
+  /** A thread row as the client knows it: a post whose withdrawal it saw land
+   *  is that withdrawal's marker, whatever the answer showed. */
+  private known(row: FeedRow): FeedRow {
+    return this.withdrawnSeen.get(row.id) ?? row;
+  }
+
+  /** For a read that began when `landings` stood at `since`: each answered row
+   *  a like landed on since then, among the rows the client holds, keeps the
+   *  landed row — the read may predate the landing. */
+  private keeper<T extends FeedRow>(standing: readonly T[], since: number): (row: T) => T {
+    const landed = new Map<string, T>();
+    for (const s of standing) if ((this.landedAt.get(s) ?? 0) > since) landed.set(s.id, s);
+    return (row) => landed.get(row.id) ?? row;
+  }
+
   // -------------------------------------------------------------------------
   // Feed actions
   // -------------------------------------------------------------------------
@@ -1143,65 +1212,93 @@ export class App {
   private async loadFeed(): Promise<void> {
     if (this.standalone) return;
     const feed = this.state.feed;
+    // A page read for the node or the viewer before writes nothing: the change
+    // that moved the generation reads the feed again itself.
+    const gen = this.readerGen;
+    const since = this.landings;
     feed.loading = true;
     feed.error = null;
     this.renderFeed();
     try {
       const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true);
-      feed.posts = res.posts.filter(isLivePost);
-      feed.pending = this.dedupeOwn(res.pending.filter(isLivePost));
-      feed.next = res.next;
-      feed.loaded = true;
-      feed.loading = false;
-      this.indexRows([...res.posts, ...res.pending]);
+      if (gen !== this.readerGen) return;
+      this.takeFeedPage(res, since);
     } catch (e) {
+      if (gen !== this.readerGen) return;
       // No stored preference and a seed list — walk it, adopting the first one
       // that answers, for the session only (WEB_INTERFACE → "The client is
       // served from the node's own origin"). When none answers, the friendly
-      // line names the state.
+      // line names the state. An adoption moves the generation, and its page
+      // lands under the generation the adoption opened.
       if (readStore(KEY_NODE) === null && BUILD_NODES.length > 0) {
-        const walked = await this.walkSeedList();
+        const walked = await this.walkSeedList(gen);
         if (walked !== null) {
-          feed.posts = walked.res.posts.filter(isLivePost);
-          feed.pending = this.dedupeOwn(walked.res.pending.filter(isLivePost));
-          feed.next = walked.res.next;
-          feed.loaded = true;
-          feed.loading = false;
-          this.indexRows([...walked.res.posts, ...walked.res.pending]);
-          this.renderFeed();
-          return;
+          if (walked.gen !== this.readerGen) return;
+          this.takeFeedPage(walked.res, since);
+        } else {
+          if (gen !== this.readerGen) return;
+          this.dropFeedRows();
+          feed.error = 'no node answered — set one in settings';
         }
-        feed.loading = false;
-        feed.error = 'no node answered — set one in settings';
       } else {
-        feed.loading = false;
+        this.dropFeedRows();
         feed.error = msg(e);
       }
     }
     this.renderFeed();
   }
 
-  /** Adopt the first seed after `prefs.node` that answers /status. In-memory,
+  /** A first page, read from when `landings` stood at `since`, replaces the
+   *  feed's rows and its cursor — its live rows, a like that landed since keeping
+   *  its row (keeper). */
+  private takeFeedPage(res: FeedResult, since: number): void {
+    const feed = this.state.feed;
+    feed.posts = this.liveRows(res.posts).map(this.keeper(feed.posts, since));
+    feed.pending = this.dedupeOwn(res.pending.filter(isLivePost));
+    feed.next = res.next;
+    feed.loaded = true;
+    feed.loading = false;
+    this.indexRows([...res.posts, ...res.pending]);
+  }
+
+  /** Empty the feed's rows — the posts, the mempool rows, the cursor and the
+   *  reports — in the object every feed read writes into. A node change drops
+   *  them before its re-read (WEB_INTERFACE → The settings window), and a first
+   *  page that fails leaves none: the rows it was to replace are the node
+   *  before's, or carry the viewer before's marks, which a ↻ never re-reads
+   *  (WEB_INTERFACE → "An identity change takes effect at once"). */
+  private dropFeedRows(): void {
+    Object.assign(this.state.feed, emptyFeedState());
+  }
+
+  /** Adopt the first seed after `prefs.node` whose feed answers. In-memory,
    *  never stored — the list keeps governing across the session
-   *  (WEB_INTERFACE → "The client is served from the node's own origin"). */
-  private async walkSeedList(): Promise<{ base: string; res: Awaited<ReturnType<Api['feed']>> } | null> {
+   *  (WEB_INTERFACE → "The client is served from the node's own origin"). A
+   *  node or identity change during the walk ends it adopting nothing: that
+   *  change reads the feed itself, and a node the settings row set is never
+   *  overridden by a seed. An adoption answers its page with the generation it
+   *  opened. */
+  private async walkSeedList(gen: number): Promise<{ res: FeedResult; gen: number } | null> {
     const seen = new Set([prefs.node]);
     for (const base of BUILD_NODES) {
       if (seen.has(base)) continue;
       seen.add(base);
       const probe = new NodeClient(() => base);
+      let res: FeedResult;
       try {
-        const res = await probe.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true);
-        prefs.node = base; // session only — no writeStore.
-        // The corner's tip and, where the build carries one, the verified tip
-        // are per reading node (WEB_INTERFACE → The status corner, → The
-        // extension → "The verified tip"): the shared method drops them and
-        // reads the adopted node at once.
-        this.onReadingNodeChanged();
-        return { base, res };
+        res = await probe.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true);
       } catch {
-        // try the next entry
+        if (gen !== this.readerGen) return null;
+        continue; // try the next entry
       }
+      if (gen !== this.readerGen) return null;
+      prefs.node = base; // session only — no writeStore.
+      // The corner's tip and, where the build carries one, the verified tip
+      // are per reading node (WEB_INTERFACE → The status corner, → The
+      // extension → "The verified tip"): the shared method drops them and
+      // reads the adopted node at once.
+      this.onReadingNodeChanged();
+      return { res, gen: this.readerGen };
     }
     return null;
   }
@@ -1209,48 +1306,73 @@ export class App {
   private async refreshFeed(): Promise<void> {
     if (this.standalone) return;
     const feed = this.state.feed;
+    // A ↻ read for the node or the viewer before writes nothing: the change
+    // that moved the generation reads the feed again itself.
+    const gen = this.readerGen;
     this.clearSettledFeed();
     await this.refreshTip(); // a ↻ re-reads the tip, so a held mark can re-enable
+    if (gen !== this.readerGen) return;
+    // A feed holding no first page reads one: a ↻ never pages an empty feed to
+    // the cap.
+    if (!feed.loaded) return this.loadFeed();
     try {
       // The reconnection paging lives in reconcileNewer; this fetches each page
       // and takes the mempool from page 0 (the only call with a null cursor).
+      // The rows land together once the last page has answered; a page offers
+      // its live rows alone (liveRows).
+      const rows: FeedRow[] = [];
+      let pending: FeedRow[] = [];
       const r = await reconcileNewer(
         feed.posts,
         async (after) => {
           const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer(), undefined, true);
-          this.indexRows([...res.posts, ...res.pending]);
-          if (after === null) feed.pending = this.dedupeOwn(res.pending.filter(isLivePost));
-          return { posts: res.posts, next: res.next };
+          rows.push(...res.posts, ...res.pending);
+          if (after === null) pending = res.pending;
+          return { posts: this.liveRows(res.posts), next: res.next };
         },
         REFRESH_PAGE_CAP,
       );
-      feed.posts = r.posts;
+      if (gen !== this.readerGen) return;
+      this.indexRows(rows);
+      feed.pending = this.dedupeOwn(pending.filter(isLivePost));
+      feed.posts = landRefresh(feed.posts, r);
       if (r.next !== undefined) feed.next = r.next; // reset only on the replace branch
       feed.report = r.newCount ? `${r.newCount} new ${r.newCount === 1 ? 'post' : 'posts'}` : 'no new posts';
       feed.error = null;
     } catch (e) {
+      if (gen !== this.readerGen) return;
       feed.error = msg(e);
     }
     this.renderFeed();
   }
 
+  /** `load older` continues the cursor it was asked for: a page for the node or
+   *  the viewer before writes nothing, and neither does one whose cursor a ↻ or
+   *  a first page moved meanwhile — the next `load older` continues the feed
+   *  that stands. The cursor is the key: a landing replaces the rows' array. */
   private async loadOlder(): Promise<void> {
     if (this.standalone) return;
     const feed = this.state.feed;
-    if (feed.next === null) return;
+    const cursor = feed.next;
+    if (cursor === null) return;
+    const gen = this.readerGen;
     feed.loading = true;
     this.renderFeed();
     try {
-      const res = await this.client.feed({ limit: FEED_LIMIT, after: feed.next }, this.viewer(), undefined, true);
-      const older = res.posts.filter(isLivePost);
-      const have = new Set(feed.posts.map((p) => p.id));
-      const added = older.filter((p) => !have.has(p.id));
-      feed.posts = [...feed.posts, ...added];
-      feed.next = res.next;
-      feed.olderReport = added.length ? `${added.length} older ${added.length === 1 ? 'post' : 'posts'}` : 'no older posts';
-      this.indexRows(res.posts);
+      const res = await this.client.feed({ limit: FEED_LIMIT, after: cursor }, this.viewer(), undefined, true);
+      if (gen !== this.readerGen) return;
+      if (feed.next === cursor) {
+        const older = this.liveRows(res.posts);
+        const have = new Set(feed.posts.map((p) => p.id));
+        const added = older.filter((p) => !have.has(p.id));
+        feed.posts = [...feed.posts, ...added];
+        feed.next = res.next;
+        feed.olderReport = added.length ? `${added.length} older ${added.length === 1 ? 'post' : 'posts'}` : 'no older posts';
+        this.indexRows(res.posts);
+      }
     } catch (e) {
-      feed.error = msg(e);
+      if (gen !== this.readerGen) return;
+      if (feed.next === cursor) feed.error = msg(e);
     }
     feed.loading = false;
     this.renderFeed();
@@ -1410,6 +1532,7 @@ export class App {
     if (cur === null) return;
     const gen = this.readerGen;
     const stamp = this.listingStamp();
+    const order = this.beginRead();
     let credits: CreditsResult;
     try {
       credits = await this.readOwnCredits(cur.pubKeyHex);
@@ -1417,18 +1540,21 @@ export class App {
       return; // a failed read leaves the last-known state; the next ↻ retries
     }
     if (gen !== this.readerGen) return;
-    this.takeCredits(credits, stamp);
+    this.takeCredits(credits, stamp, order);
   }
 
   /** Take a /credits listing as the balance row's, beside the stamp its read
-   *  began under: the balance moves in its slot (HOUSE_STYLE → Motion) and the
-   *  figures run follows (WEB_INTERFACE → The extension → "The verified
-   *  figures"). */
-  private takeCredits(credits: CreditsResult, stamp: ListingStamp): void {
+   *  began under — unless the held listing's read began later (newerRead): the
+   *  balance moves in its slot (HOUSE_STYLE → Motion) and the figures run
+   *  follows (WEB_INTERFACE → The extension → "The verified figures"). Answers
+   *  whether it took. */
+  private takeCredits(credits: CreditsResult, stamp: ListingStamp, order: number): boolean {
+    if (!this.newerRead('credits', order)) return false;
     this.walletCredits = credits;
     this.walletCreditsStamp = stamp;
     this.renderCreditsRowInPlace();
     this.startFigures();
+    return true;
   }
 
   private focus(id: string): void {
@@ -1479,29 +1605,44 @@ export class App {
     return t;
   }
 
-  private applyThread(t: ThreadState, res: ThreadResult): void {
-    t.root = res.post;
+  private applyThread(t: ThreadState, res: ThreadResult, since: number): void {
+    this.putThreadRows(t, since, res.post, res.descendants);
     t.ancestorIds = new Set(res.ancestors.map((a) => a.id));
-    t.descendants = res.descendants;
     t.descendantCount = res.descendantCount;
     t.next = res.next;
     t.error = null;
-    this.indexRows([res.post, ...res.ancestors, ...res.descendants, ...res.pending]);
+    this.indexRows([t.root, ...res.ancestors, ...t.descendants, ...res.pending]);
   }
 
+  /** Write a thread read's rows, read from when `landings` stood at `since`, as
+   *  the client knows them: a like that landed since keeps its row (keeper), and
+   *  a post whose withdrawal the client saw land is its withdrawn card (known). */
+  private putThreadRows(t: ThreadState, since: number, root: PostJson | WithdrawnJson | null, descendants: FeedRow[]): void {
+    const keep = this.keeper<FeedRow>(t.root ? [t.root, ...t.descendants] : t.descendants, since);
+    t.root = root === null ? null : this.known(keep(root));
+    t.descendants = descendants.map((r) => this.known(keep(r)));
+  }
+
+  /** Read a thread's first page. A read for the node or the viewer before
+   *  writes nothing: the change that moved the generation reads every open
+   *  thread again itself. */
   private async fetchThread(id: string): Promise<void> {
     const t = this.ensureThreadState(id);
+    const gen = this.readerGen;
+    const since = this.landings;
     t.loading = true;
     t.error = null;
     this.renderThreadLoad(id);
     try {
       const res = await this.client.thread(id, { limit: THREAD_LIMIT }, this.viewer());
+      if (gen !== this.readerGen) return;
       if (res === null) {
         t.root = null; // 404 — the post is gone; the body says so, it is not an error
       } else {
-        this.applyThread(t, res);
+        this.applyThread(t, res, since);
       }
     } catch (e) {
+      if (gen !== this.readerGen) return;
       t.error = msg(e);
     }
     t.loading = false;
@@ -1510,16 +1651,23 @@ export class App {
 
   /** Refresh re-reads the whole thread — descendants load oldest-first, so new
    *  replies are the newest and would otherwise sit past the last loaded page.
-   *  It reports the change in reply count. */
+   *  It reports the change in reply count. A ↻ read for the node or the viewer
+   *  before writes nothing, the report included, and the rows it writes keep
+   *  every withdrawal the client saw land and every like that landed after it
+   *  began (putThreadRows). */
   private async refreshThread(id: string): Promise<void> {
     const t = this.state.threads.get(id);
     if (!t) return;
+    const gen = this.readerGen;
+    const since = this.landings;
     const before = t.descendantCount;
     const region = this.regionFocusedOn(id);
     this.clearSettledThread(id);
     await this.refreshTip(); // a ↻ re-reads the tip
+    if (gen !== this.readerGen) return;
     try {
       let res = await this.client.thread(id, { limit: THREAD_LIMIT }, this.viewer());
+      if (gen !== this.readerGen) return;
       if (res === null) {
         t.root = null;
         if (region) region.report = null;
@@ -1529,42 +1677,52 @@ export class App {
         let pages = 1;
         while (next !== null && pages < REFRESH_PAGE_CAP) {
           const more = await this.client.thread(id, { limit: THREAD_LIMIT, after: next }, this.viewer());
+          if (gen !== this.readerGen) return;
           if (more === null) break;
           all.push(...more.descendants);
           next = more.next;
           res = more;
           pages++;
         }
-        t.root = res.post;
+        this.putThreadRows(t, since, res.post, all);
         t.ancestorIds = new Set(res.ancestors.map((a) => a.id));
-        t.descendants = all;
         t.descendantCount = res.descendantCount;
         t.next = next; // null once fully read; set only if the page cap was hit
         t.error = null;
-        this.indexRows([res.post, ...all]);
+        this.indexRows([t.root, ...t.descendants]);
         const delta = t.descendantCount - before;
         if (region) region.report = delta > 0 ? `${delta} new ${delta === 1 ? 'reply' : 'replies'}` : 'no new replies';
       }
     } catch (e) {
+      if (gen !== this.readerGen) return;
       t.error = msg(e);
     }
     this.renderRegionsFor(id);
   }
 
+  /** A thread's `more` continues the cursor it was asked for: a page for the
+   *  node or the viewer before writes nothing, and neither does one whose
+   *  cursor a ↻ or a first page moved meanwhile — the next `more` continues the
+   *  thread that stands. The cursor is the key: a landing replaces the rows'
+   *  array. */
   private async threadMore(id: string): Promise<void> {
     const t = this.state.threads.get(id);
     if (!t || t.next === null) return;
+    const cursor = t.next;
+    const gen = this.readerGen;
     try {
-      const res = await this.client.thread(id, { limit: THREAD_LIMIT, after: t.next }, this.viewer());
+      const res = await this.client.thread(id, { limit: THREAD_LIMIT, after: cursor }, this.viewer());
+      if (gen !== this.readerGen || t.next !== cursor) return;
       if (res !== null) {
         const have = new Set(t.descendants.map((d) => d.id));
-        const added = res.descendants.filter((d) => !have.has(d.id));
+        const added = res.descendants.filter((d) => !have.has(d.id)).map((d) => this.known(d));
         t.descendants = [...t.descendants, ...added];
         t.next = res.next;
         t.descendantCount = res.descendantCount;
         this.indexRows(added);
       }
     } catch (e) {
+      if (gen !== this.readerGen || t.next !== cursor) return;
       t.error = msg(e);
     }
     this.renderRegionsFor(id);
@@ -1598,10 +1756,10 @@ export class App {
   private async changeNode(origin: string): Promise<void> {
     setNode(origin);
     // Everything loaded came from the old node; drop it and re-read. The shared
-    // method the seed adoption calls too drops the threads, the reader's own
-    // state, the corner's tip and, where the build carries one, the verified
-    // tip, and reads the new node at once (WEB_INTERFACE → The settings window,
-    // → The status corner); the feed follows.
+    // method the seed adoption calls too drops the threads, the feed's rows, the
+    // reader's own state, the corner's tip and, where the build carries one, the
+    // verified tip, and reads the new node at once (WEB_INTERFACE → The settings
+    // window, → The status corner); the feed's own read follows.
     this.onReadingNodeChanged();
     await this.loadFeed();
   }
@@ -1662,6 +1820,7 @@ export class App {
     this.ownNameLoaded = false;
     this.walletCredits = null;
     this.walletCreditsStamp = null;
+    this.heldRead.clear();
     // The figures describe the listings dropped here. A run in flight for them
     // is dropped by its older generation, and the flags clear beside the
     // generation, so the run the re-read owes can start (WEB_INTERFACE → The
@@ -1709,6 +1868,7 @@ export class App {
     if (cur === null) return;
     const gen = this.readerGen;
     const stamp = this.listingStamp();
+    const order = this.beginRead();
     let karma: KarmaResult;
     try {
       karma = await this.readOwnKarma(cur.pubKeyHex);
@@ -1716,17 +1876,30 @@ export class App {
       return; // a failed read leaves the last-known state; the next read retries
     }
     if (gen !== this.readerGen) return;
-    this.takeKarma(karma, stamp);
+    this.takeKarma(karma, stamp, order);
   }
 
-  /** Take a /karma listing as the rep row's, beside the stamp its read began
-   *  under: the number moves in its slot (HOUSE_STYLE → Motion) and the figures
-   *  run follows (WEB_INTERFACE → The extension → "The verified figures"). */
-  private takeKarma(karma: KarmaResult, stamp: ListingStamp): void {
+  /** Hold a /karma listing as the rep row's, beside the stamp its read began
+   *  under — unless the held listing's read began later (newerRead). Answers
+   *  whether it took. */
+  private holdKarma(karma: KarmaResult, stamp: ListingStamp, order: number): boolean {
+    if (!this.newerRead('karma', order)) return false;
     this.profileKarma = karma;
     this.profileKarmaStamp = stamp;
+    return true;
+  }
+
+  /** Take a /karma listing as the rep row's: its height feeds the tip the gates
+   *  read (bumpTip) whichever listing the row holds, then it is held
+   *  (holdKarma), the number moves in its slot (HOUSE_STYLE → Motion) and the
+   *  figures run follows (WEB_INTERFACE → The extension → "The verified
+   *  figures"). Answers whether it took. */
+  private takeKarma(karma: KarmaResult, stamp: ListingStamp, order: number): boolean {
+    this.bumpTip(karma.height);
+    if (!this.holdKarma(karma, stamp, order)) return false;
     this.renderProfileKarma();
     this.startFigures();
+    return true;
   }
 
   /** Ask the faucet — a 202 rides the bounded poll as a grant entry; a rejection is
@@ -2061,9 +2234,11 @@ export class App {
    *  joining every open thread that holds its parent, the count staying the node's
    *  (WEB_INTERFACE → The withdraw control, → The wallet). Returns whether the feed
    *  changed, the keys of the @posts windows that lost the row, and the parent ids
-   *  whose regions the caller must re-render explicitly. */
+   *  whose regions the caller must re-render explicitly. The withdrawal joins
+   *  the ones the client has seen land, which every later write of rows keeps. */
   private applyWithdrawLanding(postId: string, fetched: PostResult | null): { feedChanged: boolean; postsKeys: string[]; touchParents: string[] } {
     const withdrawn = fetched !== null && 'kind' in fetched ? fetched : null;
+    if (withdrawn) this.withdrawnSeen.set(postId, withdrawn);
     for (const t of this.state.threads.values()) {
       if (t.root && t.root.id === postId && withdrawn) t.root = withdrawn;
       if (withdrawn) t.descendants = t.descendants.map((r) => (r.id === postId ? withdrawn : r));
@@ -2143,12 +2318,15 @@ export class App {
    *  identity load, the profile's open and ↻, and after an identity or node
    *  change. /credits is the wallet's own read (WEB_INTERFACE → The profile
    *  window, → The wallet window). An answer for the node or the key before
-   *  writes nothing. */
+   *  writes nothing, and each piece keeps the answer of a read begun after this
+   *  one (newerRead). */
   private async loadMembershipState(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
     const gen = this.readerGen;
     const stamp = this.listingStamp();
+    const order = this.beginRead();
+    let karmaTaken = false;
     try {
       const [karma, status, vouched, escrow, bonds, ownName] = await Promise.all([
         this.readOwnKarma(cur.pubKeyHex),
@@ -2159,16 +2337,20 @@ export class App {
         this.client.usernameByOwner(cur.pubKeyHex),
       ]);
       if (gen !== this.readerGen) return;
-      this.profileKarma = karma;
-      this.profileKarmaStamp = stamp;
-      this.state.status = status; // vouchCooldownBlocks + the bond range for the invites row
+      karmaTaken = this.holdKarma(karma, stamp, order);
+      // vouchCooldownBlocks + the bond range for the invites row
+      if (this.newerRead('status', order)) this.state.status = status;
       this.bumpTip(status.blockHeight);
       this.bumpTip(karma.height);
-      this.vouched = vouched;
-      this.escrowHeldUntil = escrow;
-      this.bondsView = bonds;
-      this.ownName = ownName;
-      this.ownNameLoaded = true;
+      if (this.newerRead('vouches', order)) {
+        this.vouched = vouched;
+        this.escrowHeldUntil = escrow;
+      }
+      if (this.newerRead('bonds', order)) this.bondsView = bonds;
+      if (this.newerRead('name', order)) {
+        this.ownName = ownName;
+        this.ownNameLoaded = true;
+      }
     } catch {
       return; // a failed read leaves the last-known state; the ↻ retries
     }
@@ -2177,7 +2359,7 @@ export class App {
     this.renderPanes();
     // A fresh karma listing triggers a figures verifier run
     // (WEB_INTERFACE → The extension → "The verified figures").
-    this.startFigures();
+    if (karmaTaken) this.startFigures();
   }
 
   /** Read the whole /credits for a key, following `next` to the end. The
@@ -2422,12 +2604,18 @@ export class App {
     return this.loadAuthorData(key);
   }
 
+  /** The endorsers' `more` continues the page it was asked for: once a ↻ or a
+   *  raise re-read the endorsers it writes nothing, and the next `more`
+   *  continues the list that stands. A page across a node or identity change
+   *  lands in the entry the drop removed. */
   private async moreEndorsers(key: string): Promise<void> {
     const d = this.authorData.get(key);
-    if (!d || d.endorsers === null || d.endorsers.next === null) return;
+    const from = d?.endorsers ?? null;
+    if (!d || from === null || from.next === null) return;
     try {
-      const page = await this.client.vouchesByTarget(key, { after: d.endorsers.next });
-      d.endorsers = { vouches: [...d.endorsers.vouches, ...page.vouches], count: page.count, next: page.next };
+      const page = await this.client.vouchesByTarget(key, { after: from.next });
+      if (d.endorsers !== from) return;
+      d.endorsers = { vouches: [...from.vouches, ...page.vouches], count: page.count, next: page.next };
       d.endorsersNext = page.next !== null;
     } catch {
       return;
@@ -2446,19 +2634,26 @@ export class App {
     void this.loadAuthorPosts(key);
   }
 
+  /** Read an author-posts window's first page. A read for the node or the
+   *  viewer before writes nothing — its entry went with the drop, and its rows
+   *  never reach the post index. */
   private async loadAuthorPosts(key: string): Promise<void> {
     const f = this.authorPostsData.get(key);
     if (!f) return;
+    const gen = this.readerGen;
+    const since = this.landings;
     f.loading = true;
     this.renderRegionsFor(postsWindowId(key));
     try {
       const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer(), key);
-      f.posts = res.posts.filter(isLivePost);
+      if (gen !== this.readerGen) return;
+      f.posts = this.liveRows(res.posts).map(this.keeper(f.posts, since));
       f.next = res.next;
       f.loaded = true;
       f.error = null;
       this.indexRows(res.posts);
     } catch (e) {
+      if (gen !== this.readerGen) return;
       f.error = msg(e);
     }
     f.loading = false;
@@ -2466,42 +2661,59 @@ export class App {
   }
 
   /** The posts window's ↻ reports what it did through the feed's own reconcile,
-   *  keyed by the author (WEB_INTERFACE → The author window). */
+   *  keyed by the author (WEB_INTERFACE → The author window). A ↻ read for the
+   *  node or the viewer before writes nothing, the report included. */
   private async refreshAuthorPosts(key: string): Promise<void> {
     const f = this.authorPostsData.get(key);
     if (!f) return;
+    // A window holding no first page reads one: a ↻ never pages an empty list
+    // to the cap.
+    if (!f.loaded) return this.loadAuthorPosts(key);
+    const gen = this.readerGen;
     const region = this.regionFocusedOn(postsWindowId(key));
     try {
+      const rows: FeedRow[] = [];
       const r = await reconcileNewer(
         f.posts,
         async (after) => {
           const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer(), key);
-          this.indexRows(res.posts);
-          return { posts: res.posts, next: res.next };
+          rows.push(...res.posts);
+          return { posts: this.liveRows(res.posts), next: res.next };
         },
         REFRESH_PAGE_CAP,
       );
-      f.posts = r.posts;
+      if (gen !== this.readerGen) return;
+      this.indexRows(rows);
+      f.posts = landRefresh(f.posts, r);
       if (r.next !== undefined) f.next = r.next;
       f.error = null;
       if (region) region.report = r.newCount ? `${r.newCount} new ${r.newCount === 1 ? 'post' : 'posts'}` : 'no new posts';
     } catch (e) {
+      if (gen !== this.readerGen) return;
       f.error = msg(e);
     }
     this.renderRegionsFor(postsWindowId(key));
   }
 
+  /** An author-posts window's `more` continues the cursor it was asked for: a
+   *  page for the node or the viewer before writes nothing, and neither does
+   *  one whose cursor a ↻ or a first page moved meanwhile — the next `more`
+   *  continues the list that stands. */
   private async authorPostsMore(key: string): Promise<void> {
     const f = this.authorPostsData.get(key);
     if (!f || f.next === null) return;
+    const cursor = f.next;
+    const gen = this.readerGen;
     try {
-      const res = await this.client.feed({ limit: FEED_LIMIT, after: f.next }, this.viewer(), key);
-      const older = res.posts.filter(isLivePost);
+      const res = await this.client.feed({ limit: FEED_LIMIT, after: cursor }, this.viewer(), key);
+      if (gen !== this.readerGen || f.next !== cursor) return;
+      const older = this.liveRows(res.posts);
       const have = new Set(f.posts.map((p) => p.id));
       f.posts = [...f.posts, ...older.filter((p) => !have.has(p.id))];
       f.next = res.next;
       this.indexRows(res.posts);
     } catch (e) {
+      if (gen !== this.readerGen || f.next !== cursor) return;
       f.error = msg(e);
     }
     this.renderRegionsFor(postsWindowId(key));
@@ -2534,14 +2746,19 @@ export class App {
     this.renderInvitesRowInPlace();
   }
 
+  /** The invites row's `more` continues the page it was asked for: a page for
+   *  the node or the key before, or for a first page a landing or a membership
+   *  read replaced meanwhile, writes nothing, and the next `more` continues the
+   *  page that stands. */
   private async moreBonds(): Promise<void> {
     const cur = this.idm.current();
-    if (cur === null || this.bondsView === null || this.bondsView.next === null) return;
+    const from = this.bondsView;
+    if (cur === null || from === null || from.next === null) return;
     const gen = this.readerGen;
     try {
-      const page = await this.client.bonds(cur.pubKeyHex, { after: this.bondsView.next });
-      if (gen !== this.readerGen) return; // a page for the node or the key before
-      this.bondsView = { bonds: [...this.bondsView.bonds, ...page.bonds], bondCount: page.bondCount, next: page.next };
+      const page = await this.client.bonds(cur.pubKeyHex, { after: from.next });
+      if (gen !== this.readerGen || this.bondsView !== from) return;
+      this.bondsView = { bonds: [...from.bonds, ...page.bonds], bondCount: page.bondCount, next: page.next };
     } catch {
       return;
     }
@@ -2907,17 +3124,18 @@ export class App {
   /** The reading node changed — the settings row's `changeNode`, and the seed
    *  adoption at start. Everything loaded came from the node before, so in
    *  every build it drops and the new node is read at once (WEB_INTERFACE → The
-   *  settings window, → The status corner): the threads, the reader's own state
-   *  (dropReaderState, the figures and the tip the gates read among it), and the
-   *  corner's tip, rise and last-read flag, so the number beside the dot is
-   *  never another node's; `cornerGen` bumps so a tick in flight for the node
-   *  before drops its answer when it resolves. The header and the panes
-   *  re-render from what is left — `—` where a figure stood while its read is
-   *  in flight, never the node before's — and the corner reads *no tip yet*,
-   *  tip `—`. Where the build carries a verifier, a run in flight for the
-   *  previous node is dropped by its older generation, the verdict returns to
-   *  `null` (checking), the flag is cleared so the new run can start, and it
-   *  does (WEB_INTERFACE → The extension → "The verified tip"). */
+   *  settings window, → The status corner): the threads and the post index, the
+   *  feed's rows (dropFeedRows), the reader's own state (dropReaderState, the
+   *  figures and the tip the gates read among it), and the corner's tip, rise
+   *  and last-read flag, so the number beside the dot is never another node's;
+   *  `cornerGen` bumps so a tick in flight for the node before drops its answer
+   *  when it resolves. The header, the feed and the panes re-render from what
+   *  is left — `—` where a figure stood while its read is in flight, never the
+   *  node before's — and the corner reads *no tip yet*, tip `—`. Where the
+   *  build carries a verifier, a run in flight for the previous node is dropped
+   *  by its older generation, the verdict returns to `null` (checking), the
+   *  flag is cleared so the new run can start, and it does (WEB_INTERFACE → The
+   *  extension → "The verified tip"). */
   private onReadingNodeChanged(): void {
     this.cornerGen += 1;
     this.cornerLastTip = null;
@@ -2931,8 +3149,10 @@ export class App {
     }
     this.state.threads.clear();
     this.state.posts.clear();
+    this.dropFeedRows();
     this.dropReaderState();
     this.renderHeader();
+    this.renderFeed();
     this.renderPanes();
     this.renderCornerNow();
     void this.cornerTick();
@@ -3033,6 +3253,22 @@ export class App {
     return stamp !== null && stamp.anchored && stamp.seq === this.anchorSeq && this.tipAnchor !== null;
   }
 
+  /** A read of the reader's own state begins: its place in the order such reads
+   *  began in, taken before its first await as the stamp is. */
+  private beginRead(): number {
+    this.readsBegun += 1;
+    return this.readsBegun;
+  }
+
+  /** Whether the answer of the read begun at `order` replaces the piece's held
+   *  answer — never when the held answer's read began later — holding its order
+   *  when it does. */
+  private newerRead(piece: ReaderPiece, order: number): boolean {
+    if (order < (this.heldRead.get(piece) ?? 0)) return false;
+    this.heldRead.set(piece, order);
+    return true;
+  }
+
   /** Read /blocks/current, update the corner's state, feed viewerTip. The first
    *  answering read is treated as a rise, so a page opens fresh — the corner
    *  never opens clay on load for a chain the client has not yet observed
@@ -3106,7 +3342,9 @@ export class App {
    *  land in it, and a grant is decided on that same read (WEB_INTERFACE → The
    *  profile window → "The `rep` row is the `effective` number alone", → The
    *  wallet window → "The `balance` row", → The faucet step). A read that
-   *  answers after the reader's own state dropped ends the tick, writing nothing. */
+   *  answers after the reader's own state dropped ends the tick, writing nothing;
+   *  a piece a read begun after the tick's own already answered keeps that
+   *  answer (newerRead), and the tick still decides its entries on its own read. */
   private async reconcile(tip: number): Promise<void> {
     const gen = this.readerGen;
     let feedTouched = false;
@@ -3130,18 +3368,22 @@ export class App {
     let vouchRows: { targetId: string }[] = [];
     let bondRows: { inviteePublicKey: string }[] = [];
     if (hasMembership && cur !== null) {
+      const order = this.beginRead();
       const vouched = await this.readVouchSet(cur.pubKeyHex);
       const escrow = await this.readEscrow(cur.pubKeyHex);
       if (gen !== this.readerGen) return;
-      this.vouched = vouched;
-      this.escrowHeldUntil = escrow;
+      if (this.newerRead('vouches', order)) {
+        this.vouched = vouched;
+        this.escrowHeldUntil = escrow;
+      }
       this.bumpTip(tip);
       vouchRows = [...vouched.keys()].map((targetId) => ({ targetId }));
     }
     if (hasInvite && cur !== null) {
+      const order = this.beginRead();
       const bonds = await this.client.bonds(cur.pubKeyHex);
       if (gen !== this.readerGen) return;
-      this.bondsView = bonds;
+      if (this.newerRead('bonds', order)) this.bondsView = bonds;
       bondRows = bonds.bonds;
     }
 
@@ -3194,14 +3436,17 @@ export class App {
       }
       if (entry.kind === 'claim' || entry.kind === 'burn') {
         if (cur === null) continue;
+        const order = this.beginRead();
         const held = await this.client.usernameByOwner(cur.pubKeyHex);
         if (gen !== this.readerGen) return;
         const outcome = entry.kind === 'claim' ? reconcileClaim(entry, held, tip) : reconcileBurn(entry, held, tip);
         if (outcome === 'pending') continue;
         this.ledger.remove(entry.txId);
         if (outcome === 'landed') {
-          this.ownName = held;
-          this.ownNameLoaded = true;
+          if (this.newerRead('name', order)) {
+            this.ownName = held;
+            this.ownNameLoaded = true;
+          }
           this.usernameFlight = null;
           karmaLanded = true;
         } else {
@@ -3274,6 +3519,7 @@ export class App {
     let karmaTaken = false;
     if (cur !== null && (karmaLanded || grants.length > 0)) {
       const stamp = this.listingStamp();
+      const order = this.beginRead();
       let karma: KarmaResult | null = null;
       try {
         karma = await this.readOwnKarma(cur.pubKeyHex);
@@ -3290,10 +3536,7 @@ export class App {
           if (outcome === 'landed') karmaLanded = true;
           grantSettled = true;
         }
-        if (karmaLanded) {
-          this.takeKarma(karma, stamp);
-          karmaTaken = true;
-        }
+        if (karmaLanded) karmaTaken = this.takeKarma(karma, stamp, order);
       }
     }
 
@@ -3304,6 +3547,7 @@ export class App {
     let creditsTaken = false;
     if (cur !== null && (creditsLanded || creditGrants.length > 0)) {
       const stamp = this.listingStamp();
+      const order = this.beginRead();
       let credits: CreditsResult | null = null;
       try {
         credits = await this.readOwnCredits(cur.pubKeyHex);
@@ -3320,10 +3564,7 @@ export class App {
           if (outcome === 'landed') creditsLanded = true;
           creditsChanged = true;
         }
-        if (creditsLanded) {
-          this.takeCredits(credits, stamp);
-          creditsTaken = true;
-        }
+        if (creditsLanded) creditsTaken = this.takeCredits(credits, stamp, order);
       }
     }
 
@@ -3343,7 +3584,7 @@ export class App {
       this.renderUsernameRowInPlace();
       this.renderHeader();
     }
-    // An expired grant moves the rep row's line; where a landing's listing was
+    // A settled grant moves the rep row's line; where this tick's listing was
     // taken, the row moved with it already.
     if (grantSettled && !karmaTaken) this.renderProfileKarma();
     // A send's or a credits grant's ending moves the balance row in place — the
