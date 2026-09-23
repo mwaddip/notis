@@ -3,7 +3,7 @@ export type HttpFetch = (url: string, init?: RequestInit) => Promise<Response>;
 /** A node call that has not answered in this many ms is treated as unreachable. */
 const REQUEST_TIMEOUT_MS = 10_000;
 
-/** The most characters of any one node-supplied string a verdict names. */
+/** The most characters of any one node-supplied string a verdict names, counted as shown. */
 const VERDICT_TEXT_MAX = 120;
 
 export interface NodeResponse<T> {
@@ -46,16 +46,29 @@ export async function fetchJson<T>(
 }
 
 /**
- * A node's text as a verdict names it: whole up to 120 characters, else its
- * first 120 and `…`, a surrogate pair never split. Applied where the text
- * enters a verdict, never to the data a status is decided on — the nipopow
- * route's 404 is classified by its body's `error` (NODE_INTERFACE → Nipopow).
+ * A node's text as a verdict names it, for a person to read: every C0 control,
+ * DEL and C1 control as its `\u` escape — ESC as `\u001b`, CR as `\u000d` —
+ * never raw; the text so shown whole up to 120 characters, else as much of it
+ * as fits in 120 and `…`, a surrogate pair and an escape never split. Applied
+ * where the text enters a verdict, never to the data a status is decided on —
+ * the nipopow route's 404 is classified by its body's `error` (NODE_INTERFACE →
+ * Nipopow).
  */
 export function capped(text: string): string {
-  if (text.length <= VERDICT_TEXT_MAX) return text;
-  const last = text.charCodeAt(VERDICT_TEXT_MAX - 1);
-  const end = last >= 0xd800 && last <= 0xdbff ? VERDICT_TEXT_MAX - 1 : VERDICT_TEXT_MAX;
-  return `${text.slice(0, end)}…`;
+  let shown = '';
+  // A string iterates by code point, a surrogate pair as one step.
+  for (const ch of text) {
+    const unit = isControl(ch) ? `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}` : ch;
+    if (shown.length + unit.length > VERDICT_TEXT_MAX) return `${shown}…`;
+    shown += unit;
+  }
+  return shown;
+}
+
+// C0 (U+0000–U+001F), DEL (U+007F) and C1 (U+0080–U+009F).
+function isControl(ch: string): boolean {
+  const c = ch.charCodeAt(0);
+  return c <= 0x1f || (c >= 0x7f && c <= 0x9f);
 }
 
 /** A parsed body read as an object: not null, not an array. Its fields are the

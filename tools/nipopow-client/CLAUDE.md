@@ -101,6 +101,12 @@ well-formed name, for which nothing is asked. The box is proven by the figures' 
 one AVL verification — and a check is total as a run is
 (`WEB_INTERFACE → The extension → "The verified names"`).
 
+**A verdict names node text for a person to read**: every node string a verdict, a refusal or a line of
+the command line's text (`textLines`, `src/text.ts`, which runs nothing at import) names passes through
+`capped()` — each C0 control, DEL and C1 control as its `\u` escape, never raw, the text so shown cut at
+120 characters with `…`, never inside a surrogate pair or an escape — and nothing a status is decided on
+does; `--json` carries the node's data raw.
+
 - **Owns:** `src/*`, `test/*`, this package's `package.json` and configs.
 - **Does NOT own:** anything in `packages/`, `contracts/`, or `tools/e2e` (the acceptance case that
   runs this tool against a real mesh lives there and is a separate dispatch). Cross-cutting changes —

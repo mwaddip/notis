@@ -146,6 +146,9 @@ function checkName(
     return { ok: false, refusal: `candidate boxType '${candidate.boxType}' is not username` };
   }
   const owner = Buffer.from(candidate.owner).toString('hex');
+  // TYPES_INTERFACE → Content limits — the codec bounds a name's length and
+  // checks none of its bytes; the alphabet is consensus's check, which this
+  // tool does not run on a proven box, so a refusal names it through `capped`.
   const name = new TextDecoder().decode(candidate.name);
   if ('key' in claim) {
     const key = claim.key.toLowerCase();
@@ -153,12 +156,12 @@ function checkName(
       return { ok: false, refusal: `candidate owner '${owner}' does not match the label's key '${key}'` };
     }
     if (firstDifference(candidate.name, typed) !== -1) {
-      return { ok: false, refusal: `candidate name '${name}' does not match the label's name '${claim.name}'` };
+      return { ok: false, refusal: `candidate name '${capped(name)}' does not match the label's name '${claim.name}'` };
     }
     return { ok: true, owner, name };
   }
   if (firstDifference(canonicalUsernameBytes(candidate.name), canonicalUsernameBytes(typed)) !== -1) {
-    return { ok: false, refusal: `candidate name '${name}' is not the typed name '${claim.name}'` };
+    return { ok: false, refusal: `candidate name '${capped(name)}' is not the typed name '${claim.name}'` };
   }
   const expected = typeof answeredOwner === 'string' ? answeredOwner.toLowerCase() : null;
   if (owner !== expected) {
