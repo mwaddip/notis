@@ -483,10 +483,10 @@ export function recordInsertion(userBytes: UserId, record: IdentityRecord): AvlI
   };
 }
 
-// A minimal AVL proof response as the endpoint serves — the endpoint's own
-// shape (NODE_INTERFACE → Nipopow → /api/v1/proof/:boxId, avl-endpoint.ts:
-// `stateRoot`, `proof` base64, `kind`, `value`). The test wires it per request
-// so proveFigures reads what the node would return.
+// A minimal AVL proof response in the endpoint's own shape — `stateRoot`,
+// `proof` base64, `kind`, `value` — as `GET /api/v1/proof/:boxId` serves it
+// (NODE_INTERFACE → AVL+ State Root). The test wires it per request so
+// proveFigures reads what the node would return.
 export function avlProofJson(
   boxIdOrKey: string,
   atHeight: number,
