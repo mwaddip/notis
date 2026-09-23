@@ -253,7 +253,7 @@ async function proveKeyAtHeight(
 // NODE_INTERFACE → Entity kinds — a box at one height: included, its value
 // decoded and hashed back to the key it was proven under. What the box must
 // further be — its type, its owner — is each caller's check on the candidate.
-async function proveBoxAtHeight(
+export async function proveBoxAtHeight(
   nodeUrl: string,
   boxId: string,
   atHeight: number,
@@ -619,7 +619,7 @@ export async function proveBoxes(
 // NODE_INTERFACE → Blocks — `GET /blocks/current` answers `{ height, hash }`; no
 // answer, or one whose `height` is not a block height, leaves `heightAfter`
 // unread (WEB_INTERFACE → The extension → "A run is total").
-async function readHeightAfter(nodeUrl: string, httpFetch: HttpFetch): Promise<number | null> {
+export async function readHeightAfter(nodeUrl: string, httpFetch: HttpFetch): Promise<number | null> {
   const res = await fetchJson<unknown>(httpFetch, `${nodeUrl}/blocks/current`);
   if (!res.ok || !isRecord(res.data)) return null;
   const height = res.data['height'];
@@ -630,7 +630,7 @@ async function readHeightAfter(nodeUrl: string, httpFetch: HttpFetch): Promise<n
 // both heights is `absent` when the node's height after the run is the anchor's
 // tip; a block landed since, a fallen height or an unread one leaves it
 // `unchecked` — undecided reads as unchecked, never as a lie.
-function excludedAtBoth(
+export function excludedAtBoth(
   heightAfter: number | null,
   tipHeight: number,
 ): { absent: true } | { absent: false; why: string } {
@@ -648,13 +648,13 @@ function isBlockHeight(v: unknown): v is number {
   return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 }
 
-const HEX_64 = /^[0-9a-f]{64}$/i;
+export const HEX_64 = /^[0-9a-f]{64}$/i;
 const DECIMAL = /^[0-9]+$/;
 
 // An entry is asked about only when it is an object whose `boxId` is 64 hex and
 // named nowhere earlier in the listing, in either ledger, and whose `value` is
 // a decimal string (WEB_INTERFACE → The extension → "A run is total";
-// WEB_INTERFACE → The extension → "an id the listing names more than once");
+// WEB_INTERFACE → The extension → "The verified figures");
 // for any other, the reason it is not, named. `named` holds every 64-hex id the
 // listing named before this entry, lowercased.
 function malformedListedBox(listed: unknown, named: Set<string>): string | null {
@@ -697,7 +697,7 @@ function malformedFigureBox(
 // A node's value as a verdict names it: a string quoted, anything else by its
 // kind. Never converted — a parsed object can carry a `toString` that is not a
 // function, and converting it throws.
-function shown(v: unknown): string {
+export function shown(v: unknown): string {
   if (typeof v === 'string') return `'${v}'`;
   if (v === undefined) return 'missing';
   if (v === null) return 'null';

@@ -17,6 +17,9 @@ export type {
   FiguresResult,
 } from './boxes.js';
 
+export { proveName } from './names.js';
+export type { NameClaim, NameStatus, NameResult } from './names.js';
+
 export { verifierProfile } from './config.js';
 export type { VerifyProfile } from './config.js';
 

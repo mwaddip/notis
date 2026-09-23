@@ -40,7 +40,7 @@ chain the proof committed. Bytes in, verdict out, exit.
 
 **It answers twice: as a command line (`dist/index.js`, the package's `bin`) and as a library
 (`src/lib.ts` → `dist/lib.js`, the package's `exports`)** — `resolveTip`, `fetchListing`, `proveFigures`,
-`proveBoxes`, `verifierProfile` and their types, re-exports with no side effect at import. **The web
+`proveBoxes`, `proveName`, `verifierProfile` and their types, re-exports with no side effect at import. **The web
 client's extension build is the library's caller**: its tip verifier runs `resolveTip` in the page with
 the browser's `fetch` (`WEB_INTERFACE → The extension → "The verified tip"`), and its figures verifier
 runs `proveFigures` after every verified tip against the listing the rows rendered
@@ -81,6 +81,24 @@ one implementation shared with the node, and `null` where `listing.karma.height`
 or the record `unproven` — is the command line's exit 1. `proveBoxes` composes the two for the command line's own
 use; the CLI itself calls `fetchListing` and `proveFigures` so it can print the row's `listing.karma
 .height` beside `effective`.
+
+**The names.** `proveName(nodeUrl, claim, anchor, fetch)` proves a **label** — `{ key, name }`, a key
+and the name a row carries beside it — or a **typed handle** — `{ name }`, without its `@` — through
+the username box the node names for it, in this order the check's meaning rests on: the lookup, `GET
+/usernames?owner=<key>` for a label and `GET /usernames/<name>` for a handle; that box at `suffixHead`,
+once more at `tip` when excluded there; and one `GET /blocks/current` only when it is excluded at both.
+The proven value is a username box, and for a label its `owner` is the key and its name the label's
+name byte for byte — a name is shown as typed; for a handle its name's canonical form is the typed
+name's and its `owner` the lookup's `owner`, the key a send goes to. The lookup's own `name` is never
+read. **`proven`** and **`young`** carry the proven box's `owner`, lowercase hex, and its `name` as
+typed; **`unchecked`** and **`absent`** are decided by `heightAfter` as a figure's are;
+**`unproven`** — any proof failure, a `boxType` other than `username`, an owner or a name that is not
+the claim's, a lookup `boxId` that is not 64 hex, or a label whose key is not 64 hex or whose name is
+not a well-formed name, for which nothing is asked; **`no-proof`** — the lookup's failure other than a
+404, or a proof not served; **`none`** — the lookup answered 404, or a typed handle is not a
+well-formed name, for which nothing is asked. The box is proven by the figures' own path — the tool's
+one AVL verification — and a check is total as a run is
+(`WEB_INTERFACE → The extension → "The verified names"`).
 
 - **Owns:** `src/*`, `test/*`, this package's `package.json` and configs.
 - **Does NOT own:** anything in `packages/`, `contracts/`, or `tools/e2e` (the acceptance case that

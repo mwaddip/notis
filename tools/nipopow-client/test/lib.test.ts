@@ -5,6 +5,7 @@ import type {
   TipResult, NodeTipResult,
   ListedBox, Listing, ListingResult,
   Anchor, FigureStatus, FigureBox, RecordResult, LedgerSums, FiguresResult,
+  NameClaim, NameStatus, NameResult,
   HttpFetch, VerifyProfile,
 } from '../src/lib.js';
 
@@ -20,12 +21,13 @@ describe('library entry', () => {
     expect(stderrSpy).not.toHaveBeenCalled();
     expect(argvGet).not.toHaveBeenCalled();
 
-    // Runtime exports — the value names, sorted. The 12 types above are
-    // checked at compile time and carry no runtime name.
+    // Runtime exports — the value names, sorted. The types above are checked
+    // at compile time and carry no runtime name.
     expect(Object.keys(lib).sort()).toEqual([
       'fetchListing',
       'proveBoxes',
       'proveFigures',
+      'proveName',
       'resolveTip',
       'verifierProfile',
     ]);
@@ -37,7 +39,8 @@ describe('library entry', () => {
 
   it('the exported types are usable from outside', () => {
     // A no-op that exists to reference every type in a value position, so tsc
-    // verifies the export list against tip.ts, boxes.ts, config.ts, http.ts.
+    // verifies the export list against tip.ts, boxes.ts, names.ts, config.ts,
+    // http.ts.
     const _t: TipResult | null = null;
     const _n: NodeTipResult | null = null;
     const _lb: ListedBox | null = null;
@@ -49,10 +52,14 @@ describe('library entry', () => {
     const _rr: RecordResult | null = null;
     const _ls: LedgerSums | null = null;
     const _fr: FiguresResult | null = null;
+    const _nc: NameClaim | null = null;
+    const _ns: NameStatus | null = null;
+    const _nr: NameResult | null = null;
     const _f: HttpFetch | null = null;
     const _p: VerifyProfile | null = null;
     void _t; void _n; void _lb; void _l; void _lr; void _a;
     void _fs; void _fb; void _rr; void _ls; void _fr;
+    void _nc; void _ns; void _nr;
     void _f; void _p;
     expect(true).toBe(true);
   });
