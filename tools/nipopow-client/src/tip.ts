@@ -3,7 +3,7 @@ import type { NipopowProof, VerifyResult, CompareResult, PoPowHeader } from '@da
 import type { BlockHeader, NetworkProfile } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import type { HttpFetch } from './http.js';
-import { fetchJson } from './http.js';
+import { fetchJson, isRecord } from './http.js';
 import { verifierProfile } from './config.js';
 
 export interface NodeTipResult {
@@ -41,7 +41,7 @@ export async function resolveTip(
   const nodes: NodeTipResult[] = [];
 
   for (const url of nodeUrls) {
-    const res = await fetchJson<{ proof: string }>(
+    const res = await fetchJson<unknown>(
       httpFetch,
       `${url}/nipopow/proof/${m}/${k}`,
     );
@@ -57,7 +57,8 @@ export async function resolveTip(
       });
       continue;
     }
-    if (!res.data.proof || typeof res.data.proof !== 'string') {
+    const proofHex = isRecord(res.data) ? res.data['proof'] : undefined;
+    if (typeof proofHex !== 'string' || proofHex === '') {
       nodes.push({
         url,
         verified: false,
@@ -72,7 +73,7 @@ export async function resolveTip(
 
     let proof: NipopowProof;
     try {
-      proof = decodeNipopowProof(hexToBytes(res.data.proof));
+      proof = decodeNipopowProof(hexToBytes(proofHex));
     } catch {
       nodes.push({
         url,

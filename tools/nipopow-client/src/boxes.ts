@@ -10,13 +10,14 @@ import {
 } from '@dagsocial/types';
 import type {
   BlockHeader,
+  DecodedBoxCandidate,
   IdentityRecord,
   NetworkProfile,
   UserId,
 } from '@dagsocial/types';
 import type { PoPowHeader } from '@dagsocial/nipopow';
 import type { HttpFetch } from './http.js';
-import { fetchJson } from './http.js';
+import { fetchJson, isRecord } from './http.js';
 
 export interface ListedBox {
   boxId: string;
@@ -81,24 +82,21 @@ interface CreditPageResponse {
   next: string | null;
 }
 
-interface AvlProofResponse {
-  boxId: string;
-  atHeight: number;
-  stateRoot: string;
-  proof: string;
-  kind: 'box' | 'record' | 'network' | 'username' | 'holder' | null;
-  value: unknown;
-}
-
-interface BlocksCurrentResponse {
-  height: number;
-  hash: string | null;
+// WEB_INTERFACE → The extension → "A run is total" — the paging walks a page's
+// `boxes` and follows its `next`, so a page is an object with a `boxes` array
+// and a `next` that is a string or null; any other answer is a malformed page.
+// Each entry is the node's claim, checked by proveFigures before a proof is
+// asked for it.
+function isPage(data: unknown): boolean {
+  return isRecord(data)
+    && Array.isArray(data['boxes'])
+    && (data['next'] === null || typeof data['next'] === 'string');
 }
 
 // NODE_INTERFACE → UTXO queries — /karma/:userId and /credits/:userId are paged
 // by keyset, `after=<next>` on each following request until `next` is null.
 // A 404 is an identity the node has never seen (empty listing); any other
-// non-ok is a listing failure carrying the route and the status.
+// non-ok, or a malformed page, is a listing failure carrying the route.
 export async function fetchListing(
   nodeUrl: string,
   user: string,
@@ -113,6 +111,9 @@ export async function fetchListing(
     `${nodeUrl}/karma/${user}`,
   );
   if (firstKarma.ok) {
+    if (!isPage(firstKarma.data)) {
+      return { ok: false, reason: `GET /karma/${user}: malformed page` };
+    }
     for (const b of firstKarma.data.boxes) karmaBoxes.push(b);
     karmaHeight = firstKarma.data.height;
     karmaEffective = firstKarma.data.effective;
@@ -124,6 +125,9 @@ export async function fetchListing(
       );
       if (!r.ok) {
         return { ok: false, reason: `GET /karma/${user}?after=${next}: HTTP ${r.status}` };
+      }
+      if (!isPage(r.data)) {
+        return { ok: false, reason: `GET /karma/${user}?after=${next}: malformed page` };
       }
       for (const b of r.data.boxes) karmaBoxes.push(b);
       next = r.data.next;
@@ -138,6 +142,9 @@ export async function fetchListing(
     `${nodeUrl}/credits/${user}`,
   );
   if (firstCredit.ok) {
+    if (!isPage(firstCredit.data)) {
+      return { ok: false, reason: `GET /credits/${user}: malformed page` };
+    }
     for (const b of firstCredit.data.boxes) creditsBoxes.push(b);
     let next: string | null = firstCredit.data.next;
     while (next !== null) {
@@ -147,6 +154,9 @@ export async function fetchListing(
       );
       if (!r.ok) {
         return { ok: false, reason: `GET /credits/${user}?after=${next}: HTTP ${r.status}` };
+      }
+      if (!isPage(r.data)) {
+        return { ok: false, reason: `GET /credits/${user}?after=${next}: malformed page` };
       }
       for (const b of r.data.boxes) creditsBoxes.push(b);
       next = r.data.next;
@@ -164,11 +174,25 @@ export async function fetchListing(
   };
 }
 
+type KeyProofOutcome =
+  | { kind: 'included'; value: Uint8Array }
+  | { kind: 'exclusion' }
+  | { kind: 'unproven'; verdict: string }
+  | { kind: 'no-proof'; verdict: string };
+
+type BoxAtHeight =
+  | { kind: 'included'; candidate: DecodedBoxCandidate }
+  | { kind: 'exclusion' }
+  | { kind: 'unproven'; verdict: string }
+  | { kind: 'no-proof'; verdict: string };
+
 type BoxProofOutcome =
   | { kind: 'proven'; value: bigint; lockedUntilBlock: number | null }
   | { kind: 'exclusion' }
   | { kind: 'unproven'; verdict: string }
   | { kind: 'no-proof'; verdict: string };
+
+type FirstPassOutcome = BoxProofOutcome | { kind: 'malformed'; verdict: string };
 
 type RecordProofOutcome =
   | { kind: 'proven'; record: IdentityRecord }
@@ -176,11 +200,85 @@ type RecordProofOutcome =
   | { kind: 'unproven'; verdict: string }
   | { kind: 'no-proof'; verdict: string };
 
-// WEB_INTERFACE → The extension → "The verified figures" — one proof, one height,
-// one entity kind. Every accepted verdict comes with an AVL inclusion under a
-// stateRoot the caller trusts; every other outcome is one of the four verdicts
-// below.
-async function proveOneBoxAtHeight(
+// NODE_INTERFACE → AVL+ State Root — one key, one height, one lookup proof,
+// verified against the stateRoot the caller verified under proof-of-work. The
+// answer's `kind` is the node's reading, trusted only to refuse; its `value` is
+// never read — the value is the one the proof carries. An answer of another
+// shape — a body that is not an object, a `stateRoot` that is not the header's,
+// a `proof` that is not a string — is unproven (WEB_INTERFACE → The extension →
+// "A run is total"). The tool's one AVL verification.
+async function proveKeyAtHeight(
+  nodeUrl: string,
+  key: string,
+  entity: 'box' | 'record',
+  atHeight: number,
+  expectedStateRoot: string,
+  httpFetch: HttpFetch,
+): Promise<KeyProofOutcome> {
+  const proofRes = await fetchJson<unknown>(
+    httpFetch,
+    `${nodeUrl}/api/v1/proof/${key}?atHeight=${atHeight}`,
+  );
+  if (!proofRes.ok) {
+    if (proofRes.status === 0) {
+      return { kind: 'no-proof', verdict: `transport failure: ${proofRes.body}` };
+    }
+    return { kind: 'no-proof', verdict: `HTTP ${proofRes.status}: ${proofRes.body}` };
+  }
+  const resp = isRecord(proofRes.data) ? proofRes.data : {};
+  if (resp['stateRoot'] !== expectedStateRoot) {
+    return { kind: 'unproven', verdict: 'stateRoot mismatch' };
+  }
+  // NODE_INTERFACE → Entity kinds — the AVL value carries provenance
+  const kind = resp['kind'];
+  if (kind != null && kind !== entity) {
+    return {
+      kind: 'unproven',
+      verdict: `node returned kind ${shown(kind)} for a ${entity === 'box' ? 'box id' : 'record key'}`,
+    };
+  }
+  const proof = resp['proof'];
+  if (typeof proof !== 'string') return { kind: 'unproven', verdict: 'proof rejected' };
+  const avlResult = verifyAvlLookup(
+    hexToBytes(expectedStateRoot),
+    base64ToBytes(proof),
+    { keyLength: AVL_KEY_LENGTH, valueLengthOpt: null },
+    hexToBytes(key),
+  );
+  if (avlResult === null) return { kind: 'unproven', verdict: 'proof rejected' };
+  if (avlResult.value === null) return { kind: 'exclusion' };
+  return { kind: 'included', value: avlResult.value };
+}
+
+// NODE_INTERFACE → Entity kinds — a box at one height: included, its value
+// decoded and hashed back to the key it was proven under. What the box must
+// further be — its type, its owner — is each caller's check on the candidate.
+async function proveBoxAtHeight(
+  nodeUrl: string,
+  boxId: string,
+  atHeight: number,
+  expectedStateRoot: string,
+  httpFetch: HttpFetch,
+): Promise<BoxAtHeight> {
+  const outcome = await proveKeyAtHeight(nodeUrl, boxId, 'box', atHeight, expectedStateRoot, httpFetch);
+  if (outcome.kind !== 'included') return outcome;
+  let record;
+  try {
+    record = boxRecordFromBytes(outcome.value);
+  } catch {
+    return { kind: 'unproven', verdict: 'value decode failed' };
+  }
+  const derivedId = computeCandidateBoxId(record.candidate, record.txId, record.index);
+  if (derivedId !== boxId) {
+    return { kind: 'unproven', verdict: 'value does not hash to the key' };
+  }
+  return { kind: 'included', candidate: record.candidate };
+}
+
+// WEB_INTERFACE → The extension → "The verified figures" — a listed box is
+// proven when it is included, its `boxType` is the ledger it was listed under
+// and its `owner` is the loaded key.
+async function proveListedBoxAtHeight(
   nodeUrl: string,
   boxId: string,
   boxClass: 'karma' | 'credit',
@@ -189,51 +287,16 @@ async function proveOneBoxAtHeight(
   expectedStateRoot: string,
   httpFetch: HttpFetch,
 ): Promise<BoxProofOutcome> {
-  const proofRes = await fetchJson<AvlProofResponse>(
-    httpFetch,
-    `${nodeUrl}/api/v1/proof/${boxId}?atHeight=${atHeight}`,
-  );
-  if (!proofRes.ok) {
-    if (proofRes.status === 0) {
-      return { kind: 'no-proof', verdict: `transport failure: ${proofRes.body}` };
-    }
-    return { kind: 'no-proof', verdict: `HTTP ${proofRes.status}: ${proofRes.body}` };
-  }
-  const resp = proofRes.data;
-  if (resp.stateRoot !== expectedStateRoot) {
-    return { kind: 'unproven', verdict: 'stateRoot mismatch' };
-  }
-  // NODE_INTERFACE → Entity kinds — the AVL value carries provenance
-  if (resp.kind != null && resp.kind !== 'box') {
-    return { kind: 'unproven', verdict: `node returned kind '${resp.kind}' for a box id` };
-  }
-  const avlResult = verifyAvlLookup(
-    hexToBytes(expectedStateRoot),
-    base64ToBytes(resp.proof),
-    { keyLength: AVL_KEY_LENGTH, valueLengthOpt: null },
-    hexToBytes(boxId),
-  );
-  if (avlResult === null) return { kind: 'unproven', verdict: 'proof rejected' };
-  if (avlResult.value === null) return { kind: 'exclusion' };
-
-  let record;
-  try {
-    record = boxRecordFromBytes(avlResult.value);
-  } catch {
-    return { kind: 'unproven', verdict: 'value decode failed' };
-  }
-  const derivedId = computeCandidateBoxId(record.candidate, record.txId, record.index);
-  if (derivedId !== boxId) {
-    return { kind: 'unproven', verdict: 'value does not hash to the key' };
-  }
-  if (record.candidate.boxType !== boxClass) {
+  const at = await proveBoxAtHeight(nodeUrl, boxId, atHeight, expectedStateRoot, httpFetch);
+  if (at.kind !== 'included') return at;
+  if (at.candidate.boxType !== boxClass) {
     return {
       kind: 'unproven',
-      verdict: `candidate boxType '${record.candidate.boxType}' does not match listing '${boxClass}'`,
+      verdict: `candidate boxType '${at.candidate.boxType}' does not match listing '${boxClass}'`,
     };
   }
   // Both karma and credit carry `owner` (TYPES_INTERFACE → Layout — Boxes).
-  const cand = record.candidate as { owner: Uint8Array; lockedUntilBlock?: number };
+  const cand = at.candidate as { owner: Uint8Array; lockedUntilBlock?: number };
   const ownerHex = Buffer.from(cand.owner).toString('hex');
   if (ownerHex !== userLowerHex) {
     return {
@@ -247,7 +310,7 @@ async function proveOneBoxAtHeight(
         ? null
         : cand.lockedUntilBlock
       : null;
-  return { kind: 'proven', value: record.candidate.value, lockedUntilBlock };
+  return { kind: 'proven', value: at.candidate.value, lockedUntilBlock };
 }
 
 // The record key is derived from `user` under IDENTITY_KEY_DOMAIN — the caller's
@@ -260,34 +323,11 @@ async function proveRecordAtHeight(
   expectedStateRoot: string,
   httpFetch: HttpFetch,
 ): Promise<RecordProofOutcome> {
-  const proofRes = await fetchJson<AvlProofResponse>(
-    httpFetch,
-    `${nodeUrl}/api/v1/proof/${recordKey}?atHeight=${atHeight}`,
-  );
-  if (!proofRes.ok) {
-    if (proofRes.status === 0) {
-      return { kind: 'no-proof', verdict: `transport failure: ${proofRes.body}` };
-    }
-    return { kind: 'no-proof', verdict: `HTTP ${proofRes.status}: ${proofRes.body}` };
-  }
-  const resp = proofRes.data;
-  if (resp.stateRoot !== expectedStateRoot) {
-    return { kind: 'unproven', verdict: 'stateRoot mismatch' };
-  }
-  if (resp.kind != null && resp.kind !== 'record') {
-    return { kind: 'unproven', verdict: `node returned kind '${resp.kind}' for a record key` };
-  }
-  const avlResult = verifyAvlLookup(
-    hexToBytes(expectedStateRoot),
-    base64ToBytes(resp.proof),
-    { keyLength: AVL_KEY_LENGTH, valueLengthOpt: null },
-    hexToBytes(recordKey),
-  );
-  if (avlResult === null) return { kind: 'unproven', verdict: 'proof rejected' };
-  if (avlResult.value === null) return { kind: 'exclusion' };
+  const outcome = await proveKeyAtHeight(nodeUrl, recordKey, 'record', atHeight, expectedStateRoot, httpFetch);
+  if (outcome.kind !== 'included') return outcome;
   let record: IdentityRecord;
   try {
-    record = identityRecordFromBytes(avlResult.value);
+    record = identityRecordFromBytes(outcome.value);
   } catch {
     return { kind: 'unproven', verdict: 'value decode failed' };
   }
@@ -316,11 +356,17 @@ export async function proveFigures(
   for (const b of listing.karma.boxes) allBoxes.push({ listed: b, boxClass: 'karma' });
   for (const b of listing.credits.boxes) allBoxes.push({ listed: b, boxClass: 'credit' });
 
-  // Step 1 — every listed box at suffixHead
-  const firstPass: BoxProofOutcome[] = [];
+  // Step 1 — every listed box at suffixHead; an entry that is not a listed box
+  // is unproven and asks for nothing
+  const firstPass: FirstPassOutcome[] = [];
   for (const { listed, boxClass } of allBoxes) {
+    const malformed = malformedListedBox(listed);
+    if (malformed !== null) {
+      firstPass.push({ kind: 'malformed', verdict: malformed });
+      continue;
+    }
     firstPass.push(
-      await proveOneBoxAtHeight(
+      await proveListedBoxAtHeight(
         nodeUrl,
         listed.boxId,
         boxClass,
@@ -348,7 +394,7 @@ export async function proveFigures(
     const { listed, boxClass } = allBoxes[i]!;
     secondPass.set(
       listed.boxId,
-      await proveOneBoxAtHeight(
+      await proveListedBoxAtHeight(
         nodeUrl,
         listed.boxId,
         boxClass,
@@ -361,11 +407,7 @@ export async function proveFigures(
   }
 
   // Step 4 — one GET /blocks/current
-  const blocksRes = await fetchJson<BlocksCurrentResponse>(
-    httpFetch,
-    `${nodeUrl}/blocks/current`,
-  );
-  const heightAfter = blocksRes.ok ? blocksRes.data.height : null;
+  const heightAfter = await readHeightAfter(nodeUrl, httpFetch);
 
   // Assemble the per-box verdicts
   const boxes: FigureBox[] = [];
@@ -373,6 +415,11 @@ export async function proveFigures(
   for (let i = 0; i < allBoxes.length; i++) {
     const { listed, boxClass } = allBoxes[i]!;
     const first = firstPass[i]!;
+    if (first.kind === 'malformed') {
+      boxes.push(malformedFigureBox(listed, boxClass, first.verdict));
+      failed = true;
+      continue;
+    }
     const listingValue = BigInt(listed.value);
     const listingLocked =
       boxClass === 'credit' ? listed.lockedUntilBlock ?? null : null;
@@ -437,9 +484,9 @@ export async function proveFigures(
           verdict: `no proof at tip: ${second.verdict}`,
         };
       } else {
-        // Excluded at both — decided by heightAfter. An undecided heightAfter
-        // (null) or a fallen height read as unchecked, never as a lie.
-        if (heightAfter !== null && heightAfter === tipHeight) {
+        // Excluded at both — decided by heightAfter.
+        const decided = excludedAtBoth(heightAfter, tipHeight);
+        if (decided.absent) {
           fb = {
             boxId: listed.boxId,
             boxClass,
@@ -450,19 +497,13 @@ export async function proveFigures(
           };
           failed = true;
         } else {
-          const why =
-            heightAfter === null
-              ? '/blocks/current unavailable'
-              : heightAfter > tipHeight
-                ? `heightAfter ${heightAfter} > tip ${tipHeight} — a block landed since the anchor`
-                : `heightAfter ${heightAfter} < tip ${tipHeight} — the node's height fell`;
           fb = {
             boxId: listed.boxId,
             boxClass,
             value: listingValue,
             lockedUntilBlock: listingLocked,
             status: 'unchecked',
-            verdict: `unchecked — ${why}`,
+            verdict: `unchecked — ${decided.why}`,
           };
         }
       }
@@ -502,20 +543,24 @@ export async function proveFigures(
 
   // TYPES_INTERFACE → Identity record and karma valuation — one implementation
   // of the valuation shared by the node and the client; valued at the row's
-  // own height, so an unchanged state reproduces the number exactly.
+  // own height, so an unchanged state reproduces the number exactly. A height
+  // that is not a block height values nothing.
+  const valuedAt: unknown = listing.karma.height;
   let effective: bigint | null;
-  if (record.status === 'proven') {
+  if (!isBlockHeight(valuedAt)) {
+    effective = null;
+  } else if (record.status === 'proven') {
     effective = effectiveKarma(
       karmaSums.proven,
       record.record,
-      listing.karma.height,
+      valuedAt,
       decayCfgFor(profile),
     );
   } else if (record.status === 'absent') {
     effective = effectiveKarma(
       karmaSums.proven,
       null,
-      listing.karma.height,
+      valuedAt,
       decayCfgFor(profile),
     );
   } else {
@@ -552,6 +597,89 @@ export async function proveBoxes(
     };
   }
   return proveFigures(nodeUrl, user, listingResult.listing, anchor, profile, httpFetch);
+}
+
+// NODE_INTERFACE → Blocks — `GET /blocks/current` answers `{ height, hash }`; no
+// answer, or one whose `height` is not a block height, leaves `heightAfter`
+// unread (WEB_INTERFACE → The extension → "A run is total").
+async function readHeightAfter(nodeUrl: string, httpFetch: HttpFetch): Promise<number | null> {
+  const res = await fetchJson<unknown>(httpFetch, `${nodeUrl}/blocks/current`);
+  if (!res.ok || !isRecord(res.data)) return null;
+  const height = res.data['height'];
+  return isBlockHeight(height) ? height : null;
+}
+
+// WEB_INTERFACE → The extension → "The verified figures" — a key excluded at
+// both heights is `absent` when the node's height after the run is the anchor's
+// tip; a block landed since, a fallen height or an unread one leaves it
+// `unchecked` — undecided reads as unchecked, never as a lie.
+function excludedAtBoth(
+  heightAfter: number | null,
+  tipHeight: number,
+): { absent: true } | { absent: false; why: string } {
+  if (heightAfter === tipHeight) return { absent: true };
+  const why =
+    heightAfter === null
+      ? '/blocks/current unavailable'
+      : heightAfter > tipHeight
+        ? `heightAfter ${heightAfter} > tip ${tipHeight} — a block landed since the anchor`
+        : `heightAfter ${heightAfter} < tip ${tipHeight} — the node's height fell`;
+  return { absent: false, why };
+}
+
+function isBlockHeight(v: unknown): v is number {
+  return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+}
+
+const HEX_64 = /^[0-9a-f]{64}$/i;
+const DECIMAL = /^[0-9]+$/;
+
+// WEB_INTERFACE → The extension → "A run is total" — an entry is asked about
+// only when it is an object whose `boxId` is 64 hex and whose `value` is a
+// decimal string; for any other, the reason it is not, named.
+function malformedListedBox(listed: unknown): string | null {
+  if (!isRecord(listed)) return `the listed box is not an object: ${shown(listed)}`;
+  const boxId = listed['boxId'];
+  if (typeof boxId !== 'string' || !HEX_64.test(boxId)) {
+    return `the listed boxId is not 64 hex: ${shown(boxId)}`;
+  }
+  const value = listed['value'];
+  if (typeof value !== 'string' || !DECIMAL.test(value)) {
+    return `the listed value is not a decimal integer: ${shown(value)}`;
+  }
+  return null;
+}
+
+// A malformed entry keeps what reads — its `boxId` where it is a string, its
+// `value` where it is a decimal string, else '' and 0n; an unproven box enters
+// no sum.
+function malformedFigureBox(
+  listed: unknown,
+  boxClass: 'karma' | 'credit',
+  verdict: string,
+): FigureBox {
+  const entry = isRecord(listed) ? listed : {};
+  const boxId = entry['boxId'];
+  const value = entry['value'];
+  return {
+    boxId: typeof boxId === 'string' ? boxId : '',
+    boxClass,
+    value: typeof value === 'string' && DECIMAL.test(value) ? BigInt(value) : 0n,
+    lockedUntilBlock: null,
+    status: 'unproven',
+    verdict: `unproven: ${verdict}`,
+  };
+}
+
+// A node's value as a verdict names it: a string quoted, anything else by its
+// kind. Never converted — a parsed object can carry a `toString` that is not a
+// function, and converting it throws.
+function shown(v: unknown): string {
+  if (typeof v === 'string') return `'${v}'`;
+  if (v === undefined) return 'missing';
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return 'an array';
+  return typeof v === 'object' ? 'an object' : `a ${typeof v}`;
 }
 
 function hexToBytes(hex: string): Uint8Array {
