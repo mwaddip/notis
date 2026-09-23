@@ -489,7 +489,10 @@ included at `tip`, every check holding; `unchecked` — excluded at both and `he
 **`absent`** — excluded at both and `heightAfter` equal to `tip.height`: **the node points at a box the chain does not
 hold**, exact for the reason a listing's `absent` is, since the lookup follows the anchor; `unproven` — a proof that
 fails, a value that does not decode or hash to its key, a `kind` or `boxType` not a username box's, an owner or a name
-not the claim's; `no-proof` — the lookup or a proof not served; `none` — the lookup answered 404. **A handle reads as it
+not the claim's, and — with no request — a label whose key is not 64 hex or whose name is not a well-formed name
+(`TYPES_INTERFACE → Content limits`), since no box can carry it; `no-proof` — the lookup or a proof not served; `none` —
+the lookup answered 404, or — with no request — a typed handle that is not a well-formed name, which no one can hold.
+**A handle reads as it
 reads without a verifier while no check has decided it, and under `proven`, `young` and `unchecked`; under `absent`,
 `unproven`, `no-proof` and `none` it is clay** — the node showed a name the chain does not back, or could not back one
 it showed (→ The identity display, → The author window). **It runs** in the extension build alone and only with an
