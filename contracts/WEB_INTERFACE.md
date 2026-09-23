@@ -426,8 +426,10 @@ excluded at both and `heightAfter` equal to `tip.height`: listed at a height the
 node lists what the chain does not hold** (the anchor predates the listing, so the reading node's height at the listing
 was at least the tip's, and a node whose height fell between the reads shows as `unchecked` or a proof failure on the
 next run, never as a false `absent`); `unproven` — a `stateRoot` other than the header's, a rejected lookup, a value
-that does not decode or hash to the key, a `kind` that is not a box's, an owner or a type that is not the listing's;
-`no-proof` — nothing served. The record is `proven` or `null` at `suffixHead` — the same `null` the node values — or
+that does not decode or hash to the key, a `kind` that is not a box's, an owner, a type, a value or a lock that is not
+the listing's — a box's value and lock are fixed by its id — and **an id the listing names more than once**, in either
+ledger, from its second place on, with no request: the chain holds a box once, so a listing that counts it twice
+lists what no proof backs; `no-proof` — nothing served. The record is `proven` or `null` at `suffixHead` — the same `null` the node values — or
 `unproven` / `no-proof` by the same rules. **The valuation** is `effectiveKarma` over the proven karma face total and
 the proven record **at the karma listing's own `height`** — the height the node computed the row's `effective` at — so
 an unchanged state reproduces the number shown exactly; the proven spendable sum is the balance row's rule over the
@@ -468,7 +470,8 @@ omission is what reading both nodes as a union is for.
 
 > ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — a proof answer whose body is not an object or whose `proof`
 > is not a string, a `/blocks/current` answer without a `height`, and a listed id that is not 64 hex throw out of
-> `proveFigures`, and the App keeps the line it had.
+> `proveFigures`, and the App keeps the line it had; an id listed twice is proven twice and counted twice, the tip pass
+> keyed by the id; a listed value or lock other than the box's own reads `proven`.
 
 **The verified names.** The extension proves every handle it shows, and every handle it sends to, against the state the
 verified chain committed — the figures' anchor, their proofs and their order. **A check** is `proveName` of
