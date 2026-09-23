@@ -444,7 +444,10 @@ already. A listing not read after the current anchor is passed empty, and its ro
 muted *not checked yet* — the run proved nothing about it. The karma listing is read whole, following `next` (→ "Paging is keyset, never offset"),
 the row's number the first page's `effective`. One run in flight; a listing or an anchor that moves during a run marks
 one more run, started when it ends; a result for a listing no longer rendered, or under an older generation, is
-dropped; a run in flight keeps the line it had. **What it says** is one
+dropped; a run in flight keeps the line it had. **A run is total**: an answer of any shape from the node — a body that
+is not the route's, a `proof` that is not a string, a key that is not 64 hex, bytes the lookup cannot parse — ends in a
+status (`unproven`, or `heightAfter` unread), never in a thrown run, because a run that does not end writes no line, and
+a figure with no line reads as proven. **What it says** is one
 muted line beneath the figure — the element the balance row's locked line is — **and only when something is not whole:
 a figure every box of which proved reads as it reads without a verifier.** The lines, the first that holds: **none** in
 a build with no verifier, and none over an empty listing (a proof of emptiness is a proof of nothing); *not checked — the
@@ -462,6 +465,10 @@ row's `effective` are the reads the run proved, in every state; the line describ
 and the figure in clay (→ The wallet window, → The profile window). **What it means** is a lower bound and no more:
 every proven box is real and the key's; a node that withholds a box still serves valid proofs for the rest, and
 omission is what reading both nodes as a union is for.
+
+> ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — a proof answer whose body is not an object or whose `proof`
+> is not a string, a `/blocks/current` answer without a `height`, and a listed id that is not 64 hex throw out of
+> `proveFigures`, and the App keeps the line it had.
 
 **The verified names.** The extension proves every handle it shows, and every handle it sends to, against the state the
 verified chain committed — the figures' anchor, their proofs and their order. **A check** is `proveName` of
@@ -488,7 +495,7 @@ surface, against the anchor standing. **A check that ends `unchecked` asks for o
 result** — a block landed since the anchor, and a fresh anchor makes the next answer exact; a second `unchecked` waits
 for the next run. A clay pair is checked again at every verified run. One batch in flight, a trigger during it marking
 one more; a node change drops every result with the generation it bumps; a result under an older generation is
-dropped. **A send to a handle is checked at the press** (→ The wallet window): `proven` and `young` go to the flow,
+dropped. **A check is total**, as a run is (→ "The verified figures"). **A send to a handle is checked at the press** (→ The wallet window): `proven` and `young` go to the flow,
 to the key the proven box names; `none` is *no one holds that name.*; `unchecked` takes its one tip run first; every
 other status refuses and nothing is signed; with no anchor the press asks for a tip run and waits for its verdict, and
 `thin` or `refused` refuses. **What it means**: a handle in ink stands beside the key whose box the verified chain holds
