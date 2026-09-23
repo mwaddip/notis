@@ -148,9 +148,10 @@ old poll, and re-reads every open surface with the new `viewer`.
   `https` only, serves the renderer and the composer.
 
 **From `HOUSE_STYLE.md` — the ones this surface will collide with:**
-- **Nothing moves that the reader did not ask to move.** No polling, no live counts, no injected
-  banner, no infinite scroll (it is a variable-ratio lever). **Refresh is a button and it reports what
-  it did** — `4 new posts` or `no new posts`.
+- **Nothing leaves its place that the reader did not ask to move** — literally: no injected banner, no
+  card arriving or shifting, no infinite scroll (it is a variable-ratio lever). **A number is not motion: it
+  can and should update whenever what it counts changes**, in its fixed slot, never animated.
+  **Refresh is a button and it reports what it did** — `4 new posts` or `no new posts`.
 - **Numbers never animate.** **150ms ceiling, ease-out. `prefers-reduced-motion` means none, not less.**
 - **A restored preference is painted, not transitioned.** Suppress transitions until after first paint,
   or a stored dark theme paints light and flips.
