@@ -310,9 +310,18 @@ into an image element.
 Every rule here is a prohibition, and together they are most of what keeps the place calm.
 
 - **Motion only ever responds to a user action.** Nothing moves on its own — no autoplay, no
-  ambient animation, no live-ticking counts, no "12 new posts" banner sliding in. If the feed
-  changed, say so and wait.
-- **The one exception is the status corner's tip** (user, 2026-09-17): a dot and the chain's height at the
+  ambient animation, no count ticking up before the reader's eyes, no "12 new posts" banner sliding in.
+  If the feed changed, say so and wait.
+- **"Nothing moves" is literal: nothing leaves its place unless the reader asked** (user, 2026-09-23). **A
+  number is not motion — it can and should update whenever what it counts changes**, in its fixed slot, the
+  digits swapped and never animated (→ "Numbers never animate"). What this section forbids is a thing
+  arriving, leaving or shifting where the reader did not act: a card, a banner, a line that pushes others
+  down. So the rep a reader's own post spent reads its new number when the post lands, and the figures the
+  extension proves take their fresh values when the proof runs (`WEB_INTERFACE → The extension → "The verified
+  figures"`). ⚠ **AHEAD OF CODE (2026-09-23, the verified figures)** — a landing re-reads `/karma` only for a
+  grant, an invite, a claim and a burn, and the extension proves the figures the App holds without reading them
+  first.
+- **The status corner's tip reads on a clock** (user, 2026-09-17): a dot and the chain's height at the
   viewport's bottom-right, out of the reading path, read every thirty seconds while the tab is visible, so a
   reader can glance whether blocks progress. It moves nothing else — no count on a card, no feed refresh, no
   banner; the number changes in place and never animates, and the dot is its only colour
