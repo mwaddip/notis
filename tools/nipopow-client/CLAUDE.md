@@ -60,17 +60,19 @@ null, surfaces as `{ ok: false, reason }`. `proveFigures(nodeUrl, user, listing,
 anchor, profile, fetch)` runs, in this order the run's whole meaning rests on: every listed box at
 `suffixHead`, then the identity record at `suffixHead`, then every box excluded at `suffixHead` once
 more at `tip`, then one `GET /blocks/current`. A box is **`proven`** when it is included at
-`suffixHead`, its value hashes back to its key, its `owner` is the loaded key and its `boxType` the
-ledger it was listed under — a node that lists another key's real box, or the wrong ledger's, gets
-`unproven`. Otherwise: **`young`** — excluded at `suffixHead`, included at `tip`; **`unchecked`** —
+`suffixHead`, its value hashes back to its key, its `owner` is the loaded key, its `boxType` the
+ledger it was listed under, and its value and (for a credit box) its lock the listing's, both fixed
+by the box id — a node that lists another key's real box, the wrong ledger's, or a real box at another
+value or lock, gets `unproven`. Otherwise: **`young`** — excluded at `suffixHead`, included at `tip`; **`unchecked`** —
 excluded at both and `heightAfter` above `tip.height` (a block landed since), or below (the node's
 height fell — a reorg), or unread — `/blocks/current` gave no block height (undecided reads as
 unchecked, never as a lie); **`absent`** — excluded at both and `heightAfter` equal to `tip.height`,
 the node listing what the chain does not hold; **`unproven`** — a `stateRoot` other than the header's,
 a rejected lookup, a proof answer that is not an object or whose `proof` is not a string, a value that
-does not decode or hash to the key, a `kind` that is not a box's, an owner or a type that is not the
-listing's, or an entry that is not an object with a 64-hex `boxId` and a decimal `value` — for which
-no proof is asked; **`no-proof`** — nothing served. The record is `proven` or `absent` at
+does not decode or hash to the key, a `kind` that is not a box's, an owner, a type, a value or a lock
+that is not the listing's, or an entry that is not an object with a 64-hex `boxId` and a decimal `value`, or that
+names an id the listing named earlier in either ledger — for which no proof is asked;
+**`no-proof`** — nothing served. The record is `proven` or `absent` at
 `suffixHead` — the same `null` the node values — or `unproven` / `no-proof` by the same rules; the
 valuation is `effectiveKarma(karma.proven, record, listing.karma.height, decayCfgFor(profile))`, the
 one implementation shared with the node, and `null` where `listing.karma.height` is not a block height.

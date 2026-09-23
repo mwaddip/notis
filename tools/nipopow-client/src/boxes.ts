@@ -276,18 +276,20 @@ async function proveBoxAtHeight(
 }
 
 // WEB_INTERFACE → The extension → "The verified figures" — a listed box is
-// proven when it is included, its `boxType` is the ledger it was listed under
-// and its `owner` is the loaded key.
+// proven when it is included, its `boxType` is the ledger it was listed under,
+// its `owner` is the loaded key, and its value — and a credit box's lock — are
+// the listing's, both being fixed by the box id. `listed` has passed
+// malformedListedBox.
 async function proveListedBoxAtHeight(
   nodeUrl: string,
-  boxId: string,
+  listed: ListedBox,
   boxClass: 'karma' | 'credit',
   userLowerHex: string,
   atHeight: number,
   expectedStateRoot: string,
   httpFetch: HttpFetch,
 ): Promise<BoxProofOutcome> {
-  const at = await proveBoxAtHeight(nodeUrl, boxId, atHeight, expectedStateRoot, httpFetch);
+  const at = await proveBoxAtHeight(nodeUrl, listed.boxId, atHeight, expectedStateRoot, httpFetch);
   if (at.kind !== 'included') return at;
   if (at.candidate.boxType !== boxClass) {
     return {
@@ -304,12 +306,25 @@ async function proveListedBoxAtHeight(
       verdict: `candidate owner '${ownerHex}' does not match user '${userLowerHex}'`,
     };
   }
+  if (at.candidate.value !== BigInt(listed.value)) {
+    return {
+      kind: 'unproven',
+      verdict: `candidate value ${at.candidate.value} does not match listing ${listed.value}`,
+    };
+  }
   const lockedUntilBlock =
     boxClass === 'credit'
       ? cand.lockedUntilBlock === undefined
         ? null
         : cand.lockedUntilBlock
       : null;
+  const listedLock: unknown = listed.lockedUntilBlock ?? null;
+  if (boxClass === 'credit' && listedLock !== lockedUntilBlock) {
+    return {
+      kind: 'unproven',
+      verdict: `candidate lockedUntilBlock ${lockShown(lockedUntilBlock)} does not match listing ${lockShown(listedLock)}`,
+    };
+  }
   return { kind: 'proven', value: at.candidate.value, lockedUntilBlock };
 }
 
@@ -356,11 +371,12 @@ export async function proveFigures(
   for (const b of listing.karma.boxes) allBoxes.push({ listed: b, boxClass: 'karma' });
   for (const b of listing.credits.boxes) allBoxes.push({ listed: b, boxClass: 'credit' });
 
-  // Step 1 — every listed box at suffixHead; an entry that is not a listed box
-  // is unproven and asks for nothing
+  // Step 1 — every listed box at suffixHead; an entry that is not a listed box,
+  // or names an id the listing named earlier, is unproven and asks for nothing
   const firstPass: FirstPassOutcome[] = [];
+  const named = new Set<string>();
   for (const { listed, boxClass } of allBoxes) {
-    const malformed = malformedListedBox(listed);
+    const malformed = malformedListedBox(listed, named);
     if (malformed !== null) {
       firstPass.push({ kind: 'malformed', verdict: malformed });
       continue;
@@ -368,7 +384,7 @@ export async function proveFigures(
     firstPass.push(
       await proveListedBoxAtHeight(
         nodeUrl,
-        listed.boxId,
+        listed,
         boxClass,
         userLowerHex,
         suffixHeight,
@@ -387,16 +403,17 @@ export async function proveFigures(
     httpFetch,
   );
 
-  // Step 3 — every box the first pass excluded, once more at tip
-  const secondPass = new Map<string, BoxProofOutcome>();
+  // Step 3 — every box the first pass excluded, once more at tip, each kept by
+  // its place in the listing
+  const secondPass = new Map<number, BoxProofOutcome>();
   for (let i = 0; i < allBoxes.length; i++) {
     if (firstPass[i]!.kind !== 'exclusion') continue;
     const { listed, boxClass } = allBoxes[i]!;
     secondPass.set(
-      listed.boxId,
+      i,
       await proveListedBoxAtHeight(
         nodeUrl,
-        listed.boxId,
+        listed,
         boxClass,
         userLowerHex,
         tipHeight,
@@ -454,7 +471,7 @@ export async function proveFigures(
         verdict: `no proof at suffixHead: ${first.verdict}`,
       };
     } else {
-      const second = secondPass.get(listed.boxId)!;
+      const second = secondPass.get(i)!;
       if (second.kind === 'proven') {
         fb = {
           boxId: listed.boxId,
@@ -634,15 +651,21 @@ function isBlockHeight(v: unknown): v is number {
 const HEX_64 = /^[0-9a-f]{64}$/i;
 const DECIMAL = /^[0-9]+$/;
 
-// WEB_INTERFACE → The extension → "A run is total" — an entry is asked about
-// only when it is an object whose `boxId` is 64 hex and whose `value` is a
-// decimal string; for any other, the reason it is not, named.
-function malformedListedBox(listed: unknown): string | null {
+// An entry is asked about only when it is an object whose `boxId` is 64 hex and
+// named nowhere earlier in the listing, in either ledger, and whose `value` is
+// a decimal string (WEB_INTERFACE → The extension → "A run is total";
+// WEB_INTERFACE → The extension → "an id the listing names more than once");
+// for any other, the reason it is not, named. `named` holds every 64-hex id the
+// listing named before this entry, lowercased.
+function malformedListedBox(listed: unknown, named: Set<string>): string | null {
   if (!isRecord(listed)) return `the listed box is not an object: ${shown(listed)}`;
   const boxId = listed['boxId'];
   if (typeof boxId !== 'string' || !HEX_64.test(boxId)) {
     return `the listed boxId is not 64 hex: ${shown(boxId)}`;
   }
+  const id = boxId.toLowerCase();
+  if (named.has(id)) return `the listed boxId is named earlier in the listing: ${shown(boxId)}`;
+  named.add(id);
   const value = listed['value'];
   if (typeof value !== 'string' || !DECIMAL.test(value)) {
     return `the listed value is not a decimal integer: ${shown(value)}`;
@@ -680,6 +703,12 @@ function shown(v: unknown): string {
   if (v === null) return 'null';
   if (Array.isArray(v)) return 'an array';
   return typeof v === 'object' ? 'an object' : `a ${typeof v}`;
+}
+
+// A lock as a verdict names it: a number as written, no lock as `none`.
+function lockShown(v: unknown): string {
+  if (v === null) return 'none';
+  return typeof v === 'number' ? String(v) : shown(v);
 }
 
 function hexToBytes(hex: string): Uint8Array {
