@@ -55,8 +55,9 @@ no `process` (the command line's `index.ts` alone does).
 
 **The figures.** `fetchListing(nodeUrl, user, fetch)` reads `/karma/:user` and `/credits/:user`
 following `next` to the end, `height` and `effective` from the first karma page — a 404 is an empty
-listing; any other non-ok, or a page that is not an object with a `boxes` array and a `next` string or
-null, surfaces as `{ ok: false, reason }`. `proveFigures(nodeUrl, user, listing,
+listing; any other non-ok, or a page that is not an object with a `boxes` array and a `next` that is
+null or a string with no lone surrogate (the next request carries it through `encodeURIComponent`),
+surfaces as `{ ok: false, reason }`. `proveFigures(nodeUrl, user, listing,
 anchor, profile, fetch)` runs, in this order the run's whole meaning rests on: every listed box at
 `suffixHead`, then the identity record at `suffixHead`, then every box excluded at `suffixHead` once
 more at `tip`, then one `GET /blocks/current`. A box is **`proven`** when it is included at
@@ -78,7 +79,7 @@ valuation is `effectiveKarma(karma.proven, record, listing.karma.height, decayCf
 one implementation shared with the node, and `null` where `listing.karma.height` is not a block height.
 **The run is total**: an answer of any shape ends in a status, never a throw
 (`WEB_INTERFACE → The extension → "A run is total"`). **`failed`** — any box `unproven` or `absent`,
-or the record `unproven` — is the command line's exit 1. `proveBoxes` composes the two for the command line's own
+the record `unproven`, or a listing height that is not a block height — is the command line's exit 1. `proveBoxes` composes the two for the command line's own
 use; the CLI itself calls `fetchListing` and `proveFigures` so it can print the row's `listing.karma
 .height` beside `effective`.
 

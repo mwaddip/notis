@@ -3,7 +3,7 @@ import type { DecodedBoxCandidate } from '@dagsocial/types';
 import type { Anchor } from './boxes.js';
 import { HEX_64, excludedAtBoth, proveBoxAtHeight, readHeightAfter, shown } from './boxes.js';
 import type { HttpFetch } from './http.js';
-import { fetchJson, isRecord } from './http.js';
+import { capped, fetchJson, isRecord } from './http.js';
 
 /**
  * WEB_INTERFACE → The extension → "The verified names" — a label is a key and
@@ -77,8 +77,8 @@ export async function proveName(
         : `none — the node answers that no one holds ${shown(claimed)}`);
     }
     return unanswered('no-proof', lookup.status === 0
-      ? `no answer to the lookup: transport failure: ${lookup.body}`
-      : `no answer to the lookup: HTTP ${lookup.status}: ${lookup.body}`);
+      ? `no answer to the lookup: transport failure: ${capped(lookup.body)}`
+      : `no answer to the lookup: HTTP ${lookup.status}: ${capped(lookup.body)}`);
   }
   const answer = isRecord(lookup.data) ? lookup.data : {};
   const answeredBoxId = answer['boxId'];

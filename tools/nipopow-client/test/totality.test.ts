@@ -132,6 +132,8 @@ describe('fetchListing — a page the paging cannot walk fails the listing, its 
     ['a `boxes` that is not an array', { boxes: 'abc', next: null, height: 1, effective: '0' }],
     ['no `next`', { boxes: [], height: 1, effective: '0' }],
     ['a `next` that is neither a string nor null', { boxes: [], next: 7, height: 1, effective: '0' }],
+    ['a `next` that is a lone high surrogate', { boxes: [], next: '\ud800', height: 1, effective: '0' }],
+    ['a `next` that carries a lone low surrogate', { boxes: [], next: 'c\udc00', height: 1, effective: '0' }],
   ])('a karma page with %s is a malformed page', async (_shape, body) => {
     const fetch: HttpFetch = async () => jsonResponse(200, body);
     const result = await fetchListing('http://a', USER_HEX, fetch);
@@ -148,6 +150,22 @@ describe('fetchListing — a page the paging cannot walk fails the listing, its 
     };
     const result = await fetchListing('http://a', USER_HEX, fetch);
     expect(result).toEqual({ ok: false, reason: `GET /karma/${USER_HEX}?after=c1: malformed page` });
+  });
+
+  it('a `next` carrying a surrogate pair is well-formed text, followed with the pair encoded', async () => {
+    const calls: string[] = [];
+    const fetch: HttpFetch = async (url: string) => {
+      const u = new URL(url);
+      calls.push(`${u.pathname}${u.search}`);
+      if (u.pathname === `/karma/${USER_HEX}` && !u.searchParams.has('after')) {
+        return jsonResponse(200, { boxes: [], next: 'c\u{1F600}', height: 1, effective: '0' });
+      }
+      if (u.pathname === `/karma/${USER_HEX}`) return jsonResponse(200, { boxes: [], next: null });
+      return jsonResponse(404, { error: 'not found' });
+    };
+    const result = await fetchListing('http://a', USER_HEX, fetch);
+    expect(result.ok).toBe(true);
+    expect(calls[1]).toBe(`/karma/${USER_HEX}?after=c%F0%9F%98%80`);
   });
 
   it('a credits page that is malformed fails the listing, the credits route named', async () => {
@@ -237,17 +255,18 @@ describe('proveFigures — a listed entry that is not a listed box asks for noth
   });
 });
 
-describe('proveFigures — a listing height that is not a block height values nothing', () => {
+describe('proveFigures — a listing height that is not a block height values nothing and fails the run', () => {
   it.each([
     ['infinite, as JSON 1e400 parses', Infinity],
     ['a string', String(TIP_H)],
     ['a fraction', TIP_H + 0.5],
     ['negative', -1],
-  ])('a listing height that is %s leaves effective null, never a throw', async (_shape, height) => {
+  ])('a listing height that is %s leaves effective null and fails the run, never a throw', async (_shape, height) => {
     const { fetch } = node();
     const result = await prove(listingOf([{ boxId: BOX_ID, value: '100' }], height), fetch);
     expect(result.boxes[0]!.status).toBe('proven');
     expect(result.karma.proven).toBe(100n);
     expect(result.karma.effective).toBeNull();
+    expect(result.failed).toBe(true);
   });
 });

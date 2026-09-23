@@ -1,6 +1,7 @@
 import { parseConfig, ConfigError } from './config.js';
 import { resolveTip } from './tip.js';
 import { fetchListing, proveFigures } from './boxes.js';
+import { capped } from './http.js';
 import type { Config } from './config.js';
 import type { TipResult } from './tip.js';
 import type { Anchor, FiguresResult, LedgerSums, Listing } from './boxes.js';
@@ -206,7 +207,7 @@ function outputText(tip: TipResult, run: Run | null): void {
     } else {
       for (const b of figures.boxes) {
         const valueSuffix = b.status === 'proven' || b.status === 'young' ? ` value=${b.value}` : '';
-        lines.push(`  ${b.boxClass} ${b.boxId}: ${b.verdict}${valueSuffix}`);
+        lines.push(`  ${b.boxClass} ${capped(b.boxId)}: ${b.verdict}${valueSuffix}`);
       }
       lines.push(`karma total (face value at suffixHead): ${figures.karma.proven}`);
       lines.push(`credit total (face value at suffixHead): ${figures.credits.proven}`);

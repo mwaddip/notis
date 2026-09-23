@@ -3,6 +3,9 @@ export type HttpFetch = (url: string, init?: RequestInit) => Promise<Response>;
 /** A node call that has not answered in this many ms is treated as unreachable. */
 const REQUEST_TIMEOUT_MS = 10_000;
 
+/** The most characters of any one node-supplied string a verdict names. */
+const VERDICT_TEXT_MAX = 120;
+
 export interface NodeResponse<T> {
   ok: true;
   data: T;
@@ -38,8 +41,21 @@ export async function fetchJson<T>(
   try {
     return { ok: true, data: JSON.parse(text) as T };
   } catch {
-    return { ok: false, status: res.status, body: `unparseable body: ${text.slice(0, 120)}` };
+    return { ok: false, status: res.status, body: `unparseable body: ${capped(text)}` };
   }
+}
+
+/**
+ * A node's text as a verdict names it: whole up to 120 characters, else its
+ * first 120 and `…`, a surrogate pair never split. Applied where the text
+ * enters a verdict, never to the data a status is decided on — the nipopow
+ * route's 404 is classified by its body's `error` (NODE_INTERFACE → Nipopow).
+ */
+export function capped(text: string): string {
+  if (text.length <= VERDICT_TEXT_MAX) return text;
+  const last = text.charCodeAt(VERDICT_TEXT_MAX - 1);
+  const end = last >= 0xd800 && last <= 0xdbff ? VERDICT_TEXT_MAX - 1 : VERDICT_TEXT_MAX;
+  return `${text.slice(0, end)}…`;
 }
 
 /** A parsed body read as an object: not null, not an array. Its fields are the

@@ -17,7 +17,7 @@ import type {
 } from '@dagsocial/types';
 import type { PoPowHeader } from '@dagsocial/nipopow';
 import type { HttpFetch } from './http.js';
-import { fetchJson, isRecord } from './http.js';
+import { capped, fetchJson, isRecord } from './http.js';
 
 export interface ListedBox {
   boxId: string;
@@ -84,13 +84,25 @@ interface CreditPageResponse {
 
 // WEB_INTERFACE → The extension → "A run is total" — the paging walks a page's
 // `boxes` and follows its `next`, so a page is an object with a `boxes` array
-// and a `next` that is a string or null; any other answer is a malformed page.
-// Each entry is the node's claim, checked by proveFigures before a proof is
-// asked for it.
+// and a `next` that is null or well-formed text, the next request carrying it
+// through `encodeURIComponent`; any other answer is a malformed page. Each
+// entry is the node's claim, checked by proveFigures before a proof is asked
+// for it.
 function isPage(data: unknown): boolean {
-  return isRecord(data)
-    && Array.isArray(data['boxes'])
-    && (data['next'] === null || typeof data['next'] === 'string');
+  if (!isRecord(data) || !Array.isArray(data['boxes'])) return false;
+  const next = data['next'];
+  return next === null || (typeof next === 'string' && isWellFormedText(next));
+}
+
+// Text with no lone surrogate, the one thing `encodeURIComponent` throws on.
+// Iterating a string yields a surrogate pair as one code point and a lone
+// surrogate singly, so a code point in U+D800–U+DFFF is a lone one.
+function isWellFormedText(s: string): boolean {
+  for (const ch of s) {
+    const cp = ch.codePointAt(0);
+    if (cp !== undefined && cp >= 0xd800 && cp <= 0xdfff) return false;
+  }
+  return true;
 }
 
 // NODE_INTERFACE → UTXO queries — /karma/:userId and /credits/:userId are paged
@@ -124,10 +136,10 @@ export async function fetchListing(
         `${nodeUrl}/karma/${user}?after=${encodeURIComponent(next)}`,
       );
       if (!r.ok) {
-        return { ok: false, reason: `GET /karma/${user}?after=${next}: HTTP ${r.status}` };
+        return { ok: false, reason: `GET /karma/${user}?after=${capped(next)}: HTTP ${r.status}` };
       }
       if (!isPage(r.data)) {
-        return { ok: false, reason: `GET /karma/${user}?after=${next}: malformed page` };
+        return { ok: false, reason: `GET /karma/${user}?after=${capped(next)}: malformed page` };
       }
       for (const b of r.data.boxes) karmaBoxes.push(b);
       next = r.data.next;
@@ -153,10 +165,10 @@ export async function fetchListing(
         `${nodeUrl}/credits/${user}?after=${encodeURIComponent(next)}`,
       );
       if (!r.ok) {
-        return { ok: false, reason: `GET /credits/${user}?after=${next}: HTTP ${r.status}` };
+        return { ok: false, reason: `GET /credits/${user}?after=${capped(next)}: HTTP ${r.status}` };
       }
       if (!isPage(r.data)) {
-        return { ok: false, reason: `GET /credits/${user}?after=${next}: malformed page` };
+        return { ok: false, reason: `GET /credits/${user}?after=${capped(next)}: malformed page` };
       }
       for (const b of r.data.boxes) creditsBoxes.push(b);
       next = r.data.next;
@@ -221,9 +233,9 @@ async function proveKeyAtHeight(
   );
   if (!proofRes.ok) {
     if (proofRes.status === 0) {
-      return { kind: 'no-proof', verdict: `transport failure: ${proofRes.body}` };
+      return { kind: 'no-proof', verdict: `transport failure: ${capped(proofRes.body)}` };
     }
-    return { kind: 'no-proof', verdict: `HTTP ${proofRes.status}: ${proofRes.body}` };
+    return { kind: 'no-proof', verdict: `HTTP ${proofRes.status}: ${capped(proofRes.body)}` };
   }
   const resp = isRecord(proofRes.data) ? proofRes.data : {};
   if (resp['stateRoot'] !== expectedStateRoot) {
@@ -309,7 +321,7 @@ async function proveListedBoxAtHeight(
   if (at.candidate.value !== BigInt(listed.value)) {
     return {
       kind: 'unproven',
-      verdict: `candidate value ${at.candidate.value} does not match listing ${listed.value}`,
+      verdict: `candidate value ${at.candidate.value} does not match listing ${capped(listed.value)}`,
     };
   }
   const lockedUntilBlock =
@@ -561,11 +573,12 @@ export async function proveFigures(
   // TYPES_INTERFACE → Identity record and karma valuation — one implementation
   // of the valuation shared by the node and the client; valued at the row's
   // own height, so an unchanged state reproduces the number exactly. A height
-  // that is not a block height values nothing.
+  // that is not a block height values nothing and fails the run.
   const valuedAt: unknown = listing.karma.height;
   let effective: bigint | null;
   if (!isBlockHeight(valuedAt)) {
     effective = null;
+    failed = true;
   } else if (record.status === 'proven') {
     effective = effectiveKarma(
       karmaSums.proven,
@@ -694,11 +707,11 @@ function malformedFigureBox(
   };
 }
 
-// A node's value as a verdict names it: a string quoted, anything else by its
-// kind. Never converted — a parsed object can carry a `toString` that is not a
-// function, and converting it throws.
+// A node's value as a verdict names it: a string quoted and capped, anything
+// else by its kind. Never converted — a parsed object can carry a `toString`
+// that is not a function, and converting it throws.
 export function shown(v: unknown): string {
-  if (typeof v === 'string') return `'${v}'`;
+  if (typeof v === 'string') return `'${capped(v)}'`;
   if (v === undefined) return 'missing';
   if (v === null) return 'null';
   if (Array.isArray(v)) return 'an array';

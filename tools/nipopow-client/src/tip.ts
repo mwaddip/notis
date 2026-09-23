@@ -3,7 +3,7 @@ import type { NipopowProof, VerifyResult, CompareResult, PoPowHeader } from '@da
 import type { BlockHeader, NetworkProfile } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import type { HttpFetch } from './http.js';
-import { fetchJson, isRecord } from './http.js';
+import { capped, fetchJson, isRecord } from './http.js';
 import { verifierProfile } from './config.js';
 
 export interface NodeTipResult {
@@ -51,7 +51,9 @@ export async function resolveTip(
         verified: false,
         proof: null,
         verifyResult: null,
-        refuseReason: res.status === 0 ? `unreachable: ${res.body}` : `HTTP ${res.status}: ${res.body}`,
+        refuseReason: res.status === 0
+          ? `unreachable: ${capped(res.body)}`
+          : `HTTP ${res.status}: ${capped(res.body)}`,
         refuseCode: classifyNonOk(res.status, res.body),
         behind: null,
       });
