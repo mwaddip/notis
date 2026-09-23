@@ -7,7 +7,7 @@
 // the same the wallet's balance line reads, and decides which proven credit
 // boxes are spendable at the row's height.
 //
-// The seven rows are the contract's, the first that holds — WEB_INTERFACE →
+// The rows are the contract's, the first that holds — WEB_INTERFACE →
 // The extension → "The verified figures", → The wallet window → "The `balance`
 // row", → The profile window → "The `rep` row is the `effective` number
 // alone". The voice is copied from the contract, never rephrased; a node is
@@ -70,12 +70,21 @@ export function figuresLine(input: FiguresLineInput): FiguresLine {
     return null;
   }
 
-  // The rest of the rows read the result's own per-ledger sums and the record's
-  // status (which, for karma, feeds into rows 4 and 5 too).
-  const sums = ledger === 'credits' ? result.credits : result.karma;
+  // The rest of the rows read the result's own boxes and per-ledger sums and the
+  // record's status (which, for karma, feeds into rows 4 and 5 too).
   const cls: 'credit' | 'karma' = ledger === 'credits' ? 'credit' : 'karma';
-  const record = result.record;
   const boxes = result.boxes.filter((b) => b.boxClass === cls);
+
+  // The run proved nothing about the row's listing — the tool answers one box
+  // for every box it was handed, so a result holding none of this ledger's was
+  // handed none: a listing not read after the anchor goes to the run empty, and
+  // a listing that has grown since the run is not the one it proved. Muted *not
+  // checked yet*, never a figure of 0 proven (WEB_INTERFACE → The extension →
+  // "The verified figures").
+  if (boxes.length === 0) return { text: 'not checked yet', weight: 'muted' };
+
+  const sums = ledger === 'credits' ? result.credits : result.karma;
+  const record = result.record;
   const unprovenBox = boxes.some((b) => b.status === 'unproven');
   const noProofBox = boxes.some((b) => b.status === 'no-proof');
   const recordUnproven = ledger === 'karma' && record.status === 'unproven';

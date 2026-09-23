@@ -463,8 +463,18 @@ describe('the App verified figures — the verdict and the row', () => {
       heightAfter: 6001,
       failed: false,
     };
+    // The verified tip reads both listings first (WEB_INTERFACE → The extension
+    // → "The verified figures"): the karma write starts a run with the wallet's
+    // listing — read before the anchor — passed empty, and the credits write
+    // marks one more. That first run's listing has moved when it answers, so
+    // its result is dropped and the run over the current listing follows.
+    const first = h.figuresCalls[h.figuresCalls.length - 1]!;
+    expect(first.listing.credits.boxes).toHaveLength(0);
+    first.resolve(emptyResult());
+    await flush();
     // Resolve the last figures run that reflects the current listing.
     const lastCall = h.figuresCalls[h.figuresCalls.length - 1]!;
+    expect(lastCall.listing.credits.boxes).toHaveLength(1);
     lastCall.resolve(result);
     await flush();
     const ctx = inner.ctx();

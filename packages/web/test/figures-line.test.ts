@@ -8,8 +8,8 @@ import type { IdentityRecord } from '@dagsocial/types';
 // The pure line model that says beneath the wallet's balance and profile's rep
 // what the verified-figures run could not prove (WEB_INTERFACE → The extension
 // → "The verified figures", → The wallet window, → The profile window). The
-// seven rows of the contract's table, each tested per ledger and titled by
-// its rule; every FiguresResult built by hand — no tool call.
+// rows of the contract's list, each tested per ledger and titled by its rule;
+// every FiguresResult built by hand — no tool call.
 
 const emptySums: LedgerSums = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n };
 
@@ -135,6 +135,64 @@ describe("figuresLine — row 3': no verdict or a verified verdict without a run
   });
   it('karma: verdict verified, no result yet → null', () => {
     expect(figuresLine(input({ ledger: 'karma', verdict: VERIFIED, result: null }))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A listing the run did not prove — a result holding no box of the row's ledger
+// under a listing that holds some → muted "not checked yet", never a figure of
+// 0 proven, and before every row that reads the result
+// ---------------------------------------------------------------------------
+describe('figuresLine — a listing the run did not prove reads muted "not checked yet"', () => {
+  it('credits: a result holding karma boxes alone under a listed balance → "not checked yet", never "0 $NOTIS proven"', () => {
+    const r = result({
+      boxes: [box({ boxClass: 'karma', status: 'proven', value: 100n })],
+      karma: { ...emptySums, proven: 100n, effective: 100n },
+    });
+    expect(figuresLine(input({ ledger: 'credits', verdict: VERIFIED, result: r, shown: 1_250_000_000n })))
+      .toEqual({ text: 'not checked yet', weight: 'muted' });
+  });
+
+  it('karma: a result holding no karma box under a listed rep → "not checked yet", never "0 rep proven"', () => {
+    const r = result({
+      boxes: [box({ boxClass: 'credit', status: 'proven', value: 500n })],
+      credits: { ...emptySums, proven: 500n },
+    });
+    expect(figuresLine(input({ ledger: 'karma', verdict: VERIFIED, result: r, shown: 100n })))
+      .toEqual({ text: 'not checked yet', weight: 'muted' });
+  });
+
+  it('it stands before the full rule: the record unproven in a result that proved no karma box reads "not checked yet"', () => {
+    const r = result({
+      boxes: [],
+      record: { status: 'unproven', verdict: 'stateRoot mismatch' } as RecordResult,
+      karma: { ...emptySums, effective: null },
+    });
+    expect(figuresLine(input({ ledger: 'karma', verdict: VERIFIED, result: r, shown: 100n })))
+      .toEqual({ text: 'not checked yet', weight: 'muted' });
+  });
+
+  it('under a thin verdict with a result standing it still reads "not checked yet" — the unverified line is for no result', () => {
+    const r = result({ boxes: [box({ boxClass: 'karma', status: 'proven', value: 100n })] });
+    expect(figuresLine(input({ ledger: 'credits', verdict: THIN, result: r, shown: 1_250_000_000n })))
+      .toEqual({ text: 'not checked yet', weight: 'muted' });
+  });
+
+  it('an empty listing stays silent — the empty-listing row comes first', () => {
+    expect(figuresLine(input({ ledger: 'credits', verdict: VERIFIED, result: result({ boxes: [] }), boxCount: 0 }))).toBeNull();
+    expect(figuresLine(input({ ledger: 'karma', verdict: VERIFIED, result: result({ boxes: [] }), boxCount: 0 }))).toBeNull();
+  });
+
+  it('a result holding the ledger\'s boxes reads by the rows after it, the other ledger\'s absence aside', () => {
+    const r = result({
+      boxes: [box({ boxClass: 'credit', status: 'proven', value: 1_250_000_000n })],
+      credits: { ...emptySums, proven: 1_250_000_000n },
+    });
+    // Every credit box proven and the balance reproduced — silence for the balance …
+    expect(figuresLine(input({ ledger: 'credits', verdict: VERIFIED, result: r, shown: 1_250_000_000n }))).toBeNull();
+    // … while the rep row, whose listing the run was not handed, reads not checked yet.
+    expect(figuresLine(input({ ledger: 'karma', verdict: VERIFIED, result: r, shown: 100n })))
+      .toEqual({ text: 'not checked yet', weight: 'muted' });
   });
 });
 
