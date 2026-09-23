@@ -434,8 +434,8 @@ runs**, in the extension build alone and only with an identity and an anchor: ri
 `verified`, **reading the reader's listings first** — `/karma` always, `/credits` while the wallet window is open — the
 rows taking the fresh figures in place (`HOUSE_STYLE → Motion`); and after every read of a listing while an anchor
 stands — a window opening, its `↻`, a landing, an identity or a node change — whose listing is read after the anchor
-already. A listing not read after the current anchor — `/credits` while the wallet window is closed — is passed empty,
-its row not being on screen. The karma listing is read whole, following `next` (→ "Paging is keyset, never offset"),
+already. A listing not read after the current anchor is passed empty, and its row, where one is on screen, reads
+muted *not checked yet* — the run proved nothing about it. The karma listing is read whole, following `next` (→ "Paging is keyset, never offset"),
 the row's number the first page's `effective`. One run in flight; a listing or an anchor that moves during a run marks
 one more run, started when it ends; a result for a listing no longer rendered, or under an older generation, is
 dropped; a run in flight keeps the line it had. **What it says** is one
@@ -443,7 +443,8 @@ muted line beneath the figure — the element the balance row's locked line is �
 a figure every box of which proved reads as it reads without a verifier.** The lines, the first that holds: **none** in
 a build with no verifier, and none over an empty listing (a proof of emptiness is a proof of nothing); *not checked — the
 chain is not verified* while the verdict is `thin` or `refused` and no result stands — a verdict or a run not yet
-returned shows nothing; **clay, and the figure clay**, when a box or the record is `unproven` or a box is `absent` —
+returned shows nothing; muted *not checked yet* under a figure whose listing the run did not prove — never a figure of
+*0 proven* for it; **clay, and the figure clay**, when a box or the record is `unproven` or a box is `absent` —
 *the node lists 12.5 $NOTIS the chain does not hold* when any is `absent`, else *this node's proof of the balance did not
 verify*, for rep *… lists 5 rep …* and *… proof of your rep …*; muted *the node served no proof for 12.5 $NOTIS* (*… for
 your rep*) when a box or the record is `no-proof`; **nothing** when every box is `proven` and the valuation equals the
@@ -1289,8 +1290,8 @@ $NOTIS (→ The wallet), in `gold` (`HOUSE_STYLE → "Gold means credits and not
 a box is locked, one muted line, *N $NOTIS more unlock by block H*, H the latest `lockedUntilBlock` among them.
 With no spendable box: the faucet step when a faucet is set (→ The faucet step), else *no $NOTIS yet.* **The balance
 takes a new value whenever one is read** — the window's opening and `↻`, every landing of the reader's own
-transaction while the window is open, and in the extension every verified tip while it is open (`HOUSE_STYLE →
-Motion`). **In the extension, one more muted line of the same element stands beneath the figure only when the verified-figures run could
+transaction (a send's and a grant's landing are read off `/credits` itself, open or closed), and in the extension every
+verified tip while the window is open (`HOUSE_STYLE → Motion`). **In the extension, one more muted line of the same element stands beneath the figure only when the verified-figures run could
 not prove the whole balance** — *87.5 $NOTIS proven at block 9005 · 12.5 $NOTIS landed since*, *… · 12.5 $NOTIS not
 checked yet*, *the node served no proof for 12.5 $NOTIS*, *not checked — the chain is not verified* — **and under the
 full rule that line and the gold figure are clay**: *the node lists 12.5 $NOTIS the chain does not hold*, *this node's
