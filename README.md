@@ -436,7 +436,13 @@ from the node you read and from the other nodes of the seed list — testnet's n
 `node02.notis.fun` — each verified against the network's own proof-of-work profile and compared. The dot in the
 corner is green only while blocks progress and that check holds; clay says what is wrong — one node could not be
 checked, a proof did not verify, another node's chain holds more work than the one you read. It warns and changes
-nothing: the node you read is yours to set. **A Notis link lands in the extension**: a post's
+nothing: the node you read is yours to set. **It proves your rep and your balance against that chain**: every box the
+node lists for your key is proven present in the state the checked chain committed — and yours, of the ledger it was
+listed under — and your rep is valued from the proven boxes and your proven identity record with the node's own
+function. A figure every box of which proved reads as it always does; beneath one that did not, a muted line says what
+could not be proven yet, and the line and the figure turn clay when the node's proof did not verify or it lists what
+the chain does not hold. A proven figure is a lower bound: a node that leaves one of your boxes out is not caught by
+it. **A Notis link lands in the extension**: a post's
 link stays a plain `https` link to the website, and one that opens a tab of its own is taken into the extension's
 workspace — the setting *a Notis link opens: on the site · here* turns that off — while a link followed inside a
 page stays on the site, where `add to workspace` hands the thread over. For that the extension asks, at install,
