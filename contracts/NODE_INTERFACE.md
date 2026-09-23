@@ -3848,7 +3848,15 @@ the network record and the username records (see "Entity kinds" below).
   application and included in block headers
 - **avl-prover:** Generates inclusion/exclusion proofs for any key
 - **avl-endpoint:** `GET /api/v1/proof/:boxId?atHeight=N` — serves proofs to
-  light clients
+  light clients. It answers `{ boxId, atHeight, stateRoot, proof, kind, value }`: `stateRoot` the digest of the
+  version the proof is made against, hex; `proof` the lookup proof's bytes, base64; `kind` the entity kind the key
+  resolves to — `box`, `record`, `network`, `username` or `holder` (→ Entity kinds) — and `value` the node's decoding
+  of it, both `null` where the key is absent and the proof is one of exclusion. `:boxId` is any 64-hex key of the tree,
+  a record's derived key included; `atHeight` must name a height a checkpoint stands at exactly, else 404 `{ error:
+  'height not available' }`; without it the proof is against the current version; 400 for a key that is not 64 hex or
+  a height that is not a non-negative integer. **`kind` and `value` are the node's reading and a light client trusts
+  neither**: it verifies the proof against a `stateRoot` it verified under proof-of-work and decodes the value the
+  proof carries (`WEB_INTERFACE → The extension → "The verified figures"`)
 - **Config:** `MAX_PROOF_HISTORY` (prune old proof versions). The check below
   is not configurable — no variable disables it
 - **Verification:** apply computes the post-mutation digest and rejects the
