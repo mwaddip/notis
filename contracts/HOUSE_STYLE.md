@@ -318,9 +318,7 @@ Every rule here is a prohibition, and together they are most of what keeps the p
   arriving, leaving or shifting where the reader did not act: a card, a banner, a line that pushes others
   down. So the rep a reader's own post spent reads its new number when the post lands, and the figures the
   extension proves take their fresh values when the proof runs (`WEB_INTERFACE → The extension → "The verified
-  figures"`). ⚠ **AHEAD OF CODE (2026-09-23, the verified figures)** — a landing re-reads `/karma` only for a
-  grant, an invite, a claim and a burn, and the extension proves the figures the App holds without reading them
-  first.
+  figures"`).
 - **The status corner's tip reads on a clock** (user, 2026-09-17): a dot and the chain's height at the
   viewport's bottom-right, out of the reading path, read every thirty seconds while the tab is visible, so a
   reader can glance whether blocks progress. It moves nothing else — no count on a card, no feed refresh, no

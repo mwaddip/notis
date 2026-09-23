@@ -2174,13 +2174,12 @@ pool — with the trigger being **touch**, never a per-block walk. See
 `decay.ts`. The read API reports the same valuation: `GET /karma/:userId` carries it as
 `effective` (→ UTXO queries).
 
-> ⚠ **AHEAD OF CODE (2026-09-22, the verified figures)** — the valuation function and its two helpers are
-> `services/decay.ts`' own today. **They are `@dagsocial/types`'** — `effectiveKarma`, `isIdentityStale`,
-> `owedPeriods`, `DecayCfg` and `decayCfgFor` (`TYPES_INTERFACE → Identity record and karma valuation`) — and
-> `decay.ts` keeps the execution alone: `deriveKarmaDecay`, the deps, the leg. `loadConfig` builds its `DecayCfg`
-> through `decayCfgFor(profile)` and the four sites that pass a cfg on pass the one it built. **One implementation**:
-> the engine, the read API and a light client reproducing `effective` from a proven face total and a proven record
-> call the same function, and an inline copy anywhere is the mirror defect class.
+**The valuation function and its two helpers are `@dagsocial/types`'** — `effectiveKarma`, `isIdentityStale`,
+`owedPeriods`, `DecayCfg` and `decayCfgFor` (`TYPES_INTERFACE → Identity record and karma valuation`) — and `decay.ts`
+holds the execution: `deriveKarmaDecay`, `commitDecayClocks`, the deps, the leg. `loadConfig` builds its `DecayCfg`
+through `decayCfgFor(profile)`, and the sites that pass a cfg on pass the one it built. **One implementation**: the
+engine, the read API and a light client reproducing `effective` from a proven face total and a proven record call the
+same function, and an inline copy anywhere is the mirror defect class.
 
 The clock is the `IdentityRecord` (Store Interface → Identity Records):
 
@@ -3216,12 +3215,10 @@ read neither height that meets `insertBox` — a box's `createdAtBlock` is
 creator-declared, so a backdated box would backdate its owner's clock, and the
 `created_at_block` column is uncommitted. So the clock lives in committed state.
 
-> ⚠ **AHEAD OF CODE (2026-09-22, the verified figures)** — the type `IdentityRecord` and the key function
-> `identityRecordKey` are `store/identity-records.ts`' own today. **They are `@dagsocial/types`'**
-> (`TYPES_INTERFACE → Identity record and karma valuation`), as the layout is (`TYPES_INTERFACE → Layout —
-> IdentityRecord`), so that a light client derives the key it asks a proof for and decodes the value it is served with
-> the code the node runs. This section keeps what is the store's: the table, its functions, the writers, the
-> lifecycle, and what the fields mean — `store/identity-records.ts` imports the type and the key from `types`.
+**The type `IdentityRecord` and the key function `identityRecordKey` are `@dagsocial/types`'** (`TYPES_INTERFACE →
+Identity record and karma valuation`), as the layout is (`TYPES_INTERFACE → Layout — IdentityRecord`), so that a light
+client derives the key it asks a proof for and decodes the value it is served with the code the node runs. This section
+holds what is the store's: the table, its functions, the writers, the lifecycle, and what the fields mean.
 
 ```
 IdentityRecord {
@@ -3306,12 +3303,10 @@ functions of the identity, so the two representations cannot drift.
 
 #### Layout — IdentityRecord
 
-> ⚠ **AHEAD OF CODE (2026-09-22, the verified figures)** — the layout's table and its domains stood here, with the
-> argument that `IdentityRecord` was a `node` type and `state/serialize-box.ts` its only encoder. **The layout is
-> `TYPES_INTERFACE → Layout — IdentityRecord`** and the encoder is `identityRecordBytes` / `identityRecordFromBytes` of
-> `@dagsocial/types` — byte for byte what `serializeIdentityRecord` / `deserializeIdentityRecord` write and read today —
-> so that a light client decodes a proven record with the code the node runs. `state/serialize-box.ts` keeps the
-> network, name and holder records and dispatches the identity kind (`0x80`, → Entity kinds) to types' codec.
+**The layout is `TYPES_INTERFACE → Layout — IdentityRecord`**, and its encoder `identityRecordBytes` /
+`identityRecordFromBytes` of `@dagsocial/types`, so that a light client decodes a proven record with the code the node
+runs. `state/serialize-box.ts` holds the network, name and holder records and dispatches the identity kind (`0x80`, →
+Entity kinds) to types' codec.
 
 The AVL value is `identityRecordBytes(record)` — no wrapper, no tag of this package's own: the tag is field 1 of the
 layout, as `enum8(boxType)` is field 1 of a box record, and the four-part boundary check applies on the read

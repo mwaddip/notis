@@ -415,7 +415,9 @@ Identity record and karma valuation`); every box the first pass excluded proven 
 to its key (`NODE_INTERFACE → Entity kinds`), **its `owner` is the loaded key and its `boxType` the ledger it was listed
 under** — a node that lists another key's real box, or the wrong ledger's, gets nothing for it. Otherwise: `young` —
 excluded at `suffixHead`, included at `tip`: real, inside the region a reorg can still move; `unchecked` — excluded at
-both and `heightAfter` above `tip.height`: a block landed since the anchor, the next run decides; **`absent`** —
+both and `heightAfter` above `tip.height`: a block landed since the anchor, the next run decides — so a landing's
+own re-read, proven against the anchor standing, reads its new box *not checked yet* until the next verified tip;
+**`absent`** —
 excluded at both and `heightAfter` equal to `tip.height`: listed at a height the chain's state does not hold it at, **the
 node lists what the chain does not hold** (the anchor predates the listing, so the reading node's height at the listing
 was at least the tip's, and a node whose height fell between the reads shows as `unchecked` or a proof failure on the
@@ -456,9 +458,6 @@ row's `effective` are the reads the run proved, in every state; the line describ
 and the figure in clay (→ The wallet window, → The profile window). **What it means** is a lower bound and no more:
 every proven box is real and the key's; a node that withholds a box still serves valid proofs for the rest, and
 omission is what reading both nodes as a union is for.
-
-> ⚠ **AHEAD OF CODE (2026-09-23, the verified figures)** — a tip run that ends `verified` proves the listings the App
-> holds without reading them first, so a listing read before the anchor is proven against it.
 
 **The policy.** The ledger a transaction moves is read from its outputs: **any output with `boxType`
 `credit` or `fee` is a credits transaction; otherwise karma.** Inputs are ids only
@@ -600,6 +599,18 @@ value too, and refuses a name no network profile answers to.
 **Paging is keyset, never offset.** `after=<key>` goes in, `next` comes back — a formatted key, or
 `null` at the end of the collection. A client that counts rows it rendered, rather than following
 `next`, pages wrongly the moment anything is filtered out of a page.
+
+**No answer overwrites a newer one.** Reads answer in any order, so every write of what a read brought
+is checked against what stands: a read begun before a change of the node or the identity writes nothing
+(→ The settings window, → The identity module); each piece of the reader's own state — the two listings,
+`/status`, the vouch set and the escrow, the bonds, the reader's name — keeps the answer of the read begun
+last, whichever lands last; a continuation — a `more`, a `load older` — continues the page or cursor it
+was asked for and writes nothing once that has moved; a refresh lands its new rows on the rows standing
+as it lands, never on the rows it started from, and a refresh of a list that holds no rows reads its
+first page. **A withdrawal the client has seen land is final on every write of rows** — no answer shows
+that post live again, since any that does is older than the landing — so a list never takes the root
+back and a thread keeps the withdrawn card; the set of those posts needs no order and no pruning,
+because a withdrawal is never undone.
 
 **The author-posts window reads the same view with `author=<key>`** (→ The author window) — the one
 place the client passes the filter; the feed never does.
@@ -1266,9 +1277,6 @@ extension → "The verified figures", the rule and every line). The number is th
 row every box of which proved, and whose valuation reproduces it, reads exactly as it reads on the web. **A card by the
 loaded key reads `· you`** after the prefix, muted ink, text only.
 
-> ⚠ **AHEAD OF CODE (2026-09-23, the verified figures)** — a landing re-reads `/karma` for a grant, an invite, a claim
-> and a burn alone; a post, a like, a vouch and a withdrawal leave the number the spend changed.
-
 ### The wallet window *(write surface)*
 
 **`@wallet`** — an `@`-window like `@profile`, opened from the header's `wallet` control (→ The profile window) by
@@ -1298,9 +1306,6 @@ full rule that line and the gold figure are clay**: *the node lists 12.5 $NOTIS 
 proof of the balance did not verify* (→ The extension → "The verified figures"). Gold still means credits: the figure
 gives up the colour only while the node's own proof of it fails, as the corner's height does on `refused`. The figure is
 the live spendable sum in every state; a balance every box of which proved reads exactly as it reads on the web.
-
-> ⚠ **AHEAD OF CODE (2026-09-23, the verified figures)** — a verified tip re-reads no listing; the balance moves at the
-> window's opening, its `↻` and a send's or a grant's landing.
 
 **The `send` row** stands while a box is spendable, and while a send's own line stands — its flight, the pending
 line, *sent* — so a send of the whole balance still reads its ending. The

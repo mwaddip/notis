@@ -1261,11 +1261,6 @@ recompute the hash and check the signature.
 
 ## Identity record and karma valuation (`identity-record.ts`, `karma-valuation.ts`)
 
-> ⚠ **AHEAD OF CODE (2026-09-22, the verified figures)** — the type, the key, the codec and the valuation
-> below live in `packages/node` today (`store/identity-records.ts`, `state/serialize-box.ts`,
-> `services/decay.ts`); this section states where they land and what they are, and `node` imports them
-> back from here once they have moved. Nothing about the bytes or the arithmetic changes in the move.
-
 **The second committed entity alongside boxes — the per-identity decay clock and standing** (`NODE_INTERFACE →
 Identity Records` is the store that holds it and names its writers). The type, its AVL key and its layout are this
 package's, so that a light client can derive the key, decode the value it is served and value it with the same
@@ -2135,11 +2130,6 @@ it in that shape: writer versus schema type, field by field. Two rows in this co
 and both were found by someone searching from a direction the previous searcher had not.
 
 ### Layout — IdentityRecord
-
-> ⚠ **AHEAD OF CODE (2026-09-22, the verified figures)** — the encoder is `packages/node/src/state/serialize-box.ts`'
-> `serializeIdentityRecord` / `deserializeIdentityRecord` today; it moves here as `identityRecordBytes` /
-> `identityRecordFromBytes` (→ Identity record and karma valuation), byte for byte the same, and node's kind dispatch
-> calls it from here.
 
 **The AVL value of an identity record** (→ Identity record and karma valuation). The same writer vocabulary as the
 box arm, and the same tree: `Layout — Boxes` governs the box values beside it.
