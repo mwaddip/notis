@@ -2174,6 +2174,13 @@ pool — with the trigger being **touch**, never a per-block walk. See
 `decay.ts`. The read API reports the same valuation: `GET /karma/:userId` carries it as
 `effective` (→ UTXO queries).
 
+**The valuation function and its two helpers are `@dagsocial/types`'** — `effectiveKarma`, `isIdentityStale`,
+`owedPeriods`, `DecayCfg` and `decayCfgFor` (`TYPES_INTERFACE → Identity record and karma valuation`) — and `decay.ts`
+holds the execution: `deriveKarmaDecay`, `commitDecayClocks`, the deps, the leg. `loadConfig` builds its `DecayCfg`
+through `decayCfgFor(profile)`, and the sites that pass a cfg on pass the one it built. **One implementation**: the
+engine, the read API and a light client reproducing `effective` from a proven face total and a proven record call the
+same function, and an inline copy anywhere is the mirror defect class.
+
 The clock is the `IdentityRecord` (Store Interface → Identity Records):
 
 ```
@@ -3208,6 +3215,11 @@ read neither height that meets `insertBox` — a box's `createdAtBlock` is
 creator-declared, so a backdated box would backdate its owner's clock, and the
 `created_at_block` column is uncommitted. So the clock lives in committed state.
 
+**The type `IdentityRecord` and the key function `identityRecordKey` are `@dagsocial/types`'** (`TYPES_INTERFACE →
+Identity record and karma valuation`), as the layout is (`TYPES_INTERFACE → Layout — IdentityRecord`), so that a light
+client derives the key it asks a proof for and decodes the value it is served with the code the node runs. This section
+holds what is the store's: the table, its functions, the writers, the lifecycle, and what the fields mean.
+
 ```
 IdentityRecord {
   lastActivityBlock: number     // u32 — starts at the claim height that creates the record; advanced when block application applies the owner's post transaction, thread or reply
@@ -3291,55 +3303,15 @@ functions of the identity, so the two representations cannot drift.
 
 #### Layout — IdentityRecord
 
-> **It lives here rather than in `TYPES_INTERFACE` because `IdentityRecord` is a `node` type
-> and `state/serialize-box.ts` is its only encoder** — but it uses the same writer vocabulary,
-> and `TYPES_INTERFACE` → Layout — Boxes governs the box arm of the same tree.
+**The layout is `TYPES_INTERFACE → Layout — IdentityRecord`**, and its encoder `identityRecordBytes` /
+`identityRecordFromBytes` of `@dagsocial/types`, so that a light client decodes a proven record with the code the node
+runs. `state/serialize-box.ts` holds the network, name and holder records and dispatches the identity kind (`0x80`, →
+Entity kinds) to types' codec.
 
-| # | Field | Encoding |
-|---|---|---|
-| 1 | tag | `u8` — **`0x80`**, the record discriminator (see "Entity kinds") |
-| 2 | `lastActivityBlock` | `vlqU` |
-| 3 | `lastDecayBlock` | `vlqU` |
-| 4 | `invitedAtBlock` | `vlqU` |
-| 5 | `lifetimeLikesReceived` | `vlqU64` |
-| 6 | `memberSinceBlock` | `vlqU` |
-| 7 | `memberBar` | `vlqU` |
-| 8 | `memberVouches` | `vlqU` |
-| 9 | `memberLikes` | `vlqU64` |
-| 10 | `invitesUsed` | `vlqU` |
-
-**The tag is part of the layout, not a wrapper around it** — the box arm works the same way, where
-`enum8(boxType)` is field 1 of `boxContentBytes` rather than a prefix bolted on outside it. One
-encoder, one byte string, no composition step where a caller could disagree about ordering.
-
-**Domains, and where they are established.** `lastActivityBlock`, `lastDecayBlock`,
-`invitedAtBlock` and `memberSinceBlock` are `u32` block heights, `memberBar`, `memberVouches` and
-`invitesUsed` are `u32` counts; `vlqU` is total *by sentinel*, so an out-of-domain value cannot
-panic the encoder — it **collides**, exactly as `createdAt` did in the header before 1f.
-`lifetimeLikesReceived` and `memberLikes` are `vlqU64` and `writeVlqU64OrThrow` **throws**
-outside `[0, 2⁶⁴)`; the domain belongs upstream of the encoder — the like counters are their only
-writers, they are unbounded by design and bounded only by the writer's `2⁶⁴`. One like per block for the life of the chain does not
-approach that, and the field is a **count**, never an amount — a saturating or wrapping write
-here would silently re-price every bond that settles afterwards. **A domain check at the encoder
-would be the band-aid; if the field ever gains a second writer, that writer owns the domain.**
-
-> ⚠ **The same encodable-versus-storable gap that narrowed box values applies here, one field over.**
-> `lifetimeLikesReceived` is `vlqU64` into a SQLite `INTEGER`, which is **signed**, so its real
-> ceiling is `2⁶³ − 1` and not the `2⁶⁴` above (TYPES_INTERFACE → "Box value domain"). **Left
-> unnarrowed deliberately**: it is a count bounded by like traffic rather than a value bounded by
-> conservation, so the unreachability argument is stronger here than it ever was for box values.
-> Recorded because the *reasoning* differs, not because the gap does.
-
-⚠ **Two cbor-era hazards on this record are retired by construction, and the field discipline is
-NOT.** Conditional presence and key order were both consensus-visible under cbor-x (§1a, §1b). A
-positional layout has no keys and no map header, so neither is expressible. **Every field from
-`invitedAtBlock` on must still always be written, zero included** — not because absence would
-fork the bytes any more, but because the fields are part of the record and a layout writes every
-field. Likewise `bigint` stays the type of `lifetimeLikesReceived` and `memberLikes`: under
-`vlqU64` a `number` and a
-`bigint` of equal value encode identically, so the type no longer guards the *bytes* — it guards
-the `safeIntegers` row boundary against a silent `Number()` coercion, which is a different and
-still-live reason.
+The AVL value is `identityRecordBytes(record)` — no wrapper, no tag of this package's own: the tag is field 1 of the
+layout, as `enum8(boxType)` is field 1 of a box record, and the four-part boundary check applies on the read
+(`TYPES_INTERFACE → The boundary check`). Every field is always written, zero included; the domains and the
+encodable-versus-storable gap on `lifetimeLikesReceived` are stated with the layout.
 
 | Function | Signature |
 |----------|-----------|
@@ -3876,7 +3848,15 @@ the network record and the username records (see "Entity kinds" below).
   application and included in block headers
 - **avl-prover:** Generates inclusion/exclusion proofs for any key
 - **avl-endpoint:** `GET /api/v1/proof/:boxId?atHeight=N` — serves proofs to
-  light clients
+  light clients. It answers `{ boxId, atHeight, stateRoot, proof, kind, value }`: `stateRoot` the digest of the
+  version the proof is made against, hex; `proof` the lookup proof's bytes, base64; `kind` the entity kind the key
+  resolves to — `box`, `record`, `network`, `username` or `holder` (→ Entity kinds) — and `value` the node's decoding
+  of it, both `null` where the key is absent and the proof is one of exclusion. `:boxId` is any 64-hex key of the tree,
+  a record's derived key included; `atHeight` must name a height a checkpoint stands at exactly, else 404 `{ error:
+  'height not available' }`; without it the proof is against the current version; 400 for a key that is not 64 hex or
+  a height that is not a non-negative integer. **`kind` and `value` are the node's reading and a light client trusts
+  neither**: it verifies the proof against a `stateRoot` it verified under proof-of-work and decodes the value the
+  proof carries (`WEB_INTERFACE → The extension → "The verified figures"`)
 - **Config:** `MAX_PROOF_HISTORY` (prune old proof versions). The check below
   is not configurable — no variable disables it
 - **Verification:** apply computes the post-mutation digest and rejects the

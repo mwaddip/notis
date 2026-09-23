@@ -1259,6 +1259,75 @@ recompute the hash and check the signature.
 
 ---
 
+## Identity record and karma valuation (`identity-record.ts`, `karma-valuation.ts`)
+
+**The second committed entity alongside boxes — the per-identity decay clock and standing** (`NODE_INTERFACE →
+Identity Records` is the store that holds it and names its writers). The type, its AVL key and its layout are this
+package's, so that a light client can derive the key, decode the value it is served and value it with the same
+function the node runs: **one implementation of the valuation, never a second one a client would have to trust.**
+
+```
+IdentityRecord {
+  lastActivityBlock: number     // u32 — the height of the owner's most recent post transaction; the grant path initialises it
+  lastDecayBlock: number        // u32 — bumped when a decay squaring fires
+  invitedAtBlock: number        // u32 — the height an invite claim applied; 0 = never invited (a reachable value, not a sentinel)
+  lifetimeLikesReceived: bigint // likes ever received; never decremented
+  memberSinceBlock: number      // u32 — 0 = never a member; else the height the bar was first met — the AGE, never reset
+  memberBar: number             // u32 — D(N) at first set, never reset; 0 on a root and on a root's invitee
+  memberVouches: number         // u32 — live counted vouches naming this identity
+  memberLikes: bigint           // likes received from members; never decremented
+  invitesUsed: number           // u32 — bonds this identity has created; never decremented
+}
+```
+
+The two `bigint` counters take `vlqU64` — a `number` and a `bigint` of equal value encode identically, so the type guards
+the store's `safeIntegers` row boundary, not the bytes (→ Layout — IdentityRecord). What each field means, who writes
+it and what is derived from it is `NODE_INTERFACE → Identity Records`; the bytes are → Layout — IdentityRecord.
+
+**The AVL key** is `blake2b512( IDENTITY_KEY_DOMAIN ‖ identityId )[0:32]`, hex — **never the raw `identityId`**. Records
+and boxes share one 32-byte keyspace and a public key is 32 attacker-chosen bytes: used raw, a keypair could be ground
+whose key equals a live box id. Hashing under the domain tag (→ Domain tags) is what makes the entity kinds provably
+disjoint (`NODE_INTERFACE → Entity kinds`).
+
+**The valuation** is over committed state, at every karma-sufficiency read; face values move only when a block's
+settlement touches the identity (`NODE_INTERFACE → Karma decay` holds the rule and its derivation; `ARCHITECTURE →
+Karma decay` the model):
+
+```
+stale       = height > staleThresholdBlocks ∧ (height − lastActivityBlock) >= staleThresholdBlocks
+owedPeriods = floor( (height − max(lastActivityBlock, lastDecayBlock)) / decayIntervalBlocks )
+effective   = stale ∧ owedPeriods > 0
+              ? max( faceTotal − owedPeriods · decayAmount, min(faceTotal, karmaMinimum) )
+              : faceTotal
+```
+
+**`>=`, not `>`**: an identity last active at `A` is stale iff `height − A >= threshold`; `>` would delay every first
+decay by one block. The `height > staleThresholdBlocks` guard is not subsumed by the formula — a never-active identity
+carries `lastActivityBlock 0`, and without the guard it would read stale at exactly `height === threshold`. **The
+`max` in `owedPeriods` is not decoration**: after a squaring the owner's karma box is the decay output, whose height is
+`lastDecayBlock`; charging from `lastActivityBlock` alone would re-bill every interval since the original activity on
+every later cycle. **A `null` record values as never active** — maximally stale, decaying from height 0: every karma
+producer writes a record, so the case should be unreachable, and the total function says what happens if it is not;
+the alternative, exempting a record-less owner from decay, is the silent economic hole.
+
+`DecayCfg` is `{ staleThresholdBlocks, decayIntervalBlocks, decayAmount: bigint, karmaMinimum: bigint }`, and
+**`decayCfgFor(profile)` is its one derivation**: the profile's `karmaStaleThresholdBlocks` and `karmaDecayIntervalBlocks`
+(→ Network profiles) with `KARMA_DECAY_AMOUNT` and `KARMA_MINIMUM` (→ Karma). The node's `loadConfig` builds
+its cfg through it; a client builds the same from `profileFor(network)` — never from anything a node serves.
+
+| Export | Signature | Description |
+|--------|-----------|-------------|
+| `identityRecordKey(identityId)` | `(UserId) => string` | The record's AVL key, hex — `blake2b512(IDENTITY_KEY_DOMAIN ‖ identityId)[0:32]` |
+| `identityRecordBytes(record)` | `(IdentityRecord) => Uint8Array` | The AVL value — see Layout — IdentityRecord |
+| `identityRecordFromBytes(bytes)` | `(Uint8Array) => IdentityRecord` | Inverse of `identityRecordBytes`, with the four-part boundary check (→ The boundary check); a first byte other than `IDENTITY_RECORD_TAG` is refused as `invalid-tag` |
+| `IDENTITY_RECORD_TAG` | `0x80` | Field 1 of the layout — the record discriminator among the tree's entity kinds (`NODE_INTERFACE → Entity kinds`) |
+| `decayCfgFor(profile)` | `(NetworkProfile) => DecayCfg` | The one derivation of the valuation's four numbers |
+| `isIdentityStale(record, height, staleThresholdBlocks)` | `(IdentityRecord \| null, number, number) => boolean` | `stale` above |
+| `owedPeriods(record, height, decayIntervalBlocks)` | `(IdentityRecord \| null, number, number) => number` | `owedPeriods` above — no clamp at zero: the caller skips `<= 0`, and a negative says a clock ran ahead of the chain |
+| `effectiveKarma(faceTotal, record, height, cfg)` | `(bigint, IdentityRecord \| null, number, DecayCfg) => bigint` | `effective` above — the value every karma-sufficiency check on the node reads, the number `GET /karma/:userId` serves as `effective`, and the number a light client reproduces from a proven face total and a proven record |
+
+---
+
 ## Post-withdraw types (`post-withdraw.ts`)
 
 ```
@@ -2060,6 +2129,50 @@ class: a future box field can reintroduce the shape, and the table above is how 
 it in that shape: writer versus schema type, field by field. Two rows in this contract were wrong,
 and both were found by someone searching from a direction the previous searcher had not.
 
+### Layout — IdentityRecord
+
+**The AVL value of an identity record** (→ Identity record and karma valuation). The same writer vocabulary as the
+box arm, and the same tree: `Layout — Boxes` governs the box values beside it.
+
+| # | Field | Encoding |
+|---|---|---|
+| 1 | tag | `u8` — **`0x80`**, `IDENTITY_RECORD_TAG`, the record discriminator (`NODE_INTERFACE → Entity kinds`) |
+| 2 | `lastActivityBlock` | `vlqU` |
+| 3 | `lastDecayBlock` | `vlqU` |
+| 4 | `invitedAtBlock` | `vlqU` |
+| 5 | `lifetimeLikesReceived` | `vlqU64` |
+| 6 | `memberSinceBlock` | `vlqU` |
+| 7 | `memberBar` | `vlqU` |
+| 8 | `memberVouches` | `vlqU` |
+| 9 | `memberLikes` | `vlqU64` |
+| 10 | `invitesUsed` | `vlqU` |
+
+**The tag is part of the layout, not a wrapper around it** — the box arm works the same way, where `enum8(boxType)` is
+field 1 of `boxContentBytes` rather than a prefix bolted on outside it. One encoder, one byte string, no composition
+step where a caller could disagree about ordering. Written as a `StructCodec`, so `encodeStruct` / `decodeStruct` give
+it the four-part boundary check (→ The boundary check): project onto the schema, assert the reader is exhausted,
+re-encode and byte-compare — without the third step, non-minimal VLQ would let two byte strings decode to one record,
+which is two AVL values for one state.
+
+**Every field is always written, zero included.** A positional layout has no keys and no map header, so conditional
+presence is not expressible — and the fields are part of the record. `bigint` stays the type of
+`lifetimeLikesReceived` and `memberLikes`: under `vlqU64` a `number` and a `bigint` of equal value encode identically,
+so the type guards the store's `safeIntegers` row boundary against a silent `Number()` coercion, not the bytes.
+
+**Domains, and where they are established.** `lastActivityBlock`, `lastDecayBlock`, `invitedAtBlock` and
+`memberSinceBlock` are `u32` block heights, `memberBar`, `memberVouches` and `invitesUsed` are `u32` counts; `vlqU` is
+total *by sentinel*, so an out-of-domain value cannot panic the encoder — it collides (→ Totality).
+`lifetimeLikesReceived` and `memberLikes` are `vlqU64` and `writeVlqU64OrThrow` **throws** outside `[0, 2⁶⁴)`; the
+domain belongs upstream of the encoder — the like counters are their only writers, unbounded by design and bounded only
+by the writer's `2⁶⁴`; the field is a **count**, never an amount, and a saturating or wrapping write here would silently
+re-price every bond that settles afterwards. **A domain check at the encoder would be the band-aid; if a field ever
+gains a second writer, that writer owns the domain.**
+
+> ⚠ **The encodable-versus-storable gap that narrowed box values applies here, one field over.** `lifetimeLikesReceived`
+> is `vlqU64` into a SQLite `INTEGER`, which is **signed**, so its real ceiling is `2⁶³ − 1` and not the `2⁶⁴` above
+> (→ Box value domain). **Left unnarrowed deliberately**: it is a count bounded by like traffic rather than a value
+> bounded by conservation, so the unreachability argument is stronger here than it ever was for box values.
+
 ### Layout — UtxoTransaction
 
 **Id preimage** (`txIdBytes`) — signatures are Ed25519 *over* the txId and are correctly absent:
@@ -2456,6 +2569,8 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 | `decodeOrderingBlock(bytes)` | `(Uint8Array) => OrderingBlock` | Inverse of `encodeOrderingBlock` |
 | `encodeTx(tx)` | `(UtxoTransaction) => Uint8Array` | **Positional** — `txIdBytes` ‖ `arr(signatures sorted)`. See Layout — UtxoTransaction |
 | `decodeTx(bytes)` | `(Uint8Array) => UtxoTransaction` | Inverse of `encodeTx` |
+| `identityRecordBytes(record)` | `(IdentityRecord) => Uint8Array` | Positional — the identity record's AVL value. See Layout — IdentityRecord |
+| `identityRecordFromBytes(bytes)` | `(Uint8Array) => IdentityRecord` | Inverse of `identityRecordBytes` |
 
 
 ### How a dispatch decays this contract, and why nothing catches it

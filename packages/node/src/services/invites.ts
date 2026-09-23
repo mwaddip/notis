@@ -1,10 +1,10 @@
 import {
   computeTxId,
   MEMPOOL_EXPIRY_BLOCKS,
+  effectiveKarma,
   membershipBar,
 } from '@dagsocial/types';
 import type { BondBox, KarmaBox, UtxoTransaction } from '@dagsocial/types';
-import { effectiveKarma } from './decay.js';
 import { isMember, isRoot, materializeOutput, validateTx } from './utxo-engine.js';
 import { admitTx } from './admit-tx.js';
 import type { UtxoEngineDeps } from './utxo-engine.js';

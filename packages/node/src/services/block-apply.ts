@@ -119,7 +119,7 @@ import type {
   OrderingBlock,
   UtxoTransaction,
 } from '@dagsocial/types';
-import type { IdentityRecord } from '../store/identity-records.js';
+import type { IdentityRecord } from '@dagsocial/types';
 import { putNetworkRecord } from '../store/identity-records.js';
 
 /**

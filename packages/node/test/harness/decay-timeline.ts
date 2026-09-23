@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { computeBoxId } from '@dagsocial/types';
-import type { KarmaBox } from '@dagsocial/types';
+import type { DecayCfg, KarmaBox } from '@dagsocial/types';
 import {
   labelNonce,
   seedProvenance,
@@ -38,13 +38,10 @@ import {
 // ---------------------------------------------------------------------------
 // Scenario description
 // ---------------------------------------------------------------------------
-
-export interface DecayCfg {
-  staleThresholdBlocks: number;
-  decayIntervalBlocks: number;
-  decayAmount: bigint;
-  karmaMinimum: bigint;
-}
+//
+// `DecayCfg` is `@dagsocial/types`' — TYPES_INTERFACE → Identity record and
+// karma valuation. The scenario carries a cfg the harness passes to
+// `deriveKarmaDecay` verbatim.
 
 /**
  * One thing that happens inside a block, in the order listed.

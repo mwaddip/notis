@@ -24,6 +24,7 @@ import {
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
+  identityRecordKey,
 } from '@dagsocial/types';
 import type {
   BondBox,
@@ -409,7 +410,7 @@ describe('the invite at block application', () => {
     utxo.insertBox(karmaA);
     utxo.insertBox(karmaB);
     const recordPuts = [{
-      key: records.identityRecordKey(root.userId),
+      key: identityRecordKey(root.userId),
       record: records.getIdentityRecord(root.userId)!,
     }];
     await activateProverOverStore(recordPuts);
@@ -536,7 +537,7 @@ describe('the invite at block application', () => {
     const records = await importRecords();
 
     const { isIdentityStale, owedPeriods: owedPeriodsFromDecay, effectiveKarma } =
-      await import('../../src/services/decay.js');
+      await import('@dagsocial/types');
 
     // Claimed at a height that puts the claim-epoch owed periods at exactly 1
     // when measured at boundaryHeight, while the clock-0 identity owes many

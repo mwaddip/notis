@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 // The extension proof — the twelve steps of WEB_INTERFACE → The extension
-// plus the four links-into-the-extension steps and the verified-tip block
-// (17a · 17 · 17b · 18 · 19a · 19b · 19c · 20), each read verbatim, over raw
-// CDP against a live devnet stack. Drives the App's real UI on the
-// extension's own page: the composer, the like word, the profile window's
-// rows, and the prompt window found by its `prompt.html?id=` URL. The
-// verified-tip block runs against a second stack the harness owns — node B
-// (server, bootstrapped from A), node C (used for the real-fork test in
-// 19b), node D (isolated, 17a's too-short and 19c's share-no-block) and the
-// lying relay (19a).
+// plus the four links-into-the-extension steps, the verified-tip block
+// (17a · 17 · 17b · 18 · 19a · 19b · 19c · 20) and the verified-figures block
+// (21 · 24 · 22a · 22b · 23 · 25), each read verbatim, over raw CDP against a
+// live devnet stack. Drives the App's real UI on the extension's own page:
+// the composer, the like word, the profile and wallet windows' rows, and the
+// prompt window found by its `prompt.html?id=` URL. The verified-tip block
+// runs against a second stack the harness owns — node B (server,
+// bootstrapped from A), node C (used for the real-fork test in 19b), node D
+// (isolated, 17a's too-short and 19c's share-no-block) and the lying relay
+// (19a). The verified-figures block brings up a B of its own and, for its
+// three lie arms, the figures relay (22a · 22b · 23).
 //
 // Preconditions:
 //  1. `node packages/node/dist/index.js` running as `NETWORK_TYPE=devnet`
@@ -25,12 +27,22 @@
 // Modes:
 //   --verified-tip alone: 1–16 read NOT RUN, 17a–20 run.
 //   --r-key and --verified-tip: 1–16 and 17a–20 all run.
+//   --r-key and --verified-figures: 1–16 run, 17a–20 read NOT RUN,
+//     21·24·22a·22b·23·25 run. The figures run hangs on
+//     a verified tip (WEB_INTERFACE → The extension → "The verified figures"),
+//     which needs a second verified node, so the figures block runs B as the
+//     tip block does; hence --verified-figures requires --node-dist, --scratch
+//     and --node-p2p as well as --r-key (config error at the top otherwise, as
+//     --verified-tip is with its own four).
+//   Both --verified-tip and --verified-figures with --r-key: 1–16, 17a–20, then
+//     21·24·22a·22b·23·25 in that order.
 //   Neither: every step reads NOT RUN by name.
 //
 // Usage:
 //   node scripts/extension-check/run.mjs \
 //     --extension-dir <path> [--r-key <path>] --node <origin> --faucet <origin> \
 //     [--verified-tip --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
+//     [--verified-figures --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--public <origin+base> --web-dist <dir>]
 
 import { spawn } from 'node:child_process';
@@ -45,7 +57,7 @@ import { matchPatternFor } from '../../extension/match-pattern.mjs';
 // Boolean flags — never consume the next argument. Without this the parser
 // below reads the following flag as the flag's value, and every arg after
 // `--verified-tip` shifts by one silently.
-const BOOLEAN_FLAGS = new Set(['verified-tip']);
+const BOOLEAN_FLAGS = new Set(['verified-tip', 'verified-figures']);
 const args = new Map();
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
@@ -67,6 +79,11 @@ const PASSPHRASE = 'proof-pass';
 // steps 17a · 17 · 17b · 18 · 19a · 19b · 19c · 20. Absent, they read NOT RUN
 // by name, as 13–16 do without --public / --web-dist.
 const VERIFIED_TIP = args.get('verified-tip') === true;
+// The verified-figures block — WEB_INTERFACE → The extension → "The verified
+// figures", steps 21 · 24 · 22a · 22b · 23 · 25: the honest states read A, and
+// the three lie arms read the figures relay. Absent, every step reads NOT RUN
+// by name.
+const VERIFIED_FIGURES = args.get('verified-figures') === true;
 const NODE_DIST = args.get('node-dist') ?? null;
 const MINER_SCRIPT = args.get('miner') ?? null;
 const SCRATCH = args.get('scratch') ?? null;
@@ -80,6 +97,10 @@ const B_P2P_PORT = 19772;
 const B_ORIGIN = `http://127.0.0.1:${B_HTTP_PORT}`;
 const RELAY_PORT = 19780;
 const RELAY_ORIGIN = `http://127.0.0.1:${RELAY_PORT}`;
+// The figures relay — the lie arms 22a · 22b · 23, on a port of its own beside
+// 19a's relay.
+const FIG_RELAY_PORT = 19785;
+const FIG_RELAY_ORIGIN = `http://127.0.0.1:${FIG_RELAY_PORT}`;
 const C_HTTP_PORT = 19790;
 const C_ADMIN_PORT = 19791;
 const C_P2P_PORT = 19792;
@@ -94,6 +115,10 @@ const D_HTTP_PORT = 19795;
 const D_ADMIN_PORT = 19796;
 const D_P2P_PORT = 19797;
 const D_ORIGIN = `http://127.0.0.1:${D_HTTP_PORT}`;
+// The devnet faucet's public key — devnet-only and public by design: the key
+// steps 12 and 21 send to, and the owner of the real box the figures relay
+// lists under R's key in step 22b.
+const DEVNET_FAUCET_KEY = '5468d985c3924a95f3d3dc98b67a41ac2c7cc4cfca4fcbf7c5627452f1617f36';
 
 if (!EXT_DIR || !existsSync(EXT_DIR)) { console.error('missing --extension-dir'); process.exit(2); }
 // --r-key is optional. Without it, steps 1–16 read NOT RUN by name and 17–20
@@ -124,6 +149,36 @@ if (VERIFIED_TIP) {
   }
   if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
     console.error('--verified-tip requires --node-p2p <multiaddr> — A\'s p2p bootstrap, e.g. /ip4/127.0.0.1/tcp/19742');
+    process.exit(2);
+  }
+}
+
+// --verified-figures requires --r-key AND the lifecycle args `bringUpNodeB`
+// reads (--node-dist, --scratch, --node-p2p). The figures run hangs on a
+// verified tip (WEB_INTERFACE → The extension → "The verified figures"),
+// which needs a second verified node, so the block runs B as the tip block
+// does — using bringUpNodeB verbatim (SCRATCH, NODE_DIST, NODE_P2P). Step 25
+// uses --public/--web-dist when they are given and reads NOT RUN by name
+// when they are not.
+if (VERIFIED_FIGURES) {
+  if (!R_KEY) {
+    console.error('--verified-figures requires --r-key <path> — R\'s identity is what steps 21 and 24 measure');
+    process.exit(2);
+  }
+  if (!NODE_DIST || !existsSync(NODE_DIST)) {
+    console.error('--verified-figures requires --node-dist <packages/node/dist/index.js> — bringUpNodeB spawns B from it');
+    process.exit(2);
+  }
+  if (!SCRATCH) {
+    console.error('--verified-figures requires --scratch <dir> — bringUpNodeB writes b.db there');
+    process.exit(2);
+  }
+  if (!existsSync(SCRATCH)) {
+    console.error(`--scratch not found: ${SCRATCH}`);
+    process.exit(2);
+  }
+  if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
+    console.error('--verified-figures requires --node-p2p <multiaddr> — A\'s p2p bootstrap for B, e.g. /ip4/127.0.0.1/tcp/19742');
     process.exit(2);
   }
 }
@@ -761,6 +816,113 @@ async function startLyingRelay(upstream) {
   return { server, flips, origin: RELAY_ORIGIN };
 }
 
+// The figures relay — WEB_INTERFACE → The extension → "The verified figures",
+// the lie arms 22a · 22b · 23. Every GET is proxied to `upstream` with
+// `access-control-allow-origin: *`, as 19a's relay does, and every
+// /nipopow/proof/ answer passes verbatim in every mode: the reading node's tip
+// proof is A's own, so the corner stays verified and the anchor stands. The
+// step sets `relay.mode` between arms, and the mode is the one hostile edit:
+//   honest          — none;
+//   credits-fake    — R's first /credits page lists one more box, a fresh
+//                     random id holding 12.5 $NOTIS: its proofs come from A,
+//                     which holds no such key;
+//   credits-foreign — R's first /credits page lists the devnet faucet's
+//                     largest credit box, read from upstream at the request —
+//                     a real box of another key;
+//   avl-flip        — every /api/v1/proof/ answer carries its proof with one
+//                     byte flipped ten from the end, the JSON otherwise as
+//                     served: the flip is made in the decoded proof, never in
+//                     the JSON text, so what fails is the proof's verification.
+// `relay.edits` counts each mode's edits.
+async function startFiguresRelay(upstream, port) {
+  const relay = {
+    server: null,
+    origin: `http://127.0.0.1:${port}`,
+    mode: 'honest',
+    edits: { 'credits-fake': 0, 'credits-foreign': 0, 'avl-flip': 0 },
+  };
+  const ownCreditsPath = `/credits/${R_JSON.pubKeyHex.toLowerCase()}`;
+  relay.server = createServer(async (req, res) => {
+    try {
+      const method = req.method ?? 'GET';
+      const url = req.url ?? '/';
+      if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+        res.writeHead(405, { 'access-control-allow-origin': '*' });
+        res.end('figures relay serves reads only');
+        return;
+      }
+      if (method === 'OPTIONS') {
+        res.writeHead(204, {
+          'access-control-allow-origin': '*',
+          'access-control-allow-methods': 'GET, HEAD, OPTIONS',
+          'access-control-allow-headers': '*',
+        });
+        res.end();
+        return;
+      }
+      const upstreamRes = await fetch(upstream + url, { method });
+      let body = Buffer.from(await upstreamRes.arrayBuffer());
+      const mode = relay.mode;
+      const target = new URL(url, upstream);
+      if (method === 'GET' && upstreamRes.status === 200) {
+        const ownFirstPage = target.pathname.toLowerCase() === ownCreditsPath && !target.searchParams.has('after');
+        if ((mode === 'credits-fake' || mode === 'credits-foreign') && ownFirstPage) {
+          const listing = JSON.parse(body.toString('utf8'));
+          const box = mode === 'credits-fake'
+            ? { boxId: randomBytes(32).toString('hex'), value: '1250000000' }
+            : await largestCreditBox(upstream, DEVNET_FAUCET_KEY);
+          if (box !== null) {
+            listing.boxes.push(box);
+            listing.boxCount += 1;
+            body = Buffer.from(JSON.stringify(listing));
+            relay.edits[mode] += 1;
+            console.log(`[vf] figures relay ${mode} edit ${relay.edits[mode]}: ${box.boxId.slice(0, 12)}… (${box.value}) listed under R`);
+          }
+        } else if (mode === 'avl-flip' && target.pathname.startsWith('/api/v1/proof/')) {
+          const answer = JSON.parse(body.toString('utf8'));
+          const proof = Buffer.from(answer.proof, 'base64');
+          if (proof.length >= 11) {
+            proof[proof.length - 10] = proof[proof.length - 10] ^ 0x01;
+            answer.proof = proof.toString('base64');
+            body = Buffer.from(JSON.stringify(answer));
+            relay.edits['avl-flip'] += 1;
+          }
+        }
+      }
+      res.writeHead(upstreamRes.status, {
+        'access-control-allow-origin': '*',
+        'content-type': upstreamRes.headers.get('content-type') ?? 'application/octet-stream',
+        'cache-control': 'no-store',
+      });
+      res.end(body);
+    } catch (e) {
+      res.writeHead(502, { 'access-control-allow-origin': '*' });
+      res.end(String(e));
+    }
+  });
+  await new Promise((res, rej) => {
+    relay.server.on('error', rej);
+    relay.server.listen(port, '127.0.0.1', res);
+  });
+  return relay;
+}
+
+// The largest credit box `key` holds on `upstream`, as served — `{ boxId,
+// value, lockedUntilBlock? }` — its whole listing read, following `next`
+// (WEB_INTERFACE → "Paging is keyset, never offset"); null when it holds none.
+async function largestCreditBox(upstream, key) {
+  let best = null;
+  let after = null;
+  do {
+    const r = await fetch(`${upstream}/credits/${key}` + (after === null ? '' : `?after=${encodeURIComponent(after)}`));
+    if (!r.ok) return best;
+    const page = await r.json();
+    for (const b of page.boxes ?? []) if (best === null || BigInt(b.value) > BigInt(best.value)) best = b;
+    after = page.next ?? null;
+  } while (after !== null);
+  return best;
+}
+
 // Read the rendered corner from a CDP session's page — the dot's class, the
 // tip span's classes, the tip text and the `title` attribute (WEB_INTERFACE →
 // The status corner, → The extension → "The verified tip").
@@ -889,9 +1051,18 @@ async function titleTipNearReadingNode(readingOrigin, reading, tolerance = 5) {
 // ---------------------------------------------------------------------------
 
 const VERIFIED_TIP_STEPS = ['17a', 17, '17b', 18, '19a', '19b', '19c', 20];
+// The verified-figures block — steps 21 · 24 · 22a · 22b · 23 · 25, in the
+// order they run (WEB_INTERFACE → The extension → "The verified figures");
+// 22a · 22b · 23 are the lie arms, read through the figures relay.
+const VERIFIED_FIGURES_STEPS = [21, 24, '22a', '22b', 23, 25];
+const LIE_ARM_STEPS = ['22a', '22b', 23];
 
 function markVerifiedTipNotRun(reason) {
   for (const s of VERIFIED_TIP_STEPS) record(s, 'NOT RUN', reason);
+}
+
+function markVerifiedFiguresNotRun(reason) {
+  for (const s of VERIFIED_FIGURES_STEPS) record(s, 'NOT RUN', reason);
 }
 
 // Press the corner and wait for its next verdict — one press, one verifier
@@ -1491,6 +1662,808 @@ function tallyLeds(readings) {
 }
 
 // ---------------------------------------------------------------------------
+// The verified-figures block — steps 21 · 24 · 22a · 22b · 23 · 25
+// (WEB_INTERFACE → The extension → "The verified figures"). The figures run
+// hangs on a verified tip, which needs a second verified node, so the block
+// runs B as the tip block does — bringUpNodeB verbatim after the A pre-flight
+// and stopChild('b') at the end. 21 and 24 read A; the lie arms 22a · 22b · 23
+// read the figures relay, after 24 and while B is up; 25 reads the hosted web
+// build. Pacing is external: the paced miner runs outside the harness, started
+// before promote.mjs and kept to the end.
+// ---------------------------------------------------------------------------
+
+// K in the tip verifier — packages/web/src/extension/tip-verifier.ts:18. The
+// wait for silence is at least K + 1 blocks past the landing block, so the
+// tool proves the new box at suffixHead and silence fires (row 6).
+const FIGURES_K = 20;
+
+// The App's figures verifier fetches `/api/v1/proof/<key>?atHeight=<h>` for
+// each listed box and the identity record; the request pattern is the
+// observable that a figures run happened — the parallel to
+// `proofRequestsSince` for the tip run's `/nipopow/proof/`. With `origin`,
+// only the requests to that node count: a run proves against the reading node.
+function figuresProofRequestsSince(events, startIdx, origin = null) {
+  const out = [];
+  for (let i = startIdx; i < events.length; i++) {
+    const ev = events[i];
+    if (ev.method !== 'Network.requestWillBeSent') continue;
+    const url = ev.params?.request?.url ?? '';
+    if (!url.includes('/api/v1/proof/')) continue;
+    if (origin !== null && !url.startsWith(origin + '/')) continue;
+    out.push({ url, at: ev.__at ?? null, index: i });
+  }
+  return out;
+}
+
+// Wait for the figures run following the tip run's `verified` verdict — the
+// App triggers startFigures from the verified arm of startVerification. The
+// end of the run is a settled interval with no new /api/v1/proof/ request; a
+// run that fires no request at all (an anchor that never resolved to verified,
+// a listing the App has not read) returns an empty list at the bound. With
+// `origin`, only the runs against that node count.
+async function waitForFiguresRun(cx, sinceIdx, ms = 30000, quietMs = 2000, origin = null) {
+  const t0 = Date.now();
+  let last = 0;
+  let lastAt = t0;
+  while (Date.now() - t0 < ms) {
+    const now = figuresProofRequestsSince(cx.events, sinceIdx, origin).length;
+    if (now !== last) { last = now; lastAt = Date.now(); }
+    if (now > 0 && Date.now() - lastAt >= quietMs) return figuresProofRequestsSince(cx.events, sinceIdx, origin);
+    await sleep(100);
+  }
+  return figuresProofRequestsSince(cx.events, sinceIdx, origin);
+}
+
+// Press the corner and wait for BOTH the tip run and the figures run to settle.
+// The tip run's 2 proofs come first (one per node); the figures run follows on
+// the `verified` arm. The two waits share the same startIdx — `sinceIdx` cross
+// their event ranges without ambiguity.
+async function pressCornerAndReadFigures(cx, opts = {}) {
+  const startIdx = cx.events.length;
+  await pressCorner(cx);
+  await waitForVerifierRun(cx, startIdx, opts.tipAtLeast ?? 2, opts.tipMs ?? 30000, opts.tipQuietMs ?? 1500);
+  const figProofs = await waitForFiguresRun(cx, startIdx, opts.figMs ?? 30000, opts.figQuietMs ?? 2000);
+  await sleep(300);
+  return { figProofs };
+}
+
+// Read the wallet's balance row and pick out the FIGURES hint alone
+// (WEB_INTERFACE → The wallet window). The `.credits-line` can carry two
+// `div.hint` children: a locked-credits hint (`N $NOTIS more unlock by block
+// M.`, wallet.ts:219–221) and the verified-figures hint (WEB_INTERFACE → The
+// extension → "The verified figures"). The two are disjoint by voice — the
+// figures line carries one of the contract's sentences named below — so a
+// text-shape match separates them without a class of their own.
+async function readCreditsRow(cx) {
+  return cx.eval(`(() => {
+    const line = document.querySelector('.credits-line');
+    if (!line) return { present: false };
+    const hints = [...line.querySelectorAll('.hint')].map((h) => ({
+      text: h.textContent ?? '',
+      hasClay: h.classList.contains('clay'),
+    }));
+    const gold = line.querySelector('.mono.gold');
+    const isFiguresHint = (t) =>
+      /proven at block/.test(t) ||
+      /landed since/.test(t) ||
+      /not checked yet/.test(t) ||
+      /chain is not verified/.test(t) ||
+      /chain does not hold/.test(t) ||
+      /did not verify/.test(t) ||
+      /no proof for/.test(t);
+    const figHint = hints.find((h) => isFiguresHint(h.text)) ?? null;
+    return {
+      present: true,
+      allHints: hints,
+      figHintText: figHint?.text ?? null,
+      figHintHasClay: figHint?.hasClay ?? false,
+      goldText: gold?.textContent ?? null,
+      goldHasClay: gold ? gold.classList.contains('clay') : false,
+    };
+  })()`);
+}
+
+// Read the profile's rep row (WEB_INTERFACE → The profile window; the DOM
+// shape is `.karma-field > span.mono + optional .hint`).
+async function readKarmaField(cx) {
+  return cx.eval(`(() => {
+    const field = document.querySelector('.karma-field');
+    if (!field) return { present: false };
+    const hint = field.querySelector('.hint');
+    const mono = field.querySelector('span.mono');
+    return {
+      present: true,
+      hintText: hint?.textContent ?? null,
+      hintHasClay: hint ? hint.classList.contains('clay') : false,
+      monoText: mono?.textContent ?? null,
+      monoHasClay: mono ? mono.classList.contains('clay') : false,
+    };
+  })()`);
+}
+
+// Poll a row through `read` (readCreditsRow, readKarmaField) until `predicate`
+// holds or `ms` passes. Returns `{ timedOut, last }` — the last reading in both
+// arms, as waitForCornerState does.
+async function waitForRow(read, cx, predicate, ms) {
+  const t0 = Date.now();
+  let last = null;
+  while (Date.now() - t0 < ms) {
+    last = await read(cx);
+    if (predicate(last)) return { timedOut: false, last };
+    await sleep(200);
+  }
+  return { timedOut: true, last };
+}
+
+// Press a window's header control — `open wallet`, `open profile`. A window
+// not open opens and reads its listing; an open one is raised, never
+// duplicated, and a raise reads nothing (WEB_INTERFACE → The workspace, → The
+// profile window). A column renders its focused window's body alone, so a
+// row is in the page only while its window is the one raised.
+async function raiseWindow(cx, label) {
+  await cx.eval(`document.querySelector(${JSON.stringify(`[aria-label="${label}"]`)}).click()`, true);
+}
+
+// Poll `/blocks/current` until the tip reaches `target`, or the bound trips.
+// The bound is 12 min — at 3.4 blocks/min (packages/web/CLAUDE.md → The proof,
+// 7g), K + 1 = 21 blocks is ~6 min, so twelve is comfortably above expectation.
+// A trip returns { reached: false, last }, with `last` being the last read.
+async function waitForNodeTip(target, ms = 12 * 60 * 1000, pollMs = 10000) {
+  const t0 = Date.now();
+  let last = null;
+  while (Date.now() - t0 < ms) {
+    last = await currentHeight(NODE);
+    if (last !== null && last >= target) return { reached: true, last, elapsedMs: Date.now() - t0 };
+    await sleep(pollMs);
+  }
+  return { reached: false, last, elapsedMs: Date.now() - t0 };
+}
+
+async function verifiedFiguresSteps(cx, targetId = 'unknown') {
+  // Liveness probe — same shape as the tip block's, a three-second wall around
+  // `1+1` against the session. A dead session records every step false with
+  // the reason.
+  const alive = await (async () => {
+    const timeout = new Promise((_, rej) =>
+      setTimeout(() => rej(new Error('liveness timeout')), 3000));
+    try { return (await Promise.race([cx.eval(`1+1`), timeout])) === 2; }
+    catch { return false; }
+  })();
+  if (!alive) {
+    const reason = `the verified-figures block's session is not live: ${targetId}`;
+    for (const s of VERIFIED_FIGURES_STEPS) record(s, false, reason);
+    return;
+  }
+
+  // ---- Pre-flight — A is up. The tip block's cleanup (stopAllChildren) stops
+  // B when --verified-tip runs, and a run without --verified-tip never starts
+  // it, so B is always down here. The figures block owns its own B: the tip
+  // block's calls verbatim (bringUpNodeB, waitForHttpUp, waitForPeers,
+  // waitForHeightsClose). Step 25 needs no B and still runs when B does not
+  // come up.
+  const aUp = await waitForHttpUp(NODE, 15000);
+  if (!aUp) {
+    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, 'NOT RUN', `node A did not answer /blocks/current at ${NODE}`);
+    await runFiguresStep25();
+    return;
+  }
+  const preHeightA = await currentHeight(NODE);
+  console.log(`[vf] pre-flight: A height=${preHeightA} at ${NODE}`);
+
+  // Bring up B — bringUpNodeB wipes b.db and spawns fresh from NODE_DIST,
+  // bootstrapped from NODE_P2P. The tip block's cleanup left b.db orphaned
+  // in SCRATCH; a wipe here is what the tip block does too (bringUpNodeB
+  // top). A failure below records 21, 24 and the lie arms NOT RUN with the
+  // reason; 25 needs no B.
+  console.log(`[vf] bringing up node B for the figures run`);
+  await bringUpNodeB();
+  const bUp = await waitForHttpUp(B_ORIGIN, 30000);
+  if (!bUp) {
+    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, 'NOT RUN', `node B did not come up at ${B_ORIGIN}`);
+    await runFiguresStep25();
+    await stopChild('b');
+    return;
+  }
+  console.log(`[vf] node B up at ${B_ORIGIN}`);
+  const bAdminOrigin = `http://127.0.0.1:${B_ADMIN_PORT}`;
+  const bPeers = await waitForPeers(bAdminOrigin, 1, 60000);
+  console.log(`[vf] node B peers_connected=${bPeers}`);
+  if (bPeers === null) {
+    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, 'NOT RUN', `node B never reached ≥1 peer_connected within 60s (bootstrap ${NODE_P2P})`);
+    await runFiguresStep25();
+    await stopChild('b');
+    return;
+  }
+  const abSynced = await waitForHeightsClose(NODE, B_ORIGIN, 2, 300000);
+  if (abSynced === null) {
+    const hA = await currentHeight(NODE);
+    const hB = await currentHeight(B_ORIGIN);
+    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, 'NOT RUN', `B never caught up to A within 5 minutes (A=${hA}, B=${hB})`);
+    await runFiguresStep25();
+    await stopChild('b');
+    return;
+  }
+  console.log(`[vf] A/B synced: ${JSON.stringify(abSynced)}`);
+
+  try {
+    // ---- Pre-condition — a corner press must read led fresh + *verified
+    // across 2 nodes*. Without it, the rows would carry row 3's *not checked
+    // — the chain is not verified* (WEB_INTERFACE → The extension → "The
+    // verified figures"), not the lines the steps assert. The reading is
+    // copied into every step line it gates.
+    await cx.waitFor(`!!document.querySelector('.corner')`, 'corner mounted 21', 30000);
+    const verifiedReading = await pressAndReadVerdict(cx, { atLeast: 2, ms: 60000, quietMs: 2000 });
+    const verifiedOk = verifiedReading.reading.ledClass === 'led fresh'
+      && /^verified across 2 nodes · tip \d+$/.test(verifiedReading.reading.title ?? '');
+    if (!verifiedOk) {
+      const detail = `pre-condition press: led=${verifiedReading.reading.ledClass}, tip=${verifiedReading.reading.tipClass}, title=${JSON.stringify(verifiedReading.reading.title)}, proof requests=${verifiedReading.proofs.length}; the figures verifier fires only under 'verified' (WEB_INTERFACE → The extension → "The verified figures")`;
+      for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, false, detail);
+      await runFiguresStep25();
+      return;
+    }
+    console.log(`[vf] pre-condition ok: led=${verifiedReading.reading.ledClass}, title=${JSON.stringify(verifiedReading.reading.title)}`);
+
+    // ---- Step 21 — the balance: young → silent after K+1 blocks.
+    await runFiguresStep21(cx);
+
+    // ---- Step 24 — rep: silent → post → landed since → silent after K+1 blocks.
+    await runFiguresStep24(cx);
+
+    // ---- Steps 22a · 22b · 23 — the lie arms, through the figures relay,
+    // while B is up: the relay's verdict is read across the relay, A and B.
+    await runFiguresLieArms(cx);
+
+    // ---- Step 25 — no verifier, no /api/v1/proof/ request on the hosted origin.
+    await runFiguresStep25();
+  } finally {
+    // ---- Cleanup — B by its handle, as the tip block does. The tip block's
+    // own cleanup already ran if --verified-tip preceded us; this stops the B
+    // the figures block itself brought up.
+    console.log(`[vf] cleanup: stopping node B by handle`);
+    await stopChild('b');
+    console.log(`[vf] cleanup done; live children left=${vtChildren.size}`);
+  }
+}
+
+// Step 21 — the balance's young → silent transition. A send to the devnet
+// faucet key produces a fresh change output on R; the young state is the
+// change box below suffixHead. After K + 1 blocks the change is proven and
+// row 6 fires — silence (WEB_INTERFACE → The extension → "The verified
+// figures", → The wallet window → "The `balance` row").
+async function runFiguresStep21(cx) {
+  try {
+    // Ensure the wallet window is open. If the header's control is not there
+    // (a page reopened without an identity), the step fails at once.
+    const walletBtn = await cx.eval(`!!document.querySelector('[aria-label="open wallet"]')`);
+    if (!walletBtn) {
+      record(21, false, 'no [aria-label="open wallet"] control on the extension page — identity not loaded?');
+      return;
+    }
+    // Open the wallet, or raise it where it is open.
+    await raiseWindow(cx, 'open wallet');
+
+    // Read the balance before the send. The row mounts before its listing
+    // lands — `—` until the read answers — so the wait is on the figure
+    // itself, with a bound. If R has no spendable, no send is possible.
+    const figure = await waitForRow(readCreditsRow, cx,
+      (r) => r.present && (r.goldText ?? '').trim() !== '', 60000);
+    const goldBefore = figure.last?.goldText ?? null;
+    const balanceNum = Number(goldBefore);
+    if (figure.timedOut || !Number.isFinite(balanceNum) || balanceNum < 2) {
+      record(21, false, `R has too little \$NOTIS to send (gold=${JSON.stringify(goldBefore)}, figure ${figure.timedOut ? 'absent after 60 s' : 'read'}, hints=${JSON.stringify(figure.last?.allHints ?? null)}); the figures block needs a spendable balance to create the young change output`);
+      return;
+    }
+    // Send half the balance to the devnet faucet key — the change output is
+    // R's own new box, young until K blocks pass. The exact amount is not
+    // load-bearing; a fraction is fine.
+    const sendAmount = (balanceNum / 2).toFixed(2);
+    const preSendH = await currentHeight(NODE);
+    await cx.waitFor(`!!document.querySelector('form.credits-form')`, 'send form 21');
+    await cx.eval(`(() => {
+      const form = document.querySelector('form.credits-form');
+      const inputs = form.querySelectorAll('input');
+      inputs[0].value = ${JSON.stringify(DEVNET_FAUCET_KEY)};
+      inputs[1].value = ${JSON.stringify(sendAmount)};
+      form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    })()`, true);
+    // The extension arm opens a prompt window at once (the resolved-key hint
+    // appears alongside; no confirm row in the field). Approve.
+    const prompt21 = await findExt('prompt.html');
+    if (!prompt21) {
+      record(21, false, 'no prompt window opened for the step 21 send');
+      return;
+    }
+    const cxp = await openSession(prompt21.webSocketDebuggerUrl);
+    try {
+      await cxp.waitFor(`!!document.querySelector('.prompt button.btn-primary')`, 'prompt approve 21', 15000);
+      await cxp.eval(`document.querySelector('.prompt button.btn-primary').click()`, true);
+    } finally {
+      await sleep(1500);
+      try { cxp.s.close(); } catch {}
+    }
+
+    // Wait for the wallet's row to reflect the change output (the row updates
+    // when the send lands; the poll bound is generous — 3 minutes covers a
+    // paced miner well past the change output's height).
+    await cx.waitFor(
+      `document.querySelector('.credits-line .mono.gold')?.textContent !== ${JSON.stringify(goldBefore)}`,
+      'row updates after step 21 send', 180000);
+    const landedH21 = await currentHeight(NODE);
+    if (landedH21 === null) {
+      record(21, false, 'could not read /blocks/current after the step 21 send landed');
+      return;
+    }
+
+    // Assertion 1 — press the corner, read the young line. A verified tip
+    // re-reads the listings before it proves them, and a run can land after
+    // another one it followed, so the line is awaited with a bound.
+    const youngShape = /^\S.* \$NOTIS proven at block \d+ · \S.* \$NOTIS landed since$/;
+    await pressCornerAndReadFigures(cx);
+    const before = (await waitForRow(readCreditsRow, cx,
+      (r) => r.present && youngShape.test(r.figHintText ?? ''), 15000)).last;
+    const beforeOk = before.present
+      && before.goldText !== null
+      && !before.goldHasClay
+      && before.figHintText !== null
+      && !before.figHintHasClay
+      && youngShape.test(before.figHintText);
+
+    // Wait for the tip to reach landedH21 + K + 1 (~ 6 min at 3.4 blocks/min).
+    const targetH = landedH21 + FIGURES_K + 1;
+    const wait = await waitForNodeTip(targetH);
+    const rate = wait.last !== null
+      ? ((wait.last - landedH21) / (wait.elapsedMs / 60000)).toFixed(2)
+      : 'null';
+    if (!wait.reached) {
+      record(21, false,
+        `before: gold=${JSON.stringify(before.goldText)} clay=${before.goldHasClay} figHint=${JSON.stringify(before.figHintText)} shape ok=${beforeOk}; ` +
+        `tip did not reach ${targetH} within ${(wait.elapsedMs / 1000).toFixed(0)}s (last=${wait.last}, ~${rate} blocks/min from landed=${landedH21}, K+1=${FIGURES_K + 1})`);
+      return;
+    }
+
+    // Assertion 2 — press the corner, read silence, awaited with a bound: the
+    // line of the run before stands until the press's own run lands.
+    await pressCornerAndReadFigures(cx);
+    const after = (await waitForRow(readCreditsRow, cx,
+      (r) => r.present && r.figHintText === null && !r.goldHasClay, 15000)).last;
+    const afterOk = after.present && after.figHintText === null && !after.goldHasClay;
+
+    record(21, beforeOk && afterOk,
+      `before press: gold=${JSON.stringify(before.goldText)} (clay=${before.goldHasClay}), figHint=${JSON.stringify(before.figHintText)} (clay=${before.figHintHasClay}), young shape ok=${beforeOk}; ` +
+      `sent ${sendAmount} \$NOTIS at h≥${preSendH}, change landed at h=${landedH21}, target h=${targetH}; ` +
+      `waited ${(wait.elapsedMs / 1000).toFixed(0)}s (~${rate} blocks/min); ` +
+      `after press: gold=${JSON.stringify(after.goldText)} (clay=${after.goldHasClay}), figHint=${JSON.stringify(after.figHintText)}, silence=${after.figHintText === null}, all-hints=${JSON.stringify(after.allHints)}`);
+  } catch (e) {
+    record(21, false, `error: ${String(e)}`);
+  }
+}
+
+// Step 24 — the rep row across R's own post (WEB_INTERFACE → The extension →
+// "The verified figures", → The profile window → "The `rep` row is the
+// `effective` number alone"). Silence before the post. The post's landing
+// re-reads /karma, so the number moves to the node's new `effective` with no
+// press. A press then proves the fresh listing, where the post's change is a
+// young box: *… landed since*. K + 1 blocks on, a verified tip re-reads before
+// it proves, and a press reads silence. R posts one root, spending
+// POST_PRICE_THREAD (5) rep.
+async function runFiguresStep24(cx) {
+  try {
+    const profileBtn = await cx.eval(`!!document.querySelector('[aria-label="open profile"]')`);
+    if (!profileBtn) {
+      record(24, false, 'no [aria-label="open profile"] control on the extension page — identity not loaded?');
+      return;
+    }
+    // Open the profile, or raise it where it is open.
+    await raiseWindow(cx, 'open profile');
+    await cx.waitFor(`!!document.querySelector('.karma-field span.mono')`, 'profile rep number 24', 30000);
+
+    // R's rep before the post. Under devnet's karmaDecayIntervalBlocks=3 and
+    // KARMA_DECAY_AMOUNT=5 rep per interval, a stale key drains ~35 rep over
+    // K+1 = 21 blocks, and a post costs POST_PRICE_THREAD = 5 rep: R needs a
+    // buffer above the drain plus the post to reach the silence assertion.
+    const initialRep = await cx.eval(`document.querySelector('.karma-field span.mono')?.textContent ?? null`);
+    const initialRepNum = Number(initialRep);
+    // Drain over the K+1 wait — at 3 blocks per interval, that's
+    // ceil((K+1)/3) intervals × 5 rep. Plus 5 for the post. Plus KARMA_MINIMUM.
+    const drainOverKPlus1 = Math.ceil((FIGURES_K + 1) / 3) * 5;
+    const buffer = drainOverKPlus1 + 5 + 10;
+    if (!Number.isFinite(initialRepNum) || initialRepNum < buffer) {
+      record(24, false,
+        `R has too little rep to survive the K+1 wait plus a post (rep=${initialRep}, drain estimate=${drainOverKPlus1}, buffer needed=${buffer})`);
+      return;
+    }
+
+    // Assertion 1 — press the corner, read silence (every box proven).
+    await pressCornerAndReadFigures(cx);
+    const before = await readKarmaField(cx);
+    const beforeOk = before.present && before.hintText === null && !before.monoHasClay;
+    if (!beforeOk) {
+      record(24, false,
+        `before-post assertion failed: hint=${JSON.stringify(before.hintText)} (clay=${before.hintHasClay}), mono=${JSON.stringify(before.monoText)} clay=${before.monoHasClay}`);
+      return;
+    }
+    // The number the post will move, and the listing it spends from as A
+    // serves it — which boxes the post can leave unspent.
+    const prePostRep = before.monoText;
+    const karmaPre = await readNodeKarma();
+
+    // Post one root through the composer. The rep policy is silent since
+    // step 9, so no prompt fires — the post lands on submit alone.
+    const preH24 = await currentHeight(NODE);
+    await cx.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
+    await cx.waitFor(`document.querySelector('.composer textarea')`, 'composer for step 24', 10000);
+    const CONTENT_24 = 'proof-vf-24-' + Date.now();
+    await cx.eval(`(() => {
+      const ta = document.querySelector('.composer textarea');
+      ta.value = ${JSON.stringify(CONTENT_24)};
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`, true);
+    await cx.waitFor(`!document.querySelector('.composer .btn-primary').disabled`, 'composer enabled 24', 15000);
+    const postIdx = cx.events.length;
+    await cx.eval(`document.querySelector('.composer .btn-primary').click()`, true);
+    // A prompt would refuse the silent policy; assert none appears and go on.
+    await sleep(2000);
+    const promptOpen24 = await findExt('prompt.html');
+    if (promptOpen24) {
+      record(24, false, `a prompt opened for the step 24 post — policy is not silent`);
+      return;
+    }
+
+    // The landing re-reads /karma: the number moves off the pre-post number
+    // with no press, and it is the node's own `effective`. The profile is
+    // raised first — the composer's submission may have moved the view — and
+    // a raise reads nothing.
+    await raiseWindow(cx, 'open profile');
+    const landing = await waitForRow(readKarmaField, cx,
+      (k) => k.present && k.monoText !== null && k.monoText !== prePostRep, 5 * 60 * 1000);
+    const landedH24 = await currentHeight(NODE);
+    const karmaPost = await readNodeKarma();
+    if (landing.timedOut || landedH24 === null) {
+      record(24, false,
+        `before: silence ok=${beforeOk}; posted at h>${preH24}; the number never moved off ${prePostRep} within 5 min with no press (last=${JSON.stringify(landing.last)}); A's /karma effective=${karmaPost?.effective ?? 'null'}`);
+      return;
+    }
+    const numberOk = landing.last.monoText === karmaPost?.effective && landing.last.monoText !== prePostRep;
+    // A tip run in the wait — the ten-minute timer — re-reads /karma too; with
+    // none, the move is the landing's own read.
+    const tipRunsInLanding = proofRequestsSince(cx.events, postIdx).length;
+    // The run the landing's own read starts, with no press — its reading is
+    // recorded beside the step: the anchor it proves against predates the
+    // post, so the change reads as a block landed since the anchor.
+    const landingRun = await waitForFiguresRun(cx, postIdx, 30000, 2000);
+    const landingLine = await readKarmaField(cx);
+
+    // Assertion 2 — press the corner: a verified tip re-reads /karma before it
+    // proves, and the post's change is a young box — *… landed since*, the
+    // line awaited with a bound.
+    const youngShapeRep = /^(\d+) rep proven at block \d+ · \d+ rep landed since$/;
+    await pressCornerAndReadFigures(cx);
+    const during = (await waitForRow(readKarmaField, cx,
+      (k) => k.present && youngShapeRep.test(k.hintText ?? ''), 15000)).last;
+    const duringOk = during.present
+      && during.hintText !== null
+      && !during.monoHasClay
+      && !during.hintHasClay
+      && youngShapeRep.test(during.hintText);
+    const provenPart = youngShapeRep.exec(during.hintText ?? '')?.[1] ?? null;
+    const provenSays = provenPart === null
+      ? 'no proven part read'
+      : provenPart === '0'
+        ? 'proven part 0 — the post spent every karma box R held'
+        : `proven part ${provenPart} — boxes the post left unspent`;
+
+    // Wait for the tip to reach landedH24 + K + 1. The rep drain over the wait
+    // is measured and reported; a drain below KARMA_MINIMUM (10) means R runs
+    // out during the wait and the row's silence would come from an empty
+    // ledger rather than a proven state.
+    const targetH24 = landedH24 + FIGURES_K + 1;
+    const wait24 = await waitForNodeTip(targetH24);
+    const rate24 = wait24.last !== null
+      ? ((wait24.last - landedH24) / (wait24.elapsedMs / 60000)).toFixed(2)
+      : 'null';
+    // Compute the drain — three blocks per interval, five rep per interval.
+    const drainOverWait = wait24.last !== null
+      ? Math.floor((wait24.last - preH24) / 3) * 5
+      : null;
+    const repAfterWait = await cx.eval(`document.querySelector('.karma-field span.mono')?.textContent ?? null`);
+    const repAfterNum = Number(repAfterWait);
+    if (!wait24.reached) {
+      record(24, false,
+        `before: silence ok=${beforeOk}; landing number ok=${numberOk}; during: hint=${JSON.stringify(during.hintText)} shape ok=${duringOk}; ` +
+        `tip did not reach ${targetH24} within ${(wait24.elapsedMs / 1000).toFixed(0)}s (last=${wait24.last}, ~${rate24} blocks/min from landed=${landedH24}, K+1=${FIGURES_K + 1}); ` +
+        `initial rep=${initialRep}, rep after wait=${repAfterWait}, drain estimate=${drainOverWait}`);
+      return;
+    }
+    if (Number.isFinite(repAfterNum) && repAfterNum < 5) {
+      record(24, false,
+        `before: silence ok=${beforeOk}; landing number ok=${numberOk}; during: hint=${JSON.stringify(during.hintText)} shape ok=${duringOk}; ` +
+        `R's rep dropped below 5 during the wait: initial=${initialRep}, after=${repAfterWait}, drain estimate=${drainOverWait} rep over ${(wait24.elapsedMs / 1000).toFixed(0)}s`);
+      return;
+    }
+
+    // Assertion 3 — press the corner, read silence, awaited with a bound: the
+    // line of the run before stands until the press's own run lands.
+    await pressCornerAndReadFigures(cx);
+    const after = (await waitForRow(readKarmaField, cx,
+      (k) => k.present && k.hintText === null && !k.monoHasClay, 15000)).last;
+    const afterOk = after.present && after.hintText === null && !after.monoHasClay;
+
+    record(24, beforeOk && numberOk && duringOk && afterOk,
+      `before press: hint=${JSON.stringify(before.hintText)} silence=${before.hintText === null} ok=${beforeOk}, rep=${prePostRep}; ` +
+      `R's karma boxes on A before the post=${karmaPre?.boxCount ?? 'null'}, after=${karmaPost?.boxCount ?? 'null'}; ` +
+      `landed with no press by h=${landedH24} (pre=${preH24}): row=${JSON.stringify(landing.last.monoText)} vs A's effective=${JSON.stringify(karmaPost?.effective ?? null)}, moved off ${JSON.stringify(prePostRep)}, ok=${numberOk}, tip-proof requests in the wait=${tipRunsInLanding}; ` +
+      `the landing's own run (no press, ${landingRun.length} proof requests): hint=${JSON.stringify(landingLine.hintText)} clay=${landingLine.hintHasClay}; ` +
+      `during press: hint=${JSON.stringify(during.hintText)} shape ok=${duringOk}, ${provenSays}; ` +
+      `waited to h=${wait24.last} (~${rate24} blocks/min) target=${targetH24}, elapsed=${(wait24.elapsedMs / 1000).toFixed(0)}s; ` +
+      `rep initial=${initialRep} → after=${repAfterWait}, drain estimate=${drainOverWait} rep; ` +
+      `after press: hint=${JSON.stringify(after.hintText)} silence=${after.hintText === null}, mono=${JSON.stringify(after.monoText)} clay=${after.monoHasClay}`);
+  } catch (e) {
+    record(24, false, `error: ${String(e)}`);
+  }
+}
+
+// R's /karma on A, read by the harness beside the row — the node's
+// `effective` and the key's box count (NODE_INTERFACE → UTXO queries). Null
+// when A does not answer.
+async function readNodeKarma() {
+  try {
+    const r = await fetch(`${NODE}/karma/${R_JSON.pubKeyHex}`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    return { effective: j.effective ?? null, boxCount: j.boxCount ?? null };
+  } catch {
+    return null;
+  }
+}
+
+// ---- The lie arms — 22a · 22b · 23 (WEB_INTERFACE → The extension → "The
+// verified figures"). Each arm sets the figures relay's mode with @wallet and
+// @profile open, then sets the settings row's `node` to the relay: a node
+// change drops everything loaded and re-reads it from the new node
+// (WEB_INTERFACE → The settings window), so an arm presses no ↻ — the change
+// is the re-read, and the arm is its proof. The rows are read once the relay's
+// run lands. Then the row is blanked back to A, and the balance row reads
+// silent again once A's own run lands — part of the arm's verdict, so the next
+// arm starts clean.
+
+const BALANCE_UNPROVEN = "this node's proof of the balance did not verify";
+const REP_UNPROVEN = "this node's proof of your rep did not verify";
+// The relay's fabricated 12.5 $NOTIS box read as `absent`, and as `unchecked`
+// — a block landed between the anchor and the run's /blocks/current, and the
+// next run decides.
+const FAKE_ABSENT_LINE = /^the node lists 12\.5\d* \$NOTIS the chain does not hold$/;
+const FAKE_UNCHECKED_TAIL = / · 12\.5\d* \$NOTIS not checked yet$/;
+
+const repNotClay = (k) => k.present && k.monoText !== null && !k.hintHasClay && !k.monoHasClay;
+
+const LIE_ARMS = [
+  {
+    // A fabricated box: `absent` only where `heightAfter` equals the anchor's
+    // tip, so an `unchecked` reading is pressed again, up to five times. The
+    // lie is the credits listing's alone — the rep row is not clay.
+    step: '22a',
+    mode: 'credits-fake',
+    creditsSettled: (r) => r.present && (FAKE_ABSENT_LINE.test(r.figHintText ?? '') || FAKE_UNCHECKED_TAIL.test(r.figHintText ?? '')),
+    creditsOk: (r) => r.present && FAKE_ABSENT_LINE.test(r.figHintText ?? '') && r.figHintHasClay && r.goldHasClay,
+    presses: 5,
+    karmaSettled: (k) => k.present && k.monoText !== null,
+    karmaOk: repNotClay,
+  },
+  {
+    // Another key's real box: its owner fails the check at whichever height
+    // includes it. The rep row is not clay.
+    step: '22b',
+    mode: 'credits-foreign',
+    creditsSettled: (r) => r.present && r.figHintText === BALANCE_UNPROVEN,
+    creditsOk: (r) => r.present && r.figHintText === BALANCE_UNPROVEN && r.figHintHasClay && r.goldHasClay,
+    presses: 0,
+    karmaSettled: (k) => k.present && k.monoText !== null,
+    karmaOk: repNotClay,
+  },
+  {
+    // The listing is honest and every proof lies: both rows under the full
+    // rule.
+    step: 23,
+    mode: 'avl-flip',
+    creditsSettled: (r) => r.present && r.figHintText === BALANCE_UNPROVEN,
+    creditsOk: (r) => r.present && r.figHintText === BALANCE_UNPROVEN && r.figHintHasClay && r.goldHasClay,
+    presses: 0,
+    karmaSettled: (k) => k.present && k.hintText === REP_UNPROVEN,
+    karmaOk: (k) => k.present && k.hintText === REP_UNPROVEN && k.hintHasClay && k.monoHasClay,
+  },
+];
+
+// A row as the step lines read it — the figures hint and the figure, each
+// with its clay.
+function creditsSeen(r) {
+  if (!r?.present) return 'row not in the page';
+  return `hint=${JSON.stringify(r.figHintText)} (clay=${r.figHintHasClay}), gold=${JSON.stringify(r.goldText)} (clay=${r.goldHasClay})`;
+}
+
+function karmaSeen(k) {
+  if (!k?.present) return 'row not in the page';
+  return `hint=${JSON.stringify(k.hintText)} (clay=${k.hintHasClay}), rep=${JSON.stringify(k.monoText)} (clay=${k.monoHasClay})`;
+}
+
+// The page's requests since `startIdx` whose URL opens with `prefix`.
+function requestsTo(events, startIdx, prefix) {
+  let n = 0;
+  for (let i = startIdx; i < events.length; i++) {
+    const ev = events[i];
+    if (ev.method === 'Network.requestWillBeSent' && (ev.params?.request?.url ?? '').startsWith(prefix)) n += 1;
+  }
+  return n;
+}
+
+async function runFiguresLieArms(cx) {
+  let relay;
+  try {
+    relay = await startFiguresRelay(NODE.replace(/\/+$/, ''), FIG_RELAY_PORT);
+  } catch (e) {
+    for (const s of LIE_ARM_STEPS) record(s, false, `the figures relay did not start on ${FIG_RELAY_ORIGIN}: ${String(e)}`);
+    return;
+  }
+  console.log(`[vf] figures relay up: ${relay.origin} → ${NODE}`);
+  try {
+    for (const arm of LIE_ARMS) await runLieArm(cx, relay, arm);
+  } finally {
+    relay.mode = 'honest';
+    try { relay.server.close(); } catch {}
+    console.log(`[vf] figures relay closed; edits=${JSON.stringify(relay.edits)}`);
+  }
+}
+
+async function runLieArm(cx, relay, arm) {
+  let onRelay = false;
+  try {
+    const editsBefore = relay.edits[arm.mode];
+    // (1) The relay's mode, with @wallet and @profile open.
+    relay.mode = arm.mode;
+    await raiseWindow(cx, 'open profile');
+    await raiseWindow(cx, 'open wallet');
+
+    // (2) The node row set to the relay; the corner reads verified across the
+    // relay, A and B.
+    const changeIdx = cx.events.length;
+    onRelay = true;
+    const change = await changeNodeAndAwait(cx, relay.origin,
+      (c) => c.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(c.title ?? ''),
+      'led fresh + verified across N nodes (reading the figures relay)', 60000);
+    const verified = !change.reached.timedOut && change.stored === relay.origin;
+
+    // (3) The rows, once the relay's run lands; the balance line awaited with
+    // a bound, and pressed again where the arm allows it.
+    await raiseWindow(cx, 'open wallet');
+    const relayRun = verified ? await waitForFiguresRun(cx, changeIdx, 60000, 2000, relay.origin) : [];
+    let credits = await waitForRow(readCreditsRow, cx, arm.creditsSettled, 15000);
+    const readings = [`after the change: ${creditsSeen(credits.last)}`];
+    let presses = 0;
+    while (verified && presses < arm.presses && !arm.creditsOk(credits.last)) {
+      presses += 1;
+      await pressCornerAndReadFigures(cx);
+      credits = await waitForRow(readCreditsRow, cx, arm.creditsSettled, 15000);
+      readings.push(`press ${presses}: ${creditsSeen(credits.last)}`);
+    }
+    const creditsOk = arm.creditsOk(credits.last);
+    await raiseWindow(cx, 'open profile');
+    const karma = await waitForRow(readKarmaField, cx, arm.karmaSettled, 15000);
+    const karmaOk = arm.karmaOk(karma.last);
+    const corner = await readCorner(cx);
+    const cornerOk = corner.ledClass === 'led fresh';
+    const edits = relay.edits[arm.mode] - editsBefore;
+    const creditsReads = requestsTo(cx.events, changeIdx, `${relay.origin}/credits/${R_JSON.pubKeyHex}`);
+    const karmaReads = requestsTo(cx.events, changeIdx, `${relay.origin}/karma/${R_JSON.pubKeyHex}`);
+    const nodeCredits = await fetch(`${NODE}/credits/${R_JSON.pubKeyHex}`).then((r) => r.json()).catch(() => null);
+
+    // (4) Back to A: the balance row silent again once A's own run lands.
+    const back = await leaveFiguresRelay(cx);
+    onRelay = false;
+    record(arm.step, verified && creditsOk && karmaOk && cornerOk && back.ok,
+      `relay ${arm.mode} edits=${edits}; ` +
+      `change: stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}, verified=${verified}; ` +
+      `through the relay: /credits reads=${creditsReads}, /karma reads=${karmaReads}, figures proof requests=${relayRun.length}; ` +
+      `balance ${readings.join(' | ')} (A's /credits total=${nodeCredits?.total ?? 'null'} base units), ok=${creditsOk}; ` +
+      `rep ${karmaSeen(karma.last)}, ok=${karmaOk}; ` +
+      `corner led=${corner.ledClass}, title=${JSON.stringify(corner.title)}, ok=${cornerOk}; ` +
+      `back to A: ${back.detail}, ok=${back.ok}`);
+  } catch (e) {
+    record(arm.step, false, `error: ${String(e)}`);
+    // An arm that failed on the relay hands the next one A, as every arm
+    // leaves it.
+    if (onRelay) {
+      await blankNodeAndAwaitVerified(cx).catch((err) => console.error(`[vf] ${arm.step}: blank back to A failed: ${String(err)}`));
+    }
+  }
+}
+
+// Step (4) of every lie arm — the node row blanked back to A, and the balance
+// row silent once A's own figures run lands: before that run the row holds no
+// result, which reads silent too.
+async function leaveFiguresRelay(cx) {
+  const blankIdx = cx.events.length;
+  const blank = await blankNodeAndAwaitVerified(cx);
+  const verified = !blank.reached.timedOut;
+  await raiseWindow(cx, 'open wallet');
+  const aRun = verified ? await waitForFiguresRun(cx, blankIdx, 60000, 2000, NODE.replace(/\/+$/, '')) : [];
+  const row = await waitForRow(readCreditsRow, cx,
+    (r) => r.present && r.goldText !== null && r.figHintText === null && !r.goldHasClay, 15000);
+  return {
+    ok: verified && aRun.length > 0 && !row.timedOut,
+    detail: `led=${blank.reading.ledClass}, title=${JSON.stringify(blank.reading.title)}, A's figures proof requests=${aRun.length}, balance ${creditsSeen(row.last)}`,
+  };
+}
+
+// Step 25 — the hosted build has no verifier, so no `.credits-line .hint` or
+// `.karma-field .hint` renders and no `/api/v1/proof/` request fires (as step
+// 20 asserts no `/nipopow/proof/`; same log, different literal). The hosted
+// origin is the harness's static server at `--public` (rung 1's server, step
+// 20's own). Without `--public`/`--web-dist` the step reads NOT RUN by name.
+async function runFiguresStep25() {
+  if (PUBLIC === null || webDistAbs === null) {
+    record(25, 'NOT RUN', 'no --public / --web-dist — the hosted origin is not served');
+    return;
+  }
+  let bcx = null;
+  let cxH = null;
+  let createdTargetId = null;
+  try {
+    bcx = await openBrowserSession();
+    const hostedUrl = publicOrigin + publicBase;
+    const created = await bcx.call('Target.createTarget', { url: hostedUrl });
+    createdTargetId = created.targetId;
+    const info = await findTargetById(createdTargetId, 15000);
+    if (!info) {
+      record(25, false, `hosted target ${createdTargetId.slice(0, 8)}… never appeared in /json/list`);
+      return;
+    }
+    cxH = await openSession(info.webSocketDebuggerUrl);
+    // Wait for the corner — the read surface renders on the hosted build as it
+    // does with no identity (WEB_INTERFACE → The read surface).
+    await cxH.waitFor(`!!document.querySelector('.corner')`, 'hosted corner 25', 30000);
+
+    // Try to open the wallet — the hosted build carries no identity here, so
+    // the header may not show the control. The assertion is about the DOM's
+    // hint elements and the request log, not the wallet being open.
+    const walletBtnPresent = await cxH.eval(`(() => {
+      const b = document.querySelector('[aria-label="open wallet"]');
+      if (!b) return false;
+      b.click();
+      return true;
+    })()`, true);
+    await sleep(2000);
+
+    // Idle 20 s, then press the corner and give it 5 s. No `/api/v1/proof/`
+    // fires through either window — the hosted build has no figures verifier.
+    const startIdx = cxH.events.length;
+    await sleep(20000);
+    await pressCorner(cxH);
+    await sleep(5000);
+
+    const requests = cxH.events.slice(startIdx).filter((e) => e.method === 'Network.requestWillBeSent');
+    const apiProofRequests = requests.filter((e) => (e.params?.request?.url ?? '').includes('/api/v1/proof/'));
+    const hints = await cxH.eval(`(() => ({
+      creditsLineHint: document.querySelector('.credits-line .hint')?.textContent ?? null,
+      karmaFieldHint: document.querySelector('.karma-field .hint')?.textContent ?? null,
+    }))()`);
+    const ok = apiProofRequests.length === 0
+      && hints.creditsLineHint === null
+      && hints.karmaFieldHint === null;
+    record(25, ok,
+      `hosted origin=${hostedUrl}, wallet control present=${walletBtnPresent}, ` +
+      `/api/v1/proof/ requests on hosted origin=${apiProofRequests.length} (${JSON.stringify(apiProofRequests.map((e) => e.params?.request?.url ?? ''))}), ` +
+      `.credits-line .hint=${JSON.stringify(hints.creditsLineHint)}, .karma-field .hint=${JSON.stringify(hints.karmaFieldHint)}`);
+  } catch (e) {
+    record(25, false, `error: ${String(e)}`);
+  } finally {
+    try { if (cxH) cxH.s.close(); } catch {}
+    if (bcx && createdTargetId) {
+      await bcx.call('Target.closeTarget', { targetId: createdTargetId }).catch(() => {});
+    }
+    try { if (bcx) bcx.s.close(); } catch {}
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The run.
 // ---------------------------------------------------------------------------
 
@@ -1534,6 +2507,10 @@ async function main() {
     } else {
       markVerifiedTipNotRun('no --verified-tip');
     }
+    // The verified-figures block requires --r-key; --verified-figures alone
+    // is a config error caught at the top. Here without --r-key the six steps
+    // read NOT RUN by name.
+    markVerifiedFiguresNotRun('no --r-key — the verified-figures block does not run');
     return;
   }
 
@@ -1906,7 +2883,6 @@ async function main() {
   // → The extension. The identity is unlocked (step 9), the policy is
   // silent (step 9), and the wallet is already open from step 11 with the
   // permissions stub resolving true.
-  const DEVNET_FAUCET_KEY = '5468d985c3924a95f3d3dc98b67a41ac2c7cc4cfca4fcbf7c5627452f1617f36';
   const R_HEX = R_JSON.pubKeyHex;
 
   // --- 12a — press ask under the granted stub → the stub is asked again
@@ -2763,6 +3739,33 @@ async function main() {
     try { vtCx.s.close(); } catch {}
   } else {
     markVerifiedTipNotRun('no --verified-tip');
+  }
+
+  // The verified-figures block after the tip block — the tip block's cleanup
+  // stops B, C, D and the lying relay by their handles, so only A is left, and
+  // the figures block brings up a B of its own and the figures relay
+  // (WEB_INTERFACE → The extension → "The verified figures"). It runs on the
+  // extension page live at this moment, or a fresh one where none is open;
+  // storage restores R's identity (envelope in local, seed in session from
+  // step 12d's unlock).
+  if (VERIFIED_FIGURES) {
+    let vfPage = await findExt('index.html');
+    if (!vfPage) {
+      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
+      await sleep(2000);
+      vfPage = await findExt('index.html');
+    }
+    if (!vfPage) throw new Error('verified-figures block: no extension page');
+    const vfCx = await openSession(vfPage.webSocketDebuggerUrl);
+    // The App's boot needs a moment before the wallet control mounts —
+    // main.ts's bootstrapProxy awaits the background's snapshot.
+    try {
+      await vfCx.waitFor(`!!document.querySelector('[aria-label="open wallet"]')`, 'header wallet control 25', 30000);
+    } catch {}
+    await verifiedFiguresSteps(vfCx, vfPage.id);
+    try { vfCx.s.close(); } catch {}
+  } else {
+    markVerifiedFiguresNotRun('no --verified-figures');
   }
 
   // ------- Step 13-uncancelled — the browser-context arm, last after the

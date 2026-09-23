@@ -5,6 +5,9 @@ import { stageLine, type Flight } from './card';
 import { isValidUsernameBytes } from '@dagsocial/types';
 import { formatCredits, parseCredits } from '../model/credits';
 import { spendableCreditBoxes, lockedCreditSummary } from '../wallet/reads';
+import { figuresLine } from '../model/figures-line';
+import type { FiguresView } from '../model/state';
+import type { TipVerdict } from '../model/tip-verdict';
 import type { CreditsResult, StatusResult } from '../api/dto';
 
 // The @wallet window — WEB_INTERFACE → The wallet window. Everything $NOTIS
@@ -50,6 +53,15 @@ export interface WalletCtx {
   // WEB_INTERFACE → The wallet window → "The `send` row"). The App fills it
   // `!this.idm.policy`: the in-page module has no policy, the proxy has.
   confirmInRow: boolean;
+  // The extension's verified-figures run — WEB_INTERFACE → The extension →
+  // "The verified figures". `verdict === undefined` when the build has no
+  // verifier, `null` while none has returned; `figures` is null until a run's
+  // result lands. The pure `figuresLine` reads the three fields together and
+  // the balance row renders the muted line beneath the figure, adding `clay`
+  // to the hint and to the gold span under the full rule (→ "The `balance`
+  // row").
+  verdict: TipVerdict | null | undefined;
+  figures: FiguresView | null;
 }
 
 function row(label: string): { row: HTMLElement; field: HTMLElement } {
@@ -137,6 +149,38 @@ function sumValues(boxes: readonly { value: string }[]): bigint {
   return s;
 }
 
+/** Append the verified-figures line beneath the balance figure — a `div.hint`,
+ *  clay under the full rule (WEB_INTERFACE → The extension → "The verified
+ *  figures", HOUSE_STYLE → Gold and clay are not interchangeable). `goldSpan`
+ *  is the gold figure whose ink flips clay under the full rule; a locked-
+ *  wallet branch has no gold to flip and passes null. */
+function appendFiguresLine(
+  line: HTMLElement,
+  ctx: WalletCtx,
+  boxCount: number,
+  height: number,
+  shown: bigint,
+  goldSpan: HTMLElement | null,
+): void {
+  const fLine = figuresLine({
+    ledger: 'credits',
+    verdict: ctx.verdict,
+    result: ctx.figures?.result ?? null,
+    shown,
+    suffixHeight: ctx.figures?.anchor.suffixHead.header.height ?? null,
+    boxCount,
+    height,
+  });
+  if (fLine === null) return;
+  const hint = el('div', 'hint');
+  hint.textContent = fLine.text;
+  if (fLine.weight === 'clay') {
+    hint.classList.add('clay');
+    if (goldSpan !== null) goldSpan.classList.add('clay');
+  }
+  line.appendChild(hint);
+}
+
 /** Toggle the `.send-row` — walletBody starts it hidden and updateCredits
  *  shows or hides it as the spendable side changes. Selects by class, so
  *  the geometry of the credits-field wrapper does not decide the row's
@@ -165,14 +209,18 @@ function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: Wallet
     formSlot.replaceChildren();
   } else if (spendable > 0n) {
     // Balance in gold + "$NOTIS"; the locked-hint beneath names only what is
-    // above the current height (WEB_INTERFACE → The wallet window).
-    line.append(el('span', 'mono gold', formatCredits(spendable)), ' $NOTIS');
+    // above the current height (WEB_INTERFACE → The wallet window). The
+    // extension's verified-figures line follows, muted or clay by the pure
+    // model's row (→ "The verified figures").
+    const goldSpan = el('span', 'mono gold', formatCredits(spendable));
+    line.append(goldSpan, ' $NOTIS');
     const locked = lockedCreditSummary(c.boxes, height);
     if (locked) {
       const hint = el('div', 'hint');
       hint.append(mono(formatCredits(locked.value)), ' $NOTIS more unlock by block ', mono(String(locked.height)), '.');
       line.appendChild(hint);
     }
+    appendFiguresLine(line, ctx, c.boxCount, height, spendable, goldSpan);
   } else {
     // No spendable box → the faucet step when a faucet is set, else "no $NOTIS yet."
     // The locked hint still stands so the reader knows what is on its way.
@@ -198,6 +246,11 @@ function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: Wallet
       hint.append(mono(formatCredits(locked.value)), ' $NOTIS more unlock by block ', mono(String(locked.height)), '.');
       line.appendChild(hint);
     }
+    // A wallet whose boxes are all locked shows no gold; the figures line
+    // still stands so a fake locked box does not pass unremarked
+    // (WEB_INTERFACE → The extension → "The verified figures"; `shown` is 0
+    // here, so row 6 answers null when every box is proven — silence).
+    if (c.boxCount > 0) appendFiguresLine(line, ctx, c.boxCount, height, 0n, null);
     // No spendable box means the form has nothing to spend — drop it.
     formSlot.replaceChildren();
   }

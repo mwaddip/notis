@@ -341,6 +341,7 @@ check can tell an omission from an exclusion.
 | `MAX_UINT32` | the domain bound of a `u32` field |
 | `MSG_HANDSHAKE`, `MSG_SYNC_INFO`, `MSG_INV`, `MSG_MODIFIER_REQUEST`, `MSG_MODIFIER_RESPONSE`, `MSG_GET_PEERS`, `MSG_PEERS`, `MSG_GET_HEADERS`, `MSG_HEADERS`, `MSG_GET_BLOCKS`, `MSG_BLOCKS` | message codes — `NET_INTERFACE → Frame Format` |
 | `MODIFIER_ORDERING_BLOCK`, `MODIFIER_POST_BODY` | modifier type ids — `NET_INTERFACE → ModifierRequest` |
+| `IDENTITY_RECORD_TAG` | field 1 of the identity record's AVL value, `0x80` — a layout discriminator, not a tunable — `TYPES_INTERFACE → Layout — IdentityRecord`; the tree's other tags are `node`'s (`NODE_INTERFACE → Entity kinds`) |
 | `GET_PEERS_INTERVAL_MS`, `OUTBOUND_TICK_INTERVAL_MS` | local cadences — `NET_INTERFACE → Outbound Manager` |
 | `genesisCommitteeKeys`, `faucetPublicKey`, `genesisProofPayload`, `genesisStateRoot`, `genesisId`, `bootstrapPeers`, `backerTable` | identity fields — non-numeric, listed for completeness |
 

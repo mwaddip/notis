@@ -397,8 +397,67 @@ Which of these a node's failure is comes from the result's `refuseCode` — `unr
 parsed out of the sentence beside it. **It warns and nothing more**: no read is blocked, no write, and the reading node is never switched — the reader's remedy is the
 settings window's `node` row, and the status corner is where the verdict shows (→ The status corner). What a verdict
 says is the trust model's and no more: headers and work, never a body; nothing about a balance, a name or a post the
-page shows; nothing with fewer than two nodes answering; and two nodes under one operator and one DNS zone answer for
-one box lying, not for the operator.
+page shows — the loaded key's own two figures are the exception, below; nothing with fewer than two nodes answering;
+and two nodes under one operator and one DNS zone answer for one box lying, not for the operator.
+
+**The verified figures.** The extension proves the two figures the reading node serves for the loaded key — the
+wallet's balance and the profile's rep — against the state the verified chain committed, box by box, and says beneath
+each what it could not prove. **The anchor**: a tip run answers `{ verdict, anchor }`, `anchor` being the **reading
+node's own** verified `tip` and `suffixHead` headers from its proof, non-null when and only when the verdict is
+`verified` — under it they are PoW-verified, on the best chain (`behind` carried them), and heights the reading node can
+prove at, where the winner's tip may be a block it has not seen. The anchor is held beside the verdict, written by the
+run that writes it, cleared with it, dropped with it on a node change; nothing is stored. **The run** is `proveFigures`
+of `@dagsocial/nipopow-client` — the code the command-line light client runs — over **the listing the rows rendered**,
+in this order: every listed box proven at `suffixHead.height` against its `stateRoot` (`NODE_INTERFACE → AVL+ State
+Root`, the endpoint), and the key's identity record at the key `identityRecordKey` derives (`TYPES_INTERFACE →
+Identity record and karma valuation`); every box the first pass excluded proven once more at `tip.height`; then one
+`GET /blocks/current`, `heightAfter`. **A box is `proven`** when it is included at `suffixHead`, its value hashes back
+to its key (`NODE_INTERFACE → Entity kinds`), **its `owner` is the loaded key and its `boxType` the ledger it was listed
+under** — a node that lists another key's real box, or the wrong ledger's, gets nothing for it. Otherwise: `young` —
+excluded at `suffixHead`, included at `tip`: real, inside the region a reorg can still move; `unchecked` — excluded at
+both and `heightAfter` above `tip.height`: a block landed since the anchor, the next run decides — so a landing's
+own re-read, proven against the anchor standing, reads its new box *not checked yet* until the next verified tip;
+**`absent`** —
+excluded at both and `heightAfter` equal to `tip.height`: listed at a height the chain's state does not hold it at, **the
+node lists what the chain does not hold** (the anchor predates the listing, so the reading node's height at the listing
+was at least the tip's, and a node whose height fell between the reads shows as `unchecked` or a proof failure on the
+next run, never as a false `absent`); `unproven` — a `stateRoot` other than the header's, a rejected lookup, a value
+that does not decode or hash to the key, a `kind` that is not a box's, an owner or a type that is not the listing's;
+`no-proof` — nothing served. The record is `proven` or `null` at `suffixHead` — the same `null` the node values — or
+`unproven` / `no-proof` by the same rules. **The valuation** is `effectiveKarma` over the proven karma face total and
+the proven record **at the karma listing's own `height`** — the height the node computed the row's `effective` at — so
+an unchanged state reproduces the number shown exactly; the proven spendable sum is the balance row's rule over the
+`proven` credit boxes, each lock read from the proven candidate. Both remainders are non-negative by construction: the
+proven set is the listed set less what is younger than `suffixHead`, and a record proven there has clocks no later than
+the live one. **It proves a listing read after its anchor, and never one read before it** — the order is what makes
+`absent` exact: the anchor predates the listing, so the reading node's height at the listing was at least the tip's,
+where a listing read before the anchor may name a box spent since, which the chain rightly no longer holds. **It
+runs**, in the extension build alone and only with an identity and an anchor: right after every tip run that ends
+`verified`, **reading the reader's listings first** — `/karma` always, `/credits` while the wallet window is open — the
+rows taking the fresh figures in place (`HOUSE_STYLE → Motion`); and after every read of a listing while an anchor
+stands — a window opening, its `↻`, a landing, an identity or a node change — whose listing is read after the anchor
+already. A listing not read after the current anchor is passed empty, and its row, where one is on screen, reads
+muted *not checked yet* — the run proved nothing about it. The karma listing is read whole, following `next` (→ "Paging is keyset, never offset"),
+the row's number the first page's `effective`. One run in flight; a listing or an anchor that moves during a run marks
+one more run, started when it ends; a result for a listing no longer rendered, or under an older generation, is
+dropped; a run in flight keeps the line it had. **What it says** is one
+muted line beneath the figure — the element the balance row's locked line is — **and only when something is not whole:
+a figure every box of which proved reads as it reads without a verifier.** The lines, the first that holds: **none** in
+a build with no verifier, and none over an empty listing (a proof of emptiness is a proof of nothing); *not checked — the
+chain is not verified* while the verdict is `thin` or `refused` and no result stands — a verdict or a run not yet
+returned shows nothing; muted *not checked yet* under a figure whose listing the run did not prove — never a figure of
+*0 proven* for it; **clay, and the figure clay**, when a box or the record is `unproven` or a box is `absent` —
+*the node lists 12.5 $NOTIS the chain does not hold* when any is `absent`, else *this node's proof of the balance did not
+verify*, for rep *… lists 5 rep …* and *… proof of your rep …*; muted *the node served no proof for 12.5 $NOTIS* (*… for
+your rep*) when a box or the record is `no-proof`; **nothing** when every box is `proven` and the valuation equals the
+number shown; else muted *87.5 $NOTIS proven at block 9005 · 12.5 $NOTIS landed since* (`young`) · *… · 12.5 $NOTIS not
+checked yet* (`unchecked`), both when both, *proven at block* naming `suffixHead.height`, for rep *87 rep proven at
+block 9005 · 5 rep landed since*. **The line never replaces the figure** — the balance row's spendable sum and the rep
+row's `effective` are the reads the run proved, in every state; the line describes them. The two weights are the corner's
+(`HOUSE_STYLE → Gold and clay are not interchangeable`): a heads-up is the line alone, the full rule the line in clay
+and the figure in clay (→ The wallet window, → The profile window). **What it means** is a lower bound and no more:
+every proven box is real and the key's; a node that withholds a box still serves valid proofs for the rest, and
+omission is what reading both nodes as a union is for.
 
 **The policy.** The ledger a transaction moves is read from its outputs: **any output with `boxType`
 `credit` or `fee` is a credits transaction; otherwise karma.** Inputs are ids only
@@ -540,6 +599,18 @@ value too, and refuses a name no network profile answers to.
 **Paging is keyset, never offset.** `after=<key>` goes in, `next` comes back — a formatted key, or
 `null` at the end of the collection. A client that counts rows it rendered, rather than following
 `next`, pages wrongly the moment anything is filtered out of a page.
+
+**No answer overwrites a newer one.** Reads answer in any order, so every write of what a read brought
+is checked against what stands: a read begun before a change of the node or the identity writes nothing
+(→ The settings window, → The identity module); each piece of the reader's own state — the two listings,
+`/status`, the vouch set and the escrow, the bonds, the reader's name — keeps the answer of the read begun
+last, whichever lands last; a continuation — a `more`, a `load older` — continues the page or cursor it
+was asked for and writes nothing once that has moved; a refresh lands its new rows on the rows standing
+as it lands, never on the rows it started from, and a refresh of a list that holds no rows reads its
+first page. **A withdrawal the client has seen land is final on every write of rows** — no answer shows
+that post live again, since any that does is older than the landing — so a list never takes the root
+back and a thread keeps the withdrawn card; the set of those posts needs no order and no pruning,
+because a withdrawal is never undone.
 
 **The author-posts window reads the same view with `author=<key>`** (→ The author window) — the one
 place the client passes the filter; the feed never does.
@@ -694,7 +765,8 @@ stops while it is hidden: one request per half minute per visible tab, and the b
 loaded, and reads the new node at once** — the number beside the dot is never another node's. **A
 press re-reads at once** — the corner is a control at the size the pointer needs (`HOUSE_STYLE → Interaction`), and
 the read it makes is the refresh it reports: the number moves in place, never animates, and no other surface
-changes. Its `title` names the state in words — *blocks progressing · tip 2295*, *no new block for 12 minutes · tip
+changes but, in the extension, the two figures the verified tip re-reads and re-proves, each in its own slot (→ The
+extension → "The verified figures"). Its `title` names the state in words — *blocks progressing · tip 2295*, *no new block for 12 minutes · tip
 2295*, *the node did not answer · last tip 2295*. At one column it sits clear of the bar and of every control; in the
 standalone mode it is present, since the page reads the same node; with no node answering at start it reads `—`.
 
@@ -1194,7 +1266,16 @@ no number. The available count drops when the bond lands, in place, never animat
 **The `rep` row is the `effective` number alone**, in mono — the value every sufficiency check on the node
 reads, never the face `total`, which would promise rep the next spend does not have; the row's label says what
 the number counts, so no unit follows it (user, 2026-09-18). This is the one place a rep balance rests on the
-reading surface. **A card by the loaded key reads `· you`** after the prefix, muted ink, text only.
+reading surface. **The number takes a new value whenever one is read** (`HOUSE_STYLE → Motion`) — the window's `↻`,
+**every landing of the reader's own transaction**, which re-reads `/karma` (a post, a like, a vouch, a withdrawal, a claim
+or a burn changed what it counts; a landing reports it, never predicts it), and in the extension every verified tip. **In
+the extension, beneath the number and only when something is not whole, one muted line says
+what the verified-figures run could not prove** — *87 rep proven at block 9005 · 5 rep landed since*, *the node served
+no proof for your rep*, *not checked — the chain is not verified* — **and under the full rule the line and the number
+are clay**: *this node's proof of your rep did not verify*, *the node lists 5 rep the chain does not hold* (→ The
+extension → "The verified figures", the rule and every line). The number is the live `effective` in every state; a
+row every box of which proved, and whose valuation reproduces it, reads exactly as it reads on the web. **A card by the
+loaded key reads `· you`** after the prefix, muted ink, text only.
 
 ### The wallet window *(write surface)*
 
@@ -1215,7 +1296,16 @@ reconciles whether or not the window is open (→ The wallet); the update in pla
 **The `balance` row**: the balance from `GET /credits/:key` — the spendable sum, formatted as
 $NOTIS (→ The wallet), in `gold` (`HOUSE_STYLE → "Gold means credits and nothing else"`) — and beneath it, when
 a box is locked, one muted line, *N $NOTIS more unlock by block H*, H the latest `lockedUntilBlock` among them.
-With no spendable box: the faucet step when a faucet is set (→ The faucet step), else *no $NOTIS yet.*
+With no spendable box: the faucet step when a faucet is set (→ The faucet step), else *no $NOTIS yet.* **The balance
+takes a new value whenever one is read** — the window's opening and `↻`, every landing of the reader's own
+transaction (a send's and a grant's landing are read off `/credits` itself, open or closed), and in the extension every
+verified tip while the window is open (`HOUSE_STYLE → Motion`). **In the extension, one more muted line of the same element stands beneath the figure only when the verified-figures run could
+not prove the whole balance** — *87.5 $NOTIS proven at block 9005 · 12.5 $NOTIS landed since*, *… · 12.5 $NOTIS not
+checked yet*, *the node served no proof for 12.5 $NOTIS*, *not checked — the chain is not verified* — **and under the
+full rule that line and the gold figure are clay**: *the node lists 12.5 $NOTIS the chain does not hold*, *this node's
+proof of the balance did not verify* (→ The extension → "The verified figures"). Gold still means credits: the figure
+gives up the colour only while the node's own proof of it fails, as the corner's height does on `refused`. The figure is
+the live spendable sum in every state; a balance every box of which proved reads exactly as it reads on the web.
 
 **The `send` row** stands while a box is spendable, and while a send's own line stands — its flight, the pending
 line, *sent* — so a send of the whole balance still reads its ending. The

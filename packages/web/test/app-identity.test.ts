@@ -120,7 +120,13 @@ function harness(opts: PendingLedger | HarnessOpts = {}): Harness {
     currentBlock: async (): Promise<BlockCurrent> => ({ height, hash: null }),
     karma: async (key): Promise<KarmaResult> => {
       karmaKeys.push(key);
-      return karmaResult({ userId: key, boxCount, total: boxCount > 0 ? '250' : '0', effective: boxCount > 0 ? '250' : '0' });
+      // The App pages /karma through `next` and sets `boxCount` to
+      // `boxes.length` (WEB_INTERFACE → The extension → "The verified
+      // figures"), so `boxCount` and `boxes` must agree on every page.
+      const boxes = boxCount > 0
+        ? Array.from({ length: boxCount }, (_, i) => ({ boxId: (i + 1).toString(16).padStart(2, '0').repeat(32), value: '250' }))
+        : [];
+      return karmaResult({ userId: key, boxCount, boxes, total: boxCount > 0 ? '250' : '0', effective: boxCount > 0 ? '250' : '0' });
     },
     vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
     vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),

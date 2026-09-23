@@ -21,10 +21,11 @@ is a transaction on the UTXO ledger, and withdrawal is the author's only act ove
 
 ## This package (`@dagsocial/types`)
 The shared data model and cryptographic/encoding primitives: posts, blocks, boxes, identity,
-merkle, positional serialization, protocol constants, and the hash/id helpers (`computePostId`,
-`computeBoxId`, `computeTxId`). **Pure functions only** — no I/O, no state.
+merkle, positional serialization, protocol constants, the hash/id helpers (`computePostId`,
+`computeBoxId`, `computeTxId`), the identity record and the karma valuation
+(`identityRecordBytes`, `identityRecordKey`, `effectiveKarma`). **Pure functions only** — no I/O, no state.
 
-- **Owns:** `src/*` (post, post-withdraw, block, utxo, identity, codec, merkle, serialization, interlinks, membership, network, constants, index).
+- **Owns:** `src/*` (post, post-withdraw, block, utxo, identity, codec, merkle, serialization, interlinks, membership, network, constants, identity-record, karma-valuation, index).
 - **Does NOT own:** node logic, networking, stateless validation, wire codec. Depends only on Node `crypto`
   and `@dagsocial/wire`. A consumer needs a change? It comes back through the main session.
 

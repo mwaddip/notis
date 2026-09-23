@@ -1,9 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { fixtureProvenance } from '../helpers.js';
 import {
-  isIdentityStale,
-  owedPeriods,
-  effectiveKarma,
   commitDecayClocks,
   deriveKarmaDecay,
 } from '../../src/services/decay.js';
@@ -13,18 +10,14 @@ import {
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
 } from '@dagsocial/types';
-import type { KarmaBox } from '@dagsocial/types';
-import type { IdentityRecord } from '../../src/store/identity-records.js';
+import type { IdentityRecord, KarmaBox } from '@dagsocial/types';
 
 /**
- * Spec G phase D — the decay clock reads the committed identity record.
- *
- * The predicates took `KarmaBox[]` and read `createdAtBlock`; they now take an
- * `IdentityRecord`. The scenarios below are the same ones, restated on the
- * clock: a box at height H that counted as activity is `lastActivityBlock: H`,
- * and a decay-burn box at height H is `lastDecayBlock: H`. End-to-end
- * equivalence is checked against frozen pre-swap captures in
- * `decay-golden.test.ts`; these are the unit-level statements of the two rules.
+ * The decay execution — `deriveKarmaDecay` reads the identity record and the
+ * pre-body karma projection and returns per-owner plans, `commitDecayClocks`
+ * writes the clocks back (NODE_INTERFACE → Karma decay). End-to-end
+ * equivalence is checked against frozen captures in `decay-golden.test.ts`;
+ * these are the unit-level statements of the plan and the clock write.
  */
 
 const OWNER = new Uint8Array(32).fill(0xaa);
@@ -65,117 +58,9 @@ function makeKarmaBox(overrides: Partial<KarmaBox> = {}): KarmaBox {
   };
 }
 
-// ---------------------------------------------------------------------------
-// isIdentityStale
-// ---------------------------------------------------------------------------
-
-describe('isIdentityStale', () => {
-  it('returns false for an identity with no record below the threshold height', () => {
-    expect(isIdentityStale(null, 1000, KARMA_STALE_THRESHOLD_BLOCKS)).toBe(false);
-  });
-
-  it('returns false when activity is within the threshold', () => {
-    // current = 100000, age = 1000 — well inside the threshold
-    expect(isIdentityStale(clock(99000), 100000, KARMA_STALE_THRESHOLD_BLOCKS)).toBe(false);
-  });
-
-  it('returns true when activity is older than the threshold', () => {
-    // current = 100000, age = 99000 — beyond the threshold
-    expect(isIdentityStale(clock(1000), 100000, KARMA_STALE_THRESHOLD_BLOCKS)).toBe(true);
-  });
-
-  it('a recent decay does not count as activity', () => {
-    // The decay-burn box the old code excluded is `lastDecayBlock` here: recent,
-    // and still not activity. Otherwise one decay would make the identity look
-    // fresh and no second cycle could ever fire.
-    expect(
-      isIdentityStale(clock(1000, 99999), 100000, KARMA_STALE_THRESHOLD_BLOCKS),
-    ).toBe(true);
-  });
-
-  it('recent activity wins over an old decay', () => {
-    expect(
-      isIdentityStale(clock(99999, 1000), 100000, KARMA_STALE_THRESHOLD_BLOCKS),
-    ).toBe(false);
-  });
-
-  it('is stale at exactly the threshold, not one block later', () => {
-    // `>=`, not `>`. The predecessor's test was `createdAtBlock > height −
-    // threshold`, so an activity height exactly `threshold` blocks back is
-    // already stale. The contract's prose said `>` and was off by one.
-    expect(isIdentityStale(clock(100), 100 + KARMA_STALE_THRESHOLD_BLOCKS,
-      KARMA_STALE_THRESHOLD_BLOCKS)).toBe(true);
-    expect(isIdentityStale(clock(100), 99 + KARMA_STALE_THRESHOLD_BLOCKS,
-      KARMA_STALE_THRESHOLD_BLOCKS)).toBe(false);
-  });
-
-  it('never stale at or below the threshold height', () => {
-    // The chain has not existed long enough. Load-bearing for a clock of 0,
-    // where the subtraction alone would report stale at exactly `threshold`.
-    expect(isIdentityStale(clock(0), KARMA_STALE_THRESHOLD_BLOCKS,
-      KARMA_STALE_THRESHOLD_BLOCKS)).toBe(false);
-    expect(isIdentityStale(clock(0), KARMA_STALE_THRESHOLD_BLOCKS + 1,
-      KARMA_STALE_THRESHOLD_BLOCKS)).toBe(true);
-  });
-
-  it('a missing record reads as never-active', () => {
-    expect(isIdentityStale(null, 100000, KARMA_STALE_THRESHOLD_BLOCKS)).toBe(true);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// owedPeriods
-// ---------------------------------------------------------------------------
-
-describe('owedPeriods', () => {
-  it('returns 0 when the clock is at the current height', () => {
-    expect(owedPeriods(clock(1000), 1000, KARMA_DECAY_INTERVAL_BLOCKS)).toBe(0);
-  });
-
-  it('counts periods since activity', () => {
-    // Three whole intervals since the activity height.
-    expect(
-      owedPeriods(clock(1000), 1000 + 3 * KARMA_DECAY_INTERVAL_BLOCKS, KARMA_DECAY_INTERVAL_BLOCKS),
-    ).toBe(3);
-  });
-
-  it('uses the decay height when it is later than the activity height', () => {
-    // The `max(...)` fallback: after a decay the only karma box is the
-    // decay-burn box, whose height is exactly `lastDecayBlock`.
-    // One interval past the decay — not three past the activity.
-    const activityAt = 1000;
-    const decayAt = activityAt + 2 * KARMA_DECAY_INTERVAL_BLOCKS;
-    expect(
-      owedPeriods(
-        clock(activityAt, decayAt),
-        decayAt + KARMA_DECAY_INTERVAL_BLOCKS,
-        KARMA_DECAY_INTERVAL_BLOCKS,
-      ),
-    ).toBe(1);
-  });
-
-  it('uses the activity height when it is later than the decay height', () => {
-    // The decay sits more than one whole interval before the activity, so
-    // reading the decay height instead would change the answer.
-    const decayAt = 100;
-    const activityAt = decayAt + KARMA_DECAY_INTERVAL_BLOCKS;
-    const height = activityAt + 3 * KARMA_DECAY_INTERVAL_BLOCKS;
-    expect(owedPeriods(clock(activityAt, decayAt), height, KARMA_DECAY_INTERVAL_BLOCKS)).toBe(3);
-    expect(owedPeriods(clock(height - 1, decayAt), height, KARMA_DECAY_INTERVAL_BLOCKS)).toBe(0);
-  });
-
-  it('activity and decay at the same height count once', () => {
-    // The intra-block adjacency: decay fires, then a vouch settlement mints for
-    // the same owner in the same block.
-    expect(
-      owedPeriods(clock(2000, 2000), 2000 + KARMA_DECAY_INTERVAL_BLOCKS, KARMA_DECAY_INTERVAL_BLOCKS),
-    ).toBe(1);
-  });
-
-  it('a missing record counts from height 0', () => {
-    expect(owedPeriods(null, 2 * KARMA_DECAY_INTERVAL_BLOCKS, KARMA_DECAY_INTERVAL_BLOCKS)).toBe(2);
-  });
-});
+// The pure-piece tests — `isIdentityStale`, `owedPeriods`, `effectiveKarma` —
+// live in `@dagsocial/types`' `karma-valuation.test.ts`. The execution-level
+// tests below drive the deps and the plan.
 
 // ---------------------------------------------------------------------------
 // deriveKarmaDecay
@@ -378,52 +263,3 @@ describe('deriveKarmaDecay', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// effectiveKarma — the one valuation function
-// ---------------------------------------------------------------------------
-
-describe('effectiveKarma', () => {
-  it('returns face total for a non-stale identity', () => {
-    expect(effectiveKarma(100n, clock(99000), 100000, TEST_CFG)).toBe(100n);
-  });
-
-  it('reduces a stale identity by owed periods', () => {
-    const rec = clock(1000);
-    const height = 1000 + KARMA_STALE_THRESHOLD_BLOCKS;
-    // At exactly the threshold: owedPeriods = floor(40320 / 1440) = 28.
-    // With 1000n balance the floor (10n) does not bind.
-    expect(effectiveKarma(1000n, rec, height, TEST_CFG)).toBe(1000n - 28n * KARMA_DECAY_AMOUNT);
-  });
-
-  it('clamps at KARMA_MINIMUM for an identity holding more', () => {
-    const rec = clock(1000);
-    const height = 1000 + KARMA_STALE_THRESHOLD_BLOCKS + 100 * KARMA_DECAY_INTERVAL_BLOCKS;
-    expect(effectiveKarma(100n, rec, height, TEST_CFG)).toBe(KARMA_MINIMUM);
-  });
-
-  it('clamps at face total when face < KARMA_MINIMUM', () => {
-    const rec = clock(1000);
-    const height = 1000 + KARMA_STALE_THRESHOLD_BLOCKS + KARMA_DECAY_INTERVAL_BLOCKS;
-    expect(effectiveKarma(5n, rec, height, TEST_CFG)).toBe(5n);
-  });
-
-  it('a null record reads as never-active — maximally stale', () => {
-    const height = KARMA_STALE_THRESHOLD_BLOCKS + 100 * KARMA_DECAY_INTERVAL_BLOCKS;
-    expect(effectiveKarma(100n, null, height, TEST_CFG)).toBe(KARMA_MINIMUM);
-  });
-
-  it('uses max(lastActivity, lastDecay) as the clock start', () => {
-    const height = 1000 + KARMA_STALE_THRESHOLD_BLOCKS + 2 * KARMA_DECAY_INTERVAL_BLOCKS;
-    // From activity (1000): owedPeriods = floor((40320 + 2880) / 1440) = 30
-    const fromActivity = effectiveKarma(1000n, clock(1000), height, TEST_CFG);
-    // From decay (2440): owedPeriods = floor((40320 + 2880 - 1440) / 1440) = 29
-    const fromDecay = effectiveKarma(
-      1000n,
-      clock(1000, 1000 + KARMA_DECAY_INTERVAL_BLOCKS),
-      height,
-      TEST_CFG,
-    );
-    expect(fromActivity).toBe(1000n - 30n * KARMA_DECAY_AMOUNT);
-    expect(fromDecay).toBe(1000n - 29n * KARMA_DECAY_AMOUNT);
-  });
-});

@@ -72,7 +72,8 @@ unlocked seed in `storage.session`, never a worker global), every write signed t
 *sign each rep action* row says ask; the `notSigned` arm and the fourth ending — the composer still open;
 the shell's `notis-nodes` seed list and `notis-public` link origin; one manifest template → two zips; **the
 chain it reads checked by NiPoPoW proofs from the seed list's nodes, the verdict folded into the status corner**
-(`WEB_INTERFACE → The extension → "The verified tip"`). **Links into
+(`WEB_INTERFACE → The extension → "The verified tip"`), **and the wallet's balance and the profile's rep proven box by
+box against that chain, a line beneath a figure only when something is not whole** (`→ "The verified figures"`). **Links into
 the extension** (`WEB_INTERFACE → The extension → "Links into the extension"`, `→ The way into the workspace`): a
 post's link stays the website's, and a reader who runs the extension follows it into the extension's workspace. **The
 bridge** (`src/extension/bridge.ts`, built as `bridge.js`) is the extension's one content script, declared for
@@ -148,9 +149,10 @@ old poll, and re-reads every open surface with the new `viewer`.
   `https` only, serves the renderer and the composer.
 
 **From `HOUSE_STYLE.md` — the ones this surface will collide with:**
-- **Nothing moves that the reader did not ask to move.** No polling, no live counts, no injected
-  banner, no infinite scroll (it is a variable-ratio lever). **Refresh is a button and it reports what
-  it did** — `4 new posts` or `no new posts`.
+- **Nothing leaves its place that the reader did not ask to move** — literally: no injected banner, no
+  card arriving or shifting, no infinite scroll (it is a variable-ratio lever). **A number is not motion: it
+  can and should update whenever what it counts changes**, in its fixed slot, never animated.
+  **Refresh is a button and it reports what it did** — `4 new posts` or `no new posts`.
 - **Numbers never animate.** **150ms ceiling, ease-out. `prefers-reduced-motion` means none, not less.**
 - **A restored preference is painted, not transitioned.** Suppress transitions until after first paint,
   or a stored dark theme paints light and flips.
@@ -338,6 +340,28 @@ sentence. The `Buffer` polyfill is `buffer` 6 (`validation`'s PoW check writes w
 polyfill sits under every byte the browser build signs and `pnpm test` cannot see it** — the binding check and the
 proof's write steps are its only proof.
 
+**The verified figures** (`WEB_INTERFACE → The extension → "The verified figures"`, `→ The profile window`, `→ The
+wallet window`): the extension proves the reader's rep and balance against the verified chain. A tip run answers
+`{ verdict, anchor }` — the reading node's own verified `tip` and `suffixHead`, under `verified` alone —
+and `src/extension/figures-verifier.ts` (`createFiguresVerifier`) runs `proveFigures` of `@dagsocial/nipopow-client`
+over the listings the rows show: every box at `suffixHead`, the identity record at the key `identityRecordKey` of
+`@dagsocial/types` derives, the excluded boxes again at `tip`, then `/blocks/current`; **a box is `proven` only when its
+value hashes to its key, its `owner` is the reader's key and its type the ledger it was listed under**; rep is valued by
+`effectiveKarma` of `@dagsocial/types` — the node's own function — at the listing's height. **A run proves a listing
+read after its anchor and never one read before it**: every read of the reader's own listing is stamped at its start
+with the anchor sequence, a verified tip reads `/karma` (and `/credits` with the wallet open) before it proves, and a
+listing not read after the current anchor goes to the run empty, its row reading *not checked yet*. **The reader's own
+state is re-read, never predicted**: a landing of the reader's own transaction re-reads the listing it changed, a node
+or identity change drops the reader's state and reads it again (`dropReaderState` / `rereadReaderState`), and **no
+answer overwrites a newer one** — `readerGen` drops a read across a node or identity change, `readsBegun` /
+`newerRead` keep the answer of the latest-begun read per piece, every continuation page continues the page it was
+asked for, a refresh lands on the rows standing as it lands, and `withdrawnSeen` — a withdrawal is final — keeps a
+withdrawn post out of every write of rows. `src/model/figures-line.ts` (`figuresLine`, pure) turns a result into the
+row's line: nothing when every box proved (silence is the green), muted for what could not be proven yet, **clay with
+the figure clay** when a proof did not verify or the node lists what the chain does not hold. The numbers update in
+their slots whenever a read brings a new one (`HOUSE_STYLE → Motion`). The web build is handed no figures verifier, and
+`build-release.sh` refuses `api/v1/proof` in its assets beside `nipopow/proof`.
+
 Three Vite builds — the pages (`index.html`, `prompt.html`) through `vite.extension.config.ts`, the background
 as one IIFE file through `vite.background.config.ts`, and, when `VITE_PUBLIC` is not empty, the bridge as one IIFE
 file through `vite.bridge.config.ts` — then `extension/emit-manifests.mjs <version> <chrome-outdir>
@@ -424,7 +448,17 @@ the row on D mined past 30 — *the nodes share no block to compare*; **20** the
 paragraph's title and no `/nipopow/` request. In a full run the block runs after step 16 on a session opened on
 the extension page live at that moment (step 15 closes the first one), and the browser-context arm runs last. The
 extension for it is built with `VITE_NETWORK=devnet` and `VITE_NODES` naming A then B; the harness refuses
-otherwise. **The ten-minute timer and the visibility rule are the unit tests'**, not the proof's. ⚠ **17b guards a
+otherwise. **With `--verified-figures` as well (it needs `--r-key` and the lifecycle arguments `bringUpNodeB` reads)
+the verified-figures block** runs next, owning a B of its own (a verified tip needs a second verified node) and a
+**figures relay** on its own port that passes every `/nipopow/proof/` answer through — so the corner stays green —
+and lies in one mode at a time: `credits-fake` (a fabricated box on R's first `/credits` page), `credits-foreign` (the
+devnet faucet's largest credit box listed under R), `avl-flip` (one byte of each decoded box proof flipped): **21** a
+send's young change reads *… landed since* after a press and silence after K + 1 blocks; **24** R's post — the rep
+number the node's new `effective` with no press (the landing's run reads *… not checked yet*: its anchor predates the
+post), *… landed since* after a press, silence after K + 1; **22a** clay *the node lists … the chain does not hold*, the
+figure clay; **22b** clay *this node's proof of the balance did not verify* — the owner check; **23** both rows clay;
+each arm switched back to A and silent again; **25** the hosted web build — no line and no `/api/v1/proof/` request.
+**The ten-minute timer and the visibility rule are the unit tests'**, not the proof's. ⚠ **17b guards a
 race that is wide only for a follower under a fast miner**: reading B at about three blocks a second, a build
 whose verdict read every lost comparison as *outworked* showed the alarm on 24 of 30 presses; under the paced
 miner of a full run the two fetches mostly see one height. The web build for it: `VITE_WEB_BASE=/web/ VITE_API_BASE=<the devnet node's origin>

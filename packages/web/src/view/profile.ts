@@ -3,6 +3,9 @@ import { prefs } from '../prefs';
 import { unlockForm, setPassphraseForm } from './passphrase';
 import { stageLine, type Flight } from './card';
 import { INVITE_BOND_VEST_PER_LIKES, USERNAME_BURN_PRICE, isValidUsernameBytes } from '@dagsocial/types';
+import { figuresLine } from '../model/figures-line';
+import type { FiguresView } from '../model/state';
+import type { TipVerdict } from '../model/tip-verdict';
 import type { KarmaResult, BondsResult, UsernameResult } from '../api/dto';
 import type { Origin } from '../model/workspace';
 
@@ -62,6 +65,15 @@ export interface ProfileCtx {
   pendingUsername: { kind: 'claim' | 'burn'; name: string } | null;
   canSignClaim: boolean;
   canAffordBurn: boolean;
+  // The extension's verified-figures run — WEB_INTERFACE → The extension →
+  // "The verified figures", → The profile window → "The `rep` row is the
+  // `effective` number alone". `verdict === undefined` when the build has no
+  // verifier, `null` while none has returned; `figures` is null until a run's
+  // result lands. The pure `figuresLine` reads the three fields together and
+  // the karma field renders the muted line beneath the number, adding `clay`
+  // to the hint and to the mono span under the full rule.
+  verdict: TipVerdict | null | undefined;
+  figures: FiguresView | null;
 }
 
 function row(label: string): { row: HTMLElement; field: HTMLElement } {
@@ -441,7 +453,7 @@ export function renderKarmaField(field: HTMLElement, handlers: ProfileHandlers, 
     return;
   }
   if (k.boxCount > 0) {
-    balance(field, k);
+    balance(field, k, ctx);
     return;
   }
   // No karma box — a grant in flight, an expired one, the faucet step, or nothing.
@@ -471,9 +483,35 @@ export function renderKarmaField(field: HTMLElement, handlers: ProfileHandlers, 
 /** The row's label counts what the number counts, so the number stands alone —
  *  the effective view, the value every sufficiency check on the node reads, never
  *  the face total (WEB_INTERFACE → The profile window → "The `rep` row is the
- *  `effective` number alone"). */
-function balance(field: HTMLElement, k: KarmaResult): void {
-  field.append(mono(k.effective));
+ *  `effective` number alone"). In the extension, one muted line beneath the
+ *  number says what the verified-figures run could not prove, and under the
+ *  full rule the number and the line are clay (→ "The verified figures").
+ *  The number stays the live `effective` in every state; the line describes
+ *  it, and never replaces it. */
+function balance(field: HTMLElement, k: KarmaResult, ctx: ProfileCtx): void {
+  const monoSpan = mono(k.effective);
+  field.append(monoSpan);
+  const fLine = figuresLine({
+    ledger: 'karma',
+    verdict: ctx.verdict,
+    result: ctx.figures?.result ?? null,
+    shown: BigInt(k.effective),
+    suffixHeight: ctx.figures?.anchor.suffixHead.header.height ?? null,
+    boxCount: k.boxCount,
+    height: k.height,
+  });
+  if (fLine !== null) {
+    const hint = el('div', 'hint');
+    hint.textContent = fLine.text;
+    if (fLine.weight === 'clay') {
+      // HOUSE_STYLE → Gold and clay are not interchangeable — the full rule.
+      // The number gives up its ink for clay only while the node's own proof
+      // of the rep fails, as the corner's height does on `refused`.
+      hint.classList.add('clay');
+      monoSpan.classList.add('clay');
+    }
+    field.appendChild(hint);
+  }
 }
 
 // Lock and unlock are local to the window — they fire no onChange, so the row

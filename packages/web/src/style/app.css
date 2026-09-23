@@ -457,6 +457,11 @@ header .spacer { flex: 1 1 auto; }
 /* The theme control sizes to its label rather than stretching the field. */
 .winbody .theme-btn { align-self: flex-start; }
 .winbody .hint { font-size: 11.5px; color: var(--inkMute); }
+/* The verified-figures line under the full rule (HOUSE_STYLE → Gold and clay
+   are not interchangeable): the .hint goes clay alongside the figure it
+   describes — the wallet's balance row and the profile's rep row (WEB_INTERFACE
+   → The extension → "The verified figures"). */
+.winbody .hint.clay { color: var(--clay); }
 /* The settings window's identity-tint preview — two sample title bars stacked
    above the four words, one focused and one not, each with a fixed --idh. The
    samples inherit the .bar rules, so a change to the tint applies to them
@@ -483,6 +488,13 @@ header .spacer { flex: 1 1 auto; }
    window → "The `balance` row"). The token is defined per theme on :root; the
    class carries it to a run of text. */
 .gold { color: var(--gold); }
+/* Gold gives way to clay only under the full rule of the verified-figures run
+   (WEB_INTERFACE → The extension → "The verified figures", → The wallet
+   window, → The profile window; HOUSE_STYLE → Gold and clay are not
+   interchangeable). `.gold` and `.clay` are both single-class rules, so the
+   later one wins — `.mono.clay` sits AFTER `.gold` for `.mono.gold.clay` to
+   render clay. */
+.mono.clay { color: var(--clay); }
 /* The key row's full hex wraps within the 660px cap rather than overflowing. */
 .winbody .field .mono { word-break: break-all; }
 

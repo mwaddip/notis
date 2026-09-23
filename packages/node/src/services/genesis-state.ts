@@ -12,7 +12,7 @@ import {
 } from '../store/system.js';
 import { emissionTotal } from './block-creator.js';
 import {
-  getAllIdentityRecords, identityRecordKey,
+  getAllIdentityRecords,
   putNetworkRecord, getNetworkRecord, networkRecordKey,
 } from '../store/identity-records.js';
 import { getCurrentHeight } from '../store/ordering.js';
@@ -20,7 +20,7 @@ import { getUnspentBoxes } from '../store/utxo.js';
 import { bootstrapAvlProver, getAvlProver } from '../state/avl-prover.js';
 import type { RecordPut, NetworkPut } from '../state/avl-prover.js';
 import { config } from '../config.js';
-import { hexToBuf } from '@dagsocial/types';
+import { hexToBuf, identityRecordKey } from '@dagsocial/types';
 import type { AnyBox } from '@dagsocial/types';
 
 /**

@@ -21,9 +21,8 @@ import {
   BACKER_UNSTAKE_MIN_PCT,
 } from '@dagsocial/types';
 import { isCreditSideTx } from './coinbase-split.js';
-import { effectiveKarma } from './decay.js';
-import type { DecayCfg } from './decay.js';
-import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, UsernameBox, BackerStakeBox, BackerUnstakeBox, PostCommit, PostWithdrawCommit, ProtocolEra } from '@dagsocial/types';
+import { effectiveKarma } from '@dagsocial/types';
+import type { DecayCfg, UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, UsernameBox, BackerStakeBox, BackerUnstakeBox, PostCommit, PostWithdrawCommit, ProtocolEra } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
 // must never grow a local copy: the id it returns is both the hash
@@ -34,9 +33,10 @@ import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, Bon
 // (NODE_INTERFACE → "Box Identity and Mint Provenance").
 
 import { ed25519PublicKeyToKeyObject, verifyPostCommitDomains, verifyPostWithdrawCommitDomains, verifyTxProtocolVersion } from '@dagsocial/validation';
+import type { IdentityRecord } from '@dagsocial/types';
 // Type-only: erased at compile time, so the engine gains no runtime edge into
 // the store module graph. Same seam `DecayDeps` uses for the same record.
-import type { IdentityRecord, NetworkRecord } from '../store/identity-records.js';
+import type { NetworkRecord } from '../store/identity-records.js';
 
 // ---------------------------------------------------------------------------
 // The karma transition set

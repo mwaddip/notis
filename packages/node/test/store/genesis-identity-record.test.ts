@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { hexToBuf, profileFor } from '@dagsocial/types';
 import type { KarmaBox, UserId } from '@dagsocial/types';
-import type { IdentityRecord } from '../../src/store/identity-records.js';
+import type { IdentityRecord } from '@dagsocial/types';
 import {
   GENESIS_SYSTEM_KARMA,
   genesisContext,

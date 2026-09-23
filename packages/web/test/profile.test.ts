@@ -7,6 +7,10 @@ import { karmaResult } from './karma-fixture';
 import { prefs } from '../src/prefs';
 import type { Origin } from '../src/model/workspace';
 import type { UsernameResult } from '../src/api/dto';
+import type { FiguresView } from '../src/model/state';
+import type { TipVerdict } from '../src/model/tip-verdict';
+import type { FiguresResult, FigureBox, LedgerSums, RecordResult, Anchor } from '@dagsocial/nipopow-client';
+import type { BlockHeader, IdentityRecord, UserId } from '@dagsocial/types';
 
 const appCss = readFileSync(resolve(process.cwd(), 'src/style/app.css'), 'utf8');
 
@@ -47,6 +51,10 @@ function ctx(over: Partial<ProfileCtx> = {}): ProfileCtx {
     identity: null, backedUp: false, karma: null, grant: null,
     invite: null, canAffordMinBond: false, bonds: null, inviteFlight: null,
     ownName: null, ownNameLoaded: true, usernameFlight: null, pendingUsername: null, canSignClaim: false, canAffordBurn: false,
+    // The web arm's default — no verifier, so `figuresLine` reads row 1 and
+    // renders nothing beneath the number. The extension arm's tests override
+    // both (WEB_INTERFACE → The extension → "The verified figures").
+    verdict: undefined, figures: null,
     ...over,
   };
 }
@@ -754,6 +762,171 @@ describe('profile — the username row', () => {
     renderUsernameRow(f, h, c2);
     expect(f.querySelector('.handle')?.textContent).toBe('@Alice_01');
     expect(f.querySelector('form')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The verified-figures line beneath the rep number (WEB_INTERFACE → The
+// extension → "The verified figures", → The profile window → "The `rep` row
+// is the `effective` number alone"). The pure model's rows are pinned in
+// test/figures-line.test.ts; these tests pin the row's plumbing: the hint
+// element renders under the mono number, and under the full rule (row 4)
+// the mono span gains `.clay` alongside the hint. The number stays the live
+// `effective` in every state.
+// ---------------------------------------------------------------------------
+
+const EMPTY_SUMS: LedgerSums = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n };
+const RECORD: IdentityRecord = {
+  lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0,
+  lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+  memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+};
+function stubHeader(over: Partial<BlockHeader> = {}): BlockHeader {
+  return {
+    protocolVersion: 1, height: 9020, prevBlockHash: '00'.repeat(32),
+    utxoTxRoot: '00'.repeat(32), stateRoot: '00'.repeat(32),
+    validatorId: new Uint8Array(32) as UserId, powNonce: 0, powTargetBits: 0,
+    createdAt: 0, interlinkRoot: '00'.repeat(32),
+    ...over,
+  };
+}
+function pfAnchor(suffixHeight = 9005, tipHeight = 9020): Anchor {
+  return {
+    tip: stubHeader({ height: tipHeight }),
+    suffixHead: { header: stubHeader({ height: suffixHeight }), interlinks: [] },
+  };
+}
+function pfBox(over: Partial<FigureBox> & Pick<FigureBox, 'boxClass' | 'status'>): FigureBox {
+  return { boxId: 'a'.repeat(64), value: 0n, lockedUntilBlock: null, verdict: 'test', ...over };
+}
+function pfFigures(result: Partial<FiguresResult> = {}, suffixHeight = 9005): FiguresView {
+  return {
+    result: {
+      boxes: [],
+      record: { status: 'proven', record: RECORD } as RecordResult,
+      karma: { ...EMPTY_SUMS, effective: 0n },
+      credits: { ...EMPTY_SUMS },
+      heightAfter: 9020,
+      failed: false,
+      ...result,
+    },
+    anchor: pfAnchor(suffixHeight),
+  };
+}
+const VERIFIED_PF: TipVerdict = { kind: 'verified', nodes: 2, height: 9020 };
+const REFUSED_PF: TipVerdict = { kind: 'refused', reason: 'invalid-proof', by: null, height: null };
+
+describe('profile — the verified-figures line beneath the rep number', () => {
+  const repCtx = (over: Partial<ProfileCtx> = {}): ProfileCtx => ctx({
+    identity: unlocked,
+    karma: karmaResult({ boxCount: 1, total: '100', effective: '100', height: 9020 }),
+    ...over,
+  });
+
+  it('the default web ctx (no verifier) renders no hint under the mono number', () => {
+    const f = rowField(render(handlers(), repCtx()), 'rep')!;
+    const mono = f.querySelector<HTMLElement>('.mono')!;
+    expect(mono.textContent).toBe('100');
+    expect(mono.classList.contains('clay')).toBe(false);
+    expect(f.querySelector('.hint')).toBeNull();
+  });
+
+  it('a verified verdict + a proven+young result renders a muted hint, no .clay on the number', () => {
+    const fv = pfFigures({
+      boxes: [
+        pfBox({ boxClass: 'karma', status: 'proven', value: 87n }),
+        pfBox({ boxClass: 'karma', status: 'young',  value: 13n }),
+      ],
+      karma: { proven: 87n, young: 13n, unchecked: 0n, absent: 0n, effective: 87n },
+    });
+    const f = rowField(render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
+    const hint = f.querySelector<HTMLElement>('.hint');
+    expect(hint?.textContent).toBe('87 rep proven at block 9005 · 13 rep landed since');
+    expect(hint?.classList.contains('clay')).toBe(false);
+    const mono = f.querySelector<HTMLElement>('.mono')!;
+    expect(mono.classList.contains('clay')).toBe(false);
+    expect(mono.textContent).toBe('100');
+  });
+
+  it('an unproven karma box → the full rule: clay hint AND clay class on the mono number (row 4)', () => {
+    const fv = pfFigures({
+      boxes: [pfBox({ boxClass: 'karma', status: 'unproven', value: 100n })],
+      karma: { ...EMPTY_SUMS, effective: null },
+    });
+    const f = rowField(render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
+    const hint = f.querySelector<HTMLElement>('.hint');
+    expect(hint?.textContent).toBe("this node's proof of your rep did not verify");
+    expect(hint?.classList.contains('clay')).toBe(true);
+    const mono = f.querySelector<HTMLElement>('.mono')!;
+    expect(mono.classList.contains('clay')).toBe(true);
+    expect(mono.textContent).toBe('100');
+  });
+
+  it('the record unproven, boxes proven → the same clay line ("proof of your rep")', () => {
+    const fv = pfFigures({
+      boxes: [pfBox({ boxClass: 'karma', status: 'proven', value: 100n })],
+      karma: { ...EMPTY_SUMS, proven: 100n, effective: null },
+      record: { status: 'unproven', verdict: '' } as RecordResult,
+    });
+    const f = rowField(render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
+    expect(f.querySelector<HTMLElement>('.hint')?.textContent).toBe("this node's proof of your rep did not verify");
+    expect(f.querySelector<HTMLElement>('.mono')!.classList.contains('clay')).toBe(true);
+  });
+
+  it('an absent karma sum → clay "the node lists N rep the chain does not hold"', () => {
+    const fv = pfFigures({
+      boxes: [pfBox({ boxClass: 'karma', status: 'absent', value: 5n })],
+      karma: { ...EMPTY_SUMS, absent: 5n, effective: null },
+    });
+    const f = rowField(render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
+    expect(f.querySelector<HTMLElement>('.hint')?.textContent).toBe('the node lists 5 rep the chain does not hold');
+    expect(f.querySelector<HTMLElement>('.mono')!.classList.contains('clay')).toBe(true);
+  });
+
+  it('the record no-proof, no boxes no-proof → muted "the node served no proof for your rep"', () => {
+    const fv = pfFigures({
+      boxes: [pfBox({ boxClass: 'karma', status: 'proven', value: 100n })],
+      karma: { ...EMPTY_SUMS, proven: 100n, effective: null },
+      record: { status: 'no-proof', verdict: '' } as RecordResult,
+    });
+    const f = rowField(render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
+    const hint = f.querySelector<HTMLElement>('.hint');
+    expect(hint?.textContent).toBe('the node served no proof for your rep');
+    expect(hint?.classList.contains('clay')).toBe(false);
+    expect(f.querySelector<HTMLElement>('.mono')!.classList.contains('clay')).toBe(false);
+  });
+
+  it('a refused verdict, no figures back → the unverified line (row 3), muted', () => {
+    const f = rowField(render(handlers(), repCtx({ verdict: REFUSED_PF, figures: null })), 'rep')!;
+    const hint = f.querySelector<HTMLElement>('.hint');
+    expect(hint?.textContent).toBe('not checked — the chain is not verified');
+    expect(hint?.classList.contains('clay')).toBe(false);
+    expect(f.querySelector<HTMLElement>('.mono')!.classList.contains('clay')).toBe(false);
+  });
+
+  it('every proven and effective reproduces the number → no hint (row 6 silence)', () => {
+    const fv = pfFigures({
+      boxes: [pfBox({ boxClass: 'karma', status: 'proven', value: 100n })],
+      karma: { ...EMPTY_SUMS, proven: 100n, effective: 100n },
+    });
+    const f = rowField(render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
+    expect(f.querySelector('.hint')).toBeNull();
+    expect(f.querySelector<HTMLElement>('.mono')!.classList.contains('clay')).toBe(false);
+  });
+
+  it('the empty karma listing (boxCount 0) renders no hint even under a verified verdict (row 2)', () => {
+    // The faucet step / "no rep yet." branch stands as it does — the hint's
+    // absence is what row 2 pins.
+    prefs.faucet = '';
+    const f = rowField(
+      render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 0 }), verdict: VERIFIED_PF, figures: null })),
+      'rep',
+    )!;
+    // No mono number under an empty karma listing — the row renders the
+    // "no rep yet." branch or the faucet step, and the pure model reads row 2
+    // for the rep row. Neither branch owns a hint of the verified-figures
+    // shape.
+    expect(f.querySelector('.hint')).toBeNull();
   });
 });
 

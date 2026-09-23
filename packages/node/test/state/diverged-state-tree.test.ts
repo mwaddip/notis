@@ -9,7 +9,7 @@ import {
 import { DivergedStateTreeError } from '../../src/services/corrupt-state.js';
 import { fixtureProvenance, openAvlDb } from '../helpers.js';
 import type { AnyBox } from '@dagsocial/types';
-import type { IdentityRecord } from '../../src/store/identity-records.js';
+import type { IdentityRecord } from '@dagsocial/types';
 
 /**
  * The tree is asked, and a refusal is raised (NODE_INTERFACE → AVL+ State Root).

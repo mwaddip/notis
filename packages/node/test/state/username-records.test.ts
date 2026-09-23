@@ -3,7 +3,6 @@ import { describe, it, expect } from 'vitest';
 import {
   NAME_RECORD_TAG,
   HOLDER_RECORD_TAG,
-  IDENTITY_RECORD_TAG,
   NETWORK_RECORD_TAG,
   serializeUsernameRecord,
   deserializeUsernameRecord,
@@ -12,6 +11,7 @@ import {
   deserializeBox,
   deserializeAvlValue,
 } from '../../src/state/serialize-box.js';
+import { IDENTITY_RECORD_TAG } from '@dagsocial/types';
 import { randomBytes } from 'node:crypto';
 
 function hexId(): string { return randomBytes(32).toString('hex'); }

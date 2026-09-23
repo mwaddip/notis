@@ -7,12 +7,23 @@ import {
   AVL_KEY_LENGTH,
   boxRecordBytes,
   computeCandidateBoxId,
+  identityRecordBytes,
+  identityRecordKey,
   protocolVersionAt,
   RETARGET_HALFLIFE_BLOCKS,
   NETWORK_PROFILES,
   profileFor,
 } from '@dagsocial/types';
-import type { BlockHeader, BoxCandidate, TxId, NetworkProfile, ProtocolEra } from '@dagsocial/types';
+import type {
+  BlockHeader,
+  BoxCandidate,
+  TxId,
+  NetworkProfile,
+  ProtocolEra,
+  IdentityRecord,
+  UserId,
+} from '@dagsocial/types';
+import type { Anchor } from '../src/boxes.js';
 import {
   verifyOrderingBlockPoW,
   blockHash,
@@ -369,7 +380,7 @@ export function createFakeNode(opts: {
   return { url, fetch: httpFetch };
 }
 
-function jsonResponse(status: number, body: unknown): Response {
+export function jsonResponse(status: number, body: unknown): Response {
   const text = JSON.stringify(body);
   return {
     ok: status >= 200 && status < 300,
@@ -379,10 +390,117 @@ function jsonResponse(status: number, body: unknown): Response {
   } as unknown as Response;
 }
 
-function hexToBytes(hex: string): Uint8Array {
+export function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < bytes.length; i++) {
     bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
   }
   return bytes;
+}
+
+// A minimal Anchor for figures tests — proveFigures reads only .header.height,
+// .header.stateRoot on suffixHead and .height, .stateRoot on tip.
+export function makeAnchor(
+  tipHeight: number,
+  tipStateRoot: string,
+  suffixHeight: number,
+  suffixStateRoot: string,
+): Anchor {
+  const bare = (h: number, sr: string): BlockHeader => ({
+    protocolVersion: PROTOCOL_VERSION,
+    height: h,
+    prevBlockHash: '00'.repeat(32),
+    utxoTxRoot: '00'.repeat(32),
+    stateRoot: sr,
+    validatorId: new Uint8Array(32),
+    powNonce: 0,
+    powTargetBits: DEVNET_POW_TARGET_BITS,
+    createdAt: 1_000_000,
+    interlinkRoot: '00'.repeat(32),
+  });
+  return {
+    tip: bare(tipHeight, tipStateRoot),
+    suffixHead: { header: bare(suffixHeight, suffixStateRoot), interlinks: [] },
+  };
+}
+
+export interface AvlInsertion {
+  keyHex: string;
+  valueBytes: Uint8Array;
+}
+
+export interface AvlEntry {
+  proof: Uint8Array;
+  value: Uint8Array | null;
+}
+
+export interface AvlBuild {
+  digest: string;
+  entries: Map<string, AvlEntry>;
+}
+
+// Build an AVL tree with the given insertions, then produce a lookup proof for
+// each insertion (inclusion) and for each extra key (exclusion). One tree, one
+// digest, proofs for every key the caller will ask about.
+export function buildAvlWithInsertions(
+  insertions: AvlInsertion[],
+  extraLookups: string[] = [],
+): AvlBuild {
+  const prover = new BatchAVLProver(AVL_KEY_LENGTH, null);
+  for (const ins of insertions) {
+    prover.performOneOperation({
+      tag: 'Insert',
+      key: hexToBytes(ins.keyHex),
+      value: ins.valueBytes,
+    });
+    prover.generateProof();
+  }
+  const entries = new Map<string, AvlEntry>();
+  for (const ins of insertions) {
+    prover.performOneOperation({ tag: 'Lookup', key: hexToBytes(ins.keyHex) });
+    const proof = prover.generateProof();
+    entries.set(ins.keyHex, { proof: Uint8Array.from(proof), value: ins.valueBytes });
+  }
+  for (const key of extraLookups) {
+    prover.performOneOperation({ tag: 'Lookup', key: hexToBytes(key) });
+    const proof = prover.generateProof();
+    entries.set(key, { proof: Uint8Array.from(proof), value: null });
+  }
+  return { digest: Buffer.from(prover.digest()).toString('hex'), entries };
+}
+
+export function boxInsertion(candidate: BoxCandidate, txId: TxId, index: number): AvlInsertion {
+  return {
+    keyHex: computeCandidateBoxId(candidate, txId, index),
+    valueBytes: boxRecordBytes(candidate, txId, index),
+  };
+}
+
+export function recordInsertion(userBytes: UserId, record: IdentityRecord): AvlInsertion {
+  return {
+    keyHex: identityRecordKey(userBytes),
+    valueBytes: identityRecordBytes(record),
+  };
+}
+
+// A minimal AVL proof response in the endpoint's own shape — `stateRoot`,
+// `proof` base64, `kind`, `value` — as `GET /api/v1/proof/:boxId` serves it
+// (NODE_INTERFACE → AVL+ State Root). The test wires it per request so
+// proveFigures reads what the node would return.
+export function avlProofJson(
+  boxIdOrKey: string,
+  atHeight: number,
+  stateRoot: string,
+  proofBytes: Uint8Array,
+  kind: 'box' | 'record' | 'network' | 'username' | 'holder' | null,
+  value: unknown,
+): unknown {
+  return {
+    boxId: boxIdOrKey,
+    atHeight,
+    stateRoot,
+    proof: Buffer.from(proofBytes).toString('base64'),
+    kind,
+    value,
+  };
 }

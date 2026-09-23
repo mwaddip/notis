@@ -16,6 +16,7 @@ import { unlinkSync } from 'fs';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
 import {
   computeTxId,
+  identityRecordKey,
   selectBoxes,
   PROTOCOL_VERSION,
   MAX_BLOCK_BODY_BYTES,
@@ -428,7 +429,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     const currentHeight = ordering.getCurrentHeight();
     expect(currentHeight).toBe(3);
     const records = idr.getAllIdentityRecords().map((r) => ({
-      key: idr.identityRecordKey(r.identityId),
+      key: identityRecordKey(r.identityId),
       record: r.record,
     }));
     const unspentB = utxo.getUnspentBoxes();

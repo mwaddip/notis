@@ -8,6 +8,8 @@ import {
 } from 'vitest';
 import {
   computeTxId,
+  identityRecordFromBytes,
+  identityRecordKey,
   PROTOCOL_VERSION,
   MAX_BLOCK_BODY_BYTES,
 } from '@dagsocial/types';
@@ -606,12 +608,11 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     expect(recordMutations[0]).toMatchObject({ record: { invitedAtBlock: 2 } });
 
     // The TREE holds the LAST write — the collapse rule's subject.
-    const key = Buffer.from(recordStore.identityRecordKey(invitee.userId), 'hex');
-    const serialize = await import('../../src/state/serialize-box.js');
+    const key = Buffer.from(identityRecordKey(invitee.userId), 'hex');
     const lookup = handle.prover.performOneOperation({ tag: 'Lookup', key });
     if (!lookup.success) throw new Error('lookup failed');
     expect(lookup.value).toBeTruthy();
-    expect(serialize.deserializeIdentityRecord(lookup.value!)).toEqual({
+    expect(identityRecordFromBytes(lookup.value!)).toEqual({
       lastActivityBlock: 2,
       lastDecayBlock: 0,
       invitedAtBlock: 2,

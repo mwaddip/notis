@@ -4,12 +4,11 @@
 // out of the web bundle.
 
 import { resolveTip } from '@dagsocial/nipopow-client';
-import type { TipResult, HttpFetch } from '@dagsocial/nipopow-client';
+import type { Anchor, TipResult, HttpFetch, NodeTipResult } from '@dagsocial/nipopow-client';
 import { profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
 import { tipVerdict } from '../model/tip-verdict';
-import type { TipVerdict } from '../model/tip-verdict';
-import type { TipVerifier } from '../model/state';
+import type { TipRun, TipVerifier } from '../model/state';
 
 // NIPOPOW_INTERFACE → NipopowProof — `m` is the security parameter and `k` the
 // suffix length; the pair `6, 20` is WEB_INTERFACE → The extension → "The
@@ -36,7 +35,7 @@ export function createTipVerifier(opts: TipVerifierOptions): TipVerifier {
   const resolve = opts.resolve ?? resolveTip;
   const profile = profileFor(opts.network);
   return {
-    async run(readingBase: string): Promise<TipVerdict> {
+    async run(readingBase: string): Promise<TipRun> {
       // The reading base is asked first; the fold's own rule then gives the
       // comparison its meaning — `winnerIndex === 0` says the reading node
       // holds the best chain or ties for it (WEB_INTERFACE → The extension
@@ -52,7 +51,24 @@ export function createTipVerifier(opts: TipVerifierOptions): TipVerifier {
       addIfNew(readingBase);
       for (const b of opts.nodes) addIfNew(b);
       const result: TipResult = await resolve(urls, M, K, profile, opts.now, opts.fetch);
-      return tipVerdict(result);
+      const verdict = tipVerdict(result);
+      // The anchor is the reading node's own verified headers — reading node
+      // is at index 0, kept at the front of `urls` (WEB_INTERFACE → The
+      // extension → "The verified figures"). Only under `verified` are they
+      // PoW-checked and on the winner's chain; every other verdict leaves the
+      // anchor `null`. A `verified` result whose `nodes[0].verifyResult` is
+      // not the `ok: true` shape the verdict's totality gate requires leaves
+      // it `null` too — the verdict is trusted first (→ "The verdict is total
+      // by itself").
+      const anchor: Anchor | null = verdict.kind === 'verified' ? anchorFromReading(result.nodes[0]) : null;
+      return { verdict, anchor };
     },
   };
+}
+
+function anchorFromReading(node: NodeTipResult | undefined): Anchor | null {
+  if (node === undefined) return null;
+  const vr = node.verifyResult;
+  if (vr === null || vr.ok !== true) return null;
+  return { tip: vr.tip, suffixHead: vr.suffixHead };
 }

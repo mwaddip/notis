@@ -4,8 +4,18 @@
 export { resolveTip } from './tip.js';
 export type { TipResult, NodeTipResult } from './tip.js';
 
-export { proveBoxes } from './boxes.js';
-export type { BoxesResult, BoxVerdict, BoxClass, BoxStatus } from './boxes.js';
+export { fetchListing, proveFigures, proveBoxes } from './boxes.js';
+export type {
+  ListedBox,
+  Listing,
+  ListingResult,
+  Anchor,
+  FigureStatus,
+  FigureBox,
+  RecordResult,
+  LedgerSums,
+  FiguresResult,
+} from './boxes.js';
 
 export { verifierProfile } from './config.js';
 export type { VerifyProfile } from './config.js';

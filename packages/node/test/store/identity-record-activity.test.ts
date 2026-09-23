@@ -8,7 +8,8 @@ import type {
   UserId,
 } from '@dagsocial/types';
 import type { BlockJournal } from '../../src/store/journal.js';
-import type { IdentityRecord } from '../../src/store/identity-records.js';
+import type { IdentityRecord } from '@dagsocial/types';
+import { identityRecordKey } from '@dagsocial/types';
 import {
   seedProvenance,
   type Stored,
@@ -51,11 +52,11 @@ async function importJournalFresh() {
 }
 
 async function importRecordsFresh() {
-  return (await import('../../src/store/identity-records.js')) as {
+  const store = (await import('../../src/store/identity-records.js')) as {
     getIdentityRecord: (id: UserId) => IdentityRecord | null;
     putIdentityRecord: (id: UserId, r: IdentityRecord) => void;
-    identityRecordKey: (id: UserId) => string;
   };
+  return { ...store, identityRecordKey };
 }
 
 function owner(label: string): UserId {

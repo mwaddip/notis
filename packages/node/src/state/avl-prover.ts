@@ -2,7 +2,6 @@ import { BatchAVLProver, PersistentBatchAVLProver } from '@ergots/avltree';
 import { SqliteAvlStorage } from './avl-storage.js';
 import {
   serializeBox,
-  serializeIdentityRecord,
   serializeNetworkRecord,
   serializeUsernameRecord,
   serializeHolderRecord,
@@ -11,9 +10,13 @@ import type { UsernameAvlRecord } from './serialize-box.js';
 import { getDb } from '../store/db.js';
 import { config } from '../config.js';
 import { DivergedStateTreeError } from '../services/corrupt-state.js';
-import type { AnyBox } from '@dagsocial/types';
-import { USERNAME_KEY_DOMAIN, USERNAME_HOLDER_KEY_DOMAIN } from '@dagsocial/types';
-import type { IdentityRecord, NetworkRecord } from '../store/identity-records.js';
+import type { AnyBox, IdentityRecord } from '@dagsocial/types';
+import {
+  USERNAME_KEY_DOMAIN,
+  USERNAME_HOLDER_KEY_DOMAIN,
+  identityRecordBytes,
+} from '@dagsocial/types';
+import type { NetworkRecord } from '../store/identity-records.js';
 import type { HolderRecord } from '../store/usernames.js';
 import crypto from 'node:crypto';
 
@@ -169,7 +172,7 @@ export function bootstrapAvlProver(
     const result = handle.prover.performOneOperation({
       tag: 'Insert',
       key: hexToBytes(put.key),
-      value: serializeIdentityRecord(put.record),
+      value: identityRecordBytes(put.record),
     });
     if (!result.success) {
       throw new DivergedStateTreeError(
@@ -291,7 +294,7 @@ export function applyBlockMutations(
     prover.performOneOperation({
       tag: 'InsertOrUpdate',
       key: hexToBytes(put.key),
-      value: serializeIdentityRecord(put.record),
+      value: identityRecordBytes(put.record),
     });
   }
 

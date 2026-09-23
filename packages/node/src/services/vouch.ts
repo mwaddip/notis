@@ -2,13 +2,13 @@ import {
   computeTxId,
   VOUCH_MIN_BALANCE,
   MEMPOOL_EXPIRY_BLOCKS,
+  effectiveKarma,
 } from '@dagsocial/types';
 import type { VouchBox, VouchEscrowBox, UtxoTransaction } from '@dagsocial/types';
 import {
   hasPendingVouch,
 } from '../store/index.js';
 import { isValidVouchTarget } from '@dagsocial/validation';
-import { effectiveKarma } from './decay.js';
 import { isMember, validateTx } from './utxo-engine.js';
 import { admitTx } from './admit-tx.js';
 import type { UtxoEngineDeps } from './utxo-engine.js';
