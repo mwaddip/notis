@@ -1186,6 +1186,19 @@ export class App {
     });
   }
 
+  /** An author window's read landed. Its body renders where it is focused, and
+   *  every other column holding it or the subject's posts window redraws its bars
+   *  in place, the body untouched: both bars read the subject's name, stacked or
+   *  focused, in any column (WEB_INTERFACE → The author window). */
+  private renderAuthorLoad(key: string): void {
+    const author = authorWindowId(key);
+    const posts = postsWindowId(key);
+    this.state.workspace.columns.forEach((column, ci) => {
+      if (column.wins[column.focus] === author) this.renderRegion(column.uid);
+      else if (column.wins.includes(author) || column.wins.includes(posts)) this.replaceBars(column, ci);
+    });
+  }
+
   /** Replace a column's bars in place from the current ctx, leaving its body. */
   private replaceBars(column: Column, ci: number): void {
     const region = this.panesEl.querySelector<HTMLElement>(`.region[data-uid="${column.uid}"]`);
@@ -2652,6 +2665,8 @@ export class App {
     void this.loadAuthorData(key);
   }
 
+  /** Read an author window's endorsers and its subject's name, which lands on
+   *  every bar that reads it (renderAuthorLoad). */
   private async loadAuthorData(key: string): Promise<void> {
     const d = this.authorData.get(key);
     if (!d) return;
@@ -2664,7 +2679,7 @@ export class App {
     } catch {
       return; // leave the window's last data; the ↻ retries
     }
-    this.renderRegionsFor(authorWindowId(key));
+    this.renderAuthorLoad(key);
   }
 
   private refreshAuthor(key: string): Promise<void> {
@@ -2921,11 +2936,18 @@ export class App {
   /** A press on the send form begins, unless a check of a handle runs — then it
    *  does nothing and this answers false, so one press is one check. A press
    *  that begins drops the answer the press before it was given, and with it
-   *  the send an unlock was owed for (WEB_INTERFACE → The wallet window → "The
-   *  `send` row"). */
+   *  the send an unlock was owed for, and takes away the ending the send before
+   *  it left in the flight's place — never a send still in flight, and never the
+   *  ledger's pending line (WEB_INTERFACE → The wallet window → "The `send`
+   *  row"). The row is drawn at once: a press the form itself refuses draws
+   *  nothing more. */
   private beginSendPress(): boolean {
     if (this.sendCheck !== null) return false;
     this.dropSendAnswer();
+    if (this.sendFlight !== null && isSettled(this.sendFlight.stage)) {
+      this.sendFlight = null;
+      this.renderCreditsRowInPlace();
+    }
     return true;
   }
 

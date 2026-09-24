@@ -110,7 +110,13 @@ interface World {
   threadReads: number;
   usernameByOwner: string[];
   usernameByName: number;
+  // While set, the node holds each /usernames?owner= answer for that key until
+  // a test releases its waiter.
+  holdOwner: string | null;
+  ownerWaiters: Array<() => void>;
 }
+
+const KAY_NAME: UsernameResult = { name: 'Kay', owner: K, boxId: '54'.repeat(32), claimedAtBlock: 43 };
 
 function world(): World {
   return {
@@ -119,12 +125,14 @@ function world(): World {
       [ME2, { name: 'Two', owner: ME2, boxId: '50'.repeat(32), claimedAtBlock: 39 }],
       [A, { name: 'Alice', owner: A, boxId: '52'.repeat(32), claimedAtBlock: 41 }],
       [B, { name: 'Bob', owner: B, boxId: '53'.repeat(32), claimedAtBlock: 42 }],
-      [K, { name: 'Kay', owner: K, boxId: '54'.repeat(32), claimedAtBlock: 43 }],
+      [K, KAY_NAME],
     ]),
     feedPosts: [post(ROOT, A, 'Alice', 'the root'), post(ROOT2, B, 'Bob', 'second root'), post(ROOT3, D, 'Dee', 'dee writes')],
     threadReads: 0,
     usernameByOwner: [],
     usernameByName: 0,
+    holdOwner: null,
+    ownerWaiters: [],
   };
 }
 
@@ -179,6 +187,7 @@ function fakeApi(w: World): Api {
       : { bonds: [bond(I, 'Ivy')], bondCount: 2, next: 'b1' }),
     usernameByOwner: async (key) => {
       w.usernameByOwner.push(key);
+      if (w.holdOwner === key) await new Promise<void>((release) => { w.ownerWaiters.push(release); });
       return w.names.get(key) ?? null;
     },
     usernameByName: async () => {
@@ -220,6 +229,7 @@ interface Drive {
   refreshFeed(): Promise<void>;
   loadMembershipState(): Promise<void>;
   openProfile(): void;
+  openSettings(): void;
   openThread(id: string, origin: Origin): void;
   openAuthor(key: string, origin: Origin): void;
   openAuthorPosts(key: string, origin: Origin): void;
@@ -554,6 +564,138 @@ describe('the name checks — a pair first on a surface', () => {
     expect(bar).toContain('@Tom');
     const fresh = await answer(h, () => 'proven');
     expect(fresh.map(pairOf)).toEqual([TOM]);
+  });
+
+  it.each(['its ↻ on its bar', 'a node change\'s re-read'] as const)('an author window whose subject\'s name lands behind another window in its stack — %s — draws the handle on its bar, the focused body untouched, and the handle is checked', async (how) => {
+    const w = world();
+    // Before the ↻ Kay holds no name; she claims one while the window stands.
+    if (how === 'its ↻ on its bar') w.names.delete(K);
+    const h = harness({ world: w });
+    await h.drive.loadMembershipState();
+    h.drive.openAuthor(K, { from: 'feed' });
+    await flush();
+    // The settings window joins column 0's stack, focused; the author window's
+    // bar stands above it.
+    h.drive.openSettings();
+    await flush();
+    const authorBar = (): HTMLElement => col(h, 0).querySelector<HTMLElement>('.bar')!;
+    expect(authorBar().classList.contains('focused')).toBe(false);
+    let anchor = anchorFor(100);
+    await verify(h, 0, anchor);
+    await answer(h, () => 'proven');
+    w.holdOwner = K;
+    if (how === 'its ↻ on its bar') {
+      w.names.set(K, KAY_NAME);
+      refreshAuthorWindow(h, 0);
+      await flush();
+    } else {
+      expect(authorBar().querySelector('.handle')?.textContent).toBe('@Kay');
+      await h.drive.changeNode(NODE_B);
+      await flush();
+      // The new node's run verifies while the subject's name read is held.
+      anchor = anchorFor(101);
+      await verify(h, 1, anchor);
+      await answer(h, () => 'proven');
+    }
+    // The read is held: the bar reads the key prefix.
+    expect(authorBar().querySelector('.handle')).toBeNull();
+    expect(authorBar().querySelector('.hex')).not.toBeNull();
+    const body = col(h, 0).querySelector<HTMLElement>('.region-body')!;
+    const settings = body.firstElementChild;
+    const asked = h.nameCalls.length;
+    for (const release of w.ownerWaiters.splice(0)) release();
+    await flush();
+    // The stacked bar reads the handle, marked with its pair.
+    const handle = authorBar().querySelector<HTMLElement>('.bar-label .handle')!;
+    expect(handle.textContent).toBe('@Kay');
+    expect(handle.dataset.namePair).toBe(KAY);
+    expect(authorBar().classList.contains('focused')).toBe(false);
+    // The focused window's body is the one that stood.
+    expect(col(h, 0).querySelector('.region-body')).toBe(body);
+    expect(body.firstElementChild).toBe(settings);
+    // The handle is checked against the anchor standing, and a clay result
+    // lands on it where it stands.
+    const fresh = await answerOne(h, 'absent');
+    expect(pairOf(fresh)).toBe(KAY);
+    expect(fresh.anchor).toBe(anchor);
+    expect(h.nameCalls).toHaveLength(asked + 1);
+    expect(handle.isConnected).toBe(true);
+    expect(handle.classList.contains('clay')).toBe(true);
+  });
+
+  it.each([
+    ['focused in a column of its own', 'its ↻ on its bar'],
+    ['focused in a column of its own', 'a node change\'s re-read'],
+    ['stacked behind another window', 'its ↻ on its bar'],
+    ['stacked behind another window', 'a node change\'s re-read'],
+  ] as const)('a posts window %s draws the handle on its bar as its subject\'s name lands through the author window — %s — the body untouched, and the handle is checked', async (where, how) => {
+    const w = world();
+    // Before the ↻ Kay holds no name; she claims one while the windows stand.
+    if (how === 'its ↻ on its bar') w.names.delete(K);
+    const h = harness({ world: w });
+    await h.drive.loadMembershipState();
+    // The author window stands focused in a column of its own, and the posts
+    // window in another: focused there, or stacked behind the settings window.
+    const [authorCi, postsCi] = where === 'focused in a column of its own' ? [0, 1] : [1, 0];
+    if (where === 'focused in a column of its own') {
+      h.drive.openAuthor(K, { from: 'feed' });
+      await flush();
+      h.drive.openAuthorPosts(K, { from: 'pane', ci: 0 });
+      await flush();
+    } else {
+      h.drive.openAuthorPosts(K, { from: 'feed' });
+      await flush();
+      h.drive.openSettings();
+      await flush();
+      h.drive.openAuthor(K, { from: 'pane', ci: 0 });
+      await flush();
+    }
+    const postsBar = (): HTMLElement => col(h, postsCi).querySelector<HTMLElement>('.bar')!;
+    expect(postsBar().querySelector('.bar-label .name')?.textContent).toBe('posts');
+    expect(postsBar().classList.contains('focused')).toBe(where === 'focused in a column of its own');
+    let anchor = anchorFor(100);
+    await verify(h, 0, anchor);
+    await answer(h, () => 'proven');
+    w.holdOwner = K;
+    if (how === 'its ↻ on its bar') {
+      w.names.set(K, KAY_NAME);
+      refreshAuthorWindow(h, authorCi);
+      await flush();
+    } else {
+      expect(postsBar().querySelector('.handle')?.textContent).toBe('@Kay');
+      await h.drive.changeNode(NODE_B);
+      await flush();
+      // The new node's run verifies while the subject's name read is held.
+      anchor = anchorFor(101);
+      await verify(h, 1, anchor);
+      await answer(h, () => 'proven');
+    }
+    // The read is held: the posts bar reads the key prefix.
+    expect(postsBar().querySelector('.handle')).toBeNull();
+    expect(postsBar().querySelector('.hex')).not.toBeNull();
+    const body = col(h, postsCi).querySelector<HTMLElement>('.region-body')!;
+    const shown = body.firstElementChild;
+    const asked = h.nameCalls.length;
+    for (const release of w.ownerWaiters.splice(0)) release();
+    await flush();
+    // The posts bar reads the handle, marked with its pair, as the author
+    // window's bar does.
+    const handle = postsBar().querySelector<HTMLElement>('.bar-label .handle')!;
+    expect(handle.textContent).toBe('@Kay');
+    expect(handle.dataset.namePair).toBe(KAY);
+    expect(col(h, authorCi).querySelector('.bar-label .handle')?.textContent).toBe('@Kay');
+    // The column's body is the one that stood: the posts window's own, or the
+    // window focused over it.
+    expect(col(h, postsCi).querySelector('.region-body')).toBe(body);
+    expect(body.firstElementChild).toBe(shown);
+    // The handle is checked against the anchor standing, and a clay result
+    // lands on it where it stands.
+    const fresh = await answerOne(h, 'absent');
+    expect(pairOf(fresh)).toBe(KAY);
+    expect(fresh.anchor).toBe(anchor);
+    expect(h.nameCalls).toHaveLength(asked + 1);
+    expect(handle.isConnected).toBe(true);
+    expect(handle.classList.contains('clay')).toBe(true);
   });
 
   it('the reader\'s claim landing draws the new name in the header and the username row, and it is checked', async () => {

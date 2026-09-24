@@ -520,6 +520,99 @@ describe('the row after a landed send', () => {
   });
 });
 
+// A press takes away the ending the send before it left in the flight's place —
+// never a send still in flight (WEB_INTERFACE → The wallet window → "The `send`
+// row"). The web build's press is the form's; the confirm row's `send` sends.
+
+describe('a press takes away the ending the send before it left — the web build', () => {
+  type H = ReturnType<typeof harness>;
+  type Ending = 'rejected' | 'landed' | 'expired';
+
+  const flightLine = (): string => document.querySelector<HTMLElement>('.credits-flight')!.textContent ?? '';
+  const shownRefusals = (): string[] => [...document.querySelectorAll<HTMLElement>('form.credits-form .pf-refusal')]
+    .filter((r) => !r.hidden).map((r) => r.textContent ?? '');
+
+  async function openWalletOf(h: H): Promise<void> {
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
+    await flush();
+  }
+
+  /** Type into the send form on screen and press it. */
+  async function pressForm(to: string, amount = '1'): Promise<void> {
+    const form = document.querySelector<HTMLFormElement>('form.credits-form')!;
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = to;
+    inputs[1]!.value = amount;
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+  }
+
+  /** 1 $NOTIS to REC through the form and the confirm row's `send`. */
+  async function sendThroughConfirm(): Promise<void> {
+    await pressForm(REC);
+    [...document.querySelectorAll<HTMLButtonElement>('.pf-confirm .word')].find((b) => b.textContent === 'send')!.click();
+    await flush();
+  }
+
+  /** A send brought to its ending: the node's refusal, or a landing or an expiry the poll reads. */
+  async function sendToEnding(h: H, ending: Ending): Promise<void> {
+    if (ending === 'rejected') sendResp = () => ({ status: 400, message: 'too small' });
+    await sendThroughConfirm();
+    if (ending === 'rejected') return;
+    const entry = h.drive.ledger.all().find((e) => e.kind === 'send')!;
+    if (ending === 'landed') {
+      creditsRecipient = { userId: REC, total: '100000000', boxes: [{ boxId: entry.send!.boxId, value: '100000000' }], boxCount: 1, next: null };
+      creditsSelf = { userId: ME, total: '9900000000', boxes: [{ boxId: CHANGE_BOX, value: '9900000000' }], boxCount: 1, next: null };
+      blockHeight = 101;
+    } else {
+      blockHeight = 10_000;
+    }
+    await h.drive.pollTick();
+    await flush();
+  }
+
+  it.each<[Ending, string]>([
+    ['rejected', 'send rejected: too small'],
+    ['landed', 'sent'],
+    ['expired', 'no block took this by height 820.'],
+  ])('a send %s, then a press whose handle no one holds: the ending goes at the press, and the refusal is the row\'s one line', async (ending, line) => {
+    const h = harness();
+    await openWalletOf(h);
+    await sendToEnding(h, ending);
+    expect(flightLine()).toBe(line);
+    await pressForm('@nobody');
+    expect(flightLine()).toBe('');
+    expect(shownRefusals()).toEqual(['no one holds that name.']);
+    expect(document.querySelector('.pf-confirm')).toBeNull();
+    // A render in place draws the row from what the App holds: no ending.
+    await (h.app as unknown as { refreshWalletCredits: () => Promise<void> }).refreshWalletCredits();
+    await flush();
+    expect(flightLine()).toBe('');
+    expect(h.drive.sendFlight).toBeNull();
+  });
+
+  it('a press while the send before it is still submitting leaves that flight standing', async () => {
+    const h = harness();
+    await openWalletOf(h);
+    sendDefer = { resolve: () => {} };
+    await sendThroughConfirm();
+    expect(flightLine()).toBe('submitting…');
+    await pressForm('@nobody');
+    expect(shownRefusals()).toEqual(['no one holds that name.']);
+    expect(flightLine()).toBe('submitting…');
+    await (h.app as unknown as { refreshWalletCredits: () => Promise<void> }).refreshWalletCredits();
+    await flush();
+    expect(flightLine()).toBe('submitting…');
+    // The send it stood for goes on to its own acceptance.
+    sendDefer!.resolve({ status: 'pending', txId: last(), expiresAtHeight: 820 });
+    await flush();
+    expect(flightLine()).toBe(`1 $NOTIS to ${REC.slice(0, 16)}… · submitted`);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The extension arm — the App builds ctx with confirmInRow: false when the
 // identity module implements `policy`, so no .pf-confirm renders and the send

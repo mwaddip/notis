@@ -43,7 +43,8 @@ export interface WalletHandlers {
   // The send form (WEB_INTERFACE → The wallet window → "The `send` row").
   // beginSendPress opens every press: false while the extension checks a handle
   // — the press then does nothing, so one press is one check — and otherwise it
-  // drops the answer the press before left. In the extension pressSend hands
+  // drops the answer the press before left and the ending the send before left
+  // in the flight's place, in either build. In the extension pressSend hands
   // the App the press once its amount and recipient are read: the check, the
   // answer, the unlock a locked identity owes and the flow are the App's, and
   // the row draws each from it. The web build resolves a handle through

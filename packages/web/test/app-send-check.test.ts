@@ -968,6 +968,92 @@ describe('the send check — one press is one check', () => {
   });
 });
 
+// A press takes away the ending the send before it left in the flight's place —
+// never a send still in flight, and never the ledger's pending line
+// (WEB_INTERFACE → The wallet window → "The `send` row").
+
+describe('the send check — a press takes away the ending the send before it left', () => {
+  it('a declined send, then a press whose check refuses: the decline goes at the press, and the refusal is the row\'s one line', async () => {
+    const h = harness();
+    h.world.sign = 'declined';
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@bob');
+    await answer(h, result('proven', REC, 'Bob'));
+    expect(flightLine()).toBe('send not sent.');
+    h.world.signCalls.length = 0;
+    await press('@eve');
+    expect(flightLine()).toBe('checking @eve…');
+    await answer(h, result('absent'));
+    expect(flightLine()).toBe('');
+    expectRefused(h, form, "this node's answer for @eve did not verify.", '@eve');
+    expect(shownRefusals()).toEqual(["this node's answer for @eve did not verify."]);
+    expect(shownKeys()).toEqual([]);
+    // A render in place draws the row from what the App holds: no ending.
+    await h.drive.refreshWalletCredits();
+    await flush();
+    expect(flightLine()).toBe('');
+  });
+
+  it('a press the form refuses before any check — an amount it cannot read — takes the decline away as well', async () => {
+    const h = harness();
+    h.world.sign = 'declined';
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    await press('@bob');
+    await answer(h, result('proven', REC, 'Bob'));
+    expect(flightLine()).toBe('send not sent.');
+    await press('@bob', 'x');
+    expect(flightLine()).toBe('');
+    expect(shownRefusals()).toEqual(['an amount is digits with up to eight decimals.']);
+    expect(h.nameCalls.filter(isPress)).toHaveLength(1);
+    await h.drive.refreshWalletCredits();
+    await flush();
+    expect(flightLine()).toBe('');
+  });
+
+  it('a press while the send before it is still submitting leaves that flight standing — through a check\'s refusal and a refusal of the form\'s own', async () => {
+    const h = harness();
+    h.world.sign = 'held';
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@bob');
+    await answer(h, result('proven', REC, 'Bob'));
+    expect(flightLine()).toBe('submitting…');
+    await press('@eve');
+    expect(flightLine()).toBe('checking @eve…');
+    await answer(h, result('none'));
+    expect(flightLine()).toBe('submitting…');
+    expect(refusalLine(form).textContent).toBe('no one holds that name.');
+    await press('@eve', 'x');
+    expect(flightLine()).toBe('submitting…');
+    expect(refusalLine(form).textContent).toBe('an amount is digits with up to eight decimals.');
+    await h.drive.refreshWalletCredits();
+    await flush();
+    expect(flightLine()).toBe('submitting…');
+    expect(h.world.signCalls).toHaveLength(1);
+  });
+
+  it('a press leaves the ledger\'s pending line standing', async () => {
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    await press('@bob');
+    await answer(h, result('proven', REC, 'Bob'));
+    expect(flightLine()).toBe('1 $NOTIS to @Bob · submitted');
+    await press('@eve');
+    await answer(h, result('none'));
+    expect(flightLine()).toBe('1 $NOTIS to @Bob · submitted');
+    await press('@eve', 'x');
+    expect(flightLine()).toBe('1 $NOTIS to @Bob · submitted');
+    expect(sendEntries(h)).toHaveLength(1);
+  });
+});
+
 describe('the send check — a render of the row while the check runs', () => {
   it('in place — the wallet\'s ↻ — the line stands, and the pressed form stands with its values and takes the answer', async () => {
     const h = harness();
