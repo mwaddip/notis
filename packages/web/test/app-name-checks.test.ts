@@ -385,6 +385,10 @@ function rowField(root: HTMLElement, label: string): HTMLElement {
   const r = [...root.querySelectorAll('.row')].find((x) => x.querySelector('label')?.textContent === label);
   return r!.querySelector<HTMLElement>('.field')!;
 }
+/** Press the ↻ of the author window in column `ci` — its re-read, and its render. */
+function refreshAuthorWindow(h: Harness, ci: number): void {
+  col(h, ci).querySelector<HTMLButtonElement>('button[aria-label="refresh this author"]')!.click();
+}
 function marked(pair: string): HTMLElement[] {
   return [...document.querySelectorAll<HTMLElement>('[data-name-pair]')].filter((e) => e.dataset.namePair === pair);
 }
@@ -397,17 +401,22 @@ function textNode(root: Node, text: string): Text | null {
   return null;
 }
 
-/** Every mutation under the three surfaces from now on. */
-function observe(h: Harness): () => MutationRecord[] {
+/** Every mutation under the roots from now on. */
+function observeUnder(roots: readonly Node[]): () => MutationRecord[] {
   const records: MutationRecord[] = [];
   const mo = new MutationObserver((rs) => records.push(...rs));
-  for (const root of [h.appbar, h.feed, h.panes]) {
+  for (const root of roots) {
     mo.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
   }
   return () => {
     records.push(...mo.takeRecords());
     return records;
   };
+}
+
+/** Every mutation under the three surfaces from now on. */
+function observe(h: Harness): () => MutationRecord[] {
+  return observeUnder([h.appbar, h.feed, h.panes]);
 }
 
 beforeEach(() => {
@@ -748,7 +757,7 @@ describe('the name checks — the node, the identity, the anchor', () => {
 });
 
 describe('the name checks — every handle carries the pair it reads', () => {
-  it('each site marks its handle with the key and the name it asks the check for; the name row marks the handle its line follows; a prefix carries none', async () => {
+  it('each site marks its handle with the key and the name it asks the check for; a prefix carries none', async () => {
     const h = harness();
     await everySurface(h);
     // The reader's own root in the feed, and a reply under ROOT in the pane —
@@ -784,11 +793,8 @@ describe('the name checks — every handle carries the pair it reads', () => {
     expect(pairAt(col(h, 0).querySelector('.bond')!, '@Ivy')).toBe(IVY);
     expect(pairAt(rowField(col(h, 0), 'username'), '@Me_1')).toBe(MINE);
     expect(h.appbar.querySelector<HTMLElement>('button[aria-label="open profile"]')!.dataset.namePair).toBe(MINE);
-    // Every handle on the page is a site; the two name rows carry the line mark.
+    // Every handle on the page is a site.
     for (const e of document.querySelectorAll<HTMLElement>('.handle')) expect(e.dataset.namePair).toBeDefined();
-    const lined = [...document.querySelectorAll<HTMLElement>('[data-name-line]')];
-    expect(lined).toHaveLength(2);
-    expect(lined.every((e) => rowField(col(h, 2), 'name').contains(e) || rowField(col(h, 5), 'name').contains(e))).toBe(true);
     // Eve's posts window bar is her prefix — no author window read her name.
     expect(bar(4).querySelector('.hex')).not.toBeNull();
     expect(bar(4).querySelector('[data-name-pair]')).toBeNull();
@@ -821,7 +827,7 @@ describe('the name checks — a result lands in place', () => {
     expect(records()).toEqual([]);
   });
 
-  it('a clay result flips that pair\'s handles and no other node — the line joins the author window\'s name row; the scroll, a composer\'s draft and focus, and a selection hold', async () => {
+  it('a clay result flips that pair\'s handles and no other node — no line joins the author window\'s name row; the scroll, a composer\'s draft and focus, and a selection hold', async () => {
     const h = harness();
     await everySurface(h);
     // The reader mid-read: the feed composer open with a draft and focus, the
@@ -849,7 +855,12 @@ describe('the name checks — a result lands in place', () => {
     // bar and name row, the posts window's bar and card.
     expect(alice).toHaveLength(7);
     const nodes = [...h.appbar.querySelectorAll('*'), ...h.feed.querySelectorAll('*'), ...h.panes.querySelectorAll('*')];
+    const nameField = rowField(col(h, 2), 'name');
+    const nameHandle = alice.find((e) => nameField.contains(e))!;
+    const body = col(h, 2).querySelector<HTMLElement>('.winbody')!;
+    expect(body.contains(nameField)).toBe(true);
     const records = observe(h);
+    const inBody = observeUnder([body]);
     await answer(h, (c) => (claimPair(c) === ALICE ? 'unproven' : 'proven'));
 
     const rs = records();
@@ -860,16 +871,15 @@ describe('the name checks — a result lands in place', () => {
     expect(attributes).toHaveLength(alice.length);
     expect(new Set(attributes.map((r) => r.target))).toEqual(new Set(alice));
     for (const e of alice) expect(e.classList.contains('clay')).toBe(true);
-    const nameField = rowField(col(h, 2), 'name');
-    expect(children).toHaveLength(1);
-    expect(children[0]!.target).toBe(nameField);
-    expect(children[0]!.removedNodes).toHaveLength(0);
-    expect(children[0]!.addedNodes).toHaveLength(1);
-    const line = children[0]!.addedNodes[0] as HTMLElement;
-    expect(line.matches('div.hint.clay')).toBe(true);
-    expect(line.textContent).toBe("this node's answer for this name did not verify");
-    expect(line.previousElementSibling).toBe(alice.find((e) => nameField.contains(e)));
-    expect(document.querySelectorAll('.hint.clay')).toHaveLength(1);
+    // The line waits for the window's render: no child list changes anywhere,
+    // and the author window's body sees its name handle's class and nothing else.
+    expect(children).toHaveLength(0);
+    const bodyRecords = inBody();
+    expect(bodyRecords).toHaveLength(1);
+    expect(bodyRecords[0]!.type).toBe('attributes');
+    expect(bodyRecords[0]!.attributeName).toBe('class');
+    expect(bodyRecords[0]!.target).toBe(nameHandle);
+    expect(document.querySelectorAll('.hint.clay')).toHaveLength(0);
     // Every node stands where it stood; nothing scrolled; the draft, its focus
     // and the selection are the reader's still.
     for (const n of nodes) expect(n.isConnected).toBe(true);
@@ -883,35 +893,62 @@ describe('the name checks — a result lands in place', () => {
     expect(selection.toString()).toBe('second');
   });
 
-  it('a clay pair that proves on the next run turns ink where it stands, its line leaving with it', async () => {
+  it('the author window\'s next render — its ↻ — draws the line beneath the handle a late clay result turned', async () => {
     const h = harness();
     await everySurface(h);
     await verify(h, 0, anchorFor(100));
     await answer(h, (c) => (claimPair(c) === ALICE ? 'absent' : 'proven'));
-    const alice = marked(ALICE);
-    for (const e of alice) expect(e.classList.contains('clay')).toBe(true);
+    for (const e of marked(ALICE)) expect(e.classList.contains('clay')).toBe(true);
+    expect(rowField(col(h, 2), 'name').querySelector('.hint')).toBeNull();
+    refreshAuthorWindow(h, 2);
+    await flush();
+    const nameField = rowField(col(h, 2), 'name');
+    const nameHandle = nameField.querySelector<HTMLElement>('.handle')!;
+    expect(nameHandle.textContent).toBe('@Alice');
+    expect(nameHandle.classList.contains('clay')).toBe(true);
+    const line = nameField.querySelector<HTMLElement>('div.hint.clay')!;
+    expect(line.textContent).toBe("this node's answer for this name did not verify");
+    expect(line.previousElementSibling).toBe(nameHandle);
+    // The one line on the page.
+    expect(document.querySelectorAll('.hint.clay')).toHaveLength(1);
+  });
+
+  it('a clay pair that proves on the next run turns ink where it stands; the line a render drew stands until the next render', async () => {
+    const h = harness();
+    await everySurface(h);
+    await verify(h, 0, anchorFor(100));
+    await answer(h, (c) => (claimPair(c) === ALICE ? 'absent' : 'proven'));
+    refreshAuthorWindow(h, 2);
+    await flush();
     const nameField = rowField(col(h, 2), 'name');
     const line = nameField.querySelector('.hint.clay')!;
     expect(line).not.toBeNull();
     await pressCorner(h);
     await verify(h, 1, anchorFor(101));
     await flush();
+    const alice = marked(ALICE);
+    for (const e of alice) expect(e.classList.contains('clay')).toBe(true);
     const records = observe(h);
     await answer(h, () => 'proven');
     const rs = records();
     const attributes = rs.filter((r) => r.type === 'attributes');
     const children = rs.filter((r) => r.type === 'childList');
     expect(attributes.length + children.length).toBe(rs.length);
+    expect(attributes.every((r) => r.attributeName === 'class')).toBe(true);
     expect(attributes).toHaveLength(alice.length);
     expect(new Set(attributes.map((r) => r.target))).toEqual(new Set(alice));
     for (const e of alice) {
       expect(e.isConnected).toBe(true);
       expect(e.classList.contains('clay')).toBe(false);
     }
-    expect(children).toHaveLength(1);
-    expect(children[0]!.target).toBe(nameField);
-    expect([...children[0]!.removedNodes]).toEqual([line]);
-    expect(children[0]!.addedNodes).toHaveLength(0);
+    // The line stands where the render put it.
+    expect(children).toHaveLength(0);
+    expect(line.isConnected).toBe(true);
+    expect(nameField.querySelector('.hint.clay')).toBe(line);
+    // The window's next render draws the name row from the result it holds.
+    refreshAuthorWindow(h, 2);
+    await flush();
+    expect(rowField(col(h, 2), 'name').querySelector('.hint')).toBeNull();
     expect(document.querySelector('.clay')).toBeNull();
   });
 

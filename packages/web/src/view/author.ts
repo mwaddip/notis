@@ -87,14 +87,15 @@ export function authorBody(handlers: AuthorHandlers, ctx: AuthorCtx): HTMLElemen
 
   // name — @Name when held, `no name` muted when not, loading… before the read
   // (WEB_INTERFACE → The author window). A clay handle carries one clay line
-  // beneath it, the element the figures' line is; no other site grows one.
+  // beneath it, the element the figures' line is, drawn by this render alone;
+  // no other site grows one.
   {
     const { row: r, field } = row('name');
     if (!ctx.usernameLoaded) {
       field.appendChild(el('span', 'inkmute', 'loading…'));
     } else if (ctx.username) {
       const handle = el('span', 'handle', '@' + ctx.username.name);
-      markHandle(handle, ctx.authorKey, ctx.username.name, true);
+      markHandle(handle, ctx.authorKey, ctx.username.name);
       field.appendChild(handle);
       if (ctx.nameClay(ctx.authorKey, ctx.username.name)) {
         handle.classList.add('clay');
