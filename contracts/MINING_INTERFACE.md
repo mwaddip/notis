@@ -763,9 +763,6 @@ script; deployed via `scripts/dagsocial-miner.service`):
    once; any other status waits five seconds and repolls
 5. Repeat
 
-> ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — a submit that fails in transit throws the solved nonce away:
-> the loop backs off and solves the next template from nonce 0.
-
 ⚠ **The duty cycle sleeps *between* work windows, so `MINER_PCT` throttles hashing within a solve and
 does not pace the interval between blocks.** Where a solve finishes inside one window — devnet, at
 ~4,096 expected hashes — the sleep never runs and block production is bounded by how fast the node
