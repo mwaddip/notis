@@ -73,7 +73,9 @@ unlocked seed in `storage.session`, never a worker global), every write signed t
 the shell's `notis-nodes` seed list and `notis-public` link origin; one manifest template → two zips; **the
 chain it reads checked by NiPoPoW proofs from the seed list's nodes, the verdict folded into the status corner**
 (`WEB_INTERFACE → The extension → "The verified tip"`), **and the wallet's balance and the profile's rep proven box by
-box against that chain, a line beneath a figure only when something is not whole** (`→ "The verified figures"`). **Links into
+box against that chain, a line beneath a figure only when something is not whole** (`→ "The verified figures"`), **and
+every handle it shows and sends to proven through its name's box — clay where the node's answer does not verify, a send
+going to the proven key** (`→ "The verified names"`). **Links into
 the extension** (`WEB_INTERFACE → The extension → "Links into the extension"`, `→ The way into the workspace`): a
 post's link stays the website's, and a reader who runs the extension follows it into the extension's workspace. **The
 bridge** (`src/extension/bridge.ts`, built as `bridge.js`) is the extension's one content script, declared for
@@ -360,7 +362,27 @@ withdrawn post out of every write of rows. `src/model/figures-line.ts` (`figures
 row's line: nothing when every box proved (silence is the green), muted for what could not be proven yet, **clay with
 the figure clay** when a proof did not verify or the node lists what the chain does not hold. The numbers update in
 their slots whenever a read brings a new one (`HOUSE_STYLE → Motion`). The web build is handed no figures verifier, and
-`build-release.sh` refuses `api/v1/proof` in its assets beside `nipopow/proof`.
+`build-release.sh` refuses `api/v1/proof` in its assets beside `nipopow/proof`. **The run is total**: a node's answer of
+any shape ends in a status, never a thrown run — and `NodeClient`'s paged reads refuse a page whose list is not an
+array or whose `next` is neither `null` nor a non-empty string with no lone surrogate (`PageError`, taken where a
+non-2xx's `ApiError` is), so no read loops on a malformed cursor.
+
+**The verified names** (`WEB_INTERFACE → The extension → "The verified names"`, `→ The identity display`, `→ The author
+window`, `→ The wallet window`): the extension proves every handle it shows, and every handle it sends to, through
+`proveName` of `@dagsocial/nipopow-client` — the lookup (`/usernames?owner=` for a label, `/usernames/:name` for a typed
+handle), the name's box at `suffixHead` then `tip`, the proven owner and name held to the claim. `src/extension/
+names-verifier.ts` (`createNamesVerifier`) is handed to the App in the extension build alone; the App keeps one result
+per `(key, name)` pair (`model/name-verdict.ts` — `namePair`, `nameIsClay`), checks every pair on screen after each
+verified tip run and the undecided ones after each render that draws a handle, one batch at a time, and a check ending
+`unchecked` asks for one tip run. **A result lands in place**: each handle carries its pair (`view/name-handle.ts`,
+`data-name-pair`) and a result that changes its clay toggles the class alone — an ink result touches no DOM; the
+author window's clay line is drawn only by the window's render. Results drop on a node change and outlast an identity
+change and an unverified run. **The send's press is the App's** (`pressSend`): *checking @bob…* in the flight's place
+while the check runs (`sendCheck`), a press during it doing nothing; the answer (`sendAnswer` — a refusal, or the key
+the proven box names, with the unlock a locked identity owes) held by the App and drawn on whichever form stands; the
+key the flow receives is `recipientVerdict`'s, the proven owner, never the node's word; a node or identity change
+(`readerGen`) ends a press with nothing landing. The web build takes the node's answer at the press, with its confirm
+row.
 
 Three Vite builds — the pages (`index.html`, `prompt.html`) through `vite.extension.config.ts`, the background
 as one IIFE file through `vite.background.config.ts`, and, when `VITE_PUBLIC` is not empty, the bridge as one IIFE
@@ -458,6 +480,20 @@ number the node's new `effective` with no press (the landing's run reads *… no
 post), *… landed since* after a press, silence after K + 1; **22a** clay *the node lists … the chain does not hold*, the
 figure clay; **22b** clay *this node's proof of the balance did not verify* — the owner check; **23** both rows clay;
 each arm switched back to A and silent again; **25** the hosted web build — no line and no `/api/v1/proof/` request.
+**With `--verified-names` as well (it needs `--s-key` beside what the figures block needs) the verified-names block**
+runs on a B of its own, a second identity **S** holding a name — S promoted as R is and its name claimed by
+`scripts/extension-check/claim-name.mjs` through the web's own `submitClaimFlow` (⚠ a second `promote.mjs` is refused
+once by the faucet, whose in-memory chain names a change `promote.mjs` spent outside it — run it again) — and the
+figures relay's five **name modes** (`label-rename`, `owner-404`, `owner-fakebox`, `name-owner`, `name-fakebox`, every
+proof passed through verbatim so the corner stays green): **26** R claims a name through the `username` row — the
+header, R's cards, a thread, R's author window and the row read it in ink, the checks in the log; **29** a send typed
+to S's handle — *checking @S…*, S's key beneath the field and on the prompt's `to:`, declined; **27a** a renamed label
+clay; **27b** a withheld name — R's cards clay, the header R's key prefix (the own-name read falls to the same 404: the
+omission the rule leaves uncaught); **27c** a made-up box clay, each check's heights and each tip run's cause in the
+relay's log; **27d** the author window's name row turning clay in place with no line and the rows unmoved, its `↻`
+drawing the line; **28a** Eve's key over S's box and **28b** a made-up box refused at the press with no prompt — 28b
+pressed once A has mined past the anchor, so its first check reads `unchecked`, asks one tip run and the retry reads
+`absent`; **30** the hosted web build — no clay and no `/api/v1/proof/`. Each lie arm switched back to A and ink again.
 **The ten-minute timer and the visibility rule are the unit tests'**, not the proof's. ⚠ **17b guards a
 race that is wide only for a follower under a fast miner**: reading B at about three blocks a second, a build
 whose verdict read every lost comparison as *outworked* showed the alarm on 24 of 30 presses; under the paced
@@ -483,7 +519,15 @@ speed, so the miner is paced from outside — a stop-and-continue loop around it
 (`kill -STOP`, forty seconds, `kill -CONT`, three seconds measured about three a minute here), **started before
 `promote.mjs` and kept to the end** — for the throwaway's rep to last the run: unpaced at about four blocks a second
 the throwaway fell from 240 rep to 4 before its second post. The loop has a pidfile of its own, and ⚠ **a
-`SIGSTOP`-ed miner does not die on `SIGTERM` until it is continued** — stop the loop, `kill -CONT`, then `kill`.
+`SIGSTOP`-ed miner does not die on `SIGTERM` until it is continued** — stop the loop, `kill -CONT`, then `kill`. The
+miner at `MINER_PCT=3` on a fresh chain paces a full run's blocks (about twenty a minute falling to five as ASERT
+hardens); at `MINER_PCT=1` windows yield nothing and a grant's wait runs out. ⚠ **Launch the miner and the pacer with
+`setsid`, from a script** (`bash stack-up.sh`): under `nohup … & disown` a stopped miner stays in the launching shell's
+process group, and when that shell exits the kernel's SIGCONT to the orphaned group runs the miner unpaced until the
+pacer's next stop; in a shell with job control on, `setsid` forks and `$!` names the exited parent. ⚠ **`promote.mjs`
+under the pacer needs retries** — its waits lose to windows that yield nothing, and the faucet refuses once after a
+promote spent its boxes outside the service (`No karma box input found in transaction`); run it again after a pacer
+cycle.
 
 ⛔ **A proof stack is stopped by PID, never by name.** This machine's `dagsocial-miner` user unit runs the same
 `packages/node/scripts/miner.mjs` against testnet, and `pkill -f miner.mjs` kills it — it did, twice on 2026-09-17,
@@ -492,8 +536,9 @@ stalling the chain for an hour and three quarters and then for forty minutes. St
 (`tr '\0' ' ' < /proc/<pid>/cmdline`) and `kill` from the pidfiles; a listener left on a port the recipe owns is
 resolved with `ss -ltnp`. Never `pkill`, never `pgrep -f`, never a grep over `/proc/*/environ`. After the last run,
 `systemctl --user is-active dagsocial-miner` must print `active`, **and no headless Chromium of the run may be left**
-(`ps -eo pid,args`, read for the cached Chrome's path — a smoke run once left one verifying testnet every ten minutes
-for two hours). ⚠ Devnet's storage rent period is a hundred blocks: a box that sits through it is charged
+(`rtk proxy ps -eo pid,args`, read for the cached Chrome's path — a smoke run once left one verifying testnet every ten
+minutes for two hours; ⛔ **never a bare `ps`**: the rtk hook rewrites a top-level `ps` to a 32-line `rtk ps`, which
+read 0 Chromium processes while 16 were up). ⚠ Devnet's storage rent period is a hundred blocks: a box that sits through it is charged
 `STORAGE_RENT_PER_BYTE` per record byte at the producer's next collection, so a long run at a fast pace shows a
 throwaway's grant shrunk — keep a run short, and start the faucet with `FAUCET_CREDIT_AMOUNT=10000000000` (100
 $NOTIS, what step 12a reads) and `FAUCET_BOND_AMOUNT=250`.

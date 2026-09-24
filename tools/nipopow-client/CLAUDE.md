@@ -13,12 +13,16 @@ your standing context — read it and the linked docs before touching code.
    `compareProofs`, and **The trust model** (the three rules this tool embodies).
 5. `../../contracts/NODE_INTERFACE.md` — the routes it reads: `Nipopow` (HTTP API), `Nipopow prover`,
    the `/api/v1/proof/:boxId` endpoint (the "avl-endpoint" bullet and "The AVL value carries
-   provenance"), `/karma/:userId` and `/credits/:userId` in `HTTP API`.
-6. `../../contracts/TYPES_INTERFACE.md` — `Box and transaction identity` / `Layout — Boxes`
-   (`boxRecordFromBytes`, `computeCandidateBoxId`), `Network profiles`.
-7. `../../contracts/SPECIAL.md` — S.P.E.C.I.A.L. attention weights. It carries a section per protocol
+   provenance"), `/karma/:userId` and `/credits/:userId` in `HTTP API`, `/usernames/:name` and
+   `/usernames?owner=` in `Usernames`, and `Username records` (a name is unique on its canonical form, an identity
+   holds at most one).
+6. `../../contracts/TYPES_INTERFACE.md` — `BoxId` / `Layout — Boxes` (`boxRecordFromBytes`,
+   `computeCandidateBoxId`), `Content limits` (`isValidUsernameBytes`, `canonicalUsernameBytes`), `Network profiles`.
+7. `../../contracts/WEB_INTERFACE.md` — `The extension` → "The verified tip", "The verified figures" and "The verified
+   names": what the web client, this library's caller, gets from it.
+8. `../../contracts/SPECIAL.md` — S.P.E.C.I.A.L. attention weights. It carries a section per protocol
    package and none for this one; 5 is competent everywhere by default.
-8. Your task's spec in `../../docs/specs/` — `2026-08-27-nipopow-light-client.md` §6 and §8 (U4).
+9. Your task's spec in `../../docs/specs/` — `2026-08-27-nipopow-light-client.md` §6 and §8 (U4).
 
 ⛔ **There is no `NIPOPOW_CLIENT_INTERFACE.md`, and its absence is the point.** The six protocol
 packages have contracts because they define consensus surface. This tool has none: it is a client
