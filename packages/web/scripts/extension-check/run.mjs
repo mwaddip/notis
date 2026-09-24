@@ -175,6 +175,28 @@ if (VERIFIED_TIP) {
   }
 }
 
+// The comparison step 19b waits on is the tool's own (WEB_INTERFACE → The
+// extension → "The verified tip"): `resolveTip` of `@dagsocial/nipopow-client`
+// from its built dist — the code the extension's tip verifier runs — under the
+// profile that verifier takes from the build's network, devnet. A TipResult
+// carries no score, so `compareProofs` of `@dagsocial/nipopow` — the fold's own
+// comparison — reads the two sides' scores off the proofs it does carry. That
+// package is the tool's dependency and not this one's, so it is reached
+// through the tool's own link to it.
+let forkTools = null;
+if (VERIFIED_TIP) {
+  try {
+    const clientUrl = import.meta.resolve('@dagsocial/nipopow-client');
+    const { resolveTip, verifierProfile } = await import(clientUrl);
+    const { compareProofs } = await import(new URL('../node_modules/@dagsocial/nipopow/dist/index.js', clientUrl).href);
+    const { profileFor } = await import('@dagsocial/types');
+    forkTools = { resolveTip, verifierProfile, compareProofs, profile: profileFor('devnet') };
+  } catch (e) {
+    console.error(`--verified-tip requires the built @dagsocial/nipopow-client, its @dagsocial/nipopow and @dagsocial/types (pnpm -r build): ${e.message}`);
+    process.exit(2);
+  }
+}
+
 // --verified-figures requires --r-key AND the lifecycle args `bringUpNodeB`
 // reads (--node-dist, --scratch, --node-p2p). The figures run hangs on a
 // verified tip (WEB_INTERFACE → The extension → "The verified figures"),
@@ -804,12 +826,12 @@ async function waitForPeers(adminOrigin, min, ms = 30000) {
   return null;
 }
 
-async function waitForHeight(origin, target, ms = 300000) {
+async function waitForHeight(origin, target, ms = 300000, pollMs = 500) {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
     const h = await currentHeight(origin);
     if (h !== null && h >= target) return h;
-    await sleep(500);
+    await sleep(pollMs);
   }
   return null;
 }
@@ -823,6 +845,40 @@ async function waitForHeightsClose(originA, originB, tolerance, ms = 300000) {
     await sleep(500);
   }
   return null;
+}
+
+// Step 19b's precondition, read as the extension's tip verifier reads it with
+// C as the reading node (WEB_INTERFACE → The extension → "The verified tip"):
+// `resolveTip` over [C, A] — C first, so a tie keeps C — at the verifier's
+// m = 6 and k = 20, under devnet's profile. `outworked` is the verdict table's
+// row: C verified, A the winner, C's `behind` null. The scores are
+// `compareProofs`'s over the two proofs the result carries, in the fold's
+// order (C as `a`), and absent where either side did not verify.
+async function readForkComparison() {
+  const aOrigin = NODE.replace(/\/+$/, '');
+  const result = await forkTools.resolveTip([C_ORIGIN, aOrigin], 6, 20, forkTools.profile, Date.now, fetch);
+  const [c, a] = result.nodes;
+  const tipOf = (n) => (n.verifyResult?.ok === true ? n.verifyResult.tip.height : null);
+  const cmp = c.verified && a.verified
+    ? forkTools.compareProofs(c.proof, a.proof, 6, forkTools.verifierProfile(forkTools.profile, Date.now()))
+    : null;
+  return {
+    c: { verified: c.verified, refuseCode: c.refuseCode, tip: tipOf(c), behind: c.behind },
+    a: { verified: a.verified, refuseCode: a.refuseCode, tip: tipOf(a) },
+    winner: result.winnerIndex === 0 ? 'C' : result.winnerIndex === 1 ? 'A' : 'none',
+    compare: cmp === null ? null
+      : cmp.verdict === 'incomparable' ? { verdict: 'incomparable', reason: cmp.reason }
+      : { verdict: cmp.verdict === 'a' ? 'C' : cmp.verdict === 'b' ? 'A' : 'tie', scoreC: String(cmp.scoreA), scoreA: String(cmp.scoreB), lca: cmp.lca.height },
+    outworked: c.verified && result.winnerIndex === 1 && c.behind === null,
+  };
+}
+
+function describeForkComparison(r) {
+  const side = (name, s) => (s.verified ? `${name} tip ${s.tip}` : `${name} not verified (${s.refuseCode})`);
+  const scores = r.compare === null ? 'no comparison'
+    : r.compare.verdict === 'incomparable' ? `incomparable (${r.compare.reason})`
+    : `scores above LCA ${r.compare.lca}: C ${r.compare.scoreC} · A ${r.compare.scoreA} (${r.compare.verdict})`;
+  return `${side('C', r.c)}, ${side('A', r.a)}, winner ${r.winner}, C behind ${r.c.behind}, ${scores}`;
 }
 
 // The lying relay — WEB_INTERFACE → The extension → "The verified tip". Every
@@ -1600,43 +1656,60 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
         if (!cBackUp) {
           record('19b', false, `C did not come back up at ${C_ORIGIN} after restart`);
         } else {
-          // Phase 3 — mine 3 blocks on C while A mines on. Stop C's miner as
-          // soon as C is +3 above its sync height.
+          // Phase 3 — C mines a branch of its own while A mines on. C's miner
+          // runs at MINER_PCT=100 and can land several blocks between two
+          // reads half a second apart, so C's height is read every 20 ms and
+          // the miner stopped once C stands three above its sync height. A
+          // submit already in flight can still land after the stop; the depth
+          // the step reports is the one read once it settles.
           const hCbeforeMine = await currentHeight(C_ORIGIN);
-          console.log(`[vt] 19b phase 3: C isolated at height=${hCbeforeMine}, starting C's miner for ~3 blocks`);
+          console.log(`[vt] 19b phase 3: C isolated at height=${hCbeforeMine}, starting C's miner until C stands 3 above it`);
           spawnDaemon('c-miner', MINER_SCRIPT, {
             NODE_URL: C_ORIGIN,
             MINING_SECRET: cSecret,
             MINER_PCT: '100',
           });
-          const hCafterMine = await waitForHeight(C_ORIGIN, hCbeforeMine + 3, 600000);
+          const hCafterMine = await waitForHeight(C_ORIGIN, hCbeforeMine + 3, 600000, 20);
           await stopChild('c-miner');
           // C may land one more block already in flight after the miner stops.
           await sleep(1500);
           const hCafterSettle = await currentHeight(C_ORIGIN);
-          console.log(`[vt] 19b phase 3: C reached height=${hCafterSettle} after +3 mine`);
+          const cBranch = typeof hCafterSettle === 'number' && typeof hCbeforeMine === 'number'
+            ? hCafterSettle - hCbeforeMine
+            : null;
+          console.log(`[vt] 19b phase 3: C read ${hCafterMine} at the stop and ${hCafterSettle} once settled — a branch ${cBranch} deep above ${hCbeforeMine}`);
 
-          // Phase 4 — wait for A to stand above C. A paced A-miner does not
-          // necessarily overtake C's three fresh blocks by the moment C stops
-          // mining (`CLAUDE.md → "The proof"` — *"a few blocks a minute"*);
-          // the three assertions below read A > C and stand only once the
-          // pace has carried A past hCafterSettle. A five-minute bound is
-          // plenty at that pace; its expiry is a FAIL of 19b that names both
-          // heights.
-          const hAoverC = await (async () => {
-            const t0 = Date.now();
-            while (Date.now() - t0 < 300000) {
-              const h = await currentHeight(NODE);
-              if (typeof h === 'number' && typeof hCafterSettle === 'number' && h > hCafterSettle) return h;
-              await sleep(500);
+          // Phase 4 — wait for the comparison the verdict reads, not for
+          // height: a tie keeps the reading node, so A standing higher is not
+          // A outworking C (NIPOPOW_INTERFACE → compareProofs; WEB_INTERFACE →
+          // The extension → "The verified tip"). The tool's resolveTip over
+          // [C, A] is read every two seconds until C verifies, A wins and C's
+          // `behind` is null, while A's miner runs on and C stays cut off. Ten
+          // minutes bound it at the recipe's pace; its expiry is a FAIL of 19b
+          // that names the last comparison. A comparison is logged when it
+          // reads differently from the one before it.
+          const phase4Start = Date.now();
+          let comparisons = 0;
+          let comparison = null;
+          let comparedAt = null;
+          let lastLogged = null;
+          while (Date.now() - phase4Start < 600000) {
+            comparison = await readForkComparison();
+            comparisons += 1;
+            comparedAt = `+${((Date.now() - phase4Start) / 1000).toFixed(1)}s`;
+            const described = describeForkComparison(comparison);
+            if (described !== lastLogged) {
+              console.log(`[vt] 19b phase 4 comparison ${comparisons} (${comparedAt}): ${described}`);
+              lastLogged = described;
             }
-            return null;
-          })();
-          if (hAoverC === null) {
-            const hAlast = await currentHeight(NODE);
-            record('19b', false, `A did not overtake C within 5 minutes (hC=${hCafterSettle}, hA=${hAlast}); A's miner may be paced too slowly`);
+            if (comparison.outworked) break;
+            await sleep(2000);
+          }
+          if (!comparison.outworked) {
+            record('19b', false, `A's proof did not out-score C's within 10 minutes — the last of ${comparisons} comparisons (${comparedAt}): ${describeForkComparison(comparison)}; C's branch ${cBranch} deep above ${hCbeforeMine}`);
           } else {
-            console.log(`[vt] 19b phase 4: A overtook C at hA=${hAoverC} (hC=${hCafterSettle})`);
+            const phase4 = `C's branch ${cBranch} deep above ${hCbeforeMine}; phase 4: A's proof out-scored C's at comparison ${comparisons} (${comparedAt}): ${describeForkComparison(comparison)}`;
+            console.log(`[vt] 19b phase 4: A's proof out-scored C's at comparison ${comparisons} (${comparedAt})`);
             // Assertions — peers_connected=0 on C, C's block at hCnow ≠ A's,
             // A > C. The block-at-height read (`/blocks/:height`,
             // NODE_INTERFACE → Blocks) carries the full header; two different
@@ -1669,7 +1742,7 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
           console.log(`[vt] 19b assertions: peers_connected=${cPeers}, hA=${hAnow}, hC=${hCnow}, forkH=${forkH}, cBlock.sig=${cSig?.slice(0, 12) ?? 'null'}…, aBlock.sig=${aSig?.slice(0, 12) ?? 'null'}…, fork=${forkOk}`);
           if (!forkOk) {
             record('19b', false,
-              `fork preconditions failed: C peers_connected=${cPeers}, hA=${hAnow}, hC=${hCnow}, C.block@${forkH}.sig=${cSig?.slice(0, 12) ?? 'null'}…, A.block@${forkH}.sig=${aSig?.slice(0, 12) ?? 'null'}…`);
+              `fork preconditions failed: C peers_connected=${cPeers}, hA=${hAnow}, hC=${hCnow}, C.block@${forkH}.sig=${cSig?.slice(0, 12) ?? 'null'}…, A.block@${forkH}.sig=${aSig?.slice(0, 12) ?? 'null'}…; ${phase4}`);
           } else {
             // The outworked title names the WINNER (contract → "the host with
             // its port, never the URL"), not the reading node — A holds more
@@ -1696,7 +1769,7 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
               && titleRe.test(reading.title ?? '')
               && tipCheck.near;
             record('19b', ok,
-              `prefs.node stored=${JSON.stringify(stored)}, applied=${JSON.stringify(applied)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, title tip=${tipCheck.tipTitle} vs C height=${tipCheck.nodeHeight} near=${tipCheck.near}, C peers_connected=${cPeers}, hA=${hAnow}, hC=${hCnow}, C.block@${forkH}.sig=${cSig.slice(0, 12)}…, A.block@${forkH}.sig=${aSig.slice(0, 12)}…, proof requests=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))})`);
+              `prefs.node stored=${JSON.stringify(stored)}, applied=${JSON.stringify(applied)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, title tip=${tipCheck.tipTitle} vs C height=${tipCheck.nodeHeight} near=${tipCheck.near}, C peers_connected=${cPeers}, hA=${hAnow}, hC=${hCnow}, C.block@${forkH}.sig=${cSig.slice(0, 12)}…, A.block@${forkH}.sig=${aSig.slice(0, 12)}…, proof requests=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))}); ${phase4}`);
           }
           }
           const post = await blankNodeAndAwaitVerified(cx);
