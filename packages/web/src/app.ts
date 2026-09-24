@@ -1199,6 +1199,18 @@ export class App {
     });
   }
 
+  /** An author-posts window's read ended. Its body renders where it is focused,
+   *  and every other column holding it redraws its bars in place, the body
+   *  untouched: its bar reads the subject's name from its rows where no author
+   *  window's read holds one (WEB_INTERFACE → The author window). */
+  private renderPostsLoad(key: string): void {
+    const posts = postsWindowId(key);
+    this.state.workspace.columns.forEach((column, ci) => {
+      if (column.wins[column.focus] === posts) this.renderRegion(column.uid);
+      else if (column.wins.includes(posts)) this.replaceBars(column, ci);
+    });
+  }
+
   /** Replace a column's bars in place from the current ctx, leaving its body. */
   private replaceBars(column: Column, ci: number): void {
     const region = this.panesEl.querySelector<HTMLElement>(`.region[data-uid="${column.uid}"]`);
@@ -2739,7 +2751,7 @@ export class App {
       f.error = msg(e);
     }
     f.loading = false;
-    this.renderRegionsFor(postsWindowId(key));
+    this.renderPostsLoad(key);
   }
 
   /** The posts window's ↻ reports what it did through the feed's own reconcile,
@@ -2774,7 +2786,7 @@ export class App {
       if (gen !== this.readerGen) return;
       f.error = msg(e);
     }
-    this.renderRegionsFor(postsWindowId(key));
+    this.renderPostsLoad(key);
   }
 
   /** An author-posts window's `more` continues the cursor it was asked for: a
@@ -2798,7 +2810,7 @@ export class App {
       if (gen !== this.readerGen || f.next !== cursor) return;
       f.error = msg(e);
     }
-    this.renderRegionsFor(postsWindowId(key));
+    this.renderPostsLoad(key);
   }
 
   // ---- invite, from the profile's invites row (WEB_INTERFACE → The profile window) ----

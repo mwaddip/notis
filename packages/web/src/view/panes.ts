@@ -60,6 +60,18 @@ function threadLabel(k: string, ctx: RenderCtx): BarLabel {
   return { authorKey: root.author, authorName: root.authorName, excerpt: root.content ?? 'content not on this node yet', replyCount: t.descendantCount, nested };
 }
 
+/** The name an author or posts window's bar reads: the subject's, read by the
+ *  author window, where that read holds one; else, on a posts window, the
+ *  `authorName` of its first row whose author is the subject — every row of it
+ *  is theirs, and the node fills the name on each (WEB_INTERFACE → The author
+ *  window; NODE_INTERFACE → Usernames → "A list row carries its names"). */
+function subjectName(sub: { kind: 'author' | 'posts'; key: string }, ctx: RenderCtx): string | null {
+  const read = ctx.author.get(sub.key)?.username;
+  if (read) return read.name;
+  if (sub.kind === 'author') return null;
+  return ctx.authorPosts.get(sub.key)?.posts.find((row) => row.author === sub.key)?.authorName ?? null;
+}
+
 function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: Handlers, ctx: RenderCtx): HTMLElement {
   const win = isWin(k);
   const b = el('div', 'bar' + (focused ? ' focused' : '') + (win ? ' win' : ''));
@@ -74,11 +86,11 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
     // holds a name, else the prefix in mono (WEB_INTERFACE → The identity display).
     label.setAttribute('aria-label', 'show this window');
     label.appendChild(el('span', 'name', sub.kind === 'author' ? 'author' : 'posts'));
-    const subName = ctx.author.get(sub.key)?.username;
-    if (subName) {
-      const h = el('span', 'handle', '@' + subName.name);
-      if (ctx.nameClay(sub.key, subName.name)) h.classList.add('clay');
-      markHandle(h, sub.key, subName.name);
+    const subName = subjectName(sub, ctx);
+    if (subName !== null) {
+      const h = el('span', 'handle', '@' + subName);
+      if (ctx.nameClay(sub.key, subName)) h.classList.add('clay');
+      markHandle(h, sub.key, subName);
       label.appendChild(h);
     } else {
       label.appendChild(el('span', 'hex', shortHex(sub.key, 10)));

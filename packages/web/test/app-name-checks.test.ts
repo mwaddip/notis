@@ -47,6 +47,7 @@ const T = 'a4'.repeat(32);    // Tom — ROOT4's author: ROOT4's thread alone
 const N = '94'.repeat(32);    // Neo — ROOTN's author: the feed after a ↻
 const U = '84'.repeat(32);    // Uma — the second page of the reader's bonds
 const Z = '7a'.repeat(32);    // Zed — ROOT6's author, a withdrawn root: the thread's root alone
+const O = '64'.repeat(32);    // Ola — ROOT9's author, holding no name: her posts window's rows carry none
 
 const ROOT = '1'.repeat(64);
 const ROOT2 = '2'.repeat(64);
@@ -58,6 +59,9 @@ const ROOT4 = '7'.repeat(64);
 const ROOT5 = '8'.repeat(64);
 const ROOTN = '9'.repeat(64);
 const ROOT6 = 'f'.repeat(64);
+const ROOT7 = '0a'.repeat(32); // Kay's, carrying the name she held when it was read
+const ROOT8 = '0b'.repeat(32); // Eve's, carrying no name
+const ROOT9 = '0c'.repeat(32); // Ola's
 
 const MINE = namePair(ME, 'Me_1');
 const ALICE = namePair(A, 'Alice');
@@ -79,7 +83,7 @@ const TWO = namePair(ME2, 'Two');
  *  sources, every other pair through one alone. */
 const ON_SCREEN = [MINE, ALICE, BOB, VIC, IVY, DEE, PAM, EVE, KAY];
 
-function post(id: string, author: string, authorName: string, content: string, parents: string[] = []): PostJson {
+function post(id: string, author: string, authorName: string | null, content: string, parents: string[] = []): PostJson {
   return {
     id, content, contentHash: contentHashHex(content), author, parentRefs: parents,
     protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 90, blockIndex: 0,
@@ -107,6 +111,10 @@ function statusResult(): StatusResult {
 interface World {
   names: Map<string, UsernameResult>;
   feedPosts: PostJson[];
+  // An author's posts: the first page, and the page after its cursor, which
+  // the first page names only when the author has one.
+  postsOf: Map<string, PostJson[]>;
+  olderPostsOf: Map<string, PostJson[]>;
   threadReads: number;
   usernameByOwner: string[];
   usernameByName: number;
@@ -114,6 +122,9 @@ interface World {
   // a test releases its waiter.
   holdOwner: string | null;
   ownerWaiters: Array<() => void>;
+  // While set, the node holds each page of that author's posts the same way.
+  holdPosts: string | null;
+  postsWaiters: Array<() => void>;
 }
 
 const KAY_NAME: UsernameResult = { name: 'Kay', owner: K, boxId: '54'.repeat(32), claimedAtBlock: 43 };
@@ -128,21 +139,25 @@ function world(): World {
       [K, KAY_NAME],
     ]),
     feedPosts: [post(ROOT, A, 'Alice', 'the root'), post(ROOT2, B, 'Bob', 'second root'), post(ROOT3, D, 'Dee', 'dee writes')],
+    postsOf: new Map<string, PostJson[]>([
+      [A, [post(ROOT, A, 'Alice', 'the root')]],
+      [B, [post(ROOT2, B, 'Bob', 'second root')]],
+      [E, [post(ROOT5, E, 'Eve', 'eve writes')]],
+      [O, [post(ROOT9, O, null, 'ola writes')]],
+    ]),
+    olderPostsOf: new Map<string, PostJson[]>(),
     threadReads: 0,
     usernameByOwner: [],
     usernameByName: 0,
     holdOwner: null,
     ownerWaiters: [],
+    holdPosts: null,
+    postsWaiters: [],
   };
 }
 
 function fakeApi(w: World): Api {
   const pending: PostJson = { ...post(PEND, P, 'Pam', 'not in a block yet'), status: 'pending', blockHeight: null, blockIndex: null };
-  const byAuthor = new Map<string, PostJson[]>([
-    [A, [post(ROOT, A, 'Alice', 'the root')]],
-    [B, [post(ROOT2, B, 'Bob', 'second root')]],
-    [E, [post(ROOT5, E, 'Eve', 'eve writes')]],
-  ]);
   const thread = (root: PostJson, replies: PostJson[]): ThreadResult => ({
     post: root, ancestors: [], ancestorCount: 0, descendants: replies, descendantCount: replies.length,
     next: null, pending: [], pendingCount: 0,
@@ -164,9 +179,13 @@ function fakeApi(w: World): Api {
     id: invitee.slice(0, 2).repeat(32), value: '100', inviterId: ME, inviteePublicKey: invitee, inviterName: 'Me_1', inviteeName: name,
   });
   return {
-    feed: async (_page, _viewer, author): Promise<FeedResult> => (author === undefined
-      ? { posts: [...w.feedPosts], next: null, pending: [pending], pendingCount: 1 }
-      : { posts: byAuthor.get(author) ?? [], next: null, pending: [], pendingCount: 0 }),
+    feed: async (page, _viewer, author): Promise<FeedResult> => {
+      if (author === undefined) return { posts: [...w.feedPosts], next: null, pending: [pending], pendingCount: 1 };
+      if (w.holdPosts === author) await new Promise<void>((release) => { w.postsWaiters.push(release); });
+      if (page?.after !== undefined) return { posts: [...(w.olderPostsOf.get(author) ?? [])], next: null, pending: [], pendingCount: 0 };
+      const next = w.olderPostsOf.has(author) ? 'older' : null;
+      return { posts: [...(w.postsOf.get(author) ?? [])], next, pending: [], pendingCount: 0 };
+    },
     thread: async (id) => {
       w.threadReads += 1;
       return threads.get(id) ?? null;
@@ -721,6 +740,185 @@ describe('the name checks — a pair first on a surface', () => {
   });
 });
 
+describe('the name checks — a posts window\'s bar reads its rows\' name where no author window\'s read holds one', () => {
+  it('a posts window opened with no author window reads `posts · @Name` from its rows, marked with the pair, and asks for no name; a clay result turns the handle clay where it stands, and the next render draws it clay', async () => {
+    const h = harness();
+    h.drive.openAuthorPosts(E, { from: 'feed' });
+    await flush();
+    const label = col(h, 0).querySelector<HTMLElement>('.bar-label')!;
+    expect(label.querySelector('.name')?.textContent).toBe('posts');
+    expect(label.querySelector('.hex')).toBeNull();
+    const handle = label.querySelector<HTMLElement>('.handle')!;
+    expect(handle.textContent).toBe('@Eve');
+    expect(handle.dataset.namePair).toBe(EVE);
+    // The name is the rows': no name read was asked for Eve.
+    expect(h.world.usernameByOwner).not.toContain(E);
+    // A verified run checks the pair, and a clay result lands on the bar's
+    // handle and the card's, and on nothing else.
+    const anchor = anchorFor(100);
+    await verify(h, 0, anchor);
+    const records = observe(h);
+    const c = await answerOne(h, 'absent');
+    expect(pairOf(c)).toBe(EVE);
+    expect(c.anchor).toBe(anchor);
+    expect(handle.isConnected).toBe(true);
+    expect(handle.classList.contains('clay')).toBe(true);
+    const eve = marked(EVE);
+    expect(eve).toContain(handle);
+    const rs = records();
+    expect(rs.every((r) => r.type === 'attributes' && r.attributeName === 'class')).toBe(true);
+    expect(new Set(rs.map((r) => r.target))).toEqual(new Set(eve));
+    // The next render draws the bar's handle clay from the result held.
+    h.drive.renderPanes();
+    const drawn = col(h, 0).querySelector<HTMLElement>('.bar-label .handle')!;
+    expect(drawn).not.toBe(handle);
+    expect(drawn.textContent).toBe('@Eve');
+    expect(drawn.classList.contains('clay')).toBe(true);
+  });
+
+  it('the first row by the subject names the bar — a row by another author lends it nothing, and a ↻ that brings a newer row carrying no name leaves the prefix', async () => {
+    const w = world();
+    // The node answers Eve's posts with another author's row first.
+    w.postsOf.set(E, [post(ROOT3, D, 'Dee', 'dee writes'), post(ROOT5, E, 'Eve', 'eve writes')]);
+    const h = harness({ world: w });
+    h.drive.openAuthorPosts(E, { from: 'feed' });
+    await flush();
+    const label = (): HTMLElement => col(h, 0).querySelector<HTMLElement>('.bar-label')!;
+    expect(label().querySelector<HTMLElement>('.handle')?.textContent).toBe('@Eve');
+    expect(label().querySelector<HTMLElement>('.handle')?.dataset.namePair).toBe(EVE);
+    // Eve burns her name and posts again: the ↻ brings her newer row, carrying
+    // none, above the rows that stood.
+    w.postsOf.set(E, [post(ROOT8, E, null, 'eve after the burn'), ...(w.postsOf.get(E) ?? [])]);
+    col(h, 0).querySelector<HTMLButtonElement>('button[aria-label="refresh these posts"]')!.click();
+    await flush();
+    expect(col(h, 0).querySelector(`.card[data-post-id="${ROOT8}"]`)).not.toBeNull();
+    expect(label().querySelector('.handle')).toBeNull();
+    expect(label().querySelector('.hex')).not.toBeNull();
+  });
+
+  it('with the author window open both bars read the name its read holds, over a name the rows carry; while that read is in flight the posts bar keeps its rows\' name', async () => {
+    const w = world();
+    // Kay's row was read under the name she held before: Kay_1.
+    w.postsOf.set(K, [post(ROOT7, K, 'Kay_1', 'kay writes')]);
+    const h = harness({ world: w });
+    h.drive.openAuthorPosts(K, { from: 'feed' });
+    await flush();
+    const postsLabel = (): HTMLElement => col(h, 0).querySelector<HTMLElement>('.bar-label')!;
+    expect(postsLabel().querySelector('.handle')?.textContent).toBe('@Kay_1');
+    // The author window opens in the next column with its name read held.
+    w.holdOwner = K;
+    h.drive.openAuthor(K, { from: 'pane', ci: 0 });
+    await flush();
+    expect(col(h, 1).querySelector('.bar-label .name')?.textContent).toBe('author');
+    expect(col(h, 1).querySelector('.bar-label .hex')).not.toBeNull();
+    expect(postsLabel().querySelector('.handle')?.textContent).toBe('@Kay_1');
+    for (const release of w.ownerWaiters.splice(0)) release();
+    await flush();
+    // The read landed: both bars read Kay, marked with her pair; the posts
+    // window's card keeps the row it holds.
+    const handle = postsLabel().querySelector<HTMLElement>('.handle')!;
+    expect(handle.textContent).toBe('@Kay');
+    expect(handle.dataset.namePair).toBe(KAY);
+    expect(col(h, 1).querySelector('.bar-label .handle')?.textContent).toBe('@Kay');
+    expect(col(h, 0).querySelector(`.card[data-post-id="${ROOT7}"] .who .handle`)?.textContent).toBe('@Kay_1');
+  });
+
+  it('an author read that holds no name leaves the posts bar on its rows\' name, and a check that finds none turns it clay', async () => {
+    const h = harness();
+    // Eve's name read answers none; her rows carry Eve.
+    expect(h.world.names.has(E)).toBe(false);
+    h.drive.openAuthorPosts(E, { from: 'feed' });
+    await flush();
+    h.drive.openAuthor(E, { from: 'pane', ci: 0 });
+    await flush();
+    expect(h.world.usernameByOwner).toContain(E);
+    expect(col(h, 1).querySelector('.bar-label .handle')).toBeNull();
+    expect(col(h, 1).querySelector('.bar-label .hex')).not.toBeNull();
+    const handle = col(h, 0).querySelector<HTMLElement>('.bar-label .handle')!;
+    expect(handle.textContent).toBe('@Eve');
+    expect(handle.dataset.namePair).toBe(EVE);
+    await verify(h, 0, anchorFor(100));
+    const c = await answerOne(h, 'none');
+    expect(pairOf(c)).toBe(EVE);
+    expect(handle.isConnected).toBe(true);
+    expect(handle.classList.contains('clay')).toBe(true);
+  });
+
+  it.each(['its first page', 'its ↻ on its bar', 'its more', 'a node change\'s re-read'] as const)('a posts window stacked behind another window draws its rows\' name on its bar as they land — %s — the body untouched, and the handle is checked', async (how) => {
+    const w = world();
+    // What the window holds before the landing: nothing on its first page or
+    // across a node change, a row carrying no name before its ↻, another
+    // author's row before its more.
+    if (how === 'its ↻ on its bar') w.postsOf.set(E, [post(ROOT8, E, null, 'eve before her claim')]);
+    if (how === 'its more') {
+      w.postsOf.set(E, [post(ROOT3, D, 'Dee', 'dee writes')]);
+      w.olderPostsOf.set(E, [post(ROOT5, E, 'Eve', 'eve writes')]);
+    }
+    if (how === 'its first page') w.holdPosts = E;
+    const h = harness({ world: w });
+    h.drive.openAuthorPosts(E, { from: 'feed' });
+    await flush();
+    if (how === 'its more') {
+      // `more` is pressed in the window's body; its page is held while the
+      // settings window joins the stack.
+      w.holdPosts = E;
+      col(h, 0).querySelector<HTMLButtonElement>('button[aria-label="load more posts by this author"]')!.click();
+      await flush();
+    }
+    // The settings window joins column 0's stack, focused; the posts window's
+    // bar stands above it.
+    h.drive.openSettings();
+    await flush();
+    const postsBar = (): HTMLElement => col(h, 0).querySelector<HTMLElement>('.bar')!;
+    expect(postsBar().querySelector('.bar-label .name')?.textContent).toBe('posts');
+    expect(postsBar().classList.contains('focused')).toBe(false);
+    let anchor = anchorFor(100);
+    await verify(h, 0, anchor);
+    await answer(h, () => 'proven');
+    if (how === 'its ↻ on its bar') {
+      // Eve claims her name and posts again; the ↻ is held.
+      w.postsOf.set(E, [post(ROOT5, E, 'Eve', 'eve writes'), post(ROOT8, E, null, 'eve before her claim')]);
+      w.holdPosts = E;
+      postsBar().querySelector<HTMLButtonElement>('button[aria-label="refresh these posts"]')!.click();
+      await flush();
+    } else if (how === 'a node change\'s re-read') {
+      expect(postsBar().querySelector('.handle')?.textContent).toBe('@Eve');
+      w.holdPosts = E;
+      await h.drive.changeNode(NODE_B);
+      await flush();
+      // The new node's run verifies while the window's rows are held.
+      anchor = anchorFor(101);
+      await verify(h, 1, anchor);
+      await answer(h, () => 'proven');
+    }
+    // The rows are held: the posts bar reads the key prefix.
+    expect(postsBar().querySelector('.handle')).toBeNull();
+    expect(postsBar().querySelector('.hex')).not.toBeNull();
+    const body = col(h, 0).querySelector<HTMLElement>('.region-body')!;
+    const shown = body.firstElementChild;
+    const asked = h.nameCalls.length;
+    for (const release of w.postsWaiters.splice(0)) release();
+    await flush();
+    // The stacked bar reads the rows' name, marked with its pair.
+    const handle = postsBar().querySelector<HTMLElement>('.bar-label .handle')!;
+    expect(handle.textContent).toBe('@Eve');
+    expect(handle.dataset.namePair).toBe(EVE);
+    expect(postsBar().classList.contains('focused')).toBe(false);
+    // The focused window's body is the one that stood.
+    expect(col(h, 0).querySelector('.region-body')).toBe(body);
+    expect(body.firstElementChild).toBe(shown);
+    // The handle is checked against the anchor standing, and a clay result
+    // lands on it where it stands; no name read was asked for Eve.
+    const fresh = await answerOne(h, 'absent');
+    expect(pairOf(fresh)).toBe(EVE);
+    expect(fresh.anchor).toBe(anchor);
+    expect(h.nameCalls).toHaveLength(asked + 1);
+    expect(handle.isConnected).toBe(true);
+    expect(handle.classList.contains('clay')).toBe(true);
+    expect(h.world.usernameByOwner).not.toContain(E);
+  });
+});
+
 describe('the name checks — one batch in flight', () => {
   it('pairs appearing during a batch make one more batch of those pairs, not two', async () => {
     const h = harness();
@@ -937,9 +1135,15 @@ describe('the name checks — every handle carries the pair it reads', () => {
     expect(h.appbar.querySelector<HTMLElement>('button[aria-label="open profile"]')!.dataset.namePair).toBe(MINE);
     // Every handle on the page is a site.
     for (const e of document.querySelectorAll<HTMLElement>('.handle')) expect(e.dataset.namePair).toBeDefined();
-    // Eve's posts window bar is her prefix — no author window read her name.
-    expect(bar(4).querySelector('.hex')).not.toBeNull();
-    expect(bar(4).querySelector('[data-name-pair]')).toBeNull();
+    // Eve's posts window bar reads her name from its rows — no author window
+    // read it (WEB_INTERFACE → The author window).
+    expect(pairAt(bar(4), '@Eve')).toBe(EVE);
+    // A posts window whose rows carry no name reads the prefix, and a prefix
+    // carries no pair.
+    h.drive.openAuthorPosts(O, { from: 'pane', ci: 5 });
+    await flush();
+    expect(bar(6).querySelector('.hex')).not.toBeNull();
+    expect(bar(6).querySelector('[data-name-pair]')).toBeNull();
   });
 
   it('a card drawn with no check to read carries no pair; drawn with one, its handle carries the row\'s', () => {
