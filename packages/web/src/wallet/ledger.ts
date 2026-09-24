@@ -1,6 +1,6 @@
 import { readStore, writeStore } from '../prefs';
 import { isWithdrawn } from '../api/dto';
-import { heldEntry, isBlockHeight } from './expiry';
+import { heldEntry } from './expiry';
 import type { PostResult, KarmaResult, UsernameResult, CreditsResult } from '../api/dto';
 import type { SpendableBox, ChangeRef, PendingEntry, EntryOutcome, SendRef, UnboundedEntry } from './types';
 
@@ -324,9 +324,10 @@ const KNOWN_KINDS: ReadonlySet<PendingEntry['kind']> = new Set<PendingEntry['kin
 ]);
 
 /** Validate and convert one stored entry, throwing on any malformed field so
- *  restore() can drop the whole ledger rather than load a partial one. The
- *  stored `expiresAtHeight` is not checked here: restore holds it through the
- *  bound, which takes any shape. */
+ *  restore() can drop the whole ledger rather than load a partial one.
+ *  `submittedAtHeight` need only be a number, and the stored `expiresAtHeight`
+ *  is not checked at all: restore holds both through the bound, which takes
+ *  any shape. */
 function parseStoredEntry(v: unknown): UnboundedEntry {
   if (typeof v !== 'object' || v === null) throw new Error('entry is not an object');
   const o = v as Record<string, unknown>;
@@ -335,7 +336,7 @@ function parseStoredEntry(v: unknown): UnboundedEntry {
     throw new Error('entry has an unknown kind');
   }
   if (!Array.isArray(o.inputs) || !o.inputs.every((x) => typeof x === 'string')) throw new Error('entry inputs are not strings');
-  if (!isBlockHeight(o.submittedAtHeight)) throw new Error('entry submittedAtHeight is not a block height');
+  if (typeof o.submittedAtHeight !== 'number') throw new Error('entry submittedAtHeight is not a number');
   let change: ChangeRef | undefined;
   if (o.change !== undefined) {
     const c = o.change;

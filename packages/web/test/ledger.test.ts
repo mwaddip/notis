@@ -24,6 +24,7 @@ import {
 import type { PendingEntry } from '../src/wallet/types';
 import type { PostJson, PostResult, WithdrawnJson, CreditsResult } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
+import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 
 const KEY = 'aa'.repeat(32); // the identity that owns the ledger
 const STORE = pendingKeyFor(KEY)!; // notis.pending.<KEY>
@@ -148,22 +149,37 @@ describe('PendingLedger — persistence and removal', () => {
     expect(new PendingLedger(KEY).size).toBe(0);
     // Each shape fault drops the ledger: non-string inputs, a change whose value
     // is not a decimal string, a non-string id, and a submittedAtHeight that is
-    // not a block height — the bound needs the height the entry was built at.
+    // not a number at all — restore holds any number through the bound.
     const { submittedAtHeight: _built, ...unbuilt } = good;
     for (const bad of [
       { ...good, inputs: [1, 2] },
       { ...good, change: { boxId: 'c', value: 5, createdAtBlock: 1 } },
       { ...good, txId: 42 },
       { ...good, submittedAtHeight: 'soon' },
-      { ...good, submittedAtHeight: 5000.5 },
-      { ...good, submittedAtHeight: -1 },
-      { ...good, submittedAtHeight: 2 ** 53 },
       { ...good, submittedAtHeight: null },
       unbuilt,
     ]) {
       localStorage.setItem(STORE, JSON.stringify([good, bad]));
       expect(new PendingLedger(KEY).size, JSON.stringify(bad)).toBe(0);
     }
+  });
+
+  it('restore takes any number as submittedAtHeight — a fraction, a negative and an out-of-range value all restore, bounded', () => {
+    const stored = (txId: string, submittedAtHeight: number): Record<string, unknown> => ({
+      txId, kind: 'post', postId: 'p-' + txId, inputs: ['in-' + txId],
+      submittedAtHeight, expiresAtHeight: 5720,
+    });
+    localStorage.setItem(STORE, JSON.stringify([
+      stored('t1', 5000.5),
+      stored('t2', -1),
+      stored('t3', 2 ** 53),
+    ]));
+    const restored = new PendingLedger(KEY).all();
+    expect(restored.map((e) => [e.txId, e.submittedAtHeight, e.expiresAtHeight])).toEqual([
+      ['t1', 5000.5, Math.min(5720, 5000.5 + MEMPOOL_EXPIRY_BLOCKS)],
+      ['t2', -1, Math.min(5720, -1 + MEMPOOL_EXPIRY_BLOCKS)],
+      ['t3', 2 ** 53, Math.min(5720, 2 ** 53 + MEMPOOL_EXPIRY_BLOCKS)],
+    ]);
   });
 
   // WEB_INTERFACE → The wallet → "A pending entry's expiry is the client's, and a
