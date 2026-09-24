@@ -342,13 +342,22 @@ function sendForm(slot: HTMLElement, handlers: WalletHandlers, ctx: WalletCtx): 
   // next press proceeds without a second unlock (WEB_INTERFACE → The wallet).
   let cur = ctx;
 
+  // The key beneath the field names the one a send goes to (WEB_INTERFACE →
+  // The wallet window → "The `send` row"), so a press that ends in a refusal
+  // takes away the key a press before it left there.
+  const refuse = (text: string): void => {
+    resolvedKey.textContent = '';
+    resolvedKey.hidden = true;
+    refusal.textContent = text;
+    refusal.hidden = false;
+  };
+
   const submitForm = async (): Promise<void> => {
     refusal.hidden = true;
     // Amount first — a bad number never asks the network for a handle.
     const amount = parseCredits(amountInput.value);
     if (amount === null || amount === 0n) {
-      refusal.textContent = 'an amount is digits with up to eight decimals.';
-      refusal.hidden = false;
+      refuse('an amount is digits with up to eight decimals.');
       return;
     }
     // Recipient: a bare 64 hex is a key; else an @handle (one leading @ stripped) validated as a username.
@@ -362,22 +371,19 @@ function sendForm(slot: HTMLElement, handlers: WalletHandlers, ctx: WalletCtx): 
       const naked = raw.startsWith('@') ? raw.slice(1) : raw;
       const bytes = new TextEncoder().encode(naked);
       if (!isValidUsernameBytes(bytes)) {
-        refusal.textContent = 'that is not a key or a name.';
-        refusal.hidden = false;
+        refuse('that is not a key or a name.');
         return;
       }
       const res = await handlers.resolveRecipient(naked);
       if ('refusal' in res) {
-        refusal.textContent = res.refusal;
-        refusal.hidden = false;
+        refuse(res.refusal);
         return;
       }
       toHex = res.key;
       toName = res.name;
     }
     if (toHex === cur.identity?.pubKeyHex) {
-      refusal.textContent = 'that is your own key.';
-      refusal.hidden = false;
+      refuse('that is your own key.');
       return;
     }
     if (cur.confirmInRow) {

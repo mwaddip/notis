@@ -1,0 +1,644 @@
+// @vitest-environment happy-dom
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { Anchor, NameClaim, NameResult, NameStatus } from '@dagsocial/nipopow-client';
+import type { BlockHeader } from '@dagsocial/types';
+import { App } from '../src/app';
+import type { Api } from '../src/api/client';
+import type { WriteClient, SendSubmitResult, Rejection } from '../src/api/write';
+import type { AppIdentity, NamesVerifier, TipVerifier } from '../src/model/state';
+import type { SignResult } from '../src/wallet/submit';
+import type { CreditsResult, FeedResult, PostJson, StatusResult, UsernameResult } from '../src/api/dto';
+import type { TipVerdict } from '../src/model/tip-verdict';
+import { karmaResult } from './karma-fixture';
+import { contentHashHex } from '../src/integrity';
+import { setNode } from '../src/prefs';
+
+// The send's check at the press (WEB_INTERFACE → The extension → "The verified
+// names", → The wallet window → "The `send` row"), driven through the App as the
+// extension build holds it: the identity module with a policy — no confirm row —
+// a tip verifier and a names verifier, every run of each answered by the test. A
+// typed handle is checked against the anchor standing, or the one a tip run
+// writes; the send goes to the key the proven box names and never the node's
+// word; every other ending refuses in the row, the form keeping its values and
+// nothing signed.
+
+const NODE_A = 'https://a.example';
+const NODE_B = 'https://b.example';
+
+const ME = 'aa'.repeat(32);   // the reader
+const REC = 'cd'.repeat(32);  // the key the proven box names
+const EVE = 'e7'.repeat(32);  // another holder, for a second press
+const EVIL = 'e5'.repeat(32); // the key the node's own /usernames/:name answers — the App never asks
+const CBOX = 'bb'.repeat(32); // the reader's spendable credit box
+
+const CANT = "@bob can't be checked — the chain is not verified.";
+
+function post(): PostJson {
+  return {
+    id: '1'.repeat(64), content: 'hi', contentHash: contentHashHex('hi'), author: 'f1'.repeat(32), parentRefs: [],
+    protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 90, blockIndex: 0,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null,
+  };
+}
+
+function statusResult(): StatusResult {
+  return {
+    networkType: 'testnet', blockHeight: 100, protocolVersion: 1, postCount: 1, pendingPosts: 0,
+    totalKarma: '0', liquidKarma: '0', totalCredits: '0', inviteProbationBlocks: 43200,
+    vouchCooldownBlocks: 60, inviteBondMin: '100', inviteBondMax: '1000',
+    membership: { memberCount: 2, memberBar: 3, memberLikesBar: 6 },
+  };
+}
+
+/** What the fake node and the fake signer answer, changeable by a test, and
+ *  what they were asked. */
+interface World {
+  ownName: UsernameResult | null;
+  sign: 'signed' | 'declined' | 'held';
+  signCalls: string[];
+  usernameByName: string[];
+}
+
+function world(): World {
+  return { ownName: null, sign: 'signed', signCalls: [], usernameByName: [] };
+}
+
+function fakeApi(w: World): Api {
+  return {
+    feed: async (): Promise<FeedResult> => ({ posts: [post()], next: null, pending: [], pendingCount: 0 }),
+    thread: async () => null,
+    post: async () => null,
+    status: async () => statusResult(),
+    currentBlock: async () => ({ height: 100, hash: null }),
+    karma: async (key) => karmaResult({
+      userId: key, member: true, invitesAvailable: 2, memberSinceBlock: 5, boxCount: 1,
+      total: '250', effective: '250', boxes: [{ boxId: '11'.repeat(32), value: '250' }], height: 100,
+    }),
+    credits: async (key): Promise<CreditsResult> => (key === ME
+      ? { userId: ME, total: '10000000000', boxes: [{ boxId: CBOX, value: '10000000000' }], boxCount: 1, next: null }
+      : { userId: key, total: '0', boxes: [], boxCount: 0, next: null }),
+    vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
+    vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
+    vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
+    bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
+    usernameByOwner: async (key) => (key === ME ? w.ownName : null),
+    // The node's own word for a handle names another key — read, it would send
+    // there. The extension never reads it.
+    usernameByName: async (name) => {
+      w.usernameByName.push(name);
+      return { name, owner: EVIL, boxId: '5e'.repeat(32), claimedAtBlock: 1 };
+    },
+  };
+}
+
+function fakeWrite(w: World): WriteClient {
+  return {
+    submitSend: async (): Promise<SendSubmitResult | Rejection> =>
+      ({ status: 'pending', txId: w.signCalls[w.signCalls.length - 1]!, expiresAtHeight: 820 }),
+  } as unknown as WriteClient;
+}
+
+function identity(w: World): AppIdentity {
+  return {
+    current: () => ({ pubKeyHex: ME, locked: false }),
+    sign: (_bytes: Uint8Array, txIdHex: string): Promise<SignResult> => {
+      w.signCalls.push(txIdHex);
+      if (w.sign === 'held') return new Promise(() => {});
+      return Promise.resolve(w.sign === 'declined' ? { declined: true } : { signature: 'ab'.repeat(64) });
+    },
+    onChange: () => {},
+    draft: async () => ({ pubKeyHex: ME }),
+    create: async () => ({ pubKeyHex: ME }),
+    discardDraft: () => {},
+    inspectFile: async () => ({ kind: 'clear' as const, pubKeyHex: ME }),
+    importFile: async () => ({ pubKeyHex: ME }),
+    exportFile: async () => '',
+    unlock: async () => {},
+    lock: async () => {},
+    forget: async () => {},
+    backedUp: () => true,
+    // The extension's proxy carries the policy, and the App reads its presence
+    // as the build with no confirm row (WEB_INTERFACE → The wallet window).
+    policy: () => 'silent',
+    setPolicy: async () => {},
+  };
+}
+
+function header(height: number, tag: string): BlockHeader {
+  return {
+    protocolVersion: 1, height, prevBlockHash: '00'.repeat(32), utxoTxRoot: '00'.repeat(32),
+    stateRoot: '11'.repeat(31) + tag, validatorId: new Uint8Array(32), powNonce: 0,
+    powTargetBits: 0x1d00ffff, createdAt: 0, interlinkRoot: '00'.repeat(32),
+  };
+}
+
+function anchorFor(h: number): Anchor {
+  return { tip: header(h, 'aa'), suffixHead: { header: header(h - 19, 'bb'), interlinks: [] } };
+}
+
+interface TipRunHandle {
+  resolve: (run: { verdict: TipVerdict; anchor: Anchor | null }) => void;
+  reject: (e: unknown) => void;
+}
+
+interface NameCall {
+  base: string;
+  claim: NameClaim;
+  anchor: Anchor;
+  resolve: (r: NameResult) => void;
+  reject: (e: unknown) => void;
+  settled: boolean;
+}
+
+interface Drive {
+  loadFeed(): Promise<void>;
+  loadMembershipState(): Promise<void>;
+  openWallet(): void;
+  changeNode(origin: string): Promise<void>;
+  ledger: { all(): Array<{ kind: string; postId: string; send?: { toHex: string; toName: string | null } }> };
+  cornerEl: HTMLButtonElement | null;
+}
+
+interface Harness {
+  drive: Drive;
+  world: World;
+  tipRuns: TipRunHandle[];
+  nameCalls: NameCall[];
+}
+
+/** The App over fakes as the extension build holds it; mounting it starts the
+ *  first tip run, held until the test answers it. */
+function harness(w: World = world()): Harness {
+  const tipRuns: TipRunHandle[] = [];
+  const tipVerifier: TipVerifier = {
+    run: () => new Promise((resolve, reject) => { tipRuns.push({ resolve, reject }); }),
+  };
+  const nameCalls: NameCall[] = [];
+  const namesVerifier: NamesVerifier = {
+    run: (base, claim, anchor) => new Promise((resolve, reject) => {
+      nameCalls.push({ base, claim, anchor, resolve, reject, settled: false });
+    }),
+  };
+  const app = new App(
+    fakeApi(w), fakeWrite(w), identity(w), undefined, undefined, undefined, tipVerifier, undefined, namesVerifier,
+  );
+  const appbar = document.createElement('header');
+  const feed = document.createElement('section'); feed.id = 'feed';
+  const panes = document.createElement('section'); panes.id = 'panes';
+  document.body.append(appbar, feed, panes);
+  app.mount(appbar, feed, panes);
+  return { drive: app as unknown as Drive, world: w, tipRuns, nameCalls };
+}
+
+const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+/** The feed, the reader's own state, and the wallet window open on its send form. */
+async function ready(h: Harness): Promise<void> {
+  await h.drive.loadFeed();
+  await h.drive.loadMembershipState();
+  h.drive.openWallet();
+  await flush();
+  await flush();
+  expect(document.querySelector('form.credits-form')).not.toBeNull();
+}
+
+/** Answer tip run `i` with a verdict — verified with its anchor, or none. */
+async function endRun(h: Harness, i: number, verdict: TipVerdict, anchor: Anchor | null = null): Promise<void> {
+  h.tipRuns[i]!.resolve({ verdict, anchor });
+  await flush();
+}
+const verified = (anchor: Anchor): TipVerdict => ({ kind: 'verified', nodes: 2, height: anchor.tip.height });
+const THIN: TipVerdict = { kind: 'thin', reason: 'one-node', height: 100 };
+
+/** Type a recipient and an amount into the send form and press `send`. */
+async function press(to: string, amount = '1'): Promise<HTMLFormElement> {
+  const form = document.querySelector<HTMLFormElement>('form.credits-form')!;
+  const inputs = form.querySelectorAll<HTMLInputElement>('input');
+  inputs[0]!.value = to;
+  inputs[1]!.value = amount;
+  form.dispatchEvent(new Event('submit', { cancelable: true }));
+  await flush();
+  return form;
+}
+
+function result(status: NameStatus, owner: string | null = null, name: string | null = null): NameResult {
+  return { status, owner, name, boxId: '5f'.repeat(32), heightAfter: null, verdict: status };
+}
+
+const isPress = (c: NameCall): boolean => !('key' in c.claim);
+const isLabel = (c: NameCall): boolean => 'key' in c.claim;
+
+/** Answer the one waiting check the predicate picks — by default the one
+ *  waiting at all. */
+async function answer(h: Harness, r: NameResult, which: (c: NameCall) => boolean = () => true): Promise<NameCall> {
+  const waiting = h.nameCalls.filter((c) => !c.settled && which(c));
+  expect(waiting).toHaveLength(1);
+  const c = waiting[0]!;
+  c.settled = true;
+  c.resolve(r);
+  await flush();
+  return c;
+}
+
+function refusalLine(form: HTMLFormElement): HTMLElement {
+  return form.querySelector<HTMLElement>('.pf-refusal')!;
+}
+function keyLine(form: HTMLFormElement): HTMLElement {
+  return form.querySelector<HTMLElement>('.resolved-key')!;
+}
+function values(form: HTMLFormElement): string[] {
+  return [...form.querySelectorAll<HTMLInputElement>('input')].map((i) => i.value);
+}
+function sendEntries(h: Harness): Array<{ postId: string; send?: { toHex: string; toName: string | null } }> {
+  return h.drive.ledger.all().filter((e) => e.kind === 'send');
+}
+
+/** The row refused with `text`: the line shown, no key beneath the field, the
+ *  form's values as typed, nothing signed and nothing pending. */
+function expectRefused(h: Harness, form: HTMLFormElement, text: string, typed: string): void {
+  expect(refusalLine(form).hidden).toBe(false);
+  expect(refusalLine(form).textContent).toBe(text);
+  expect(keyLine(form).hidden).toBe(true);
+  expect(values(form)).toEqual([typed, '1']);
+  expect(h.world.signCalls).toEqual([]);
+  expect(sendEntries(h)).toEqual([]);
+}
+
+beforeEach(() => {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+  localStorage.clear();
+  document.body.innerHTML = '';
+  setNode(NODE_A);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe('the send check — the table, against the anchor standing', () => {
+  it.each<NameStatus>(['proven', 'young'])('%s — the key beneath the field and the key signed for are the proven owner; the node\'s own answer is never read', async (status) => {
+    const h = harness();
+    h.world.sign = 'held';
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@bob');
+    const call = await answer(h, result(status, REC, 'Bob'));
+    // The check: the typed name, at the reading node, against the anchor standing.
+    expect(call.claim).toEqual({ name: 'bob' });
+    expect(call.base).toBe(NODE_A);
+    expect(call.anchor).toBe(a1);
+    expect(keyLine(form).hidden).toBe(false);
+    expect(keyLine(form).textContent).toBe(REC);
+    expect(refusalLine(form).hidden).toBe(true);
+    // The flow went to the signer at once — the prompt is the confirmation.
+    expect(h.world.signCalls).toHaveLength(1);
+    expect(document.querySelector('.pf-confirm')).toBeNull();
+    expect(h.world.usernameByName).toEqual([]);
+    expect(h.tipRuns).toHaveLength(1);
+  });
+
+  it('the ledger entry and the pending line carry the proven key and the name as committed, not as typed', async () => {
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    await press('@bob');
+    await answer(h, result('proven', REC, 'Bob'));
+    const entries = sendEntries(h);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.postId).toBe(REC);
+    expect(entries[0]!.send).toMatchObject({ toHex: REC, toName: 'Bob' });
+    expect(document.querySelector('.credits-flight')!.textContent).toBe('1 $NOTIS to @Bob · submitted');
+    expect(h.world.usernameByName).toEqual([]);
+  });
+
+  it('none — *no one holds that name.*', async () => {
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@bob');
+    await answer(h, result('none'));
+    expectRefused(h, form, 'no one holds that name.', '@bob');
+  });
+
+  it.each<NameStatus>(['absent', 'unproven'])('%s — *this node\'s answer for @bob did not verify.*', async (status) => {
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@bob');
+    await answer(h, result(status));
+    expectRefused(h, form, "this node's answer for @bob did not verify.", '@bob');
+    expect(h.world.usernameByName).toEqual([]);
+  });
+
+  it('no-proof — *the node served no proof for @bob.*', async () => {
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@bob');
+    await answer(h, result('no-proof'));
+    expectRefused(h, form, 'the node served no proof for @bob.', '@bob');
+  });
+
+  it('a refusal names the handle as the reader typed it — its case kept, its `@` added where none was typed', async () => {
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    let form = await press('@BoB');
+    const first = await answer(h, result('absent'));
+    expect(first.claim).toEqual({ name: 'BoB' });
+    expectRefused(h, form, "this node's answer for @BoB did not verify.", '@BoB');
+    form = await press('bob');
+    const second = await answer(h, result('no-proof'));
+    expect(second.claim).toEqual({ name: 'bob' });
+    expectRefused(h, form, 'the node served no proof for @bob.', 'bob');
+  });
+
+  it('a proven owner that is the reader\'s own key refuses as the key typed would — *that is your own key.*', async () => {
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@me');
+    await answer(h, result('proven', ME, 'Me'));
+    expectRefused(h, form, 'that is your own key.', '@me');
+  });
+
+  it('a press that refuses takes away the key a press before it left beneath the field', async () => {
+    const h = harness();
+    h.world.sign = 'declined';
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@bob');
+    await answer(h, result('proven', REC, 'Bob'));
+    // The prompt declined: the values and the proven key stand.
+    expect(keyLine(form).hidden).toBe(false);
+    expect(keyLine(form).textContent).toBe(REC);
+    expect(values(form)).toEqual(['@bob', '1']);
+    h.world.signCalls.length = 0;
+    await press('@eve');
+    await answer(h, result('unproven'));
+    expectRefused(h, form, "this node's answer for @eve did not verify.", '@eve');
+    expect(keyLine(form).textContent).toBe('');
+  });
+});
+
+describe('the send check — `unchecked` takes one tip run', () => {
+  it('a second check against the anchor of one fresh run decides — proven goes to the flow with the second result\'s key', async () => {
+    const h = harness();
+    h.world.sign = 'held';
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@bob');
+    await answer(h, result('unchecked'));
+    // One tip run started; no second check until it ends.
+    expect(h.tipRuns).toHaveLength(2);
+    expect(h.nameCalls.filter((c) => !c.settled)).toHaveLength(0);
+    const a2 = anchorFor(103);
+    await endRun(h, 1, verified(a2), a2);
+    const second = await answer(h, result('young', EVE, 'bob'));
+    expect(second.claim).toEqual({ name: 'bob' });
+    expect(second.anchor).toBe(a2);
+    expect(keyLine(form).textContent).toBe(EVE);
+    expect(h.world.signCalls).toHaveLength(1);
+    expect(h.tipRuns).toHaveLength(2);
+  });
+
+  it('a second `unchecked` refuses — *@bob is too new to check yet.* — after exactly one run', async () => {
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@bob');
+    await answer(h, result('unchecked'));
+    const a2 = anchorFor(103);
+    await endRun(h, 1, verified(a2), a2);
+    await answer(h, result('unchecked'));
+    expectRefused(h, form, '@bob is too new to check yet.', '@bob');
+    expect(h.tipRuns).toHaveLength(2);
+    expect(h.nameCalls).toHaveLength(2);
+  });
+
+  it('the run after `unchecked` ending with no anchor refuses — *@bob can\'t be checked* — with no second check', async () => {
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@bob');
+    await answer(h, result('unchecked'));
+    await endRun(h, 1, THIN);
+    expectRefused(h, form, CANT, '@bob');
+    expect(h.nameCalls).toHaveLength(1);
+  });
+
+  it('a run already in flight is the one the second check waits on — no run more', async () => {
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    // A press of the corner starts run 1 before the press's check ends.
+    h.drive.cornerEl!.dispatchEvent(new Event('click'));
+    await flush();
+    expect(h.tipRuns).toHaveLength(2);
+    const form = await press('@bob');
+    await answer(h, result('unchecked'));
+    expect(h.tipRuns).toHaveLength(2);
+    const a2 = anchorFor(103);
+    await endRun(h, 1, verified(a2), a2);
+    const second = await answer(h, result('none'));
+    expect(second.anchor).toBe(a2);
+    expectRefused(h, form, 'no one holds that name.', '@bob');
+  });
+});
+
+describe('the send check — no anchor standing', () => {
+  it('the run in flight is joined — no second run — and the check waits for its anchor', async () => {
+    const h = harness();
+    h.world.sign = 'held';
+    await ready(h);
+    const form = await press('@bob');
+    expect(h.tipRuns).toHaveLength(1);
+    expect(h.nameCalls).toHaveLength(0);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const call = await answer(h, result('proven', REC, 'Bob'));
+    expect(call.anchor).toBe(a1);
+    expect(keyLine(form).textContent).toBe(REC);
+    expect(h.world.signCalls).toHaveLength(1);
+    expect(h.tipRuns).toHaveLength(1);
+  });
+
+  it('with no run in flight the press starts one, and a verified end checks against the anchor it wrote', async () => {
+    const h = harness();
+    h.world.sign = 'held';
+    await ready(h);
+    await endRun(h, 0, THIN);
+    const form = await press('@bob');
+    expect(h.tipRuns).toHaveLength(2);
+    expect(h.nameCalls).toHaveLength(0);
+    const a1 = anchorFor(100);
+    await endRun(h, 1, verified(a1), a1);
+    const call = await answer(h, result('proven', REC, 'Bob'));
+    expect(call.anchor).toBe(a1);
+    expect(keyLine(form).textContent).toBe(REC);
+  });
+
+  const UNVERIFIED: TipVerdict[] = [
+    { kind: 'thin', reason: 'no-proof', height: null },
+    { kind: 'thin', reason: 'too-short', height: 12 },
+    { kind: 'thin', reason: 'one-node', height: 100 },
+    { kind: 'thin', reason: 'split', height: 100 },
+    { kind: 'refused', reason: 'invalid-proof', by: null, height: 100 },
+    { kind: 'refused', reason: 'outworked', by: NODE_B, height: 100 },
+  ];
+
+  it.each(UNVERIFIED)('a run the press started that ends $kind · $reason refuses — *@bob can\'t be checked* — and asks no check', async (verdict) => {
+    const h = harness();
+    await ready(h);
+    await endRun(h, 0, THIN);
+    const form = await press('@bob');
+    // The press waits on the run it started.
+    expect(h.tipRuns).toHaveLength(2);
+    expect(refusalLine(form).hidden).toBe(true);
+    await endRun(h, 1, verdict);
+    expectRefused(h, form, CANT, '@bob');
+    expect(h.nameCalls).toHaveLength(0);
+  });
+
+  it.each(UNVERIFIED)('a joined run that ends $kind · $reason refuses the same', async (verdict) => {
+    const h = harness();
+    await ready(h);
+    const form = await press('@bob');
+    expect(refusalLine(form).hidden).toBe(true);
+    await endRun(h, 0, verdict);
+    expectRefused(h, form, CANT, '@bob');
+    expect(h.nameCalls).toHaveLength(0);
+    expect(h.tipRuns).toHaveLength(1);
+  });
+
+  it('a run that ends without a verdict refuses — *@bob can\'t be checked*', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const h = harness();
+    await ready(h);
+    const form = await press('@bob');
+    expect(refusalLine(form).hidden).toBe(true);
+    h.tipRuns[0]!.reject(new Error('the run threw'));
+    await flush();
+    expectRefused(h, form, CANT, '@bob');
+    expect(h.nameCalls).toHaveLength(0);
+    expect(errors).toHaveBeenCalledTimes(1);
+  });
+
+  it('a hidden tab starts no run, and the press refuses at once', async () => {
+    const h = harness();
+    await ready(h);
+    await endRun(h, 0, THIN);
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    const form = await press('@bob');
+    expectRefused(h, form, CANT, '@bob');
+    expect(h.tipRuns).toHaveLength(1);
+    expect(h.nameCalls).toHaveLength(0);
+  });
+
+  it('an empty reading base starts no run, and the press refuses at once', async () => {
+    const h = harness();
+    await ready(h);
+    await endRun(h, 0, THIN);
+    setNode('');
+    const form = await press('@bob');
+    expectRefused(h, form, CANT, '@bob');
+    expect(h.tipRuns).toHaveLength(1);
+    expect(h.nameCalls).toHaveLength(0);
+  });
+});
+
+describe('the send check — a node change, and a check that throws', () => {
+  it('a node change drops the run the press waits on: the press refuses and does not join the new node\'s run', async () => {
+    const h = harness();
+    await ready(h);
+    const form = await press('@bob');
+    expect(refusalLine(form).hidden).toBe(true);
+    await h.drive.changeNode(NODE_B);
+    await flush();
+    // The new node's run is under way; the press ended without it.
+    expect(h.tipRuns).toHaveLength(2);
+    expect(refusalLine(form).textContent).toBe(CANT);
+    expect(h.nameCalls).toHaveLength(0);
+    const a1 = anchorFor(100);
+    await endRun(h, 1, verified(a1), a1);
+    expect(h.nameCalls.filter(isPress)).toHaveLength(0);
+    expect(h.world.signCalls).toEqual([]);
+    expect(sendEntries(h)).toEqual([]);
+  });
+
+  it('a check a node change moved past is dropped, proven or not: the press refuses', async () => {
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@bob');
+    expect(h.nameCalls).toHaveLength(1);
+    await h.drive.changeNode(NODE_B);
+    await answer(h, result('proven', REC, 'Bob'));
+    expect(refusalLine(form).textContent).toBe(CANT);
+    expect(keyLine(form).hidden).toBe(true);
+    expect(h.world.signCalls).toEqual([]);
+    expect(sendEntries(h)).toEqual([]);
+  });
+
+  it('a check that throws is logged once and the press refuses — *@bob can\'t be checked*', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@bob');
+    const c = h.nameCalls[0]!;
+    c.settled = true;
+    c.reject(new Error('the seam threw'));
+    await flush();
+    expectRefused(h, form, CANT, '@bob');
+    expect(errors).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the send check — a run the press starts is a run a name check asks for', () => {
+  it('the handles\' spent ask does not hold the press\'s run back, and the press\'s run does not give the handles another', async () => {
+    const w = world();
+    w.ownName = { name: 'Me_1', owner: ME, boxId: '51'.repeat(32), claimedAtBlock: 40 };
+    w.sign = 'held';
+    const h = harness(w);
+    await ready(h);
+    // The reader's own name is on screen: a verified run checks it, `unchecked`
+    // asks for its one run, and a second `unchecked` asks for none.
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    await answer(h, result('unchecked'), isLabel);
+    expect(h.tipRuns).toHaveLength(2);
+    const a2 = anchorFor(101);
+    await endRun(h, 1, verified(a2), a2);
+    await answer(h, result('unchecked'), isLabel);
+    expect(h.tipRuns).toHaveLength(2);
+    // The press's own `unchecked` still gets its run.
+    const form = await press('@bob');
+    await answer(h, result('unchecked'), isPress);
+    expect(h.tipRuns).toHaveLength(3);
+    const a3 = anchorFor(104);
+    await endRun(h, 2, verified(a3), a3);
+    // The run checks every pair on screen, and the press checks once more.
+    const second = await answer(h, result('proven', REC, 'Bob'), isPress);
+    expect(second.anchor).toBe(a3);
+    expect(keyLine(form).textContent).toBe(REC);
+    // The name's third `unchecked` asks for nothing: the press's run left the
+    // handles' ask spent.
+    await answer(h, result('unchecked'), isLabel);
+    expect(h.tipRuns).toHaveLength(3);
+  });
+});

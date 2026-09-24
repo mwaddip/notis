@@ -29,7 +29,7 @@ import { renderKarmaField, renderInvitesRow, renderUsernameRow } from './view/pr
 import { renderCreditsRow, resetCreditsSendForm, type ResolvedRecipient } from './view/wallet';
 import { cornerState, renderCorner, CORNER_POLL_MS, type CornerState } from './view/corner';
 import type { TipVerdict } from './model/tip-verdict';
-import { namePair, nameIsClay } from './model/name-verdict';
+import { namePair, nameIsClay, recipientVerdict } from './model/name-verdict';
 import { markHandle, landNameClay } from './view/name-handle';
 import type { Anchor } from './model/state';
 import type { Listing, NameResult } from '@dagsocial/nipopow-client';
@@ -42,7 +42,7 @@ import {
 import {
   FEED_COMPOSER_KEY, type AppState, type ThreadState, type RenderCtx, type Handlers, type Submission,
   type FlightStage, type AppIdentity, type AuthorWindowData, type FeedState, type FiguresView,
-  type TipVerifier, type FiguresVerifier, type NamesVerifier,
+  type TipVerifier, type TipRun, type FiguresVerifier, type NamesVerifier,
 } from './model/state';
 import { decideMove, type ScreenEntry } from './history';
 
@@ -278,6 +278,11 @@ export class App {
   private lastVerifyBeganAt: number | null = null;
   private verifyInFlight = false;
   private verifyGen = 0;
+  // The presses waiting on the run in flight — a send to a handle that needs a
+  // fresh anchor (WEB_INTERFACE → The extension → "The verified names"). The
+  // run's end settles each with its verdict and anchor; a run that ends without
+  // a verdict, or that a node change drops, settles each with null.
+  private tipRunWaiters: Array<(run: TipRun | null) => void> = [];
   // The verified figures (WEB_INTERFACE → The extension → "The verified
   // figures") — the seam runs proveFigures over the App's own listing and
   // hands the reading node's verified headers on. Non-null only in the
@@ -2893,15 +2898,52 @@ export class App {
 
   /** Resolve an @handle to its holder — the row's send form calls this at the
    *  press, the way the composer resolves nothing (a post has no recipient) and
-   *  the vouch resolves its box at the press (WEB_INTERFACE → The wallet). One
-   *  read per press; a 404 answers *no one holds that name.* */
+   *  the vouch resolves its box at the press (WEB_INTERFACE → The wallet). In
+   *  the extension the handle is proven against the verified chain first
+   *  (proveRecipient); the web build takes the node's answer, one read per
+   *  press, a 404 answering *no one holds that name.* */
   private async resolveRecipient(name: string): Promise<ResolvedRecipient | { refusal: string }> {
+    if (this.namesVerifier !== null) return this.proveRecipient(this.namesVerifier, name);
     try {
       const held = await this.client.usernameByName(name);
       if (held === null) return { refusal: 'no one holds that name.' };
       return { key: held.owner, name: held.name };
     } catch {
       return { refusal: "can't reach the node right now." };
+    }
+  }
+
+  /** A send to a handle is checked at the press (WEB_INTERFACE → The extension →
+   *  "The verified names", → The wallet window → "The `send` row"): the typed
+   *  handle against the anchor standing — with none, the anchor a tip run
+   *  writes — and a check that ends `unchecked` once more against the anchor of
+   *  one tip run. The answer is the proven result's (recipientVerdict), never
+   *  the node's word. A press left with no anchor to check against, whose check
+   *  throws, or whose checks a node change moved past, is *can't be checked*. */
+  private async proveRecipient(verifier: NamesVerifier, name: string): Promise<ResolvedRecipient | { refusal: string }> {
+    const gen = this.namesGen;
+    const handle = '@' + name;
+    const anchor = this.tipAnchor ?? (await this.tipRunForPress())?.anchor ?? null;
+    let result = await this.checkHandle(verifier, name, anchor);
+    if (result !== null && result.status === 'unchecked') {
+      result = await this.checkHandle(verifier, name, (await this.tipRunForPress())?.anchor ?? null);
+    }
+    if (result === null || gen !== this.namesGen) {
+      return { refusal: `${handle} can't be checked — the chain is not verified.` };
+    }
+    return recipientVerdict(result, handle);
+  }
+
+  /** One check of a typed handle at the reading node, or null with no anchor to
+   *  check it against. A check is total, so a rejection is the seam's own
+   *  failure — logged, and no result. */
+  private async checkHandle(verifier: NamesVerifier, name: string, anchor: Anchor | null): Promise<NameResult | null> {
+    if (anchor === null) return null;
+    try {
+      return await verifier.run(prefs.node, { name }, anchor);
+    } catch (e) {
+      console.error(e);
+      return null;
     }
   }
 
@@ -3106,9 +3148,10 @@ export class App {
    *  during a run is that run (WEB_INTERFACE → The extension → "The verified
    *  tip"). An empty reading base runs nothing; a hidden tab runs nothing.
    *  The gen stamps the run so a late verdict under an older generation is
-   *  dropped and never touches the flag or the render. `askedByNames` marks the
-   *  run a name check that ended `unchecked` asks for; a run that begins on any
-   *  other trigger lets a check ask again (→ "The verified names"). */
+   *  dropped and never touches the flag or the render. `askedByNames` marks a
+   *  run a name check asks for — one that ended `unchecked`, or a send's check
+   *  at the press (tipRunForPress); a run that begins on any other trigger lets
+   *  a check ask again (→ "The verified names"). */
   private startVerification(askedByNames = false): void {
     if (this.verifier === null) return;
     if (!this.cornerVisible()) return;
@@ -3148,6 +3191,7 @@ export class App {
           this.renderCreditsRowInPlace();
           this.renderProfileKarma();
         }
+        this.settleTipRunWaiters(run);
       },
       (e) => {
         // A run that throws clears the verdict to `null` under the current
@@ -3165,8 +3209,29 @@ export class App {
         this.figures = null;
         this.renderCreditsRowInPlace();
         this.renderProfileKarma();
+        this.settleTipRunWaiters(null);
       },
     );
+  }
+
+  /** A tip run for a send's check at the press — one with no anchor standing, or
+   *  one that ended `unchecked` (WEB_INTERFACE → The extension → "The verified
+   *  names"): the run in flight joined, or one started as a run a name check
+   *  asks for. Answers the run's verdict and anchor as it ends, and null where
+   *  no run starts — no verifier, a hidden tab, an empty base — or the run ends
+   *  without a verdict. */
+  private tipRunForPress(): Promise<TipRun | null> {
+    this.startVerification(true);
+    if (!this.verifyInFlight) return Promise.resolve(null);
+    return new Promise((settle) => this.tipRunWaiters.push(settle));
+  }
+
+  /** Settle every press waiting on the run — with its verdict and anchor, or
+   *  null where it ends without a verdict. */
+  private settleTipRunWaiters(run: TipRun | null): void {
+    const waiters = this.tipRunWaiters;
+    this.tipRunWaiters = [];
+    for (const settle of waiters) settle(run);
   }
 
   /** The reading node changed — the settings row's `changeNode`, and the seed
@@ -3183,7 +3248,8 @@ export class App {
    *  build carries a verifier, a run in flight for the previous node is dropped
    *  by its older generation, the verdict returns to `null` (checking), the
    *  flag is cleared so the new run can start, and it does (WEB_INTERFACE → The
-   *  extension → "The verified tip"). Every name check's result is the node
+   *  extension → "The verified tip"); a press waiting on the dropped run is
+   *  settled without a verdict. Every name check's result is the node
    *  before's answer: the results drop with the generation, so a batch in
    *  flight writes nothing more, and its flags clear before the re-render, which
    *  draws every handle as it reads with no check (→ "The verified names"). */
@@ -3197,6 +3263,7 @@ export class App {
       this.verifyInFlight = false;
       this.tipVerdict = null;
       this.tipAnchor = null;
+      this.settleTipRunWaiters(null);
     }
     this.nameChecks.clear();
     this.namesGen += 1;
