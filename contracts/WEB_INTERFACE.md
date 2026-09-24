@@ -1358,7 +1358,8 @@ reconciles whether or not the window is open (→ The wallet); the update in pla
 **The `balance` row**: the balance from `GET /credits/:key` — the spendable sum, formatted as
 $NOTIS (→ The wallet), in `gold` (`HOUSE_STYLE → "Gold means credits and nothing else"`) — and beneath it, when
 a box is locked, one muted line, *N $NOTIS more unlock by block H*, H the latest `lockedUntilBlock` among them.
-With no spendable box: the faucet step when a faucet is set (→ The faucet step), else *no $NOTIS yet.* **The balance
+With no box spendable at the `/status` height: the faucet step when a faucet is set (→ The faucet step), else *no $NOTIS
+yet.* — both only once a `/status` answer stands; until then the row reads `—` in their place. **The balance
 takes a new value whenever one is read** — the window's opening and `↻`, every landing of the reader's own
 transaction (a send's and a grant's landing are read off `/credits` itself, open or closed), and in the extension every
 verified tip while the window is open (`HOUSE_STYLE → Motion`). **In the extension, one more muted line of the same element stands beneath the figure only when the verified-figures run could
@@ -1473,8 +1474,10 @@ motion contract asks of pending state (`HOUSE_STYLE → Motion`).
 reserves nothing of the reader's, so refusing one releases nothing. The expiry a 202 carries is bounded as every
 entry's is (→ The wallet).
 
-**The $NOTIS step, in the wallet's `balance` row — `ask the faucet for $NOTIS` — while an identity is loaded, its
-`/credits` shows no spendable box, and a faucet base is configured** (→ The wallet window). The call is `POST <faucet>/credits
+**The $NOTIS step, in the wallet's `balance` row — `ask the faucet for $NOTIS` — while an identity is loaded, a
+faucet base is configured, a `/status` answer stands, and its `/credits` shows no box spendable at that height**
+(→ The wallet window). A grant records the highest tip the client has read (→ The wallet), and an ask before any
+`/status` answer would record none. The call is `POST <faucet>/credits
 { pubkey }` in the same module; the answer is `202 { txId, status, expiresAtHeight, boxId }`
 (`NODE_INTERFACE → Faucet`) — the transfer's expiry relayed from the node, and the id of the box the grant
 creates. The wait rides the ledger as a `creditGrant` entry whose subject is that box id, `inputs: []` and no
@@ -1483,6 +1486,9 @@ balance reads it; past `expiresAtHeight` and absent → expired — *no block to
 N.* with `ask again`. A 202 without a numeric `expiresAtHeight` or a 64-hex `boxId` is refused, for the reason
 above. The relayed refusals map as the rep step's do, except a 400 — credits repeat, so it is not the
 once-per-key rule: *the faucet refused that key: <message>*.
+
+> ⚠ **AHEAD OF CODE (2026-09-24, the reservation expiry)** — the step and *no $NOTIS yet.* render on the `/credits`
+> answer alone, spendability judged at height `0` while no `/status` answer stands.
 
 ### The username row *(username surface)*
 
