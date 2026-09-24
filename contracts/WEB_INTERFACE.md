@@ -1126,6 +1126,18 @@ key's entries and cannot try to spend its predicted change; a reload that forgot
 re-spend a box the node holds pending and receive a 409 for a failure the reader never saw. **An
 identity change rebuilds the ledger for the new key at once** (→ The identity module, `onChange`).
 
+**A pending entry's expiry is the client's, and a node's answer can only bring it sooner.** An entry expires at its
+`submittedAtHeight` plus `MEMPOOL_EXPIRY_BLOCKS` — the lifetime a node gives every transaction it pools
+(`MEMPOOL_INTERFACE → What takes an entry out of the pool`) — or at the `expiresAtHeight` its answer carried when that
+is a block height below it. `submittedAtHeight` is the height the transaction was built at, the `/status` height its
+outputs declare; for a faucet grant, the highest tip the client has read when it asks. The ledger applies the rule
+where an entry enters it — added, and restored from storage — so every flow is covered, and a stored entry carrying a
+later height is cut back at the next load: an answered height alone would let a node hold an entry's inputs out of
+the spendable view for good, and across a node change, since the ledger is the identity's. **A 2xx is recorded
+whether or not its body carries `expiresAtHeight`** — the transaction is the reader's own and may land, so its inputs
+stay reserved. One whose `txId` differs from the built one is a client rejection — *"the node computed a different
+transaction id"* — since the client records no entry under an id the node does not share.
+
 **Builders exist for a post, a like, a vouch, an unvouch, an invite, a withdrawal, a claim, a burn and a send, and
 nothing else.** A root
 post: change and a `karma_price` of `POST_PRICE_THREAD`. A reply: change, a `karma_price` of
@@ -1340,7 +1352,8 @@ reconciles whether or not the window is open (→ The wallet); the update in pla
 **The `balance` row**: the balance from `GET /credits/:key` — the spendable sum, formatted as
 $NOTIS (→ The wallet), in `gold` (`HOUSE_STYLE → "Gold means credits and nothing else"`) — and beneath it, when
 a box is locked, one muted line, *N $NOTIS more unlock by block H*, H the latest `lockedUntilBlock` among them.
-With no spendable box: the faucet step when a faucet is set (→ The faucet step), else *no $NOTIS yet.* **The balance
+With no box spendable at the `/status` height: the faucet step when a faucet is set (→ The faucet step), else *no $NOTIS
+yet.* — both only once a `/status` answer stands; until then the row reads `—` in their place. **The balance
 takes a new value whenever one is read** — the window's opening and `↻`, every landing of the reader's own
 transaction (a send's and a grant's landing are read off `/credits` itself, open or closed), and in the extension every
 verified tip while the window is open (`HOUSE_STYLE → Motion`). **In the extension, one more muted line of the same element stands beneath the figure only when the verified-figures run could
@@ -1451,17 +1464,21 @@ faucet's invite by height N."* with `ask again`. Colour and text in a fixed box:
 motion contract asks of pending state (`HOUSE_STYLE → Motion`).
 
 ⛔ **A 202 without `expiresAtHeight` is refused** — *"the faucet did not say when its invite expires."*
-— never bounded by a guess: a grant with no expiry would run the poll for ever, which the motion
-contract forbids. The faucet relays the field (`NODE_INTERFACE → Faucet`).
+— the faucet relays the field (`NODE_INTERFACE → Faucet`), so an answer without it is not the route's; a grant
+reserves nothing of the reader's, so refusing one releases nothing. The expiry a 202 carries is bounded as every
+entry's is (→ The wallet).
 
-**The $NOTIS step, in the wallet's `balance` row — `ask the faucet for $NOTIS` — while an identity is loaded, its
-`/credits` shows no spendable box, and a faucet base is configured** (→ The wallet window). The call is `POST <faucet>/credits
+**The $NOTIS step, in the wallet's `balance` row — `ask the faucet for $NOTIS` — while an identity is loaded, a
+faucet base is configured, a `/status` answer stands, and its `/credits` shows no box spendable at that height**
+(→ The wallet window). A grant records the highest tip the client has read (→ The wallet), and an ask before any
+`/status` answer would record none. The call is `POST <faucet>/credits
 { pubkey }` in the same module; the answer is `202 { txId, status, expiresAtHeight, boxId }`
 (`NODE_INTERFACE → Faucet`) — the transfer's expiry relayed from the node, and the id of the box the grant
 creates. The wait rides the ledger as a `creditGrant` entry whose subject is that box id, `inputs: []` and no
 change, so it is inert in both views; reconcile is `GET /credits/:key`: the box listed → landed, and the row's
 balance reads it; past `expiresAtHeight` and absent → expired — *no block took the faucet's transfer by height
-N.* with `ask again`. A 202 without a numeric `expiresAtHeight` or a 64-hex `boxId` is refused, for the reason
+N.*, and `ask again` beside it once a `/status` answer stands, for the step's own reason; the line survives a change of
+the node being read, so it can stand before one does. A 202 without a numeric `expiresAtHeight` or a 64-hex `boxId` is refused, for the reason
 above. The relayed refusals map as the rep step's do, except a 400 — credits repeat, so it is not the
 once-per-key rule: *the faucet refused that key: <message>*.
 
@@ -1618,7 +1635,7 @@ Interaction`). The maturity bind, liveness and authorship are the node's to refu
 **The flight runs in the slot.** The second press replaces the `withdraw` button with the stage line —
 `submitting…`, then `submitted`, the like count staying beside it — and the ledger holds a `withdraw` entry:
 its subject the post, its one input the spent
-box, its `change` the returned box under its predicted id, its `expiresAtHeight` the body's. A reload
+box, its `change` the returned box under its predicted id, its `expiresAtHeight` the ledger's (→ The wallet). A reload
 renders `submitted` from the entry. **Landed:** the entry's `GET /posts/:id` answered the withdrawn marker,
 and the client replaces the row in place with what it fetched — in every open thread the post becomes the
 withdrawn card at its depth (the marker's `parentRefs`, `NODE_INTERFACE → Withdrawal`), the feed and any
@@ -1635,9 +1652,7 @@ again`, which rebuilds from the current view and submits anew; the entry is remo
 the spendable view. **Rejected:** the column's report line reads *"withdraw rejected: …"* with the node's
 refusal in the voice register — its known refusals mapped to sentences, as the like's and the vouch's
 are (`HOUSE_STYLE → Voice`) — and the control returns; a transport failure reads *"withdraw rejected:
-can't reach the node right now."* and leaves nothing pending. A 2xx whose body carries no `expiresAtHeight` is a client
-rejection — *"the node answered without an expiry height"* — the way a txId that differs from the built
-one is: the client records no entry it cannot track.
+can't reach the node right now."* and leaves nothing pending.
 
 ## Writes
 

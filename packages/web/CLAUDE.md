@@ -220,10 +220,10 @@ devnet faucet key promote a throwaway to member the earned way, and the client i
 that stack. On testnet the reader is a resident: the marks are absent and the author window and the
 invites row say why.
 
-**A withdrawal is exercisable on testnet once the deployed node answers `expiresAtHeight` on
-`POST /posts/:id/withdraw`** and carries `parentRefs` on the withdrawn view (`NODE_INTERFACE → Withdrawal`).
-Against an older node the client ends the flight in the client rejection *"the node answered without an
-expiry height"* and records no entry — it tracks nothing it cannot expire.
+**A withdrawal is exercisable on testnet once the deployed node carries `parentRefs` on the withdrawn view**
+(`NODE_INTERFACE → Withdrawal`). Its 2xx is recorded whether or not it carries `expiresAtHeight`: the entry's
+expiry is the ledger's own — the build height plus `MEMPOOL_EXPIRY_BLOCKS`, sooner only by the node's answer
+(`WEB_INTERFACE → The wallet`).
 
 **The pending ledger is per identity** — `notis.pending.<pubKeyHex>`, rebuilt at once on an identity
 change; a second key never sees the first's predicted change. A faucet grant rides it as a `grant` entry

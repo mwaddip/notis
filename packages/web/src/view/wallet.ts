@@ -65,8 +65,10 @@ export interface WalletCtx {
   // check runs for, `@` and the name as typed, which the flight's place reads
   // while it stands; sendAnswer the answer the App gave the press before, which
   // the form's lines read (WEB_INTERFACE → The wallet window → "The `send`
-  // row"). status.blockHeight is the tip the row's spendable-at-height filter
-  // reads (WEB_INTERFACE → The wallet).
+  // row"). status null before a /status answer stands; its blockHeight is the
+  // tip the row's spendable-at-height filter reads (WEB_INTERFACE → The wallet),
+  // and the faucet step, *no $NOTIS yet.* and a lapsed grant's `ask again` wait
+  // for it (→ The wallet window → "The `balance` row").
   status: StatusResult | null;
   credits: CreditsResult | null;
   creditGrant: GrantView | null;
@@ -292,8 +294,13 @@ function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: Wallet
     }
     appendFiguresLine(line, ctx, c.boxCount, height, spendable, goldSpan);
   } else {
-    // No spendable box → the faucet step when a faucet is set, else "no $NOTIS yet."
-    // The locked hint still stands so the reader knows what is on its way.
+    // No box spendable at the /status height → the faucet step when a faucet is
+    // set, else "no $NOTIS yet." — both, and the lapsed grant's `ask again`, only
+    // once a /status answer stands, since a grant records the highest tip the
+    // client has read; until then `—` stands in their place. A grant in flight
+    // or one that lapsed reads its own line (WEB_INTERFACE → The wallet window →
+    // "The `balance` row", → The faucet step). The locked hint still stands so
+    // the reader knows what is on its way.
     const locked = lockedCreditSummary(c.boxes, height);
     if (ctx.creditGrant?.state === 'pending') {
       line.appendChild(el('span', 'inkmute', 'working…'));
@@ -301,9 +308,13 @@ function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: Wallet
       line.appendChild(el('span', 'inkmute', "no block took the faucet's transfer by height "));
       line.appendChild(mono(String(ctx.creditGrant.atHeight)));
       line.appendChild(document.createTextNode('. '));
-      const again = el('button', 'word', 'ask again') as HTMLButtonElement;
-      again.addEventListener('click', () => handlers.askFaucetCredits());
-      line.appendChild(again);
+      if (ctx.status !== null) {
+        const again = el('button', 'word', 'ask again') as HTMLButtonElement;
+        again.addEventListener('click', () => handlers.askFaucetCredits());
+        line.appendChild(again);
+      }
+    } else if (ctx.status === null) {
+      line.appendChild(el('span', 'inkmute', '—'));
     } else if (prefs.faucet !== '') {
       const ask = el('button', 'word', 'ask the faucet for $NOTIS') as HTMLButtonElement;
       ask.addEventListener('click', () => handlers.askFaucetCredits());

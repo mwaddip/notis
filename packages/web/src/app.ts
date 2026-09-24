@@ -333,9 +333,9 @@ export class App {
   private landedAt = new WeakMap<FeedRow, number>();
   // Membership state (WEB_INTERFACE → The identity display). The reader's vouch
   // set read from the node, the escrow gate, the optimistic overlay before a
-  // vouch's 2xx, the tip the gates read, and the two window kinds' data. The
-  // overlay is the reader's own act and drops with the identity alone; the rest
-  // is the node's answer and drops with the reader's own state.
+  // vouch's 2xx, the tip the gates and a faucet grant read, and the two window
+  // kinds' data. The overlay is the reader's own act and drops with the identity
+  // alone; the rest is the node's answer and drops with the reader's own state.
   private vouched = new Map<string, { boxId: string; createdAtBlock: number }>();
   private escrowHeldUntil: number | null = null;
   private optimisticVouches = new Set<string>();
@@ -1999,10 +1999,21 @@ export class App {
    *  the public key, so a locked identity can ask. In the extension the hook is
    *  called synchronously from the press before any await, so the browser's
    *  user-input window is still open (WEB_INTERFACE → The faucet step → "In the
-   *  extension the press asks the browser for the faucet's origin first"). */
+   *  extension the press asks the browser for the faucet's origin first"). The
+   *  grant is the pressing key's, so its entry goes to the ledger read with that
+   *  key at the press, and the answer moves the row, the poll and the report
+   *  only while that ledger is still the App's: an identity change rebuilds it
+   *  for another key, and a key never sees another key's entries (WEB_INTERFACE →
+   *  The wallet). Its `submittedAtHeight` is the highest tip the client had read
+   *  at the press, which the ledger bounds the faucet's expiry by (→ The wallet →
+   *  "A pending entry's expiry is the client's, and a node's answer can only
+   *  bring it sooner"); the rep row offers the step only beside a /karma whose
+   *  height that tip has taken. */
   private async askFaucet(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
+    const ledger = this.ledger;
+    const askedAt = this.viewerTip;
     // The hook is invoked synchronously here — an `await` in front of the
     // request loses the user-input window in Firefox.
     const permission = this.requestFaucetOrigin ? this.requestFaucetOrigin(prefs.faucet) : null;
@@ -2018,23 +2029,24 @@ export class App {
       }
     }
     const res = await this.faucetClient.askKarma(cur.pubKeyHex);
+    const loaded = ledger === this.ledger;
     if ('message' in res) {
-      const region = this.regionFocusedOn('@profile');
+      const region = loaded ? this.regionFocusedOn('@profile') : null;
       if (region) {
         region.report = faucetLine(res);
         this.renderRegion(region.uid);
       }
       return;
     }
-    const entry: PendingEntry = {
+    ledger.add({
       txId: res.txId,
       kind: 'grant',
       postId: cur.pubKeyHex, // the key the grant was asked for; a grant has no post
       inputs: [],
       expiresAtHeight: res.expiresAtHeight,
-      submittedAtHeight: this.lastPolledHeight,
-    };
-    this.ledger.add(entry);
+      submittedAtHeight: askedAt,
+    });
+    if (!loaded) return;
     this.grantView = { state: 'pending' };
     this.startPoll();
     this.renderProfileKarma();
@@ -2510,7 +2522,8 @@ export class App {
   /** The your-vouch row's escrow gate reads `viewerTip`, so it must follow every
    *  height the client reads — /status, /karma, /blocks/current — or a stake held
    *  "until block N" stays held past N once the poll stops (WEB_INTERFACE → The
-   *  identity display). Monotonic within one node's reads: a stale read never
+   *  identity display); a faucet grant records it as the highest tip the client
+   *  has read (→ The wallet). Monotonic within one node's reads: a stale read never
    *  rewinds it. An identity change and a change of the reading node drop it with
    *  everything else loaded, and a read in flight across either writes nothing
    *  (WEB_INTERFACE → The status corner). */
@@ -3150,10 +3163,17 @@ export class App {
    *  faucet step). In the extension the hook is called synchronously from the
    *  press before any await, so the browser's user-input window is still open
    *  (WEB_INTERFACE → The faucet step → "In the extension the press asks the
-   *  browser for the faucet's origin first"). */
+   *  browser for the faucet's origin first"). The entry goes to the pressing
+   *  key's ledger and the answer moves the view only while that ledger is still
+   *  the App's, and the tip read at the press is its `submittedAtHeight`, as the
+   *  rep step's are; the balance row offers the step only once a /status answer
+   *  stands, whose height that tip has taken (→ The wallet window → "The
+   *  `balance` row"). */
   private async askFaucetCredits(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
+    const ledger = this.ledger;
+    const askedAt = this.viewerTip;
     // The hook is invoked synchronously here — an `await` in front of the
     // request loses the user-input window in Firefox.
     const permission = this.requestFaucetOrigin ? this.requestFaucetOrigin(prefs.faucet) : null;
@@ -3169,23 +3189,24 @@ export class App {
       }
     }
     const res = await this.faucetClient.askCredits(cur.pubKeyHex);
+    const loaded = ledger === this.ledger;
     if ('message' in res) {
-      const region = this.regionFocusedOn('@wallet');
+      const region = loaded ? this.regionFocusedOn('@wallet') : null;
       if (region) {
         region.report = faucetLine(res, 'credits');
         this.renderRegion(region.uid);
       }
       return;
     }
-    const entry: PendingEntry = {
+    ledger.add({
       txId: res.txId,
       kind: 'creditGrant',
       postId: res.boxId, // a credits grant's subject is the box id the faucet named
       inputs: [],
       expiresAtHeight: res.expiresAtHeight,
-      submittedAtHeight: this.lastPolledHeight,
-    };
-    this.ledger.add(entry);
+      submittedAtHeight: askedAt,
+    });
+    if (!loaded) return;
     this.creditGrantView = { state: 'pending' };
     this.startPoll();
     this.renderCreditsRowInPlace();

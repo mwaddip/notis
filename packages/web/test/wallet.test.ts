@@ -271,6 +271,38 @@ describe('wallet window — the balance and send rows', () => {
     expect(button(f, 'ask the faucet for $NOTIS')).toBeNull();
   });
 
+  // The step, *no $NOTIS yet.* and a lapsed grant's `ask again` wait for a
+  // /status answer: a grant records the highest tip the client has read
+  // (WEB_INTERFACE → The wallet window → "The `balance` row", → The faucet step).
+  it('no /status answer yet, no spendable box → — in place of the step and of *no $NOTIS yet.*', () => {
+    prefs.faucet = '/faucet';
+    const faucet = creditsField(render(handlers(), creditsCtx({ status: null })))!;
+    expect(faucet.querySelector('.credits-line')?.textContent).toBe('—');
+    expect(button(faucet, 'ask the faucet for $NOTIS')).toBeNull();
+    prefs.faucet = '';
+    const none = creditsField(render(handlers(), creditsCtx({ status: null })))!;
+    expect(none.querySelector('.credits-line')?.textContent).toBe('—');
+  });
+
+  it('a /status answer landing in place turns the — into the step', () => {
+    prefs.faucet = '/faucet';
+    const f = creditsField(render(handlers(), creditsCtx({ status: null })))!;
+    expect(button(f, 'ask the faucet for $NOTIS')).toBeNull();
+    renderCreditsRow(f, handlers(), creditsCtx());
+    expect(button(f, 'ask the faucet for $NOTIS')).not.toBeNull();
+  });
+
+  it('no /status answer yet, a grant in flight reads working… and a lapsed one its sentence, *ask again* joining once one stands', () => {
+    prefs.faucet = '/faucet';
+    const pending = creditsField(render(handlers(), creditsCtx({ status: null, creditGrant: { state: 'pending' } })))!;
+    expect(pending.querySelector('.credits-line')?.textContent).toBe('working…');
+    const lapsed = creditsField(render(handlers(), creditsCtx({ status: null, creditGrant: { state: 'expired', atHeight: 5999 } })))!;
+    expect(lapsed.querySelector('.credits-line')?.textContent).toBe("no block took the faucet's transfer by height 5999. ");
+    expect(button(lapsed, 'ask again')).toBeNull();
+    renderCreditsRow(lapsed, handlers(), creditsCtx({ creditGrant: { state: 'expired', atHeight: 5999 } }));
+    expect(button(lapsed, 'ask again')).not.toBeNull();
+  });
+
   it('the send form validates: empty amount, non-numeric, zero, ninth decimal, own key', async () => {
     const c = creditsCtx({
       credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),

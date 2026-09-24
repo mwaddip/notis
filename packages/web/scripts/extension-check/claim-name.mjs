@@ -109,14 +109,15 @@ async function main() {
     return;
   }
 
-  const { submitClaimFlow, NodeClient, WriteClient } = await loadClaimFlow();
+  const { submitClaimFlow, heldEntry, NodeClient, WriteClient } = await loadClaimFlow();
   const deps = {
     reads: new NodeClient(() => API),
     write: new WriteClient(() => API),
     // This process has no transaction pending, so the spendable view is the
     // confirmed boxes — the ledger's view with no entry (WEB_INTERFACE → The
-    // wallet); the entry the flow adds is the one it answers.
-    ledger: { spendable: (confirmed) => confirmed, add: () => {} },
+    // wallet); `add` answers the entry as the ledger holds it, its expiry bounded,
+    // and the flow answers that entry.
+    ledger: { spendable: (confirmed) => confirmed, add: heldEntry },
     // Raw Ed25519 over the transaction id — the signature the identity module
     // makes (WEB_INTERFACE → The identity module).
     identity: {

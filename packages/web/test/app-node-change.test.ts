@@ -90,9 +90,10 @@ function fakeNodes(nodes: Record<string, NodeAnswers>, base: () => string) {
       userId: key, total: n.effective, effective: n.effective, boxes: [{ boxId: n.karmaBox, value: n.effective }],
       boxCount: 1, height: n.height, member: true, memberSinceBlock: 5, invitesAvailable: 2,
     })),
-    credits: (key) => answer('credits', key, (n): CreditsResult => ({
-      userId: key, total: n.credits, boxes: [{ boxId: n.creditBox, value: n.credits }], boxCount: 1, next: null,
-    })),
+    // A node whose `credits` is '0' answers the empty page (NODE_INTERFACE → UTXO queries).
+    credits: (key) => answer('credits', key, (n): CreditsResult => (n.credits === '0'
+      ? { userId: key, total: '0', boxes: [], boxCount: 0, next: null }
+      : { userId: key, total: n.credits, boxes: [{ boxId: n.creditBox, value: n.credits }], boxCount: 1, next: null })),
     vouchesByTarget: (key) => answer('vouchesByTarget', key, (n) => ({ vouches: [], count: n.endorsers, next: null })),
     vouchesByVoucher: (key) => answer('vouchesByVoucher', key, () => ({ vouches: [], count: 0, next: null })),
     vouchCooldowns: (key) => answer('vouchCooldowns', key, (n) => ({
@@ -171,6 +172,7 @@ interface Drive {
   openAuthorPosts(key: string, origin: { from: 'feed' }): void;
   profileKarma: KarmaResult | null;
   walletCredits: CreditsResult | null;
+  creditGrantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
   viewerTip: number;
   figures: unknown;
   figuresInFlight: boolean;
@@ -235,6 +237,8 @@ const repField = (): HTMLElement | null => document.querySelector<HTMLElement>('
 const repNumber = (): string | null => document.querySelector('.karma-field .mono')?.textContent ?? null;
 const balanceLine = (): HTMLElement | null => document.querySelector<HTMLElement>('.credits-line');
 const gold = (): string | null => document.querySelector('.credits-line .mono.gold')?.textContent ?? null;
+const balanceWord = (text: string): HTMLButtonElement | null =>
+  [...document.querySelectorAll<HTMLButtonElement>('.credits-line button')].find((b) => b.textContent === text) ?? null;
 const headerProfile = (h: Harness): string | null =>
   h.appbar.querySelector('button[aria-label="open profile"]')?.textContent ?? null;
 const rowText = (label: string): string | null => {
@@ -269,6 +273,7 @@ beforeEach(() => {
   document.head.innerHTML = '';
   document.body.innerHTML = '';
   setNode('');
+  prefs.faucet = '';
 });
 
 afterEach(() => {
@@ -428,6 +433,54 @@ describe('a node change — the reader\'s own state drops and is read from the n
     await flush();
     expect(h.drive.viewerTip).toBe(495);
     expect(rowText('your vouch')).toContain('your stake from an unvouch is held until block 500');
+  });
+
+  // The $NOTIS step waits for a /status answer, since a grant records the
+  // highest tip the client has read (WEB_INTERFACE → The wallet window → "The
+  // `balance` row", → The faucet step).
+  it('the new node\'s /credits answering before its /status, the $NOTIS step waits — the row reads — until the /status answer stands', async () => {
+    prefs.faucet = '/faucet';
+    setNode(A);
+    const h = harness({ layout: '@wallet', a: { credits: '0' }, b: { credits: '0' } });
+    await h.drive.loadMembershipState();
+    await h.drive.refreshWalletCredits();
+    await flush();
+    expect(balanceWord('ask the faucet for $NOTIS')).not.toBeNull();
+
+    h.nodes.setHold((method, base) => base === B && method === 'status');
+    void h.drive.changeNode(B);
+    await flush();
+    expect(h.drive.walletCredits?.boxCount).toBe(0);
+    expect(balanceLine()?.textContent).toBe('—');
+    expect(balanceWord('ask the faucet for $NOTIS')).toBeNull();
+
+    for (const x of h.nodes.held) x.release();
+    await flush();
+    expect(balanceWord('ask the faucet for $NOTIS')).not.toBeNull();
+    // A standing /status answer means the tip a grant records is at least its height.
+    expect(h.drive.viewerTip).toBeGreaterThanOrEqual(NODE_B.height);
+  });
+
+  it('a lapsed $NOTIS grant\'s line stands across a node change, its *ask again* joining once the new node\'s /status answer stands', async () => {
+    prefs.faucet = '/faucet';
+    setNode(A);
+    const h = harness({ layout: '@wallet', a: { credits: '0' }, b: { credits: '0' } });
+    // The view a reconcile leaves when a grant lapses; a node change keeps it.
+    h.drive.creditGrantView = { state: 'expired', atHeight: 480 };
+    await h.drive.loadMembershipState();
+    await h.drive.refreshWalletCredits();
+    await flush();
+    expect(balanceWord('ask again')).not.toBeNull();
+
+    h.nodes.setHold((method, base) => base === B && method === 'status');
+    void h.drive.changeNode(B);
+    await flush();
+    expect(balanceLine()?.textContent).toBe("no block took the faucet's transfer by height 480. ");
+    expect(balanceWord('ask again')).toBeNull();
+
+    for (const x of h.nodes.held) x.release();
+    await flush();
+    expect(balanceWord('ask again')).not.toBeNull();
   });
 });
 
