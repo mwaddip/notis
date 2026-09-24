@@ -1138,12 +1138,6 @@ whether or not its body carries `expiresAtHeight`** — the transaction is the r
 stay reserved. One whose `txId` differs from the built one is a client rejection — *"the node computed a different
 transaction id"* — since the client records no entry under an id the node does not share.
 
-> ⚠ **AHEAD OF CODE (2026-09-24, the reservation expiry)** — an entry expires at the `expiresAtHeight` the answer
-> carried, unbounded; a withdrawal, a claim, a burn or a send whose 2xx carries none is a client rejection, and a
-> post, a like, a vouch, an unvouch or an invite records the entry with the field missing — it never expires, and the
-> stored ledger fails its restore, so the next load starts it empty; a faucet grant records `submittedAtHeight` as
-> the poll's last height, `0` before the poll has run.
-
 **Builders exist for a post, a like, a vouch, an unvouch, an invite, a withdrawal, a claim, a burn and a send, and
 nothing else.** A root
 post: change and a `karma_price` of `POST_PRICE_THREAD`. A reply: change, a `karma_price` of
@@ -1487,10 +1481,6 @@ N.*, and `ask again` beside it once a `/status` answer stands, for the step's ow
 the node being read, so it can stand before one does. A 202 without a numeric `expiresAtHeight` or a 64-hex `boxId` is refused, for the reason
 above. The relayed refusals map as the rep step's do, except a 400 — credits repeat, so it is not the
 once-per-key rule: *the faucet refused that key: <message>*.
-
-> ⚠ **AHEAD OF CODE (2026-09-24, the reservation expiry)** — the step, *no $NOTIS yet.* and the expired line's
-> `ask again` render on the `/credits` answer alone, spendability judged at height `0` while no `/status` answer
-> stands.
 
 ### The username row *(username surface)*
 
