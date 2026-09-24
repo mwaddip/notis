@@ -49,10 +49,14 @@ lives under `tools/` because it is a tool, not a peer of `validation`, and it is
 
 **1. It spawns `dist`, never imports the node — and a stale `dist` is a refusal.** The node's config
 is a module-scope singleton, so two nodes cannot share a process; every node is a child process
-running the built artefact, which loads `types`, `wire`, `validation` and `net` from *their* `dist`.
-Setup stats each of the five `packages/<p>/dist/index.js` against the newest file under that
-package's `src/` and fails the run naming the stale package and the command (`pnpm -r build`). A
-`git checkout` that touches `src` makes `dist` read stale by mtime even when the content is
+running the built artefact, which loads `types`, `wire`, `validation`, `net` and `nipopow` from
+*their* `dist`; the light-client test spawns `tools/nipopow-client/dist/index.js`, which loads `types`,
+`wire`, `validation` and `nipopow` the same way. Before either spawns, setup stats each
+`dist/index.js` that process loads (`NODE_LOADS`, `NIPOPOW_CLIENT_LOADS` in `src/dist-freshness.ts`)
+against the newest file under that package's `src/` and fails the run naming each stale package with
+its path, and a command that builds every package it checked. `test/dist-freshness.test.ts` holds each
+list equal to its entry's workspace dependency closure, read from the manifests, and in build order.
+A `git checkout` that touches `src` makes `dist` read stale by mtime even when the content is
 identical; the refusal is loud and the remedy is the build. A false-fresh is impossible.
 
 **2. It paces on block height, never wall clock.** `mine(node, n)` is the clock. `confirm(...)` mines
@@ -104,15 +108,17 @@ what every `pnpm -r test` in the gate pays.
   `NET_INTERFACE`; every disagreement between a contract and the node is a finding for the REPORT.
 - **You own this package only.** Never edit `../../packages/*` or `../../contracts/`. Cross-cutting
   changes — the workspace glob, the lockfile beyond this package's entry — are main's to route.
-- **Forced verification before "done":** the five `dist`s fresh (`pnpm --filter @dagsocial/<p> build`
-  for `wire`, `types`, `validation`, `net`, `node`, in that order — `types` imports `wire`), then
+- **Forced verification before "done":** every `dist` a spawned process loads fresh
+  (`pnpm --filter @dagsocial/<p> build` for `wire`, `types`, `validation`, `net`, `nipopow`, `node`,
+  `nipopow-client`, in that order — each after the packages it imports), then
   `pnpm --filter @dagsocial/e2e typecheck` **and** `pnpm --filter @dagsocial/e2e test`, both clean,
   with the suite's wall-clock stated. ⛔ **`typecheck` is two configs**, and the test one is the config
   that catches an argument the runtime happens to accept — run
   `npx tsc --noEmit -p tools/e2e/tsconfig.test.json` explicitly and report it separately.
 - ⛔ **`pnpm --filter`, never `pnpm -r`** — the tree is shared, and `-r` compiles a sibling's
-  uncommitted work into `dist/`. ⚠ **`git status --short packages/` before building**, and say what
-  the tree held: a sibling's uncommitted edit rides into the `dist` this suite spawns.
+  uncommitted work into `dist/`. ⚠ **`git status --short packages/ tools/nipopow-client/` before
+  building**, and say what the tree held: a sibling's uncommitted edit rides into the `dist` this
+  suite spawns.
 - **Comments cite `contracts/` only, in the form the root `CLAUDE.md → Comment style` fixes** — a heading's
   prose name, or a bold lead in quotes; grep the contract before citing and paste what you find. Never a
   marker, never a phase tag, never this file, never the spec. Present tense; no narration of what code used to do.
@@ -125,7 +131,7 @@ what every `pnpm -r test` in the gate pays.
 
 ## Quick commands
 ```bash
-for p in wire types validation net node; do pnpm --filter @dagsocial/$p build; done   # fresh dists, in order
+for p in wire types validation net nipopow node nipopow-client; do pnpm --filter @dagsocial/$p build; done   # fresh dists, in order
 pnpm --filter @dagsocial/e2e typecheck
 npx tsc --noEmit -p tools/e2e/tsconfig.test.json    # the second config, run explicitly
 time pnpm --filter @dagsocial/e2e test              # the mesh; state the wall-clock

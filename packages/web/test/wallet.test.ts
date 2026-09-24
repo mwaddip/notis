@@ -2,7 +2,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { walletBody, renderCreditsRow, resetCreditsSendForm, type WalletHandlers, type WalletCtx } from '../src/view/wallet';
+import {
+  walletBody, renderCreditsRow, resetCreditsSendForm, sendUnlockRow,
+  type WalletHandlers, type WalletCtx, type SendRecipient,
+} from '../src/view/wallet';
 import { prefs } from '../src/prefs';
 import { shortHex } from '../src/dom';
 import type { CreditsResult, StatusResult } from '../src/api/dto';
@@ -22,6 +25,10 @@ const unlocked = { pubKeyHex: KEY, locked: false };
 
 function handlers(over: Partial<WalletHandlers> = {}): WalletHandlers {
   return {
+    // Every press begins — no check runs: the web build always, the extension
+    // between presses.
+    beginSendPress: () => true,
+    pressSend: () => {},
     resolveRecipient: async () => ({ refusal: 'no one holds that name.' }),
     send: () => {},
     askFaucetCredits: () => {},
@@ -59,7 +66,7 @@ function creditsResult(over: Partial<CreditsResult> = {}): CreditsResult {
 function ctx(over: Partial<WalletCtx> = {}): WalletCtx {
   return {
     identity: null, status: null, credits: null, creditGrant: null,
-    sendFlight: null, pendingSend: null,
+    sendFlight: null, pendingSend: null, sendCheck: null, sendAnswer: null,
     // The web arm's default — the confirm row stands. The extension arm's
     // tests override this to false and cover the flow the prompt confirms
     // (WEB_INTERFACE → The wallet window → "in the web build, the confirm row").
@@ -588,114 +595,149 @@ describe('wallet window — the balance and send rows', () => {
 // ---------------------------------------------------------------------------
 // The extension arm — WEB_INTERFACE → The wallet window →
 // "in the extension there is no confirm row". `confirmInRow: false` — the
-// confirm row does not build; the resolved key renders beneath the recipient
-// field in mono, whole, and `send` fires at once. A locked press mounts the
-// unlock form under the form (a `.card-unlock` row) and proceeds on unlock.
+// confirm row does not build; the form hands the App the press once its amount
+// and recipient are read, and the row draws the answer the App holds: the key
+// beneath the recipient field in mono, whole, or the refusal in its line, and
+// after the form the unlock row a locked identity owes. The press itself —
+// the check, the unlock, the flow — is pinned through the App in
+// app-send-check.test.ts.
 // ---------------------------------------------------------------------------
 
+function extForm(f: HTMLElement): { form: HTMLFormElement; to: HTMLInputElement; amount: HTMLInputElement } {
+  const form = f.querySelector('form.credits-form') as HTMLFormElement;
+  return {
+    form,
+    to: form.querySelector<HTMLInputElement>('input[aria-label*="recipient"]')!,
+    amount: form.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!,
+  };
+}
+
 describe('wallet — the send flow, extension arm (confirmInRow: false)', () => {
-  it('a resolved handle: no .pf-confirm; the whole key beneath the recipient in mono; send called once', async () => {
-    const sent: Array<[string, string | null, bigint]> = [];
+  it('a handle: the form hands the App the press — the name less its `@`, the amount in base units — and builds no confirm row', async () => {
+    const pressed: Array<[SendRecipient, bigint]> = [];
+    const resolved: string[] = [];
+    const sent: unknown[] = [];
     const h = handlers({
-      send: (k, n, a) => sent.push([k, n, a]),
-      resolveRecipient: async () => ({ key: REC, name: REC_NAME }),
+      pressSend: (to, a) => pressed.push([to, a]),
+      resolveRecipient: async (t) => { resolved.push(t); return { key: REC, name: REC_NAME }; },
+      send: (...args) => sent.push(args),
     });
     const f = creditsField(render(h, extCtx()))!;
-    const form = f.querySelector('form.credits-form') as HTMLFormElement;
-    const to = form.querySelector<HTMLInputElement>('input[aria-label*="recipient"]')!;
-    const amount = form.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!;
+    const { form, to, amount } = extForm(f);
     to.value = '@bob'; amount.value = '12.5';
     form.dispatchEvent(new Event('submit', { cancelable: true }));
     await flush();
-    // No confirm row is ever built on the extension arm.
     expect(f.querySelector('.pf-confirm')).toBeNull();
-    // The resolved key renders beneath the recipient, mono, whole (never a prefix).
+    expect(pressed).toEqual([[{ name: 'bob' }, 1_250_000_000n]]);
+    // The App resolves and sends; the form does neither and draws no key itself.
+    expect(resolved).toEqual([]);
+    expect(sent).toEqual([]);
+    expect(form.querySelector<HTMLElement>('.resolved-key')!.hidden).toBe(true);
+  });
+
+  it('a bare key: handed to the App as a key, lowercased', async () => {
+    const pressed: Array<[SendRecipient, bigint]> = [];
+    const h = handlers({ pressSend: (to, a) => pressed.push([to, a]) });
+    const f = creditsField(render(h, extCtx()))!;
+    const { form, to, amount } = extForm(f);
+    to.value = 'FF'.repeat(32); amount.value = '3.14';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    expect(pressed).toEqual([[{ key: 'ff'.repeat(32) }, 314_000_000n]]);
+  });
+
+  it('a refusal of the form\'s own — the amount, a recipient neither key nor name — hands the App nothing', async () => {
+    const pressed: unknown[] = [];
+    const h = handlers({ pressSend: (...args) => pressed.push(args) });
+    const f = creditsField(render(h, extCtx()))!;
+    const { form, to, amount } = extForm(f);
+    const refusal = form.querySelector<HTMLElement>('.pf-refusal')!;
+    to.value = '@bob'; amount.value = '0';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(refusal.textContent).toBe('an amount is digits with up to eight decimals.');
+    to.value = '@not a name'; amount.value = '1';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(refusal.textContent).toBe('that is not a key or a name.');
+    expect(pressed).toEqual([]);
+  });
+
+  it('every press opens with beginSendPress, in either build', async () => {
+    for (const confirmInRow of [false, true]) {
+      let begun = 0;
+      const h = handlers({ beginSendPress: () => { begun += 1; return true; } });
+      const { form, to, amount } = extForm(creditsField(render(h, extCtx({ confirmInRow })))!);
+      to.value = '@bob'; amount.value = '';
+      form.dispatchEvent(new Event('submit', { cancelable: true }));
+      await flush();
+      expect(begun).toBe(1);
+    }
+  });
+
+  it('the key the App holds stands beneath the recipient field — whole, in mono — the refusal line hidden', () => {
+    const f = creditsField(render(handlers(), extCtx({ sendAnswer: { key: REC, unlock: null } })))!;
+    const { form } = extForm(f);
     const key = form.querySelector<HTMLElement>('.resolved-key')!;
     expect(key.hidden).toBe(false);
     expect(key.textContent).toBe(REC);
     expect(key.classList.contains('mono')).toBe(true);
-    // send was called once with the resolved key.
-    expect(sent).toEqual([[REC, REC_NAME, 1_250_000_000n]]);
+    expect(form.querySelector<HTMLElement>('.pf-refusal')!.hidden).toBe(true);
   });
 
-  it('a bare key: no .pf-confirm; the same key beneath the field; send called with name null', async () => {
-    const sent: Array<[string, string | null, bigint]> = [];
-    const h = handlers({ send: (k, n, a) => sent.push([k, n, a]) });
-    const OTHER = 'ff'.repeat(32);
-    const f = creditsField(render(h, extCtx()))!;
-    const form = f.querySelector('form.credits-form') as HTMLFormElement;
-    const to = form.querySelector<HTMLInputElement>('input[aria-label*="recipient"]')!;
-    const amount = form.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!;
-    to.value = OTHER; amount.value = '3.14';
-    form.dispatchEvent(new Event('submit', { cancelable: true }));
-    await flush();
-    expect(f.querySelector('.pf-confirm')).toBeNull();
+  it('the refusal the App holds reads in the form\'s line, taking away the key a press before left beneath the field', () => {
+    const f = creditsField(render(handlers(), extCtx({ sendAnswer: { key: REC, unlock: null } })))!;
+    const { form } = extForm(f);
+    renderCreditsRow(f, handlers(), extCtx({ sendAnswer: { refusal: 'no one holds that name.' } }));
+    const refusal = form.querySelector<HTMLElement>('.pf-refusal')!;
     const key = form.querySelector<HTMLElement>('.resolved-key')!;
-    expect(key.hidden).toBe(false);
-    expect(key.textContent).toBe(OTHER);
-    expect(sent).toEqual([[OTHER, null, 314_000_000n]]);
+    expect(refusal.hidden).toBe(false);
+    expect(refusal.textContent).toBe('no one holds that name.');
+    expect(key.hidden).toBe(true);
+    expect(key.textContent).toBe('');
   });
 
-  it('a locked press mounts the unlock form UNDER the form; unlock proceeds; no confirm row is built', async () => {
-    const sent: Array<[string, string | null, bigint]> = [];
-    const unlockedWith: string[] = [];
-    const h = handlers({
-      send: (k, n, a) => sent.push([k, n, a]),
-      unlockIdentity: async (p) => { unlockedWith.push(p); },
-    });
-    const f = creditsField(render(h, extCtx({ identity: { pubKeyHex: KEY, locked: true } })))!;
-    const form = f.querySelector('form.credits-form') as HTMLFormElement;
-    const to = form.querySelector<HTMLInputElement>('input[aria-label*="recipient"]')!;
-    const amount = form.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!;
-    to.value = REC; amount.value = '1';
+  it('with no answer held a render leaves the form\'s own lines as its press left them', async () => {
+    const h = handlers();
+    const f = creditsField(render(h, extCtx()))!;
+    const { form, to, amount } = extForm(f);
+    to.value = '@bob'; amount.value = 'x';
     form.dispatchEvent(new Event('submit', { cancelable: true }));
     await flush();
-    // No confirm row is ever built.
-    expect(f.querySelector('.pf-confirm')).toBeNull();
-    // The unlock form is UNDER the form, the invites row's .card-unlock pattern.
-    const urow = form.parentElement?.querySelector('.card-unlock');
-    expect(urow).not.toBeNull();
-    // No send yet — the unlock is pending.
-    expect(sent).toHaveLength(0);
-    // The unlock's submit resolves; the send fires.
-    const unlock = urow!.querySelector('form.pf') as HTMLFormElement;
-    (unlock.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    renderCreditsRow(f, h, extCtx());
+    const refusal = form.querySelector<HTMLElement>('.pf-refusal')!;
+    expect(refusal.hidden).toBe(false);
+    expect(refusal.textContent).toBe('an amount is digits with up to eight decimals.');
+  });
+
+  it('the unlock row the App holds stands after the form: a render in place leaves the same element, a rebuilt body moves it under its fresh form', () => {
+    const row = sendUnlockRow(KEY, async () => {}, () => {});
+    const c = extCtx({ sendAnswer: { key: REC, unlock: row } });
+    const f = creditsField(render(handlers(), c))!;
+    const { form } = extForm(f);
+    expect(form.nextElementSibling).toBe(row);
+    renderCreditsRow(f, handlers(), c);
+    expect(form.nextElementSibling).toBe(row);
+    expect(f.querySelectorAll('.card-unlock')).toHaveLength(1);
+    const rebuilt = extForm(creditsField(render(handlers(), c))!).form;
+    expect(rebuilt.nextElementSibling).toBe(row);
+    expect(form.nextElementSibling).toBeNull();
+  });
+
+  it('sendUnlockRow: a `.card-unlock` row holding the unlock form for the key — the passphrase to onUnlock, `cancel` to onCancel', async () => {
+    const unlocked: string[] = [];
+    let cancelled = 0;
+    const row = sendUnlockRow(KEY, async (p) => { unlocked.push(p); }, () => { cancelled += 1; });
+    expect(row.className).toBe('card-unlock');
+    const unlock = row.querySelector<HTMLFormElement>('form.pf')!;
+    expect(unlock.querySelector<HTMLInputElement>('input[autocomplete="username"]')!.value).toBe(KEY);
+    unlock.querySelector<HTMLInputElement>('input[type="password"]')!.value = 'pw';
     unlock.dispatchEvent(new Event('submit', { cancelable: true }));
     await flush();
-    expect(unlockedWith).toEqual(['pw']);
-    expect(sent).toEqual([[REC, null, 100_000_000n]]);
-    // The card-unlock is gone.
-    expect(form.parentElement?.querySelector('.card-unlock')).toBeNull();
-  });
-
-  it('a second submit after an in-row unlock goes straight through with no new unlock row', async () => {
-    const sent: Array<[string, string | null, bigint]> = [];
-    const unlockedWith: string[] = [];
-    const h = handlers({
-      send: (k, n, a) => sent.push([k, n, a]),
-      unlockIdentity: async (p) => { unlockedWith.push(p); },
-    });
-    const f = creditsField(render(h, extCtx({ identity: { pubKeyHex: KEY, locked: true } })))!;
-    const form = f.querySelector('form.credits-form') as HTMLFormElement;
-    const to = form.querySelector<HTMLInputElement>('input[aria-label*="recipient"]')!;
-    const amount = form.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!;
-    // First press: locked → the unlock row mounts under the form.
-    to.value = REC; amount.value = '1';
-    form.dispatchEvent(new Event('submit', { cancelable: true }));
-    await flush();
-    const urow = form.parentElement?.querySelector('.card-unlock');
-    (urow!.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
-    (urow!.querySelector('form.pf') as HTMLFormElement).dispatchEvent(new Event('submit', { cancelable: true }));
-    await flush();
-    expect(sent).toEqual([[REC, null, 100_000_000n]]);
-    // Second press: no new unlock row is mounted; send fires straight.
-    const OTHER = 'ff'.repeat(32);
-    to.value = OTHER; amount.value = '2';
-    form.dispatchEvent(new Event('submit', { cancelable: true }));
-    await flush();
-    expect(form.parentElement?.querySelector('.card-unlock')).toBeNull();
-    expect(unlockedWith).toEqual(['pw']); // no second unlock asked
-    expect(sent).toEqual([[REC, null, 100_000_000n], [OTHER, null, 200_000_000n]]);
+    expect(unlocked).toEqual(['pw']);
+    button(row, 'cancel')!.click();
+    expect(cancelled).toBe(1);
   });
 
   it('resetCreditsSendForm clears the resolved-key hint alongside the inputs', () => {
@@ -712,6 +754,109 @@ describe('wallet — the send flow, extension arm (confirmInRow: false)', () => 
     expect(inputs[1]!.value).toBe('');
     expect(key.textContent).toBe('');
     expect(key.hidden).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// While a handle's check runs — WEB_INTERFACE → The wallet window → "The `send`
+// row": in the extension the flight's place reads *checking @bob…* from the
+// press to its answer, and a press during it does nothing. The App holds the
+// check; the row reads it from `sendCheck` and a press from `beginSendPress`.
+// ---------------------------------------------------------------------------
+
+describe('wallet — the send row while a handle is checked', () => {
+  it('the flight\'s place reads *checking @bob…* — the handle as the App holds it — in one stage line', () => {
+    const f = creditsField(render(handlers(), extCtx({ sendCheck: '@BoB' })))!;
+    const flight = f.querySelector<HTMLElement>('.credits-flight')!;
+    expect(flight.children).toHaveLength(1);
+    const line = flight.firstElementChild as HTMLElement;
+    expect(line.tagName).toBe('DIV');
+    expect(line.className).toBe('stage');
+    expect(line.textContent).toBe('checking @BoB…');
+  });
+
+  it('the line stands alone in the flight\'s place, over the pending line and over an ending', () => {
+    const pending = creditsField(render(handlers(), extCtx({
+      sendCheck: '@bob',
+      pendingSend: { toHex: REC, toName: 'alice', amount: 1_250_000_000n },
+    })))!;
+    expect(pending.querySelector('.credits-flight')?.textContent).toBe('checking @bob…');
+    const ended = creditsField(render(handlers(), extCtx({
+      sendCheck: '@bob',
+      sendFlight: { stage: 'rejected', reason: 'send not sent.' },
+    })))!;
+    expect(ended.querySelector('.credits-flight')?.textContent).toBe('checking @bob…');
+  });
+
+  it('the send row stands while the check runs with no box spendable, its line alone', () => {
+    const f = creditsField(render(handlers(), creditsCtx({ confirmInRow: false, sendCheck: '@bob' })))!;
+    expect(f.querySelector<HTMLElement>(':scope > .send-row')?.hidden).toBe(false);
+    expect(f.querySelector('.credits-flight')?.textContent).toBe('checking @bob…');
+    expect(f.querySelector('form.credits-form')).toBeNull();
+  });
+
+  it('an in-place render follows the check — the line comes and goes — and leaves the form and its values standing', () => {
+    const h = handlers();
+    const f = creditsField(render(h, extCtx()))!;
+    const form = f.querySelector('form.credits-form') as HTMLFormElement;
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = '@bob'; inputs[1]!.value = '12.5';
+    renderCreditsRow(f, h, extCtx({ sendCheck: '@bob' }));
+    expect(f.querySelector('.credits-flight')?.textContent).toBe('checking @bob…');
+    expect(f.querySelector('form.credits-form')).toBe(form);
+    renderCreditsRow(f, h, extCtx());
+    expect(f.querySelector('.credits-flight')?.textContent).toBe('');
+    expect(f.querySelector('form.credits-form')).toBe(form);
+    expect([inputs[0]!.value, inputs[1]!.value]).toEqual(['@bob', '12.5']);
+  });
+
+  it('a press while a check runs does nothing — a handle, a bad amount, a key — and the key beneath the field stands', async () => {
+    let checking = false;
+    const pressed: Array<[SendRecipient, bigint]> = [];
+    const h = handlers({
+      beginSendPress: () => !checking,
+      pressSend: (to, a) => pressed.push([to, a]),
+    });
+    const f = creditsField(render(h, extCtx({ sendAnswer: { key: REC, unlock: null } })))!;
+    const { form, to, amount } = extForm(f);
+    const refusal = form.querySelector<HTMLElement>('.pf-refusal')!;
+    const key = form.querySelector<HTMLElement>('.resolved-key')!;
+    expect(key.textContent).toBe(REC);
+    checking = true;
+    for (const [t, a] of [['@carol', '2'], ['@carol', 'x'], ['ff'.repeat(32), '3']] as const) {
+      to.value = t; amount.value = a;
+      form.dispatchEvent(new Event('submit', { cancelable: true }));
+      await flush();
+      expect(pressed).toEqual([]);
+      expect(refusal.hidden).toBe(true);
+      expect(key.hidden).toBe(false);
+      expect(key.textContent).toBe(REC);
+      expect([to.value, amount.value]).toEqual([t, a]);
+    }
+    // The check over, the next press is a press.
+    checking = false;
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(pressed).toEqual([[{ key: 'ff'.repeat(32) }, 300_000_000n]]);
+  });
+
+  it('a press while a check runs leaves a refusal line standing as it reads', async () => {
+    let checking = false;
+    const h = handlers({ beginSendPress: () => !checking });
+    const f = creditsField(render(h, extCtx()))!;
+    const { form, to, amount } = extForm(f);
+    const refusal = form.querySelector<HTMLElement>('.pf-refusal')!;
+    to.value = '@bob'; amount.value = '';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(refusal.hidden).toBe(false);
+    expect(refusal.textContent).toBe('an amount is digits with up to eight decimals.');
+    checking = true;
+    amount.value = '1';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(refusal.hidden).toBe(false);
+    expect(refusal.textContent).toBe('an amount is digits with up to eight decimals.');
   });
 });
 

@@ -1,6 +1,7 @@
 import { el, shortHex } from '../dom';
 import { unlockForm } from './passphrase';
 import { card, stageLine, listCardOpts } from './card';
+import { markHandle, nameLine } from './name-handle';
 import type { Flight } from './card';
 import type { VouchesTargetResult, UsernameResult, PostJson } from '../api/dto';
 import type { FeedState } from '../model/state';
@@ -44,6 +45,7 @@ export interface AuthorCtx {
   flight: Flight | null;                // the your-vouch stage line while a flight runs
   username: UsernameResult | null;
   usernameLoaded: boolean;
+  nameClay: (key: string, name: string) => boolean; // the handle reads clay (→ The extension → "The verified names")
 }
 
 export interface AuthorHandlers {
@@ -84,13 +86,21 @@ export function authorBody(handlers: AuthorHandlers, ctx: AuthorCtx): HTMLElemen
   }
 
   // name — @Name when held, `no name` muted when not, loading… before the read
-  // (WEB_INTERFACE → The author window).
+  // (WEB_INTERFACE → The author window). A clay handle carries one clay line
+  // beneath it, the element the figures' line is, drawn by this render alone;
+  // no other site grows one.
   {
     const { row: r, field } = row('name');
     if (!ctx.usernameLoaded) {
       field.appendChild(el('span', 'inkmute', 'loading…'));
     } else if (ctx.username) {
-      field.appendChild(el('span', 'handle', '@' + ctx.username.name));
+      const handle = el('span', 'handle', '@' + ctx.username.name);
+      markHandle(handle, ctx.authorKey, ctx.username.name);
+      field.appendChild(handle);
+      if (ctx.nameClay(ctx.authorKey, ctx.username.name)) {
+        handle.classList.add('clay');
+        field.appendChild(nameLine());
+      }
     } else {
       field.appendChild(el('span', 'inkmute', 'no name'));
     }
@@ -142,8 +152,11 @@ function endorsers(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx)
   for (const v of e.vouches) {
     const line = el('div', 'endorser');
     // WEB_INTERFACE → The identity display — the handle where the row carries a
-    // name, else the prefix; the same control.
+    // name, else the prefix; the same control, the handle clay where the chain
+    // does not back it.
     const btn = el('button', v.voucherName !== null ? 'handle authorbtn' : 'hex authorbtn');
+    if (v.voucherName !== null && ctx.nameClay(v.voucherId, v.voucherName)) btn.classList.add('clay');
+    if (v.voucherName !== null) markHandle(btn, v.voucherId, v.voucherName);
     btn.textContent = v.voucherName !== null ? '@' + v.voucherName : shortHex(v.voucherId, 10);
     btn.setAttribute('aria-label', 'open this author');
     btn.addEventListener('click', () => handlers.openAuthor(v.voucherId, ctx.origin));
@@ -240,6 +253,7 @@ export interface PostsCtx {
   likePending: (postId: string) => boolean;
   linkUrl: (id: string) => string;
   expandedImages: ReadonlySet<string>;    // images shown this session (WEB_INTERFACE → Content)
+  nameClay: (key: string, name: string) => boolean; // the handle reads clay (→ The extension → "The verified names")
 }
 
 export interface PostsHandlers {
@@ -290,6 +304,7 @@ function postCard(post: PostJson, handlers: PostsHandlers, ctx: PostsCtx): HTMLE
     replyCount: post.descendantCount,
     onOpen: (id) => handlers.openThread(id, ctx.origin),
     onAuthor: (key) => handlers.openAuthor(key, ctx.origin),
+    nameClay: ctx.nameClay,
     you,
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,

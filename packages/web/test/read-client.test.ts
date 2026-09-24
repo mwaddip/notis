@@ -7,13 +7,17 @@ import { NodeClient } from '../src/api/client';
 const VIEWER = 'aa'.repeat(32);
 let calls: string[];
 
+// A last page in every paged route's list at once, so any read the URL tests
+// make answers a page.
+const ANY_PAGE = { posts: [], descendants: [], boxes: [], vouches: [], cooldowns: [], bonds: [], next: null };
+
 beforeEach(() => {
   calls = [];
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string | URL) => {
       calls.push(String(url));
-      return { ok: true, status: 200, statusText: 'OK', json: async () => ({}) } as Response;
+      return { ok: true, status: 200, statusText: 'OK', json: async () => ({ ...ANY_PAGE }) } as Response;
     }),
   );
 });

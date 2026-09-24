@@ -574,6 +574,16 @@ header .spacer { flex: 1 1 auto; }
    so the hover's `ink` wins on the prefix by the source-order tie. */
 .endorser .hex, .bond .hex { font-family: var(--mono); font-size: 11.5px; color: var(--inkMute); }
 .endorser .handle, .bond .handle { font-size: 13px; font-weight: 600; color: var(--ink); }
+/* In the extension a handle the chain does not back is clay — the text alone:
+   the same face, weight and size, nothing moving (WEB_INTERFACE → The identity
+   display, → The extension → "The verified names"). Each rule outranks every
+   rule that inks its handle: `.handle` (0,1,0) by `.handle.clay` (0,2,0);
+   `.who .handle`, `.endorser .handle`, `.bond .handle` and the prefix control's
+   hover darkening, each (0,2,0), by the (0,3,0) rule; the header's `.hdr-word`
+   (0,1,0) by `.hdr-word.clay` (0,2,0). An open card's fade still applies. */
+.handle.clay { color: var(--clay); }
+.who .handle.clay, .endorser .handle.clay, .bond .handle.clay { color: var(--clay); }
+.hdr-word.clay { color: var(--clay); }
 /* The hover darkens the ink to `ink` wherever the prefix is a control — the card
    who row, an endorser row, a bond row — and nothing else. It follows every
    context's `.hex` colour rule so its `ink` wins the (0,2,0) tie

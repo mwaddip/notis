@@ -13,12 +13,16 @@ your standing context — read it and the linked docs before touching code.
    `compareProofs`, and **The trust model** (the three rules this tool embodies).
 5. `../../contracts/NODE_INTERFACE.md` — the routes it reads: `Nipopow` (HTTP API), `Nipopow prover`,
    the `/api/v1/proof/:boxId` endpoint (the "avl-endpoint" bullet and "The AVL value carries
-   provenance"), `/karma/:userId` and `/credits/:userId` in `HTTP API`.
-6. `../../contracts/TYPES_INTERFACE.md` — `Box and transaction identity` / `Layout — Boxes`
-   (`boxRecordFromBytes`, `computeCandidateBoxId`), `Network profiles`.
-7. `../../contracts/SPECIAL.md` — S.P.E.C.I.A.L. attention weights. It carries a section per protocol
+   provenance"), `/karma/:userId` and `/credits/:userId` in `HTTP API`, `/usernames/:name` and
+   `/usernames?owner=` in `Usernames`, and `Username records` (a name is unique on its canonical form, an identity
+   holds at most one).
+6. `../../contracts/TYPES_INTERFACE.md` — `BoxId` / `Layout — Boxes` (`boxRecordFromBytes`,
+   `computeCandidateBoxId`), `Content limits` (`isValidUsernameBytes`, `canonicalUsernameBytes`), `Network profiles`.
+7. `../../contracts/WEB_INTERFACE.md` — `The extension` → "The verified tip", "The verified figures" and "The verified
+   names": what the web client, this library's caller, gets from it.
+8. `../../contracts/SPECIAL.md` — S.P.E.C.I.A.L. attention weights. It carries a section per protocol
    package and none for this one; 5 is competent everywhere by default.
-8. Your task's spec in `../../docs/specs/` — `2026-08-27-nipopow-light-client.md` §6 and §8 (U4).
+9. Your task's spec in `../../docs/specs/` — `2026-08-27-nipopow-light-client.md` §6 and §8 (U4).
 
 ⛔ **There is no `NIPOPOW_CLIENT_INTERFACE.md`, and its absence is the point.** The six protocol
 packages have contracts because they define consensus surface. This tool has none: it is a client
@@ -40,7 +44,7 @@ chain the proof committed. Bytes in, verdict out, exit.
 
 **It answers twice: as a command line (`dist/index.js`, the package's `bin`) and as a library
 (`src/lib.ts` → `dist/lib.js`, the package's `exports`)** — `resolveTip`, `fetchListing`, `proveFigures`,
-`proveBoxes`, `verifierProfile` and their types, re-exports with no side effect at import. **The web
+`proveBoxes`, `proveName`, `verifierProfile` and their types, re-exports with no side effect at import. **The web
 client's extension build is the library's caller**: its tip verifier runs `resolveTip` in the page with
 the browser's `fetch` (`WEB_INTERFACE → The extension → "The verified tip"`), and its figures verifier
 runs `proveFigures` after every verified tip against the listing the rows rendered
@@ -55,25 +59,57 @@ no `process` (the command line's `index.ts` alone does).
 
 **The figures.** `fetchListing(nodeUrl, user, fetch)` reads `/karma/:user` and `/credits/:user`
 following `next` to the end, `height` and `effective` from the first karma page — a 404 is an empty
-listing, any other non-ok surfaces as `{ ok: false, reason }`. `proveFigures(nodeUrl, user, listing,
+listing; any other non-ok, or a page that is not an object with a `boxes` array and a `next` that is
+null or a non-empty string with no lone surrogate (the next request carries it through `encodeURIComponent`),
+surfaces as `{ ok: false, reason }`. `proveFigures(nodeUrl, user, listing,
 anchor, profile, fetch)` runs, in this order the run's whole meaning rests on: every listed box at
 `suffixHead`, then the identity record at `suffixHead`, then every box excluded at `suffixHead` once
 more at `tip`, then one `GET /blocks/current`. A box is **`proven`** when it is included at
-`suffixHead`, its value hashes back to its key, its `owner` is the loaded key and its `boxType` the
-ledger it was listed under — a node that lists another key's real box, or the wrong ledger's, gets
-`unproven`. Otherwise: **`young`** — excluded at `suffixHead`, included at `tip`; **`unchecked`** —
+`suffixHead`, its value hashes back to its key, its `owner` is the loaded key, its `boxType` the
+ledger it was listed under, and its value and (for a credit box) its lock the listing's, both fixed
+by the box id — a node that lists another key's real box, the wrong ledger's, or a real box at another
+value or lock, gets `unproven`. Otherwise: **`young`** — excluded at `suffixHead`, included at `tip`; **`unchecked`** —
 excluded at both and `heightAfter` above `tip.height` (a block landed since), or below (the node's
-height fell — a reorg), or `/blocks/current` did not answer (undecided reads as unchecked, never as a
-lie); **`absent`** — excluded at both and `heightAfter` equal to `tip.height`, the node listing what
-the chain does not hold; **`unproven`** — a `stateRoot` other than the header's, a rejected lookup, a
-value that does not decode or hash to the key, a `kind` that is not a box's, an owner or a type that
-is not the listing's; **`no-proof`** — nothing served. The record is `proven` or `absent` at
+height fell — a reorg), or unread — `/blocks/current` gave no block height (undecided reads as
+unchecked, never as a lie); **`absent`** — excluded at both and `heightAfter` equal to `tip.height`,
+the node listing what the chain does not hold; **`unproven`** — a `stateRoot` other than the header's,
+a rejected lookup, a proof answer that is not an object or whose `proof` is not a string, a value that
+does not decode or hash to the key, a `kind` that is not a box's, an owner, a type, a value or a lock
+that is not the listing's, or an entry that is not an object with a 64-hex `boxId` and a decimal `value`, or that
+names an id the listing named earlier in either ledger — for which no proof is asked;
+**`no-proof`** — nothing served. The record is `proven` or `absent` at
 `suffixHead` — the same `null` the node values — or `unproven` / `no-proof` by the same rules; the
 valuation is `effectiveKarma(karma.proven, record, listing.karma.height, decayCfgFor(profile))`, the
-one implementation shared with the node. **`failed`** — any box `unproven` or `absent`, or the record
-`unproven` — is the command line's exit 1. `proveBoxes` composes the two for the command line's own
+one implementation shared with the node, and `null` where `listing.karma.height` is not a block height.
+**The run is total**: an answer of any shape ends in a status, never a throw
+(`WEB_INTERFACE → The extension → "A run is total"`). **`failed`** — any box `unproven` or `absent`,
+the record `unproven`, or a listing height that is not a block height — is the command line's exit 1. `proveBoxes` composes the two for the command line's own
 use; the CLI itself calls `fetchListing` and `proveFigures` so it can print the row's `listing.karma
 .height` beside `effective`.
+
+**The names.** `proveName(nodeUrl, claim, anchor, fetch)` proves a **label** — `{ key, name }`, a key
+and the name a row carries beside it — or a **typed handle** — `{ name }`, without its `@` — through
+the username box the node names for it, in this order the check's meaning rests on: the lookup, `GET
+/usernames?owner=<key>` for a label and `GET /usernames/<name>` for a handle; that box at `suffixHead`,
+once more at `tip` when excluded there; and one `GET /blocks/current` only when it is excluded at both.
+The proven value is a username box, and for a label its `owner` is the key and its name the label's
+name byte for byte — a name is shown as typed; for a handle its name's canonical form is the typed
+name's and its `owner` the lookup's `owner`, the key a send goes to. The lookup's own `name` is never
+read. **`proven`** and **`young`** carry the proven box's `owner`, lowercase hex, and its `name` as
+typed; **`unchecked`** and **`absent`** are decided by `heightAfter` as a figure's are;
+**`unproven`** — any proof failure, a `boxType` other than `username`, an owner or a name that is not
+the claim's, a lookup `boxId` that is not 64 hex, or a label whose key is not 64 hex or whose name is
+not a well-formed name, for which nothing is asked; **`no-proof`** — the lookup's failure other than a
+404, or a proof not served; **`none`** — the lookup answered 404, or a typed handle is not a
+well-formed name, for which nothing is asked. The box is proven by the figures' own path — the tool's
+one AVL verification — and a check is total as a run is
+(`WEB_INTERFACE → The extension → "The verified names"`).
+
+**A verdict names node text for a person to read**: every node string a verdict, a refusal or a line of
+the command line's text (`textLines`, `src/text.ts`, which runs nothing at import) names passes through
+`capped()` — each C0 control, DEL and C1 control as its `\u` escape, never raw, the text so shown cut at
+120 characters with `…`, never inside a surrogate pair or an escape — and nothing a status is decided on
+does; `--json` carries the node's data raw.
 
 - **Owns:** `src/*`, `test/*`, this package's `package.json` and configs.
 - **Does NOT own:** anything in `packages/`, `contracts/`, or `tools/e2e` (the acceptance case that

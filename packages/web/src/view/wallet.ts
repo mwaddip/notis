@@ -24,13 +24,33 @@ import type { CreditsResult, StatusResult } from '../api/dto';
  *  that came back empty is a refusal, so this is the success shape. */
 export type ResolvedRecipient = { key: string; name: string | null };
 
+/** Who a press sends to, as the form read it: a 64-hex key, or a well-formed
+ *  handle with one leading `@` stripped, resolved at the press
+ *  (WEB_INTERFACE → The wallet window → "The `send` row"). */
+export type SendRecipient = { key: string } | { name: string };
+
+/** The answer the App gives a press in the extension, held until the next press
+ *  begins: a refusal, or the key the send goes to — with the unlock row the App
+ *  holds while a locked identity owes the unlock before that send
+ *  (WEB_INTERFACE → The wallet window → "The `send` row"). */
+export type SendAnswer = { refusal: string } | { key: string; unlock: HTMLElement | null };
+
 /** How a $NOTIS faucet grant reads while it stands or after it lapses
  *  (WEB_INTERFACE → The faucet step). */
 export type GrantView = { state: 'pending' } | { state: 'expired'; atHeight: number };
 
 export interface WalletHandlers {
-  // The send form and its resolution (WEB_INTERFACE → The wallet window →
-  // "The `send` row"). The App resolves an @handle to a key at the press.
+  // The send form (WEB_INTERFACE → The wallet window → "The `send` row").
+  // beginSendPress opens every press: false while the extension checks a handle
+  // — the press then does nothing, so one press is one check — and otherwise it
+  // drops the answer the press before left and the ending the send before left
+  // in the flight's place, in either build. In the extension pressSend hands
+  // the App the press once its amount and recipient are read: the check, the
+  // answer, the unlock a locked identity owes and the flow are the App's, and
+  // the row draws each from it. The web build resolves a handle through
+  // resolveRecipient and confirms in the row before `send`.
+  beginSendPress: () => boolean;
+  pressSend: (to: SendRecipient, amount: bigint) => void;
   resolveRecipient: (text: string) => Promise<ResolvedRecipient | { refusal: string }>;
   send: (toHex: string, toName: string | null, amount: bigint) => void;
   askFaucetCredits: () => void;
@@ -41,13 +61,19 @@ export interface WalletCtx {
   identity: { pubKeyHex: string; locked: boolean } | null;
   // credits null before the first read; sendFlight is the transient ending;
   // pendingSend the ledger entry that survives a reload; creditGrant a faucet
-  // transfer in flight or one that lapsed. status.blockHeight is the tip the
-  // row's spendable-at-height filter reads (WEB_INTERFACE → The wallet).
+  // transfer in flight or one that lapsed; sendCheck the handle a press's
+  // check runs for, `@` and the name as typed, which the flight's place reads
+  // while it stands; sendAnswer the answer the App gave the press before, which
+  // the form's lines read (WEB_INTERFACE → The wallet window → "The `send`
+  // row"). status.blockHeight is the tip the row's spendable-at-height filter
+  // reads (WEB_INTERFACE → The wallet).
   status: StatusResult | null;
   credits: CreditsResult | null;
   creditGrant: GrantView | null;
   sendFlight: Flight | null;
   pendingSend: { toHex: string; toName: string | null; amount: bigint } | null;
+  sendCheck: string | null;
+  sendAnswer: SendAnswer | null;
   // The send row's confirm — true on the web (the confirm row stands in the
   // form's slot), false in the extension (the prompt is the one confirmation —
   // WEB_INTERFACE → The wallet window → "The `send` row"). The App fills it
@@ -147,6 +173,50 @@ function sumValues(boxes: readonly { value: string }[]): bigint {
   let s = 0n;
   for (const b of boxes) s += BigInt(b.value);
   return s;
+}
+
+/** A refusal in the form's line, taking away the key a press before it left
+ *  beneath the field — that line names the key a send goes to
+ *  (WEB_INTERFACE → The wallet window → "The `send` row"). */
+function refuseIn(refusal: HTMLElement, resolvedKey: HTMLElement, text: string): void {
+  resolvedKey.textContent = '';
+  resolvedKey.hidden = true;
+  refusal.textContent = text;
+  refusal.hidden = false;
+}
+
+/** Write the answer the App holds into the form on screen, the same whether a
+ *  rebuild mounted it or the reader pressed it (WEB_INTERFACE → The wallet
+ *  window → "The `send` row"): a refusal in its line, or the key the send goes
+ *  to beneath the field, whole, in mono — and after the form the unlock row the
+ *  App holds while a locked identity owes it, moved rather than rebuilt, so
+ *  what is typed in it stands. With no answer held the two lines stand as the
+ *  form's own press left them. */
+function showSendAnswer(formSlot: HTMLElement, answer: SendAnswer | null): void {
+  const form = formSlot.querySelector<HTMLFormElement>('form.credits-form');
+  if (answer === null || form === null) return;
+  const refusal = form.querySelector<HTMLElement>('.pf-refusal')!;
+  const resolvedKey = form.querySelector<HTMLElement>('.resolved-key')!;
+  if ('refusal' in answer) {
+    refuseIn(refusal, resolvedKey, answer.refusal);
+    return;
+  }
+  resolvedKey.textContent = answer.key;
+  resolvedKey.hidden = false;
+  if (answer.unlock !== null && form.nextElementSibling !== answer.unlock) form.after(answer.unlock);
+}
+
+/** The unlock a locked identity owes before the send a press made — the row
+ *  the App holds and the send row mounts after its form
+ *  (WEB_INTERFACE → The wallet window → "The `send` row"). */
+export function sendUnlockRow(
+  pubKeyHex: string,
+  onUnlock: (passphrase: string) => Promise<void>,
+  onCancel: () => void,
+): HTMLElement {
+  const row = el('div', 'card-unlock');
+  row.appendChild(unlockForm(pubKeyHex, onUnlock, onCancel));
+  return row;
 }
 
 /** Append the verified-figures line beneath the balance figure — a `div.hint`,
@@ -255,13 +325,20 @@ function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: Wallet
     formSlot.replaceChildren();
   }
 
-  // The pending line reads from the ledger — durable across a reload. The row
-  // renders it directly rather than through stageLine, which prints only
-  // "submitted" on that stage and would lose the amount and recipient
-  // (WEB_INTERFACE → The wallet window; the identity display's 16-glyph
-  // prefix, → The identity display).
+  showSendAnswer(formSlot, ctx.sendAnswer);
+
+  // While a press's check runs the flight's place reads *checking @bob…* and
+  // nothing else — the handle as typed, in the flight line's element and voice
+  // (WEB_INTERFACE → The wallet window → "The `send` row"). The pending line
+  // reads from the ledger — durable across a reload. The row renders it
+  // directly rather than through stageLine, which prints only "submitted" on
+  // that stage and would lose the amount and recipient (WEB_INTERFACE → The
+  // wallet window; the identity display's 16-glyph prefix, → The identity
+  // display).
   const ps = ctx.pendingSend;
-  if (ps !== null) {
+  if (ctx.sendCheck !== null) {
+    flight.appendChild(el('div', 'stage', `checking ${ctx.sendCheck}…`));
+  } else if (ps !== null) {
     const who = ps.toName !== null ? '@' + ps.toName : shortHex(ps.toHex, 16);
     const l = el('div', 'stage');
     l.textContent = `${formatCredits(ps.amount)} $NOTIS to ${who} · submitted`;
@@ -275,21 +352,25 @@ function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: Wallet
   }
 
   // The `send` row stands while a box is spendable, and while a send's own
-  // line stands — its flight, the pending line, *sent* — so a send of the
-  // whole balance still reads its ending (WEB_INTERFACE → The wallet window
-  // → "The `send` row"). One predicate, read here.
-  toggleSendRow(field, spendable > 0n || ctx.pendingSend !== null || ctx.sendFlight !== null);
+  // line stands — its check, its flight, the pending line, *sent* — so a send
+  // of the whole balance still reads its ending (WEB_INTERFACE → The wallet
+  // window → "The `send` row"). One predicate, read here.
+  toggleSendRow(
+    field,
+    spendable > 0n || ctx.pendingSend !== null || ctx.sendFlight !== null || ctx.sendCheck !== null,
+  );
 }
 
 /** The send form — the recipient (a key or an @handle), the amount ($NOTIS
  *  through parseCredits, never `type=number` which drops decimals and refuses a
- *  locale), the word `send`, a refusal line, and the hint. On submit: parse the
- *  amount, then the recipient — a 64-hex key straight through, else an @handle
- *  stripped of one leading `@` and validated as a username, resolved through the
- *  App at the press; the reader's own key refuses in place. With `confirmInRow`
- *  the web build's confirm row stands next; without it, the extension takes the
- *  key beneath the field and calls `send` at once
- *  (WEB_INTERFACE → The wallet window → "in the extension there is no confirm row"). */
+ *  locale), the word `send`, a refusal line, and the hint. On submit, unless the
+ *  App is checking a handle: parse the amount, then the recipient — a 64-hex
+ *  key, else an @handle stripped of one leading `@` and validated as a
+ *  username. Without `confirmInRow` the extension hands the App the press from
+ *  there, and the row draws its answer from what the App holds
+ *  (WEB_INTERFACE → The wallet window → "in the extension there is no confirm row");
+ *  with it, the web build resolves a handle at the press, refuses the reader's
+ *  own key in place, and stands the confirm row next. */
 function sendForm(slot: HTMLElement, handlers: WalletHandlers, ctx: WalletCtx): void {
   const form = el('form', 'pf credits-form') as HTMLFormElement;
 
@@ -301,8 +382,8 @@ function sendForm(slot: HTMLElement, handlers: WalletHandlers, ctx: WalletCtx): 
   toInput.autocapitalize = 'off';
   toInput.spellcheck = false;
 
-  // The resolved-key line beneath the recipient — extension arm only, shown
-  // after a submit resolves. Kept in the form so `resetCreditsSendForm` can
+  // The resolved-key line beneath the recipient — extension arm only, drawn
+  // from the App's answer. Kept in the form so `resetCreditsSendForm` can
   // clear it alongside the inputs on an accepted submission.
   const resolvedKey = el('div', 'hint resolved-key mono');
   resolvedKey.hidden = true;
@@ -337,84 +418,63 @@ function sendForm(slot: HTMLElement, handlers: WalletHandlers, ctx: WalletCtx): 
     void submitForm();
   });
 
-  // The effective ctx — an in-row unlock fires no onChange, so every read of
-  // the identity goes through `cur`, which the unlock path replaces so the
-  // next press proceeds without a second unlock (WEB_INTERFACE → The wallet).
-  let cur = ctx;
+  const refuse = (text: string): void => refuseIn(refusal, resolvedKey, text);
 
   const submitForm = async (): Promise<void> => {
+    // One press is one check: while a handle's check runs, a press does nothing
+    // — the refusal line, the fields and the key beneath them stand as they are
+    // (WEB_INTERFACE → The wallet window → "The `send` row").
+    if (!handlers.beginSendPress()) return;
     refusal.hidden = true;
     // Amount first — a bad number never asks the network for a handle.
     const amount = parseCredits(amountInput.value);
     if (amount === null || amount === 0n) {
-      refusal.textContent = 'an amount is digits with up to eight decimals.';
-      refusal.hidden = false;
+      refuse('an amount is digits with up to eight decimals.');
       return;
     }
     // Recipient: a bare 64 hex is a key; else an @handle (one leading @ stripped) validated as a username.
     const raw = toInput.value.trim();
     const asKey = raw.toLowerCase();
-    let toHex: string;
-    let toName: string | null = null;
+    let to: SendRecipient;
     if (/^[0-9a-f]{64}$/.test(asKey)) {
-      toHex = asKey;
+      to = { key: asKey };
     } else {
       const naked = raw.startsWith('@') ? raw.slice(1) : raw;
-      const bytes = new TextEncoder().encode(naked);
-      if (!isValidUsernameBytes(bytes)) {
-        refusal.textContent = 'that is not a key or a name.';
-        refusal.hidden = false;
+      if (!isValidUsernameBytes(new TextEncoder().encode(naked))) {
+        refuse('that is not a key or a name.');
         return;
       }
-      const res = await handlers.resolveRecipient(naked);
+      to = { name: naked };
+    }
+    if (!ctx.confirmInRow) {
+      // The extension: the prompt is the one confirmation (WEB_INTERFACE → The
+      // wallet window → "in the extension there is no confirm row"), and the
+      // App takes the press from here.
+      handlers.pressSend(to, amount);
+      return;
+    }
+    // The web build: a handle resolved at the press, then the confirm row in
+    // the form's slot; keep restores the form with its values (the fourth
+    // ending, WEB_INTERFACE → The wallet). A locked identity mounts the unlock
+    // form first.
+    let toHex: string;
+    let toName: string | null = null;
+    if ('key' in to) {
+      toHex = to.key;
+    } else {
+      const res = await handlers.resolveRecipient(to.name);
       if ('refusal' in res) {
-        refusal.textContent = res.refusal;
-        refusal.hidden = false;
+        refuse(res.refusal);
         return;
       }
       toHex = res.key;
       toName = res.name;
     }
-    if (toHex === cur.identity?.pubKeyHex) {
-      refusal.textContent = 'that is your own key.';
-      refusal.hidden = false;
+    if (toHex === ctx.identity?.pubKeyHex) {
+      refuse('that is your own key.');
       return;
     }
-    if (cur.confirmInRow) {
-      // The web build: the confirm row stands in the form's slot; keep
-      // restores the form with its values (the fourth ending, WEB_INTERFACE →
-      // The wallet). A locked identity mounts the unlock form first.
-      sendConfirm(slot, handlers, cur, { toHex, toName, amount, raw, amountText: amountInput.value });
-      return;
-    }
-    // The extension: the prompt is the one confirmation (WEB_INTERFACE → The
-    // wallet window → "in the extension there is no confirm row"). Render the
-    // resolved key beneath the recipient field, whole in mono, and call `send`
-    // at once. A locked identity mounts the unlock form under the form
-    // (a `.card-unlock` row) and proceeds on unlock.
-    resolvedKey.textContent = toHex;
-    resolvedKey.hidden = false;
-    const go = (): void => handlers.send(toHex, toName, amount);
-    const id = cur.identity;
-    if (id?.locked) {
-      if (form.parentElement?.querySelector('.card-unlock')) return; // already open
-      const urow = el('div', 'card-unlock');
-      urow.appendChild(
-        unlockForm(
-          id.pubKeyHex,
-          async (p) => {
-            await handlers.unlockIdentity(p);
-            cur = { ...cur, identity: { pubKeyHex: id.pubKeyHex, locked: false } };
-            urow.remove();
-            go();
-          },
-          () => urow.remove(),
-        ),
-      );
-      form.insertAdjacentElement('afterend', urow);
-      return;
-    }
-    go();
+    sendConfirm(slot, handlers, ctx, { toHex, toName, amount, raw, amountText: amountInput.value });
   };
 
   slot.appendChild(form);

@@ -51,6 +51,7 @@ function ctx(over: Partial<ProfileCtx> = {}): ProfileCtx {
     identity: null, backedUp: false, karma: null, grant: null,
     invite: null, canAffordMinBond: false, bonds: null, inviteFlight: null,
     ownName: null, ownNameLoaded: true, usernameFlight: null, pendingUsername: null, canSignClaim: false, canAffordBurn: false,
+    nameClay: () => false, // no check has decided a pair — every handle in ink
     // The web arm's default — no verifier, so `figuresLine` reads row 1 and
     // renders nothing beneath the number. The extension arm's tests override
     // both (WEB_INTERFACE → The extension → "The verified figures").
@@ -883,6 +884,30 @@ describe('profile — the verified-figures line beneath the rep number', () => {
     expect(f.querySelector<HTMLElement>('.mono')!.classList.contains('clay')).toBe(true);
   });
 
+  // A listing height that is not a block height leaves the valuation unmade —
+  // `effective: null` beside a proven or absent record (WEB_INTERFACE → The
+  // extension → "A run is total"): the full rule, the number in its slot.
+  for (const record of [
+    { status: 'proven', record: RECORD } as RecordResult,
+    { status: 'absent' } as RecordResult,
+  ]) {
+    it(`the valuation not made beside the ${record.status} record, every box proven → the clay line and the number clay, never "0 rep proven"`, () => {
+      const fv = pfFigures({
+        boxes: [pfBox({ boxClass: 'karma', status: 'proven', value: 100n })],
+        record,
+        karma: { ...EMPTY_SUMS, proven: 100n, effective: null },
+        failed: true,
+      });
+      const f = rowField(render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
+      const hint = f.querySelector<HTMLElement>('.hint');
+      expect(hint?.textContent).toBe("this node's proof of your rep did not verify");
+      expect(hint?.classList.contains('clay')).toBe(true);
+      const mono = f.querySelector<HTMLElement>('.mono')!;
+      expect(mono.classList.contains('clay')).toBe(true);
+      expect(mono.textContent).toBe('100');
+    });
+  }
+
   it('the record no-proof, no boxes no-proof → muted "the node served no proof for your rep"', () => {
     const fv = pfFigures({
       boxes: [pfBox({ boxClass: 'karma', status: 'proven', value: 100n })],
@@ -930,3 +955,48 @@ describe('profile — the verified-figures line beneath the rep number', () => {
   });
 });
 
+describe('profile — a handle the chain does not back is clay (WEB_INTERFACE → The identity display)', () => {
+  const clayFor = (key: string, name: string) => (k: string, n: string): boolean => k === key && n === name;
+  const bondsWith = (inviteeName: string): ProfileCtx['bonds'] => ({
+    bonds: [{ id: 'b1', value: '100', inviterId: KEY, inviteePublicKey: INVITEE, inviterName: 'Me', inviteeName }], bondCount: 1, next: null,
+  });
+
+  it('a standing-bond row pairs the invitee\'s key with its name — clay on the same control; ink as today', () => {
+    const opened: string[] = [];
+    const h = handlers({ openAuthor: (k) => opened.push(k) });
+    const clay = rowField(render(h, memberCtx({ bonds: bondsWith('Ivy'), nameClay: clayFor(INVITEE, 'Ivy') })), 'invites')!
+      .querySelector('.bond .authorbtn') as HTMLElement;
+    expect([...clay.classList]).toEqual(['handle', 'authorbtn', 'clay']);
+    expect(clay.textContent).toBe('@Ivy');
+    clay.click();
+    expect(opened).toEqual([INVITEE]);
+    const ink = rowField(render(handlers(), memberCtx({ bonds: bondsWith('Ivy'), nameClay: clayFor(KEY, 'Ivy') })), 'invites')!
+      .querySelector('.bond .authorbtn') as HTMLElement;
+    expect([...ink.classList]).toEqual(['handle', 'authorbtn']);
+  });
+
+  it('the username row pairs the loaded key with the reader\'s name — clay; ink as today', () => {
+    // The node's answer names another owner; the pair is the reader's own key.
+    const held: UsernameResult = { ...HELD, owner: INVITEE };
+    const clay = rowField(render(handlers(), memberCtx({ ownName: held, canAffordBurn: true, nameClay: clayFor(KEY, 'Alice_01') })), 'username')!;
+    const h = clay.querySelector('.handle') as HTMLElement;
+    expect([...h.classList]).toEqual(['handle', 'clay']);
+    expect(h.textContent).toBe('@Alice_01');
+    // No line grows here — the author window's name row is the one place.
+    expect(clay.querySelector('.hint.clay')).toBeNull();
+    const ink = rowField(render(handlers(), memberCtx({ ownName: HELD, canAffordBurn: true, nameClay: clayFor(KEY, 'alice_01') })), 'username')!;
+    expect([...(ink.querySelector('.handle') as HTMLElement).classList]).toEqual(['handle']);
+  });
+
+  it('an in-place update of the username row reads the predicate too', () => {
+    const b = render(handlers(), memberCtx({ canSignClaim: true }));
+    const field = rowField(b, 'username')!;
+    renderUsernameRow(field, handlers(), memberCtx({ ownName: HELD, canAffordBurn: true, nameClay: clayFor(KEY, 'Alice_01') }));
+    expect(field.querySelector('.handle.clay')?.textContent).toBe('@Alice_01');
+  });
+
+  it('a pending claim\'s handle is the reader\'s own typed name, not one a node showed — it stays inkmute', () => {
+    const f = rowField(render(handlers(), memberCtx({ pendingUsername: { kind: 'claim', name: 'Alice_01' }, nameClay: () => true })), 'username')!;
+    expect([...(f.querySelector('.handle') as HTMLElement).classList]).toEqual(['handle', 'inkmute']);
+  });
+});

@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { spawnNode, waitForStatus, type NodeProcess } from './node-process.js';
 import { p2pPort } from './ports.js';
-import { assertDistFresh } from './dist-freshness.js';
+import { assertDistFresh, NODE_LOADS } from './dist-freshness.js';
 
 export interface MeshOptions {
   fileIndex: number;
@@ -20,7 +20,7 @@ export interface Mesh {
 }
 
 export async function createMesh(opts: MeshOptions): Promise<Mesh> {
-  assertDistFresh();
+  assertDistFresh(NODE_LOADS);
 
   const miningSecret = randomBytes(32).toString('hex');
   const runDir = mkdtempSync(join(tmpdir(), 'dagsocial-e2e-'));

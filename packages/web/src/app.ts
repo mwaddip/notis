@@ -26,11 +26,15 @@ import { readBuildContext } from './wallet/reads';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps } from './wallet/submit';
 import { identity as identitySingleton } from './identity/identity';
 import { renderKarmaField, renderInvitesRow, renderUsernameRow } from './view/profile';
-import { renderCreditsRow, resetCreditsSendForm, type ResolvedRecipient } from './view/wallet';
+import {
+  renderCreditsRow, resetCreditsSendForm, sendUnlockRow, type ResolvedRecipient, type SendAnswer, type SendRecipient,
+} from './view/wallet';
 import { cornerState, renderCorner, CORNER_POLL_MS, type CornerState } from './view/corner';
 import type { TipVerdict } from './model/tip-verdict';
+import { namePair, nameIsClay, recipientVerdict } from './model/name-verdict';
+import { markHandle, landNameClay } from './view/name-handle';
 import type { Anchor } from './model/state';
-import type { Listing } from '@dagsocial/nipopow-client';
+import type { Listing, NameResult } from '@dagsocial/nipopow-client';
 import type { Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
@@ -40,7 +44,7 @@ import {
 import {
   FEED_COMPOSER_KEY, type AppState, type ThreadState, type RenderCtx, type Handlers, type Submission,
   type FlightStage, type AppIdentity, type AuthorWindowData, type FeedState, type FiguresView,
-  type TipVerifier, type FiguresVerifier,
+  type TipVerifier, type TipRun, type FiguresVerifier, type NamesVerifier,
 } from './model/state';
 import { decideMove, type ScreenEntry } from './history';
 
@@ -276,6 +280,11 @@ export class App {
   private lastVerifyBeganAt: number | null = null;
   private verifyInFlight = false;
   private verifyGen = 0;
+  // The presses waiting on the run in flight — a send to a handle that needs a
+  // fresh anchor (WEB_INTERFACE → The extension → "The verified names"). The
+  // run's end settles each with its verdict and anchor; a run that ends without
+  // a verdict, or that a node change drops, settles each with null.
+  private tipRunWaiters: Array<(run: TipRun | null) => void> = [];
   // The verified figures (WEB_INTERFACE → The extension → "The verified
   // figures") — the seam runs proveFigures over the App's own listing and
   // hands the reading node's verified headers on. Non-null only in the
@@ -340,6 +349,24 @@ export class App {
   // The reader's own name (WEB_INTERFACE → The identity display).
   private ownName: UsernameResult | null = null;
   private ownNameLoaded = false;
+  // The verified names (WEB_INTERFACE → The extension → "The verified names") —
+  // one check's result per key and name, held under namePair. Every handle on
+  // screen reads it through nameClay; a pair with no result reads as it reads
+  // without a verifier.
+  private nameChecks = new Map<string, NameResult>();
+  // The seam runs proveName over one pair on screen against the anchor
+  // standing; non-null only in the extension build. One batch in flight, its
+  // pairs checked one after another; a trigger during a batch marks one more,
+  // `every` over `new`. A node change drops every result and moves the
+  // generation, which drops a batch in flight at its next answer; an identity
+  // change keeps them — a name's check reads no identity. nameRunAsked holds
+  // once a check that ended `unchecked` has asked for its one tip run, until a
+  // run no check asked for begins.
+  private namesVerifier: NamesVerifier | null;
+  private namesGen = 0;
+  private namesInFlight = false;
+  private namesMarked: 'new' | 'every' | null = null;
+  private nameRunAsked = false;
   private usernameFlight: Flight | null = null;
   private usernameInFlight: { kind: 'claim' | 'burn'; name: string } | null = null;
   // The wallet window (WEB_INTERFACE → The wallet window). walletCredits is the
@@ -347,11 +374,20 @@ export class App {
   // wallet open, the wallet's ↻, an identity or node change and a verified tip
   // while the wallet is open, and each landing that moves the balance;
   // creditGrantView is a faucet transfer in flight or one that lapsed; sendFlight
-  // is the transient ending for the row (the pending state lives in the ledger).
+  // is the transient ending for the row (the pending state lives in the ledger);
+  // sendCheck is the handle a press's check runs for in the extension, `@` and
+  // the name as typed, from the press to its answer — the row reads it in the
+  // flight's place, and a press reads it and does nothing; sendAnswer is the
+  // answer the extension's press before was given, until the next press begins —
+  // a refusal, or the key the send goes to with the unlock row a locked
+  // identity owes before that send — which the row draws into whichever form
+  // stands (→ "The `send` row").
   private walletCredits: CreditsResult | null = null;
   private walletCreditsStamp: ListingStamp | null = null;
   private creditGrantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null = null;
   private sendFlight: Flight | null = null;
+  private sendCheck: string | null = null;
+  private sendAnswer: SendAnswer | null = null;
 
   // Optional in the extension build — the App's own hook, called synchronously
   // from `askFaucet` / `askFaucetCredits` before any await, so the browser's
@@ -370,6 +406,7 @@ export class App {
     requestFaucetOrigin?: (origin: string) => Promise<boolean>,
     verifier?: TipVerifier | null,
     figuresVerifier?: FiguresVerifier | null,
+    namesVerifier?: NamesVerifier | null,
   ) {
     this.client = client ?? new NodeClient(() => prefs.node);
     this.writeClient = writeClient ?? new WriteClient(() => prefs.node);
@@ -378,6 +415,7 @@ export class App {
     this.requestFaucetOrigin = requestFaucetOrigin ?? null;
     this.verifier = verifier ?? null;
     this.figuresVerifier = figuresVerifier ?? null;
+    this.namesVerifier = namesVerifier ?? null;
     // With no verifier the verdict stays `undefined` — the corner reads the
     // first paragraph of the status corner, word for word (WEB_INTERFACE →
     // The status corner, → The extension → "The verified tip").
@@ -444,9 +482,13 @@ export class App {
       claimUsername: (name) => void this.claimUsername(name),
       burnUsername: () => void this.burnUsername(),
       // The wallet's send row (WEB_INTERFACE → The wallet window → "The `send`
-      // row"). resolveRecipient is the handle → holder read the form runs at
-      // the press; send is the credits transfer flow; askFaucetCredits is the
-      // faucet's $NOTIS step (→ The faucet step).
+      // row"). beginSendPress opens every press; pressSend is the extension's
+      // press once the form has read it; resolveRecipient is the handle →
+      // holder read the web build's form runs at the press; send is the credits
+      // transfer flow; askFaucetCredits is the faucet's $NOTIS step (→ The
+      // faucet step).
+      beginSendPress: () => this.beginSendPress(),
+      pressSend: (to, amount) => void this.pressSend(to, amount),
       resolveRecipient: (name) => this.resolveRecipient(name),
       send: (toHex, toName, amount) => void this.send(toHex, toName, amount),
       askFaucetCredits: () => void this.askFaucetCredits(),
@@ -658,6 +700,7 @@ export class App {
       canSignWithdraw: this.canSignWithdraw(),
       ownName: this.ownName,
       ownNameLoaded: this.ownNameLoaded,
+      nameClay: (key, name) => this.nameClay(key, name),
       usernameFlight: this.usernameFlight,
       pendingUsername: this.usernameInFlight ?? pendingUsernameEntry(this.ledger.all()),
       canSignClaim: this.canSignWithdraw(), // same predicate — a spendable box
@@ -670,6 +713,8 @@ export class App {
       creditGrant: this.creditGrantView,
       sendFlight: this.sendFlight,
       pendingSend: pendingSendEntries(this.ledger.all())[0] ?? null,
+      sendCheck: this.sendCheck,
+      sendAnswer: this.sendAnswer,
       // The web build's identity module has no `policy`; the extension's proxy
       // has (WEB_INTERFACE → The profile window). `!this.idm.policy` is
       // therefore the same predicate the sign-each-rep-action row renders on:
@@ -722,6 +767,13 @@ export class App {
   private canAffordBurn(): boolean {
     if (this.profileKarma === null) return false;
     return BigInt(this.profileKarma.effective) >= USERNAME_BURN_PRICE;
+  }
+
+  /** Whether the handle a key and a name render as reads clay — the check held
+   *  for the pair, ink while none has decided it (WEB_INTERFACE → The extension
+   *  → "The verified names"). */
+  private nameClay(key: string, name: string): boolean {
+    return nameIsClay(this.nameChecks.get(namePair(key, name)));
   }
 
   private renderHeader(): void {
@@ -791,6 +843,10 @@ export class App {
       } else if (this.ownName) {
         profile.style.fontWeight = '600';
         profile.textContent = '@' + this.ownName.name;
+        // In the extension a handle the chain does not back is clay — the text
+        // alone, the same control (WEB_INTERFACE → The identity display).
+        if (this.nameClay(cur.pubKeyHex, this.ownName.name)) profile.classList.add('clay');
+        markHandle(profile, cur.pubKeyHex, this.ownName.name);
       } else {
         profile.style.fontFamily = 'var(--mono)';
         profile.textContent = shortHex(cur.pubKeyHex, 16);
@@ -823,6 +879,7 @@ export class App {
     bar.appendChild(right);
 
     this.updateHeaderArrows();
+    this.checkNames('new');
   }
 
   // WEB_INTERFACE → The standalone thread — no arrows, no profile control.
@@ -1031,6 +1088,7 @@ export class App {
       renderFeedInto(this.feedEl, this.state.feed, this.handlers, this.ctx());
       this.feedEl.scrollTop = top;
     });
+    this.checkNames('new');
   }
 
   /** Replace one card in the feed by post id — the like's optimistic press and its
@@ -1040,10 +1098,12 @@ export class App {
     const post = this.state.feed.posts.find((p) => p.id === postId);
     if (!post) return;
     replaceFeedCard(this.feedEl, post, this.ctx(), this.handlers);
+    this.checkNames('new');
   }
 
   private renderPanes(): void {
     this.withComposerFocus(() => this.renderPanesBody());
+    this.checkNames('new');
   }
 
   private renderPanesBody(): void {
@@ -1086,6 +1146,7 @@ export class App {
    *  in them survive. */
   private renderRegion(uid: number): void {
     this.withComposerFocus(() => this.renderRegionInPlace(uid));
+    this.checkNames('new');
   }
 
   private renderRegionInPlace(uid: number): void {
@@ -1125,11 +1186,37 @@ export class App {
     });
   }
 
+  /** An author window's read landed. Its body renders where it is focused, and
+   *  every other column holding it or the subject's posts window redraws its bars
+   *  in place, the body untouched: both bars read the subject's name, stacked or
+   *  focused, in any column (WEB_INTERFACE → The author window). */
+  private renderAuthorLoad(key: string): void {
+    const author = authorWindowId(key);
+    const posts = postsWindowId(key);
+    this.state.workspace.columns.forEach((column, ci) => {
+      if (column.wins[column.focus] === author) this.renderRegion(column.uid);
+      else if (column.wins.includes(author) || column.wins.includes(posts)) this.replaceBars(column, ci);
+    });
+  }
+
+  /** An author-posts window's read ended. Its body renders where it is focused,
+   *  and every other column holding it redraws its bars in place, the body
+   *  untouched: its bar reads the subject's name from its rows where no author
+   *  window's read holds one (WEB_INTERFACE → The author window). */
+  private renderPostsLoad(key: string): void {
+    const posts = postsWindowId(key);
+    this.state.workspace.columns.forEach((column, ci) => {
+      if (column.wins[column.focus] === posts) this.renderRegion(column.uid);
+      else if (column.wins.includes(posts)) this.replaceBars(column, ci);
+    });
+  }
+
   /** Replace a column's bars in place from the current ctx, leaving its body. */
   private replaceBars(column: Column, ci: number): void {
     const region = this.panesEl.querySelector<HTMLElement>(`.region[data-uid="${column.uid}"]`);
     const oldBars = region?.querySelector<HTMLElement>('.bars');
     if (oldBars) oldBars.replaceWith(renderBars(column, ci, this.handlers, this.ctx()));
+    this.checkNames('new');
   }
 
   private structural(mutate: () => void): void {
@@ -1803,9 +1890,14 @@ export class App {
    *  before writes nothing when it answers. The identity change and a change of
    *  the reading node both call it (WEB_INTERFACE → The identity module, → The
    *  settings window, → The status corner); the reader's own acts in flight are
-   *  the identity change's to drop. */
+   *  the identity change's to drop, all but a send's press in the extension,
+   *  which belongs to the node and the key it was made under and ends with the
+   *  generation — its check, its answer, and the send an unlock was owed for
+   *  (→ The wallet window → "The `send` row"). */
   private dropReaderState(): void {
     this.readerGen += 1;
+    this.sendCheck = null;
+    this.dropSendAnswer();
     this.lastPolledHeight = 0;
     this.profileKarma = null;
     this.profileKarmaStamp = null;
@@ -2585,6 +2677,8 @@ export class App {
     void this.loadAuthorData(key);
   }
 
+  /** Read an author window's endorsers and its subject's name, which lands on
+   *  every bar that reads it (renderAuthorLoad). */
   private async loadAuthorData(key: string): Promise<void> {
     const d = this.authorData.get(key);
     if (!d) return;
@@ -2597,7 +2691,7 @@ export class App {
     } catch {
       return; // leave the window's last data; the ↻ retries
     }
-    this.renderRegionsFor(authorWindowId(key));
+    this.renderAuthorLoad(key);
   }
 
   private refreshAuthor(key: string): Promise<void> {
@@ -2657,7 +2751,7 @@ export class App {
       f.error = msg(e);
     }
     f.loading = false;
-    this.renderRegionsFor(postsWindowId(key));
+    this.renderPostsLoad(key);
   }
 
   /** The posts window's ↻ reports what it did through the feed's own reconcile,
@@ -2692,7 +2786,7 @@ export class App {
       if (gen !== this.readerGen) return;
       f.error = msg(e);
     }
-    this.renderRegionsFor(postsWindowId(key));
+    this.renderPostsLoad(key);
   }
 
   /** An author-posts window's `more` continues the cursor it was asked for: a
@@ -2716,7 +2810,7 @@ export class App {
       if (gen !== this.readerGen || f.next !== cursor) return;
       f.error = msg(e);
     }
-    this.renderRegionsFor(postsWindowId(key));
+    this.renderPostsLoad(key);
   }
 
   // ---- invite, from the profile's invites row (WEB_INTERFACE → The profile window) ----
@@ -2772,6 +2866,7 @@ export class App {
   private renderInvitesRowInPlace(): void {
     const field = document.querySelector<HTMLElement>('.invites-field');
     if (field) renderInvitesRow(field, this.handlers, this.ctx(), this.profileOrigin());
+    this.checkNames('new');
   }
 
   private profileOrigin(): Origin {
@@ -2845,21 +2940,172 @@ export class App {
   private renderUsernameRowInPlace(): void {
     const field = document.querySelector<HTMLElement>('.username-field');
     if (field) renderUsernameRow(field, this.handlers, this.ctx());
+    this.checkNames('new');
   }
 
   // ---- the wallet window's send row (WEB_INTERFACE → The wallet window) ----
 
+  /** A press on the send form begins, unless a check of a handle runs — then it
+   *  does nothing and this answers false, so one press is one check. A press
+   *  that begins drops the answer the press before it was given, and with it
+   *  the send an unlock was owed for, and takes away the ending the send before
+   *  it left in the flight's place — never a send still in flight, and never the
+   *  ledger's pending line (WEB_INTERFACE → The wallet window → "The `send`
+   *  row"). The row is drawn at once: a press the form itself refuses draws
+   *  nothing more. */
+  private beginSendPress(): boolean {
+    if (this.sendCheck !== null) return false;
+    this.dropSendAnswer();
+    if (this.sendFlight !== null && isSettled(this.sendFlight.stage)) {
+      this.sendFlight = null;
+      this.renderCreditsRowInPlace();
+    }
+    return true;
+  }
+
+  /** The extension's press once the form has read its amount and recipient
+   *  (WEB_INTERFACE → The wallet window → "in the extension there is no confirm
+   *  row"): a handle resolved — checked against the verified chain where the
+   *  build carries the names verifier — and then the answer the App holds and
+   *  the row draws on whichever form stands: a refusal, or the key the send
+   *  goes to beneath the field and the flow, which a locked identity reaches
+   *  through the unlock it owes first. A press belongs to the node and the
+   *  identity it was made under: a change of either ends it (dropReaderState),
+   *  and its answer lands nowhere. */
+  private async pressSend(to: SendRecipient, amount: bigint): Promise<void> {
+    const gen = this.readerGen;
+    let key: string;
+    let name: string | null = null;
+    if ('key' in to) {
+      key = to.key;
+    } else {
+      const res = await this.resolveRecipient(to.name);
+      if (gen !== this.readerGen) return;
+      if ('refusal' in res) {
+        this.answerSend({ refusal: res.refusal });
+        return;
+      }
+      key = res.key;
+      name = res.name;
+    }
+    const cur = this.idm.current();
+    if (cur === null) return;
+    if (key === cur.pubKeyHex) {
+      this.answerSend({ refusal: 'that is your own key.' });
+      return;
+    }
+    if (cur.locked) {
+      this.answerSend({ key, unlock: this.owedUnlock(cur.pubKeyHex, key, name, amount) });
+      return;
+    }
+    this.answerSend({ key, unlock: null });
+    void this.send(key, name, amount);
+  }
+
+  /** Hold a press's answer in place of the one before, and draw it on the row. */
+  private answerSend(answer: SendAnswer): void {
+    this.dropSendAnswer();
+    this.sendAnswer = answer;
+    this.renderCreditsRowInPlace();
+  }
+
+  /** Drop the answer the App holds; an unlock row it owed leaves the screen,
+   *  and the send it was owed for is not made. */
+  private dropSendAnswer(): void {
+    const answer = this.sendAnswer;
+    if (answer !== null && 'key' in answer) answer.unlock?.remove();
+    this.sendAnswer = null;
+  }
+
+  /** The unlock a locked identity owes before a proven send: the unlock, then
+   *  the send — while the row is still the one owed, since a press, a node
+   *  change or an identity change takes the send away with it. `cancel` takes
+   *  the row away and leaves the key standing (WEB_INTERFACE → The wallet
+   *  window → "The `send` row"). */
+  private owedUnlock(pubKeyHex: string, key: string, name: string | null, amount: bigint): HTMLElement {
+    const owed = (): boolean => {
+      const answer = this.sendAnswer;
+      return answer !== null && 'key' in answer && answer.unlock === row;
+    };
+    const row = sendUnlockRow(
+      pubKeyHex,
+      async (passphrase) => {
+        await this.idm.unlock(passphrase);
+        if (!owed()) return;
+        this.answerSend({ key, unlock: null });
+        void this.send(key, name, amount);
+      },
+      () => {
+        if (owed()) this.answerSend({ key, unlock: null });
+      },
+    );
+    return row;
+  }
+
   /** Resolve an @handle to its holder — the row's send form calls this at the
    *  press, the way the composer resolves nothing (a post has no recipient) and
-   *  the vouch resolves its box at the press (WEB_INTERFACE → The wallet). One
-   *  read per press; a 404 answers *no one holds that name.* */
+   *  the vouch resolves its box at the press (WEB_INTERFACE → The wallet). In
+   *  the extension the handle is proven against the verified chain first
+   *  (proveRecipient); the web build takes the node's answer, one read per
+   *  press, a 404 answering *no one holds that name.* */
   private async resolveRecipient(name: string): Promise<ResolvedRecipient | { refusal: string }> {
+    if (this.namesVerifier !== null) return this.proveRecipient(this.namesVerifier, name);
     try {
       const held = await this.client.usernameByName(name);
       if (held === null) return { refusal: 'no one holds that name.' };
       return { key: held.owner, name: held.name };
     } catch {
       return { refusal: "can't reach the node right now." };
+    }
+  }
+
+  /** A send to a handle is checked at the press (WEB_INTERFACE → The extension →
+   *  "The verified names", → The wallet window → "The `send` row"). From the
+   *  press to its answer sendCheck holds the handle as typed — the row reads
+   *  *checking @bob…* in the flight's place, moved in place as the check
+   *  begins, and a press does nothing; the answer's own render takes the line
+   *  away. The answer is the proven result's (recipientVerdict), never the
+   *  node's word; a press left with no anchor to check against is *can't be
+   *  checked — the chain is not verified.*, and one whose check throws *can't
+   *  be checked.* A node or identity change ends the check with the generation
+   *  it moves, the line going with it. */
+  private async proveRecipient(verifier: NamesVerifier, name: string): Promise<ResolvedRecipient | { refusal: string }> {
+    const gen = this.readerGen;
+    const handle = '@' + name;
+    this.sendCheck = handle;
+    this.renderCreditsRowInPlace();
+    const result = await this.checkRecipient(verifier, name);
+    // Past a change the row's check, if any, is a later press's.
+    if (gen === this.readerGen) this.sendCheck = null;
+    if (result === 'no-anchor') return { refusal: `${handle} can't be checked — the chain is not verified.` };
+    if (result === 'threw') return { refusal: `${handle} can't be checked.` };
+    return recipientVerdict(result, handle);
+  }
+
+  /** The press's check: the typed handle against the anchor standing — with
+   *  none, the anchor a tip run writes — and a check that ends `unchecked` once
+   *  more against the anchor of one tip run. Answers the last check's result. */
+  private async checkRecipient(verifier: NamesVerifier, name: string): Promise<NameResult | 'no-anchor' | 'threw'> {
+    const anchor = this.tipAnchor ?? (await this.tipRunForPress())?.anchor ?? null;
+    const first = await this.checkHandle(verifier, name, anchor);
+    if (typeof first !== 'object' || first.status !== 'unchecked') return first;
+    return this.checkHandle(verifier, name, (await this.tipRunForPress())?.anchor ?? null);
+  }
+
+  /** One check of a typed handle at the reading node: its result, `no-anchor`
+   *  with no anchor to check it against, or `threw` — a check is total, so a
+   *  rejection is the seam's own failure, logged. */
+  private async checkHandle(
+    verifier: NamesVerifier,
+    name: string,
+    anchor: Anchor | null,
+  ): Promise<NameResult | 'no-anchor' | 'threw'> {
+    if (anchor === null) return 'no-anchor';
+    try {
+      return await verifier.run(prefs.node, { name }, anchor);
+    } catch (e) {
+      console.error(e);
+      return 'threw';
     }
   }
 
@@ -2882,8 +3128,10 @@ export class App {
     }
     if (result.ok) {
       this.sendFlight = null; // the pending line is now the ledger's entry
-      // The form clears on an accepted submission; every other ending leaves
-      // its values intact (WEB_INTERFACE → The wallet).
+      // The form clears on an accepted submission, the answer beneath its field
+      // with it; every other ending leaves its values intact (WEB_INTERFACE →
+      // The wallet).
+      this.dropSendAnswer();
       const field = document.querySelector<HTMLElement>('.credits-field');
       if (field) resetCreditsSendForm(field);
       this.startPoll();
@@ -3064,13 +3312,17 @@ export class App {
    *  during a run is that run (WEB_INTERFACE → The extension → "The verified
    *  tip"). An empty reading base runs nothing; a hidden tab runs nothing.
    *  The gen stamps the run so a late verdict under an older generation is
-   *  dropped and never touches the flag or the render. */
-  private startVerification(): void {
+   *  dropped and never touches the flag or the render. `askedByNames` marks a
+   *  run a name check asks for — one that ended `unchecked`, or a send's check
+   *  at the press (tipRunForPress); a run that begins on any other trigger lets
+   *  a check ask again (→ "The verified names"). */
+  private startVerification(askedByNames = false): void {
     if (this.verifier === null) return;
     if (!this.cornerVisible()) return;
     if (this.verifyInFlight) return;
     const readingBase = prefs.node;
     if (readingBase === '') return;
+    if (!askedByNames) this.nameRunAsked = false;
     const gen = this.verifyGen;
     this.lastVerifyBeganAt = Date.now();
     this.verifyInFlight = true;
@@ -3095,11 +3347,15 @@ export class App {
           this.anchorSeq += 1;
           void this.refreshOwnKarma();
           if (openSet(this.state.workspace).has('@wallet')) void this.refreshWalletCredits();
+          // WEB_INTERFACE → The extension → "The verified names" — every pair
+          // on screen, against the anchor this run wrote.
+          this.checkNames('every');
         } else {
           this.figures = null;
           this.renderCreditsRowInPlace();
           this.renderProfileKarma();
         }
+        this.settleTipRunWaiters(run);
       },
       (e) => {
         // A run that throws clears the verdict to `null` under the current
@@ -3117,8 +3373,29 @@ export class App {
         this.figures = null;
         this.renderCreditsRowInPlace();
         this.renderProfileKarma();
+        this.settleTipRunWaiters(null);
       },
     );
+  }
+
+  /** A tip run for a send's check at the press — one with no anchor standing, or
+   *  one that ended `unchecked` (WEB_INTERFACE → The extension → "The verified
+   *  names"): the run in flight joined, or one started as a run a name check
+   *  asks for. Answers the run's verdict and anchor as it ends, and null where
+   *  no run starts — no verifier, a hidden tab, an empty base — or the run ends
+   *  without a verdict. */
+  private tipRunForPress(): Promise<TipRun | null> {
+    this.startVerification(true);
+    if (!this.verifyInFlight) return Promise.resolve(null);
+    return new Promise((settle) => this.tipRunWaiters.push(settle));
+  }
+
+  /** Settle every press waiting on the run — with its verdict and anchor, or
+   *  null where it ends without a verdict. */
+  private settleTipRunWaiters(run: TipRun | null): void {
+    const waiters = this.tipRunWaiters;
+    this.tipRunWaiters = [];
+    for (const settle of waiters) settle(run);
   }
 
   /** The reading node changed — the settings row's `changeNode`, and the seed
@@ -3135,7 +3412,14 @@ export class App {
    *  build carries a verifier, a run in flight for the previous node is dropped
    *  by its older generation, the verdict returns to `null` (checking), the
    *  flag is cleared so the new run can start, and it does (WEB_INTERFACE → The
-   *  extension → "The verified tip"). */
+   *  extension → "The verified tip"); a press waiting on the dropped run is
+   *  settled without a verdict. Every name check's result is the node
+   *  before's answer: the results drop with the generation, so a batch in
+   *  flight writes nothing more, and its flags clear before the re-render, which
+   *  draws every handle as it reads with no check (→ "The verified names"); a
+   *  send's press ends with the reader's state (dropReaderState), so the row
+   *  re-renders with no *checking* line and no answer, and a press checks at
+   *  the new node (→ The wallet window → "The `send` row"). */
   private onReadingNodeChanged(): void {
     this.cornerGen += 1;
     this.cornerLastTip = null;
@@ -3146,7 +3430,12 @@ export class App {
       this.verifyInFlight = false;
       this.tipVerdict = null;
       this.tipAnchor = null;
+      this.settleTipRunWaiters(null);
     }
+    this.nameChecks.clear();
+    this.namesGen += 1;
+    this.namesInFlight = false;
+    this.namesMarked = null;
     this.state.threads.clear();
     this.state.posts.clear();
     this.dropFeedRows();
@@ -3267,6 +3556,135 @@ export class App {
     if (order < (this.heldRead.get(piece) ?? 0)) return false;
     this.heldRead.set(piece, order);
     return true;
+  }
+
+  // ---- the verified names (WEB_INTERFACE → The extension → "The verified
+  // names") ----
+  // The App checks the key-and-name pairs its surfaces show: every pair on
+  // screen after each tip run that ends `verified`, and after each render of a
+  // surface that draws handles the pairs no check has decided — a pair first on
+  // a surface, whether a read brought its row or a window opened over rows the
+  // App already held. A result that changes a pair's clay lands on its marked
+  // handles where they stand (view/name-handle.ts).
+
+  /** Check the pairs on screen — `every` one, or the `new` ones no check has
+   *  decided — against the anchor standing, one after another. With no verifier
+   *  or no anchor nothing runs; a trigger during a batch marks one more, `every`
+   *  over `new`. */
+  private checkNames(scope: 'new' | 'every'): void {
+    if (this.namesVerifier === null) return;
+    if (this.namesInFlight) {
+      if (this.namesMarked !== 'every') this.namesMarked = scope;
+      return;
+    }
+    if (this.tipAnchor === null) return;
+    const pairs = this.namePairsOnScreen()
+      .filter((p) => scope === 'every' || !this.nameChecks.has(namePair(p.key, p.name)));
+    if (pairs.length === 0) return;
+    this.namesInFlight = true;
+    void this.runNameBatch(this.namesVerifier, pairs, prefs.node, this.namesGen);
+  }
+
+  /** One batch: each pair checked against the anchor standing as its check
+   *  begins, the batch ending where none stands. A check is total, so a
+   *  rejection is the seam's own failure — logged, and the pair keeps no result.
+   *  A batch under an older generation writes nothing and leaves the flags to
+   *  the generation that moved it. */
+  private async runNameBatch(
+    verifier: NamesVerifier,
+    pairs: Array<{ key: string; name: string }>,
+    readingBase: string,
+    gen: number,
+  ): Promise<void> {
+    for (const { key, name } of pairs) {
+      const anchor = this.tipAnchor;
+      if (anchor === null) break;
+      let result: NameResult;
+      try {
+        result = await verifier.run(readingBase, { key, name }, anchor);
+      } catch (e) {
+        console.error(e);
+        if (gen !== this.namesGen) return;
+        continue;
+      }
+      if (gen !== this.namesGen) return;
+      this.landName(key, name, result);
+      if (result.status === 'unchecked') this.askTipRunForNames();
+    }
+    this.namesInFlight = false;
+    const marked = this.namesMarked;
+    this.namesMarked = null;
+    if (marked !== null) this.checkNames(marked);
+  }
+
+  /** Hold a check's result for its pair. A result that leaves the pair's clay
+   *  as it was touches nothing on screen; one that changes it lands on the
+   *  pair's handles in place (HOUSE_STYLE → Motion). */
+  private landName(key: string, name: string, result: NameResult): void {
+    const pair = namePair(key, name);
+    const was = nameIsClay(this.nameChecks.get(pair));
+    this.nameChecks.set(pair, result);
+    const is = nameIsClay(result);
+    if (was !== is) landNameClay([this.appbar, this.feedEl, this.panesEl], pair, is);
+  }
+
+  /** A check that ended `unchecked` — a block landed since the anchor — asks for
+   *  one tip run, whose verified resolver checks every pair again against the
+   *  fresh anchor. Once asked, no check asks again until a run no check asked
+   *  for begins. */
+  private askTipRunForNames(): void {
+    if (this.nameRunAsked) return;
+    this.nameRunAsked = true;
+    this.startVerification(true);
+  }
+
+  /** The pairs the surfaces show, each once, read from the App's state — the
+   *  sources every handle site renders from (WEB_INTERFACE → The identity
+   *  display): the reader's own name beside the loaded key (the header, the
+   *  profile's `username` row, the reader's own cards); the feed's rows; and for
+   *  every open window, a thread's rows with the index row its bar reads while
+   *  no root of its own stands, an author window's subject name and endorsers,
+   *  a posts window's rows with the subject name its bar reads, and the
+   *  profile's standing bonds. A window stacked behind another counts: its bar,
+   *  and its body once focused, draw from the same state. */
+  private namePairsOnScreen(): Array<{ key: string; name: string }> {
+    const pairs = new Map<string, { key: string; name: string }>();
+    const add = (key: string, name: string | null): void => {
+      if (name === null) return;
+      const pair = namePair(key, name);
+      if (!pairs.has(pair)) pairs.set(pair, { key, name });
+    };
+    const addRow = (row: FeedRow | null | undefined): void => {
+      if (row) add(row.author, row.authorName);
+    };
+    const cur = this.idm.current();
+    if (cur !== null && this.ownName !== null) add(cur.pubKeyHex, this.ownName.name);
+    if (!this.standalone) {
+      for (const row of this.state.feed.pending) addRow(row);
+      for (const row of this.state.feed.posts) addRow(row);
+    }
+    for (const id of openSet(this.state.workspace)) {
+      const sub = windowSubject(id);
+      if (sub !== null) {
+        const d = this.authorData.get(sub.key);
+        if (d?.username) add(sub.key, d.username.name);
+        if (sub.kind === 'author') {
+          for (const v of d?.endorsers?.vouches ?? []) add(v.voucherId, v.voucherName);
+        } else {
+          for (const row of this.authorPostsData.get(sub.key)?.posts ?? []) addRow(row);
+        }
+      } else if (id === '@profile') {
+        for (const b of this.bondsView?.bonds ?? []) add(b.inviteePublicKey, b.inviteeName);
+      } else if (!isWin(id)) {
+        addRow(this.state.posts.get(id));
+        const t = this.state.threads.get(id);
+        if (t) {
+          addRow(t.root);
+          for (const row of t.descendants) addRow(row);
+        }
+      }
+    }
+    return [...pairs.values()];
   }
 
   /** Read /blocks/current, update the corner's state, feed viewerTip. The first

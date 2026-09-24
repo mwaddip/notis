@@ -4,6 +4,7 @@ import { profileBody } from './profile';
 import { settingsBody } from './settings';
 import { walletBody } from './wallet';
 import { authorBody, authorPostsBody, type AuthorCtx, type PostsCtx } from './author';
+import { markHandle } from './name-handle';
 import { flattenThread } from '../model/thread';
 import { identityHue } from '../model/identity';
 import { isWithdrawn } from '../api/dto';
@@ -59,6 +60,18 @@ function threadLabel(k: string, ctx: RenderCtx): BarLabel {
   return { authorKey: root.author, authorName: root.authorName, excerpt: root.content ?? 'content not on this node yet', replyCount: t.descendantCount, nested };
 }
 
+/** The name an author or posts window's bar reads: the subject's, read by the
+ *  author window, where that read holds one; else, on a posts window, the
+ *  `authorName` of its first row whose author is the subject — every row of it
+ *  is theirs, and the node fills the name on each (WEB_INTERFACE → The author
+ *  window; NODE_INTERFACE → Usernames → "A list row carries its names"). */
+function subjectName(sub: { kind: 'author' | 'posts'; key: string }, ctx: RenderCtx): string | null {
+  const read = ctx.author.get(sub.key)?.username;
+  if (read) return read.name;
+  if (sub.kind === 'author') return null;
+  return ctx.authorPosts.get(sub.key)?.posts.find((row) => row.author === sub.key)?.authorName ?? null;
+}
+
 function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: Handlers, ctx: RenderCtx): HTMLElement {
   const win = isWin(k);
   const b = el('div', 'bar' + (focused ? ' focused' : '') + (win ? ' win' : ''));
@@ -73,9 +86,12 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
     // holds a name, else the prefix in mono (WEB_INTERFACE → The identity display).
     label.setAttribute('aria-label', 'show this window');
     label.appendChild(el('span', 'name', sub.kind === 'author' ? 'author' : 'posts'));
-    const subName = ctx.author.get(sub.key)?.username;
-    if (subName) {
-      label.appendChild(el('span', 'handle', '@' + subName.name));
+    const subName = subjectName(sub, ctx);
+    if (subName !== null) {
+      const h = el('span', 'handle', '@' + subName);
+      if (ctx.nameClay(sub.key, subName)) h.classList.add('clay');
+      markHandle(h, sub.key, subName);
+      label.appendChild(h);
     } else {
       label.appendChild(el('span', 'hex', shortHex(sub.key, 10)));
     }
@@ -116,7 +132,10 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
     if (m.authorKey) b.style.setProperty('--idh', String(identityHue(m.authorKey)));
     label.setAttribute('aria-label', 'show this thread');
     if (m.authorName !== null) {
-      label.appendChild(el('span', 'handle', '@' + m.authorName));
+      const h = el('span', 'handle', '@' + m.authorName);
+      if (m.authorKey !== undefined && ctx.nameClay(m.authorKey, m.authorName)) h.classList.add('clay');
+      if (m.authorKey !== undefined) markHandle(h, m.authorKey, m.authorName);
+      label.appendChild(h);
     } else {
       label.appendChild(el('span', 'hex', shortHex(m.authorKey ?? k, 10)));
     }
@@ -154,6 +173,7 @@ function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx
   const locked = ctx.identity?.locked ?? false;
   const base: Partial<CardOpts> = {
     onAuthor: (key) => handlers.openAuthor(key, { from: 'pane', ci }),
+    nameClay: ctx.nameClay,
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,
@@ -196,6 +216,7 @@ function authorCtxFrom(key: string, ci: number, ctx: RenderCtx): AuthorCtx {
     flight: d?.flight ?? null,
     username: d?.username ?? null,
     usernameLoaded: d?.usernameLoaded ?? false,
+    nameClay: ctx.nameClay,
   };
 }
 
@@ -211,6 +232,7 @@ function postsCtxFrom(key: string, ci: number, ctx: RenderCtx): PostsCtx {
     likePending: (id) => ctx.likePending(id),
     linkUrl: (id) => ctx.linkUrl(id),
     expandedImages: ctx.expandedImages,
+    nameClay: ctx.nameClay,
   };
 }
 
@@ -282,6 +304,7 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
           replyCount: null,
           flight: flightFor(sub, handlers.tryAgain),
           you: ctx.ownKey !== null && sub.author === ctx.ownKey,
+          nameClay: ctx.nameClay,
           expanded: ctx.expandedImages,
           onExpand: handlers.expandImage,
           onCollapse: handlers.collapseImage,

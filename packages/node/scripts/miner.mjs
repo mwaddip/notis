@@ -208,13 +208,36 @@ async function templateMovedPast(height) {
   }
 }
 
-async function submitNonce(powNonce, height) {
-  const res = await fetch(`${NODE_URL}/mining/submit`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ powNonce, height }),
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  });
+/**
+ * `POST /mining/submit` — MINING_INTERFACE → Miner Script step 4. A submit
+ * that rejects in transit (`fetch` throwing, including the
+ * `AbortSignal.timeout`) is retried with the same `powNonce` and `height`, up
+ * to three attempts in all, one second apart, each a new `fetch`: a found
+ * nonce is a whole solve's work, and a transport failure says nothing about
+ * the block. The first attempt that answers decides — a 401 is a
+ * configuration failure, not a transport one, and throws without a retry; any
+ * other status is returned for the caller to interpret.
+ *
+ * `fetchImpl`/`sleepImpl` default to the real globals; a test supplies its
+ * own to exercise the retry without a network call or a real delay.
+ */
+async function submitNonce(powNonce, height, fetchImpl = fetch, sleepImpl = sleep) {
+  const body = JSON.stringify({ powNonce, height });
+  let res;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      res = await fetchImpl(`${NODE_URL}/mining/submit`, {
+        method: 'POST',
+        headers,
+        body,
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      break;
+    } catch (err) {
+      if (attempt >= 3) throw err;
+      await sleepImpl(1000);
+    }
+  }
   if (res.status === 401) {
     throw new Error('Mining API returned 401 — check MINING_SECRET');
   }

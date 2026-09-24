@@ -3,8 +3,9 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-// happy-dom and jsdom compute no stylesheet, so this pins the rule's PRESENCE in
-// app.css, never its effect; the rendered proof in Chromium pins the effect
+// This pins the rule's PRESENCE in app.css, never its effect. happy-dom computes
+// a cascade — specificity, order, tokens — where a view test renders, but never a
+// hover or a layout; the rendered proof in Chromium pins those
 // (WEB_INTERFACE → The identity display). Lexical, and honest about it.
 const css = readFileSync(fileURLToPath(new URL('../src/style/app.css', import.meta.url)), 'utf8');
 const fontsCss = readFileSync(fileURLToPath(new URL('../public/fonts/fonts.css', import.meta.url)), 'utf8');
@@ -330,5 +331,46 @@ describe('fonts.css — the self-hosted italic face', () => {
     expect(italic).toBeDefined();
     expect(italic!).toContain('font-weight: 400 700');
     expect(italic!).toContain("url('Plus-Jakarta-Sans-Italic.woff2')");
+  });
+});
+
+describe('app.css — a handle the chain does not back is clay', () => {
+  // WEB_INTERFACE → The identity display — the text alone, in the tokens' clay:
+  // each rule outranks every rule that inks its handle. happy-dom computes the
+  // rest but never matches a hover, so the rule that outranks the prefix
+  // control's hover darkening is pinned here by its selectors.
+  const decls = (block: string): string => block.slice(block.indexOf('{') + 1, block.lastIndexOf('}')).trim();
+  const classCount = (selector: string): number => (selector.match(/[.:][A-Za-z][\w-]*/g) ?? []).length;
+
+  it('.handle.clay is clay and sets colour alone — the face, weight and size stay the handle\'s', () => {
+    const block = css.match(/\.handle\.clay\s*\{[^}]*\}/)?.[0];
+    expect(block).toBeDefined();
+    expect(decls(block!)).toBe('color: var(--clay);');
+  });
+
+  it('the who, endorser and bond handles take clay at three classes, above the (0,2,0) rules that ink them and the hover', () => {
+    const m = css.match(/([^{}]*\.who \.handle\.clay[^{}]*)\{([^}]*)\}/);
+    expect(m).not.toBeNull();
+    const selectors = m![1]!.split(',').map((s) => s.trim());
+    expect(selectors).toEqual(['.who .handle.clay', '.endorser .handle.clay', '.bond .handle.clay']);
+    for (const s of selectors) expect(classCount(s)).toBe(3);
+    expect(m![2]!.trim()).toBe('color: var(--clay);');
+    // What they outrank, each at two.
+    expect(css).toMatch(/\.who \.handle \{[^}]*color: var\(--ink\)/);
+    expect(css).toMatch(/\.endorser \.handle, \.bond \.handle \{[^}]*color: var\(--ink\)/);
+    const hover = mediaBlock('@media (hover: hover) {');
+    expect(hover).toContain('.authorbtn:hover { color: var(--ink); }');
+    expect(classCount('.authorbtn:hover')).toBe(2);
+  });
+
+  it('the header\'s profile word takes clay over .hdr-word\'s ink', () => {
+    const block = css.match(/\.hdr-word\.clay\s*\{[^}]*\}/)?.[0];
+    expect(block).toBeDefined();
+    expect(decls(block!)).toBe('color: var(--clay);');
+  });
+
+  it('the clay token stands in both themes', () => {
+    expect(css).toMatch(/:root \{[^}]*--clay: #9A4A2F/);
+    expect(css).toMatch(/:root\[data-t="dark"\] \{[^}]*--clay: #CC7658/);
   });
 });

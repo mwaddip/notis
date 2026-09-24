@@ -360,9 +360,9 @@ other base of the seed list, each verified against the build's own profile and t
 (`NIPOPOW_INTERFACE → The trust model`). The verifier is `resolveTip` of `@dagsocial/nipopow-client` — the code the
 command-line light client runs, never a second implementation of a trust decision — handed to the App by the extension
 build alone, as the identity proxy is; **the web build is handed none**, since a verifier served by the host it checks
-says nothing about that host. It runs in the page: at start, on a press of the status corner, and every ten minutes
-while the tab is visible — a tab that becomes visible again runs one only when the last began ten minutes ago or more;
-one run at a time, a trigger during a run being that run; a change of the node being read drops the verdict and any
+says nothing about that host. It runs in the page: at start, on a press of the status corner, every ten minutes
+while the tab is visible — a tab that becomes visible again runs one only when the last began ten minutes ago or more —
+and when a name check asks for one (→ "The verified names"); one run at a time, a trigger during a run being that run; a change of the node being read drops the verdict and any
 run still in flight for the node before, and runs again; a run that ends without a verdict leaves the corner where
 none has returned; nothing is stored. A run
 asks `GET /nipopow/proof/6/20` (`NODE_INTERFACE → Nipopow`) of the reading node first and then of the others, duplicates
@@ -394,11 +394,12 @@ integer reads as `null`, by the same rule.
 Another node's bad proof never refuses the reading node — it thins the verdict, since the second witness is gone.
 Which of these a node's failure is comes from the result's `refuseCode` — `unreachable`, `too-short`, `http`,
 `invalid`, a closed set the tool fills from the route's documented answers (`NODE_INTERFACE → Nipopow`) — never
-parsed out of the sentence beside it. **It warns and nothing more**: no read is blocked, no write, and the reading node is never switched — the reader's remedy is the
+parsed out of the sentence beside it. **It warns and nothing more**: no read is blocked, no write but a send to a handle (→ "The verified names"), and the reading node is never switched — the reader's remedy is the
 settings window's `node` row, and the status corner is where the verdict shows (→ The status corner). What a verdict
 says is the trust model's and no more: headers and work, never a body; nothing about a balance, a name or a post the
-page shows — the loaded key's own two figures are the exception, below; nothing with fewer than two nodes answering;
-and two nodes under one operator and one DNS zone answer for one box lying, not for the operator.
+page shows — the loaded key's own two figures and the names the page shows are the exceptions, below; nothing with
+fewer than two nodes answering; and two nodes under one operator and one DNS zone answer for one box lying, not for the
+operator.
 
 **The verified figures.** The extension proves the two figures the reading node serves for the loaded key — the
 wallet's balance and the profile's rep — against the state the verified chain committed, box by box, and says beneath
@@ -422,8 +423,10 @@ excluded at both and `heightAfter` equal to `tip.height`: listed at a height the
 node lists what the chain does not hold** (the anchor predates the listing, so the reading node's height at the listing
 was at least the tip's, and a node whose height fell between the reads shows as `unchecked` or a proof failure on the
 next run, never as a false `absent`); `unproven` — a `stateRoot` other than the header's, a rejected lookup, a value
-that does not decode or hash to the key, a `kind` that is not a box's, an owner or a type that is not the listing's;
-`no-proof` — nothing served. The record is `proven` or `null` at `suffixHead` — the same `null` the node values — or
+that does not decode or hash to the key, a `kind` that is not a box's, an owner, a type, a value or a lock that is not
+the listing's — a box's value and lock are fixed by its id — and **an id the listing names more than once**, in either
+ledger, from its second place on, with no request: the chain holds a box once, so a listing that counts it twice
+lists what no proof backs; `no-proof` — nothing served. The record is `proven` or `null` at `suffixHead` — the same `null` the node values — or
 `unproven` / `no-proof` by the same rules. **The valuation** is `effectiveKarma` over the proven karma face total and
 the proven record **at the karma listing's own `height`** — the height the node computed the row's `effective` at — so
 an unchanged state reproduces the number shown exactly; the proven spendable sum is the balance row's rule over the
@@ -440,7 +443,10 @@ already. A listing not read after the current anchor is passed empty, and its ro
 muted *not checked yet* — the run proved nothing about it. The karma listing is read whole, following `next` (→ "Paging is keyset, never offset"),
 the row's number the first page's `effective`. One run in flight; a listing or an anchor that moves during a run marks
 one more run, started when it ends; a result for a listing no longer rendered, or under an older generation, is
-dropped; a run in flight keeps the line it had. **What it says** is one
+dropped; a run in flight keeps the line it had. **A run is total**: an answer of any shape from the node — a body that
+is not the route's, a `proof` that is not a string, a key that is not 64 hex, bytes the lookup cannot parse — ends in a
+status (`unproven`, or `heightAfter` unread), never in a thrown run, because a run that does not end writes no line, and
+a figure with no line reads as proven. **What it says** is one
 muted line beneath the figure — the element the balance row's locked line is — **and only when something is not whole:
 a figure every box of which proved reads as it reads without a verifier.** The lines, the first that holds: **none** in
 a build with no verifier, and none over an empty listing (a proof of emptiness is a proof of nothing); *not checked — the
@@ -458,6 +464,44 @@ row's `effective` are the reads the run proved, in every state; the line describ
 and the figure in clay (→ The wallet window, → The profile window). **What it means** is a lower bound and no more:
 every proven box is real and the key's; a node that withholds a box still serves valid proofs for the rest, and
 omission is what reading both nodes as a union is for.
+
+**The verified names.** The extension proves every handle it shows, and every handle it sends to, against the state the
+verified chain committed — the figures' anchor, their proofs and their order. **A check** is `proveName` of
+`@dagsocial/nipopow-client` over a claim: a **label** — a key and the name a row carries beside it — or a **typed
+handle** alone. In this order: **the lookup**, read inside the check and so after the anchor — `GET
+/usernames?owner=<key>` for a label, `GET /usernames/<name>` for a handle (`NODE_INTERFACE → Usernames`); **the box** its
+answer names, proven at `suffixHead.height`, once more at `tip.height` when excluded there, and one `GET
+/blocks/current` when excluded at both; **the checks on the proven value** — every check a figure's box takes up to its
+decode, then a `boxType` of `username`, and for a label **the `owner` the claim's key and the name's bytes the claim's
+name exactly** (a name is shown as typed, so the name shown is the name committed), for a handle the name's canonical
+form the typed name's (`TYPES_INTERFACE → Content limits`) and the `owner` the answer's. A live box carrying both is the
+binding, since a name is unique on its canonical form and an identity holds at most one (`NODE_INTERFACE → Username
+records`). **The statuses**: `proven` — included at `suffixHead`, every check holding; `young` — excluded there and
+included at `tip`, every check holding; `unchecked` — excluded at both and `heightAfter` above `tip.height` or unread;
+**`absent`** — excluded at both and `heightAfter` equal to `tip.height`: **the node points at a box the chain does not
+hold**, exact for the reason a listing's `absent` is, since the lookup follows the anchor; `unproven` — a proof that
+fails, a value that does not decode or hash to its key, a `kind` or `boxType` not a username box's, an owner or a name
+not the claim's, and — with no request — a label whose key is not 64 hex or whose name is not a well-formed name
+(`TYPES_INTERFACE → Content limits`), since no box can carry it; `no-proof` — the lookup or a proof not served; `none` —
+the lookup answered 404, or — with no request — a typed handle that is not a well-formed name, which no one can hold.
+**A handle reads as it
+reads without a verifier while no check has decided it, and under `proven`, `young` and `unchecked`; under `absent`,
+`unproven`, `no-proof` and `none` it is clay** — the node showed a name the chain does not back, or could not back one
+it showed (→ The identity display, → The author window). **It runs** in the extension build alone and only with an
+anchor: every pair on screen right after every tip run that ends `verified`, and a pair when it first appears on a
+surface, against the anchor standing. **A check that ends `unchecked` asks for one tip run and runs again on its
+result** — a block landed since the anchor, and a fresh anchor makes the next answer exact; a second `unchecked` waits
+for the next run. A clay pair is checked again at every verified run. One batch in flight, a trigger during it marking
+one more; a node change drops every result with the generation it bumps; a result under an older generation is
+dropped; a tip run that ends `thin` or `refused` keeps them — each is a fact about the verified anchor it was proven at,
+and dropping one would turn a lie's clay back to ink while a second node is gone. **A check is total**, as a run is
+(→ "The verified figures"). **A send to a handle is checked at the press** (→ The wallet window): `proven` and `young` go to the flow,
+to the key the proven box names; `none` is *no one holds that name.*; `unchecked` takes its one tip run first; every
+other status refuses and nothing is signed; with no anchor the press asks for a tip run and waits for its verdict, and
+`thin` or `refused` refuses. **What it means**: a handle in ink stands beside the key whose box the verified chain holds
+under that name, at `suffixHead` or, younger, at the tip. A node that shows a key bare, or answers *no one holds that
+name.* for a held one, is not caught — omission is what reading both nodes as a union is for — and a name burned in
+the last `k` blocks still proves for its old holder, as a box spent since `suffixHead` still proves there.
 
 **The policy.** The ledger a transaction moves is read from its outputs: **any output with `boxType`
 `credit` or `fee` is a credits transaction; otherwise karma.** Inputs are ids only
@@ -1316,8 +1360,12 @@ the press** through `GET /usernames/:name` (`NODE_INTERFACE → Identity paramet
 keys only — an unknown one refused in place, *no one holds that name.*; then, **in the web build, the confirm
 row**, the burn's pattern: *send 12.5 $NOTIS to @bob · <prefix>?* — the handle when one resolved, and always the
 key it resolved to, in mono, the prefix the identity display renders — with `send` and `keep`, focus on `keep`, Esc
-keeps; **in the extension there is no confirm row**: `send` shows the key it resolved to beneath the field, in
-mono, and goes to the flow — the prompt is the confirmation (→ The extension) — the build told apart by the
+keeps; **in the extension there is no confirm row**: the handle is checked against the verified chain first (→ The
+extension → "The verified names") — **the row reading *checking @bob…* in the flight's place while the check runs, and
+a press during it doing nothing**, so one press is one check and at most one prompt; a press takes away the ending the
+send before it left in the flight's place — and once it proves, `send` shows
+the key the proven box names beneath the field, in mono, and goes to the flow — the prompt is the confirmation (→ The
+extension) — the build told apart by the
 identity module implementing `policy`, the predicate the policy row reads. A locked identity unlocks in place
 first — in the confirm's place on the web, under the form in the extension — and the next press needs no second
 unlock; the flight
@@ -1329,8 +1377,13 @@ form keeps its values on every ending but an accepted submission, which clears i
 the reader's own key is *that is your own key.*; a payment or a change below the floor names it — *send at least
 N $NOTIS.*, *that leaves change under N $NOTIS — send a little more, or all of it.*; a shortfall is *not enough
 $NOTIS.*; a decline is *send not sent.*, a refusal *send not sent: <reason>.*, the lock race *your key is locked*
-(→ The wallet, `notSigned`). In the extension the prompt is the one confirmation, because credits always prompt
-(→ The extension).
+(→ The wallet, `notSigned`); in the extension, a handle that does not prove is *this node's answer for @bob did not
+verify.* (`absent`, `unproven`), *the node served no proof for @bob.* (`no-proof`), *@bob is too new to check yet.* (a
+second `unchecked`), *@bob can't be checked — the chain is not verified.* (`thin`, `refused`), *@bob can't be
+checked.* (a check that ends without an answer — a check is total, so only a defect reaches it) — the form keeping its
+values, nothing signed. **A press belongs to the node and the key it was made under**: a change of either ends it — its
+check, its answer and an unlock it owed — and nothing of it lands. In the extension the prompt is the one
+confirmation, because credits always prompt (→ The extension).
 
 ### The settings window *(read surface)*
 
@@ -1466,9 +1519,10 @@ name is legal and reads as a handle by its `@`, its face and its ink, where a pr
 the prefix is a control the handle is the same control** — the who row's button, its label and its handler,
 only its text and its face changed. The rows that carry a name: a card's who row from its row's `authorName`,
 a thread's bar from its root row, the standalone page's title (→ The standalone thread), the reader's own
-submission cards from the reader's own name, the header's profile control and the standalone header's display
-from the reader's own name, the author window's bars and `name` row from its subject's (→ The author
-window), an endorser row from its row's `voucherName` and a standing-bond row from its row's `inviteeName`. **An endorser row and a bond row carry the handle**: the endorser row from its row's `voucherName`, the bond row from its row's `inviteeName` (`NODE_INTERFACE → Usernames`), the prefix where the name is `null`. **A row fetched before a
+submission cards from the reader's own name, the header's profile control, the profile's `username` row (→ The
+username row) and the standalone header's display from the reader's own name, the author window's bars and `name` row
+from its subject's (→ The author
+window), an endorser row from its row's `voucherName` and a standing-bond row from its row's `inviteeName`. **An endorser row and a bond row carry the handle**: the endorser row from its row's `voucherName`, the bond row from its row's `inviteeName` (`NODE_INTERFACE → Usernames`), the prefix where the name is `null`. **In the extension a handle the chain does not back is clay** — the text alone: the same control, the same face and size, nothing moving (`HOUSE_STYLE → Motion`), at every site above (→ The extension → "The verified names"). **A row fetched before a
 landing keeps what it fetched** — the reader's own claim or burn landing re-renders the header and the profile
 row and nothing else (`HOUSE_STYLE → Motion`); the feed's ↻ brings newer posts and leaves the rows on screen as
 they are, a thread's ↻ re-reads its rows, and a reload re-reads everything (→ What the feed reads, and what a
@@ -1500,7 +1554,8 @@ coarse pointer a 36px hit box by padding a negative margin absorbs.
 **`@author:<64hex>`** — an `@`-window like `@profile`, opened from an identity's prefix by the placement
 rule every window follows, raised rather than duplicated, persisted in the arrangement (`isWindowId`
 accepts the prefix with 64 hex). The bar reads `author · <prefix>` — `author · @Name` when the subject holds a
-name (→ The identity display) — and carries no spine. `↻` is live and re-reads the endorsers page and the
+name (→ The identity display), in every column holding the window, stacked or focused, as its read lands, the way a
+thread's bar reads its load — and carries no spine. `↻` is live and re-reads the endorsers page and the
 subject's name (`GET /usernames?owner=`). Rows:
 
 ```
@@ -1511,7 +1566,13 @@ your vouch   vouch · vouched since block N · unvouch — or the one-line reaso
 posts        a word that opens the author-posts window beside this one
 ```
 
-No standing and no balance: an author's window shows neither (→ The profile window, → The wallet window).
+No standing and no balance: an author's window shows neither (→ The profile window, → The wallet window). **In the
+extension a clay handle in the `name` row carries one clay line beneath it** — *this node's answer for this name did not
+verify* — the element the figures' line is (→ The extension → "The verified names"); no other site grows a line. **The
+line is drawn with the window's render** — the window opening, its `↻`, a read that fills it — and never by a result
+alone: a result that lands after the window rendered turns the handle clay or ink in place and leaves the line and the
+rows beneath it where they stand until the next render, since a line that arrives or leaves unasked pushes the rows
+below it (`HOUSE_STYLE → Motion`).
 
 **`vouch` is a word, and this row is the one place a vouch is cast**
 (`HOUSE_STYLE → Interaction`): a press on it vouches at once — no confirmation — with the stakes sentence

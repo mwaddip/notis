@@ -3,9 +3,10 @@ import type { Workspace, Origin } from './workspace';
 import type { Theme, IdTint } from '../prefs';
 import type { Flight } from '../view/card';
 import type { YourVouch } from '../view/author';
+import type { SendAnswer, SendRecipient } from '../view/wallet';
 import type { SignResult } from '../wallet/submit';
 import type { TipVerdict } from './tip-verdict';
-import type { Anchor, FiguresResult, Listing } from '@dagsocial/nipopow-client';
+import type { Anchor, FiguresResult, Listing, NameClaim, NameResult } from '@dagsocial/nipopow-client';
 export type { Anchor };
 
 /** What the App holds when a figures verifier run has returned — the tool's
@@ -13,9 +14,10 @@ export type { Anchor };
  *  `suffixHead.header.height` is the height the *proven at block N* clause
  *  names; the anchor's presence beside the result lets a later run drop a
  *  result that no longer belongs to the anchor the App now holds
- *  (WEB_INTERFACE → The extension → "The verified figures"). Null while no
- *  run has returned for this identity/anchor/listing generation — unit 7
- *  fills the field; this unit passes null. */
+ *  (WEB_INTERFACE → The extension → "The verified figures"). The App's
+ *  figures run writes one when it returns for the listings the App still
+ *  holds; the App holds null until then, and again once the reader's state
+ *  drops or a tip run ends without an anchor. */
 export interface FiguresView {
   result: FiguresResult;
   anchor: Anchor;
@@ -135,6 +137,11 @@ export interface RenderCtx {
   // The reader's own name (WEB_INTERFACE → The identity display).
   ownName: UsernameResult | null;
   ownNameLoaded: boolean;
+  // Whether the handle a key and a name render as reads clay — the check the App
+  // holds for the pair, false while none has decided it (WEB_INTERFACE → The
+  // extension → "The verified names", → The identity display). Every view that
+  // renders a handle reads it.
+  nameClay: (key: string, name: string) => boolean;
   // The username row (WEB_INTERFACE → The username row).
   usernameFlight: Flight | null;
   pendingUsername: { kind: 'claim' | 'burn'; name: string } | null;
@@ -144,7 +151,11 @@ export interface RenderCtx {
   // reader's own /credits, null before the first read; creditGrant is a faucet
   // transfer in flight or one that lapsed; sendFlight is the transient ending;
   // pendingSend is the ledger's own send entry — the durable line that survives
-  // a reload. status is the last /status the App holds — its blockHeight is the
+  // a reload; sendCheck is the handle a press's check runs for in the
+  // extension, `@` and the name as typed, null while none runs; sendAnswer the
+  // answer the App gave the extension's press before — a refusal, or the key
+  // the send goes to with the unlock a locked identity owes (→ "The `send`
+  // row"). status is the last /status the App holds — its blockHeight is the
   // tip the balance row's spendable-at-height filter reads (WEB_INTERFACE → The
   // wallet).
   status: StatusResult | null;
@@ -152,6 +163,8 @@ export interface RenderCtx {
   creditGrant: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
   sendFlight: Flight | null;
   pendingSend: { toHex: string; toName: string | null; amount: bigint } | null;
+  sendCheck: string | null;
+  sendAnswer: SendAnswer | null;
   // The wallet's send row confirm — true on the web build (the confirm row
   // stands), false in the extension (the prompt is the one confirmation —
   // WEB_INTERFACE → The wallet window → "in the web build, the confirm row",
@@ -168,8 +181,8 @@ export interface RenderCtx {
   // The verified-figures run's result and the anchor it was proven against —
   // the wallet's balance row and the profile's rep row read it through the
   // pure `figuresLine` model (WEB_INTERFACE → The extension → "The verified
-  // figures"). Null while no run has returned; the App passes null in this
-  // unit, and unit 7 fills the field.
+  // figures"). The App passes the result its figures run holds — null while
+  // none stands, and always in a build with no verifier.
   figures: FiguresView | null;
   // WEB_INTERFACE → Links
   linkUrl: (id: string) => string;
@@ -239,9 +252,13 @@ export interface Handlers {
   claimUsername: (name: string) => void;
   burnUsername: () => void;
   // The wallet's send row (WEB_INTERFACE → The wallet window → "The `send`
-  // row"). resolveRecipient is the handle → holder read the row's send form
-  // runs at the press; send is the credits transfer; askFaucetCredits is the
-  // faucet's $NOTIS step (→ The faucet step).
+  // row"). beginSendPress opens every press — false while a handle's check runs,
+  // when the press does nothing; pressSend is the extension's press once the form
+  // has read its amount and recipient; resolveRecipient is the handle → holder
+  // read the web build's form runs at the press; send is the credits transfer;
+  // askFaucetCredits is the faucet's $NOTIS step (→ The faucet step).
+  beginSendPress: () => boolean;
+  pressSend: (to: SendRecipient, amount: bigint) => void;
   resolveRecipient: (name: string) => Promise<{ key: string; name: string | null } | { refusal: string }>;
   send: (toHex: string, toName: string | null, amount: bigint) => void;
   askFaucetCredits: () => void;
@@ -316,4 +333,14 @@ export interface TipVerifier {
  *  trigger fires. */
 export interface FiguresVerifier {
   run(readingBase: string, user: string, listing: Listing, anchor: Anchor): Promise<FiguresResult>;
+}
+
+/** The extension proves every handle it shows against the state the verified
+ *  chain committed (WEB_INTERFACE → The extension → "The verified names"). The
+ *  App holds an implementation only in the extension build; the web build is
+ *  handed none. `run` checks one claim — a label, a key and the name a row
+ *  carries beside it, or a typed handle — against the reading node's own
+ *  verified headers standing when the check begins. */
+export interface NamesVerifier {
+  run(readingBase: string, claim: NameClaim, anchor: Anchor): Promise<NameResult>;
 }

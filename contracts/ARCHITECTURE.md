@@ -2534,10 +2534,12 @@ Six rules govern it:
    the vitest process. A suite that spawns `dist/index.js` as a child process runs the built
    artefact, so it needs a genuine build first and no alias reaches it. **One suite does:
    `tools/e2e` (`@dagsocial/e2e`) spawns `packages/node/dist/index.js` for every node of its mesh,
-   and that process loads `types`, `wire`, `validation` and `net` from their `dist` in turn** (the
-   node bundle externalises its workspace dependencies). It refuses to run when any of those five
-   `dist/index.js` is missing or older than the newest file under that package's `src/`, naming the
-   package — a stale build is a refusal, never a run against old code that reports green. The gate
+   which loads `types`, `wire`, `validation`, `net` and `nipopow` from their `dist` in turn, and its
+   light-client test spawns `tools/nipopow-client/dist/index.js`, which loads `types`, `wire`,
+   `validation` and `nipopow` the same way** (a bundle externalises its workspace dependencies). It
+   refuses to run when any `dist/index.js` a process it spawns loads is
+   missing or older than the newest file under that package's `src/`, naming the package — a stale
+   build is a refusal, never a run against old code that reports green. The gate
    order in rule 3 is what keeps the refusal from firing: build first. Being under `tools/*`, the
    suite is in `pnpm -r test` by the workspace glob; nothing has to remember to run it.
 5. **Test trees are typechecked — all six packages, at zero.** Each `typecheck` script runs

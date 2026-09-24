@@ -260,6 +260,76 @@ describe('figuresLine — row 4: the node lists / this node\'s proof did not ver
 });
 
 // ---------------------------------------------------------------------------
+// Row 4 — the valuation not made: beside a proven or absent record the tool
+// answers `effective: null` only for a listing height that is not a block
+// height; the rep row reads the full rule, never a figure of 0 proven
+// (WEB_INTERFACE → The extension → "A run is total")
+// ---------------------------------------------------------------------------
+describe('figuresLine — row 4: a rep valuation the tool could not make (clay)', () => {
+  const ABSENT_RECORD = { status: 'absent' } as RecordResult;
+
+  it('karma: effective null beside a proven record, every box proven → clay "this node\'s proof of your rep did not verify", never "0 rep proven"', () => {
+    const r = result({
+      boxes: [box({ boxClass: 'karma', status: 'proven', value: 100n })],
+      karma: { ...emptySums, proven: 100n, effective: null },
+      failed: true,
+    });
+    const line = figuresLine(input({ ledger: 'karma', verdict: VERIFIED, result: r, shown: 100n }));
+    expect(line).toEqual({ text: "this node's proof of your rep did not verify", weight: 'clay' });
+  });
+
+  it('karma: effective null beside an absent record, every box proven → the same clay line', () => {
+    const r = result({
+      boxes: [box({ boxClass: 'karma', status: 'proven', value: 100n })],
+      record: ABSENT_RECORD,
+      karma: { ...emptySums, proven: 100n, effective: null },
+      failed: true,
+    });
+    const line = figuresLine(input({ ledger: 'karma', verdict: VERIFIED, result: r, shown: 100n }));
+    expect(line).toEqual({ text: "this node's proof of your rep did not verify", weight: 'clay' });
+  });
+
+  it('karma: a no-proof box beside the valuation not made → row 4\'s clay line ahead of row 5', () => {
+    const r = result({
+      boxes: [
+        box({ boxClass: 'karma', status: 'proven', value: 95n }),
+        box({ boxClass: 'karma', status: 'no-proof', value: 5n }),
+      ],
+      karma: { ...emptySums, proven: 95n, effective: null },
+      failed: true,
+    });
+    const line = figuresLine(input({ ledger: 'karma', verdict: VERIFIED, result: r, shown: 100n }));
+    expect(line).toEqual({ text: "this node's proof of your rep did not verify", weight: 'clay' });
+  });
+
+  it('karma: an absent box beside the valuation not made → row 4 names what the chain does not hold', () => {
+    const r = result({
+      boxes: [
+        box({ boxClass: 'karma', status: 'proven', value: 95n }),
+        box({ boxClass: 'karma', status: 'absent', value: 5n }),
+      ],
+      karma: { ...emptySums, proven: 95n, absent: 5n, effective: null },
+      failed: true,
+    });
+    const line = figuresLine(input({ ledger: 'karma', verdict: VERIFIED, result: r, shown: 100n }));
+    expect(line).toEqual({ text: 'the node lists 5 rep the chain does not hold', weight: 'clay' });
+  });
+
+  it('credits: the rep valuation not made leaves the balance row as it reads — silence when every credit box proved', () => {
+    const r = result({
+      boxes: [
+        box({ boxClass: 'karma', status: 'proven', value: 100n }),
+        box({ boxClass: 'credit', status: 'proven', value: 1_250_000_000n }),
+      ],
+      karma: { ...emptySums, proven: 100n, effective: null },
+      credits: { ...emptySums, proven: 1_250_000_000n },
+      failed: true,
+    });
+    expect(figuresLine(input({ ledger: 'credits', verdict: VERIFIED, result: r, shown: 1_250_000_000n }))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Row 5 — muted: a box no-proof, or (karma) the record no-proof
 // ---------------------------------------------------------------------------
 describe('figuresLine — row 5: the node served no proof', () => {
@@ -275,7 +345,8 @@ describe('figuresLine — row 5: the node served no proof', () => {
   it('karma: one no-proof box → muted "the node served no proof for 5 rep"', () => {
     const r = result({
       boxes: [box({ boxClass: 'karma', status: 'no-proof', value: 5n })],
-      karma: { ...emptySums, effective: null },
+      // The proven record values the proven face — none — at 0.
+      karma: { ...emptySums, effective: 0n },
     });
     const line = figuresLine(input({ ledger: 'karma', verdict: VERIFIED, result: r, shown: 0n }));
     expect(line).toEqual({ text: 'the node served no proof for 5 rep', weight: 'muted' });

@@ -51,8 +51,9 @@ Seven packages, in dependency order:
   reached by a build-time `crypto` shim, and signs
   with `@noble/curves`; with no identity loaded it is the read surface exactly. **It also builds as a browser
   extension** — the same client as the extension's own page, the key held by the extension's background,
-  credits signed by hand and rep silently, and the chain it reads checked by NiPoPoW proofs from the seed list's
-  nodes (`WEB_INTERFACE → The extension`); each release carries its two zips beside the web zip.
+  credits signed by hand and rep silently, the chain it reads checked by NiPoPoW proofs from the seed list's
+  nodes, and the reader's figures and every name it shows or sends to proven against that chain
+  (`WEB_INTERFACE → The extension`); each release carries its two zips beside the web zip.
 
 Three tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
 

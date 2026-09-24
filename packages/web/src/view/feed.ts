@@ -20,11 +20,13 @@ function isYou(author: string, ctx: RenderCtx): boolean {
 }
 
 /** The opts a feed card carries: the identity display — the prefix opens the
- *  author window (WEB_INTERFACE → The identity display) — and the content-image
- *  opts every card shares (WEB_INTERFACE → Content). */
+ *  author window, and the handle reads the verified names' clay (WEB_INTERFACE →
+ *  The identity display) — and the content-image opts every card shares
+ *  (WEB_INTERFACE → Content). */
 function identityOpts(ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
   return {
     onAuthor: (key) => handlers.openAuthor(key, { from: 'feed' }),
+    nameClay: ctx.nameClay,
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,

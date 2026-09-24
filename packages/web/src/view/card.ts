@@ -2,6 +2,7 @@ import { el, shortHex } from '../dom';
 import { parseContent, renderContent } from './content';
 import { unlockForm } from './passphrase';
 import { copyGlyph } from './glyphs';
+import { markHandle } from './name-handle';
 import type { PostJson, WithdrawnJson } from '../api/dto';
 import { isWithdrawn } from '../api/dto';
 import { assertContentHash } from '../integrity';
@@ -44,6 +45,7 @@ export interface CardOpts {
   onUnlock?: (passphrase: string) => Promise<void>; // load the seed, then the like or vouch proceeds
   // The identity display (WEB_INTERFACE → The identity display).
   onAuthor?: ((key: string) => void) | null; // the prefix button opens the author window
+  nameClay?: (key: string, name: string) => boolean; // the handle reads clay (→ The extension → "The verified names")
   // The author's own controls (WEB_INTERFACE → The withdraw control).
   onWithdraw?: ((id: string) => void) | null; // the confirm row's withdraw signs
   withdraw?: 'pending' | Flight | null;  // 'pending' from the ledger, else the transient flight in the slot
@@ -69,16 +71,24 @@ function whoRow(authorKey: string, authorName: string | null, whenMs: number | n
   const who = el('div', 'who');
   // WEB_INTERFACE → The identity display — the handle @Name where the row
   // carries a name, else the key prefix in mono. Where the prefix is a control
-  // the handle is the same control.
+  // the handle is the same control. In the extension a handle the chain does
+  // not back is clay, the text alone; a handle that reads the check carries its
+  // pair, so a result lands on it in place.
+  const clay = authorName !== null && opts.nameClay !== undefined && opts.nameClay(authorKey, authorName);
   if (opts.onAuthor) {
     const b = el('button', authorName !== null ? 'handle authorbtn' : 'hex authorbtn');
+    if (clay) b.classList.add('clay');
+    if (authorName !== null && opts.nameClay !== undefined) markHandle(b, authorKey, authorName);
     b.textContent = authorName !== null ? '@' + authorName : shortHex(authorKey, 16);
     b.setAttribute('aria-label', 'open this author');
     b.addEventListener('click', () => opts.onAuthor!(authorKey));
     who.appendChild(b);
   } else {
     if (authorName !== null) {
-      who.appendChild(el('span', 'handle', '@' + authorName));
+      const h = el('span', 'handle', '@' + authorName);
+      if (clay) h.classList.add('clay');
+      if (opts.nameClay !== undefined) markHandle(h, authorKey, authorName);
+      who.appendChild(h);
     } else {
       who.appendChild(el('span', 'hex', shortHex(authorKey, 16)));
     }
