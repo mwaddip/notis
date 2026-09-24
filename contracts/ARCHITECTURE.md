@@ -2542,11 +2542,6 @@ Six rules govern it:
    build is a refusal, never a run against old code that reports green. The gate
    order in rule 3 is what keeps the refusal from firing: build first. Being under `tools/*`, the
    suite is in `pnpm -r test` by the workspace glob; nothing has to remember to run it.
-
-   > ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — the suite checks `wire`, `types`,
-   > `validation`, `net` and `node` alone: a stale `nipopow` runs under every node of a mesh, and a
-   > stale `nipopow-client` under its light-client test.
-
 5. **Test trees are typechecked — all six packages, at zero.** Each `typecheck` script runs
    `tsc --noEmit && tsc --noEmit -p tsconfig.test.json`, so `pnpm -r typecheck` compiles every
    test tree in the workspace. Node was the last to land: 409 errors → 0, in one unit, with **zero

@@ -401,9 +401,6 @@ page shows — the loaded key's own two figures and the names the page shows are
 fewer than two nodes answering; and two nodes under one operator and one DNS zone answer for one box lying, not for the
 operator.
 
-> ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — a run starts at start, on a press of the corner and on its
-> ten-minute clock alone, and no verdict blocks a write.
-
 **The verified figures.** The extension proves the two figures the reading node serves for the loaded key — the
 wallet's balance and the profile's rep — against the state the verified chain committed, box by box, and says beneath
 each what it could not prove. **The anchor**: a tip run answers `{ verdict, anchor }`, `anchor` being the **reading
@@ -468,11 +465,6 @@ and the figure in clay (→ The wallet window, → The profile window). **What i
 every proven box is real and the key's; a node that withholds a box still serves valid proofs for the rest, and
 omission is what reading both nodes as a union is for.
 
-> ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — a proof answer whose body is not an object or whose `proof`
-> is not a string, a `/blocks/current` answer without a `height`, and a listed id that is not 64 hex throw out of
-> `proveFigures`, and the App keeps the line it had; an id listed twice is proven twice and counted twice, the tip pass
-> keyed by the id; a listed value or lock other than the box's own reads `proven`.
-
 **The verified names.** The extension proves every handle it shows, and every handle it sends to, against the state the
 verified chain committed — the figures' anchor, their proofs and their order. **A check** is `proveName` of
 `@dagsocial/nipopow-client` over a claim: a **label** — a key and the name a row carries beside it — or a **typed
@@ -510,10 +502,6 @@ other status refuses and nothing is signed; with no anchor the press asks for a 
 under that name, at `suffixHead` or, younger, at the tip. A node that shows a key bare, or answers *no one holds that
 name.* for a held one, is not caught — omission is what reading both nodes as a union is for — and a name burned in
 the last `k` blocks still proves for its old holder, as a box spent since `suffixHead` still proves there.
-
-> ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — no `proveName` exists; every handle renders in ink in every
-> build, and the extension's send resolves a handle through `GET /usernames/:name` and goes to the flow on the node's
-> word.
 
 **The policy.** The ledger a transaction moves is read from its outputs: **any output with `boxType`
 `credit` or `fee` is a credits transaction; otherwise karma.** Inputs are ids only
@@ -1392,11 +1380,9 @@ $NOTIS.*; a decline is *send not sent.*, a refusal *send not sent: <reason>.*, t
 verify.* (`absent`, `unproven`), *the node served no proof for @bob.* (`no-proof`), *@bob is too new to check yet.* (a
 second `unchecked`), *@bob can't be checked — the chain is not verified.* (`thin`, `refused`), *@bob can't be
 checked.* (a check that ends without an answer — a check is total, so only a defect reaches it) — the form keeping its
-values, nothing signed. In the extension the prompt is the one confirmation, because credits always prompt
-(→ The extension).
-
-> ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — the press shows nothing while the check runs and a second
-> press runs a second check; a check that throws reads *… can't be checked — the chain is not verified.*
+values, nothing signed. **A press belongs to the node and the key it was made under**: a change of either ends it — its
+check, its answer and an unlock it owed — and nothing of it lands. In the extension the prompt is the one
+confirmation, because credits always prompt (→ The extension).
 
 ### The settings window *(read surface)*
 
@@ -1532,8 +1518,9 @@ name is legal and reads as a handle by its `@`, its face and its ink, where a pr
 the prefix is a control the handle is the same control** — the who row's button, its label and its handler,
 only its text and its face changed. The rows that carry a name: a card's who row from its row's `authorName`,
 a thread's bar from its root row, the standalone page's title (→ The standalone thread), the reader's own
-submission cards from the reader's own name, the header's profile control and the standalone header's display
-from the reader's own name, the author window's bars and `name` row from its subject's (→ The author
+submission cards from the reader's own name, the header's profile control, the profile's `username` row (→ The
+username row) and the standalone header's display from the reader's own name, the author window's bars and `name` row
+from its subject's (→ The author
 window), an endorser row from its row's `voucherName` and a standing-bond row from its row's `inviteeName`. **An endorser row and a bond row carry the handle**: the endorser row from its row's `voucherName`, the bond row from its row's `inviteeName` (`NODE_INTERFACE → Usernames`), the prefix where the name is `null`. **In the extension a handle the chain does not back is clay** — the text alone: the same control, the same face and size, nothing moving (`HOUSE_STYLE → Motion`), at every site above (→ The extension → "The verified names"). **A row fetched before a
 landing keeps what it fetched** — the reader's own claim or burn landing re-renders the header and the profile
 row and nothing else (`HOUSE_STYLE → Motion`); the feed's ↻ brings newer posts and leaves the rows on screen as
@@ -1543,8 +1530,6 @@ prefix is `shortHex(key, 16)` on a card and the whole key in a window. **No mark
 is cast and read in the author window alone (→ The author window), so a card reads the same with or without
 an identity loaded — the prefix, `· you` on the reader's own, the date. The count a reader sees is the
 author window's endorsers line, from `GET /vouches?target=`.
-
-> ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — every handle renders in ink in every build.
 
 **The prefix on a card is the way into the author window, and it looks exactly like the text prefix
 it stands in for.** It is a `<button>` in the who row (`aria-label` *"open this author"*) rendered as the
@@ -1586,9 +1571,6 @@ line is drawn with the window's render** — the window opening, its `↻`, a re
 alone: a result that lands after the window rendered turns the handle clay or ink in place and leaves the line and the
 rows beneath it where they stand until the next render, since a line that arrives or leaves unasked pushes the rows
 below it (`HOUSE_STYLE → Motion`).
-
-> ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — a result that lands after the window rendered inserts or
-> removes the line beside the handle in place.
 
 **`vouch` is a word, and this row is the one place a vouch is cast**
 (`HOUSE_STYLE → Interaction`): a press on it vouches at once — no confirmation — with the stakes sentence
