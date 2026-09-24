@@ -26,7 +26,9 @@ import { readBuildContext } from './wallet/reads';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps } from './wallet/submit';
 import { identity as identitySingleton } from './identity/identity';
 import { renderKarmaField, renderInvitesRow, renderUsernameRow } from './view/profile';
-import { renderCreditsRow, resetCreditsSendForm, type ResolvedRecipient } from './view/wallet';
+import {
+  renderCreditsRow, resetCreditsSendForm, sendUnlockRow, type ResolvedRecipient, type SendAnswer, type SendRecipient,
+} from './view/wallet';
 import { cornerState, renderCorner, CORNER_POLL_MS, type CornerState } from './view/corner';
 import type { TipVerdict } from './model/tip-verdict';
 import { namePair, nameIsClay, recipientVerdict } from './model/name-verdict';
@@ -375,12 +377,17 @@ export class App {
   // is the transient ending for the row (the pending state lives in the ledger);
   // sendCheck is the handle a press's check runs for in the extension, `@` and
   // the name as typed, from the press to its answer — the row reads it in the
-  // flight's place, and a press reads it and does nothing (→ "The `send` row").
+  // flight's place, and a press reads it and does nothing; sendAnswer is the
+  // answer the extension's press before was given, until the next press begins —
+  // a refusal, or the key the send goes to with the unlock row a locked
+  // identity owes before that send — which the row draws into whichever form
+  // stands (→ "The `send` row").
   private walletCredits: CreditsResult | null = null;
   private walletCreditsStamp: ListingStamp | null = null;
   private creditGrantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null = null;
   private sendFlight: Flight | null = null;
   private sendCheck: string | null = null;
+  private sendAnswer: SendAnswer | null = null;
 
   // Optional in the extension build — the App's own hook, called synchronously
   // from `askFaucet` / `askFaucetCredits` before any await, so the browser's
@@ -475,12 +482,14 @@ export class App {
       claimUsername: (name) => void this.claimUsername(name),
       burnUsername: () => void this.burnUsername(),
       // The wallet's send row (WEB_INTERFACE → The wallet window → "The `send`
-      // row"). resolveRecipient is the handle → holder read the form runs at
-      // the press; checkingRecipient is whether a press's check runs; send is
-      // the credits transfer flow; askFaucetCredits is the faucet's $NOTIS step
-      // (→ The faucet step).
+      // row"). beginSendPress opens every press; pressSend is the extension's
+      // press once the form has read it; resolveRecipient is the handle →
+      // holder read the web build's form runs at the press; send is the credits
+      // transfer flow; askFaucetCredits is the faucet's $NOTIS step (→ The
+      // faucet step).
+      beginSendPress: () => this.beginSendPress(),
+      pressSend: (to, amount) => void this.pressSend(to, amount),
       resolveRecipient: (name) => this.resolveRecipient(name),
-      checkingRecipient: () => this.sendCheck !== null,
       send: (toHex, toName, amount) => void this.send(toHex, toName, amount),
       askFaucetCredits: () => void this.askFaucetCredits(),
       // The extension's identity exposes both policy and setPolicy; the in-page
@@ -705,6 +714,7 @@ export class App {
       sendFlight: this.sendFlight,
       pendingSend: pendingSendEntries(this.ledger.all())[0] ?? null,
       sendCheck: this.sendCheck,
+      sendAnswer: this.sendAnswer,
       // The web build's identity module has no `policy`; the extension's proxy
       // has (WEB_INTERFACE → The profile window). `!this.idm.policy` is
       // therefore the same predicate the sign-each-rep-action row renders on:
@@ -1855,9 +1865,14 @@ export class App {
    *  before writes nothing when it answers. The identity change and a change of
    *  the reading node both call it (WEB_INTERFACE → The identity module, → The
    *  settings window, → The status corner); the reader's own acts in flight are
-   *  the identity change's to drop. */
+   *  the identity change's to drop, all but a send's press in the extension,
+   *  which belongs to the node and the key it was made under and ends with the
+   *  generation — its check, its answer, and the send an unlock was owed for
+   *  (→ The wallet window → "The `send` row"). */
   private dropReaderState(): void {
     this.readerGen += 1;
+    this.sendCheck = null;
+    this.dropSendAnswer();
     this.lastPolledHeight = 0;
     this.profileKarma = null;
     this.profileKarmaStamp = null;
@@ -2903,6 +2918,96 @@ export class App {
 
   // ---- the wallet window's send row (WEB_INTERFACE → The wallet window) ----
 
+  /** A press on the send form begins, unless a check of a handle runs — then it
+   *  does nothing and this answers false, so one press is one check. A press
+   *  that begins drops the answer the press before it was given, and with it
+   *  the send an unlock was owed for (WEB_INTERFACE → The wallet window → "The
+   *  `send` row"). */
+  private beginSendPress(): boolean {
+    if (this.sendCheck !== null) return false;
+    this.dropSendAnswer();
+    return true;
+  }
+
+  /** The extension's press once the form has read its amount and recipient
+   *  (WEB_INTERFACE → The wallet window → "in the extension there is no confirm
+   *  row"): a handle resolved — checked against the verified chain where the
+   *  build carries the names verifier — and then the answer the App holds and
+   *  the row draws on whichever form stands: a refusal, or the key the send
+   *  goes to beneath the field and the flow, which a locked identity reaches
+   *  through the unlock it owes first. A press belongs to the node and the
+   *  identity it was made under: a change of either ends it (dropReaderState),
+   *  and its answer lands nowhere. */
+  private async pressSend(to: SendRecipient, amount: bigint): Promise<void> {
+    const gen = this.readerGen;
+    let key: string;
+    let name: string | null = null;
+    if ('key' in to) {
+      key = to.key;
+    } else {
+      const res = await this.resolveRecipient(to.name);
+      if (gen !== this.readerGen) return;
+      if ('refusal' in res) {
+        this.answerSend({ refusal: res.refusal });
+        return;
+      }
+      key = res.key;
+      name = res.name;
+    }
+    const cur = this.idm.current();
+    if (cur === null) return;
+    if (key === cur.pubKeyHex) {
+      this.answerSend({ refusal: 'that is your own key.' });
+      return;
+    }
+    if (cur.locked) {
+      this.answerSend({ key, unlock: this.owedUnlock(cur.pubKeyHex, key, name, amount) });
+      return;
+    }
+    this.answerSend({ key, unlock: null });
+    void this.send(key, name, amount);
+  }
+
+  /** Hold a press's answer in place of the one before, and draw it on the row. */
+  private answerSend(answer: SendAnswer): void {
+    this.dropSendAnswer();
+    this.sendAnswer = answer;
+    this.renderCreditsRowInPlace();
+  }
+
+  /** Drop the answer the App holds; an unlock row it owed leaves the screen,
+   *  and the send it was owed for is not made. */
+  private dropSendAnswer(): void {
+    const answer = this.sendAnswer;
+    if (answer !== null && 'key' in answer) answer.unlock?.remove();
+    this.sendAnswer = null;
+  }
+
+  /** The unlock a locked identity owes before a proven send: the unlock, then
+   *  the send — while the row is still the one owed, since a press, a node
+   *  change or an identity change takes the send away with it. `cancel` takes
+   *  the row away and leaves the key standing (WEB_INTERFACE → The wallet
+   *  window → "The `send` row"). */
+  private owedUnlock(pubKeyHex: string, key: string, name: string | null, amount: bigint): HTMLElement {
+    const owed = (): boolean => {
+      const answer = this.sendAnswer;
+      return answer !== null && 'key' in answer && answer.unlock === row;
+    };
+    const row = sendUnlockRow(
+      pubKeyHex,
+      async (passphrase) => {
+        await this.idm.unlock(passphrase);
+        if (!owed()) return;
+        this.answerSend({ key, unlock: null });
+        void this.send(key, name, amount);
+      },
+      () => {
+        if (owed()) this.answerSend({ key, unlock: null });
+      },
+    );
+    return row;
+  }
+
   /** Resolve an @handle to its holder — the row's send form calls this at the
    *  press, the way the composer resolves nothing (a post has no recipient) and
    *  the vouch resolves its box at the press (WEB_INTERFACE → The wallet). In
@@ -2923,25 +3028,21 @@ export class App {
   /** A send to a handle is checked at the press (WEB_INTERFACE → The extension →
    *  "The verified names", → The wallet window → "The `send` row"). From the
    *  press to its answer sendCheck holds the handle as typed — the row reads
-   *  *checking @bob…* in the flight's place, and a press does nothing — the row
-   *  moving in place as the check begins and as it ends, before the answer goes
-   *  back to the form. The answer is the proven result's (recipientVerdict),
-   *  never the node's word. A press left with no anchor to check against is
-   *  *can't be checked — the chain is not verified.*, and so is one a node
-   *  change moved past: the change ends the press's check with the generation
-   *  it moves, the line going with it. One whose check throws is *can't be
-   *  checked.* */
+   *  *checking @bob…* in the flight's place, moved in place as the check
+   *  begins, and a press does nothing; the answer's own render takes the line
+   *  away. The answer is the proven result's (recipientVerdict), never the
+   *  node's word; a press left with no anchor to check against is *can't be
+   *  checked — the chain is not verified.*, and one whose check throws *can't
+   *  be checked.* A node or identity change ends the check with the generation
+   *  it moves, the line going with it. */
   private async proveRecipient(verifier: NamesVerifier, name: string): Promise<ResolvedRecipient | { refusal: string }> {
-    const gen = this.namesGen;
+    const gen = this.readerGen;
     const handle = '@' + name;
     this.sendCheck = handle;
     this.renderCreditsRowInPlace();
     const result = await this.checkRecipient(verifier, name);
-    // A node change ended this check already, and the row's check may be a
-    // later press's.
-    if (gen !== this.namesGen) return { refusal: `${handle} can't be checked — the chain is not verified.` };
-    this.sendCheck = null;
-    this.renderCreditsRowInPlace();
+    // Past a change the row's check, if any, is a later press's.
+    if (gen === this.readerGen) this.sendCheck = null;
     if (result === 'no-anchor') return { refusal: `${handle} can't be checked — the chain is not verified.` };
     if (result === 'threw') return { refusal: `${handle} can't be checked.` };
     return recipientVerdict(result, handle);
@@ -2993,8 +3094,10 @@ export class App {
     }
     if (result.ok) {
       this.sendFlight = null; // the pending line is now the ledger's entry
-      // The form clears on an accepted submission; every other ending leaves
-      // its values intact (WEB_INTERFACE → The wallet).
+      // The form clears on an accepted submission, the answer beneath its field
+      // with it; every other ending leaves its values intact (WEB_INTERFACE →
+      // The wallet).
+      this.dropSendAnswer();
       const field = document.querySelector<HTMLElement>('.credits-field');
       if (field) resetCreditsSendForm(field);
       this.startPoll();
@@ -3280,9 +3383,9 @@ export class App {
    *  before's answer: the results drop with the generation, so a batch in
    *  flight writes nothing more, and its flags clear before the re-render, which
    *  draws every handle as it reads with no check (→ "The verified names"); a
-   *  send's check at the press ends with them, so the row re-renders with no
-   *  *checking* line and a press checks at the new node (→ The wallet window →
-   *  "The `send` row"). */
+   *  send's press ends with the reader's state (dropReaderState), so the row
+   *  re-renders with no *checking* line and no answer, and a press checks at
+   *  the new node (→ The wallet window → "The `send` row"). */
   private onReadingNodeChanged(): void {
     this.cornerGen += 1;
     this.cornerLastTip = null;
@@ -3299,7 +3402,6 @@ export class App {
     this.namesGen += 1;
     this.namesInFlight = false;
     this.namesMarked = null;
-    this.sendCheck = null;
     this.state.threads.clear();
     this.state.posts.clear();
     this.dropFeedRows();
