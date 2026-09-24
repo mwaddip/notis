@@ -84,14 +84,15 @@ interface CreditPageResponse {
 
 // WEB_INTERFACE → The extension → "A run is total" — the paging walks a page's
 // `boxes` and follows its `next`, so a page is an object with a `boxes` array
-// and a `next` that is null or well-formed text, the next request carrying it
-// through `encodeURIComponent`; any other answer is a malformed page. Each
-// entry is the node's claim, checked by proveFigures before a proof is asked
-// for it.
+// and a `next` that is null or a row's key: text that is not empty, since no
+// row's key is (NODE_INTERFACE → "Every paged response carries `next`"), and
+// well-formed, the next request carrying it through `encodeURIComponent`; any
+// other answer is a malformed page. Each entry is the node's claim, checked by
+// proveFigures before a proof is asked for it.
 function isPage(data: unknown): boolean {
   if (!isRecord(data) || !Array.isArray(data['boxes'])) return false;
   const next = data['next'];
-  return next === null || (typeof next === 'string' && isWellFormedText(next));
+  return next === null || (typeof next === 'string' && next !== '' && isWellFormedText(next));
 }
 
 // Text with no lone surrogate, the one thing `encodeURIComponent` throws on.

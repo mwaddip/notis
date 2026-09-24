@@ -83,6 +83,21 @@ function node(routes: Routes = {}): { fetch: HttpFetch; calls: string[] } {
   return { fetch, calls };
 }
 
+// A node answering each path and query `answers` names with its page, and every
+// other request with a 404, which ends a listing — a request the tool should not
+// make shows in the log, and the paging stops there; each request logged in order.
+function pages(answers: Record<string, unknown>): { fetch: HttpFetch; calls: string[] } {
+  const calls: string[] = [];
+  const fetch: HttpFetch = async (url: string) => {
+    const u = new URL(url);
+    const at = `${u.pathname}${u.search}`;
+    calls.push(at);
+    const page = answers[at];
+    return page === undefined ? jsonResponse(404, { error: 'not found' }) : jsonResponse(200, page);
+  };
+  return { fetch, calls };
+}
+
 // A listing as the caller hands it — entries and height as the node sent them.
 function listingOf(karma: unknown[], height: unknown = TIP_H): Listing {
   return {
@@ -166,6 +181,38 @@ describe('fetchListing — a page the paging cannot walk fails the listing, its 
     const result = await fetchListing('http://a', USER_HEX, fetch);
     expect(result.ok).toBe(true);
     expect(calls[1]).toBe(`/karma/${USER_HEX}?after=c%F0%9F%98%80`);
+  });
+
+  it('a first page whose `next` is the empty string fails the listing after one request, the route named', async () => {
+    const { fetch, calls } = pages({
+      [`/karma/${USER_HEX}`]: { boxes: [], next: '', height: 1, effective: '0' },
+    });
+    const result = await fetchListing('http://a', USER_HEX, fetch);
+    expect(result).toEqual({ ok: false, reason: `GET /karma/${USER_HEX}: malformed page` });
+    expect(calls).toEqual([`/karma/${USER_HEX}`]);
+  });
+
+  it('a following page whose `next` is the empty string fails the listing after two requests, its cursor named', async () => {
+    const { fetch, calls } = pages({
+      [`/karma/${USER_HEX}`]: { boxes: [], next: 'c1', height: 1, effective: '0' },
+      [`/karma/${USER_HEX}?after=c1`]: { boxes: [], next: '' },
+    });
+    const result = await fetchListing('http://a', USER_HEX, fetch);
+    expect(result).toEqual({ ok: false, reason: `GET /karma/${USER_HEX}?after=c1: malformed page` });
+    expect(calls).toEqual([`/karma/${USER_HEX}`, `/karma/${USER_HEX}?after=c1`]);
+  });
+
+  it('a `next` of one character is a cursor, followed', async () => {
+    const { fetch, calls } = pages({
+      [`/karma/${USER_HEX}`]: { boxes: [], next: 'c', height: 1, effective: '0' },
+      [`/karma/${USER_HEX}?after=c`]: { boxes: [], next: null },
+    });
+    const result = await fetchListing('http://a', USER_HEX, fetch);
+    expect(result).toEqual({
+      ok: true,
+      listing: { karma: { boxes: [], height: 1, effective: '0' }, credits: { boxes: [] } },
+    });
+    expect(calls).toEqual([`/karma/${USER_HEX}`, `/karma/${USER_HEX}?after=c`, `/credits/${USER_HEX}`]);
   });
 
   it('a credits page that is malformed fails the listing, the credits route named', async () => {

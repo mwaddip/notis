@@ -56,7 +56,7 @@ no `process` (the command line's `index.ts` alone does).
 **The figures.** `fetchListing(nodeUrl, user, fetch)` reads `/karma/:user` and `/credits/:user`
 following `next` to the end, `height` and `effective` from the first karma page — a 404 is an empty
 listing; any other non-ok, or a page that is not an object with a `boxes` array and a `next` that is
-null or a string with no lone surrogate (the next request carries it through `encodeURIComponent`),
+null or a non-empty string with no lone surrogate (the next request carries it through `encodeURIComponent`),
 surfaces as `{ ok: false, reason }`. `proveFigures(nodeUrl, user, listing,
 anchor, profile, fetch)` runs, in this order the run's whole meaning rests on: every listed box at
 `suffixHead`, then the identity record at `suffixHead`, then every box excluded at `suffixHead` once
