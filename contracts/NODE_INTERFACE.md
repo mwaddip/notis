@@ -4298,10 +4298,13 @@ the handler.
 | `credits.ts` | Credit transfer validation and execution | UTXO engine internals |
 | `invites.ts` | Invite lifecycle (create, commit, claim, cancel) | Bond box internals |
 | `block-creator.ts` | Block creation, mining, template assembly | Post validation |
-| `block-apply.ts` | Block application, UTXO settlement, per-block like settlement | Block creation |
-| `utxo-engine.ts` | UTXO transaction validation and application | Block structure |
+| `block-apply.ts` | Block application — the header checks, the phase order over the package's rules, the store's writes | Block creation, the rules themselves |
+| `@dagsocial/consensus` | The rules' implementation — the transaction engine, the settlement, decay, the coinbase split, the block's post readers (`CONSENSUS_INTERFACE → What it holds`) | Persistence, I/O, the header checks |
 | `fork-resolution.ts` | Chain fork detection and reorg | Block creation |
 | `genesis-state.ts` | Cold-start seeding of the height-0 state, and the root check over it | Which boxes exist (`store/system.ts`) |
+
+> ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 1)** — the rules live in `services/utxo-engine.ts`,
+> `settlement.ts`, `decay.ts`, `coinbase-split.ts` and `block-posts.ts`; no `@dagsocial/consensus` exists.
 
 **Validation pipeline (phased, increasing cost):**
 1. Signature verification (cheap — Ed25519 verify)

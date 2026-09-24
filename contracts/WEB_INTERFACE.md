@@ -100,9 +100,10 @@ the extension itself sends the website nothing.
 
 ## The browser reaches `@dagsocial/types` through a build-time shim
 
-`@dagsocial/types` and `@dagsocial/validation` are written against Node: `createHash('blake2b512')`
-in five files, `generateKeyPairSync`, `createPublicKey` and `verify` in one, and `Buffer` as a
-**global that is never imported**. A browser has none of them.
+`@dagsocial/types` and `@dagsocial/validation` are written against Node: `createHash('blake2b512')` in six
+files, `generateKeyPairSync` in one, and `Buffer` as a **global that is never imported**. A browser has
+none of them. Signatures are not among them: `validation` verifies Ed25519 through `@noble/curves`
+(`VALIDATION_INTERFACE → Acceptance criterion`), which runs in a browser as it is.
 
 The client supplies them **at build time and changes neither package**: `crypto` resolves to a shim
 over pure-TS primitives, and `Buffer` is supplied to the bundle. Nothing in `types` or `validation`
@@ -111,12 +112,14 @@ migrated.
 
 **The shim carries only what the client's own module graph reaches, and nothing on speculation.**
 The extension's verifier brings `@dagsocial/validation` into the graph (→ The extension → "The verified tip"), and
-that package's one module imports `createPublicKey` and `verify` by name beside `createHash` — so the shim names
-both, **as functions that throw one fixed sentence**, and no bundle carries either: nothing the verifier reaches
-calls them, tree-shaking drops them whole, and `build-extension.sh` refuses assets that contain the sentence. They
-arrive as implementations with the code that calls them. An unreached primitive cannot be pinned by any
-test that runs, and an unpinned consensus-critical primitive is a liability rather than a
-convenience — which is the whole argument against a hand-rolled copy, applied to the shim itself.
+that package imports `createHash` alone from `crypto`, which the shim implements. A primitive the graph does not
+reach has no name in the shim: an unreached primitive cannot be pinned by any test that runs, and an unpinned
+consensus-critical primitive is a liability rather than a convenience — which is the whole argument against a
+hand-rolled copy, applied to the shim itself.
+
+> ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 1)** — `validation`'s one module imports
+> `createPublicKey` and `verify` by name beside `createHash`, so the shim names both as functions that throw one
+> fixed sentence, tree-shaking drops them, and `build-extension.sh` refuses assets that contain the sentence.
 
 ⛔ **The shim's hashing must be byte-identical to `createHash('blake2b512')`, and that must be
 pinned.** Every id in the protocol is a blake2b-512 digest truncated to 32 bytes; a shim that

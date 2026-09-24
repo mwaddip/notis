@@ -100,6 +100,24 @@ default (package)         S10 P10 E3  C7  I7  A6  L9
   reachability arguments expire.
 ```
 
+### @dagsocial/consensus
+
+```
+default (package)         S10 P10 E3  C7  I8  A6  L10
+  The state transition — the one implementation of what a transaction and a block do to state,
+  run by the node and by a browser leaf that validates blocks. A wrong accept is a corrupted
+  chain, as in validation, and a leaf that disagrees with the node by one verdict is on its
+  own fork. It reads state only through the interface its caller injects, and trusts each
+  answer as an input it must bound. L is 10: a cap exactly reached, the last item of a due
+  queue, a key a block both writes and reads — every edge is consensus, and two runs that
+  differ on one fork. It holds no state between calls, so E is low. I is 8: the boundary is
+  the whole point — a rule that reaches past its injected state, or a clock, a global or a
+  Node built-in, is a rule the leaf cannot run.
+```
+
+> ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 1)** — no `@dagsocial/consensus` exists; its
+> modules are `@dagsocial/node`'s services and take the node's profile.
+
 ### @dagsocial/nipopow
 
 ```
