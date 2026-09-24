@@ -1310,10 +1310,13 @@ async function pressAndReadVerdict(cx, opts = {}) {
 // the verified-across-N-nodes predicate. Records the intermediate values so
 // the caller can build the step's detail line.
 async function changeNodeAndAwait(cx, origin, predicate, description, ms = 60000) {
+  // From before the row is set: changeNode drops the verdict and starts a new
+  // run inside setNodeViaUi's own change event, so the count starting here
+  // covers that run's own requests, not only ones after it is already moving.
+  const startIdx = cx.events.length;
   const applied = await setNodeViaUi(cx, origin);
   const stored = await readPrefsNode(cx);
-  const startIdx = cx.events.length;
-  // changeNode drops the verdict and starts a new run; nothing to press.
+  // Nothing to press: the change itself started the run above.
   const reached = await waitForCornerState(cx, predicate, description, ms);
   const reading = reached.last ?? await readCorner(cx);
   const proofs = proofRequestsSince(cx.events, startIdx);
