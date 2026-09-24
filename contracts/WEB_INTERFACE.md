@@ -1483,12 +1483,14 @@ faucet base is configured, a `/status` answer stands, and its `/credits` shows n
 creates. The wait rides the ledger as a `creditGrant` entry whose subject is that box id, `inputs: []` and no
 change, so it is inert in both views; reconcile is `GET /credits/:key`: the box listed → landed, and the row's
 balance reads it; past `expiresAtHeight` and absent → expired — *no block took the faucet's transfer by height
-N.* with `ask again`. A 202 without a numeric `expiresAtHeight` or a 64-hex `boxId` is refused, for the reason
+N.*, and `ask again` beside it once a `/status` answer stands, for the step's own reason; the line survives a change of
+the node being read, so it can stand before one does. A 202 without a numeric `expiresAtHeight` or a 64-hex `boxId` is refused, for the reason
 above. The relayed refusals map as the rep step's do, except a 400 — credits repeat, so it is not the
 once-per-key rule: *the faucet refused that key: <message>*.
 
-> ⚠ **AHEAD OF CODE (2026-09-24, the reservation expiry)** — the step and *no $NOTIS yet.* render on the `/credits`
-> answer alone, spendability judged at height `0` while no `/status` answer stands.
+> ⚠ **AHEAD OF CODE (2026-09-24, the reservation expiry)** — the step, *no $NOTIS yet.* and the expired line's
+> `ask again` render on the `/credits` answer alone, spendability judged at height `0` while no `/status` answer
+> stands.
 
 ### The username row *(username surface)*
 
