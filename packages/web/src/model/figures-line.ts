@@ -89,12 +89,18 @@ export function figuresLine(input: FiguresLineInput): FiguresLine {
   const noProofBox = boxes.some((b) => b.status === 'no-proof');
   const recordUnproven = ledger === 'karma' && record.status === 'unproven';
   const recordNoProof = ledger === 'karma' && record.status === 'no-proof';
+  // Beside a proven or absent record the tool values the rep figure at the
+  // listing's height, and a null valuation there is one it could not make — a
+  // valuation that did not verify (WEB_INTERFACE → The extension → "A run is
+  // total").
+  const valuationUnproven = ledger === 'karma' && result.karma.effective === null
+    && (record.status === 'proven' || record.status === 'absent');
 
-  // Row 4 — a box `unproven` or `absent`, or (karma) the record `unproven`.
-  // The full rule; the caller reads `weight === 'clay'` and marks the figure
-  // clay too (WEB_INTERFACE → The wallet window, → The profile window;
-  // HOUSE_STYLE → Gold and clay are not interchangeable).
-  if (unprovenBox || sums.absent > 0n || recordUnproven) {
+  // Row 4 — a box `unproven` or `absent`, or (karma) the record `unproven` or
+  // the valuation not made. The full rule; the caller reads `weight === 'clay'`
+  // and marks the figure clay too (WEB_INTERFACE → The wallet window, → The
+  // profile window; HOUSE_STYLE → Gold and clay are not interchangeable).
+  if (unprovenBox || sums.absent > 0n || recordUnproven || valuationUnproven) {
     if (sums.absent > 0n) {
       const amount = ledger === 'credits'
         ? `${formatCredits(sums.absent)} $NOTIS`
@@ -127,8 +133,9 @@ export function figuresLine(input: FiguresLineInput): FiguresLine {
   // spendable, so it is left out. (`spendableCreditBoxes` in
   // src/wallet/reads.ts is the same predicate; the shape differs so the rule
   // is written out.)
-  // For karma: `result.karma.effective`, which the record's proven-or-absent
-  // status ensures is non-null here (rows 4/5 decide first).
+  // For karma: `result.karma.effective`, non-null here — rows 4 and 5 took
+  // every null valuation, beside an unproven or no-proof record and beside a
+  // proven or absent one.
   let proven: bigint;
   if (ledger === 'credits') {
     proven = 0n;

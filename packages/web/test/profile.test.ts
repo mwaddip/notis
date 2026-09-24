@@ -884,6 +884,30 @@ describe('profile — the verified-figures line beneath the rep number', () => {
     expect(f.querySelector<HTMLElement>('.mono')!.classList.contains('clay')).toBe(true);
   });
 
+  // A listing height that is not a block height leaves the valuation unmade —
+  // `effective: null` beside a proven or absent record (WEB_INTERFACE → The
+  // extension → "A run is total"): the full rule, the number in its slot.
+  for (const record of [
+    { status: 'proven', record: RECORD } as RecordResult,
+    { status: 'absent' } as RecordResult,
+  ]) {
+    it(`the valuation not made beside the ${record.status} record, every box proven → the clay line and the number clay, never "0 rep proven"`, () => {
+      const fv = pfFigures({
+        boxes: [pfBox({ boxClass: 'karma', status: 'proven', value: 100n })],
+        record,
+        karma: { ...EMPTY_SUMS, proven: 100n, effective: null },
+        failed: true,
+      });
+      const f = rowField(render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
+      const hint = f.querySelector<HTMLElement>('.hint');
+      expect(hint?.textContent).toBe("this node's proof of your rep did not verify");
+      expect(hint?.classList.contains('clay')).toBe(true);
+      const mono = f.querySelector<HTMLElement>('.mono')!;
+      expect(mono.classList.contains('clay')).toBe(true);
+      expect(mono.textContent).toBe('100');
+    });
+  }
+
   it('the record no-proof, no boxes no-proof → muted "the node served no proof for your rep"', () => {
     const fv = pfFigures({
       boxes: [pfBox({ boxClass: 'karma', status: 'proven', value: 100n })],

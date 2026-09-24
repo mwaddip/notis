@@ -13,9 +13,10 @@ export type { Anchor };
  *  `suffixHead.header.height` is the height the *proven at block N* clause
  *  names; the anchor's presence beside the result lets a later run drop a
  *  result that no longer belongs to the anchor the App now holds
- *  (WEB_INTERFACE → The extension → "The verified figures"). Null while no
- *  run has returned for this identity/anchor/listing generation — unit 7
- *  fills the field; this unit passes null. */
+ *  (WEB_INTERFACE → The extension → "The verified figures"). The App's
+ *  figures run writes one when it returns for the listings the App still
+ *  holds; the App holds null until then, and again once the reader's state
+ *  drops or a tip run ends without an anchor. */
 export interface FiguresView {
   result: FiguresResult;
   anchor: Anchor;
@@ -173,8 +174,8 @@ export interface RenderCtx {
   // The verified-figures run's result and the anchor it was proven against —
   // the wallet's balance row and the profile's rep row read it through the
   // pure `figuresLine` model (WEB_INTERFACE → The extension → "The verified
-  // figures"). Null while no run has returned; the App passes null in this
-  // unit, and unit 7 fills the field.
+  // figures"). The App passes the result its figures run holds — null while
+  // none stands, and always in a build with no verifier.
   figures: FiguresView | null;
   // WEB_INTERFACE → Links
   linkUrl: (id: string) => string;

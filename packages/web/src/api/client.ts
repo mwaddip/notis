@@ -17,6 +17,37 @@ export class ApiError extends Error {
   }
 }
 
+/** A 2xx whose body is not the page its route answers — thrown where a non-2xx
+ *  throws `ApiError`, so every caller's failure path takes it. */
+export class PageError extends Error {
+  constructor() {
+    super("the node's answer is not a page");
+    this.name = 'PageError';
+  }
+}
+
+/** The list each paged route answers its rows in: `posts`, the thread's
+ *  `descendants`, the `boxes` of /karma and /credits, the `vouches` of both
+ *  /vouches arms, the cooldown arm's `cooldowns` and the `bonds` of /invites
+ *  (NODE_INTERFACE → "Every list a view returns is a page"). */
+type PageList = 'posts' | 'descendants' | 'boxes' | 'vouches' | 'cooldowns' | 'bonds';
+
+// The one thing `encodeURIComponent` throws on.
+const LONE_SURROGATE = /\p{Cs}/u;
+
+/** A page is an object whose list is an array and whose `next` is null or a
+ *  key the next read carries as `after` — a non-empty string, since `url()`
+ *  drops an empty query value, with no lone surrogate (NODE_INTERFACE → "Every
+ *  list a view returns is a page", WEB_INTERFACE → "Paging is keyset, never
+ *  offset"). */
+function isPage(data: unknown, list: PageList): boolean {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) return false;
+  const fields = data as Record<string, unknown>;
+  if (!Array.isArray(fields[list])) return false;
+  const next = fields['next'];
+  return next === null || (typeof next === 'string' && next !== '' && !LONE_SURROGATE.test(next));
+}
+
 export interface Page {
   limit?: number;
   after?: string | null;
@@ -64,18 +95,26 @@ export class NodeClient implements Api {
     return base + path + (qs ? '?' + qs : '');
   }
 
-  private async get<T>(url: string): Promise<T> {
+  private async get<T>(url: string, list?: keyof T & PageList): Promise<T> {
     const res = await fetch(url);
     if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`);
-    return (await res.json()) as T;
+    return this.body<T>(res, list);
   }
 
   /** A 404 is a legitimate absence (no such post), not a transport failure. */
-  private async getOrNull<T>(url: string): Promise<T | null> {
+  private async getOrNull<T>(url: string, list?: keyof T & PageList): Promise<T | null> {
     const res = await fetch(url);
     if (res.status === 404) return null;
     if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`);
-    return (await res.json()) as T;
+    return this.body<T>(res, list);
+  }
+
+  /** A 2xx's body. A paged read names its list, and a body that is not a page
+   *  throws there. */
+  private async body<T>(res: Response, list?: keyof T & PageList): Promise<T> {
+    const data: unknown = await res.json();
+    if (list !== undefined && !isPage(data, list)) throw new PageError();
+    return data as T;
   }
 
   feed(page: Page = {}, viewer?: string, author?: string, roots?: boolean): Promise<FeedResult> {
@@ -83,12 +122,13 @@ export class NodeClient implements Api {
     // (WEB_INTERFACE → The author window); `roots=1` restricts to posts with no
     // parent, the feed's own read (WEB_INTERFACE → What the feed reads). The node
     // rejects `roots=0`, so it is 1 or absent (NODE_INTERFACE → Posts).
-    return this.get<FeedResult>(this.url('/posts', { limit: page.limit, after: page.after ?? undefined, author, viewer, roots: roots ? 1 : undefined }));
+    return this.get<FeedResult>(this.url('/posts', { limit: page.limit, after: page.after ?? undefined, author, viewer, roots: roots ? 1 : undefined }), 'posts');
   }
 
   thread(id: string, page: Page = {}, viewer?: string): Promise<ThreadResult | null> {
     return this.getOrNull<ThreadResult>(
       this.url(`/posts/${encodeURIComponent(id)}/thread`, { limit: page.limit, after: page.after ?? undefined, viewer }),
+      'descendants',
     );
   }
 
@@ -107,27 +147,27 @@ export class NodeClient implements Api {
   // The spendable view's confirmed boxes, paged by `next`. No viewer — a balance
   // read is keyed by the identity in the path, not by a viewer query.
   karma(key: string, page: Page = {}): Promise<KarmaResult> {
-    return this.get<KarmaResult>(this.url(`/karma/${encodeURIComponent(key)}`, { limit: page.limit, after: page.after ?? undefined }));
+    return this.get<KarmaResult>(this.url(`/karma/${encodeURIComponent(key)}`, { limit: page.limit, after: page.after ?? undefined }), 'boxes');
   }
 
   credits(key: string, page: Page = {}): Promise<CreditsResult> {
-    return this.get<CreditsResult>(this.url(`/credits/${encodeURIComponent(key)}`, { limit: page.limit, after: page.after ?? undefined }));
+    return this.get<CreditsResult>(this.url(`/credits/${encodeURIComponent(key)}`, { limit: page.limit, after: page.after ?? undefined }), 'boxes');
   }
 
   vouchesByTarget(key: string, page: Page = {}): Promise<VouchesTargetResult> {
-    return this.get<VouchesTargetResult>(this.url('/vouches', { target: key, limit: page.limit, after: page.after ?? undefined }));
+    return this.get<VouchesTargetResult>(this.url('/vouches', { target: key, limit: page.limit, after: page.after ?? undefined }), 'vouches');
   }
 
   vouchesByVoucher(key: string, page: Page = {}): Promise<VouchesVoucherResult> {
-    return this.get<VouchesVoucherResult>(this.url('/vouches', { voucher: key, limit: page.limit, after: page.after ?? undefined }));
+    return this.get<VouchesVoucherResult>(this.url('/vouches', { voucher: key, limit: page.limit, after: page.after ?? undefined }), 'vouches');
   }
 
   vouchCooldowns(key: string, page: Page = {}): Promise<VouchCooldownsResult> {
-    return this.get<VouchCooldownsResult>(this.url('/vouches', { voucher: key, cooldowns: 1, limit: page.limit, after: page.after ?? undefined }));
+    return this.get<VouchCooldownsResult>(this.url('/vouches', { voucher: key, cooldowns: 1, limit: page.limit, after: page.after ?? undefined }), 'cooldowns');
   }
 
   bonds(key: string, page: Page = {}): Promise<BondsResult> {
-    return this.get<BondsResult>(this.url(`/invites/${encodeURIComponent(key)}`, { limit: page.limit, after: page.after ?? undefined }));
+    return this.get<BondsResult>(this.url(`/invites/${encodeURIComponent(key)}`, { limit: page.limit, after: page.after ?? undefined }), 'bonds');
   }
 
   usernameByOwner(key: string): Promise<UsernameResult | null> {
