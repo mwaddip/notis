@@ -5,7 +5,7 @@ import type { Flight } from '../view/card';
 import type { YourVouch } from '../view/author';
 import type { SignResult } from '../wallet/submit';
 import type { TipVerdict } from './tip-verdict';
-import type { Anchor, FiguresResult, Listing } from '@dagsocial/nipopow-client';
+import type { Anchor, FiguresResult, Listing, NameClaim, NameResult } from '@dagsocial/nipopow-client';
 export type { Anchor };
 
 /** What the App holds when a figures verifier run has returned — the tool's
@@ -322,4 +322,14 @@ export interface TipVerifier {
  *  trigger fires. */
 export interface FiguresVerifier {
   run(readingBase: string, user: string, listing: Listing, anchor: Anchor): Promise<FiguresResult>;
+}
+
+/** The extension proves every handle it shows against the state the verified
+ *  chain committed (WEB_INTERFACE → The extension → "The verified names"). The
+ *  App holds an implementation only in the extension build; the web build is
+ *  handed none. `run` checks one claim — a label, a key and the name a row
+ *  carries beside it, or a typed handle — against the reading node's own
+ *  verified headers standing when the check begins. */
+export interface NamesVerifier {
+  run(readingBase: string, claim: NameClaim, anchor: Anchor): Promise<NameResult>;
 }

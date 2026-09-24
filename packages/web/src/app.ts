@@ -30,6 +30,7 @@ import { renderCreditsRow, resetCreditsSendForm, type ResolvedRecipient } from '
 import { cornerState, renderCorner, CORNER_POLL_MS, type CornerState } from './view/corner';
 import type { TipVerdict } from './model/tip-verdict';
 import { namePair, nameIsClay } from './model/name-verdict';
+import { markHandle, landNameClay } from './view/name-handle';
 import type { Anchor } from './model/state';
 import type { Listing, NameResult } from '@dagsocial/nipopow-client';
 import type { Flight } from './view/card';
@@ -41,7 +42,7 @@ import {
 import {
   FEED_COMPOSER_KEY, type AppState, type ThreadState, type RenderCtx, type Handlers, type Submission,
   type FlightStage, type AppIdentity, type AuthorWindowData, type FeedState, type FiguresView,
-  type TipVerifier, type FiguresVerifier,
+  type TipVerifier, type FiguresVerifier, type NamesVerifier,
 } from './model/state';
 import { decideMove, type ScreenEntry } from './history';
 
@@ -346,6 +347,19 @@ export class App {
   // screen reads it through nameClay; a pair with no result reads as it reads
   // without a verifier.
   private nameChecks = new Map<string, NameResult>();
+  // The seam runs proveName over one pair on screen against the anchor
+  // standing; non-null only in the extension build. One batch in flight, its
+  // pairs checked one after another; a trigger during a batch marks one more,
+  // `every` over `new`. A node change drops every result and moves the
+  // generation, which drops a batch in flight at its next answer; an identity
+  // change keeps them — a name's check reads no identity. nameRunAsked holds
+  // once a check that ended `unchecked` has asked for its one tip run, until a
+  // run no check asked for begins.
+  private namesVerifier: NamesVerifier | null;
+  private namesGen = 0;
+  private namesInFlight = false;
+  private namesMarked: 'new' | 'every' | null = null;
+  private nameRunAsked = false;
   private usernameFlight: Flight | null = null;
   private usernameInFlight: { kind: 'claim' | 'burn'; name: string } | null = null;
   // The wallet window (WEB_INTERFACE → The wallet window). walletCredits is the
@@ -376,6 +390,7 @@ export class App {
     requestFaucetOrigin?: (origin: string) => Promise<boolean>,
     verifier?: TipVerifier | null,
     figuresVerifier?: FiguresVerifier | null,
+    namesVerifier?: NamesVerifier | null,
   ) {
     this.client = client ?? new NodeClient(() => prefs.node);
     this.writeClient = writeClient ?? new WriteClient(() => prefs.node);
@@ -384,6 +399,7 @@ export class App {
     this.requestFaucetOrigin = requestFaucetOrigin ?? null;
     this.verifier = verifier ?? null;
     this.figuresVerifier = figuresVerifier ?? null;
+    this.namesVerifier = namesVerifier ?? null;
     // With no verifier the verdict stays `undefined` — the corner reads the
     // first paragraph of the status corner, word for word (WEB_INTERFACE →
     // The status corner, → The extension → "The verified tip").
@@ -808,6 +824,7 @@ export class App {
         // In the extension a handle the chain does not back is clay — the text
         // alone, the same control (WEB_INTERFACE → The identity display).
         if (this.nameClay(cur.pubKeyHex, this.ownName.name)) profile.classList.add('clay');
+        markHandle(profile, cur.pubKeyHex, this.ownName.name);
       } else {
         profile.style.fontFamily = 'var(--mono)';
         profile.textContent = shortHex(cur.pubKeyHex, 16);
@@ -840,6 +857,7 @@ export class App {
     bar.appendChild(right);
 
     this.updateHeaderArrows();
+    this.checkNames('new');
   }
 
   // WEB_INTERFACE → The standalone thread — no arrows, no profile control.
@@ -1048,6 +1066,7 @@ export class App {
       renderFeedInto(this.feedEl, this.state.feed, this.handlers, this.ctx());
       this.feedEl.scrollTop = top;
     });
+    this.checkNames('new');
   }
 
   /** Replace one card in the feed by post id — the like's optimistic press and its
@@ -1057,10 +1076,12 @@ export class App {
     const post = this.state.feed.posts.find((p) => p.id === postId);
     if (!post) return;
     replaceFeedCard(this.feedEl, post, this.ctx(), this.handlers);
+    this.checkNames('new');
   }
 
   private renderPanes(): void {
     this.withComposerFocus(() => this.renderPanesBody());
+    this.checkNames('new');
   }
 
   private renderPanesBody(): void {
@@ -1103,6 +1124,7 @@ export class App {
    *  in them survive. */
   private renderRegion(uid: number): void {
     this.withComposerFocus(() => this.renderRegionInPlace(uid));
+    this.checkNames('new');
   }
 
   private renderRegionInPlace(uid: number): void {
@@ -1147,6 +1169,7 @@ export class App {
     const region = this.panesEl.querySelector<HTMLElement>(`.region[data-uid="${column.uid}"]`);
     const oldBars = region?.querySelector<HTMLElement>('.bars');
     if (oldBars) oldBars.replaceWith(renderBars(column, ci, this.handlers, this.ctx()));
+    this.checkNames('new');
   }
 
   private structural(mutate: () => void): void {
@@ -2789,6 +2812,7 @@ export class App {
   private renderInvitesRowInPlace(): void {
     const field = document.querySelector<HTMLElement>('.invites-field');
     if (field) renderInvitesRow(field, this.handlers, this.ctx(), this.profileOrigin());
+    this.checkNames('new');
   }
 
   private profileOrigin(): Origin {
@@ -2862,6 +2886,7 @@ export class App {
   private renderUsernameRowInPlace(): void {
     const field = document.querySelector<HTMLElement>('.username-field');
     if (field) renderUsernameRow(field, this.handlers, this.ctx());
+    this.checkNames('new');
   }
 
   // ---- the wallet window's send row (WEB_INTERFACE → The wallet window) ----
@@ -3081,13 +3106,16 @@ export class App {
    *  during a run is that run (WEB_INTERFACE → The extension → "The verified
    *  tip"). An empty reading base runs nothing; a hidden tab runs nothing.
    *  The gen stamps the run so a late verdict under an older generation is
-   *  dropped and never touches the flag or the render. */
-  private startVerification(): void {
+   *  dropped and never touches the flag or the render. `askedByNames` marks the
+   *  run a name check that ended `unchecked` asks for; a run that begins on any
+   *  other trigger lets a check ask again (→ "The verified names"). */
+  private startVerification(askedByNames = false): void {
     if (this.verifier === null) return;
     if (!this.cornerVisible()) return;
     if (this.verifyInFlight) return;
     const readingBase = prefs.node;
     if (readingBase === '') return;
+    if (!askedByNames) this.nameRunAsked = false;
     const gen = this.verifyGen;
     this.lastVerifyBeganAt = Date.now();
     this.verifyInFlight = true;
@@ -3112,6 +3140,9 @@ export class App {
           this.anchorSeq += 1;
           void this.refreshOwnKarma();
           if (openSet(this.state.workspace).has('@wallet')) void this.refreshWalletCredits();
+          // WEB_INTERFACE → The extension → "The verified names" — every pair
+          // on screen, against the anchor this run wrote.
+          this.checkNames('every');
         } else {
           this.figures = null;
           this.renderCreditsRowInPlace();
@@ -3152,7 +3183,10 @@ export class App {
    *  build carries a verifier, a run in flight for the previous node is dropped
    *  by its older generation, the verdict returns to `null` (checking), the
    *  flag is cleared so the new run can start, and it does (WEB_INTERFACE → The
-   *  extension → "The verified tip"). */
+   *  extension → "The verified tip"). Every name check's result is the node
+   *  before's answer: the results drop with the generation, so a batch in
+   *  flight writes nothing more, and its flags clear before the re-render, which
+   *  draws every handle as it reads with no check (→ "The verified names"). */
   private onReadingNodeChanged(): void {
     this.cornerGen += 1;
     this.cornerLastTip = null;
@@ -3164,6 +3198,10 @@ export class App {
       this.tipVerdict = null;
       this.tipAnchor = null;
     }
+    this.nameChecks.clear();
+    this.namesGen += 1;
+    this.namesInFlight = false;
+    this.namesMarked = null;
     this.state.threads.clear();
     this.state.posts.clear();
     this.dropFeedRows();
@@ -3284,6 +3322,135 @@ export class App {
     if (order < (this.heldRead.get(piece) ?? 0)) return false;
     this.heldRead.set(piece, order);
     return true;
+  }
+
+  // ---- the verified names (WEB_INTERFACE → The extension → "The verified
+  // names") ----
+  // The App checks the key-and-name pairs its surfaces show: every pair on
+  // screen after each tip run that ends `verified`, and after each render of a
+  // surface that draws handles the pairs no check has decided — a pair first on
+  // a surface, whether a read brought its row or a window opened over rows the
+  // App already held. A result that changes a pair's clay lands on its marked
+  // handles where they stand (view/name-handle.ts).
+
+  /** Check the pairs on screen — `every` one, or the `new` ones no check has
+   *  decided — against the anchor standing, one after another. With no verifier
+   *  or no anchor nothing runs; a trigger during a batch marks one more, `every`
+   *  over `new`. */
+  private checkNames(scope: 'new' | 'every'): void {
+    if (this.namesVerifier === null) return;
+    if (this.namesInFlight) {
+      if (this.namesMarked !== 'every') this.namesMarked = scope;
+      return;
+    }
+    if (this.tipAnchor === null) return;
+    const pairs = this.namePairsOnScreen()
+      .filter((p) => scope === 'every' || !this.nameChecks.has(namePair(p.key, p.name)));
+    if (pairs.length === 0) return;
+    this.namesInFlight = true;
+    void this.runNameBatch(this.namesVerifier, pairs, prefs.node, this.namesGen);
+  }
+
+  /** One batch: each pair checked against the anchor standing as its check
+   *  begins, the batch ending where none stands. A check is total, so a
+   *  rejection is the seam's own failure — logged, and the pair keeps no result.
+   *  A batch under an older generation writes nothing and leaves the flags to
+   *  the generation that moved it. */
+  private async runNameBatch(
+    verifier: NamesVerifier,
+    pairs: Array<{ key: string; name: string }>,
+    readingBase: string,
+    gen: number,
+  ): Promise<void> {
+    for (const { key, name } of pairs) {
+      const anchor = this.tipAnchor;
+      if (anchor === null) break;
+      let result: NameResult;
+      try {
+        result = await verifier.run(readingBase, { key, name }, anchor);
+      } catch (e) {
+        console.error(e);
+        if (gen !== this.namesGen) return;
+        continue;
+      }
+      if (gen !== this.namesGen) return;
+      this.landName(key, name, result);
+      if (result.status === 'unchecked') this.askTipRunForNames();
+    }
+    this.namesInFlight = false;
+    const marked = this.namesMarked;
+    this.namesMarked = null;
+    if (marked !== null) this.checkNames(marked);
+  }
+
+  /** Hold a check's result for its pair. A result that leaves the pair's clay
+   *  as it was touches nothing on screen; one that changes it lands on the
+   *  pair's handles in place (HOUSE_STYLE → Motion). */
+  private landName(key: string, name: string, result: NameResult): void {
+    const pair = namePair(key, name);
+    const was = nameIsClay(this.nameChecks.get(pair));
+    this.nameChecks.set(pair, result);
+    const is = nameIsClay(result);
+    if (was !== is) landNameClay([this.appbar, this.feedEl, this.panesEl], pair, is);
+  }
+
+  /** A check that ended `unchecked` — a block landed since the anchor — asks for
+   *  one tip run, whose verified resolver checks every pair again against the
+   *  fresh anchor. Once asked, no check asks again until a run no check asked
+   *  for begins. */
+  private askTipRunForNames(): void {
+    if (this.nameRunAsked) return;
+    this.nameRunAsked = true;
+    this.startVerification(true);
+  }
+
+  /** The pairs the surfaces show, each once, read from the App's state — the
+   *  sources every handle site renders from (WEB_INTERFACE → The identity
+   *  display): the reader's own name beside the loaded key (the header, the
+   *  profile's `username` row, the reader's own cards); the feed's rows; and for
+   *  every open window, a thread's rows with the index row its bar reads while
+   *  no root of its own stands, an author window's subject name and endorsers,
+   *  a posts window's rows with the subject name its bar reads, and the
+   *  profile's standing bonds. A window stacked behind another counts: its bar,
+   *  and its body once focused, draw from the same state. */
+  private namePairsOnScreen(): Array<{ key: string; name: string }> {
+    const pairs = new Map<string, { key: string; name: string }>();
+    const add = (key: string, name: string | null): void => {
+      if (name === null) return;
+      const pair = namePair(key, name);
+      if (!pairs.has(pair)) pairs.set(pair, { key, name });
+    };
+    const addRow = (row: FeedRow | null | undefined): void => {
+      if (row) add(row.author, row.authorName);
+    };
+    const cur = this.idm.current();
+    if (cur !== null && this.ownName !== null) add(cur.pubKeyHex, this.ownName.name);
+    if (!this.standalone) {
+      for (const row of this.state.feed.pending) addRow(row);
+      for (const row of this.state.feed.posts) addRow(row);
+    }
+    for (const id of openSet(this.state.workspace)) {
+      const sub = windowSubject(id);
+      if (sub !== null) {
+        const d = this.authorData.get(sub.key);
+        if (d?.username) add(sub.key, d.username.name);
+        if (sub.kind === 'author') {
+          for (const v of d?.endorsers?.vouches ?? []) add(v.voucherId, v.voucherName);
+        } else {
+          for (const row of this.authorPostsData.get(sub.key)?.posts ?? []) addRow(row);
+        }
+      } else if (id === '@profile') {
+        for (const b of this.bondsView?.bonds ?? []) add(b.inviteePublicKey, b.inviteeName);
+      } else if (!isWin(id)) {
+        addRow(this.state.posts.get(id));
+        const t = this.state.threads.get(id);
+        if (t) {
+          addRow(t.root);
+          for (const row of t.descendants) addRow(row);
+        }
+      }
+    }
+    return [...pairs.values()];
   }
 
   /** Read /blocks/current, update the corner's state, feed viewerTip. The first

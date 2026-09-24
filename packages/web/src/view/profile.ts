@@ -2,6 +2,7 @@ import { el, shortHex } from '../dom';
 import { prefs } from '../prefs';
 import { unlockForm, setPassphraseForm } from './passphrase';
 import { stageLine, type Flight } from './card';
+import { markHandle } from './name-handle';
 import { INVITE_BOND_VEST_PER_LIKES, USERNAME_BURN_PRICE, isValidUsernameBytes } from '@dagsocial/types';
 import { figuresLine } from '../model/figures-line';
 import type { FiguresView } from '../model/state';
@@ -428,6 +429,7 @@ function standingBonds(field: HTMLElement, handlers: ProfileHandlers, ctx: Profi
     // does not back it.
     const btn = el('button', bond.inviteeName !== null ? 'handle authorbtn' : 'hex authorbtn');
     if (bond.inviteeName !== null && ctx.nameClay(bond.inviteePublicKey, bond.inviteeName)) btn.classList.add('clay');
+    if (bond.inviteeName !== null) markHandle(btn, bond.inviteePublicKey, bond.inviteeName);
     btn.textContent = bond.inviteeName !== null ? '@' + bond.inviteeName : shortHex(bond.inviteePublicKey, 10);
     btn.setAttribute('aria-label', 'open this author');
     btn.addEventListener('click', () => handlers.openAuthor(bond.inviteePublicKey, origin));
@@ -660,6 +662,7 @@ function updateUsername(field: HTMLElement, handlers: ProfileHandlers, ctx: Prof
     const handle = el('span', 'handle');
     handle.textContent = '@' + ctx.ownName.name;
     if (ctx.identity !== null && ctx.nameClay(ctx.identity.pubKeyHex, ctx.ownName.name)) handle.classList.add('clay');
+    if (ctx.identity !== null) markHandle(handle, ctx.identity.pubKeyHex, ctx.ownName.name);
     line.appendChild(handle);
     line.appendChild(document.createTextNode(' '));
 

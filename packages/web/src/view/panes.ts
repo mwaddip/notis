@@ -4,6 +4,7 @@ import { profileBody } from './profile';
 import { settingsBody } from './settings';
 import { walletBody } from './wallet';
 import { authorBody, authorPostsBody, type AuthorCtx, type PostsCtx } from './author';
+import { markHandle } from './name-handle';
 import { flattenThread } from '../model/thread';
 import { identityHue } from '../model/identity';
 import { isWithdrawn } from '../api/dto';
@@ -77,6 +78,7 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
     if (subName) {
       const h = el('span', 'handle', '@' + subName.name);
       if (ctx.nameClay(sub.key, subName.name)) h.classList.add('clay');
+      markHandle(h, sub.key, subName.name);
       label.appendChild(h);
     } else {
       label.appendChild(el('span', 'hex', shortHex(sub.key, 10)));
@@ -120,6 +122,7 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
     if (m.authorName !== null) {
       const h = el('span', 'handle', '@' + m.authorName);
       if (m.authorKey !== undefined && ctx.nameClay(m.authorKey, m.authorName)) h.classList.add('clay');
+      if (m.authorKey !== undefined) markHandle(h, m.authorKey, m.authorName);
       label.appendChild(h);
     } else {
       label.appendChild(el('span', 'hex', shortHex(m.authorKey ?? k, 10)));

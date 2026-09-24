@@ -1,6 +1,7 @@
 import { el, shortHex } from '../dom';
 import { unlockForm } from './passphrase';
 import { card, stageLine, listCardOpts } from './card';
+import { markHandle, nameLine } from './name-handle';
 import type { Flight } from './card';
 import type { VouchesTargetResult, UsernameResult, PostJson } from '../api/dto';
 import type { FeedState } from '../model/state';
@@ -93,10 +94,11 @@ export function authorBody(handlers: AuthorHandlers, ctx: AuthorCtx): HTMLElemen
       field.appendChild(el('span', 'inkmute', 'loading…'));
     } else if (ctx.username) {
       const handle = el('span', 'handle', '@' + ctx.username.name);
+      markHandle(handle, ctx.authorKey, ctx.username.name, true);
       field.appendChild(handle);
       if (ctx.nameClay(ctx.authorKey, ctx.username.name)) {
         handle.classList.add('clay');
-        field.appendChild(el('div', 'hint clay', "this node's answer for this name did not verify"));
+        field.appendChild(nameLine());
       }
     } else {
       field.appendChild(el('span', 'inkmute', 'no name'));
@@ -153,6 +155,7 @@ function endorsers(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx)
     // does not back it.
     const btn = el('button', v.voucherName !== null ? 'handle authorbtn' : 'hex authorbtn');
     if (v.voucherName !== null && ctx.nameClay(v.voucherId, v.voucherName)) btn.classList.add('clay');
+    if (v.voucherName !== null) markHandle(btn, v.voucherId, v.voucherName);
     btn.textContent = v.voucherName !== null ? '@' + v.voucherName : shortHex(v.voucherId, 10);
     btn.setAttribute('aria-label', 'open this author');
     btn.addEventListener('click', () => handlers.openAuthor(v.voucherId, ctx.origin));

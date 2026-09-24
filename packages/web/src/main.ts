@@ -7,7 +7,8 @@ import { bootstrapProxy } from './extension/proxy';
 import { wrapTabs } from './extension/handover';
 import { createTipVerifier } from './extension/tip-verifier';
 import { createFiguresVerifier } from './extension/figures-verifier';
-import type { AppIdentity, TipVerifier, FiguresVerifier } from './model/state';
+import { createNamesVerifier } from './extension/names-verifier';
+import type { AppIdentity, TipVerifier, FiguresVerifier, NamesVerifier } from './model/state';
 
 // Theme is already on <html> from the head's theme.js; this re-applies it and
 // sets the identity tint before the first render, while transitions are still
@@ -61,7 +62,14 @@ const figuresVerifier: FiguresVerifier | undefined = isExtension && BUILD_NETWOR
       fetch: fetch.bind(globalThis),
     })
   : undefined;
-new App(undefined, undefined, idm, undefined, tabs, requestFaucetOrigin, verifier, figuresVerifier).start(appbar, feed, panes, mode);
+// WEB_INTERFACE → The extension → "The verified names" — the names verifier is
+// handed to the App under the same static condition, so Rollup dead-code-
+// eliminates createNamesVerifier from the web bundle (build-release.sh's
+// `api/v1/proof` check).
+const namesVerifier: NamesVerifier | undefined = isExtension && BUILD_NETWORK !== null
+  ? createNamesVerifier({ fetch: fetch.bind(globalThis) })
+  : undefined;
+new App(undefined, undefined, idm, undefined, tabs, requestFaucetOrigin, verifier, figuresVerifier, namesVerifier).start(appbar, feed, panes, mode);
 
 // Restoring a stored preference is painted, not transitioned: drop the
 // transition-suppressing class only after the first paint (HOUSE_STYLE → Motion).
