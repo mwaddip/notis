@@ -1373,8 +1373,10 @@ keys only — an unknown one refused in place, *no one holds that name.*; then, 
 row**, the burn's pattern: *send 12.5 $NOTIS to @bob · <prefix>?* — the handle when one resolved, and always the
 key it resolved to, in mono, the prefix the identity display renders — with `send` and `keep`, focus on `keep`, Esc
 keeps; **in the extension there is no confirm row**: the handle is checked against the verified chain first (→ The
-extension → "The verified names"), and once it proves, `send` shows the key the proven box names beneath the field, in
-mono, and goes to the flow — the prompt is the confirmation (→ The extension) — the build told apart by the
+extension → "The verified names") — **the row reading *checking @bob…* in the flight's place while the check runs, and
+a press during it doing nothing**, so one press is one check and at most one prompt — and once it proves, `send` shows
+the key the proven box names beneath the field, in mono, and goes to the flow — the prompt is the confirmation (→ The
+extension) — the build told apart by the
 identity module implementing `policy`, the predicate the policy row reads. A locked identity unlocks in place
 first — in the confirm's place on the web, under the form in the extension — and the next press needs no second
 unlock; the flight
@@ -1388,12 +1390,13 @@ N $NOTIS.*, *that leaves change under N $NOTIS — send a little more, or all of
 $NOTIS.*; a decline is *send not sent.*, a refusal *send not sent: <reason>.*, the lock race *your key is locked*
 (→ The wallet, `notSigned`); in the extension, a handle that does not prove is *this node's answer for @bob did not
 verify.* (`absent`, `unproven`), *the node served no proof for @bob.* (`no-proof`), *@bob is too new to check yet.* (a
-second `unchecked`), *@bob can't be checked — the chain is not verified.* (`thin`, `refused`) — the form keeping its
+second `unchecked`), *@bob can't be checked — the chain is not verified.* (`thin`, `refused`), *@bob can't be
+checked.* (a check that ends without an answer — a check is total, so only a defect reaches it) — the form keeping its
 values, nothing signed. In the extension the prompt is the one confirmation, because credits always prompt
 (→ The extension).
 
-> ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — the extension's send goes to the flow with the key the node
-> answered, unchecked.
+> ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — the press shows nothing while the check runs and a second
+> press runs a second check; a check that throws reads *… can't be checked — the chain is not verified.*
 
 ### The settings window *(read surface)*
 
