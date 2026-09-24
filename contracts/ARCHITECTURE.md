@@ -2684,7 +2684,9 @@ backfill — and a withdrawn post keeps its row with `content` `NULL` and its ma
   the buyer's credits in one transaction both sign; buying while holding burns the buyer's old name with
   the buyer paying `USERNAME_BURN_PRICE`; the holder record's `{ available, holding }` and `{ used, none }`
   states (§Usernames)
-- **Username proofs in the light client:** the name record, then the box it names
+- **A name's absence in the light client:** the name record, and a key's holder record, proven excluded — so
+  a node that answers that a held name is free, or shows a named key bare, is caught. A name the node points
+  at is proven through its box (WEB_INTERFACE → The extension → "The verified names")
 - **A name whose holder's karma is gone:** held forever today; release on decay is a rule for a later
   version
 - **The backer table's fill tool:** reads the migration contract at the snapshot slot and writes mainnet's

@@ -49,6 +49,8 @@ rsync -a \
   `# The release job builds the tarball and the web zip into this root before the .deb` \
   --exclude '*.tar.gz' \
   --exclude '*.zip' \
+  `# sign-extension.sh writes the signed Firefox build into this root` \
+  --exclude '*.xpi' \
   --exclude 'prompts' \
   --exclude 'tmp' \
   --exclude 'CLAUDE.md' \
