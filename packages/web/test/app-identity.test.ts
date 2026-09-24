@@ -8,6 +8,7 @@ import type { KarmaResult, PostResult, StatusResult, FeedResult, BlockCurrent } 
 import type { PendingEntry } from '../src/wallet/types';
 import type { WriteClient, Rejection } from '../src/api/write';
 import type { FaucetGrant, CreditGrant } from '../src/api/faucet';
+import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import { prefs } from '../src/prefs';
 import { karmaResult } from './karma-fixture';
 
@@ -86,6 +87,8 @@ interface Drive {
   profileKarma: KarmaResult | null;
   grantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
   creditGrantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
+  viewerTip: number;
+  refreshTip(): Promise<void>;
 }
 
 interface Harness {
@@ -433,24 +436,24 @@ describe('the App faucet permission — the extension arm (rep step)', () => {
   });
 });
 
+/** A faucet whose answers wait until the test gives them. */
+function heldFaucet(h: Harness): {
+  karma?: (v: FaucetGrant | Rejection) => void;
+  credits?: (v: CreditGrant | Rejection) => void;
+} {
+  const held: { karma?: (v: FaucetGrant | Rejection) => void; credits?: (v: CreditGrant | Rejection) => void } = {};
+  (h.app as unknown as { faucetClient: unknown }).faucetClient = {
+    askKarma: () => new Promise<FaucetGrant | Rejection>((r) => { held.karma = r; }),
+    askCredits: () => new Promise<CreditGrant | Rejection>((r) => { held.credits = r; }),
+  };
+  return held;
+}
+
 // WEB_INTERFACE → The wallet: the ledger is per identity, and a key never sees
 // another key's entries. A faucet ask is the pressing key's, so an identity
 // change between its POST and the answer leaves the grant in that key's ledger,
 // and the answer moves nothing on screen.
 describe('a faucet answer landing after an identity change', () => {
-  /** A faucet whose answers wait until the test gives them. */
-  function heldFaucet(h: Harness): {
-    karma?: (v: FaucetGrant | Rejection) => void;
-    credits?: (v: CreditGrant | Rejection) => void;
-  } {
-    const held: { karma?: (v: FaucetGrant | Rejection) => void; credits?: (v: CreditGrant | Rejection) => void } = {};
-    (h.app as unknown as { faucetClient: unknown }).faucetClient = {
-      askKarma: () => new Promise<FaucetGrant | Rejection>((r) => { held.karma = r; }),
-      askCredits: () => new Promise<CreditGrant | Rejection>((r) => { held.credits = r; }),
-    };
-    return held;
-  }
-
   it('a rep grant enters the asking key\'s ledger, never the loaded key\'s, and moves no view', async () => {
     const h = harness();
     await h.idn.create('pw');
@@ -501,5 +504,50 @@ describe('a faucet answer landing after an identity change', () => {
     held.karma!({ status: 400, message: 'already granted' });
     await asked;
     expect(document.querySelector('.report')?.textContent ?? '').not.toContain('faucet');
+  });
+});
+
+// A faucet grant records the highest tip the client had read when it asked, and
+// the ledger bounds the faucet's expiry by it (WEB_INTERFACE → The wallet → "A
+// pending entry's expiry is the client's, and a node's answer can only bring it
+// sooner"). The tip is read at the press: a later read moves the tip, not the
+// grant's height.
+describe('a faucet grant records the tip read at the press', () => {
+  it('the rep grant', async () => {
+    const h = harness();
+    await h.idn.create('pw');
+    await flush();
+    const tip = h.drive.viewerTip;
+    expect(tip).toBeGreaterThanOrEqual(6000); // the /status answer's height
+    const held = heldFaucet(h);
+    const asked = h.drive.askFaucet();
+    await flush();
+    h.setHeight(tip + 40);
+    await h.drive.refreshTip();
+    expect(h.drive.viewerTip).toBe(tip + 40);
+    held.karma!({ txId: 'cc'.repeat(32), status: 'pending', expiresAtHeight: 1e15 });
+    await asked;
+    expect(h.drive.ledger.all()).toEqual([
+      { txId: 'cc'.repeat(32), kind: 'grant', postId: KEY, inputs: [], submittedAtHeight: tip, expiresAtHeight: tip + MEMPOOL_EXPIRY_BLOCKS },
+    ]);
+  });
+
+  it('the $NOTIS grant', async () => {
+    const h = harness();
+    await h.idn.create('pw');
+    await flush();
+    const tip = h.drive.viewerTip;
+    expect(tip).toBeGreaterThanOrEqual(6000);
+    const held = heldFaucet(h);
+    const asked = h.drive.askFaucetCredits();
+    await flush();
+    h.setHeight(tip + 40);
+    await h.drive.refreshTip();
+    expect(h.drive.viewerTip).toBe(tip + 40);
+    held.credits!({ txId: 'cc'.repeat(32), status: 'pending', expiresAtHeight: 1e15, boxId: 'dd'.repeat(32) });
+    await asked;
+    expect(h.drive.ledger.all()).toEqual([
+      { txId: 'cc'.repeat(32), kind: 'creditGrant', postId: 'dd'.repeat(32), inputs: [], submittedAtHeight: tip, expiresAtHeight: tip + MEMPOOL_EXPIRY_BLOCKS },
+    ]);
   });
 });

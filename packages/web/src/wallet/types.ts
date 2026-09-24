@@ -45,7 +45,12 @@ export interface SendRef {
  *  box, so the spendable view ignores it, and it has no change. A withdrawal's
  *  one karma input is spent and its equal-value output is the entry's `change`,
  *  so the spendable view stays whole while it is pending (WEB_INTERFACE → The
- *  withdraw control). */
+ *  withdraw control). `submittedAtHeight` is the height the transaction was built
+ *  at — for a faucet grant the highest tip the client had read when it asked —
+ *  and `expiresAtHeight` is the ledger's: that height plus `MEMPOOL_EXPIRY_BLOCKS`,
+ *  or the answered height when that is a block height below it (WEB_INTERFACE →
+ *  The wallet → "A pending entry's expiry is the client's, and a node's answer
+ *  can only bring it sooner"). */
 export interface PendingEntry {
   txId: string;
   kind: EntryKind;
@@ -56,6 +61,11 @@ export interface PendingEntry {
   expiresAtHeight: number;
   submittedAtHeight: number;
 }
+
+/** An entry on its way into the ledger, its `expiresAtHeight` as an answer
+ *  carried it or as storage held it, whatever its shape — the ledger bounds it
+ *  where the entry enters. */
+export type UnboundedEntry = Omit<PendingEntry, 'expiresAtHeight'> & { expiresAtHeight: unknown };
 
 /** What reconcile decides for one entry against the node's answer. */
 export type EntryOutcome = 'landed' | 'expired' | 'pending';

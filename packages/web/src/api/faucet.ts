@@ -38,8 +38,12 @@ export class FaucetClient {
 
   /** Ask the faucet to invite a key to karma — the request carries only the public
    *  key, so a locked identity can ask (WEB_INTERFACE → The faucet step). A 202
-   *  without a numeric expiresAtHeight is refused client-side: a grant with no
-   *  expiry would run the poll for ever, which the motion contract forbids. */
+   *  without a numeric expiresAtHeight is refused client-side: the faucet relays
+   *  the field (NODE_INTERFACE → Faucet), so an answer without it is not the
+   *  route's, and a grant reserves nothing of the reader's, so refusing one
+   *  releases nothing. The height a 202 carries is bounded in the ledger as every
+   *  entry's is (WEB_INTERFACE → The faucet step → "A 202 without
+   *  `expiresAtHeight` is refused"). */
   async askKarma(pubkey: string): Promise<FaucetGrant | Rejection> {
     const res = await fetch(this.base().replace(/\/$/, '') + '/karma', {
       method: 'POST',
@@ -65,9 +69,9 @@ export class FaucetClient {
 
   /** Ask the faucet to send this key $NOTIS — a repeatable grant, unlike karma's
    *  once-per-key invite (WEB_INTERFACE → The faucet step). The 202 must carry
-   *  a numeric `expiresAtHeight` and a 64-hex `boxId` so the ledger can bound
-   *  the wait and name the box the grant creates; missing either is a
-   *  client-side refusal. */
+   *  a numeric `expiresAtHeight` and a 64-hex `boxId`, the id naming the box the
+   *  grant creates; missing either is a client-side refusal, for the reason the
+   *  rep step's refusal gives. */
   async askCredits(pubkey: string): Promise<CreditGrant | Rejection> {
     const res = await fetch(this.base().replace(/\/$/, '') + '/credits', {
       method: 'POST',

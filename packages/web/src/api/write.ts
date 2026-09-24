@@ -37,8 +37,10 @@ export interface InviteSubmitResult {
 }
 
 /** `POST /posts/:id/withdraw` 2xx — the post the withdrawal empties, bounded like
- *  the rest. `expiresAtHeight` is checked in the flow: a 2xx without it cannot be
- *  tracked (WEB_INTERFACE → The withdraw control). */
+ *  the rest. A 2xx is recorded with or without `expiresAtHeight`, and the entry's
+ *  expiry is the ledger's, which the answered height can only bring sooner
+ *  (WEB_INTERFACE → The wallet → "A pending entry's expiry is the client's, and a
+ *  node's answer can only bring it sooner"). */
 export interface WithdrawSubmitResult {
   status: string; // 'submitted'
   txId: string;

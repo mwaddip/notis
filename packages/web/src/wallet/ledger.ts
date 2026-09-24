@@ -1,7 +1,8 @@
 import { readStore, writeStore } from '../prefs';
 import { isWithdrawn } from '../api/dto';
+import { heldEntry, isBlockHeight } from './expiry';
 import type { PostResult, KarmaResult, UsernameResult, CreditsResult } from '../api/dto';
-import type { SpendableBox, ChangeRef, PendingEntry, EntryOutcome, SendRef } from './types';
+import type { SpendableBox, ChangeRef, PendingEntry, EntryOutcome, SendRef, UnboundedEntry } from './types';
 
 // The persisted pending ledger and the spendable view over it
 // (WEB_INTERFACE → The wallet). A reload that forgot the ledger would re-spend a
@@ -37,9 +38,16 @@ export class PendingLedger {
     return this.entries.size;
   }
 
-  add(entry: PendingEntry): void {
-    this.entries.set(entry.txId, entry);
+  /** Hold an entry and answer it as held, its expiry the ledger's whatever the
+   *  answer carried (heldEntry). Every writer adds through here, and restore
+   *  holds a stored entry the same way, so no entry in the ledger outlives its
+   *  bound (WEB_INTERFACE → The wallet → "A pending entry's expiry is the
+   *  client's, and a node's answer can only bring it sooner"). */
+  add(entry: UnboundedEntry): PendingEntry {
+    const held = heldEntry(entry);
+    this.entries.set(held.txId, held);
     this.persist();
+    return held;
   }
 
   /** Drop an entry — a landed or expired one, or a 409 whose transaction the
@@ -83,7 +91,9 @@ export class PendingLedger {
   /** localStorage is untrusted input, validated rather than trusted the way the
    *  identity module refuses a malformed file: every entry's shape is checked and
    *  any malformed one starts the ledger empty — all or nothing, so a single bad
-   *  row cannot let a partial ledger re-spend a box the node holds pending. */
+   *  row cannot let a partial ledger re-spend a box the node holds pending. The
+   *  stored `expiresAtHeight` is held as an added one is, so an entry carrying a
+   *  later height, or none, is bounded here. */
   private restore(): void {
     if (this.storageKey === null) return;
     const raw = readStore(this.storageKey);
@@ -92,7 +102,7 @@ export class PendingLedger {
     try {
       const parsed: unknown = JSON.parse(raw);
       if (!Array.isArray(parsed)) throw new Error('pending ledger is not an array');
-      entries = parsed.map((v) => parseStoredEntry(v)); // throws before any insert on a bad entry
+      entries = parsed.map((v) => heldEntry(parseStoredEntry(v))); // throws before any insert on a bad entry
     } catch {
       this.entries.clear();
       return;
@@ -314,8 +324,10 @@ const KNOWN_KINDS: ReadonlySet<PendingEntry['kind']> = new Set<PendingEntry['kin
 ]);
 
 /** Validate and convert one stored entry, throwing on any malformed field so
- *  restore() can drop the whole ledger rather than load a partial one. */
-function parseStoredEntry(v: unknown): PendingEntry {
+ *  restore() can drop the whole ledger rather than load a partial one. The
+ *  stored `expiresAtHeight` is not checked here: restore holds it through the
+ *  bound, which takes any shape. */
+function parseStoredEntry(v: unknown): UnboundedEntry {
   if (typeof v !== 'object' || v === null) throw new Error('entry is not an object');
   const o = v as Record<string, unknown>;
   if (typeof o.txId !== 'string' || typeof o.postId !== 'string') throw new Error('entry has non-string ids');
@@ -323,7 +335,7 @@ function parseStoredEntry(v: unknown): PendingEntry {
     throw new Error('entry has an unknown kind');
   }
   if (!Array.isArray(o.inputs) || !o.inputs.every((x) => typeof x === 'string')) throw new Error('entry inputs are not strings');
-  if (typeof o.expiresAtHeight !== 'number' || typeof o.submittedAtHeight !== 'number') throw new Error('entry heights are not numbers');
+  if (!isBlockHeight(o.submittedAtHeight)) throw new Error('entry submittedAtHeight is not a block height');
   let change: ChangeRef | undefined;
   if (o.change !== undefined) {
     const c = o.change;

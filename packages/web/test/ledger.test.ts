@@ -146,17 +146,65 @@ describe('PendingLedger — persistence and removal', () => {
     // One good entry beside a bad-kind one → the whole ledger is dropped.
     localStorage.setItem(STORE, JSON.stringify([good, { ...good, txId: 't2', kind: 'nope' }]));
     expect(new PendingLedger(KEY).size).toBe(0);
-    // Each shape fault drops the ledger: non-string inputs, non-numeric height,
-    // and a change whose value is not a decimal string.
+    // Each shape fault drops the ledger: non-string inputs, a change whose value
+    // is not a decimal string, a non-string id, and a submittedAtHeight that is
+    // not a block height — the bound needs the height the entry was built at.
+    const { submittedAtHeight: _built, ...unbuilt } = good;
     for (const bad of [
       { ...good, inputs: [1, 2] },
-      { ...good, expiresAtHeight: 'soon' },
       { ...good, change: { boxId: 'c', value: 5, createdAtBlock: 1 } },
       { ...good, txId: 42 },
+      { ...good, submittedAtHeight: 'soon' },
+      { ...good, submittedAtHeight: 5000.5 },
+      { ...good, submittedAtHeight: -1 },
+      { ...good, submittedAtHeight: 2 ** 53 },
+      { ...good, submittedAtHeight: null },
+      unbuilt,
     ]) {
-      localStorage.setItem(STORE, JSON.stringify([bad]));
+      localStorage.setItem(STORE, JSON.stringify([good, bad]));
       expect(new PendingLedger(KEY).size, JSON.stringify(bad)).toBe(0);
     }
+  });
+
+  // WEB_INTERFACE → The wallet → "A pending entry's expiry is the client's, and a
+  // node's answer can only bring it sooner": the ledger bounds an entry where it
+  // enters — added, and restored from storage.
+  it('add holds the entry with its expiry bounded and answers the entry it holds', () => {
+    const ledger = new PendingLedger(KEY);
+    const held = ledger.add({ ...postEntry, expiresAtHeight: 1e15 });
+    expect(held.expiresAtHeight).toBe(5720); // 5000 + MEMPOOL_EXPIRY_BLOCKS
+    expect(ledger.all()).toEqual([held]);
+    expect(ledger.all()[0]).toBe(held);
+    // The bounded value is the one persisted.
+    expect(new PendingLedger(KEY).all()[0]?.expiresAtHeight).toBe(5720);
+    // An answer with no expiry is held at the client's own; one below the bound stays.
+    expect(ledger.add({ ...likeEntry, expiresAtHeight: undefined }).expiresAtHeight).toBe(5720);
+    expect(ledger.add({ ...noChangeEntry, expiresAtHeight: 5100 }).expiresAtHeight).toBe(5100);
+  });
+
+  it('restore bounds a stored entry carrying a later height, none, or one of another shape — the rest of the ledger loads', () => {
+    const stored = (txId: string, over: Record<string, unknown>): Record<string, unknown> => ({
+      txId, kind: 'post', postId: 'p-' + txId, inputs: ['in-' + txId], submittedAtHeight: 5000, expiresAtHeight: 5720, ...over,
+    });
+    const { expiresAtHeight: _none, ...noExpiry } = stored('t2', {});
+    localStorage.setItem(STORE, JSON.stringify([
+      stored('t1', { expiresAtHeight: 1e15 }),
+      noExpiry,
+      stored('t3', { expiresAtHeight: 'soon' }),
+      stored('t4', { expiresAtHeight: 5300 }),
+    ]));
+    const restored = new PendingLedger(KEY).all();
+    expect(restored.map((e) => [e.txId, e.expiresAtHeight])).toEqual([
+      ['t1', 5720], ['t2', 5720], ['t3', 5720], ['t4', 5300],
+    ]);
+  });
+
+  it('a grant stored at submittedAtHeight 0 restores bounded at 720: it still lands on its box, and past 720 without one it expires', () => {
+    localStorage.setItem(STORE, JSON.stringify([{ ...grantEntry, submittedAtHeight: 0 }]));
+    const [grant] = new PendingLedger(KEY).all();
+    expect(grant?.expiresAtHeight).toBe(720);
+    expect(reconcileGrant(grant!, karmaResult({ boxCount: 1 }), 5850)).toBe('landed');
+    expect(reconcileGrant(grant!, karmaResult({ boxCount: 0 }), 5850)).toBe('expired');
   });
 
   it('two identities never see each other\'s entries', () => {

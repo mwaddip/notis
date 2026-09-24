@@ -14,7 +14,11 @@ import { isRejection } from '../api/write';
 // The submit orchestration — the one path from a composer press or a like to
 // the node: resolve the confirmed author, read the spendable view and the era
 // (WEB_INTERFACE → "Reads before a write, in this order: `GET /karma/:key` following `next`, then `GET /status`"),
-// build the transaction, sign it, POST it, and on a 2xx add the ledger entry.
+// build the transaction, sign it, POST it, and on a 2xx add the ledger entry
+// and answer the entry the ledger holds. A 2xx is recorded whether or not its
+// body carries `expiresAtHeight`; the ledger bounds the expiry it holds by the
+// height the transaction was built at (WEB_INTERFACE → The wallet → "A pending
+// entry's expiry is the client's, and a node's answer can only bring it sooner").
 // Nothing retries (WEB_INTERFACE → "Nothing retries"): a rejection comes
 // straight back for the caller to show.
 
@@ -132,7 +136,7 @@ export async function submitPostFlow(
   // tracked under an id the node does not share.
   if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
-  const entry: PendingEntry = {
+  const entry = deps.ledger.add({
     txId: built.txId,
     kind: 'post',
     postId: body.postId, // the node's own id — authoritative, never derived here
@@ -140,8 +144,7 @@ export async function submitPostFlow(
     ...(built.change ? { change: built.change } : {}),
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
-  };
-  deps.ledger.add(entry);
+  });
   return { ok: true, entry, body };
 }
 
@@ -169,7 +172,7 @@ export async function submitLikeFlow(deps: SubmitDeps, targetId: string): Promis
   if (isRejection(body)) return { ok: false, rejection: body };
   if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
-  const entry: PendingEntry = {
+  const entry = deps.ledger.add({
     txId: built.txId,
     kind: 'like',
     postId: targetId, // a like has no post id of its own; its target
@@ -177,8 +180,7 @@ export async function submitLikeFlow(deps: SubmitDeps, targetId: string): Promis
     ...(built.change ? { change: built.change } : {}),
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
-  };
-  deps.ledger.add(entry);
+  });
   return { ok: true, entry, body };
 }
 
@@ -203,7 +205,7 @@ export async function submitVouchFlow(deps: SubmitDeps, targetKey: string): Prom
   if (isRejection(body)) return { ok: false, rejection: body };
   if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
-  const entry: PendingEntry = {
+  const entry = deps.ledger.add({
     txId: built.txId,
     kind: 'vouch',
     postId: targetKey, // the identity vouched for
@@ -211,8 +213,7 @@ export async function submitVouchFlow(deps: SubmitDeps, targetKey: string): Prom
     ...(built.change ? { change: built.change } : {}),
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
-  };
-  deps.ledger.add(entry);
+  });
   return { ok: true, entry, body };
 }
 
@@ -248,15 +249,14 @@ export async function submitUnvouchFlow(deps: SubmitDeps, targetKey: string): Pr
   if (isRejection(body)) return { ok: false, rejection: body };
   if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
-  const entry: PendingEntry = {
+  const entry = deps.ledger.add({
     txId: built.txId,
     kind: 'unvouch',
     postId: targetKey, // the identity unvouched — its box the one input
     inputs: built.tx.inputs,
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
-  };
-  deps.ledger.add(entry);
+  });
   return { ok: true, entry, body };
 }
 
@@ -280,7 +280,7 @@ export async function submitInviteFlow(deps: SubmitDeps, inviteeKey: string, bon
   if (isRejection(body)) return { ok: false, rejection: body };
   if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
-  const entry: PendingEntry = {
+  const entry = deps.ledger.add({
     txId: built.txId,
     kind: 'invite',
     postId: inviteeKey, // the key invited
@@ -288,16 +288,13 @@ export async function submitInviteFlow(deps: SubmitDeps, inviteeKey: string, bon
     ...(built.change ? { change: built.change } : {}),
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
-  };
-  deps.ledger.add(entry);
+  });
   return { ok: true, entry, body };
 }
 
 /** Submit a withdrawal of the reader's own post. The smallest karma box in, one
  *  equal karma output back out, `postWithdraw` naming the post (WEB_INTERFACE →
- *  The withdraw control). A 2xx whose body carries no numeric `expiresAtHeight`
- *  is a client rejection: the ledger's poll has no height to expire against, so
- *  the client records no entry it cannot track. */
+ *  The withdraw control). */
 export async function submitWithdrawFlow(deps: SubmitDeps, postId: string): Promise<SubmitResult<WithdrawSubmitResult>> {
   const id = deps.identity.current();
   if (id === null) throw new Error('submitWithdrawFlow: no identity loaded');
@@ -315,9 +312,8 @@ export async function submitWithdrawFlow(deps: SubmitDeps, postId: string): Prom
   const body = await deps.write.submitWithdraw(postId, signed.body);
   if (isRejection(body)) return { ok: false, rejection: body };
   if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
-  if (typeof body.expiresAtHeight !== 'number') return clientRejection('the node answered without an expiry height');
 
-  const entry: PendingEntry = {
+  const entry = deps.ledger.add({
     txId: built.txId,
     kind: 'withdraw',
     postId, // the post the withdrawal empties
@@ -325,8 +321,7 @@ export async function submitWithdrawFlow(deps: SubmitDeps, postId: string): Prom
     ...(built.change ? { change: built.change } : {}),
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
-  };
-  deps.ledger.add(entry);
+  });
   return { ok: true, entry, body };
 }
 
@@ -348,9 +343,8 @@ export async function submitClaimFlow(deps: SubmitDeps, name: string): Promise<S
   const body = await deps.write.submitClaim(signed.body);
   if (isRejection(body)) return { ok: false, rejection: body };
   if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
-  if (typeof body.expiresAtHeight !== 'number') return clientRejection('the node answered without an expiry height');
 
-  const entry: PendingEntry = {
+  const entry = deps.ledger.add({
     txId: built.txId,
     kind: 'claim',
     postId: name,
@@ -358,8 +352,7 @@ export async function submitClaimFlow(deps: SubmitDeps, name: string): Promise<S
     ...(built.change ? { change: built.change } : {}),
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
-  };
-  deps.ledger.add(entry);
+  });
   return { ok: true, entry, body };
 }
 
@@ -386,9 +379,8 @@ export async function submitBurnFlow(deps: SubmitDeps): Promise<SubmitResult<Bur
   const body = await deps.write.submitBurn(held.name, signed.body);
   if (isRejection(body)) return { ok: false, rejection: body };
   if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
-  if (typeof body.expiresAtHeight !== 'number') return clientRejection('the node answered without an expiry height');
 
-  const entry: PendingEntry = {
+  const entry = deps.ledger.add({
     txId: built.txId,
     kind: 'burn',
     postId: held.name,
@@ -396,8 +388,7 @@ export async function submitBurnFlow(deps: SubmitDeps): Promise<SubmitResult<Bur
     ...(built.change ? { change: built.change } : {}),
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
-  };
-  deps.ledger.add(entry);
+  });
   return { ok: true, entry, body };
 }
 
@@ -437,9 +428,8 @@ export async function submitSendFlow(
   const body = await deps.write.submitSend(signed.body);
   if (isRejection(body)) return { ok: false, rejection: body };
   if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
-  if (typeof body.expiresAtHeight !== 'number') return clientRejection('the node answered without an expiry height');
 
-  const entry: PendingEntry = {
+  const entry = deps.ledger.add({
     txId: built.txId,
     kind: 'send',
     postId: toHex, // a send's subject is the recipient's key
@@ -448,8 +438,7 @@ export async function submitSendFlow(
     send: { toHex, toName, amount, boxId: built.paymentBoxId },
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
-  };
-  deps.ledger.add(entry);
+  });
   return { ok: true, entry, body };
 }
 

@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps,
+  submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps, type SubmitResult,
 } from '../src/wallet/submit';
 import { PendingLedger } from '../src/wallet/ledger';
+import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { Api } from '../src/api/client';
 import type { CreditBoxRow, CreditsResult, KarmaBoxRow, KarmaResult, PostResult, StatusResult, VouchesVoucherResult } from '../src/api/dto';
 import { karmaResult as karmaFixture } from './karma-fixture';
@@ -480,19 +481,22 @@ describe('submitWithdrawFlow', () => {
     expect(ledger.size).toBe(0);
   });
 
-  it('a 2xx without a numeric expiresAtHeight is a client rejection and adds no entry', async () => {
+  it('a 2xx without expiresAtHeight records the entry, its expiry the ledger\'s', async () => {
     const ledger = new PendingLedger(PUB);
     const w = write();
-    // A 2xx that echoes the id but carries no expiry height — untrackable, so the
-    // flow refuses it and records nothing.
+    // A 2xx that echoes the id but carries no expiry height: the transaction is
+    // the reader's own and may land, so its input stays reserved until the
+    // ledger's own bound (WEB_INTERFACE → The wallet).
     w.submitWithdraw = async (postId, tx) => {
       writeCalls.push({ kind: 'withdraw', tx, postId });
       return { status: 'submitted', txId: lastSignedTxId(), postId } as WithdrawSubmitResult;
     };
     const deps: SubmitDeps = { reads: reads(), write: w, ledger, identity };
     const res = await submitWithdrawFlow(deps, TARGET_ID);
-    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node answered without an expiry height' } });
-    expect(ledger.size).toBe(0);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.entry).toMatchObject({ kind: 'withdraw', postId: TARGET_ID, expiresAtHeight: 6720, submittedAtHeight: 6000 });
+    expect(ledger.all()).toEqual([res.entry]);
   });
 });
 
@@ -838,14 +842,16 @@ describe('submitSendFlow', () => {
     expect(ledger.size).toBe(0);
   });
 
-  it('a 2xx without expiresAtHeight is a client rejection, no entry', async () => {
+  it('a 2xx without expiresAtHeight records the entry, its expiry the ledger\'s', async () => {
     const ledger = new PendingLedger(PUB);
     const w = write();
     w.submitSend = async (tx) => { writeCalls.push({ kind: 'send', tx }); return { status: 'pending', txId: lastSignedTxId() } as unknown as SendSubmitResult; };
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: w, ledger, identity };
     const res = await submitSendFlow(deps, RECIPIENT, null, 1_250_000_000n);
-    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node answered without an expiry height' } });
-    expect(ledger.size).toBe(0);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.entry).toMatchObject({ kind: 'send', postId: RECIPIENT, expiresAtHeight: 6720, submittedAtHeight: 6000 });
+    expect(ledger.all()).toEqual([res.entry]);
   });
 
   it('a spendable view that cannot cover the amount is one rejection, not a throw', async () => {
@@ -913,5 +919,103 @@ describe('submitSendFlow', () => {
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity };
     await submitSendFlow(deps, RECIPIENT, 'bob', 1_250_000_000n);
     expect(signHints).toEqual([undefined]);
+  });
+});
+
+// -------------------------------------------------------------------------
+// The reservation expiry across the nine flows (WEB_INTERFACE → The wallet →
+// "A pending entry's expiry is the client's, and a node's answer can only bring
+// it sooner"): a 2xx is recorded whatever its body says of `expiresAtHeight`,
+// the entry holds the ledger's bound from the height the transaction was built
+// at, and the flow answers the entry the ledger holds; a txId the node computed
+// differently is refused in every flow.
+// -------------------------------------------------------------------------
+
+describe('the reservation expiry, every flow', () => {
+  const BUILT = 6000; // statusResult().blockHeight — the height every output declares
+  const OWN = BUILT + MEMPOOL_EXPIRY_BLOCKS;
+
+  /** Every write answers 2xx: the signed id (or another), the route's own
+   *  fields, and `expiresAtHeight` as given — left out entirely under `omit`. */
+  function writeAnswering(expiresAtHeight: unknown, opts: { omit?: boolean; wrongId?: boolean } = {}): SubmitDeps['write'] {
+    const answer = (extra: Record<string, unknown>): never => {
+      const body: Record<string, unknown> = { status: 'pending', txId: opts.wrongId ? 'ff'.repeat(32) : lastSignedTxId(), ...extra };
+      if (!opts.omit) body.expiresAtHeight = expiresAtHeight;
+      return body as never;
+    };
+    return {
+      submitPost: async (tx, content) => { writeCalls.push({ kind: 'post', tx, content }); return answer({ postId: 'newpost' }); },
+      submitLike: async (tx) => { writeCalls.push({ kind: 'like', tx }); return answer({}); },
+      submitVouch: async (tx) => { writeCalls.push({ kind: 'vouch', tx }); return answer({}); },
+      submitUnvouch: async (targetHex, tx) => { writeCalls.push({ kind: 'unvouch', tx, targetHex }); return answer({}); },
+      submitInvite: async (tx) => { writeCalls.push({ kind: 'invite', tx }); return answer({ bondBoxId: 'bond1' }); },
+      submitWithdraw: async (postId, tx) => { writeCalls.push({ kind: 'withdraw', tx, postId }); return answer({ postId }); },
+      submitClaim: async (tx) => { writeCalls.push({ kind: 'claim', tx }); return answer({ name: 'Alice_01' }); },
+      submitBurn: async (name, tx) => { writeCalls.push({ kind: 'burn', tx, name }); return answer({}); },
+      submitSend: async (tx) => { writeCalls.push({ kind: 'send', tx }); return answer({}); },
+    };
+  }
+
+  const FLOWS: Array<{ kind: string; run: (deps: SubmitDeps) => Promise<SubmitResult<unknown>> }> = [
+    { kind: 'post', run: (d) => submitPostFlow(d, 'a thread', null) },
+    { kind: 'like', run: (d) => submitLikeFlow(d, TARGET_ID) },
+    { kind: 'vouch', run: (d) => submitVouchFlow(d, VOUCH_TARGET) },
+    { kind: 'unvouch', run: (d) => submitUnvouchFlow(d, VOUCH_TARGET) },
+    { kind: 'invite', run: (d) => submitInviteFlow(d, INVITEE, 100n) },
+    { kind: 'withdraw', run: (d) => submitWithdrawFlow(d, TARGET_ID) },
+    { kind: 'claim', run: (d) => submitClaimFlow(d, 'Alice_01') },
+    { kind: 'burn', run: (d) => submitBurnFlow(d) },
+    { kind: 'send', run: (d) => submitSendFlow(d, '44'.repeat(32), null, 1_250_000_000n) },
+  ];
+
+  /** Run every flow on a fresh ledger against one write client. */
+  async function eachFlow(
+    write: SubmitDeps['write'],
+    check: (kind: string, res: SubmitResult<unknown>, ledger: PendingLedger) => void,
+  ): Promise<void> {
+    for (const f of FLOWS) {
+      localStorage.clear();
+      heldName = { name: 'Alice_01', owner: PUB, boxId: '44'.repeat(32), claimedAtBlock: 5050 };
+      const ledger = new PendingLedger(PUB);
+      const deps: SubmitDeps = {
+        reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()], [{ boxId: '55'.repeat(32), value: '10000000000' }]),
+        write, ledger, identity,
+      };
+      check(f.kind, await f.run(deps), ledger);
+    }
+  }
+
+  it('a later answered height is held at the build height plus MEMPOOL_EXPIRY_BLOCKS, and the flow answers the entry the ledger holds', async () => {
+    await eachFlow(writeAnswering(1e15), (kind, res, ledger) => {
+      expect(res.ok, kind).toBe(true);
+      if (!res.ok) return;
+      expect(res.entry.kind).toBe(kind);
+      expect([res.entry.submittedAtHeight, res.entry.expiresAtHeight], kind).toEqual([BUILT, OWN]);
+      expect(ledger.all()[0], kind).toBe(res.entry);
+    });
+  });
+
+  it('a 2xx carrying no expiresAtHeight is recorded, held at the client\'s own bound', async () => {
+    await eachFlow(writeAnswering(undefined, { omit: true }), (kind, res, ledger) => {
+      expect(res.ok, kind).toBe(true);
+      if (!res.ok) return;
+      expect(res.entry.expiresAtHeight, kind).toBe(OWN);
+      expect(ledger.size, kind).toBe(1);
+    });
+  });
+
+  it('an answered block height below the bound is kept — a node can bring an expiry sooner', async () => {
+    await eachFlow(writeAnswering(BUILT + 100), (kind, res) => {
+      expect(res.ok, kind).toBe(true);
+      if (!res.ok) return;
+      expect(res.entry.expiresAtHeight, kind).toBe(BUILT + 100);
+    });
+  });
+
+  it('a 2xx whose txId is not the built one is refused and records nothing', async () => {
+    await eachFlow(writeAnswering(OWN, { wrongId: true }), (kind, res, ledger) => {
+      expect(res, kind).toEqual({ ok: false, rejection: { status: 0, message: 'the node computed a different transaction id' } });
+      expect(ledger.size, kind).toBe(0);
+    });
   });
 });
