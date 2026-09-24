@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 // The extension proof — the twelve steps of WEB_INTERFACE → The extension
 // plus the four links-into-the-extension steps, the verified-tip block
-// (17a · 17 · 17b · 18 · 19a · 19b · 19c · 20) and the verified-figures block
-// (21 · 24 · 22a · 22b · 23 · 25), each read verbatim, over raw CDP against a
-// live devnet stack. Drives the App's real UI on the extension's own page:
-// the composer, the like word, the profile and wallet windows' rows, and the
-// prompt window found by its `prompt.html?id=` URL. The verified-tip block
-// runs against a second stack the harness owns — node B (server,
-// bootstrapped from A), node C (used for the real-fork test in 19b), node D
-// (isolated, 17a's too-short and 19c's share-no-block) and the lying relay
-// (19a). The verified-figures block brings up a B of its own and, for its
-// three lie arms, the figures relay (22a · 22b · 23).
+// (17a · 17 · 17b · 18 · 19a · 19b · 19c · 20), the verified-figures block
+// (21 · 24 · 22a · 22b · 23 · 25) and the verified-names block (26 · 29 · 30),
+// each read verbatim, over raw CDP against a live devnet stack. Drives the
+// App's real UI on the extension's own page: the composer, the like word, the
+// profile and wallet windows' rows, and the prompt window found by its
+// `prompt.html?id=` URL. The verified-tip block runs against a second stack
+// the harness owns — node B (server, bootstrapped from A), node C (used for
+// the real-fork test in 19b), node D (isolated, 17a's too-short and 19c's
+// share-no-block) and the lying relay (19a). The verified-figures block brings
+// up a B of its own and, for its three lie arms, the figures relay
+// (22a · 22b · 23). The verified-names block brings up a B of its own too.
 //
 // Preconditions:
 //  1. `node packages/node/dist/index.js` running as `NETWORK_TYPE=devnet`
@@ -23,26 +24,37 @@
 //     repo and never enters a commit, a log or the REPORT.
 //  4. The extension was built via build-extension.sh with devnet values
 //     (VITE_NODES points at [A, B]).
+//  5. For --verified-names: a second throwaway S promoted as R is, holding a
+//     name `claim-name.mjs` (beside this file) claimed; S's clear file lives
+//     in a scratch path as R's does, and the harness reads its public key
+//     alone.
 //
 // Modes:
 //   --verified-tip alone: 1–16 read NOT RUN, 17a–20 run.
-//   --r-key and --verified-tip: 1–16 and 17a–20 all run.
-//   --r-key and --verified-figures: 1–16 run, 17a–20 read NOT RUN,
-//     21·24·22a·22b·23·25 run. The figures run hangs on
+//   --r-key: 1–12 run, then 13–16 with --public and --web-dist (NOT RUN
+//     without them); then each block below runs on its flag, in this order,
+//     and reads NOT RUN by name without it.
+//   --verified-tip: 17a–20.
+//   --verified-figures: 21·24·22a·22b·23·25. The figures run hangs on
 //     a verified tip (WEB_INTERFACE → The extension → "The verified figures"),
 //     which needs a second verified node, so the figures block runs B as the
 //     tip block does; hence --verified-figures requires --node-dist, --scratch
 //     and --node-p2p as well as --r-key (config error at the top otherwise, as
 //     --verified-tip is with its own four).
-//   Both --verified-tip and --verified-figures with --r-key: 1–16, 17a–20, then
-//     21·24·22a·22b·23·25 in that order.
-//   Neither: every step reads NOT RUN by name.
+//   --verified-names: 26·29·30. A name check proves against the verified tip's
+//     anchor (WEB_INTERFACE → The extension → "The verified names"), so the
+//     block runs a B of its own and requires what --verified-figures requires,
+//     and --s-key: 29 sends to S's handle.
+//   20, 25 and 30 read the hosted web build, and read NOT RUN without --public
+//     and --web-dist.
+//   No --r-key and no --verified-tip: every step reads NOT RUN by name.
 //
 // Usage:
 //   node scripts/extension-check/run.mjs \
 //     --extension-dir <path> [--r-key <path>] --node <origin> --faucet <origin> \
 //     [--verified-tip --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--verified-figures --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
+//     [--verified-names --s-key <path> --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--public <origin+base> --web-dist <dir>]
 
 import { spawn } from 'node:child_process';
@@ -57,7 +69,7 @@ import { matchPatternFor } from '../../extension/match-pattern.mjs';
 // Boolean flags — never consume the next argument. Without this the parser
 // below reads the following flag as the flag's value, and every arg after
 // `--verified-tip` shifts by one silently.
-const BOOLEAN_FLAGS = new Set(['verified-tip', 'verified-figures']);
+const BOOLEAN_FLAGS = new Set(['verified-tip', 'verified-figures', 'verified-names']);
 const args = new Map();
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
@@ -84,6 +96,13 @@ const VERIFIED_TIP = args.get('verified-tip') === true;
 // the three lie arms read the figures relay. Absent, every step reads NOT RUN
 // by name.
 const VERIFIED_FIGURES = args.get('verified-figures') === true;
+// The verified-names block — WEB_INTERFACE → The extension → "The verified
+// names", steps 26 · 29 · 30: a claimed name in ink on every surface, a send
+// to S's handle, the hosted web build. Absent, every step reads NOT RUN by
+// name.
+const VERIFIED_NAMES = args.get('verified-names') === true;
+// S's clear file — its public key is the recipient step 29 expects.
+const S_KEY = args.get('s-key') ?? null;
 const NODE_DIST = args.get('node-dist') ?? null;
 const MINER_SCRIPT = args.get('miner') ?? null;
 const SCRATCH = args.get('scratch') ?? null;
@@ -183,6 +202,46 @@ if (VERIFIED_FIGURES) {
   }
 }
 
+// --verified-names requires what --verified-figures requires, for the same
+// reason — a name check proves against the verified tip's anchor, which needs
+// a second verified node (WEB_INTERFACE → The extension → "The verified
+// names") — and --s-key, S's clear file: step 29 sends to S's handle and reads
+// S's public key beneath the field and on the prompt. The harness reads that
+// key alone and signs nothing as S. Step 30 uses --public/--web-dist when they
+// are given and reads NOT RUN by name when they are not.
+let S_PUB = null;
+if (VERIFIED_NAMES) {
+  if (!R_KEY) {
+    console.error('--verified-names requires --r-key <path> — R claims the name step 26 reads and sends in step 29');
+    process.exit(2);
+  }
+  if (!NODE_DIST || !existsSync(NODE_DIST)) {
+    console.error('--verified-names requires --node-dist <packages/node/dist/index.js> — bringUpNodeB spawns B from it');
+    process.exit(2);
+  }
+  if (!SCRATCH) {
+    console.error('--verified-names requires --scratch <dir> — bringUpNodeB writes b.db there');
+    process.exit(2);
+  }
+  if (!existsSync(SCRATCH)) {
+    console.error(`--scratch not found: ${SCRATCH}`);
+    process.exit(2);
+  }
+  if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
+    console.error('--verified-names requires --node-p2p <multiaddr> — A\'s p2p bootstrap for B, e.g. /ip4/127.0.0.1/tcp/19742');
+    process.exit(2);
+  }
+  if (!S_KEY || !existsSync(S_KEY)) {
+    console.error('--verified-names requires --s-key <path> — S\'s clear file { pubKeyHex, privKeyBase64 }; step 29 sends to S\'s handle');
+    process.exit(2);
+  }
+  S_PUB = JSON.parse(readFileSync(S_KEY, 'utf8')).pubKeyHex ?? null;
+  if (typeof S_PUB !== 'string' || !/^[0-9a-f]{64}$/.test(S_PUB)) {
+    console.error(`--s-key holds no 64-hex pubKeyHex: ${S_KEY}`);
+    process.exit(2);
+  }
+}
+
 // --public and --web-dist come together — pass both or neither. Without them
 // the twelve run as today and steps 13–16 are reported NOT RUN by name
 // (WEB_INTERFACE → The extension → "Links into the extension").
@@ -241,13 +300,14 @@ if (R_KEY) {
 }
 
 // The build's network is the shell's `notis-network` — WEB_INTERFACE →
-// The extension → "The verified tip". Steps 17–20 refuse to run against a
-// bundle whose profile disagrees: an extension built for testnet's profile
-// against a devnet chain would read *this node's proof did not verify* for
-// every reading node, and a green step would be a lie about the check.
+// The extension → "The verified tip". Every block that reads a verified tip —
+// 17–20, the figures block, the names block — refuses to run against a bundle
+// whose profile disagrees: an extension built for testnet's profile against a
+// devnet chain would read *this node's proof did not verify* for every reading
+// node, and a green step would be a lie about the check.
 // The bundle's `notis-nodes` must be exactly [A, B] — the harness owns B, and
 // index 0 (the reading node's default) is A the operator's.
-if (VERIFIED_TIP) {
+if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES) {
   const networkMetaMatch = shellHtml.match(/<meta[^>]+name="notis-network"[^>]+content="([^"]*)"[^>]*>/);
   const shellNetwork = networkMetaMatch ? networkMetaMatch[1] : null;
   if (shellNetwork !== 'devnet') {
@@ -2464,8 +2524,793 @@ async function runFiguresStep25() {
 }
 
 // ---------------------------------------------------------------------------
+// The verified-names block — steps 26 · 29 · 30 (WEB_INTERFACE → The extension
+// → "The verified names", → The identity display, → The author window, → The
+// wallet window → "The `send` row"). A name check proves against the verified
+// tip's anchor, which needs a second verified node, so the block brings up a B
+// of its own after the A pre-flight, as the figures block does, and stops it
+// at the end. 26 and 29 read A; 30 reads the hosted web build and needs no B.
+// The block reads at a tiling width: the header's profile control is a word at
+// two columns and more, a glyph at one (WEB_INTERFACE → The workspace).
+// ---------------------------------------------------------------------------
+
+const VERIFIED_NAMES_STEPS = [26, 29, 30];
+
+function markVerifiedNamesNotRun(reason) {
+  for (const s of VERIFIED_NAMES_STEPS) record(s, 'NOT RUN', reason);
+}
+
+// The page's size for the block — wider than the one-column line, 955px, so
+// the workspace tiles (WEB_INTERFACE → The workspace).
+const NAMES_VIEWPORT = { width: 1280, height: 900 };
+// What step 29 types as the amount — above the per-byte floor, and a decline
+// spends none of it (WEB_INTERFACE → The wallet window → "The `send` row").
+const NAMES_SEND_AMOUNT = '2';
+// The profile's `username` row, found by its label (WEB_INTERFACE → The
+// username row) — a page expression.
+const USERNAME_ROW_JS = `[...document.querySelectorAll('.winbody .row')].find((r) => r.querySelector('label')?.textContent === 'username')`;
+
+// `origin`'s `/usernames?owner=<key>` — `{ name, owner, boxId, claimedAtBlock }`,
+// or null on the 404 that says the key holds no name (NODE_INTERFACE →
+// Usernames).
+async function usernameOf(origin, key) {
+  const r = await fetch(`${origin}/usernames?owner=${key}`);
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`GET ${origin}/usernames?owner=${key.slice(0, 8)}… answered ${r.status}`);
+  return r.json();
+}
+
+// The ids of `key`'s live roots on A, newest first — the cards the feed draws
+// for that author (NODE_INTERFACE → Posts).
+async function liveRootIds(key) {
+  const r = await fetch(`${NODE}/posts?roots=1&author=${key}&limit=50`);
+  if (!r.ok) throw new Error(`GET ${NODE}/posts?roots=1&author=${key.slice(0, 8)}… answered ${r.status}`);
+  const j = await r.json();
+  return (Array.isArray(j?.posts) ? j.posts : [])
+    .filter((p) => p.kind !== 'withdrawn' && typeof p.id === 'string')
+    .map((p) => p.id);
+}
+
+// The page's requests of a name check from `startIdx` up to `endIdx`
+// (WEB_INTERFACE → The extension → "The verified names"): the lookups by owner
+// of `ownerKey`, the lookups of the typed `handle`, and the proofs of `boxId`,
+// each proof with its `atHeight` and request id — beside every
+// `/blocks/current` and `/nipopow/proof/` request of the same window.
+function nameRequestsSince(events, startIdx, { ownerKey = null, handle = null, boxId = null, endIdx = events.length } = {}) {
+  const out = { ownerLookups: 0, handleLookups: 0, boxProofs: [], blocksCurrent: 0, tipProofs: 0 };
+  for (let i = startIdx; i < endIdx; i++) {
+    const ev = events[i];
+    if (ev.method !== 'Network.requestWillBeSent') continue;
+    const u = new URL(ev.params.request.url);
+    const p = u.pathname;
+    if (ownerKey !== null && p.endsWith('/usernames') && (u.searchParams.get('owner') ?? '').toLowerCase() === ownerKey) {
+      out.ownerLookups += 1;
+    } else if (handle !== null && p.endsWith(`/usernames/${encodeURIComponent(handle)}`)) {
+      out.handleLookups += 1;
+    } else if (boxId !== null && p.endsWith(`/api/v1/proof/${boxId}`)) {
+      out.boxProofs.push({ atHeight: Number(u.searchParams.get('atHeight')), requestId: ev.params.requestId });
+    } else if (p.endsWith('/blocks/current')) {
+      out.blocksCurrent += 1;
+    } else if (p.includes('/nipopow/proof/')) {
+      out.tipProofs += 1;
+    }
+  }
+  return out;
+}
+
+// The request ids the page's log has seen finish or fail since `startIdx`.
+function settledRequestIds(events, startIdx) {
+  const ids = new Set();
+  for (let i = startIdx; i < events.length; i++) {
+    const m = events[i].method;
+    if (m === 'Network.loadingFinished' || m === 'Network.loadingFailed') ids.add(events[i].params.requestId);
+  }
+  return ids;
+}
+
+// The page's lookups, box proofs and tip proofs since `startIdx` — the traffic
+// of a name check, and of the tip run a check can ask for.
+function checkTrafficSince(events, startIdx) {
+  let n = 0;
+  for (let i = startIdx; i < events.length; i++) {
+    const ev = events[i];
+    if (ev.method !== 'Network.requestWillBeSent') continue;
+    const url = ev.params.request.url;
+    if (url.includes('/usernames') || url.includes('/api/v1/proof/') || url.includes('/nipopow/proof/')) n += 1;
+  }
+  return n;
+}
+
+// Wait for `quietMs` with no new lookup, box proof or tip proof, bounded by
+// `ms` — and, with `boxId`, for a proof of that box asked since `startIdx` and
+// every one answered. A check that ends `unchecked` asks one tip run and checks
+// again on its result (WEB_INTERFACE → The extension → "The verified names");
+// the quiet waits that out, so a handle read after it reads the result its
+// check landed, where one read before it may read a pair no check has decided
+// — which reads ink as well.
+async function waitForNameChecks(cx, startIdx, { boxId = null, ms = 90000, quietMs = 3000 } = {}) {
+  const t0 = Date.now();
+  let traffic = -1;
+  let quietFrom = t0;
+  while (Date.now() - t0 < ms) {
+    const now = checkTrafficSince(cx.events, startIdx);
+    if (now !== traffic) { traffic = now; quietFrom = Date.now(); }
+    let proven = true;
+    if (boxId !== null) {
+      const proofs = nameRequestsSince(cx.events, startIdx, { boxId }).boxProofs;
+      const settled = settledRequestIds(cx.events, startIdx);
+      proven = proofs.length > 0 && proofs.every((p) => settled.has(p.requestId));
+    }
+    if (proven && Date.now() - quietFrom >= quietMs) return { settled: true, ms: Date.now() - t0 };
+    await sleep(200);
+  }
+  return { settled: false, ms: Date.now() - t0 };
+}
+
+// Wait for a CDP event named `method` on the session since `startIdx`; throws
+// at `ms`, as the session's own waitFor does.
+async function waitForEvent(cx, startIdx, method, ms) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    for (let i = startIdx; i < cx.events.length; i++) if (cx.events[i].method === method) return;
+    await sleep(100);
+  }
+  throw new Error(`timeout waiting for ${method}`);
+}
+
+// Every site step 26 reads a handle at (WEB_INTERFACE → The identity display),
+// each `{ text, clay, handle }` — `handle` whether the element is a handle and
+// not a prefix — or null where the page holds none: the header's profile
+// control; R's cards in the feed, by the ids A lists for R; the thread whose
+// root is `rootId` — its bar and its root card; R's author window — its bar,
+// its `name` row and the clay line beneath it; the profile's `username` row.
+// A column draws its focused window's body alone, so a window's rows are read
+// while it is the one raised. `clayAnywhere` is every clay handle on the page.
+async function readNameSites(cx, rKey, rIds, rootId) {
+  return cx.eval(`(() => {
+    const seen = (el) => el === null || el === undefined ? null : {
+      text: (el.textContent ?? '').trim(),
+      clay: el.classList.contains('clay'),
+      handle: el.classList.contains('handle') || el.dataset.namePair !== undefined,
+    };
+    const rowOf = (body, label) => [...body.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === label) ?? null;
+    const rIds = ${JSON.stringify(rIds)};
+    const rootId = ${JSON.stringify(rootId)};
+    const regions = [...document.querySelectorAll('#panes .region')];
+    const feed = [...document.querySelectorAll('#feed .card[data-post-id]')]
+      .filter((c) => rIds.includes(c.dataset.postId))
+      .map((c) => ({ id: c.dataset.postId, ...seen(c.querySelector('.who .authorbtn, .who .handle, .who .hex')) }));
+    const threadRegion = rootId === null ? null
+      : regions.find((r) => r.querySelector('.region-body .card[data-post-id="' + rootId + '"]')) ?? null;
+    const threadRoot = threadRegion === null ? null
+      : threadRegion.querySelector('.region-body .card[data-post-id="' + rootId + '"] .who .authorbtn, .region-body .card[data-post-id="' + rootId + '"] .who .handle');
+    const authorRegion = regions.find((r) => {
+      const body = r.querySelector('.region-body .winbody');
+      return !!body && !!rowOf(body, 'endorsers') && (rowOf(body, 'key')?.textContent ?? '').includes(${JSON.stringify(rKey)});
+    }) ?? null;
+    const nameRow = authorRegion === null ? null : rowOf(authorRegion.querySelector('.region-body .winbody'), 'name');
+    const profileRow = ${USERNAME_ROW_JS} ?? null;
+    const barHandle = (region) => region.querySelector('.bar.focused .bar-label .handle, .bar.focused .bar-label .hex');
+    return {
+      width: innerWidth,
+      header: seen(document.querySelector('[aria-label="open profile"]')),
+      feed,
+      threadBar: threadRegion === null ? null : seen(barHandle(threadRegion)),
+      threadRoot: seen(threadRoot),
+      authorBar: authorRegion === null ? null : seen(barHandle(authorRegion)),
+      authorName: nameRow === null ? null : seen(nameRow.querySelector('.field .handle')),
+      authorField: nameRow === null ? null : (nameRow.querySelector('.field')?.textContent ?? '').trim(),
+      authorLine: nameRow === null ? null : (nameRow.querySelector('.field .hint.clay')?.textContent ?? null),
+      profile: profileRow === null ? null : seen(profileRow.querySelector('.username-line .handle')),
+      clayAnywhere: [...document.querySelectorAll('.handle.clay, [data-name-pair].clay')].map((e) => (e.textContent ?? '').trim()),
+    };
+  })()`);
+}
+
+// A site as a step line reads it.
+function siteSeen(x) {
+  return x === null ? 'absent' : `${JSON.stringify(x.text)} (clay=${x.clay})`;
+}
+
+async function verifiedNamesSteps(cx, targetId = 'unknown') {
+  // Liveness probe — the other blocks' shape, a three-second wall around `1+1`.
+  const alive = await (async () => {
+    const timeout = new Promise((_, rej) =>
+      setTimeout(() => rej(new Error('liveness timeout')), 3000));
+    try { return (await Promise.race([cx.eval(`1+1`), timeout])) === 2; }
+    catch { return false; }
+  })();
+  if (!alive) {
+    const reason = `the verified-names block's session is not live: ${targetId}`;
+    for (const s of VERIFIED_NAMES_STEPS) record(s, false, reason);
+    return;
+  }
+  const rKey = R_JSON.pubKeyHex.toLowerCase();
+
+  // ---- Pre-flight — A is up; S's name as A serves it — the handle 29 types
+  // and the box whose proofs it counts. 30 needs no B, and runs when A or B
+  // does not come up.
+  const aUp = await waitForHttpUp(NODE, 15000);
+  if (!aUp) {
+    for (const s of [26, 29]) record(s, 'NOT RUN', `node A did not answer /blocks/current at ${NODE}`);
+    await runNamesStep30(null);
+    return;
+  }
+  console.log(`[vn] pre-flight: A height=${await currentHeight(NODE)} at ${NODE}`);
+  const sHeld = await usernameOf(NODE, S_PUB);
+  console.log(`[vn] S ${S_PUB.slice(0, 8)}… holds ${sHeld === null ? 'no name' : `@${sHeld.name}, box ${sHeld.boxId.slice(0, 12)}…, claimed at block ${sHeld.claimedAtBlock}`}`);
+
+  // ---- B — bringUpNodeB wipes b.db and spawns fresh, bootstrapped from A.
+  console.log(`[vn] bringing up node B for the names block`);
+  await bringUpNodeB();
+  const notRunWithout = async (reason) => {
+    for (const s of [26, 29]) record(s, 'NOT RUN', reason);
+    await runNamesStep30((await usernameOf(NODE, rKey))?.name ?? null);
+  };
+  try {
+    if (!await waitForHttpUp(B_ORIGIN, 30000)) {
+      await notRunWithout(`node B did not come up at ${B_ORIGIN}`);
+      return;
+    }
+    const bPeers = await waitForPeers(`http://127.0.0.1:${B_ADMIN_PORT}`, 1, 60000);
+    console.log(`[vn] node B up at ${B_ORIGIN}, peers_connected=${bPeers}`);
+    if (bPeers === null) {
+      await notRunWithout(`node B never reached ≥1 peer_connected within 60s (bootstrap ${NODE_P2P})`);
+      return;
+    }
+    const abSynced = await waitForHeightsClose(NODE, B_ORIGIN, 2, 300000);
+    if (abSynced === null) {
+      await notRunWithout(`B never caught up to A within 5 minutes (A=${await currentHeight(NODE)}, B=${await currentHeight(B_ORIGIN)})`);
+      return;
+    }
+    console.log(`[vn] A/B synced: ${JSON.stringify(abSynced)}`);
+
+    // ---- The tiling width, and the corner verified across A and B — without
+    // a verified tip no check runs and every handle reads as it reads without
+    // a verifier (WEB_INTERFACE → The extension → "The verified names").
+    let verifiedReading = null;
+    let preError = null;
+    try {
+      await cx.call('Emulation.setDeviceMetricsOverride', {
+        width: NAMES_VIEWPORT.width, height: NAMES_VIEWPORT.height, deviceScaleFactor: 1, mobile: false,
+      });
+      await cx.waitFor(`!matchMedia('(max-width: 955px)').matches && !!document.querySelector('[aria-label="open profile"].hdr-word') && !!document.querySelector('.corner')`,
+        'the header at a tiling width', 30000);
+      verifiedReading = await pressAndReadVerdict(cx, { atLeast: 2, ms: 60000, quietMs: 2000 });
+    } catch (e) {
+      preError = String(e);
+    }
+    const verifiedOk = verifiedReading !== null && verifiedReading.reading.ledClass === 'led fresh'
+      && /^verified across 2 nodes · tip \d+$/.test(verifiedReading.reading.title ?? '');
+    if (!verifiedOk) {
+      const detail = preError !== null
+        ? `pre-condition: ${preError}`
+        : `pre-condition press: led=${verifiedReading.reading.ledClass}, title=${JSON.stringify(verifiedReading.reading.title)}, proof requests=${verifiedReading.proofs.length}; a name check runs only against a verified tip's anchor (WEB_INTERFACE → The extension → "The verified names")`;
+      for (const s of [26, 29]) record(s, false, detail);
+      await runNamesStep30((await usernameOf(NODE, rKey))?.name ?? null);
+      return;
+    }
+    console.log(`[vn] pre-condition ok: width ${NAMES_VIEWPORT.width}, led=${verifiedReading.reading.ledClass}, title=${JSON.stringify(verifiedReading.reading.title)}`);
+
+    // ---- Step 26 — R's claimed name, in ink everywhere.
+    const rName = await runNamesStep26(cx, rKey);
+
+    // ---- Step 29 — the honest send to S's handle, declined at the prompt.
+    await runNamesStep29(cx, sHeld);
+
+    // ---- Step 30 — no verifier on the hosted web build.
+    await runNamesStep30(rName);
+  } finally {
+    await cx.call('Emulation.clearDeviceMetricsOverride').catch(() => {});
+    console.log(`[vn] cleanup: stopping node B by handle`);
+    await stopChild('b');
+    console.log(`[vn] cleanup done; live children left=${vtChildren.size}`);
+  }
+}
+
+// Step 26 — a name, in ink everywhere (WEB_INTERFACE → The username row, → The
+// identity display, → The extension → "The verified names"). R claims a fresh
+// name through the profile's `username` row — the field and the boxed `claim`
+// — and the landing is awaited: it re-renders the row and the header in place,
+// and the header's render checks the new pair, a proof of the name's box in
+// the log. A reload re-reads every row, so R's cards carry the name; then,
+// under the verified corner, the header's word, R's cards, a thread R's card
+// opens, R's author window and the profile's row read the handle in ink, and
+// the log holds the reload's check — `/usernames?owner=<R>` and a proof of the
+// name's box. Answers R's name, or null where R holds none.
+async function runNamesStep26(cx, rKey) {
+  // 1 to 24 letters, digits or _ (TYPES_INTERFACE → Content limits): R and six
+  // hex digits, fresh per run.
+  const name = 'R' + randomBytes(3).toString('hex');
+  const ink = (x) => x !== null && x.text === '@' + name && x.handle && !x.clay;
+  try {
+    const heldBefore = await usernameOf(NODE, rKey);
+    if (heldBefore !== null) {
+      record(26, false, `R already holds @${heldBefore.name} on A — the row claims only for a key holding none; step 26 runs with a fresh throwaway`);
+      return heldBefore.name;
+    }
+
+    // (1) The claim, through the row: the field, then `claim`. A locked
+    // identity mounts the unlock form under the claim form, and success
+    // continues the claim (WEB_INTERFACE → The username row).
+    await raiseWindow(cx, 'open profile');
+    await cx.waitFor(`!!(${USERNAME_ROW_JS})?.querySelector('form.username-form input[aria-label="the name to claim"]')`,
+      'the username row\'s claim form', 30000);
+    const claimIdx = cx.events.length;
+    const press = await cx.eval(`(() => {
+      const row = ${USERNAME_ROW_JS};
+      const form = row.querySelector('form.username-form');
+      const input = form.querySelector('input[aria-label="the name to claim"]');
+      const claim = [...form.querySelectorAll('button')].find((b) => b.textContent.trim() === 'claim');
+      if (!claim) return { pressed: false, unlock: false };
+      input.value = ${JSON.stringify(name)};
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      claim.click();
+      return { pressed: true, unlock: !!row.querySelector('.card-unlock form.pf input[type="password"]') };
+    })()`, true);
+    if (!press.pressed) {
+      record(26, false, 'the username row\'s claim form carried no `claim`');
+      return null;
+    }
+    if (press.unlock) {
+      await cx.eval(`(() => {
+        const form = (${USERNAME_ROW_JS}).querySelector('.card-unlock form.pf');
+        form.querySelector('input[type="password"]').value = ${JSON.stringify(PASSPHRASE)};
+        form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+      })()`, true);
+    }
+
+    // (2) The row, polled until the name lands: its states in order — the
+    // pending handle in inkMute with the stage line, then the handle held.
+    const states = [];
+    let landed = false;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 5 * 60 * 1000) {
+      const s = await cx.eval(`(() => {
+        const row = ${USERNAME_ROW_JS};
+        if (!row) return null;
+        const h = row.querySelector('.username-line .handle');
+        return {
+          handle: h === null ? null : h.textContent.trim(),
+          inkmute: h === null ? null : h.classList.contains('inkmute'),
+          clay: h === null ? null : h.classList.contains('clay'),
+          flight: (row.querySelector('.username-flight')?.textContent ?? '').trim(),
+        };
+      })()`);
+      const shown = s === null ? 'no row' : `${s.handle ?? '—'}${s.inkmute ? ' (inkmute)' : ''}${s.flight !== '' ? ' · ' + s.flight : ''}`;
+      if (states[states.length - 1] !== shown) states.push(shown);
+      if (s !== null && s.handle === '@' + name && s.inkmute === false) { landed = true; break; }
+      if (s !== null && /^(claim rejected|no block took)/.test(s.flight)) break;
+      await sleep(200);
+    }
+    const promptDuringClaim = (await jsonList()).some((t) => t.url.includes('prompt.html'));
+    const held = await usernameOf(NODE, rKey);
+    if (!landed || held === null || held.name !== name) {
+      record(26, false, `claim of @${name}: row states ${JSON.stringify(states)}, landed=${landed}, A's /usernames?owner=R: ${held === null ? '404' : `@${held.name}`}, prompt opened=${promptDuringClaim}`);
+      return held?.name ?? null;
+    }
+    const boxId = held.boxId.toLowerCase();
+
+    // (3) The landing, in place: the header's word and the row, and the check
+    // the header's render asks for the new pair — a proof of its box.
+    const inPlace = await readNameSites(cx, rKey, [], null);
+    const landingCheck = await waitForNameChecks(cx, claimIdx, { boxId });
+    const landingReqs = nameRequestsSince(cx.events, claimIdx, { ownerKey: rKey, boxId });
+    const landingOk = landingCheck.settled && landingReqs.boxProofs.length > 0;
+    console.log(`[vn] 26 landed: @${name} box ${boxId.slice(0, 12)}… at block ${held.claimedAtBlock}; header ${siteSeen(inPlace.header)}; landing check: ${JSON.stringify({ ...landingReqs, boxProofs: landingReqs.boxProofs.map((p) => p.atHeight) })}`);
+
+    // (4) A reload re-reads every row (WEB_INTERFACE → The identity display),
+    // and its tip run at start ends verified; the check of the pair follows.
+    const reloadIdx = cx.events.length;
+    await cx.call('Page.reload');
+    // The new document's load event first — a wait that began while the reload
+    // was in flight could read the old document's feed and corner.
+    await waitForEvent(cx, reloadIdx, 'Page.loadEventFired', 60000);
+    await cx.waitFor(`!!document.querySelector('#feed .card[data-post-id]')`, 'the feed after the reload', 60000);
+    const reloadCorner = await waitForCornerState(cx,
+      (c) => c.ledClass === 'led fresh' && /^verified across 2 nodes · tip \d+$/.test(c.title ?? ''),
+      'led fresh + verified across 2 nodes (after the reload)', 60000);
+    const reloadCheck = await waitForNameChecks(cx, reloadIdx, { boxId });
+    const rIds = await liveRootIds(rKey);
+    const atReload = await readNameSites(cx, rKey, rIds, null);
+    const rootId = atReload.feed[0]?.id ?? null;
+    if (rootId === null) {
+      record(26, false, `@${name} landed at block ${held.claimedAtBlock}, but the feed after the reload holds no card of R (A lists ${rIds.length} live roots of R)`);
+      return name;
+    }
+
+    // (5) A thread R's card opens — its strip.
+    const threadIdx = cx.events.length;
+    await cx.eval(`document.querySelector('#feed .card[data-post-id="${rootId}"] button.strip').click()`, true);
+    await cx.waitFor(`!!document.querySelector('#panes .region-body .card[data-post-id="${rootId}"]')`, 'the thread R\'s card opened', 30000);
+    await waitForNameChecks(cx, threadIdx, { ms: 30000 });
+    const atThread = await readNameSites(cx, rKey, rIds, rootId);
+
+    // (6) R's author window — the who row's control on R's card.
+    const authorIdx = cx.events.length;
+    await cx.eval(`document.querySelector('#feed .card[data-post-id="${rootId}"] .who button.authorbtn').click()`, true);
+    await cx.waitFor(`(() => {
+      const rowOf = (body, label) => [...body.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === label) ?? null;
+      return [...document.querySelectorAll('#panes .region-body .winbody')].some((b) =>
+        !!rowOf(b, 'endorsers') && (rowOf(b, 'key')?.textContent ?? '').includes(${JSON.stringify(rKey)})
+        && !!rowOf(b, 'name')?.querySelector('.field .handle'));
+    })()`, 'R\'s author window with its name row read', 30000);
+    await waitForNameChecks(cx, authorIdx, { ms: 30000 });
+    const atAuthor = await readNameSites(cx, rKey, rIds, rootId);
+
+    // (7) The profile's `username` row, raised.
+    await raiseWindow(cx, 'open profile');
+    await cx.waitFor(`!!(${USERNAME_ROW_JS})?.querySelector('.username-line .handle')`, 'the profile\'s username row', 30000);
+    const atProfile = await readNameSites(cx, rKey, rIds, rootId);
+    const cornerEnd = await readCorner(cx);
+    const reloadReqs = nameRequestsSince(cx.events, reloadIdx, { ownerKey: rKey, boxId });
+
+    const headerOk = ink(atProfile.header);
+    const feedOk = atProfile.feed.length > 0 && atProfile.feed.every(ink);
+    const threadOk = ink(atThread.threadBar) && ink(atThread.threadRoot);
+    const authorOk = ink(atAuthor.authorBar) && ink(atAuthor.authorName) && atAuthor.authorLine === null;
+    const profileOk = ink(atProfile.profile);
+    const noClay = [atReload, atThread, atAuthor, atProfile].every((r) => r.clayAnywhere.length === 0);
+    const cornerOk = !reloadCorner.timedOut && cornerEnd.ledClass === 'led fresh'
+      && /^verified across 2 nodes · tip \d+$/.test(cornerEnd.title ?? '');
+    const logOk = reloadCheck.settled && reloadReqs.ownerLookups > 0 && reloadReqs.boxProofs.length > 0;
+    record(26, landingOk && headerOk && feedOk && threadOk && authorOk && profileOk && noClay && cornerOk && logOk,
+      `@${name} claimed through the row: states ${JSON.stringify(states)}, prompt opened=${promptDuringClaim}; ` +
+      `A: box ${boxId.slice(0, 12)}… claimed at block ${held.claimedAtBlock}; ` +
+      `in place at the landing: header ${siteSeen(inPlace.header)}, row ${siteSeen(inPlace.profile)}; ` +
+      `the landing's check: /usernames?owner=R ×${landingReqs.ownerLookups}, box proofs at ${JSON.stringify(landingReqs.boxProofs.map((p) => p.atHeight))}, /blocks/current ×${landingReqs.blocksCurrent}, tip proofs ×${landingReqs.tipProofs}, settled=${landingCheck.settled}, ok=${landingOk}; ` +
+      `after the reload (width ${atProfile.width}): corner ${JSON.stringify(cornerEnd.title)} (${cornerEnd.ledClass}), ok=${cornerOk}; ` +
+      `header ${siteSeen(atProfile.header)} ok=${headerOk}; ` +
+      `R's cards in the feed ×${atProfile.feed.length}: ${JSON.stringify(atProfile.feed.map((c) => `${c.id.slice(0, 8)}… ${c.text}${c.clay ? ' clay' : ''}`))} ok=${feedOk}; ` +
+      `thread ${rootId.slice(0, 8)}…: bar ${siteSeen(atThread.threadBar)}, root card ${siteSeen(atThread.threadRoot)} ok=${threadOk}; ` +
+      `author window: bar ${siteSeen(atAuthor.authorBar)}, name row ${siteSeen(atAuthor.authorName)}, line ${JSON.stringify(atAuthor.authorLine)} ok=${authorOk}; ` +
+      `profile row ${siteSeen(atProfile.profile)} ok=${profileOk}; ` +
+      `clay anywhere: ${JSON.stringify([...new Set([atReload, atThread, atAuthor, atProfile].flatMap((r) => r.clayAnywhere))])}; ` +
+      `the reload's log: /usernames?owner=R ×${reloadReqs.ownerLookups}, box proofs at ${JSON.stringify(reloadReqs.boxProofs.map((p) => p.atHeight))}, tip proofs ×${reloadReqs.tipProofs}, settled=${reloadCheck.settled}, ok=${logOk}`);
+    return name;
+  } catch (e) {
+    record(26, false, `error: ${String(e)}`);
+    return (await usernameOf(NODE, rKey).catch(() => null))?.name ?? null;
+  }
+}
+
+// Step 29 — the honest send to a handle (WEB_INTERFACE → The wallet window →
+// "The `send` row", → The extension → "The verified names"). R types S's
+// handle and an amount in the wallet's `send` row and presses `send`: the row
+// reads *checking @<name>…* in the flight's place while the check runs — read
+// by an observer installed before the press, so a line that stands for
+// milliseconds is read as surely as one that stands for seconds — the key
+// beneath the field is S's, the prompt window opens naming S's key on its
+// `to:` line, and a decline sends nothing: no `/credits/transfer`, the flight
+// *send not sent.*. S's box is aged past `suffixHead` when the check proves
+// it there, young when it proves it at the tip alone.
+async function runNamesStep29(cx, sHeld) {
+  if (sHeld === null) {
+    record(29, false, `S ${S_PUB.slice(0, 8)}… holds no name on A — claim-name.mjs claims one before the run`);
+    return;
+  }
+  const handle = '@' + sHeld.name;
+  const sBox = sHeld.boxId.toLowerCase();
+  try {
+    await raiseWindow(cx, 'open wallet');
+    await cx.waitFor(`!!document.querySelector('.credits-field form.credits-form')`, 'the send form 29', 60000);
+    await cx.eval(`(() => {
+      window.__flightTexts = [];
+      const note = () => {
+        const text = (document.querySelector('.credits-field .credits-flight')?.textContent ?? '').trim();
+        const last = window.__flightTexts[window.__flightTexts.length - 1];
+        if (last === undefined || last !== text) window.__flightTexts.push(text);
+      };
+      window.__flightObserver?.disconnect();
+      window.__flightObserver = new MutationObserver(note);
+      window.__flightObserver.observe(document.body, { subtree: true, childList: true, characterData: true });
+      note();
+      return true;
+    })()`);
+    const pressIdx = cx.events.length;
+    const promptsBefore = new Set((await jsonList()).filter((t) => t.url.includes('prompt.html?id=')).map((t) => t.id));
+    await cx.eval(`(() => {
+      const form = document.querySelector('.credits-field form.credits-form');
+      const inputs = form.querySelectorAll('input');
+      inputs[0].value = ${JSON.stringify(handle)};
+      inputs[1].value = ${JSON.stringify(NAMES_SEND_AMOUNT)};
+      [...form.querySelectorAll('button')].find((b) => b.textContent.trim() === 'send').click();
+    })()`, true);
+
+    // The answer: the key beneath the field, or the row's refusal.
+    await cx.waitFor(`(() => {
+      const form = document.querySelector('.credits-field form.credits-form');
+      const key = form?.querySelector('.resolved-key');
+      const refusal = form?.querySelector('.pf-refusal');
+      return (!!key && !key.hidden && key.textContent.trim() !== '') || (!!refusal && !refusal.hidden);
+    })()`, 'the send row\'s answer', 60000);
+    // The check's requests are the press's up to its answer.
+    const answerIdx = cx.events.length;
+    const answer = await cx.eval(`(() => {
+      const form = document.querySelector('.credits-field form.credits-form');
+      const key = form.querySelector('.resolved-key');
+      const refusal = form.querySelector('.pf-refusal');
+      return {
+        key: key.hidden ? null : key.textContent.trim(),
+        refusal: refusal.hidden ? null : refusal.textContent.trim(),
+        unlock: !!document.querySelector('.credits-field .card-unlock form.pf input[type="password"]'),
+      };
+    })()`);
+    // A locked identity owes the unlock under the form before the flow
+    // (WEB_INTERFACE → The wallet window → "The `send` row").
+    if (answer.unlock) {
+      await cx.eval(`(() => {
+        const form = document.querySelector('.credits-field .card-unlock form.pf');
+        form.querySelector('input[type="password"]').value = ${JSON.stringify(PASSPHRASE)};
+        form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+      })()`, true);
+    }
+
+    // The prompt — a window opened for this send, found by its URL.
+    let prompt = null;
+    if (answer.key !== null) {
+      const t0 = Date.now();
+      while (prompt === null && Date.now() - t0 < 30000) {
+        prompt = (await jsonList()).find((t) => t.url.includes(`chrome-extension://${EXT_ID}/prompt.html?id=`) && !promptsBefore.has(t.id) && t.webSocketDebuggerUrl) ?? null;
+        if (prompt === null) await sleep(200);
+      }
+    }
+    let lines = null;
+    let declined = false;
+    if (prompt !== null) {
+      const cxp = await openSession(prompt.webSocketDebuggerUrl);
+      try {
+        await cxp.waitFor(`!!document.querySelector('.prompt .line.target')`, 'the prompt\'s to: line 29', 15000);
+        lines = await cxp.eval(`[...document.querySelectorAll('.prompt .line')].map((l) => ({
+          cls: [...l.classList].filter((c) => c !== 'line').join(' '),
+          text: (l.textContent ?? '').replace(/\\s+/g, ' ').trim(),
+          label: l.querySelector('.target-label')?.textContent ?? null,
+          value: l.querySelector('.target-value')?.textContent ?? null,
+        }))`);
+        await cxp.eval(`document.querySelector('.prompt button.btn-ghost').click()`, true);
+        declined = true;
+      } finally {
+        await sleep(1500);
+        try { cxp.s.close(); } catch {}
+      }
+    }
+
+    // The ending, and the log since the press.
+    const notSent = await cx.waitFor(`document.querySelector('.credits-field .credits-flight .stage')?.textContent?.trim() === 'send not sent.'`,
+      'send not sent 29', 30000).then(() => true, () => false);
+    const after = await cx.eval(`(() => {
+      const form = document.querySelector('.credits-field form.credits-form');
+      const inputs = form ? form.querySelectorAll('input') : [];
+      return {
+        flight: (document.querySelector('.credits-field .credits-flight')?.textContent ?? '').trim(),
+        to: inputs[0]?.value ?? null,
+        amount: inputs[1]?.value ?? null,
+        texts: window.__flightTexts,
+      };
+    })()`);
+    await cx.eval(`window.__flightObserver?.disconnect(); true`);
+    // A send is a `/credits/transfer` to any node.
+    const transfers = cx.events.slice(pressIdx).filter((ev) =>
+      ev.method === 'Network.requestWillBeSent' && ev.params.request.url.includes('/credits/transfer')).length;
+    const reqs = nameRequestsSince(cx.events, pressIdx, { handle: sHeld.name, boxId: sBox, endIdx: answerIdx });
+    const heights = reqs.boxProofs.map((p) => p.atHeight);
+    const age = heights.length === 1 && sHeld.claimedAtBlock <= heights[0]
+      ? `aged past suffixHead — claimed at block ${sHeld.claimedAtBlock}, proven at ${heights[0]}`
+      : heights.length === 2
+        ? `young at the tip — claimed at block ${sHeld.claimedAtBlock}, excluded at ${heights[0]}, proven at ${heights[1]}`
+        : `claimed at block ${sHeld.claimedAtBlock}, proofs at ${JSON.stringify(heights)}`;
+
+    const checking = `checking ${handle}…`;
+    const checkingOk = after.texts.includes(checking);
+    const keyOk = answer.key === S_PUB && answer.refusal === null;
+    const target = lines?.find((l) => l.cls === 'target') ?? null;
+    const promptKey = target?.value ?? null;
+    const promptOk = lines !== null && lines[0]?.text === 'Notis transfer' && target !== null && target.label === 'to:' && promptKey === S_PUB;
+    const declinedOk = declined && notSent && transfers === 0 && after.to === handle && after.amount === NAMES_SEND_AMOUNT;
+    const logOk = reqs.handleLookups > 0 && reqs.boxProofs.length > 0;
+    record(29, checkingOk && keyOk && promptOk && declinedOk && logOk,
+      `typed ${JSON.stringify(handle)} and ${NAMES_SEND_AMOUNT} $NOTIS; the flight's texts in order ${JSON.stringify(after.texts)} — ${JSON.stringify(checking)} read=${checkingOk}; ` +
+      `beneath the field: ${JSON.stringify(answer.key)}, refusal ${JSON.stringify(answer.refusal)}, unlock owed=${answer.unlock}, S's key=${answer.key === S_PUB}; ` +
+      `prompt ${prompt === null ? 'none opened' : prompt.url.replace(/^.*\//, '')}: lines ${JSON.stringify((lines ?? []).map((l) => `${l.cls}:${l.text}`))}, to: key equals S's public key=${promptKey === S_PUB}; ` +
+      `declined=${declined}, flight ${JSON.stringify(after.flight)}, /credits/transfer requests=${transfers}, form kept ${JSON.stringify(after.to)} / ${JSON.stringify(after.amount)}; ` +
+      `the check: /usernames/${sHeld.name} ×${reqs.handleLookups}, box ${sBox.slice(0, 12)}… proofs at ${JSON.stringify(heights)}, /blocks/current ×${reqs.blocksCurrent}, tip proofs ×${reqs.tipProofs}; S's box ${age}`);
+  } catch (e) {
+    record(29, false, `error: ${String(e)}`);
+  }
+}
+
+// Step 30 — no verifier (WEB_INTERFACE → The extension → "The verified names":
+// the web build is handed none). The hosted web build renders every handle as
+// it reads without a verifier — none clay — and asks no `/api/v1/proof/`. Its
+// `/usernames?owner=` reads are the web build's own, each named: with no
+// identity loaded the reader's own name is never read, and an author window
+// reads its subject's as it opens (WEB_INTERFACE → The author window). The page
+// is opened blank and navigated once the log listens, so the log holds every
+// request it made.
+async function runNamesStep30(rName) {
+  if (PUBLIC === null || webDistAbs === null) {
+    record(30, 'NOT RUN', 'no --public / --web-dist — the hosted origin is not served');
+    return;
+  }
+  const rKey = R_JSON.pubKeyHex.toLowerCase();
+  let bcx = null;
+  let cxH = null;
+  let createdTargetId = null;
+  try {
+    bcx = await openBrowserSession();
+    const created = await bcx.call('Target.createTarget', { url: 'about:blank' });
+    createdTargetId = created.targetId;
+    const info = await findTargetById(createdTargetId, 15000);
+    if (!info) {
+      record(30, false, `hosted target ${createdTargetId.slice(0, 8)}… never appeared in /json/list`);
+      return;
+    }
+    cxH = await openSession(info.webSocketDebuggerUrl);
+    const startIdx = cxH.events.length;
+    const hostedUrl = publicOrigin + publicBase;
+    await cxH.call('Page.navigate', { url: hostedUrl });
+    const rIds = await liveRootIds(rKey);
+    await cxH.waitFor(`[...document.querySelectorAll('#feed .card[data-post-id]')].some((c) => ${JSON.stringify(rIds)}.includes(c.dataset.postId))`,
+      'a card of R on the hosted page', 30000);
+    const rootId = await cxH.eval(`[...document.querySelectorAll('#feed .card[data-post-id]')].map((c) => c.dataset.postId).find((id) => ${JSON.stringify(rIds)}.includes(id)) ?? null`);
+
+    // R's author window, from R's card — the one read of a subject's name.
+    const openIdx = cxH.events.length;
+    await cxH.eval(`document.querySelector('#feed .card[data-post-id="${rootId}"] .who button.authorbtn').click()`, true);
+    await cxH.waitFor(`(() => {
+      const rowOf = (body, label) => [...body.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === label) ?? null;
+      return [...document.querySelectorAll('.winbody')].some((b) => {
+        const field = rowOf(b, 'name')?.querySelector('.field');
+        return !!rowOf(b, 'endorsers') && !!field && !!field.querySelector('.handle, .inkmute') && field.textContent.trim() !== 'loading…';
+      });
+    })()`, 'R\'s author window on the hosted page', 30000);
+
+    // An idle stretch, a press of the corner and a settle — the extension
+    // checks names after a verified tip run and after a render; the web build
+    // runs neither.
+    await sleep(10000);
+    await pressCorner(cxH);
+    await sleep(5000);
+
+    const page = await cxH.eval(`(() => {
+      const rowOf = (body, label) => [...body.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === label) ?? null;
+      const body = [...document.querySelectorAll('.winbody')].find((b) => !!rowOf(b, 'endorsers')) ?? null;
+      const nameRow = body === null ? null : rowOf(body, 'name');
+      return {
+        width: innerWidth,
+        handles: [...document.querySelectorAll('.handle')].map((h) => ({ text: (h.textContent ?? '').trim(), clay: h.classList.contains('clay') })),
+        nameRow: nameRow === null ? null : (nameRow.querySelector('.field')?.textContent ?? '').trim(),
+        nameLine: nameRow === null ? null : (nameRow.querySelector('.field .hint.clay')?.textContent ?? null),
+      };
+    })()`);
+    const requests = [];
+    for (let i = startIdx; i < cxH.events.length; i++) {
+      const ev = cxH.events[i];
+      if (ev.method === 'Network.requestWillBeSent') requests.push({ url: new URL(ev.params.request.url), index: i });
+    }
+    const proofs = requests.filter((r) => r.url.pathname.includes('/api/v1/proof/'));
+    const handleReads = requests.filter((r) => r.url.pathname.includes('/usernames/'));
+    // Each `/usernames?owner=` read, named: R's, from its author window's
+    // opening on, is that window's subject read; any other is unexplained.
+    const ownerReads = requests
+      .filter((r) => r.url.pathname.endsWith('/usernames') && r.url.searchParams.has('owner'))
+      .map((r) => {
+        const owner = (r.url.searchParams.get('owner') ?? '').toLowerCase();
+        const named = owner === rKey && r.index >= openIdx ? 'the author window\'s subject, R' : null;
+        return { owner, named };
+      });
+    const unexplained = ownerReads.filter((r) => r.named === null);
+    const rHandle = rName === null ? null : '@' + rName;
+    const handlesOk = page.handles.length > 0 && page.handles.every((h) => !h.clay)
+      && (rHandle === null || page.handles.some((h) => h.text === rHandle));
+    const authorOk = rHandle === null || (page.nameRow === rHandle && page.nameLine === null);
+    const ok = handlesOk && authorOk && proofs.length === 0 && handleReads.length === 0 && unexplained.length === 0;
+    record(30, ok,
+      `hosted origin=${hostedUrl} (width ${page.width}); handles ×${page.handles.length}: ${JSON.stringify([...new Set(page.handles.map((h) => h.text + (h.clay ? ' clay' : '')))])}, R's ${JSON.stringify(rHandle)} among them, none clay=${page.handles.every((h) => !h.clay)}; ` +
+      `R's author window name row ${JSON.stringify(page.nameRow)}, line ${JSON.stringify(page.nameLine)}; ` +
+      `/api/v1/proof/ requests=${proofs.length}; /usernames/<name> requests=${handleReads.length}; ` +
+      `/usernames?owner= requests ×${ownerReads.length}: ${JSON.stringify(ownerReads.map((r) => `${r.owner.slice(0, 8)}… — ${r.named ?? 'unexplained'}`))}`);
+  } catch (e) {
+    record(30, false, `error: ${String(e)}`);
+  } finally {
+    try { if (cxH) cxH.s.close(); } catch {}
+    if (bcx && createdTargetId) {
+      await bcx.call('Target.closeTarget', { targetId: createdTargetId }).catch(() => {});
+    }
+    try { if (bcx) bcx.s.close(); } catch {}
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The run.
 // ---------------------------------------------------------------------------
+
+// The three blocks after the links steps, in order, each on its flag and NOT
+// RUN by name without it — reached on every run with --r-key, whether the links
+// steps ran or not. `bcx` is the browser session that opens an extension page
+// where none is live.
+async function runVerifiedBlocks(bcx) {
+  // The verified-tip block after the 1–16 pass and before the browser-context
+  // arm — 17a's D is fresh and isolated, so its readings hold whatever A's
+  // height is by now. 17b's press train runs under A's live miner; 19b makes
+  // its own fork on C; 19c uses D's own miner past 30. The block runs on the
+  // extension page live at this moment — 16(d)'s bridge takeover leaves one;
+  // where none is open, `Target.createTarget` a fresh `index.html`, the way
+  // the harness opens every other extension page (WEB_INTERFACE → The
+  // extension → "The verified tip").
+  if (VERIFIED_TIP) {
+    let vtPage = await findExt('index.html');
+    if (!vtPage) {
+      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
+      await sleep(2000);
+      vtPage = await findExt('index.html');
+    }
+    if (!vtPage) throw new Error('verified-tip block: no extension page');
+    const vtCx = await openSession(vtPage.webSocketDebuggerUrl);
+    await verifiedTipSteps(vtCx, vtPage.id);
+    try { vtCx.s.close(); } catch {}
+  } else {
+    markVerifiedTipNotRun('no --verified-tip');
+  }
+
+  // The verified-figures block after the tip block — the tip block's cleanup
+  // stops B, C, D and the lying relay by their handles, so only A is left, and
+  // the figures block brings up a B of its own and the figures relay
+  // (WEB_INTERFACE → The extension → "The verified figures"). It runs on the
+  // extension page live at this moment, or a fresh one where none is open;
+  // storage restores R's identity (envelope in local, seed in session from
+  // step 12d's unlock).
+  if (VERIFIED_FIGURES) {
+    let vfPage = await findExt('index.html');
+    if (!vfPage) {
+      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
+      await sleep(2000);
+      vfPage = await findExt('index.html');
+    }
+    if (!vfPage) throw new Error('verified-figures block: no extension page');
+    const vfCx = await openSession(vfPage.webSocketDebuggerUrl);
+    // The App's boot needs a moment before the wallet control mounts —
+    // main.ts's bootstrapProxy awaits the background's snapshot.
+    try {
+      await vfCx.waitFor(`!!document.querySelector('[aria-label="open wallet"]')`, 'header wallet control 25', 30000);
+    } catch {}
+    await verifiedFiguresSteps(vfCx, vfPage.id);
+    try { vfCx.s.close(); } catch {}
+  } else {
+    markVerifiedFiguresNotRun('no --verified-figures');
+  }
+
+  // The verified-names block after the figures block — the figures block's
+  // cleanup stops its B, and the names block brings up its own (WEB_INTERFACE
+  // → The extension → "The verified names"). It runs on the extension page live
+  // at this moment, or a fresh one where none is open; storage restores R's
+  // identity, as it does for the figures block.
+  if (VERIFIED_NAMES) {
+    let vnPage = await findExt('index.html');
+    if (!vnPage) {
+      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
+      await sleep(2000);
+      vnPage = await findExt('index.html');
+    }
+    if (!vnPage) throw new Error('verified-names block: no extension page');
+    const vnCx = await openSession(vnPage.webSocketDebuggerUrl);
+    await verifiedNamesSteps(vnCx, vnPage.id);
+    try { vnCx.s.close(); } catch {}
+  } else {
+    markVerifiedNamesNotRun('no --verified-names');
+  }
+}
+
+// The blocks on a run whose links steps end early — no --public, or no root of
+// R's to link to — through a browser session of their own.
+async function runVerifiedBlocksAlone() {
+  const bcx = await openBrowserSession();
+  try {
+    await runVerifiedBlocks(bcx);
+  } finally {
+    try { bcx.s.close(); } catch {}
+  }
+}
 
 async function main() {
   // Open the extension's page.
@@ -2509,8 +3354,9 @@ async function main() {
     }
     // The verified-figures block requires --r-key; --verified-figures alone
     // is a config error caught at the top. Here without --r-key the six steps
-    // read NOT RUN by name.
+    // read NOT RUN by name — and the names block's three, which require it too.
     markVerifiedFiguresNotRun('no --r-key — the verified-figures block does not run');
+    markVerifiedNamesNotRun('no --r-key — the verified-names block does not run');
     return;
   }
 
@@ -3124,6 +3970,7 @@ async function main() {
     record(14, 'NOT RUN', 'no --public / --web-dist');
     record(15, 'NOT RUN', 'no --public / --web-dist');
     record(16, 'NOT RUN', 'no --public / --web-dist');
+    await runVerifiedBlocksAlone();
     return;
   }
 
@@ -3133,6 +3980,7 @@ async function main() {
     record(14, false, 'no confirmed root post authored by R');
     record(15, false, 'no confirmed root post authored by R');
     record(16, false, 'no confirmed root post authored by R');
+    await runVerifiedBlocksAlone();
     return;
   }
   console.log(`steps 13-16 link target = <public>p/${postId.slice(0, 8)}…`);
@@ -3718,55 +4566,7 @@ async function main() {
     try { if (cx15) cx15.s.close(); } catch {}
   }
 
-  // The verified-tip block after the 1–16 pass and before the browser-context
-  // arm — 17a's D is fresh and isolated, so its readings hold whatever A's
-  // height is by now. 17b's press train runs under A's live miner; 19b makes
-  // its own fork on C; 19c uses D's own miner past 30. The block runs on the
-  // extension page live at this moment — 16(d)'s bridge takeover leaves one;
-  // where none is open, `Target.createTarget` a fresh `index.html`, the way
-  // the harness opens every other extension page (WEB_INTERFACE → The
-  // extension → "The verified tip").
-  if (VERIFIED_TIP) {
-    let vtPage = await findExt('index.html');
-    if (!vtPage) {
-      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
-      await sleep(2000);
-      vtPage = await findExt('index.html');
-    }
-    if (!vtPage) throw new Error('verified-tip block: no extension page');
-    const vtCx = await openSession(vtPage.webSocketDebuggerUrl);
-    await verifiedTipSteps(vtCx, vtPage.id);
-    try { vtCx.s.close(); } catch {}
-  } else {
-    markVerifiedTipNotRun('no --verified-tip');
-  }
-
-  // The verified-figures block after the tip block — the tip block's cleanup
-  // stops B, C, D and the lying relay by their handles, so only A is left, and
-  // the figures block brings up a B of its own and the figures relay
-  // (WEB_INTERFACE → The extension → "The verified figures"). It runs on the
-  // extension page live at this moment, or a fresh one where none is open;
-  // storage restores R's identity (envelope in local, seed in session from
-  // step 12d's unlock).
-  if (VERIFIED_FIGURES) {
-    let vfPage = await findExt('index.html');
-    if (!vfPage) {
-      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
-      await sleep(2000);
-      vfPage = await findExt('index.html');
-    }
-    if (!vfPage) throw new Error('verified-figures block: no extension page');
-    const vfCx = await openSession(vfPage.webSocketDebuggerUrl);
-    // The App's boot needs a moment before the wallet control mounts —
-    // main.ts's bootstrapProxy awaits the background's snapshot.
-    try {
-      await vfCx.waitFor(`!!document.querySelector('[aria-label="open wallet"]')`, 'header wallet control 25', 30000);
-    } catch {}
-    await verifiedFiguresSteps(vfCx, vfPage.id);
-    try { vfCx.s.close(); } catch {}
-  } else {
-    markVerifiedFiguresNotRun('no --verified-figures');
-  }
+  await runVerifiedBlocks(bcx);
 
   // ------- Step 13-uncancelled — the browser-context arm, last after the
   // verified-tip block. The extension does not load in a
