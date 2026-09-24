@@ -2,16 +2,18 @@
 // The extension proof — the twelve steps of WEB_INTERFACE → The extension
 // plus the four links-into-the-extension steps, the verified-tip block
 // (17a · 17 · 17b · 18 · 19a · 19b · 19c · 20), the verified-figures block
-// (21 · 24 · 22a · 22b · 23 · 25) and the verified-names block (26 · 29 · 30),
-// each read verbatim, over raw CDP against a live devnet stack. Drives the
-// App's real UI on the extension's own page: the composer, the like word, the
-// profile and wallet windows' rows, and the prompt window found by its
-// `prompt.html?id=` URL. The verified-tip block runs against a second stack
-// the harness owns — node B (server, bootstrapped from A), node C (used for
-// the real-fork test in 19b), node D (isolated, 17a's too-short and 19c's
-// share-no-block) and the lying relay (19a). The verified-figures block brings
-// up a B of its own and, for its three lie arms, the figures relay
-// (22a · 22b · 23). The verified-names block brings up a B of its own too.
+// (21 · 24 · 22a · 22b · 23 · 25) and the verified-names block
+// (26 · 29 · 27a–d · 28a–b · 30), each read verbatim, over raw CDP against a
+// live devnet stack. Drives the App's real UI on the extension's own page: the
+// composer, the like word, the profile and wallet windows' rows, and the prompt
+// window found by its `prompt.html?id=` URL. The verified-tip block runs
+// against a second stack the harness owns — node B (server, bootstrapped from
+// A), node C (used for the real-fork test in 19b), node D (isolated, 17a's
+// too-short and 19c's share-no-block) and the lying relay (19a). The
+// verified-figures block brings up a B of its own and, for its three lie arms,
+// the figures relay (22a · 22b · 23). The verified-names block brings up a B of
+// its own too, and the figures relay again for its lie arms, in its name modes
+// (27a–d · 28a–b).
 //
 // Preconditions:
 //  1. `node packages/node/dist/index.js` running as `NETWORK_TYPE=devnet`
@@ -41,10 +43,10 @@
 //     tip block does; hence --verified-figures requires --node-dist, --scratch
 //     and --node-p2p as well as --r-key (config error at the top otherwise, as
 //     --verified-tip is with its own four).
-//   --verified-names: 26·29·30. A name check proves against the verified tip's
-//     anchor (WEB_INTERFACE → The extension → "The verified names"), so the
-//     block runs a B of its own and requires what --verified-figures requires,
-//     and --s-key: 29 sends to S's handle.
+//   --verified-names: 26·29·27a–d·28a–b·30. A name check proves against the
+//     verified tip's anchor (WEB_INTERFACE → The extension → "The verified
+//     names"), so the block runs a B of its own and requires what
+//     --verified-figures requires, and --s-key: 28 and 29 send to S's handle.
 //   20, 25 and 30 read the hosted web build, and read NOT RUN without --public
 //     and --web-dist.
 //   No --r-key and no --verified-tip: every step reads NOT RUN by name.
@@ -116,8 +118,8 @@ const B_P2P_PORT = 19772;
 const B_ORIGIN = `http://127.0.0.1:${B_HTTP_PORT}`;
 const RELAY_PORT = 19780;
 const RELAY_ORIGIN = `http://127.0.0.1:${RELAY_PORT}`;
-// The figures relay — the lie arms 22a · 22b · 23, on a port of its own beside
-// 19a's relay.
+// The figures relay — the lie arms 22a · 22b · 23, and in its name modes the
+// lie arms 27a–d · 28a–b, on a port of its own beside 19a's relay.
 const FIG_RELAY_PORT = 19785;
 const FIG_RELAY_ORIGIN = `http://127.0.0.1:${FIG_RELAY_PORT}`;
 const C_HTTP_PORT = 19790;
@@ -135,8 +137,9 @@ const D_ADMIN_PORT = 19796;
 const D_P2P_PORT = 19797;
 const D_ORIGIN = `http://127.0.0.1:${D_HTTP_PORT}`;
 // The devnet faucet's public key — devnet-only and public by design: the key
-// steps 12 and 21 send to, and the owner of the real box the figures relay
-// lists under R's key in step 22b.
+// steps 12 and 21 send to, the owner of the real box the figures relay lists
+// under R's key in step 22b, and the owner the relay names for S's handle in
+// step 28a.
 const DEVNET_FAUCET_KEY = '5468d985c3924a95f3d3dc98b67a41ac2c7cc4cfca4fcbf7c5627452f1617f36';
 
 if (!EXT_DIR || !existsSync(EXT_DIR)) { console.error('missing --extension-dir'); process.exit(2); }
@@ -893,16 +896,47 @@ async function startLyingRelay(upstream) {
 //                     byte flipped ten from the end, the JSON otherwise as
 //                     served: the flip is made in the decoded proof, never in
 //                     the JSON text, so what fails is the proof's verification.
-// `relay.edits` counts each mode's edits.
-async function startFiguresRelay(upstream, port) {
+// With `names` — R's key and S's name — the name modes of WEB_INTERFACE → The
+// extension → "The verified names", the lie arms 27a–d · 28a–b, every
+// /api/v1/proof/ answer passing verbatim as well:
+//   label-rename    — every row of a /posts answer — the feed's, a thread's
+//                     post, ancestors, descendants and pending, one post's —
+//                     whose `author` is R carries `relay.renameTo` as its
+//                     authorName;
+//   owner-404       — /usernames?owner=<R> answers 404 { error: 'Identity
+//                     holds no name' }, the node's own words for a key holding
+//                     none;
+//   owner-fakebox   — /usernames?owner=<R> answers `relay.fakeBoxId` as its
+//                     boxId, every other field as served;
+//   name-owner      — /usernames/<S's name>, in any case, answers the devnet
+//                     faucet's key as its owner, the boxId as served: another
+//                     key over S's real box;
+//   name-fakebox    — /usernames/<S's name>, in any case, answers
+//                     `relay.fakeBoxId` as its boxId.
+// `relay.edits` counts each mode's edited answers, `relay.renamed` the rows
+// label-rename renamed, and `relay.log` holds every request the relay served —
+// its arrival and answer times, status and edit, and for /blocks/current the
+// height it forwarded: the outside record the name arms read a check's heights
+// and a tip run's start from.
+async function startFiguresRelay(upstream, port, names = null) {
   const relay = {
     server: null,
     origin: `http://127.0.0.1:${port}`,
     mode: 'honest',
-    edits: { 'credits-fake': 0, 'credits-foreign': 0, 'avl-flip': 0 },
+    edits: {
+      'credits-fake': 0, 'credits-foreign': 0, 'avl-flip': 0,
+      'label-rename': 0, 'owner-404': 0, 'owner-fakebox': 0, 'name-owner': 0, 'name-fakebox': 0,
+    },
+    renamed: 0,
+    renameTo: null,
+    fakeBoxId: null,
+    log: [],
   };
   const ownCreditsPath = `/credits/${R_JSON.pubKeyHex.toLowerCase()}`;
+  const rKey = names?.rKey ?? null;
+  const sName = names?.sName ?? null;
   relay.server = createServer(async (req, res) => {
+    const at = Date.now();
     try {
       const method = req.method ?? 'GET';
       const url = req.url ?? '/';
@@ -920,10 +954,27 @@ async function startFiguresRelay(upstream, port) {
         res.end();
         return;
       }
-      const upstreamRes = await fetch(upstream + url, { method });
-      let body = Buffer.from(await upstreamRes.arrayBuffer());
       const mode = relay.mode;
       const target = new URL(url, upstream);
+      const ownerLookup = rKey !== null && target.pathname === '/usernames'
+        && (target.searchParams.get('owner') ?? '').toLowerCase() === rKey;
+      const looked = handleLookupName(target.pathname);
+      const sLookup = sName !== null && looked !== null && looked.toLowerCase() === sName.toLowerCase();
+      if (mode === 'owner-404' && method === 'GET' && ownerLookup) {
+        relay.edits['owner-404'] += 1;
+        relay.log.push({ at, doneAt: Date.now(), path: url, status: 404, edit: 'owner-404' });
+        console.log(`[vn] relay owner-404 edit ${relay.edits['owner-404']}: ${url}`);
+        res.writeHead(404, {
+          'access-control-allow-origin': '*',
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'no-store',
+        });
+        res.end(JSON.stringify({ error: 'Identity holds no name' }));
+        return;
+      }
+      const upstreamRes = await fetch(upstream + url, { method });
+      let body = Buffer.from(await upstreamRes.arrayBuffer());
+      const entry = { at, doneAt: null, path: url, status: upstreamRes.status, edit: null };
       if (method === 'GET' && upstreamRes.status === 200) {
         const ownFirstPage = target.pathname.toLowerCase() === ownCreditsPath && !target.searchParams.has('after');
         if ((mode === 'credits-fake' || mode === 'credits-foreign') && ownFirstPage) {
@@ -947,8 +998,31 @@ async function startFiguresRelay(upstream, port) {
             body = Buffer.from(JSON.stringify(answer));
             relay.edits['avl-flip'] += 1;
           }
+        } else if (mode === 'label-rename' && (target.pathname === '/posts' || target.pathname.startsWith('/posts/'))) {
+          const answer = JSON.parse(body.toString('utf8'));
+          const rows = renameRows(answer, rKey, relay.renameTo);
+          if (rows > 0) {
+            body = Buffer.from(JSON.stringify(answer));
+            relay.edits['label-rename'] += 1;
+            relay.renamed += rows;
+            entry.edit = `label-rename ×${rows}`;
+            console.log(`[vn] relay label-rename edit ${relay.edits['label-rename']}: ${rows} row(s) of R as @${relay.renameTo} in ${url.slice(0, 80)}`);
+          }
+        } else if ((mode === 'owner-fakebox' && ownerLookup) || ((mode === 'name-owner' || mode === 'name-fakebox') && sLookup)) {
+          const answer = JSON.parse(body.toString('utf8'));
+          if (mode === 'name-owner') answer.owner = DEVNET_FAUCET_KEY;
+          else answer.boxId = relay.fakeBoxId;
+          body = Buffer.from(JSON.stringify(answer));
+          relay.edits[mode] += 1;
+          entry.edit = mode;
+          console.log(`[vn] relay ${mode} edit ${relay.edits[mode]}: ${url} → ${mode === 'name-owner' ? `owner ${DEVNET_FAUCET_KEY.slice(0, 12)}…` : `boxId ${relay.fakeBoxId.slice(0, 12)}…`}`);
+        }
+        if (target.pathname === '/blocks/current') {
+          try { entry.height = JSON.parse(body.toString('utf8')).height ?? null; } catch { entry.height = null; }
         }
       }
+      entry.doneAt = Date.now();
+      relay.log.push(entry);
       res.writeHead(upstreamRes.status, {
         'access-control-allow-origin': '*',
         'content-type': upstreamRes.headers.get('content-type') ?? 'application/octet-stream',
@@ -965,6 +1039,42 @@ async function startFiguresRelay(upstream, port) {
     relay.server.listen(port, '127.0.0.1', res);
   });
   return relay;
+}
+
+// Close a relay and every connection it holds, its mode back to honest. The
+// browser pools keep-alive connections by origin, and one left open would carry
+// a later request on the port to this server's handler rather than to the relay
+// that listens there next.
+function closeRelay(relay) {
+  relay.mode = 'honest';
+  try { relay.server.close(); } catch {}
+  try { relay.server.closeAllConnections(); } catch {}
+}
+
+// The name a `/usernames/<name>` path looks up, one leading `@` dropped
+// (NODE_INTERFACE → Usernames), or null for any other path.
+function handleLookupName(pathname) {
+  if (!pathname.startsWith('/usernames/')) return null;
+  let name;
+  try { name = decodeURIComponent(pathname.slice('/usernames/'.length)); } catch { return null; }
+  return name.startsWith('@') ? name.slice(1) : name;
+}
+
+// Rename R's rows in a /posts answer in place — every object whose `author` is
+// `rKey` and whose `authorName` is a name — and answer how many.
+function renameRows(value, rKey, to) {
+  let rows = 0;
+  const walk = (v) => {
+    if (Array.isArray(v)) { for (const x of v) walk(x); return; }
+    if (v === null || typeof v !== 'object') return;
+    if (typeof v.author === 'string' && v.author.toLowerCase() === rKey && typeof v.authorName === 'string') {
+      v.authorName = to;
+      rows += 1;
+    }
+    for (const k of Object.keys(v)) walk(v[k]);
+  };
+  walk(value);
+  return rows;
 }
 
 // The largest credit box `key` holds on `upstream`, as served — `{ boxId,
@@ -2367,8 +2477,7 @@ async function runFiguresLieArms(cx) {
   try {
     for (const arm of LIE_ARMS) await runLieArm(cx, relay, arm);
   } finally {
-    relay.mode = 'honest';
-    try { relay.server.close(); } catch {}
+    closeRelay(relay);
     console.log(`[vf] figures relay closed; edits=${JSON.stringify(relay.edits)}`);
   }
 }
@@ -2524,17 +2633,25 @@ async function runFiguresStep25() {
 }
 
 // ---------------------------------------------------------------------------
-// The verified-names block — steps 26 · 29 · 30 (WEB_INTERFACE → The extension
-// → "The verified names", → The identity display, → The author window, → The
-// wallet window → "The `send` row"). A name check proves against the verified
-// tip's anchor, which needs a second verified node, so the block brings up a B
-// of its own after the A pre-flight, as the figures block does, and stops it
-// at the end. 26 and 29 read A; 30 reads the hosted web build and needs no B.
-// The block reads at a tiling width: the header's profile control is a word at
-// two columns and more, a glyph at one (WEB_INTERFACE → The workspace).
+// The verified-names block — steps 26 · 29 · 27a–d · 28a–b · 30 (WEB_INTERFACE
+// → The extension → "The verified names", → The identity display, → The author
+// window, → The wallet window → "The `send` row"). A name check proves against
+// the verified tip's anchor, which needs a second verified node, so the block
+// brings up a B of its own after the A pre-flight, as the figures block does,
+// and stops it at the end. 26 and 29 read A; the lie arms 27a–d and 28a–b read
+// the figures relay in its name modes, each switched back to A and read honest
+// again; 30 reads the hosted web build and needs no B. The block reads at a
+// tiling width: the header's profile control is a word at two columns and
+// more, a glyph at one (WEB_INTERFACE → The workspace).
 // ---------------------------------------------------------------------------
 
-const VERIFIED_NAMES_STEPS = [26, 29, 30];
+// In the order they run: 29 on the send row as 26 leaves it, before any send
+// arm has pressed it.
+const VERIFIED_NAMES_STEPS = [26, 29, '27a', '27b', '27c', '27d', '28a', '28b', 30];
+// The steps that read a verified tip — every one but 30.
+const NAMES_STEPS_ON_B = VERIFIED_NAMES_STEPS.filter((s) => s !== 30);
+const NAMES_LABEL_STEPS = ['27a', '27b', '27c', '27d'];
+const NAMES_SEND_STEPS = ['28a', '28b'];
 
 function markVerifiedNamesNotRun(reason) {
   for (const s of VERIFIED_NAMES_STEPS) record(s, 'NOT RUN', reason);
@@ -2727,12 +2844,12 @@ async function verifiedNamesSteps(cx, targetId = 'unknown') {
   }
   const rKey = R_JSON.pubKeyHex.toLowerCase();
 
-  // ---- Pre-flight — A is up; S's name as A serves it — the handle 29 types
-  // and the box whose proofs it counts. 30 needs no B, and runs when A or B
-  // does not come up.
+  // ---- Pre-flight — A is up; S's name as A serves it — the handle 28 and 29
+  // type and the box whose proofs they count. 30 needs no B, and runs when A
+  // or B does not come up.
   const aUp = await waitForHttpUp(NODE, 15000);
   if (!aUp) {
-    for (const s of [26, 29]) record(s, 'NOT RUN', `node A did not answer /blocks/current at ${NODE}`);
+    for (const s of NAMES_STEPS_ON_B) record(s, 'NOT RUN', `node A did not answer /blocks/current at ${NODE}`);
     await runNamesStep30(null);
     return;
   }
@@ -2744,7 +2861,7 @@ async function verifiedNamesSteps(cx, targetId = 'unknown') {
   console.log(`[vn] bringing up node B for the names block`);
   await bringUpNodeB();
   const notRunWithout = async (reason) => {
-    for (const s of [26, 29]) record(s, 'NOT RUN', reason);
+    for (const s of NAMES_STEPS_ON_B) record(s, 'NOT RUN', reason);
     await runNamesStep30((await usernameOf(NODE, rKey))?.name ?? null);
   };
   try {
@@ -2786,7 +2903,7 @@ async function verifiedNamesSteps(cx, targetId = 'unknown') {
       const detail = preError !== null
         ? `pre-condition: ${preError}`
         : `pre-condition press: led=${verifiedReading.reading.ledClass}, title=${JSON.stringify(verifiedReading.reading.title)}, proof requests=${verifiedReading.proofs.length}; a name check runs only against a verified tip's anchor (WEB_INTERFACE → The extension → "The verified names")`;
-      for (const s of [26, 29]) record(s, false, detail);
+      for (const s of NAMES_STEPS_ON_B) record(s, false, detail);
       await runNamesStep30((await usernameOf(NODE, rKey))?.name ?? null);
       return;
     }
@@ -2797,6 +2914,10 @@ async function verifiedNamesSteps(cx, targetId = 'unknown') {
 
     // ---- Step 29 — the honest send to S's handle, declined at the prompt.
     await runNamesStep29(cx, sHeld);
+
+    // ---- Steps 27a–d and 28a–b — the lie arms, through the figures relay in
+    // its name modes, each switched back to A and read honest again.
+    await runNamesLieArms(cx, rKey, rName, sHeld);
 
     // ---- Step 30 — no verifier on the hosted web build.
     await runNamesStep30(rName);
@@ -2974,6 +3095,828 @@ async function runNamesStep26(cx, rKey) {
   }
 }
 
+// ---- The lie arms — 27a–d · 28a–b (WEB_INTERFACE → The extension → "The
+// verified names", → The identity display, → The author window, → The wallet
+// window → "The `send` row"). Each arm sets the figures relay's name mode and
+// the settings row's `node` to the relay: a node change drops every name
+// result and re-reads every surface from the new node (WEB_INTERFACE → The
+// settings window), and the tip run it starts writes the anchor the checks run
+// against. The arm reads, then blanks the row back to A and reads the honest
+// state again — part of the arm's verdict, so the next arm starts clean.
+
+// The corner verified across the nodes it asked — three while the relay is
+// read (the relay, A, B), two while A is.
+const cornerVerified = (c) => c.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(c.title ?? '');
+// The line beneath a clay handle in the author window's `name` row
+// (WEB_INTERFACE → The author window).
+const NAME_LINE = "this node's answer for this name did not verify";
+
+// The checks of the box `boxId` the relay served since `since`, in the order
+// they began — each a proof at suffixHead, one at the tip (K − 1 blocks above
+// it) where the box is excluded there, and the first /blocks/current asked
+// after the tip proof's answer: `absent` where that height is the tip's,
+// `unchecked` where it is not (WEB_INTERFACE → The extension → "The verified
+// names"). The pairing is by order: a /blocks/current the page asked for
+// another reader in the same instant pairs instead, and reads the same height
+// unless a block lands between the two. A check with no tip proof proved the
+// box at suffixHead, or refused it there.
+function nameChecksFromRelayLog(log, since, boxId) {
+  const proofPath = `/api/v1/proof/${boxId.toLowerCase()}`;
+  const checks = [];
+  let open = null;
+  for (const e of log.filter((x) => x.at >= since).sort((a, b) => a.at - b.at)) {
+    const u = new URL(e.path, 'http://relay');
+    if (u.pathname.toLowerCase() === proofPath) {
+      const height = Number(u.searchParams.get('atHeight'));
+      if (open !== null && open.tip === null && height === open.suffixHead + FIGURES_K - 1) {
+        open.tip = height;
+        open.tipDoneAt = e.doneAt;
+      } else {
+        open = { at: e.at, suffixHead: height, tip: null, tipDoneAt: null, heightAfter: null, decidedAt: null, status: null };
+        checks.push(open);
+      }
+    } else if (u.pathname === '/blocks/current' && open !== null && open.tip !== null && open.status === null && e.at >= open.tipDoneAt) {
+      open.heightAfter = typeof e.height === 'number' ? e.height : null;
+      open.decidedAt = e.doneAt;
+      open.status = open.heightAfter === open.tip ? 'absent' : 'unchecked';
+    }
+  }
+  return checks;
+}
+
+// The tip runs the relay saw since `since` — one /nipopow/proof/ request per
+// run, the reading node being asked first (WEB_INTERFACE → The extension → "The
+// verified tip") — each classed by what began it: the node change (the first),
+// a check that ended `unchecked` (within 3 s of the /blocks/current that
+// decided it), a press of the corner (within 3 s of one), or unexplained — the
+// ten-minute clock among what that leaves.
+function tipRunsFromRelayLog(log, since, { presses = [], checks = [] } = {}) {
+  return log
+    .filter((e) => e.at >= since && new URL(e.path, 'http://relay').pathname.startsWith('/nipopow/proof/'))
+    .sort((a, b) => a.at - b.at)
+    .map((e, i) => {
+      let why = 'unexplained';
+      if (i === 0) why = 'node change';
+      else if (checks.some((c) => c.status === 'unchecked' && e.at >= c.decidedAt && e.at - c.decidedAt < 3000)) why = 'asked';
+      else if (presses.some((p) => e.at >= p && e.at - p < 3000)) why = 'press';
+      return { at: e.at, why };
+    });
+}
+
+function checksSeen(checks) {
+  if (checks.length === 0) return 'none';
+  return checks.map((c) => (c.tip === null
+    ? `[suffixHead ${c.suffixHead} alone]`
+    : c.status === null
+      ? `[suffixHead ${c.suffixHead} · tip ${c.tip}, no /blocks/current after it]`
+      : `[suffixHead ${c.suffixHead} · tip ${c.tip} · heightAfter ${c.heightAfter ?? '—'} → ${c.status}]`)).join(' ');
+}
+
+function runsSeen(runs, t0) {
+  if (runs.length === 0) return 'none';
+  return runs.map((r) => `${r.why} +${((r.at - t0) / 1000).toFixed(1)}s`).join(', ');
+}
+
+// Every handle of R's on the page — every element marked with a pair of R's key
+// (view/name-handle.ts), each `{ site, text, clay }` — with the header's
+// profile control and R's cards in the feed read on their own, and every clay
+// handle whose pair is not R's (WEB_INTERFACE → The identity display).
+async function readRHandles(cx, rKey, rIds) {
+  return cx.eval(`(() => {
+    const rKey = ${JSON.stringify(rKey)};
+    const rIds = ${JSON.stringify(rIds)};
+    const siteOf = (e) => {
+      if (e.matches('[aria-label="open profile"]')) return 'header';
+      const card = e.closest('.card[data-post-id]');
+      if (card !== null) return (e.closest('#feed') !== null ? 'feed card ' : 'pane card ') + card.dataset.postId.slice(0, 8);
+      const bar = e.closest('.bar');
+      if (bar !== null) return (bar.querySelector('.bar-label .name')?.textContent ?? 'thread') + ' bar';
+      if (e.closest('.username-line') !== null) return 'profile row';
+      if (e.closest('.endorser') !== null) return 'endorser';
+      if (e.closest('.bond') !== null) return 'bond';
+      const label = e.closest('.row')?.querySelector('label')?.textContent ?? null;
+      return label === null ? 'elsewhere' : label + ' row';
+    };
+    const seen = (e) => ({ site: siteOf(e), text: (e.textContent ?? '').trim(), clay: e.classList.contains('clay') });
+    const hdr = document.querySelector('[aria-label="open profile"]');
+    return {
+      handles: [...document.querySelectorAll('[data-name-pair]')]
+        .filter((e) => (e.dataset.namePair ?? '').startsWith(rKey + '@')).map(seen),
+      otherClay: [...document.querySelectorAll('.handle.clay, [data-name-pair].clay')]
+        .filter((e) => !(e.dataset.namePair ?? '').startsWith(rKey + '@')).map(seen),
+      header: hdr === null ? null : {
+        text: (hdr.textContent ?? '').trim(),
+        clay: hdr.classList.contains('clay'),
+        handle: hdr.dataset.namePair !== undefined,
+        mono: (hdr.style.fontFamily ?? '').includes('mono'),
+      },
+      feed: [...document.querySelectorAll('#feed .card[data-post-id]')]
+        .filter((c) => rIds.includes(c.dataset.postId))
+        .map((c) => {
+          const who = c.querySelector('.who .authorbtn, .who .handle, .who .hex');
+          return { id: c.dataset.postId, text: who === null ? null : (who.textContent ?? '').trim(), clay: who !== null && who.classList.contains('clay') };
+        }),
+    };
+  })()`);
+}
+
+// R's handles as a step line reads them — the header, R's cards in the feed,
+// every handle of R's grouped by what it reads and where, and any other clay.
+function rHandlesSeen(r) {
+  if (r === null) return 'not read';
+  const header = r.header === null ? 'absent'
+    : `${JSON.stringify(r.header.text)} (${r.header.handle ? (r.header.clay ? 'clay' : 'ink') : r.header.mono ? 'mono, no handle' : 'no handle'})`;
+  const cards = [...new Set(r.feed.map((c) => `${c.text} ${c.clay ? 'clay' : 'ink'}`))];
+  const groups = new Map();
+  for (const h of r.handles) {
+    const k = `${h.text} ${h.clay ? 'clay' : 'ink'}`;
+    if (!groups.has(k)) groups.set(k, new Set());
+    groups.get(k).add(h.site.replace(/ [0-9a-f]{8}$/, ''));
+  }
+  const handles = [...groups].map(([k, sites]) => `${k} at ${[...sites].join(', ')}`).join('; ');
+  return `header ${header}; R's cards in the feed ×${r.feed.length} ${JSON.stringify(cards)}; R's handles ×${r.handles.length}: ${handles || 'none'}; other clay ×${r.otherClay.length}${r.otherClay.length > 0 ? ' ' + JSON.stringify(r.otherClay.map((h) => h.text)) : ''}`;
+}
+
+// R's handles once a card of R's stands in the feed and the name checks have
+// gone quiet — no lookup, box proof or tip proof for 3 s since `sinceIdx`
+// (waitForNameChecks): a handle read before its check lands reads ink however
+// the check will end.
+async function readRHandlesQuiet(cx, sinceIdx, rKey, rIds) {
+  await cx.waitFor(`[...document.querySelectorAll('#feed .card[data-post-id]')].some((c) => ${JSON.stringify(rIds)}.includes(c.dataset.postId))`,
+    'a card of R in the feed', 60000);
+  const quiet = await waitForNameChecks(cx, sinceIdx, { ms: 90000, quietMs: 3000 });
+  return { quiet: quiet.settled, reading: await readRHandles(cx, rKey, rIds) };
+}
+
+// The honest state, read on A: every handle of R's `@<R's name>` in ink — the
+// header's among them — and no clay handle anywhere.
+function honestNames(r, rName) {
+  return r !== null && r.header !== null && r.header.handle && r.header.text === '@' + rName && !r.header.clay
+    && r.feed.length > 0 && r.feed.every((c) => c.text === '@' + rName && !c.clay)
+    && r.handles.every((h) => h.text === '@' + rName && !h.clay)
+    && r.otherClay.length === 0;
+}
+
+// A well-formed name no identity holds on A — `base`, or `base` and hex digits
+// where A answers a holder (NODE_INTERFACE → Usernames).
+async function freeName(base) {
+  for (const name of [base, base + randomBytes(2).toString('hex'), base + randomBytes(3).toString('hex')]) {
+    const r = await fetch(`${NODE}/usernames/${encodeURIComponent(name)}`);
+    if (r.status === 404) return name;
+  }
+  return null;
+}
+
+const NAME_LABEL_ARMS = [
+  {
+    // Another name on R's rows: the label's lookup names R's real box, whose
+    // name is not the row's — unproven, clay wherever a row carries it. The
+    // header reads R's own name from /usernames?owner=, answered as served —
+    // ink, as every handle drawn from that answer is.
+    step: '27a',
+    mode: 'label-rename',
+    presses: 0,
+    relayOk: (r, { rName, renameTo }) => r.header !== null && r.header.handle && r.header.text === '@' + rName && !r.header.clay
+      && r.feed.length > 0 && r.feed.every((c) => c.text === '@' + renameTo && c.clay)
+      && r.handles.every((h) => (h.text === '@' + renameTo && h.clay) || (h.text === '@' + rName && !h.clay))
+      && r.otherClay.length === 0,
+  },
+  {
+    // The node says R holds no name while its rows carry one — none, clay on
+    // every handle a row draws. The App's own-name read falls to the same 404,
+    // so the header draws R's key prefix in mono: no handle to turn clay — the
+    // omission the rule leaves uncaught (→ "The verified names": a node that
+    // shows a key bare is not caught).
+    step: '27b',
+    mode: 'owner-404',
+    presses: 0,
+    relayOk: (r, { rKey, rName }) => r.header !== null && !r.header.handle && r.header.mono && !r.header.clay
+      && r.header.text === rKey.slice(0, 16) + '…'
+      && r.feed.length > 0 && r.feed.every((c) => c.text === '@' + rName && c.clay)
+      && r.handles.every((h) => h.text === '@' + rName && h.clay)
+      && r.otherClay.length === 0,
+  },
+  {
+    // A box the chain does not hold — absent, clay on every handle of R's, the
+    // header's among them; the corner pressed again while a block landing
+    // inside a check leaves the pair unchecked, up to five presses.
+    step: '27c',
+    mode: 'owner-fakebox',
+    presses: 5,
+    relayOk: (r, { rName }) => r.header !== null && r.header.handle && r.header.text === '@' + rName && r.header.clay
+      && r.feed.length > 0 && r.feed.every((c) => c.text === '@' + rName && c.clay)
+      && r.handles.length > 0 && r.handles.every((h) => h.text === '@' + rName && h.clay)
+      && r.otherClay.length === 0,
+  },
+];
+
+async function runNamesLieArms(cx, rKey, rName, sHeld) {
+  let relay;
+  try {
+    relay = await startFiguresRelay(NODE.replace(/\/+$/, ''), FIG_RELAY_PORT, { rKey, sName: sHeld?.name ?? null });
+  } catch (e) {
+    for (const s of [...NAMES_LABEL_STEPS, ...NAMES_SEND_STEPS]) record(s, false, `the relay did not start on ${FIG_RELAY_ORIGIN}: ${String(e)}`);
+    return;
+  }
+  console.log(`[vn] relay up in its name modes: ${relay.origin} → ${NODE}`);
+  try {
+    if (rName === null) {
+      for (const s of NAMES_LABEL_STEPS) record(s, false, 'R holds no name on A — step 26 claimed none, so no row of R\'s carries a name');
+    } else {
+      const ctx = { rKey, rName, rIds: await liveRootIds(rKey), renameTo: await freeName('Mallory') };
+      console.log(`[vn] label arms: R @${rName}, ${ctx.rIds.length} live roots of R on A, rows renamed to @${ctx.renameTo}`);
+      for (const arm of NAME_LABEL_ARMS) {
+        if (arm.mode === 'label-rename' && ctx.renameTo === null) {
+          record(arm.step, false, 'no free name to rename R\'s rows to — Mallory and two hex tails of it are all held on A');
+          continue;
+        }
+        await runNameLabelArm(cx, relay, arm, ctx);
+      }
+      await runNamesStep27d(cx, relay, ctx);
+    }
+    if (sHeld === null) {
+      for (const s of NAMES_SEND_STEPS) record(s, false, `S ${S_PUB.slice(0, 8)}… holds no name on A — claim-name.mjs claims one before the run`);
+    } else {
+      for (const arm of NAME_SEND_ARMS) await runNameSendArm(cx, relay, arm, { sHeld });
+    }
+  } finally {
+    closeRelay(relay);
+    console.log(`[vn] relay closed; edits=${JSON.stringify(relay.edits)}, rows renamed=${relay.renamed}`);
+  }
+}
+
+// One label arm — 27a · 27b · 27c: (1) the mode, (2) the node row set to the
+// relay and the corner verified across the relay, A and B, (3) R's handles once
+// the checks go quiet, the corner pressed again where the arm allows it, (4)
+// back to A and every handle of R's in ink again.
+async function runNameLabelArm(cx, relay, arm, ctx) {
+  let onRelay = false;
+  try {
+    const editsBefore = relay.edits[arm.mode];
+    const renamedBefore = relay.renamed;
+    // (1) The mode — R's rows renamed to a name no identity holds, or a fresh
+    // made-up box.
+    relay.mode = arm.mode;
+    relay.renameTo = ctx.renameTo;
+    if (arm.mode === 'owner-fakebox') relay.fakeBoxId = randomBytes(32).toString('hex');
+
+    // (2) The node row set to the relay.
+    const changeAt = Date.now();
+    const changeIdx = cx.events.length;
+    onRelay = true;
+    const change = await changeNodeAndAwait(cx, relay.origin, cornerVerified,
+      `led fresh + verified across N nodes (reading the relay, ${arm.step})`, 60000);
+    const verified = !change.reached.timedOut && change.stored === relay.origin;
+
+    // (3) R's handles, once the checks go quiet; pressed again, up to the
+    // arm's presses, while they do not read as the lie makes them.
+    const readings = [];
+    const presses = [];
+    let seen = verified ? await readRHandlesQuiet(cx, changeIdx, ctx.rKey, ctx.rIds) : null;
+    if (seen !== null) readings.push(`after the change: ${rHandlesSeen(seen.reading)}`);
+    while (seen !== null && presses.length < arm.presses && !arm.relayOk(seen.reading, ctx)) {
+      presses.push(Date.now());
+      const pressIdx = cx.events.length;
+      await pressCorner(cx);
+      seen = await readRHandlesQuiet(cx, pressIdx, ctx.rKey, ctx.rIds);
+      readings.push(`press ${presses.length}: ${rHandlesSeen(seen.reading)}`);
+    }
+    const relayOk = seen !== null && arm.relayOk(seen.reading, ctx);
+    const corner = await readCorner(cx);
+    const cornerOk = cornerVerified(corner);
+    const edits = relay.edits[arm.mode] - editsBefore;
+    const checks = arm.mode === 'owner-fakebox' ? nameChecksFromRelayLog(relay.log, changeAt, relay.fakeBoxId) : [];
+    const runs = tipRunsFromRelayLog(relay.log, changeAt, { presses, checks });
+    const asked = runs.filter((r) => r.why === 'asked').length;
+    const pageTipProofs = proofRequestsSince(cx.events, changeIdx).length;
+
+    // (4) Back to A, and the honest state read again.
+    const back = await leaveNamesRelay(cx, ctx);
+    onRelay = false;
+    record(arm.step, verified && relayOk && cornerOk && back.ok,
+      `relay ${arm.mode} edits=${edits}` +
+      (arm.mode === 'label-rename' ? ` (rows of R renamed @${ctx.renameTo}: ${relay.renamed - renamedBefore})` : '') +
+      (arm.mode === 'owner-fakebox' ? ` (made-up box ${relay.fakeBoxId.slice(0, 12)}…)` : '') + '; ' +
+      `change: stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}, verified=${verified}; ` +
+      `on the relay: ${readings.join(' | ')}, ok=${relayOk}; ` +
+      (arm.mode === 'owner-fakebox' ? `the made-up box's checks (the relay's log): ${checksSeen(checks)}; ` : '') +
+      `tip runs through the relay: ${runsSeen(runs, changeAt)} — asked by a check: ${asked}; page /nipopow/proof/ requests=${pageTipProofs}; ` +
+      `corner led=${corner.ledClass}, title=${JSON.stringify(corner.title)}, ok=${cornerOk}; ` +
+      `back on A: ${back.detail}, ok=${back.ok}`);
+  } catch (e) {
+    record(arm.step, false, `error: ${String(e)}`);
+    // An arm that failed on the relay hands the next one A, as every arm
+    // leaves it.
+    if (onRelay) {
+      await blankNodeAndAwaitVerified(cx).catch((err) => console.error(`[vn] ${arm.step}: blank back to A failed: ${String(err)}`));
+    }
+  }
+}
+
+// Step (4) of a label arm — the node row blanked back to A, and every handle of
+// R's read in ink once A's checks go quiet.
+async function leaveNamesRelay(cx, ctx) {
+  const blankIdx = cx.events.length;
+  const blank = await blankNodeAndAwaitVerified(cx);
+  const verified = !blank.reached.timedOut;
+  const seen = verified ? await readRHandlesQuiet(cx, blankIdx, ctx.rKey, ctx.rIds) : null;
+  return {
+    ok: verified && seen !== null && honestNames(seen.reading, ctx.rName),
+    detail: `led=${blank.reading.ledClass}, title=${JSON.stringify(blank.reading.title)}, ${seen === null ? 'not read' : rHandlesSeen(seen.reading)}`,
+  };
+}
+
+// A page expression reading R's author window's `name` row (WEB_INTERFACE →
+// The author window): its state — `absent` where no such window body is drawn,
+// `loading`, `handle`, or `other` (`no name`) — the handle's text and clay, the
+// clay line beneath it, and every row below it with its offset from the body's
+// top.
+const authorNameRowJs = (rKey) => `(() => {
+  const rowOf = (body, label) => [...body.querySelectorAll(':scope > .row')].find((r) => r.querySelector('label')?.textContent === label) ?? null;
+  const body = [...document.querySelectorAll('#panes .region-body .winbody')].find((b) =>
+    !!rowOf(b, 'endorsers') && (rowOf(b, 'key')?.textContent ?? '').includes(${JSON.stringify(rKey)})) ?? null;
+  if (body === null) return { state: 'absent', text: null, clay: false, line: null, rows: [] };
+  const nameRow = rowOf(body, 'name');
+  const field = nameRow?.querySelector('.field') ?? null;
+  const handle = field?.querySelector('.handle') ?? null;
+  const line = field?.querySelector('.hint.clay') ?? null;
+  const top = body.getBoundingClientRect().top;
+  const rows = [...body.querySelectorAll(':scope > .row')];
+  return {
+    state: handle !== null ? 'handle' : (field?.textContent ?? '').trim() === 'loading…' ? 'loading' : 'other',
+    text: handle !== null ? (handle.textContent ?? '').trim() : (field?.textContent ?? '').trim(),
+    clay: handle !== null && handle.classList.contains('clay'),
+    line: line === null ? null : line.textContent,
+    rows: rows.slice(rows.indexOf(nameRow) + 1).map((r) => [r.querySelector('label')?.textContent ?? '', Math.round(r.getBoundingClientRect().top - top)]),
+  };
+})()`;
+
+// A page expression finding R's author window's bar — its kind, and its
+// subject's handle or key prefix (WEB_INTERFACE → The author window).
+const authorBarJs = (rKey) => `([...document.querySelectorAll('#panes .bar')].find((b) =>
+  b.querySelector('.bar-label .name')?.textContent === 'author'
+  && ((b.querySelector('.bar-label [data-name-pair]')?.dataset.namePair ?? '').startsWith(${JSON.stringify(rKey + '@')})
+    || b.querySelector('.bar-label .hex')?.textContent === ${JSON.stringify(rKey.slice(0, 10) + '…')})) ?? null)`;
+
+// R's author window in a column of its own — opened from R's card's who row
+// where it is not open, moved to its own pane on the right where it shares a
+// column: every window opened from the feed or the header stacks in the first
+// column, the settings window a node change opens among them, and a column
+// draws its focused window's body alone (WEB_INTERFACE → The workspace).
+async function authorWindowAlone(cx, rKey, rIds) {
+  const bar = authorBarJs(rKey);
+  let opened = false;
+  if (!(await cx.eval(`!!${bar}`))) {
+    opened = await cx.eval(`(() => {
+      const card = [...document.querySelectorAll('#feed .card[data-post-id]')].find((c) => ${JSON.stringify(rIds)}.includes(c.dataset.postId));
+      const who = card?.querySelector('.who button.authorbtn') ?? null;
+      if (who === null) return false;
+      who.click();
+      return true;
+    })()`, true);
+    if (!opened) throw new Error('no card of R\'s in the feed to open R\'s author window from');
+    await cx.waitFor(`!!${bar}`, 'R\'s author window', 30000);
+  }
+  const moved = await cx.eval(`(() => {
+    const b = ${bar};
+    if (b.closest('.region').querySelectorAll('.bar').length === 1) return false;
+    b.querySelector('[aria-label="move this window to its own pane on the right"]').click();
+    return true;
+  })()`, true);
+  if (moved) {
+    await cx.waitFor(`${bar}?.closest('.region')?.querySelectorAll('.bar').length === 1`, 'R\'s author window in a column of its own', 30000);
+  }
+  return { opened, moved };
+}
+
+// Record R's author window's `name` row from now — a state each time a mutation
+// changes it, stamped with the page's clock, so a class toggled in place is read
+// apart from a render that draws the row again.
+async function recordAuthorNameRow(cx, rKey) {
+  await cx.eval(`(() => {
+    window.__authorRec?.observer.disconnect();
+    const read = () => ${authorNameRowJs(rKey)};
+    const rec = { snaps: [], observer: null };
+    const note = () => {
+      const s = read();
+      const key = JSON.stringify(s);
+      if (rec.snaps.length === 0 || rec.snaps[rec.snaps.length - 1].key !== key) rec.snaps.push({ t: Date.now(), key, ...s });
+    };
+    rec.observer = new MutationObserver(note);
+    rec.observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class'] });
+    note();
+    window.__authorRec = rec;
+    return true;
+  })()`);
+}
+
+// The recorded states so far; `stop` ends the recording.
+async function authorRecord(cx, stop = false) {
+  return cx.eval(`(() => {
+    const rec = window.__authorRec;
+    if (!rec) return [];
+    if (${stop}) { rec.observer.disconnect(); window.__authorRec = undefined; }
+    return rec.snaps.map(({ key, ...s }) => s);
+  })()`);
+}
+
+// The author window's states after the node change, read for WEB_INTERFACE →
+// The author window → "The line is drawn with the window's render": the first
+// handle the window drew, and — where it drew it ink — the state the clay
+// landed in and the one just before it.
+function authorLanding(snaps, rName) {
+  const drawnAt = snaps.findIndex((s) => s.state === 'handle');
+  if (drawnAt === -1) return { ok: false, seen: 'no handle drawn after the change' };
+  const drawn = snaps[drawnAt];
+  if (drawn.clay) {
+    return {
+      ok: drawn.text === '@' + rName && drawn.line === NAME_LINE,
+      seen: 'the result held when the window rendered — clay with the line at once',
+    };
+  }
+  const clayAt = snaps.findIndex((s, i) => i > drawnAt && s.state === 'handle' && s.clay);
+  if (clayAt === -1) return { ok: false, seen: 'drawn ink, never clay' };
+  const before = snaps[clayAt - 1];
+  const landing = snaps[clayAt];
+  const rowsHeld = before.state === 'handle' && JSON.stringify(before.rows) === JSON.stringify(landing.rows);
+  return {
+    ok: drawn.line === null && before.state === 'handle' && !before.clay && before.line === null
+      && landing.text === '@' + rName && landing.line === null && rowsHeld,
+    seen: `the result landed after the render — ${landing.t - drawn.t} ms after the window drew the handle ink it turned clay in place, ` +
+      `line ${landing.line === null ? 'none' : JSON.stringify(landing.line)}, the rows below ${rowsHeld ? 'at the offsets they rendered at' : 'moved'}`,
+  };
+}
+
+// The states as a step line reads them, each stamped with its time after `t0`.
+function snapsSeen(snaps, t0) {
+  return snaps.map((s) => `+${((s.t - t0) / 1000).toFixed(2)}s ` + (s.state === 'handle'
+    ? `${s.text} ${s.clay ? 'clay' : 'ink'}${s.line !== null ? ' + line' : ''} [${s.rows.map(([label, top]) => `${label} ${top}`).join(' · ')}]`
+    : s.state === 'absent' ? 'absent' : `${s.state} ${JSON.stringify(s.text)}`)).join(' → ');
+}
+
+// Step 27d — the author window's line waits for a render (WEB_INTERFACE → The
+// author window). R's author window stands in a column of its own on A, its
+// name row recorded; owner-fakebox is set again over a fresh made-up box and
+// the node row set to the relay: the change draws the window again with no
+// result, and the check's `absent` lands after — the handle turns clay in
+// place, no line beneath it, the rows below where they rendered. The window's
+// ↻ is a render, and draws the line. Back on A: ink, no line.
+async function runNamesStep27d(cx, relay, ctx) {
+  const { rKey, rName, rIds } = ctx;
+  const inkOnA = `(() => { const s = ${authorNameRowJs(rKey)}; return s.state === 'handle' && s.text === ${JSON.stringify('@' + rName)} && !s.clay && s.line === null; })()`;
+  let onRelay = false;
+  let recording = false;
+  try {
+    // (0) R's author window in a column of its own, its name row in ink on A.
+    const placed = await authorWindowAlone(cx, rKey, rIds);
+    await cx.waitFor(inkOnA, 'R\'s author window, its name row in ink on A', 30000);
+
+    // (1) The mode, set again over a fresh made-up box; the row recorded.
+    const editsBefore = relay.edits['owner-fakebox'];
+    relay.mode = 'owner-fakebox';
+    relay.fakeBoxId = randomBytes(32).toString('hex');
+    await recordAuthorNameRow(cx, rKey);
+    recording = true;
+
+    // (2) The node row set to the relay.
+    const changeAt = Date.now();
+    const changeIdx = cx.events.length;
+    onRelay = true;
+    const change = await changeNodeAndAwait(cx, relay.origin, cornerVerified,
+      'led fresh + verified across N nodes (reading the relay, 27d)', 60000);
+    const verified = !change.reached.timedOut && change.stored === relay.origin;
+
+    // (3) The window's states from the change until the checks go quiet — the
+    // render, then the landing — then its ↻, which draws the line.
+    if (verified) await waitForNameChecks(cx, changeIdx, { ms: 90000, quietMs: 3000 });
+    const landing = authorLanding((await authorRecord(cx)).filter((s) => s.t >= changeAt), rName);
+    await cx.eval(`${authorBarJs(rKey)}.querySelector('[aria-label="refresh this author"]').click()`, true);
+    const lineDrawn = await cx.waitFor(`(${authorNameRowJs(rKey)}).line !== null`, 'the author window\'s line after ↻', 30000)
+      .then(() => true, () => false);
+    const refreshed = await cx.eval(authorNameRowJs(rKey));
+    const snaps = (await authorRecord(cx, true)).filter((s) => s.t >= changeAt);
+    recording = false;
+    const refreshOk = lineDrawn && refreshed.state === 'handle' && refreshed.text === '@' + rName && refreshed.clay && refreshed.line === NAME_LINE;
+    const edits = relay.edits['owner-fakebox'] - editsBefore;
+    const checks = nameChecksFromRelayLog(relay.log, changeAt, relay.fakeBoxId);
+    const runs = tipRunsFromRelayLog(relay.log, changeAt, { checks });
+
+    // (4) Back to A: the window drawn again, its handle ink and no line.
+    const back = await leaveNamesRelay(cx, ctx);
+    onRelay = false;
+    const inkBack = await cx.waitFor(inkOnA, 'R\'s author window in ink again on A', 30000).then(() => true, () => false);
+    const backRow = await cx.eval(authorNameRowJs(rKey));
+    record('27d', verified && landing.ok && refreshOk && back.ok && inkBack,
+      `relay owner-fakebox edits=${edits} (made-up box ${relay.fakeBoxId.slice(0, 12)}…); ` +
+      `R's author window ${placed.opened ? 'opened from R\'s card' : 'open'}${placed.moved ? ', moved to a column of its own' : ', alone in its column'}; ` +
+      `change: stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}, verified=${verified}; ` +
+      `the run saw: ${landing.seen}, ok=${landing.ok}; ` +
+      `after ↻: ${JSON.stringify(refreshed.text)} ${refreshed.clay ? 'clay' : 'ink'}, line ${JSON.stringify(refreshed.line)}, ok=${refreshOk}; ` +
+      `the name row's states from the change: ${snapsSeen(snaps, changeAt)}; ` +
+      `the made-up box's checks (the relay's log): ${checksSeen(checks)}; tip runs through the relay: ${runsSeen(runs, changeAt)}; ` +
+      `back on A: ${back.detail}; the name row ${JSON.stringify(backRow.text)} ${backRow.clay ? 'clay' : 'ink'}, line ${JSON.stringify(backRow.line)}, ok=${back.ok && inkBack}`);
+  } catch (e) {
+    if (recording) await authorRecord(cx, true).catch(() => {});
+    record('27d', false, `error: ${String(e)}`);
+    if (onRelay) {
+      await blankNodeAndAwaitVerified(cx).catch((err) => console.error(`[vn] 27d: blank back to A failed: ${String(err)}`));
+    }
+  }
+}
+
+const NAME_SEND_ARMS = [
+  {
+    // Another key over S's real box: the box proves and its owner is not the
+    // answer's — unproven, refused, no prompt. One press is one check.
+    step: '28a',
+    mode: 'name-owner',
+    presses: 1,
+    staleAnchor: false,
+  },
+  {
+    // A made-up box, pressed against the anchor the node change wrote once A
+    // has mined past it: the first check `unchecked`, one tip run asked, the
+    // retry against the fresh anchor `absent` — refused, no prompt. A block
+    // landing inside the retry reads *too new to check yet*, pressed again, up
+    // to five presses.
+    step: '28b',
+    mode: 'name-fakebox',
+    presses: 5,
+    staleAnchor: true,
+  },
+];
+
+// One press of the send row's `send` with `handle` and NAMES_SEND_AMOUNT typed,
+// and a second press in the same instant, while the first press's check runs —
+// a press during it does nothing (WEB_INTERFACE → The wallet window → "The
+// `send` row"). Answers the flight's text at the second press, the row's
+// answer, the flight's texts from before the press on, the prompt targets
+// opened since it, the `/credits/transfer` requests, and the press's and the
+// answer's places in the log and on the clock.
+async function pressSendTwice(cx, handle) {
+  await recordFlightTexts(cx);
+  const promptsBefore = await promptTargetIds();
+  const pressIdx = cx.events.length;
+  const pressAt = Date.now();
+  const second = await cx.eval(`(() => {
+    const form = document.querySelector('.credits-field form.credits-form');
+    const inputs = form.querySelectorAll('input');
+    inputs[0].value = ${JSON.stringify(handle)};
+    inputs[1].value = ${JSON.stringify(NAMES_SEND_AMOUNT)};
+    const send = () => [...document.querySelectorAll('.credits-field form.credits-form button')].find((b) => b.textContent.trim() === 'send') ?? null;
+    send().click();
+    const flight = (document.querySelector('.credits-field .credits-flight')?.textContent ?? '').trim();
+    const again = send();
+    if (again !== null) again.click();
+    return { flight, pressed: again !== null };
+  })()`, true);
+  await cx.waitFor(SEND_ANSWERED_JS, 'the send row\'s answer', 90000);
+  const answerIdx = cx.events.length;
+  const answerAt = Date.now();
+  const answer = await cx.eval(SEND_ANSWER_JS);
+  // A refused press opens no prompt — the targets read after a settle.
+  await sleep(3000);
+  const prompts = (await jsonList())
+    .filter((t) => t.url.includes('prompt.html?id=') && !promptsBefore.has(t.id))
+    .map((t) => t.url.replace(/^.*\//, ''));
+  const texts = await takeFlightTexts(cx);
+  const transfers = cx.events.slice(pressIdx).filter((ev) =>
+    ev.method === 'Network.requestWillBeSent' && ev.params.request.url.includes('/credits/transfer')).length;
+  return { second, answer, prompts, texts, transfers, pressIdx, answerIdx, pressAt, answerAt };
+}
+
+// A page expression true once the send row has answered a press: no check
+// running, and a key beneath the field or a refusal in the row's line.
+const SEND_ANSWERED_JS = `(() => {
+  if ((document.querySelector('.credits-field .credits-flight')?.textContent ?? '').trim().startsWith('checking ')) return false;
+  const form = document.querySelector('.credits-field form.credits-form');
+  const key = form?.querySelector('.resolved-key');
+  const refusal = form?.querySelector('.pf-refusal');
+  return (!!key && !key.hidden && key.textContent.trim() !== '') || (!!refusal && !refusal.hidden && refusal.textContent.trim() !== '');
+})()`;
+
+// A page expression reading the send row's answer — the key beneath the field,
+// the refusal, and whether an unlock is owed.
+const SEND_ANSWER_JS = `(() => {
+  const form = document.querySelector('.credits-field form.credits-form');
+  const key = form.querySelector('.resolved-key');
+  const refusal = form.querySelector('.pf-refusal');
+  return {
+    key: key.hidden || key.textContent.trim() === '' ? null : key.textContent.trim(),
+    refusal: refusal.hidden ? null : refusal.textContent.trim(),
+    unlock: !!document.querySelector('.credits-field .card-unlock form.pf input[type="password"]'),
+  };
+})()`;
+
+// One send arm — 28a · 28b: (1) the mode, (2) the node row set to the relay,
+// (3) the send row pressed twice with S's handle typed — for 28b once A has
+// mined past the height the anchor was written at — and pressed again while a
+// block landing inside the retry reads *too new*, (4) back to A, where the
+// send to S's handle proves and its prompt is declined.
+async function runNameSendArm(cx, relay, arm, { sHeld }) {
+  const handle = '@' + sHeld.name;
+  const lie = `this node's answer for ${handle} did not verify.`;
+  const young = `${handle} is too new to check yet.`;
+  const checking = `checking ${handle}…`;
+  let onRelay = false;
+  try {
+    const editsBefore = relay.edits[arm.mode];
+    // (1) The mode — another key as the owner, or a fresh made-up box.
+    relay.mode = arm.mode;
+    if (arm.mode === 'name-fakebox') relay.fakeBoxId = randomBytes(32).toString('hex');
+    const boxId = arm.mode === 'name-fakebox' ? relay.fakeBoxId : sHeld.boxId.toLowerCase();
+
+    // (2) The node row set to the relay.
+    const changeAt = Date.now();
+    const changeIdx = cx.events.length;
+    onRelay = true;
+    const change = await changeNodeAndAwait(cx, relay.origin, cornerVerified,
+      `led fresh + verified across N nodes (reading the relay, ${arm.step})`, 60000);
+    const verified = !change.reached.timedOut && change.stored === relay.origin;
+    if (!verified) {
+      const back = await leaveSendRelay(cx, { sHeld });
+      onRelay = false;
+      record(arm.step, false, `relay ${arm.mode}: the corner never read verified on the relay — stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}; back on A: ${back.detail}`);
+      return;
+    }
+
+    // (3) The send row, once the checks the change began have gone quiet; for
+    // 28b, the anchor made stale — A mines past the height it stood at.
+    await raiseWindow(cx, 'open wallet');
+    await cx.waitFor(`!!document.querySelector('.credits-field form.credits-form')`, `the send form ${arm.step}`, 60000);
+    await waitForNameChecks(cx, changeIdx, { ms: 90000, quietMs: 3000 });
+    let stale = null;
+    if (arm.staleAnchor) {
+      // A tip run begun while A mines — the ten-minute clock — writes a fresh
+      // anchor, and the wait begins again from the height after it.
+      for (let waits = 1; waits <= 3; waits++) {
+        const runsBefore = tipRunsFromRelayLog(relay.log, changeAt).length;
+        const standing = await currentHeight(NODE);
+        stale = { standing, reached: await waitForHeight(NODE, standing + 1, 180000), waits };
+        if (stale.reached === null || tipRunsFromRelayLog(relay.log, changeAt).length === runsBefore) break;
+      }
+    }
+    const presses = [];
+    while (presses.length < arm.presses) {
+      const p = await pressSendTwice(cx, handle);
+      presses.push(p);
+      if (p.answer.refusal !== young) break;
+    }
+    const checks = nameChecksFromRelayLog(relay.log, changeAt, boxId);
+    const runs = tipRunsFromRelayLog(relay.log, changeAt, { checks });
+    const seen = presses.map((p) => {
+      const lookups = nameRequestsSince(cx.events, p.pressIdx, { handle: sHeld.name, endIdx: p.answerIdx }).handleLookups;
+      const own = checks.filter((c) => c.at >= p.pressAt && c.at <= p.answerAt);
+      const asked = runs.filter((r) => r.why === 'asked' && r.at >= p.pressAt && r.at <= p.answerAt).length;
+      const ok = p.second.pressed && p.second.flight === checking && p.texts.includes(checking)
+        && p.answer.key === null && p.prompts.length === 0 && p.transfers === 0
+        && lookups >= 1 && lookups === own.length;
+      return { own, asked, ok, line:
+        `flight at the second press ${JSON.stringify(p.second.flight)} (pressed=${p.second.pressed}), texts ${JSON.stringify(p.texts)}, ` +
+        `answer ${JSON.stringify(p.answer.refusal ?? p.answer.key)}, key beneath ${JSON.stringify(p.answer.key)}, ` +
+        `/usernames/${sHeld.name} ×${lookups}, checks ${checksSeen(own)}, tip runs asked ${asked}, ` +
+        `prompts opened ${JSON.stringify(p.prompts)}, /credits/transfer ×${p.transfers}, ok=${ok}` };
+    });
+    const last = presses[presses.length - 1];
+    const endOk = last !== undefined && last.answer.refusal === lie;
+    // 28b's path — the first press's first check against the stale anchor
+    // `unchecked`, one tip run asked, the retry `absent`.
+    const first = seen[0];
+    const pathOk = !arm.staleAnchor || (first !== undefined && first.own[0]?.status === 'unchecked' && first.asked === 1
+      && (seen.length > 1 || first.own[1]?.status === 'absent'));
+    const corner = await readCorner(cx);
+    const cornerOk = cornerVerified(corner);
+    const edits = relay.edits[arm.mode] - editsBefore;
+
+    // (4) Back to A — the send to S's handle proves there.
+    const back = await leaveSendRelay(cx, { sHeld });
+    onRelay = false;
+    record(arm.step, seen.every((s) => s.ok) && endOk && pathOk && cornerOk && back.ok,
+      `relay ${arm.mode} edits=${edits}${arm.mode === 'name-fakebox' ? ` (made-up box ${relay.fakeBoxId.slice(0, 12)}…)` : ` (owner ${DEVNET_FAUCET_KEY.slice(0, 12)}… over S's box ${sHeld.boxId.slice(0, 12)}…)`}; ` +
+      `change: stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}; ` +
+      (stale === null ? '' : `the anchor made stale: A stood at ${stale.standing} after the ${stale.waits === 1 ? 'change\'s checks' : `tip run during wait ${stale.waits - 1}`}, mined to ${stale.reached ?? 'nothing within 3 min'}; `) +
+      `typed ${JSON.stringify(handle)} and ${NAMES_SEND_AMOUNT} $NOTIS; ` +
+      seen.map((s, i) => `press ${i + 1}: ${s.line}`).join(' | ') + '; ' +
+      `ends ${JSON.stringify(last?.answer.refusal ?? null)}, ok=${endOk}${arm.staleAnchor ? `, the path unchecked → asked run → absent ok=${pathOk}` : ''}; ` +
+      `tip runs through the relay: ${runsSeen(runs, changeAt)}; ` +
+      `corner led=${corner.ledClass}, title=${JSON.stringify(corner.title)}, ok=${cornerOk}; ` +
+      `back on A: ${back.detail}, ok=${back.ok}`);
+  } catch (e) {
+    record(arm.step, false, `error: ${String(e)}`);
+    if (onRelay) {
+      await blankNodeAndAwaitVerified(cx).catch((err) => console.error(`[vn] ${arm.step}: blank back to A failed: ${String(err)}`));
+    }
+  }
+}
+
+// Step (4) of a send arm — the node row blanked back to A, and the send to S's
+// handle proving there: S's key beneath the field and on the prompt's `to:`
+// line, the prompt declined, nothing sent.
+async function leaveSendRelay(cx, { sHeld }) {
+  const blankIdx = cx.events.length;
+  const blank = await blankNodeAndAwaitVerified(cx);
+  const corner = `led=${blank.reading.ledClass}, title=${JSON.stringify(blank.reading.title)}`;
+  if (blank.reached.timedOut) return { ok: false, detail: `${corner} — A never read verified` };
+  await raiseWindow(cx, 'open wallet');
+  await cx.waitFor(`!!document.querySelector('.credits-field form.credits-form')`, 'the send form back on A', 60000);
+  await waitForNameChecks(cx, blankIdx, { ms: 90000, quietMs: 3000 });
+  const handle = '@' + sHeld.name;
+  const promptsBefore = await promptTargetIds();
+  const pressIdx = cx.events.length;
+  await cx.eval(`(() => {
+    const form = document.querySelector('.credits-field form.credits-form');
+    const inputs = form.querySelectorAll('input');
+    inputs[0].value = ${JSON.stringify(handle)};
+    inputs[1].value = ${JSON.stringify(NAMES_SEND_AMOUNT)};
+    [...form.querySelectorAll('button')].find((b) => b.textContent.trim() === 'send').click();
+  })()`, true);
+  await cx.waitFor(SEND_ANSWERED_JS, 'the send row\'s answer back on A', 90000);
+  const answer = await cx.eval(SEND_ANSWER_JS);
+  if (answer.unlock) {
+    await cx.eval(`(() => {
+      const form = document.querySelector('.credits-field .card-unlock form.pf');
+      form.querySelector('input[type="password"]').value = ${JSON.stringify(PASSPHRASE)};
+      form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    })()`, true);
+  }
+  const { prompt, lines, declined } = answer.key !== null
+    ? await readAndDeclinePrompt(promptsBefore, 'back on A')
+    : { prompt: null, lines: null, declined: false };
+  const notSent = await cx.waitFor(`document.querySelector('.credits-field .credits-flight .stage')?.textContent?.trim() === 'send not sent.'`,
+    'send not sent back on A', 30000).then(() => true, () => false);
+  const transfers = cx.events.slice(pressIdx).filter((ev) =>
+    ev.method === 'Network.requestWillBeSent' && ev.params.request.url.includes('/credits/transfer')).length;
+  const promptKey = lines?.find((l) => l.cls === 'target')?.value ?? null;
+  return {
+    ok: answer.key === S_PUB && answer.refusal === null && promptKey === S_PUB && declined && notSent && transfers === 0,
+    detail: `${corner}; the send to ${handle}: key beneath ${JSON.stringify(answer.key)}, refusal ${JSON.stringify(answer.refusal)}, ` +
+      `prompt ${prompt === null ? 'none opened' : prompt.url.replace(/^.*\//, '')} to: S's key=${promptKey === S_PUB}, declined=${declined}, ` +
+      `send not sent=${notSent}, /credits/transfer ×${transfers}`,
+  };
+}
+
+// The texts the send row's flight place shows, in order, from now — an observer
+// on the page, so a line that stands for milliseconds is read as surely as one
+// that stands for seconds (WEB_INTERFACE → The wallet window → "The `send`
+// row"). `takeFlightTexts` answers them and stops the observer.
+async function recordFlightTexts(cx) {
+  await cx.eval(`(() => {
+    window.__flightTexts = [];
+    const note = () => {
+      const text = (document.querySelector('.credits-field .credits-flight')?.textContent ?? '').trim();
+      const last = window.__flightTexts[window.__flightTexts.length - 1];
+      if (last === undefined || last !== text) window.__flightTexts.push(text);
+    };
+    window.__flightObserver?.disconnect();
+    window.__flightObserver = new MutationObserver(note);
+    window.__flightObserver.observe(document.body, { subtree: true, childList: true, characterData: true });
+    note();
+    return true;
+  })()`);
+}
+
+async function takeFlightTexts(cx) {
+  return cx.eval(`(() => { window.__flightObserver?.disconnect(); return window.__flightTexts ?? []; })()`);
+}
+
+// The ids of the prompt windows open now.
+async function promptTargetIds() {
+  return new Set((await jsonList()).filter((t) => t.url.includes('prompt.html?id=')).map((t) => t.id));
+}
+
+// The prompt window a send opened — the target new since `promptsBefore` whose
+// URL is the extension's `prompt.html?id=` — its lines read and `cancel`
+// pressed (WEB_INTERFACE → The extension). The target is null where none opened
+// within 30 s.
+async function readAndDeclinePrompt(promptsBefore, what) {
+  let prompt = null;
+  const t0 = Date.now();
+  while (prompt === null && Date.now() - t0 < 30000) {
+    prompt = (await jsonList()).find((t) => t.url.includes(`chrome-extension://${EXT_ID}/prompt.html?id=`) && !promptsBefore.has(t.id) && t.webSocketDebuggerUrl) ?? null;
+    if (prompt === null) await sleep(200);
+  }
+  let lines = null;
+  let declined = false;
+  if (prompt !== null) {
+    const cxp = await openSession(prompt.webSocketDebuggerUrl);
+    try {
+      await cxp.waitFor(`!!document.querySelector('.prompt .line.target')`, `the prompt's to: line ${what}`, 15000);
+      lines = await cxp.eval(`[...document.querySelectorAll('.prompt .line')].map((l) => ({
+        cls: [...l.classList].filter((c) => c !== 'line').join(' '),
+        text: (l.textContent ?? '').replace(/\\s+/g, ' ').trim(),
+        label: l.querySelector('.target-label')?.textContent ?? null,
+        value: l.querySelector('.target-value')?.textContent ?? null,
+      }))`);
+      await cxp.eval(`document.querySelector('.prompt button.btn-ghost').click()`, true);
+      declined = true;
+    } finally {
+      await sleep(1500);
+      try { cxp.s.close(); } catch {}
+    }
+  }
+  return { prompt, lines, declined };
+}
+
 // Step 29 — the honest send to a handle (WEB_INTERFACE → The wallet window →
 // "The `send` row", → The extension → "The verified names"). R types S's
 // handle and an amount in the wallet's `send` row and presses `send`: the row
@@ -2994,21 +3937,9 @@ async function runNamesStep29(cx, sHeld) {
   try {
     await raiseWindow(cx, 'open wallet');
     await cx.waitFor(`!!document.querySelector('.credits-field form.credits-form')`, 'the send form 29', 60000);
-    await cx.eval(`(() => {
-      window.__flightTexts = [];
-      const note = () => {
-        const text = (document.querySelector('.credits-field .credits-flight')?.textContent ?? '').trim();
-        const last = window.__flightTexts[window.__flightTexts.length - 1];
-        if (last === undefined || last !== text) window.__flightTexts.push(text);
-      };
-      window.__flightObserver?.disconnect();
-      window.__flightObserver = new MutationObserver(note);
-      window.__flightObserver.observe(document.body, { subtree: true, childList: true, characterData: true });
-      note();
-      return true;
-    })()`);
+    await recordFlightTexts(cx);
     const pressIdx = cx.events.length;
-    const promptsBefore = new Set((await jsonList()).filter((t) => t.url.includes('prompt.html?id=')).map((t) => t.id));
+    const promptsBefore = await promptTargetIds();
     await cx.eval(`(() => {
       const form = document.querySelector('.credits-field form.credits-form');
       const inputs = form.querySelectorAll('input');
@@ -3046,34 +3977,11 @@ async function runNamesStep29(cx, sHeld) {
       })()`, true);
     }
 
-    // The prompt — a window opened for this send, found by its URL.
-    let prompt = null;
-    if (answer.key !== null) {
-      const t0 = Date.now();
-      while (prompt === null && Date.now() - t0 < 30000) {
-        prompt = (await jsonList()).find((t) => t.url.includes(`chrome-extension://${EXT_ID}/prompt.html?id=`) && !promptsBefore.has(t.id) && t.webSocketDebuggerUrl) ?? null;
-        if (prompt === null) await sleep(200);
-      }
-    }
-    let lines = null;
-    let declined = false;
-    if (prompt !== null) {
-      const cxp = await openSession(prompt.webSocketDebuggerUrl);
-      try {
-        await cxp.waitFor(`!!document.querySelector('.prompt .line.target')`, 'the prompt\'s to: line 29', 15000);
-        lines = await cxp.eval(`[...document.querySelectorAll('.prompt .line')].map((l) => ({
-          cls: [...l.classList].filter((c) => c !== 'line').join(' '),
-          text: (l.textContent ?? '').replace(/\\s+/g, ' ').trim(),
-          label: l.querySelector('.target-label')?.textContent ?? null,
-          value: l.querySelector('.target-value')?.textContent ?? null,
-        }))`);
-        await cxp.eval(`document.querySelector('.prompt button.btn-ghost').click()`, true);
-        declined = true;
-      } finally {
-        await sleep(1500);
-        try { cxp.s.close(); } catch {}
-      }
-    }
+    // The prompt — a window opened for this send, found by its URL, read and
+    // declined.
+    const { prompt, lines, declined } = answer.key !== null
+      ? await readAndDeclinePrompt(promptsBefore, '29')
+      : { prompt: null, lines: null, declined: false };
 
     // The ending, and the log since the press.
     const notSent = await cx.waitFor(`document.querySelector('.credits-field .credits-flight .stage')?.textContent?.trim() === 'send not sent.'`,
@@ -3085,10 +3993,9 @@ async function runNamesStep29(cx, sHeld) {
         flight: (document.querySelector('.credits-field .credits-flight')?.textContent ?? '').trim(),
         to: inputs[0]?.value ?? null,
         amount: inputs[1]?.value ?? null,
-        texts: window.__flightTexts,
       };
     })()`);
-    await cx.eval(`window.__flightObserver?.disconnect(); true`);
+    const texts = await takeFlightTexts(cx);
     // A send is a `/credits/transfer` to any node.
     const transfers = cx.events.slice(pressIdx).filter((ev) =>
       ev.method === 'Network.requestWillBeSent' && ev.params.request.url.includes('/credits/transfer')).length;
@@ -3101,7 +4008,7 @@ async function runNamesStep29(cx, sHeld) {
         : `claimed at block ${sHeld.claimedAtBlock}, proofs at ${JSON.stringify(heights)}`;
 
     const checking = `checking ${handle}…`;
-    const checkingOk = after.texts.includes(checking);
+    const checkingOk = texts.includes(checking);
     const keyOk = answer.key === S_PUB && answer.refusal === null;
     const target = lines?.find((l) => l.cls === 'target') ?? null;
     const promptKey = target?.value ?? null;
@@ -3109,7 +4016,7 @@ async function runNamesStep29(cx, sHeld) {
     const declinedOk = declined && notSent && transfers === 0 && after.to === handle && after.amount === NAMES_SEND_AMOUNT;
     const logOk = reqs.handleLookups > 0 && reqs.boxProofs.length > 0;
     record(29, checkingOk && keyOk && promptOk && declinedOk && logOk,
-      `typed ${JSON.stringify(handle)} and ${NAMES_SEND_AMOUNT} $NOTIS; the flight's texts in order ${JSON.stringify(after.texts)} — ${JSON.stringify(checking)} read=${checkingOk}; ` +
+      `typed ${JSON.stringify(handle)} and ${NAMES_SEND_AMOUNT} $NOTIS; the flight's texts in order ${JSON.stringify(texts)} — ${JSON.stringify(checking)} read=${checkingOk}; ` +
       `beneath the field: ${JSON.stringify(answer.key)}, refusal ${JSON.stringify(answer.refusal)}, unlock owed=${answer.unlock}, S's key=${answer.key === S_PUB}; ` +
       `prompt ${prompt === null ? 'none opened' : prompt.url.replace(/^.*\//, '')}: lines ${JSON.stringify((lines ?? []).map((l) => `${l.cls}:${l.text}`))}, to: key equals S's public key=${promptKey === S_PUB}; ` +
       `declined=${declined}, flight ${JSON.stringify(after.flight)}, /credits/transfer requests=${transfers}, form kept ${JSON.stringify(after.to)} / ${JSON.stringify(after.amount)}; ` +
