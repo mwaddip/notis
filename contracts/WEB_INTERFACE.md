@@ -1362,7 +1362,8 @@ row**, the burn's pattern: *send 12.5 $NOTIS to @bob · <prefix>?* — the handl
 key it resolved to, in mono, the prefix the identity display renders — with `send` and `keep`, focus on `keep`, Esc
 keeps; **in the extension there is no confirm row**: the handle is checked against the verified chain first (→ The
 extension → "The verified names") — **the row reading *checking @bob…* in the flight's place while the check runs, and
-a press during it doing nothing**, so one press is one check and at most one prompt — and once it proves, `send` shows
+a press during it doing nothing**, so one press is one check and at most one prompt; a press takes away the ending the
+send before it left in the flight's place — and once it proves, `send` shows
 the key the proven box names beneath the field, in mono, and goes to the flow — the prompt is the confirmation (→ The
 extension) — the build told apart by the
 identity module implementing `policy`, the predicate the policy row reads. A locked identity unlocks in place
@@ -1383,6 +1384,9 @@ checked.* (a check that ends without an answer — a check is total, so only a d
 values, nothing signed. **A press belongs to the node and the key it was made under**: a change of either ends it — its
 check, its answer and an unlock it owed — and nothing of it lands. In the extension the prompt is the one
 confirmation, because credits always prompt (→ The extension).
+
+> ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — a press leaves the ending of the send before it standing in
+> the flight's place beneath its own answer.
 
 ### The settings window *(read surface)*
 
@@ -1553,7 +1557,8 @@ coarse pointer a 36px hit box by padding a negative margin absorbs.
 **`@author:<64hex>`** — an `@`-window like `@profile`, opened from an identity's prefix by the placement
 rule every window follows, raised rather than duplicated, persisted in the arrangement (`isWindowId`
 accepts the prefix with 64 hex). The bar reads `author · <prefix>` — `author · @Name` when the subject holds a
-name (→ The identity display) — and carries no spine. `↻` is live and re-reads the endorsers page and the
+name (→ The identity display), in every column holding the window, stacked or focused, as its read lands, the way a
+thread's bar reads its load — and carries no spine. `↻` is live and re-reads the endorsers page and the
 subject's name (`GET /usernames?owner=`). Rows:
 
 ```
@@ -1563,6 +1568,9 @@ endorsers    N vouches, then one row per voucher — their identity, following n
 your vouch   vouch · vouched since block N · unvouch — or the one-line reason the reader cannot
 posts        a word that opens the author-posts window beside this one
 ```
+
+> ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — a stacked author window's bar keeps the key prefix when its
+> subject's name read lands; only a focused one redraws.
 
 No standing and no balance: an author's window shows neither (→ The profile window, → The wallet window). **In the
 extension a clay handle in the `name` row carries one clay line beneath it** — *this node's answer for this name did not
