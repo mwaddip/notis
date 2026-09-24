@@ -372,11 +372,15 @@ export class App {
   // wallet open, the wallet's ↻, an identity or node change and a verified tip
   // while the wallet is open, and each landing that moves the balance;
   // creditGrantView is a faucet transfer in flight or one that lapsed; sendFlight
-  // is the transient ending for the row (the pending state lives in the ledger).
+  // is the transient ending for the row (the pending state lives in the ledger);
+  // sendCheck is the handle a press's check runs for in the extension, `@` and
+  // the name as typed, from the press to its answer — the row reads it in the
+  // flight's place, and a press reads it and does nothing (→ "The `send` row").
   private walletCredits: CreditsResult | null = null;
   private walletCreditsStamp: ListingStamp | null = null;
   private creditGrantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null = null;
   private sendFlight: Flight | null = null;
+  private sendCheck: string | null = null;
 
   // Optional in the extension build — the App's own hook, called synchronously
   // from `askFaucet` / `askFaucetCredits` before any await, so the browser's
@@ -472,9 +476,11 @@ export class App {
       burnUsername: () => void this.burnUsername(),
       // The wallet's send row (WEB_INTERFACE → The wallet window → "The `send`
       // row"). resolveRecipient is the handle → holder read the form runs at
-      // the press; send is the credits transfer flow; askFaucetCredits is the
-      // faucet's $NOTIS step (→ The faucet step).
+      // the press; checkingRecipient is whether a press's check runs; send is
+      // the credits transfer flow; askFaucetCredits is the faucet's $NOTIS step
+      // (→ The faucet step).
       resolveRecipient: (name) => this.resolveRecipient(name),
+      checkingRecipient: () => this.sendCheck !== null,
       send: (toHex, toName, amount) => void this.send(toHex, toName, amount),
       askFaucetCredits: () => void this.askFaucetCredits(),
       // The extension's identity exposes both policy and setPolicy; the in-page
@@ -698,6 +704,7 @@ export class App {
       creditGrant: this.creditGrantView,
       sendFlight: this.sendFlight,
       pendingSend: pendingSendEntries(this.ledger.all())[0] ?? null,
+      sendCheck: this.sendCheck,
       // The web build's identity module has no `policy`; the extension's proxy
       // has (WEB_INTERFACE → The profile window). `!this.idm.policy` is
       // therefore the same predicate the sign-each-rep-action row renders on:
@@ -2914,36 +2921,56 @@ export class App {
   }
 
   /** A send to a handle is checked at the press (WEB_INTERFACE → The extension →
-   *  "The verified names", → The wallet window → "The `send` row"): the typed
-   *  handle against the anchor standing — with none, the anchor a tip run
-   *  writes — and a check that ends `unchecked` once more against the anchor of
-   *  one tip run. The answer is the proven result's (recipientVerdict), never
-   *  the node's word. A press left with no anchor to check against, whose check
-   *  throws, or whose checks a node change moved past, is *can't be checked*. */
+   *  "The verified names", → The wallet window → "The `send` row"). From the
+   *  press to its answer sendCheck holds the handle as typed — the row reads
+   *  *checking @bob…* in the flight's place, and a press does nothing — the row
+   *  moving in place as the check begins and as it ends, before the answer goes
+   *  back to the form. The answer is the proven result's (recipientVerdict),
+   *  never the node's word. A press left with no anchor to check against is
+   *  *can't be checked — the chain is not verified.*, and so is one a node
+   *  change moved past: the change ends the press's check with the generation
+   *  it moves, the line going with it. One whose check throws is *can't be
+   *  checked.* */
   private async proveRecipient(verifier: NamesVerifier, name: string): Promise<ResolvedRecipient | { refusal: string }> {
     const gen = this.namesGen;
     const handle = '@' + name;
-    const anchor = this.tipAnchor ?? (await this.tipRunForPress())?.anchor ?? null;
-    let result = await this.checkHandle(verifier, name, anchor);
-    if (result !== null && result.status === 'unchecked') {
-      result = await this.checkHandle(verifier, name, (await this.tipRunForPress())?.anchor ?? null);
-    }
-    if (result === null || gen !== this.namesGen) {
-      return { refusal: `${handle} can't be checked — the chain is not verified.` };
-    }
+    this.sendCheck = handle;
+    this.renderCreditsRowInPlace();
+    const result = await this.checkRecipient(verifier, name);
+    // A node change ended this check already, and the row's check may be a
+    // later press's.
+    if (gen !== this.namesGen) return { refusal: `${handle} can't be checked — the chain is not verified.` };
+    this.sendCheck = null;
+    this.renderCreditsRowInPlace();
+    if (result === 'no-anchor') return { refusal: `${handle} can't be checked — the chain is not verified.` };
+    if (result === 'threw') return { refusal: `${handle} can't be checked.` };
     return recipientVerdict(result, handle);
   }
 
-  /** One check of a typed handle at the reading node, or null with no anchor to
-   *  check it against. A check is total, so a rejection is the seam's own
-   *  failure — logged, and no result. */
-  private async checkHandle(verifier: NamesVerifier, name: string, anchor: Anchor | null): Promise<NameResult | null> {
-    if (anchor === null) return null;
+  /** The press's check: the typed handle against the anchor standing — with
+   *  none, the anchor a tip run writes — and a check that ends `unchecked` once
+   *  more against the anchor of one tip run. Answers the last check's result. */
+  private async checkRecipient(verifier: NamesVerifier, name: string): Promise<NameResult | 'no-anchor' | 'threw'> {
+    const anchor = this.tipAnchor ?? (await this.tipRunForPress())?.anchor ?? null;
+    const first = await this.checkHandle(verifier, name, anchor);
+    if (typeof first !== 'object' || first.status !== 'unchecked') return first;
+    return this.checkHandle(verifier, name, (await this.tipRunForPress())?.anchor ?? null);
+  }
+
+  /** One check of a typed handle at the reading node: its result, `no-anchor`
+   *  with no anchor to check it against, or `threw` — a check is total, so a
+   *  rejection is the seam's own failure, logged. */
+  private async checkHandle(
+    verifier: NamesVerifier,
+    name: string,
+    anchor: Anchor | null,
+  ): Promise<NameResult | 'no-anchor' | 'threw'> {
+    if (anchor === null) return 'no-anchor';
     try {
       return await verifier.run(prefs.node, { name }, anchor);
     } catch (e) {
       console.error(e);
-      return null;
+      return 'threw';
     }
   }
 
@@ -3252,7 +3279,10 @@ export class App {
    *  settled without a verdict. Every name check's result is the node
    *  before's answer: the results drop with the generation, so a batch in
    *  flight writes nothing more, and its flags clear before the re-render, which
-   *  draws every handle as it reads with no check (→ "The verified names"). */
+   *  draws every handle as it reads with no check (→ "The verified names"); a
+   *  send's check at the press ends with them, so the row re-renders with no
+   *  *checking* line and a press checks at the new node (→ The wallet window →
+   *  "The `send` row"). */
   private onReadingNodeChanged(): void {
     this.cornerGen += 1;
     this.cornerLastTip = null;
@@ -3269,6 +3299,7 @@ export class App {
     this.namesGen += 1;
     this.namesInFlight = false;
     this.namesMarked = null;
+    this.sendCheck = null;
     this.state.threads.clear();
     this.state.posts.clear();
     this.dropFeedRows();

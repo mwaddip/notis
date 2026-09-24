@@ -30,8 +30,11 @@ export type GrantView = { state: 'pending' } | { state: 'expired'; atHeight: num
 
 export interface WalletHandlers {
   // The send form and its resolution (WEB_INTERFACE → The wallet window →
-  // "The `send` row"). The App resolves an @handle to a key at the press.
+  // "The `send` row"). The App resolves an @handle to a key at the press, and
+  // answers checkingRecipient true while the extension's check of one runs — a
+  // press then does nothing, so one press is one check.
   resolveRecipient: (text: string) => Promise<ResolvedRecipient | { refusal: string }>;
+  checkingRecipient: () => boolean;
   send: (toHex: string, toName: string | null, amount: bigint) => void;
   askFaucetCredits: () => void;
   unlockIdentity: (passphrase: string) => Promise<void>;
@@ -41,13 +44,17 @@ export interface WalletCtx {
   identity: { pubKeyHex: string; locked: boolean } | null;
   // credits null before the first read; sendFlight is the transient ending;
   // pendingSend the ledger entry that survives a reload; creditGrant a faucet
-  // transfer in flight or one that lapsed. status.blockHeight is the tip the
-  // row's spendable-at-height filter reads (WEB_INTERFACE → The wallet).
+  // transfer in flight or one that lapsed; sendCheck the handle a press's
+  // check runs for, `@` and the name as typed, which the flight's place reads
+  // while it stands (WEB_INTERFACE → The wallet window → "The `send` row").
+  // status.blockHeight is the tip the row's spendable-at-height filter reads
+  // (WEB_INTERFACE → The wallet).
   status: StatusResult | null;
   credits: CreditsResult | null;
   creditGrant: GrantView | null;
   sendFlight: Flight | null;
   pendingSend: { toHex: string; toName: string | null; amount: bigint } | null;
+  sendCheck: string | null;
   // The send row's confirm — true on the web (the confirm row stands in the
   // form's slot), false in the extension (the prompt is the one confirmation —
   // WEB_INTERFACE → The wallet window → "The `send` row"). The App fills it
@@ -255,13 +262,18 @@ function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: Wallet
     formSlot.replaceChildren();
   }
 
-  // The pending line reads from the ledger — durable across a reload. The row
-  // renders it directly rather than through stageLine, which prints only
-  // "submitted" on that stage and would lose the amount and recipient
-  // (WEB_INTERFACE → The wallet window; the identity display's 16-glyph
-  // prefix, → The identity display).
+  // While a press's check runs the flight's place reads *checking @bob…* and
+  // nothing else — the handle as typed, in the flight line's element and voice
+  // (WEB_INTERFACE → The wallet window → "The `send` row"). The pending line
+  // reads from the ledger — durable across a reload. The row renders it
+  // directly rather than through stageLine, which prints only "submitted" on
+  // that stage and would lose the amount and recipient (WEB_INTERFACE → The
+  // wallet window; the identity display's 16-glyph prefix, → The identity
+  // display).
   const ps = ctx.pendingSend;
-  if (ps !== null) {
+  if (ctx.sendCheck !== null) {
+    flight.appendChild(el('div', 'stage', `checking ${ctx.sendCheck}…`));
+  } else if (ps !== null) {
     const who = ps.toName !== null ? '@' + ps.toName : shortHex(ps.toHex, 16);
     const l = el('div', 'stage');
     l.textContent = `${formatCredits(ps.amount)} $NOTIS to ${who} · submitted`;
@@ -275,10 +287,13 @@ function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: Wallet
   }
 
   // The `send` row stands while a box is spendable, and while a send's own
-  // line stands — its flight, the pending line, *sent* — so a send of the
-  // whole balance still reads its ending (WEB_INTERFACE → The wallet window
-  // → "The `send` row"). One predicate, read here.
-  toggleSendRow(field, spendable > 0n || ctx.pendingSend !== null || ctx.sendFlight !== null);
+  // line stands — its check, its flight, the pending line, *sent* — so a send
+  // of the whole balance still reads its ending (WEB_INTERFACE → The wallet
+  // window → "The `send` row"). One predicate, read here.
+  toggleSendRow(
+    field,
+    spendable > 0n || ctx.pendingSend !== null || ctx.sendFlight !== null || ctx.sendCheck !== null,
+  );
 }
 
 /** The send form — the recipient (a key or an @handle), the amount ($NOTIS
@@ -289,7 +304,8 @@ function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: Wallet
  *  App at the press; the reader's own key refuses in place. With `confirmInRow`
  *  the web build's confirm row stands next; without it, the extension takes the
  *  key beneath the field and calls `send` at once
- *  (WEB_INTERFACE → The wallet window → "in the extension there is no confirm row"). */
+ *  (WEB_INTERFACE → The wallet window → "in the extension there is no confirm row").
+ *  A press while the App checks a handle does nothing. */
 function sendForm(slot: HTMLElement, handlers: WalletHandlers, ctx: WalletCtx): void {
   const form = el('form', 'pf credits-form') as HTMLFormElement;
 
@@ -353,6 +369,10 @@ function sendForm(slot: HTMLElement, handlers: WalletHandlers, ctx: WalletCtx): 
   };
 
   const submitForm = async (): Promise<void> => {
+    // One press is one check: while a handle's check runs, a press does nothing
+    // — the refusal line, the fields and the key beneath them stand as they are
+    // (WEB_INTERFACE → The wallet window → "The `send` row").
+    if (handlers.checkingRecipient()) return;
     refusal.hidden = true;
     // Amount first — a bad number never asks the network for a handle.
     const amount = parseCredits(amountInput.value);

@@ -150,7 +150,9 @@ export interface RenderCtx {
   // reader's own /credits, null before the first read; creditGrant is a faucet
   // transfer in flight or one that lapsed; sendFlight is the transient ending;
   // pendingSend is the ledger's own send entry — the durable line that survives
-  // a reload. status is the last /status the App holds — its blockHeight is the
+  // a reload; sendCheck is the handle a press's check runs for in the
+  // extension, `@` and the name as typed, null while none runs (→ "The `send`
+  // row"). status is the last /status the App holds — its blockHeight is the
   // tip the balance row's spendable-at-height filter reads (WEB_INTERFACE → The
   // wallet).
   status: StatusResult | null;
@@ -158,6 +160,7 @@ export interface RenderCtx {
   creditGrant: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
   sendFlight: Flight | null;
   pendingSend: { toHex: string; toName: string | null; amount: bigint } | null;
+  sendCheck: string | null;
   // The wallet's send row confirm — true on the web build (the confirm row
   // stands), false in the extension (the prompt is the one confirmation —
   // WEB_INTERFACE → The wallet window → "in the web build, the confirm row",
@@ -246,9 +249,11 @@ export interface Handlers {
   burnUsername: () => void;
   // The wallet's send row (WEB_INTERFACE → The wallet window → "The `send`
   // row"). resolveRecipient is the handle → holder read the row's send form
-  // runs at the press; send is the credits transfer; askFaucetCredits is the
-  // faucet's $NOTIS step (→ The faucet step).
+  // runs at the press; checkingRecipient answers whether a press's check is
+  // running, when a press does nothing; send is the credits transfer;
+  // askFaucetCredits is the faucet's $NOTIS step (→ The faucet step).
   resolveRecipient: (name: string) => Promise<{ key: string; name: string | null } | { refusal: string }>;
+  checkingRecipient: () => boolean;
   send: (toHex: string, toName: string | null, amount: bigint) => void;
   askFaucetCredits: () => void;
   // The extension's binary sign policy (WEB_INTERFACE → The settings window).
