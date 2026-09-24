@@ -501,7 +501,9 @@ surface, against the anchor standing. **A check that ends `unchecked` asks for o
 result** — a block landed since the anchor, and a fresh anchor makes the next answer exact; a second `unchecked` waits
 for the next run. A clay pair is checked again at every verified run. One batch in flight, a trigger during it marking
 one more; a node change drops every result with the generation it bumps; a result under an older generation is
-dropped. **A check is total**, as a run is (→ "The verified figures"). **A send to a handle is checked at the press** (→ The wallet window): `proven` and `young` go to the flow,
+dropped; a tip run that ends `thin` or `refused` keeps them — each is a fact about the verified anchor it was proven at,
+and dropping one would turn a lie's clay back to ink while a second node is gone. **A check is total**, as a run is
+(→ "The verified figures"). **A send to a handle is checked at the press** (→ The wallet window): `proven` and `young` go to the flow,
 to the key the proven box names; `none` is *no one holds that name.*; `unchecked` takes its one tip run first; every
 other status refuses and nothing is signed; with no anchor the press asks for a tip run and waits for its verdict, and
 `thin` or `refused` refuses. **What it means**: a handle in ink stands beside the key whose box the verified chain holds
@@ -1576,9 +1578,14 @@ posts        a word that opens the author-posts window beside this one
 
 No standing and no balance: an author's window shows neither (→ The profile window, → The wallet window). **In the
 extension a clay handle in the `name` row carries one clay line beneath it** — *this node's answer for this name did not
-verify* — the element the figures' line is (→ The extension → "The verified names"); no other site grows a line.
+verify* — the element the figures' line is (→ The extension → "The verified names"); no other site grows a line. **The
+line is drawn with the window's render** — the window opening, its `↻`, a read that fills it — and never by a result
+alone: a result that lands after the window rendered turns the handle clay or ink in place and leaves the line and the
+rows beneath it where they stand until the next render, since a line that arrives or leaves unasked pushes the rows
+below it (`HOUSE_STYLE → Motion`).
 
-> ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — the `name` row renders the handle in ink in every build.
+> ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — a result that lands after the window rendered inserts or
+> removes the line beside the handle in place.
 
 **`vouch` is a word, and this row is the one place a vouch is cast**
 (`HOUSE_STYLE → Interaction`): a press on it vouches at once — no confirmation — with the stakes sentence
