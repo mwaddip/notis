@@ -465,7 +465,9 @@ height 0 — *the chain is too short to check yet · tip 0*; **17** *verified ac
 node per press, none unasked in twenty seconds; **17b** thirty presses reading A and thirty reading B under A's
 live miner, every one green; **18** B stopped — *only one node could be checked* — and green again once it
 rejoins; **19a** the row on the relay — *this node's proof did not verify*, the height clay, the feed still
-rendering; **19b** the row on C once A stands above it — *127.0.0.1:19740 holds more work than this node*; **19c**
+rendering; **19b** the row on C once A's proof out-scores C's fork — `resolveTip` over `[C, A]` read until C verifies,
+A wins and C's `behind` is `null`, since a fork a few blocks deep can tie A on the score and a tie keeps the reading
+node — *127.0.0.1:19740 holds more work than this node*; **19c**
 the row on D mined past 30 — *the nodes share no block to compare*; **20** the hosted web build — the first
 paragraph's title and no `/nipopow/` request. In a full run the block runs after step 16 on a session opened on
 the extension page live at that moment (step 15 closes the first one), and the browser-context arm runs last. The
