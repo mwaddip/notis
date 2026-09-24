@@ -1385,9 +1385,6 @@ values, nothing signed. **A press belongs to the node and the key it was made un
 check, its answer and an unlock it owed — and nothing of it lands. In the extension the prompt is the one
 confirmation, because credits always prompt (→ The extension).
 
-> ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — a press leaves the ending of the send before it standing in
-> the flight's place beneath its own answer.
-
 ### The settings window *(read surface)*
 
 **`@settings`** — an `@`-window opened from the header's `settings` control (→ The profile window), placed,
@@ -1568,9 +1565,6 @@ endorsers    N vouches, then one row per voucher — their identity, following n
 your vouch   vouch · vouched since block N · unvouch — or the one-line reason the reader cannot
 posts        a word that opens the author-posts window beside this one
 ```
-
-> ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — a stacked author window's bar keeps the key prefix when its
-> subject's name read lands; only a focused one redraws.
 
 No standing and no balance: an author's window shows neither (→ The profile window, → The wallet window). **In the
 extension a clay handle in the `name` row carries one clay line beneath it** — *this node's answer for this name did not
