@@ -756,8 +756,15 @@ script; deployed via `scripts/dagsocial-miner.service`):
    difficulty. ⚠ **`header.height` suffices only because the template is stable** — see
    *GET /mining/template*. If same-height rebuilds are ever reintroduced, height stops discriminating
    and the miner needs a real template identity
-4. `POST /mining/submit` (Bearer) with `{ height, powNonce }`
+4. `POST /mining/submit` (Bearer) with `{ height, powNonce }`. **A submit that fails in transit is retried with the
+   same nonce and height** — up to three attempts, a second apart — before the loop returns to the template: a found
+   nonce is a whole solve's work, and a transport failure (a refused or reset connection, a pooled socket the node
+   closed, a timeout) says nothing about the block. A `201` is the block; a `422` (stale, or the PoW refused) repolls at
+   once; any other status waits five seconds and repolls
 5. Repeat
+
+> ⚠ **AHEAD OF CODE (2026-09-24, the verified names)** — a submit that fails in transit throws the solved nonce away:
+> the loop backs off and solves the next template from nonce 0.
 
 ⚠ **The duty cycle sleeps *between* work windows, so `MINER_PCT` throttles hashing within a solve and
 does not pace the interval between blocks.** Where a solve finishes inside one window — devnet, at
