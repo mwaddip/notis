@@ -9,6 +9,7 @@ export {
   powHit,
   levelOfHit,
   level,
+  verifyEd25519,
   verifyValidatorSignature,
   verifyProtocolVersion,
   verifyTxProtocolVersion,

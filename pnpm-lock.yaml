@@ -158,6 +158,9 @@ importers:
       '@dagsocial/types':
         specifier: workspace:*
         version: link:../types
+      '@noble/curves':
+        specifier: ^2.2.0
+        version: 2.2.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
