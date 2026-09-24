@@ -29,8 +29,9 @@ import { renderKarmaField, renderInvitesRow, renderUsernameRow } from './view/pr
 import { renderCreditsRow, resetCreditsSendForm, type ResolvedRecipient } from './view/wallet';
 import { cornerState, renderCorner, CORNER_POLL_MS, type CornerState } from './view/corner';
 import type { TipVerdict } from './model/tip-verdict';
+import { namePair, nameIsClay } from './model/name-verdict';
 import type { Anchor } from './model/state';
-import type { Listing } from '@dagsocial/nipopow-client';
+import type { Listing, NameResult } from '@dagsocial/nipopow-client';
 import type { Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
@@ -340,6 +341,11 @@ export class App {
   // The reader's own name (WEB_INTERFACE → The identity display).
   private ownName: UsernameResult | null = null;
   private ownNameLoaded = false;
+  // The verified names (WEB_INTERFACE → The extension → "The verified names") —
+  // one check's result per key and name, held under namePair. Every handle on
+  // screen reads it through nameClay; a pair with no result reads as it reads
+  // without a verifier.
+  private nameChecks = new Map<string, NameResult>();
   private usernameFlight: Flight | null = null;
   private usernameInFlight: { kind: 'claim' | 'burn'; name: string } | null = null;
   // The wallet window (WEB_INTERFACE → The wallet window). walletCredits is the
@@ -658,6 +664,7 @@ export class App {
       canSignWithdraw: this.canSignWithdraw(),
       ownName: this.ownName,
       ownNameLoaded: this.ownNameLoaded,
+      nameClay: (key, name) => this.nameClay(key, name),
       usernameFlight: this.usernameFlight,
       pendingUsername: this.usernameInFlight ?? pendingUsernameEntry(this.ledger.all()),
       canSignClaim: this.canSignWithdraw(), // same predicate — a spendable box
@@ -722,6 +729,13 @@ export class App {
   private canAffordBurn(): boolean {
     if (this.profileKarma === null) return false;
     return BigInt(this.profileKarma.effective) >= USERNAME_BURN_PRICE;
+  }
+
+  /** Whether the handle a key and a name render as reads clay — the check held
+   *  for the pair, ink while none has decided it (WEB_INTERFACE → The extension
+   *  → "The verified names"). */
+  private nameClay(key: string, name: string): boolean {
+    return nameIsClay(this.nameChecks.get(namePair(key, name)));
   }
 
   private renderHeader(): void {
@@ -791,6 +805,9 @@ export class App {
       } else if (this.ownName) {
         profile.style.fontWeight = '600';
         profile.textContent = '@' + this.ownName.name;
+        // In the extension a handle the chain does not back is clay — the text
+        // alone, the same control (WEB_INTERFACE → The identity display).
+        if (this.nameClay(cur.pubKeyHex, this.ownName.name)) profile.classList.add('clay');
       } else {
         profile.style.fontFamily = 'var(--mono)';
         profile.textContent = shortHex(cur.pubKeyHex, 16);

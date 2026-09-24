@@ -537,3 +537,93 @@ describe('card — feed-shaped: like and link without reply or withdraw', () => 
     expect(c.querySelector('.linkbtn')).toBeNull();
   });
 });
+
+describe('card — a handle the chain does not back is clay', () => {
+  // WEB_INTERFACE → The identity display — in the extension a handle the chain
+  // does not back is clay: the text alone, the same control and handler, the
+  // same face, weight and size (→ The extension → "The verified names").
+  const AUTHOR = 'bb'.repeat(32);
+  const named = (name: string): PostJson => ({ ...confirmed(AUTHOR), authorName: name });
+  const clayFor = (key: string, name: string) => (k: string, n: string): boolean => k === key && n === name;
+
+  it('a clay pair: the who row\'s button carries clay beside what it carries — the same control, label and handler', () => {
+    const opened: string[] = [];
+    const c = card(named('Alice'), { onAuthor: (k) => opened.push(k), nameClay: clayFor(AUTHOR, 'Alice') });
+    const btn = c.querySelector('.who .handle') as HTMLElement;
+    expect(btn.tagName).toBe('BUTTON');
+    expect([...btn.classList]).toEqual(['handle', 'authorbtn', 'clay']);
+    expect(btn.textContent).toBe('@Alice');
+    expect(btn.getAttribute('aria-label')).toBe('open this author');
+    btn.click();
+    expect(opened).toEqual([AUTHOR]);
+  });
+
+  it('an ink pair renders as today — the button\'s classes are handle authorbtn alone', () => {
+    const c = card(named('Alice'), { onAuthor: () => {}, nameClay: () => false });
+    expect([...(c.querySelector('.who .handle') as HTMLElement).classList]).toEqual(['handle', 'authorbtn']);
+    const none = card(named('Alice'), { onAuthor: () => {} });
+    expect([...(none.querySelector('.who .handle') as HTMLElement).classList]).toEqual(['handle', 'authorbtn']);
+  });
+
+  it('the predicate is asked with the row\'s key and name, as the row carries them', () => {
+    const asked: Array<[string, string]> = [];
+    card({ ...named('MiXed_1'), author: AUTHOR.toUpperCase() }, { onAuthor: () => {}, nameClay: (k, n) => { asked.push([k, n]); return false; } });
+    expect(asked).toEqual([[AUTHOR.toUpperCase(), 'MiXed_1']]);
+  });
+
+  it('the span a card shows with no author control goes clay too, and an ink pair\'s span stays handle alone', () => {
+    const clay = card(named('Bob'), { nameClay: clayFor(AUTHOR, 'Bob') }).querySelector('.who .handle') as HTMLElement;
+    expect(clay.tagName).toBe('SPAN');
+    expect([...clay.classList]).toEqual(['handle', 'clay']);
+    expect(clay.textContent).toBe('@Bob');
+    const ink = card(named('Bob'), { nameClay: clayFor(AUTHOR, 'bob') }).querySelector('.who .handle') as HTMLElement;
+    expect([...ink.classList]).toEqual(['handle']);
+  });
+
+  it('the withdrawn card\'s who row reads the same predicate', () => {
+    const tomb = { kind: 'withdrawn' as const, id: 'p1', author: AUTHOR, withdrawnAtHeight: 10, parentRefs: [], descendantCount: 0, authorName: 'Alice' };
+    const clay = card(tomb, { onAuthor: () => {}, nameClay: clayFor(AUTHOR, 'Alice') });
+    expect(clay.querySelector('.who .handle.clay')?.textContent).toBe('@Alice');
+    const ink = card(tomb, { onAuthor: () => {}, nameClay: () => false });
+    expect(ink.querySelector('.who .handle')).not.toBeNull();
+    expect(ink.querySelector('.clay')).toBeNull();
+  });
+
+  it('a row with no name shows the prefix and never asks — a prefix is never clay', () => {
+    const asked = vi.fn(() => true);
+    const c = card(confirmed(AUTHOR), { onAuthor: () => {}, nameClay: asked });
+    expect(asked).not.toHaveBeenCalled();
+    expect(c.querySelector('.who .hex')).not.toBeNull();
+    expect(c.querySelector('.clay')).toBeNull();
+  });
+
+  it('under the stylesheet a clay handle computes clay at the handle\'s own weight and size, an ink one beside it ink, and an open card\'s fade still applies', () => {
+    const style = document.createElement('style');
+    style.textContent = appCss;
+    document.head.appendChild(style);
+    const clay = card(named('Alice'), { onAuthor: () => {}, nameClay: () => true });
+    const ink = card(named('Alice'), { onAuthor: () => {}, nameClay: () => false });
+    const open = card(named('Alice'), { open: true, onAuthor: () => {}, nameClay: () => true });
+    const span = card(named('Alice'), { nameClay: () => true });
+    document.body.append(clay, ink, open, span);
+    try {
+      const c = window.getComputedStyle(clay.querySelector('.who .handle') as HTMLElement);
+      expect(c.color).toBe('#9A4A2F');
+      expect(c.fontWeight).toBe('600');
+      expect(c.fontSize).toBe('13px');
+      expect(window.getComputedStyle(ink.querySelector('.who .handle') as HTMLElement).color).toBe('#2A2419');
+      const o = window.getComputedStyle(open.querySelector('.who .handle') as HTMLElement);
+      expect(o.color).toBe('#9A4A2F');
+      expect(o.opacity).toBe('.75');
+      expect(window.getComputedStyle(span.querySelector('.who .handle') as HTMLElement).color).toBe('#9A4A2F');
+      // Bistre — the token's dark value (HOUSE_STYLE → Colour).
+      document.documentElement.setAttribute('data-t', 'dark');
+      expect(window.getComputedStyle(clay.querySelector('.who .handle') as HTMLElement).color).toBe('#CC7658');
+      expect(window.getComputedStyle(ink.querySelector('.who .handle') as HTMLElement).color).toBe('#E9E1CF');
+    } finally {
+      document.documentElement.removeAttribute('data-t');
+      for (const n of [clay, ink, open, span]) n.remove();
+      document.head.removeChild(style);
+    }
+  });
+});

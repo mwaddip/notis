@@ -42,6 +42,7 @@ function baseCtx(over: Partial<AuthorCtx> = {}): AuthorCtx {
     flight: null,
     username: null,
     usernameLoaded: true,
+    nameClay: () => false, // no check has decided a pair — every handle in ink
     ...over,
   };
 }
@@ -244,6 +245,7 @@ function postsCtx(over: Partial<PostsCtx> = {}): PostsCtx {
   return {
     authorKey: AUTHOR, origin: ORIGIN, feed: feedState(), writeEnabled: true, ownKey: ME, locked: false,
     likePending: () => false, linkUrl: (id) => `http://localhost/p/${id}`,
+    nameClay: () => false, // no check has decided a pair — every handle in ink
     expandedImages: new Set(), ...over,
   };
 }
@@ -306,5 +308,69 @@ describe('the author-posts window', () => {
 
     const empty = authorPostsBody(postsHandlers(), postsCtx({ feed: feedState({ posts: [] }) }));
     expect(empty.querySelector('.empty')?.textContent).toBe('no posts yet');
+  });
+});
+
+describe('a handle the chain does not back is clay (WEB_INTERFACE → The identity display, → The author window)', () => {
+  const nameRow = (b: HTMLElement): HTMLElement =>
+    [...b.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === 'name')!.querySelector<HTMLElement>('.field')!;
+  const clayFor = (key: string, name: string) => (k: string, n: string): boolean => k === key && n === name;
+
+  it('the name row pairs the window\'s subject with its name — clay, and one clay line beneath the handle', () => {
+    // The node's answer names another owner; the pair is the subject's key, the
+    // key the handle stands beside.
+    const b = authorBody(noHandlers(), baseCtx({
+      username: { name: 'Alice', owner: ME, boxId: 'x', claimedAtBlock: 100 },
+      nameClay: clayFor(AUTHOR, 'Alice'),
+    }));
+    const field = nameRow(b);
+    const handle = field.querySelector('.handle') as HTMLElement;
+    expect([...handle.classList]).toEqual(['handle', 'clay']);
+    expect(handle.textContent).toBe('@Alice');
+    const line = handle.nextElementSibling as HTMLElement;
+    expect(line.tagName).toBe('DIV');
+    expect([...line.classList]).toEqual(['hint', 'clay']);
+    expect(line.textContent).toBe("this node's answer for this name did not verify");
+    expect(field.children).toHaveLength(2);
+  });
+
+  it('an ink pair: the name row as today — the handle alone, no line', () => {
+    const b = authorBody(noHandlers(), baseCtx({
+      username: { name: 'Alice', owner: AUTHOR, boxId: 'x', claimedAtBlock: 100 },
+      nameClay: clayFor(AUTHOR, 'alice'),
+    }));
+    const field = nameRow(b);
+    expect([...(field.querySelector('.handle') as HTMLElement).classList]).toEqual(['handle']);
+    expect(field.querySelector('.hint')).toBeNull();
+    expect(field.children).toHaveLength(1);
+  });
+
+  it('no name, or not read yet — no handle, no line, the predicate never asked', () => {
+    const asked: Array<[string, string]> = [];
+    const nameClay = (k: string, n: string): boolean => { asked.push([k, n]); return true; };
+    expect(nameRow(authorBody(noHandlers(), baseCtx({ username: null, nameClay }))).querySelector('.clay')).toBeNull();
+    expect(nameRow(authorBody(noHandlers(), baseCtx({ usernameLoaded: false, nameClay }))).querySelector('.clay')).toBeNull();
+    expect(asked).toEqual([]);
+  });
+
+  it('an endorser row pairs the voucher\'s key with its name — clay on the same control; ink as today', () => {
+    const endorsers = { vouches: [{ voucherId: E1, targetId: AUTHOR, voucherName: 'Vic', targetName: 'Alice' }], count: 1, next: null };
+    const h = noHandlers();
+    const clay = authorBody(h, baseCtx({ endorsers, nameClay: clayFor(E1, 'Vic') })).querySelector('.endorser .authorbtn') as HTMLElement;
+    expect([...clay.classList]).toEqual(['handle', 'authorbtn', 'clay']);
+    expect(clay.textContent).toBe('@Vic');
+    clay.click();
+    expect(h.calls.openAuthor).toEqual([[E1, ORIGIN]]);
+    const ink = authorBody(noHandlers(), baseCtx({ endorsers, nameClay: clayFor(AUTHOR, 'Vic') })).querySelector('.endorser .authorbtn') as HTMLElement;
+    expect([...ink.classList]).toEqual(['handle', 'authorbtn']);
+  });
+
+  it('the posts window\'s cards read the predicate — the clay pair\'s card alone', () => {
+    const posts = [{ ...post(P1, AUTHOR), authorName: 'Alice' }, { ...post(P2, ME), authorName: 'Me' }];
+    const b = authorPostsBody(postsHandlers(), postsCtx({ feed: feedState({ posts }), nameClay: clayFor(AUTHOR, 'Alice') }));
+    const clay = b.querySelector(`.card[data-post-id="${P1}"] .who .handle`) as HTMLElement;
+    expect([...clay.classList]).toEqual(['handle', 'authorbtn', 'clay']);
+    const ink = b.querySelector(`.card[data-post-id="${P2}"] .who .handle`) as HTMLElement;
+    expect([...ink.classList]).toEqual(['handle', 'authorbtn']);
   });
 });

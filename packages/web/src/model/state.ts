@@ -135,6 +135,11 @@ export interface RenderCtx {
   // The reader's own name (WEB_INTERFACE → The identity display).
   ownName: UsernameResult | null;
   ownNameLoaded: boolean;
+  // Whether the handle a key and a name render as reads clay — the check the App
+  // holds for the pair, false while none has decided it (WEB_INTERFACE → The
+  // extension → "The verified names", → The identity display). Every view that
+  // renders a handle reads it.
+  nameClay: (key: string, name: string) => boolean;
   // The username row (WEB_INTERFACE → The username row).
   usernameFlight: Flight | null;
   pendingUsername: { kind: 'claim' | 'burn'; name: string } | null;

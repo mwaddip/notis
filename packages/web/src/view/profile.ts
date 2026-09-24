@@ -61,6 +61,7 @@ export interface ProfileCtx {
   // The username row (WEB_INTERFACE → The username row).
   ownName: UsernameResult | null;
   ownNameLoaded: boolean;
+  nameClay: (key: string, name: string) => boolean; // a handle reads clay (→ The extension → "The verified names")
   usernameFlight: Flight | null;
   pendingUsername: { kind: 'claim' | 'burn'; name: string } | null;
   canSignClaim: boolean;
@@ -423,8 +424,10 @@ function standingBonds(field: HTMLElement, handlers: ProfileHandlers, ctx: Profi
   for (const bond of b.bonds) {
     const bondRow = el('div', 'bond');
     // WEB_INTERFACE → The identity display — the handle where the row carries a
-    // name, else the prefix; the same control.
+    // name, else the prefix; the same control, the handle clay where the chain
+    // does not back it.
     const btn = el('button', bond.inviteeName !== null ? 'handle authorbtn' : 'hex authorbtn');
+    if (bond.inviteeName !== null && ctx.nameClay(bond.inviteePublicKey, bond.inviteeName)) btn.classList.add('clay');
     btn.textContent = bond.inviteeName !== null ? '@' + bond.inviteeName : shortHex(bond.inviteePublicKey, 10);
     btn.setAttribute('aria-label', 'open this author');
     btn.addEventListener('click', () => handlers.openAuthor(bond.inviteePublicKey, origin));
@@ -651,10 +654,12 @@ function updateUsername(field: HTMLElement, handlers: ProfileHandlers, ctx: Prof
     return;
   }
 
-  // Holding a name — the handle, burn, and the hint.
+  // Holding a name — the handle, burn, and the hint. In the extension a handle
+  // the chain does not back is clay (WEB_INTERFACE → The identity display).
   if (ctx.ownName) {
     const handle = el('span', 'handle');
     handle.textContent = '@' + ctx.ownName.name;
+    if (ctx.identity !== null && ctx.nameClay(ctx.identity.pubKeyHex, ctx.ownName.name)) handle.classList.add('clay');
     line.appendChild(handle);
     line.appendChild(document.createTextNode(' '));
 
