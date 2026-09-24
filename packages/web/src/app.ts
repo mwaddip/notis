@@ -1999,10 +1999,16 @@ export class App {
    *  the public key, so a locked identity can ask. In the extension the hook is
    *  called synchronously from the press before any await, so the browser's
    *  user-input window is still open (WEB_INTERFACE → The faucet step → "In the
-   *  extension the press asks the browser for the faucet's origin first"). */
+   *  extension the press asks the browser for the faucet's origin first"). The
+   *  grant is the pressing key's, so its entry goes to the ledger read with that
+   *  key at the press, and the answer moves the row, the poll and the report
+   *  only while that ledger is still the App's: an identity change rebuilds it
+   *  for another key, and a key never sees another key's entries (WEB_INTERFACE →
+   *  The wallet). */
   private async askFaucet(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
+    const ledger = this.ledger;
     // The hook is invoked synchronously here — an `await` in front of the
     // request loses the user-input window in Firefox.
     const permission = this.requestFaucetOrigin ? this.requestFaucetOrigin(prefs.faucet) : null;
@@ -2018,8 +2024,9 @@ export class App {
       }
     }
     const res = await this.faucetClient.askKarma(cur.pubKeyHex);
+    const loaded = ledger === this.ledger;
     if ('message' in res) {
-      const region = this.regionFocusedOn('@profile');
+      const region = loaded ? this.regionFocusedOn('@profile') : null;
       if (region) {
         region.report = faucetLine(res);
         this.renderRegion(region.uid);
@@ -2034,7 +2041,8 @@ export class App {
       expiresAtHeight: res.expiresAtHeight,
       submittedAtHeight: this.lastPolledHeight,
     };
-    this.ledger.add(entry);
+    ledger.add(entry);
+    if (!loaded) return;
     this.grantView = { state: 'pending' };
     this.startPoll();
     this.renderProfileKarma();
@@ -3150,10 +3158,13 @@ export class App {
    *  faucet step). In the extension the hook is called synchronously from the
    *  press before any await, so the browser's user-input window is still open
    *  (WEB_INTERFACE → The faucet step → "In the extension the press asks the
-   *  browser for the faucet's origin first"). */
+   *  browser for the faucet's origin first"). The entry goes to the pressing
+   *  key's ledger and the answer moves the view only while that ledger is still
+   *  the App's, as the rep step's does. */
   private async askFaucetCredits(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
+    const ledger = this.ledger;
     // The hook is invoked synchronously here — an `await` in front of the
     // request loses the user-input window in Firefox.
     const permission = this.requestFaucetOrigin ? this.requestFaucetOrigin(prefs.faucet) : null;
@@ -3169,8 +3180,9 @@ export class App {
       }
     }
     const res = await this.faucetClient.askCredits(cur.pubKeyHex);
+    const loaded = ledger === this.ledger;
     if ('message' in res) {
-      const region = this.regionFocusedOn('@wallet');
+      const region = loaded ? this.regionFocusedOn('@wallet') : null;
       if (region) {
         region.report = faucetLine(res, 'credits');
         this.renderRegion(region.uid);
@@ -3185,7 +3197,8 @@ export class App {
       expiresAtHeight: res.expiresAtHeight,
       submittedAtHeight: this.lastPolledHeight,
     };
-    this.ledger.add(entry);
+    ledger.add(entry);
+    if (!loaded) return;
     this.creditGrantView = { state: 'pending' };
     this.startPoll();
     this.renderCreditsRowInPlace();
