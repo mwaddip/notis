@@ -221,7 +221,7 @@ async function templateMovedPast(height) {
  * `fetchImpl`/`sleepImpl` default to the real globals; a test supplies its
  * own to exercise the retry without a network call or a real delay.
  */
-export async function submitNonce(powNonce, height, fetchImpl = fetch, sleepImpl = sleep) {
+async function submitNonce(powNonce, height, fetchImpl = fetch, sleepImpl = sleep) {
   const body = JSON.stringify({ powNonce, height });
   let res;
   for (let attempt = 1; ; attempt++) {
@@ -311,9 +311,4 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// MINING_INTERFACE → Miner Script: the loop above is the deployed process.
-// Importing this module for its exports (the mirror test, the submit-retry
-// test) must not start it — only running it directly does.
-if (import.meta.url === `file://${process.argv[1]}`) {
-  main();
-}
+main();

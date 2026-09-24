@@ -1,11 +1,18 @@
 /**
  * `scripts/miner.mjs` retries a submit that fails in transit with the same
- * nonce and height — MINING_INTERFACE → Miner Script step 4. The script runs
- * `main()` only when invoked directly, so importing it here for its exports
- * does not start the mining loop, and `submitNonce` takes its `fetch` and
- * `sleep` as parameters precisely so a test can supply its own.
+ * nonce and height — MINING_INTERFACE → Miner Script step 4. The script
+ * starts unconditionally (`main()` runs at load, standalone by design), so
+ * this test never imports the module — it extracts `submitNonce`'s
+ * declaration from the source text by name, exactly as `miner-mirror.test.ts`
+ * extracts the PoW predicate, and evaluates it with its own
+ * `NODE_URL`/`headers`/`FETCH_TIMEOUT_MS` and an injected `fetch` and `sleep`.
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { extractDeclaration } from './extract-declaration.js';
+
+const MINER = fileURLToPath(new URL('../../scripts/miner.mjs', import.meta.url));
 
 type FetchResult = { status: number };
 type FetchCall = [url: string, init: { body: string; [key: string]: unknown }];
@@ -16,14 +23,23 @@ type SubmitNonce = (
   sleepImpl: (ms: number) => Promise<void>,
 ) => Promise<FetchResult>;
 
-// A non-literal specifier: `tsc` resolves a literal `import()` argument the
-// same as a static import and TS7016s without `allowJs`, which this package
-// does not set. Built at runtime instead, exactly like the mirror test's own
-// text-extraction workaround for the same standalone-script constraint.
-const MINER_URL = new URL('../../scripts/miner.mjs', import.meta.url).href;
-
-async function importMiner(): Promise<{ submitNonce: SubmitNonce }> {
-  return (await import(MINER_URL)) as unknown as { submitNonce: SubmitNonce };
+/**
+ * `submitNonce` reads three module-level consts unconditionally beyond the
+ * arguments it takes — `NODE_URL`, `headers`, `FETCH_TIMEOUT_MS` — so the
+ * harness defines fixed stand-ins for them alongside the extracted
+ * declaration. Its own `fetchImpl`/`sleepImpl` defaults (`fetch`, `sleep`)
+ * never run: every test below passes both explicitly.
+ */
+function loadSubmitNonce(): { submitNonce: SubmitNonce } {
+  const src = readFileSync(MINER, 'utf8');
+  const body = [
+    `const NODE_URL = ${JSON.stringify('http://miner-submit-retry.test.invalid')};`,
+    `const headers = ${JSON.stringify({ 'Content-Type': 'application/json' })};`,
+    'const FETCH_TIMEOUT_MS = 10000;',
+    extractDeclaration(src, 'async function submitNonce(', 'miner.mjs'),
+    'return { submitNonce };',
+  ].join('\n\n');
+  return new Function(body)() as { submitNonce: SubmitNonce };
 }
 
 /** Answers `results` in order — an `Error` rejects that attempt, anything else resolves it. */
@@ -50,8 +66,9 @@ function makeSleep() {
 }
 
 describe('miner.mjs submitNonce — a transport rejection retries, a status never does', () => {
+  const { submitNonce } = loadSubmitNonce();
+
   it('retries a rejected attempt and accepts the next answer, with the same body', async () => {
-    const { submitNonce } = await importMiner();
     const { fn: fetchImpl, calls } = makeFetch([new Error('fetch failed'), { status: 201 }]);
     const { fn: sleepImpl, calls: sleeps } = makeSleep();
 
@@ -64,7 +81,6 @@ describe('miner.mjs submitNonce — a transport rejection retries, a status neve
   });
 
   it('throws after exactly three rejections, a pause between each', async () => {
-    const { submitNonce } = await importMiner();
     const err = new Error('fetch failed');
     const { fn: fetchImpl, calls } = makeFetch([err, err, err]);
     const { fn: sleepImpl, calls: sleeps } = makeSleep();
@@ -75,7 +91,6 @@ describe('miner.mjs submitNonce — a transport rejection retries, a status neve
   });
 
   it('does not retry a 422 — the first attempt already answered', async () => {
-    const { submitNonce } = await importMiner();
     const { fn: fetchImpl, calls } = makeFetch([{ status: 422 }]);
     const { fn: sleepImpl, calls: sleeps } = makeSleep();
 
@@ -87,7 +102,6 @@ describe('miner.mjs submitNonce — a transport rejection retries, a status neve
   });
 
   it('throws a 401 without retrying — a configuration failure, not a transport one', async () => {
-    const { submitNonce } = await importMiner();
     const { fn: fetchImpl, calls } = makeFetch([{ status: 401 }]);
     const { fn: sleepImpl, calls: sleeps } = makeSleep();
 
