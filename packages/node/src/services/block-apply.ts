@@ -614,7 +614,7 @@ export function proverFeedFromEffects(effects: BlockEffects): ProverFeed {
  * write runs inside the funnel's transaction and nothing here catches: a write
  * that fails fails the block (NODE_INTERFACE → "The funnel is total").
  */
-function writeBlockEffects(effects: BlockEffects, height: number): BlockJournal {
+export function writeBlockEffects(effects: BlockEffects, height: number): BlockJournal {
   // The block's posts, confirmed at their committed positions: a row this node
   // holds as it is, a placeholder from the commit for one it lacks
   // (NODE_INTERFACE → Post transactions → "A post applied without its packet
