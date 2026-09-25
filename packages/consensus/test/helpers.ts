@@ -1,21 +1,57 @@
-import { createHash, generateKeyPairSync, type KeyObject } from 'crypto';
-import { canonicalBoxBytes, computeBoxId, decayCfgFor, u32BE } from '@dagsocial/types';
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  sign as cryptoSign,
+  type KeyObject,
+} from 'crypto';
+import {
+  EMPTY_STATE_ROOT,
+  LIKE_KARMA_COST,
+  POST_PRICE_REPLY,
+  POST_PRICE_THREAD,
+  PROTOCOL_VERSION,
+  REPLY_AUTHOR_SHARE,
+  USERNAME_BURN_PRICE,
+  VOUCH_KARMA_AMOUNT,
+  canonicalBoxBytes,
+  computeBoxId,
+  computeContentHash,
+  computePostId,
+  computeTxId,
+  decayCfgFor,
+  encodeTx,
+  u32BE,
+} from '@dagsocial/types';
 import type {
   AnyBox,
+  AnyBoxCandidate,
   BackerPoolBox,
   BondBox,
   BoxId,
+  CreditBox,
   EmissionBox,
   IdentityRecord,
   KarmaBox,
   KarmaPoolBox,
   LikeAccrualBox,
   NetworkProfile,
+  OrderingBlock,
+  PostCommit,
   TreasuryBox,
+  UtxoTransaction,
   VouchBox,
   VouchEscrowBox,
 } from '@dagsocial/types';
-import type { ApplyContext, NetworkRecord, StateView, UsernameRow } from '@dagsocial/consensus';
+import { buildBlockSettlement, materializeOutput } from '@dagsocial/consensus';
+import type {
+  ApplyContext,
+  BlockEffects,
+  NetworkRecord,
+  StateView,
+  UsernameRow,
+} from '@dagsocial/consensus';
 
 /**
  * Convert a short string label to a deterministic 32-byte Uint8Array
@@ -269,6 +305,24 @@ export class MemoryStateView implements StateView {
     return copy;
   }
 
+  /** Every entry the view holds, as one string: equal before and after a run that wrote nothing. */
+  digest(): string {
+    const byKey = <V>(entries: Iterable<[string, V]>): Array<[string, V]> =>
+      [...entries].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return JSON.stringify(
+      {
+        boxes: byKey(this.boxes.entries()),
+        records: byKey(this.records.entries()),
+        network: this.network,
+        names: byKey(this.names.entries()),
+        topology: byKey(this.topology.entries()),
+        posts: byKey(this.posts.entries()),
+        likes: [...this.likes].sort(),
+      },
+      (_key, value: unknown) => (typeof value === 'bigint' ? `${value}n` : value instanceof Uint8Array ? hex(value) : value),
+    );
+  }
+
   // ---- writes: a fixture's seeding, and a reference's copy of a block's writes ----
 
   insertBox(box: AnyBox): void {
@@ -448,4 +502,284 @@ export class MemoryStateView implements StateView {
   private firstOfType<B extends AnyBox>(boxType: AnyBox['boxType']): B | null {
     return this.live<B>((b) => b.boxType === boxType).sort(idOrder)[0] ?? null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Signed transactions and candidate blocks
+// ---------------------------------------------------------------------------
+
+const PKCS8_ED25519_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
+
+/** An Ed25519 identity from a fixed seed — the same key on every run. */
+export function seededIdentity(label: string): TestIdentity {
+  const seed = createHash('blake2b512').update(`dagsocial/test/consensus/${label}`).digest().subarray(0, 32);
+  const privateKey = createPrivateKey({
+    key: Buffer.concat([PKCS8_ED25519_PREFIX, seed]),
+    format: 'der',
+    type: 'pkcs8',
+  });
+  const userId = rawPublicKey(createPublicKey(privateKey));
+  return { userId, publicKey: userId, privateKey };
+}
+
+/** A transaction, its id, and its outputs with the ids block application gives them. */
+export interface Built {
+  tx: UtxoTransaction;
+  txId: string;
+  out: AnyBox[];
+}
+
+export interface BuiltPost extends Built {
+  postId: string;
+  commit: PostCommit;
+}
+
+/** Sign (unless unsigned) and materialize the outputs under the transaction's id. */
+export function finish(tx: UtxoTransaction, signer: TestIdentity | null): Built {
+  if (signer !== null) {
+    const unsignedId = computeTxId(tx);
+    tx.signatures[hex(signer.userId)] = new Uint8Array(
+      cryptoSign(null, Buffer.from(unsignedId, 'hex'), signer.privateKey),
+    );
+  }
+  const txId = computeTxId(tx);
+  return { tx, txId, out: tx.outputs.map((o, i) => materializeOutput(o, txId, i)) };
+}
+
+const karmaOut = (owner: Uint8Array, value: bigint, h: number): AnyBoxCandidate =>
+  ({ boxType: 'karma', value, createdAtBlock: h, owner }) as AnyBoxCandidate;
+
+/** The karma change output — output 0 of every builder that leaves one. */
+export function changeOf(built: Built): KarmaBox {
+  const change = built.out[0];
+  if (!change || change.boxType !== 'karma') throw new Error('the transaction leaves no karma change');
+  return change;
+}
+
+function commitOf(author: TestIdentity, content: string, parentRefs: string[]): PostCommit {
+  return {
+    contentHash: computeContentHash(content),
+    author: author.userId,
+    parentRefs,
+    protocolVersion: PROTOCOL_VERSION,
+    type: 'regular',
+  };
+}
+
+export function threadTx(author: TestIdentity, input: KarmaBox, content: string, h: number): BuiltPost {
+  const outputs: AnyBoxCandidate[] = [];
+  if (input.value > POST_PRICE_THREAD) outputs.push(karmaOut(author.userId, input.value - POST_PRICE_THREAD, h));
+  outputs.push({ boxType: 'karma_price', value: POST_PRICE_THREAD, createdAtBlock: h } as AnyBoxCandidate);
+  const commit = commitOf(author, content, []);
+  const built = finish(
+    { inputs: [input.id!], outputs, signatures: {}, protocolVersion: PROTOCOL_VERSION, post: commit },
+    author,
+  );
+  return { ...built, postId: computePostId(built.txId, 0), commit };
+}
+
+export function replyTx(
+  author: TestIdentity,
+  input: KarmaBox,
+  content: string,
+  parentId: string,
+  parentAuthor: Uint8Array,
+  h: number,
+): BuiltPost {
+  const outputs: AnyBoxCandidate[] = [];
+  if (input.value > POST_PRICE_REPLY) outputs.push(karmaOut(author.userId, input.value - POST_PRICE_REPLY, h));
+  outputs.push(
+    { boxType: 'karma_price', value: POST_PRICE_REPLY - REPLY_AUTHOR_SHARE, createdAtBlock: h } as AnyBoxCandidate,
+    { boxType: 'like_accrual', value: REPLY_AUTHOR_SHARE, createdAtBlock: h, author: parentAuthor } as AnyBoxCandidate,
+  );
+  const commit = commitOf(author, content, [parentId]);
+  const built = finish(
+    { inputs: [input.id!], outputs, signatures: {}, protocolVersion: PROTOCOL_VERSION, post: commit },
+    author,
+  );
+  return { ...built, postId: computePostId(built.txId, 0), commit };
+}
+
+export function likeTx(liker: TestIdentity, input: KarmaBox, postId: string, author: Uint8Array, h: number): Built {
+  const outputs: AnyBoxCandidate[] = [];
+  if (input.value > LIKE_KARMA_COST) outputs.push(karmaOut(liker.userId, input.value - LIKE_KARMA_COST, h));
+  outputs.push({ boxType: 'like_accrual', value: LIKE_KARMA_COST, createdAtBlock: h, author } as AnyBoxCandidate);
+  return finish(
+    { inputs: [input.id!], outputs, signatures: {}, protocolVersion: PROTOCOL_VERSION, likeTarget: postId },
+    liker,
+  );
+}
+
+export function vouchTx(voucher: TestIdentity, input: KarmaBox, target: Uint8Array, h: number): Built {
+  return finish({
+    inputs: [input.id!],
+    outputs: [
+      karmaOut(voucher.userId, input.value - VOUCH_KARMA_AMOUNT, h),
+      { boxType: 'vouch', value: VOUCH_KARMA_AMOUNT, createdAtBlock: h, voucherId: voucher.userId, targetId: target } as AnyBoxCandidate,
+    ],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  }, voucher);
+}
+
+export function unvouchTx(voucher: TestIdentity, staked: VouchBox, cooldown: number, h: number): Built {
+  return finish({
+    inputs: [staked.id!],
+    outputs: [{
+      boxType: 'vouch_escrow',
+      value: staked.value,
+      createdAtBlock: h,
+      owner: voucher.userId,
+      releaseAtBlock: staked.createdAtBlock + cooldown,
+    } as AnyBoxCandidate],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  }, voucher);
+}
+
+export function inviteTx(inviter: TestIdentity, input: KarmaBox, invitee: Uint8Array, bond: bigint, h: number): Built {
+  return finish({
+    inputs: [input.id!],
+    outputs: [
+      karmaOut(inviter.userId, input.value - bond, h),
+      { boxType: 'bond', value: bond, createdAtBlock: h, inviterId: inviter.userId, inviteePublicKey: invitee } as AnyBoxCandidate,
+    ],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  }, inviter);
+}
+
+export function claimTx(holder: TestIdentity, input: KarmaBox, name: string, h: number): Built {
+  return finish({
+    inputs: [input.id!],
+    outputs: [
+      karmaOut(holder.userId, input.value, h),
+      { boxType: 'username', value: 0n, createdAtBlock: h, owner: holder.userId, name: new TextEncoder().encode(name) } as AnyBoxCandidate,
+    ],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  }, holder);
+}
+
+export function burnTx(holder: TestIdentity, input: KarmaBox, nameBox: AnyBox, h: number): Built {
+  return finish({
+    inputs: [input.id!, nameBox.id!],
+    outputs: [
+      karmaOut(holder.userId, input.value - USERNAME_BURN_PRICE, h),
+      { boxType: 'karma_price', value: USERNAME_BURN_PRICE, createdAtBlock: h } as AnyBoxCandidate,
+    ],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  }, holder);
+}
+
+export function withdrawTx(author: TestIdentity, input: KarmaBox, postId: string, h: number): Built {
+  return finish({
+    inputs: [input.id!],
+    outputs: [karmaOut(author.userId, input.value, h)],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+    postWithdraw: { postId },
+  }, author);
+}
+
+export function consolidateTx(owner: TestIdentity, inputs: KarmaBox[], h: number): Built {
+  return finish({
+    inputs: inputs.map((b) => b.id!),
+    outputs: [karmaOut(owner.userId, inputs.reduce((sum, b) => sum + b.value, 0n), h)],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  }, owner);
+}
+
+export function creditSendTx(
+  sender: TestIdentity,
+  input: CreditBox,
+  amount: bigint,
+  recipient: Uint8Array,
+  fee: bigint,
+  h: number,
+): Built {
+  return finish({
+    inputs: [input.id!],
+    outputs: [
+      { boxType: 'credit', value: amount, createdAtBlock: h, owner: recipient } as AnyBoxCandidate,
+      { boxType: 'credit', value: input.value - amount - fee, createdAtBlock: h, owner: sender.userId } as AnyBoxCandidate,
+      { boxType: 'fee', value: fee, createdAtBlock: h } as AnyBoxCandidate,
+    ],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  }, sender);
+}
+
+/**
+ * A candidate block of these transactions at `height`, its settlement the
+ * producer's build over `view` and its last entry. The hash-covered header
+ * fields are placeholders, as in the producer's speculative run: `applyBlock`
+ * reads `height` and `validatorId` alone.
+ */
+export function candidateBlock(
+  view: StateView,
+  height: number,
+  txs: Built[],
+  validator: Uint8Array,
+  ctx: ApplyContext,
+): OrderingBlock {
+  const txBytes = txs.map((b) => encodeTx(b.tx));
+  const settled = buildBlockSettlement(view, txBytes, height, validator, validator, ctx);
+  if ('error' in settled) throw new Error(`no settlement at height ${height}: ${settled.error}`);
+  return {
+    header: {
+      protocolVersion: PROTOCOL_VERSION,
+      height,
+      prevBlockHash: '0'.repeat(64),
+      utxoTxRoot: '0'.repeat(64),
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: validator,
+      powNonce: 0,
+      powTargetBits: 0,
+      createdAt: 0,
+      interlinkRoot: '0'.repeat(64),
+    },
+    utxoTxTree: {
+      utxoTxIds: [...txs.map((b) => b.txId), computeTxId(settled.tx)],
+      utxoTxs: [...txBytes, encodeTx(settled.tx)],
+    },
+    validatorSignature: new Uint8Array(64),
+  };
+}
+
+/**
+ * Write a block's effects into the view in their order — the node's writer's
+ * work, done over maps, so a suite can apply the next block over the state this
+ * one left. The view derives the holder record from the name rows, as the
+ * store does.
+ */
+export function writeEffects(view: MemoryStateView, effects: BlockEffects, height: number): void {
+  for (const m of effects.mutations) {
+    switch (m.kind) {
+      case 'box':
+        if (m.op === 'insert') view.insertBox(m.box);
+        else view.consumeBox(m.boxId);
+        break;
+      case 'record':
+        view.putIdentityRecord(m.identityId, m.record);
+        break;
+      case 'network':
+        view.putNetworkRecord(m.record);
+        break;
+      case 'username':
+        if (m.row !== null) view.putUsername(m.row);
+        else view.deleteUsername(m.nameLower);
+        break;
+      case 'holder':
+        break;
+    }
+  }
+  for (const { postId, post } of effects.posts) {
+    view.confirmPost(postId);
+    view.insertBlockTopology(postId, post.author, height);
+  }
+  for (const { targetPostId, likerId } of effects.likeRecords) view.insertLikeRecord(targetPostId, likerId);
+  for (const postId of effects.withdrawals) view.withdrawPost(postId);
 }

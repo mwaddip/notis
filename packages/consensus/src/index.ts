@@ -30,5 +30,7 @@ export type { EmbeddedTx } from './coinbase-split.js';
 
 export { postsOf, postIdsOf, withdrawalsOf } from './block-posts.js';
 
+export { applyBlock } from './apply-block.js';
+export type { ApplyResult, BlockEffects } from './apply-block.js';
 export type { StateView, ApplyContext } from './state-view.js';
 export type { HolderRecord } from './overlay.js';
