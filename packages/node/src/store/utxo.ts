@@ -112,18 +112,6 @@ function provenanceOf(row: UtxoRow): { txId: string; index: number } {
 }
 
 /**
- * The height to record in the `created_at_block` **store column**.
- *
- * Taken from the box's own `createdAtBlock` field — which the creator declared
- * and `canonicalBoxBytes` encodes. The column and the field hold the same
- * number: for a settlement box the producer declares the height being applied,
- * for a user box the client declares it and `validateTx` step 5 bounds it.
- */
-function settledHeight(box: AnyBox): number {
-  return box.createdAtBlock ?? 0;
-}
-
-/**
  * Reconstruct a typed box from a utxo_boxes row.
  *
  * Columns id, box_type, value, created_at_block and owner are read directly;
@@ -1153,7 +1141,11 @@ export function insertBox(box: AnyBox): void {
     box.id,
     box.boxType,
     box.value,
-    settledHeight(box),
+    // The column holds the box's own `createdAtBlock` — which the creator
+    // declared and `canonicalBoxBytes` encodes: for a settlement box the height
+    // being applied, for a user box the client's, bounded by `validateTx`
+    // (NODE_INTERFACE → Populating the record).
+    box.createdAtBlock,
     owner,
     JSON.stringify(extraData),
     box.txId,
