@@ -806,11 +806,6 @@ function utxoDepsOver(state: BlockOverlay, ctx: ApplyContext): UtxoEngineDeps {
     getBox: (id) => state.getBox(id),
     insertBox: (box) => state.insertBox(box),
     consumeBox: (id) => state.consumeBox(id),
-    // The view holds no single-box karma read and no rule reads one: every
-    // balance check sums the owner's whole set (NODE_INTERFACE → UTXO).
-    getKarmaBox: () => {
-      throw new Error('UtxoEngineDeps.getKarmaBox: no rule reads a single karma box');
-    },
     // The vouch cast's minimum-balance gate reads the voucher's current summed
     // karma (ARCHITECTURE → Vouch boxes): the sum over the owner's whole live
     // set, the one definition the pool's check sums too (NODE_INTERFACE → UTXO).

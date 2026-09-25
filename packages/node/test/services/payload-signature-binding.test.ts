@@ -32,7 +32,6 @@ import {
   getBoxProvenance,
   insertBox,
   consumeBox,
-  getKarmaBox,
   getKarmaValue,
 } from '../../src/store/utxo.js';
 import { getIdentityRecord, putIdentityRecord, getNetworkRecord } from '../../src/store/identity-records.js';
@@ -55,7 +54,6 @@ function makeDeps(topologyAuthors: Map<string, Uint8Array> = new Map()): UtxoEng
     getBox,
     insertBox,
     consumeBox,
-    getKarmaBox,
     getKarmaValue,
     getIdentityRecord,
     hasActiveVouchEscrow: () => false,

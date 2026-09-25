@@ -27,7 +27,6 @@ const STUB_DEPS: UtxoEngineDeps = {
   getBox: () => null,
   insertBox: () => {},
   consumeBox: () => {},
-  getKarmaBox: () => null,
   getKarmaValue: () => 0n,
   getIdentityRecord: () => null,
   hasActiveVouchEscrow: () => false,

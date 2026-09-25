@@ -21,7 +21,6 @@ import { initDb, getDb, closeDb } from '../../src/store/db.js';
 import {
   getBox,
   getCreditBoxes,
-  getKarmaBox,
   getKarmaValue,
   insertBox,
   consumeBox,
@@ -51,7 +50,6 @@ const engineDeps: UtxoEngineDeps = {
   getBox,
   insertBox,
   consumeBox,
-  getKarmaBox,
   getKarmaValue,
   getIdentityRecord,
   hasActiveVouchEscrow: () => false,

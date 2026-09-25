@@ -138,7 +138,6 @@ describe('validateAndApplyTx', () => {
       getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => storeInsertBox(box),
       consumeBox: (id: string, atBlock: number) => storeConsumeBox(id, atBlock),
-      getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,
@@ -596,7 +595,7 @@ describe('validateAndApplyTx', () => {
     expect(box).not.toBeNull();
 
     // No new boxes created — only the original karma box exists
-    const bobBox = deps.getKarmaBox(ownerPubKey);
+    const bobBox = getKarmaBox(ownerPubKey);
     expect(bobBox).not.toBeNull(); // the original box is still there, unchanged
   });
 
@@ -865,7 +864,7 @@ describe('validateAndApplyTx', () => {
 
       // Nothing applied.
       expect(deps.getBox(karma.id!)).not.toBeNull();
-      expect(deps.getKarmaBox(ownerPubKey)!.value).toBe(100n);
+      expect(getKarmaBox(ownerPubKey)!.value).toBe(100n);
     });
 
     it('accepts the correct like K(v) -> K(v-1) + marker(LIKE_KARMA_COST)', () => {
@@ -896,7 +895,7 @@ describe('validateAndApplyTx', () => {
 
       expect(result.valid).toBe(true);
       expect(result.error).toBeUndefined();
-      expect(deps.getKarmaBox(ownerPubKey)!.value).toBe(100n - LIKE_KARMA_COST);
+      expect(getKarmaBox(ownerPubKey)!.value).toBe(100n - LIKE_KARMA_COST);
     });
 
     // -----------------------------------------------------------------------
@@ -972,7 +971,7 @@ describe('validateAndApplyTx', () => {
 
       expect(result.valid).toBe(false);
       expect(result.error).toContain("field 'value' must be a non-negative bigint < 2^63");
-      expect(deps.getKarmaBox(ownerPubKey)!.value).toBe(10n);
+      expect(getKarmaBox(ownerPubKey)!.value).toBe(10n);
     });
 
     // -----------------------------------------------------------------------

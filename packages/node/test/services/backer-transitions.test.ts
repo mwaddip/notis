@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   initDb, closeDb, getDb,
   insertBox, consumeBox,
-  getKarmaBox, getKarmaValue,
+  getKarmaValue,
   getIdentityRecord,
   hasActiveVouchEscrow,
   getBoxProvenance, getVouchBox, getNetworkRecord,
@@ -35,7 +35,6 @@ function makeDeps(): UtxoEngineDeps {
     getBox: getBoxWithPending,
     insertBox,
     consumeBox,
-    getKarmaBox,
     getKarmaValue,
     getIdentityRecord,
     hasActiveVouchEscrow,

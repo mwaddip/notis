@@ -16,7 +16,6 @@ import {
   getBoxProvenance,
   insertBox,
   consumeBox,
-  getKarmaBox,
   getKarmaValue,
 } from '../../src/store/utxo.js';
 import { getIdentityRecord, putIdentityRecord, getNetworkRecord } from '../../src/store/identity-records.js';
@@ -38,7 +37,6 @@ const deps: UtxoEngineDeps = {
   getBox,
   insertBox,
   consumeBox,
-  getKarmaBox,
   getKarmaValue,
   getIdentityRecord,
   hasActiveVouchEscrow: () => false,

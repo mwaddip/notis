@@ -31,7 +31,6 @@ import { handleOrderingBlock, pullBlocksHandler } from './services/handle-block.
 import { failStopIfCorruptChain, guardStoreRead } from './services/corrupt-state.js';
 import { scheduledPowTargetBits } from './services/difficulty.js';
 import {
-  getKarmaBox,
   getKarmaBoxes,
   getKarmaValue,
   hasActiveVouchEscrow,
@@ -188,7 +187,6 @@ net.onTx((tx, content, fromPeerId) => {
     getBox,
       insertBox: () => {},
     consumeBox: () => {},
-    getKarmaBox,
     getKarmaBoxes,
     // The vouch cast's minimum-balance gate (ARCHITECTURE → "Vouch boxes").
     // Relay validation has to reach the same verdict the block path will — the

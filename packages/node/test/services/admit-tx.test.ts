@@ -237,7 +237,6 @@ describe('rent admission refusal', () => {
       getBox: utxo.getBox,
       insertBox: utxo.insertBox,
       consumeBox: utxo.consumeBox,
-      getKarmaBox: utxo.getKarmaBox,
       getKarmaValue: utxo.getKarmaValue,
       getIdentityRecord: (await import('../../src/store/identity-records.js')).getIdentityRecord,
       hasActiveVouchEscrow: () => false,

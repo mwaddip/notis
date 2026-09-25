@@ -625,7 +625,6 @@ describe('the invite at block application', () => {
       getBox: utxo.getBox,
       insertBox: utxo.insertBox,
       consumeBox: utxo.consumeBox,
-      getKarmaBox: utxo.getKarmaBox,
       getKarmaValue: utxo.getKarmaValue,
       getIdentityRecord: records.getIdentityRecord,
       hasActiveVouchEscrow: () => false,

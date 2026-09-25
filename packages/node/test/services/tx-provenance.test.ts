@@ -250,7 +250,6 @@ describe('transaction output provenance (Spec G phase C3)', () => {
         getBox,
         insertBox,
         consumeBox: () => {},
-        getKarmaBox: () => null,
         runInTransaction: (fn: () => void) => { getDb().transaction(fn)(); },
       } as never,
       { inputs: [], outputs: [], signatures: {}, protocolVersion: 1 },

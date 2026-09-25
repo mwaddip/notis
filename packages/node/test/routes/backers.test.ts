@@ -4,7 +4,7 @@ import express from 'express';
 import http from 'http';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import {
-  insertBox, getBox as storeGetBox, getKarmaBox, getKarmaValue,
+  insertBox, getBox as storeGetBox, getKarmaValue,
   getBoxProvenance, hasActiveVouchEscrow, getBackerPoolBox, getBackerStakeBox,
 } from '../../src/store/utxo.js';
 import { getVouchBox } from '../../src/store/vouch-queries.js';
@@ -61,7 +61,6 @@ function makeDeps(): UtxoEngineDeps {
     consumeBox: (id: string, atBlock: number) => {
       db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
     },
-    getKarmaBox,
     getKarmaValue,
     getIdentityRecord,
     hasActiveVouchEscrow,

@@ -132,7 +132,6 @@ async function storeBackedDeps() {
     getIdentityRecord: identityStore.getIdentityRecord,
     insertBox: utxoStore.insertBox,
     consumeBox: utxoStore.consumeBox,
-    getKarmaBox: utxoStore.getKarmaBox,
     getKarmaValue: utxoStore.getKarmaValue,
     hasActiveVouchEscrow: () => false,
     vouchCooldownBlocks: 2,

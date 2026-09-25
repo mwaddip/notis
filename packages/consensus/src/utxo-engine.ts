@@ -119,13 +119,12 @@ export interface UtxoEngineDeps {
   getBox: (id: string) => AnyBox | null;
   insertBox: (box: AnyBox) => void;
   consumeBox: (id: string, atBlock: number) => void;
-  getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
   /**
    * Summed value of every unspent KarmaBox owned by `owner`.
    *
    * Consensus input, not a convenience read: the vouch cast is a predicate on
    * the voucher's *current* karma (ARCHITECTURE → "Vouch boxes"). Summed rather
-   * than `getKarmaBox().value` because multiple unspent karma boxes per owner is
+   * than one box's value because multiple unspent karma boxes per owner is
    * reachable — an invite grant alongside a mint, or a plain karma split — and
    * reading one box would let the threshold be evaded, or met, by how the karma
    * happens to be partitioned.

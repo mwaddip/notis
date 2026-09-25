@@ -13,7 +13,6 @@ import { insertPost, getPost, queryPostsPage, getAncestorsNearest, getSubtreePag
 import { getUsernameByOwner } from '../../src/store/usernames.js';
 import { getCurrentHeight, getBlockCreatedAt } from '../../src/store/ordering.js';
 import {
-  getKarmaBox,
   getKarmaBoxes,
   insertBox,
   getBox as storeGetBox,
@@ -82,7 +81,6 @@ async function request(
       },
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
-      getKarmaBox,
       getLikeRecordCount,
       getDescendantCount,
       hasLikeRecord,
@@ -114,7 +112,6 @@ async function request(
             consumeBox: (id: string, atBlock: number) => {
               db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
             },
-            getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
             getIdentityRecord: (identityId: Uint8Array) =>
               storeGetIdentityRecord(identityId),
             getKarmaValue: (owner: Uint8Array) =>
@@ -260,7 +257,6 @@ describe('posts routes', () => {
       },
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
-      getKarmaBox,
       getLikeRecordCount,
       getDescendantCount,
       hasLikeRecord,
@@ -916,7 +912,6 @@ describe('posts routes — alias resolution', () => {
         },
         storageRentPeriodBlocks: 40,
         getBoxProvenance: () => null,
-        getKarmaBox: () => null,
         getLikeRecordCount: () => 0,
         getDescendantCount: () => 0,
         hasLikeRecord: () => false,

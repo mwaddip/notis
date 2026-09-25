@@ -112,7 +112,6 @@ describe('invite id prediction carries transaction provenance', () => {
     getBox,
     insertBox,
     consumeBox: () => {},
-    getKarmaBox: () => null,
     getKarmaValue: (owner: Uint8Array) =>
       getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
     getIdentityRecord: (id: Uint8Array) =>
