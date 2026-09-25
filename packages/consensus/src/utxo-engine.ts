@@ -1,4 +1,3 @@
-import { verify as cryptoVerify } from 'crypto';
 import {
   BOX_VALUE_BOUND,
   boxRecordBytes,
@@ -32,7 +31,7 @@ import type { DecayCfg, UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, Cred
 // same `Encoder` options, same strip rule, same domain tag, all by hand
 // (NODE_INTERFACE → "Box Identity and Mint Provenance").
 
-import { ed25519PublicKeyToKeyObject, verifyPostCommitDomains, verifyPostWithdrawCommitDomains, verifyTxProtocolVersion } from '@dagsocial/validation';
+import { verifyEd25519, verifyPostCommitDomains, verifyPostWithdrawCommitDomains, verifyTxProtocolVersion } from '@dagsocial/validation';
 import type { IdentityRecord } from '@dagsocial/types';
 
 /** NODE_INTERFACE → Network record. The node's store persists the row; `DecayDeps` reads the same shape. */
@@ -248,12 +247,7 @@ function verifyGuardSignature(
   const hexKey = Buffer.from(pubKey).toString('hex');
   const signature = tx.signatures[hexKey];
   if (!signature) return false;
-  try {
-    const keyObj = ed25519PublicKeyToKeyObject(pubKey);
-    return Boolean(cryptoVerify(null, txHash, keyObj, Buffer.from(signature)));
-  } catch {
-    return false;
-  }
+  return verifyEd25519(signature, txHash, pubKey);
 }
 
 /**
