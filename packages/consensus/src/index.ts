@@ -14,7 +14,6 @@ export type { UtxoEngineDeps, UtxoResult, NetworkRecord, UsernameRow } from './u
 export {
   buildBlockSettlement,
   buildSettlement,
-  checkSettlement,
   bondOutputOf,
   settlementMarginalBytes,
 } from './settlement.js';

@@ -3,10 +3,8 @@
 import { describe, it, expect } from 'vitest';
 import { splitCoinbase } from '@dagsocial/consensus';
 import { backerLeg } from '../src/coinbase-split.js';
-import {
-  buildSettlement,
-  checkSettlement,
-} from '@dagsocial/consensus';
+import { checkSettlement } from '../src/settlement.js';
+import { buildSettlement } from '@dagsocial/consensus';
 import type { SettlementDeps, SettlementBody } from '@dagsocial/consensus';
 import type {
   AnyBox,
