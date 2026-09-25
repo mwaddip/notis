@@ -103,6 +103,41 @@ function append<K, V>(map: Map<K, V[]>, key: K, value: V): void {
 }
 
 /**
+ * A box the block inserted, as a read answers it: a copy, every byte field a
+ * plain `Uint8Array` and no key that holds `undefined`.
+ */
+function readBackBox<B extends AnyBox>(box: B): B {
+  const copy: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(box)) {
+    if (value === undefined) continue;
+    copy[key] = value instanceof Uint8Array ? new Uint8Array(value) : value;
+  }
+  return copy as B;
+}
+
+/** An identity record the block wrote, as a read answers it: a copy, its fields in the record's declared order. */
+function readBackRecord(record: IdentityRecord): IdentityRecord {
+  return {
+    lastActivityBlock: record.lastActivityBlock,
+    lastDecayBlock: record.lastDecayBlock,
+    invitedAtBlock: record.invitedAtBlock,
+    lifetimeLikesReceived: record.lifetimeLikesReceived,
+    memberSinceBlock: record.memberSinceBlock,
+    memberBar: record.memberBar,
+    memberVouches: record.memberVouches,
+    memberLikes: record.memberLikes,
+    invitesUsed: record.invitesUsed,
+  };
+}
+
+/** A name row the block wrote, as a read answers it: a copy, or none for a removal. */
+function readBackRow(row: UsernameRow | null): UsernameRow | null {
+  return row === null
+    ? null
+    : { nameLower: row.nameLower, name: row.name, owner: row.owner, boxId: row.boxId, claimedAtBlock: row.claimedAtBlock };
+}
+
+/**
  * The block-local layer `applyBlock` reads and writes through
  * (CONSENSUS_INTERFACE → The overlay). Every write is visible to every later
  * read of the block and to no read outside it; the view underneath is never
@@ -119,10 +154,14 @@ function append<K, V>(map: Map<K, V[]>, key: K, value: V): void {
  * - **The store's backstops**: an insert of a box id the state holds or held
  *   throws `BoxIdTakenError`; a spend of a box that is not live throws
  *   `SpendOfNonLiveBoxError`.
+ * - **A read of what the block wrote answers a copy** — of a box, a record, a
+ *   name row or a post's author — with every byte field a plain `Uint8Array`
+ *   and a record's fields in its declared order, whatever carried the bytes the
+ *   block was decoded from; no reader holds an object the effects hold.
  *
  * `mutations`, `likeRecords` and `withdrawals` are the block's writes in the
  * order it made them — the effects' own lists (CONSENSUS_INTERFACE →
- * BlockEffects).
+ * BlockEffects); an inserted box is listed as the object the block passed.
  */
 export class BlockOverlay implements StateView {
   readonly mutations: BlockMutation[] = [];
@@ -156,7 +195,8 @@ export class BlockOverlay implements StateView {
 
   getBox(id: string): AnyBox | null {
     if (this.spent.has(id)) return null;
-    return this.inserted.get(id) ?? this.view.getBox(id);
+    const inserted = this.inserted.get(id);
+    return inserted !== undefined ? readBackBox(inserted) : this.view.getBox(id);
   }
 
   getBoxProvenance(id: string): { txId: string; index: number } | null {
@@ -166,21 +206,21 @@ export class BlockOverlay implements StateView {
 
   getIdentityRecord(identityId: Uint8Array): IdentityRecord | null {
     const written = this.records.get(hex(identityId));
-    return written !== undefined ? written.record : this.view.getIdentityRecord(identityId);
+    return written !== undefined ? readBackRecord(written.record) : this.view.getIdentityRecord(identityId);
   }
 
   getNetworkRecord(): NetworkRecord {
-    return this.network ?? this.view.getNetworkRecord();
+    return this.network !== null ? { memberCount: this.network.memberCount } : this.view.getNetworkRecord();
   }
 
   getUsername(nameLower: string): UsernameRow | null {
     const written = this.names.get(nameLower);
-    return written !== undefined ? written : this.view.getUsername(nameLower);
+    return written !== undefined ? readBackRow(written) : this.view.getUsername(nameLower);
   }
 
   getUsernameByOwner(owner: Uint8Array): UsernameRow | null {
     const written = this.holders.get(hex(owner));
-    return written !== undefined ? written : this.view.getUsernameByOwner(owner);
+    return written !== undefined ? readBackRow(written) : this.view.getUsernameByOwner(owner);
   }
 
   /**
@@ -189,7 +229,10 @@ export class BlockOverlay implements StateView {
    * Topology).
    */
   getTopologyAuthor(postId: string): Uint8Array | null {
-    return this.view.getTopologyAuthor(postId) ?? this.topology.get(postId)?.author ?? null;
+    const fromView = this.view.getTopologyAuthor(postId);
+    if (fromView !== null) return fromView;
+    const written = this.topology.get(postId);
+    return written !== undefined ? new Uint8Array(written.author) : null;
   }
 
   getTopologyHeight(postId: string): number | null {
@@ -242,7 +285,9 @@ export class BlockOverlay implements StateView {
     order: (a: AnyBox, b: AnyBox) => number,
   ): B[] {
     const kept = fromView.filter((box) => !this.spent.has(box.id!));
-    const added = (this.composedInserts.get(key) ?? []).filter((box) => !this.spent.has(box.id!)) as B[];
+    const added = (this.composedInserts.get(key) ?? [])
+      .filter((box) => !this.spent.has(box.id!))
+      .map((box) => readBackBox(box) as B);
     return added.length === 0 ? kept : [...kept, ...added].sort(order);
   }
 

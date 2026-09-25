@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
+import { PROTOCOL_VERSION, computeTxId, decodeTx, encodeTx } from '@dagsocial/types';
 import {
   BlockOverlay,
   BoxIdTakenError,
   LimitedQueryAfterWriteError,
   SpendOfNonLiveBoxError,
 } from '../src/overlay.js';
-import type { AnyBox } from '@dagsocial/types';
+import { materializeOutput } from '../src/utxo-engine.js';
+import type { AnyBox, AnyBoxCandidate, IdentityRecord, KarmaBox, UtxoTransaction } from '@dagsocial/types';
 import type { UsernameRow } from '@dagsocial/consensus';
 import {
   MemoryStateView,
@@ -82,7 +84,7 @@ describe('BlockOverlay — keyed reads answer the block\'s own entry first', () 
 
     const made = karmaBox(bob, 5n, 3);
     overlay.insertBox(made);
-    expect(overlay.getBox(made.id)).toBe(made);
+    expect(overlay.getBox(made.id)).toEqual(made);
 
     overlay.consumeBox(held.id);
     overlay.consumeBox(made.id);
@@ -117,11 +119,11 @@ describe('BlockOverlay — keyed reads answer the block\'s own entry first', () 
     const second = identityRecord({ memberVouches: 3 });
     overlay.putIdentityRecord(alice, first);
     overlay.putIdentityRecord(new Uint8Array(alice), second);
-    expect(overlay.getIdentityRecord(alice)).toBe(second);
+    expect(overlay.getIdentityRecord(alice)).toEqual(second);
 
     expect(overlay.getIdentityRecord(bob)).toBeNull();
     overlay.putIdentityRecord(bob, first);
-    expect(overlay.getIdentityRecord(bob)).toBe(first);
+    expect(overlay.getIdentityRecord(bob)).toEqual(first);
     expect(view.getIdentityRecord(alice)).toEqual(identityRecord({ memberVouches: 1 }));
     expect(view.getIdentityRecord(bob)).toBeNull();
   });
@@ -149,8 +151,8 @@ describe('BlockOverlay — keyed reads answer the block\'s own entry first', () 
 
     const reclaimed = nameRow('alpha', bob, 'b'.repeat(64));
     overlay.putUsername(reclaimed);
-    expect(overlay.getUsername('alpha')).toBe(reclaimed);
-    expect(overlay.getUsernameByOwner(bob)).toBe(reclaimed);
+    expect(overlay.getUsername('alpha')).toEqual(reclaimed);
+    expect(overlay.getUsernameByOwner(bob)).toEqual(reclaimed);
     expect(overlay.getUsernameByOwner(alice)).toBeNull();
     expect(view.getUsername('alpha')).toBe(alpha);
   });
@@ -166,7 +168,7 @@ describe('BlockOverlay — keyed reads answer the block\'s own entry first', () 
 
     overlay.insertBlockTopology('p2', bob, 7);
     overlay.insertBlockTopology('p2', carol, 7);
-    expect(overlay.getTopologyAuthor('p2')).toBe(bob);
+    expect(overlay.getTopologyAuthor('p2')).toEqual(bob);
     expect(overlay.getTopologyHeight('p2')).toBe(7);
 
     expect(overlay.getTopologyAuthor('p3')).toBeNull();
@@ -319,7 +321,7 @@ describe('BlockOverlay — an unlimited query composes under its own order', () 
       }
       expectComposedAgree(overlay, reference, who);
       for (const id of known) {
-        expect(overlay.getBox(id)).toBe(reference.getBox(id));
+        expect(overlay.getBox(id)).toEqual(reference.getBox(id));
         expect(overlay.getBoxProvenance(id)).toEqual(reference.getBoxProvenance(id));
       }
     }
@@ -597,5 +599,135 @@ describe('BlockOverlay — the block\'s writes, in the order it made them', () =
     expect(view.getPostStanding('p')).toBe('live');
     expect(view.hasLikeRecord('p', bob)).toBe(false);
     expect(view.getTopologyAuthor('q')).toBeNull();
+  });
+});
+
+describe('BlockOverlay — a read of what the block wrote answers a copy', () => {
+  /** A body's outputs as a node holds them once it decodes the body from a `Buffer`. */
+  function decodedFromBuffer(outputs: AnyBoxCandidate[]): AnyBox[] {
+    const tx: UtxoTransaction = { inputs: ['ab'.repeat(32)], outputs, signatures: {}, protocolVersion: PROTOCOL_VERSION };
+    const decoded = decodeTx(Buffer.from(encodeTx(tx)));
+    const txId = computeTxId(decoded);
+    return decoded.outputs.map((out, index) => materializeOutput(out, txId, index));
+  }
+
+  const byteFields = (box: object): Array<[string, Uint8Array]> =>
+    Object.entries(box).filter((entry): entry is [string, Uint8Array] => entry[1] instanceof Uint8Array);
+
+  /** A value with every byte field as hex and every bigint as text: values compare whatever carries their bytes. */
+  function shape(value: unknown): unknown {
+    return JSON.parse(JSON.stringify(value, function (this: Record<string, unknown>, key: string, v: unknown) {
+      const raw = this[key];
+      if (raw instanceof Uint8Array) return Buffer.from(raw).toString('hex');
+      return typeof v === 'bigint' ? `${v}n` : v;
+    }));
+  }
+
+  it('a box a Buffer-decoded body inserted reads back with every byte field a plain Uint8Array, and the effects keep the box as passed', () => {
+    const [owner, holder, author, invitee] = [uid('copy/owner'), uid('copy/holder'), uid('copy/author'), uid('copy/invitee')];
+    const outputs = decodedFromBuffer([
+      { boxType: 'karma', value: 7n, createdAtBlock: 2, owner },
+      { boxType: 'credit', value: 9n, createdAtBlock: 2, owner: holder },
+      { boxType: 'vouch', value: 1n, createdAtBlock: 2, voucherId: owner, targetId: holder },
+      { boxType: 'vouch_escrow', value: 1n, createdAtBlock: 2, owner, releaseAtBlock: 5 },
+      { boxType: 'like_accrual', value: 1n, createdAtBlock: 2, author },
+      { boxType: 'bond', value: 25n, createdAtBlock: 2, inviterId: owner, inviteePublicKey: invitee },
+      { boxType: 'username', value: 0n, createdAtBlock: 2, owner, name: new TextEncoder().encode('alpha') },
+    ] as AnyBoxCandidate[]);
+    for (const box of outputs) {
+      expect(byteFields(box).length).toBeGreaterThan(0);
+      expect(byteFields(box).every(([, bytes]) => Buffer.isBuffer(bytes))).toBe(true);
+    }
+    // A decoded credit output carries its absent lock as a key holding `undefined`.
+    expect(Object.hasOwn(outputs[1]!, 'lockedUntilBlock')).toBe(true);
+
+    const overlay = new BlockOverlay(new MemoryStateView());
+    for (const box of outputs) overlay.insertBox(box);
+
+    for (const box of outputs) {
+      const read = overlay.getBox(box.id!)!;
+      expect(read).not.toBe(box);
+      expect(shape(read)).toEqual(shape(box));
+      for (const [field, bytes] of byteFields(read)) {
+        expect(Object.getPrototypeOf(bytes), `${box.boxType}.${field}`).toBe(Uint8Array.prototype);
+        expect(bytes).not.toBe((box as unknown as Record<string, unknown>)[field]);
+      }
+    }
+    expect(Object.hasOwn(overlay.getBox(outputs[1]!.id!)!, 'lockedUntilBlock')).toBe(false);
+
+    const composed = [
+      ...overlay.getKarmaBoxes(owner),
+      ...overlay.getVouchBoxes(owner, holder),
+      ...overlay.getVouchEscrowsFor(owner),
+      ...overlay.getLikeAccrualBoxes(author),
+    ];
+    expect(ids(composed)).toEqual([outputs[0]!.id, outputs[2]!.id, outputs[3]!.id, outputs[4]!.id]);
+    for (const read of composed) {
+      for (const [field, bytes] of byteFields(read)) {
+        expect(Object.getPrototypeOf(bytes), `${read.boxType}.${field}`).toBe(Uint8Array.prototype);
+      }
+    }
+
+    // A later transaction of the block spends the karma output: the owner it
+    // reads is a plain Uint8Array, and the spend lands.
+    const karma = outputs[0]!;
+    expect(Object.getPrototypeOf((overlay.getBox(karma.id!) as KarmaBox).owner)).toBe(Uint8Array.prototype);
+    overlay.consumeBox(karma.id!);
+    expect(overlay.getBox(karma.id!)).toBeNull();
+
+    const inserted = overlay.mutations.flatMap((m) => (m.kind === 'box' && m.op === 'insert' ? [m.box] : []));
+    expect(inserted).toHaveLength(outputs.length);
+    inserted.forEach((box, i) => expect(box).toBe(outputs[i]));
+    expect(byteFields(inserted[0]!).every(([, bytes]) => Buffer.isBuffer(bytes))).toBe(true);
+  });
+
+  it('writing through a read changes neither the effects nor a later read', () => {
+    const [owner, holder, poster] = [uid('copy/w-owner'), uid('copy/w-holder'), uid('copy/w-poster')];
+    const overlay = new BlockOverlay(new MemoryStateView({ memberCount: 2 }));
+    const box = karmaBox(owner, 5n, 1);
+    const record = identityRecord({ memberVouches: 1 });
+    const row = nameRow('alpha', holder, 'b'.repeat(64));
+    const author = new Uint8Array(poster);
+    overlay.insertBox(box);
+    overlay.putIdentityRecord(owner, record);
+    overlay.putUsername(row);
+    overlay.putNetworkRecord({ memberCount: 3 });
+    overlay.insertBlockTopology('p', author, 4);
+    const effectsBefore = shape(overlay.mutations);
+
+    const readBox = overlay.getBox(box.id) as KarmaBox;
+    readBox.owner.fill(0);
+    (readBox as { value: bigint }).value = 99n;
+    const [listed] = overlay.getKarmaBoxes(owner);
+    listed!.owner.fill(1);
+    overlay.getIdentityRecord(owner)!.memberVouches = 99;
+    overlay.getUsername('alpha')!.boxId = 'f'.repeat(64);
+    overlay.getUsernameByOwner(holder)!.boxId = 'e'.repeat(64);
+    overlay.getNetworkRecord().memberCount = 99;
+    overlay.getTopologyAuthor('p')!.fill(2);
+
+    expect(shape(overlay.mutations)).toEqual(effectsBefore);
+    expect(box.owner).toEqual(uid('copy/w-owner'));
+    expect(overlay.getBox(box.id)).toEqual(box);
+    expect(overlay.getKarmaBoxes(owner)).toEqual([box]);
+    expect(overlay.getIdentityRecord(owner)).toEqual(record);
+    expect(overlay.getUsername('alpha')).toEqual(row);
+    expect(overlay.getUsernameByOwner(holder)).toEqual(row);
+    expect(overlay.getNetworkRecord()).toEqual({ memberCount: 3 });
+    expect(overlay.getTopologyAuthor('p')).toEqual(poster);
+    expect(author).toEqual(poster);
+  });
+
+  it('a record reads back in its declared field order, whatever order its writer listed', () => {
+    const who = uid('copy/r-who');
+    const overlay = new BlockOverlay(new MemoryStateView());
+    const listed = {
+      invitesUsed: 1, memberLikes: 2n, memberVouches: 3, memberBar: 4, memberSinceBlock: 5,
+      lifetimeLikesReceived: 6n, invitedAtBlock: 7, lastDecayBlock: 8, lastActivityBlock: 9,
+    } as IdentityRecord;
+    overlay.putIdentityRecord(who, listed);
+    const read = overlay.getIdentityRecord(who)!;
+    expect(Object.keys(read)).toEqual(Object.keys(identityRecord()));
+    expect(read).toEqual(listed);
   });
 });
