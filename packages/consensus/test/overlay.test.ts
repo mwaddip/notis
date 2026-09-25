@@ -603,12 +603,18 @@ describe('BlockOverlay — the block\'s writes, in the order it made them', () =
 });
 
 describe('BlockOverlay — a read of what the block wrote answers a copy', () => {
-  /** A body's outputs as a node holds them once it decodes the body from a `Buffer`. */
-  function decodedFromBuffer(outputs: AnyBoxCandidate[]): AnyBox[] {
+  /** A body's outputs as decoded, each byte field then carried as a `Buffer`. */
+  function withBufferFields(outputs: AnyBoxCandidate[]): AnyBox[] {
     const tx: UtxoTransaction = { inputs: ['ab'.repeat(32)], outputs, signatures: {}, protocolVersion: PROTOCOL_VERSION };
-    const decoded = decodeTx(Buffer.from(encodeTx(tx)));
+    const decoded = decodeTx(encodeTx(tx));
     const txId = computeTxId(decoded);
-    return decoded.outputs.map((out, index) => materializeOutput(out, txId, index));
+    return decoded.outputs.map((out, index) => {
+      const box = materializeOutput(out, txId, index) as unknown as Record<string, unknown>;
+      for (const [field, value] of Object.entries(box)) {
+        if (value instanceof Uint8Array) box[field] = Buffer.from(value);
+      }
+      return box as unknown as AnyBox;
+    });
   }
 
   const byteFields = (box: object): Array<[string, Uint8Array]> =>
@@ -623,9 +629,9 @@ describe('BlockOverlay — a read of what the block wrote answers a copy', () =>
     }));
   }
 
-  it('a box a Buffer-decoded body inserted reads back with every byte field a plain Uint8Array, and the effects keep the box as passed', () => {
+  it('a box inserted with its byte fields in Buffers reads back with every byte field a plain Uint8Array, and the effects keep the box as passed', () => {
     const [owner, holder, author, invitee] = [uid('copy/owner'), uid('copy/holder'), uid('copy/author'), uid('copy/invitee')];
-    const outputs = decodedFromBuffer([
+    const outputs = withBufferFields([
       { boxType: 'karma', value: 7n, createdAtBlock: 2, owner },
       { boxType: 'credit', value: 9n, createdAtBlock: 2, owner: holder },
       { boxType: 'vouch', value: 1n, createdAtBlock: 2, voucherId: owner, targetId: holder },
