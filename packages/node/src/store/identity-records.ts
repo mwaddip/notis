@@ -11,12 +11,11 @@ export type { NetworkRecord };
  * SQL and journal for the identity record (TYPES_INTERFACE → Identity record
  * and karma valuation for the type, the AVL key and the codec).
  *
- * **Who populates this.** `recordKarmaActivity` bumps `lastActivityBlock`
- * from the open journal's height when a post transaction applies — the
- * transaction carries a `post` commit (NODE_INTERFACE → Populating the
- * record); `commitDecayClocks` bumps `lastDecayBlock` when decay fires; and
- * `ensureSystemKarmaBox` writes genesis's own record, since it runs outside
- * block application where the choke point has no height to read.
+ * **Who populates this.** Block application writes each record its effects
+ * carry — the activity bump when a post transaction applies, the decay clock
+ * when decay fires, the grant, the like counters, the membership pass
+ * (NODE_INTERFACE → Populating the record); `ensureSystemKarmaBox` writes
+ * genesis's own record, since it runs outside block application.
  *
  * The SQL table keys on the raw identity bytes (`UserId`); the AVL key is
  * derived from them by `identityRecordKey` in `@dagsocial/types`. Both are
@@ -116,8 +115,7 @@ export function getAllIdentityRecords(): Array<{ identityId: UserId; record: Ide
  * unbounded-but-simple is the deliberate choice at this stage.
  *
  * While a block journal is open this captures the row it replaces **before**
- * writing and records the mutation — the record-once choke point that keeps
- * the AVL feed and the rollback inverse derived from one log.
+ * writing and records the mutation.
  */
 export function putIdentityRecord(identityId: UserId, record: IdentityRecord): void {
   const replaced = isBlockJournalOpen()

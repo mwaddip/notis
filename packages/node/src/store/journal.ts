@@ -68,13 +68,14 @@ export interface HolderMutation {
 export type JournalMutation = BoxMutation | RecordMutation | NetworkMutation | UsernameMutation | HolderMutation;
 
 /**
- * Single source of truth for undoing a block and feeding the AVL prover.
- * `mutations` is the ordered primitive log; the remaining fields are typed
- * side-records for non-box effects, each with an exact inverse.
+ * The record a block's effects are journalled into, and the one a revert
+ * undoes the block from (NODE_INTERFACE → Block Journal). `mutations` is the
+ * ordered primitive log; the remaining fields are typed side-records for
+ * non-box effects, each with an exact inverse.
  */
 export interface BlockJournal {
   blockHeight: number;
-  /** Ordered, application order — state rollback + AVL feed. */
+  /** Ordered, application order — replayed in reverse by a revert. */
   mutations: JournalMutation[];
   /** The post ids this block committed. Inverse: unconfirmPost (NODE_INTERFACE → Block Journal). */
   confirmedPostIds: string[];

@@ -1001,23 +1001,6 @@ export function getLikeCarryBox(
   return getLikeAccrualBoxes(author).find((box) => !exclude.has(box.id!)) ?? null;
 }
 
-/**
- * Advance an identity's activity clock to the height of the block being applied
- * (NODE_INTERFACE → Populating the record).
- *
- * Called from the user-transaction loop in `applyOrderingBlock` for every
- * transaction whose inputs are karma boxes — the spend is the activity
- * (ARCHITECTURE → Karma decay). Settlement consumption (decay) and settlement
- * outputs (grants, payouts, vests, returns) do not advance the clock.
- *
- * `lastDecayBlock` is carried through untouched: the fields of the record
- * have different writers, and an activity bump that reset the decay clock would
- * hand the owner a free interval. `invitedAtBlock` likewise — the grant path
- * owns it. `lifetimeLikesReceived` likewise — the payout path owns it.
- *
- * Asserts a journal is open: the user loop always runs inside one, and a call
- * would not be a settled one.
- */
 // ---------------------------------------------------------------------------
 // Karma membership hook — registered by index.ts so the store stays net-agnostic
 // ---------------------------------------------------------------------------
