@@ -4,8 +4,10 @@
 // that carries it, so the block's journal, the AVL feed and a prover rebuilt
 // from `getUnspentBoxes()` at restart all hold it.
 // ---------------------------------------------------------------------------
-import { describe, it, expect, vi } from 'vitest';
-import { unlinkSync } from 'fs';
+import { describe, it, expect, vi, onTestFinished } from 'vitest';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
 import {
   computeTxId,
@@ -105,12 +107,6 @@ async function importJournalStore() {
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
-
-function rmrf(path: string): void {
-  for (const p of [path, path + '-wal', path + '-shm']) {
-    try { unlinkSync(p); } catch { /* absent */ }
-  }
-}
 
 function digestHex(handle: { prover: { digest(): Uint8Array | null } }): string {
   const d = handle.prover.digest();
@@ -285,10 +281,12 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
   // The restart-rebuild convergence — the inverted before-leg
   // -------------------------------------------------------------------------
 
-  const FORK_DB = '/tmp/dagsocial-test-credits-consensus.sqlite';
-
   it('a mined transfer reaches the live tree, and a restart-rebuild reproduces its content', async () => {
-    rmrf(FORK_DB);
+    // A directory private to this run, so two runs of the suite on one machine
+    // never write the same store file.
+    const forkDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-credits-consensus-'));
+    onTestFinished(() => rmSync(forkDir, { recursive: true, force: true }));
+    const FORK_DB = join(forkDir, 'store.sqlite');
     vi.resetModules();
 
     // ---- world A: the running node, which is also the honest network's view
@@ -438,6 +436,5 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     expect(handleB.prover.unauthenticatedLookup(Buffer.from(seeded.id!, 'hex'))).toBeNull();
 
     db.closeDb();
-    rmrf(FORK_DB);
   }, 30_000);
 });

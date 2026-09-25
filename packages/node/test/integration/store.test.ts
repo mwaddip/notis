@@ -13,10 +13,14 @@ import {
   isLivePost,
 } from '../../src/store/posts.js';
 import { computeContentHash } from '@dagsocial/types';
-import { unlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { PostCommit } from '@dagsocial/types';
 
-const TEST_DB = '/tmp/dagsocial-test-posts-store.sqlite';
+// A directory private to this run, so two runs of the suite on one machine
+// never write the same store file.
+let testDir: string;
 
 function hex(u: Uint8Array): string { return Buffer.from(u).toString('hex'); }
 
@@ -36,13 +40,13 @@ function makeCommit(overrides: Partial<PostCommit> & { content?: string } = {}):
 
 describe('posts store (integration)', () => {
   beforeAll(() => {
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
-    initDb(TEST_DB);
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-posts-store-'));
+    initDb(join(testDir, 'store.sqlite'));
   });
 
   afterAll(() => {
     closeDb();
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   it('inserts and retrieves a post via getPost', () => {
