@@ -5,6 +5,8 @@ import {
   computeContentHash,
   computePostId,
   computeTxId,
+  decodeOrderingBlock,
+  encodeOrderingBlock,
   identityRecordKey,
   LIKE_KARMA_COST,
   POST_PRICE_REPLY,
@@ -50,6 +52,20 @@ import {
  * The profile numbers it needs shortened are `PIN_CONFIG`; the suite installs
  * them into the config module before anything here is imported.
  */
+
+/**
+ * The byte type of every block the scenario hands the funnel and the
+ * speculative run: `'Uint8Array'` hands each block as `makeApplicableBlock`
+ * builds it; `'Buffer'` hands it decoded from a `Buffer` of its encoding, where
+ * every byte field the codec reads is a `Buffer` over that input.
+ */
+export type PinCarrier = 'Uint8Array' | 'Buffer';
+
+function carried(block: OrderingBlock, carrier: PinCarrier): OrderingBlock {
+  return carrier === 'Uint8Array'
+    ? block
+    : decodeOrderingBlock(Buffer.from(encodeOrderingBlock(block)));
+}
 
 /** The profile numbers the scenario runs under — installed by the suite's config mock. */
 export const PIN_CONFIG = Object.freeze({
@@ -522,7 +538,7 @@ function residentRecord(): IdentityRecord {
   };
 }
 
-export async function runApplyPinScenario(): Promise<ApplyPinCapture> {
+export async function runApplyPinScenario(carrier: PinCarrier = 'Uint8Array'): Promise<ApplyPinCapture> {
   const m = await loadModules();
   for (const [field, value] of Object.entries(PIN_CONFIG)) {
     const read = (m.config as unknown as Record<string, unknown>)[field];
@@ -535,14 +551,14 @@ export async function runApplyPinScenario(): Promise<ApplyPinCapture> {
   m.db.initDb(':memory:');
   m.difficulty.setClock(() => CLOCK_MS);
   try {
-    return await runScenario(m);
+    return await runScenario(m, carrier);
   } finally {
     m.difficulty.setClock(null);
     m.db.closeDb();
   }
 }
 
-async function runScenario(m: Modules): Promise<ApplyPinCapture> {
+async function runScenario(m: Modules, carrier: PinCarrier): Promise<ApplyPinCapture> {
   const miner = seeded('miner');
   const [r1, r2] = [seeded('root-1'), seeded('root-2')];
   const t = seeded('target');
@@ -615,9 +631,10 @@ async function runScenario(m: Modules): Promise<ApplyPinCapture> {
   const blocks: OrderingBlock[] = [];
   const pinned: PinnedBlock[] = [];
   const refusals: RefusalCapture[] = [];
-  const build = (txs: Built[]): Promise<OrderingBlock> => {
+  const build = async (txs: Built[]): Promise<OrderingBlock> => {
     const height = blocks.length + 1;
-    return makeApplicableBlock({ height, miner, createdAt: stampAt(height), utxoTxs: txs.map((b) => b.tx) });
+    const block = await makeApplicableBlock({ height, miner, createdAt: stampAt(height), utxoTxs: txs.map((b) => b.tx) });
+    return carried(block, carrier);
   };
   const applyNext = async (txs: Built[]): Promise<void> => {
     const block = await build(txs);
