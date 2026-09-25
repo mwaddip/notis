@@ -2657,12 +2657,12 @@ describe('block-apply funnel totality', () => {
     )).toBe(true);
     expect(posts.isLivePost(posts.getPost(postId))).toBe(false);
 
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(blockApply.applyOrderingBlock(
       await makeApplicableBlock({ height: 3, utxoTxs: [makePostWithdrawTx(author, postId, 94, utxo)] }),
     )).toBe(false);
-    expect(error.mock.calls.some(([m]) => String(m).includes('already-withdrawn or unknown'))).toBe(true);
-    error.mockRestore();
+    expect(warn.mock.calls.some(([m]) => String(m).includes('already-withdrawn or unknown'))).toBe(true);
+    warn.mockRestore();
   });
 
   it('rejects a block whose postWithdraw input owner is not the post topology author', async () => {

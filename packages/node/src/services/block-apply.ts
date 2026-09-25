@@ -1,6 +1,6 @@
 import * as validation from '@dagsocial/validation';
-import { commitDecayClocks, deriveKarmaDecay } from '@dagsocial/consensus';
-import { hasActiveVouchEscrow } from '../store/utxo.js';
+import { applyBlock } from '@dagsocial/consensus';
+import type { ApplyContext, BlockEffects, StateView } from '@dagsocial/consensus';
 import {
   CorruptChainStateError,
   MissingStoredBlockError,
@@ -9,42 +9,13 @@ import {
 } from './corrupt-state.js';
 import { config } from '../config.js';
 import type { Config } from '../config.js';
-import type { ApplyContext, StateView } from '@dagsocial/consensus';
 import {
-  collectPostBodyKarma,
-  computeBlockReward,
   computeUtxoTxRoot,
   clearTemplate,
-  decayDeps,
   rebuildTemplate,
-  settlementDepsWith,
 } from './block-creator.js';
-import {
-  countKarmaActors,
-  isCreditSideTx,
-  type EmbeddedTx,
-} from '@dagsocial/consensus';
-import {
-  bondOutputOf,
-  checkSettlement,
-  contributeToBody,
-  emptyBody,
-} from '@dagsocial/consensus';
-import { postsOf, postIdsOf, withdrawalsOf } from '@dagsocial/consensus';
 import { scheduledTargetBits, nowMs } from './difficulty.js';
 import {
-  applyTx,
-  checkOutputShape,
-  checkSettlementOutputShape,
-  checkTxEnvelope,
-  materializeOutput,
-  validateTx,
-  isMember,
-  isRoot,
-} from '@dagsocial/consensus';
-import {
-  getKarmaBox,
-  getKarmaValue,
   getPost,
   insertBox,
   getBox,
@@ -58,20 +29,19 @@ import {
   getOrderingBlock,
   removeUtxoTxEntry,
   insertBlockTopology,
-  getTopologyAuthor,
   getTopologyAuthorBytes,
   getTopologyHeight,
   getIdentityRecord,
   putIdentityRecord,
-  recordKarmaActivity,
   hasLikeRecord,
   insertLikeRecord,
   getVouchEscrowsReleasableAt,
   purgeRefusedHeaders,
   getBoxProvenance,
   getInterlinks,
-  getVouchBox,
   getNetworkRecord,
+  putNetworkRecord,
+  networkRecordKey,
   getLapsedVouches,
   getBackerPoolBox,
   putUsername,
@@ -88,49 +58,35 @@ import {
   getBondsInvitedAt,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
-import {
-  beginBlockJournal,
-  finishBlockJournal,
-  abortBlockJournal,
-  recordConfirmedPosts,
-  recordAppliedUtxoTx,
-  recordWithdrawnPost,
-  insertBlockJournal,
-  purgeOldJournals,
+import { insertBlockJournal, purgeOldJournals } from '../store/journal.js';
+import type {
+  BlockJournal,
+  HolderMutation,
+  JournalMutation,
+  RecordMutation,
+  UsernameMutation,
 } from '../store/journal.js';
-import type { BlockJournal } from '../store/journal.js';
-import { tryGetAvlProver, applyBlockMutations, checkpointProver } from '../state/avl-prover.js';
+import {
+  tryGetAvlProver,
+  applyBlockMutations,
+  checkpointProver,
+  usernameRecordKey,
+  holderRecordKey,
+} from '../state/avl-prover.js';
+import type { RecordPut, NetworkPut, UsernamePut, HolderPut } from '../state/avl-prover.js';
 import { emitPostIndexed } from '../journal.js';
 import { countedVerifyOrderingBlockPoW, noteTip } from '../metrics.js';
 import { getNet } from './net-instance.js';
-import type { RecordPut, NetworkPut, UsernamePut, HolderPut } from '../state/avl-prover.js';
-import { usernameRecordKey, holderRecordKey } from '../state/avl-prover.js';
-import { canonicalUsernameBytes } from '@dagsocial/types';
-import { networkRecordKey } from '../store/identity-records.js';
 import {
-  encodeTx,
-  decodeTx,
+  canonicalUsernameBytes,
+  identityRecordKey,
   MAX_FUTURE_DRIFT_MS,
   GENESIS_PREV_BLOCK_HASH,
   protocolVersionAt,
-  MAX_ESCROW_RETURNS_PER_BLOCK,
-  MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
-  computeTxId,
   interlinkRoot,
   updateInterlinks,
-  membershipBar as membershipBarFn,
-  memberLikesBar,
 } from '@dagsocial/types';
-import type {
-  AnyBox,
-  KarmaBox,
-  VouchBox,
-  UsernameBox,
-  OrderingBlock,
-  UtxoTransaction,
-} from '@dagsocial/types';
-import type { IdentityRecord } from '@dagsocial/types';
-import { putNetworkRecord } from '../store/identity-records.js';
+import type { AnyBox, OrderingBlock } from '@dagsocial/types';
 
 /**
  * Signals "this block is invalid" from inside the transaction that wraps block
@@ -233,7 +189,7 @@ export function applyOrderingBlock(block: OrderingBlock): boolean {
  *
  * The funnel is total: no input makes this function throw. A block that causes
  * an unexpected exception is a block the node rejects, on the same terms as an
- * explicit rejection — transaction rolled back, journal dropped, verdict
+ * explicit rejection — transaction rolled back, prover restored, verdict
  * returned, detail logged. That is not defensive padding. The gossip callback
  * is `async` and the net layer discards its promise, so a propagated throw
  * becomes an unhandled rejection, which exits the process on Node ≥ 15; and
@@ -280,7 +236,6 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
     // MINING_INTERFACE → Header timestamp rules: the future bound is an
     // acceptance rule, not a consensus verdict.
     if (err instanceof BlockBeyondFutureBound) {
-      abortBlockJournal();
       restoreProver();
       return { applied: false, class: 'acceptance' };
     }
@@ -298,21 +253,18 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
     // exactly like a quiet network. The unwinding below still runs, because the
     // boundary is the caller's decision and not this function's to presume.
     if (err instanceof CorruptChainStateError) {
-      abortBlockJournal();
       restoreProver();
       throw err;
     }
     // better-sqlite3 has already rolled the transaction back by the time the
     // throw surfaces here (it issues ROLLBACK, or ROLLBACK TO for the nested
     // reorg savepoint, before re-throwing), so the node is on its pre-block
-    // state. What is left is to drop the half-built journal (a no-op if the
-    // body already finished it), restore the prover, and answer the caller
-    // the same way an explicit rejection does.
+    // state. What is left is to restore the prover and answer the caller the
+    // same way an explicit rejection does.
     const detail = String(err);
     console.error(
       `Rejected block height=${block.header.height}: unexpected failure during apply: ${detail}`,
     );
-    abortBlockJournal();
     restoreProver();
     return { applied: false, class: 'local', detail };
   }
@@ -340,12 +292,6 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
 function applyBlockBody(block: OrderingBlock): boolean {
   const currentHeight = getCurrentHeight();
 
-  // Open the record-once journal: from here on the store mutation primitives
-  // record automatically, and every rejection path below aborts it. The
-  // lifecycle is owned here rather than by the mutation phase, so the
-  // speculative caller (`computePostBlockStateRoot`) records identically.
-  beginBlockJournal(block.header.height);
-
   // 1. Chain-link check + interlink root + genesis pin
   // (NODE_INTERFACE → Ordering block apply-time authorization)
   let expectedInterlinks: string[];
@@ -354,12 +300,10 @@ function applyBlockBody(block: OrderingBlock): boolean {
     // Genesis: prevBlockHash must be all zeros
     if (block.header.prevBlockHash !== GENESIS_PREV_BLOCK_HASH) {
       console.warn(`Rejected block height=${block.header.height}: genesis prevBlockHash mismatch`);
-      abortBlockJournal();
       return false;
     }
     if (block.header.height !== 1) {
       console.warn(`Rejected block: first block must have height=1, got ${block.header.height}`);
-      abortBlockJournal();
       return false;
     }
     expectedInterlinks = [];
@@ -370,7 +314,6 @@ function applyBlockBody(block: OrderingBlock): boolean {
       const bh = validation.blockHash(block.header);
       if (bh !== genesisId) {
         console.warn(`Rejected block height=${block.header.height}: genesis pin mismatch`);
-        abortBlockJournal();
         return false;
       }
     }
@@ -395,13 +338,11 @@ function applyBlockBody(block: OrderingBlock): boolean {
     }
     if (!validation.verifyBlockChainLink(block, prevBlock)) {
       console.warn(`Rejected block height=${block.header.height}: chain link check failed`);
-      abortBlockJournal();
       return false;
     }
     // MINING_INTERFACE → Header timestamp rules, order rule
     if (!validation.verifyCreatedAtOrder(block.header, prevBlock.header)) {
       console.warn(`Rejected block height=${block.header.height}: createdAt not above the parent's`);
-      abortBlockJournal();
       return false;
     }
     // MINING_INTERFACE → Header timestamp rules, future bound
@@ -419,7 +360,6 @@ function applyBlockBody(block: OrderingBlock): boolean {
   }
   if (block.header.interlinkRoot !== interlinkRoot(expectedInterlinks)) {
     console.warn(`Rejected block height=${block.header.height}: interlinkRoot mismatch`);
-    abortBlockJournal();
     return false;
   }
 
@@ -428,7 +368,6 @@ function applyBlockBody(block: OrderingBlock): boolean {
   // (VALIDATION_INTERFACE → Protocol Version).
   if (!validation.verifyProtocolVersion(block.header.protocolVersion, block.header.height, config.protocolVersionSchedule)) {
     console.warn(`Rejected block height=${block.header.height}: protocol version ${block.header.protocolVersion} is not the era ${protocolVersionAt(config.protocolVersionSchedule, block.header.height)}`);
-    abortBlockJournal();
     return false;
   }
 
@@ -444,12 +383,10 @@ function applyBlockBody(block: OrderingBlock): boolean {
       `Rejected block height=${block.header.height}: powTargetBits ` +
       `${block.header.powTargetBits} != scheduled ${scheduledTarget}`,
     );
-    abortBlockJournal();
     return false;
   }
   if (!countedVerifyOrderingBlockPoW(block.header)) {
     console.warn(`Rejected block height=${block.header.height}: PoW invalid`);
-    abortBlockJournal();
     return false;
   }
 
@@ -460,7 +397,6 @@ function applyBlockBody(block: OrderingBlock): boolean {
   // funnel every apply path (gossip, sync, reorg) passes through — so no path skips it.
   if (!validation.verifyValidatorSignature(block.header, block.validatorSignature)) {
     console.warn(`Rejected block height=${block.header.height}: validator signature invalid`);
-    abortBlockJournal();
     return false;
   }
 
@@ -471,7 +407,6 @@ function applyBlockBody(block: OrderingBlock): boolean {
   const computedUtxoRoot = computeUtxoTxRoot(block.utxoTxTree);
   if (computedUtxoRoot !== block.header.utxoTxRoot) {
     console.warn(`Rejected block height=${block.header.height}: utxoTxRoot mismatch`);
-    abortBlockJournal();
     return false;
   }
 
@@ -489,54 +424,55 @@ function applyBlockBody(block: OrderingBlock): boolean {
   // rebuild is at the end of `applyOrderingBlock`, once the write is committed.
   clearTemplate();
 
-  // 7–12b. Mutation phase — the block's state transition, run verbatim (at an
-  // explicitly passed height) by the block creator to obtain the post-block
-  // stateRoot before mining (H-6). It never touches the journal lifecycle, so
-  // its rejections are turned into an abort here.
-  if (!applyMutationPhase(block, block.header.height)) {
-    abortBlockJournal();
+  // 7–13. The mutation phase (NODE_INTERFACE → "Apply funnel: validation and
+  // mutation phases"): the rules over the store's view, answering the block's
+  // effects or the reason a rule refused it, and writing nothing. The block
+  // creator runs the same call over the same view to obtain the post-block
+  // stateRoot before mining (NODE_INTERFACE → Post-block stateRoot).
+  const height = block.header.height;
+  const result = applyBlock(storeStateView, block, applyContextFrom(config));
+  if (!result.ok) {
+    // A refusal is a verdict, not an error.
+    console.warn(result.reason);
     return false;
   }
 
-  // 13. AVL state root update (skipped if prover not initialized)
-  //
-  // Nothing mutates boxes past §12b, so the journal is complete: close it and
-  // derive the prover feed from its mutation log.
-  const journal = finishBlockJournal();
+  // The AVL feed from the effects and the stateRoot compare, before any effect
+  // is written — unconditional on every node holding a prover (NODE_INTERFACE →
+  // AVL+ State Root). The prover is restored by the funnel's single rollback
+  // point, not here.
   const handle = tryGetAvlProver();
   if (handle) {
-    const feed = proverFeedFromJournal(journal);
+    const feed = proverFeedFromEffects(result.effects);
     const computedDigest = applyBlockMutations(
-      handle.prover, block.header.height,
+      handle.prover, height,
       feed.consumed, feed.created, feed.recordPuts, feed.networkPuts,
       feed.usernamePuts, feed.holderPuts, feed.removedRecordKeys,
     );
-
-    // Verify against block header — unconditional on every node holding a
-    // prover (NODE_INTERFACE → AVL+ State Root). The prover is restored by
-    // the funnel's single rollback point, not here.
     const expectedHex = Buffer.from(computedDigest).toString('hex');
     if (block.header.stateRoot !== expectedHex) {
       console.warn(
-        `stateRoot mismatch at height ${block.header.height}: ` +
+        `stateRoot mismatch at height ${height}: ` +
         `computed=${expectedHex.slice(0, 16)}... ` +
         `header=${block.header.stateRoot.slice(0, 16)}...`,
       );
-      abortBlockJournal();
       return false;
     }
-
-    // Checkpoint prover state at this height
-    checkpointProver(handle, block.header.height);
   }
+
+  // The effects written to the store, and the block journal built from them.
+  const journal = writeBlockEffects(result.effects, height);
+
+  // Checkpoint prover state at this height
+  if (handle) checkpointProver(handle, height);
 
   // 14. Persist journal and purge old ones
   insertBlockJournal(journal);
   // Retention is the real floor under revert depth — `revertBlock` throws
   // without a journal — so it tracks the depth the fork walk can reach
   // (NODE_INTERFACE → Fork choice decides on verified headers).
-  purgeOldJournals(block.header.height - config.maxReorgDepth);
-  purgeRefusedHeaders(block.header.height - config.maxReorgDepth);
+  purgeOldJournals(height - config.maxReorgDepth);
+  purgeRefusedHeaders(height - config.maxReorgDepth);
 
   // The one site where an absence is simply printed. `applyOrderingBlock` ran
   // `verifyOrderingBlockStructure` over this header before calling us, so it is
@@ -545,23 +481,12 @@ function applyBlockBody(block: OrderingBlock): boolean {
   // back a valid block, and inventing a placeholder would print a hash that is
   // not one. If the impossible happens the line says `hash=null`, which is true.
   const appliedHash = validation.blockHash(block.header);
-  console.log(`Applied ordering block height=${block.header.height} hash=${appliedHash} (${block.utxoTxTree.utxoTxIds.length} txs)`);
+  console.log(`Applied ordering block height=${height} hash=${appliedHash} (${block.utxoTxTree.utxoTxIds.length} txs)`);
   return true;
 }
 
-/**
- * The prover feed a finished journal implies — the one derivation both the
- * apply commit (§13) and the creator's speculative run use, so producer and
- * verifier can never disagree by construction.
- *
- * An insert later followed by a remove for the same boxId is a box that never
- * existed outside this block: the pair nets out (drop both); survivors keep
- * first-occurrence order, which `applyBlockMutations` then replaces with the
- * canonical one (M-12). Created-box bytes come from the journal's recorded
- * payload, never a store re-fetch: `getBox` returns null for a created-then-
- * consumed box, so a re-fetch would silently drop it.
- */
-interface ProverFeed {
+/** The mutation set one block hands the prover, each group in any order. */
+export interface ProverFeed {
   consumed: string[];
   created: AnyBox[];
   recordPuts: RecordPut[];
@@ -571,11 +496,32 @@ interface ProverFeed {
   removedRecordKeys: string[];
 }
 
-function proverFeedFromJournal(journal: BlockJournal): ProverFeed {
+/**
+ * The prover feed a block's effects imply — the one derivation the apply commit
+ * and the creator's speculative run both use, so producer and verifier cannot
+ * disagree by construction (NODE_INTERFACE → AVL+ State Root).
+ *
+ * - A box inserted and later removed in the block never existed outside it: the
+ *   pair nets out. An inserted box's bytes are the effect's box, never a store
+ *   re-fetch, which answers nothing for a box created and spent in one block.
+ * - An identity or the network record keeps its last write
+ *   (NODE_INTERFACE → "Where record collapsing happens, and why it is not
+ *   arbitrary").
+ * - A name or holder key keeps its last write too, and a last write that
+ *   removes the key reaches the prover only for a key the state held before the
+ *   block, which its first mutation in the block says: a key the block both
+ *   creates and removes gives the feed nothing (NODE_INTERFACE → "A removable
+ *   record the block creates and removes nets out, as a box does").
+ *
+ * `applyBlockMutations` puts each group in canonical order (M-12). The switch
+ * on `kind` is exhaustive (NODE_INTERFACE → "One log, not parallel arrays").
+ */
+export function proverFeedFromEffects(effects: BlockEffects): ProverFeed {
+  const mutations = effects.mutations;
   const cancelled = new Set<number>();
   const pendingInsertIndex = new Map<string, number>();
-  for (let i = 0; i < journal.mutations.length; i++) {
-    const m = journal.mutations[i]!;
+  for (let i = 0; i < mutations.length; i++) {
+    const m = mutations[i]!;
     if (m.kind !== 'box') continue;
     if (m.op === 'insert') {
       pendingInsertIndex.set(m.boxId, i);
@@ -588,41 +534,45 @@ function proverFeedFromJournal(journal: BlockJournal): ProverFeed {
       }
     }
   }
+
   const consumed: string[] = [];
   const created: AnyBox[] = [];
   const recordByKey = new Map<string, RecordPut>();
   let latestNetwork: NetworkPut | null = null;
-  const nrKey = networkRecordKey();
-  // Username/holder: last write per key wins; null = removal.
-  const usernameByKey = new Map<string, UsernamePut | null>();
-  const holderByKey = new Map<string, HolderPut | null>();
-  for (let i = 0; i < journal.mutations.length; i++) {
+  // Per removable key: whether the state held it before the block, and the
+  // block's last write to it — a put, or null for a removal.
+  const usernameByKey = new Map<string, { heldBefore: boolean; last: UsernamePut | null }>();
+  const holderByKey = new Map<string, { heldBefore: boolean; last: HolderPut | null }>();
+  for (let i = 0; i < mutations.length; i++) {
     if (cancelled.has(i)) continue;
-    const m = journal.mutations[i]!;
+    const m = mutations[i]!;
     switch (m.kind) {
       case 'box':
         if (m.op === 'remove') consumed.push(m.boxId);
-        else created.push(m.box!);
+        else created.push(m.box);
         break;
-      case 'record':
-        recordByKey.set(m.key, { key: m.key, record: m.record });
+      case 'record': {
+        const key = identityRecordKey(m.identityId);
+        recordByKey.set(key, { key, record: m.record });
         break;
+      }
       case 'network':
-        latestNetwork = { key: nrKey, network: { memberCount: m.memberCount } };
+        latestNetwork = { key: networkRecordKey(), network: { memberCount: m.record.memberCount } };
         break;
       case 'username': {
-        const key = usernameRecordKey(
-          canonicalUsernameBytes(Buffer.from(m.nameLower, 'utf8')),
-        );
-        usernameByKey.set(key, m.row ? { key, username: { boxId: m.row.boxId } } : null);
+        const key = usernameRecordKey(canonicalUsernameBytes(Buffer.from(m.nameLower, 'utf8')));
+        const last = m.row ? { key, username: { boxId: m.row.boxId } } : null;
+        const seen = usernameByKey.get(key);
+        if (seen) seen.last = last;
+        else usernameByKey.set(key, { heldBefore: m.heldBefore, last });
         break;
       }
       case 'holder': {
-        const ownerBytes = typeof m.owner === 'string'
-          ? Buffer.from(m.owner, 'hex')
-          : m.owner;
-        const key = holderRecordKey(ownerBytes);
-        holderByKey.set(key, m.record ? { key, holder: m.record } : null);
+        const key = holderRecordKey(m.owner);
+        const last = m.record ? { key, holder: m.record } : null;
+        const seen = holderByKey.get(key);
+        if (seen) seen.last = last;
+        else holderByKey.set(key, { heldBefore: m.heldBefore, last });
         break;
       }
       default: {
@@ -636,13 +586,13 @@ function proverFeedFromJournal(journal: BlockJournal): ProverFeed {
   const usernamePuts: UsernamePut[] = [];
   const holderPuts: HolderPut[] = [];
   const removedRecordKeys: string[] = [];
-  for (const [key, val] of usernameByKey) {
-    if (val) usernamePuts.push(val);
-    else removedRecordKeys.push(key);
+  for (const [key, { heldBefore, last }] of usernameByKey) {
+    if (last) usernamePuts.push(last);
+    else if (heldBefore) removedRecordKeys.push(key);
   }
-  for (const [key, val] of holderByKey) {
-    if (val) holderPuts.push(val);
-    else removedRecordKeys.push(key);
+  for (const [key, { heldBefore, last }] of holderByKey) {
+    if (last) holderPuts.push(last);
+    else if (heldBefore) removedRecordKeys.push(key);
   }
 
   return {
@@ -657,14 +607,126 @@ function proverFeedFromJournal(journal: BlockJournal): ProverFeed {
 }
 
 /**
- * Carries the speculative run's result out through the throw that forces
- * better-sqlite3 to roll the transaction back — the value and the rollback are
- * the same event, so neither can happen without the other.
+ * Write a block's effects to the store, in their order, and build the block's
+ * journal from them (NODE_INTERFACE → Block Journal): each mutation becomes its
+ * entry, and a record, network, name or holder write captures the row it
+ * replaces just before it writes, so a key written twice journals twice. Every
+ * write runs inside the funnel's transaction and nothing here catches: a write
+ * that fails fails the block (NODE_INTERFACE → "The funnel is total").
  */
-class SpeculativeRollback extends Error {
-  constructor(readonly digestHex: string) {
-    super('speculative state-root run rolled back');
+function writeBlockEffects(effects: BlockEffects, height: number): BlockJournal {
+  // The block's posts, confirmed at their committed positions: a row this node
+  // holds as it is, a placeholder from the commit for one it lacks
+  // (NODE_INTERFACE → Post transactions → "A post applied without its packet
+  // is a placeholder").
+  effects.posts.forEach(({ postId, post }, index) => {
+    if (getPost(postId) === null) {
+      insertPost(postId, post, null);
+      emitPostIndexed(postId, post.parentRefs.length);
+    }
+    confirmPost(postId, height, index);
+  });
+  // block_topology from the block's post transactions: the consensus author
+  // and parent refs, never local DAG content (NODE_INTERFACE → Block Topology).
+  for (const { postId, post } of effects.posts) {
+    insertBlockTopology(postId, post.parentRefs, Buffer.from(post.author).toString('hex'), height);
   }
+
+  const mutations: JournalMutation[] = [];
+  for (let i = 0; i < effects.mutations.length; i++) {
+    const m = effects.mutations[i]!;
+    switch (m.kind) {
+      case 'box':
+        if (m.op === 'insert') {
+          insertBox(m.box);
+          mutations.push({ kind: 'box', op: 'insert', boxId: m.boxId, box: m.box });
+        } else {
+          consumeBox(m.boxId, height);
+          mutations.push({ kind: 'box', op: 'remove', boxId: m.boxId });
+        }
+        break;
+      case 'record': {
+        const replaced = getIdentityRecord(m.identityId);
+        putIdentityRecord(m.identityId, m.record);
+        const entry: RecordMutation = {
+          kind: 'record',
+          key: identityRecordKey(m.identityId),
+          identityId: m.identityId,
+          record: m.record,
+        };
+        if (replaced !== null) entry.replaced = replaced;
+        mutations.push(entry);
+        break;
+      }
+      case 'network': {
+        const replaced = getNetworkRecord();
+        putNetworkRecord(m.record);
+        mutations.push({ kind: 'network', memberCount: m.record.memberCount, replaced });
+        break;
+      }
+      case 'username': {
+        // The name record and the holder record after it are one `usernames`
+        // row (NODE_INTERFACE → Username records): both rows they replace are
+        // captured before the one write that moves them.
+        const holder = effects.mutations[i + 1];
+        if (holder?.kind !== 'holder') {
+          throw new Error(`effects at height ${height}: the name record ${m.nameLower} is not followed by its holder record`);
+        }
+        const replacedName = getUsername(m.nameLower);
+        const replacedHolder = getUsernameByOwner(holder.owner);
+        const rowOwner = m.row !== null ? m.row.owner : replacedName?.owner;
+        if (rowOwner !== Buffer.from(holder.owner).toString('hex')) {
+          throw new Error(`effects at height ${height}: the holder record after ${m.nameLower} names another owner`);
+        }
+        if (m.row !== null) putUsername(m.row);
+        else deleteUsername(m.nameLower);
+        const nameEntry: UsernameMutation = { kind: 'username', nameLower: m.nameLower, row: m.row };
+        if (replacedName !== null) nameEntry.replaced = replacedName;
+        const holderEntry: HolderMutation = { kind: 'holder', owner: holder.owner, record: holder.record };
+        if (replacedHolder !== null) holderEntry.replaced = { claimAvailable: false, boxId: replacedHolder.boxId };
+        mutations.push(nameEntry, holderEntry);
+        i++;
+        break;
+      }
+      case 'holder':
+        throw new Error(`effects at height ${height}: a holder record with no name record before it`);
+      default: {
+        const _exhaustive: never = m;
+        void _exhaustive;
+        break;
+      }
+    }
+  }
+
+  const likeRecordInsertions = effects.likeRecords.map(({ targetPostId, likerId }) => {
+    insertLikeRecord(targetPostId, likerId, height);
+    return { targetPostId, likerId };
+  });
+
+  const withdrawnPosts = effects.withdrawals.map((postId) => {
+    const post = getPost(postId);
+    if (post === null) {
+      throw new Error(`effects at height ${height}: withdrawn post ${postId} has no row`);
+    }
+    withdrawPost(postId, height);
+    return { id: postId, content: post.content };
+  });
+
+  // Remove each applied transaction from the local mempool if present. This is
+  // the whole of the cleanup for a block that arrived from a peer — a block
+  // this node mined is cleaned by rowid in `finalizeBlock`, which reaches every
+  // included entry wherever it sits (MEMPOOL_INTERFACE → Confirmed-entry
+  // cleanup reaches every row).
+  for (const { txId } of effects.appliedTxs) removeUtxoTxEntry(txId);
+
+  return {
+    blockHeight: height,
+    mutations,
+    confirmedPostIds: effects.posts.map(({ postId }) => postId),
+    appliedUtxoTxs: effects.appliedTxs.map(({ txId, txBytes }) => ({ txId, txBytes })),
+    likeRecordInsertions,
+    withdrawnPosts,
+  };
 }
 
 /**
@@ -693,14 +755,11 @@ export type StateRootSpeculation =
  *
  * PoW covers the header, so the producer has to know this digest *before*
  * mining, and the only way to know it without a second implementation of the
- * state transition is to run the block's own body. That happens here: the
- * mutation phase, verbatim, at the block's height, inside a SQLite transaction
- * that is always rolled back. No block storage, no `clearTemplate`, no journal
- * persistence, no prover checkpoint.
- *
- * SQLite rollback does not reach the prover's in-memory tree, so the digest is
- * snapshotted up front and restored explicitly afterwards — the same asymmetry
- * the apply funnel handles for rejected blocks.
+ * state transition is to run the block's own body: `applyBlock` over the
+ * store's view, the prover feed derived from its effects exactly as apply
+ * derives it, the digest read, and the prover restored to its snapshot. It
+ * writes nothing to the store — no block, no effect, no journal — and performs
+ * no `clearTemplate` and no prover checkpoint.
  *
  * The candidate carries a placeholder header (`powNonce` 0, empty signature):
  * the mutation phase reads neither, and runs at the header's height.
@@ -719,9 +778,9 @@ export type StateRootSpeculation =
  * `failStopIfCorruptChain` directly.
  *
  * ⚠ **The `finally` below does NOT run on that arm.** `process.exit(1)` does not
- * unwind, so the journal abort and the prover restore are both skipped. That is
- * correct — the process is ending and nothing reads the tree afterwards — but a
- * reader who assumes `finally` always runs will mis-reason about it.
+ * unwind, so the prover restore is skipped. That is correct — the process is
+ * ending and nothing reads the tree afterwards — but a reader who assumes
+ * `finally` always runs will mis-reason about it.
  */
 export function computePostBlockStateRoot(block: OrderingBlock): StateRootSpeculation {
   const handle = tryGetAvlProver();
@@ -731,32 +790,23 @@ export function computePostBlockStateRoot(block: OrderingBlock): StateRootSpecul
   const height = block.header.height;
 
   try {
-    getDb().transaction((): void => {
-      beginBlockJournal(height);
-      if (!applyMutationPhase(block, height)) throw new BlockRejected();
-      const feed = proverFeedFromJournal(finishBlockJournal());
-      throw new SpeculativeRollback(
-        Buffer.from(
-          applyBlockMutations(
-            handle.prover, height,
-            feed.consumed, feed.created, feed.recordPuts, feed.networkPuts,
-            feed.usernamePuts, feed.holderPuts, feed.removedRecordKeys,
-          ),
-        ).toString('hex'),
-      );
-    })();
-    throw new Error('unreachable: speculative run must exit via throw');
-  } catch (err) {
-    if (err instanceof SpeculativeRollback) {
-      return { kind: 'computed', stateRoot: err.digestHex };
-    }
-    if (err instanceof BlockRejected) {
+    const result = applyBlock(storeStateView, block, applyContextFrom(config));
+    if (!result.ok) {
+      console.warn(result.reason);
       console.warn(
         `stateRoot speculation at height ${height}: the body was rejected by its ` +
         `own mutation phase — the block cannot be produced`,
       );
       return { kind: 'body-rejected' };
     }
+    const feed = proverFeedFromEffects(result.effects);
+    const digest = applyBlockMutations(
+      handle.prover, height,
+      feed.consumed, feed.created, feed.recordPuts, feed.networkPuts,
+      feed.usernamePuts, feed.holderPuts, feed.removedRecordKeys,
+    );
+    return { kind: 'computed', stateRoot: Buffer.from(digest).toString('hex') };
+  } catch (err) {
     // Above the unclaimed-throw arm, because that arm would swallow it into a
     // verdict about the block. Never returns.
     if (err instanceof CorruptChainStateError) {
@@ -766,7 +816,7 @@ export function computePostBlockStateRoot(block: OrderingBlock): StateRootSpecul
     // decided. The verdict stays `body-rejected` — the apply funnel converts
     // the same throw into a rejection, so no node would apply this body — but
     // it must not be *logged* as one: forever-rejecting and never-producing are
-    // the same silence from two different faults, and the arm above already
+    // the same silence from two different faults, and the refusal arm above
     // prints the one that is a verdict. `err` rather than `String(err)`,
     // because for an unclaimed throw the stack is the whole diagnosis.
     console.error(
@@ -776,811 +826,9 @@ export function computePostBlockStateRoot(block: OrderingBlock): StateRootSpecul
     );
     return { kind: 'body-rejected' };
   } finally {
-    // The transaction is rolled back by the time this runs (better-sqlite3
-    // issues ROLLBACK before re-throwing). These undo what it cannot reach.
-    abortBlockJournal();
     const current = handle.prover.digest();
     if (!current || !Buffer.from(current).equals(Buffer.from(snapshot))) {
       handle.prover.rollback(snapshot);
     }
   }
-}
-
-/**
- * The block's state transition — everything between the header-dependent
- * validation and the commit (NODE_INTERFACE → "Apply funnel: validation and
- * mutation phases").
- *
- * Height is a parameter rather than `block.header.height` because the block
- * creator runs this phase before its header exists, to compute the post-block
- * `stateRoot` it must commit to (H-6). The split is structural: there is no
- * "skip the checks" mode on the apply path, and the body-level rejections here
- * (embedded-tx re-validation) reject on both paths
- * identically.
- *
- * Journal-lifecycle-free by contract: a journal is already open when this runs
- * and the caller finishes or aborts it, so both callers record the same way.
- */
-function applyMutationPhase(
-  block: OrderingBlock,
-  height: number,
-): boolean {
-  // ⛔ **DECAY AND ESCROWS ARE DERIVED FROM PRE-BODY STATE, AND THEY HAVE
-  // TO BE.** Decay is computed after decoding (the touched set comes from the
-  // decoded transactions' inputs) but before the apply loop, so the UTXO
-  // state is pre-body. Escrows are captured here for the same reason: the
-  // body can create one (an unvouch of a long-held vouch), and a post-body
-  // read would see it on one side only
-  // (NODE_INTERFACE → The settlement transaction).
-  // Both are assigned at §9b, after decoding and before the apply loop.
-
-  // Every post id the block commits to, independent of per-post confirm
-  // outcomes — same semantics as the confirm loop in §7, which tolerates
-  // per-post failures. Both read `postsOf`, so rollback un-confirms exactly what
-  // apply confirmed.
-  const blockPosts = postsOf(block);
-  recordConfirmedPosts(postIdsOf(block));
-
-  // 7. The coinbase is applied with the rest of the settlement, at §11a — after
-  // the body, because the fees it pays out are a property of what the body
-  // applied. ⛔ **There is no mint**: the credits are spent from the
-  // `EmissionBox` by the same transaction that emits them, so source and
-  // destination are named in one operation (MINING_INTERFACE → Coinbase
-  // Application).
-
-  // 7. Confirm the posts this block creates; insert a placeholder for any absent row.
-  //
-  // A row already present (pending, from the packet) is confirmed as-is. A row
-  // absent — the packet never reached this node — is inserted from the commit
-  // with content = NULL (the placeholder). The body is backfilled by id
-  // (NODE_INTERFACE → Store Interface → Posts DAG, "Backfill after sync").
-  for (let idx = 0; idx < blockPosts.length; idx++) {
-    const { postId, post } = blockPosts[idx]!;
-    if (!getPost(postId)) {
-      try {
-        insertPost(postId, post, null);
-        emitPostIndexed(postId, post.parentRefs.length);
-      } catch (err) {
-        console.warn(`Failed to store post ${postId}: ${String(err)}`);
-      }
-    }
-    try {
-      confirmPost(postId, height, idx);
-    } catch (err) {
-      console.warn(`Failed to confirm post ${postId}: ${String(err)}`);
-    }
-  }
-
-  // 8. Populate block_topology from this block's post transactions.
-  // Consensus data only — this, not dag_posts.author, is the authority for
-  // withdrawal authorization, and it is derivable by any node holding the block body.
-  for (const { postId, post } of blockPosts) {
-    insertBlockTopology(
-      postId,
-      post.parentRefs,
-      Buffer.from(post.author).toString('hex'),
-      height,
-    );
-  }
-
-  // 11. Apply UTXO transactions from the block.
-  //
-  // NODE_INTERFACE → Block finalization → "The body is in dependency order,
-  // and that is a consensus rule". One pass over the body in committed order:
-  // every input resolves in the confirmed set as it stands at that point —
-  // the pre-block set plus this block's earlier transactions' outputs, minus
-  // their consumed inputs — or the block is rejected. Then full re-validation
-  // (signatures, authorization, transitions, conservation), then apply. A
-  // block producer is untrusted (permissionless PoW), so nothing about an
-  // embedded tx is assumed verified.
-  const utxoDeps = {
-    getBox,
-      insertBox,
-    consumeBox,
-    getKarmaBox,
-    // The vouch cast's minimum-balance gate reads the voucher's current summed
-    // karma (ARCHITECTURE → "Vouch boxes"). The store's getKarmaValue is the
-    // single implementation shared with the pool and relay paths — a different
-    // read here would be a consensus split, not a style difference.
-    getKarmaValue,
-    // The vouch cast's cooldown gate (NODE_INTERFACE → "Vouch transition
-    // rules") — same single-implementation rule as getKarmaValue.
-    hasActiveVouchEscrow,
-    vouchCooldownBlocks: config.vouchCooldownBlocks,
-    inviteBondMin: config.inviteBondMin,
-    inviteBondMax: config.inviteBondMax,
-    decayCfg: {
-      staleThresholdBlocks: config.karmaStaleThresholdBlocks,
-      decayIntervalBlocks: config.karmaDecayIntervalBlocks,
-      decayAmount: config.karmaDecayAmount,
-      karmaMinimum: config.karmaMinimum,
-    },
-    storageRentPeriodBlocks: config.storageRentPeriodBlocks,
-    getBoxProvenance,
-    // ⛔ The like marker's author, from `block_topology` and never
-    // `dag_posts.author` (ARCHITECTURE → Likes). The same read §11's apply arm
-    // makes, so the marker's pin and the like-record's author cannot disagree.
-    getTopologyAuthor: getTopologyAuthorBytes,
-    // NODE_INTERFACE → Post transactions: at apply only `block_topology` is read.
-    getPendingPostAuthor: () => null,
-    // The invite-create not-already-an-account bar (NODE_INTERFACE → "Bond
-    // transition rules") — same rule again.
-    getIdentityRecord,
-    runInTransaction: (fn: () => void) => {
-      getDb().transaction(fn)();
-    },
-    getVouchBox,
-    getNetworkRecord,
-    membershipBarMultiplier: config.membershipBarMultiplier,
-    putIdentityRecord,
-    protocolVersionSchedule: config.protocolVersionSchedule,
-    getUsername,
-    getUsernameByOwner,
-  };
-
-  // The proof obligation (NODE_INTERFACE → "Embedded transactions: a mismatch
-  // rejects the block"): every declared `utxoTxId` must be proven to be the id
-  // of the bytes carried beside it, and an arm that cannot complete that proof
-  // rejects the block. A body that does not match its committed ids would
-  // otherwise apply different state under one block hash. Stated as a property
-  // rather than as a list, so a guard added here later inherits the verdict.
-  interface QueuedTx {
-    txId: string;
-    tx: UtxoTransaction;
-    outputs: AnyBox[];
-  }
-  const queue: QueuedTx[] = [];
-  // ⛔ **The LAST entry is the settlement, and that is the whole of how it is
-  // identified** (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`).
-  // `verifyOrderingBlockStructure` has already refused a body with no entries,
-  // so this index exists; identifying the settlement by position rather than by
-  // what it spends is what lets a node find it with no UTXO set at all.
-  const lastIndex = block.utxoTxTree.utxoTxIds.length - 1;
-  let settlement: { txId: string; tx: UtxoTransaction; outputs: AnyBox[] } | null = null;
-  for (let i = 0; i < block.utxoTxTree.utxoTxIds.length; i++) {
-    const txId = block.utxoTxTree.utxoTxIds[i]!;
-    const txBytes = block.utxoTxTree.utxoTxs[i];
-    const isSettlement = i === lastIndex;
-
-    if (!txBytes) {
-      console.warn(
-        `Rejected block height=${height}: embedded UTXO tx ${txId} carries no body`,
-      );
-      return false;
-    }
-
-    let tx: UtxoTransaction;
-    try {
-      tx = decodeTx(txBytes);
-    } catch (err) {
-      console.warn(
-        `Rejected block height=${height}: embedded UTXO tx ${txId} did not ` +
-        `decode: ${String(err)}`,
-      );
-      return false;
-    }
-
-    // Both gates run before `computeTxId` hashes the decoded value, and
-    // together they are what makes that hash total: the envelope types every
-    // field `txIdBytes` reads directly, the output check the fields it
-    // reaches through `canonicalBoxBytes`' throwing writers (NODE_INTERFACE →
-    // "The output domain check"). Unchecked, an out-of-domain output field
-    // becomes an exception absorbed by the funnel's totality handler instead of
-    // the stated rejection below.
-    //
-    // ⚠ **The settlement gets the schema that admits the three protocol
-    // boxes.** It creates the emission, treasury and pool successors, which a
-    // user transaction may not — the same closed key set (the four required
-    // fields plus `likeTarget`, `post` and `postWithdraw`) and the
-    // same field types, over a wider set of box types.
-    const envelopeCheck = checkTxEnvelope(tx, height, config.protocolVersionSchedule);
-    if (!envelopeCheck.valid) {
-      console.warn(
-        `Rejected block height=${height}: embedded UTXO tx ${txId} has a ` +
-        `malformed envelope: ${envelopeCheck.error}`,
-      );
-      return false;
-    }
-
-    const outputCheck = isSettlement
-      ? checkSettlementOutputShape(tx.outputs)
-      : checkOutputShape(tx.outputs);
-    if (!outputCheck.valid) {
-      console.warn(
-        `Rejected block height=${height}: embedded UTXO tx ${txId} has an ` +
-        `out-of-domain output: ${outputCheck.error}`,
-      );
-      return false;
-    }
-
-    const decodedTxId = computeTxId(tx);
-    if (decodedTxId !== txId) {
-      console.warn(
-        `Rejected block height=${height}: embedded UTXO tx ${txId} declares an ` +
-        `id its bytes do not produce (${decodedTxId})`,
-      );
-      return false;
-    }
-
-    // `txId` here is the block's declared id, already checked byte-for-byte
-    // against `computeTxId(tx)` above — so it is the real creating transaction,
-    // not a re-derivation. Position in `tx.outputs` is the `index`.
-    const outputs = tx.outputs.map((box, index) =>
-      materializeOutput(box as AnyBox, txId, index),
-    );
-    // ⛔ **The settlement never enters the queue.** `validateTx` governs user
-    // transactions: no signer authorizes a settlement and no transition row
-    // admits the pool, the emission box or a fee box as an input, so putting it
-    // through that gate would reject every valid block. Its own rule is
-    // `checkSettlement`, at §11a, after the body it is derived from has applied.
-    if (isSettlement) settlement = { txId, tx, outputs };
-    else queue.push({ txId, tx, outputs });
-  }
-  if (settlement === null) {
-    console.warn(
-      `Rejected block height=${height}: body carries no settlement transaction`,
-    );
-    return false;
-  }
-
-  // Per-block like accrual: in-memory, this invocation only — the
-  // end-of-phase settlement (§11b) reads both maps. Local by design, so the
-  // speculative (creator) run accrues and settles identically and its rollback
-  // discards everything with it.
-  const likesPerAuthor = new Map<string, number>(); // author hex → likes this block
-  const memberLikesPerAuthor = new Map<string, number>(); // author hex → member-likes this block
-  // Identities the membership pass evaluates — every vouch target whose box was
-  // cast or consumed, every author whose memberLikes rose. Captured during the
-  // apply loop; the pass runs after the like counters.
-  const membershipTouched = new Set<string>();
-  // Pre-block records for touched identities — the first write's `replaced`.
-  const preBlockRecords = new Map<string, IdentityRecord | null>();
-
-  // What the settlement is derived from, accumulated as each transaction is
-  // applied (MINING_INTERFACE → Coinbase Application). Gathered here rather than
-  // ahead of the loop because this is the only place an input is guaranteed to
-  // resolve: a transaction may spend a box an earlier transaction in this same
-  // block creates, and until the loop has applied that one, the confirmed set
-  // this phase reads through does not hold the output.
-  //
-  // Apply order is committed order (NODE_INTERFACE → Block finalization), so
-  // `perTxOutputs`, `appliedTxs` and every per-transaction list are in the
-  // body's order — the order the settlement's fee-box inputs must follow.
-  //
-  // `appliedTxs` carries each transaction with its FIRST input box, which is
-  // all `actorOf` reads, and reading it is sound only because `validateTx` has
-  // passed by the time it is recorded — step 3's boxType pin is what makes the
-  // first input speak for the transaction rather than being the producer's
-  // choice.
-  const perTxOutputs = new Map<string, AnyBox[]>();
-  const rentTxIds = new Set<string>();
-  const appliedTxs: EmbeddedTx[] = [];
-
-  // ⛔ **Two inviters naming the same key in one block must not both grant**
-  // (NODE_INTERFACE → Legal box transitions). The eligibility test each invite
-  // passed is `IdentityRecord` existence, and the grant that writes that record
-  // is the settlement's — which runs after every transaction here — so a
-  // record-existence test cannot see a sibling transaction in the same block.
-  // Without this the second bond draws a second grant from the pool for one
-  // key, sized by whatever bond the second inviter chose.
-  //
-  // Keyed on the invitee hex; the value is the bond's `inviterId`, which the
-  // grant step reads to decide the conferral
-  // (NODE_INTERFACE → "A root's grant confers membership").
-  const invitedThisBlock = new Map<string, Uint8Array>();
-
-  // §9b. Pre-body captures: decay and escrows.
-  //
-  // Decay: squared per identity on touch (ARCHITECTURE → Karma decay). The
-  // post-body projection derives from decoded transactions + the pre-body
-  // UTXO set — both available before the apply loop. The settlement consumes
-  // the projected boxes, which are the ones that exist after the body applies.
-  const postBodyKarma = collectPostBodyKarma(
-    queue.map((q) => ({ txId: q.txId, inputs: q.tx.inputs, outputs: q.outputs })),
-  );
-  const decayPlans = deriveKarmaDecay(decayDeps, postBodyKarma, height, {
-    staleThresholdBlocks: config.karmaStaleThresholdBlocks,
-    decayIntervalBlocks: config.karmaDecayIntervalBlocks,
-    decayAmount: config.karmaDecayAmount,
-    karmaMinimum: config.karmaMinimum,
-  });
-  // Escrows and release candidates: captured before the apply loop so the
-  // body's own mutations do not appear in the settlement's input list on one
-  // side only.
-  const escrows = getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
-  const lapsedVouches = getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
-  const capturedBackerPool = getBackerPoolBox();
-
-  // One pass, in committed order (NODE_INTERFACE → Block finalization).
-  for (const item of queue) {
-    const unresolvedInput = item.tx.inputs.find((id) => getBox(id) === null);
-    if (unresolvedInput !== undefined) {
-      console.warn(
-        `Rejected block height=${height}: embedded UTXO tx ${item.txId} ` +
-        `has an unresolved input ${unresolvedInput}`,
-      );
-      return false;
-    }
-
-    // Every input resolves — full re-validation. A tx that lists the same
-    // input twice is refused by validateTx step 1 (duplicate input ids),
-    // before any liveness read.
-    const revalidated = validateTx(utxoDeps, item.tx, height);
-    if (!revalidated.valid) {
-      console.warn(
-        `Rejected block height=${height}: embedded UTXO tx ` +
-        `${item.txId} failed re-validation: ${revalidated.error}`,
-      );
-      return false;
-    }
-
-    // Like apply rules (NODE_INTERFACE → Per-block like settlement):
-    // re-checked at apply — consensus, not gateway courtesy — and BEFORE
-    // applyTx, so a failing like never mutates state. Any failure rejects
-    // the whole block, like any other invalid embedded tx.
-    let likeToRecord: {
-      targetPostId: string;
-      likerId: Uint8Array;
-      authorHex: string;
-    } | null = null;
-    if (item.tx.likeTarget !== undefined) {
-      const targetPostId = item.tx.likeTarget;
-      // Confirmed ⟺ a topology row exists, and its author — never
-      // dag_posts.author — is who the like credits: placeholder rows carry
-      // a zeroed author, and a like on a confirmed but content-less post
-      // must credit the consensus-recorded author.
-      const authorHex = getTopologyAuthor(targetPostId);
-      if (authorHex === null) {
-        console.warn(
-          `Rejected block height=${height}: like tx ${item.txId} targets ` +
-          `unconfirmed post ${targetPostId}`,
-        );
-        return false;
-      }
-      // NODE_INTERFACE → Karma transition rules: a like targets a live post
-      // only — a placeholder is live (credits the topology author). A
-      // withdrawn post, or an unknown one, rejects.
-      const target = getPost(targetPostId);
-      if (!isLivePost(target)) {
-        console.warn(
-          `Rejected block height=${height}: like tx ${item.txId} targets ` +
-          `withdrawn or unknown post ${targetPostId}`,
-        );
-        return false;
-      }
-      // The liker is the karma inputs' owner, read from the input boxes —
-      // never from the signature map. The gateway's one-signature rule is
-      // gateway policy; a validator can embed a spare-signature like tx
-      // directly, and it must still apply with the liker the owner state
-      // names. validateTx above pinned every input to one karma owner, so
-      // the first input names it.
-      const likerId = (getBox(item.tx.inputs[0]!) as KarmaBox).owner;
-      // One like per account per post, structurally: the key exists or it
-      // does not. Applied likes earlier in this block already inserted
-      // their record, so an intra-block duplicate fails here too.
-      if (hasLikeRecord(targetPostId, likerId)) {
-        console.warn(
-          `Rejected block height=${height}: like tx ${item.txId} ` +
-          `duplicates an existing like-record for ${targetPostId}`,
-        );
-        return false;
-      }
-      likeToRecord = { targetPostId, likerId, authorHex };
-    }
-
-    // ⛔ **THE UNVOUCH NEEDS NO ARM HERE.** The stake moves into a
-    // `VouchEscrowBox` the voucher's own transaction outputs, so `applyTx`
-    // inserts it like any other output and the store's choke point journals it
-    // with an exact inverse. ✅ **The obligation is committed state**, in the
-    // UTXO set and therefore in the `stateRoot`, so nothing has to remember it
-    // (ARCHITECTURE → Vouch boxes).
-
-    // ⛔ **One invitee per block.** The bond IS the request, so a second bond
-    // naming a key an earlier transaction in this block already named would
-    // draw a second grant from the pool for one key. Refused before `applyTx`,
-    // so a rejected block has mutated nothing on this transaction's account.
-    const bondOut = bondOutputOf(item.outputs);
-    if (bondOut !== null) {
-      const inviteeHex = Buffer.from(bondOut.inviteePublicKey).toString('hex');
-      if (invitedThisBlock.has(inviteeHex)) {
-        console.warn(
-          `Rejected block height=${height}: invite tx ${item.txId} names ` +
-          `${inviteeHex}, which another bond in this block already names`,
-        );
-        return false;
-      }
-      invitedThisBlock.set(inviteeHex, bondOut.inviterId);
-    }
-
-    // Before `applyTx` consumes them. Every input is present (tested at the
-    // top of this iteration) and reading the first is sound because
-    // `validateTx` has just passed (NODE_INTERFACE → `validateTx` step 3).
-    const firstInput = item.tx.inputs[0];
-    const firstInputBox = firstInput !== undefined ? getBox(firstInput)! : null;
-
-    // Capture a username input before applyTx consumes it — the burn's
-    // deleteUsername needs the name from the box.
-    let capturedUsernameInput: AnyBox | null = null;
-    for (const inputId of item.tx.inputs) {
-      const b = getBox(inputId);
-      if (b && b.boxType === 'username') { capturedUsernameInput = b; break; }
-    }
-    if (firstInputBox !== null) {
-      appliedTxs.push({ tx: item.tx, inputBoxes: [firstInputBox] });
-    }
-
-    // Rent recognition by shape: an unsigned credit-side tx that passed
-    // authorization is a rent collection (NODE_INTERFACE → "Storage rent
-    // is a transition requiring no signature"). The biconditional is
-    // structural — authorization refuses unsigned non-eligible credit.
-    if (isCreditSideTx(item.tx) && Object.keys(item.tx.signatures).length === 0) {
-      rentTxIds.add(item.txId);
-    }
-
-    perTxOutputs.set(item.txId, item.outputs);
-
-    // Track vouch targets for the membership pass. Capture the pre-block
-    // record BEFORE applyTx modifies it — both inputs (consumed) and outputs
-    // (created), so the pass sees the true pre-block value.
-    for (const inputId of item.tx.inputs) {
-      const inputBox = getBox(inputId);
-      if (inputBox && inputBox.boxType === 'vouch') {
-        const targetHex = Buffer.from((inputBox as VouchBox).targetId).toString('hex');
-        membershipTouched.add(targetHex);
-        if (!preBlockRecords.has(targetHex)) {
-          preBlockRecords.set(targetHex, getIdentityRecord((inputBox as VouchBox).targetId));
-        }
-      }
-    }
-    for (const out of item.outputs) {
-      if (out.boxType === 'vouch') {
-        const targetHex = Buffer.from((out as VouchBox).targetId).toString('hex');
-        membershipTouched.add(targetHex);
-        if (!preBlockRecords.has(targetHex)) {
-          preBlockRecords.set(targetHex, getIdentityRecord((out as VouchBox).targetId));
-        }
-      }
-    }
-
-    applyTx(utxoDeps, item.tx, item.outputs, height);
-
-    // Posting is the activity (NODE_INTERFACE → Populating the record). The
-    // post arm pins the author to the karma inputs' owner, so firstInputBox
-    // is the author. The write lands after applyTx's box writes, so reverse
-    // replay restores it first.
-    if (item.tx.post !== undefined) {
-      recordKarmaActivity((firstInputBox as KarmaBox).owner);
-    }
-
-    if (likeToRecord !== null) {
-      // Journalled side-record (inverse: deleteLikeRecord), plus the
-      // in-memory accrual §11b settles.
-      insertLikeRecord(likeToRecord.targetPostId, likeToRecord.likerId, height);
-      likesPerAuthor.set(
-        likeToRecord.authorHex,
-        (likesPerAuthor.get(likeToRecord.authorHex) ?? 0) + 1,
-      );
-      // ARCHITECTURE → Membership: memberLikes bumped iff member(liker).
-      const likerRecord = getIdentityRecord(likeToRecord.likerId);
-      if (likerRecord && isMember(likerRecord)) {
-        memberLikesPerAuthor.set(
-          likeToRecord.authorHex,
-          (memberLikesPerAuthor.get(likeToRecord.authorHex) ?? 0) + 1,
-        );
-      }
-    }
-
-    // NODE_INTERFACE → Username transition rules.
-    // Claim: a username output → putUsername.
-    const usernameOut = item.outputs.find(o => o.boxType === 'username');
-    if (usernameOut) {
-      const u = usernameOut as UsernameBox;
-      const canonical = Buffer.from(canonicalUsernameBytes(u.name)).toString('utf8');
-      putUsername({
-        nameLower: canonical,
-        name: Buffer.from(u.name).toString('utf8'),
-        owner: Buffer.from(u.owner).toString('hex'),
-        boxId: usernameOut.id!,
-        claimedAtBlock: height,
-      });
-    }
-    // Burn: a username input → deleteUsername. The box is read before applyTx
-    // consumed it (capturedUsernameInput, captured above).
-    if (capturedUsernameInput) {
-      const u = capturedUsernameInput as UsernameBox;
-      const canonical = Buffer.from(canonicalUsernameBytes(u.name)).toString('utf8');
-      deleteUsername(canonical);
-    }
-
-    // Remove from the local mempool if present. This is the whole of the
-    // cleanup for a block that arrived from a peer — a block this node mined
-    // is cleaned by rowid in `finalizeBlock`, which reaches every included
-    // entry wherever it sits (MEMPOOL_INTERFACE → Confirmed-entry cleanup reaches every row).
-    removeUtxoTxEntry(item.txId);
-
-    // Box mutations are journaled by the store choke point; the tx itself
-    // is kept for mempool re-insertion on reorg.
-    recordAppliedUtxoTx(item.txId, encodeTx(item.tx));
-  }
-
-  // 8b. Process withdrawal transactions from this block.
-  const withdrawnThisBlock = new Set<string>();
-  const blockWithdrawals = withdrawalsOf(block, getTopologyAuthorBytes);
-  for (const bw of blockWithdrawals) {
-    const { postWithdraw } = bw;
-    const postId = postWithdraw.postId;
-
-    const postHeight = getTopologyHeight(postId);
-    if (postHeight === null || postHeight >= height) {
-      console.error(
-        `Block ${height}: postWithdraw ${postId} is not confirmed ` +
-        `in an earlier block (topology height ${postHeight})`,
-      );
-      return false;
-    }
-
-    const existing = getPost(postId);
-    if (existing === null || existing.withdrawnAtHeight !== null) {
-      console.error(
-        `Block ${height}: postWithdraw ${postId} targets an already-withdrawn or unknown post`,
-      );
-      return false;
-    }
-    if (withdrawnThisBlock.has(postId)) {
-      console.error(
-        `Block ${height}: duplicate postWithdraw for ${postId} in the same block`,
-      );
-      return false;
-    }
-    withdrawnThisBlock.add(postId);
-
-    const priorContent = existing.content;
-    recordWithdrawnPost(postId, priorContent);
-    withdrawPost(postId, height);
-  }
-
-  // 11a. The settlement transaction — the block's every protocol effect, in one
-  // transaction committed under `utxoTxRoot` (NODE_INTERFACE → the settlement
-  // transaction).
-  //
-  // It sits after the loop because what it consumes and pays is a property of
-  // what the body applied, and inside this phase because the phase is the one
-  // derivation both the applier and the creator's speculative run share — so a
-  // creator whose own settlement does not match its body declines to produce the
-  // block instead of mining one every peer will refuse.
-  //
-  // The settlement reads the body in committed order — which IS the apply
-  // order (NODE_INTERFACE → Block finalization). The settlement's fee-box
-  // inputs and its id hash them in that order.
-  const settlementBody = emptyBody();
-  for (let i = 0; i < lastIndex; i++) {
-    const txId = block.utxoTxTree.utxoTxIds[i]!;
-    const outputs = perTxOutputs.get(txId);
-    if (outputs) contributeToBody(settlementBody, outputs, rentTxIds.has(txId));
-  }
-  settlementBody.actors = countKarmaActors(appliedTxs, block.header.validatorId);
-
-  const emission = computeBlockReward(height);
-  const settlementCheck = checkSettlement(
-    settlementDepsWith(() => decayPlans, escrows, lapsedVouches, () => capturedBackerPool),
-    height,
-    config.protocolVersionSchedule,
-    emission,
-    config.creditMinerRewardDelay,
-    settlementBody,
-    settlement.tx,
-  );
-  if (!settlementCheck.valid) {
-    console.warn(
-      `Rejected block height=${height}: settlement ${settlement.txId}: ` +
-      `${settlementCheck.error}`,
-    );
-    return false;
-  }
-
-  // 11a-i. Apply it, like any other transaction: consume the inputs, insert the
-  // outputs. That is what makes the coinbase, the emission and treasury
-  // successors and every invite grant one operation with a named source and a
-  // named sink (ARCHITECTURE → The conservation axiom).
-  //
-  // ⛔ **The fee boxes are consumed HERE, as the settlement's inputs.** Block
-  // application is their only spender and it runs once per block, so a fee box
-  // surviving its block would hand its value to a later miner and break the
-  // coinbase identity. Every insert above is followed by its remove here, so
-  // `proverFeedFromJournal` nets the pair and neither operation reaches the
-  // prover — a fee box is absent from the AVL tree in the only block it ever
-  // exists in.
-  //
-  // ⛔ **NOT `recordAppliedUtxoTx`, and that is not an omission.** The journal's
-  // transaction records exist for one purpose — `revertBlock` re-inserts them
-  // into the mempool — and the settlement is derived from a body rather than
-  // submitted by anyone. Recording it would put a protocol transaction into the
-  // pool on every reorg, where the next fill would draw it in as a user entry.
-  // Its box mutations are journalled by the store choke point like every other,
-  // so the rollback inverse is unaffected.
-  // The lapse leg's vouch consumptions lower targets' memberVouches through
-  // applyTx below — capture each target before the apply so the membership pass
-  // evaluates them.
-  for (const v of lapsedVouches) {
-    const targetHex = Buffer.from(v.targetId).toString('hex');
-    membershipTouched.add(targetHex);
-    if (!preBlockRecords.has(targetHex)) {
-      preBlockRecords.set(targetHex, getIdentityRecord(v.targetId));
-    }
-  }
-
-  applyTx(utxoDeps, settlement.tx, settlement.outputs, height);
-
-  // 11a-ii. The clock epoch: a new record's `lastActivityBlock` starts at the
-  // claim height (NODE_INTERFACE → Identity Records; ARCHITECTURE → Karma
-  // decay, "the clock starts at onboarding"). The grant is a settlement
-  // output, and only the user loop advances the clock — the epoch is this
-  // record write's, not a spend event's. A legal invitee has no record yet,
-  // so `after` is null and the fallback applies; a pre-existing record is a
-  // consensus bar violation upstream, not something this write papers over.
-  // Ascending invitee order, so two grants in one block write in an order the
-  // block fixes rather than one a map's iteration happens to produce.
-  //
-  // NODE_INTERFACE → "A root's grant confers membership": the inviter's
-  // standing is read from its record as it stands when the settlement
-  // grants — after every apply of this block, like the budget check beside
-  // it (NODE_INTERFACE → Bond transition rules) — and a root's invitee is
-  // written a member from this block; a member's invitee is written a
-  // resident, as today.
-  for (const inviteeHex of [...invitedThisBlock.keys()].sort()) {
-    const invitee = new Uint8Array(Buffer.from(inviteeHex, 'hex'));
-    const inviterId = invitedThisBlock.get(inviteeHex)!;
-    const inviterRecord = getIdentityRecord(inviterId);
-    if (!inviterRecord) {
-      // The invite-create arm refuses a bond whose inviter holds no identity
-      // record (NODE_INTERFACE → "Only a root or a member creates a bond,
-      // and a member's invites are a budget"), so a bond that reached this
-      // grant always names one; a null read here is a bug in this node, not
-      // a shape a peer chose.
-      throw new Error(
-        `unreachable: bond inviter ${Buffer.from(inviterId).toString('hex')} ` +
-        `holds no identity record at the grant`,
-      );
-    }
-    const conferred = isRoot(inviterRecord);
-    const after = getIdentityRecord(invitee);
-    // NODE_INTERFACE → Membership pass → "A record the block first wrote has
-    // no pre-block state, and the pass reads none": a legal invitee has no
-    // record before this block, so the pre-image captured here is the
-    // absence itself, never the record this write is about to create.
-    preBlockRecords.set(inviteeHex, null);
-    membershipTouched.add(inviteeHex);
-    putIdentityRecord(invitee, {
-      lastActivityBlock: after?.lastActivityBlock ?? height,
-      lastDecayBlock: after?.lastDecayBlock ?? 0,
-      invitedAtBlock: height,
-      // Carried through rather than written, and it is always 0 here: a legal
-      // invitee is not an account yet, so it has never held karma, never posted
-      // and never been liked. The read is what keeps that a consequence of the
-      // bar rather than an assumption this line makes.
-      lifetimeLikesReceived: after?.lifetimeLikesReceived ?? 0n,
-      memberSinceBlock: conferred ? height : (after?.memberSinceBlock ?? 0),
-      memberBar: conferred ? 0 : (after?.memberBar ?? 0),
-      memberVouches: after?.memberVouches ?? 0,
-      memberLikes: after?.memberLikes ?? 0n,
-      invitesUsed: after?.invitesUsed ?? 0,
-    });
-  }
-
-  // 11b. The bookkeeping the settlement's boxes do not carry.
-  //
-  // ⛔ **EVERY VALUE MOVEMENT IS ABOVE THIS LINE.** The like payout, the carry,
-  // the escrow releases, the vested bonds and the decay charges are all
-  // outputs of the settlement transaction, because each one either draws from
-  // or returns to the karma pool and the settlement is the
-  // pool's only spender (NODE_INTERFACE → The settlement transaction). What is
-  // left here is committed state that is not a box: the like counter and the
-  // decay clock.
-  //
-  // Order pinned by the contract: embedded txs → settlement → author counters →
-  // decay clocks.
-
-  // The lifetime like counter, ascending author-hex order.
-  //
-  // ⛔ **This settlement is the counter's ONLY writer, and it only ever adds.**
-  // Nothing decrements it: a withdrawal empties a post's content but leaves
-  // its like-records untouched, so no author act can ever lower a count
-  // somebody else's bond settles against (ARCHITECTURE → Bond outcomes).
-  //
-  // ⚠ **The outstanding accrual is NOT written back**, because there is nothing
-  // to write: the carry is a `LikeAccrualBox` the settlement just emitted, and
-  // the box IS the carry (ARCHITECTURE → Likes).
-  for (const authorHex of [...likesPerAuthor.keys()].sort()) {
-    const author = new Uint8Array(Buffer.from(authorHex, 'hex'));
-    const received = BigInt(likesPerAuthor.get(authorHex)!);
-    // Re-read after the settlement so the activity bump its karma output wrote
-    // is preserved; a missing record means maximally stale ({0, 0}), never
-    // "skip this author".
-    const after = getIdentityRecord(author);
-    putIdentityRecord(author, {
-      lastActivityBlock: after?.lastActivityBlock ?? 0,
-      lastDecayBlock: after?.lastDecayBlock ?? 0,
-      // Carried through: the grant path owns it, and an author being paid for
-      // likes in the same block they were invited is reachable.
-      invitedAtBlock: after?.invitedAtBlock ?? 0,
-      lifetimeLikesReceived: (after?.lifetimeLikesReceived ?? 0n) + received,
-      memberSinceBlock: after?.memberSinceBlock ?? 0,
-      memberBar: after?.memberBar ?? 0,
-      memberVouches: after?.memberVouches ?? 0,
-      memberLikes: (after?.memberLikes ?? 0n) + BigInt(memberLikesPerAuthor.get(authorHex) ?? 0),
-      invitesUsed: after?.invitesUsed ?? 0,
-    });
-  }
-
-  // 12. The membership pass (NODE_INTERFACE → Membership pass).
-  //
-  // Between the like counters and the decay clocks. Reads N, D(N), Y(N) once
-  // from the network record of pre-body state. Over the identities the block
-  // touched, ascending hex. Four cases: set / lapse / re-qualify / conferred
-  // (case 4 — the grant step above already wrote the age and the bar for a
-  // root's invitee; this pass only counts it). N written once at the end.
-  // No value moves.
-  // Add authors whose memberLikes rose to the membership pass's touched set.
-  for (const authorHex of memberLikesPerAuthor.keys()) {
-    membershipTouched.add(authorHex);
-  }
-
-  {
-    const N = getNetworkRecord().memberCount;
-    const D = membershipBarFn(N, config.membershipBarMultiplier);
-    const Y = memberLikesBar(N, config.membershipBarMultiplier);
-
-    let newN = N;
-    for (const idHex of [...membershipTouched].sort()) {
-      const id = new Uint8Array(Buffer.from(idHex, 'hex'));
-      // NODE_INTERFACE → "A record the block first wrote has no pre-block
-      // state, and the pass reads none": `??` would treat a captured `null`
-      // — the grant step's pre-image for a legal invitee — as absent and
-      // fall through to the post-grant record, reading a conferred member as
-      // one that was already there. The existing captures (vouch targets)
-      // are unaffected: a vouch target always holds a record.
-      const pre = preBlockRecords.has(idHex) ? preBlockRecords.get(idHex)! : getIdentityRecord(id);
-      const current = getIdentityRecord(id);
-      if (!current) continue;
-
-      const wasMember = pre !== null && pre.memberSinceBlock > 0 && pre.memberVouches >= pre.memberBar;
-
-      if (current.memberSinceBlock === 0 &&
-          current.memberVouches >= D &&
-          current.memberLikes >= BigInt(Y)) {
-        putIdentityRecord(id, {
-          ...current,
-          memberSinceBlock: height,
-          memberBar: D,
-        });
-        newN++;
-      } else if (current.memberSinceBlock > 0 && current.memberBar > 0) {
-        const isMemberNow = current.memberVouches >= current.memberBar;
-        if (wasMember && !isMemberNow) {
-          newN--;
-        } else if (!wasMember && isMemberNow) {
-          newN++;
-        }
-      } else if (current.memberSinceBlock > 0 && current.memberBar === 0 && !wasMember) {
-        // Case 4: conferred. The grant step already wrote the age and the
-        // bar; a root cannot reach here, since its record is seeded at
-        // genesis and `wasMember` is true for it on every block.
-        newN++;
-      }
-    }
-
-    if (newN !== N) {
-      putNetworkRecord({ memberCount: newN });
-    }
-  }
-
-  // 13. Advance the decay clock for every identity the settlement charged.
-  //
-  // ⚠ **Only firings reach here.** A stale identity sitting at the karma floor
-  // produces no plan and keeps its clock where it was, rather than silently
-  // forfeiting the intervals it is owed — the same gate the eager pass always
-  // had, now expressed as the plan's existence.
-  commitDecayClocks(decayDeps, decayPlans, height);
-
-  return true;
 }
