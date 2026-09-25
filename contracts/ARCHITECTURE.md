@@ -762,9 +762,6 @@ to verify box existence or absence without storing the full UTXO set.
   pairs for the same boxId netted out deterministically, and a name or holder
   key the block both creates and removes netted out the same way. Inserted box
   bytes come from the effect's box, never a store re-fetch
-  > ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 2)** — the set is derived from the journal the store's
-  > primitives recorded, and a name or holder key created and removed in one block reaches the prover as a `Remove`
-  > of a key the tree never held, which stops the node.
 - **Canonically ordered (M-12):** the AVL digest is insertion-order-sensitive,
   so every prover feed is sorted before the operations run: the per-block net
   set applies all removes then all inserts, each sorted lexicographically by
@@ -2156,8 +2153,6 @@ no object check compares against it and no producer stamps it.
   builds the journal from that one list (`NODE_INTERFACE → Block Journal`). Call
   sites never maintain parallel mutation bookkeeping, and no store primitive
   records.
-  > ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 2)** — the log is recorded at the store's write
-  > primitives (`insertBox`, `consumeBox`, the record writers) while a block journal is open.
 - **Accounting-agnostic.** The log carries no per-mutation-class fields.
   Every mutation class — settlement legs, bonds, like accounting, coinbase
   splits, and future ones like storage rent — journals through the same log
@@ -2174,7 +2169,6 @@ no object check compares against it and no producer stamps it.
   is computed from the block's effects, the same list the journal is built
   from — never from hand-maintained consumed/created lists (the drift source
   behind audit C-5/H-5/H-7).
-  > ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 2)** — the set is computed from the journal.
 - **Prover restored on rejection.** A rejected block leaves the AVL prover at
   its pre-block digest regardless of which stage rejected it.
 

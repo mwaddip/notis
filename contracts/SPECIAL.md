@@ -120,8 +120,13 @@ src/utxo-engine.ts                 S10 P8  E8  C5  I8  A6  L10
   explicit block-application path. A wrong arithmetic edge here is money created from
   nothing, permanently, on a chain nobody can rewrite.
 
-src/apply-block.ts                 S10 P9  E3  C6  I9  A7  L10
-  The mutation phase and its overlay (CONSENSUS_INTERFACE → The overlay). Every read after a
+src/apply-block.ts                 S10 P9  E3  C6  I8  A6  L10
+  The mutation phase, whole (CONSENSUS_INTERFACE → Applying a block). Peer-supplied bodies
+  reach it, and its order is consensus: a step moved ahead of another still passes every
+  rule's own test and forks the chain — the block-application pin is what sees it.
+
+src/overlay.ts                     S10 P9  E3  C6  I9  A7  L10
+  The block's writes over the view (CONSENSUS_INTERFACE → The overlay). Every read after a
   write must answer over the state the block has left: a composition wrong by one box, one
   record or one position in an order is a fork no test of the rules alone can see, because
   the rules are right and their input is not. A is 7: every read of the phase passes here,

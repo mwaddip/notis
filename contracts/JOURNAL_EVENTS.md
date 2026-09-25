@@ -17,8 +17,7 @@
 > (Spec B P1) = the **record-once consensus mutation log** built from a block's effects, which
 > feeds the AVL prover and the `stateRoot`. They are unrelated. `BlockJournal` is specified
 > in `NODE_INTERFACE.md → Store Interface → Block Journal`, **not here.** Do not reason from
-> one to the other. ⚠ AHEAD OF CODE (2026-09-25, the consensus package, stage 2): the log is recorded at the
-> store's write primitives while a block journal is open.
+> one to the other.
 
 ## Format
 

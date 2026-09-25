@@ -1655,9 +1655,6 @@ separates both from wire's own refusals, so a caller switching on `code` never h
   `b33` / `b64` and `lp(x)` readers copy the field out, so a decoded struct never aliases the bytes it
   came from, and the copy is a plain `Uint8Array` whether the input is one or a `Buffer` — what a
   decoder answers does not depend on how its caller carried the bytes.
-  > ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 2)** — `readBytesN` and `readLp` copy with
-  > `.slice()`, which on a `Buffer` input returns a `Buffer` view onto it: the decoded fields alias the input and take
-  > its type.
 - **Enum tags are never renumbered.** A renumber silently moves every id and `stateRoot` that covers
   the tag (the T2b `0x03` lesson, now applying inside the id preimage).
 - **A retired tag's *number* may be reassigned to a new type — under all three of the following, and
