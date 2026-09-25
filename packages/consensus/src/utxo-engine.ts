@@ -2111,10 +2111,19 @@ function checkAuthorization(
 
     const signerKey = rule.signer(box, tx, currentBlockHeight);
     if (signerKey === null) continue;
-    if (!signerKey || !verifyGuardSignature(tx, txHash, signerKey)) {
+    if (!signerKey) {
       return { valid: false, error: rule.unsigned(box, tx) };
     }
-    requiredKeys.add(Buffer.from(signerKey).toString('hex'));
+    // A key's signature is one map entry over the transaction's id, so a key
+    // already verified for this transaction verifies for every later input it
+    // signs for: each is checked once (CONSENSUS_INTERFACE → Cost → "A
+    // transaction checks each signer once").
+    const signerHex = Buffer.from(signerKey).toString('hex');
+    if (requiredKeys.has(signerHex)) continue;
+    if (!verifyGuardSignature(tx, txHash, signerKey)) {
+      return { valid: false, error: rule.unsigned(box, tx) };
+    }
+    requiredKeys.add(signerHex);
   }
 
   // NODE_INTERFACE → Legal box transitions → "The signature map carries no key
