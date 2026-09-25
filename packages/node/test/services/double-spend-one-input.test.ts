@@ -14,16 +14,17 @@ import {
  *
  * ⛔ **This is what keeps `DivergedStateTreeError` off the peer-reachable side
  * of the fail-stop boundary** (NODE_INTERFACE → "What the funnel's totality
- * catch is FOR"), and the mechanism is not local to one file. The journal
- * records a remove per `consumeBox` call, and `proverFeedFromJournal` cancels
+ * catch is FOR"), and the mechanism is not local to one file. The block's
+ * effects list a remove per spend, and the prover feed derived from them cancels
  * insert-then-remove pairs but does **not** dedupe repeated removes — so a
  * `consumed` list carrying one id twice would refuse on the second `Remove`.
  *
- * What prevents it: the single-pass input check resolves against the confirmed
- * set as the loop evolves it. Once the first transaction's `applyTx` marks the
- * box spent, the second's `getBox` returns null and the block is rejected at
- * once. `consumeBox` is the backstop under that: it refuses a consume of an id
- * no live row holds, so the second remove could not be journalled at all.
+ * What prevents it: the single-pass input check resolves against the state as
+ * the loop evolves it. Once the first transaction's `applyTx` spends the box,
+ * the second's `getBox` returns null and the block is rejected at once. The
+ * overlay's spend backstop is under that: it refuses a spend of an id no live
+ * box holds, so the second remove could not be listed at all
+ * (CONSENSUS_INTERFACE → The overlay).
  *
  * The assertion is that the boundary is not reached — a root comparison cannot
  * see this, because the block never gets far enough to produce a root.

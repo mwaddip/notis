@@ -105,7 +105,6 @@ async function importBlockApply() {
     applyOrderingBlock: (block: OrderingBlock) => boolean;
     computePostBlockStateRoot: (
       block: OrderingBlock,
-      height: number,
     ) => import('../../src/services/block-apply.js').StateRootSpeculation;
   };
 }
@@ -262,10 +261,7 @@ async function assertRoundTrip(
   //     transition, not two.
   const blockApply = await importBlockApply();
   const journalsBefore = journalHeights(db.getDb());
-  const speculative = blockApply.computePostBlockStateRoot(
-    classBlock,
-    classBlock.header.height,
-  );
+  const speculative = blockApply.computePostBlockStateRoot(classBlock);
   expect(speculative).toEqual({
     kind: 'computed',
     stateRoot: Buffer.from(postDigest).toString('hex'),
@@ -274,9 +270,8 @@ async function assertRoundTrip(
   // holding a prover accepts exactly the blocks a producer builds.
   expect(classBlock.header.stateRoot).toBe(Buffer.from(postDigest).toString('hex'));
 
-  // 2c. …and it left no trace: its transaction rolled back, the prover was
-  //     restored by hand (SQLite rollback cannot reach it), and it persisted
-  //     no journal row.
+  // 2c. …and it left no trace: it wrote nothing to the store, the prover was
+  //     restored to its snapshot, and it persisted no journal row.
   expect(dumpState(db.getDb())).toEqual(pre.state);
   expect(Buffer.from(digestOf(handle)).equals(Buffer.from(pre.digest))).toBe(true);
   expect(journalHeights(db.getDb())).toEqual(journalsBefore);
@@ -538,7 +533,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
 
   it('identity record: an invite grant writes two record mutations and the journal reverts both', async () => {
     // The record mutation class: a block that writes the same record key
-    // **twice**, exercising `proverFeedFromJournal`'s collapse-to-last-write
+    // **twice**, exercising the prover feed's collapse-to-last-write
     // rule. An invite grant fires two writers at one height for the invitee:
     //   1. The settlement's karma output → `insertBox` → `bumpActivityClock`
     //      → `putIdentityRecord(lastActivityBlock: H)`

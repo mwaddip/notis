@@ -163,11 +163,7 @@ describe('block journal (store choke-point recording)', () => {
   });
 
   // `recordBoxRemove` sits downstream of `consumeBox`'s live-row check, so a
-  // refused consume journals nothing — the half that makes the guard worth
-  // having. A remove entry for a box that was never spent survives
-  // `proverFeedFromJournal` (it cancels insert+remove pairs, never repeated
-  // removes) and reaches the AVL+ tree, which refuses a `Remove` of a key it
-  // does not hold and stops the node.
+  // refused consume journals nothing.
   it('a refused consume records nothing while open', async () => {
     const s = await importAll();
     s.initDb(':memory:');

@@ -1273,12 +1273,10 @@ export class BoxNotLiveError extends Error {
  * Mark a **live** box spent at the given block height.
  *
  * ⛔ **The `spent_at_block IS NULL` predicate and the row-count check are ONE
- * guard.** The predicate alone leaves the `UPDATE` a no-op while
- * `recordBoxRemove` still journals a remove, and `proverFeedFromJournal` does
- * not dedupe repeated removes — so that entry reaches the AVL+ tree, which
- * refuses a `Remove` of a key it does not hold and stops the node
- * (`DivergedStateTreeError`, the `Remove` arm). Together they make a journalled
- * remove follow a spend that happened rather than a caller's assumption.
+ * guard.** The predicate alone leaves the `UPDATE` a silent no-op for a box
+ * the store does not hold live; with the count checked, that spend fails loudly
+ * inside the caller's transaction instead (NODE_INTERFACE → Store Interface,
+ * the `consumeBox` row).
  *
  * `recordBoxRemove` runs downstream of the check, so a refused consume journals
  * nothing (NODE_INTERFACE → Store Interface, the `consumeBox` row).
