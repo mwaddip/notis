@@ -16,9 +16,13 @@ import { buildMinedHeaderChain } from '../helpers.js';
 import { GENESIS_PREV_BLOCK_HASH, MAX_FUTURE_DRIFT_MS } from '@dagsocial/types';
 import { retargetParams } from '../../src/services/difficulty.js';
 import { decodeNipopowProof, verifyProof } from '@dagsocial/nipopow';
-import { unlinkSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
-const TEST_DB = '/tmp/dagsocial-test-routes-nipopow.sqlite';
+// A directory private to this run, so two runs of the suite on one machine
+// never write the same store file.
+let testDir: string;
 const CHAIN_LEN = 20;
 
 function request(
@@ -58,8 +62,8 @@ describe('nipopow route', () => {
   let app: express.Express;
 
   beforeAll(() => {
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
-    initDb(TEST_DB);
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-routes-nipopow-'));
+    initDb(join(testDir, 'store.sqlite'));
 
     const { headers, interlinksPerHeader } = buildMinedHeaderChain({
       anchorPrevBlockHash: GENESIS_PREV_BLOCK_HASH,
@@ -104,7 +108,7 @@ describe('nipopow route', () => {
 
   afterAll(() => {
     closeDb();
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   // ---- 400 rejections ----

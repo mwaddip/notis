@@ -36,9 +36,13 @@ import type { InvitesDeps } from '../../src/routes/invites.js';
 import { ClientError } from '../../src/services/client-error.js';
 import { config } from '../../src/config.js';
 import { MempoolFullError, PendingSpendConflictError } from '../../src/store/mempool.js';
-import { unlinkSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
-const TEST_DB = '/tmp/dagsocial-test-routes-invites.sqlite';
+// A directory private to this run, so two runs of the suite on one machine
+// never write the same store file.
+let testDir: string;
 
 async function request(
   path: string,
@@ -126,8 +130,8 @@ describe('invites routes', () => {
   let inviterPubKeyHex: string;
 
   beforeAll(() => {
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
-    initDb(TEST_DB);
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-routes-invites-'));
+    initDb(join(testDir, 'store.sqlite'));
     getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     inviterKp = generateKeyPair();
@@ -147,7 +151,7 @@ describe('invites routes', () => {
 
   afterAll(() => {
     closeDb();
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   /** Seed a karma box for the inviter. */
