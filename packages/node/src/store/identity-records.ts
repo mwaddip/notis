@@ -1,15 +1,14 @@
 import { createHash } from 'node:crypto';
-import { NETWORK_KEY_DOMAIN, identityRecordKey } from '@dagsocial/types';
+import { NETWORK_KEY_DOMAIN } from '@dagsocial/types';
 import { getDb } from './db.js';
-import { isBlockJournalOpen, recordIdentityRecordPut, recordNetworkRecordPut } from './journal.js';
 import type { UserId, IdentityRecord } from '@dagsocial/types';
 import type { NetworkRecord } from '@dagsocial/consensus';
 
 export type { NetworkRecord };
 
 /**
- * SQL and journal for the identity record (TYPES_INTERFACE → Identity record
- * and karma valuation for the type, the AVL key and the codec).
+ * SQL for the identity record (TYPES_INTERFACE → Identity record and karma valuation
+ * for the type, the AVL key and the codec).
  *
  * **Who populates this.** Block application writes each record its effects
  * carry — the activity bump when a post transaction applies, the decay clock
@@ -114,13 +113,10 @@ export function getAllIdentityRecords(): Array<{ identityId: UserId; record: Ide
  * require revert to resurrect records with their exact prior values;
  * unbounded-but-simple is the deliberate choice at this stage.
  *
- * While a block journal is open this captures the row it replaces **before**
- * writing and records the mutation.
+ * A plain write: the journal entry and the row it replaces are the effects
+ * writer's (NODE_INTERFACE → Block Journal).
  */
 export function putIdentityRecord(identityId: UserId, record: IdentityRecord): void {
-  const replaced = isBlockJournalOpen()
-    ? (getIdentityRecord(identityId) ?? undefined)
-    : undefined;
   getDb()
     .prepare(
       `INSERT OR REPLACE INTO identity_records
@@ -142,14 +138,13 @@ export function putIdentityRecord(identityId: UserId, record: IdentityRecord): v
       record.memberLikes,
       record.invitesUsed,
     );
-  recordIdentityRecordPut(identityRecordKey(identityId), identityId, record, replaced);
 }
 
 /**
  * Remove an identity record.
  *
  * Fork-rollback inverse only — the inverse of a *first* `putIdentityRecord` for
- * a key. Never records to the block journal.
+ * a key.
  */
 export function deleteIdentityRecord(identityId: UserId): void {
   getDb()
@@ -186,18 +181,14 @@ export function getNetworkRecord(): NetworkRecord {
 }
 
 /**
- * Upsert the network record. While a block journal is open, captures the row
- * it replaces and records a NetworkMutation — the same pattern as
- * putIdentityRecord.
+ * Upsert the network record — a plain write, as `putIdentityRecord` is: the
+ * journal entry and the row it replaces are the effects writer's
+ * (NODE_INTERFACE → Block Journal).
  */
 export function putNetworkRecord(record: NetworkRecord): void {
-  const replaced = isBlockJournalOpen()
-    ? getNetworkRecord()
-    : undefined;
   getDb()
     .prepare(
       `INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, ?)`,
     )
     .run(record.memberCount);
-  recordNetworkRecordPut(record, replaced);
 }
