@@ -1,4 +1,4 @@
-import { createHash, createPublicKey } from 'crypto';
+import { createHash } from 'crypto';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import {
   MAX_CONTENT_BYTES,
@@ -7,7 +7,6 @@ import {
   MAX_SETTLEMENT_BYTES,
   MAX_BLOCK_BODY_BYTES,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
-  ED25519_SPKI_PREFIX,
   LEVEL_CAP,
   MAX_INTERLINKS,
   MAX_FUTURE_DRIFT_MS,
@@ -21,32 +20,13 @@ import type { BlockHeader, OrderingBlock, ProtocolEra, UtxoTransaction } from '@
 import { isDisallowedContentCodepoint } from './content-charset.js';
 
 // ---------------------------------------------------------------------------
-// Ed25519 SPKI helpers
-// ---------------------------------------------------------------------------
-
-const ED25519_SPKI_BUF = Buffer.from(ED25519_SPKI_PREFIX, 'hex');
-
-function wrapSpki(raw: Uint8Array): Buffer {
-  return Buffer.concat([ED25519_SPKI_BUF, Buffer.from(raw)]);
-}
-
-/** Wrap a raw 32-byte Ed25519 public key as an SPKI DER KeyObject. */
-export function ed25519PublicKeyToKeyObject(rawKey: Uint8Array): ReturnType<typeof createPublicKey> {
-  return createPublicKey({
-    key: wrapSpki(rawKey),
-    format: 'der',
-    type: 'spki',
-  });
-}
-
-// ---------------------------------------------------------------------------
 // Input guards (audit M-5, M-6)
 // ---------------------------------------------------------------------------
 //
 // Every exported verify* function receives objects straight off the wire, so
 // its arguments may be wrongly typed or out of range. The guards below stand in
 // front of the operations that throw on such input — `Buffer.byteLength`,
-// `Buffer.from`, `createPublicKey`, noble's `ed25519.verify`, `BigInt` /
+// `Buffer.from`, noble's `ed25519.verify`, `BigInt` /
 // `writeBigUInt64LE`, the codec's throwing writers, and plain `.length` reads —
 // so a malformed object yields a clean `false` / `{ valid: false }`, never an
 // exception.
@@ -65,7 +45,7 @@ function isObject(v: unknown): v is Record<string, unknown> {
  *
  * Deliberately not `ArrayBuffer.isView`: `Buffer.from(new Uint32Array(8))`
  * copies *elements*, not bytes, so a 32-byte-but-not-Uint8Array view would
- * silently yield an 8-byte key and throw downstream in `createPublicKey`.
+ * silently yield an 8-byte key where a 32-byte one is required.
  */
 function isBytes(v: unknown): v is Uint8Array {
   return v instanceof Uint8Array;
