@@ -18,7 +18,6 @@ import { PROTOCOL_VERSION } from '@dagsocial/types';
 import type { BackerStakeBox, BackerPoolBox, UtxoTransaction } from '@dagsocial/types';
 import { seedProvenance, signTransaction, txToJson, rawPublicKey } from '../helpers.js';
 import { config } from '../../src/config.js';
-import { beginBlockJournal, finishBlockJournal } from '../../src/store/journal.js';
 import { setMempoolCap, DEFAULT_MAX_MEMPOOL_ENTRIES, PendingSpendConflictError } from '../../src/store/mempool.js';
 import { generateKeyPairSync } from 'crypto';
 
@@ -130,7 +129,6 @@ describe('backer routes', () => {
 
   beforeAll(() => {
     initDb(TEST_DB);
-    beginBlockJournal(1);
     setMempoolCap(DEFAULT_MAX_MEMPOOL_ENTRIES);
     const deps = makeDeps();
     app = express();
@@ -150,7 +148,6 @@ describe('backer routes', () => {
   });
 
   afterAll(() => {
-    try { finishBlockJournal(); } catch { /* ok */ }
     closeDb();
   });
 

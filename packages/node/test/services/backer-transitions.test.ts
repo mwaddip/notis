@@ -8,7 +8,6 @@ import {
   hasActiveVouchEscrow,
   getBoxProvenance, getVouchBox, getNetworkRecord,
   getUsername, getUsernameByOwner,
-  beginBlockJournal, finishBlockJournal,
 } from '../../src/store/index.js';
 import { getBoxWithPending } from '../../src/store/mempool.js';
 import {
@@ -105,14 +104,12 @@ describe('backer transition rules', () => {
 
   beforeEach(() => {
     initDb(':memory:');
-    beginBlockJournal(HEIGHT);
     deps = makeDeps();
     holder = makeTestIdentity();
     stranger = makeTestIdentity();
     nonce = 0;
   });
   afterEach(() => {
-    try { finishBlockJournal(); } catch { /* already finished */ }
     closeDb();
   });
 
