@@ -1011,16 +1011,11 @@ describe('block-apply journal recording', () => {
       karmaMinimum: KARMA_MINIMUM,
     };
 
-    // Spec G phase D: the decay clock is committed state. `oldBox` was inserted
-    // by the store alone, which writes no record, so the identity reads as never
-    // active — the same clock its `createdAtBlock` of 0 gave the old box-age
-    // reading, so the burn below is unchanged by the swap.
+    // The decay clock is committed state. `oldBox` was inserted by the store
+    // alone, which writes no record, so the identity reads as never active.
     const records = await import('../../src/store/identity-records.js');
 
     const deps = {
-      consumeBox: (boxId: string, height: number) =>
-        utxo.consumeBox(boxId, height),
-      insertBox: (box: KarmaBox) => utxo.insertBox(box),
       getIdentityRecord: records.getIdentityRecord,
       putIdentityRecord: records.putIdentityRecord,
     };

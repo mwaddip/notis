@@ -989,13 +989,11 @@ describe('revertBlock', () => {
       karmaMinimum: KARMA_MINIMUM,
     };
 
-    // Spec G phase D: the decay clock is committed state, injected alongside
-    // the box accessors.
+    // The decay clock is committed state: the deps read and write the identity
+    // record.
     const records = await import('../../src/store/identity-records.js');
 
     const deps = {
-      consumeBox: utxo.consumeBox,
-      insertBox: utxo.insertBox,
       getIdentityRecord: records.getIdentityRecord,
       putIdentityRecord: records.putIdentityRecord,
     };

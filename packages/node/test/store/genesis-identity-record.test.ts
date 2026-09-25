@@ -43,8 +43,6 @@ type Store = Awaited<ReturnType<typeof importFresh>>;
 
 function decayDeps(s: Store) {
   return {
-    consumeBox: s.utxo.consumeBox,
-    insertBox: s.utxo.insertBox,
     getIdentityRecord: s.records.getIdentityRecord,
     putIdentityRecord: s.records.putIdentityRecord,
   };
