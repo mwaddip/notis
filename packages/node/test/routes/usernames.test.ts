@@ -23,7 +23,6 @@ import {
 import type { KarmaBox, UsernameBox, UtxoTransaction } from '@dagsocial/types';
 import { rawPublicKey, seedProvenance, signTransaction, txToJson } from '../helpers.js';
 import { config } from '../../src/config.js';
-import { beginBlockJournal, finishBlockJournal } from '../../src/store/journal.js';
 import { setMempoolCap, DEFAULT_MAX_MEMPOOL_ENTRIES, PendingSpendConflictError } from '../../src/store/mempool.js';
 
 const TEST_DB = '/tmp/dagsocial-test-routes-usernames.sqlite';
@@ -167,9 +166,7 @@ describe('username routes', () => {
   });
 
   it('GET /usernames/:name — returns the row, with and without @', async () => {
-    beginBlockJournal(1);
     putUsername({ nameLower: 'alice', name: 'Alice', owner: holder.hex, boxId: 'aa'.repeat(32), claimedAtBlock: 1 });
-    finishBlockJournal();
 
     const res1 = await get(app, '/usernames/Alice');
     expect(res1.status).toBe(200);
@@ -219,14 +216,10 @@ describe('username routes', () => {
     const kb = seedKarma(burnHolder.pub, 100n);
     const boxA = seedUsernameBox(burnHolder.pub, 'NameA');
     const boxB = seedUsernameBox(burnHolder.pub, 'NameB');
-    beginBlockJournal(10);
     putUsername({ nameLower: 'namea', name: 'NameA', owner: burnHolder.hex, boxId: boxA.id!, claimedAtBlock: 10 });
-    finishBlockJournal();
     // Seed NameB under a different owner so the UNIQUE constraint is not hit
     const burnHolder2 = makeKeys();
-    beginBlockJournal(11);
     putUsername({ nameLower: 'nameb', name: 'NameB', owner: burnHolder2.hex, boxId: boxB.id!, claimedAtBlock: 11 });
-    finishBlockJournal();
 
     // A valid burn of NameA, posted to /usernames/NameB/burn — wrong path
     const tx: UtxoTransaction = {
@@ -472,9 +465,7 @@ describe('username routes', () => {
     const burner = makeKeys();
     const kb = seedKarma(burner.pub, 100n);
     const uBox = seedUsernameBox(burner.pub, 'BurnMe');
-    beginBlockJournal(1);
     putUsername({ nameLower: 'burnme', name: 'BurnMe', owner: burner.hex, boxId: uBox.id!, claimedAtBlock: 1 });
-    finishBlockJournal();
     putIdentityRecord(burner.pub, { lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     const tx: UtxoTransaction = {
@@ -558,9 +549,7 @@ describe('username routes', () => {
     const burner = makeKeys();
     const kb = seedKarma(burner.pub, 100n);
     const uBox = seedUsernameBox(burner.pub, 'BurnConflict');
-    beginBlockJournal(1);
     putUsername({ nameLower: 'burnconflict', name: 'BurnConflict', owner: burner.hex, boxId: uBox.id!, claimedAtBlock: 1 });
-    finishBlockJournal();
 
     const tx: UtxoTransaction = {
       inputs: [kb.id!, uBox.id!],
@@ -582,9 +571,7 @@ describe('username routes', () => {
     const burner = makeKeys();
     const kb = seedKarma(burner.pub, 100n);
     const uBox = seedUsernameBox(burner.pub, 'WrongPrice');
-    beginBlockJournal(1);
     putUsername({ nameLower: 'wrongprice', name: 'WrongPrice', owner: burner.hex, boxId: uBox.id!, claimedAtBlock: 1 });
-    finishBlockJournal();
     putIdentityRecord(burner.pub, { lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     const wrongPrice = USERNAME_BURN_PRICE - 1n;
