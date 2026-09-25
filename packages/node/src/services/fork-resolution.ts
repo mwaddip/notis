@@ -28,6 +28,7 @@ import {
   insertRefusedHeader,
   anyRefusedHeader,
   getInterlinks,
+  getKarmaOwners,
 } from '../store/index.js';
 import { ceilingOf } from '@dagsocial/consensus';
 import { getDb } from '../store/db.js';
@@ -316,6 +317,11 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
     restoreProver();
     throw err;
   }
+
+  // Net's relay gate, re-seeded from the store the reorg committed
+  // (NODE_INTERFACE → Post transactions → "The set moves after a commit, never
+  // inside a transaction").
+  getNet()?.setKarmaMembers(getKarmaOwners());
 
   // NODE_INTERFACE → Admin Listener: the tip the reorg left.
   noteTip(forkHeight + newBlocks.length);

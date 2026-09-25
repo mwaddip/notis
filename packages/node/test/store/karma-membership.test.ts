@@ -1,11 +1,26 @@
-import { fixtureProvenance } from '../helpers.js';
+import {
+  FIXTURE_BOND_KARMA,
+  activateProverOverStore,
+  fixtureProvenance,
+  makeApplicableBlock,
+  makeKarmaBox as seededKarmaBox,
+  makePostCommit,
+  makeTestIdentity,
+  signTransaction,
+  toHex,
+  type TestIdentity,
+} from '../helpers.js';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
+import type { NetNode } from '@dagsocial/net';
+import { POST_PRICE_THREAD, PROTOCOL_VERSION } from '@dagsocial/types';
 
 import type {
   AnyBox,
+  AnyBoxCandidate,
   KarmaBox,
+  UtxoTransaction,
 } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
@@ -278,5 +293,205 @@ describe('karma membership hook', () => {
     // Consume the last — an exact spend: onLoss fires.
     consumeBox(box2.id!, 5);
     expect(losses).toEqual([ownerHex(OWNER_A)]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Net's relay gate after a commit (NODE_INTERFACE → Post transactions → "The
+// set moves after a commit, never inside a transaction"). One block carries an
+// invite by a root (the invitee's first karma box is the grant), a post paid
+// from its author's only box (no karma left), and a post paid from one of its
+// author's two boxes; a sentinel sits in the set holding no karma, touched by
+// no block, so a re-seed and a per-owner move answer differently for it.
+// ---------------------------------------------------------------------------
+
+const inviter = makeTestIdentity();
+const invitee = makeTestIdentity();
+const lastBoxPoster = makeTestIdentity();
+const spareBoxPoster = makeTestIdentity();
+const SENTINEL = 'ee'.repeat(32);
+
+const hexOf = (who: TestIdentity): string => toHex(who.userId);
+const sorted = (owners: Iterable<string>): string[] => [...owners].sort();
+
+/** Net's relay-gate surface over a real set, recording each call. */
+function recordingNet() {
+  const members = new Set<string>();
+  const calls: string[] = [];
+  const node = {
+    setKarmaMembers(owners: Iterable<string>): void {
+      calls.push('set');
+      members.clear();
+      for (const owner of owners) members.add(owner);
+    },
+    addKarmaMember(ownerHex: string): void {
+      calls.push(`add ${ownerHex}`);
+      members.add(ownerHex);
+    },
+    removeKarmaMember(ownerHex: string): void {
+      calls.push(`remove ${ownerHex}`);
+      members.delete(ownerHex);
+    },
+    tipApplied(): void {},
+  };
+  return { members, calls, node: node as unknown as NetNode };
+}
+
+/** The root's invite: its karma back less the bond, and the bond naming the invitee. */
+function inviteTx(karma: KarmaBox): UtxoTransaction {
+  const tx: UtxoTransaction = {
+    inputs: [karma.id!],
+    outputs: [
+      { boxType: 'karma', value: karma.value - FIXTURE_BOND_KARMA, createdAtBlock: 0, owner: inviter.userId },
+      { boxType: 'bond', value: FIXTURE_BOND_KARMA, createdAtBlock: 0, inviterId: inviter.userId, inviteePublicKey: invitee.userId },
+    ] as AnyBoxCandidate[],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  };
+  signTransaction(tx, inviter.privateKey, hexOf(inviter));
+  return tx;
+}
+
+/** A thread post paid from one karma box of exactly its price: no karma change. */
+function exactPostTx(author: TestIdentity, karma: KarmaBox, content: string): UtxoTransaction {
+  const tx: UtxoTransaction = {
+    inputs: [karma.id!],
+    outputs: [{ boxType: 'karma_price', value: POST_PRICE_THREAD, createdAtBlock: 0 } as AnyBoxCandidate],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+    post: makePostCommit(author.userId, content),
+  };
+  signTransaction(tx, author.privateKey, hexOf(author));
+  return tx;
+}
+
+/**
+ * A node over a fresh store — the inviter a root, each poster's boxes, the
+ * tree over them — with net's set seeded from the store as `index.ts` seeds it,
+ * plus the sentinel.
+ */
+async function openNode() {
+  const db = await import('../../src/store/db.js');
+  db.initDb(':memory:');
+  db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+  const utxo = await import('../../src/store/utxo.js');
+  const records = await import('../../src/store/identity-records.js');
+  records.putIdentityRecord(inviter.userId, {
+    lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+    lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+    memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+  });
+  const inviterKarma = seededKarmaBox(100n, inviter.userId, 0, 1);
+  const lastBox = seededKarmaBox(POST_PRICE_THREAD, lastBoxPoster.userId, 0, 2);
+  const spentBox = seededKarmaBox(POST_PRICE_THREAD, spareBoxPoster.userId, 0, 3);
+  const spareBox = seededKarmaBox(50n, spareBoxPoster.userId, 0, 4);
+  for (const box of [inviterKarma, lastBox, spentBox, spareBox]) utxo.insertBox(box);
+  await activateProverOverStore();
+
+  const net = recordingNet();
+  (await import('../../src/services/net-instance.js')).setNet(net.node);
+  net.node.setKarmaMembers([...utxo.getKarmaOwners(), SENTINEL]);
+  net.calls.length = 0;
+
+  return {
+    db,
+    net,
+    txs: [
+      inviteTx(inviterKarma),
+      exactPostTx(lastBoxPoster, lastBox, 'paid from the last box'),
+      exactPostTx(spareBoxPoster, spentBox, 'paid from one of two'),
+    ],
+    blockApply: await import('../../src/services/block-apply.js'),
+    forks: await import('../../src/services/fork-resolution.js'),
+    corrupt: await import('../../src/services/corrupt-state.js'),
+  };
+}
+
+describe("net's karma membership moves after a commit", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('a committed block moves each owner whose karma boxes it inserted or spent, present iff it holds one, and no other', async () => {
+    const node = await openNode();
+    const block = await makeApplicableBlock({ utxoTxs: node.txs });
+
+    expect(node.blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true });
+    expect(sorted(node.net.members)).toEqual(
+      sorted([hexOf(inviter), hexOf(invitee), hexOf(spareBoxPoster), SENTINEL]),
+    );
+    expect(sorted(node.net.calls)).toEqual(sorted([
+      `add ${hexOf(inviter)}`,
+      `add ${hexOf(invitee)}`,
+      `add ${hexOf(spareBoxPoster)}`,
+      `remove ${hexOf(lastBoxPoster)}`,
+    ]));
+  });
+
+  it('a committed reorg re-seeds the set from the store, the blocks it reverts and applies moving nothing on their own', async () => {
+    const node = await openNode();
+    // Both over the pre-block state: the reorg reverts `block` and applies `rival`.
+    const rival = await makeApplicableBlock({ utxoTxs: [node.txs[0]!] });
+    const block = await makeApplicableBlock({ utxoTxs: node.txs });
+    expect(node.blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true });
+    node.net.calls.length = 0;
+
+    node.forks.reorg(0, [rival]);
+
+    expect(sorted(node.net.members)).toEqual(
+      sorted([hexOf(inviter), hexOf(invitee), hexOf(lastBoxPoster), hexOf(spareBoxPoster)]),
+    );
+    expect(node.net.calls).toEqual(['set']);
+  });
+
+  it('a block the funnel refuses moves nothing', async () => {
+    const node = await openNode();
+    const before = sorted(node.net.members);
+    const liar = await makeApplicableBlock({ utxoTxs: node.txs, stateRoot: 'ff'.repeat(33) });
+
+    expect(node.blockApply.applyOrderingBlockVerdict(liar)).toEqual({ applied: false, class: 'consensus' });
+    expect(sorted(node.net.members)).toEqual(before);
+    expect(node.net.calls).toEqual([]);
+  });
+
+  it('a block whose writes fail inside its transaction moves nothing', async () => {
+    const node = await openNode();
+    const before = sorted(node.net.members);
+    const block = await makeApplicableBlock({ utxoTxs: node.txs });
+    // The block's last write refused: every effect is written, then the
+    // transaction rolls back.
+    node.db.getDb().exec(
+      "CREATE TRIGGER refuse_journal BEFORE INSERT ON block_journal BEGIN SELECT RAISE(ABORT, 'journal refused'); END",
+    );
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(node.blockApply.applyOrderingBlockVerdict(block)).toMatchObject({ applied: false, class: 'local' });
+    expect(errors).toHaveBeenCalledTimes(1);
+    errors.mockRestore();
+    expect(sorted(node.net.members)).toEqual(before);
+    expect(node.net.calls).toEqual([]);
+  });
+
+  it('the speculative run moves nothing', async () => {
+    const node = await openNode();
+    const before = sorted(node.net.members);
+    const block = await makeApplicableBlock({ utxoTxs: node.txs });
+
+    expect(node.blockApply.computePostBlockStateRoot(block)).toEqual({ kind: 'computed', stateRoot: block.header.stateRoot });
+    expect(sorted(node.net.members)).toEqual(before);
+    expect(node.net.calls).toEqual([]);
+  });
+
+  it('a reorg that rolls back moves nothing', async () => {
+    const node = await openNode();
+    const liar = await makeApplicableBlock({ utxoTxs: node.txs, stateRoot: 'ff'.repeat(33) });
+    const block = await makeApplicableBlock({ utxoTxs: node.txs });
+    expect(node.blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true });
+    const after = sorted(node.net.members);
+    node.net.calls.length = 0;
+
+    expect(() => node.forks.reorg(0, [liar])).toThrow(node.corrupt.ReorgBlockRejectedError);
+    expect(sorted(node.net.members)).toEqual(after);
+    expect(node.net.calls).toEqual([]);
   });
 });

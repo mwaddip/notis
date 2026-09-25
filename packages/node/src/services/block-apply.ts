@@ -52,6 +52,7 @@ import {
   getTreasuryBox,
   getKarmaPoolBox,
   getKarmaBoxes,
+  getKarmaBox,
   getVouchEscrowsFor,
   getVouchBoxes,
   getLikeAccrualBoxes,
@@ -224,9 +225,12 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
     if (current && Buffer.from(current).equals(Buffer.from(preDigest))) return;
     avlHandle.prover.rollback(preDigest);
   };
+  let karmaOwners: Set<string>;
   try {
-    getDb().transaction(() => {
-      if (!applyBlockBody(block)) throw new BlockRejected();
+    karmaOwners = getDb().transaction(() => {
+      const moved = applyBlockBody(block);
+      if (moved === null) throw new BlockRejected();
+      return moved;
     })();
   } catch (err) {
     if (err instanceof BlockRejected) {
@@ -280,6 +284,11 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
   // failed reorg rolls back; `reorg` rebuilds once, after its own commit, and
   // the tip metric moves with it (NODE_INTERFACE → Admin Listener).
   if (!getDb().inTransaction) {
+    // Net's relay gate follows the committed state for the owners whose karma
+    // boxes this block moved; nested in a reorg, the reorg re-seeds it after its
+    // own commit (NODE_INTERFACE → Post transactions → "The set moves after a
+    // commit, never inside a transaction").
+    moveKarmaMembers(karmaOwners);
     rebuildTemplate();
     noteTip(block.header.height);
     // The applied tip reaches net at the same seam, so a version boundary can
@@ -289,7 +298,13 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
   return { applied: true };
 }
 
-function applyBlockBody(block: OrderingBlock): boolean {
+/**
+ * The block's checks, its mutation phase and its writes, inside the funnel's
+ * transaction: `null` when a check or a rule refuses the block, otherwise the
+ * owners whose karma boxes it moved, for the move of net's relay gate once the
+ * transaction has committed.
+ */
+function applyBlockBody(block: OrderingBlock): Set<string> | null {
   const currentHeight = getCurrentHeight();
 
   // 1. Chain-link check + interlink root + genesis pin
@@ -300,11 +315,11 @@ function applyBlockBody(block: OrderingBlock): boolean {
     // Genesis: prevBlockHash must be all zeros
     if (block.header.prevBlockHash !== GENESIS_PREV_BLOCK_HASH) {
       console.warn(`Rejected block height=${block.header.height}: genesis prevBlockHash mismatch`);
-      return false;
+      return null;
     }
     if (block.header.height !== 1) {
       console.warn(`Rejected block: first block must have height=1, got ${block.header.height}`);
-      return false;
+      return null;
     }
     expectedInterlinks = [];
 
@@ -314,7 +329,7 @@ function applyBlockBody(block: OrderingBlock): boolean {
       const bh = validation.blockHash(block.header);
       if (bh !== genesisId) {
         console.warn(`Rejected block height=${block.header.height}: genesis pin mismatch`);
-        return false;
+        return null;
       }
     }
     // MINING_INTERFACE → Header timestamp rules, future bound (height 1)
@@ -338,12 +353,12 @@ function applyBlockBody(block: OrderingBlock): boolean {
     }
     if (!validation.verifyBlockChainLink(block, prevBlock)) {
       console.warn(`Rejected block height=${block.header.height}: chain link check failed`);
-      return false;
+      return null;
     }
     // MINING_INTERFACE → Header timestamp rules, order rule
     if (!validation.verifyCreatedAtOrder(block.header, prevBlock.header)) {
       console.warn(`Rejected block height=${block.header.height}: createdAt not above the parent's`);
-      return false;
+      return null;
     }
     // MINING_INTERFACE → Header timestamp rules, future bound
     if (!validation.verifyCreatedAtBound(block.header, nowMs(), MAX_FUTURE_DRIFT_MS)) {
@@ -360,7 +375,7 @@ function applyBlockBody(block: OrderingBlock): boolean {
   }
   if (block.header.interlinkRoot !== interlinkRoot(expectedInterlinks)) {
     console.warn(`Rejected block height=${block.header.height}: interlinkRoot mismatch`);
-    return false;
+    return null;
   }
 
   // 2. Protocol version
@@ -368,7 +383,7 @@ function applyBlockBody(block: OrderingBlock): boolean {
   // (VALIDATION_INTERFACE → Protocol Version).
   if (!validation.verifyProtocolVersion(block.header.protocolVersion, block.header.height, config.protocolVersionSchedule)) {
     console.warn(`Rejected block height=${block.header.height}: protocol version ${block.header.protocolVersion} is not the era ${protocolVersionAt(config.protocolVersionSchedule, block.header.height)}`);
-    return false;
+    return null;
   }
 
   // 3. PoW target — MINING_INTERFACE → Difficulty Schedule. Checked before the
@@ -383,11 +398,11 @@ function applyBlockBody(block: OrderingBlock): boolean {
       `Rejected block height=${block.header.height}: powTargetBits ` +
       `${block.header.powTargetBits} != scheduled ${scheduledTarget}`,
     );
-    return false;
+    return null;
   }
   if (!countedVerifyOrderingBlockPoW(block.header)) {
     console.warn(`Rejected block height=${block.header.height}: PoW invalid`);
-    return false;
+    return null;
   }
 
   // 3b. Validator signature (H-1)
@@ -397,7 +412,7 @@ function applyBlockBody(block: OrderingBlock): boolean {
   // funnel every apply path (gossip, sync, reorg) passes through — so no path skips it.
   if (!validation.verifyValidatorSignature(block.header, block.validatorSignature)) {
     console.warn(`Rejected block height=${block.header.height}: validator signature invalid`);
-    return false;
+    return null;
   }
 
   // 4. Merkle root verification — one root over one body of transactions, each
@@ -407,7 +422,7 @@ function applyBlockBody(block: OrderingBlock): boolean {
   const computedUtxoRoot = computeUtxoTxRoot(block.utxoTxTree);
   if (computedUtxoRoot !== block.header.utxoTxRoot) {
     console.warn(`Rejected block height=${block.header.height}: utxoTxRoot mismatch`);
-    return false;
+    return null;
   }
 
   // 5. The coinbase's maturity lock is checked with the rest of the settlement,
@@ -434,7 +449,7 @@ function applyBlockBody(block: OrderingBlock): boolean {
   if (!result.ok) {
     // A refusal is a verdict, not an error.
     console.warn(result.reason);
-    return false;
+    return null;
   }
 
   // The AVL feed from the effects and the stateRoot compare, before any effect
@@ -456,9 +471,13 @@ function applyBlockBody(block: OrderingBlock): boolean {
         `computed=${expectedHex.slice(0, 16)}... ` +
         `header=${block.header.stateRoot.slice(0, 16)}...`,
       );
-      return false;
+      return null;
     }
   }
+
+  // Read before the effects are written: a box the block spends names its owner
+  // in the store until the spend lands.
+  const karmaOwners = karmaOwnersOf(result.effects, storeStateView);
 
   // The effects written to the store, and the block journal built from them.
   const journal = writeBlockEffects(result.effects, height);
@@ -482,7 +501,7 @@ function applyBlockBody(block: OrderingBlock): boolean {
   // not one. If the impossible happens the line says `hash=null`, which is true.
   const appliedHash = validation.blockHash(block.header);
   console.log(`Applied ordering block height=${height} hash=${appliedHash} (${block.utxoTxTree.utxoTxIds.length} txs)`);
-  return true;
+  return karmaOwners;
 }
 
 /** The mutation set one block hands the prover, each group in any order. */
@@ -727,6 +746,46 @@ export function writeBlockEffects(effects: BlockEffects, height: number): BlockJ
     likeRecordInsertions,
     withdrawnPosts,
   };
+}
+
+/**
+ * The owners whose karma boxes a block's effects insert or spend, as hex — those
+ * net's relay gate moves for once the block commits (NODE_INTERFACE → Post
+ * transactions → "The set moves after a commit, never inside a transaction").
+ * A box the block spends and did not insert is read through `view`, so this
+ * runs before the effects are written.
+ */
+function karmaOwnersOf(effects: BlockEffects, view: Pick<StateView, 'getBox'>): Set<string> {
+  const inserted = new Set<string>();
+  const owners = new Set<string>();
+  for (const m of effects.mutations) {
+    if (m.kind !== 'box') continue;
+    let box: AnyBox | null;
+    if (m.op === 'insert') {
+      inserted.add(m.boxId);
+      box = m.box;
+    } else {
+      // A box the block inserted names its owner at its insert.
+      if (inserted.has(m.boxId)) continue;
+      box = view.getBox(m.boxId);
+    }
+    if (box?.boxType === 'karma') owners.add(Buffer.from(box.owner).toString('hex'));
+  }
+  return owners;
+}
+
+/**
+ * Net's relay gate after a block's commit: each owner the block's karma boxes
+ * moved is present iff it holds an unspent karma box (NODE_INTERFACE → Post
+ * transactions → "The set moves after a commit, never inside a transaction").
+ */
+function moveKarmaMembers(owners: Set<string>): void {
+  const net = getNet();
+  if (!net) return;
+  for (const ownerHex of owners) {
+    if (getKarmaBox(Buffer.from(ownerHex, 'hex')) !== null) net.addKarmaMember(ownerHex);
+    else net.removeKarmaMember(ownerHex);
+  }
 }
 
 /**
