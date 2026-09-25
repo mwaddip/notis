@@ -278,7 +278,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // The restart-rebuild convergence — the inverted before-leg
+  // The restart-rebuild convergence
   // -------------------------------------------------------------------------
 
   it('a mined transfer reaches the live tree, and a restart-rebuild reproduces its content', async () => {
@@ -370,8 +370,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
 
     // The transfer reached the AVL feed: the digest moved at the block, and
     // the live tree now authenticates the transfer outputs and has dropped
-    // the spent input. On the pre-fix HEAD the digest did NOT move here —
-    // the mutations bypassed the journal, so the tree never saw them.
+    // the spent input.
     expect(digestHex(handle)).not.toBe(preBlockDigest);
     const bobBox = utxo.getCreditBoxes(bob.userId)[0]!;
     expect(bobBox.txId).toBe(pooled.txId);
