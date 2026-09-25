@@ -842,7 +842,6 @@ function utxoDepsOver(state: BlockOverlay, ctx: ApplyContext): UtxoEngineDeps {
 /** Decay's deps over the overlay: the clocks it commits are the block's writes. */
 function decayDepsOver(state: BlockOverlay): DecayDeps {
   return {
-    getKarmaBoxes: (owner) => state.getKarmaBoxes(owner),
     getIdentityRecord: (identityId) => state.getIdentityRecord(identityId),
     putIdentityRecord: (identityId, record) => state.putIdentityRecord(identityId, record),
   };

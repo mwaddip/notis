@@ -159,8 +159,8 @@ function applyDecayPlans(
 }
 
 /**
- * Decay's dependencies over the real store: `getKarmaBoxes` (the ordered read),
- * `getIdentityRecord`, `putIdentityRecord`.
+ * Decay's dependencies over the real store: `getIdentityRecord`,
+ * `putIdentityRecord`.
  *
  * Kept as one function so the shape the harness injects stays visibly the one
  * `DecayDeps` declares.
@@ -170,7 +170,6 @@ function applyDecayPlans(
  */
 function decayDeps(m: Modules): Parameters<Modules['decay']['deriveKarmaDecay']>[0] {
   return {
-    getKarmaBoxes: (owner: Uint8Array) => m.utxo.getKarmaBoxes(owner),
     getIdentityRecord: m.records.getIdentityRecord,
     putIdentityRecord: m.records.putIdentityRecord,
   };

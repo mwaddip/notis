@@ -1216,7 +1216,6 @@ export function buildBlockSettlement(
   const capturedPool = view.getBackerPoolBox();
   // The build writes no state, and `deriveKarmaDecay` writes no record.
   const decayDeps: DecayDeps = {
-    getKarmaBoxes: (owner) => view.getKarmaBoxes(owner),
     getIdentityRecord: (identityId) => view.getIdentityRecord(identityId),
     putIdentityRecord: () => {
       throw new Error('buildBlockSettlement writes no state, and deriveKarmaDecay wrote a record');

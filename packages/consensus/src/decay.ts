@@ -16,7 +16,6 @@ import type { StateView } from './state-view.js';
 // ---------------------------------------------------------------------------
 
 export interface DecayDeps {
-  getKarmaBoxes: (owner: Uint8Array) => KarmaBox[];
   /** The identity's decay clock, or null if it has never held karma. */
   getIdentityRecord: (identityId: Uint8Array) => IdentityRecord | null;
   /** Write the clock back. */
