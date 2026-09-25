@@ -39,9 +39,13 @@ import type {
 } from '@dagsocial/types';
 import { createRouter } from '../../src/routes/utxo.js';
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
-import { unlinkSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { config } from '../../src/config.js';
-const TEST_DB = '/tmp/dagsocial-test-routes-utxo.sqlite';
+// A directory private to this run, so two runs of the suite on one machine
+// never write the same store file.
+let testDir: string;
 
 const DECAY_CFG = {
   staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
@@ -148,8 +152,8 @@ describe('UTXO routes', () => {
   let inviteUserIdHex: string;
 
   beforeAll(() => {
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
-    initDb(TEST_DB);
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-routes-utxo-'));
+    initDb(join(testDir, 'store.sqlite'));
 
     const kp1 = generateKeyPair();
     karmaUserId = kp1.publicKey;
@@ -212,7 +216,7 @@ describe('UTXO routes', () => {
 
   afterAll(() => {
     closeDb();
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   it('GET /karma/:userId returns karma balance with effective and boxCount', async () => {

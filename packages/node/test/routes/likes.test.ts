@@ -28,10 +28,14 @@ import { createRouter } from '../../src/routes/likes.js';
 import type { LikesDeps } from '../../src/routes/likes.js';
 import { ClientError } from '../../src/services/client-error.js';
 import { MempoolFullError, PendingSpendConflictError } from '../../src/store/mempool.js';
-import { unlinkSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { config } from '../../src/config.js';
 
-const TEST_DB = '/tmp/dagsocial-test-routes-likes.sqlite';
+// A directory private to this run, so two runs of the suite on one machine
+// never write the same store file.
+let testDir: string;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -178,8 +182,8 @@ describe('likes routes', () => {
   let karmaBox: KarmaBox;
 
   beforeAll(() => {
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
-    initDb(TEST_DB);
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-routes-likes-'));
+    initDb(join(testDir, 'store.sqlite'));
 
     // Create a post author (needed for post insertion)
     const authorKp = generateKeyPair();
@@ -217,7 +221,7 @@ describe('likes routes', () => {
 
   afterAll(() => {
     closeDb();
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   // ---------------------------------------------------------------------------

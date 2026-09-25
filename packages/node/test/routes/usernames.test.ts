@@ -1,5 +1,8 @@
 // NODE_INTERFACE → Usernames — the four routes
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import express from 'express';
 import http from 'http';
 import { generateKeyPairSync } from 'crypto';
@@ -25,7 +28,9 @@ import { rawPublicKey, seedProvenance, signTransaction, txToJson } from '../help
 import { config } from '../../src/config.js';
 import { setMempoolCap, DEFAULT_MAX_MEMPOOL_ENTRIES, PendingSpendConflictError } from '../../src/store/mempool.js';
 
-const TEST_DB = '/tmp/dagsocial-test-routes-usernames.sqlite';
+// A directory private to this run, so two runs of the suite on one machine
+// never write the same store file.
+let testDir: string;
 
 function hex(id: Uint8Array): string { return Buffer.from(id).toString('hex'); }
 
@@ -129,8 +134,8 @@ describe('username routes', () => {
   let holder: ReturnType<typeof makeKeys>;
 
   beforeAll(() => {
-    try { require('fs').unlinkSync(TEST_DB); } catch {}
-    initDb(TEST_DB);
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-routes-usernames-'));
+    initDb(join(testDir, 'store.sqlite'));
     getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 0)').run();
     holder = makeKeys();
 
@@ -148,7 +153,7 @@ describe('username routes', () => {
 
   afterAll(() => {
     closeDb();
-    try { require('fs').unlinkSync(TEST_DB); } catch {}
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   // --- GET /usernames/:name ---

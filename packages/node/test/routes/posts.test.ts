@@ -47,10 +47,14 @@ import type {
 } from '@dagsocial/types';
 import { createRouter } from '../../src/routes/posts.js';
 import { PendingSpendConflictError } from '../../src/store/mempool.js';
-import { unlinkSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { config } from '../../src/config.js';
 
-const TEST_DB = '/tmp/dagsocial-test-routes-posts.sqlite';
+// A directory private to this run, so two runs of the suite on one machine
+// never write the same store file.
+let testDir: string;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -187,13 +191,13 @@ async function request(
 
 describe('posts routes', () => {
   beforeAll(() => {
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
-    initDb(TEST_DB);
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-routes-posts-'));
+    initDb(join(testDir, 'store.sqlite'));
   });
 
   afterAll(() => {
     closeDb();
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   // -----------------------------------------------------------------------
@@ -946,13 +950,13 @@ describe('posts routes — alias resolution', () => {
   }
 
   beforeAll(() => {
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
-    initDb(TEST_DB);
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-routes-posts-'));
+    initDb(join(testDir, 'store.sqlite'));
   });
 
   afterAll(() => {
     closeDb();
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   // viewer on GET /posts
