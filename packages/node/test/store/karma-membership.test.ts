@@ -280,8 +280,8 @@ describe("net's karma membership moves after a commit", () => {
     const node = await openNode();
     const before = sorted(node.net.members);
     const block = await makeApplicableBlock({ utxoTxs: node.txs });
-    // The block's last write refused: every effect is written, then the
-    // transaction rolls back.
+    // The journal insert refused: every effect is already written when it runs,
+    // and the transaction rolls back.
     node.db.getDb().exec(
       "CREATE TRIGGER refuse_journal BEFORE INSERT ON block_journal BEGIN SELECT RAISE(ABORT, 'journal refused'); END",
     );
