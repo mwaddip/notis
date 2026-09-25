@@ -5,7 +5,8 @@
 `@dagsocial/consensus` is where the state-transition rules run: what a transaction may do, what a block's settlement
 consumes and emits, how decay and the coinbase split are computed, and what a block's body does to state as a whole —
 `applyBlock`. **It is the one implementation of them** — the node runs it, and a browser leaf that validates blocks
-runs the same code (`ARCHITECTURE → Overview`; board X2). The rules themselves are stated in `NODE_INTERFACE` and
+runs the same code (`ARCHITECTURE → Overview`; `ARCHITECTURE → Deferred to future protocol versions`, the validating
+leaf). The rules themselves are stated in `NODE_INTERFACE` and
 cited from the code as they are; this contract states where they run, what the package may depend on, and how state
 reaches them.
 
@@ -26,14 +27,10 @@ makes is `validation`'s `verifyEd25519` (`VALIDATION_INTERFACE → Acceptance cr
 | `overlay` | — (`HolderRecord`, the shape its holder mutations carry) | this contract's `The overlay` | `StateView` |
 | `state-view` | — (`StateView`, `ApplyContext`) | this contract's `StateView` and `ApplyContext` | — |
 | `utxo-engine` | `validateTx` · `applyTx` · `checkTxEnvelope` · `checkOutputShape` · `checkSettlementOutputShape` · `materializeOutput` · `ceilingOf` · `isMember` · `isRoot` | `NODE_INTERFACE → validateTx` · `→ Legal box transitions` · `→ Transaction envelope shape` · `→ Output shape` · `→ Spend timing` · `→ Validity ceiling` | `UtxoEngineDeps` |
-| `settlement` | `buildBlockSettlement` · `buildSettlement` · `checkSettlement` · `bondOutputOf` · `settlementMarginalBytes` | `NODE_INTERFACE → The settlement transaction` | `StateView` (the build) · `SettlementDeps` |
+| `settlement` | `buildBlockSettlement` · `buildSettlement` · `bondOutputOf` · `settlementMarginalBytes` | `NODE_INTERFACE → The settlement transaction` | `StateView` (the build) · `SettlementDeps` |
 | `decay` | `deriveKarmaDecay` · `commitDecayClocks` | `NODE_INTERFACE → Karma decay` | `DecayDeps` |
 | `coinbase-split` | `computeBlockReward` · `splitCoinbase` · `isCreditSideTx` | `MINING_INTERFACE → Emission Schedule` · `→ Coinbase Application` | none |
 | `block-posts` | `postsOf` · `postIdsOf` | `NODE_INTERFACE → Post transactions` · `→ Withdrawal transactions` | none |
-
-> ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 2)** — the barrel still exports `contributeToBody`,
-> `emptyBody`, `collectPostBodyKarma`, `backerLeg`, `countKarmaActors` and `withdrawalsOf`, which neither the node's
-> source nor its suites call.
 
 Beside them the barrel exports the types a caller builds their arguments and reads their answers with — `StateView`,
 `ApplyContext`, `ApplyResult`, `BlockEffects`, `HolderRecord`, `UtxoEngineDeps`, `UtxoResult`, `SettlementDeps`,
@@ -183,10 +180,6 @@ worst case is then one check per 128 bytes of body — an extra signer costs 32 
 signature — so a body at `MAX_BLOCK_BODY_BYTES` forces at most about **15 600 checks: 17–27 s** on the measuring core,
 before any browser's slowdown. No other term may grow faster than the reads the body makes: each overlay read is a map
 lookup or one composition over the view's answer to it.
-
-> ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 2)** — the engine checks a signer's signature once per
-> input it signs for: a body of 308-input transactions from one signer each forces about 61 300 checks, 67–104 s on
-> the measuring core.
 
 ## Tests
 

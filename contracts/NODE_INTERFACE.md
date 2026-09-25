@@ -1682,10 +1682,6 @@ There is **no other legal bond or invite shape**. In particular:
   (`getKarmaOwners`). A block the funnel refuses, a speculative run and a reorg
   that rolls back move nothing.
 
-  > ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 2)** — `insertBox`, `consumeBox`, `deleteBox` and
-  > `unconsumeBox` move the set through a store hook inside whatever transaction they run in, so the creator's
-  > speculative run, which always rolls back, moves it too.
-
   > ✅ **RESOLVED 2026-08-22 — closed by PR #119 (`9945682`).** `index.ts` seeds
   > the set at startup with `getKarmaOwners()` (every identity holding an unspent karma box) and
   > registers a store hook (`registerKarmaMembershipHook`) that `insertBox` / `consumeBox` /
@@ -3146,7 +3142,8 @@ walks a subtree over topology (the thread's subtree is `dag_parent_refs`', Store
 |----------|-----------|
 | `getBox(boxId)` | `(string) => AnyBox \| null` |
 | `getUnspentBoxes()` | `() => AnyBox[]` — all unspent boxes (for AVL bootstrapping), `ORDER BY created_at_block` with ties in no stated order; `bootstrapAvlProver` sorts them canonically, so no reader depends on the tie order |
-| `getKarmaBox(owner)` | `(Uint8Array) => KarmaBox \| null` — one live karma box of the owner, `LIMIT 1` with no `ORDER BY`: genesis seeding's existence read, and never a rule's (`CONSENSUS_INTERFACE → StateView` holds no single-box karma read) |
+| `getKarmaBox(owner)` | `(Uint8Array) => KarmaBox \| null` — one live karma box of the owner, `LIMIT 1` with no `ORDER BY`: an existence read — genesis seeding's, and the funnel's move of net's relay gate after a commit (→ Post transactions) — and never a rule's (`CONSENSUS_INTERFACE → StateView` holds no single-box karma read) |
+| `getKarmaOwners()` | `() => string[]` — every identity holding a live karma box, as hex, in no stated order: what net's relay-gate set is seeded from at startup and re-seeded from once a reorg commits (→ Post transactions); a set, so no order reaches anything |
 | `getKarmaBoxes(owner)` | `(Uint8Array) => KarmaBox[]` — multi-box listing: full boxes, keyed on `id` |
 | `getBackerStakeBox(owner)` | `(UserId) => BackerStakeBox \| null` — the identity's live stake, at most one (→ Backer transition rules) |
 | `getBackerPoolBox()` | `() => BackerPoolBox \| null` — the one live pool box, `ORDER BY id LIMIT 1` like the emission, treasury and karma-pool reads; null on a network whose table is empty. **Consensus input**: the settlement's backer leg, read from pre-body state on both sides (§The settlement transaction), never at the check |
@@ -3163,8 +3160,8 @@ walks a subtree over topology (the thread's subtree is `dag_parent_refs`', Store
 | `getVouchCountForTarget(targetId)` | `(UserId) => number` — the unspent vouch boxes whose target is the identity, `COUNT(*)` over `VOUCH_TARGET_WHERE` on `idx_utxo_boxes_vouch_target`; feeds the page's `count` |
 | `getVouchBoxes(voucherId, targetId)` | `(UserId, UserId) => VouchBox[]` — every live vouch box for the pair, ascending `id`; `getVouchBox` answers the first — the `StateView` read, used for existence (`CONSENSUS_INTERFACE → StateView`) |
 | `getLikeAccrualBoxes(author)` | `(UserId) => LikeAccrualBox[]` — every live `like_accrual` box naming the author, ascending `id`: the carry box and the block's markers alike, told apart by the settlement's carry lookup, which composes over this read (`CONSENSUS_INTERFACE → StateView`) |
-| `insertBox(box)` | `(AnyBox) => void` — writes the provenance columns, and nothing else (→ Block Journal). ⚠ AHEAD OF CODE (2026-09-25, stage 2): it moves net's karma membership through a store hook, inside the transaction it runs in (→ Post transactions) |
-| `consumeBox(boxId, consumedAtBlock)` | `(string, number) => void` — mark a **live** box spent. ⛔ **Throws `BoxNotLiveError` when no live row matched.** The `UPDATE` carries `AND spent_at_block IS NULL` and checks the row count, so a spend of a box the store does not hold live fails loudly instead of updating nothing. ⚠ **Not a `CorruptChainStateError`** — a caller naming a box the store does not hold live is a rejection, not a reason to stop the node. ⚠ AHEAD OF CODE (2026-09-25, stage 2): it moves net's karma membership through a store hook, inside the transaction it runs in (→ Post transactions) |
+| `insertBox(box)` | `(AnyBox) => void` — writes the provenance columns, and nothing else — the journal and net's karma membership follow the block's effects (→ Block Journal, → Post transactions) |
+| `consumeBox(boxId, consumedAtBlock)` | `(string, number) => void` — mark a **live** box spent. ⛔ **Throws `BoxNotLiveError` when no live row matched.** The `UPDATE` carries `AND spent_at_block IS NULL` and checks the row count, so a spend of a box the store does not hold live fails loudly instead of updating nothing. ⚠ **Not a `CorruptChainStateError`** — a caller naming a box the store does not hold live is a rejection, not a reason to stop the node. It does nothing else |
 | `unconsumeBox(boxId)` | `(string) => void` — un-mark spent (fork-rollback inverse; never records) |
 | `deleteBox(boxId)` | `(string) => void` — (fork-rollback inverse; never records) |
 

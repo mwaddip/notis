@@ -2468,8 +2468,8 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   configuration, I/O or state. Anything that does — a local setting, the net, an
   engine — reaches a store module through a setter `index.ts` calls at startup,
   as the mempool cap does (`MEMPOOL_INTERFACE → Size cap — reject, never evict`),
-  the way `index.ts` wires the node's other seams (`setNet`, the
-  karma-membership hook, `setMempoolCap`).
+  the way `index.ts` wires the node's other seams (`setNet`,
+  `setMempoolCap`).
 - **"Does NOT own" on every package** — each package explicitly lists what
   it is NOT responsible for. Prevents scope creep.
   > **True — every workspace member carries it.** Note it lives in each member's `CLAUDE.md`, not in
@@ -2690,3 +2690,8 @@ backfill — and a withdrawn post keeps its row with `content` `NULL` and its ma
   pool). The Solana contract itself is outside this repository
 - **The backer unstake control in the web client**, and the profile window's copyable public key for the
   deposit flow (`WEB_INTERFACE`)
+- **A leaf that validates blocks without holding the state:** every consensus read a keyed record under the state
+  root (**N2** — `CONSENSUS_INTERFACE → StateView` marks each read that moves), and a per-block proof of the block's
+  reads and writes committed in the header as `ADProofsRoot` (**N3** — the keys a recording view answered, beside the
+  effects' writes, are its list: `CONSENSUS_INTERFACE → BlockEffects`); then the leaf's verifier over them (**N4**).
+  N2 and N3 move committed bytes, so they ride one reset together
