@@ -118,9 +118,8 @@ async function importTopology() {
 /**
  * `Σ karma-bearing box + pool`, read straight off the live UTXO set.
  *
- * ⛔ **It walks the boxes rather than any accumulator the node keeps.** The
- * karma-supply delta the store accounts at its choke point is derived from the
- * same inserts and consumes, so summing it would check the node's arithmetic
+ * ⛔ **It walks the boxes rather than any figure the node derives.** A figure
+ * derived from the same inserts and consumes would check the node's arithmetic
  * against itself. The rows are the ledger.
  */
 async function conservationTotal(): Promise<bigint> {

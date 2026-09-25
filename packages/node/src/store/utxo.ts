@@ -1,13 +1,4 @@
 import { getDb } from './db.js';
-import {
-  isBlockJournalOpen,
-  openBlockJournalHeight,
-  recordBoxInsert,
-  recordBoxRemove,
-  recordKarmaSupplyDelta,
-} from './journal.js';
-import { getIdentityRecord, putIdentityRecord } from './identity-records.js';
-import { countsAsCirculatingKarma } from '../karma-supply.js';
 import type { Page, PageResult, BoxKey } from './index.js';
 import type {
   AnyBox,
@@ -129,7 +120,7 @@ function provenanceOf(row: UtxoRow): { txId: string; index: number } {
  * for a user box the client declares it and `validateTx` step 5 bounds it.
  */
 function settledHeight(box: AnyBox): number {
-  return box.createdAtBlock ?? (openBlockJournalHeight() ?? 0);
+  return box.createdAtBlock ?? 0;
 }
 
 /**
@@ -978,29 +969,6 @@ export function getLikeAccrualBoxes(author: Uint8Array): LikeAccrualBox[] {
   return rows.map((row) => rowToBox(row) as LikeAccrualBox);
 }
 
-/**
- * The live carry box for one author, or null: the first of the author's
- * `like_accrual` boxes by id that `exclude` does not name.
- *
- * ⛔ **One per author is an invariant of the settlement, not of this query.**
- * The settlement consumes an author's carry box in the same step that emits the
- * replacement, so a second one cannot arise; the id order makes a second, were
- * a defect upstream to leave one, the same box on every node.
- *
- * ⛔ **`exclude` is not an optimisation — it is the only thing that separates a
- * carry box from a marker.** At the point the settlement is derived, this
- * block's markers are live `like_accrual` boxes naming the same author. Their
- * ids are the caller's, from the body, so the discrimination is block content
- * and not a heuristic on value — a carry of `1` and a marker of
- * `LIKE_KARMA_COST` are indistinguishable by value at the constants in force.
- */
-export function getLikeCarryBox(
-  author: Uint8Array,
-  exclude: Set<string>,
-): LikeAccrualBox | null {
-  return getLikeAccrualBoxes(author).find((box) => !exclude.has(box.id!)) ?? null;
-}
-
 // ---------------------------------------------------------------------------
 // Karma membership hook — registered by index.ts so the store stays net-agnostic
 // ---------------------------------------------------------------------------
@@ -1057,25 +1025,6 @@ function notifyMembershipIfNeeded(
   }
 }
 
-export function recordKarmaActivity(owner: Uint8Array): void {
-  const height = openBlockJournalHeight();
-  if (height === null) {
-    throw new Error('recordKarmaActivity called outside block application');
-  }
-  const existing = getIdentityRecord(owner);
-  putIdentityRecord(owner, {
-    lastActivityBlock: height,
-    lastDecayBlock: existing?.lastDecayBlock ?? 0,
-    invitedAtBlock: existing?.invitedAtBlock ?? 0,
-    lifetimeLikesReceived: existing?.lifetimeLikesReceived ?? 0n,
-    memberSinceBlock: existing?.memberSinceBlock ?? 0,
-    memberBar: existing?.memberBar ?? 0,
-    memberVouches: existing?.memberVouches ?? 0,
-    memberLikes: existing?.memberLikes ?? 0n,
-    invitesUsed: existing?.invitesUsed ?? 0,
-  });
-}
-
 /**
  * Insert a box into the utxo_boxes table.
  *
@@ -1083,12 +1032,6 @@ export function recordKarmaActivity(owner: Uint8Array): void {
  * into the extra_data JSON column.
  */
 export function insertBox(box: AnyBox): void {
-  // Never record an insert without its boxId — the apply funnel's totality
-  // catch converts this throw into a block rejection.
-  if (isBlockJournalOpen() && !box.id) {
-    throw new Error('insertBox: box.id must be set while a block journal is open');
-  }
-
   const db = getDb();
 
   // Build extra_data and column values per box type
@@ -1217,15 +1160,6 @@ export function insertBox(box: AnyBox): void {
     box.index,
   );
 
-  recordBoxInsert(box);
-
-  // A karma-bearing box entering the live set is karma entering circulation, so
-  // the pool owes the same amount (TYPES_INTERFACE → KarmaPoolBox). Accounted at
-  // this choke point rather than at the producers, which is what makes the
-  // supply non-inflatable **by construction**: a mint site added later cannot
-  // forget to draw, because drawing is not something its author does.
-  if (countsAsCirculatingKarma(box.boxType)) recordKarmaSupplyDelta(box.value);
-
   if (box.boxType === 'karma' && owner !== null) {
     notifyMembershipIfNeeded(owner, box.id!, 'insert');
   }
@@ -1261,35 +1195,19 @@ export class BoxNotLiveError extends Error {
  * inside the caller's transaction instead (NODE_INTERFACE → Store Interface,
  * the `consumeBox` row).
  *
- * `recordBoxRemove` runs downstream of the check, so a refused consume journals
- * nothing (NODE_INTERFACE → Store Interface, the `consumeBox` row).
- *
  * **`RETURNING` rather than a second read**, and it tightens the guard above
  * rather than only saving a round trip: the row is the spend that happened, so
- * the type and value accounted below are the ones this call actually removed —
- * a `SELECT` beforehand would describe a box the `UPDATE` might then not match.
- * `safeIntegers`, because `value` is a `bigint` above 2⁵³.
+ * the type and owner read below are the ones this call actually removed — a
+ * `SELECT` beforehand would describe a box the `UPDATE` might then not match.
  */
 export function consumeBox(boxId: string, consumedAtBlock: number): void {
   const spent = getDb()
     .prepare(
       `UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ? AND spent_at_block IS NULL
-       RETURNING box_type, value, owner`,
+       RETURNING box_type, owner`,
     )
-    .safeIntegers()
-    .get(consumedAtBlock, boxId) as { box_type: string; value: bigint; owner: Buffer | null } | undefined;
+    .get(consumedAtBlock, boxId) as { box_type: string; owner: Buffer | null } | undefined;
   if (spent === undefined) throw new BoxNotLiveError(boxId);
-  recordBoxRemove(boxId);
-
-  // The mirror of `insertBox`'s accounting: karma leaving the live set is karma
-  // leaving circulation, and the pool takes it back (TYPES_INTERFACE →
-  // KarmaPoolBox). Consume and insert are the only writers of the live set —
-  // `deleteBox` and `unconsumeBox` are journal-replay inverses and account
-  // nothing, for the reason they journal nothing — so the pair is the whole of
-  // it.
-  if (countsAsCirculatingKarma(spent.box_type as AnyBox['boxType'])) {
-    recordKarmaSupplyDelta(-spent.value);
-  }
 
   if (spent.box_type === 'karma' && spent.owner !== null) {
     notifyMembershipIfNeeded(spent.owner, undefined, 'remove');
@@ -1298,7 +1216,7 @@ export function consumeBox(boxId: string, consumedAtBlock: number): void {
 
 /**
  * Reverse a consumeBox by clearing spent_at_block.
- * Fork-rollback inverse — never records to the block journal.
+ * Fork-rollback inverse.
  */
 export function unconsumeBox(boxId: string): void {
   const row = getDb()
@@ -1314,7 +1232,7 @@ export function unconsumeBox(boxId: string): void {
 
 /**
  * Delete a box entirely (for rolling back an insertBox).
- * Fork-rollback inverse — never records to the block journal.
+ * Fork-rollback inverse.
  */
 export function deleteBox(boxId: string): void {
   const deleted = getDb()

@@ -52,7 +52,6 @@ export {
   getVouchEscrowsReleasableAt,
   hasActiveVouchEscrow,
   getLikeAccrualBoxes,
-  getLikeCarryBox,
   getUnspentBoxes,
   insertBox,
   consumeBox,
@@ -61,7 +60,6 @@ export {
   BoxNotLiveError,
   getKarmaOwners,
   registerKarmaMembershipHook,
-  recordKarmaActivity,
 } from './utxo.js';
 export type { KarmaMembershipHook } from './utxo.js';
 
@@ -90,9 +88,6 @@ export {
 } from './ordering.js';
 
 export {
-  beginBlockJournal,
-  finishBlockJournal,
-  abortBlockJournal,
   insertBlockJournal,
   getBlockJournal,
   deleteBlockJournal,
