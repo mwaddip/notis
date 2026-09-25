@@ -66,7 +66,12 @@
 import {
   INVITE_BOND_VEST_PER_LIKES,
   LIKES_PER_KARMA_PAYOUT,
+  MAX_BOND_SETTLEMENTS_PER_BLOCK,
+  MAX_ESCROW_RETURNS_PER_BLOCK,
+  MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
   protocolVersionAt,
+  computeTxId,
+  decodeTx,
   encodeTx,
 } from '@dagsocial/types';
 import type {
@@ -86,8 +91,18 @@ import type {
   ProtocolEra,
 } from '@dagsocial/types';
 import { verifyProtocolVersion } from '@dagsocial/validation';
-import { splitCoinbase, backerLeg } from './coinbase-split.js';
-import type { DecayPlan } from './decay.js';
+import {
+  splitCoinbase,
+  backerLeg,
+  computeBlockReward,
+  countKarmaActors,
+  isCreditSideTx,
+  type EmbeddedTx,
+} from './coinbase-split.js';
+import { collectPostBodyKarma, deriveKarmaDecay } from './decay.js';
+import type { DecayDeps, DecayPlan } from './decay.js';
+import { materializeOutput } from './utxo-engine.js';
+import type { ApplyContext, StateView } from './state-view.js';
 
 // ---------------------------------------------------------------------------
 // The body a settlement is derived from
@@ -1061,4 +1076,164 @@ export function bondOutputOf(outputs: AnyBox[]): BondBox | null {
     if (out.boxType === 'bond') return out;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Over a StateView — the read wiring both sides share, and the producer's build
+// ---------------------------------------------------------------------------
+
+/**
+ * The settlement's reads, every one with a stated total order.
+ *
+ * ⛔ **ONE WIRING, SHARED BY THE PRODUCER AND THE APPLIER.** They must derive
+ * the same settlement from the same state, and two copies of this object are two
+ * derivations that agree only by inspection (CONSENSUS_INTERFACE → The
+ * settlement build).
+ *
+ * `plans` is a thunk because the caller has already derived the decay pass:
+ * `checkSettlement` reads it, and so does the clock commit afterwards, and two
+ * scans of the identity set that must agree is exactly what one scan avoids.
+ *
+ * `escrows` and `lapsedVouches` are captured lists and the backer pool a captured
+ * box: those legs read pre-body state, so both sides take them before the apply
+ * loop and hand them in (NODE_INTERFACE → The settlement transaction).
+ */
+export function settlementDepsWith(
+  view: StateView,
+  ctx: ApplyContext,
+  plans: () => DecayPlan[],
+  escrows: VouchEscrowBox[],
+  lapsedVouches: VouchBox[],
+  capturedBackerPoolBox: () => BackerPoolBox | null,
+): SettlementDeps {
+  return {
+    getEmissionBox: () => view.getEmissionBox(),
+    getTreasuryBox: () => view.getTreasuryBox(),
+    getKarmaPoolBox: () => view.getKarmaPoolBox(),
+    getBox: (id) => view.getBox(id),
+    // The author's live accrual boxes in id order, the block's markers left out:
+    // the first is the carry box. One per author is the settlement's invariant —
+    // it consumes a carry box in the step that emits its successor — and the id
+    // order makes a second, were a defect upstream to leave one, the same box on
+    // every node.
+    getLikeCarryBox: (author, exclude) => {
+      for (const box of view.getLikeAccrualBoxes(author)) {
+        if (!exclude.has(box.id!)) return box;
+      }
+      return null;
+    },
+    // `invitedAtBlock` 0 is every never-invited identity, so a height inside the
+    // first probation window settles no bond (NODE_INTERFACE → Identity Records).
+    getBondsSettlingAt: (h) => {
+      const invitedAt = h - ctx.inviteProbationBlocks;
+      return invitedAt <= 0 ? [] : view.getBondsInvitedAt(invitedAt, MAX_BOND_SETTLEMENTS_PER_BLOCK);
+    },
+    getEscrowsReleasableAt: () => escrows,
+    getLapsedVouches: () => lapsedVouches,
+    getLifetimeLikes: (invitee) => view.getIdentityRecord(invitee)?.lifetimeLikesReceived ?? 0n,
+    getDecayPlans: plans,
+    vouchCooldownBlocks: ctx.vouchCooldownBlocks,
+    getBackerPoolBox: capturedBackerPoolBox,
+    backerSupply: ctx.backerSupply,
+    creditFixedRateBlocks: ctx.creditFixedRateBlocks,
+  };
+}
+
+/**
+ * Everything a body of these transactions contributes to the settlement: the
+ * fee total and the fee box ids, the karma-side actor count, and the invitee of
+ * every bond.
+ *
+ * ⚠ **A prediction, not the rule.** The rule is the applier's, which gathers
+ * the same quantities while it applies the transactions in committed order. This
+ * runs before the body has been applied and cannot use that walk, because the
+ * settlement it feeds is part of the body the applier runs over.
+ *
+ * A wrong prediction cannot produce a bad block: `checkSettlement` refuses a
+ * settlement that does not match its body, and a body its own producer's apply
+ * refuses is the speculative run's `body-rejected`, never a mined block
+ * (NODE_INTERFACE → Post-block stateRoot).
+ *
+ * Inputs resolve against the pre-body state **and this block's own outputs**,
+ * because a transaction may spend a box an earlier one in the same block
+ * creates. Order does not matter to the actor count — a set is commutative — and
+ * the fee box ids and invitees are collected in the order the body itself fixes:
+ * committed transaction order, one of the three orders NODE_INTERFACE → "Three
+ * ordering sources are permitted and no fourth is" permits, and the order the
+ * applier collects the settlement body in. An input that resolves to neither
+ * leaves the body unappliable, which the applier refuses.
+ */
+function predictSettlementBody(
+  view: StateView,
+  decodedTxs: { tx: UtxoTransaction; txId: string; inputs: string[]; outputs: AnyBox[] }[],
+  validator: Uint8Array,
+): SettlementBody {
+  const ownOutputs = new Map<string, AnyBox>();
+  for (const { outputs } of decodedTxs) {
+    for (const box of outputs) if (box.id) ownOutputs.set(box.id, box);
+  }
+  const resolve = (boxId: string): AnyBox | null =>
+    view.getBox(boxId) ?? ownOutputs.get(boxId) ?? null;
+
+  const body = emptyBody();
+  const embedded: EmbeddedTx[] = [];
+  for (const { tx, inputs, outputs } of decodedTxs) {
+    const inputBoxes = inputs
+      .map(resolve)
+      .filter((box): box is AnyBox => box !== null);
+    embedded.push({ tx, inputBoxes });
+    const isRent = isCreditSideTx(tx) && Object.keys(tx.signatures).length === 0;
+    contributeToBody(body, outputs, isRent);
+  }
+
+  body.actors = countKarmaActors(embedded, validator);
+  return body;
+}
+
+/**
+ * The producer's settlement for a body of user transactions, ready to ride as
+ * the body's last entry (CONSENSUS_INTERFACE → The settlement build): read
+ * through `view` over pre-body state, the body's own outputs resolved from the
+ * body, every derivation the one the applier makes.
+ */
+export function buildBlockSettlement(
+  view: StateView,
+  txBytesList: Uint8Array[],
+  height: number,
+  validator: Uint8Array,
+  minerOwner: Uint8Array,
+  ctx: ApplyContext,
+): { tx: UtxoTransaction } | { error: string } {
+  const decoded = txBytesList.map((raw) => {
+    const tx = decodeTx(raw);
+    const txId = computeTxId(tx);
+    const outputs = tx.outputs.map((out, i) => materializeOutput(out, txId, i));
+    return { tx, txId, inputs: tx.inputs, outputs };
+  });
+  const postBody = collectPostBodyKarma(view, decoded);
+  const escrows = view.getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
+  const lapsed = view.getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
+  const capturedPool = view.getBackerPoolBox();
+  // The build writes no state, and `deriveKarmaDecay` writes no record.
+  const decayDeps: DecayDeps = {
+    getKarmaBoxes: (owner) => view.getKarmaBoxes(owner),
+    getIdentityRecord: (identityId) => view.getIdentityRecord(identityId),
+    putIdentityRecord: () => {
+      throw new Error('buildBlockSettlement writes no state, and deriveKarmaDecay wrote a record');
+    },
+  };
+  return buildSettlement(
+    settlementDepsWith(
+      view, ctx,
+      () => deriveKarmaDecay(decayDeps, postBody, height, ctx.decayCfg),
+      escrows, lapsed,
+      () => capturedPool,
+    ),
+    height,
+    ctx.protocolVersionSchedule,
+    computeBlockReward(height, ctx),
+    ctx.creditMinerRewardDelay,
+    predictSettlementBody(view, decoded, validator),
+    minerOwner,
+  );
 }

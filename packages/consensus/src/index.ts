@@ -12,6 +12,7 @@ export {
 export type { UtxoEngineDeps, UtxoResult, NetworkRecord, UsernameRow } from './utxo-engine.js';
 
 export {
+  buildBlockSettlement,
   buildSettlement,
   checkSettlement,
   contributeToBody,
@@ -21,10 +22,10 @@ export {
 } from './settlement.js';
 export type { SettlementDeps, SettlementBody } from './settlement.js';
 
-export { deriveKarmaDecay, commitDecayClocks } from './decay.js';
+export { collectPostBodyKarma, deriveKarmaDecay, commitDecayClocks } from './decay.js';
 export type { DecayDeps, DecayPlan } from './decay.js';
 
-export { splitCoinbase, backerLeg, countKarmaActors, isCreditSideTx } from './coinbase-split.js';
+export { computeBlockReward, splitCoinbase, backerLeg, countKarmaActors, isCreditSideTx } from './coinbase-split.js';
 export type { EmbeddedTx } from './coinbase-split.js';
 
 export { postsOf, postIdsOf, withdrawalsOf } from './block-posts.js';

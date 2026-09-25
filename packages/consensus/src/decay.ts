@@ -3,12 +3,13 @@ import {
   isIdentityStale,
   owedPeriods,
 } from '@dagsocial/types';
-import type { DecayCfg, IdentityRecord, KarmaBox } from '@dagsocial/types';
+import type { AnyBox, DecayCfg, IdentityRecord, KarmaBox } from '@dagsocial/types';
+import type { StateView } from './state-view.js';
 
 // The valuation — `effectiveKarma`, `isIdentityStale`, `owedPeriods`, `DecayCfg`
 // — is `@dagsocial/types`' (TYPES_INTERFACE → Identity record and karma
-// valuation). `decay.ts` keeps the execution: `deriveKarmaDecay` and
-// `commitDecayClocks` below, driven by the deps this service already exposes.
+// valuation). `decay.ts` keeps the execution: `collectPostBodyKarma`,
+// `deriveKarmaDecay` and `commitDecayClocks` below.
 
 // ---------------------------------------------------------------------------
 // Decay execution
@@ -18,7 +19,7 @@ export interface DecayDeps {
   getKarmaBoxes: (owner: Uint8Array) => KarmaBox[];
   /** The identity's decay clock, or null if it has never held karma. */
   getIdentityRecord: (identityId: Uint8Array) => IdentityRecord | null;
-  /** Write the clock back. Journals at the store choke point. */
+  /** Write the clock back. */
   putIdentityRecord: (identityId: Uint8Array, record: IdentityRecord) => void;
 }
 
@@ -44,6 +45,75 @@ export interface DecayPlan {
   newValue: bigint;
   /** What returns to the pool. */
   burnAmount: bigint;
+}
+
+/**
+ * Post-body karma projection for each identity the block's body touches.
+ *
+ * ⛔ **The plan must name boxes the settlement can consume — post-body, not
+ * pre-body.** A touched identity had a body tx consume one of its pre-body
+ * karma boxes, so naming pre-body boxes in the plan double-spends. The
+ * projection removes consumed boxes and adds the body's karma change outputs.
+ *
+ * The identity record is not projected: `deriveKarmaDecay` reads it before the
+ * body applies, so producer and applier read the same pre-body record
+ * (NODE_INTERFACE → A derived quantity has TWO kinds of input).
+ *
+ * Both the creator and the applier call this with the same decoded txs over
+ * the same pre-body state, so both derive the same post-body set.
+ *
+ * ⛔ **Order is a consensus obligation.** Entries are sorted ascending by
+ * owner hex; `deriveKarmaDecay` emits plans in that order.
+ */
+export function collectPostBodyKarma(
+  view: Pick<StateView, 'getBox' | 'getKarmaBoxes'>,
+  decodedTxs: { txId: string; inputs: string[]; outputs: AnyBox[] }[],
+): Map<string, { owner: Uint8Array; boxes: KarmaBox[] }> {
+  const allInputIds = new Set<string>();
+  for (const tx of decodedTxs) {
+    for (const id of tx.inputs) allInputIds.add(id);
+  }
+
+  const touchedOwnerHexes = new Set<string>();
+  const touchedOwners = new Map<string, Uint8Array>();
+
+  for (const id of allInputIds) {
+    const box = view.getBox(id);
+    if (box?.boxType === 'karma') {
+      const hex = Buffer.from((box as KarmaBox).owner).toString('hex');
+      if (!touchedOwnerHexes.has(hex)) {
+        touchedOwnerHexes.add(hex);
+        touchedOwners.set(hex, (box as KarmaBox).owner);
+      }
+    }
+  }
+
+  const bodyKarmaOutputs = new Map<string, KarmaBox[]>();
+  for (const tx of decodedTxs) {
+    for (const out of tx.outputs) {
+      if (out.boxType === 'karma') {
+        const k = out as KarmaBox;
+        const hex = Buffer.from(k.owner).toString('hex');
+        if (touchedOwnerHexes.has(hex)) {
+          let arr = bodyKarmaOutputs.get(hex);
+          if (!arr) { arr = []; bodyKarmaOutputs.set(hex, arr); }
+          arr.push(k);
+        }
+      }
+    }
+  }
+
+  const sorted = [...touchedOwnerHexes].sort();
+  const result = new Map<string, { owner: Uint8Array; boxes: KarmaBox[] }>();
+  for (const hex of sorted) {
+    const preBody = view.getKarmaBoxes(touchedOwners.get(hex)!);
+    const surviving = preBody.filter((b) => b.id && !allInputIds.has(b.id));
+    const produced = (bodyKarmaOutputs.get(hex) ?? []).filter(
+      (b) => b.id && !allInputIds.has(b.id),
+    );
+    result.set(hex, { owner: touchedOwners.get(hex)!, boxes: [...surviving, ...produced] });
+  }
+  return result;
 }
 
 /**
