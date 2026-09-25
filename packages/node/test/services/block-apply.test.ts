@@ -56,7 +56,7 @@ import {
   signTransaction,
   seedPostTx, fillerTx, makePostTx,
   coinbaseOf, withCoinbase,
-  seedEmissionBox, seedKarmaPoolBox } from '../helpers.js';
+  seedEmissionBox, seedKarmaPoolBox, nodeRewardSchedule } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -645,7 +645,7 @@ describe('block-apply journal recording', () => {
      * that much and the two never coincide.
      */
     async function minerSliceAt1(fees: bigint, actors: number): Promise<bigint> {
-      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+      const computeBlockReward = await nodeRewardSchedule();
       const { splitCoinbase } = await import('@dagsocial/consensus');
       return splitCoinbase(computeBlockReward(1), fees, 0n, actors).miner;
     }
@@ -918,7 +918,7 @@ describe('block-apply journal recording', () => {
       db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       await importUtxo();
       const blockApply = await importBlockApply();
-      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+      const computeBlockReward = await nodeRewardSchedule();
 
       const miner = makeTestIdentity();
       const block = await makeApplicableBlock({
@@ -946,7 +946,7 @@ describe('block-apply journal recording', () => {
       db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       await importUtxo();
       const blockApply = await importBlockApply();
-      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+      const computeBlockReward = await nodeRewardSchedule();
       const { splitCoinbase } = await import('@dagsocial/consensus');
 
       // Exactly the miner's slice, to the miner's own key, PLUS a karma output
@@ -1701,7 +1701,7 @@ describe('block-apply mint provenance', () => {
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const blockApply = await importBlockApply();
-    const { computeBlockReward } = await import('../../src/services/block-creator.js');
+    const computeBlockReward = await nodeRewardSchedule();
     const { splitCoinbase } = await import('@dagsocial/consensus');
     const miner = makeTestIdentity();
     const second = makeTestIdentity();
@@ -2743,14 +2743,14 @@ describe('block-apply funnel totality', () => {
     const ba = await importBlockApply();
     const { solveHeaderPow } = await import('../helpers.js');
     const miner = makeTestIdentity();
-    const { computeUtxoTxRoot, buildBlockSettlement } = await import(
-      '../../src/services/block-creator.js'
-    );
+    const { computeUtxoTxRoot } = await import('../../src/services/block-creator.js');
+    const { storeStateView, applyContextFrom } = await import('../../src/services/block-apply.js');
+    const { buildBlockSettlement } = await import('@dagsocial/consensus');
     const { config } = await import('../../src/config.js');
     const { encodeTx, interlinkRoot } = await import('@dagsocial/types');
     await seedEmissionBox();
     await seedKarmaPoolBox();
-    const built = buildBlockSettlement([], 1, miner.userId, miner.userId);
+    const built = buildBlockSettlement(storeStateView, [], 1, miner.userId, miner.userId, applyContextFrom(config));
     if ('error' in built) throw new Error(built.error);
     const tree = {
       utxoTxIds: [computeTxId(built.tx)],

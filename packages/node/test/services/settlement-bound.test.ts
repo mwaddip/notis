@@ -52,16 +52,27 @@ async function importBlockApply() {
 }
 
 async function importBlockCreator() {
-  return (await import('../../src/services/block-creator.js')) as unknown as {
+  const creator = (await import('../../src/services/block-creator.js')) as unknown as {
     startBlockCreator: (cfg: Config) => void;
     stopBlockCreator: () => void;
     createOrderingBlock: () => OrderingBlock | null;
+  };
+  const { storeStateView, applyContextFrom } = await import('../../src/services/block-apply.js');
+  const { config: nodeConfig } = await import('../../src/config.js');
+  const { buildBlockSettlement } = await import('@dagsocial/consensus');
+  return {
+    startBlockCreator: creator.startBlockCreator,
+    stopBlockCreator: creator.stopBlockCreator,
+    createOrderingBlock: creator.createOrderingBlock,
+    // The settlement build the creator runs: over the store's view, under the
+    // context of the process config.
     buildBlockSettlement: (
       txBytesList: Uint8Array[],
       height: number,
       validator: Uint8Array,
       minerOwner: Uint8Array,
-    ) => { tx: UtxoTransaction } | { error: string };
+    ): { tx: UtxoTransaction } | { error: string } =>
+      buildBlockSettlement(storeStateView, txBytesList, height, validator, minerOwner, applyContextFrom(nodeConfig)),
   };
 }
 
