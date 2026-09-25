@@ -237,7 +237,6 @@ export function createApp(config: Config): express.Express {
     getBox: store.getBoxWithPending,
     insertBox: store.insertBox,
     consumeBox: store.consumeBox,
-    getKarmaBoxes: store.getKarmaBoxes,
     getKarmaValue: store.getKarmaValue,
     getIdentityRecord: store.getIdentityRecord,
     hasActiveVouchEscrow: store.hasActiveVouchEscrow,

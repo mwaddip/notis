@@ -5,7 +5,6 @@ import http from 'http';
 import { createPrivateKey, sign } from 'crypto';
 import { initDb, closeDb } from '../../src/store/db.js';
 import {
-  getKarmaBox,
   getKarmaBoxesPage,
   getKarmaValue,
   getKarmaTotal,
@@ -92,7 +91,6 @@ async function request(
         getTopologyAuthor: () => null,
         getPendingPostAuthor: () => null,
         getIdentityRecord,
-        getKarmaBoxes: (owner: Uint8Array) => [getKarmaBox(owner)].filter(Boolean) as KarmaBox[],
         runInTransaction: (fn: () => void) => fn(),
         getVouchBox: () => null,
         getNetworkRecord: () => ({ memberCount: 1 }),
@@ -697,7 +695,6 @@ describe('UTXO routes', () => {
           getTopologyAuthor: () => null,
           getPendingPostAuthor: () => null,
           getIdentityRecord: () => null,
-          getKarmaBoxes: () => [],
           runInTransaction: (fn: () => void) => fn(),
           getVouchBox: () => null,
           getNetworkRecord: () => ({ memberCount: 1 }),
@@ -804,7 +801,6 @@ describe('utxo routes — alias resolution', () => {
           getTopologyAuthor: () => null,
           getPendingPostAuthor: () => null,
           getIdentityRecord: () => null,
-          getKarmaBoxes: () => [],
           runInTransaction: (fn: () => void) => fn(),
           getVouchBox: () => null,
           getNetworkRecord: () => ({ memberCount: 1 }),

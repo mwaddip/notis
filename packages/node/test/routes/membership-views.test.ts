@@ -141,7 +141,6 @@ describe('/karma/:userId membership fields', () => {
           getTopologyAuthor: () => null,
           getPendingPostAuthor: () => null,
           getIdentityRecord,
-          getKarmaBoxes: (owner: Uint8Array) => [getKarmaBox(owner)].filter(Boolean) as KarmaBox[],
           runInTransaction: (fn: () => void) => fn(),
           getVouchBox: () => null,
           getNetworkRecord,
