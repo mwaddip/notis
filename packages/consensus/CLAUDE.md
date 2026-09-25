@@ -9,7 +9,7 @@ context — read it and the linked docs before touching code.
 3. `../../CLAUDE.md` (repo root) — project overview and the Design-by-Contract dispatch workflow.
 4. `../../contracts/ARCHITECTURE.md` — architecture and invariants.
 5. `../../contracts/SPECIAL.md` — S.P.E.C.I.A.L. attention weights: `@dagsocial/consensus`'s default and its
-   `src/utxo-engine.ts` override. Internalize on session start.
+   `src/utxo-engine.ts`, `src/apply-block.ts` and `src/overlay.ts` overrides. Internalize on session start.
 6. `../../contracts/CONSENSUS_INTERFACE.md` — this package's contract: where the rules run, what the package may
    depend on, how state reaches them.
 7. `../../contracts/NODE_INTERFACE.md` — **the rules themselves**: `validateTx`, `Legal box transitions`, `The
@@ -24,10 +24,12 @@ the UTXO ledger, and withdrawal is the author's only act over a post. Consensus 
 Node.js ≥ 22.
 
 ## This package (`@dagsocial/consensus`)
-**The state-transition rules** — what a transaction may do (`validateTx`, `applyTx`, the envelope, the output shape,
-the transitions), what a block's settlement consumes and emits (`buildSettlement`, `checkSettlement`), decay, the
-coinbase split, the block's post and withdrawal readers. **The one implementation**: the node runs it over its
-store, and a browser leaf that validates blocks will run the same code.
+**The state-transition rules** — what a block's body does to state as one function (`applyBlock`, the mutation
+phase, answering the block's effects or a reason), what a transaction may do (`validateTx`, `applyTx`, the envelope,
+the output shape, the transitions), what a block's settlement consumes and emits (`buildSettlement`, the producer's
+`buildBlockSettlement`, `checkSettlement`), decay, the coinbase split and the reward, the block's post and withdrawal
+readers. **The one implementation**: the node runs it over a `StateView` of its store, and a browser leaf that
+validates blocks will run the same code.
 
 - **Owns:** `src/*`, `test/*`.
 - **Does NOT own:** persistence — the store, the journal, the AVL prover (`@dagsocial/node`); the header checks
@@ -36,10 +38,11 @@ store, and a browser leaf that validates blocks will run the same code.
   (`@dagsocial/types`); mempool policy, block production, fork resolution, networking, routes, configuration.
 
 ## The boundary that defines this package
-- **No Node built-in import, no WASM, no I/O, no module-level state, no clock** (`CONSENSUS_INTERFACE → Place in
-  the workspace`). A rule that needs a number the network sets takes it from its caller; a rule that needs state reads
-  it through `UtxoEngineDeps`, `SettlementDeps` or `DecayDeps`. A rule that reaches past them is a rule the leaf
-  cannot run.
+- **No Node built-in import, no WASM, no I/O, no module-level state a result can depend on, no clock**
+  (`CONSENSUS_INTERFACE → Place in the workspace`). A rule that needs a number the network sets takes it from its caller (`ApplyContext`); a rule that
+  needs state reads it through `StateView` — `applyBlock` through its overlay, which builds `UtxoEngineDeps`,
+  `SettlementDeps` and `DecayDeps` over it (`CONSENSUS_INTERFACE → The overlay`). A rule that reaches past them is a
+  rule the leaf cannot run.
 - **Workspace dependencies: `@dagsocial/types` and `@dagsocial/validation`, and nothing else — never `node`.**
 - **Every signature check is `verifyEd25519`** — strict RFC 8032 through `@noble/curves`
   (`VALIDATION_INTERFACE → Acceptance criterion`).

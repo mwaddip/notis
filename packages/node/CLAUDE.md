@@ -27,12 +27,12 @@ them as ordinary transactions. TypeScript, pnpm workspaces, Node.js ≥ 22.
 
 ## This package (`@dagsocial/node`)
 The full node: Express HTTP API, PoW verifier, SQLite store, block creator + application, invites/vouch,
-withdrawal, AVL+ state — running `@dagsocial/consensus`'s rules (the UTXO engine, the per-block settlement, decay)
-over its store. The node serves no client
+withdrawal, AVL+ state — running `@dagsocial/consensus`'s `applyBlock` over a `StateView` of its store and writing
+the block's effects, the journal built from them (NODE_INTERFACE → Block Journal). The node serves no client
 (NODE_INTERFACE → The node serves no client).
 
 - **Owns:** `src/server.ts`, `src/routes/*`, `src/services/*`, `src/store/*`, `src/state/*` (AVL+).
-- **Does NOT own:** the state-transition rules (`@dagsocial/consensus` — the node builds their deps over its store),
+- **Does NOT own:** the state-transition rules (`@dagsocial/consensus` — the node answers its `StateView` over its store),
   shared structures/hashing (`@dagsocial/types`), stateless validation
   (`@dagsocial/validation`), networking (`@dagsocial/net`), wire codec (`@dagsocial/wire`). Need a change
   there? Describe it back to the main session — do not edit sibling packages.
