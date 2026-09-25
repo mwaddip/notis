@@ -178,6 +178,7 @@ function makeKarmaBox(value: bigint, owner: Uint8Array, seed: number): KarmaBox 
   const box = seedProvenance<KarmaBox>({
     boxType: 'karma',
     value,
+    createdAtBlock: 0,
     owner,
   }, seed);
   return box;

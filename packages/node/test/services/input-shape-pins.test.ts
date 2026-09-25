@@ -135,6 +135,7 @@ describe('P2-B phase 4 — input-shape pins', () => {
     const candidate = {
       boxType: 'karma' as const,
       value,
+      createdAtBlock: 0,
       owner,
     };
     const box = seedProvenance<KarmaBox>(candidate, 1, nonce);
@@ -152,6 +153,7 @@ describe('P2-B phase 4 — input-shape pins', () => {
     const candidate = {
       boxType: 'vouch' as const,
       value,
+      createdAtBlock: 0,
       voucherId,
       targetId,
     };

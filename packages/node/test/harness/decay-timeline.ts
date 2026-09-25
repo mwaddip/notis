@@ -249,6 +249,7 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
           const box = seedProvenance<KarmaBox>({
             boxType: 'karma',
             value: step.amount,
+            createdAtBlock: 0,
             owner,
           }, height, labelNonce(`mint-${step.owner}`));
           m.utxo.insertBox(box);
@@ -266,6 +267,7 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
           const box = seedProvenance<KarmaBox>({
             boxType: 'karma',
             value: step.amount,
+            createdAtBlock: 0,
             owner,
           }, step.at, labelNonce(step.tag));
           m.utxo.insertBox(box);

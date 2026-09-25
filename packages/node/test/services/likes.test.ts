@@ -64,6 +64,7 @@ function createKarmaBox(
     {
       boxType: 'karma',
       value,
+      createdAtBlock: 0,
       owner,
     },
     seed,
