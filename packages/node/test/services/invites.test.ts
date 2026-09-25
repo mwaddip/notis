@@ -40,8 +40,8 @@ import {
   getNetworkRecord as storeGetNetworkRecord,
 } from '../../src/store/index.js';
 import { createInvite } from '../../src/services/invites.js';
-import { validateTx } from '../../src/services/utxo-engine.js';
-import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
+import { validateTx } from '@dagsocial/consensus';
+import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import {
   rawPublicKey,
   seedProvenance,

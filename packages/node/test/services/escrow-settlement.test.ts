@@ -494,7 +494,7 @@ describe('escrow settlement leg', () => {
     const escrow = makeEscrowBox(5n, voucher.userId, 1);
     utxo.insertBox(escrow);
 
-    const { validateTx } = await import('../../src/services/utxo-engine.js');
+    const { validateTx } = await import('@dagsocial/consensus');
     const { getBox, getIdentityRecord, getKarmaBox, getKarmaBoxes, hasActiveVouchEscrow, insertBox, consumeBox } = await import('../../src/store/index.js');
     const tx: UtxoTransaction = {
       inputs: [escrow.id!],

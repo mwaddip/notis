@@ -77,7 +77,7 @@ function unvouchEscrow(value: bigint, owner: Uint8Array) {
     releaseAtBlock: 0 + COOLDOWN,
   };
 }
-import { materializeOutput } from '../../src/services/utxo-engine.js';
+import { materializeOutput } from '@dagsocial/consensus';
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { createRouter } from '../../src/routes/vouches.js';
 import { config } from '../../src/config.js';

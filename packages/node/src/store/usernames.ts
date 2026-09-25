@@ -1,16 +1,11 @@
 import { getDb } from './db.js';
 import { recordUsernameMutation, recordHolderMutation } from './journal.js';
 import type { UserId } from '@dagsocial/types';
+import type { UsernameRow } from '@dagsocial/consensus';
 
 // NODE_INTERFACE → Username records
 
-export interface UsernameRow {
-  nameLower: string;
-  name: string;
-  owner: string;
-  boxId: string;
-  claimedAtBlock: number;
-}
+export type { UsernameRow };
 
 export interface HolderRecord {
   claimAvailable: boolean;

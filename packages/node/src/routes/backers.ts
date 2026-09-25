@@ -2,7 +2,7 @@
 import { Router } from 'express';
 import type { BackerPoolBox, BackerStakeBox, UtxoTransaction } from '@dagsocial/types';
 import { protocolVersionAt, computeTxId, MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
-import type { UtxoEngineDeps, UtxoResult } from '../services/utxo-engine.js';
+import type { UtxoEngineDeps, UtxoResult } from '@dagsocial/consensus';
 import { admitTx } from '../services/admit-tx.js';
 import { getNet } from '../services/net-instance.js';
 import { jsonToTx } from './json-to-tx.js';

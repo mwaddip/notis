@@ -33,7 +33,7 @@ import type {
 } from '@dagsocial/types';
 import type { BlockJournal, BoxMutation } from '../../src/store/journal.js';
 import type { AnyBox } from '@dagsocial/types';
-import type { DecayPlan } from '../../src/services/decay.js';
+import type { DecayPlan } from '@dagsocial/consensus';
 import type Database from 'better-sqlite3';
 import { config } from '../../src/config.js';
 import type { Config } from '../../src/config.js';
@@ -646,7 +646,7 @@ describe('block-apply journal recording', () => {
      */
     async function minerSliceAt1(fees: bigint, actors: number): Promise<bigint> {
       const { computeBlockReward } = await import('../../src/services/block-creator.js');
-      const { splitCoinbase } = await import('../../src/services/coinbase-split.js');
+      const { splitCoinbase } = await import('@dagsocial/consensus');
       return splitCoinbase(computeBlockReward(1), fees, 0n, actors).miner;
     }
 
@@ -744,7 +744,7 @@ describe('block-apply journal recording', () => {
       const utxo = await importUtxo();
       const blockApply = await importBlockApply();
       await import('../../src/services/block-creator.js');
-      const { materializeOutput } = await import('../../src/services/utxo-engine.js');
+      const { materializeOutput } = await import('@dagsocial/consensus');
 
       const sender = makeTestIdentity();
       const miner = makeTestIdentity();
@@ -779,7 +779,7 @@ describe('block-apply journal recording', () => {
       const utxo = await importUtxo();
       const blockApply = await importBlockApply();
       await import('../../src/services/block-creator.js');
-      const { materializeOutput } = await import('../../src/services/utxo-engine.js');
+      const { materializeOutput } = await import('@dagsocial/consensus');
       const { decodeTx } = await import('@dagsocial/types');
 
       const sender = makeTestIdentity();
@@ -947,7 +947,7 @@ describe('block-apply journal recording', () => {
       await importUtxo();
       const blockApply = await importBlockApply();
       const { computeBlockReward } = await import('../../src/services/block-creator.js');
-      const { splitCoinbase } = await import('../../src/services/coinbase-split.js');
+      const { splitCoinbase } = await import('@dagsocial/consensus');
 
       // Exactly the miner's slice, to the miner's own key, PLUS a karma output
       // no bond in this body asks for. The amount is right, so nothing else can
@@ -1018,7 +1018,7 @@ describe('block-apply journal recording', () => {
     // its box mutations are journaled at the store choke point; the return
     // value asserted here is the service's own per-owner summary.
     const { deriveKarmaDecay } = await import(
-      '../../src/services/decay.js'
+      '@dagsocial/consensus'
     );
     const { KARMA_DECAY_AMOUNT, KARMA_DECAY_INTERVAL_BLOCKS, KARMA_MINIMUM } = await import('@dagsocial/types');
 
@@ -1702,7 +1702,7 @@ describe('block-apply mint provenance', () => {
 
     const blockApply = await importBlockApply();
     const { computeBlockReward } = await import('../../src/services/block-creator.js');
-    const { splitCoinbase } = await import('../../src/services/coinbase-split.js');
+    const { splitCoinbase } = await import('@dagsocial/consensus');
     const miner = makeTestIdentity();
     const second = makeTestIdentity();
     const slice = splitCoinbase(computeBlockReward(1), 0n, 0n, 0).miner;

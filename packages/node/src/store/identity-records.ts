@@ -3,6 +3,9 @@ import { NETWORK_KEY_DOMAIN, identityRecordKey } from '@dagsocial/types';
 import { getDb } from './db.js';
 import { isBlockJournalOpen, recordIdentityRecordPut, recordNetworkRecordPut } from './journal.js';
 import type { UserId, IdentityRecord } from '@dagsocial/types';
+import type { NetworkRecord } from '@dagsocial/consensus';
+
+export type { NetworkRecord };
 
 /**
  * SQL and journal for the identity record (TYPES_INTERFACE → Identity record
@@ -159,10 +162,6 @@ export function deleteIdentityRecord(identityId: UserId): void {
 // ---------------------------------------------------------------------------
 // Network record — NODE_INTERFACE → Network record
 // ---------------------------------------------------------------------------
-
-export interface NetworkRecord {
-  memberCount: number;
-}
 
 /**
  * The network record's AVL key: `blake2b512(NETWORK_KEY_DOMAIN)[0:32]`, hex.

@@ -5,7 +5,7 @@ import { computeTxId, MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import { withdrawRoutes } from '../../src/routes/withdraw.js';
 import { setNet } from '../../src/services/net-instance.js';
-import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
+import type { UtxoEngineDeps } from '@dagsocial/consensus';
 
 // ---------------------------------------------------------------------------
 // Helpers

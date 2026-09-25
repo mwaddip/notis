@@ -55,7 +55,7 @@ import {
   countKarmaActors,
   isCreditSideTx,
   type EmbeddedTx,
-} from './coinbase-split.js';
+} from '@dagsocial/consensus';
 import {
   bondOutputOf,
   buildSettlement,
@@ -63,11 +63,11 @@ import {
   emptyBody,
   type SettlementBody,
   type SettlementDeps,
-} from './settlement.js';
-import { deriveKarmaDecay } from './decay.js';
-import type { DecayDeps, DecayPlan } from './decay.js';
+} from '@dagsocial/consensus';
+import { deriveKarmaDecay } from '@dagsocial/consensus';
+import type { DecayDeps, DecayPlan } from '@dagsocial/consensus';
 import type { KarmaBox, VouchBox, VouchEscrowBox } from '@dagsocial/types';
-import { materializeOutput } from './utxo-engine.js';
+import { materializeOutput } from '@dagsocial/consensus';
 import {
   MissingStoredBlockError,
   UnhashableStoredHeaderError,

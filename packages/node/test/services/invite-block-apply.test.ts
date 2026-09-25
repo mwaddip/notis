@@ -93,7 +93,7 @@ async function importJournal() {
   return await import('../../src/store/journal.js');
 }
 async function importEngine() {
-  return await import('../../src/services/utxo-engine.js');
+  return await import('@dagsocial/consensus');
 }
 
 /**
@@ -615,7 +615,7 @@ describe('the invite at block application', () => {
     await activateProverOverStore();
 
     const mempool = await importMempool();
-    const engine = await import('../../src/services/utxo-engine.js');
+    const engine = await import('@dagsocial/consensus');
 
     mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), 1000);
     expect(await mineOne()).not.toBeNull();

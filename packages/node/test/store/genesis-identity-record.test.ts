@@ -36,7 +36,7 @@ async function importFresh() {
     putIdentityRecord: (id: UserId, r: IdentityRecord) => void;
   };
   const utxo = await import('../../src/store/utxo.js');
-  const decay = await import('../../src/services/decay.js');
+  const decay = await import('@dagsocial/consensus');
   return { ...db, system, records, utxo, decay };
 }
 

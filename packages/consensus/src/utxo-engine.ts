@@ -34,9 +34,20 @@ import type { DecayCfg, UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, Cred
 
 import { ed25519PublicKeyToKeyObject, verifyPostCommitDomains, verifyPostWithdrawCommitDomains, verifyTxProtocolVersion } from '@dagsocial/validation';
 import type { IdentityRecord } from '@dagsocial/types';
-// Type-only: erased at compile time, so the engine gains no runtime edge into
-// the store module graph. Same seam `DecayDeps` uses for the same record.
-import type { NetworkRecord } from '../store/identity-records.js';
+
+/** NODE_INTERFACE → Network record. The node's store persists the row; `DecayDeps` reads the same shape. */
+export interface NetworkRecord {
+  memberCount: number;
+}
+
+/** NODE_INTERFACE → Username records. The node's store persists the row; `UtxoEngineDeps` reads it by name and by owner. */
+export interface UsernameRow {
+  nameLower: string;
+  name: string;
+  owner: string;
+  boxId: string;
+  claimedAtBlock: number;
+}
 
 // ---------------------------------------------------------------------------
 // The karma transition set
@@ -206,8 +217,8 @@ export interface UtxoEngineDeps {
    * version to the era at the judged-for height (NODE_INTERFACE → validateTx).
    */
   protocolVersionSchedule: readonly ProtocolEra[];
-  getUsername: (nameLower: string) => import('../store/usernames.js').UsernameRow | null;
-  getUsernameByOwner: (owner: Uint8Array | string) => import('../store/usernames.js').UsernameRow | null;
+  getUsername: (nameLower: string) => UsernameRow | null;
+  getUsernameByOwner: (owner: Uint8Array | string) => UsernameRow | null;
 }
 
 // ---------------------------------------------------------------------------

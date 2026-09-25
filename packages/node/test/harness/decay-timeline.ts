@@ -126,7 +126,7 @@ async function loadModules() {
   const utxo = await import('../../src/store/utxo.js');
   const journal = await import('../../src/store/journal.js');
   const records = await import('../../src/store/identity-records.js');
-  const decay = await import('../../src/services/decay.js');
+  const decay = await import('@dagsocial/consensus');
   const provenance = await import('../../src/mint-provenance.js');
   return { db, utxo, journal, records, decay, provenance };
 }

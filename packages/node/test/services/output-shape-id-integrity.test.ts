@@ -44,8 +44,8 @@ import {
   putIdentityRecord as storePutIdentityRecord,
   getNetworkRecord as storeGetNetworkRecord,
 } from '../../src/store/index.js';
-import { validateTx, applyTx } from '../../src/services/utxo-engine.js';
-import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
+import { validateTx, applyTx } from '@dagsocial/consensus';
+import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { config } from '../../src/config.js';
 
 function rawPublicKey(keyObj: KeyObject): Uint8Array {

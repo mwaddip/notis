@@ -45,7 +45,7 @@ echo "==> Installing production dependencies"
   pnpm install --prod --frozen-lockfile 2>&1 | tail -5
 )
 
-for d in types validation wire net node; do
+for d in types validation wire nipopow consensus net node; do
   [ -d "$APP/app/packages/$d/dist" ] || { echo "  ✗ packages/$d missing dist/ — build failed"; exit 1; }
 done
 [ -d "$APP/app/tools/faucet/dist" ] || echo "  (note: tools/faucet dist absent — not needed by the node)"

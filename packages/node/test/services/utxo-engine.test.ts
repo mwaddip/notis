@@ -60,8 +60,8 @@ import {
   getVouchBox as storeGetVouchBox,
   getNetworkRecord as storeGetNetworkRecord,
 } from '../../src/store/index.js';
-import { validateTx, applyTx } from '../../src/services/utxo-engine.js';
-import type { UtxoEngineDeps, UtxoResult } from '../../src/services/utxo-engine.js';
+import { validateTx, applyTx } from '@dagsocial/consensus';
+import type { UtxoEngineDeps, UtxoResult } from '@dagsocial/consensus';
 import { config } from '../../src/config.js';
 
 /**

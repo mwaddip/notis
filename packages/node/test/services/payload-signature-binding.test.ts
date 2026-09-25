@@ -37,8 +37,8 @@ import {
 } from '../../src/store/utxo.js';
 import { getIdentityRecord, putIdentityRecord, getNetworkRecord } from '../../src/store/identity-records.js';
 import { getVouchBox } from '../../src/store/vouch-queries.js';
-import { validateTx } from '../../src/services/utxo-engine.js';
-import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
+import { validateTx } from '@dagsocial/consensus';
+import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import {
   makeTestIdentity,
   seedProvenance,

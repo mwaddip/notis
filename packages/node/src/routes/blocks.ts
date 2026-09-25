@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { OrderingBlock, ProtocolEra } from '@dagsocial/types';
 import { membershipBar, memberLikesBar, protocolVersionAt } from '@dagsocial/types';
-import { postIdsOf } from '../services/block-posts.js';
+import { postIdsOf } from '@dagsocial/consensus';
 import type { NetworkRecord } from '../store/identity-records.js';
 
 // ---------------------------------------------------------------------------

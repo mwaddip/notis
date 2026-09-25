@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { timingSafeEqual } from 'crypto';
 import { computePowHash } from '@dagsocial/validation';
 import type { OrderingBlock } from '@dagsocial/types';
-import { postIdsOf } from '../services/block-posts.js';
+import { postIdsOf } from '@dagsocial/consensus';
 import { resolveIdentityParam, isResolveError } from './page.js';
 import type { UsernameLookup } from './page.js';
 

@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { fixtureProvenance } from '../helpers.js';
+import { fixtureProvenance } from './helpers.js';
 import {
   commitDecayClocks,
   deriveKarmaDecay,
-} from '../../src/services/decay.js';
+} from '@dagsocial/consensus';
 import {
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,

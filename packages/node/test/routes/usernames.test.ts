@@ -9,8 +9,8 @@ import { getVouchBox } from '../../src/store/vouch-queries.js';
 import { getIdentityRecord, putIdentityRecord, getNetworkRecord } from '../../src/store/identity-records.js';
 import { getCurrentHeight } from '../../src/store/ordering.js';
 import { getUsername, getUsernameByOwner, putUsername } from '../../src/store/usernames.js';
-import { validateTx } from '../../src/services/utxo-engine.js';
-import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
+import { validateTx } from '@dagsocial/consensus';
+import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { createRouter } from '../../src/routes/usernames.js';
 import {
   PROTOCOL_VERSION,

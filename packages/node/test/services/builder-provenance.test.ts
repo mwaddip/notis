@@ -15,7 +15,7 @@ import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import { insertBox, getBox, getKarmaBoxes } from '../../src/store/utxo.js';
 import { putIdentityRecord } from '../../src/store/identity-records.js';
 import { createInvite } from '../../src/services/invites.js';
-import { validateTx, materializeOutput } from '../../src/services/utxo-engine.js';
+import { validateTx, materializeOutput } from '@dagsocial/consensus';
 import {
   seedProvenance,
   signTransaction,

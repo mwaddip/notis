@@ -30,15 +30,15 @@ import type {
 import {
   buildSettlement,
   checkSettlement,
-} from '../../src/services/settlement.js';
-import type { SettlementDeps, SettlementBody } from '../../src/services/settlement.js';
-import type { DecayPlan } from '../../src/services/decay.js';
+} from '@dagsocial/consensus';
+import type { SettlementDeps, SettlementBody } from '@dagsocial/consensus';
+import type { DecayPlan } from '@dagsocial/consensus';
 import {
   makeTestIdentity,
   seedProvenance,
   hex,
   labelNonce,
-} from '../helpers.js';
+} from './helpers.js';
 
 const HEIGHT = 10;
 const EMISSION = 100n;

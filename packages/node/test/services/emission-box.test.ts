@@ -44,9 +44,9 @@ async function importFresh() {
   const prover = await import('../../src/state/avl-prover.js');
   const creator = await import('../../src/services/block-creator.js');
   const apply = await import('../../src/services/block-apply.js');
-  const split = await import('../../src/services/coinbase-split.js');
-  const settlement = await import('../../src/services/settlement.js');
-  const engine = await import('../../src/services/utxo-engine.js');
+  const split = await import('@dagsocial/consensus');
+  const settlement = await import('@dagsocial/consensus');
+  const engine = await import('@dagsocial/consensus');
   const config = await import('../../src/config.js');
   return { db, system, utxo, genesis, prover, creator, apply, split, settlement, engine, config };
 }

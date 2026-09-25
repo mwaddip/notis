@@ -13,8 +13,8 @@ import {
 import { getBoxWithPending } from '../../src/store/mempool.js';
 import {
   validateTx,
-} from '../../src/services/utxo-engine.js';
-import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
+} from '@dagsocial/consensus';
+import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import {
   PROTOCOL_VERSION,
 } from '@dagsocial/types';

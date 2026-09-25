@@ -49,8 +49,8 @@ import {
   insertBlockJournal,
 } from '../../src/store/journal.js';
 import { revertBlock } from '../../src/services/fork-resolution.js';
-import { validateTx, applyTx, isMember, isRoot } from '../../src/services/utxo-engine.js';
-import type { UtxoEngineDeps, UtxoResult } from '../../src/services/utxo-engine.js';
+import { validateTx, applyTx, isMember, isRoot } from '@dagsocial/consensus';
+import type { UtxoEngineDeps, UtxoResult } from '@dagsocial/consensus';
 import { config } from '../../src/config.js';
 
 function validateAndApplyTx(

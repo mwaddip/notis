@@ -34,7 +34,7 @@ import {
 } from '../helpers.js';
 // Pure and stateless, so one static instance is safe alongside this file's
 // module resets.
-import { checkTxEnvelope } from '../../src/services/utxo-engine.js';
+import { checkTxEnvelope } from '@dagsocial/consensus';
 
 // checkTxEnvelope takes the judged-for height and the era schedule
 // (NODE_INTERFACE → validateTx). These envelope-shape tests use the single-era

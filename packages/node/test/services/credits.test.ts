@@ -29,7 +29,7 @@ import {
 import { getIdentityRecord } from '../../src/store/identity-records.js';
 import { getPendingEntries } from '../../src/store/mempool.js';
 import { sendCredits } from '../../src/services/credits.js';
-import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
+import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import {
   rawPublicKey,
   seedProvenance,
@@ -299,7 +299,7 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
   // -------------------------------------------------------------------------
 
   it('computeTxId is invariant under output provenance', async () => {
-    const { materializeOutput } = await import('../../src/services/utxo-engine.js');
+    const { materializeOutput } = await import('@dagsocial/consensus');
 
     const candidate: CandidateOf<CreditBox> = {
       boxType: 'credit',

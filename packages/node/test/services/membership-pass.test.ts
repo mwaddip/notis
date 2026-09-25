@@ -144,7 +144,7 @@ describe('membership pass', () => {
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const records = await importRecords();
-    const { isMember } = await import('../../src/services/utxo-engine.js');
+    const { isMember } = await import('@dagsocial/consensus');
 
     const member = makeTestIdentity();
     // Flagged when D=1: bar is fixed at 1.
@@ -176,7 +176,7 @@ describe('membership pass', () => {
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const records = await importRecords();
-    const { isMember } = await import('../../src/services/utxo-engine.js');
+    const { isMember } = await import('@dagsocial/consensus');
 
     const author = makeTestIdentity();
     const memberLiker = makeTestIdentity();
@@ -280,7 +280,7 @@ describe('a root\'s invitee, for life', () => {
 
     // Member stays true: memberBar 0 keeps memberVouches >= memberBar true
     // whatever memberVouches is.
-    const { isMember } = await import('../../src/services/utxo-engine.js');
+    const { isMember } = await import('@dagsocial/consensus');
     expect(isMember(after)).toBe(true);
 
     // N is unaffected by it: the pass's lapse/re-qualify branch requires

@@ -1,12 +1,12 @@
 // MINING_INTERFACE → The backer pool — the arithmetic, the worked vectors, and
 // the invariant V ≥ Σ accrued(stake).
 import { describe, it, expect } from 'vitest';
-import { backerLeg, splitCoinbase } from '../../src/services/coinbase-split.js';
+import { backerLeg, splitCoinbase } from '@dagsocial/consensus';
 import {
   buildSettlement,
   checkSettlement,
-} from '../../src/services/settlement.js';
-import type { SettlementDeps, SettlementBody } from '../../src/services/settlement.js';
+} from '@dagsocial/consensus';
+import type { SettlementDeps, SettlementBody } from '@dagsocial/consensus';
 import type {
   AnyBox,
   AnyBoxCandidate,
@@ -16,7 +16,7 @@ import type {
   CreditBox,
   UtxoTransaction,
 } from '@dagsocial/types';
-import { makeTestIdentity, seedProvenance } from '../helpers.js';
+import { makeTestIdentity, seedProvenance } from './helpers.js';
 
 // Devnet's numbers: S = 100, stakes 20 and 30, base = 4_200_000_000 (42 credits, no fees), c = 35.
 const S = 100n;
