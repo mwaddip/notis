@@ -69,6 +69,7 @@ function creditBox(o: UserId, value: bigint): Stored<CreditBox> {
   return seedProvenance<CreditBox>({
     boxType: 'credit' as const,
     value,
+    createdAtBlock: 0,
     owner: o,
   }, 1);
 }

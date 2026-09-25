@@ -157,6 +157,7 @@ describe('UTXO routes', () => {
     const karmaBox = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 42n,
+      createdAtBlock: 0,
       owner: kp1.publicKey,
     }, 1);
     insertBox(karmaBox);
@@ -165,6 +166,7 @@ describe('UTXO routes', () => {
     const karmaBox2 = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 58n,
+      createdAtBlock: 0,
       owner: kp1.publicKey,
     }, 1);
     insertBox(karmaBox2);
@@ -202,6 +204,7 @@ describe('UTXO routes', () => {
       value: 3n,
       inviterId: inviteUserId,
       inviteePublicKey: new Uint8Array(32).fill(0xcc),
+      createdAtBlock: 0,
     }, 1);
     insertBox(settledBond);
     consumeBox(settledBond.id!, 10);

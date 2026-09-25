@@ -69,6 +69,7 @@ describe('invite id prediction carries transaction provenance', () => {
     const karma = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 100n,
+      createdAtBlock: 0,
       owner: inviterId,
     }, 1);
     insertBox(karma);

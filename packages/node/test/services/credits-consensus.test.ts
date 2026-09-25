@@ -165,6 +165,7 @@ function seedCreditBox(
   const box = seedProvenance<CreditBox>({
     boxType: 'credit' as const,
     value,
+    createdAtBlock: 0,
     owner,
   }, 1);
   insertBox(box);
