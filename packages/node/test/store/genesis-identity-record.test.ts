@@ -13,10 +13,9 @@ import {
  * Genesis writes its own identity record.
  *
  * `ensureSystemKarmaBox` is the one non-decay karma producer that runs
- * **outside** block application. `insertBox`'s choke point takes the activity
- * height from the open journal, and genesis has none, so the system identity
- * would otherwise hold its whole stake with no clock at all and decay would
- * fall back to "never active".
+ * **outside** block application, so no block's activity bump writes its
+ * record: the system identity would otherwise hold its whole stake with no
+ * clock at all and decay would fall back to "never active".
  *
  * That fallback is not equivalent. The guard (`height <= threshold` → not
  * stale) happens to make *staleness* agree, but `owedPeriods` counts from 0
@@ -44,7 +43,6 @@ type Store = Awaited<ReturnType<typeof importFresh>>;
 
 function decayDeps(s: Store) {
   return {
-    getKarmaBoxes: (owner: Uint8Array) => s.utxo.getKarmaBoxes(owner),
     consumeBox: s.utxo.consumeBox,
     insertBox: s.utxo.insertBox,
     getIdentityRecord: s.records.getIdentityRecord,

@@ -80,7 +80,6 @@ describe('deriveKarmaDecay', () => {
     }
     return {
       deps: {
-        getKarmaBoxes: (owner: Uint8Array) => boxesMap.get(key(owner)) ?? [],
         getIdentityRecord: (id: Uint8Array) => recordMap.get(key(id)) ?? null,
         putIdentityRecord: (id: Uint8Array, r: IdentityRecord) => {
           recordMap.set(key(id), r);

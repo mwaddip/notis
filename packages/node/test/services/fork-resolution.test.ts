@@ -994,7 +994,6 @@ describe('revertBlock', () => {
     const records = await import('../../src/store/identity-records.js');
 
     const deps = {
-      getKarmaBoxes,
       consumeBox: utxo.consumeBox,
       insertBox: utxo.insertBox,
       getIdentityRecord: records.getIdentityRecord,

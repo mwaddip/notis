@@ -997,8 +997,8 @@ describe('block-apply journal recording', () => {
 
     // Import decay module directly — applyOrderingBlock delegates to it,
     // and we can't build 20,000+ blocks in a test. Inside block application
-    // its box mutations are journaled at the store choke point; the return
-    // value asserted here is the service's own per-owner summary.
+    // the settlement emits the boxes its plans describe; the return value
+    // asserted here is the per-owner plan itself.
     const { deriveKarmaDecay } = await import(
       '@dagsocial/consensus'
     );
@@ -1012,16 +1012,12 @@ describe('block-apply journal recording', () => {
     };
 
     // Spec G phase D: the decay clock is committed state. `oldBox` was inserted
-    // with no journal open, so the identity has no record and reads as never
+    // by the store alone, which writes no record, so the identity reads as never
     // active — the same clock its `createdAtBlock` of 0 gave the old box-age
     // reading, so the burn below is unchanged by the swap.
     const records = await import('../../src/store/identity-records.js');
 
     const deps = {
-      getKarmaBoxes: (owner: Uint8Array) => {
-        const box = utxo.getKarmaBox(owner);
-        return box ? [box] : [];
-      },
       consumeBox: (boxId: string, height: number) =>
         utxo.consumeBox(boxId, height),
       insertBox: (box: KarmaBox) => utxo.insertBox(box),
@@ -1031,7 +1027,8 @@ describe('block-apply journal recording', () => {
 
     const staleHeight = KARMA_STALE_THRESHOLD_BLOCKS + 100;
     const ownerHex = Buffer.from(identity.userId).toString('hex');
-    const karmaBoxes = deps.getKarmaBoxes(identity.userId);
+    const ownerBox = utxo.getKarmaBox(identity.userId);
+    const karmaBoxes = ownerBox ? [ownerBox] : [];
     const postBody = new Map([[ownerHex, { owner: identity.userId, boxes: karmaBoxes }]]);
     const entries: DecayPlan[] = deriveKarmaDecay(deps, postBody, staleHeight, decayCfg);
 
