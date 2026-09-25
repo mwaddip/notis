@@ -51,6 +51,7 @@ export {
   getVouchEscrowsForPage,
   getVouchEscrowsReleasableAt,
   hasActiveVouchEscrow,
+  getLikeAccrualBoxes,
   getLikeCarryBox,
   getUnspentBoxes,
   insertBox,
@@ -137,6 +138,7 @@ export { loadAllPeers, putPeer, deletePeer, peerStorage } from './peers.js';
 
 export {
   getVouchBox,
+  getVouchBoxes,
   getVouchesForTargetPage,
   getVouchesForVoucherPage,
   getVouchCountForTarget,

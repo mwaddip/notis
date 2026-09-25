@@ -8,6 +8,8 @@ import {
   failStopIfCorruptChain,
 } from './corrupt-state.js';
 import { config } from '../config.js';
+import type { Config } from '../config.js';
+import type { ApplyContext, StateView } from '@dagsocial/consensus';
 import {
   collectPostBodyKarma,
   computeBlockReward,
@@ -76,6 +78,14 @@ import {
   deleteUsername,
   getUsername,
   getUsernameByOwner,
+  getEmissionBox,
+  getTreasuryBox,
+  getKarmaPoolBox,
+  getKarmaBoxes,
+  getVouchEscrowsFor,
+  getVouchBoxes,
+  getLikeAccrualBoxes,
+  getBondsInvitedAt,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
 import {
@@ -142,6 +152,65 @@ class BlockBeyondFutureBound extends Error {}
 export type ApplyVerdict =
   | { applied: true }
   | { applied: false; class: 'consensus' | 'acceptance' | 'local'; detail?: string };
+
+/**
+ * The rules' reads over this node's store (CONSENSUS_INTERFACE → StateView):
+ * each is the store's own query for it, its order and its limit included.
+ */
+export const storeStateView: StateView = {
+  getBox,
+  getBoxProvenance,
+  getIdentityRecord,
+  getNetworkRecord,
+  getUsername,
+  getUsernameByOwner,
+  getEmissionBox,
+  getTreasuryBox,
+  getKarmaPoolBox,
+  getBackerPoolBox,
+  getKarmaBoxes,
+  getVouchEscrowsFor,
+  getVouchBoxes,
+  getLikeAccrualBoxes,
+  getBondsInvitedAt,
+  getVouchEscrowsReleasableAt,
+  getLapsedVouches,
+  getTopologyAuthor: getTopologyAuthorBytes,
+  getTopologyHeight,
+  // `isLivePost` is the one liveness predicate (NODE_INTERFACE → Post
+  // transactions); a row that is not live is a withdrawn one.
+  getPostStanding: (postId) => {
+    const post = getPost(postId);
+    return post === null ? 'none' : isLivePost(post) ? 'live' : 'withdrawn';
+  },
+  hasLikeRecord,
+};
+
+/**
+ * The network profile's numbers the rules read (CONSENSUS_INTERFACE →
+ * ApplyContext), from a node's configuration.
+ */
+export function applyContextFrom(cfg: Config): ApplyContext {
+  return {
+    protocolVersionSchedule: cfg.protocolVersionSchedule,
+    vouchCooldownBlocks: cfg.vouchCooldownBlocks,
+    inviteBondMin: cfg.inviteBondMin,
+    inviteBondMax: cfg.inviteBondMax,
+    inviteProbationBlocks: cfg.inviteProbationBlocks,
+    decayCfg: {
+      staleThresholdBlocks: cfg.karmaStaleThresholdBlocks,
+      decayIntervalBlocks: cfg.karmaDecayIntervalBlocks,
+      decayAmount: cfg.karmaDecayAmount,
+      karmaMinimum: cfg.karmaMinimum,
+    },
+    storageRentPeriodBlocks: cfg.storageRentPeriodBlocks,
+    membershipBarMultiplier: cfg.membershipBarMultiplier,
+    backerSupply: cfg.profile.backerSupply,
+    creditFixedRateBlocks: cfg.creditFixedRateBlocks,
+    creditEpochBlocks: cfg.creditEpochBlocks,
+    creditMinerRewardDelay: cfg.creditMinerRewardDelay,
+  };
+}
 
 /**
  * The boolean projection of the verdict — for callers that need only the

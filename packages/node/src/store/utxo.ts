@@ -958,26 +958,13 @@ export function getVouchEscrowsReleasableAt(height: number, limit: number): Vouc
 }
 
 /**
- * The live carry box for one author, or null.
- *
- * ⛔ **One per author is an invariant of the settlement, not of this query.**
- * The settlement consumes an author's carry box in the same step that emits the
- * replacement, so a second one cannot arise; `ORDER BY id LIMIT 1` is the stated
- * total order every protocol-box read in this package carries, so a defect
- * upstream degrades to a deterministic verdict rather than to a fork.
- *
- * ⛔ **`exclude` is not an optimisation — it is the only thing that separates a
- * carry box from a marker.** The two share a type and are told apart by lifetime
- * alone (TYPES_INTERFACE → LikeAccrualBox); at the point the settlement is
- * derived, this block's markers are live `like_accrual` boxes naming the same
- * author. Their ids are the caller's, from the body, so the discrimination is
- * block content and not a heuristic on value — a carry of `1` and a marker of
- * `LIKE_KARMA_COST` are indistinguishable by value at the constants in force.
+ * Every live `like_accrual` box naming the author, ascending box id — the
+ * author's carry box and any markers alike, since the two share a type and are
+ * told apart by lifetime alone (TYPES_INTERFACE → LikeAccrualBox). The
+ * `StateView` read the settlement's carry lookup composes over
+ * (CONSENSUS_INTERFACE → StateView).
  */
-export function getLikeCarryBox(
-  author: Uint8Array,
-  exclude: Set<string>,
-): LikeAccrualBox | null {
+export function getLikeAccrualBoxes(author: Uint8Array): LikeAccrualBox[] {
   const rows = getDb()
     .prepare(
       `SELECT * FROM utxo_boxes
@@ -988,10 +975,30 @@ export function getLikeCarryBox(
     )
     .safeIntegers()
     .all(pubkeyToHex(author)) as UtxoRow[];
-  for (const row of rows) {
-    if (!exclude.has(row.id)) return rowToBox(row) as LikeAccrualBox;
-  }
-  return null;
+  return rows.map((row) => rowToBox(row) as LikeAccrualBox);
+}
+
+/**
+ * The live carry box for one author, or null: the first of the author's
+ * `like_accrual` boxes by id that `exclude` does not name.
+ *
+ * ⛔ **One per author is an invariant of the settlement, not of this query.**
+ * The settlement consumes an author's carry box in the same step that emits the
+ * replacement, so a second one cannot arise; the id order makes a second, were
+ * a defect upstream to leave one, the same box on every node.
+ *
+ * ⛔ **`exclude` is not an optimisation — it is the only thing that separates a
+ * carry box from a marker.** At the point the settlement is derived, this
+ * block's markers are live `like_accrual` boxes naming the same author. Their
+ * ids are the caller's, from the body, so the discrimination is block content
+ * and not a heuristic on value — a carry of `1` and a marker of
+ * `LIKE_KARMA_COST` are indistinguishable by value at the constants in force.
+ */
+export function getLikeCarryBox(
+  author: Uint8Array,
+  exclude: Set<string>,
+): LikeAccrualBox | null {
+  return getLikeAccrualBoxes(author).find((box) => !exclude.has(box.id!)) ?? null;
 }
 
 /**
