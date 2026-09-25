@@ -1697,13 +1697,14 @@ There is **no other legal bond or invite shape**. In particular:
   > rejected at the topic validator — posts reached other nodes only inside blocks. Found by the e2e
   > packet chapter, the first test that needed a relayed post's body.
 
-  **Measured 2026-08-15:** Ed25519 verify **73.2 µs**, one `blake2b512`
-  **2.08 µs**, `Set.has()` **0.023 µs**. The relay path goes 75.3 → 73.8 µs,
-  **2 % cheaper** than with PoW, because the signature outweighs the PoW check
-  35×. **The cost objection to replacing PoW is answered by measurement.**
-  ⚠ Single core, no batching; the *ordering* of those costs is the durable
-  result, and the binding constraint on a real node is signature verification —
-  above ≈50 Mbit/s CPU binds before bandwidth does.
+  **Measured:** Ed25519 verify through `verifyEd25519` **1.1–1.7 ms** (noble,
+  strict; 2026-09-25 — OpenSSL verifies the same signature in ≈0.07 ms), one
+  `blake2b512` **2.08 µs**, `Set.has()` **0.023 µs** (2026-08-15). The signature
+  outweighs the PoW check it replaced some 500×, so **the cost objection to
+  replacing PoW is answered by measurement.** ⚠ Single core, no batching; the
+  *ordering* of those costs is the durable result, and the binding constraint on
+  a real node is signature verification — at ≈460-byte transactions, above
+  ≈2–3 Mbit/s CPU binds before bandwidth does (`CONSENSUS_INTERFACE → Cost`).
 - **Stateful admission is strictly stronger than PoW was.** PoW proved someone
   burned a millisecond; a post transaction proves its author holds the karma and
   really locked it. That is why the two removals are one unit and not two.
