@@ -2037,9 +2037,6 @@ no object check compares against it and no producer stamps it.
   excluded from every preimage** — `txIdBytes` omits them and every Merkle leaf is an id — so a
   malleated signature can never move a block hash; what remains is acceptance, and one stated rule
   with one implementation is what keeps two verifiers from disagreeing about a block's validity
-  > ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 1)** — verification is
-  > `crypto.verify(null, …)` with a `KeyObject` in every case: Ed25519 as the runtime's OpenSSL implements
-  > it, measured on node v22.19.0 / openssl 3.0.17 to reject the `S + L` malleation and the high-bit variant.
 - Public keys: 32 raw bytes, hex-encoded on wire
 - Secret keys never in API responses, DTOs, or committed data structures
 
@@ -2540,9 +2537,6 @@ Six rules govern it:
    build is a refusal, never a run against old code that reports green. The gate
    order in rule 3 is what keeps the refusal from firing: build first. Being under `tools/*`, the
    suite is in `pnpm -r test` by the workspace glob; nothing has to remember to run it.
-
-   > ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 1)** — no `consensus` package exists: the
-   > library packages, the aliased set (rule 1) and the node's closure (rule 4) hold the other names only.
 5. **Test trees are typechecked — every package, at zero.** Each `typecheck` script runs
    `tsc --noEmit && tsc --noEmit -p tsconfig.test.json`, so `pnpm -r typecheck` compiles every
    test tree in the workspace. Node was the last to land: 409 errors → 0, in one unit, with **zero

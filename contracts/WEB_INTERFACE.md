@@ -117,10 +117,6 @@ reach has no name in the shim: an unreached primitive cannot be pinned by any te
 consensus-critical primitive is a liability rather than a convenience — which is the whole argument against a
 hand-rolled copy, applied to the shim itself.
 
-> ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 1)** — `validation`'s one module imports
-> `createPublicKey` and `verify` by name beside `createHash`, so the shim names both as functions that throw one
-> fixed sentence, tree-shaking drops them, and `build-extension.sh` refuses assets that contain the sentence.
-
 ⛔ **The shim's hashing must be byte-identical to `createHash('blake2b512')`, and that must be
 pinned.** Every id in the protocol is a blake2b-512 digest truncated to 32 bytes; a shim that
 differs by one byte produces ids the node rejects, and neither package's own tests would notice

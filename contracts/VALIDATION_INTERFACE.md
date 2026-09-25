@@ -516,11 +516,6 @@ verify half**: a block carrying a transaction whose signature one implementation
 another refuses splits the network — which is why the accepted set is a rule with one
 implementation, not whatever a runtime ships.
 
-> ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 1)** — no `verifyEd25519` exists. Both
-> signature sites wrap the key in an SPKI envelope (`302a300506032b6570032100`), build a `KeyObject`
-> with `crypto.createPublicKey` and call `crypto.verify(null, …)`: Ed25519 as the runtime's OpenSSL
-> implements it.
-
 ### verifyValidatorSignature
 
 ```
