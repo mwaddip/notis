@@ -9,10 +9,10 @@ import type { IdentityRecord } from '@dagsocial/types';
  * (NODE_INTERFACE → Identity Records).
  *
  * These tests drive `putIdentityRecord` / `getIdentityRecord` /
- * `deleteIdentityRecord` directly, with no journal open and no producer in the
- * way, so what they pin is the row boundary itself. The producers that call
- * these primitives in anger — `insertBox`, decay, genesis, fork rollback — and
- * the journal recording that wraps them are covered in their own suites.
+ * `deleteIdentityRecord` directly, with no producer in the way, so what they
+ * pin is the row boundary itself. The callers that write records in anger —
+ * the effects writer, genesis, fork rollback — are covered in their own
+ * suites.
  */
 
 async function importDbFresh() {

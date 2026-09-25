@@ -28,7 +28,7 @@ export interface CreditTransferResult {
  * inside `admitTx`'s.
  *
  * Building the transfer server-side and applying it with
- * `consumeBox`/`insertBox` directly — no block, no open journal — bypasses
+ * `consumeBox`/`insertBox` directly — no block, no journal — bypasses
  * consensus entirely (audit F-consensus-7): the transfer enters no block,
  * produces no journal entries, never reaches the AVL feed, and the divergence
  * detonates at the next restart-rebuild as a permanent `stateRoot` fork. A

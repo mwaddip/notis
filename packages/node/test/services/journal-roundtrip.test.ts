@@ -40,9 +40,9 @@ import {
 // round-trips (NODE_INTERFACE → "Rollback").
 //
 // Every test drives a REAL block through applyOrderingBlock — the funnel — so
-// the journal under test is the one the store choke point recorded, never a
-// hand-built fixture. Reverts go through the real reorg path. Three
-// assertions per class:
+// the journal under test is the one the effects writer built from the block's
+// effects, never a hand-built fixture. Reverts go through the real reorg path.
+// Three assertions per class:
 //
 //   1. DB identity — utxo_boxes plus the side tables (like_records,
 //      identity_records)
