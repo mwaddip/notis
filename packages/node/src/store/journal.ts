@@ -1,8 +1,6 @@
 import { getDb } from './db.js';
 import { encode, decode } from 'cbor-x';
 import type { AnyBox, IdentityRecord, UserId } from '@dagsocial/types';
-// Type-only: erased at compile time, so this does not create a runtime cycle
-// with identity-records.ts, which imports the recording hook below.
 import type { NetworkRecord } from './identity-records.js';
 import type { UsernameRow, HolderRecord } from './usernames.js';
 
@@ -68,13 +66,14 @@ export interface HolderMutation {
 export type JournalMutation = BoxMutation | RecordMutation | NetworkMutation | UsernameMutation | HolderMutation;
 
 /**
- * Single source of truth for undoing a block and feeding the AVL prover.
- * `mutations` is the ordered primitive log; the remaining fields are typed
- * side-records for non-box effects, each with an exact inverse.
+ * The record a block's effects are journalled into, and the one a revert
+ * undoes the block from (NODE_INTERFACE → Block Journal). `mutations` is the
+ * ordered primitive log; the remaining fields are typed side-records for
+ * non-box effects, each with an exact inverse.
  */
 export interface BlockJournal {
   blockHeight: number;
-  /** Ordered, application order — state rollback + AVL feed. */
+  /** Ordered, application order — replayed in reverse by a revert. */
   mutations: JournalMutation[];
   /** The post ids this block committed. Inverse: unconfirmPost (NODE_INTERFACE → Block Journal). */
   confirmedPostIds: string[];
@@ -84,242 +83,6 @@ export interface BlockJournal {
   likeRecordInsertions: Array<{ targetPostId: string; likerId: UserId }>;
   /** Inverse: restore the prior content and clear the marker. */
   withdrawnPosts: Array<{ id: string; content: string | null }>;
-}
-
-// ---------------------------------------------------------------------------
-// Recording context
-//
-// Module-level singleton: block application is synchronous single-threaded
-// better-sqlite3, so at most one journal is ever open. While open, the store
-// mutation primitives (insertBox, consumeBox, putIdentityRecord,
-// insertLikeRecord) record automatically — call sites never maintain
-// parallel mutation bookkeeping. The rollback inverses (deleteBox,
-// unconsumeBox, deleteIdentityRecord, deleteLikeRecord) never record.
-// ---------------------------------------------------------------------------
-
-let openJournal: BlockJournal | null = null;
-
-/**
- * Net change to circulating karma so far in the open block — positive when the
- * block has minted, negative when it has burned. Read by the karma supply pool's
- * settlement, which draws the pool down by exactly this (TYPES_INTERFACE →
- * KarmaPoolBox).
- *
- * ⛔ **Beside the journal rather than a field on it, and the two are not
- * interchangeable.** `BlockJournal` is the persisted rollback record: every
- * field of it is CBOR-encoded into `block_journal` by `insertBlockJournal`.
- * Rollback needs no delta — it replays the pool box's own insert and remove like
- * any other mutation, so the pool returns to its pre-block value from the
- * mutation log alone. Carried as a field this would be a column of every stored
- * journal that nothing ever reads back.
- *
- * What the journal *does* supply is the lifetime, which is the whole reason this
- * lives here: the accumulator is meaningful exactly while a block is being
- * applied, and the three functions below are its only writers.
- */
-let openKarmaSupplyDelta = 0n;
-
-/**
- * Open a journal for the block being applied. Throws if one is already open
- * (the apply funnel's totality catch turns that into a block rejection).
- */
-export function beginBlockJournal(height: number): void {
-  if (openJournal !== null) {
-    throw new Error(
-      `beginBlockJournal: journal for height ${openJournal.blockHeight} is still open`,
-    );
-  }
-  openJournal = {
-    blockHeight: height,
-    mutations: [],
-    confirmedPostIds: [],
-    appliedUtxoTxs: [],
-    likeRecordInsertions: [],
-    withdrawnPosts: [],
-  };
-  openKarmaSupplyDelta = 0n;
-}
-
-/** Return the open journal and close it. Throws if none is open. */
-export function finishBlockJournal(): BlockJournal {
-  if (openJournal === null) {
-    throw new Error('finishBlockJournal: no block journal is open');
-  }
-  const journal = openJournal;
-  openJournal = null;
-  openKarmaSupplyDelta = 0n;
-  return journal;
-}
-
-/** Discard the open journal. No-op when none is open. */
-export function abortBlockJournal(): void {
-  openJournal = null;
-  openKarmaSupplyDelta = 0n;
-}
-
-/** True while a block journal is open. */
-export function isBlockJournalOpen(): boolean {
-  return openJournal !== null;
-}
-
-/**
- * The height of the block currently being applied, or null when no journal is
- * open.
- *
- * The identity record's activity clock is bumped at the `insertBox` choke
- * point, and that choke point has no height of its own: `insertBox` takes no
- * height argument, and a box carries no height field, so there is nothing on
- * the box to read either.
- *
- * `beginBlockJournal(height)` already carries the *settled* height, and the
- * record is only meaningful during block application, which is precisely when a
- * journal is open. So this is the narrow seam rather than a new parameter
- * threaded through every producer.
- *
- * Read-only: nothing may set the height through here, because the height is a
- * property of the open journal and outlives no part of it.
- */
-export function openBlockJournalHeight(): number | null {
-  return openJournal === null ? null : openJournal.blockHeight;
-}
-
-/**
- * The net karma the open block has minted, or null when no journal is open.
- *
- * `null` rather than `0n` for the closed case, because the two mean different
- * things and the pool's settlement acts on the difference: a block that moved no
- * karma is `0n` and leaves the pool alone; no open journal is not a block at all,
- * and nothing may settle a pool against it.
- */
-export function openBlockJournalKarmaSupplyDelta(): bigint | null {
-  return openJournal === null ? null : openKarmaSupplyDelta;
-}
-
-/**
- * Account a box mutation against the block's karma supply (NODE_INTERFACE →
- * Store Interface). Positive when a karma-bearing box was created, negative when
- * one was consumed.
- *
- * Called from `insertBox` and `consumeBox`, which are the only writers of the
- * live UTXO set — `deleteBox` and `unconsumeBox` are rollback inverses and
- * record nothing, here as everywhere else. A silent no-op with no journal open,
- * like every other hook in this file: genesis accounts for its own grants
- * against the pool it seeds, and no other path outside block application moves
- * karma.
- */
-export function recordKarmaSupplyDelta(amount: bigint): void {
-  if (openJournal === null) return;
-  openKarmaSupplyDelta += amount;
-}
-
-// ---------------------------------------------------------------------------
-// Recording hooks — called by the other store modules at their mutation
-// choke points. Each is a silent no-op when no journal is open (bootstrap
-// and non-block paths). Not re-exported from the store barrel: services
-// record through the primitives, never directly.
-// ---------------------------------------------------------------------------
-
-/** Record a box insertion. The box must carry its final id. */
-export function recordBoxInsert(box: AnyBox): void {
-  if (openJournal === null) return;
-  if (!box.id) {
-    throw new Error('recordBoxInsert: box.id must be set while a block journal is open');
-  }
-  openJournal.mutations.push({ kind: 'box', op: 'insert', boxId: box.id, box });
-}
-
-/** Record a box spend (consumeBox). */
-export function recordBoxRemove(boxId: string): void {
-  if (openJournal === null) return;
-  openJournal.mutations.push({ kind: 'box', op: 'remove', boxId });
-}
-
-/**
- * Record an identity-record write, capturing the row it replaced (if any) so
- * rollback can restore what the upsert overwrote.
- *
- * A record written **twice in one block** (activity bump then decay, at the same
- * height) appends two entries, and both are kept: `revertBlock` replays in
- * reverse, so the last inverse applied is the *first* write's `replaced` — the
- * true pre-block value. Collapsing them per key would restore an intra-block
- * intermediate instead.
- */
-export function recordIdentityRecordPut(
-  key: string,
-  identityId: UserId,
-  record: IdentityRecord,
-  replaced?: IdentityRecord,
-): void {
-  if (openJournal === null) return;
-  const entry: RecordMutation = { kind: 'record', key, identityId, record };
-  if (replaced !== undefined) {
-    entry.replaced = replaced;
-  }
-  openJournal.mutations.push(entry);
-}
-
-/** Record a network-record write (putNetworkRecord). */
-export function recordNetworkRecordPut(
-  record: NetworkRecord,
-  replaced: NetworkRecord | undefined,
-): void {
-  if (openJournal === null) return;
-  if (replaced === undefined) return;
-  openJournal.mutations.push({
-    kind: 'network',
-    memberCount: record.memberCount,
-    replaced,
-  });
-}
-
-/** Record an applied like-record insertion (insertLikeRecord). */
-export function recordLikeRecordInsertion(targetPostId: string, likerId: UserId): void {
-  if (openJournal === null) return;
-  openJournal.likeRecordInsertions.push({ targetPostId, likerId });
-}
-
-/**
- * Record the post ids this block committed (NODE_INTERFACE → Block Journal).
- * Inverse: unconfirmPost.
- */
-export function recordConfirmedPosts(ids: string[]): void {
-  if (openJournal === null) return;
-  openJournal.confirmedPostIds.push(...ids);
-}
-
-/** Record an applied UTXO tx (mempool re-insertion on reorg only). */
-export function recordAppliedUtxoTx(txId: string, txBytes: Uint8Array): void {
-  if (openJournal === null) return;
-  openJournal.appliedUtxoTxs.push({ txId, txBytes });
-}
-
-export function recordWithdrawnPost(id: string, content: string | null): void {
-  if (openJournal === null) return;
-  openJournal.withdrawnPosts.push({ id, content });
-}
-
-/** Record a username (name record) mutation — NODE_INTERFACE → Block Journal. */
-export function recordUsernameMutation(
-  nameLower: string,
-  row: UsernameRow | null,
-  replaced?: UsernameRow,
-): void {
-  if (openJournal === null) return;
-  const entry: UsernameMutation = { kind: 'username', nameLower, row };
-  if (replaced !== undefined) entry.replaced = replaced;
-  openJournal.mutations.push(entry);
-}
-
-/** Record a holder-record mutation — NODE_INTERFACE → Block Journal. */
-export function recordHolderMutation(
-  owner: UserId,
-  record: HolderRecord | null,
-  replaced?: HolderRecord,
-): void {
-  if (openJournal === null) return;
-  const entry: HolderMutation = { kind: 'holder', owner, record };
-  if (replaced !== undefined) entry.replaced = replaced;
-  openJournal.mutations.push(entry);
 }
 
 // ---------------------------------------------------------------------------

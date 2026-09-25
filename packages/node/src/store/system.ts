@@ -84,9 +84,8 @@ export function ensureSystemKarmaBox(systemPubKey: Uint8Array, currentHeight: nu
   insertBox(box);
 
   // Genesis is the one non-decay karma producer that runs **outside** block
-  // application, so `insertBox`'s choke point cannot bump the activity clock:
-  // there is no open journal, and therefore no settled height for it to read
-  // (Spec G phase D).
+  // application, so no block's activity bump writes the system identity's
+  // record (NODE_INTERFACE → Populating the record).
   //
   // Left unwritten, the system identity would hold karma with no record, and
   // decay would fall back to "never active" — staleness one block early and one
@@ -95,9 +94,9 @@ export function ensureSystemKarmaBox(systemPubKey: Uint8Array, currentHeight: nu
   // the clock and the box get the same height from the same local, so they
   // cannot disagree.
   //
-  // With no journal open this records nothing to roll back, which is correct —
-  // genesis is not a block. The row still reaches the `stateRoot` on any node
-  // that bootstraps its prover from the store.
+  // This writes no block journal, which is correct — genesis is not a block.
+  // The row still reaches the `stateRoot` on any node that bootstraps its
+  // prover from the store.
   // The system identity was never invited, and genesis is the one event that
   // could not have been a claim — a claim is a user transaction and the first
   // block is height 1. It has received no likes either: genesis mints boxes,
@@ -266,10 +265,9 @@ export function ensureEmissionBox(total: bigint, currentHeight: number): Emissio
  * subject table).
  *
  * Each member gets an identity record for the reason `ensureSystemKarmaBox`
- * writes one: genesis runs outside block application, so `insertBox`'s choke
- * point has no open journal and no settled height to bump an activity clock
- * from. Left unwritten, a member holds karma with no record and decay reads
- * "never active".
+ * writes one: genesis runs outside block application, so no block's activity
+ * bump writes it. Left unwritten, a member holds karma with no record and decay
+ * reads "never active".
  *
  * `invitedAtBlock: 0` — a committee member was never invited, and genesis is the
  * one event that could not have been a claim, since a claim is a user

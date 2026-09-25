@@ -388,7 +388,7 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
           'out-of-domain',
         );
       }
-      return { boxType, value: value as 0n, createdAtBlock, owner, name: r.readBytes(nameLen).slice() };
+      return { boxType, value: value as 0n, createdAtBlock, owner, name: readBytesN(r, nameLen) };
     }
     case 'backer_stake':
     case 'backer_unstake':
@@ -701,10 +701,11 @@ export interface BoxCandidate {
    * is **not committed in the `stateRoot`** — a rule reading it instead of the box
    * would be reading something no light client can verify.
    *
-   * ⛔ **The activity clock is the number that is NOT this one.** It takes the open
-   * journal's height, because it records when the chain saw activity rather than
-   * what a creator declared — reading this field there would let a backdated box
-   * backdate its owner's decay clock.
+   * ⛔ **The activity clock is the number that is NOT this one.** It takes the
+   * applying block's height, because it records when the chain saw activity rather
+   * than what a creator declared — reading this field there would let a backdated
+   * box backdate its owner's decay clock (NODE_INTERFACE → Populating the record →
+   * "The ACTIVITY CLOCK takes the applying block's height").
    */
   createdAtBlock: number;
 }

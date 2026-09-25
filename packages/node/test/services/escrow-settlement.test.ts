@@ -495,7 +495,7 @@ describe('escrow settlement leg', () => {
     utxo.insertBox(escrow);
 
     const { validateTx } = await import('@dagsocial/consensus');
-    const { getBox, getIdentityRecord, getKarmaBox, getKarmaBoxes, hasActiveVouchEscrow, insertBox, consumeBox } = await import('../../src/store/index.js');
+    const { getBox, getIdentityRecord, getKarmaBoxes, hasActiveVouchEscrow, insertBox, consumeBox } = await import('../../src/store/index.js');
     const tx: UtxoTransaction = {
       inputs: [escrow.id!],
       outputs: [{ boxType: 'karma' as const, value: 5n, createdAtBlock: 0, owner: voucher.userId }],
@@ -509,7 +509,6 @@ describe('escrow settlement leg', () => {
         getIdentityRecord,
         insertBox: (box) => insertBox(box),
         consumeBox: (id, atBlock) => consumeBox(id, atBlock),
-        getKarmaBox: (owner) => getKarmaBox(owner),
         getKarmaValue: (owner) => getKarmaBoxes(owner).reduce((s, b) => s + b.value, 0n),
         hasActiveVouchEscrow,
         vouchCooldownBlocks: config.vouchCooldownBlocks,

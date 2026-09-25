@@ -51,7 +51,7 @@ export {
   getVouchEscrowsForPage,
   getVouchEscrowsReleasableAt,
   hasActiveVouchEscrow,
-  getLikeCarryBox,
+  getLikeAccrualBoxes,
   getUnspentBoxes,
   insertBox,
   consumeBox,
@@ -59,10 +59,7 @@ export {
   deleteBox,
   BoxNotLiveError,
   getKarmaOwners,
-  registerKarmaMembershipHook,
-  recordKarmaActivity,
 } from './utxo.js';
-export type { KarmaMembershipHook } from './utxo.js';
 
 export {
   insertLikeRecord,
@@ -89,9 +86,6 @@ export {
 } from './ordering.js';
 
 export {
-  beginBlockJournal,
-  finishBlockJournal,
-  abortBlockJournal,
   insertBlockJournal,
   getBlockJournal,
   deleteBlockJournal,
@@ -137,6 +131,7 @@ export { loadAllPeers, putPeer, deletePeer, peerStorage } from './peers.js';
 
 export {
   getVouchBox,
+  getVouchBoxes,
   getVouchesForTargetPage,
   getVouchesForVoucherPage,
   getVouchCountForTarget,

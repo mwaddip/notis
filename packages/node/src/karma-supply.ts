@@ -3,8 +3,7 @@ import type { AnyBox } from '@dagsocial/types';
 /**
  * The karma supply verdict table — one row per box type, answering whether that
  * type's value counts as karma in circulation. `getTotalKarma` sums the true
- * rows, `GET /status` builds an `IN` list from them, and `countsAsCirculatingKarma`
- * reads the table directly.
+ * rows: `GET /status` builds an `IN` list from them.
  *
  * Karma is spendable in a `karma` box and escrowed in the others marked true —
  * escrowed karma is held rather than destroyed. `credit`, `emission`, `treasury`
@@ -25,9 +24,7 @@ import type { AnyBox } from '@dagsocial/types';
  * as, spread from or derived from another (NODE_INTERFACE → Three karma sets,
  * and none derives from another).
  *
- * It lives here rather than beside either reader, because it has two and they
- * sit at opposite ends of the package. `routes/blocks.ts` re-exports it for
- * `GET /status`; `store/utxo.ts` reads it at the box mutation choke point.
+ * `routes/blocks.ts` re-exports `KARMA_SUPPLY_TYPES`, derived below, for `GET /status`.
  */
 const KARMA_SUPPLY_VERDICT: Record<AnyBox['boxType'], boolean> = {
   karma: true,
@@ -56,13 +53,3 @@ export const KARMA_SUPPLY_TYPES: ReadonlyArray<AnyBox['boxType']> = Object.freez
   (Object.keys(KARMA_SUPPLY_VERDICT) as AnyBox['boxType'][])
     .filter((k) => KARMA_SUPPLY_VERDICT[k]),
 );
-
-/**
- * Does a box of this type hold karma that is in circulation?
- *
- * Reads the verdict table directly rather than the derived array, so the two
- * cannot disagree about a type.
- */
-export function countsAsCirculatingKarma(boxType: AnyBox['boxType']): boolean {
-  return KARMA_SUPPLY_VERDICT[boxType] === true;
-}

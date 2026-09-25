@@ -56,7 +56,7 @@ import {
   signTransaction,
   seedPostTx, fillerTx, makePostTx,
   coinbaseOf, withCoinbase,
-  seedEmissionBox, seedKarmaPoolBox } from '../helpers.js';
+  seedEmissionBox, seedKarmaPoolBox, nodeRewardSchedule } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -160,7 +160,6 @@ async function importJournalStore() {
     getBlockJournal: (height: number) => BlockJournal | null;
     insertBlockJournal: (journal: BlockJournal) => void;
     deleteBlockJournal: (height: number) => void;
-    isBlockJournalOpen: () => boolean;
   };
 }
 
@@ -645,7 +644,7 @@ describe('block-apply journal recording', () => {
      * that much and the two never coincide.
      */
     async function minerSliceAt1(fees: bigint, actors: number): Promise<bigint> {
-      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+      const computeBlockReward = await nodeRewardSchedule();
       const { splitCoinbase } = await import('@dagsocial/consensus');
       return splitCoinbase(computeBlockReward(1), fees, 0n, actors).miner;
     }
@@ -918,7 +917,7 @@ describe('block-apply journal recording', () => {
       db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       await importUtxo();
       const blockApply = await importBlockApply();
-      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+      const computeBlockReward = await nodeRewardSchedule();
 
       const miner = makeTestIdentity();
       const block = await makeApplicableBlock({
@@ -946,7 +945,7 @@ describe('block-apply journal recording', () => {
       db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       await importUtxo();
       const blockApply = await importBlockApply();
-      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+      const computeBlockReward = await nodeRewardSchedule();
       const { splitCoinbase } = await import('@dagsocial/consensus');
 
       // Exactly the miner's slice, to the miner's own key, PLUS a karma output
@@ -979,23 +978,6 @@ describe('block-apply journal recording', () => {
   });
 
   // -----------------------------------------------------------------------
-  // 10. Successful block leaves no journal open after persistence
-  // -----------------------------------------------------------------------
-
-  it('no block journal is left open after successful block application', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-
-    const bc = await importBlockCreator();
-    bc.startBlockCreator(testConfig);
-    await mineNextBlock(bc);
-
-    const journal = await importJournalStore();
-    expect(journal.isBlockJournalOpen()).toBe(false);
-  });
-
-  // -----------------------------------------------------------------------
   // 11. Decay burns recorded in journal
   // -----------------------------------------------------------------------
 
@@ -1015,8 +997,8 @@ describe('block-apply journal recording', () => {
 
     // Import decay module directly — applyOrderingBlock delegates to it,
     // and we can't build 20,000+ blocks in a test. Inside block application
-    // its box mutations are journaled at the store choke point; the return
-    // value asserted here is the service's own per-owner summary.
+    // the settlement emits the boxes its plans describe; the return value
+    // asserted here is the per-owner plan itself.
     const { deriveKarmaDecay } = await import(
       '@dagsocial/consensus'
     );
@@ -1029,27 +1011,19 @@ describe('block-apply journal recording', () => {
       karmaMinimum: KARMA_MINIMUM,
     };
 
-    // Spec G phase D: the decay clock is committed state. `oldBox` was inserted
-    // with no journal open, so the identity has no record and reads as never
-    // active — the same clock its `createdAtBlock` of 0 gave the old box-age
-    // reading, so the burn below is unchanged by the swap.
+    // The decay clock is committed state. `oldBox` was inserted by the store
+    // alone, which writes no record, so the identity reads as never active.
     const records = await import('../../src/store/identity-records.js');
 
     const deps = {
-      getKarmaBoxes: (owner: Uint8Array) => {
-        const box = utxo.getKarmaBox(owner);
-        return box ? [box] : [];
-      },
-      consumeBox: (boxId: string, height: number) =>
-        utxo.consumeBox(boxId, height),
-      insertBox: (box: KarmaBox) => utxo.insertBox(box),
       getIdentityRecord: records.getIdentityRecord,
       putIdentityRecord: records.putIdentityRecord,
     };
 
     const staleHeight = KARMA_STALE_THRESHOLD_BLOCKS + 100;
     const ownerHex = Buffer.from(identity.userId).toString('hex');
-    const karmaBoxes = deps.getKarmaBoxes(identity.userId);
+    const ownerBox = utxo.getKarmaBox(identity.userId);
+    const karmaBoxes = ownerBox ? [ownerBox] : [];
     const postBody = new Map([[ownerHex, { owner: identity.userId, boxes: karmaBoxes }]]);
     const entries: DecayPlan[] = deriveKarmaDecay(deps, postBody, staleHeight, decayCfg);
 
@@ -1701,7 +1675,7 @@ describe('block-apply mint provenance', () => {
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const blockApply = await importBlockApply();
-    const { computeBlockReward } = await import('../../src/services/block-creator.js');
+    const computeBlockReward = await nodeRewardSchedule();
     const { splitCoinbase } = await import('@dagsocial/consensus');
     const miner = makeTestIdentity();
     const second = makeTestIdentity();
@@ -2480,10 +2454,6 @@ describe('block-apply funnel totality', () => {
       getCreditBoxes: (owner: Uint8Array) => unknown[];
     };
     expect(getCreditBoxes(coinbaseOf(block)[0]!.owner)).toHaveLength(0);
-
-    // The half-built journal is dropped, so the next block does not inherit it.
-    const journalStore = await importJournalStore();
-    expect(journalStore.isBlockJournalOpen()).toBe(false);
   });
 
   it('applies the same block with no stub in place (control)', async () => {
@@ -2657,12 +2627,12 @@ describe('block-apply funnel totality', () => {
     )).toBe(true);
     expect(posts.isLivePost(posts.getPost(postId))).toBe(false);
 
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(blockApply.applyOrderingBlock(
       await makeApplicableBlock({ height: 3, utxoTxs: [makePostWithdrawTx(author, postId, 94, utxo)] }),
     )).toBe(false);
-    expect(error.mock.calls.some(([m]) => String(m).includes('already-withdrawn or unknown'))).toBe(true);
-    error.mockRestore();
+    expect(warn.mock.calls.some(([m]) => String(m).includes('already-withdrawn or unknown'))).toBe(true);
+    warn.mockRestore();
   });
 
   it('rejects a block whose postWithdraw input owner is not the post topology author', async () => {
@@ -2743,14 +2713,14 @@ describe('block-apply funnel totality', () => {
     const ba = await importBlockApply();
     const { solveHeaderPow } = await import('../helpers.js');
     const miner = makeTestIdentity();
-    const { computeUtxoTxRoot, buildBlockSettlement } = await import(
-      '../../src/services/block-creator.js'
-    );
+    const { computeUtxoTxRoot } = await import('../../src/services/block-creator.js');
+    const { storeStateView, applyContextFrom } = await import('../../src/services/block-apply.js');
+    const { buildBlockSettlement } = await import('@dagsocial/consensus');
     const { config } = await import('../../src/config.js');
     const { encodeTx, interlinkRoot } = await import('@dagsocial/types');
     await seedEmissionBox();
     await seedKarmaPoolBox();
-    const built = buildBlockSettlement([], 1, miner.userId, miner.userId);
+    const built = buildBlockSettlement(storeStateView, [], 1, miner.userId, miner.userId, applyContextFrom(config));
     if ('error' in built) throw new Error(built.error);
     const tree = {
       utxoTxIds: [computeTxId(built.tx)],

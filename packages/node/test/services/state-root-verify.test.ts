@@ -100,6 +100,7 @@ describe('stateRoot verification (P3 acceptance)', () => {
     const seeded = seedProvenance<CreditBox>({
       boxType: 'credit' as const,
       value: 100n,
+      createdAtBlock: 0,
       owner: holder.userId,
     }, 1);
     seeded.id = computeBoxId(seeded);

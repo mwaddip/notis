@@ -1,32 +1,30 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
-import { computeBoxId } from '@dagsocial/types';
+import { computeBoxId, identityRecordKey } from '@dagsocial/types';
 import type {
   CreditBox,
+  IdentityRecord,
   KarmaBox,
   UserId,
 } from '@dagsocial/types';
-import type { BlockJournal } from '../../src/store/journal.js';
-import type { IdentityRecord } from '@dagsocial/types';
-import { identityRecordKey } from '@dagsocial/types';
+import type { RecordMutation } from '../../src/store/journal.js';
 import {
+  makeApplicableBlock,
+  makeTestIdentity,
+  seedPostTx,
   seedProvenance,
   type Stored,
 } from '../helpers.js';
 
 /**
- * `recordKarmaActivity` advances the identity record's activity clock.
+ * The identity record's activity clock (NODE_INTERFACE → Populating the record).
  *
- * The staleness clock lives in the committed record, and `recordKarmaActivity`
- * is the single writer of `lastActivityBlock` during block application: it
- * fires from the user-transaction loop in `applyOrderingBlock` for every
- * transaction whose inputs are karma boxes (ARCHITECTURE → Karma decay).
- * Settlement consumption (decay) and settlement outputs (grants, payouts,
- * vests, returns) do not advance the clock — only user spends do.
- *
- * The height comes from the **open journal**. `recordKarmaActivity` asserts a
- * journal is open and throws outside block application.
+ * The clock is block application's: a post transaction advances its author's
+ * `lastActivityBlock` to the height of the block applying it, carrying every
+ * other field, and the effects writer journals the write with the row it
+ * replaces. The store's box writers move no clock — settlement consumption and
+ * settlement outputs are not activity.
  */
 
 async function importDbFresh() {
@@ -43,20 +41,11 @@ async function importUtxoFresh() {
   return import('../../src/store/utxo.js');
 }
 
-async function importJournalFresh() {
-  return (await import('../../src/store/journal.js')) as {
-    beginBlockJournal: (height: number) => void;
-    finishBlockJournal: () => BlockJournal;
-    openBlockJournalHeight: () => number | null;
-  };
-}
-
 async function importRecordsFresh() {
-  const store = (await import('../../src/store/identity-records.js')) as {
+  return (await import('../../src/store/identity-records.js')) as {
     getIdentityRecord: (id: UserId) => IdentityRecord | null;
     putIdentityRecord: (id: UserId, r: IdentityRecord) => void;
   };
-  return { ...store, identityRecordKey };
 }
 
 function owner(label: string): UserId {
@@ -80,11 +69,12 @@ function creditBox(o: UserId, value: bigint): Stored<CreditBox> {
   return seedProvenance<CreditBox>({
     boxType: 'credit' as const,
     value,
+    createdAtBlock: 0,
     owner: o,
   }, 1);
 }
 
-describe('recordKarmaActivity advances the activity clock', () => {
+describe('the activity clock', () => {
   beforeEach(async () => { vi.resetModules(); });
   afterEach(() => { vi.resetModules(); });
 
@@ -103,15 +93,12 @@ describe('recordKarmaActivity advances the activity clock', () => {
   // -------------------------------------------------------------------------
   it('a seeded box read back from the store still derives its own id', async () => {
     const { initDb } = await importDbFresh();
-    const { beginBlockJournal, finishBlockJournal } = await importJournalFresh();
     const { insertBox, getBox } = await importUtxoFresh();
     initDb(':memory:');
 
     const alice = owner('alice');
     const seeded = karmaBox(alice, 42, 100n);
-    beginBlockJournal(42);
     insertBox(seeded);
-    finishBlockJournal();
 
     const stored = getBox(seeded.id);
     expect(stored).not.toBeNull();
@@ -120,166 +107,70 @@ describe('recordKarmaActivity advances the activity clock', () => {
     expect(computeBoxId(stored!)).toBe(stored!.id);
   });
 
-  it('recordKarmaActivity creates the record at the journal height', async () => {
-    const { initDb } = await importDbFresh();
-    const { beginBlockJournal, finishBlockJournal } = await importJournalFresh();
-    const { recordKarmaActivity } = await importUtxoFresh();
-    const { getIdentityRecord } = await importRecordsFresh();
-    initDb(':memory:');
-
-    const alice = owner('alice');
-    beginBlockJournal(42);
-    recordKarmaActivity(alice);
-    finishBlockJournal();
-
-    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 42, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
-  });
-
   it('insertBox alone does NOT advance the activity clock', async () => {
     const { initDb } = await importDbFresh();
-    const { beginBlockJournal, finishBlockJournal } = await importJournalFresh();
     const { insertBox } = await importUtxoFresh();
     const { getIdentityRecord } = await importRecordsFresh();
     initDb(':memory:');
 
     const alice = owner('alice');
-    beginBlockJournal(42);
     insertBox(karmaBox(alice, 42, 100n));
-    finishBlockJournal();
 
     expect(getIdentityRecord(alice)).toBeNull();
   });
 
   it('a non-karma box creates no record', async () => {
     const { initDb } = await importDbFresh();
-    const { beginBlockJournal, finishBlockJournal } = await importJournalFresh();
     const { insertBox } = await importUtxoFresh();
     const { getIdentityRecord } = await importRecordsFresh();
     initDb(':memory:');
 
     const alice = owner('alice');
-    beginBlockJournal(12);
     insertBox(creditBox(alice, 5000n));
-    finishBlockJournal();
 
     expect(getIdentityRecord(alice)).toBeNull();
   });
 
-  it('recordKarmaActivity throws with no journal open', async () => {
-    const { initDb } = await importDbFresh();
-    const { recordKarmaActivity } = await importUtxoFresh();
-    initDb(':memory:');
-
-    const alice = owner('alice');
-    expect(() => recordKarmaActivity(alice)).toThrow('outside block application');
-  });
-
-  it('height 0 is a height, not "no journal"', async () => {
-    const { initDb } = await importDbFresh();
-    const { beginBlockJournal, finishBlockJournal } = await importJournalFresh();
-    const { recordKarmaActivity } = await importUtxoFresh();
-    const { getIdentityRecord } = await importRecordsFresh();
-    initDb(':memory:');
-
-    const alice = owner('alice');
-    beginBlockJournal(0);
-    recordKarmaActivity(alice);
-    finishBlockJournal();
-
-    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
-  });
-
-  it('a later activity bump preserves lastDecayBlock', async () => {
-    const { initDb } = await importDbFresh();
-    const { beginBlockJournal, finishBlockJournal } = await importJournalFresh();
-    const { recordKarmaActivity } = await importUtxoFresh();
+  it('a post advances its author\'s clock to the block\'s height, carrying every other field, journalled with the row it replaced', async () => {
+    const db = await importDbFresh();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const { getIdentityRecord, putIdentityRecord } = await importRecordsFresh();
-    initDb(':memory:');
+    const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
+    const { getBlockJournal } = await import('../../src/store/journal.js');
 
-    const alice = owner('alice');
-    putIdentityRecord(alice, { lastActivityBlock: 5, lastDecayBlock: 33, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
+    // `newcomer` holds no record; `resident` holds one with every field set.
+    const newcomer = makeTestIdentity();
+    const resident = makeTestIdentity();
+    const prior: IdentityRecord = {
+      lastActivityBlock: 1, lastDecayBlock: 1, invitedAtBlock: 1, lifetimeLikesReceived: 7n,
+      memberSinceBlock: 1, memberBar: 2, memberVouches: 2, memberLikes: 3n, invitesUsed: 2,
+    };
+    putIdentityRecord(resident.userId, prior);
 
-    beginBlockJournal(77);
-    recordKarmaActivity(alice);
-    finishBlockJournal();
+    expect(applyOrderingBlock(await makeApplicableBlock({ height: 1 }))).toBe(true);
+    const newcomerPost = await seedPostTx(newcomer, 'a first post, from no record');
+    const residentPost = await seedPostTx(resident, 'a post over a record');
+    expect(applyOrderingBlock(await makeApplicableBlock({
+      height: 2, utxoTxs: [newcomerPost.tx, residentPost.tx],
+    }))).toBe(true);
 
-    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 77, lastDecayBlock: 33, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
-  });
+    const created: IdentityRecord = {
+      lastActivityBlock: 2, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    };
+    const carried: IdentityRecord = { ...prior, lastActivityBlock: 2 };
+    expect(getIdentityRecord(newcomer.userId)).toEqual(created);
+    expect(getIdentityRecord(resident.userId)).toEqual(carried);
 
-  it('each identity gets its own clock', async () => {
-    const { initDb } = await importDbFresh();
-    const { beginBlockJournal, finishBlockJournal } = await importJournalFresh();
-    const { recordKarmaActivity } = await importUtxoFresh();
-    const { getIdentityRecord } = await importRecordsFresh();
-    initDb(':memory:');
-
-    const alice = owner('alice');
-    const bob = owner('bob');
-    beginBlockJournal(3);
-    recordKarmaActivity(alice);
-    finishBlockJournal();
-    beginBlockJournal(9);
-    recordKarmaActivity(bob);
-    finishBlockJournal();
-
-    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 3, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
-    expect(getIdentityRecord(bob)).toEqual({ lastActivityBlock: 9, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
-  });
-
-  it('the bump is journaled', async () => {
-    const { initDb } = await importDbFresh();
-    const { beginBlockJournal, finishBlockJournal } = await importJournalFresh();
-    const { recordKarmaActivity } = await importUtxoFresh();
-    const { identityRecordKey } = await importRecordsFresh();
-    initDb(':memory:');
-
-    const alice = owner('alice');
-    beginBlockJournal(4);
-    recordKarmaActivity(alice);
-    const journal = finishBlockJournal();
-
-    expect(journal.mutations).toEqual([
-      {
-        kind: 'record',
-        key: identityRecordKey(alice),
-        identityId: alice,
-        record: { lastActivityBlock: 4, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 },
-      },
+    const writesTo = (who: UserId) => getBlockJournal(2)!.mutations.filter(
+      (m): m is RecordMutation => m.kind === 'record' && m.key === identityRecordKey(who),
+    );
+    const newcomerWrites = writesTo(newcomer.userId);
+    expect(newcomerWrites.map((m) => m.record)).toEqual([created]);
+    expect('replaced' in newcomerWrites[0]!).toBe(false);
+    expect(writesTo(resident.userId).map(({ record, replaced }) => ({ record, replaced }))).toEqual([
+      { record: carried, replaced: prior },
     ]);
-  });
-
-  it('a second bump in the same block journals the value it replaced', async () => {
-    const { initDb } = await importDbFresh();
-    const { beginBlockJournal, finishBlockJournal } = await importJournalFresh();
-    const { recordKarmaActivity } = await importUtxoFresh();
-    const { putIdentityRecord } = await importRecordsFresh();
-    initDb(':memory:');
-
-    const alice = owner('alice');
-    putIdentityRecord(alice, { lastActivityBlock: 2, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
-
-    beginBlockJournal(6);
-    recordKarmaActivity(alice);
-    const journal = finishBlockJournal();
-
-    const records = journal.mutations.filter((m) => m.kind === 'record');
-    expect(records).toHaveLength(1);
-    expect(records[0]).toMatchObject({
-      record: { lastActivityBlock: 6, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 },
-      replaced: { lastActivityBlock: 2, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 },
-    });
-  });
-
-  it('openBlockJournalHeight tracks the open journal and nothing else', async () => {
-    const { initDb } = await importDbFresh();
-    const { beginBlockJournal, finishBlockJournal, openBlockJournalHeight } =
-      await importJournalFresh();
-    initDb(':memory:');
-
-    expect(openBlockJournalHeight()).toBeNull();
-    beginBlockJournal(17);
-    expect(openBlockJournalHeight()).toBe(17);
-    finishBlockJournal();
-    expect(openBlockJournalHeight()).toBeNull();
   });
 });

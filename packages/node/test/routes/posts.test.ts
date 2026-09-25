@@ -13,7 +13,6 @@ import { insertPost, getPost, queryPostsPage, getAncestorsNearest, getSubtreePag
 import { getUsernameByOwner } from '../../src/store/usernames.js';
 import { getCurrentHeight, getBlockCreatedAt } from '../../src/store/ordering.js';
 import {
-  getKarmaBox,
   getKarmaBoxes,
   insertBox,
   getBox as storeGetBox,
@@ -48,10 +47,14 @@ import type {
 } from '@dagsocial/types';
 import { createRouter } from '../../src/routes/posts.js';
 import { PendingSpendConflictError } from '../../src/store/mempool.js';
-import { unlinkSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { config } from '../../src/config.js';
 
-const TEST_DB = '/tmp/dagsocial-test-routes-posts.sqlite';
+// A directory private to this run, so two runs of the suite on one machine
+// never write the same store file.
+let testDir: string;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -82,7 +85,6 @@ async function request(
       },
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
-      getKarmaBox,
       getLikeRecordCount,
       getDescendantCount,
       hasLikeRecord,
@@ -114,7 +116,6 @@ async function request(
             consumeBox: (id: string, atBlock: number) => {
               db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
             },
-            getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
             getIdentityRecord: (identityId: Uint8Array) =>
               storeGetIdentityRecord(identityId),
             getKarmaValue: (owner: Uint8Array) =>
@@ -190,13 +191,13 @@ async function request(
 
 describe('posts routes', () => {
   beforeAll(() => {
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
-    initDb(TEST_DB);
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-routes-posts-'));
+    initDb(join(testDir, 'store.sqlite'));
   });
 
   afterAll(() => {
     closeDb();
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   // -----------------------------------------------------------------------
@@ -260,7 +261,6 @@ describe('posts routes', () => {
       },
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
-      getKarmaBox,
       getLikeRecordCount,
       getDescendantCount,
       hasLikeRecord,
@@ -916,7 +916,6 @@ describe('posts routes — alias resolution', () => {
         },
         storageRentPeriodBlocks: 40,
         getBoxProvenance: () => null,
-        getKarmaBox: () => null,
         getLikeRecordCount: () => 0,
         getDescendantCount: () => 0,
         hasLikeRecord: () => false,
@@ -951,13 +950,13 @@ describe('posts routes — alias resolution', () => {
   }
 
   beforeAll(() => {
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
-    initDb(TEST_DB);
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-routes-posts-'));
+    initDb(join(testDir, 'store.sqlite'));
   });
 
   afterAll(() => {
     closeDb();
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   // viewer on GET /posts

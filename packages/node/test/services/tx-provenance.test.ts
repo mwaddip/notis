@@ -51,13 +51,6 @@ function creditCandidate(
   };
 }
 
-// The module's own type rather than a hand-written shape: under a hand-written
-// shape, reaching for another export is a compile error and the test that
-// needed it goes unwritten instead.
-async function importJournalFresh() {
-  return import('../../src/store/journal.js');
-}
-
 describe('transaction output provenance (Spec G phase C3)', () => {
   beforeEach(async () => { vi.resetModules(); });
   afterEach(() => { vi.resetModules(); });
@@ -238,13 +231,12 @@ describe('transaction output provenance (Spec G phase C3)', () => {
     // any key added or reordered changes the id, so the store path adds nothing.
     //
     // `insertBox` fills the `created_at_block` column from the box's own
-    // `createdAtBlock`, never from the open journal
+    // `createdAtBlock`, never from the applying height
     // (NODE_INTERFACE → Populating the record). The box declares 300 while the
-    // journal and the applied height are 777, so a writer reaching for the
-    // journal reads a height this assertion refuses.
+    // applied height is 777, so a writer reaching for the applying height reads
+    // a height this assertion refuses.
     const { initDb } = await importDbFresh();
     const { insertBox, getBox } = await importUtxoFresh();
-    const { beginBlockJournal, finishBlockJournal } = await importJournalFresh();
     const { serializeBox } = await import('../../src/state/serialize-box.js');
     const { materializeOutput, applyTx } = await import(
       '@dagsocial/consensus'
@@ -253,20 +245,17 @@ describe('transaction output provenance (Spec G phase C3)', () => {
     initDb(':memory:');
 
     const produced = materializeOutput(creditCandidate(100n, user(0xf1), 300), TX_ID, 0);
-    beginBlockJournal(777);
     applyTx(
       {
         getBox,
         insertBox,
         consumeBox: () => {},
-        getKarmaBox: () => null,
         runInTransaction: (fn: () => void) => { getDb().transaction(fn)(); },
       } as never,
       { inputs: [], outputs: [], signatures: {}, protocolVersion: 1 },
       [produced],
       777,
     );
-    finishBlockJournal();
 
     const columnHeight = (
       getDb()

@@ -219,13 +219,14 @@ describe('config', () => {
     });
 
     // The flat fields above are only half the claim: a consumer that still
-    // reads the module constant leaves them defined and unused. `computeBlockReward`
-    // is the one consumer reachable without a database, and it runs on the apply
-    // path of nodes that never start a block creator — so it reads the process
-    // config, not the injected one.
+    // reads the module constant leaves them defined and unused. The block reward
+    // is the one consumer reachable without a database, and the apply path of
+    // nodes that never start a block creator computes it under the context of
+    // the process config (`applyContextFrom(config)`), not the injected one.
     it('the emission schedule a consumer computes follows NETWORK_TYPE', async () => {
       process.env['NETWORK_TYPE'] = 'devnet';
-      const { computeBlockReward } = await import('../src/services/block-creator.js');
+      const { nodeRewardSchedule } = await import('./helpers.js');
+      const computeBlockReward = await nodeRewardSchedule();
 
       // devnet's fixed-rate period ends at 1000, so 1001 is one epoch in.
       expect(computeBlockReward(1000)).toBe(CREDIT_INITIAL_REWARD);
@@ -236,7 +237,8 @@ describe('config', () => {
 
     it('the same heights are still fixed-rate on testnet', async () => {
       process.env['NETWORK_TYPE'] = 'testnet';
-      const { computeBlockReward } = await import('../src/services/block-creator.js');
+      const { nodeRewardSchedule } = await import('./helpers.js');
+      const computeBlockReward = await nodeRewardSchedule();
 
       expect(computeBlockReward(1001)).toBe(CREDIT_INITIAL_REWARD);
     });

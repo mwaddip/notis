@@ -9,7 +9,7 @@ import { createPrivateKey, type KeyObject } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import { insertPost } from '../../src/store/posts.js';
 import {
-  insertBox, getKarmaBox, getKarmaBoxes, getBox as storeGetBox } from '../../src/store/utxo.js';
+  insertBox, getKarmaBoxes, getBox as storeGetBox } from '../../src/store/utxo.js';
 import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/identity-records.js';
 import { getCurrentHeight } from '../../src/store/ordering.js';
 import { castLike } from '../../src/services/likes.js';
@@ -28,10 +28,14 @@ import { createRouter } from '../../src/routes/likes.js';
 import type { LikesDeps } from '../../src/routes/likes.js';
 import { ClientError } from '../../src/services/client-error.js';
 import { MempoolFullError, PendingSpendConflictError } from '../../src/store/mempool.js';
-import { unlinkSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { config } from '../../src/config.js';
 
-const TEST_DB = '/tmp/dagsocial-test-routes-likes.sqlite';
+// A directory private to this run, so two runs of the suite on one machine
+// never write the same store file.
+let testDir: string;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -61,7 +65,6 @@ async function request(
       consumeBox: (id: string, atBlock: number) => {
         db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
       },
-      getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,
@@ -179,8 +182,8 @@ describe('likes routes', () => {
   let karmaBox: KarmaBox;
 
   beforeAll(() => {
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
-    initDb(TEST_DB);
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-routes-likes-'));
+    initDb(join(testDir, 'store.sqlite'));
 
     // Create a post author (needed for post insertion)
     const authorKp = generateKeyPair();
@@ -218,7 +221,7 @@ describe('likes routes', () => {
 
   afterAll(() => {
     closeDb();
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   // ---------------------------------------------------------------------------

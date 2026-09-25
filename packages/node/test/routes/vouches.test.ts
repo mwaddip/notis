@@ -12,6 +12,9 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import express from 'express';
 import http from 'http';
 import { generateKeyPairSync, type KeyObject } from 'crypto';
@@ -46,7 +49,6 @@ import {
   closeDb,
   getDb,
   getBox as storeGetBox,
-  getKarmaBox,
   getKarmaBoxes,
   insertBox,
   consumeBox,
@@ -107,7 +109,6 @@ describe('vouch routes — the JSON edge', () => {
       },
           insertBox: (box: AnyBox) => insertBox(box),
       consumeBox: (id: string, atBlock: number) => consumeBox(id, atBlock),
-      getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array): bigint =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       getIdentityRecord,
@@ -616,16 +617,18 @@ describe('vouch routes — the JSON edge', () => {
 describe('vouch routes — alias resolution', () => {
   const HOLDER_HEX = 'aa'.repeat(32);
   const lookup = (lower: string) => lower === 'alice' ? { nameLower: 'alice', name: 'Alice', owner: HOLDER_HEX, boxId: 'bb'.repeat(32), claimedAtBlock: 1 } : null;
-  const ALIAS_DB = '/tmp/dagsocial-test-routes-vouches-alias.sqlite';
+  // A directory private to this run, so two runs of the suite on one machine
+  // never write the same store file.
+  let aliasDir: string;
 
   beforeAll(() => {
-    try { require('fs').unlinkSync(ALIAS_DB); } catch {}
-    initDb(ALIAS_DB);
+    aliasDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-routes-vouches-alias-'));
+    initDb(join(aliasDir, 'store.sqlite'));
     getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
   });
   afterAll(() => {
     closeDb();
-    try { require('fs').unlinkSync(ALIAS_DB); } catch {}
+    rmSync(aliasDir, { recursive: true, force: true });
   });
 
   function aliasGet(path: string): Promise<{ status: number; data: unknown }> {
@@ -636,7 +639,6 @@ describe('vouch routes — alias resolution', () => {
             getBox: () => null,
             insertBox: () => {},
             consumeBox: () => {},
-            getKarmaBox: () => null,
             getKarmaValue: () => 0n,
             getIdentityRecord: () => null,
             hasActiveVouchEscrow: () => false,

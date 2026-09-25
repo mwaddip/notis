@@ -41,9 +41,10 @@ Eight packages, in dependency order:
 - `@dagsocial/types` — data structures, base58, positional codecs, hashing, protocol constants. **Pure functions only.**
 - `@dagsocial/wire` — stream framing (VLQ, blake2b checksums, magic bytes).
 - `@dagsocial/validation` — pure stateless checks: PoW, signatures, block structure, Merkle roots.
-- `@dagsocial/consensus` — the state-transition rules: the transaction engine, the settlement, decay, the coinbase
-  split. **The one implementation** the node runs and a browser leaf will run — no Node built-in, no I/O; state
-  reaches it through interfaces its caller injects.
+- `@dagsocial/consensus` — the state-transition rules: `applyBlock` (a block's body as one function, answering its
+  effects), the transaction engine, the settlement, decay, the coinbase split. **The one implementation** the node
+  runs and a browser leaf will run — no Node built-in, no I/O; state reaches it through a `StateView` its caller
+  answers.
 - `@dagsocial/nipopow` — NiPoPoW proofs over ordering-block headers: the proof codecs, `verifyProof`, `compareProofs`, `proveWithReader`. **Pure functions only.**
 - `@dagsocial/net` — libp2p + Gossipsub relay, whole-block sync, peer management.
 - `@dagsocial/node` — Express server, PoW, verifier, SQLite store, AVL+ state root, block creator; it runs `consensus`'s rules over its store.

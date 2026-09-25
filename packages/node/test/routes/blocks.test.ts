@@ -13,9 +13,13 @@ import { createRouter, KARMA_SUPPLY_TYPES } from '../../src/routes/blocks.js';
 import type { BlocksDeps } from '../../src/routes/blocks.js';
 import { PROTOCOL_VERSION } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
-import { unlinkSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
-const TEST_DB = '/tmp/dagsocial-test-routes-blocks.sqlite';
+// A directory private to this run, so two runs of the suite on one machine
+// never write the same store file.
+let testDir: string;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -161,8 +165,8 @@ async function request(
 
 describe('blocks routes', () => {
   beforeAll(() => {
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
-    initDb(TEST_DB);
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-routes-blocks-'));
+    initDb(join(testDir, 'store.sqlite'));
 
     // ⚠ **There is no poison half to build.** `postIds` is not a stored field:
     // the route derives it from the block's post-bearing transactions, so a
@@ -177,7 +181,7 @@ describe('blocks routes', () => {
 
   afterAll(() => {
     closeDb();
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   it('GET /blocks/:height returns block data', async () => {

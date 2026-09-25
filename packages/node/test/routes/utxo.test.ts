@@ -5,7 +5,6 @@ import http from 'http';
 import { createPrivateKey, sign } from 'crypto';
 import { initDb, closeDb } from '../../src/store/db.js';
 import {
-  getKarmaBox,
   getKarmaBoxesPage,
   getKarmaValue,
   getKarmaTotal,
@@ -40,9 +39,13 @@ import type {
 } from '@dagsocial/types';
 import { createRouter } from '../../src/routes/utxo.js';
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
-import { unlinkSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { config } from '../../src/config.js';
-const TEST_DB = '/tmp/dagsocial-test-routes-utxo.sqlite';
+// A directory private to this run, so two runs of the suite on one machine
+// never write the same store file.
+let testDir: string;
 
 const DECAY_CFG = {
   staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
@@ -81,7 +84,6 @@ async function request(
         getBox: getBoxWithPending,
         insertBox,
         consumeBox,
-        getKarmaBox,
         getKarmaValue,
         hasActiveVouchEscrow: () => false,
         vouchCooldownBlocks: 2,
@@ -93,7 +95,6 @@ async function request(
         getTopologyAuthor: () => null,
         getPendingPostAuthor: () => null,
         getIdentityRecord,
-        getKarmaBoxes: (owner: Uint8Array) => [getKarmaBox(owner)].filter(Boolean) as KarmaBox[],
         runInTransaction: (fn: () => void) => fn(),
         getVouchBox: () => null,
         getNetworkRecord: () => ({ memberCount: 1 }),
@@ -151,8 +152,8 @@ describe('UTXO routes', () => {
   let inviteUserIdHex: string;
 
   beforeAll(() => {
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
-    initDb(TEST_DB);
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-routes-utxo-'));
+    initDb(join(testDir, 'store.sqlite'));
 
     const kp1 = generateKeyPair();
     karmaUserId = kp1.publicKey;
@@ -160,6 +161,7 @@ describe('UTXO routes', () => {
     const karmaBox = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 42n,
+      createdAtBlock: 0,
       owner: kp1.publicKey,
     }, 1);
     insertBox(karmaBox);
@@ -168,6 +170,7 @@ describe('UTXO routes', () => {
     const karmaBox2 = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 58n,
+      createdAtBlock: 0,
       owner: kp1.publicKey,
     }, 1);
     insertBox(karmaBox2);
@@ -205,6 +208,7 @@ describe('UTXO routes', () => {
       value: 3n,
       inviterId: inviteUserId,
       inviteePublicKey: new Uint8Array(32).fill(0xcc),
+      createdAtBlock: 0,
     }, 1);
     insertBox(settledBond);
     consumeBox(settledBond.id!, 10);
@@ -212,7 +216,7 @@ describe('UTXO routes', () => {
 
   afterAll(() => {
     closeDb();
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   it('GET /karma/:userId returns karma balance with effective and boxCount', async () => {
@@ -687,7 +691,6 @@ describe('UTXO routes', () => {
           getBox: () => { throw new PendingSpendConflictError(boxId); },
           insertBox: () => {},
           consumeBox: () => {},
-          getKarmaBox: () => null,
           getKarmaValue: () => 0n,
           hasActiveVouchEscrow: () => false,
           vouchCooldownBlocks: 2,
@@ -699,7 +702,6 @@ describe('UTXO routes', () => {
           getTopologyAuthor: () => null,
           getPendingPostAuthor: () => null,
           getIdentityRecord: () => null,
-          getKarmaBoxes: () => [],
           runInTransaction: (fn: () => void) => fn(),
           getVouchBox: () => null,
           getNetworkRecord: () => ({ memberCount: 1 }),
@@ -795,7 +797,6 @@ describe('utxo routes — alias resolution', () => {
           getBox: () => null,
           insertBox: () => {},
           consumeBox: () => {},
-          getKarmaBox: () => null,
           getKarmaValue: () => 0n,
           hasActiveVouchEscrow: () => false,
           vouchCooldownBlocks: 2,
@@ -807,7 +808,6 @@ describe('utxo routes — alias resolution', () => {
           getTopologyAuthor: () => null,
           getPendingPostAuthor: () => null,
           getIdentityRecord: () => null,
-          getKarmaBoxes: () => [],
           runInTransaction: (fn: () => void) => fn(),
           getVouchBox: () => null,
           getNetworkRecord: () => ({ memberCount: 1 }),

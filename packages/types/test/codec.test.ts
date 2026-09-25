@@ -34,7 +34,16 @@ import {
   writeVlqU,
   writeVlqU64OrThrow,
 } from '../src/codec.js';
-import { decodePostBody } from '../src/serialization.js';
+import {
+  decodeOrderingBlock,
+  decodePostBody,
+  decodeTx,
+  encodeOrderingBlock,
+  encodeTx,
+} from '../src/serialization.js';
+import { PROTOCOL_VERSION } from '../src/constants.js';
+import type { OrderingBlock } from '../src/block.js';
+import type { AnyBoxCandidate, UtxoTransaction } from '../src/utxo.js';
 
 const bytes = (f: (w: ByteWriter) => void): Uint8Array => {
   const w = new ByteWriter();
@@ -261,7 +270,94 @@ describe('decoded byte fields do not alias the input', () => {
     input.fill(9);
     expect([...out]).toEqual([7, 7]);
   });
+
+  // TYPES_INTERFACE → Primitives: what a decoder answers does not depend on how
+  // its caller carried the bytes.
+  it('from a Buffer input, readBytesN and readLp answer a fresh, plain Uint8Array', () => {
+    const input = Buffer.from([...new Array<number>(32).fill(1), 2, 7, 7]);
+    const r = new ByteReader(input);
+    const fixed = readBytesN(r, 32);
+    const prefixed = readLp(r);
+    input.fill(9);
+    for (const out of [fixed, prefixed]) {
+      expect(Object.getPrototypeOf(out)).toBe(Uint8Array.prototype);
+    }
+    expect(fixed.every((b) => b === 1)).toBe(true);
+    expect([...prefixed]).toEqual([7, 7]);
+  });
+
+  it('a block and a transaction decoded from a Buffer hold no Buffer and no view of it', () => {
+    const owner = new Uint8Array(32).fill(3);
+    const tx: UtxoTransaction = {
+      inputs: ['ab'.repeat(32)],
+      outputs: [
+        { boxType: 'karma', value: 5n, createdAtBlock: 1, owner },
+        { boxType: 'username', value: 0n, createdAtBlock: 1, owner, name: new TextEncoder().encode('alpha') },
+      ] as AnyBoxCandidate[],
+      signatures: { ['cd'.repeat(32)]: new Uint8Array(64).fill(4) },
+      protocolVersion: PROTOCOL_VERSION,
+      post: {
+        contentHash: new Uint8Array(32).fill(7),
+        parentRefs: [],
+        author: owner,
+        protocolVersion: PROTOCOL_VERSION,
+        type: 'regular',
+      },
+    };
+    const block: OrderingBlock = {
+      header: {
+        protocolVersion: PROTOCOL_VERSION,
+        height: 1,
+        prevBlockHash: '0'.repeat(64),
+        utxoTxRoot: '0'.repeat(64),
+        stateRoot: '00'.repeat(33),
+        validatorId: new Uint8Array(32).fill(5),
+        powNonce: 0,
+        powTargetBits: 3072,
+        createdAt: 1700000000000,
+        interlinkRoot: '00'.repeat(32),
+      },
+      utxoTxTree: { utxoTxIds: ['f'.repeat(64)], utxoTxs: [encodeTx(tx)] },
+      validatorSignature: new Uint8Array(64).fill(6),
+    };
+
+    const blockInput = Buffer.from(encodeOrderingBlock(block));
+    const txInput = Buffer.from(encodeTx(tx));
+    const decodedBlock = decodeOrderingBlock(blockInput);
+    const decodedTx = decodeTx(txInput);
+    const expectedBlock = decodeOrderingBlock(encodeOrderingBlock(block));
+    const expectedTx = decodeTx(encodeTx(tx));
+    blockInput.fill(0);
+    txInput.fill(0);
+
+    const fields = [...byteFieldsOf(decodedBlock, 'block'), ...byteFieldsOf(decodedTx, 'tx')];
+    // The validator's id and signature and the body; the two owners, the name,
+    // the signature, the post's content hash and author.
+    expect(fields.map(([path]) => path).sort()).toEqual([
+      'block.header.validatorId',
+      'block.utxoTxTree.utxoTxs.0',
+      'block.validatorSignature',
+      'tx.outputs.0.owner',
+      'tx.outputs.1.name',
+      'tx.outputs.1.owner',
+      'tx.post.author',
+      'tx.post.contentHash',
+      `tx.signatures.${'cd'.repeat(32)}`,
+    ]);
+    for (const [path, field] of fields) {
+      expect(Object.getPrototypeOf(field), path).toBe(Uint8Array.prototype);
+    }
+    expect(decodedBlock).toEqual(expectedBlock);
+    expect(decodedTx).toEqual(expectedTx);
+  });
 });
+
+/** Every byte field reachable in a decoded value, with its path. */
+function byteFieldsOf(value: unknown, path: string): Array<[string, Uint8Array]> {
+  if (value instanceof Uint8Array) return [[path, value]];
+  if (value === null || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([key, v]) => byteFieldsOf(v, `${path}.${key}`));
+}
 
 // ---------------------------------------------------------------------------
 // The boundary check's four steps

@@ -1251,32 +1251,33 @@ tree collapse into clean rejections:
 > examines nothing a peer sent — it fires when the AVL+ tree and `utxo_boxes` have drifted apart.
 > See AVL+ State Root → "the tree is asked".
 >
-> **Both arms are enforced by the store**, and the enforcement is what puts the condition outside
-> peer reach rather than an argument about the callers.
+> **Both arms are enforced before the tree is asked**, and the enforcement is what puts the condition
+> outside peer reach rather than an argument about the callers: the overlay refuses each first, before
+> the feed is derived (`CONSENSUS_INTERFACE → The overlay`), and the store refuses each again when the
+> effects are written.
 >
-> The **`Insert`** arm: a duplicate box id dies on `utxo_boxes.id`'s primary key inside the applying
-> transaction, before the prover feed is built from the journal.
+> The **`Insert`** arm: a box id the state holds or held throws `BoxIdTakenError` in the overlay, and
+> dies on `utxo_boxes.id`'s primary key inside the applying transaction.
 >
-> The **`Remove`** arm: `consumeBox`'s `UPDATE` carries `AND spent_at_block IS NULL` and refuses a
-> zero row count, so a remove entry follows a spend that really happened. `recordBoxRemove` runs
-> downstream of that check and has exactly one caller, which is what makes the primitive the sole
-> gate rather than one of several. A consume naming an absent or already-spent id throws
-> `BoxNotLiveError` inside the applying transaction, and the funnel's totality catch converts it to a
-> block rejection — the same shape the `Insert` arm's constraint failure takes.
+> The **`Remove`** arm: a spend of a box that is not live throws `SpendOfNonLiveBoxError` in the
+> overlay, so a remove in the effects follows a spend that really happened; `consumeBox`'s `UPDATE`
+> carries `AND spent_at_block IS NULL` and refuses a zero row count with `BoxNotLiveError`. Either
+> throw lands in the funnel's totality catch as a block rejection — the same shape the `Insert`
+> arm's takes.
 >
-> ⛔ **A second remove of one id therefore cannot be journalled at all**, which is the property this
-> arm rests on. Two mechanisms stop it reaching the store: within one transaction, `validateTx`
-> step 1 rejects duplicate inputs; across two, the apply loop's liveness pre-check runs against state
-> the loop is itself evolving, so the second transaction defers forever. **The primitive is the
-> backstop under both**, and it has to be — `proverFeedFromJournal` cancels insert-then-remove pairs
-> but does not dedupe repeated removes, so a second remove reaching the feed would reach the tree.
-> A repeated consume costs the block, never the node.
+> ⛔ **A second remove of one id therefore cannot reach the effects at all**, which is the property
+> this arm rests on. Two mechanisms stop it first: within one transaction, `validateTx` step 1 rejects
+> duplicate inputs; across two, the apply loop's liveness pre-check runs against state the loop is
+> itself evolving, so the second transaction defers forever. **The backstops are under both**, and
+> they have to be — the feed derivation cancels insert-then-remove pairs but does not dedupe repeated
+> removes, so a second remove reaching the feed would reach the tree. A repeated consume costs the
+> block, never the node.
 >
 > ✅ **The fee-box consume names ids from the block's own outputs**, inserted earlier in the same
-> transaction, so it spends a live row like every other site. Its insert+remove pair nets out in
-> `proverFeedFromJournal` and neither op reaches the tree: `fee-box-prover-feed.test.ts` proves both
-> halves were journalled *and* that neither reaches either feed, the speculative or the applied.
-> Change the netting and it goes red.
+> transaction, so it spends a live box like every other site. Its insert+remove pair nets out in the
+> feed derivation and neither op reaches the tree: `fee-box-prover-feed.test.ts` proves both halves
+> were journalled *and* that neither reaches either feed, the speculative or the applied. Change the
+> netting and it goes red.
 >
 > ⚠ **The store is now a raising site, and that is the point.** An earlier draft of this section
 > implied the boundary lives only at apply's callers. **It cannot.** By the time a `ReaderError`
@@ -1674,6 +1675,13 @@ There is **no other legal bond or invite shape**. In particular:
   receives karma and when it falls to zero — it is not a decay or settlement
   concern, so it is not on any hot path.
 
+  **The set moves after a commit, never inside a transaction.** Once a block's
+  transaction commits, the node moves it for every owner whose karma boxes the
+  block's effects inserted or spent — present iff the owner holds an unspent karma
+  box — and once a reorg commits, it re-seeds the set from the store
+  (`getKarmaOwners`). A block the funnel refuses, a speculative run and a reorg
+  that rolls back move nothing.
+
   > ✅ **RESOLVED 2026-08-22 — closed by PR #119 (`9945682`).** `index.ts` seeds
   > the set at startup with `getKarmaOwners()` (every identity holding an unspent karma box) and
   > registers a store hook (`registerKarmaMembershipHook`) that `insertBox` / `consumeBox` /
@@ -1686,13 +1694,14 @@ There is **no other legal bond or invite shape**. In particular:
   > rejected at the topic validator — posts reached other nodes only inside blocks. Found by the e2e
   > packet chapter, the first test that needed a relayed post's body.
 
-  **Measured 2026-08-15:** Ed25519 verify **73.2 µs**, one `blake2b512`
-  **2.08 µs**, `Set.has()` **0.023 µs**. The relay path goes 75.3 → 73.8 µs,
-  **2 % cheaper** than with PoW, because the signature outweighs the PoW check
-  35×. **The cost objection to replacing PoW is answered by measurement.**
-  ⚠ Single core, no batching; the *ordering* of those costs is the durable
-  result, and the binding constraint on a real node is signature verification —
-  above ≈50 Mbit/s CPU binds before bandwidth does.
+  **Measured:** Ed25519 verify through `verifyEd25519` **1.1–1.7 ms** (noble,
+  strict; 2026-09-25 — OpenSSL verifies the same signature in ≈0.07 ms), one
+  `blake2b512` **2.08 µs**, `Set.has()` **0.023 µs** (2026-08-15). The signature
+  outweighs the PoW check it replaced some 500×, so **the cost objection to
+  replacing PoW is answered by measurement.** ⚠ Single core, no batching; the
+  *ordering* of those costs is the durable result, and the binding constraint on
+  a real node is signature verification — at ≈460-byte transactions, above
+  ≈2–3 Mbit/s CPU binds before bandwidth does (`CONSENSUS_INTERFACE → Cost`).
 - **Stateful admission is strictly stronger than PoW was.** PoW proved someone
   burned a millisecond; a post transaction proves its author holds the karma and
   really locked it. That is why the two removals are one unit and not two.
@@ -2858,17 +2867,15 @@ know that digest **before** mining — it cannot be filled in afterwards.
 apply path runs**, never by a second implementation of the state transition:
 
 1. Snapshot the prover digest.
-2. In a SQLite transaction that is always rolled back, run the block's
-   **mutation phase** (see "Apply funnel: validation and mutation phases")
-   at the block's height, then derive the prover feed from the resulting
-   journal and compute the digest exactly as apply does.
-3. Roll the transaction back and restore the prover to the snapshot
-   (`prover.rollback`) — SQLite rollback does not reach the prover's
-   in-memory state.
+2. Run `applyBlock` over the store's `StateView` with the candidate block —
+   the mutation phase (see "Apply funnel: validation and mutation phases") at
+   the candidate's height. It reads the store and writes nothing.
+3. Derive the prover feed from its effects and compute the digest exactly as
+   apply does, then restore the prover to the snapshot (`prover.rollback`).
 4. Use the computed digest as `header.stateRoot`, then mine.
 
-The speculative run performs no block storage, no `clearTemplate`, no journal
-persistence, and no prover checkpoint.
+The speculative run writes nothing to the store — no block, no effect, no
+journal — and performs no `clearTemplate` and no prover checkpoint.
 
 **The speculation has three outcomes, not two** (the code
 returns them as a discriminated union so no caller can conflate them):
@@ -3135,7 +3142,8 @@ walks a subtree over topology (the thread's subtree is `dag_parent_refs`', Store
 |----------|-----------|
 | `getBox(boxId)` | `(string) => AnyBox \| null` |
 | `getUnspentBoxes()` | `() => AnyBox[]` — all unspent boxes (for AVL bootstrapping), `ORDER BY created_at_block` with ties in no stated order; `bootstrapAvlProver` sorts them canonically, so no reader depends on the tie order |
-| `getKarmaBox(owner)` | `(Uint8Array) => KarmaBox \| null` — single box (backward compat) |
+| `getKarmaBox(owner)` | `(Uint8Array) => KarmaBox \| null` — one live karma box of the owner, `LIMIT 1` with no `ORDER BY`: an existence read — genesis seeding's, and the funnel's move of net's relay gate after a commit (→ Post transactions) — and never a rule's (`CONSENSUS_INTERFACE → StateView` holds no single-box karma read) |
+| `getKarmaOwners()` | `() => string[]` — every identity holding a live karma box, as hex, in no stated order: what net's relay-gate set is seeded from at startup and re-seeded from once a reorg commits (→ Post transactions); a set, so no order reaches anything |
 | `getKarmaBoxes(owner)` | `(Uint8Array) => KarmaBox[]` — multi-box listing: full boxes, keyed on `id` |
 | `getBackerStakeBox(owner)` | `(UserId) => BackerStakeBox \| null` — the identity's live stake, at most one (→ Backer transition rules) |
 | `getBackerPoolBox()` | `() => BackerPoolBox \| null` — the one live pool box, `ORDER BY id LIMIT 1` like the emission, treasury and karma-pool reads; null on a network whose table is empty. **Consensus input**: the settlement's backer leg, read from pre-body state on both sides (§The settlement transaction), never at the check |
@@ -3150,8 +3158,10 @@ walks a subtree over topology (the thread's subtree is `dag_parent_refs`', Store
 | `getBondBoxesPage(inviterId, page)` | `(UserId, Page<string>) => { rows: BondBox[], next: string \| null, count: number }` — the inviter's **unspent** bonds (`spent_at_block IS NULL`), ascending `id` strictly after `after` (`id > ?`); `count` over the whole set |
 | `getVouchesForTargetPage(targetId, page)` | `(UserId, Page<string>) => { rows: VouchBox[], next: string \| null, count: number }` — the identity's unspent vouch boxes (`store/vouch-queries.ts`), ascending `id` strictly after `after`, the rows selected in the page statement; `count` over the whole set, read through `getVouchCountForTarget` |
 | `getVouchCountForTarget(targetId)` | `(UserId) => number` — the unspent vouch boxes whose target is the identity, `COUNT(*)` over `VOUCH_TARGET_WHERE` on `idx_utxo_boxes_vouch_target`; feeds the page's `count` |
-| `insertBox(box)` | `(AnyBox) => void` — writes the provenance columns; records `{kind:'box', op:'insert', boxId, box}` while a block journal is open |
-| `consumeBox(boxId, consumedAtBlock)` | `(string, number) => void` — mark a **live** box spent; records `{kind:'box', op:'remove', boxId}` while a block journal is open. ⛔ **Throws `BoxNotLiveError` when no live row matched.** The `UPDATE` carries `AND spent_at_block IS NULL` and checks the row count, so the journal entry follows a real spend instead of a caller's assumption. ⚠ **Not a `CorruptChainStateError`** — a caller naming a box the store does not hold live is a rejection, not a reason to stop the node |
+| `getVouchBoxes(voucherId, targetId)` | `(UserId, UserId) => VouchBox[]` — every live vouch box for the pair, ascending `id`; `getVouchBox` answers the first — the `StateView` read, used for existence (`CONSENSUS_INTERFACE → StateView`) |
+| `getLikeAccrualBoxes(author)` | `(UserId) => LikeAccrualBox[]` — every live `like_accrual` box naming the author, ascending `id`: the carry box and the block's markers alike, told apart by the settlement's carry lookup, which composes over this read (`CONSENSUS_INTERFACE → StateView`) |
+| `insertBox(box)` | `(AnyBox) => void` — writes the provenance columns, and nothing else — the journal and net's karma membership follow the block's effects (→ Block Journal, → Post transactions) |
+| `consumeBox(boxId, consumedAtBlock)` | `(string, number) => void` — mark a **live** box spent. ⛔ **Throws `BoxNotLiveError` when no live row matched.** The `UPDATE` carries `AND spent_at_block IS NULL` and checks the row count, so a spend of a box the store does not hold live fails loudly instead of updating nothing. ⚠ **Not a `CorruptChainStateError`** — a caller naming a box the store does not hold live is a rejection, not a reason to stop the node. It does nothing else |
 | `unconsumeBox(boxId)` | `(string) => void` — un-mark spent (fork-rollback inverse; never records) |
 | `deleteBox(boxId)` | `(string) => void` — (fork-rollback inverse; never records) |
 
@@ -3316,7 +3326,7 @@ encodable-versus-storable gap on `lifetimeLikesReceived` are stated with the lay
 | Function | Signature |
 |----------|-----------|
 | `getIdentityRecord(identityId)` | `(UserId) => IdentityRecord \| null` |
-| `putIdentityRecord(identityId, record)` | `(UserId, IdentityRecord) => void` — upsert; while a block journal is open, captures the row it replaces and records `{kind:'record', key, record, replaced?}` |
+| `putIdentityRecord(identityId, record)` | `(UserId, IdentityRecord) => void` — upsert. The journal entry and the row it replaces are the effects' writer's (→ Block Journal) |
 | `deleteIdentityRecord(identityId)` | `(UserId) => void` — fork-rollback inverse only; never records |
 
 **Lifecycle:** created on first karma receipt, on the first like received (the
@@ -3372,21 +3382,19 @@ box keyspace, which is a distinct concern from how the bytes are typed.
   whose liker was a member at apply; only ever adds.
 - **`invitesUsed`** — `+1` at the invite-create arm's apply; only ever adds.
 
-**Two heights meet at `insertBox`, and they answer different questions.**
+**Two heights, and they answer different questions.**
 
 ⛔ **The `created_at_block` COLUMN takes the box's own `createdAtBlock`** — the height its creator
 declared and signed, which `canonicalBoxBytes` encodes and the box id covers. The column is a
 denormalisation of a committed field, not an independent observation.
 
-⛔ **The ACTIVITY CLOCK takes the open journal's height** — `beginBlockJournal(height)`, the height
-this block is settling at. It must not read any box's `createdAtBlock`: the clock records *when the chain saw activity*,
+⛔ **The ACTIVITY CLOCK takes the applying block's height** — `applyBlock`'s, the height this block
+is settling at. It must not read any box's `createdAtBlock`: the clock records *when the chain saw activity*,
 and a creator-declared value is not that. **A backdated box would otherwise backdate its owner's
 decay clock**, which is the one place the loose creator-declared bound would become exploitable.
 
-The record is only meaningful during block application, which is exactly when a journal is open.
-
-With no journal open (bootstrap, non-block paths) `insertBox` records nothing,
-consistent with every other choke-point hook.
+The clock moves only inside `applyBlock` — block application is the one writer that knows the height
+a block settles at.
 
 **A missing record means maximally stale, never "skip this owner".** The
 fallback is `{lastActivityBlock: 0, lastDecayBlock: 0}`. Both total options are
@@ -3400,7 +3408,7 @@ With genesis writing its own record (below), this path should be unreachable —
 but "should be unreachable" is exactly the condition under which a silent
 exemption would never be noticed.
 
-**Genesis is the one box created with no journal open.** `ensureSystemKarmaBox`
+**Genesis is the one box created outside block application.** `ensureSystemKarmaBox`
 runs at startup and outside block application, so nothing writes the system
 identity's record. It
 must be given one explicitly at `genesisHeight`, **not** left to a
@@ -3483,7 +3491,7 @@ NULL)` — one row, present from seeding on.
 | Function | Signature |
 |----------|-----------|
 | `getNetworkRecord()` | `() => NetworkRecord` — the one row; throws where none exists, which is a store that was never seeded |
-| `putNetworkRecord(record)` | `(NetworkRecord) => void` — while a block journal is open, captures the row it replaces and records `{kind:'network', memberCount, replaced}` |
+| `putNetworkRecord(record)` | `(NetworkRecord) => void` — upsert. The journal entry and the row it replaces are the effects' writer's (→ Block Journal) |
 
 *Alternative considered:* a `memberCount` field on the karma pool box. Rejected — the pool box
 is "no owner, no trailing fields" by contract and a population count is not a value.
@@ -3516,10 +3524,11 @@ endpoint serves them as `kind: 'username'` and `kind: 'holder'`.
 meaning is never written** — a burn removes the record rather than writing the absent state, so absence
 has one encoding.
 
-**Written** by block application alone — the claim and the burn arms — through `putUsername` and
-`deleteUsername`, each of which records **two** mutations, one per record (→ Block Journal), on
-`putIdentityRecord`'s pattern: the value each replaces is captured, rollback exact. Nothing seeds them;
-the genesis state holds none, and every existing `stateRoot` is what it was.
+**Written** by block application alone — the claim and the burn arms. **`applyBlock` emits both
+mutations** (`CONSENSUS_INTERFACE → BlockEffects`): a claim writes the name record and the holder record
+`{ claimAvailable: false, boxId }` for its owner, a burn removes both; the node writes them through
+`putUsername` and `deleteUsername` and journals each with the value it replaces, rollback exact (→ Block
+Journal). Nothing seeds them; the genesis state holds none, and every existing `stateRoot` is what it was.
 
 **Table:** `usernames (name_lower TEXT PRIMARY KEY, name TEXT NOT NULL, owner TEXT NOT NULL UNIQUE,
 box_id TEXT NOT NULL, claimed_at_block INTEGER NOT NULL)`, created `IF NOT EXISTS` as every table is, so
@@ -3532,8 +3541,8 @@ now.
 |----------|-----------|
 | `getUsername(nameLower)` | `(string) => UsernameRow \| null` — the row for a canonical name |
 | `getUsernameByOwner(owner)` | `(UserId) => UsernameRow \| null` — the identity's name, at most one |
-| `putUsername(row)` | `(UsernameRow) => void` — the claim's write; while a block journal is open, records `{kind:'username', …}` and `{kind:'holder', …}` |
-| `deleteUsername(nameLower)` | `(string) => void` — the burn's write; records both removals with the rows they replace |
+| `putUsername(row)` | `(UsernameRow) => void` — the claim's write |
+| `deleteUsername(nameLower)` | `(string) => void` — the burn's write |
 | `countUsernames()` | `() => number` — `/status`'s `usernameCount` |
 
 `UsernameRow { nameLower, name, owner, boxId, claimedAtBlock }` — `name` as typed, `nameLower` its
@@ -3545,8 +3554,8 @@ canonical form.
 `VouchEscrowBox` — an ordinary box in the UTXO set and therefore in the
 `stateRoot` — created as the unvouch transaction's output and consumed by the
 settlement of the first block at or past `releaseAtBlock` (§The settlement
-transaction). The escrow's create and spend are journalled by `insertBox` /
-`consumeBox` like any other box; no bespoke side-records exist.
+transaction). The escrow's create and spend are box mutations in the block's
+effects like any other box's (→ Block Journal); no bespoke side-records exist.
 
 | Function | Signature |
 |----------|-----------|
@@ -3692,8 +3701,9 @@ and fail-stops (`failStopIfCorruptChain`), never a refusal the requester is blam
 
 ### Block Journal
 
-The journal is the single source of truth for undoing a block and for feeding
-the AVL prover (ARCHITECTURE → "Block application journal"). One CBOR-encoded
+The journal is the single source of truth for undoing a block; it and the AVL
+feed are both derived from the block's effects (ARCHITECTURE → "Block application journal";
+`CONSENSUS_INTERFACE → BlockEffects`). One CBOR-encoded
 row per applied block, purged below `height − maxReorgDepth` (the profile's reorg horizon —
 TYPES_INTERFACE → Chain reorganisation).
 
@@ -3775,34 +3785,34 @@ separate arrays because they are **not** in the `stateRoot` — they are node-lo
 bookkeeping with an exact inverse. `kind: 'record'` is the first entry that is
 both journaled *and* committed, and that is the whole distinction.
 
-**Recording (choke point).** `beginBlockJournal(height)` opens the journal at
-the top of block application. While open, the store mutation primitives record
-automatically: `insertBox` appends `{kind:'box', op:'insert', boxId, box}`;
-`consumeBox` appends `{kind:'box', op:'remove', boxId}`; `putIdentityRecord`
-appends `{kind:'record', …}`, capturing the row it replaces; `putNetworkRecord` appends
-`{kind:'network', …}` the same way;
-`insertLikeRecord` and
-`deleteLikeRecordsForPosts` append their side-records, capturing the affected row(s)
-before writing. Services and call sites MUST NOT maintain parallel mutation
-bookkeeping — record-once at the choke point is the drift fix (C-5, H-5, H-7,
-and the merge-consume value-loss class). With no journal open, every
-primitive behaves as before and records nothing (bootstrap and non-block
-paths). The rollback inverses — `deleteBox`, `unconsumeBox`,
-`deleteIdentityRecord`, `deleteLikeRecord`, `restoreLikeRecord` — never record.
-`beginBlockJournal` while a journal is open throws (the apply funnel's totality
-catch turns that into a block rejection).
+**Built from the block's effects.** The journal is a function of `applyBlock`'s
+effects (`CONSENSUS_INTERFACE → BlockEffects`) and of the store the effects are
+written into. The node writes the effects in their order and builds the journal
+as it writes: each mutation becomes its entry, and a record, network, name or
+holder write captures the row it replaces from the store just before it writes —
+so a key written twice in one block journals twice, the first entry's
+`replaced` the pre-block value, which is what reverse replay restores. A name
+mutation and the holder mutation after it are the one `usernames` row they
+describe (→ Username records): both replaced rows are read before the one write
+that moves them, and each journals as its own entry.
+`confirmedPostIds` is the ids of the effects' `posts`; `appliedUtxoTxs` is their
+`appliedTxs`; `likeRecordInsertions` is their `likeRecords`; `withdrawnPosts`
+pairs each withdrawn id with the content the store holds for it before the
+withdrawal's write. **No store primitive records**, and services and call sites
+MUST NOT maintain parallel mutation bookkeeping — one list, written and
+journalled from the same pass, is the drift fix (C-5, H-5, H-7, and the
+merge-consume value-loss class). The rollback inverses — `deleteBox`,
+`unconsumeBox`, `deleteIdentityRecord`, `deleteLikeRecord` — are plain writes
+like every other.
 
 | Function | Signature |
 |----------|-----------|
-| `beginBlockJournal(height)` | `(number) => void` — throws if a journal is already open |
-| `finishBlockJournal()` | `() => BlockJournal` — returns and closes the open journal; throws if none is open |
-| `abortBlockJournal()` | `() => void` — discards the open journal (no-op when none) |
 | `insertBlockJournal(journal)` | `(BlockJournal) => void` |
 | `getBlockJournal(height)` | `(number) => BlockJournal \| null` |
 | `deleteBlockJournal(height)` | `(number) => void` |
 | `purgeOldJournals(belowHeight)` | `(number) => void` |
 
-**Rollback (`revertBlock`).** Refuses to run while a block journal is open. A
+**Rollback (`revertBlock`).** A
 journal absent for a height inside retention is `MissingJournalError` —
 fail-stop, never a refused reorg ("What the funnel's totality catch is FOR").
 Replays `mutations` in reverse order — `box`/`insert` → `deleteBox(boxId)`,
@@ -3947,12 +3957,14 @@ the network record and the username records (see "Entity kinds" below).
   same `getUnspentBoxes()` read, and `assertGenesisRoot` refuses the pinned root inside the seeding
   transaction. Such a fixture mines **coinbase-only** blocks, which still move state off genesis by
   releasing the emission box.
-- **Journal-fed:** the per-block mutation set is derived from
-  `BlockJournal.mutations` — intra-block insert+remove pairs for the same
-  boxId net out; inserted box bytes come from the journal's `box` payload,
-  never a store re-fetch (`getBox` returns null for created-then-consumed
-  boxes and silently dropped them). The derivation switches on `kind` and
-  **must be exhaustive** — see "One log, not parallel arrays" above
+- **Effects-fed:** the per-block mutation set is derived from the block's
+  effects' `mutations` (`CONSENSUS_INTERFACE → BlockEffects`) — intra-block
+  insert+remove pairs for the same boxId net out, and so does a name or holder
+  key the block both creates and removes (→ "Where record collapsing happens");
+  inserted box bytes come from the effect's box, never a store re-fetch
+  (`getBox` returns null for a created-then-consumed box). One derivation serves
+  the apply path and the speculative run. It switches on `kind` and **must be
+  exhaustive** — see "One log, not parallel arrays" above
 - **Canonically ordered (M-12):** `applyBlockMutations` sorts internally —
   all removes, then all inserts, then all record puts, each lexicographically
   by hex key, then the network record's put — so every caller inherits the canonical order; callers MUST NOT
@@ -4219,21 +4231,29 @@ wins, identical final tree); the journal keeps both entries because rollback
 needs the first one's `replaced`. Netting is per-kind: boxes cancel
 insert+remove pairs, records keep the last write — do not share one code path.
 
+**A removable record the block creates and removes nets out, as a box does.** The name and
+holder records are the two a block can remove (→ Username records), so their last write in a
+block may be a removal — and **a removal reaches the prover only for a key the state held
+before the block.** A key the block both created and removed has no net effect: the feed
+carries neither a put nor a remove for it, so the tree is never asked to `Remove` a key it does
+not hold (which `applyBlockMutations` refuses as `DivergedStateTreeError`). Whether the state
+held a key before the block is said by the key's first mutation in the block
+(`CONSENSUS_INTERFACE → BlockEffects`). A block claiming a name and burning it is valid under
+every rule, so this is what lets every node apply it.
+
 **Where record collapsing happens, and why it is not arbitrary.** The collapse
-belongs to **`proverFeedFromJournal`**, not to `applyBlockMutations`. Box
+belongs to **the feed derivation**, not to `applyBlockMutations`. Box
 mutations commute: cancel the insert+remove pairs in any order and the surviving
 set is the same, which is why `applyBlockMutations` can own box canonicalisation
 by sorting. **Record puts do not commute** — two writes to one key differ in
-*which came last*, and that is carried by journal application order alone. Once
+*which came last*, and that is carried by the effects' application order alone. Once
 `applyBlockMutations` sorts by hex key, that information is gone; a sort cannot
 recover it, and any behaviour that appeared to work would be relying on sort
-stability. So the collapse must happen while journal order is still
+stability. So the collapse must happen while that order is still
 authoritative, and `applyBlockMutations` receives **at most one entry per record
 key**. The natural reading — "`applyBlockMutations` owns canonical ordering,
 therefore it owns this too" — is wrong, and wrong in a way that produces a
-silently order-dependent digest. *(Gap found by the phase B session; pinned
-here because the contract previously stated both rules without saying which
-function owns the collapse.)*
+silently order-dependent digest.
 
 `applyBlockMutations`' `recordPuts` parameter is **optional and defaults to
 empty**, so the many existing four-argument call sites keep working. That
@@ -4298,8 +4318,8 @@ the handler.
 | `credits.ts` | Credit transfer validation and execution | UTXO engine internals |
 | `invites.ts` | Invite lifecycle (create, commit, claim, cancel) | Bond box internals |
 | `block-creator.ts` | Block creation, mining, template assembly | Post validation |
-| `block-apply.ts` | Block application — the header checks, the phase order over the package's rules, the store's writes | Block creation, the rules themselves |
-| `@dagsocial/consensus` | The rules' implementation — the transaction engine, the settlement, decay, the coinbase split, the block's post readers (`CONSENSUS_INTERFACE → What it holds`) | Persistence, I/O, the header checks |
+| `block-apply.ts` | Block application — the header checks, the store's `StateView`, `applyBlock` over it, the effects written and journalled | Block creation, the rules and their order |
+| `@dagsocial/consensus` | The rules' implementation — `applyBlock` (the mutation phase, whole), the transaction engine, the settlement and its build, decay, the coinbase split and the reward, the block's post readers (`CONSENSUS_INTERFACE → What it holds`) | Persistence, I/O, the header checks |
 | `fork-resolution.ts` | Chain fork detection and reorg | Block creation |
 | `genesis-state.ts` | Cold-start seeding of the height-0 state, and the root check over it | Which boxes exist (`store/system.ts`) |
 
@@ -5017,27 +5037,32 @@ from its own creating transaction is unbuildable (→ `TYPES_INTERFACE` → Post
 obligation is unchanged and is not weakened by losing its illustration**; `post.parentRefs`
 reaches the same writer by the same route and is the live instance.
 
-**Apply funnel: validation and mutation phases.** `applyBlockBody` is split so
-the state transition can be run without the header being final — that is what
-lets the block creator compute a post-block `stateRoot` through this same code
-instead of a parallel implementation (H-6). The split is structural, not a
-mode flag: there is no "skip the checks" parameter on the apply path.
+**Apply funnel: validation and mutation phases.** Block application is three
+phases, and the middle one is `@dagsocial/consensus`'s `applyBlock`
+(`CONSENSUS_INTERFACE → Applying a block`) — the state transition as one
+function, run without the header being final. That is what lets the block
+creator compute a post-block `stateRoot` through this same code instead of a
+parallel implementation (H-6). The split is structural, not a mode flag: there
+is no "skip the checks" parameter on the apply path.
 
 | Phase | Contents | Runs in speculative computation? |
 |-------|----------|----------------------------------|
-| **Validation** | chain-link, protocol version, PoW target + PoW, interlink root, validator signature, Merkle roots, coinbase value + maturity, block storage, `clearTemplate` | No — the header does not exist yet |
-| **Mutation** | coinbase mint, post confirmation, DAG scores, topology, embedded UTXO txs, per-block like settlement, decay, vouch cooldowns | Yes — verbatim, at an explicitly passed height |
-| **Commit** | AVL feed + `stateRoot` verification + checkpoint, journal persistence | No — the speculative run reads the digest and rolls back |
+| **Validation** | chain-link, interlink root, genesis pin, header timestamps, protocol version, PoW target + PoW, validator signature, Merkle root, block storage, `clearTemplate` | No — the header does not exist yet |
+| **Mutation** | `applyBlock` over a `StateView` of the store: post confirmation, topology, the embedded transactions, the withdrawals, the settlement, the grants, the like counters, the membership pass, the decay clocks — answering the block's effects or a reason | Yes — the same call, over the same view, at the candidate's height |
+| **Commit** | the AVL feed from the effects + `stateRoot` verification, then the effects written to the store, the journal built from them and persisted, the prover checkpointed | No — the speculative run derives the feed, reads the digest and restores the prover; it writes nothing to the store |
 
-The mutation phase takes its height as an argument rather than reading
-`header.height`, and rejects a block for body-level reasons (embedded-tx
-re-validation, the withdrawal phase's binds) on both paths identically. Any check
-that depends on the finalized header belongs in the validation phase.
+**No effect is written before the block's verdict is known.** The mutation phase
+reads the store and writes nothing, the `stateRoot` is compared before any
+effect is persisted, and the writes that follow are the effects in their order
+(→ Block Journal). A body-level rejection (embedded-tx
+re-validation, the withdrawal phase's binds, the settlement) answers the same
+reason on both paths. Any check that depends on the finalized header belongs in
+the validation phase.
 
 **The funnel is total.** `applyOrderingBlock` MUST NOT propagate an exception
 for any input. A block that causes an unexpected throw is a block the node
-rejects: the surrounding transaction rolls back, the open block journal is
-discarded, the AVL prover is restored to its pre-block digest (the funnel
+rejects: the surrounding transaction rolls back, the AVL prover is restored
+to its pre-block digest (the funnel
 snapshots the digest before the body runs — SQLite rollback does not reach
 the prover's in-memory state), and the function returns `false`, exactly as
 for an explicit rejection, with the error logged server-side. This is the
@@ -5208,9 +5233,10 @@ no per-post serve path. `onPeerActive` is wired to peer-readiness
 - Mutating routes return `{ status: "pending", txId, expiresAtHeight }` —
   state is not applied until the enclosing ordering block is finalized.
 - Every mutation of a **committed entity** during block application — boxes and
-  identity records alike — is recorded exactly once, at the store choke point,
-  in the block journal; rollback replays inverses in reverse order; the AVL
-  feed derives from the same journal (record-once, Spec B P1; Spec G phase B).
+  records alike — is listed exactly once, in `applyBlock`'s effects, in
+  application order; the store's writes and the block journal are built from
+  that one list; rollback replays inverses in reverse order; the AVL feed derives
+  from the same list (record-once, Spec B P1; Spec G phase B).
 - **Consensus code never reads the `created_at_block` column.** It is not in
   the `stateRoot`, so a node bootstrapping from an AVL snapshot cannot
   reconstruct it. Unenforceable by test — contract and review only.

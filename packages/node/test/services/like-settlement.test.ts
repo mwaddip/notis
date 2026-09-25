@@ -73,10 +73,9 @@ async function importUtxo() {
     getBox: (boxId: string) => { id?: string; value: bigint } | null;
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
     getKarmaValue: (owner: Uint8Array) => bigint;
-    getLikeCarryBox: (
+    getLikeAccrualBoxes: (
       author: Uint8Array,
-      exclude: Set<string>,
-    ) => { value: bigint; author: Uint8Array; id?: string } | null;
+    ) => Array<{ value: bigint; author: Uint8Array; id?: string }>;
     getUnspentBoxes: () => import('@dagsocial/types').AnyBox[];
   };
 }
@@ -225,11 +224,12 @@ const POST_CHANGE = 1n;
  *
  * ⚠ **Read AFTER the block applies**, when this block's markers are spent — a
  * marker and a carry box share a type and are told apart only by lifetime, so
- * the exclusion set may be empty only once the markers are gone.
+ * the author's first live accrual box is the carry only once the markers are
+ * gone.
  */
 async function carryOf(author: Uint8Array): Promise<bigint> {
   const utxo = await importUtxo();
-  return utxo.getLikeCarryBox(author, new Set<string>())?.value ?? 0n;
+  return utxo.getLikeAccrualBoxes(author)[0]?.value ?? 0n;
 }
 
 describe('per-block like settlement (P2-D N2b)', () => {

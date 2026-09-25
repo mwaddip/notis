@@ -17,9 +17,9 @@ import {
  *
  * ⛔ **This is the one claim the whole fee-box design rests on, and a root
  * comparison cannot check it.** A fee box is created by a credit-side
- * transaction and consumed by the same block's application, so
- * `proverFeedFromJournal` cancels the insert/remove pair and neither operation
- * is presented to the AVL tree. Feeding the pair through instead would leave
+ * transaction and consumed by the same block's application, so the prover
+ * feed derived from the block's effects cancels the insert/remove pair and
+ * neither operation is presented to the AVL tree. Feeding the pair through instead would leave
  * the *same* digest — an insert followed by a remove of one key returns the
  * tree to where it started — so the two hypotheses are indistinguishable
  * everywhere downstream. The feed is the only place they differ.

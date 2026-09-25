@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { computeBoxId } from '@dagsocial/types';
-import type { DecayCfg, KarmaBox } from '@dagsocial/types';
+import type { DecayCfg, IdentityRecord, KarmaBox } from '@dagsocial/types';
 import {
   labelNonce,
   seedProvenance,
@@ -15,18 +15,19 @@ import {
  * a change in any of the three is a fork, never an improvement.
  *
  * This module is that check. It drives a timeline of blocks against the
- * **production** code path — the real store (`insertBox`, `consumeBox`,
- * `getKarmaBoxes`, `recordKarmaActivity`), the real block journal,
- * `transferKarma`, and the real `deriveKarmaDecay` — and captures burn amounts,
- * balances and heights. The captures are frozen as fixtures, and any edit to the
- * decay path has to reproduce them exactly.
+ * **production** decay path — the real store (`insertBox`, `consumeBox`,
+ * `getKarmaBoxes`, the identity record), the real `deriveKarmaDecay` and
+ * `commitDecayClocks` — and captures burn amounts, balances and heights. The
+ * captures are frozen as fixtures, and any edit to the decay path has to
+ * reproduce them exactly.
  *
- * **Why the real store and not an in-memory fake.** The behaviour lives in two
- * places at once: `recordKarmaActivity` records `lastActivityBlock` from the
- * open journal's height, and `decay.ts` reads the record back. A fake store is
- * a reimplementation of the first half, which would leave this harness verifying
- * a mirror rather than the shipped code. Driving SQLite means the height the
- * record gets is the height the journal actually carried.
+ * **Why the real store and not an in-memory fake.** Decay reads the clock back
+ * from the identity record and the karma boxes from the store's ordered read,
+ * so the harness drives SQLite. The activity clock itself is block
+ * application's (NODE_INTERFACE → Populating the record): its steps write the
+ * record the way block application's activity bump does — `lastActivityBlock`
+ * the block's height, every other field carried — and the bump is pinned where
+ * it runs, by the block-application suites.
  *
  * The harness is deliberately blind to *how* the clock is stored: a scenario
  * says "credit this owner at height H" and "run decay at height H", and the
@@ -46,10 +47,8 @@ import {
 /**
  * One thing that happens inside a block, in the order listed.
  *
- * `mint` is the production activity producer: `transferKarma` consumes the
- * owner's existing karma boxes and emits one consolidated replacement, and
- * `recordKarmaActivity` advances the clock. An owner normally holds exactly
- * one box. That is the shape the ledger is usually in.
+ * `mint` inserts a karma box for the owner and advances the owner's clock — the
+ * karma output of an activity.
  *
  * `seed` inserts a karma box **without** consolidating and **without**
  * advancing the clock — the shape reached when settlement karma outputs land
@@ -57,9 +56,8 @@ import {
  * the oldest and the newest here, and the committed record does not, which is
  * why multi-box owners get their own fixture group.
  *
- * `activity` advances the clock without changing boxes — an owner's karma
- * spend whose change is recorded by `recordKarmaActivity` alone, paired with
- * a `seed` that supplies the box at the same height.
+ * `activity` advances the clock without changing boxes, paired with a `seed`
+ * that supplies the box at the same height.
  */
 export type Step =
   | { at: number; op: 'mint'; owner: string; amount: bigint }
@@ -115,20 +113,18 @@ export function ownerBytes(label: string): Uint8Array {
 /**
  * Load the store/service graph fresh.
  *
- * The store's DB handle and the open-journal slot are module-level singletons,
- * so every scenario resets the registry and re-imports. All modules are pulled
- * after the same reset, which is what keeps them pointing at one DB and one
- * journal.
+ * The store's DB handle is a module-level singleton, so every scenario resets
+ * the registry and re-imports. All modules are pulled after the same reset,
+ * which is what keeps them pointing at one DB.
  */
 async function loadModules() {
   vi.resetModules();
   const db = await import('../../src/store/db.js');
   const utxo = await import('../../src/store/utxo.js');
-  const journal = await import('../../src/store/journal.js');
   const records = await import('../../src/store/identity-records.js');
   const decay = await import('@dagsocial/consensus');
   const provenance = await import('../../src/mint-provenance.js');
-  return { db, utxo, journal, records, decay, provenance };
+  return { db, utxo, records, decay, provenance };
 }
 
 type Modules = Awaited<ReturnType<typeof loadModules>>;
@@ -163,22 +159,42 @@ function applyDecayPlans(
 }
 
 /**
- * The production decay dependencies, mirroring `block-apply.ts`'s `decayDeps`:
- * `getKarmaBoxes` (the ordered read), `getIdentityRecord`, `putIdentityRecord`.
+ * Decay's dependencies over the real store: `getIdentityRecord`,
+ * `putIdentityRecord`.
  *
- * Kept as one function so the shape the harness injects and the shape block
- * application injects stay visibly the same.
+ * Kept as one function so the shape the harness injects stays visibly the one
+ * `DecayDeps` declares.
  *
  * `getIdentityRecord`/`putIdentityRecord` are the real store primitives, not
- * stand-ins. A harness-local record map would be a reimplementation of the half
- * `recordKarmaActivity` owns, and the fixtures would then be checking a mirror.
+ * stand-ins: the clock decay reads is the row the store holds.
  */
 function decayDeps(m: Modules): Parameters<Modules['decay']['deriveKarmaDecay']>[0] {
   return {
-    getKarmaBoxes: (owner: Uint8Array) => m.utxo.getKarmaBoxes(owner),
     getIdentityRecord: m.records.getIdentityRecord,
     putIdentityRecord: m.records.putIdentityRecord,
   };
+}
+
+/**
+ * Advance an owner's activity clock to `height` the way block application's
+ * activity bump does (NODE_INTERFACE → Populating the record):
+ * `lastActivityBlock` the block's height, every other field carried, a missing
+ * record read as zeros.
+ */
+function advanceActivityClock(m: Modules, owner: Uint8Array, height: number): void {
+  const existing = m.records.getIdentityRecord(owner);
+  const record: IdentityRecord = {
+    lastActivityBlock: height,
+    lastDecayBlock: existing?.lastDecayBlock ?? 0,
+    invitedAtBlock: existing?.invitedAtBlock ?? 0,
+    lifetimeLikesReceived: existing?.lifetimeLikesReceived ?? 0n,
+    memberSinceBlock: existing?.memberSinceBlock ?? 0,
+    memberBar: existing?.memberBar ?? 0,
+    memberVouches: existing?.memberVouches ?? 0,
+    memberLikes: existing?.memberLikes ?? 0n,
+    invitesUsed: existing?.invitesUsed ?? 0,
+  };
+  m.records.putIdentityRecord(owner, record);
 }
 
 function allKarmaPostBody(m: Modules): Map<string, { owner: Uint8Array; boxes: import('@dagsocial/types').KarmaBox[] }> {
@@ -208,11 +224,8 @@ function totalKarma(m: Modules, owner: Uint8Array): bigint {
 }
 
 /**
- * Run one scenario and capture its outputs.
- *
- * Every block is wrapped in a real `beginBlockJournal(height)` /
- * `finishBlockJournal()` pair, because `recordKarmaActivity` reads the open
- * journal's height (NODE_INTERFACE → Populating the record).
+ * Run one scenario and capture its outputs, each block's steps in the order
+ * listed at the block's height.
  */
 export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> {
   const m = await loadModules();
@@ -229,72 +242,68 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
   const heights = [...new Set(scenario.steps.map((s) => s.at))].sort((a, b) => a - b);
 
   for (const height of heights) {
-    m.journal.beginBlockJournal(height);
-    try {
-      for (const step of scenario.steps.filter((s) => s.at === height)) {
-        switch (step.op) {
-          case 'mint': {
-            const owner = ownerBytes(step.owner);
-            const box = seedProvenance<KarmaBox>({
-              boxType: 'karma',
-              value: step.amount,
-              owner,
-            }, height, labelNonce(`mint-${step.owner}`));
-            m.utxo.insertBox(box);
-            m.utxo.recordKarmaActivity(owner);
-            break;
+    for (const step of scenario.steps.filter((s) => s.at === height)) {
+      switch (step.op) {
+        case 'mint': {
+          const owner = ownerBytes(step.owner);
+          const box = seedProvenance<KarmaBox>({
+            boxType: 'karma',
+            value: step.amount,
+            createdAtBlock: 0,
+            owner,
+          }, height, labelNonce(`mint-${step.owner}`));
+          m.utxo.insertBox(box);
+          advanceActivityClock(m, owner, height);
+          break;
+        }
+        case 'seed': {
+          const owner = ownerBytes(step.owner);
+          // A seed step is identified by all four of `at`, `owner`, `amount`
+          // and `tag`. The middle two reach `canonicalBoxBytes`; the other two
+          // reach the synthetic provenance, so any two distinguishable steps
+          // produce distinguishable boxes. Collapsing either onto a constant
+          // would make two steps derive one txId and trip
+          // `UNIQUE(tx_id, output_index)` at the second insert.
+          const box = seedProvenance<KarmaBox>({
+            boxType: 'karma',
+            value: step.amount,
+            createdAtBlock: 0,
+            owner,
+          }, step.at, labelNonce(step.tag));
+          m.utxo.insertBox(box);
+          break;
+        }
+        case 'activity': {
+          advanceActivityClock(m, ownerBytes(step.owner), height);
+          break;
+        }
+        case 'decay': {
+          // ⛔ **Decay derives a plan; the block's settlement transaction
+          // emits its boxes** (NODE_INTERFACE → The settlement transaction).
+          // The harness stands in for that emission so the timeline keeps
+          // testing the decay ARITHMETIC — the staleness predicate, the
+          // interval count, the karma floor — which this unit did not touch.
+          const entries = m.decay.deriveKarmaDecay(decayDeps(m), allKarmaPostBody(m), height, scenario.cfg);
+          applyDecayPlans(m, entries, height);
+          m.decay.commitDecayClocks(decayDeps(m), entries, height);
+          for (const entry of entries) {
+            const ownerHex = Buffer.from(entry.owner).toString('hex');
+            decayEvents.push({
+              height,
+              owner: labelOf.get(ownerHex) ?? `unknown:${ownerHex.slice(0, 8)}`,
+              burnAmount: entry.burnAmount.toString(),
+              consumedCount: entry.consumedBoxIds.length,
+              balanceAfter: totalKarma(m, entry.owner).toString(),
+            });
           }
-          case 'seed': {
-            const owner = ownerBytes(step.owner);
-            // A seed step is identified by all four of `at`, `owner`, `amount`
-            // and `tag`. The middle two reach `canonicalBoxBytes`; the other two
-            // reach the synthetic provenance, so any two distinguishable steps
-            // produce distinguishable boxes. Collapsing either onto a constant
-            // would make two steps derive one txId and trip
-            // `UNIQUE(tx_id, output_index)` at the second insert.
-            const box = seedProvenance<KarmaBox>({
-              boxType: 'karma',
-              value: step.amount,
-              owner,
-            }, step.at, labelNonce(step.tag));
-            m.utxo.insertBox(box);
-            break;
-          }
-          case 'activity': {
-            m.utxo.recordKarmaActivity(ownerBytes(step.owner));
-            break;
-          }
-          case 'decay': {
-            // ⛔ **Decay derives a plan; the block's settlement transaction
-            // emits its boxes** (NODE_INTERFACE → The settlement transaction).
-            // The harness stands in for that emission so the timeline keeps
-            // testing the decay ARITHMETIC — the staleness predicate, the
-            // interval count, the karma floor — which this unit did not touch.
-            const entries = m.decay.deriveKarmaDecay(decayDeps(m), allKarmaPostBody(m), height, scenario.cfg);
-            applyDecayPlans(m, entries, height);
-            m.decay.commitDecayClocks(decayDeps(m), entries, height);
-            for (const entry of entries) {
-              const ownerHex = Buffer.from(entry.owner).toString('hex');
-              decayEvents.push({
-                height,
-                owner: labelOf.get(ownerHex) ?? `unknown:${ownerHex.slice(0, 8)}`,
-                burnAmount: entry.burnAmount.toString(),
-                consumedCount: entry.consumedBoxIds.length,
-                balanceAfter: totalKarma(m, entry.owner).toString(),
-              });
-            }
-            break;
-          }
+          break;
         }
       }
-    } finally {
-      m.journal.finishBlockJournal();
     }
   }
 
-  // `allKarmaPostBody` orders by owner, but the journal's per-block entry
-  // order is an artifact of insertion. Sort so the fixture pins decay outcomes
-  // rather than a storage detail.
+  // `allKarmaPostBody` orders by owner bytes, so each block's plans come in that
+  // order. Sort so the fixture pins decay outcomes rather than a storage detail.
   decayEvents.sort((a, b) => a.height - b.height || a.owner.localeCompare(b.owner));
 
   const finalBalances: Record<string, string> = {};

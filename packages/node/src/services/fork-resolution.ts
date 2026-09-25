@@ -28,10 +28,11 @@ import {
   insertRefusedHeader,
   anyRefusedHeader,
   getInterlinks,
+  getKarmaOwners,
 } from '../store/index.js';
 import { ceilingOf } from '@dagsocial/consensus';
 import { getDb } from '../store/db.js';
-import { isBlockJournalOpen, type BlockJournal } from '../store/journal.js';
+import type { BlockJournal } from '../store/journal.js';
 import { putIdentityRecord, deleteIdentityRecord, putNetworkRecord } from '../store/identity-records.js';
 import { putUsername, deleteUsername } from '../store/usernames.js';
 import { tryGetAvlProver } from '../state/avl-prover.js';
@@ -88,13 +89,6 @@ export function extendsOurTip(block: OrderingBlock): boolean {
  * Reverse all mutations from a single block using its journal.
  */
 export function revertBlock(height: number): void {
-  // Revert must never run while a journal is recording: the mutation replay
-  // uses the never-recording inverses, but the vouch-cooldown restores below
-  // go through recording primitives and would journal themselves into the
-  // open block's log.
-  if (isBlockJournalOpen()) {
-    throw new Error(`revertBlock(${height}): a block journal is open`);
-  }
   const journal = getBlockJournal(height);
   if (!journal) {
     throw new MissingJournalError('revertBlock', height);
@@ -111,11 +105,6 @@ export function revertBlock(height: number): void {
   // inverse undoes one write, and the last one replayed is the *first* write's
   // `replaced` — the true pre-block value. A per-key single restore keeping the
   // last `replaced` would restore an intra-block intermediate instead.
-  //
-  // `putIdentityRecord` is itself a recording primitive, exactly like the
-  // like-record restore loop below. That is safe only because this
-  // function refuses to run while a journal is open (the guard at the top); the
-  // guard is the mechanism, not a non-recording variant.
   for (let i = journal.mutations.length - 1; i >= 0; i--) {
     const m = journal.mutations[i]!;
     if (m.kind === 'record') {
@@ -158,7 +147,7 @@ export function revertBlock(height: number): void {
     clearWithdrawal(wp.id, wp.content);
   }
   // ⛔ **The vouch escrow needs no side-record and no inverse of its own.** It
-  // is a box, so `insertBox`/`consumeBox` journal its creation and its spend as
+  // is a box, so the block's effects journal its creation and its spend as
   // `{kind:'box'}` with the exact inverses loop 1 above already replays — and
   // boxes are not keyed, so a second escrow is a second box rather than an
   // overwrite something has to restore.
@@ -328,6 +317,11 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
     restoreProver();
     throw err;
   }
+
+  // Net's relay gate, re-seeded from the store the reorg committed
+  // (NODE_INTERFACE → Post transactions → "The set moves after a commit, never
+  // inside a transaction").
+  getNet()?.setKarmaMembers(getKarmaOwners());
 
   // NODE_INTERFACE → Admin Listener: the tip the reorg left.
   noteTip(forkHeight + newBlocks.length);

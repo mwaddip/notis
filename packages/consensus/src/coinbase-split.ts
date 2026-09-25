@@ -2,17 +2,20 @@
  * The coinbase's slices and the inclusion bonus (MINING_INTERFACE → Coinbase
  * Application).
  *
- * Pure arithmetic over bigints and a count — no store, no config, no profile.
- * Both the block creator and the applier call the same functions on the same
- * body, so producer and verifier cannot disagree about what a coinbase should
- * hold. Where the *result* is minted, and whether the treasury's share is
- * minted at all, is the caller's question and depends on the network profile.
+ * Pure arithmetic over bigints and counts — no store and no config; the reward
+ * takes the profile's two schedule numbers as an argument. Both the block
+ * creator and the applier call the same functions on the same body, so producer
+ * and verifier cannot disagree about what a coinbase should hold. Where each
+ * amount lands — the coinbase, the treasury box, the emission box — is the
+ * settlement's.
  */
 
 import {
   COINBASE_TREASURY_PCT,
   COINBASE_BACKER_PCT,
   COINBASE_BONUS_PCT,
+  CREDIT_INITIAL_REWARD,
+  CREDIT_REWARD_REDUCTION,
   INCLUSION_BONUS_K,
 } from '@dagsocial/types';
 import type {
@@ -21,6 +24,7 @@ import type {
   UtxoTransaction,
   VouchBox,
 } from '@dagsocial/types';
+import type { ApplyContext } from './state-view.js';
 
 /** One embedded transaction and the boxes its inputs resolved to. */
 export interface EmbeddedTx {
@@ -101,6 +105,28 @@ export function countKarmaActors(
     if (actorHex !== self) seen.add(actorHex);
   }
   return seen.size;
+}
+
+/**
+ * What the emission schedule owes at a height (MINING_INTERFACE → Emission
+ * Schedule): `CREDIT_INITIAL_REWARD` through `creditFixedRateBlocks`, then
+ * `CREDIT_REWARD_REDUCTION` less for each epoch of `creditEpochBlocks` begun,
+ * never below zero. What a block releases is this capped by the emission box's
+ * balance — the terminus is a balance, not a height.
+ */
+export function computeBlockReward(
+  height: number,
+  ctx: Pick<ApplyContext, 'creditFixedRateBlocks' | 'creditEpochBlocks'>,
+): bigint {
+  if (height <= 0) return 0n;
+  if (height <= ctx.creditFixedRateBlocks) {
+    return CREDIT_INITIAL_REWARD;
+  }
+  const epochs = Math.floor(
+    (height - ctx.creditFixedRateBlocks - 1) / ctx.creditEpochBlocks,
+  ) + 1;
+  const reward = CREDIT_INITIAL_REWARD - BigInt(epochs) * CREDIT_REWARD_REDUCTION;
+  return reward > 0n ? reward : 0n;
 }
 
 /**

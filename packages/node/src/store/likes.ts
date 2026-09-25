@@ -1,6 +1,5 @@
 import type { UserId } from '@dagsocial/types';
 import { getDb } from './db.js';
-import { recordLikeRecordInsertion } from './journal.js';
 
 // ---------------------------------------------------------------------------
 // Like-records (NODE_INTERFACE → Like-records)
@@ -21,9 +20,8 @@ import { recordLikeRecordInsertion } from './journal.js';
  * one-like-per-account dedup, and at apply time the engine treats the
  * collision as an invalid transaction.
  *
- * While a block journal is open, records a `likeRecordInsertions`
- * side-record (inverse: `deleteLikeRecord`). Recording happens after the
- * INSERT so a duplicate throws before anything reaches the journal.
+ * A plain write: the journal's `likeRecordInsertions` entry is the effects
+ * writer's (NODE_INTERFACE → Block Journal; inverse: `deleteLikeRecord`).
  */
 export function insertLikeRecord(
   targetPostId: string,
@@ -36,7 +34,6 @@ export function insertLikeRecord(
        VALUES (?, ?, ?)`,
     )
     .run(targetPostId, Buffer.from(likerId), blockHeight);
-  recordLikeRecordInsertion(targetPostId, likerId);
 }
 
 /** Has this liker already liked this post? The apply-time dedup read. */
@@ -58,10 +55,7 @@ export function getLikeRecordCount(postId: string): number {
   return row.cnt;
 }
 
-/**
- * Remove one like-record — fork-rollback inverse of `insertLikeRecord`.
- * Never records to the block journal.
- */
+/** Remove one like-record — fork-rollback inverse of `insertLikeRecord`. */
 export function deleteLikeRecord(targetPostId: string, likerId: UserId): void {
   getDb()
     .prepare('DELETE FROM like_records WHERE target_post_id = ? AND liker_id = ?')

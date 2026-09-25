@@ -3,12 +3,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   initDb, closeDb, getDb,
   insertBox, consumeBox,
-  getKarmaBox, getKarmaValue,
+  getKarmaValue,
   getIdentityRecord, putIdentityRecord,
   hasActiveVouchEscrow,
   getBoxProvenance, getVouchBox, getNetworkRecord,
   getUsername, getUsernameByOwner, putUsername, deleteUsername,
-  beginBlockJournal, finishBlockJournal,
 } from '../../src/store/index.js';
 import { getBoxWithPending } from '../../src/store/mempool.js';
 import {
@@ -36,7 +35,6 @@ function makeDeps(): UtxoEngineDeps {
     getBox: getBoxWithPending,
     insertBox,
     consumeBox,
-    getKarmaBox,
     getKarmaValue,
     getIdentityRecord,
     hasActiveVouchEscrow,
@@ -144,9 +142,7 @@ describe('username claim and burn transitions', () => {
     const a = makeTestIdentity();
     const kb = seedKarma(a.userId, 100n);
     insertBox(kb);
-    beginBlockJournal(HEIGHT);
     putUsername({ nameLower: 'alice', name: 'Alice', owner: hex(a.userId), boxId: 'aa'.repeat(32), claimedAtBlock: 1 });
-    finishBlockJournal();
 
     const b = makeTestIdentity();
     const kb2 = seedKarma(b.userId, 100n);
@@ -159,9 +155,7 @@ describe('username claim and burn transitions', () => {
 
   it('claim refused for a taken name (different case)', () => {
     const a = makeTestIdentity();
-    beginBlockJournal(HEIGHT);
     putUsername({ nameLower: 'alice', name: 'Alice', owner: hex(a.userId), boxId: 'aa'.repeat(32), claimedAtBlock: 1 });
-    finishBlockJournal();
 
     const b = makeTestIdentity();
     const kb = seedKarma(b.userId, 100n);
@@ -174,9 +168,7 @@ describe('username claim and burn transitions', () => {
 
   it('claim refused for an identity that holds a name', () => {
     const holder = makeTestIdentity();
-    beginBlockJournal(HEIGHT);
     putUsername({ nameLower: 'bob', name: 'Bob', owner: hex(holder.userId), boxId: 'bb'.repeat(32), claimedAtBlock: 1 });
-    finishBlockJournal();
 
     const kb = seedKarma(holder.userId, 100n);
     insertBox(kb);
@@ -359,24 +351,20 @@ describe('username claim and burn transitions', () => {
     const claimA = claimTx(a, ka, 'Reclaim');
     const r1 = validateTx(deps, claimA, HEIGHT);
     expect(r1.valid, r1.error).toBe(true);
-    beginBlockJournal(HEIGHT);
     applyTx(deps, claimA, r1.computedOutputs!, HEIGHT);
     const uOut = r1.computedOutputs!.find(o => o.boxType === 'username')!;
     putUsername({
       nameLower: 'reclaim', name: 'Reclaim',
       owner: hex(a.userId), boxId: uOut.id!, claimedAtBlock: HEIGHT,
     });
-    finishBlockJournal();
 
     const ka2 = seedKarma(a.userId, 100n);
     insertBox(ka2);
     const burnA = burnTx(a, ka2, uOut as UsernameBox);
     const r2 = validateTx(deps, burnA, HEIGHT + 1);
     expect(r2.valid, r2.error).toBe(true);
-    beginBlockJournal(HEIGHT + 1);
     applyTx(deps, burnA, r2.computedOutputs!, HEIGHT + 1);
     deleteUsername('reclaim');
-    finishBlockJournal();
 
     const b = makeTestIdentity();
     const kb = seedKarma(b.userId, 100n);
@@ -394,24 +382,20 @@ describe('username claim and burn transitions', () => {
     const c1 = claimTx(a, ka, 'SelfReclaim');
     const r1 = validateTx(deps, c1, HEIGHT);
     expect(r1.valid, r1.error).toBe(true);
-    beginBlockJournal(HEIGHT);
     applyTx(deps, c1, r1.computedOutputs!, HEIGHT);
     const uOut = r1.computedOutputs!.find(o => o.boxType === 'username')!;
     putUsername({
       nameLower: 'selfreclaim', name: 'SelfReclaim',
       owner: hex(a.userId), boxId: uOut.id!, claimedAtBlock: HEIGHT,
     });
-    finishBlockJournal();
 
     const ka2 = seedKarma(a.userId, 100n);
     insertBox(ka2);
     const b1 = burnTx(a, ka2, uOut as UsernameBox);
     const r2 = validateTx(deps, b1, HEIGHT + 1);
     expect(r2.valid, r2.error).toBe(true);
-    beginBlockJournal(HEIGHT + 1);
     applyTx(deps, b1, r2.computedOutputs!, HEIGHT + 1);
     deleteUsername('selfreclaim');
-    finishBlockJournal();
 
     const ka3 = seedKarma(a.userId, 100n);
     insertBox(ka3);

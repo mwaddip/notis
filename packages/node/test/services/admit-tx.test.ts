@@ -28,6 +28,7 @@ function creditBox(label: string, value: bigint): CreditBox {
   const box = {
     boxType: 'credit' as const,
     value,
+    createdAtBlock: 0,
     owner: new Uint8Array(owner),
     txId: createHash('blake2b512').update(`${label}_t`).digest().subarray(0, 32).toString('hex'),
     index: 0,
@@ -237,7 +238,6 @@ describe('rent admission refusal', () => {
       getBox: utxo.getBox,
       insertBox: utxo.insertBox,
       consumeBox: utxo.consumeBox,
-      getKarmaBox: utxo.getKarmaBox,
       getKarmaValue: utxo.getKarmaValue,
       getIdentityRecord: (await import('../../src/store/identity-records.js')).getIdentityRecord,
       hasActiveVouchEscrow: () => false,

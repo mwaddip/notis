@@ -355,7 +355,7 @@ describe('a root\'s invitee, for life', () => {
     rawDb.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const records = await importRecords();
-    const journal = await import('../../src/store/journal.js');
+    const { writeBlockEffects } = await importBlockApply();
 
     const invitee = makeTestIdentity();
 
@@ -366,21 +366,29 @@ describe('a root\'s invitee, for life', () => {
     const preBlockNetwork = records.getNetworkRecord();
     expect(preBlockNetwork.memberCount).toBe(1);
 
-    // Open a journal and simulate the grant step conferring membership.
-    journal.beginBlockJournal(5);
-    records.putIdentityRecord(invitee.userId, {
-      lastActivityBlock: 5, lastDecayBlock: 0, invitedAtBlock: 5,
-      lifetimeLikesReceived: 0n,
-      memberSinceBlock: 5, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
-    });
-    records.putNetworkRecord({ memberCount: 2 });
+    // A block whose effects are the grant step conferring membership, written
+    // and journalled by the effects writer.
+    const finishedJournal = writeBlockEffects({
+      mutations: [
+        {
+          kind: 'record',
+          identityId: invitee.userId,
+          record: {
+            lastActivityBlock: 5, lastDecayBlock: 0, invitedAtBlock: 5,
+            lifetimeLikesReceived: 0n,
+            memberSinceBlock: 5, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+          },
+        },
+        { kind: 'network', record: { memberCount: 2 } },
+      ],
+      posts: [], likeRecords: [], withdrawals: [], appliedTxs: [],
+    }, 5);
 
     // Verify the writes took effect.
     expect(records.getIdentityRecord(invitee.userId)!.memberSinceBlock).toBe(5);
     expect(records.getNetworkRecord().memberCount).toBe(2);
 
-    // Finish and persist the journal.
-    const finishedJournal = journal.finishBlockJournal();
+    // Persist the journal.
     rawDb.prepare(
       'INSERT INTO block_journal (block_height, journal_cbor) VALUES (?, ?)',
     ).run(5, (await import('cbor-x')).encode(finishedJournal));
@@ -389,9 +397,9 @@ describe('a root\'s invitee, for life', () => {
     const { revertBlock } = await import('../../src/services/fork-resolution.js');
     revertBlock(5);
 
-    // The record is gone: a legal invitee had none before this block, so
-    // `putIdentityRecord`'s own capture of the pre-image is the absence,
-    // never a set of zeros (NODE_INTERFACE → Block Journal).
+    // The record is gone: a legal invitee had none before this block, so the
+    // writer's capture of the pre-image is the absence, never a set of zeros
+    // (NODE_INTERFACE → Block Journal).
     expect(records.getIdentityRecord(invitee.userId)).toBeNull();
 
     // The network record is restored too.
@@ -450,7 +458,7 @@ describe('journal round-trip — membership records and the network record', () 
     rawDb.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const records = await importRecords();
-    const journal = await import('../../src/store/journal.js');
+    const { writeBlockEffects } = await importBlockApply();
 
     const identity = makeTestIdentity();
 
@@ -464,21 +472,21 @@ describe('journal round-trip — membership records and the network record', () 
     const preBlockNetwork = records.getNetworkRecord();
     expect(preBlockNetwork.memberCount).toBe(1);
 
-    // Open a journal and simulate the membership pass setting this identity.
-    journal.beginBlockJournal(5);
-    records.putIdentityRecord(identity.userId, {
-      ...preBlockRecord,
-      memberSinceBlock: 5,
-      memberBar: 1,
-    });
-    records.putNetworkRecord({ memberCount: 2 });
+    // A block whose effects are the membership pass setting this identity,
+    // written and journalled by the effects writer.
+    const finishedJournal = writeBlockEffects({
+      mutations: [
+        { kind: 'record', identityId: identity.userId, record: { ...preBlockRecord, memberSinceBlock: 5, memberBar: 1 } },
+        { kind: 'network', record: { memberCount: 2 } },
+      ],
+      posts: [], likeRecords: [], withdrawals: [], appliedTxs: [],
+    }, 5);
 
     // Verify the writes took effect.
     expect(records.getIdentityRecord(identity.userId)!.memberSinceBlock).toBe(5);
     expect(records.getNetworkRecord().memberCount).toBe(2);
 
-    // Finish and persist the journal.
-    const finishedJournal = journal.finishBlockJournal();
+    // Persist the journal.
     rawDb.prepare(
       'INSERT INTO block_journal (block_height, journal_cbor) VALUES (?, ?)',
     ).run(5, (await import('cbor-x')).encode(finishedJournal));

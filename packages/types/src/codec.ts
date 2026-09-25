@@ -373,16 +373,18 @@ export function writeBytesNOrThrow(w: ByteWriter, bytes: Uint8Array, n: number):
 }
 
 /**
- * `b32` / `b64` to a `Uint8Array`.
+ * `b32` / `b64` to a fresh, plain `Uint8Array` (TYPES_INTERFACE → Primitives).
  *
  * Copies. `ByteReader.readBytes` returns a *subarray* — a view onto the input
- * buffer — so without this the decoded struct would alias the untrusted bytes
- * it came from, and a later mutation of either would silently corrupt the
- * other. `ByteWriter.writeBytes` already copies on the way in; this is the
- * matching half.
+ * buffer — so without the copy the decoded struct would alias the untrusted
+ * bytes it came from, and a later mutation of either would silently corrupt the
+ * other. The copy is `new Uint8Array(…)`, a plain `Uint8Array` whatever carried
+ * the input: a `Buffer`'s `slice()` is a view that keeps the `Buffer` type.
+ * `ByteWriter.writeBytes` already copies on the way in; this is the matching
+ * half.
  */
 export function readBytesN(r: ByteReader, n: number): Uint8Array {
-  return r.readBytes(n).slice();
+  return new Uint8Array(r.readBytes(n));
 }
 
 /**
@@ -404,7 +406,7 @@ export function writeLp(w: ByteWriter, bytes: Uint8Array): void {
 
 /** `lp(x)` — length-prefixed bytes. Copies, per `readBytesN`. */
 export function readLp(r: ByteReader): Uint8Array {
-  return r.readBytes(r.readVlqU()).slice();
+  return new Uint8Array(r.readBytes(r.readVlqU()));
 }
 
 /**

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { BlockEffects } from '@dagsocial/consensus';
 import { uid } from '../helpers.js';
 
 /**
@@ -6,25 +7,28 @@ import { uid } from '../helpers.js';
  *
  * `(liker, targetPostId)` pairs, written only at block application. These tests
  * drive the primitives directly, with no producer in the way, so what they pin
- * is the row boundary and the composite key. The callers — block application's
- * dedup gate and insert, the mempool gate, and fork rollback's delete — are
- * covered in their own suites.
+ * is the row boundary and the composite key; the journal cases build their
+ * journal with the effects writer and undo it with `revertBlock`. The callers —
+ * block application's dedup gate, the mempool gate — are covered in their own
+ * suites.
  */
 
 // ---------------------------------------------------------------------------
-// Dynamic import helpers (reset module-level state between tests — the
-// journal recording context is a module-level singleton in journal.ts)
+// Dynamic import helpers — a fresh module graph, and so a fresh database
+// handle, per test
 // ---------------------------------------------------------------------------
 
 async function importAll() {
   const db = await import('../../src/store/db.js');
   const journal = await import('../../src/store/journal.js');
   const likes = await import('../../src/store/likes.js');
-  const utxo = await import('../../src/store/utxo.js');
-  return { ...db, ...journal, ...likes, ...utxo } as typeof db &
-    typeof journal &
-    typeof likes &
-    typeof utxo;
+  const { writeBlockEffects } = await import('../../src/services/block-apply.js');
+  const { revertBlock } = await import('../../src/services/fork-resolution.js');
+  return { ...db, ...journal, ...likes, writeBlockEffects, revertBlock };
+}
+
+function likesOnly(likeRecords: BlockEffects['likeRecords']): BlockEffects {
+  return { mutations: [], posts: [], likeRecords, withdrawals: [], appliedTxs: [] };
 }
 
 const LIKER_A = uid('lr-liker-a');
@@ -95,65 +99,7 @@ describe('like-records store (P2-D N2a)', () => {
     expect(s.hasLikeRecord('post-1', LIKER_B)).toBe(true);
   });
 
-  // --- Journal capture (choke-point recording) -------------------------------
-
-  it('insertLikeRecord records a likeRecordInsertions side-record while a journal is open', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-
-    s.beginBlockJournal(9);
-    s.insertLikeRecord('post-1', LIKER_A, 9);
-    s.insertLikeRecord('post-2', LIKER_B, 9);
-    const j = s.finishBlockJournal();
-
-    expect(j.likeRecordInsertions).toEqual([
-      { targetPostId: 'post-1', likerId: LIKER_A },
-      { targetPostId: 'post-2', likerId: LIKER_B },
-    ]);
-    // A like-record is content-layer state — never a `mutations` (stateRoot) entry.
-    expect(j.mutations).toEqual([]);
-  });
-
-  it('a duplicate insert reaches the journal ZERO times — the throw precedes recording', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-
-    s.insertLikeRecord('post-1', LIKER_A, 1);
-
-    s.beginBlockJournal(2);
-    expect(() => s.insertLikeRecord('post-1', LIKER_A, 2)).toThrow();
-    const j = s.finishBlockJournal();
-
-    expect(j.likeRecordInsertions).toEqual([]);
-  });
-
-  it('with no journal open, the choke point records nothing', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-
-    s.insertLikeRecord('post-1', LIKER_A, 1);
-
-    // A journal opened afterwards starts empty.
-    s.beginBlockJournal(5);
-    const j = s.finishBlockJournal();
-    expect(j.likeRecordInsertions).toEqual([]);
-  });
-
-  it('the inverse never records, even while a journal is open', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-
-    s.insertLikeRecord('post-1', LIKER_A, 1);
-
-    s.beginBlockJournal(6);
-    s.deleteLikeRecord('post-1', LIKER_A);
-    const j = s.finishBlockJournal();
-
-    expect(j.likeRecordInsertions).toEqual([]);
-    expect(j.mutations).toEqual([]);
-  });
-
-  it('the insertion inverse applied from a journal restores the exact pre-block rows', async () => {
+  it('revertBlock undoes a block\'s like records and restores the exact pre-block rows', async () => {
     const s = await importAll();
     s.initDb(':memory:');
 
@@ -166,14 +112,10 @@ describe('like-records store (P2-D N2a)', () => {
       .all();
 
     // A block inserts one more record.
-    s.beginBlockJournal(9);
-    s.insertLikeRecord('post-2', LIKER_A, 9);
-    const j = s.finishBlockJournal();
+    s.insertBlockJournal(s.writeBlockEffects(likesOnly([{ targetPostId: 'post-2', likerId: LIKER_A }]), 9));
+    expect(s.hasLikeRecord('post-2', LIKER_A)).toBe(true);
 
-    // Revert: the insertion inverse, reverse order.
-    for (const ins of [...j.likeRecordInsertions].reverse()) {
-      s.deleteLikeRecord(ins.targetPostId, ins.likerId);
-    }
+    s.revertBlock(9);
 
     const postRows = s.getDb()
       .prepare('SELECT * FROM like_records ORDER BY target_post_id, liker_id')
@@ -187,11 +129,7 @@ describe('like-records store (P2-D N2a)', () => {
     const s = await importAll();
     s.initDb(':memory:');
 
-    s.beginBlockJournal(11);
-    s.insertLikeRecord('post-1', LIKER_A, 11);
-    const j = s.finishBlockJournal();
-
-    s.insertBlockJournal(j);
+    s.insertBlockJournal(s.writeBlockEffects(likesOnly([{ targetPostId: 'post-1', likerId: LIKER_A }]), 11));
     const back = s.getBlockJournal(11);
     expect(back).not.toBeNull();
 
@@ -205,9 +143,7 @@ describe('like-records store (P2-D N2a)', () => {
     const s = await importAll();
     s.initDb(':memory:');
 
-    s.beginBlockJournal(12);
-    const j = s.finishBlockJournal();
-    s.insertBlockJournal(j);
+    s.insertBlockJournal(s.writeBlockEffects(likesOnly([]), 12));
 
     const back = s.getBlockJournal(12)!;
     expect(back.likeRecordInsertions).toEqual([]);

@@ -1,18 +1,13 @@
 // ---------------------------------------------------------------------------
-// P2-B phase 3 — a credit transfer is a transaction (audit F-consensus-7).
-//
-// These are the inverted before-legs: on the pre-fix HEAD, `sendCredits`
-// applied `consumeBox`/`insertBox` directly with no block and no open journal,
-// so a transfer entered no block, produced no journal entries, never reached
-// the AVL feed — and a node that rebuilt its prover from `getUnspentBoxes()`
-// at restart computed a different `stateRoot` than the network and rejected
-// every later block (measured in the before-leg run: live digest b08e6036…,
-// restart digest e4a33dfd…, honest block 3 rejected with a stateRoot
-// mismatch). The fix pools the transfer instead; settlement is the block's
-// job, so the journal, the AVL feed and a restart-rebuild all see it.
+// A credit transfer is a transaction, and it settles when it is mined
+// (NODE_INTERFACE → Credits): pooled at submission and applied by the block
+// that carries it, so the block's journal, the AVL feed and a prover rebuilt
+// from `getUnspentBoxes()` at restart all hold it.
 // ---------------------------------------------------------------------------
-import { describe, it, expect, vi } from 'vitest';
-import { unlinkSync } from 'fs';
+import { describe, it, expect, vi, onTestFinished } from 'vitest';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
 import {
   computeTxId,
@@ -113,12 +108,6 @@ async function importJournalStore() {
 // Fixtures
 // ---------------------------------------------------------------------------
 
-function rmrf(path: string): void {
-  for (const p of [path, path + '-wal', path + '-shm']) {
-    try { unlinkSync(p); } catch { /* absent */ }
-  }
-}
-
 function digestHex(handle: { prover: { digest(): Uint8Array | null } }): string {
   const d = handle.prover.digest();
   expect(d).not.toBeNull();
@@ -172,6 +161,7 @@ function seedCreditBox(
   const box = seedProvenance<CreditBox>({
     boxType: 'credit' as const,
     value,
+    createdAtBlock: 0,
     owner,
   }, 1);
   insertBox(box);
@@ -182,7 +172,7 @@ function boxMutations(journal: BlockJournal) {
   return journal.mutations.filter((m) => m.kind === 'box');
 }
 
-describe('credit transfers ride consensus (P2-B phase 3)', () => {
+describe('credit transfers ride consensus', () => {
   // -------------------------------------------------------------------------
   // Settlement: pooled → mined → applied, with the journal carrying it
   // -------------------------------------------------------------------------
@@ -210,7 +200,6 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
       getIdentityRecord: identityRecords.getIdentityRecord,
       insertBox: utxo.insertBox,
       consumeBox: utxo.consumeBox,
-      getKarmaBox: utxo.getKarmaBox,
       getKarmaValue: utxo.getKarmaValue,
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
@@ -289,13 +278,15 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // The restart-rebuild convergence — the inverted before-leg
+  // The restart-rebuild convergence
   // -------------------------------------------------------------------------
 
-  const FORK_DB = '/tmp/dagsocial-test-credits-consensus.sqlite';
-
   it('a mined transfer reaches the live tree, and a restart-rebuild reproduces its content', async () => {
-    rmrf(FORK_DB);
+    // A directory private to this run, so two runs of the suite on one machine
+    // never write the same store file.
+    const forkDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-credits-consensus-'));
+    onTestFinished(() => rmSync(forkDir, { recursive: true, force: true }));
+    const FORK_DB = join(forkDir, 'store.sqlite');
     vi.resetModules();
 
     // ---- world A: the running node, which is also the honest network's view
@@ -336,7 +327,6 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
       getIdentityRecord: identityRecords.getIdentityRecord,
       insertBox: utxo.insertBox,
       consumeBox: utxo.consumeBox,
-      getKarmaBox: utxo.getKarmaBox,
       getKarmaValue: utxo.getKarmaValue,
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
@@ -380,8 +370,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
 
     // The transfer reached the AVL feed: the digest moved at the block, and
     // the live tree now authenticates the transfer outputs and has dropped
-    // the spent input. On the pre-fix HEAD the digest did NOT move here —
-    // the mutations bypassed the journal, so the tree never saw them.
+    // the spent input.
     expect(digestHex(handle)).not.toBe(preBlockDigest);
     const bobBox = utxo.getCreditBoxes(bob.userId)[0]!;
     expect(bobBox.txId).toBe(pooled.txId);
@@ -446,6 +435,5 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     expect(handleB.prover.unauthenticatedLookup(Buffer.from(seeded.id!, 'hex'))).toBeNull();
 
     db.closeDb();
-    rmrf(FORK_DB);
   }, 30_000);
 });

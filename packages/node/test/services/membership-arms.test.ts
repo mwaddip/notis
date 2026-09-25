@@ -1,4 +1,5 @@
 import {
+  makeApplicableBlock,
   seedProvenance,
   type Stored,
   FIXTURE_BOND_KARMA,
@@ -36,18 +37,13 @@ import {
   getBox as storeGetBox,
   getIdentityRecord as storeGetIdentityRecord,
   putIdentityRecord as storePutIdentityRecord,
-  getKarmaBox,
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
   getVouchBox as storeGetVouchBox,
   getNetworkRecord as storeGetNetworkRecord,
 } from '../../src/store/index.js';
-import {
-  beginBlockJournal,
-  finishBlockJournal,
-  insertBlockJournal,
-} from '../../src/store/journal.js';
+import { applyOrderingBlock } from '../../src/services/block-apply.js';
 import { revertBlock } from '../../src/services/fork-resolution.js';
 import { validateTx, applyTx, isMember, isRoot } from '@dagsocial/consensus';
 import type { UtxoEngineDeps, UtxoResult } from '@dagsocial/consensus';
@@ -96,7 +92,6 @@ describe('membership arms', () => {
       getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => storeInsertBox(box),
       consumeBox: (id: string, atBlock: number) => storeConsumeBox(id, atBlock),
-      getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,
@@ -546,7 +541,7 @@ describe('membership arms', () => {
       expect(storeGetIdentityRecord(targetRaw)!.memberVouches).toBe(0);
     });
 
-    it('revertBlock restores the count through the journal with no arithmetic', () => {
+    it('revertBlock restores the count through the journal with no arithmetic', async () => {
       seedAsRoot(ownerPubKey);
       const { publicKey: targetPub } = generateKeyPairSync('ed25519');
       const targetRaw = rawPublicKey(targetPub);
@@ -555,20 +550,14 @@ describe('membership arms', () => {
 
       expect(storeGetIdentityRecord(targetRaw)!.memberVouches).toBe(0);
 
-      // Open a block journal, apply a vouch.
-      beginBlockJournal(10);
-      const vouchTx = makeVouchTx(karma.id!, ownerPubKey, ownerPrivKey, targetRaw, 100n);
-      const castResult = validateAndApplyTx(deps, vouchTx, 10);
-      expect(castResult.valid).toBe(true);
+      // A block carrying the vouch, applied through the funnel.
+      const vouchTx = makeVouchTx(karma.id!, ownerPubKey, ownerPrivKey, targetRaw, 100n, 1);
+      expect(applyOrderingBlock(await makeApplicableBlock({ height: 1, utxoTxs: [vouchTx] }))).toBe(true);
       expect(storeGetIdentityRecord(targetRaw)!.memberVouches).toBe(1);
-
-      // Finish and persist the journal.
-      const journal = finishBlockJournal();
-      insertBlockJournal(journal);
 
       // Revert the block. B's count should be back to 0 — restored from the
       // journal's replaced value, not from subtracting 1.
-      revertBlock(10);
+      revertBlock(1);
       expect(storeGetIdentityRecord(targetRaw)!.memberVouches).toBe(0);
     });
   });

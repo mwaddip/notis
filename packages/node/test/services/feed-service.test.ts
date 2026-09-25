@@ -17,8 +17,6 @@ import {
   getBlockCreatedAt,
   getUsernameByOwner,
   putUsername,
-  beginBlockJournal,
-  finishBlockJournal,
 } from '../../src/store/index.js';
 import { FeedService } from '../../src/services/feed-service.js';
 import type { PostJson, WithdrawnJson } from '../../src/services/feed-service.js';
@@ -352,7 +350,6 @@ describe('feed-service', () => {
   // -----------------------------------------------------------------------
 
   it('authorName rides a live row as typed when the author holds a name', () => {
-    beginBlockJournal(50);
     putUsername({
       nameLower: Buffer.from(authorId).toString('hex').slice(0, 10),
       name: 'AuthorAlias',
@@ -360,14 +357,12 @@ describe('feed-service', () => {
       boxId: 'bb'.repeat(32),
       claimedAtBlock: 50,
     });
-    finishBlockJournal();
 
     const head = feedService.getPost(liveRootId) as PostJson;
     expect(head.authorName).toBe('AuthorAlias');
   });
 
   it('authorName rides a withdrawn row as typed when the author holds a name', () => {
-    beginBlockJournal(50);
     putUsername({
       nameLower: Buffer.from(authorId).toString('hex').slice(0, 10),
       name: 'AuthorAlias',
@@ -375,7 +370,6 @@ describe('feed-service', () => {
       boxId: 'bb'.repeat(32),
       claimedAtBlock: 50,
     });
-    finishBlockJournal();
 
     const withdrawnId = insertTestPost('To be withdrawn for name test', authorId, []);
     confirmPost(withdrawnId, 51, 0);

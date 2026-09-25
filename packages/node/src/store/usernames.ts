@@ -1,5 +1,4 @@
 import { getDb } from './db.js';
-import { recordUsernameMutation, recordHolderMutation } from './journal.js';
 import type { UserId } from '@dagsocial/types';
 import type { UsernameRow } from '@dagsocial/consensus';
 
@@ -43,40 +42,22 @@ export function getUsernameByOwner(owner: UserId | string): UsernameRow | null {
   };
 }
 
+/**
+ * The claim's write — one row, the name record and its holder's record both
+ * (NODE_INTERFACE → Username records). A plain write: the journal entries and
+ * the rows they replace are the effects writer's
+ * (NODE_INTERFACE → Block Journal).
+ */
 export function putUsername(row: UsernameRow): void {
-  const db = getDb();
-  const existing = getUsername(row.nameLower);
-  const existingByOwner = getUsernameByOwner(row.owner);
-
-  db.prepare(
+  getDb().prepare(
     `INSERT OR REPLACE INTO usernames (name_lower, name, owner, box_id, claimed_at_block)
      VALUES (?, ?, ?, ?, ?)`,
   ).run(row.nameLower, row.name, row.owner, row.boxId, row.claimedAtBlock);
-
-  recordUsernameMutation(row.nameLower, row, existing ?? undefined);
-  recordHolderMutation(
-    Buffer.from(row.owner, 'hex'),
-    { claimAvailable: false, boxId: row.boxId },
-    existingByOwner ? { claimAvailable: false, boxId: existingByOwner.boxId } : undefined,
-  );
 }
 
+/** The burn's write: the row goes, and with it both records. A plain write, as `putUsername` is. */
 export function deleteUsername(nameLower: string): void {
-  const db = getDb();
-  const existing = getUsername(nameLower);
-  if (!existing) return;
-
-  db.prepare('DELETE FROM usernames WHERE name_lower = ?').run(nameLower);
-
-  recordUsernameMutation(nameLower, null, existing);
-  // NODE_INTERFACE → Username records: an absent holder record means
-  // { claimAvailable: true, boxId: null } and is never written — a burn
-  // removes the record.
-  recordHolderMutation(
-    Buffer.from(existing.owner, 'hex'),
-    null,
-    { claimAvailable: false, boxId: existing.boxId },
-  );
+  getDb().prepare('DELETE FROM usernames WHERE name_lower = ?').run(nameLower);
 }
 
 export function countUsernames(): number {

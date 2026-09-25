@@ -119,13 +119,12 @@ export interface UtxoEngineDeps {
   getBox: (id: string) => AnyBox | null;
   insertBox: (box: AnyBox) => void;
   consumeBox: (id: string, atBlock: number) => void;
-  getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
   /**
    * Summed value of every unspent KarmaBox owned by `owner`.
    *
    * Consensus input, not a convenience read: the vouch cast is a predicate on
    * the voucher's *current* karma (ARCHITECTURE → "Vouch boxes"). Summed rather
-   * than `getKarmaBox().value` because multiple unspent karma boxes per owner is
+   * than one box's value because multiple unspent karma boxes per owner is
    * reachable — an invite grant alongside a mint, or a plain karma split — and
    * reading one box would let the threshold be evaded, or met, by how the karma
    * happens to be partitioned.
@@ -787,10 +786,11 @@ function checkTransitions(
         // deadline. The inviter's cost is a
         // probation-length lock and nothing else.
         //
-        // Record existence is the right test because every karma receipt writes
-        // one through `insertBox`'s choke point. A key with no record has never
-        // held karma, so it has never posted and never been liked — which is
-        // also what makes the grant the record-CREATING event for every legal
+        // Record existence is the right test because every path that puts karma
+        // in a key's hands writes one — the invite grant, and genesis
+        // (NODE_INTERFACE → Bond transition rules). A key with no record has
+        // never held karma, so it has never posted and never been liked — which
+        // is also what makes the grant the record-CREATING event for every legal
         // invitee.
         const inviteeHex = Buffer.from(bondOut.inviteePublicKey).toString('hex');
         const inviteeRecord = deps.getIdentityRecord(bondOut.inviteePublicKey);
@@ -2112,10 +2112,19 @@ function checkAuthorization(
 
     const signerKey = rule.signer(box, tx, currentBlockHeight);
     if (signerKey === null) continue;
-    if (!signerKey || !verifyGuardSignature(tx, txHash, signerKey)) {
+    if (!signerKey) {
       return { valid: false, error: rule.unsigned(box, tx) };
     }
-    requiredKeys.add(Buffer.from(signerKey).toString('hex'));
+    // A key's signature is one map entry over the transaction's id, so a key
+    // already verified for this transaction verifies for every later input it
+    // signs for: each is checked once (CONSENSUS_INTERFACE → Cost → "A
+    // transaction checks each signer once").
+    const signerHex = Buffer.from(signerKey).toString('hex');
+    if (requiredKeys.has(signerHex)) continue;
+    if (!verifyGuardSignature(tx, txHash, signerKey)) {
+      return { valid: false, error: rule.unsigned(box, tx) };
+    }
+    requiredKeys.add(signerHex);
   }
 
   // NODE_INTERFACE → Legal box transitions → "The signature map carries no key

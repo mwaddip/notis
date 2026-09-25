@@ -1,10 +1,13 @@
 // NODE_INTERFACE → Usernames — the four routes
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import express from 'express';
 import http from 'http';
 import { generateKeyPairSync } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
-import { insertBox, getBox as storeGetBox, getKarmaBox, getKarmaValue, getBoxProvenance, hasActiveVouchEscrow } from '../../src/store/utxo.js';
+import { insertBox, getBox as storeGetBox, getKarmaValue, getBoxProvenance, hasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getVouchBox } from '../../src/store/vouch-queries.js';
 import { getIdentityRecord, putIdentityRecord, getNetworkRecord } from '../../src/store/identity-records.js';
 import { getCurrentHeight } from '../../src/store/ordering.js';
@@ -23,10 +26,11 @@ import {
 import type { KarmaBox, UsernameBox, UtxoTransaction } from '@dagsocial/types';
 import { rawPublicKey, seedProvenance, signTransaction, txToJson } from '../helpers.js';
 import { config } from '../../src/config.js';
-import { beginBlockJournal, finishBlockJournal } from '../../src/store/journal.js';
 import { setMempoolCap, DEFAULT_MAX_MEMPOOL_ENTRIES, PendingSpendConflictError } from '../../src/store/mempool.js';
 
-const TEST_DB = '/tmp/dagsocial-test-routes-usernames.sqlite';
+// A directory private to this run, so two runs of the suite on one machine
+// never write the same store file.
+let testDir: string;
 
 function hex(id: Uint8Array): string { return Buffer.from(id).toString('hex'); }
 
@@ -66,7 +70,6 @@ function makeDeps(): UtxoEngineDeps {
     consumeBox: (id: string, atBlock: number) => {
       db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
     },
-    getKarmaBox,
     getKarmaValue,
     getIdentityRecord,
     hasActiveVouchEscrow,
@@ -131,8 +134,8 @@ describe('username routes', () => {
   let holder: ReturnType<typeof makeKeys>;
 
   beforeAll(() => {
-    try { require('fs').unlinkSync(TEST_DB); } catch {}
-    initDb(TEST_DB);
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-routes-usernames-'));
+    initDb(join(testDir, 'store.sqlite'));
     getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 0)').run();
     holder = makeKeys();
 
@@ -150,7 +153,7 @@ describe('username routes', () => {
 
   afterAll(() => {
     closeDb();
-    try { require('fs').unlinkSync(TEST_DB); } catch {}
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   // --- GET /usernames/:name ---
@@ -167,9 +170,7 @@ describe('username routes', () => {
   });
 
   it('GET /usernames/:name — returns the row, with and without @', async () => {
-    beginBlockJournal(1);
     putUsername({ nameLower: 'alice', name: 'Alice', owner: holder.hex, boxId: 'aa'.repeat(32), claimedAtBlock: 1 });
-    finishBlockJournal();
 
     const res1 = await get(app, '/usernames/Alice');
     expect(res1.status).toBe(200);
@@ -219,14 +220,10 @@ describe('username routes', () => {
     const kb = seedKarma(burnHolder.pub, 100n);
     const boxA = seedUsernameBox(burnHolder.pub, 'NameA');
     const boxB = seedUsernameBox(burnHolder.pub, 'NameB');
-    beginBlockJournal(10);
     putUsername({ nameLower: 'namea', name: 'NameA', owner: burnHolder.hex, boxId: boxA.id!, claimedAtBlock: 10 });
-    finishBlockJournal();
     // Seed NameB under a different owner so the UNIQUE constraint is not hit
     const burnHolder2 = makeKeys();
-    beginBlockJournal(11);
     putUsername({ nameLower: 'nameb', name: 'NameB', owner: burnHolder2.hex, boxId: boxB.id!, claimedAtBlock: 11 });
-    finishBlockJournal();
 
     // A valid burn of NameA, posted to /usernames/NameB/burn — wrong path
     const tx: UtxoTransaction = {
@@ -472,9 +469,7 @@ describe('username routes', () => {
     const burner = makeKeys();
     const kb = seedKarma(burner.pub, 100n);
     const uBox = seedUsernameBox(burner.pub, 'BurnMe');
-    beginBlockJournal(1);
     putUsername({ nameLower: 'burnme', name: 'BurnMe', owner: burner.hex, boxId: uBox.id!, claimedAtBlock: 1 });
-    finishBlockJournal();
     putIdentityRecord(burner.pub, { lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     const tx: UtxoTransaction = {
@@ -558,9 +553,7 @@ describe('username routes', () => {
     const burner = makeKeys();
     const kb = seedKarma(burner.pub, 100n);
     const uBox = seedUsernameBox(burner.pub, 'BurnConflict');
-    beginBlockJournal(1);
     putUsername({ nameLower: 'burnconflict', name: 'BurnConflict', owner: burner.hex, boxId: uBox.id!, claimedAtBlock: 1 });
-    finishBlockJournal();
 
     const tx: UtxoTransaction = {
       inputs: [kb.id!, uBox.id!],
@@ -582,9 +575,7 @@ describe('username routes', () => {
     const burner = makeKeys();
     const kb = seedKarma(burner.pub, 100n);
     const uBox = seedUsernameBox(burner.pub, 'WrongPrice');
-    beginBlockJournal(1);
     putUsername({ nameLower: 'wrongprice', name: 'WrongPrice', owner: burner.hex, boxId: uBox.id!, claimedAtBlock: 1 });
-    finishBlockJournal();
     putIdentityRecord(burner.pub, { lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     const wrongPrice = USERNAME_BURN_PRICE - 1n;

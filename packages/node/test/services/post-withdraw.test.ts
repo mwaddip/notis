@@ -91,7 +91,6 @@ async function importJournalStore() {
     getBlockJournal: (height: number) => BlockJournal | null;
     insertBlockJournal: (journal: BlockJournal) => void;
     deleteBlockJournal: (height: number) => void;
-    isBlockJournalOpen: () => boolean;
   };
 }
 

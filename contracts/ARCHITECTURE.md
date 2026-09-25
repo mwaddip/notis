@@ -756,11 +756,12 @@ to verify box existence or absence without storing the full UTXO set.
   > snapshot bootstrap does. A future fast-sync must be designed as one of
   > those; "rebuild from the box set" is not available and no amount of care
   > makes it so.
-- **Journal-fed:** The per-block mutation set fed to the prover is derived from
-  the block journal (see Invariants → Block application journal), with
-  intra-block insert+remove pairs for the same boxId netted out
-  deterministically. Inserted box bytes come from the journal's recorded box,
-  never a store re-fetch
+- **Effects-fed:** The per-block mutation set fed to the prover is derived from
+  the block's effects — the list the block journal is built from (see
+  Invariants → Block application journal) — with intra-block insert+remove
+  pairs for the same boxId netted out deterministically, and a name or holder
+  key the block both creates and removes netted out the same way. Inserted box
+  bytes come from the effect's box, never a store re-fetch
 - **Canonically ordered (M-12):** the AVL digest is insertion-order-sensitive,
   so every prover feed is sorted before the operations run: the per-block net
   set applies all removes then all inserts, each sorted lexicographically by
@@ -2144,15 +2145,14 @@ no object check compares against it and no producer stamps it.
 
 ### Block application journal
 
-- **One record-once mutation log.** Block application maintains a single
-  ordered journal of primitive box mutations —
-  `{ op: 'insert' | 'remove', boxId, box? }` — recorded automatically at the
-  store choke point (`insertBox`, `consumeBox`) while a block journal is open.
-  Call sites never maintain parallel mutation bookkeeping; every box mutation
-  a block makes appears in the log exactly once, in application order.
-  (P2-D deleted the third choke point, `markLikeBoxesTallied`, together with
-  the epoch; the like-record side-records journal through their own hooks,
-  with exact inverses.)
+- **One record-once mutation log.** Block application keeps a single ordered
+  journal of primitive mutations — a box inserted or removed, a record written —
+  built from the block's effects: `applyBlock` lists every mutation the block
+  makes exactly once, in application order
+  (`CONSENSUS_INTERFACE → BlockEffects`), and the node writes its store and
+  builds the journal from that one list (`NODE_INTERFACE → Block Journal`). Call
+  sites never maintain parallel mutation bookkeeping, and no store primitive
+  records.
 - **Accounting-agnostic.** The log carries no per-mutation-class fields.
   Every mutation class — settlement legs, bonds, like accounting, coinbase
   splits, and future ones like storage rent — journals through the same log
@@ -2165,9 +2165,10 @@ no object check compares against it and no producer stamps it.
   digest for every mutation class.
 - **Sole replay basis.** UTXO boxes + the journal are a complete replay
   source. No mutation or rollback may read a withdrawn post's content.
-- **AVL feed derives from the journal.** The prover's per-block mutation set
-  is computed from the journal — never from hand-maintained consumed/created
-  lists (the drift source behind audit C-5/H-5/H-7).
+- **AVL feed derives from the effects.** The prover's per-block mutation set
+  is computed from the block's effects, the same list the journal is built
+  from — never from hand-maintained consumed/created lists (the drift source
+  behind audit C-5/H-5/H-7).
 - **Prover restored on rejection.** A rejected block leaves the AVL prover at
   its pre-block digest regardless of which stage rejected it.
 
@@ -2467,8 +2468,8 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   configuration, I/O or state. Anything that does — a local setting, the net, an
   engine — reaches a store module through a setter `index.ts` calls at startup,
   as the mempool cap does (`MEMPOOL_INTERFACE → Size cap — reject, never evict`),
-  the way `index.ts` wires the node's other seams (`setNet`, the
-  karma-membership hook, `setMempoolCap`).
+  the way `index.ts` wires the node's other seams (`setNet`,
+  `setMempoolCap`).
 - **"Does NOT own" on every package** — each package explicitly lists what
   it is NOT responsible for. Prevents scope creep.
   > **True — every workspace member carries it.** Note it lives in each member's `CLAUDE.md`, not in
@@ -2689,3 +2690,8 @@ backfill — and a withdrawn post keeps its row with `content` `NULL` and its ma
   pool). The Solana contract itself is outside this repository
 - **The backer unstake control in the web client**, and the profile window's copyable public key for the
   deposit flow (`WEB_INTERFACE`)
+- **A leaf that validates blocks without holding the state:** every consensus read a keyed record under the state
+  root (**N2** — `CONSENSUS_INTERFACE → StateView` marks each read that moves), and a per-block proof of the block's
+  reads and writes committed in the header as `ADProofsRoot` (**N3** — the keys a recording view answered, beside the
+  effects' writes, are its list: `CONSENSUS_INTERFACE → BlockEffects`); then the leaf's verifier over them (**N4**).
+  N2 and N3 move committed bytes, so they ride one reset together

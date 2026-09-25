@@ -71,8 +71,6 @@ describe('deriveKarmaDecay', () => {
     boxesMap: Map<string, KarmaBox[]>,
     recordMap = new Map<string, IdentityRecord>(),
   ) {
-    const consumed: { boxId: string; atHeight: number }[] = [];
-    const inserted: KarmaBox[] = [];
     const key = (o: Uint8Array) => Buffer.from(o).toString('hex');
     const postBodyKarma = new Map<string, { owner: Uint8Array; boxes: KarmaBox[] }>();
     for (const [k, boxes] of Array.from(boxesMap.entries()).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
@@ -80,15 +78,12 @@ describe('deriveKarmaDecay', () => {
     }
     return {
       deps: {
-        getKarmaBoxes: (owner: Uint8Array) => boxesMap.get(key(owner)) ?? [],
         getIdentityRecord: (id: Uint8Array) => recordMap.get(key(id)) ?? null,
         putIdentityRecord: (id: Uint8Array, r: IdentityRecord) => {
           recordMap.set(key(id), r);
         },
       },
       postBodyKarma,
-      consumed,
-      inserted,
       recordMap,
     };
   }
@@ -113,7 +108,7 @@ describe('deriveKarmaDecay', () => {
     ACTIVITY_AT + KARMA_STALE_THRESHOLD_BLOCKS + CAP_INTERVALS * KARMA_DECAY_INTERVAL_BLOCKS;
 
   it('does nothing for a non-stale identity', () => {
-    const { deps, postBodyKarma, consumed, inserted } = oneOwner(
+    const { deps, postBodyKarma } = oneOwner(
       [makeKarmaBox({ value: 100n })],
       clock(99999),
     );
@@ -121,8 +116,6 @@ describe('deriveKarmaDecay', () => {
     const journal = deriveKarmaDecay(deps, postBodyKarma, 100000, TEST_CFG);
 
     expect(journal).toHaveLength(0);
-    expect(consumed).toHaveLength(0);
-    expect(inserted).toHaveLength(0);
   });
 
   it('burns karma for a stale identity', () => {
@@ -160,7 +153,7 @@ describe('deriveKarmaDecay', () => {
   });
 
   it('does nothing when already at or below the minimum', () => {
-    const { deps, postBodyKarma, consumed, inserted } = oneOwner(
+    const { deps, postBodyKarma } = oneOwner(
       [makeKarmaBox({ id: 'old-box-1', value: 8n })],
       clock(ACTIVITY_AT),
     );
@@ -168,8 +161,6 @@ describe('deriveKarmaDecay', () => {
     const journal = deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG);
 
     expect(journal).toHaveLength(0);
-    expect(consumed).toHaveLength(0);
-    expect(inserted).toHaveLength(0);
   });
 
   it('leaves the clock untouched when nothing burns', () => {
@@ -186,7 +177,7 @@ describe('deriveKarmaDecay', () => {
   });
 
   it('consolidates multiple boxes into one', () => {
-    const { deps, postBodyKarma, consumed } = oneOwner(
+    const { deps, postBodyKarma } = oneOwner(
       [
         makeKarmaBox({ id: 'box-a', value: 50n }),
         makeKarmaBox({ id: 'box-b', value: 60n }),
@@ -198,11 +189,10 @@ describe('deriveKarmaDecay', () => {
 
     expect(journal).toHaveLength(1);
     // ⛔ **The plan NAMES both boxes; the settlement consumes them.** The
-    // derivation is pure, so `consumed` stays empty and the plan is the only
-    // place the pair can be read.
+    // derivation is pure — DecayDeps declares no box writer — so the plan is
+    // the only place the pair can be read.
     expect(journal[0]!.consumedBoxIds).toHaveLength(2);
     expect([...journal[0]!.consumedBoxIds].sort()).toEqual(['box-a', 'box-b']);
-    expect(consumed).toHaveLength(0);
   });
 
   it('advances lastDecayBlock and preserves lastActivityBlock', () => {

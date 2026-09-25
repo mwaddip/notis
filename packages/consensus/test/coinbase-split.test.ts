@@ -21,7 +21,8 @@ import type {
   UtxoTransaction,
   VouchBox,
 } from '@dagsocial/types';
-import { countKarmaActors, splitCoinbase } from '@dagsocial/consensus';
+import { splitCoinbase } from '@dagsocial/consensus';
+import { countKarmaActors } from '../src/coinbase-split.js';
 import { uid,
   FIXTURE_BOND_KARMA,
 } from './helpers.js';

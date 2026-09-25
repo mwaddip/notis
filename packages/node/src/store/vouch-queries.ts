@@ -1,5 +1,5 @@
 import { getDb } from './db.js';
-import { getBox, rowToBox } from './utxo.js';
+import { rowToBox } from './utxo.js';
 import type { UtxoRow } from './utxo.js';
 import type { VouchBox } from '@dagsocial/types';
 import type { Page, PageResult } from './index.js';
@@ -8,22 +8,30 @@ function pubkeyToHex(pk: Uint8Array): string {
   return Buffer.from(pk).toString('hex');
 }
 
+/**
+ * Every live vouch box for the (voucher, target) pair, ascending box id — the
+ * `StateView` read (CONSENSUS_INTERFACE → StateView).
+ */
+export function getVouchBoxes(voucherId: Uint8Array, targetId: Uint8Array): VouchBox[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM utxo_boxes
+       WHERE box_type = 'vouch' AND spent_at_block IS NULL
+         AND json_extract(extra_data, '$.voucherId') = ?
+         AND json_extract(extra_data, '$.targetId') = ?
+       ORDER BY id`,
+    )
+    .safeIntegers()
+    .all(pubkeyToHex(voucherId), pubkeyToHex(targetId)) as UtxoRow[];
+  return rows.map((r) => rowToBox(r) as VouchBox);
+}
+
+/** The pair's first live vouch box by id, or null — read for its existence. */
 export function getVouchBox(
   voucherId: Uint8Array,
   targetId: Uint8Array,
 ): VouchBox | null {
-  const db = getDb();
-  const row = db
-    .prepare(
-      `SELECT id FROM utxo_boxes
-       WHERE box_type = 'vouch' AND spent_at_block IS NULL
-         AND json_extract(extra_data, '$.voucherId') = ?
-         AND json_extract(extra_data, '$.targetId') = ?`,
-    )
-    .get(pubkeyToHex(voucherId), pubkeyToHex(targetId)) as
-    | { id: string } | undefined;
-  if (!row) return null;
-  return getBox(row.id) as VouchBox | null;
+  return getVouchBoxes(voucherId, targetId)[0] ?? null;
 }
 
 // NODE_INTERFACE → "Every list a view returns is a page"

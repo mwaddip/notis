@@ -1651,6 +1651,10 @@ separates both from wire's own refusals, so a caller switching on `code` never h
   signal.
 - **Ids are `b32` on the wire, hex `string` in memory.** The conversion lives in the codec layer and
   nowhere else — a conversion at any other site is a double-hexing defect.
+- **A decoded byte field is a fresh, plain `Uint8Array`, whatever carried the input.** The `b32` /
+  `b33` / `b64` and `lp(x)` readers copy the field out, so a decoded struct never aliases the bytes it
+  came from, and the copy is a plain `Uint8Array` whether the input is one or a `Buffer` — what a
+  decoder answers does not depend on how its caller carried the bytes.
 - **Enum tags are never renumbered.** A renumber silently moves every id and `stateRoot` that covers
   the tag (the T2b `0x03` lesson, now applying inside the id preimage).
 - **A retired tag's *number* may be reassigned to a new type — under all three of the following, and

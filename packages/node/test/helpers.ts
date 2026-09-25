@@ -24,7 +24,7 @@ import {
   encodeInterlinks,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW, blockHash, level as headerLevel, asertTargetBits } from '@dagsocial/validation';
-import { materializeOutput } from '@dagsocial/consensus';
+import { buildBlockSettlement, computeBlockReward, materializeOutput } from '@dagsocial/consensus';
 import { config } from '../src/config.js';
 import type { Config } from '../src/config.js';
 import { AVL_SCHEMA } from '../src/store/db.js';
@@ -786,6 +786,18 @@ export function signHeader(header: BlockHeader, privateKey: KeyObject): Uint8Arr
  * rejected — build it against the state it will be applied to.
  */
 /**
+ * The emission schedule as the node computes it: `computeBlockReward` under the
+ * context block application and the block creator hand the rules,
+ * `applyContextFrom` of the process config in the current module graph.
+ */
+export async function nodeRewardSchedule(): Promise<(height: number) => bigint> {
+  const { applyContextFrom } = await import('../src/services/block-apply.js');
+  const { config: nodeConfig } = await import('../src/config.js');
+  const ctx = applyContextFrom(nodeConfig);
+  return (height) => computeBlockReward(height, ctx);
+}
+
+/**
  * Put this network's emission box in the store, if it is not there already.
  *
  * ⛔ **A chain below the emission terminus cannot produce a block without one.**
@@ -931,9 +943,9 @@ export async function makeApplicableBlock(
     protocolVersion?: number;
   } = {},
 ): Promise<OrderingBlock> {
-  const { computeUtxoTxRoot, buildBlockSettlement } = await import(
-    '../src/services/block-creator.js'
-  );
+  const { computeUtxoTxRoot } = await import('../src/services/block-creator.js');
+  const { storeStateView, applyContextFrom } = await import('../src/services/block-apply.js');
+  const { config: nodeConfig } = await import('../src/config.js');
   const { scheduledTargetBits, nowMs } = await import('../src/services/difficulty.js');
 
   await seedEmissionBox();
@@ -972,10 +984,12 @@ export async function makeApplicableBlock(
   // body's LAST entry, which is the whole of how apply identifies it
   // (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`).
   const built = buildBlockSettlement(
+    storeStateView,
     txBytesList,
     height,
     miner.userId,
     miner.userId,
+    applyContextFrom(nodeConfig),
   );
   if ('error' in built) {
     throw new Error(`makeApplicableBlock: the body has no valid settlement: ${built.error}`);
@@ -1044,7 +1058,7 @@ export async function makeApplicableBlock(
   // to hand the caller its block either way, and the suite's own apply will
   // reject the body loudly.
   const { computePostBlockStateRoot } = await import('../src/services/block-apply.js');
-  const speculation = computePostBlockStateRoot(block, height);
+  const speculation = computePostBlockStateRoot(block);
   header.stateRoot =
     opts.stateRoot ??
     (speculation.kind === 'computed' ? speculation.stateRoot : EMPTY_STATE_ROOT);

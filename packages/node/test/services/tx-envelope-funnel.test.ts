@@ -72,7 +72,6 @@ async function importOrdering() {
 async function importJournalStore() {
   return (await import('../../src/store/journal.js')) as {
     getBlockJournal: (height: number) => BlockJournal | null;
-    isBlockJournalOpen: () => boolean;
   };
 }
 
@@ -172,10 +171,9 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     expect(utxo.getBox(aliceBox.id!)).not.toBeNull();
     expect(utxo.getBox(malloryBox.id!)).not.toBeNull();
 
-    // No half-built journal left behind.
+    // No journal stored for the refused block.
     const journal = await importJournalStore();
     expect(journal.getBlockJournal(1)).toBeNull();
-    expect(journal.isBlockJournalOpen()).toBe(false);
   });
 
   it('an unhashable transaction has no encoding either, so it never reaches the funnel', async () => {
@@ -361,7 +359,6 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     expect(journal.getBlockJournal(1)!.appliedUtxoTxs.map((t) => t.txId)).toEqual([
       computeTxId(tx),
     ]);
-    expect(journal.isBlockJournalOpen()).toBe(false);
   });
 
   it('non-vacuity: the obligation is about PROOF, not about strictness', async () => {

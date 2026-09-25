@@ -27,10 +27,8 @@ import type {
   VouchBox,
   VouchEscrowBox,
 } from '@dagsocial/types';
-import {
-  buildSettlement,
-  checkSettlement,
-} from '@dagsocial/consensus';
+import { buildSettlement } from '@dagsocial/consensus';
+import { checkSettlement } from '../src/settlement.js';
 import type { SettlementDeps, SettlementBody } from '@dagsocial/consensus';
 import type { DecayPlan } from '@dagsocial/consensus';
 import {

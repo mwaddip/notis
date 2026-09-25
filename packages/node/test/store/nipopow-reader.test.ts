@@ -15,9 +15,13 @@ import {
 } from '@dagsocial/types';
 import { retargetParams } from '../../src/services/difficulty.js';
 import { UnreadableStoredBlockError } from '../../src/services/corrupt-state.js';
-import { unlinkSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
-const TEST_DB = '/tmp/dagsocial-test-nipopow-reader.sqlite';
+// A directory private to this run, so two runs of the suite on one machine
+// never write the same store file.
+let testDir: string;
 
 // NODE_INTERFACE → Nipopow reader: four reads over a stored chain with real
 // PoW-solved headers carrying correct interlink vectors.
@@ -27,8 +31,8 @@ describe('nipopow reader store reads', () => {
   let chainHashes: string[];
 
   beforeAll(() => {
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
-    initDb(TEST_DB);
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-nipopow-reader-'));
+    initDb(join(testDir, 'store.sqlite'));
 
     const { headers, interlinksPerHeader } = buildMinedHeaderChain({
       anchorPrevBlockHash: GENESIS_PREV_BLOCK_HASH,
@@ -61,7 +65,7 @@ describe('nipopow reader store reads', () => {
 
   afterAll(() => {
     closeDb();
-    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   // ---- getPopowHeaderByHash ----

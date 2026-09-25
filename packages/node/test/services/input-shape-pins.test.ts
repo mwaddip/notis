@@ -48,7 +48,6 @@ import {
   getDb,
   getBox as storeGetBox,
   getIdentityRecord as storeGetIdentityRecord,
-  getKarmaBox,
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
@@ -90,7 +89,6 @@ describe('P2-B phase 4 — input-shape pins', () => {
       getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => storeInsertBox(box),
       consumeBox: (id: string, atBlock: number) => storeConsumeBox(id, atBlock),
-      getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array): bigint =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,
@@ -137,6 +135,7 @@ describe('P2-B phase 4 — input-shape pins', () => {
     const candidate = {
       boxType: 'karma' as const,
       value,
+      createdAtBlock: 0,
       owner,
     };
     const box = seedProvenance<KarmaBox>(candidate, 1, nonce);
@@ -154,6 +153,7 @@ describe('P2-B phase 4 — input-shape pins', () => {
     const candidate = {
       boxType: 'vouch' as const,
       value,
+      createdAtBlock: 0,
       voucherId,
       targetId,
     };

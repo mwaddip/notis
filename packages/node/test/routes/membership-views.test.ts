@@ -130,7 +130,6 @@ describe('/karma/:userId membership fields', () => {
           getBox: getBoxWithPending,
           insertBox,
           consumeBox,
-          getKarmaBox,
           getKarmaValue,
           hasActiveVouchEscrow,
           vouchCooldownBlocks: 2,
@@ -142,7 +141,6 @@ describe('/karma/:userId membership fields', () => {
           getTopologyAuthor: () => null,
           getPendingPostAuthor: () => null,
           getIdentityRecord,
-          getKarmaBoxes: (owner: Uint8Array) => [getKarmaBox(owner)].filter(Boolean) as KarmaBox[],
           runInTransaction: (fn: () => void) => fn(),
           getVouchBox: () => null,
           getNetworkRecord,
@@ -372,7 +370,6 @@ describe('POST /vouches — the four membership 400s', () => {
       },
       insertBox: (box: AnyBox) => insertBox(box),
       consumeBox: (id: string, atBlock: number) => consumeBox(id, atBlock),
-      getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array): bigint =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       getIdentityRecord,
@@ -573,7 +570,6 @@ describe('POST /invites — membership 400', () => {
         },
         insertBox: (box: AnyBox) => insertBox(box),
         consumeBox: (id: string, atBlock: number) => consumeBox(id, atBlock),
-        getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
         getKarmaValue: (owner: Uint8Array): bigint =>
           getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
         getIdentityRecord,
