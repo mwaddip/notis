@@ -756,11 +756,15 @@ to verify box existence or absence without storing the full UTXO set.
   > snapshot bootstrap does. A future fast-sync must be designed as one of
   > those; "rebuild from the box set" is not available and no amount of care
   > makes it so.
-- **Journal-fed:** The per-block mutation set fed to the prover is derived from
-  the block journal (see Invariants → Block application journal), with
-  intra-block insert+remove pairs for the same boxId netted out
-  deterministically. Inserted box bytes come from the journal's recorded box,
-  never a store re-fetch
+- **Effects-fed:** The per-block mutation set fed to the prover is derived from
+  the block's effects — the list the block journal is built from (see
+  Invariants → Block application journal) — with intra-block insert+remove
+  pairs for the same boxId netted out deterministically, and a name or holder
+  key the block both creates and removes netted out the same way. Inserted box
+  bytes come from the effect's box, never a store re-fetch
+  > ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 2)** — the set is derived from the journal the store's
+  > primitives recorded, and a name or holder key created and removed in one block reaches the prover as a `Remove`
+  > of a key the tree never held, which stops the node.
 - **Canonically ordered (M-12):** the AVL digest is insertion-order-sensitive,
   so every prover feed is sorted before the operations run: the per-block net
   set applies all removes then all inserts, each sorted lexicographically by
@@ -2166,9 +2170,11 @@ no object check compares against it and no producer stamps it.
   digest for every mutation class.
 - **Sole replay basis.** UTXO boxes + the journal are a complete replay
   source. No mutation or rollback may read a withdrawn post's content.
-- **AVL feed derives from the journal.** The prover's per-block mutation set
-  is computed from the journal — never from hand-maintained consumed/created
-  lists (the drift source behind audit C-5/H-5/H-7).
+- **AVL feed derives from the effects.** The prover's per-block mutation set
+  is computed from the block's effects, the same list the journal is built
+  from — never from hand-maintained consumed/created lists (the drift source
+  behind audit C-5/H-5/H-7).
+  > ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 2)** — the set is computed from the journal.
 - **Prover restored on rejection.** A rejected block leaves the AVL prover at
   its pre-block digest regardless of which stage rejected it.
 

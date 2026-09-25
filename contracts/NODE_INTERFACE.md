@@ -3711,8 +3711,9 @@ and fail-stops (`failStopIfCorruptChain`), never a refusal the requester is blam
 
 ### Block Journal
 
-The journal is the single source of truth for undoing a block and for feeding
-the AVL prover (ARCHITECTURE → "Block application journal"). One CBOR-encoded
+The journal is the single source of truth for undoing a block; it and the AVL
+feed are both derived from the block's effects (ARCHITECTURE → "Block application journal";
+`CONSENSUS_INTERFACE → BlockEffects`). One CBOR-encoded
 row per applied block, purged below `height − maxReorgDepth` (the profile's reorg horizon —
 TYPES_INTERFACE → Chain reorganisation).
 
@@ -3966,12 +3967,16 @@ the network record and the username records (see "Entity kinds" below).
   same `getUnspentBoxes()` read, and `assertGenesisRoot` refuses the pinned root inside the seeding
   transaction. Such a fixture mines **coinbase-only** blocks, which still move state off genesis by
   releasing the emission box.
-- **Journal-fed:** the per-block mutation set is derived from
-  `BlockJournal.mutations` — intra-block insert+remove pairs for the same
-  boxId net out; inserted box bytes come from the journal's `box` payload,
-  never a store re-fetch (`getBox` returns null for created-then-consumed
-  boxes and silently dropped them). The derivation switches on `kind` and
-  **must be exhaustive** — see "One log, not parallel arrays" above
+- **Effects-fed:** the per-block mutation set is derived from the block's
+  effects' `mutations` (`CONSENSUS_INTERFACE → BlockEffects`) — intra-block
+  insert+remove pairs for the same boxId net out, and so does a name or holder
+  key the block both creates and removes (→ "Where record collapsing happens");
+  inserted box bytes come from the effect's box, never a store re-fetch
+  (`getBox` returns null for a created-then-consumed box). One derivation serves
+  the apply path and the speculative run. It switches on `kind` and **must be
+  exhaustive** — see "One log, not parallel arrays" above
+  > ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 2)** — `proverFeedFromJournal` derives the set from
+  > the journal the store's primitives recorded, and nets boxes only.
 - **Canonically ordered (M-12):** `applyBlockMutations` sorts internally —
   all removes, then all inserts, then all record puts, each lexicographically
   by hex key, then the network record's put — so every caller inherits the canonical order; callers MUST NOT
@@ -4238,21 +4243,33 @@ wins, identical final tree); the journal keeps both entries because rollback
 needs the first one's `replaced`. Netting is per-kind: boxes cancel
 insert+remove pairs, records keep the last write — do not share one code path.
 
+**A removable record the block creates and removes nets out, as a box does.** The name and
+holder records are the two a block can remove (→ Username records), so their last write in a
+block may be a removal — and **a removal reaches the prover only for a key the state held
+before the block.** A key the block both created and removed has no net effect: the feed
+carries neither a put nor a remove for it, so the tree is never asked to `Remove` a key it does
+not hold (which `applyBlockMutations` refuses as `DivergedStateTreeError`). Whether the state
+held a key before the block is said by the key's first mutation in the block
+(`CONSENSUS_INTERFACE → BlockEffects`). A block claiming a name and burning it is valid under
+every rule, so this is what lets every node apply it.
+
+> ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 2)** — the feed keeps the last write per key with no
+> regard to whether the key existed: a name claimed and burned in one block reaches the prover as a `Remove` of a key
+> it never held, and every node holding a prover stops — the producer at its speculative run, every receiver at apply.
+
 **Where record collapsing happens, and why it is not arbitrary.** The collapse
-belongs to **`proverFeedFromJournal`**, not to `applyBlockMutations`. Box
+belongs to **the feed derivation**, not to `applyBlockMutations`. Box
 mutations commute: cancel the insert+remove pairs in any order and the surviving
 set is the same, which is why `applyBlockMutations` can own box canonicalisation
 by sorting. **Record puts do not commute** — two writes to one key differ in
-*which came last*, and that is carried by journal application order alone. Once
+*which came last*, and that is carried by the effects' application order alone. Once
 `applyBlockMutations` sorts by hex key, that information is gone; a sort cannot
 recover it, and any behaviour that appeared to work would be relying on sort
-stability. So the collapse must happen while journal order is still
+stability. So the collapse must happen while that order is still
 authoritative, and `applyBlockMutations` receives **at most one entry per record
 key**. The natural reading — "`applyBlockMutations` owns canonical ordering,
 therefore it owns this too" — is wrong, and wrong in a way that produces a
-silently order-dependent digest. *(Gap found by the phase B session; pinned
-here because the contract previously stated both rules without saying which
-function owns the collapse.)*
+silently order-dependent digest.
 
 `applyBlockMutations`' `recordPuts` parameter is **optional and defaults to
 empty**, so the many existing four-argument call sites keep working. That
@@ -5242,7 +5259,7 @@ no per-post serve path. `onPeerActive` is wired to peer-readiness
   records alike — is listed exactly once, in `applyBlock`'s effects, in
   application order; the store's writes and the block journal are built from
   that one list; rollback replays inverses in reverse order; the AVL feed derives
-  from the same journal (record-once, Spec B P1; Spec G phase B). ⚠ AHEAD OF CODE
+  from the same list (record-once, Spec B P1; Spec G phase B). ⚠ AHEAD OF CODE
   (2026-09-25, the consensus package, stage 2): the list is recorded at the store's
   write primitives while a block journal is open.
 - **Consensus code never reads the `created_at_block` column.** It is not in

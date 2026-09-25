@@ -150,6 +150,9 @@ node builds `UtxoEngineDeps` over its store for admission, where `validateTx` is
   final id), a box spent (its id), an identity record written (the id, the record), the network record written, a name
   record written or removed, a holder record written or removed. **The holder record is the phase's own rule**: a
   claim writes `{ claimAvailable: false, boxId }` for its owner, a burn removes it (`NODE_INTERFACE → Username records`).
+  **Each name and holder mutation says whether the state held its key just before it** — the overlay knows from its
+  own first touch of the key — so the feed can net out a key the block both creates and removes
+  (`NODE_INTERFACE → "A removable record the block creates and removes nets out, as a box does"`).
 - **`posts`** — the block's posts in body order (`postsOf`).
 - **`likeRecords`** — each like record written, in apply order.
 - **`withdrawals`** — each withdrawn post id, in body order.
