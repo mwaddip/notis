@@ -28,3 +28,6 @@ export { splitCoinbase, backerLeg, countKarmaActors, isCreditSideTx } from './co
 export type { EmbeddedTx } from './coinbase-split.js';
 
 export { postsOf, postIdsOf, withdrawalsOf } from './block-posts.js';
+
+export type { StateView, ApplyContext } from './state-view.js';
+export type { HolderRecord } from './overlay.js';
