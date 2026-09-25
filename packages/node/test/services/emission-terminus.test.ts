@@ -1,4 +1,4 @@
-import { coinbaseOf, makeApplicableBlock, makeTestIdentity, solveHeaderPow, ZERO_HASH } from '../helpers.js';
+import { coinbaseOf, makeApplicableBlock, makeTestIdentity, nodeRewardSchedule, solveHeaderPow, ZERO_HASH } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   CREDIT_INITIAL_REWARD,
@@ -15,9 +15,10 @@ import type { OrderingBlock } from '@dagsocial/types';
 // so there is a first height that pays zero. These heights are devnet's:
 // `creditFixedRateBlocks` 1000 and `creditEpochBlocks` 400 (TYPES_INTERFACE →
 // Network profiles), which the whole node suite runs on because
-// `vitest.config.ts` sets `NETWORK_TYPE`. `computeBlockReward` reads the process
-// config singleton, so an injected `Config` cannot move these — the profile can,
-// which is why the two fields are asserted below rather than assumed.
+// `vitest.config.ts` sets `NETWORK_TYPE`. The node computes the reward under the
+// context of its process config singleton (`applyContextFrom(config)`), so an
+// injected `Config` cannot move these — the profile can, which is why the two
+// fields are asserted below rather than assumed.
 //
 // R = 42, d = 1 → 41 decay epochs. Epoch 41 is the last that pays (42 − 41 = 1
 // credit), spanning heights F + 40×E + 1 = 17,001 through F + 41×E = 17,400.
@@ -46,7 +47,6 @@ async function importOrdering() {
 
 async function importBlockCreator() {
   return (await import('../../src/services/block-creator.js')) as unknown as {
-    computeBlockReward: (height: number) => bigint;
     stopBlockCreator: () => void;
   };
 }
@@ -135,7 +135,7 @@ describe('credit emission terminates', () => {
   });
 
   it('pays through the end of epoch 41 (control)', async () => {
-    const { computeBlockReward } = await importBlockCreator();
+    const computeBlockReward = await nodeRewardSchedule();
 
     // 42 − 41 × 1 = 1 credit.
     expect(computeBlockReward(LAST_PAYING_HEIGHT)).toBe(
@@ -150,7 +150,7 @@ describe('credit emission terminates', () => {
   });
 
   it('pays nothing from the terminus on', async () => {
-    const { computeBlockReward } = await importBlockCreator();
+    const computeBlockReward = await nodeRewardSchedule();
 
     expect(computeBlockReward(TERMINUS_HEIGHT)).toBe(0n);
 

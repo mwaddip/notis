@@ -11,9 +11,6 @@ import {
   EMPTY_STATE_ROOT,
   MAX_BLOCK_BODY_BYTES,
   STORAGE_RENT_PER_BYTE,
-  MAX_BOND_SETTLEMENTS_PER_BLOCK,
-  MAX_ESCROW_RETURNS_PER_BLOCK,
-  MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
   MAX_SETTLEMENT_BYTES,
   boxRecordBytes,
   decodeTx,
@@ -35,39 +32,25 @@ import type {
   OrderingBlock,
   BlockHeader,
   UtxoTxTree,
-  AnyBox,
   AnyBoxCandidate,
+  DecayCfg,
   UtxoTransaction,
 } from '@dagsocial/types';
-// The process config, distinct from the injected `config` below. The two
-// emission values read off it are re-checked by the applier against the same
-// singleton (`block-apply` §5, §5b), and `computeBlockReward` runs on the apply
-// path of server-role nodes, where the injected one is never assigned.
+// The process config, distinct from the injected `config` below: the rules'
+// context comes from it (`applyContextFrom`), as block application takes it on
+// every node, server-role nodes included, where the injected one is never
+// assigned.
 import { config as nodeConfig } from '../config.js';
 import type { Config } from '../config.js';
 import { scheduledTargetBits, nowMs } from './difficulty.js';
 import { getNet } from './net-instance.js';
 import {
+  applyContextFrom,
   applyOrderingBlock,
   computePostBlockStateRoot,
+  storeStateView,
 } from './block-apply.js';
-import {
-  countKarmaActors,
-  isCreditSideTx,
-  type EmbeddedTx,
-} from '@dagsocial/consensus';
-import {
-  bondOutputOf,
-  buildSettlement,
-  contributeToBody,
-  emptyBody,
-  type SettlementBody,
-  type SettlementDeps,
-} from '@dagsocial/consensus';
-import { deriveKarmaDecay } from '@dagsocial/consensus';
-import type { DecayDeps, DecayPlan } from '@dagsocial/consensus';
-import type { KarmaBox, VouchBox, VouchEscrowBox } from '@dagsocial/types';
-import { materializeOutput } from '@dagsocial/consensus';
+import { bondOutputOf, buildBlockSettlement, materializeOutput } from '@dagsocial/consensus';
 import {
   MissingStoredBlockError,
   UnhashableStoredHeaderError,
@@ -82,19 +65,7 @@ import {
 import {
   getOrderingBlock,
   getCurrentHeight,
-  getBox,
-  getBondsInvitedAt,
-  getEmissionBox,
-  getIdentityRecord,
-  getVouchEscrowsReleasableAt,
-  getLapsedVouches,
   getRentEligibleCreditBoxes,
-  getKarmaBoxes,
-  getLikeCarryBox,
-  getTreasuryBox,
-  getKarmaPoolBox,
-  getBackerPoolBox,
-  putIdentityRecord,
   getInterlinks,
 } from '../store/index.js';
 
@@ -276,27 +247,6 @@ export function submitMinedBlock(powNonce: number, submittedHeight: number): str
 // ---------------------------------------------------------------------------
 
 /**
- * Compute the block reward at a given height using Ergo-style linear decay.
- *
- * The decay's last step is to nothing: epoch 49 is the last that pays, and
- * every height above it yields 0 (MINING_INTERFACE → Emission Schedule, which
- * holds the end height and the emission total). Above the terminus the coinbase
- * carries whatever the other income terms yield, and a block with none of them
- * carries no coinbase outputs at all.
- */
-export function computeBlockReward(height: number): bigint {
-  if (height <= 0) return 0n;
-  if (height <= nodeConfig.creditFixedRateBlocks) {
-    return CREDIT_INITIAL_REWARD;
-  }
-  const epochs = Math.floor(
-    (height - nodeConfig.creditFixedRateBlocks - 1) / nodeConfig.creditEpochBlocks,
-  ) + 1;
-  const reward = CREDIT_INITIAL_REWARD - BigInt(epochs) * CREDIT_REWARD_REDUCTION;
-  return reward > 0n ? reward : 0n;
-}
-
-/**
  * This network's credit emission total — the value genesis puts in the
  * `EmissionBox` (MINING_INTERFACE → Emission Schedule; TYPES_INTERFACE →
  * EmissionBox).
@@ -403,7 +353,8 @@ export function createOrderingBlock(): OrderingBlock | null {
      */
     const rebuildBody = (): { valid: boolean; error?: string } => {
       const built = buildBlockSettlement(
-        userTxBytesList, newHeight, validatorId, currentMinerPubkey ?? validatorId,
+        storeStateView, userTxBytesList, newHeight, validatorId,
+        currentMinerPubkey ?? validatorId, applyContextFrom(nodeConfig),
       );
       if ('error' in built) return { valid: false, error: built.error };
       utxoTxTree.utxoTxIds = [...userTxIds, computeTxId(built.tx)];
@@ -427,7 +378,7 @@ export function createOrderingBlock(): OrderingBlock | null {
     //    profitable, and only the second survives a miner who re-implements this.
     //
     //    ⛔ **The pool's stored `tx_fee` orders this loop and never feeds the
-    //    coinbase.** `predictSettlementBody` below resolves every input itself,
+    //    coinbase.** The settlement build resolves every input itself,
     //    because the applier computes the block's fees from its own resolution of
     //    the body — a stored fee that has gone stale, or the zero an unpriceable
     //    entry carries, would make this node emit a coinbase its own applier
@@ -435,9 +386,10 @@ export function createOrderingBlock(): OrderingBlock | null {
     //    block.
     //
     //    ⛔ **An invitee may be named ONCE per block.** A second bond for the same
-    //    key makes the whole body inapplicable (`block-apply` §11), so a fill that
-    //    selected both would produce nothing at all. Skipping the second is an
-    //    assembly preference like the karma-first ordering, not a consensus rule.
+    //    key makes the whole body inapplicable (NODE_INTERFACE → Legal box
+    //    transitions), so a fill that selected both would produce nothing at all.
+    //    Skipping the second is an assembly preference like the karma-first
+    //    ordering, not a consensus rule.
     //
     //    ⛔ **The accumulator is SEEDED with the settlement an empty body
     //    produces.** Its baseline — the emission and treasury successors and the
@@ -670,7 +622,7 @@ export function createOrderingBlock(): OrderingBlock | null {
 
     // 19b. Compute the POST-block state root (H-6) — the digest this block's own
     // body produces, obtained by running that body through the apply path's
-    // mutation phase and rolling everything back. Never the current (pre-block)
+    // mutation phase and restoring the prover after. Never the current (pre-block)
     // digest: apply compares against the post-mutation digest, so a pre-block
     // root can never verify. PoW covers the header, so this must be known before
     // mining. A node with no prover falls back to EMPTY_STATE_ROOT — test-only,
@@ -782,243 +734,14 @@ function finalizeBlock(block: OrderingBlock): void {
 }
 
 // ---------------------------------------------------------------------------
-// The settlement's body
+// The decay configuration
 // ---------------------------------------------------------------------------
 
 /**
- * The three protocol boxes the settlement moves, read from this node's store.
- *
- * Each getter is `ORDER BY id LIMIT 1`, so "the emission box" names one row and
- * not whichever SQLite returned first — the stated total order the determinism
- * obligation requires of anything read from a table (NODE_INTERFACE → the
- * settlement transaction's determinism obligation).
+ * The four numbers karma decay reads (TYPES_INTERFACE → Identity record and
+ * karma valuation): the rules' context's own, so a reader of this and a rule
+ * run under `applyContextFrom` read one mapping of the profile.
  */
-/**
- * The decay pass's three seams: `getKarmaBoxes` (the ordered read, `ORDER BY
- * value DESC, id`), `getIdentityRecord` and `putIdentityRecord`. All through
- * the store (NODE_INTERFACE → Determinism is this mechanism's whole risk).
- */
-export const decayDeps: DecayDeps = {
-  getKarmaBoxes,
-  getIdentityRecord,
-  putIdentityRecord,
-};
-
-/**
- * Post-body karma projection for each identity the block's body touches.
- *
- * ⛔ **The plan must name boxes the settlement can consume — post-body, not
- * pre-body.** A touched identity had a body tx consume one of its pre-body
- * karma boxes, so naming pre-body boxes in the plan double-spends. The
- * projection removes consumed boxes and adds the body's karma change outputs.
- *
- * The identity record is NOT projected: user transactions do not write it,
- * so the pre-body record is what the settlement reads.
- *
- * Both the creator and the applier call this with the same decoded txs and
- * the same pre-body store, so both derive the same post-body set.
- *
- * ⛔ **Order is a consensus obligation.** Entries are sorted ascending by
- * owner hex; `deriveKarmaDecay` emits plans in that order.
- */
-export function collectPostBodyKarma(
-  decodedTxs: { txId: string; inputs: string[]; outputs: AnyBox[] }[],
-): Map<string, { owner: Uint8Array; boxes: KarmaBox[] }> {
-  const allInputIds = new Set<string>();
-  for (const tx of decodedTxs) {
-    for (const id of tx.inputs) allInputIds.add(id);
-  }
-
-  const touchedOwnerHexes = new Set<string>();
-  const touchedOwners = new Map<string, Uint8Array>();
-
-  for (const id of allInputIds) {
-    const box = getBox(id);
-    if (box?.boxType === 'karma') {
-      const hex = Buffer.from((box as KarmaBox).owner).toString('hex');
-      if (!touchedOwnerHexes.has(hex)) {
-        touchedOwnerHexes.add(hex);
-        touchedOwners.set(hex, (box as KarmaBox).owner);
-      }
-    }
-  }
-
-  const bodyKarmaOutputs = new Map<string, KarmaBox[]>();
-  for (const tx of decodedTxs) {
-    for (const out of tx.outputs) {
-      if (out.boxType === 'karma') {
-        const k = out as KarmaBox;
-        const hex = Buffer.from(k.owner).toString('hex');
-        if (touchedOwnerHexes.has(hex)) {
-          let arr = bodyKarmaOutputs.get(hex);
-          if (!arr) { arr = []; bodyKarmaOutputs.set(hex, arr); }
-          arr.push(k);
-        }
-      }
-    }
-  }
-
-  const sorted = [...touchedOwnerHexes].sort();
-  const result = new Map<string, { owner: Uint8Array; boxes: KarmaBox[] }>();
-  for (const hex of sorted) {
-    const preBody = getKarmaBoxes(touchedOwners.get(hex)!);
-    const surviving = preBody.filter((b) => b.id && !allInputIds.has(b.id));
-    const produced = (bodyKarmaOutputs.get(hex) ?? []).filter(
-      (b) => b.id && !allInputIds.has(b.id),
-    );
-    result.set(hex, { owner: touchedOwners.get(hex)!, boxes: [...surviving, ...produced] });
-  }
-  return result;
-}
-
-/** Everything the decay pass needs from the network profile. */
-export function decayConfig(): {
-  staleThresholdBlocks: number;
-  decayIntervalBlocks: number;
-  decayAmount: bigint;
-  karmaMinimum: bigint;
-} {
-  return {
-    staleThresholdBlocks: nodeConfig.karmaStaleThresholdBlocks,
-    decayIntervalBlocks: nodeConfig.karmaDecayIntervalBlocks,
-    decayAmount: nodeConfig.karmaDecayAmount,
-    karmaMinimum: nodeConfig.karmaMinimum,
-  };
-}
-
-/**
- * The settlement's reads, every one with a stated total order.
- *
- * ⛔ **ONE WIRING, SHARED BY THE PRODUCER AND THE APPLIER.** They must derive
- * the same settlement from the same state, and two copies of this object are two
- * derivations that agree only by inspection — which is the drift the whole unit
- * exists to close.
- *
- * `plans` is a thunk because the caller has already derived the decay pass:
- * `checkSettlement` reads it, and so does the clock commit afterwards, and two
- * scans of the identity set that must agree is exactly what one scan avoids.
- *
- * `escrows` is a captured list: the escrow leg reads pre-body state, so both
- * sides snapshot the releasable set before the apply loop and hand it in
- * (NODE_INTERFACE → The settlement transaction).
- */
-export function settlementDepsWith(
-  plans: () => DecayPlan[],
-  escrows: VouchEscrowBox[],
-  lapsedVouches: VouchBox[],
-  capturedBackerPoolBox: () => import('@dagsocial/types').BackerPoolBox | null,
-): SettlementDeps {
-  return {
-    getEmissionBox,
-    getTreasuryBox,
-    getKarmaPoolBox,
-    getBox,
-    getLikeCarryBox,
-    getBondsSettlingAt: (h: number) => {
-      const invitedAt = h - nodeConfig.inviteProbationBlocks;
-      return invitedAt <= 0 ? [] : getBondsInvitedAt(invitedAt, MAX_BOND_SETTLEMENTS_PER_BLOCK);
-    },
-    getEscrowsReleasableAt: () => escrows,
-    getLapsedVouches: () => lapsedVouches,
-    getLifetimeLikes: (invitee: Uint8Array) =>
-      getIdentityRecord(invitee)?.lifetimeLikesReceived ?? 0n,
-    getDecayPlans: plans,
-    vouchCooldownBlocks: nodeConfig.vouchCooldownBlocks,
-    getBackerPoolBox: capturedBackerPoolBox,
-    backerSupply: nodeConfig.profile.backerSupply,
-    creditFixedRateBlocks: nodeConfig.creditFixedRateBlocks,
-  };
-}
-
-/**
- * Everything a body of these transactions contributes to the settlement: the
- * fee total and the fee box ids, the karma-side actor count, and the invitee of
- * every bond.
- *
- * ⚠ **A prediction, not the rule.** The rule is the applier's, which gathers the
- * same quantities while walking the transactions in dependency order
- * (`block-apply` → the settlement carries the block's income). This runs before
- * the body has been applied and cannot use that walk, because the settlement it
- * feeds is part of the body the mutation phase runs over.
- *
- * A wrong prediction cannot produce a bad block: `checkSettlement` runs in the
- * mutation phase, and `computePostBlockStateRoot` runs that phase over this
- * body, so a settlement that does not match its body makes the speculation
- * `body-rejected` and this node declines to produce rather than mining a block
- * every peer refuses.
- *
- * Inputs resolve against the confirmed set **and this block's own outputs**,
- * because a transaction may spend a box another in the same block creates —
- * block order need not be dependency order, so every output is gathered before
- * any input resolves. Order does not matter to the actor count — a set is
- * commutative — and the fee box ids and invitees are collected in the order
- * the body itself fixes: committed transaction order, one of the three orders
- * NODE_INTERFACE → "Three ordering sources are permitted and no fourth is"
- * permits. The applier collects the settlement body in that same order — it
- * applies in dependency order but reads `utxoTxIds` for the settlement
- * (`block-apply` §11a). An input that resolves to neither leaves the body
- * unappliable, which the speculation above is what catches.
- */
-function predictSettlementBody(
-  decodedTxs: { tx: UtxoTransaction; txId: string; inputs: string[]; outputs: AnyBox[] }[],
-  validator: Uint8Array,
-): SettlementBody {
-  const ownOutputs = new Map<string, AnyBox>();
-  for (const { outputs } of decodedTxs) {
-    for (const box of outputs) if (box.id) ownOutputs.set(box.id, box);
-  }
-  const resolve = (boxId: string): AnyBox | null =>
-    getBox(boxId) ?? ownOutputs.get(boxId) ?? null;
-
-  const body = emptyBody();
-  const embedded: EmbeddedTx[] = [];
-  for (const { tx, inputs, outputs } of decodedTxs) {
-    const inputBoxes = inputs
-      .map(resolve)
-      .filter((box): box is AnyBox => box !== null);
-    embedded.push({ tx, inputBoxes });
-    const isRent = isCreditSideTx(tx) && Object.keys(tx.signatures).length === 0;
-    contributeToBody(body, outputs, isRent);
-  }
-
-  body.actors = countKarmaActors(embedded, validator);
-  return body;
-}
-
-/**
- * Build the settlement a body of these transactions requires, ready to ride as
- * the body's last entry.
- *
- * Shared with the test harness so a fixture's settlement is the one this node
- * would have produced, rather than a second construction that agrees by hand.
- */
-export function buildBlockSettlement(
-  txBytesList: Uint8Array[],
-  height: number,
-  validator: Uint8Array,
-  minerOwner: Uint8Array,
-): { tx: UtxoTransaction } | { error: string } {
-  const decoded = txBytesList.map((raw) => {
-    const tx = decodeTx(raw);
-    const txId = computeTxId(tx);
-    const outputs = tx.outputs.map((out, i) => materializeOutput(out as AnyBox, txId, i));
-    return { tx, txId, inputs: tx.inputs, outputs };
-  });
-  const postBody = collectPostBodyKarma(decoded);
-  const escrows = getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
-  const lapsed = getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
-  const capturedPool = getBackerPoolBox();
-  return buildSettlement(
-    settlementDepsWith(
-      () => deriveKarmaDecay(decayDeps, postBody, height, decayConfig()),
-      escrows, lapsed,
-      () => capturedPool,
-    ),
-    height,
-    nodeConfig.protocolVersionSchedule,
-    computeBlockReward(height),
-    nodeConfig.creditMinerRewardDelay,
-    predictSettlementBody(decoded, validator),
-    minerOwner,
-  );
+export function decayConfig(): DecayCfg {
+  return applyContextFrom(nodeConfig).decayCfg;
 }

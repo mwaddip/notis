@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { computeTxId } from '@dagsocial/types';
-import { makeTestIdentity, makeApplicableBlock } from '../helpers.js';
+import { makeTestIdentity, makeApplicableBlock, nodeRewardSchedule } from '../helpers.js';
 
 /**
  * The emission box and the treasury box — unit 4b.
@@ -48,7 +48,8 @@ async function importFresh() {
   const settlement = await import('@dagsocial/consensus');
   const engine = await import('@dagsocial/consensus');
   const config = await import('../../src/config.js');
-  return { db, system, utxo, genesis, prover, creator, apply, split, settlement, engine, config };
+  const reward = await nodeRewardSchedule();
+  return { db, system, utxo, genesis, prover, creator, apply, split, settlement, engine, config, reward };
 }
 
 /**
@@ -170,7 +171,7 @@ describe('the emission box', () => {
     // still positive.
     let curveTotal = 0n;
     for (let h = 1; ; h++) {
-      const r = s.creator.computeBlockReward(h);
+      const r = s.reward(h);
       if (r === 0n) break;
       curveTotal += r;
     }
@@ -296,7 +297,7 @@ describe('the treasury box', () => {
     const s = await bootUnder('devnet');
     close = () => s.db.closeDb();
 
-    const emission = s.creator.computeBlockReward(1);
+    const emission = s.reward(1);
     const expected = s.split.splitCoinbase(emission, 0n, 0n, 0).treasury;
     // Non-vacuity: a block whose slice rounded to zero would create nothing, so
     // the case has to be one where something actually accrues.
@@ -315,12 +316,12 @@ describe('the treasury box', () => {
 
     // Two blocks with DIFFERENT fee income, so the two slices differ and a
     // successor that overwrote rather than accrued would be visible.
-    const first = s.split.splitCoinbase(s.creator.computeBlockReward(1), 0n, 0n, 0).treasury;
-    const second = s.split.splitCoinbase(s.creator.computeBlockReward(2), 0n, 0n, 0).treasury;
-    expect(settle(s, 1, s.creator.computeBlockReward(1))).toBe(true);
+    const first = s.split.splitCoinbase(s.reward(1), 0n, 0n, 0).treasury;
+    const second = s.split.splitCoinbase(s.reward(2), 0n, 0n, 0).treasury;
+    expect(settle(s, 1, s.reward(1))).toBe(true);
     const predecessor = s.utxo.getTreasuryBox()!;
 
-    expect(settle(s, 2, s.creator.computeBlockReward(2))).toBe(true);
+    expect(settle(s, 2, s.reward(2))).toBe(true);
     const successor = s.utxo.getTreasuryBox()!;
 
     expect(successor.value).toBe(first + second);
@@ -338,7 +339,7 @@ describe('the treasury box', () => {
     const s = await bootUnder('devnet');
     close = () => s.db.closeDb();
 
-    expect(settle(s, 1, s.creator.computeBlockReward(1))).toBe(true);
+    expect(settle(s, 1, s.reward(1))).toBe(true);
     const before = s.utxo.getTreasuryBox()!;
     // With zero emission and zero fees the treasury slice is zero — the one
     // shape whose treasury rounds to nothing.
@@ -391,7 +392,7 @@ describe('credit conservation across a block', () => {
       expect(after.credit).toBeGreaterThan(before.credit);
 
       const backerDraw = after.backerPool - before.backerPool;
-      const split = s.split.splitCoinbase(s.creator.computeBlockReward(1), 0n, 0n, 0, backerDraw);
+      const split = s.split.splitCoinbase(s.reward(1), 0n, 0n, 0, backerDraw);
       expect(after.credit - before.credit).toBe(split.miner);
       expect(after.treasury - before.treasury).toBe(split.treasury);
     } finally {
