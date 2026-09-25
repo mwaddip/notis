@@ -10,9 +10,9 @@ context — read it and the linked docs before touching code.
 3. `../../CLAUDE.md` (repo root) — project overview + the Design-by-Contract dispatch workflow.
 4. `../../contracts/ARCHITECTURE.md` — system architecture + invariants.
 5. `../../contracts/SPECIAL.md` — S.P.E.C.I.A.L. attention weights. Internalize on session start.
-   ⚠ **This package is the one with per-subsystem profiles** — `services/utxo-engine.ts`,
-   `services/block-apply.ts`, `store/`, `state/` and `routes/` each override the
-   package default. Apply the profile of the component you are editing, not the package line.
+   ⚠ **This package has per-subsystem profiles** — `services/block-apply.ts`, `store/`, `state/` and
+   `routes/` each override the package default. Apply the profile of the component you are editing, not
+   the package line. The rules the node runs are `@dagsocial/consensus`'s, under that package's profile.
 6. The interface contract(s) for your task — `../../contracts/NODE_INTERFACE.md` always, plus
    `VALIDATION_INTERFACE.md`, `MEMPOOL_INTERFACE.md`, `MINING_INTERFACE.md`, `JOURNAL_EVENTS.md`
    as relevant.
@@ -26,12 +26,14 @@ Consensus is single-phase PoW — validator-produced ordering blocks; posts and 
 them as ordinary transactions. TypeScript, pnpm workspaces, Node.js ≥ 22.
 
 ## This package (`@dagsocial/node`)
-The full node: Express HTTP API, PoW verifier, SQLite store, UTXO engine, block creator + application,
-per-block like settlement, decay, invites/vouch, withdrawal, AVL+ state. The node serves no client
+The full node: Express HTTP API, PoW verifier, SQLite store, block creator + application, invites/vouch,
+withdrawal, AVL+ state — running `@dagsocial/consensus`'s rules (the UTXO engine, the per-block settlement, decay)
+over its store. The node serves no client
 (NODE_INTERFACE → The node serves no client).
 
 - **Owns:** `src/server.ts`, `src/routes/*`, `src/services/*`, `src/store/*`, `src/state/*` (AVL+).
-- **Does NOT own:** shared structures/hashing (`@dagsocial/types`), stateless validation
+- **Does NOT own:** the state-transition rules (`@dagsocial/consensus` — the node builds their deps over its store),
+  shared structures/hashing (`@dagsocial/types`), stateless validation
   (`@dagsocial/validation`), networking (`@dagsocial/net`), wire codec (`@dagsocial/wire`). Need a change
   there? Describe it back to the main session — do not edit sibling packages.
 
@@ -54,7 +56,8 @@ per-block like settlement, decay, invites/vouch, withdrawal, AVL+ state. The nod
   embedded tx, and every user-value mutation rides mempool → block.
 - **Hashing** — `blake2b512` truncated via `.subarray(0, 32)` for every 32-byte output; a browser mirror's
   `blakejs` must match it.
-- **Signatures** — raw Ed25519 (64 bytes), verified with `crypto.verify(null, …)` and a KeyObject.
+- **Signatures** — raw Ed25519 (64 bytes), verified by `@dagsocial/validation`'s `verifyEd25519` alone — strict
+  RFC 8032 through `@noble/curves` (`VALIDATION_INTERFACE → Acceptance criterion`).
 - **On-chain time = block height**, never wall-clock.
 - **Single-transaction atomic writes** for any multi-table mutation.
 - **Secret keys never** appear in API responses or DTOs.
