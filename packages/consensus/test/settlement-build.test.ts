@@ -11,14 +11,13 @@ import type { AnyBox, AnyBoxCandidate, UtxoTransaction } from '@dagsocial/types'
 import {
   buildBlockSettlement,
   checkSettlement,
-  collectPostBodyKarma,
   computeBlockReward,
-  emptyBody,
   materializeOutput,
   splitCoinbase,
 } from '@dagsocial/consensus';
 import type { ApplyContext } from '@dagsocial/consensus';
-import { settlementDepsWith } from '../src/settlement.js';
+import { emptyBody, settlementDepsWith } from '../src/settlement.js';
+import { collectPostBodyKarma } from '../src/decay.js';
 import {
   MemoryStateView,
   accrualBox,

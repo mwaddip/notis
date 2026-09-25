@@ -1,7 +1,8 @@
 // MINING_INTERFACE → The backer pool — the arithmetic, the worked vectors, and
 // the invariant V ≥ Σ accrued(stake).
 import { describe, it, expect } from 'vitest';
-import { backerLeg, splitCoinbase } from '@dagsocial/consensus';
+import { splitCoinbase } from '@dagsocial/consensus';
+import { backerLeg } from '../src/coinbase-split.js';
 import {
   buildSettlement,
   checkSettlement,
