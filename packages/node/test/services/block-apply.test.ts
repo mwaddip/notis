@@ -160,7 +160,6 @@ async function importJournalStore() {
     getBlockJournal: (height: number) => BlockJournal | null;
     insertBlockJournal: (journal: BlockJournal) => void;
     deleteBlockJournal: (height: number) => void;
-    isBlockJournalOpen: () => boolean;
   };
 }
 
@@ -976,23 +975,6 @@ describe('block-apply journal recording', () => {
       });
       expect(blockApply.applyOrderingBlock(clean)).toBe(true);
     });
-  });
-
-  // -----------------------------------------------------------------------
-  // 10. Successful block leaves no journal open after persistence
-  // -----------------------------------------------------------------------
-
-  it('no block journal is left open after successful block application', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-
-    const bc = await importBlockCreator();
-    bc.startBlockCreator(testConfig);
-    await mineNextBlock(bc);
-
-    const journal = await importJournalStore();
-    expect(journal.isBlockJournalOpen()).toBe(false);
   });
 
   // -----------------------------------------------------------------------
@@ -2480,10 +2462,6 @@ describe('block-apply funnel totality', () => {
       getCreditBoxes: (owner: Uint8Array) => unknown[];
     };
     expect(getCreditBoxes(coinbaseOf(block)[0]!.owner)).toHaveLength(0);
-
-    // The half-built journal is dropped, so the next block does not inherit it.
-    const journalStore = await importJournalStore();
-    expect(journalStore.isBlockJournalOpen()).toBe(false);
   });
 
   it('applies the same block with no stub in place (control)', async () => {

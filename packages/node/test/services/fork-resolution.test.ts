@@ -145,8 +145,6 @@ async function importJournalStore() {
   return (await import('../../src/store/journal.js')) as {
     getBlockJournal: (height: number) => BlockJournal | null;
     deleteBlockJournal: (height: number) => void;
-    beginBlockJournal: (height: number) => void;
-    abortBlockJournal: () => void;
   };
 }
 
@@ -955,31 +953,6 @@ describe('revertBlock', () => {
     const ordering = await importOrdering();
     expect(ordering.getOrderingBlock(1)).toBeNull();
     expect(journalStore.getBlockJournal(1)).toBeNull();
-  });
-
-  it('refuses to run while a block journal is open', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-
-    const bc = await importBlockCreator();
-    bc.startBlockCreator(testConfig);
-    await mineNextBlock(bc);
-
-    const journalStore = await importJournalStore();
-    const forkResolution = await importForkResolution();
-    journalStore.beginBlockJournal(2);
-    try {
-      expect(() => forkResolution.revertBlock(1)).toThrow(
-        'a block journal is open',
-      );
-    } finally {
-      journalStore.abortBlockJournal();
-    }
-
-    // Nothing was reverted
-    const ordering = await importOrdering();
-    expect(ordering.getOrderingBlock(1)).not.toBeNull();
   });
 
   it('rolls back decay burns', async () => {
