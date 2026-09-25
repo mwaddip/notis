@@ -21,9 +21,9 @@ import {
 } from '../../src/store/utxo.js';
 import { getIdentityRecord, putIdentityRecord, getNetworkRecord } from '../../src/store/identity-records.js';
 import { getVouchBox } from '../../src/store/vouch-queries.js';
-import { validateTx } from '../../src/services/utxo-engine.js';
-import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
-import { splitCoinbase } from '../../src/services/coinbase-split.js';
+import { validateTx } from '@dagsocial/consensus';
+import type { UtxoEngineDeps } from '@dagsocial/consensus';
+import { splitCoinbase } from '@dagsocial/consensus';
 import {
   rawPublicKey,
   seedProvenance,

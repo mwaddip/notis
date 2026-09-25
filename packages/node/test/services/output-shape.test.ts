@@ -63,8 +63,8 @@ import {
   applyTx,
   checkOutputShape,
   checkSettlementOutputShape,
-} from '../../src/services/utxo-engine.js';
-import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
+} from '@dagsocial/consensus';
+import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { config } from '../../src/config.js';
 
 function rawPublicKey(keyObj: KeyObject): Uint8Array {

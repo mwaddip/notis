@@ -276,7 +276,7 @@ describe('membership cascade across blocks', () => {
 
     // A is untouched: its record is byte-identical, and it is still a
     // member — the cascade never reaches it.
-    const { isMember } = await import('../../src/services/utxo-engine.js');
+    const { isMember } = await import('@dagsocial/consensus');
     const aAfter = records.getIdentityRecord(a.userId)!;
     expect(aAfter).toEqual(aBefore);
     expect(isMember(aAfter)).toBe(true);
@@ -471,7 +471,7 @@ describe('membership cascade across blocks', () => {
   // nor memberLikes on any counter.
   it('a reply moves neither counter', async () => {
     vi.resetModules();
-    const { isMember } = await import('../../src/services/utxo-engine.js');
+    const { isMember } = await import('@dagsocial/consensus');
 
     // A reply's marker moves neither lifetimeLikesReceived nor memberLikes —
     // the REPLY_AUTHOR_SHARE marker earmarks karma for the parent author, not

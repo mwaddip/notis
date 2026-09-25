@@ -74,7 +74,7 @@ const INVENTORY: HeightMention[] = [
 describe('ceiling obligation', () => {
   it('every currentBlockHeight mention in checkTransitions is inventoried', () => {
     const src = readFileSync(
-      resolve(__dirname, '../../src/services/utxo-engine.ts'),
+      resolve(__dirname, '../src/utxo-engine.ts'),
       'utf-8',
     );
     const lines = src.split('\n');

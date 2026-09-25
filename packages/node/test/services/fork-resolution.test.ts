@@ -997,7 +997,7 @@ describe('revertBlock', () => {
 
     // Apply decay manually (simulates what block application does)
     const { deriveKarmaDecay } = await import(
-      '../../src/services/decay.js'
+      '@dagsocial/consensus'
     );
     const {
       KARMA_STALE_THRESHOLD_BLOCKS,

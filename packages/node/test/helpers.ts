@@ -24,7 +24,7 @@ import {
   encodeInterlinks,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW, blockHash, level as headerLevel, asertTargetBits } from '@dagsocial/validation';
-import { materializeOutput } from '../src/services/utxo-engine.js';
+import { materializeOutput } from '@dagsocial/consensus';
 import { config } from '../src/config.js';
 import type { Config } from '../src/config.js';
 import { AVL_SCHEMA } from '../src/store/db.js';

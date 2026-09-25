@@ -21,7 +21,7 @@ import type { AnyBox } from '@dagsocial/types';
  * every height on every network.
  *
  * Not the set the engine's karma transition arm admits as outputs — that is
- * `KARMA_TRANSITION_TYPES` in `services/utxo-engine.ts`, and no set is defined
+ * `KARMA_TRANSITION_TYPES` in `@dagsocial/consensus`'s `utxo-engine`, and no set is defined
  * as, spread from or derived from another (NODE_INTERFACE → Three karma sets,
  * and none derives from another).
  *

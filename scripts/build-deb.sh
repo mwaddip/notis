@@ -89,7 +89,7 @@ pnpm install --prod --frozen-lockfile 2>&1 | tail -5
 # The rsync above copies the working tree, so a dist/ present here is one the
 # build produced; this loop is what turns a missing one into a failed package
 # rather than a daemon that will not start.
-for pkg in types validation wire net node; do
+for pkg in types validation wire nipopow consensus net node; do
   if [ -d "$APP_DIR/packages/$pkg/dist" ]; then
     echo "  ✓ packages/$pkg"
   else

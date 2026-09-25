@@ -100,6 +100,27 @@ default (package)         S10 P10 E3  C7  I7  A6  L9
   reachability arguments expire.
 ```
 
+### @dagsocial/consensus
+
+```
+default (package)         S10 P10 E3  C7  I8  A6  L10
+  The state transition — the one implementation of what a transaction and a block do to state,
+  run by the node and by a browser leaf that validates blocks. A wrong accept is a corrupted
+  chain, as in validation, and a leaf that disagrees with the node by one verdict is on its
+  own fork. It reads state only through the interface its caller injects, and trusts each
+  answer as an input it must bound. L is 10: a cap exactly reached, the last item of a due
+  queue, a key a block both writes and reads — every edge is consensus, and two runs that
+  differ on one fork. It holds no state between calls, so E is low. I is 8: the boundary is
+  the whole point — a rule that reaches past its injected state, or a clock, a global or a
+  Node built-in, is a rule the leaf cannot run.
+
+src/utxo-engine.ts                 S10 P8  E8  C5  I8  A6  L10
+  Value conservation. User transactions conserve value unconditionally — the exception
+  list is empty (NODE_INTERFACE → validateTx) — and every mint or burn belongs to an
+  explicit block-application path. A wrong arithmetic edge here is money created from
+  nothing, permanently, on a chain nobody can rewrite.
+```
+
 ### @dagsocial/nipopow
 
 ```
@@ -129,12 +150,6 @@ default (package)         S8  P10 E9  C5  I8  A9  L9
 ```
 default (package)         S8  P8  E8  C6  I8  A6  L8
   The full node. Everything below overrides this; when a file is not covered, use it.
-
-src/services/utxo-engine.ts        S10 P8  E8  C5  I8  A6  L10
-  Value conservation. User transactions conserve value with exactly one carve-out (the
-  like burn), and every other mint or burn belongs to an explicit block-application path.
-  A wrong arithmetic edge here is money created from nothing, permanently, on a chain
-  nobody can rewrite.
 
 src/services/block-apply.ts        S10 P9  E9  C5  I8  A6  L9
   The apply path. Peer-supplied block bodies reach here; a wrong accept corrupts state on

@@ -206,7 +206,7 @@ describe('rent admission refusal', () => {
     const dbMod = await import('../../src/store/db.js');
     dbMod.initDb(':memory:');
     const utxo = await import('../../src/store/utxo.js');
-    const engine = await import('../../src/services/utxo-engine.js');
+    const engine = await import('@dagsocial/consensus');
     const { rawPublicKey, seedProvenance } = await import('../helpers.js');
     const cfgMod = await import('../../src/config.js');
 
@@ -233,7 +233,7 @@ describe('rent admission refusal', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
 
-    const deps: import('../../src/services/utxo-engine.js').UtxoEngineDeps = {
+    const deps: import('@dagsocial/consensus').UtxoEngineDeps = {
       getBox: utxo.getBox,
       insertBox: utxo.insertBox,
       consumeBox: utxo.consumeBox,

@@ -23,7 +23,7 @@ import { hasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getLikeRecordCount, hasLikeRecord, insertLikeRecord } from '../../src/store/likes.js';
 import { insertUtxoTx, getPendingEntries } from '../../src/store/mempool.js';
 import { verifyPost } from '../../src/services/verifier.js';
-import { validateTx } from '../../src/services/utxo-engine.js';
+import { validateTx } from '@dagsocial/consensus';
 import {
   generateKeyPair,
   computeContentHash,

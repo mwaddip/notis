@@ -16,6 +16,7 @@ export const NODE_LOADS: readonly string[] = [
   'packages/validation',
   'packages/net',
   'packages/nipopow',
+  'packages/consensus',
   'packages/node',
 ];
 

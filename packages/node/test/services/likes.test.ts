@@ -42,7 +42,7 @@ import {
   getNetworkRecord as storeGetNetworkRecord,
 } from '../../src/store/index.js';
 import { castLike } from '../../src/services/likes.js';
-import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
+import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { config } from '../../src/config.js';
 import {
   rawPublicKey,

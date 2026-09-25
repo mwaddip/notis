@@ -6,8 +6,8 @@ import {
   isLivePost,
 } from '../store/index.js';
 import { ClientError } from './client-error.js';
-import { validateTx } from './utxo-engine.js';
-import type { UtxoEngineDeps } from './utxo-engine.js';
+import { validateTx } from '@dagsocial/consensus';
+import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { admitTx } from './admit-tx.js';
 
 // ---------------------------------------------------------------------------

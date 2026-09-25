@@ -5,9 +5,9 @@ import {
   membershipBar,
 } from '@dagsocial/types';
 import type { BondBox, KarmaBox, UtxoTransaction } from '@dagsocial/types';
-import { isMember, isRoot, materializeOutput, validateTx } from './utxo-engine.js';
+import { isMember, isRoot, materializeOutput, validateTx } from '@dagsocial/consensus';
 import { admitTx } from './admit-tx.js';
-import type { UtxoEngineDeps } from './utxo-engine.js';
+import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { ClientError } from './client-error.js';
 
 // ---------------------------------------------------------------------------

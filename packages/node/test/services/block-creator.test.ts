@@ -288,7 +288,7 @@ describe('block-creator', () => {
     // ⛔ ONE committed list. The post rides `utxoTxIds` with everything else,
     // and its payload — parents and author included — is inside the transaction
     // body rather than in a parallel claim the producer wrote (audit H-3).
-    const { postsOf } = await import('../../src/services/block-posts.js');
+    const { postsOf } = await import('@dagsocial/consensus');
     const carried = postsOf(block!);
     expect(carried).toHaveLength(1);
     expect(carried[0]!.postId).toBe(postId);
@@ -425,7 +425,7 @@ describe('block-creator', () => {
 
     const block = await mineNextBlock(bc);
     expect(block).not.toBeNull();
-    const { postsOf } = await import('../../src/services/block-posts.js');
+    const { postsOf } = await import('@dagsocial/consensus');
     expect(postsOf(block!).map((p) => p.postId)).toEqual([postId]);
     expect(block!.header.validatorId).toBeTruthy();
     expect(block!.validatorSignature.length).toBe(64);
@@ -682,7 +682,7 @@ describe('block-creator', () => {
     // The batch-linked UTXO tx ID should be in utxoTxIds
     expect(template!.utxoTxTree.utxoTxIds).toContain(computeTxId(likeTx));
     // …and the post rides the same list.
-    const { postsOf } = await import('../../src/services/block-posts.js');
+    const { postsOf } = await import('@dagsocial/consensus');
     expect(postsOf(template!).map((p) => p.postId)).toContain(postId);
     // Both entries leave the pool at finalize.
     const nonce = solveHeaderPow(template!.header);

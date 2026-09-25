@@ -60,7 +60,7 @@ import {
   putIdentityRecord as storePutIdentityRecord,
   getNetworkRecord as storeGetNetworkRecord,
 } from '../../src/store/index.js';
-import { applyTx, validateTx } from '../../src/services/utxo-engine.js';
+import { applyTx, validateTx } from '@dagsocial/consensus';
 import { castVouch } from '../../src/services/vouch.js';
 import { createInvite } from '../../src/services/invites.js';
 import { config } from '../../src/config.js';

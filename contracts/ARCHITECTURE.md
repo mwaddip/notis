@@ -2030,19 +2030,13 @@ no object check compares against it and no producer stamps it.
 - Signatures: raw Ed25519 (64 bytes). **Two encodings carry a signature, and base64 is not one of
   them:** raw bytes in the positional encodings (all consensus structures), and **lowercase hex**
   at the HTTP boundary (`json-to-tx.ts`) and in every client. base64 carries no signature anywhere —
-  it encodes the AVL proof blob (`state/avl-endpoint.ts`), and `base64url` the JWK key material the
-  node builds to verify with. Verification is `crypto.verify(null, …)` with a KeyObject in
-  every case
-  > ⚠ **Non-malleability is relied upon and stated nowhere.** Measured on node v22.19.0 /
-  > openssl 3.0.17: `crypto.verify` rejects the classic `S + L` malleation and the
-  > high-bit variant, enforcing RFC 8032's `0 ≤ S < L`. This matters because
-  > **every signature in the system is excluded from every preimage** — `txIdBytes` omits
-  > them and every Merkle leaf is an id — so a malleated signature can never move a block
-  > hash. What remains is acceptance: a second verifier (light client, a pure-JS Ed25519
-  > library) that is cofactored or skips the range check would accept a signature this one
-  > rejects, and the two would disagree about a block's validity. **Any mirror implementation MUST enforce
-  > `0 ≤ S < L`.** Untested: non-canonical `R` encodings, small-order points,
-  > cofactored-vs-cofactorless verification
+  it encodes the AVL proof blob (`state/avl-endpoint.ts`). Verification is `validation`'s
+  `verifyEd25519` in every case — strict RFC 8032 / FIPS 186-5 through `@noble/curves`, one
+  implementation for every runtime (`VALIDATION_INTERFACE → Acceptance criterion`): `0 ≤ S < L`,
+  canonical `A` and `R`, one valid signature per message and key. **Every signature in the system is
+  excluded from every preimage** — `txIdBytes` omits them and every Merkle leaf is an id — so a
+  malleated signature can never move a block hash; what remains is acceptance, and one stated rule
+  with one implementation is what keeps two verifiers from disagreeing about a block's validity
 - Public keys: 32 raw bytes, hex-encoded on wire
 - Secret keys never in API responses, DTOs, or committed data structures
 
@@ -2477,7 +2471,7 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   karma-membership hook, `setMempoolCap`).
 - **"Does NOT own" on every package** — each package explicitly lists what
   it is NOT responsible for. Prevents scope creep.
-  > **True — all six packages carry it.** Note it lives in `packages/*/CLAUDE.md`, not in
+  > **True — every workspace member carries it.** Note it lives in each member's `CLAUDE.md`, not in
   > `contracts/`, so it is a session-context convention rather than a contract one.
 
 ### Data integrity
@@ -2509,11 +2503,11 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 ## Build and test resolution
 
 Every package is ESM and builds with `tsup src/index.ts --format esm --dts` to a single bundled
-`dist/index.js`. The four library packages (`types`, `wire`, `validation`, `net`) each declare
-exactly one export condition — `"."` — and there are no subpath exports anywhere. **`node` has no
+`dist/index.js`. The library packages (`types`, `wire`, `validation`, `nipopow`, `consensus`, `net`)
+each declare exactly one export condition — `"."` — and there are no subpath exports anywhere. **`node` has no
 `exports` field at all**, only `main`; it is the application package and nothing depends on it, so
 bare-specifier resolution there goes through `main`. The practical effect is identical, but `node`
-is not subject to the subpath restriction the other four get from `exports`.
+is not subject to the subpath restriction the others get from `exports`.
 
 **Test code resolves `@dagsocial/*` to the package's `src/index.ts`, never to `dist/`.** A vitest
 `resolve.alias` maps each workspace package name to `packages/<pkg>/src/index.ts`, declared once at
@@ -2521,7 +2515,8 @@ the repo root and merged into every package's vitest config.
 
 Six rules govern it:
 
-1. **Uniform across all six packages.** Aliasing some and not others puts two copies of the same
+1. **Uniform across all seven packages** — `types`, `wire`, `validation`, `nipopow`, `consensus`, `net`
+   and `node`. Aliasing some and not others puts two copies of the same
    module in one process — one transpiled from `src`, one bundled inside `dist`. `instanceof` fails
    across that boundary and every module-level singleton exists twice.
 2. **The alias target is `src/index.ts`, not `src/`.** The barrel stays the surface under test, so a
@@ -2534,7 +2529,7 @@ Six rules govern it:
    the vitest process. A suite that spawns `dist/index.js` as a child process runs the built
    artefact, so it needs a genuine build first and no alias reaches it. **One suite does:
    `tools/e2e` (`@dagsocial/e2e`) spawns `packages/node/dist/index.js` for every node of its mesh,
-   which loads `types`, `wire`, `validation`, `net` and `nipopow` from their `dist` in turn, and its
+   which loads `types`, `wire`, `validation`, `consensus`, `net` and `nipopow` from their `dist` in turn, and its
    light-client test spawns `tools/nipopow-client/dist/index.js`, which loads `types`, `wire`,
    `validation` and `nipopow` the same way** (a bundle externalises its workspace dependencies). It
    refuses to run when any `dist/index.js` a process it spawns loads is
@@ -2542,7 +2537,7 @@ Six rules govern it:
    build is a refusal, never a run against old code that reports green. The gate
    order in rule 3 is what keeps the refusal from firing: build first. Being under `tools/*`, the
    suite is in `pnpm -r test` by the workspace glob; nothing has to remember to run it.
-5. **Test trees are typechecked — all six packages, at zero.** Each `typecheck` script runs
+5. **Test trees are typechecked — every package, at zero.** Each `typecheck` script runs
    `tsc --noEmit && tsc --noEmit -p tsconfig.test.json`, so `pnpm -r typecheck` compiles every
    test tree in the workspace. Node was the last to land: 409 errors → 0, in one unit, with **zero
    `src` edits**. The debt did not come apart mechanically — a bulk retype of all missing-provenance

@@ -23,7 +23,7 @@ import { executePostWithdraw } from './services/post-withdraw.js';
 import { readFileSync } from 'fs';
 import { isLivePost, type StoredPost } from './store/posts.js';
 import { getDb } from './store/db.js';
-import { validateTx } from './services/utxo-engine.js';
+import { validateTx } from '@dagsocial/consensus';
 import { admitTx } from './services/admit-tx.js';
 import { createAdminRouter, type AdminDeps } from './routes/admin.js';
 import { noteHttpRequest } from './metrics.js';

@@ -480,33 +480,41 @@ authorship is verified by the transaction's signature check and nothing else.
 **No path may reintroduce a post-level signature**: two signatures over one
 object is two places for them to disagree.
 
-The SPKI-envelope mechanics survive in the transaction signature path unchanged —
-32 raw bytes wrapped with the `302a300506032b6570032100` prefix, a `KeyObject` via
-`crypto.createPublicKey`, then `crypto.verify(null, …)`.
+**Every signature check is `verifyEd25519`** (→ Acceptance criterion): the raw 32-byte public
+key, the 64-byte signature and the message, verified by one implementation — no key envelope and
+no runtime verifier anywhere in the system.
 
-### Acceptance criterion — the runtime's, and consensus-visible through one preimage
+### Acceptance criterion — strict RFC 8032, stated here and implemented once
 
-**No verification site performs a scalar or point canonicality check of its own.** Every
-site — `verifyValidatorSignature` below, `validateTx`'s authorization check, the transaction
-author check at block application — builds a `KeyObject` and delegates accept/reject entirely
-to `crypto.verify(null, …)`: Ed25519 per RFC 8032 **as the runtime's OpenSSL implements it**.
-The criterion is therefore not a rule this repo states and enforces; it is a rule this repo
-inherits, and two nodes agree on it only while their runtimes do.
+```
+verifyEd25519(signature: Uint8Array, message: Uint8Array, publicKey: Uint8Array): boolean
+```
 
-**Measured 2026-08-06 on Node 22.19.0 / OpenSSL 3.0.17: both standard malleation forms are
-rejected** — a scalar raised by the group order (`S + L`) and the high-bit variant. Exactly
-those two forms were tested; non-canonical `R` encodings, small-order points, and
-cofactored-versus-cofactorless behaviour were not.
+**Every signature check in the system is `verifyEd25519`, and it is `@noble/curves`'
+`ed25519.verify(signature, message, publicKey, { zip215: false })`**: Ed25519 per RFC 8032 and
+FIPS 186-5 in their strict form — the scalar `S` below the group order, the key `A` and the point
+`R` canonical encodings — so a message and a key have one valid signature. Every site calls it and
+nothing else: `verifyValidatorSignature` below, `validateTx`'s authorization check
+(`CONSENSUS_INTERFACE → What it holds`) and the author check at block application; no site builds a
+key object or asks a runtime's verifier. **The rule is this repo's, stated here and implemented
+once**, so every runtime that runs it — a node, a browser — accepts the same set, and a change to
+it is a consensus change, never a dependency bump.
+
+**It is total.** A signature that is not 64 bytes, a key that is not 32, or a key that does not
+decode to a point answers `false`, never a throw — the verifiers above it promise no-panic (→
+Postconditions).
+
+**Its tests:** the RFC 8032 test vectors verify; the two malleation forms measured under the
+runtime's verifier on 2026-08-06 (Node 22.19.0 / OpenSSL 3.0.17) — a scalar raised by the group
+order (`S + L`) and the high-bit variant — refuse.
 
 **Why this section exists:** ✅ **signature bytes are excluded from every hash preimage in the
 system, with no exception.** `txIdBytes` omits them (`TYPES_INTERFACE → Layout —
 UtxoTransaction`), the header preimage omits `validatorSignature`, and every Merkle leaf is
 `leafHash('utxotx', id)` over an id. **That closes the id-malleability half and leaves the
-verify half open**: a block carrying a transaction whose signature one runtime accepts and
-another rejects splits the network — so a second
-implementation must match `crypto.verify`'s observed behaviour, not a stricter or looser
-reading of RFC 8032, and a runtime whose OpenSSL changes its acceptance set is a consensus
-event, not a dependency bump.
+verify half**: a block carrying a transaction whose signature one implementation accepts and
+another refuses splits the network — which is why the accepted set is a rule with one
+implementation, not whatever a runtime ships.
 
 ### verifyValidatorSignature
 
@@ -519,9 +527,8 @@ made by the key declared in `header.validatorId`. Recomputes the signed message
 as `Buffer.from(blockHash(header), 'hex')` — the 32 raw bytes of
 `blake2b512(encodeHeader(header))[:32]`, the exact value the block creator signs
 (`crypto.sign(null, Buffer.from(blockHash(header), 'hex'), validatorPrivKey)`).
-Wraps the 32-byte `header.validatorId` in an SPKI DER envelope, builds a
-`KeyObject`, and calls `crypto.verify(null, message, keyObj, signature)`. Returns
-`true` iff the signature verifies.
+Calls `verifyEd25519(signature, message, header.validatorId)` (→ Acceptance criterion).
+Returns `true` iff the signature verifies.
 
 `validatorSignature` lives on the block, **not** in the header, so
 `blockHash(header)` is stable before and after signing — verification recomputes
@@ -534,10 +541,8 @@ own `validatorId`) and the function performs no I/O.
 `signature` that is not a byte view, or any header outside the domain, which
 is **one** guard rather than two. `blockHash` returns `null` on
 exactly the headers `verifyHeaderFieldDomains` rejects, and its non-null return
-*proves* `validatorId` is exactly 32 bytes — which is what keeps the SPKI wrap and
-`createPublicKey` ("Failed to read asymmetric key") out of reach without a
-separate length check here. A wrong-*length* signature is left to `crypto.verify`,
-which rejects it cleanly.
+*proves* `validatorId` is exactly 32 bytes, the length `verifyEd25519` takes. A
+wrong-*length* signature is `verifyEd25519`'s to refuse, and it answers `false`.
 
 ---
 
@@ -1304,7 +1309,7 @@ own.
 ## Preconditions
 - Node.js ≥ 22 (blake2b512 via `crypto.createHash`)
 - `@dagsocial/types` package built and importable
-- `crypto.createPublicKey` and `crypto.verify` available for Ed25519
+- `@noble/curves` for Ed25519 (→ Acceptance criterion)
 
 ## Postconditions
 - All exported functions are pure: same inputs → same outputs, no side effects
@@ -1317,7 +1322,7 @@ own.
   that is not 32 bytes, a block header outside the encodable domain, a nonce that
   is negative / `NaN` / float / beyond `u64`). Every such case is a clean
   rejection, never an exception. Guard the throwing operations
-  (`Buffer.byteLength`, `createPublicKey`, `encodeHeader`,
+  (`Buffer.byteLength`, `encodeHeader`,
   `BigInt`/`writeBigUInt64LE`, `.length`) with type/shape checks first.
 
   **Phase 1f extended this rule past the `verify*` functions.** "No exported verify function
@@ -1330,9 +1335,8 @@ own.
 ## Invariants
 - All hashing uses `blake2b512.digest().subarray(0, 32)` — Node.js v22
   lacks blake2b256
-- Signatures verified with `crypto.verify(null, message, keyObj, sig)` and a KeyObject
-  using a `KeyObject` created via `crypto.createPublicKey`
-- SPKI DER prefix for Ed25519: `302a300506032b6570032100`
+- Signatures verified by `verifyEd25519` alone — strict RFC 8032 through `@noble/curves`
+  (→ Acceptance criterion)
 - **One PoW nonce encoding**: the ordering-block nonce is `encodeLE64`
   (`MINING_INTERFACE.md` → PoW Verification). A post carries no nonce.
 - The integer-range guard (M-6): a nonce or `targetBits` that is not a

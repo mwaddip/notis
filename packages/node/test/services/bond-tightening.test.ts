@@ -55,7 +55,7 @@ import {
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
 } from '../../src/store/index.js';
-import { validateTx } from '../../src/services/utxo-engine.js';
+import { validateTx } from '@dagsocial/consensus';
 import { computeTxId } from '@dagsocial/types';
 import { config } from '../../src/config.js';
 

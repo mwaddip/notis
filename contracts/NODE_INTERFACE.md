@@ -2521,7 +2521,7 @@ needs no cap: the producer keeps it inside `MAX_SETTLEMENT_BYTES` by selection, 
 `settlementMarginalBytes` reserves one input and one credit output per marker — the output unconditionally,
 since a release's sign is not readable from the transaction's bytes.
 
-⛔ **The two orders are consensus.** `derive()` builds the input list and the output list leg by leg in exactly these sequences, and a verifier recomputes both and compares the block's settlement to them position by position — the input list whole, the derived outputs element-wise; the coinbase is constrained, never derived (→ "Determinism is this mechanism's whole risk", the derived / producer-chosen table, where output ordering is a derived field). A leg moved is every settlement's bytes moved, on both sides identically. `node/test/services/settlement-leg-order.test.ts` pins both sequences with one fixture that fires every leg at once.
+⛔ **The two orders are consensus.** `derive()` builds the input list and the output list leg by leg in exactly these sequences, and a verifier recomputes both and compares the block's settlement to them position by position — the input list whole, the derived outputs element-wise; the coinbase is constrained, never derived (→ "Determinism is this mechanism's whole risk", the derived / producer-chosen table, where output ordering is a derived field). A leg moved is every settlement's bytes moved, on both sides identically. `consensus/test/settlement-leg-order.test.ts` pins both sequences with one fixture that fires every leg at once.
 
 **The settlement declares the block's era.** `derive()` stamps `protocolVersion:
 protocolVersionAt(schedule, height)`, and the verifier refuses a settlement declaring any other — the
@@ -4298,8 +4298,8 @@ the handler.
 | `credits.ts` | Credit transfer validation and execution | UTXO engine internals |
 | `invites.ts` | Invite lifecycle (create, commit, claim, cancel) | Bond box internals |
 | `block-creator.ts` | Block creation, mining, template assembly | Post validation |
-| `block-apply.ts` | Block application, UTXO settlement, per-block like settlement | Block creation |
-| `utxo-engine.ts` | UTXO transaction validation and application | Block structure |
+| `block-apply.ts` | Block application — the header checks, the phase order over the package's rules, the store's writes | Block creation, the rules themselves |
+| `@dagsocial/consensus` | The rules' implementation — the transaction engine, the settlement, decay, the coinbase split, the block's post readers (`CONSENSUS_INTERFACE → What it holds`) | Persistence, I/O, the header checks |
 | `fork-resolution.ts` | Chain fork detection and reorg | Block creation |
 | `genesis-state.ts` | Cold-start seeding of the height-0 state, and the root check over it | Which boxes exist (`store/system.ts`) |
 

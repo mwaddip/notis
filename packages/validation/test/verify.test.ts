@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createHash, sign, createPrivateKey, verify as cryptoVerify } from 'crypto';
+import { createHash, sign, createPrivateKey, createPublicKey, verify as cryptoVerify } from 'crypto';
 import { readFileSync } from 'fs';
 import {
   verifyValidatorSignature,
@@ -19,10 +19,9 @@ import {
   verifyPostWithdrawCommitDomains,
   verifyPostBody,
   verifyHeaderFieldDomains,
-  ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, computeTxId, computeContentHash, postFieldBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_SETTLEMENT_BYTES, MAX_BLOCK_BODY_BYTES, ORDERING_BLOCK_POW_TARGET_FLOOR, NETWORK_PROFILES, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, USERNAME_MAX_BYTES } from '@dagsocial/types';
+import { generateKeyPair, computePostId, computeTxId, computeContentHash, postFieldBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_SETTLEMENT_BYTES, MAX_BLOCK_BODY_BYTES, ORDERING_BLOCK_POW_TARGET_FLOOR, NETWORK_PROFILES, ED25519_SPKI_PREFIX, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, USERNAME_MAX_BYTES } from '@dagsocial/types';
 import type { PostCommit, BlockHeader, OrderingBlock, ProtocolEra, UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
 
 // The devnet profile's real schedule — one era, [1@0] — is the schedule every
@@ -2754,7 +2753,11 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     cryptoVerify(
       null,
       Buffer.from(preChangeBlockHash(h), 'hex'),
-      ed25519PublicKeyToKeyObject(kp.publicKey),
+      createPublicKey({
+        key: Buffer.concat([Buffer.from(ED25519_SPKI_PREFIX, 'hex'), Buffer.from(kp.publicKey)]),
+        format: 'der',
+        type: 'spki',
+      }),
       Buffer.from(sig),
     );
 

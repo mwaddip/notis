@@ -2,7 +2,7 @@ import { getDb } from './db.js';
 import { getBox } from './utxo.js';
 import { deletePendingPost } from './posts.js';
 import { ClientError } from '../services/client-error.js';
-import { materializeOutput, ceilingOf } from '../services/utxo-engine.js';
+import { materializeOutput, ceilingOf } from '@dagsocial/consensus';
 import type {
   UtxoTransaction,
   BondBox,
@@ -20,8 +20,8 @@ import {
   utxoTxTreeByteLength,
   canonicalUsernameBytes,
 } from '@dagsocial/types';
-import { isCreditSideTx } from '../services/coinbase-split.js';
-import { settlementMarginalBytes } from '../services/settlement.js';
+import { isCreditSideTx } from '@dagsocial/consensus';
+import { settlementMarginalBytes } from '@dagsocial/consensus';
 
 /**
  * Which half of the pool an entry occupies (MEMPOOL_INTERFACE → Eviction,

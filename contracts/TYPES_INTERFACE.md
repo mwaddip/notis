@@ -2006,7 +2006,7 @@ from this table — a use that reads every cell as an instruction rather than as
 > |---|---|---|
 > | `types/src/utxo.ts` | the interface, `BOX_TYPE_TAGS`, the codec arm | `satisfies Record<BoxCandidate['boxType'], number>`; the codec `switch` returns on every arm |
 > | `types/test/golden/structs.ts` | the corpus's **deliberately independent** reverse table | coverage-gated — §Layout — Boxes, "independent in its numbers, not in its coverage" |
-> | `node/src/services/utxo-engine.ts` | the output shape schema, `SPEND_TIMING`, `AUTHORIZATION`, the transition set, the protocol-output set | the first three are `Record<…['boxType'], …>`; the two sets are verdict tables (NODE_INTERFACE → Three karma sets, and none derives from another) |
+> | `consensus/src/utxo-engine.ts` | the output shape schema, `SPEND_TIMING`, `AUTHORIZATION`, the transition set, the protocol-output set | the first three are `Record<…['boxType'], …>`; the two sets are verdict tables (NODE_INTERFACE → Three karma sets, and none derives from another) |
 > | `node/src/store/utxo.ts` | the row mapping | the write `switch` is exhaustive by a `never` default; the read `switch` is over a string column and is covered by the provenance round-trip's total table instead |
 > | `node/src/karma-supply.ts` | the supply set | a verdict table (NODE_INTERFACE → Three karma sets, and none derives from another) |
 >

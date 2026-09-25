@@ -21,10 +21,10 @@ import type {
   UtxoTransaction,
   VouchBox,
 } from '@dagsocial/types';
-import { countKarmaActors, splitCoinbase } from '../../src/services/coinbase-split.js';
+import { countKarmaActors, splitCoinbase } from '@dagsocial/consensus';
 import { uid,
   FIXTURE_BOND_KARMA,
-} from '../helpers.js';
+} from './helpers.js';
 
 const ALICE = uid('alice');
 const BOB = uid('bob');

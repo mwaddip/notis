@@ -2,12 +2,7 @@
 // (WEB_INTERFACE → The browser reaches @dagsocial/types through a build-time shim).
 // vite resolves the bare `crypto` specifier to this module. @dagsocial/types
 // reaches createHash and generateKeyPairSync here over pure-TS primitives;
-// @dagsocial/validation reaches createPublicKey and verify here too — as
-// functions that throw one fixed sentence, because nothing the extension's
-// verifier reaches calls them and a signature implementation an unpinned bundle
-// would carry is a liability rather than a convenience. build-extension.sh
-// refuses assets that contain the sentence, so the day some unit's code reaches
-// a signature path without bringing the implementation, the build says so.
+// @dagsocial/validation reaches createHash alone.
 // `Buffer`, the other Node global these packages use but never import, is
 // supplied to the bundle separately.
 // WEB_INTERFACE → "The shim carries only what the client's own module graph reaches, and nothing on speculation"
@@ -98,29 +93,4 @@ export function generateKeyPairSync(type: string): { publicKey: PublicKeyObject;
   const seed = ed25519.utils.randomSecretKey();
   const publicKey = new PublicKeyObject(ed25519.getPublicKey(seed));
   return { publicKey, privateKey: new PrivateKeyObject(seed) };
-}
-
-// ---------------------------------------------------------------------------
-// Ed25519 — signature primitives, unimplemented
-// ---------------------------------------------------------------------------
-//
-// The names @dagsocial/validation imports from 'crypto' beside createHash. The
-// extension's verifier reaches validation but never a signature path, so
-// tree-shaking drops both; a build check refuses any asset that contains the
-// sentence below.
-// WEB_INTERFACE → "The shim carries only what the client's own module graph reaches, and nothing on speculation"
-
-const NO_SIGNATURE_PRIMITIVE = 'the crypto shim carries no signature primitive';
-
-export function createPublicKey(_key: unknown): PublicKeyObject {
-  throw new Error(NO_SIGNATURE_PRIMITIVE);
-}
-
-export function verify(
-  _algorithm: null | undefined,
-  _data: Uint8Array,
-  _key: PublicKeyObject,
-  _signature: Uint8Array,
-): boolean {
-  throw new Error(NO_SIGNATURE_PRIMITIVE);
 }

@@ -335,10 +335,9 @@ before; the corner is green only while blocks progress **and** the verdict is `v
 the comparison is outworked only when the winner's suffix does not carry its tip** (the tool's `behind` is `null`) —
 the nodes answer one after another, so a follower one block behind loses the fold at every block it lags. `main.ts`
 hands the verifier to the App in the extension build alone, and only under a non-empty `notis-network`; the web
-build is handed none and `build-release.sh` refuses `nipopow/proof` in its assets. The shim names
-`createPublicKey` and `verify` — `@dagsocial/validation` imports them — **as functions that throw**: nothing the
-verifier reaches calls them, tree-shaking drops them, and `build-extension.sh` refuses assets that carry their
-sentence. The `Buffer` polyfill is `buffer` 6 (`validation`'s PoW check writes with `writeBigUInt64LE`); **the
+build is handed none and `build-release.sh` refuses `nipopow/proof` in its assets. The shim names no signature
+primitive: `@dagsocial/validation` verifies Ed25519 through `@noble/curves` and imports `createHash` alone from
+`crypto` (`WEB_INTERFACE → The browser reaches @dagsocial/types through a build-time shim`). The `Buffer` polyfill is `buffer` 6 (`validation`'s PoW check writes with `writeBigUInt64LE`); **the
 polyfill sits under every byte the browser build signs and `pnpm test` cannot see it** — the binding check and the
 proof's write steps are its only proof.
 

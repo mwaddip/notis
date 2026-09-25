@@ -40,7 +40,7 @@ import {
 } from '../../src/store/index.js';
 import { castVouch, initiateUnvouch } from '../../src/services/vouch.js';
 import { config } from '../../src/config.js';
-import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
+import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import {
   fixtureProvenance,
   rawPublicKey,

@@ -628,7 +628,7 @@ describe('mempool store', () => {
     /** The id the pool predicts for output `index` of `tx`. */
     async function predictedId(tx: unknown, index: number): Promise<string> {
       const { computeTxId } = await import('@dagsocial/types');
-      const { materializeOutput } = await import('../../src/services/utxo-engine.js');
+      const { materializeOutput } = await import('@dagsocial/consensus');
       const t = tx as { outputs: unknown[] };
       return materializeOutput(
         t.outputs[index] as never,

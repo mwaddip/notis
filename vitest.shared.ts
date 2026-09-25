@@ -12,7 +12,7 @@ import { defineConfig } from 'vitest/config';
 // under test, so a symbol exported by a module but missing from index.ts
 // still fails at import.
 //
-// Applied uniformly to all six packages: aliasing some and not others puts
+// Applied uniformly to all seven packages: aliasing some and not others puts
 // two copies of the same module in one process (one from src, one bundled in
 // dist), which breaks `instanceof` and duplicates module-level singletons.
 //
@@ -28,6 +28,7 @@ export default defineConfig({
       '@dagsocial/wire': src('wire'),
       '@dagsocial/validation': src('validation'),
       '@dagsocial/nipopow': src('nipopow'),
+      '@dagsocial/consensus': src('consensus'),
       '@dagsocial/net': src('net'),
       '@dagsocial/node': src('node'),
     },

@@ -40,7 +40,7 @@ import {
   type Stored,
 } from '../helpers.js';
 import type { TestIdentity } from '../helpers.js';
-import { materializeOutput } from '../../src/services/utxo-engine.js';
+import { materializeOutput } from '@dagsocial/consensus';
 import { config } from '../../src/config.js';
 import type { Config } from '../../src/config.js';
 

@@ -29,7 +29,7 @@ import {
   anyRefusedHeader,
   getInterlinks,
 } from '../store/index.js';
-import { ceilingOf } from './utxo-engine.js';
+import { ceilingOf } from '@dagsocial/consensus';
 import { getDb } from '../store/db.js';
 import { isBlockJournalOpen, type BlockJournal } from '../store/journal.js';
 import { putIdentityRecord, deleteIdentityRecord, putNetworkRecord } from '../store/identity-records.js';

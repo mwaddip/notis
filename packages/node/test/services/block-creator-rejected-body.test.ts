@@ -233,7 +233,7 @@ async function seedStaleVouchCast() {
   const cast = makeVouchCastTx(spent, voucher, target.userId);
 
   // Entry-time proof: this is the tx pool entry / relay validation accepts.
-  const { validateTx } = await import('../../src/services/utxo-engine.js');
+  const { validateTx } = await import('@dagsocial/consensus');
   const deps = await storeBackedDeps();
   expect(validateTx(deps, cast, 1).valid).toBe(true);
 

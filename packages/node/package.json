@@ -11,6 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@dagsocial/consensus": "workspace:*",
     "@dagsocial/net": "workspace:*",
     "@dagsocial/nipopow": "workspace:*",
     "@dagsocial/types": "workspace:*",

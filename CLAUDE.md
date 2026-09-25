@@ -17,7 +17,7 @@ Repo directory is `dagsocial`; the project is Notis.
 ## Quick commands
 
 ```bash
-pnpm build                          # Build all six packages
+pnpm build                          # Build every workspace member
 pnpm test                           # Run all tests — includes tools/e2e, which spawns BUILT nodes: build first
 pnpm typecheck                      # src AND test trees, both configs
 node packages/node/dist/index.js    # Start a node on :3000
@@ -36,14 +36,17 @@ refuses to run against a missing or stale `dist`. See ARCHITECTURE → "Build an
 
 ## Architecture
 
-Seven packages, in dependency order:
+Eight packages, in dependency order:
 
 - `@dagsocial/types` — data structures, base58, positional codecs, hashing, protocol constants. **Pure functions only.**
 - `@dagsocial/wire` — stream framing (VLQ, blake2b checksums, magic bytes).
 - `@dagsocial/validation` — pure stateless checks: PoW, signatures, block structure, Merkle roots.
+- `@dagsocial/consensus` — the state-transition rules: the transaction engine, the settlement, decay, the coinbase
+  split. **The one implementation** the node runs and a browser leaf will run — no Node built-in, no I/O; state
+  reaches it through interfaces its caller injects.
 - `@dagsocial/nipopow` — NiPoPoW proofs over ordering-block headers: the proof codecs, `verifyProof`, `compareProofs`, `proveWithReader`. **Pure functions only.**
 - `@dagsocial/net` — libp2p + Gossipsub relay, whole-block sync, peer management.
-- `@dagsocial/node` — Express server, PoW, verifier, SQLite store, UTXO engine, AVL+ state root, block creator.
+- `@dagsocial/node` — Express server, PoW, verifier, SQLite store, AVL+ state root, block creator; it runs `consensus`'s rules over its store.
 - `@dagsocial/web` — the browser client, built with vite. The **read surface** — feed, threads, a
   tiling workspace, both themes — and the **write surface's first slice**: an identity held in the
   browser, the composer for a root and a reply, and like, on transactions the client builds and signs
@@ -176,8 +179,9 @@ makes a title plain.
 - Parent refs: 0–1 per post (`MAX_PARENT_REFS`)
 - **On-chain time is block height**, never wall clock — one named exemption: the ordering-block
   difficulty schedule reads header `createdAt` stamps (`MINING_INTERFACE` → Difficulty Schedule)
-- Signatures: raw Ed25519 — 64 raw bytes on the positional wire, hex at the HTTP JSON edge. Verified with
-  `crypto.verify(null, …)` and a KeyObject
+- Signatures: raw Ed25519 — 64 raw bytes on the positional wire, hex at the HTTP JSON edge. Verified by
+  `validation`'s `verifyEd25519` alone — strict RFC 8032 through `@noble/curves` (`VALIDATION_INTERFACE → Acceptance
+  criterion`)
 - Hashing: `blake2b512` with `.subarray(0, 32)` for every 32-byte output
 - Wire format: positional binary. HTTP API: JSON
 - **Value conservation** — every user transaction conserves, unconditionally: each cost lands in a

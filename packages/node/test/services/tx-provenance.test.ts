@@ -63,7 +63,7 @@ describe('transaction output provenance (Spec G phase C3)', () => {
   afterEach(() => { vi.resetModules(); });
 
   it('takes the real txId and the output position as index', async () => {
-    const { materializeOutput } = await import('../../src/services/utxo-engine.js');
+    const { materializeOutput } = await import('@dagsocial/consensus');
 
     const outputs = [
       creditCandidate(100n, user(0xa1)),
@@ -77,7 +77,7 @@ describe('transaction output provenance (Spec G phase C3)', () => {
   });
 
   it('binds the box id to the transaction and the position it was created at', async () => {
-    const { materializeOutput } = await import('../../src/services/utxo-engine.js');
+    const { materializeOutput } = await import('@dagsocial/consensus');
     const { computeCandidateBoxId } = await import('@dagsocial/types');
 
     // Inverted by phase G3b. This asserted that attaching provenance must NOT
@@ -99,7 +99,7 @@ describe('transaction output provenance (Spec G phase C3)', () => {
     const { initDb } = await importDbFresh();
     const { insertBox, getBox } = await importUtxoFresh();
     const { serializeBox } = await import('../../src/state/serialize-box.js');
-    const { materializeOutput } = await import('../../src/services/utxo-engine.js');
+    const { materializeOutput } = await import('@dagsocial/consensus');
     initDb(':memory:');
 
     const produced = materializeOutput(creditCandidate(100n, user(0xc1)), TX_ID, 1);
@@ -117,7 +117,7 @@ describe('transaction output provenance (Spec G phase C3)', () => {
     const { initDb } = await importDbFresh();
     const { insertBox, getBox } = await importUtxoFresh();
     const { serializeBox } = await import('../../src/state/serialize-box.js');
-    const { materializeOutput } = await import('../../src/services/utxo-engine.js');
+    const { materializeOutput } = await import('@dagsocial/consensus');
     initDb(':memory:');
 
     // A hostile output: provenance keys planted *before* the candidate fields,
@@ -152,7 +152,7 @@ describe('transaction output provenance (Spec G phase C3)', () => {
     const { initDb } = await importDbFresh();
     const { insertBox, getBox } = await importUtxoFresh();
     const { serializeBox } = await import('../../src/state/serialize-box.js');
-    const { materializeOutput } = await import('../../src/services/utxo-engine.js');
+    const { materializeOutput } = await import('@dagsocial/consensus');
     initDb(':memory:');
 
     // Keyed on the union so a new type is a compile error rather than a
@@ -247,7 +247,7 @@ describe('transaction output provenance (Spec G phase C3)', () => {
     const { beginBlockJournal, finishBlockJournal } = await importJournalFresh();
     const { serializeBox } = await import('../../src/state/serialize-box.js');
     const { materializeOutput, applyTx } = await import(
-      '../../src/services/utxo-engine.js'
+      '@dagsocial/consensus'
     );
     const { getDb } = await importDbFresh();
     initDb(':memory:');

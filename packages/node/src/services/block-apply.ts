@@ -1,5 +1,5 @@
 import * as validation from '@dagsocial/validation';
-import { commitDecayClocks, deriveKarmaDecay } from './decay.js';
+import { commitDecayClocks, deriveKarmaDecay } from '@dagsocial/consensus';
 import { hasActiveVouchEscrow } from '../store/utxo.js';
 import {
   CorruptChainStateError,
@@ -21,14 +21,14 @@ import {
   countKarmaActors,
   isCreditSideTx,
   type EmbeddedTx,
-} from './coinbase-split.js';
+} from '@dagsocial/consensus';
 import {
   bondOutputOf,
   checkSettlement,
   contributeToBody,
   emptyBody,
-} from './settlement.js';
-import { postsOf, postIdsOf, withdrawalsOf } from './block-posts.js';
+} from '@dagsocial/consensus';
+import { postsOf, postIdsOf, withdrawalsOf } from '@dagsocial/consensus';
 import { scheduledTargetBits, nowMs } from './difficulty.js';
 import {
   applyTx,
@@ -39,7 +39,7 @@ import {
   validateTx,
   isMember,
   isRoot,
-} from './utxo-engine.js';
+} from '@dagsocial/consensus';
 import {
   getKarmaBox,
   getKarmaValue,

@@ -1,4 +1,5 @@
-import { createHash, createPublicKey, verify as cryptoVerify } from 'crypto';
+import { createHash } from 'crypto';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import {
   MAX_CONTENT_BYTES,
   MAX_PARENT_REFS,
@@ -6,7 +7,6 @@ import {
   MAX_SETTLEMENT_BYTES,
   MAX_BLOCK_BODY_BYTES,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
-  ED25519_SPKI_PREFIX,
   LEVEL_CAP,
   MAX_INTERLINKS,
   MAX_FUTURE_DRIFT_MS,
@@ -20,32 +20,13 @@ import type { BlockHeader, OrderingBlock, ProtocolEra, UtxoTransaction } from '@
 import { isDisallowedContentCodepoint } from './content-charset.js';
 
 // ---------------------------------------------------------------------------
-// Ed25519 SPKI helpers
-// ---------------------------------------------------------------------------
-
-const ED25519_SPKI_BUF = Buffer.from(ED25519_SPKI_PREFIX, 'hex');
-
-function wrapSpki(raw: Uint8Array): Buffer {
-  return Buffer.concat([ED25519_SPKI_BUF, Buffer.from(raw)]);
-}
-
-/** Wrap a raw 32-byte Ed25519 public key as an SPKI DER KeyObject. */
-export function ed25519PublicKeyToKeyObject(rawKey: Uint8Array): ReturnType<typeof createPublicKey> {
-  return createPublicKey({
-    key: wrapSpki(rawKey),
-    format: 'der',
-    type: 'spki',
-  });
-}
-
-// ---------------------------------------------------------------------------
 // Input guards (audit M-5, M-6)
 // ---------------------------------------------------------------------------
 //
 // Every exported verify* function receives objects straight off the wire, so
 // its arguments may be wrongly typed or out of range. The guards below stand in
 // front of the operations that throw on such input — `Buffer.byteLength`,
-// `Buffer.from`, `createPublicKey`, `crypto.verify`, `BigInt` /
+// `Buffer.from`, noble's `ed25519.verify`, `BigInt` /
 // `writeBigUInt64LE`, the codec's throwing writers, and plain `.length` reads —
 // so a malformed object yields a clean `false` / `{ valid: false }`, never an
 // exception.
@@ -64,7 +45,7 @@ function isObject(v: unknown): v is Record<string, unknown> {
  *
  * Deliberately not `ArrayBuffer.isView`: `Buffer.from(new Uint32Array(8))`
  * copies *elements*, not bytes, so a 32-byte-but-not-Uint8Array view would
- * silently yield an 8-byte key and throw downstream in `createPublicKey`.
+ * silently yield an 8-byte key where a 32-byte one is required.
  */
 function isBytes(v: unknown): v is Uint8Array {
   return v instanceof Uint8Array;
@@ -512,6 +493,34 @@ export function verifyCreatedAtBound(
 }
 
 // ---------------------------------------------------------------------------
+// verifyEd25519
+// ---------------------------------------------------------------------------
+
+/**
+ * Every signature check in the system: `@noble/curves`' `ed25519.verify` under
+ * `{ zip215: false }` — RFC 8032 / FIPS 186-5 in their strict form, never the
+ * library's permissive ZIP-215 default (VALIDATION_INTERFACE → Acceptance
+ * criterion).
+ *
+ * Total: a signature that is not 64 bytes, a key that is not 32, or a key that
+ * does not decode to a point answers `false`, never a throw (VALIDATION_INTERFACE
+ * → Acceptance criterion). The length/type checks below stand in front of
+ * noble's own internal guards, which throw on exactly those malformed shapes;
+ * the `try/catch` around the one library call answers the same contract for
+ * whatever else a decode failure raises past it — not a swallowed error.
+ */
+export function verifyEd25519(signature: Uint8Array, message: Uint8Array, publicKey: Uint8Array): boolean {
+  if (!isBytes(signature) || signature.length !== 64) return false;
+  if (!isBytes(message)) return false;
+  if (!isBytes(publicKey) || publicKey.length !== 32) return false;
+  try {
+    return ed25519.verify(signature, message, publicKey, { zip215: false });
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // verifyValidatorSignature
 // ---------------------------------------------------------------------------
 
@@ -525,21 +534,21 @@ export function verifyCreatedAtBound(
  * `blockHash(header)` is stable before and after signing.
  *
  * PoW proves work was spent; it does not prove who spent it. This is the check
- * that binds a block to the holder of `validatorId`'s private key.
+ * that binds a block to the holder of `validatorId`'s private key. Delegates to
+ * `verifyEd25519` (VALIDATION_INTERFACE → Acceptance criterion).
  */
 export function verifyValidatorSignature(header: BlockHeader, signature: Uint8Array): boolean {
-  // A non-byte signature throws in `Buffer.from`; a wrong-*length* signature is
-  // left to `crypto.verify`, which rejects it cleanly.
+  // A non-byte signature is `verifyEd25519`'s to refuse on its own; checked
+  // here too, so this function's own no-panic guard does not depend on it.
   if (!isBytes(signature)) return false;
   // `blockHash` establishes the header domain itself, so a malformed
   // header yields `null` rather than throwing inside `encodeHeader`. Its
-  // non-null return also proves `validatorId` is exactly 32 bytes, which is what
-  // keeps `createPublicKey` ("Failed to read asymmetric key") out of reach.
+  // non-null return also proves `validatorId` is exactly 32 bytes, the length
+  // `verifyEd25519` takes (VALIDATION_INTERFACE → Acceptance criterion).
   const hash = blockHash(header);
   if (hash === null) return false;
-  const pubKeyObj = ed25519PublicKeyToKeyObject(header.validatorId);
   const message = Buffer.from(hash, 'hex');
-  return cryptoVerify(null, message, pubKeyObj, Buffer.from(signature));
+  return verifyEd25519(signature, message, header.validatorId);
 }
 
 // ---------------------------------------------------------------------------

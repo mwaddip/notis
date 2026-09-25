@@ -75,7 +75,7 @@ import {
   putIdentityRecord as storePutIdentityRecord,
   getNetworkRecord as storeGetNetworkRecord,
 } from '../../src/store/index.js';
-import { checkTxEnvelope, validateTx } from '../../src/services/utxo-engine.js';
+import { checkTxEnvelope, validateTx } from '@dagsocial/consensus';
 
 // checkTxEnvelope takes the judged-for height and the era schedule
 // (NODE_INTERFACE → validateTx). These envelope tests use the single-era

@@ -9,6 +9,7 @@ export {
   powHit,
   levelOfHit,
   level,
+  verifyEd25519,
   verifyValidatorSignature,
   verifyProtocolVersion,
   verifyTxProtocolVersion,
@@ -26,7 +27,6 @@ export {
   verifyOrderingBlockPoW,
   blockHash,
   computePowHash,
-  ed25519PublicKeyToKeyObject,
   isValidVouchTarget,
 } from './verify.js';
 
