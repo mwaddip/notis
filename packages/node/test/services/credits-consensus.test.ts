@@ -1,15 +1,8 @@
 // ---------------------------------------------------------------------------
-// P2-B phase 3 — a credit transfer is a transaction (audit F-consensus-7).
-//
-// These are the inverted before-legs: on the pre-fix HEAD, `sendCredits`
-// applied `consumeBox`/`insertBox` directly with no block and no open journal,
-// so a transfer entered no block, produced no journal entries, never reached
-// the AVL feed — and a node that rebuilt its prover from `getUnspentBoxes()`
-// at restart computed a different `stateRoot` than the network and rejected
-// every later block (measured in the before-leg run: live digest b08e6036…,
-// restart digest e4a33dfd…, honest block 3 rejected with a stateRoot
-// mismatch). The fix pools the transfer instead; settlement is the block's
-// job, so the journal, the AVL feed and a restart-rebuild all see it.
+// A credit transfer is a transaction, and it settles when it is mined
+// (NODE_INTERFACE → Credits): pooled at submission and applied by the block
+// that carries it, so the block's journal, the AVL feed and a prover rebuilt
+// from `getUnspentBoxes()` at restart all hold it.
 // ---------------------------------------------------------------------------
 import { describe, it, expect, vi } from 'vitest';
 import { unlinkSync } from 'fs';

@@ -786,10 +786,11 @@ function checkTransitions(
         // deadline. The inviter's cost is a
         // probation-length lock and nothing else.
         //
-        // Record existence is the right test because every karma receipt writes
-        // one through `insertBox`'s choke point. A key with no record has never
-        // held karma, so it has never posted and never been liked — which is
-        // also what makes the grant the record-CREATING event for every legal
+        // Record existence is the right test because every path that puts karma
+        // in a key's hands writes one — the invite grant, and genesis
+        // (NODE_INTERFACE → Bond transition rules). A key with no record has
+        // never held karma, so it has never posted and never been liked — which
+        // is also what makes the grant the record-CREATING event for every legal
         // invitee.
         const inviteeHex = Buffer.from(bondOut.inviteePublicKey).toString('hex');
         const inviteeRecord = deps.getIdentityRecord(bondOut.inviteePublicKey);

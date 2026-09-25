@@ -17,11 +17,12 @@ import type { IdentityRecord } from './identity-record.js';
 /**
  * The clock of an identity that has no record at all.
  *
- * Every karma producer writes one — the journaled paths through the store's
- * choke point, and genesis explicitly — so an owner holding karma with no
- * record should be unreachable. It is still a total function's job to say
- * what happens if one appears, and "never observed active" is the honest
- * reading: maximally stale, decaying from height 0.
+ * Every path that puts karma in a key's hands writes one — the invite grant,
+ * and genesis explicitly (NODE_INTERFACE → Bond transition rules) — so an
+ * owner holding karma with no record should be unreachable. It is still a
+ * total function's job to say what happens if one appears, and "never
+ * observed active" is the honest reading: maximally stale, decaying from
+ * height 0.
  *
  * The alternative — skipping record-less owners — is the more dangerous
  * failure: it exempts an identity from decay permanently, and does so silently.
