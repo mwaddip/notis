@@ -2144,15 +2144,16 @@ no object check compares against it and no producer stamps it.
 
 ### Block application journal
 
-- **One record-once mutation log.** Block application maintains a single
-  ordered journal of primitive box mutations —
-  `{ op: 'insert' | 'remove', boxId, box? }` — recorded automatically at the
-  store choke point (`insertBox`, `consumeBox`) while a block journal is open.
-  Call sites never maintain parallel mutation bookkeeping; every box mutation
-  a block makes appears in the log exactly once, in application order.
-  (P2-D deleted the third choke point, `markLikeBoxesTallied`, together with
-  the epoch; the like-record side-records journal through their own hooks,
-  with exact inverses.)
+- **One record-once mutation log.** Block application keeps a single ordered
+  journal of primitive mutations — a box inserted or removed, a record written —
+  built from the block's effects: `applyBlock` lists every mutation the block
+  makes exactly once, in application order
+  (`CONSENSUS_INTERFACE → BlockEffects`), and the node writes its store and
+  builds the journal from that one list (`NODE_INTERFACE → Block Journal`). Call
+  sites never maintain parallel mutation bookkeeping, and no store primitive
+  records.
+  > ⚠ **AHEAD OF CODE (2026-09-25, the consensus package, stage 2)** — the log is recorded at the store's write
+  > primitives (`insertBox`, `consumeBox`, the record writers) while a block journal is open.
 - **Accounting-agnostic.** The log carries no per-mutation-class fields.
   Every mutation class — settlement legs, bonds, like accounting, coinbase
   splits, and future ones like storage rent — journals through the same log

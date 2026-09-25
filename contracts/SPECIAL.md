@@ -119,6 +119,13 @@ src/utxo-engine.ts                 S10 P8  E8  C5  I8  A6  L10
   list is empty (NODE_INTERFACE → validateTx) — and every mint or burn belongs to an
   explicit block-application path. A wrong arithmetic edge here is money created from
   nothing, permanently, on a chain nobody can rewrite.
+
+src/apply-block.ts                 S10 P9  E3  C6  I9  A7  L10
+  The mutation phase and its overlay (CONSENSUS_INTERFACE → The overlay). Every read after a
+  write must answer over the state the block has left: a composition wrong by one box, one
+  record or one position in an order is a fork no test of the rules alone can see, because
+  the rules are right and their input is not. A is 7: every read of the phase passes here,
+  and a composition that rescans where it should compose is a cost nothing measures.
 ```
 
 ### @dagsocial/nipopow

@@ -14,10 +14,11 @@
 
 > ⚠ **Two different things share the word "journal" and this document covers only one.**
 > **This file** = the JSON-line **observability event log**. **`BlockJournal` / `BoxMutation`**
-> (Spec B P1) = the **record-once consensus mutation log** at the store choke point, which
+> (Spec B P1) = the **record-once consensus mutation log** built from a block's effects, which
 > feeds the AVL prover and the `stateRoot`. They are unrelated. `BlockJournal` is specified
 > in `NODE_INTERFACE.md → Store Interface → Block Journal`, **not here.** Do not reason from
-> one to the other.
+> one to the other. ⚠ AHEAD OF CODE (2026-09-25, the consensus package, stage 2): the log is recorded at the
+> store's write primitives while a block journal is open.
 
 ## Format
 
