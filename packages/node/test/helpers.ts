@@ -1044,7 +1044,7 @@ export async function makeApplicableBlock(
   // to hand the caller its block either way, and the suite's own apply will
   // reject the body loudly.
   const { computePostBlockStateRoot } = await import('../src/services/block-apply.js');
-  const speculation = computePostBlockStateRoot(block, height);
+  const speculation = computePostBlockStateRoot(block);
   header.stateRoot =
     opts.stateRoot ??
     (speculation.kind === 'computed' ? speculation.stateRoot : EMPTY_STATE_ROOT);

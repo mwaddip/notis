@@ -651,7 +651,7 @@ async function runScenario(m: Modules, carrier: PinCarrier): Promise<ApplyPinCap
   const refuse = async (name: string, rule: string, txs: Built[]): Promise<void> => {
     const before = captureState(m);
     const block = await build(txs);
-    const speculation = m.blockApply.computePostBlockStateRoot(block, block.header.height).kind;
+    const speculation = m.blockApply.computePostBlockStateRoot(block).kind;
     const logged: string[] = [];
     const record = (...args: unknown[]): void => { logged.push(args.map(String).join(' ')); };
     const warn = vi.spyOn(console, 'warn').mockImplementation(record);

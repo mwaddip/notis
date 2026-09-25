@@ -676,7 +676,7 @@ export function createOrderingBlock(): OrderingBlock | null {
     // mining. A node with no prover falls back to EMPTY_STATE_ROOT — test-only,
     // since production initializes one at startup, and a peer holding a prover
     // rejects such a block, which is correct.
-    const speculation = computePostBlockStateRoot(candidate, newHeight);
+    const speculation = computePostBlockStateRoot(candidate);
 
     // 19c. A body the mutation phase rejected is evicted and the build repeats
     // from purgeExpired, until the body holds or no pool row remains to evict

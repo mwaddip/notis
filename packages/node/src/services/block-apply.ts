@@ -703,7 +703,7 @@ export type StateRootSpeculation =
  * the apply funnel handles for rejected blocks.
  *
  * The candidate carries a placeholder header (`powNonce` 0, empty signature):
- * the mutation phase reads neither, and takes its height as an argument.
+ * the mutation phase reads neither, and runs at the header's height.
  *
  * An unexpected throw maps to `body-rejected`, not to the proverless fallback:
  * the apply funnel treats the same throw as a rejection of the block, so a
@@ -723,14 +723,12 @@ export type StateRootSpeculation =
  * correct — the process is ending and nothing reads the tree afterwards — but a
  * reader who assumes `finally` always runs will mis-reason about it.
  */
-export function computePostBlockStateRoot(
-  block: OrderingBlock,
-  height: number,
-): StateRootSpeculation {
+export function computePostBlockStateRoot(block: OrderingBlock): StateRootSpeculation {
   const handle = tryGetAvlProver();
   if (!handle) return { kind: 'no-prover' };
   const snapshot = handle.prover.digest();
   if (!snapshot) return { kind: 'no-prover' };
+  const height = block.header.height;
 
   try {
     getDb().transaction((): void => {

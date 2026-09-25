@@ -429,7 +429,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
 
     // A stated rejection, not the catch-all: the arm returns false, so the
     // speculation exits through `BlockRejected` and the prover is restored.
-    expect(computePostBlockStateRoot(candidate, 1)).toEqual({ kind: 'body-rejected' });
+    expect(computePostBlockStateRoot(candidate)).toEqual({ kind: 'body-rejected' });
     expect(Buffer.from(handle.prover.digest()!).toString('hex')).toBe(preDigest);
   });
 
@@ -502,7 +502,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     armed = true;
     // It never returns a verdict: the boundary is reached instead, and the
     // stubbed exit is what comes back out.
-    expect(() => computePostBlockStateRoot(candidate, 1)).toThrow('process.exit');
+    expect(() => computePostBlockStateRoot(candidate)).toThrow('process.exit');
     expect(exited).toEqual([1]);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain('FATAL');
