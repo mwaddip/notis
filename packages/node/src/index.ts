@@ -52,7 +52,6 @@ import {
   getHeightByBlockHash,
   peerStorage,
   getKarmaOwners,
-  registerKarmaMembershipHook,
   getVouchBox,
   putIdentityRecord,
   getUsername,
@@ -159,13 +158,10 @@ const net = new NetNode(
 );
 setNet(net);
 
-// 2a. Karma membership — seed from the store, then hook the choke points
-// (NODE_INTERFACE → Post transactions, the relay-gate bullet).
+// 2a. Karma membership — seeded from the store; block application and reorg
+// move it after each commit (NODE_INTERFACE → Post transactions → "The set
+// moves after a commit, never inside a transaction").
 net.setKarmaMembers(getKarmaOwners());
-registerKarmaMembershipHook({
-  onGain: (ownerHex) => net.addKarmaMember(ownerHex),
-  onLoss: (ownerHex) => net.removeKarmaMember(ownerHex),
-});
 
 // 3. Register Stage 2 handlers
 

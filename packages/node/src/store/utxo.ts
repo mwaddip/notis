@@ -958,20 +958,14 @@ export function getLikeAccrualBoxes(author: Uint8Array): LikeAccrualBox[] {
 }
 
 // ---------------------------------------------------------------------------
-// Karma membership hook — registered by index.ts so the store stays net-agnostic
+// Karma owners
 // ---------------------------------------------------------------------------
 
-export type KarmaMembershipHook = {
-  onGain: (ownerHex: string) => void;
-  onLoss: (ownerHex: string) => void;
-};
-
-let membershipHook: KarmaMembershipHook | null = null;
-
-export function registerKarmaMembershipHook(hook: KarmaMembershipHook): void {
-  membershipHook = hook;
-}
-
+/**
+ * Every identity holding an unspent karma box, as hex — what net's relay-gate
+ * set is seeded from at startup and once a reorg commits (NODE_INTERFACE → Post
+ * transactions → "The set moves after a commit, never inside a transaction").
+ */
 export function getKarmaOwners(): string[] {
   return (
     getDb()
@@ -981,36 +975,6 @@ export function getKarmaOwners(): string[] {
       )
       .all() as { owner: Buffer }[]
   ).map(r => r.owner.toString('hex'));
-}
-
-function notifyMembershipIfNeeded(
-  ownerBuf: Buffer,
-  boxId: string | undefined,
-  direction: 'insert' | 'remove',
-): void {
-  if (!membershipHook) return;
-  const ownerHex = ownerBuf.toString('hex');
-  if (direction === 'insert') {
-    const others = (
-      getDb()
-        .prepare(
-          `SELECT COUNT(*) as cnt FROM utxo_boxes
-           WHERE box_type = 'karma' AND owner = ? AND spent_at_block IS NULL AND id != ?`,
-        )
-        .get(ownerBuf, boxId!) as { cnt: number }
-    ).cnt;
-    if (others === 0) membershipHook.onGain(ownerHex);
-  } else {
-    const remaining = (
-      getDb()
-        .prepare(
-          `SELECT COUNT(*) as cnt FROM utxo_boxes
-           WHERE box_type = 'karma' AND owner = ? AND spent_at_block IS NULL`,
-        )
-        .get(ownerBuf) as { cnt: number }
-    ).cnt;
-    if (remaining === 0) membershipHook.onLoss(ownerHex);
-  }
 }
 
 /**
@@ -1151,10 +1115,6 @@ export function insertBox(box: AnyBox): void {
     box.txId,
     box.index,
   );
-
-  if (box.boxType === 'karma' && owner !== null) {
-    notifyMembershipIfNeeded(owner, box.id!, 'insert');
-  }
 }
 
 /**
@@ -1186,24 +1146,12 @@ export class BoxNotLiveError extends Error {
  * the store does not hold live; with the count checked, that spend fails loudly
  * inside the caller's transaction instead (NODE_INTERFACE → Store Interface,
  * the `consumeBox` row).
- *
- * **`RETURNING` rather than a second read**, and it tightens the guard above
- * rather than only saving a round trip: the row is the spend that happened, so
- * the type and owner read below are the ones this call actually removed — a
- * `SELECT` beforehand would describe a box the `UPDATE` might then not match.
  */
 export function consumeBox(boxId: string, consumedAtBlock: number): void {
-  const spent = getDb()
-    .prepare(
-      `UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ? AND spent_at_block IS NULL
-       RETURNING box_type, owner`,
-    )
-    .get(consumedAtBlock, boxId) as { box_type: string; owner: Buffer | null } | undefined;
-  if (spent === undefined) throw new BoxNotLiveError(boxId);
-
-  if (spent.box_type === 'karma' && spent.owner !== null) {
-    notifyMembershipIfNeeded(spent.owner, undefined, 'remove');
-  }
+  const { changes } = getDb()
+    .prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ? AND spent_at_block IS NULL')
+    .run(consumedAtBlock, boxId);
+  if (changes === 0) throw new BoxNotLiveError(boxId);
 }
 
 /**
@@ -1211,15 +1159,7 @@ export function consumeBox(boxId: string, consumedAtBlock: number): void {
  * Fork-rollback inverse.
  */
 export function unconsumeBox(boxId: string): void {
-  const row = getDb()
-    .prepare(
-      `UPDATE utxo_boxes SET spent_at_block = NULL WHERE id = ?
-       RETURNING box_type, owner`,
-    )
-    .get(boxId) as { box_type: string; owner: Buffer | null } | undefined;
-  if (row?.box_type === 'karma' && row.owner !== null) {
-    notifyMembershipIfNeeded(row.owner, boxId, 'insert');
-  }
+  getDb().prepare('UPDATE utxo_boxes SET spent_at_block = NULL WHERE id = ?').run(boxId);
 }
 
 /**
@@ -1227,12 +1167,7 @@ export function unconsumeBox(boxId: string): void {
  * Fork-rollback inverse.
  */
 export function deleteBox(boxId: string): void {
-  const deleted = getDb()
-    .prepare('DELETE FROM utxo_boxes WHERE id = ? RETURNING box_type, owner')
-    .get(boxId) as { box_type: string; owner: Buffer | null } | undefined;
-  if (deleted?.box_type === 'karma' && deleted.owner !== null) {
-    notifyMembershipIfNeeded(deleted.owner, undefined, 'remove');
-  }
+  getDb().prepare('DELETE FROM utxo_boxes WHERE id = ?').run(boxId);
 }
 
 /**

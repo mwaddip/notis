@@ -59,9 +59,7 @@ export {
   deleteBox,
   BoxNotLiveError,
   getKarmaOwners,
-  registerKarmaMembershipHook,
 } from './utxo.js';
-export type { KarmaMembershipHook } from './utxo.js';
 
 export {
   insertLikeRecord,

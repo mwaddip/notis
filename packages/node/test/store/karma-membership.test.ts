@@ -41,13 +41,7 @@ async function importUtxoFresh() {
   return mod as {
     insertBox: (box: AnyBox) => void;
     consumeBox: (boxId: string, consumedAtBlock: number) => void;
-    unconsumeBox: (boxId: string) => void;
-    deleteBox: (boxId: string) => void;
     getKarmaOwners: () => string[];
-    registerKarmaMembershipHook: (hook: {
-      onGain: (ownerHex: string) => void;
-      onLoss: (ownerHex: string) => void;
-    }) => void;
   };
 }
 
@@ -86,7 +80,7 @@ function makeKarmaBox(overrides: Partial<KarmaBox> = {}): KarmaBox {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('karma membership hook', () => {
+describe('the karma owners read', () => {
   beforeEach(() => {
     vi.resetModules();
   });
@@ -121,178 +115,6 @@ describe('karma membership hook', () => {
     const afterConsume = getKarmaOwners();
     expect(afterConsume).not.toContain(ownerHex(OWNER_B));
     expect(afterConsume).toHaveLength(1);
-  });
-
-  it('first karma insert fires onGain', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertBox, registerKarmaMembershipHook } = await importUtxoFresh();
-    const { computeBoxId } = await importTypes();
-
-    initDb(':memory:');
-
-    const gains: string[] = [];
-    const losses: string[] = [];
-    registerKarmaMembershipHook({
-      onGain: (h) => gains.push(h),
-      onLoss: (h) => losses.push(h),
-    });
-
-    const box = makeKarmaBox({ owner: OWNER_A });
-    box.id = computeBoxId(box);
-    insertBox(box);
-
-    expect(gains).toEqual([ownerHex(OWNER_A)]);
-    expect(losses).toEqual([]);
-  });
-
-  it('second karma insert does not fire onGain', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertBox, registerKarmaMembershipHook } = await importUtxoFresh();
-    const { computeBoxId } = await importTypes();
-
-    initDb(':memory:');
-
-    const gains: string[] = [];
-    registerKarmaMembershipHook({
-      onGain: (h) => gains.push(h),
-      onLoss: () => {},
-    });
-
-    const box1 = makeKarmaBox({ owner: OWNER_A });
-    box1.id = computeBoxId(box1);
-    insertBox(box1);
-
-    gains.length = 0;
-
-    const box2 = makeKarmaBox({ owner: OWNER_A, value: 200n });
-    Object.assign(box2, fixtureProvenance(box2, 2));
-    box2.id = computeBoxId(box2);
-    insertBox(box2);
-
-    expect(gains).toEqual([]);
-  });
-
-  it('consuming last karma box fires onLoss', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertBox, consumeBox, registerKarmaMembershipHook } = await importUtxoFresh();
-    const { computeBoxId } = await importTypes();
-
-    initDb(':memory:');
-
-    const box = makeKarmaBox({ owner: OWNER_A });
-    box.id = computeBoxId(box);
-    insertBox(box);
-
-    const losses: string[] = [];
-    registerKarmaMembershipHook({
-      onGain: () => {},
-      onLoss: (h) => losses.push(h),
-    });
-
-    consumeBox(box.id!, 5);
-    expect(losses).toEqual([ownerHex(OWNER_A)]);
-  });
-
-  it('consuming one of two karma boxes does not fire onLoss', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertBox, consumeBox, registerKarmaMembershipHook } = await importUtxoFresh();
-    const { computeBoxId } = await importTypes();
-
-    initDb(':memory:');
-
-    const box1 = makeKarmaBox({ owner: OWNER_A });
-    box1.id = computeBoxId(box1);
-    insertBox(box1);
-
-    const box2 = makeKarmaBox({ owner: OWNER_A, value: 200n });
-    Object.assign(box2, fixtureProvenance(box2, 2));
-    box2.id = computeBoxId(box2);
-    insertBox(box2);
-
-    const losses: string[] = [];
-    registerKarmaMembershipHook({
-      onGain: () => {},
-      onLoss: (h) => losses.push(h),
-    });
-
-    consumeBox(box1.id!, 5);
-    expect(losses).toEqual([]);
-  });
-
-  it('deleteBox (revert of first insert) fires onLoss', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertBox, deleteBox, registerKarmaMembershipHook } = await importUtxoFresh();
-    const { computeBoxId } = await importTypes();
-
-    initDb(':memory:');
-
-    const box = makeKarmaBox({ owner: OWNER_A });
-    box.id = computeBoxId(box);
-    insertBox(box);
-
-    const losses: string[] = [];
-    registerKarmaMembershipHook({
-      onGain: () => {},
-      onLoss: (h) => losses.push(h),
-    });
-
-    deleteBox(box.id!);
-    expect(losses).toEqual([ownerHex(OWNER_A)]);
-  });
-
-  it('unconsumeBox (revert of last consume) fires onGain', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertBox, consumeBox, unconsumeBox, registerKarmaMembershipHook } = await importUtxoFresh();
-    const { computeBoxId } = await importTypes();
-
-    initDb(':memory:');
-
-    const box = makeKarmaBox({ owner: OWNER_A });
-    box.id = computeBoxId(box);
-    insertBox(box);
-    consumeBox(box.id!, 5);
-
-    const gains: string[] = [];
-    registerKarmaMembershipHook({
-      onGain: (h) => gains.push(h),
-      onLoss: () => {},
-    });
-
-    unconsumeBox(box.id!);
-    expect(gains).toEqual([ownerHex(OWNER_A)]);
-  });
-
-  // T5: an exact spend of an owner's last karma box fires onLoss; a spend
-  // leaving a box does not (TYPES_INTERFACE → Box value domain).
-  it('T5: exact spend of last box fires onLoss; a spend leaving a box does not', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertBox, consumeBox, registerKarmaMembershipHook } = await importUtxoFresh();
-    const { computeBoxId } = await importTypes();
-
-    initDb(':memory:');
-
-    const box1 = makeKarmaBox({ owner: OWNER_A, value: 5n });
-    box1.id = computeBoxId(box1);
-    insertBox(box1);
-
-    const box2 = makeKarmaBox({ owner: OWNER_A, value: 10n });
-    Object.assign(box2, fixtureProvenance(box2, 2));
-    box2.id = computeBoxId(box2);
-    insertBox(box2);
-
-    const losses: string[] = [];
-    registerKarmaMembershipHook({
-      onGain: () => {},
-      onLoss: (h) => losses.push(h),
-    });
-
-    // Consume one — a spend leaving a box: no onLoss.
-    consumeBox(box1.id!, 5);
-    expect(losses).toEqual([]);
-
-    // Consume the last — an exact spend: onLoss fires.
-    consumeBox(box2.id!, 5);
-    expect(losses).toEqual([ownerHex(OWNER_A)]);
   });
 });
 
