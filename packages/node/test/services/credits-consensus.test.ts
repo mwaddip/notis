@@ -172,7 +172,7 @@ function boxMutations(journal: BlockJournal) {
   return journal.mutations.filter((m) => m.kind === 'box');
 }
 
-describe('credit transfers ride consensus (P2-B phase 3)', () => {
+describe('credit transfers ride consensus', () => {
   // -------------------------------------------------------------------------
   // Settlement: pooled → mined → applied, with the journal carrying it
   // -------------------------------------------------------------------------
