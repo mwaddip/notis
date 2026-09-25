@@ -65,7 +65,7 @@ function threadTx(author: TestIdentity, input: AnyBox, content: string, height: 
   return tx;
 }
 
-/** The block as a node holds it once decoded from a `Buffer`: every byte field a `Buffer`. */
+/** The block as a node holds it once decoded from a `Buffer`. */
 const decodedFromBuffer = (block: OrderingBlock): OrderingBlock =>
   decodeOrderingBlock(Buffer.from(encodeOrderingBlock(block)));
 
@@ -81,7 +81,7 @@ describe('the effects writer', () => {
     vi.resetModules();
   });
 
-  it('journals an identity or a liker read from a box the same Buffer-decoded block created as a Uint8Array, as a store read gives it', async () => {
+  it('a block decoded from a Buffer journals every byte field as a Uint8Array, the boxes its own transactions created included', async () => {
     const [author, poster, liker] = [makeTestIdentity(), makeTestIdentity(), makeTestIdentity()];
     const db = await import('../../src/store/db.js');
     db.initDb(':memory:');
@@ -111,7 +111,9 @@ describe('the effects writer', () => {
     const likeFirst = makeLikeTx(liker, outputsOf(likeOpening)[0] as KarmaBox, firstId, poster.userId);
     const built = await makeApplicableBlock({ height: 2, utxoTxs: [first, second, likeOpening, likeFirst] });
     const block = decodedFromBuffer(built);
-    expect(Buffer.isBuffer(block.utxoTxTree.utxoTxs[1])).toBe(true);
+    // A decoded byte field is a plain `Uint8Array` whatever carried the input
+    // (TYPES_INTERFACE → Primitives).
+    expect(Buffer.isBuffer(block.utxoTxTree.utxoTxs[1])).toBe(false);
     expect(blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true });
 
     const stored = db.getDb()
@@ -132,7 +134,7 @@ describe('the effects writer', () => {
     // The inserted boxes are listed as the block passed them: the decoded body's own bytes.
     const inserted = view.mutations.filter((m) => m.kind === 'box' && m.op === 'insert' && m.box!['boxType'] === 'karma');
     expect(inserted.length).toBeGreaterThan(0);
-    for (const m of inserted) expect(Buffer.isBuffer(m.box!['owner'])).toBe(true);
+    for (const m of inserted) expect(Buffer.isBuffer(m.box!['owner'])).toBe(false);
   });
 
   for (const failing of ['insertPost', 'confirmPost'] as const) {

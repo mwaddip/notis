@@ -23,43 +23,33 @@ import {
  * reaches the store through `applyOrderingBlockVerdict`; the scenario is
  * `test/harness/block-apply-pin.ts`.
  *
- * Two pins run the one scenario, one fixture each: the blocks as built, every
- * byte field a `Uint8Array`, and the same blocks decoded from a `Buffer`, every
- * byte field the codec reads a `Buffer`. A journal records a `Buffer` as a bare
- * CBOR byte string and a `Uint8Array` under tag 64, so the second pin freezes
- * which recorded byte fields are the decoded body's own and which a store
- * read's.
+ * Two pins run the one scenario against the one fixture: the blocks as built,
+ * and the same blocks decoded from a `Buffer`. A decoded byte field is a plain
+ * `Uint8Array` whatever carried the input (TYPES_INTERFACE → Primitives), so
+ * both runs must journal the same bytes — and a journal records a `Buffer` as a
+ * bare CBOR byte string and a `Uint8Array` under tag 64, so a byte field the
+ * carrier reached would show in them.
  *
- * **Do not regenerate a fixture.** Each pin's capture writes only when its file
- * is absent and its own variable is set to `1`, and never overwrites: a
- * difference from it is a finding about the change under test.
+ * **Do not regenerate the fixture.** The capture writes only when the file is
+ * absent and `BLOCK_APPLY_PIN_CAPTURE` is `1`, from the as-built run, and never
+ * overwrites: a difference from it is a finding about the change under test.
  */
 
 interface Pin {
   title: string;
   carrier: PinCarrier;
-  fixturePath: string;
-  /** The variable that opts a run into capturing this pin's fixture. */
-  captureVariable: string;
-  capturedFrom: string;
+  /** Whether this pin's run is the one a capture writes the fixture from. */
+  captures: boolean;
 }
 
 const PINS: Pin[] = [
-  {
-    title: 'block application, pinned',
-    carrier: 'Uint8Array',
-    fixturePath: fileURLToPath(new URL('../fixtures/block-apply-pin.json', import.meta.url)),
-    captureVariable: 'BLOCK_APPLY_PIN_CAPTURE',
-    capturedFrom: '9de7bbe9 on consensus-package-stage-2, before any stage-2 source change',
-  },
-  {
-    title: 'block application, pinned — bodies carried as Buffers',
-    carrier: 'Buffer',
-    fixturePath: fileURLToPath(new URL('../fixtures/block-apply-pin-buffer.json', import.meta.url)),
-    captureVariable: 'BLOCK_APPLY_PIN_BUFFER_CAPTURE',
-    capturedFrom: '96fd2aed on consensus-package-stage-2, before the node runs applyBlock',
-  },
+  { title: 'block application, pinned', carrier: 'Uint8Array', captures: true },
+  { title: 'block application, pinned — bodies carried as Buffers', carrier: 'Buffer', captures: false },
 ];
+
+const FIXTURE_PATH = fileURLToPath(new URL('../fixtures/block-apply-pin.json', import.meta.url));
+const CAPTURE = process.env['BLOCK_APPLY_PIN_CAPTURE'] === '1';
+const CAPTURED_FROM = '9de7bbe9 on consensus-package-stage-2, before any stage-2 source change';
 
 interface Fixture {
   capturedFrom: string;
@@ -120,9 +110,6 @@ function expectBlockMatches(actual: PinnedBlock, golden: PinnedBlock): void {
 }
 
 function describePin(pin: Pin): void {
-  const FIXTURE_PATH = pin.fixturePath;
-  const CAPTURE = process.env[pin.captureVariable] === '1';
-
   const fixture: Fixture | null = existsSync(FIXTURE_PATH)
     ? (JSON.parse(readFileSync(FIXTURE_PATH, 'utf8')) as Fixture)
     : null;
@@ -151,13 +138,13 @@ function describePin(pin: Pin): void {
       vi.resetModules();
     });
 
-    it('captures the fixture when it is absent (opt-in, never overwrites)', () => {
+    if (pin.captures) it('captures the fixture when it is absent (opt-in, never overwrites)', () => {
       if (!CAPTURE) return;
       if (existsSync(FIXTURE_PATH)) {
         throw new Error(`${FIXTURE_PATH} already exists — refusing to overwrite a frozen pin.`);
       }
       const frozen: Fixture = {
-        capturedFrom: pin.capturedFrom,
+        capturedFrom: CAPTURED_FROM,
         config: PIN_CONFIG,
         preSet: capture.preSet,
         blocks: capture.blocks,
@@ -172,7 +159,7 @@ function describePin(pin: Pin): void {
     it('the fixture exists and was captured under the scenario\'s profile numbers', () => {
       if (fixture === null) {
         throw new Error(
-          `Missing ${FIXTURE_PATH}. It is captured once, with ${pin.captureVariable}=1, ` +
+          `Missing ${FIXTURE_PATH}. It is captured once, with BLOCK_APPLY_PIN_CAPTURE=1, ` +
           `from the tree the pin freezes; a capture from a changed tree would freeze ` +
           `the change as correct.`,
         );

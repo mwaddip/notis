@@ -388,7 +388,7 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
           'out-of-domain',
         );
       }
-      return { boxType, value: value as 0n, createdAtBlock, owner, name: r.readBytes(nameLen).slice() };
+      return { boxType, value: value as 0n, createdAtBlock, owner, name: readBytesN(r, nameLen) };
     }
     case 'backer_stake':
     case 'backer_unstake':
