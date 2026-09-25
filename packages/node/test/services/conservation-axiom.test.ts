@@ -345,7 +345,9 @@ describe('the conservation axiom holds over a chain', () => {
     // them whether the remaining 1 goes to the pool or nowhere, so the pool's
     // rise is the half that distinguishes a transfer from a destruction.
     expect(utxo.getKarmaPoolBox()!.value).toBe(poolBefore + 1n);
-    const carry = utxo.getLikeCarryBox(w.author.userId, new Set<string>());
+    // Read once the block's markers are spent: the author's one live accrual
+    // box is the carry.
+    const carry = utxo.getLikeAccrualBoxes(w.author.userId)[0] ?? null;
     expect(carry, 'the remainder rides a carry box').not.toBeNull();
     expect(carry!.value).toBe(1n);
     expect(Buffer.from(carry!.author).toString('hex')).toBe(authorHex);

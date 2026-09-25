@@ -74,10 +74,6 @@ describe('the store\'s StateView', () => {
     const listed = s.blockApply.storeStateView.getLikeAccrualBoxes(author);
     expect(idsOf(listed)).toEqual(expected);
     expect(listed).toEqual(expected.map((id) => s.utxo.getBox(id)));
-    // The carry lookup is the list's first box its caller does not exclude.
-    expect(s.utxo.getLikeCarryBox(author, new Set())).toEqual(listed[0]);
-    expect(s.utxo.getLikeCarryBox(author, new Set([expected[0]!]))).toEqual(listed[1]);
-    expect(s.utxo.getLikeCarryBox(author, new Set(expected))).toBeNull();
   });
 
   it('a post\'s standing: none without a row, live for a pending or confirmed row, withdrawn once withdrawn', async () => {
