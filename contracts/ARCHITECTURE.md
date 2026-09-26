@@ -2031,10 +2031,12 @@ no object check compares against it and no producer stamps it.
 - Signatures: raw Ed25519 (64 bytes). **Two encodings carry a signature, and base64 is not one of
   them:** raw bytes in the positional encodings (all consensus structures), and **lowercase hex**
   at the HTTP boundary (`json-to-tx.ts`) and in every client. base64 carries no signature anywhere —
-  it encodes the AVL proof blob (`state/avl-endpoint.ts`). Verification is `validation`'s
-  `verifyEd25519` in every case — strict RFC 8032 / FIPS 186-5 through `@noble/curves`, one
-  implementation for every runtime (`VALIDATION_INTERFACE → Acceptance criterion`): `0 ≤ S < L`,
-  canonical `A` and `R`, one valid signature per message and key. **Every signature in the system is
+  it encodes the AVL proof blob (`state/avl-endpoint.ts`). Verification is one rule in every case —
+  `validation`'s `verifyEd25519`, or `verifyEd25519Batch` for a block's body — strict RFC 8032 /
+  FIPS 186-5 through `@noble/curves`, one implementation for every runtime
+  (`VALIDATION_INTERFACE → Acceptance criterion`): `0 ≤ S < L`, canonical `A` and `R`, `A` not of
+  small order, the cofactored equation; one valid signature per message and key (⚠ AHEAD OF CODE (2026-09-26, `ed25519-batch-verify`).
+  `verifyEd25519Batch` does not exist yet). **Every signature in the system is
   excluded from every preimage** — `txIdBytes` omits them and every Merkle leaf is an id — so a
   malleated signature can never move a block hash; what remains is acceptance, and one stated rule
   with one implementation is what keeps two verifiers from disagreeing about a block's validity

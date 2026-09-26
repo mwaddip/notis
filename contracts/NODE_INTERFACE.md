@@ -2804,7 +2804,10 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
    The decode pass runs first and carries its own rule —
    see "Embedded transactions: a mismatch rejects the block": a tx whose bytes
    cannot be proven to be the id declared beside them rejects the block before
-   this step sees a queue. Then **one pass over the body, in committed order**: for
+   this step sees a queue. **Then every signature the body carries is checked as one
+   batch** (`CONSENSUS_INTERFACE → Applying a block`): a failing batch rejects the block
+   before any transaction applies (⚠ AHEAD OF CODE (2026-09-26, `ed25519-batch-verify`). no batch runs yet; each signature
+   is checked by the pass's `validateTx`). Then **one pass over the body, in committed order**: for
    each embedded UTXO tx, every input must resolve in the confirmed UTXO set as it
    stands at that point — the pre-block set plus the outputs of this block's earlier
    transactions, minus the inputs they consumed — then **fully re-validate with
@@ -5048,8 +5051,11 @@ is no "skip the checks" parameter on the apply path.
 | Phase | Contents | Runs in speculative computation? |
 |-------|----------|----------------------------------|
 | **Validation** | chain-link, interlink root, genesis pin, header timestamps, protocol version, PoW target + PoW, validator signature, Merkle root, block storage, `clearTemplate` | No — the header does not exist yet |
-| **Mutation** | `applyBlock` over a `StateView` of the store: post confirmation, topology, the embedded transactions, the withdrawals, the settlement, the grants, the like counters, the membership pass, the decay clocks — answering the block's effects or a reason | Yes — the same call, over the same view, at the candidate's height |
+| **Mutation** | `applyBlock` over a `StateView` of the store: post confirmation, topology, the body's signatures as one batch, the embedded transactions, the withdrawals, the settlement, the grants, the like counters, the membership pass, the decay clocks — answering the block's effects or a reason | Yes — the same call, over the same view, at the candidate's height |
 | **Commit** | the AVL feed from the effects + `stateRoot` verification, then the effects written to the store, the journal built from them and persisted, the prover checkpointed | No — the speculative run derives the feed, reads the digest and restores the prover; it writes nothing to the store |
+
+> ⚠ **AHEAD OF CODE (2026-09-26, `ed25519-batch-verify`).** The mutation phase checks no batch yet; each signature is checked by
+> the embedded transactions' `validateTx`.
 
 **No effect is written before the block's verdict is known.** The mutation phase
 reads the store and writes nothing, the `stateRoot` is compared before any

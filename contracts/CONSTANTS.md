@@ -269,7 +269,7 @@ devnet differ where a cell says so. The identity fields — `magic`, `genesisCom
 
 ### validation
 
-`@dagsocial/validation` → `verify.ts`. The scale of the ordering-target expansion is an implementation
+`@dagsocial/validation` → `verify.ts` and `ed25519-batch.ts`. The scale of the ordering-target expansion is an implementation
 choice, not consensus (`VALIDATION_INTERFACE → What is not consensus`): any expansion satisfying the
 predicate agrees with every other on every input, and under-precision is one-sided. Module-private, so
 the row is marked; `scripts/miner.mjs` carries a mirror of the declaration that `miner-mirror.test.ts`
@@ -278,6 +278,9 @@ holds byte-identical across the whole domain.
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `ORDERING_TARGET_PRECISION` (literal) | `320n` | the scale the fractional-bit factor table is written at | local | the factors' fixed-point precision; under-precision is safe and one-sided. `validation/src/verify.ts` | CHOSEN | `VALIDATION_INTERFACE → What is not consensus` |
+| `BATCH_COEFFICIENT_BYTES` (literal) | `16` | 128-bit coefficients | consensus | a batch holding a failing entry passes with probability at most 2⁻¹²⁸, the margin an Ed25519 key already rests on; module-private to `validation/src/ed25519-batch.ts` | CHOSEN | `VALIDATION_INTERFACE → verifyEd25519Batch` |
+
+> ⚠ **AHEAD OF CODE (2026-09-26, `ed25519-batch-verify`).** `ed25519-batch.ts` and its literal do not exist yet.
 
 ### net
 
