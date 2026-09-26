@@ -31,3 +31,7 @@ export {
 } from './verify.js';
 
 export type { HeaderChainVerdict, RetargetParams } from './verify.js';
+
+export { verifyEd25519Batch } from './ed25519-batch.js';
+
+export type { Ed25519BatchEntry } from './ed25519-batch.js';
