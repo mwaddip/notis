@@ -55,7 +55,8 @@ a verified node's tip to the winner's where the winner's suffix carries that tip
 the winner, `null` on another chain or beyond the suffix. ⚠ **The nodes are asked one after another**,
 so a follower loses the fold at every block it lags: *lost the comparison* is not *outworked* — `behind`
 is what tells them apart. The library runs in a browser bundle: it may import no Node builtin and read
-no `process` (the command line's `index.ts` alone does).
+no Node global (the command line's `index.ts` alone does) — held by the browser pass of `typecheck`, which compiles
+`src/lib.ts` and what it imports against the DOM library (`tsconfig.browser.json`, `ARCHITECTURE → Package boundaries`).
 
 **The figures.** `fetchListing(nodeUrl, user, fetch)` reads `/karma/:user` and `/credits/:user`
 following `next` to the end, `height` and `effective` from the first karma page — a 404 is an empty
@@ -139,8 +140,8 @@ says so when asked to run with one.
   contract gaps to main.
 - **You own this package only.** Never edit `../../packages/*`, `../../contracts/`, or `../e2e`.
 - **Forced verification before "done":** `pnpm --filter @dagsocial/nipopow-client build`,
-  `pnpm --filter @dagsocial/nipopow-client typecheck` (two configs — run
-  `npx tsc --noEmit -p tools/nipopow-client/tsconfig.test.json` explicitly and report it separately)
+  `pnpm --filter @dagsocial/nipopow-client typecheck` (three configs — src, the test tree and the library's browser
+  pass; run `npx tsc --noEmit -p tools/nipopow-client/tsconfig.test.json` explicitly and report it separately)
   **and** `pnpm --filter @dagsocial/nipopow-client test`, all clean.
 - ⛔ **`pnpm --filter`, never `pnpm -r`** — the tree is shared.
 - ⚠ **No test may talk to a real node.** The node's HTTP surface is stubbed; proofs and AVL proofs

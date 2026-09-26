@@ -54,8 +54,9 @@ the block's effects, the journal built from them (NODE_INTERFACE → Block Journ
   karma/credit mints and burns happen only in block-application paths, never inside a user tx.
   `validateTx` checks the equality as one total per side, block application re-validates every
   embedded tx, and every user-value mutation rides mempool → block.
-- **Hashing** — `blake2b512` truncated via `.subarray(0, 32)` for every 32-byte output; a browser mirror's
-  `blakejs` must match it.
+- **Hashing** — every protocol digest the node reads through `@dagsocial/types` and `@dagsocial/validation` is
+  `hash32` (`TYPES_INTERFACE → The protocol hash`); the node's own `createHash('blake2b512')` sites — the network, name
+  and holder record keys — truncate to 32 bytes and answer the same bytes (`ARCHITECTURE → Cryptographic`).
 - **Signatures** — raw Ed25519 (64 bytes), verified by `@dagsocial/validation`'s one rule — `verifyEd25519`, or
   `verifyEd25519Batch` over a block's body inside `applyBlock` — strict RFC 8032 through `@noble/curves`
   (`VALIDATION_INTERFACE → Acceptance criterion`).

@@ -110,7 +110,7 @@ reads (`GET /vouches` by target, by voucher, the cooldown arm; `GET /invites/:us
 (`GET /usernames?owner=`), a handle's holder (`GET /usernames/:name`) and the balance (`GET /credits/:userId`) are `GET`s in it.
 
 **It hashes only through `@dagsocial/types`** — and, in the extension's tip verifier, `@dagsocial/validation`'s
-header hash and PoW check, through `@dagsocial/nipopow-client` — reached by the build-time shim — the wallet builders type
+header hash and PoW check, through `@dagsocial/nipopow-client` — built as they are written, substituting nothing for Node — the wallet builders type
 their box candidates and compute every id through the shared implementation, never a copy, which is why
 no mirror test applies. **If you find yourself hand-writing an encoder or a hash, you have left the
 slice — stop and report, do not implement it.**
@@ -256,14 +256,12 @@ node packages/web/scripts/promote.mjs   # devnet only: a throwaway becomes a mem
 pnpm -r build && node packages/node/scripts/dev.mjs --nodes 1 --miners 1
 ```
 
-## The binding check — the only proof the crypto shim is wired
+## The binding check — the bundle's hashing against the node's
 
-`@dagsocial/types` reaches the browser through a build-time `crypto` shim
-(`WEB_INTERFACE → The browser reaches @dagsocial/types through a build-time shim`).
-Under Node the real `crypto` is present and the substitution never happens, so
-**no committed test proves the shim** — each would pass against a bundle where the
-alias was never wired. Only the built bundle, run in a browser over live data,
-does:
+The client's builds substitute nothing for Node (`WEB_INTERFACE → The client's builds substitute nothing`):
+`@dagsocial/types` hashes over `@noble/hashes` in the browser as it does under Node. **No committed test proves the
+bundle's hashing is the node's** — under Node the suite never runs the built bundle. Only the built bundle, run in a
+browser over live data, does:
 
 ```bash
 # against a local dev node (default http://localhost:3000):
@@ -272,7 +270,7 @@ node packages/web/scripts/binding-check/run.mjs
 node packages/web/scripts/binding-check/run.mjs https://notis.fun/testnet/api
 ```
 
-It builds the shim's path through the real alias + Buffer inject, evaluates the
+It builds the harness through the same `refuseNodeBuiltins` plugin the app builds use, evaluates the
 bundle in headless Chromium (no Node `process`, `Buffer` or Web Crypto in the
 page), and asserts each live post's recomputed `computeContentHash` equals the
 `contentHash` the node served. Exit 0 = all matched. Needs a Chromium binary
@@ -335,11 +333,10 @@ before; the corner is green only while blocks progress **and** the verdict is `v
 the comparison is outworked only when the winner's suffix does not carry its tip** (the tool's `behind` is `null`) —
 the nodes answer one after another, so a follower one block behind loses the fold at every block it lags. `main.ts`
 hands the verifier to the App in the extension build alone, and only under a non-empty `notis-network`; the web
-build is handed none and `build-release.sh` refuses `nipopow/proof` in its assets. The shim names no signature
-primitive: `@dagsocial/validation` verifies Ed25519 through `@noble/curves` and imports `createHash` alone from
-`crypto` (`WEB_INTERFACE → The browser reaches @dagsocial/types through a build-time shim`). The `Buffer` polyfill is `buffer` 6 (`validation`'s PoW check writes with `writeBigUInt64LE`); **the
-polyfill sits under every byte the browser build signs and `pnpm test` cannot see it** — the binding check and the
-proof's write steps are its only proof.
+build is handed none and `build-release.sh` refuses `nipopow/proof` in its assets. `@dagsocial/validation` verifies
+Ed25519 through `@noble/curves` and hashes through `@dagsocial/types`' `hash32`, importing nothing Node
+(`WEB_INTERFACE → The client's builds substitute nothing`); **what a build does to those bytes `pnpm test` cannot see**
+— the binding check and the proof's write steps are its only proof.
 
 **The verified figures** (`WEB_INTERFACE → The extension → "The verified figures"`, `→ The profile window`, `→ The
 wallet window`): the extension proves the reader's rep and balance against the verified chain. A tip run answers
