@@ -38,6 +38,10 @@ describe('hash32 — pinned to createHash(\'blake2b512\').digest().subarray(0, 3
     const out = hash32(content(10));
     expect(out).toBeInstanceOf(Uint8Array);
     expect(out.length).toBe(32);
+    // Fresh means the result owns its bytes rather than viewing the 64-byte
+    // digest: offset 0 into a buffer exactly 32 bytes long.
+    expect(out.byteOffset).toBe(0);
+    expect(out.buffer.byteLength).toBe(32);
   });
 });
 

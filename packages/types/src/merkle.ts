@@ -1,18 +1,6 @@
 import { hash32 } from './hash.js';
 
 /**
- * Convert a hex string to a Buffer, validating even length first.
- * Buffer.from(hex, 'hex') silently truncates odd-length strings by ignoring
- * the last nibble, which can hide data corruption.
- */
-export function hexToBuf(hex: string): Buffer {
-  if (hex.length % 2 !== 0) {
-    throw new Error(`hexToBuf: odd hex length (${hex.length}) for "${hex.slice(0, 24)}..."`);
-  }
-  return Buffer.from(hex, 'hex');
-}
-
-/**
  * Domain-separated leaf hash for Merkle trees.
  * Prevents cross-tree collision (two different domains hash the same
  * underlying bytes to different leaves).
