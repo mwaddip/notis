@@ -219,7 +219,7 @@ export interface UtxoEngineDeps {
    */
   protocolVersionSchedule: readonly ProtocolEra[];
   getUsername: (nameLower: string) => UsernameRow | null;
-  getUsernameByOwner: (owner: Uint8Array | string) => UsernameRow | null;
+  getUsernameByOwner: (owner: Uint8Array) => UsernameRow | null;
   /**
    * The check a required signer's signature answers to, the one parameter the
    * two builds set apart (CONSENSUS_INTERFACE → The overlay): `applyBlock`'s

@@ -898,8 +898,7 @@ function utxoDepsOver(state: BlockOverlay, ctx: ApplyContext, verified: Readonly
     putIdentityRecord: (identityId, record) => state.putIdentityRecord(identityId, record),
     protocolVersionSchedule: ctx.protocolVersionSchedule,
     getUsername: (nameLower) => state.getUsername(nameLower),
-    getUsernameByOwner: (owner) =>
-      state.getUsernameByOwner(typeof owner === 'string' ? hexToBytes(owner) : owner),
+    getUsernameByOwner: (owner) => state.getUsernameByOwner(owner),
     verifySignature: (signature, message, publicKey) =>
       verified.has(signatureEntryKey(
         bytesToHex(message),
