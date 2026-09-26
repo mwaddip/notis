@@ -1,16 +1,4 @@
-import { createHash } from 'crypto';
-
-/**
- * Convert a hex string to a Buffer, validating even length first.
- * Buffer.from(hex, 'hex') silently truncates odd-length strings by ignoring
- * the last nibble, which can hide data corruption.
- */
-export function hexToBuf(hex: string): Buffer {
-  if (hex.length % 2 !== 0) {
-    throw new Error(`hexToBuf: odd hex length (${hex.length}) for "${hex.slice(0, 24)}..."`);
-  }
-  return Buffer.from(hex, 'hex');
-}
+import { hash32 } from './hash.js';
 
 /**
  * Domain-separated leaf hash for Merkle trees.
@@ -19,12 +7,7 @@ export function hexToBuf(hex: string): Buffer {
  */
 export function leafHash(domain: string, data: Uint8Array): Uint8Array {
   const domainBytes = new TextEncoder().encode(domain + '\0');
-  const hash = createHash('blake2b512')
-    .update(domainBytes)
-    .update(data)
-    .digest()
-    .subarray(0, 32);
-  return new Uint8Array(hash);
+  return hash32(domainBytes, data);
 }
 
 /**
@@ -56,13 +39,7 @@ const NODE_TAG = Uint8Array.of(0x00);
  * both derive roots through this function, so they stay in agreement.
  */
 export function nodeHash(left: Uint8Array, right: Uint8Array): Uint8Array {
-  const hash = createHash('blake2b512')
-    .update(NODE_TAG)
-    .update(left)
-    .update(right)
-    .digest()
-    .subarray(0, 32);
-  return new Uint8Array(hash);
+  return hash32(NODE_TAG, left, right);
 }
 
 /**

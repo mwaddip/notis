@@ -28,6 +28,10 @@ const TARGET_ID = 'ee'.repeat(32);
 const VOUCH_TARGET = '22'.repeat(32);
 const INVITEE = '33'.repeat(32);
 const VOUCH_BOX = '44'.repeat(32);
+// A foreign key of the right length but outside the hex alphabet — the shape
+// a node's confirmedAuthor or a pasted key can take when it is not what it
+// claims (TYPES_INTERFACE → Export table).
+const BAD_KEY = 'gg'.repeat(32);
 
 let signCalls: string[];
 let postReads: Array<{ id: string; viewer?: string }>;
@@ -224,6 +228,15 @@ describe('submitPostFlow', () => {
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
+
+  it('a parent confirmedAuthor that is not valid hex is refused client-side, not a throw', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(BAD_KEY), write: write(okPost, okLike), ledger, identity };
+    const res = await submitPostFlow(deps, 'a reply', PARENT_ID);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: "that post's author key is not valid." } });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
 });
 
 describe('submitLikeFlow', () => {
@@ -257,6 +270,15 @@ describe('submitLikeFlow', () => {
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(okPost, okLike), ledger, identity };
     const res = await submitLikeFlow(deps, TARGET_ID);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to like right now.' } });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('a target confirmedAuthor that is not valid hex is refused client-side, not a throw', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(BAD_KEY), write: write(okPost, okLike), ledger, identity };
+    const res = await submitLikeFlow(deps, TARGET_ID);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: "that post's author key is not valid." } });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
@@ -366,6 +388,15 @@ describe('submitVouchFlow', () => {
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
+
+  it('a target that is not valid hex is refused client-side, not a throw', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity };
+    const res = await submitVouchFlow(deps, BAD_KEY);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'that is not a valid key.' } });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
 });
 
 describe('submitUnvouchFlow', () => {
@@ -432,6 +463,15 @@ describe('submitInviteFlow', () => {
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '50' }]), write: write(), ledger, identity };
     const res = await submitInviteFlow(deps, INVITEE, 100n);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to cover the bond right now.' } });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('an invitee that is not valid hex is refused client-side, not a throw', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity };
+    const res = await submitInviteFlow(deps, BAD_KEY, 100n);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'that is not a valid key.' } });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
@@ -862,6 +902,15 @@ describe('submitSendFlow', () => {
     };
     const res = await submitSendFlow(deps, RECIPIENT, null, 1_250_000_000n);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough $NOTIS.' } });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('a recipient that is not valid hex is refused client-side, not a throw', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity };
+    const res = await submitSendFlow(deps, BAD_KEY, null, 1_250_000_000n);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'that is not a valid key.' } });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });

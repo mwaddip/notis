@@ -17,6 +17,7 @@ import {
   CREDIT_INITIAL_REWARD,
   CREDIT_REWARD_REDUCTION,
   INCLUSION_BONUS_K,
+  bytesToHex,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -97,11 +98,11 @@ export function countKarmaActors(
   validatorId: Uint8Array,
 ): number {
   const seen = new Set<string>();
-  const self = Buffer.from(validatorId).toString('hex');
+  const self = bytesToHex(validatorId);
   for (const { tx, inputBoxes } of embedded) {
     const actor = actorOf(tx, inputBoxes);
     if (!actor) continue;
-    const actorHex = Buffer.from(actor).toString('hex');
+    const actorHex = bytesToHex(actor);
     if (actorHex !== self) seen.add(actorHex);
   }
   return seen.size;

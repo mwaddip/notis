@@ -98,47 +98,23 @@ exactly, and with one it is the write surface with its signing moved out of the 
 still names the website (→ Links): a reader who follows one is brought from that page into the extension, and
 the extension itself sends the website nothing.
 
-## The browser reaches `@dagsocial/types` through a build-time shim
+## The client's builds substitute nothing
 
-`@dagsocial/types` and `@dagsocial/validation` are written against Node: `createHash('blake2b512')` in six
-files, `generateKeyPairSync` in one, and `Buffer` as a **global that is never imported**. A browser has
-none of them. Signatures are not among them: `validation` verifies Ed25519 through `@noble/curves`
-(`VALIDATION_INTERFACE → Acceptance criterion`), which runs in a browser as it is.
+**The browser runs every workspace package it reaches as that package is written**
+(`ARCHITECTURE → Package boundaries`): `@dagsocial/types`, `@dagsocial/validation`, `@dagsocial/nipopow` and
+`@dagsocial/nipopow-client`'s library import no Node built-in and read no Node global, each held to it by its own
+browser typecheck. The client supplies nothing in their place — no alias, no injected global, no polyfill — and its hex
+conversions are `@dagsocial/types`' pair (`TYPES_INTERFACE → Export table`), not copies of it.
 
-The client supplies them **at build time and changes neither package**: `crypto` resolves to a shim
-over pure-TS primitives, and `Buffer` is supplied to the bundle. Nothing in `types` or `validation`
-knows the difference, and when those packages stop depending on Node the shim is deleted rather than
-migrated.
+⛔ **A Node built-in fails every build.** `vite.config.ts`, `vite.background.config.ts` and
+`vite.extension.config.ts` each carry a plugin that refuses any Node built-in a module imports, `node:`-prefixed or
+bare. vite alone refuses only a *named* import from one; a namespace or a default import passes it with a warning and
+fails at run time, and so would a new dependency that reached for one. The plugin applies to builds alone: vitest runs
+the test tree through the same `vite.config.ts`, and a mirror test imports Node's `crypto` on purpose.
 
-**The shim carries only what the client's own module graph reaches, and nothing on speculation.**
-The extension's verifier brings `@dagsocial/validation` into the graph (→ The extension → "The verified tip"), and
-that package imports `createHash` alone from `crypto`, which the shim implements. A primitive the graph does not
-reach has no name in the shim: an unreached primitive cannot be pinned by any test that runs, and an unpinned
-consensus-critical primitive is a liability rather than a convenience — which is the whole argument against a
-hand-rolled copy, applied to the shim itself.
-
-⛔ **The shim's hashing must be byte-identical to `createHash('blake2b512')`, and that must be
-pinned.** Every id in the protocol is a blake2b-512 digest truncated to 32 bytes; a shim that
-differs by one byte produces ids the node rejects, and neither package's own tests would notice
-because neither exercises the other's code. This is the failure class a mirror test
-exists for.
-
-⛔ **A substituted module is pinned by absolute path, never by a bare specifier.** A bare specifier
-resolves from **the module that imports it**, which for a substituted Node global is a file inside
-`@dagsocial/types` — a package that declares no such dependency, so the specifier resolves to the Node
-builtin and the browser build externalizes it to nothing. The failure is invisible in a populated
-working tree, where the layout happens to make the package reachable, and appears only on a clean
-install. **This is what the throwaway-worktree gate is for; a build that succeeds in the main tree is
-not evidence.**
-
-⚠ **A test running under Node does not prove the shim.** The shim is a build-time substitution, so
-under Node the real `crypto` and the real `Buffer` are present and the substitution never happens —
-a green Node suite is consistent with a bundle in which the shim was never wired at all. **The
-binding check runs the built bundle in a browser** and recomputes, against live data, a value the
-node independently produced.
-
-⚠ **No WASM.** The substitutes are pure TS, per the preference order the project holds for every
-package.
+⚠ **A test running under Node proves none of this** — under Node the real `crypto` and `Buffer` are present. **The
+binding check runs the built bundle in a browser** and recomputes, against live data, a value the node independently
+produced: the proof that the bundle's hashing is the node's.
 
 ## The client is served from the node's own origin
 
@@ -1043,7 +1019,7 @@ the exported file is the same envelope — one codec, and importing an encrypted
 
 | Operation | Algorithm | Notes |
 |-----------|-----------|-------|
-| Key generation | `generateKeyPair()` from `@dagsocial/types`, through the shim | the seed is the DER's last 32 bytes; the RFC 8410 wrapper `302e020100300506032b657004220420` is a constant the codec re-adds |
+| Key generation | `generateKeyPair()` from `@dagsocial/types`, over `@noble/curves` | the seed is the DER's last 32 bytes; the RFC 8410 wrapper `302e020100300506032b657004220420` is a constant the codec re-adds |
 | Seal | scrypt (`@noble/hashes`) → a 32-byte key; ChaCha20-Poly1305 (`@noble/ciphers`) over the seed with `pubKeyHex` and `version` as associated data | a fresh salt and nonce per seal; a derived key is used once, which is what makes a random 12-byte nonce safe. The parameters travel in the envelope, so `N` can rise with no version bump |
 | Open | scrypt with the envelope's own parameters; the tag verified; the public key recomputed from the seed **must equal** `pubKeyHex` | a wrong passphrase, an edited header and a flipped byte are each refused with a reason |
 | Import | an envelope, stored verbatim after one successful open; **or** a clear key file `{ pubKeyHex, privKeyBase64 }` — validated as before (48 bytes, the prefix, the recomputed key) and sealed under a passphrase the reader sets | the clear shape is a **file shape only** — a clear value found in storage reads as no identity and is left in place; this client writes no clear file |
@@ -1051,7 +1027,7 @@ the exported file is the same envelope — one codec, and importing an encrypted
 | Signing | `ed25519.sign` from `@noble/curves` over the 32 transaction-id bytes, behind `sign(txBytes, txIdHex): Promise<SignResult>` | 64 raw bytes, hex in JSON, keyed by the hex public key; **answers `locked` while locked** (→ The wallet) |
 | Post ID | the node's `postId` from the `POST /posts` response | never derived client-side — the node is authoritative and the value is in the reply |
 
-**No Web Crypto, still.** scrypt and ChaCha20 are pure TS in the family the shim carries, and the
+**No Web Crypto, still.** scrypt and ChaCha20 are pure TS in the `@noble` family `@dagsocial/types` builds on, and the
 randomness is `getRandomValues`, which no secure context gates. Both primitives are in Node's own
 `crypto` (`scryptSync`, `createDecipheriv('chacha20-poly1305')`), so any Node tool opens the file with
 the standard library — pinned by a test that decrypts a browser-sealed envelope under Node. ChaCha over
@@ -1284,7 +1260,7 @@ can save from (→ The identity module). Enter submits, Esc cancels and returns 
 opened it, and a refusal is one sentence in the voice register under the fields.
 
 - **Create** and **import** are offered only with no identity loaded — switching keys is `forget`, then
-  one of them, so a loaded key is never silently replaced. Create drafts a key through the shim first and
+  one of them, so a loaded key is never silently replaced. Create drafts a key (`generateKeyPair`) first and
   shows it as the form's username — the key exists before the passphrase is typed, so the browser's
   saved entry names the key it will later unlock, as the unlock form's username does — takes two `new-password` fields (matching,
   non-empty, **no minimum length** — the manager makes the strong ones and a rule only nags), seals and
@@ -1686,14 +1662,10 @@ client that expects to announce itself first is built against an endpoint that d
 - **No WASM.** Pure-TS only, per the preference order the project holds for every package.
 - No server-side rendering — a static bundle, served beside the API by default.
 - Modern browser. **No Web Crypto.** Keys and signatures are pure TS through `@noble/curves`, the
-  family the shim already carries, so the write surface needs no secure context and adds no
+  family `@dagsocial/types` already builds on, so the write surface needs no secure context and adds no
   primitive the read surface lacks. The identity envelope's scrypt and ChaCha20-Poly1305 are the same
   family — `@noble/hashes` and `@noble/ciphers` — and its randomness is `getRandomValues`, which no
   secure context gates (→ The identity module).
-- **The `Buffer` polyfill is `buffer` 6**, the release that carries the BigInt methods Node's `Buffer` has — the PoW
-  check in `@dagsocial/validation` writes its nonce with `writeBigUInt64LE`. The polyfill encodes every byte the
-  browser build signs, and the package's tests run under Node's own `Buffer`: a change of it is proven in a real
-  browser — the binding check, the extension proof's writes — never by the test run.
 - **In the workspace the client depends on `@dagsocial/types`, and on `@dagsocial/nipopow-client` for the extension's
   verifier**, which brings `@dagsocial/nipopow` and `@dagsocial/validation` with it; tree-shaking keeps `validation`'s
   signature path out of every bundle, and the web build's assets carry none of the three (→ The extension, the build

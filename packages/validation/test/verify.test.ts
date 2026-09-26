@@ -326,6 +326,54 @@ describe('verifyContentLimits', () => {
 });
 
 // ---------------------------------------------------------------------------
+// verifyContentLimits — the byte count matches Buffer.byteLength
+//
+// `verifyContentLimits` counts bytes through a `TextEncoder`
+// (VALIDATION_INTERFACE → Content Limits). This pins that count against
+// `Buffer.byteLength(s, 'utf8')` at the 300-byte boundary and directly, for
+// strings built from lone surrogates, astral characters and a mix of both —
+// the widths a UTF-8 encoder treats differently from a UTF-16 code-unit count.
+// ---------------------------------------------------------------------------
+
+describe('verifyContentLimits — the byte count matches Buffer.byteLength', () => {
+  // Each entry is exactly 300 bytes under both counters; appending one ASCII
+  // byte moves it to exactly 301, so the two fixtures in a pair differ by
+  // exactly one byte.
+  const AT_LIMIT: Record<string, string> = {
+    // A lone (unpaired) surrogate has no valid UTF-8 encoding, so both
+    // `TextEncoder` and `Buffer.byteLength` substitute the 3-byte replacement
+    // character U+FFFD for each one — 100 of them is 300 bytes.
+    'lone surrogates': '\uD800'.repeat(100),
+    // A surrogate pair (an astral codepoint) is 4 UTF-8 bytes — 75 is 300.
+    'astral characters': '\u{1F600}'.repeat(75),
+    // ASCII (1 byte), a lone surrogate (3 bytes) and an astral character (4
+    // bytes) together: 50 + 150 + 100 = 300.
+    'mixed content': 'a'.repeat(50) + '\uD800'.repeat(50) + '\u{1F600}'.repeat(25),
+  };
+
+  for (const [name, atLimit] of Object.entries(AT_LIMIT)) {
+    it(`${name}: valid at 300 bytes, invalid one byte over`, () => {
+      expect(Buffer.byteLength(atLimit, 'utf8')).toBe(300);
+      expect(verifyContentLimits(atLimit)).toEqual({ valid: true });
+      const overLimit = atLimit + 'x';
+      expect(Buffer.byteLength(overLimit, 'utf8')).toBe(301);
+      expect(verifyContentLimits(overLimit)).toEqual({ valid: false, error: 'Content exceeds max length' });
+    });
+  }
+
+  it('the byte count itself equals Buffer.byteLength, not merely the accept/reject verdict', () => {
+    const samples = [
+      '', 'hello world', '\uD800', '\uDC00', '\uD800\uD800',
+      '\u{1F600}', 'a\uD800b', 'é', '中文',
+      ...Object.values(AT_LIMIT),
+    ];
+    for (const s of samples) {
+      expect(new TextEncoder().encode(s).length).toBe(Buffer.byteLength(s, 'utf8'));
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // verifyContentCharacters
 // ---------------------------------------------------------------------------
 
@@ -2938,7 +2986,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
       expect(signatureIsGenuine(clean, signHeader(clean))).toBe(true);
       expect(verifyHeaderFieldDomains(clean)).toEqual({ valid: true });
       expect(blockHash(clean)).toBe(preChangeBlockHash(clean));
-      expect(computePowHash(clean)).toEqual(preChangePowHash(clean));
+      expect(computePowHash(clean)).toEqual(new Uint8Array(preChangePowHash(clean)));
     });
   });
 
@@ -3106,7 +3154,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
         const h = header(over);
         expect(verifyHeaderFieldDomains(h)).toEqual({ valid: true });
         expect(blockHash(h)).toBe(preChangeBlockHash(h));
-        expect(computePowHash(h)).toEqual(preChangePowHash(h));
+        expect(computePowHash(h)).toEqual(new Uint8Array(preChangePowHash(h)));
       }
     });
 
@@ -3196,7 +3244,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
           // adds rejections, and no honest byte moves.
           if (ok) {
             expect(blockHash(h)).toBe(preChangeBlockHash(h));
-            expect(computePowHash(h)).toEqual(preChangePowHash(h));
+            expect(computePowHash(h)).toEqual(new Uint8Array(preChangePowHash(h)));
           }
         }
       }

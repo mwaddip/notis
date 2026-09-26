@@ -2027,7 +2027,12 @@ no object check compares against it and no producer stamps it.
 
 ### Cryptographic
 
-- Hashing: `blake2b512` truncated to 32 bytes for all 32-byte outputs
+- Hashing: `blake2b512` truncated to 32 bytes for all 32-byte outputs. **Every digest the packages the browser runs
+  compute is `@dagsocial/types`' `hash32`**, over `@noble/hashes` — one implementation for the node and the browser
+  (`TYPES_INTERFACE → The protocol hash`; the packages: → Package boundaries). Node-only code hashes with
+  `node:crypto`'s `createHash('blake2b512')`, which answers the same bytes: the node's network, name and holder record
+  keys, net's frame checksum, the miner script (`MINING_INTERFACE → Miner Script`) and the e2e suite's own miner and
+  test identities
 - Signatures: raw Ed25519 (64 bytes). **Two encodings carry a signature, and base64 is not one of
   them:** raw bytes in the positional encodings (all consensus structures), and **lowercase hex**
   at the HTTP boundary (`json-to-tx.ts`) and in every client. base64 carries no signature anywhere —
@@ -2471,6 +2476,13 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   as the mempool cap does (`MEMPOOL_INTERFACE → Size cap — reject, never evict`),
   the way `index.ts` wires the node's other seams (`setNet`,
   `setMempoolCap`).
+- **The browser runs six packages as they are written** — `@dagsocial/wire`, `@dagsocial/types`,
+  `@dagsocial/validation`, `@dagsocial/consensus`, `@dagsocial/nipopow` and `@dagsocial/nipopow-client`'s library
+  (`src/lib.ts` and what it imports): **no Node built-in import and no Node global** (`Buffer`, `process`, `require`,
+  `__dirname`), so a browser build takes them with nothing substituted. Each one's `typecheck` compiles its source a
+  second time against the DOM library with no Node types (`tsconfig.browser.json`), where a Node built-in or global is
+  a compile error; `@dagsocial/consensus`' suite builds `applyBlock` for a browser and runs it with browser globals
+  alone (`CONSENSUS_INTERFACE → Tests`). A test running under Node proves none of it — Node supplies both.
 - **"Does NOT own" on every package** — each package explicitly lists what
   it is NOT responsible for. Prevents scope creep.
   > **True — every workspace member carries it.** Note it lives in each member's `CLAUDE.md`, not in

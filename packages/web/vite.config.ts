@@ -1,7 +1,5 @@
 import { defineConfig } from 'vite';
-import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
-import inject from '@rollup/plugin-inject';
+import { refuseNodeBuiltins } from './scripts/refuse-node-builtins.mjs';
 
 // The client's default API base is same-origin
 // (WEB_INTERFACE → The client is served from the node's own origin), so the dev
@@ -49,44 +47,16 @@ if (!process.env['VITE_NETWORK']) process.env['VITE_NETWORK'] = '';
 // arrive with their interface.
 const API_PATHS = ['/posts', '/status', '/blocks', '/karma', '/credits', '/likes', '/vouches', '/invites', '/usernames'];
 
-// @dagsocial/types is written against Node — createHash and generateKeyPairSync
-// from `crypto`, and `Buffer` as a global it never imports. The browser has
-// neither; the client supplies them at build time and changes the package not at
-// all (WEB_INTERFACE → The browser reaches @dagsocial/types through a build-time shim).
-//
-// Both substitutes are pinned by ABSOLUTE path, never a bare specifier: a bare
-// specifier resolves from the importing module — a file inside @dagsocial/types,
-// which declares no such dependency — so it lands on the Node builtin and the
-// browser build externalizes it to nothing. `crypto` aliases to the shim;
-// `Buffer` injects from the buffer package wherever the bundle references it free.
-// WEB_INTERFACE → "A substituted module is pinned by absolute path, never by a bare specifier"
-const CRYPTO_SHIM = fileURLToPath(new URL('./src/shim/crypto.ts', import.meta.url));
-// The trailing slash forces package resolution: `resolve('buffer')` would return
-// the Node builtin's own name, not the buffer package's absolute path.
-const BUFFER_MODULE = createRequire(import.meta.url).resolve('buffer/');
-
+// WEB_INTERFACE → The client's builds substitute nothing.
 export default defineConfig(({ command }) => ({
   base: command === 'build' ? './' : '/',
-  resolve: {
-    // Only the bare specifier: `node:crypto` (the equivalence test's escape hatch
-    // to real Node crypto) and any `crypto-*` package are left untouched.
-    alias: [{ find: /^crypto$/, replacement: CRYPTO_SHIM }],
-  },
+  plugins: [refuseNodeBuiltins()],
   server: {
     proxy: {
       ...Object.fromEntries(API_PATHS.map((p) => [p, { target: NODE_ORIGIN, changeOrigin: true }])),
       ...(FAUCET_ORIGIN
         ? { '/faucet': { target: FAUCET_ORIGIN, changeOrigin: true, rewrite: (p: string) => p.replace(/^\/faucet/, '') } }
         : {}),
-    },
-  },
-  build: {
-    rollupOptions: {
-      // A free `Buffer` becomes an import of the buffer package's Buffer — never a
-      // global mutation, and skipped inside the buffer package itself.
-      plugins: [
-        inject({ modules: { Buffer: [BUFFER_MODULE, 'Buffer'] }, exclude: [/node_modules[/\\]buffer[/\\]/] }),
-      ],
     },
   },
 }));

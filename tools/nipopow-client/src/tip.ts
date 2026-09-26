@@ -1,5 +1,6 @@
 import { verifyProof, compareProofs, decodeNipopowProof } from '@dagsocial/nipopow';
 import type { NipopowProof, VerifyResult, CompareResult, PoPowHeader } from '@dagsocial/nipopow';
+import { hexToBytes } from '@dagsocial/types';
 import type { BlockHeader, NetworkProfile } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import type { HttpFetch } from './http.js';
@@ -199,12 +200,4 @@ function classifyNonOk(status: number, body: string): 'unreachable' | 'too-short
     }
   }
   return 'http';
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
 }

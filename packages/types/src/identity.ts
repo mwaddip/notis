@@ -1,4 +1,5 @@
-import { generateKeyPairSync } from 'crypto';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { hexToBytes } from './codec.js';
 
 export interface KeyPair {
   publicKey: Uint8Array;  // 32 raw bytes — Ed25519 public key
@@ -11,11 +12,23 @@ export interface KeyPair {
  */
 export type UserId = Uint8Array;
 
+/**
+ * The RFC 8410 PKCS8 prefix for a raw Ed25519 seed (TYPES_INTERFACE →
+ * Identity) — the ASN.1 `PrivateKeyInfo` wrapping an OCTET STRING around
+ * nothing but the 32-byte seed that follows it.
+ */
+const ED25519_PKCS8_PREFIX = hexToBytes('302e020100300506032b657004220420');
+
+/**
+ * A random 32-byte seed through `@noble/curves`' Ed25519 (TYPES_INTERFACE →
+ * Identity): `publicKey` is the 32 raw bytes; `secretKey` is the seed's PKCS8
+ * DER, `ED25519_PKCS8_PREFIX` ‖ the seed — 48 bytes.
+ */
 export function generateKeyPair(): KeyPair {
-  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
-  const pubDer = publicKey.export({ type: 'spki', format: 'der' });
-  const privDer = privateKey.export({ type: 'pkcs8', format: 'der' });
-  // Ed25519 SPKI DER wraps 32 raw key bytes at the end
-  const pubBytes = new Uint8Array(pubDer.slice(pubDer.length - 32));
-  return { publicKey: pubBytes, secretKey: new Uint8Array(privDer) };
+  const seed = ed25519.utils.randomSecretKey();
+  const publicKey = ed25519.getPublicKey(seed);
+  const secretKey = new Uint8Array(ED25519_PKCS8_PREFIX.length + seed.length);
+  secretKey.set(ED25519_PKCS8_PREFIX, 0);
+  secretKey.set(seed, ED25519_PKCS8_PREFIX.length);
+  return { publicKey, secretKey };
 }

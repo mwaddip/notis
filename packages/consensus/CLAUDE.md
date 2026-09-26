@@ -39,8 +39,10 @@ validates blocks will run the same code.
   (`@dagsocial/types`); mempool policy, block production, fork resolution, networking, routes, configuration.
 
 ## The boundary that defines this package
-- **No Node built-in import, no WASM, no I/O, no module-level state a result can depend on, no clock**
-  (`CONSENSUS_INTERFACE → Place in the workspace`). A rule that needs a number the network sets takes it from its caller (`ApplyContext`); a rule that
+- **No Node built-in import, no Node global, no WASM, no I/O, no module-level state a result can depend on, no clock**
+  (`CONSENSUS_INTERFACE → Place in the workspace`); two checks hold it (`CONSENSUS_INTERFACE → Tests`) — the browser
+  typecheck, and the bundle test that runs `applyBlock` built for a browser in a context whose clock and randomness
+  throw. A rule that needs a number the network sets takes it from its caller (`ApplyContext`); a rule that
   needs state reads it through `StateView` — `applyBlock` through its overlay, which builds `UtxoEngineDeps`,
   `SettlementDeps` and `DecayDeps` over it (`CONSENSUS_INTERFACE → The overlay`). A rule that reaches past them is a
   rule the leaf cannot run.
@@ -55,11 +57,12 @@ validates blocks will run the same code.
 - **Contracts lead, code follows.** Implement to `CONSENSUS_INTERFACE.md` and the rules in `NODE_INTERFACE.md`;
   flag contract gaps to main.
 - **You own this package only.** Never edit `../node`, `../validation`, `../types`, or `contracts/`.
-- **Forced verification before "done":** `pnpm --filter @dagsocial/consensus typecheck` (zero errors) **and**
-  `pnpm --filter @dagsocial/consensus test`, **and** `pnpm --filter @dagsocial/node typecheck && pnpm --filter
-  @dagsocial/node test` — the node's suite drives these rules over a real store. State the results; never claim done
-  unverified. Main proves a rule-code change on the chain itself: a node built from the change syncs testnet from
-  genesis with the state-root check on and must reach the live tip.
+- **Forced verification before "done":** `pnpm --filter @dagsocial/consensus typecheck` (zero errors — src, the test
+  tree, and the browser pass) **and** `pnpm --filter @dagsocial/consensus test` (the bundle test among it), **and**
+  `pnpm --filter @dagsocial/node typecheck && pnpm --filter @dagsocial/node test` — the node's suite drives these rules
+  over a real store. State the results; never claim done unverified. Main proves a rule-code change on the chain
+  itself: a node built from the change syncs testnet from genesis with the state-root check on and must reach the
+  live tip.
 - **Phased execution:** ≤5 files per phase; verify between phases. **Report back** via kitty when done.
 
 ## Consensus-relevant invariants (full set in ARCHITECTURE.md)

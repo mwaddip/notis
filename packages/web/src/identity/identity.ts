@@ -1,7 +1,7 @@
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { generateKeyPair } from '@dagsocial/types';
+import { generateKeyPair, bytesToHex, hexToBytes } from '@dagsocial/types';
 import { readStore, writeStore, removeStore } from '../prefs';
-import { seal, open, parseFile, toHex, hexToBytes, IdentityError, type Envelope, type ParsedFile } from './envelope';
+import { seal, open, parseFile, IdentityError, type Envelope, type ParsedFile } from './envelope';
 import type { SignResult } from '../wallet/submit';
 
 // The identity machinery — WEB_INTERFACE → The identity module. One identity at a
@@ -11,8 +11,8 @@ import type { SignResult } from '../wallet/submit';
 // identity reads locked until an unlock; current() carries the public key and the
 // lock state and nothing else. sign is the only path to the seed (WEB_INTERFACE →
 // "sign is the only path to the seed") and throws while locked. Signing is
-// @noble/curves, pure TS through the same family the shim carries, so there is no
-// Web Crypto and no secure-context requirement.
+// @noble/curves, pure TS, so there is no Web Crypto and no secure-context
+// requirement.
 
 export { IdentityError } from './envelope';
 
@@ -54,13 +54,14 @@ export class IdentityModule {
     return this.pubKeyHex === null ? null : { pubKeyHex: this.pubKeyHex, locked: this.seed === null };
   }
 
-  /** Draft a fresh key — generated through the shim and held privately, not stored;
-   *  current() is unchanged until create seals it. A second draft replaces the first
-   *  (WEB_INTERFACE → The identity module). Async so the same seam serves the
-   *  extension's proxy, which routes it as a message; here it resolves at once. */
+  /** Draft a fresh key — generated through @dagsocial/types and held privately,
+   *  not stored; current() is unchanged until create seals it. A second draft
+   *  replaces the first (WEB_INTERFACE → The identity module). Async so the same
+   *  seam serves the extension's proxy, which routes it as a message; here it
+   *  resolves at once. */
   async draft(): Promise<Identity> {
     const kp = generateKeyPair();
-    const pubKeyHex = toHex(kp.publicKey);
+    const pubKeyHex = bytesToHex(kp.publicKey);
     this.draftKp = { pubKeyHex, seed: new Uint8Array(kp.secretKey.subarray(16)) }; // the DER's last 32 bytes
     return { pubKeyHex };
   }
@@ -154,7 +155,7 @@ export class IdentityModule {
   async sign(_txBytes: Uint8Array, txIdHex: string, _hint?: { content?: string }): Promise<SignResult> {
     if (this.seed === null) return { locked: true };
     if (!HEX64.test(txIdHex)) return { refused: 'a transaction id to sign must be 64 hex characters.' };
-    return { signature: toHex(ed25519.sign(hexToBytes(txIdHex), this.seed)) };
+    return { signature: bytesToHex(ed25519.sign(hexToBytes(txIdHex), this.seed)) };
   }
 
   /** Whether the loaded key has been written to a file. */

@@ -7,6 +7,8 @@ import {
   MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
   membershipBar as membershipBarFn,
   memberLikesBar,
+  bytesToHex,
+  hexToBytes,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -39,6 +41,12 @@ import {
   validateTx,
 } from './utxo-engine.js';
 import type { UtxoEngineDeps } from './utxo-engine.js';
+
+// A username's canonical bytes are `[a-z0-9_]` — a strict subset of ASCII
+// (TYPES_INTERFACE → Content limits) — so `TextDecoder` and a partial-decode
+// reader answer the same string, and the raw, uncanonicalized name is the
+// same domain (TYPES_INTERFACE → UsernameBox).
+const USERNAME_DECODER = new TextDecoder('utf-8');
 
 /** What the block did, returned instead of written (CONSENSUS_INTERFACE → BlockEffects). */
 export interface BlockEffects {
@@ -362,7 +370,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
           `unconfirmed post ${targetPostId}`,
         );
       }
-      const authorHex = Buffer.from(author).toString('hex');
+      const authorHex = bytesToHex(author);
       // NODE_INTERFACE → Karma transition rules: a like targets a live post
       // only — a placeholder is live (credits the topology author). A
       // withdrawn post, or an unknown one, rejects.
@@ -404,7 +412,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     // so a rejected block has mutated nothing on this transaction's account.
     const bondOut = bondOutputOf(item.outputs);
     if (bondOut !== null) {
-      const inviteeHex = Buffer.from(bondOut.inviteePublicKey).toString('hex');
+      const inviteeHex = bytesToHex(bondOut.inviteePublicKey);
       if (invitedThisBlock.has(inviteeHex)) {
         return reject(
           `Rejected block height=${height}: invite tx ${item.txId} names ` +
@@ -447,7 +455,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     for (const inputId of item.tx.inputs) {
       const inputBox = state.getBox(inputId);
       if (inputBox && inputBox.boxType === 'vouch') {
-        const targetHex = Buffer.from((inputBox as VouchBox).targetId).toString('hex');
+        const targetHex = bytesToHex((inputBox as VouchBox).targetId);
         membershipTouched.add(targetHex);
         if (!preBlockRecords.has(targetHex)) {
           preBlockRecords.set(targetHex, state.getIdentityRecord((inputBox as VouchBox).targetId));
@@ -456,7 +464,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     }
     for (const out of item.outputs) {
       if (out.boxType === 'vouch') {
-        const targetHex = Buffer.from((out as VouchBox).targetId).toString('hex');
+        const targetHex = bytesToHex((out as VouchBox).targetId);
         membershipTouched.add(targetHex);
         if (!preBlockRecords.has(targetHex)) {
           preBlockRecords.set(targetHex, state.getIdentityRecord((out as VouchBox).targetId));
@@ -497,11 +505,11 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     const usernameOut = item.outputs.find(o => o.boxType === 'username');
     if (usernameOut) {
       const u = usernameOut as UsernameBox;
-      const canonical = Buffer.from(canonicalUsernameBytes(u.name)).toString('utf8');
+      const canonical = USERNAME_DECODER.decode(canonicalUsernameBytes(u.name));
       state.putUsername({
         nameLower: canonical,
-        name: Buffer.from(u.name).toString('utf8'),
-        owner: Buffer.from(u.owner).toString('hex'),
+        name: USERNAME_DECODER.decode(u.name),
+        owner: bytesToHex(u.owner),
         boxId: usernameOut.id!,
         claimedAtBlock: height,
       });
@@ -510,7 +518,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     // consumed it (capturedUsernameInput, captured above).
     if (capturedUsernameInput) {
       const u = capturedUsernameInput as UsernameBox;
-      const canonical = Buffer.from(canonicalUsernameBytes(u.name)).toString('utf8');
+      const canonical = USERNAME_DECODER.decode(canonicalUsernameBytes(u.name));
       state.deleteUsername(canonical);
     }
 
@@ -610,7 +618,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // applyTx below — capture each target before the apply so the membership pass
   // evaluates them.
   for (const v of lapsedVouches) {
-    const targetHex = Buffer.from(v.targetId).toString('hex');
+    const targetHex = bytesToHex(v.targetId);
     membershipTouched.add(targetHex);
     if (!preBlockRecords.has(targetHex)) {
       preBlockRecords.set(targetHex, state.getIdentityRecord(v.targetId));
@@ -636,7 +644,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // written a member from this block; a member's invitee is written a
   // resident.
   for (const inviteeHex of [...invitedThisBlock.keys()].sort()) {
-    const invitee = new Uint8Array(Buffer.from(inviteeHex, 'hex'));
+    const invitee = hexToBytes(inviteeHex);
     const inviterId = invitedThisBlock.get(inviteeHex)!;
     const inviterRecord = state.getIdentityRecord(inviterId);
     if (!inviterRecord) {
@@ -646,7 +654,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
       // grant always names one; a null read here is a defect, not a shape a
       // peer chose.
       throw new Error(
-        `unreachable: bond inviter ${Buffer.from(inviterId).toString('hex')} ` +
+        `unreachable: bond inviter ${bytesToHex(inviterId)} ` +
         `holds no identity record at the grant`,
       );
     }
@@ -699,7 +707,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // to write: the carry is a `LikeAccrualBox` the settlement just emitted, and
   // the box IS the carry (ARCHITECTURE → Likes).
   for (const authorHex of [...likesPerAuthor.keys()].sort()) {
-    const author = new Uint8Array(Buffer.from(authorHex, 'hex'));
+    const author = hexToBytes(authorHex);
     const received = BigInt(likesPerAuthor.get(authorHex)!);
     // Re-read here, after every earlier write of the block, so none is lost; a
     // missing record means maximally stale ({0, 0}), never "skip this author".
@@ -739,7 +747,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
 
     let newN = N;
     for (const idHex of [...membershipTouched].sort()) {
-      const id = new Uint8Array(Buffer.from(idHex, 'hex'));
+      const id = hexToBytes(idHex);
       // NODE_INTERFACE → "A record the block first wrote has no pre-block
       // state, and the pass reads none": `??` would treat a captured `null`
       // — the grant step's pre-image for a legal invitee — as absent and
@@ -836,9 +844,9 @@ function verifiedSignaturesOf(
   const entries: Ed25519BatchEntry[] = [];
   const verified = new Set<string>();
   for (const { txId, tx } of queue) {
-    const message = new Uint8Array(Buffer.from(txId, 'hex'));
+    const message = hexToBytes(txId);
     for (const [keyHex, signature] of Object.entries(tx.signatures)) {
-      entries.push({ signature, message, publicKey: new Uint8Array(Buffer.from(keyHex, 'hex')) });
+      entries.push({ signature, message, publicKey: hexToBytes(keyHex) });
       verified.add(signatureEntryKey(txId, keyHex, signature));
     }
   }
@@ -847,7 +855,7 @@ function verifiedSignaturesOf(
 
 /** An entry of the verified set: the transaction id, the key and the signature, as hex. */
 function signatureEntryKey(txIdHex: string, keyHex: string, signature: Uint8Array): string {
-  return `${txIdHex}:${keyHex}:${Buffer.from(signature).toString('hex')}`;
+  return `${txIdHex}:${keyHex}:${bytesToHex(signature)}`;
 }
 
 /**
@@ -890,12 +898,11 @@ function utxoDepsOver(state: BlockOverlay, ctx: ApplyContext, verified: Readonly
     putIdentityRecord: (identityId, record) => state.putIdentityRecord(identityId, record),
     protocolVersionSchedule: ctx.protocolVersionSchedule,
     getUsername: (nameLower) => state.getUsername(nameLower),
-    getUsernameByOwner: (owner) =>
-      state.getUsernameByOwner(typeof owner === 'string' ? Buffer.from(owner, 'hex') : owner),
+    getUsernameByOwner: (owner) => state.getUsernameByOwner(owner),
     verifySignature: (signature, message, publicKey) =>
       verified.has(signatureEntryKey(
-        Buffer.from(message).toString('hex'),
-        Buffer.from(publicKey).toString('hex'),
+        bytesToHex(message),
+        bytesToHex(publicKey),
         signature,
       )),
   };

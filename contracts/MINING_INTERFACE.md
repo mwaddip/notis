@@ -397,7 +397,7 @@ handed out the preimage while it was ready. Readiness is also **not latched** �
 drops before the window elapses withholds again, which is correct: it is alone again.
 
 **This endpoint also returns 500**, with `{ error: 'Block template header is not
-encodable' }`. `computePowHash` returns `Buffer | null`, `null` for a header outside the encodable
+encodable' }`. `computePowHash` returns `Uint8Array | null`, `null` for a header outside the encodable
 domain (`VALIDATION_INTERFACE` → `computePowHash`). The template header is built locally by
 `block-creator.ts`, so `null` means this node built a header it cannot itself encode — a bug in the
 creator, not a client error.

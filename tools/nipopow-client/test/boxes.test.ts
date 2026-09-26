@@ -776,6 +776,136 @@ describe('proveFigures — every status once, titled by its rule', () => {
   });
 });
 
+// NODE_INTERFACE → AVL+ State Root — the proof blob is base64; the decode
+// through `atob` is total, so a lying node's malformed blob is a refused
+// proof (unproven, `proof rejected`) at every one of `atob`'s two throwing
+// cases, and a well-formed blob still round-trips against the node's own
+// `Buffer.from(_, 'base64')` encoding.
+describe('proveFigures — the AVL proof blob decode is total', () => {
+  it('unproven — a proof blob with a character outside the base64 alphabet', async () => {
+    const cand = karmaCandidate(30n);
+    const boxId = computeCandidateBoxId(cand, FAKE_TXID, 0);
+    const avl = buildAvlWithInsertions([
+      boxInsertion(cand, FAKE_TXID, 0),
+      recordInsertion(USER_BYTES, RECORD_STANDING),
+    ]);
+    const anchor = makeAnchor(TIP_H, avl.digest, SUFFIX_H, avl.digest);
+
+    const httpFetch = makeFetch((path) => {
+      if (path === `/api/v1/proof/${boxId}`) {
+        return jsonResponse(200, {
+          boxId, atHeight: SUFFIX_H, stateRoot: avl.digest,
+          proof: 'abc$def=',
+          kind: 'box', value: null,
+        });
+      }
+      if (path === `/api/v1/proof/${RECORD_KEY}`) {
+        const e = avl.entries.get(RECORD_KEY)!;
+        return jsonResponse(200, {
+          boxId: RECORD_KEY, atHeight: SUFFIX_H, stateRoot: avl.digest,
+          proof: Buffer.from(e.proof).toString('base64'),
+          kind: 'record', value: null,
+        });
+      }
+      if (path === '/blocks/current') return jsonResponse(200, { height: TIP_H, hash: null });
+      return undefined;
+    });
+
+    const listing: Listing = {
+      karma: { boxes: [{ boxId, value: '30' }], height: TIP_H, effective: '30' },
+      credits: { boxes: [] },
+    };
+    const result = await proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), httpFetch);
+
+    expect(result.boxes[0]!.status).toBe('unproven');
+    expect(result.boxes[0]!.verdict).toContain('proof rejected');
+    expect(result.failed).toBe(true);
+  });
+
+  it('unproven — a proof blob whose length atob refuses', async () => {
+    const cand = karmaCandidate(30n);
+    const boxId = computeCandidateBoxId(cand, FAKE_TXID, 0);
+    const avl = buildAvlWithInsertions([
+      boxInsertion(cand, FAKE_TXID, 0),
+      recordInsertion(USER_BYTES, RECORD_STANDING),
+    ]);
+    const anchor = makeAnchor(TIP_H, avl.digest, SUFFIX_H, avl.digest);
+
+    const httpFetch = makeFetch((path) => {
+      if (path === `/api/v1/proof/${boxId}`) {
+        return jsonResponse(200, {
+          boxId, atHeight: SUFFIX_H, stateRoot: avl.digest,
+          // Five characters, all in the base64 alphabet: length mod 4 === 1,
+          // the one length `atob` refuses outright.
+          proof: 'abcde',
+          kind: 'box', value: null,
+        });
+      }
+      if (path === `/api/v1/proof/${RECORD_KEY}`) {
+        const e = avl.entries.get(RECORD_KEY)!;
+        return jsonResponse(200, {
+          boxId: RECORD_KEY, atHeight: SUFFIX_H, stateRoot: avl.digest,
+          proof: Buffer.from(e.proof).toString('base64'),
+          kind: 'record', value: null,
+        });
+      }
+      if (path === '/blocks/current') return jsonResponse(200, { height: TIP_H, hash: null });
+      return undefined;
+    });
+
+    const listing: Listing = {
+      karma: { boxes: [{ boxId, value: '30' }], height: TIP_H, effective: '30' },
+      credits: { boxes: [] },
+    };
+    const result = await proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), httpFetch);
+
+    expect(result.boxes[0]!.status).toBe('unproven');
+    expect(result.boxes[0]!.verdict).toContain('proof rejected');
+    expect(result.failed).toBe(true);
+  });
+
+  it('proven — a well-formed blob round-trips against Buffer.from(_, "base64")', async () => {
+    const cand = karmaCandidate(30n);
+    const boxId = computeCandidateBoxId(cand, FAKE_TXID, 0);
+    const avl = buildAvlWithInsertions([
+      boxInsertion(cand, FAKE_TXID, 0),
+      recordInsertion(USER_BYTES, RECORD_STANDING),
+    ]);
+    const anchor = makeAnchor(TIP_H, avl.digest, SUFFIX_H, avl.digest);
+
+    const httpFetch = makeFetch((path) => {
+      if (path === `/api/v1/proof/${boxId}`) {
+        const e = avl.entries.get(boxId)!;
+        return jsonResponse(200, {
+          boxId, atHeight: SUFFIX_H, stateRoot: avl.digest,
+          proof: Buffer.from(e.proof).toString('base64'),
+          kind: 'box', value: null,
+        });
+      }
+      if (path === `/api/v1/proof/${RECORD_KEY}`) {
+        const e = avl.entries.get(RECORD_KEY)!;
+        return jsonResponse(200, {
+          boxId: RECORD_KEY, atHeight: SUFFIX_H, stateRoot: avl.digest,
+          proof: Buffer.from(e.proof).toString('base64'),
+          kind: 'record', value: null,
+        });
+      }
+      if (path === '/blocks/current') return jsonResponse(200, { height: TIP_H, hash: null });
+      return undefined;
+    });
+
+    const listing: Listing = {
+      karma: { boxes: [{ boxId, value: '30' }], height: TIP_H, effective: '30' },
+      credits: { boxes: [] },
+    };
+    const result = await proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), httpFetch);
+
+    expect(result.boxes[0]!.status).toBe('proven');
+    expect(result.boxes[0]!.value).toBe(30n);
+    expect(result.failed).toBe(false);
+  });
+});
+
 describe('proveFigures — the identity record', () => {
   it('proven — the clocks read back exactly', async () => {
     const avl = buildAvlWithInsertions([recordInsertion(USER_BYTES, RECORD_STANDING)]);

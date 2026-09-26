@@ -4,10 +4,11 @@
 // back-pointers a NiPoPoW proof walks. This module is the vector's
 // codec and commitment; the level function belongs to @dagsocial/validation.
 
-import { createHash } from 'crypto';
 import { ReaderError } from '@dagsocial/wire';
+import { hash32 } from './hash.js';
 import {
   type StructCodec,
+  bytesToHex,
   decodeStruct,
   encodeStruct,
   readHexN,
@@ -59,12 +60,7 @@ export function decodeInterlinks(bytes: Uint8Array): string[] {
 
 export function interlinkRoot(vector: string[]): string {
   const encoded = encodeInterlinks(vector);
-  return createHash('blake2b512')
-    .update(INTERLINK_DOMAIN)
-    .update(encoded)
-    .digest()
-    .subarray(0, 32)
-    .toString('hex');
+  return bytesToHex(hash32(INTERLINK_DOMAIN, encoded));
 }
 
 // ---------------------------------------------------------------------------

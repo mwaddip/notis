@@ -19,7 +19,7 @@ Repo directory is `dagsocial`; the project is Notis.
 ```bash
 pnpm build                          # Build every workspace member
 pnpm test                           # Run all tests — includes tools/e2e, which spawns BUILT nodes: build first
-pnpm typecheck                      # src AND test trees, both configs
+pnpm typecheck                      # src AND test trees — and a browser pass in the six the browser runs
 node packages/node/dist/index.js    # Start a node on :3000
 ```
 
@@ -43,8 +43,8 @@ Eight packages, in dependency order:
 - `@dagsocial/validation` — pure stateless checks: PoW, signatures, block structure, Merkle roots.
 - `@dagsocial/consensus` — the state-transition rules: `applyBlock` (a block's body as one function, answering its
   effects), the transaction engine, the settlement, decay, the coinbase split. **The one implementation** the node
-  runs and a browser leaf will run — no Node built-in, no I/O; state reaches it through a `StateView` its caller
-  answers.
+  runs and a browser leaf will run — no Node built-in or global, no I/O; state reaches it through a `StateView` its
+  caller answers.
 - `@dagsocial/nipopow` — NiPoPoW proofs over ordering-block headers: the proof codecs, `verifyProof`, `compareProofs`, `proveWithReader`. **Pure functions only.**
 - `@dagsocial/net` — libp2p + Gossipsub relay, whole-block sync, peer management.
 - `@dagsocial/node` — Express server, PoW, verifier, SQLite store, AVL+ state root, block creator; it runs `consensus`'s rules over its store.
@@ -52,7 +52,7 @@ Eight packages, in dependency order:
   tiling workspace, both themes — and the **write surface's first slice**: an identity held in the
   browser, the composer for a root and a reply, and like, on transactions the client builds and signs
   itself. It hashes only through `@dagsocial/types` — and, in the extension's tip verifier, `@dagsocial/validation` —
-  reached by a build-time `crypto` shim, and signs
+  which it builds as they are written, substituting nothing for Node, and signs
   with `@noble/curves`; with no identity loaded it is the read surface exactly. **It also builds as a browser
   extension** — the same client as the extension's own page, the key held by the extension's background,
   credits signed by hand and rep silently, the chain it reads checked by NiPoPoW proofs from the seed list's
@@ -205,6 +205,9 @@ differs between versions branches on the era as passed in, never on a module con
 
 ## Platform constraint
 
-Node.js v22 does not support `createHash('blake2b256')`. All hashing uses `createHash('blake2b512')`
-with `.subarray(0, 32)`. A browser mirror using `blakejs` — `blake2b(data, null, 64).slice(0, 32)` —
-produces identical output; both are standard BLAKE2b-512.
+Every 32-byte digest the packages the browser runs compute is `@dagsocial/types`' `hash32`: BLAKE2b-512 over
+`@noble/hashes`, the first 32 bytes — one implementation for the node and the browser
+(`TYPES_INTERFACE → The protocol hash`). Node-only code — the node's own record keys, net's frame checksum, the
+miner script, the e2e suite — uses `createHash('blake2b512')` with `.subarray(0, 32)`, which answers the same bytes;
+Node.js v22 has no `blake2b256`, and a 32-byte BLAKE2b digest is a different function from the first 32 bytes of a
+64-byte one.

@@ -7,8 +7,9 @@
 ## Scope
 
 Shared data structures, serialization, hash functions, and
-protocol constants. Pure functions only — no side effects, no I/O, no imports
-from other DAGsocial packages.
+protocol constants. Pure functions only — no side effects, no I/O — but `generateKeyPair`, which draws its seed from
+`crypto.getRandomValues`. Its one workspace dependency is `@dagsocial/wire`; its others are `@noble/hashes` and
+`@noble/curves`. It imports no Node built-in and reads no Node global (`ARCHITECTURE → Package boundaries`).
 
 Exports from `packages/types/src/index.ts`. All types are importable by
 consumers; functions are pure and synchronous.
@@ -25,11 +26,31 @@ time a UTXO box references their public key.
 |--------|-----------|-------------|
 | `KeyPair` | `{ publicKey: Uint8Array(32), secretKey: Uint8Array }` | Ed25519 keypair (public: 32 raw bytes, secret: PKCS8 DER) |
 | `UserId` | `Uint8Array` | 32 raw bytes — the Ed25519 public key |
-| `generateKeyPair()` | `() => KeyPair` | Node `crypto.generateKeyPairSync('ed25519')`, strips SPKI DER wrapper to extract raw 32 key bytes |
+| `generateKeyPair()` | `() => KeyPair` | A random 32-byte seed through `@noble/curves`' Ed25519 (`randomSecretKey`, `getPublicKey`); `publicKey` the 32 raw bytes, `secretKey` the seed's PKCS8 DER — the RFC 8410 prefix `302e020100300506032b657004220420` ‖ the seed, 48 bytes |
 
 `UserId` is binary. On the HTTP API wire it is hex-encoded (64 hex chars).
 In the positional codecs it stays raw bytes. There is no `getUserId` hash function — the public
 key IS the identity.
+
+---
+
+## The protocol hash (`hash.ts`)
+
+| Export | Signature | Description |
+|--------|-----------|-------------|
+| `hash32(...parts)` | `(...parts: Uint8Array[]) => Uint8Array` | BLAKE2b-512 over the parts in order, the first 32 bytes of the 64-byte digest |
+
+**Every 32-byte digest this package and `@dagsocial/validation` compute is `hash32`** — the ids, the domain-separated
+keys, the Merkle leaves and nodes, the header hash and the PoW hash — and it is the one call into a BLAKE2b
+implementation in the packages the browser runs (`ARCHITECTURE → Package boundaries`): `@noble/hashes`' `blake2b`
+with `dkLen: 64`. Node-only code keeps `node:crypto`'s `createHash('blake2b512')` (`ARCHITECTURE → Cryptographic`).
+
+- **The parts are one stream.** `hash32(a, b)` equals `hash32(a ‖ b)`: a part boundary separates nothing, so every
+  domain separation is a prefix the preimage carries — a domain tag, a length prefix, `NODE_TAG`.
+- **Truncated BLAKE2b-512, never BLAKE2b-256.** The digest length is a parameter of BLAKE2b, so a 32-byte digest is a
+  different function from the first 32 bytes of a 64-byte one. Node's `createHash('blake2b512')` and any standard
+  BLAKE2b-512 answer the same bytes; the package's tests pin `hash32` to Node's over inputs from 0 bytes to several KB,
+  in one part and in several.
 
 ---
 
@@ -218,7 +239,6 @@ because deriving it is the thing that cannot be done.
 | `leafHash(domain, data)` | `blake2b512(utf8(domain ‖ "\0") ‖ data)[:32]` — domain-separated leaf so a leaf in one tree can't collide with a leaf in another. |
 | `nodeHash(left, right)` | `blake2b512(NODE_TAG ‖ left ‖ right)[:32]` — internal-node hash of two children. |
 | `buildMerkleRoot(leaves)` | Binary Merkle root over ordered leaf hashes. Empty → 32 zero bytes; single leaf → that leaf. **Odd levels PROMOTE the unpaired last node unchanged — they do NOT duplicate it** (see below). |
-| `hexToBuf(hex)` | `(string) => Buffer` — throws on odd length; an even-length string is decoded by `Buffer.from(hex, 'hex')`, which **stops at the first non-hex character**, so the output can be shorter than `hex.length / 2`. Not an alphabet check: the apply-path callers that feed leaf builds get their alphabet pinned upstream, by `verifyOrderingBlockStructure`'s per-element hex checks. |
 
 **Odd-level rule — NORMATIVE, and it is not the Bitcoin default.** When a level has an
 odd number of nodes the unpaired last node is **promoted to the next level unchanged**;
@@ -2575,6 +2595,9 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 | `decodeTx(bytes)` | `(Uint8Array) => UtxoTransaction` | Inverse of `encodeTx` |
 | `identityRecordBytes(record)` | `(IdentityRecord) => Uint8Array` | Positional — the identity record's AVL value. See Layout — IdentityRecord |
 | `identityRecordFromBytes(bytes)` | `(Uint8Array) => IdentityRecord` | Inverse of `identityRecordBytes` |
+| `bytesToHex(bytes)` | `(Uint8Array) => string` | Lowercase hex, two characters a byte — the codec's own conversion, and the one hex encoder in the packages the browser runs. Total |
+| `hexToBytes(hex)` | `(string) => Uint8Array` | Its inverse, strict: even length and `[0-9a-f]` only, or it throws — never the partial decode `Buffer.from(hex, 'hex')` answers. A caller holding hex it did not produce checks it first, so a refusal there is a verdict, not a throw |
+| `equalBytes(a, b)` | `(Uint8Array, Uint8Array) => boolean` | Equal lengths and equal bytes |
 
 
 ### How a dispatch decays this contract, and why nothing catches it

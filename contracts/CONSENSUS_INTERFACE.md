@@ -13,12 +13,14 @@ reaches them.
 ## Place in the workspace
 
 **Above `@dagsocial/types` and `@dagsocial/validation`, below `@dagsocial/node`.** Those two are its only workspace
-dependencies. **It imports no Node built-in, carries no WASM, performs no I/O, holds no module-level state a result
-can depend on and reads no clock** — a rule that needs a number the network sets receives it from its caller, and a
-rule that needs state reads it through the interface its caller injects. Its module-level values are constants and the
-two memos of `settlement.ts`' sizing probes, each a pure function of the era it is keyed by. Every signature check it
-makes is `validation`'s — `verifyEd25519` one transaction at a time, `verifyEd25519Batch` for a block's body
-(`VALIDATION_INTERFACE → Acceptance criterion`).
+dependencies. **It imports no Node built-in, reads no Node global, carries no WASM, performs no I/O, holds no
+module-level state a result can depend on and reads no clock** — a rule that needs a number the network sets receives
+it from its caller, and a rule that needs state reads it through the interface its caller injects. Its module-level
+values are constants, the two `TextDecoder`s its username reads decode through (a decode without `stream` leaves no
+state behind), and the two memos of `settlement.ts`' sizing probes, each a pure function of the era it is keyed by.
+Every signature check it makes is `validation`'s — `verifyEd25519` one transaction at a time, `verifyEd25519Batch`
+for a block's body (`VALIDATION_INTERFACE → Acceptance criterion`). The browser runs it as it is written
+(`ARCHITECTURE → Package boundaries`), held there by two checks (→ Tests).
 
 ## What it holds
 
@@ -225,6 +227,12 @@ outputs, and fits at most about 0.4% more entries.
 | the packed body, one signature corrupted — refused | 19.9–20.1 s → 4.3 s | 52.2–52.8 s → 12.4–13.5 s |
 | 20 598 entries no input requires — refused | 0.09 s → 0.09 s | 0.25–0.37 s → 0.28–0.36 s |
 
+**The protocol hash over `@noble/hashes`** (`TYPES_INTERFACE → The protocol hash`) costs, measured 2026-09-26 on the
+same i9 core against the tree before it, interleaved (medians of nine runs each; both ran 10–25% above the table's
+times on a busier machine): the ordinary body **+0.46 s (+12%)** — the most hashing, 56 221 digests over 6.2 MB —
+the packed body +0.33 s (+6%), the corrupted packed body +0.28 s, the refused one +0.01 s. Of the packed body's, the
+hashing itself is about 0.05 s (1 014 digests); the rest is unattributed. The testnet box is not measured.
+
 No other term may grow faster than the reads the body makes: each overlay read is a map lookup or one composition over
 the view's answer to it.
 
@@ -234,6 +242,20 @@ the view's answer to it.
 `packages/consensus/test/`**, with the fixture helpers it needs in `test/helpers.ts` — `applyBlock` over a stub view
 among them. A suite that drives the node's store or block application — `utxo-engine.test.ts` among them, over an
 in-memory database — stays in `packages/node/test/` and imports from the package.
+
+**Two checks hold the package to the browser** (`ARCHITECTURE → Package boundaries`):
+
+- **The browser typecheck.** `typecheck` compiles `src` a second time against the DOM library with no Node types
+  (`tsconfig.browser.json`); a Node built-in or a Node global is a compile error at its line.
+- **The bundle test** (`test/bundle.test.ts`). It builds `applyBlock` from source for a browser with vite — every Node
+  built-in a module imports failing the build, which two throwaway entries hold — and runs the bundle in a `vm` context
+  holding the ECMAScript built-ins and the context's own `TextEncoder` and `TextDecoder` alone: V8's `console` and
+  `WebAssembly` deleted, the global set asserted exactly. **The context holds the determinism rule itself**
+  (→ Applying a block): it has no `crypto`, and its `Date`, `Math.random` and `Intl.DateTimeFormat` throw. Inside it a
+  chain of signed blocks — one of them refused for a corrupted signature — is applied over a stub view, both built
+  there from primitives, and the results come back as canonical text that must equal, byte for byte, what the same
+  entry answers from source under Node. Only strings cross the context's boundary: a `Uint8Array` made outside it
+  fails `instanceof` inside, and so would the output of Node's own codecs.
 
 ## Does NOT own
 

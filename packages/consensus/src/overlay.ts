@@ -1,6 +1,7 @@
 import { isMember } from './utxo-engine.js';
 import type { NetworkRecord, UsernameRow } from './utxo-engine.js';
 import type { PostStanding, StateView } from './state-view.js';
+import { bytesToHex, hexToBytes } from '@dagsocial/types';
 import type {
   AnyBox,
   BackerPoolBox,
@@ -70,7 +71,7 @@ export class SpendOfNonLiveBoxError extends Error {
   }
 }
 
-const hex = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex');
+const hex = (bytes: Uint8Array): string => bytesToHex(bytes);
 
 const byId = (a: AnyBox, b: AnyBox): number => (a.id! < b.id! ? -1 : a.id! > b.id! ? 1 : 0);
 
@@ -421,7 +422,7 @@ export class BlockOverlay implements StateView {
    * boxId }` for its owner (NODE_INTERFACE → Username records).
    */
   putUsername(row: UsernameRow): void {
-    const owner = Buffer.from(row.owner, 'hex');
+    const owner = hexToBytes(row.owner);
     const nameHeld = this.getUsername(row.nameLower) !== null;
     const holderHeld = this.getUsernameByOwner(owner) !== null;
     this.names.set(row.nameLower, row);
@@ -442,7 +443,7 @@ export class BlockOverlay implements StateView {
   deleteUsername(nameLower: string): void {
     const existing = this.getUsername(nameLower);
     if (existing === null) return;
-    const owner = Buffer.from(existing.owner, 'hex');
+    const owner = hexToBytes(existing.owner);
     const holderHeld = this.getUsernameByOwner(owner) !== null;
     this.names.set(nameLower, null);
     this.holders.set(hex(owner), null);

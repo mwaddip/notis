@@ -26,13 +26,15 @@ merkle, positional serialization, protocol constants, the hash/id helpers (`comp
 (`identityRecordBytes`, `identityRecordKey`, `effectiveKarma`). **Pure functions only** — no I/O, no state.
 
 - **Owns:** `src/*` (post, post-withdraw, block, utxo, identity, codec, merkle, serialization, interlinks, membership, network, constants, identity-record, karma-valuation, index).
-- **Does NOT own:** node logic, networking, stateless validation, wire codec. Depends only on Node `crypto`
-  and `@dagsocial/wire`. A consumer needs a change? It comes back through the main session.
+- **Does NOT own:** node logic, networking, stateless validation, wire codec. Depends on `@dagsocial/wire`,
+  `@noble/hashes` and `@noble/curves`, and on nothing Node — no built-in, no global: the browser runs it as it is
+  written (`ARCHITECTURE → Package boundaries`). A consumer needs a change? It comes back through the main session.
 
 ## Component-session rules (Design by Contract)
 - **Contracts lead, code follows.** Implement to `TYPES_INTERFACE.md`; flag contract gaps to main.
 - **You own this package only.** Never edit `../node`, `../net`, `../validation`, `../wire`, or `contracts/`.
-- **Forced verification before "done":** `pnpm --filter @dagsocial/types typecheck` (zero errors) **and**
+- **Forced verification before "done":** `pnpm --filter @dagsocial/types typecheck` (zero errors — src, the test
+  tree, and the browser pass over `tsconfig.browser.json`) **and**
   `pnpm --filter @dagsocial/types test` (all pass). State results; never claim done unverified.
 - **Exhaustive rename search** — a hash/id/encoding change here ripples into node, validation, and the demo
   UI. Grep every consumer (code, types, strings, tests) before changing a primitive; report the blast radius.
@@ -40,8 +42,8 @@ merkle, positional serialization, protocol constants, the hash/id helpers (`comp
 
 ## Types-relevant invariants (full set in ARCHITECTURE.md)
 - **Pure functions only** — no filesystem, network, DB, or global state.
-- **Hashing** — `blake2b512` truncated via `.subarray(0, 32)` for every 32-byte output; must produce output
-  identical to `@dagsocial/validation` and any browser mirror's `blakejs`.
+- **Hashing** — every 32-byte digest is `hash32` (`TYPES_INTERFACE → The protocol hash`): BLAKE2b-512 over
+  `@noble/hashes`, truncated to 32 bytes, pinned in the tests to Node's `createHash('blake2b512')`.
 - **Positional wire format** — TYPES_INTERFACE's layout tables are normative; field order is the
   specification, and box/tx/post ids must be reproducible byte-for-byte.
 - **Canonical encoding** — a post/box/tx has exactly one id; distinct objects never collide.

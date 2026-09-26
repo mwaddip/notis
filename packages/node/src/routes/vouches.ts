@@ -12,6 +12,7 @@ import {
 } from '../store/index.js';
 import { parseLimit, isLimitError, parseAfter, isAfterError, resolveIdentityParam, isResolveError } from './page.js';
 import { nameFor } from '../services/name-cache.js';
+import type { UsernameRow } from '../store/usernames.js';
 
 export interface VouchesDeps extends UtxoEngineDeps {
   castVouch(
@@ -31,6 +32,7 @@ export interface VouchesDeps extends UtxoEngineDeps {
     tx: UtxoTransaction;
   };
   getCurrentHeight(): number;
+  getUsernameByOwner(owner: Uint8Array | string): UsernameRow | null;
 }
 
 export function createRouter(deps: VouchesDeps): Router {

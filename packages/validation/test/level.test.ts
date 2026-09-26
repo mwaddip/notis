@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { createHash } from 'crypto';
 import {
   powHit,
+  computePowHash,
   levelOfHit,
   level,
   verifyOrderingBlockPoW,
@@ -75,6 +77,32 @@ describe('powHit', () => {
     for (const bad of [null, undefined, 42, 'str', {}, [], NaN]) {
       expect(() => powHit(bad as any)).not.toThrow();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// powHit — the nonce bytes match Buffer.writeBigUInt64LE
+//
+// `powHit` writes the nonce as 8 little-endian bytes through a `DataView`
+// (VALIDATION_INTERFACE → powHit). This pins those bytes against
+// `Buffer.writeBigUInt64LE` at the widths that matter: the smallest values,
+// the one-byte/two-byte and four-byte/five-byte boundaries, and the largest
+// safe integer `isU64Safe` admits.
+// ---------------------------------------------------------------------------
+
+describe('powHit — the nonce bytes match Buffer.writeBigUInt64LE', () => {
+  const NONCES = [0, 1, 255, 256, 2 ** 32 - 1, 2 ** 32, Number.MAX_SAFE_INTEGER];
+
+  it.each(NONCES)('nonce %s hashes identically to a Node-written LE64 nonce', (nonce) => {
+    const header = makeHeader({ height: 5, prevBlockHash: 'aa'.repeat(32), powNonce: nonce });
+    const preimage = computePowHash(header);
+    expect(preimage).not.toBeNull();
+    const nonceLE = Buffer.alloc(8);
+    nonceLE.writeBigUInt64LE(BigInt(nonce));
+    const expected = new Uint8Array(
+      createHash('blake2b512').update(preimage!).update(nonceLE).digest().subarray(0, 32),
+    );
+    expect(powHit(header)).toEqual(expected);
   });
 });
 

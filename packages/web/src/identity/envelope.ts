@@ -2,6 +2,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { chacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { scryptAsync } from '@noble/hashes/scrypt.js';
 import { randomBytes } from '@noble/hashes/utils.js';
+import { bytesToHex, hexToBytes } from '@dagsocial/types';
 
 // The identity envelope — WEB_INTERFACE → The identity module. The stored value
 // and the exported file are one shape, so importing an encrypted file is storing
@@ -113,9 +114,9 @@ export async function seal(
   return {
     version: ENVELOPE_VERSION,
     pubKeyHex,
-    kdf: { name: 'scrypt', salt: toHex(salt), N: params.N, r: params.r, p: params.p },
-    cipher: { name: 'chacha20-poly1305', nonce: toHex(nonce) },
-    ciphertext: toHex(ciphertext),
+    kdf: { name: 'scrypt', salt: bytesToHex(salt), N: params.N, r: params.r, p: params.p },
+    cipher: { name: 'chacha20-poly1305', nonce: bytesToHex(nonce) },
+    ciphertext: bytesToHex(ciphertext),
   };
 }
 
@@ -135,7 +136,7 @@ export async function open(envelope: Envelope, passphrase: string): Promise<Uint
   } catch {
     throw new IdentityError('that passphrase does not open this key.');
   }
-  if (toHex(ed25519.getPublicKey(seed)) !== envelope.pubKeyHex) {
+  if (bytesToHex(ed25519.getPublicKey(seed)) !== envelope.pubKeyHex) {
     throw new IdentityError('the file names a public key its private key does not produce.');
   }
   return seed;
@@ -212,11 +213,11 @@ function seedFromClear(pubKeyHex: string, privKeyBase64: string): Uint8Array {
   if (der.length !== 48) {
     throw new IdentityError('the private key is not a 48-byte PKCS8 key.');
   }
-  if (toHex(der.subarray(0, 16)) !== PKCS8_PREFIX_HEX) {
+  if (bytesToHex(der.subarray(0, 16)) !== PKCS8_PREFIX_HEX) {
     throw new IdentityError('the private key is not an Ed25519 PKCS8 key.');
   }
   const seed = new Uint8Array(der.subarray(16));
-  if (toHex(ed25519.getPublicKey(seed)) !== pubKeyHex) {
+  if (bytesToHex(ed25519.getPublicKey(seed)) !== pubKeyHex) {
     throw new IdentityError('the file names a public key its private key does not produce.');
   }
   return seed;
@@ -229,20 +230,8 @@ function requireHex(v: unknown, what: string): string {
   return v;
 }
 
-// Hex and base64 without a Node `Buffer`: the client holds no Node global. atob and
+// Base64 without a Node `Buffer`: the client holds no Node global. atob and
 // btoa are in the DOM lib and present under vitest too. Identity code shares these.
-
-export function toHex(bytes: Uint8Array): string {
-  let s = '';
-  for (const b of bytes) s += b.toString(16).padStart(2, '0');
-  return s;
-}
-
-export function hexToBytes(hex: string): Uint8Array {
-  const out = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  return out;
-}
 
 export function base64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);

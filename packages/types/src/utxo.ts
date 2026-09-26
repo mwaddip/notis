@@ -1,8 +1,9 @@
-import { createHash } from 'crypto';
 import { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
+import { hash32 } from './hash.js';
 import { MAX_GENESIS_PROOF_PAYLOAD_BYTES, USERNAME_MAX_BYTES } from './constants.js';
 import {
   type StructCodec,
+  bytesToHex,
   decodeStruct,
   encodeStruct,
   enum8,
@@ -547,12 +548,7 @@ const BOX_RECORD: StructCodec<BoxRecord> = {
  * time and cannot be invalidated by anything block application does.
  */
 export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index: number): BoxId {
-  return createHash('blake2b512')
-    .update(BOX_ID_DOMAIN)
-    .update(boxRecordBytes(candidate, txId, index))
-    .digest()
-    .subarray(0, 32)
-    .toString('hex');
+  return bytesToHex(hash32(BOX_ID_DOMAIN, boxRecordBytes(candidate, txId, index)));
 }
 
 /**
@@ -632,12 +628,7 @@ export function computeMintTxId(height: number, reason: MintReason, subject: Uin
   writeVlqU(w, height);
   MINT_REASON.write(w, reason);
   writeLp(w, subject);
-  return createHash('blake2b512')
-    .update(MINT_ID_DOMAIN)
-    .update(w.toBytes())
-    .digest()
-    .subarray(0, 32)
-    .toString('hex');
+  return bytesToHex(hash32(MINT_ID_DOMAIN, w.toBytes()));
 }
 
 /**
@@ -1335,12 +1326,7 @@ function txIdBytes(tx: UtxoTransaction): Uint8Array {
  * contract names** — it covers every fixed-width output field.
  */
 export function computeTxId(tx: UtxoTransaction): TxId {
-  return createHash('blake2b512')
-    .update(TX_ID_DOMAIN)
-    .update(txIdBytes(tx))
-    .digest()
-    .subarray(0, 32)
-    .toString('hex');
+  return bytesToHex(hash32(TX_ID_DOMAIN, txIdBytes(tx)));
 }
 
 // ---------------------------------------------------------------------------

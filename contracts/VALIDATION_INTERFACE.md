@@ -410,7 +410,7 @@ the block creator to verify externally-submitted mining solutions.
 ### computePowHash
 
 ```
-computePowHash(header: BlockHeader): Buffer | null
+computePowHash(header: BlockHeader): Uint8Array | null
 ```
 
 **This function establishes its own domain.** It returns `null` on exactly the inputs
@@ -567,9 +567,9 @@ verifyValidatorSignature(header: BlockHeader, signature: Uint8Array): boolean
 
 Verifies that `signature` is a valid raw Ed25519 signature over the block hash,
 made by the key declared in `header.validatorId`. Recomputes the signed message
-as `Buffer.from(blockHash(header), 'hex')` — the 32 raw bytes of
+as `hexToBytes(blockHash(header))` — the 32 raw bytes of
 `blake2b512(encodeHeader(header))[:32]`, the exact value the block creator signs
-(`crypto.sign(null, Buffer.from(blockHash(header), 'hex'), validatorPrivKey)`).
+(the node's `crypto.sign(null, …)` over the same 32 bytes).
 Calls `verifyEd25519(signature, message, header.validatorId)` (→ Acceptance criterion).
 Returns `true` iff the signature verifies.
 
@@ -1350,7 +1350,9 @@ own.
 ---
 
 ## Preconditions
-- Node.js ≥ 22 (blake2b512 via `crypto.createHash`)
+
+- No Node built-in and no Node global (`ARCHITECTURE → Package boundaries`); every hash is `@dagsocial/types`'
+  `hash32`
 - `@dagsocial/types` package built and importable
 - `@noble/curves` for Ed25519 (→ Acceptance criterion)
 - `@noble/hashes` for the batch's SHA-512 (→ verifyEd25519Batch)
@@ -1366,8 +1368,10 @@ own.
   that is not 32 bytes, a block header outside the encodable domain, a nonce that
   is negative / `NaN` / float / beyond `u64`). Every such case is a clean
   rejection, never an exception. Guard the throwing operations
-  (`Buffer.byteLength`, `encodeHeader`,
-  `BigInt`/`writeBigUInt64LE`, `.length`) with type/shape checks first.
+  (`encodeHeader`, noble's `ed25519.verify`, `BigInt` / `DataView.setBigUint64`,
+  `.length`) with type/shape checks first — and a `TextEncoder` measures a
+  non-string by its string form rather than throwing, so `content`'s `typeof`
+  guard is what refuses one.
 
   **Phase 1f extended this rule past the `verify*` functions.** "No exported verify function
   throws" left `blockHash` and `computePowHash` outside the guarantee, because they are not
@@ -1377,15 +1381,15 @@ own.
   the naming convention had quietly exempted it.
 
 ## Invariants
-- All hashing uses `blake2b512.digest().subarray(0, 32)` — Node.js v22
-  lacks blake2b256
+- All hashing is `@dagsocial/types`' `hash32` — BLAKE2b-512, the first 32 bytes
+  (`TYPES_INTERFACE → The protocol hash`)
 - Signatures verified by one rule — `verifyEd25519`, or `verifyEd25519Batch` over many entries —
   strict RFC 8032 through `@noble/curves` (→ Acceptance criterion)
 - **One PoW nonce encoding**: the ordering-block nonce is `encodeLE64`
   (`MINING_INTERFACE.md` → PoW Verification). A post carries no nonce.
 - The integer-range guard (M-6): a nonce or `targetBits` that is not a
   non-negative safe integer within `u64` yields `false`, never a thrown
-  `RangeError` — the guard prevents a throw from `BigInt` / `writeBigUInt64LE`.
+  `RangeError` — the guard prevents a throw from `BigInt` / `DataView.setBigUint64`.
   Validate with `Number.isInteger` (not a loose `typeof === 'number'`, which
   admits `NaN` and floats)
 - Content limits measured in UTF-8 bytes, not characters

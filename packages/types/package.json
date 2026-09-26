@@ -13,12 +13,14 @@
   },
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc -p tsconfig.browser.json",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@dagsocial/wire": "workspace:*"
+    "@dagsocial/wire": "workspace:*",
+    "@noble/curves": "^2.2.0",
+    "@noble/hashes": "^2.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

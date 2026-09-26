@@ -18,7 +18,7 @@ import {
   computeTxId,
   leafHash,
   buildMerkleRoot,
-  hexToBuf,
+  hexToBytes,
   utxoTxTreeByteLength,
   interlinkRoot,
   updateInterlinks,
@@ -91,7 +91,7 @@ import {
  */
 export function computeUtxoTxRoot(tree: UtxoTxTree): string {
   const leaves: Uint8Array[] = tree.utxoTxIds.map((id) =>
-    leafHash('utxotx', hexToBuf(id)));
+    leafHash('utxotx', hexToBytes(id)));
   return Buffer.from(buildMerkleRoot(leaves)).toString('hex');
 }
 

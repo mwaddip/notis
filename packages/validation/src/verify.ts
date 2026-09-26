@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import {
   MAX_CONTENT_BYTES,
@@ -15,7 +14,7 @@ import {
   protocolVersionAt,
   isValidUsernameBytes,
 } from '@dagsocial/types';
-import { encodeHeader, encodeTx, utxoTxTreeByteLength, computeContentHash } from '@dagsocial/types';
+import { encodeHeader, encodeTx, utxoTxTreeByteLength, computeContentHash, hash32, bytesToHex, hexToBytes } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, ProtocolEra, UtxoTransaction } from '@dagsocial/types';
 import { isDisallowedContentCodepoint } from './content-charset.js';
 
@@ -25,11 +24,10 @@ import { isDisallowedContentCodepoint } from './content-charset.js';
 //
 // Every exported verify* function receives objects straight off the wire, so
 // its arguments may be wrongly typed or out of range. The guards below stand in
-// front of the operations that throw on such input — `Buffer.byteLength`,
-// `Buffer.from`, noble's `ed25519.verify`, `BigInt` /
-// `writeBigUInt64LE`, the codec's throwing writers, and plain `.length` reads —
-// so a malformed object yields a clean `false` / `{ valid: false }`, never an
-// exception.
+// front of the operations that throw on such input — noble's `ed25519.verify`,
+// `BigInt` / `DataView.setBigUint64`, the codec's throwing writers, and plain
+// `.length` reads — so a malformed object yields a clean `false` /
+// `{ valid: false }`, never an exception.
 //
 // Each guard checks exactly the declared type of the field it protects, so a
 // well-formed object from any conforming encoder passes unchanged and the happy
@@ -528,7 +526,7 @@ export function verifyEd25519(signature: Uint8Array, message: Uint8Array, public
  * Verify that `signature` is a valid raw Ed25519 signature over the block hash,
  * made by the key declared in `header.validatorId`.
  *
- * The signed message is `Buffer.from(blockHash(header), 'hex')` — the 32 raw
+ * The signed message is `hexToBytes(blockHash(header))` — the 32 raw
  * bytes of `blake2b512(encodeHeader(header))[:32]`, exactly what the block
  * creator signs. `validatorSignature` lives on the block, not in the header, so
  * `blockHash(header)` is stable before and after signing.
@@ -544,10 +542,12 @@ export function verifyValidatorSignature(header: BlockHeader, signature: Uint8Ar
   // `blockHash` establishes the header domain itself, so a malformed
   // header yields `null` rather than throwing inside `encodeHeader`. Its
   // non-null return also proves `validatorId` is exactly 32 bytes, the length
-  // `verifyEd25519` takes (VALIDATION_INTERFACE → Acceptance criterion).
+  // `verifyEd25519` takes (VALIDATION_INTERFACE → Acceptance criterion), and is
+  // always 64 lowercase hex characters, the shape `hexToBytes` requires to
+  // return rather than throw.
   const hash = blockHash(header);
   if (hash === null) return false;
-  const message = Buffer.from(hash, 'hex');
+  const message = hexToBytes(hash);
   return verifyEd25519(signature, message, header.validatorId);
 }
 
@@ -616,9 +616,9 @@ export function verifyTxProtocolVersion(
 // ---------------------------------------------------------------------------
 
 export function verifyContentLimits(content: string): { valid: boolean; error?: string } {
-  // `Buffer.byteLength` throws on anything that is not a string or byte view.
+  // A `TextEncoder` measures a non-string by its string form rather than throwing, so this guard is what refuses one.
   if (typeof content !== 'string') return { valid: false, error: 'Content must be a string' };
-  const byteLen = Buffer.byteLength(content, 'utf8');
+  const byteLen = new TextEncoder().encode(content).length;
   if (byteLen === 0) return { valid: false, error: 'Content is empty' };
   if (byteLen > MAX_CONTENT_BYTES) return { valid: false, error: 'Content exceeds max length' };
   return { valid: true };
@@ -867,7 +867,7 @@ export function verifyOrderingBlockStructure(
     return { valid: false, error: 'Ordering block body carries no settlement transaction' };
   }
   // Without this check an element could be a number, an object or `null`, and
-  // those reach `hexToBuf(id)` inside `computeUtxoTxRoot`'s Merkle build, which
+  // those reach `hexToBytes(id)` inside `computeUtxoTxRoot`'s Merkle build, which
   // `block-apply` calls at its Merkle-root verification step. A non-string
   // throws there — inside the apply transaction, so the funnel's totality catch
   // would turn a malformed block into an "unexpected failure" log rather than
@@ -982,11 +982,7 @@ export function isValidVouchTarget(userId: Uint8Array): boolean {
  */
 export function blockHash(header: BlockHeader): string | null {
   if (firstHeaderDomainFailure(header) !== null) return null;
-  return createHash('blake2b512')
-    .update(Buffer.from(encodeHeader(header)))
-    .digest()
-    .subarray(0, 32)
-    .toString('hex');
+  return bytesToHex(hash32(encodeHeader(header)));
 }
 
 /**
@@ -995,13 +991,10 @@ export function blockHash(header: BlockHeader): string | null {
  * `null` on exactly the headers `verifyHeaderFieldDomains` rejects, the 32-byte
  * preimage otherwise.
  */
-export function computePowHash(header: BlockHeader): Buffer | null {
+export function computePowHash(header: BlockHeader): Uint8Array | null {
   if (firstHeaderDomainFailure(header) !== null) return null;
   const template = { ...header, powNonce: 0 };
-  return createHash('blake2b512')
-    .update(Buffer.from(encodeHeader(template)))
-    .digest()
-    .subarray(0, 32);
+  return hash32(encodeHeader(template));
 }
 
 // ---------------------------------------------------------------------------
@@ -1017,13 +1010,9 @@ export function powHit(header: BlockHeader): Uint8Array | null {
   const preimage = computePowHash(header);
   if (preimage === null) return null;
   if (!isU64Safe(header.powNonce)) return null;
-  const nonceBuf = Buffer.alloc(8);
-  nonceBuf.writeBigUInt64LE(BigInt(header.powNonce));
-  return createHash('blake2b512')
-    .update(preimage)
-    .update(nonceBuf)
-    .digest()
-    .subarray(0, 32);
+  const nonceLE = new Uint8Array(8);
+  new DataView(nonceLE.buffer).setBigUint64(0, BigInt(header.powNonce), true);
+  return hash32(preimage, nonceLE);
 }
 
 // ---------------------------------------------------------------------------

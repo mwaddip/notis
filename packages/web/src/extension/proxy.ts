@@ -1,6 +1,6 @@
 import type { AppIdentity } from '../model/state';
 import type { SignResult } from '../wallet/submit';
-import { toHex } from '../identity/envelope';
+import { bytesToHex } from '@dagsocial/types';
 import type { Message, AppSnapshot, SignAnswer, SignHint, SignRecord } from './protocol';
 import { K_LINKS, LINKS_DEFAULT, readLinksPref, type LinksPref } from './links';
 
@@ -84,7 +84,7 @@ export class ExtensionProxy implements AppIdentity {
   }
 
   async sign(txBytes: Uint8Array, txIdHex: string, hint?: SignHint): Promise<SignResult> {
-    const bytesHex = toHex(txBytes);
+    const bytesHex = bytesToHex(txBytes);
     const answer = await sendMessage(this.api, {
       kind: 'sign',
       txBytesHex: bytesHex,

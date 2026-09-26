@@ -8,9 +8,10 @@
  * second one a client would have to trust.
  */
 
-import { createHash } from 'crypto';
 import { ReaderError } from '@dagsocial/wire';
+import { hash32 } from './hash.js';
 import {
+  bytesToHex,
   encodeStruct,
   decodeStruct,
   readU8,
@@ -103,12 +104,7 @@ export interface IdentityRecord {
  * separation, not by luck.
  */
 export function identityRecordKey(identityId: UserId): string {
-  return createHash('blake2b512')
-    .update(IDENTITY_KEY_DOMAIN)
-    .update(identityId)
-    .digest()
-    .subarray(0, 32)
-    .toString('hex');
+  return bytesToHex(hash32(IDENTITY_KEY_DOMAIN, identityId));
 }
 
 /** Field 1 of the layout — the record discriminator (NODE_INTERFACE → Entity kinds). */

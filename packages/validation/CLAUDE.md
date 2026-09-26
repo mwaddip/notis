@@ -31,7 +31,8 @@ counts, protocol version, and block structure. No DB, no network, no chain state
 ## Component-session rules (Design by Contract)
 - **Contracts lead, code follows.** Implement to `VALIDATION_INTERFACE.md`; flag contract gaps to main.
 - **You own this package only.** Never edit `../node`, `../types`, `../net`, `../wire`, or `contracts/`.
-- **Forced verification before "done":** `pnpm --filter @dagsocial/validation typecheck` (zero errors) **and**
+- **Forced verification before "done":** `pnpm --filter @dagsocial/validation typecheck` (zero errors — src, the
+  test tree, and the browser pass: no Node built-in, no Node global, `ARCHITECTURE → Package boundaries`) **and**
   `pnpm --filter @dagsocial/validation test` (all pass). State results; never claim done unverified.
 - **Phased execution:** ≤5 files per phase; verify between phases. **Report back** via kitty when done.
 

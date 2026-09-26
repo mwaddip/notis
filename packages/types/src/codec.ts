@@ -16,13 +16,11 @@
  *  3. **The four-part boundary check** (TYPES_INTERFACE → The boundary check)
  *     as one entry point, so no struct codec can skip a step.
  *
- * No node builtins and no `Buffer`: the web client runs this codec in the
- * browser through a build-time shim (WEB_INTERFACE → The browser reaches
- * `@dagsocial/types` through a build-time shim), so it has to stay runnable
- * there, and `@dagsocial/wire` is browser-clean for the same reason. Hex
- * conversion below
- * is hand-rolled rather than `Buffer.from(hex, 'hex')` both for that and
- * because `Buffer` silently drops invalid nibbles.
+ * No node builtins and no `Buffer`: the browser runs this package as it is
+ * written, with no Node built-in import and no Node global (ARCHITECTURE →
+ * Package boundaries), and `@dagsocial/wire` is browser-clean for the same
+ * reason. Hex conversion below is hand-rolled rather than `Buffer.from(hex,
+ * 'hex')` both for that and because `Buffer` silently drops invalid nibbles.
  *
  * ⚠ **No hashing lives here.** This layer produces preimages; the
  * `blake2b512(…).subarray(0, 32)` that consumes them stays where it is.
@@ -149,11 +147,47 @@ function hexToBytesExact(hex: unknown, n: number): Uint8Array | null {
   return out;
 }
 
-/** Render bytes as lowercase hex. The inverse of `hexToBytesExact`. */
-function bytesToHex(bytes: Uint8Array): string {
+/**
+ * Render bytes as lowercase hex, two characters a byte. The inverse of
+ * `hexToBytes`. Total — every `Uint8Array` has an encoding.
+ */
+export function bytesToHex(bytes: Uint8Array): string {
   let s = '';
   for (const b of bytes) s += HEX[b >> 4]! + HEX[b & 0x0f]!;
   return s;
+}
+
+/**
+ * Parse a lowercase hex string to bytes. The inverse of `bytesToHex`.
+ *
+ * **Strict, on one rule** (`hexToBytesExact` above): even length and
+ * `[0-9a-f]` only, or it throws — never the partial decode
+ * `Buffer.from(hex, 'hex')` answers, which stops at the first non-hex
+ * character and silently drops an odd trailing nibble.
+ *
+ * @throws {TypeError} unless `hex` is an even-length lowercase hex string
+ */
+export function hexToBytes(hex: string): Uint8Array {
+  const bytes = hexToBytesExact(hex, Math.floor(hex.length / 2));
+  if (bytes === null) {
+    throw new TypeError(`hexToBytes: not an even-length lowercase hex string (length ${hex.length})`);
+  }
+  return bytes;
+}
+
+/**
+ * Equal lengths and equal bytes.
+ *
+ * **Not constant-time** — a timing side channel is available to a caller
+ * comparing a secret against attacker-supplied bytes; this function is for
+ * comparing ordinary values (ids, roots, digests), never a secret.
+ */
+export function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------

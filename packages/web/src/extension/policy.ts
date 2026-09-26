@@ -1,5 +1,5 @@
+import { bytesToHex } from '@dagsocial/types';
 import type { UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
-import { toHex } from '../identity/envelope';
 import type { SignSummary, CreditSend } from './protocol';
 
 // The classification and summary the prompt uses. Pure functions, so they can
@@ -48,7 +48,7 @@ export function summarise(tx: UtxoTransaction, signerHex: string): SignSummary {
   }
   // Vouch, unvouch, invite, claim, burn — from the outputs' `boxType`s.
   const vouchOut = firstOut(tx, 'vouch');
-  if (vouchOut) return { kind: 'vouch', targetHex: toHex(vouchOut.targetId), spendRep: valueOf(vouchOut) };
+  if (vouchOut) return { kind: 'vouch', targetHex: bytesToHex(vouchOut.targetId), spendRep: valueOf(vouchOut) };
   const escrowOut = firstOut(tx, 'vouch_escrow');
   if (escrowOut && !firstOut(tx, 'vouch')) {
     // The `VouchEscrowBox` carries `owner` — the voucher, where the karma
@@ -58,7 +58,7 @@ export function summarise(tx: UtxoTransaction, signerHex: string): SignSummary {
     return { kind: 'unvouch' };
   }
   const bondOut = firstOut(tx, 'bond');
-  if (bondOut) return { kind: 'invite', inviteeHex: toHex(bondOut.inviteePublicKey), spendRep: valueOf(bondOut) };
+  if (bondOut) return { kind: 'invite', inviteeHex: bytesToHex(bondOut.inviteePublicKey), spendRep: valueOf(bondOut) };
   const nameOut = firstOut(tx, 'username');
   if (nameOut) return { kind: 'claim', name: nameToText(nameOut.name) };
   // Burn: a `karma_price` output present with `post` and `likeTarget` absent —
@@ -96,7 +96,7 @@ function sumNonChangeKarma(tx: UtxoTransaction, signerHex: string): string {
   let total = 0n;
   for (const out of tx.outputs) {
     if (out.boxType !== 'karma') continue;
-    if (toHex(out.owner) === signerHex) continue;
+    if (bytesToHex(out.owner) === signerHex) continue;
     total += out.value;
   }
   return total.toString();
@@ -107,7 +107,7 @@ function credits(tx: UtxoTransaction, signerHex: string): SignSummary {
   let feeValue = '0';
   for (const out of tx.outputs) {
     if (out.boxType === 'credit') {
-      const ownerHex = toHex(out.owner);
+      const ownerHex = bytesToHex(out.owner);
       // Change is any output to the signer's own key — never listed as spent
       // (WEB_INTERFACE → "The summary the prompt shows is derived from the
       // transaction").

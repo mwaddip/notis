@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 // Binding check: build the read surface's crypto path and run it in a REAL
 // browser over live node data, asserting each recomputed contentHash equals the
-// one the node served. WEB_INTERFACE → The browser reaches @dagsocial/types
-// through a build-time shim — only the built bundle in a browser exercises the
-// shim; under Node the substitution never happens, so no committed unit test can.
+// one the node served — the proof that the bundle's hashing is the node's.
+// WEB_INTERFACE → The client's builds substitute nothing.
 //
 // Usage:
 //   node scripts/binding-check/run.mjs [apiBase]
@@ -20,13 +19,11 @@ import { mkdtempSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
 import { build } from 'vite';
-import inject from '@rollup/plugin-inject';
+import { refuseNodeBuiltins } from '../refuse-node-builtins.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = join(HERE, '..', '..');
-const require_ = createRequire(import.meta.url);
 const API = process.argv[2] ?? 'http://localhost:3000';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -47,25 +44,18 @@ function findChrome() {
   return found.find(existsSync) ?? null;
 }
 
-// 1. Build the harness through the same alias + ABSOLUTE-path Buffer inject the
-//    app build uses — a bare `buffer` here would resolve from @dagsocial/types to
-//    the Node builtin and externalize to nothing.
+// 1. Build the harness through the same plugin the app build uses.
 const outDir = mkdtempSync(join(tmpdir(), 'notis-binding-'));
 await build({
   root: WEB,
   configFile: false,
   logLevel: 'warn',
-  resolve: { alias: [{ find: /^crypto$/, replacement: join(WEB, 'src/shim/crypto.ts') }] },
+  plugins: [refuseNodeBuiltins()],
   build: {
     outDir,
     emptyOutDir: true,
     minify: false,
     lib: { entry: join(HERE, 'entry.ts'), formats: ['iife'], name: 'BC', fileName: () => 'bc.js' },
-    rollupOptions: {
-      // The trailing slash forces package resolution — `resolve('buffer')` returns
-      // the Node builtin's name, not the buffer package's absolute path.
-      plugins: [inject({ modules: { Buffer: [require_.resolve('buffer/'), 'Buffer'] }, exclude: [/node_modules[/\\]buffer[/\\]/] })],
-    },
   },
 });
 const BC_JS = readFileSync(join(outDir, 'bc.js'), 'utf8');

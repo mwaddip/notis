@@ -3,7 +3,7 @@ import type { UtxoTxTree } from '@dagsocial/types';
 import {
   buildMerkleRoot,
   leafHash,
-  hexToBuf,
+  hexToBytes,
 } from '@dagsocial/types';
 import {
   computeUtxoTxRoot,
@@ -12,7 +12,7 @@ import {
 const toHex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 
 const rootOfLeaves = (...preimages: [string, string][]): string =>
-  toHex(buildMerkleRoot(preimages.map(([tag, bytes]) => leafHash(tag, hexToBuf(bytes)))));
+  toHex(buildMerkleRoot(preimages.map(([tag, bytes]) => leafHash(tag, hexToBytes(bytes)))));
 
 // ---------------------------------------------------------------------------
 // The root over a whole body

@@ -130,6 +130,21 @@ describe('an id the listing names more than once is unproven from its second pla
     expect(result.boxes[1]!.verdict).toBe(`unproven: the listed boxId is named earlier in the listing: '${upper}'`);
     expect(boxProofs(proofCalls, upper)).toEqual([]);
   });
+
+  // TYPES_INTERFACE → Export table — hexToBytes is strict, lowercase only, or
+  // it throws. An uppercase listing entry is checked case-insensitively above,
+  // so it must reach the AVL key decode in its one lowercase form, never the
+  // node's own spelling of it — the box the listing named, proven, not thrown.
+  it('an uppercase boxId, listed once, is proven in its one lowercase form', async () => {
+    const { fetch, proofCalls } = node();
+    const upper = KARMA_ID.toUpperCase();
+    const result = await prove([{ boxId: upper, value: '100' }], [], fetch);
+    expect(result.boxes[0]!.status).toBe('proven');
+    expect(result.boxes[0]!.boxId).toBe(KARMA_ID);
+    expect(result.karma.proven).toBe(100n);
+    expect(result.failed).toBe(false);
+    expect(boxProofs(proofCalls, KARMA_ID)).toEqual([`/api/v1/proof/${KARMA_ID}?atHeight=${SUFFIX_H}`]);
+  });
 });
 
 describe('a listed value or lock that is not the box\'s own is unproven', () => {

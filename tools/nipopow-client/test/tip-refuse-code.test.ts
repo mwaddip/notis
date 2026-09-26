@@ -88,6 +88,32 @@ describe('NodeTipResult.refuseCode', () => {
     expect(result.nodes[0]!.refuseReason).toContain('proof decode failed');
   });
 
+  // TYPES_INTERFACE → Export table — hexToBytes is strict: even length and
+  // [0-9a-f] only, or it throws. The throw lands in the try/catch already
+  // around the decode, so a malformed or uppercase proof is the same 'invalid'
+  // refusal as any other decode failure, never an exception out of resolveTip.
+  it("proof hex with a non-hex character → 'invalid', the decode's own throw caught", async () => {
+    const httpFetch = async (_url: string) => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ proof: 'deadbeez' }),
+    } as unknown as Response);
+    const result = await resolveTip(['http://a:3000'], M, K, profile, Date.now, httpFetch);
+    expect(result.nodes[0]!.refuseCode).toBe('invalid');
+    expect(result.nodes[0]!.refuseReason).toContain('proof decode failed');
+  });
+
+  it("proof hex in uppercase → 'invalid', never thrown out of resolveTip", async () => {
+    const httpFetch = async (_url: string) => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ proof: 'DEADBEEF' }),
+    } as unknown as Response);
+    const result = await resolveTip(['http://a:3000'], M, K, profile, Date.now, httpFetch);
+    expect(result.nodes[0]!.refuseCode).toBe('invalid');
+    expect(result.nodes[0]!.refuseReason).toContain('proof decode failed');
+  });
+
   it("proof that verifyProof refuses → 'invalid'", async () => {
     const chain = buildMinedChain({ count: CHAIN_LEN });
     const now = clockAfterChain(chain);
