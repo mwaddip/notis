@@ -2,6 +2,7 @@ import { verifyAvlLookup } from '@ergots/avltree';
 import {
   AVL_KEY_LENGTH,
   boxRecordFromBytes,
+  bytesToHex,
   computeCandidateBoxId,
   decayCfgFor,
   effectiveKarma,
@@ -252,9 +253,11 @@ async function proveKeyAtHeight(
   }
   const proof = resp['proof'];
   if (typeof proof !== 'string') return { kind: 'unproven', verdict: 'proof rejected' };
+  const proofBytes = base64ToBytes(proof);
+  if (proofBytes === null) return { kind: 'unproven', verdict: 'proof rejected' };
   const avlResult = verifyAvlLookup(
     hexToBytes(expectedStateRoot),
-    base64ToBytes(proof),
+    proofBytes,
     { keyLength: AVL_KEY_LENGTH, valueLengthOpt: null },
     hexToBytes(key),
   );
@@ -312,7 +315,7 @@ async function proveListedBoxAtHeight(
   }
   // Both karma and credit carry `owner` (TYPES_INTERFACE → Layout — Boxes).
   const cand = at.candidate as { owner: Uint8Array; lockedUntilBlock?: number };
-  const ownerHex = Buffer.from(cand.owner).toString('hex');
+  const ownerHex = bytesToHex(cand.owner);
   if (ownerHex !== userLowerHex) {
     return {
       kind: 'unproven',
@@ -733,6 +736,20 @@ function hexToBytes(hex: string): Uint8Array {
   return bytes;
 }
 
-function base64ToBytes(b64: string): Uint8Array {
-  return Uint8Array.from(Buffer.from(b64, 'base64'));
+// NODE_INTERFACE → AVL+ State Root — the proof blob is the node's base64
+// (`Buffer.from(proof).toString('base64')`, avl-endpoint.ts), decoded here with
+// `atob`, a global in both browsers and Node 22. Unlike `Buffer.from(_,
+// 'base64')`, which silently skips a character it does not recognize, `atob`
+// throws on one or on a wrong length — caught here so a malformed blob from a
+// lying node is a refused proof, `null`, never an exception out of the library.
+function base64ToBytes(b64: string): Uint8Array | null {
+  let binary: string;
+  try {
+    binary = atob(b64);
+  } catch {
+    return null;
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
