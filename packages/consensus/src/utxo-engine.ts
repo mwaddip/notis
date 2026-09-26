@@ -217,6 +217,14 @@ export interface UtxoEngineDeps {
   protocolVersionSchedule: readonly ProtocolEra[];
   getUsername: (nameLower: string) => UsernameRow | null;
   getUsernameByOwner: (owner: Uint8Array | string) => UsernameRow | null;
+  /**
+   * The check a required signer's signature answers to, the one parameter the
+   * two builds set apart (CONSENSUS_INTERFACE → The overlay): `applyBlock`'s
+   * answers from the set its body check verified; absent — admission's build —
+   * authorization calls `verifyEd25519`. Who must sign, and the refusal of a map
+   * key no input requires, are `validateTx`'s either way.
+   */
+  verifySignature?: (signature: Uint8Array, message: Uint8Array, publicKey: Uint8Array) => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -236,17 +244,22 @@ export interface UtxoResult {
 
 /**
  * Verify a signature for a given public key.
- * Returns true if a valid signature exists in tx.signatures for that key.
+ * Returns true if a valid signature exists in tx.signatures for that key —
+ * checked by the deps' `verifySignature` when they carry one, and by
+ * `verifyEd25519` when they do not (CONSENSUS_INTERFACE → The overlay).
  */
 function verifyGuardSignature(
   tx: UtxoTransaction,
   txHash: Buffer,
   pubKey: Uint8Array,
+  verifySignature: UtxoEngineDeps['verifySignature'],
 ): boolean {
   const hexKey = Buffer.from(pubKey).toString('hex');
   const signature = tx.signatures[hexKey];
   if (!signature) return false;
-  return verifyEd25519(signature, txHash, pubKey);
+  return verifySignature !== undefined
+    ? verifySignature(signature, txHash, pubKey)
+    : verifyEd25519(signature, txHash, pubKey);
 }
 
 /**
@@ -1417,8 +1430,10 @@ export function checkTxEnvelope(tx: unknown, height: number, schedule: readonly 
   // An EMPTY map is shape-legal: `checkAuthorization` decides which key must
   // have signed, and a transaction whose transition requires one is refused
   // there rather than here. Extra well-formed keys are shape-legal too —
-  // `checkAuthorization` only looks keys up, nothing iterates, and the like
-  // path's exactly-one-signature rule is `castLike` policy, not envelope shape.
+  // `checkAuthorization` refuses a key no input requires
+  // (NODE_INTERFACE → Legal box transitions → "The signature map carries no
+  // key a transition does not require"), and the like path's
+  // exactly-one-signature rule is `castLike` policy, not envelope shape.
   const signatures = tx.signatures;
   if (!isPlainObject(signatures)) {
     return {
@@ -2092,6 +2107,7 @@ function checkAuthorization(
   inputBoxes: AnyBox[],
   currentBlockHeight: number,
   storageRentPeriodBlocks: number,
+  verifySignature: UtxoEngineDeps['verifySignature'],
 ): UtxoResult {
   const AUTHORIZATION = authorizationTable(storageRentPeriodBlocks);
   const txHash = Buffer.from(computeTxId(tx), 'hex');
@@ -2121,7 +2137,7 @@ function checkAuthorization(
     // transaction checks each signer once").
     const signerHex = Buffer.from(signerKey).toString('hex');
     if (requiredKeys.has(signerHex)) continue;
-    if (!verifyGuardSignature(tx, txHash, signerKey)) {
+    if (!verifyGuardSignature(tx, txHash, signerKey, verifySignature)) {
       return { valid: false, error: rule.unsigned(box, tx) };
     }
     requiredKeys.add(signerHex);
@@ -2318,7 +2334,13 @@ export function validateTx(
   // Ahead of the transition arms, so a transaction that is both unsigned and
   // malformed is refused for being unsigned. The transition is identified here
   // from the input type and the output count; step 9 pins the rest of the shape.
-  const authCheck = checkAuthorization(tx, inputBoxes, currentBlockHeight, deps.storageRentPeriodBlocks);
+  const authCheck = checkAuthorization(
+    tx,
+    inputBoxes,
+    currentBlockHeight,
+    deps.storageRentPeriodBlocks,
+    deps.verifySignature,
+  );
   if (!authCheck.valid) return authCheck;
 
   // ---- 9. Legal box transitions ----

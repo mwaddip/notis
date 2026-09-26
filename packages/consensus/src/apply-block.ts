@@ -17,6 +17,8 @@ import type {
   UtxoTransaction,
   VouchBox,
 } from '@dagsocial/types';
+import { verifyEd25519Batch } from '@dagsocial/validation';
+import type { Ed25519BatchEntry } from '@dagsocial/validation';
 import { postsOf, withdrawalsOf } from './block-posts.js';
 import type { BlockPost } from './block-posts.js';
 import { computeBlockReward, countKarmaActors, isCreditSideTx, type EmbeddedTx } from './coinbase-split.js';
@@ -58,10 +60,10 @@ export type ApplyResult = { ok: true; effects: BlockEffects } | { ok: false; rea
 /**
  * The block's state transition — the mutation phase, whole (CONSENSUS_INTERFACE
  * → Applying a block): the block's posts and their topology · the body decoded,
- * every declared id proven, the settlement found by position · the pre-body
- * captures · the user transactions in committed order · the withdrawals · the
- * settlement · the grants · the like counters · the membership pass · the decay
- * clocks.
+ * every declared id proven, the settlement found by position · every signature
+ * the body carries, checked as one batch · the pre-body captures · the user
+ * transactions in committed order · the withdrawals · the settlement · the
+ * grants · the like counters · the membership pass · the decay clocks.
  *
  * It runs at `block.header.height` and reads no other header field but
  * `validatorId`: the node has run the checks that need the chain first, and the
@@ -121,10 +123,10 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // every input resolves in the confirmed set as it stands at that point —
   // the pre-block set plus this block's earlier transactions' outputs, minus
   // their consumed inputs — or the block is rejected. Then full re-validation
-  // (signatures, authorization, transitions, conservation), then apply. A
+  // (authorization, transitions, conservation), then apply; authorization
+  // answers each signature from the body check, which runs before the pass. A
   // block producer is untrusted (permissionless PoW), so nothing about an
   // embedded tx is assumed verified.
-  const utxoDeps = utxoDepsOver(state, ctx);
 
   // The proof obligation (NODE_INTERFACE → "Embedded transactions: a mismatch
   // rejects the block"): every declared `utxoTxId` must be proven to be the id
@@ -225,6 +227,19 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
       `Rejected block height=${height}: body carries no settlement transaction`,
     );
   }
+
+  // Every signature the body carries, checked as one batch before any
+  // transaction applies (CONSENSUS_INTERFACE → Applying a block → "A block's
+  // signatures are checked together, before any transaction applies"). The
+  // pass's `validateTx` answers each signature from what the batch verified;
+  // a missing signature is not an entry, and the pass refuses it with its
+  // transaction's reason. The settlement is outside the queue and carries no
+  // signature (`checkSettlement` refuses one).
+  const verified = verifiedSignaturesOf(queue);
+  if (verified === null) {
+    return reject(`Rejected block height=${height}: a signature in the body does not verify`);
+  }
+  const utxoDeps = utxoDepsOver(state, ctx, verified);
 
   // Per-block like accrual: in-memory, this invocation only — the
   // end-of-phase settlement (§11b) reads both maps. Local by design, so every
@@ -797,11 +812,40 @@ function advanceActivityClock(state: BlockOverlay, owner: Uint8Array, height: nu
 }
 
 /**
+ * Every signature the queued transactions carry, checked as one
+ * `verifyEd25519Batch` call (CONSENSUS_INTERFACE → Applying a block): each entry
+ * of each signature map — in body order, and within a transaction in its map's
+ * decoded order — as the signature, the transaction id's 32 bytes and the key.
+ * Answers the set the batch verified, or `null` when the batch refuses.
+ */
+function verifiedSignaturesOf(
+  queue: ReadonlyArray<{ txId: string; tx: UtxoTransaction }>,
+): ReadonlySet<string> | null {
+  const entries: Ed25519BatchEntry[] = [];
+  const verified = new Set<string>();
+  for (const { txId, tx } of queue) {
+    const message = new Uint8Array(Buffer.from(txId, 'hex'));
+    for (const [keyHex, signature] of Object.entries(tx.signatures)) {
+      entries.push({ signature, message, publicKey: new Uint8Array(Buffer.from(keyHex, 'hex')) });
+      verified.add(signatureEntryKey(txId, keyHex, signature));
+    }
+  }
+  return verifyEd25519Batch(entries) ? verified : null;
+}
+
+/** An entry of the verified set: the transaction id, the key and the signature, as hex. */
+function signatureEntryKey(txIdHex: string, keyHex: string, signature: Uint8Array): string {
+  return `${txIdHex}:${keyHex}:${Buffer.from(signature).toString('hex')}`;
+}
+
+/**
  * The engine's deps over the overlay (CONSENSUS_INTERFACE → The overlay): every
  * read answers over the state as the block has left it, and every write lands in
- * the overlay, so `validateTx` and `applyTx` run unchanged.
+ * the overlay, so `validateTx` and `applyTx` run unchanged. `verifySignature`
+ * answers from the set the body check verified — `true` only for an entry the
+ * set holds.
  */
-function utxoDepsOver(state: BlockOverlay, ctx: ApplyContext): UtxoEngineDeps {
+function utxoDepsOver(state: BlockOverlay, ctx: ApplyContext, verified: ReadonlySet<string>): UtxoEngineDeps {
   return {
     getBox: (id) => state.getBox(id),
     insertBox: (box) => state.insertBox(box),
@@ -836,6 +880,12 @@ function utxoDepsOver(state: BlockOverlay, ctx: ApplyContext): UtxoEngineDeps {
     getUsername: (nameLower) => state.getUsername(nameLower),
     getUsernameByOwner: (owner) =>
       state.getUsernameByOwner(typeof owner === 'string' ? Buffer.from(owner, 'hex') : owner),
+    verifySignature: (signature, message, publicKey) =>
+      verified.has(signatureEntryKey(
+        Buffer.from(message).toString('hex'),
+        Buffer.from(publicKey).toString('hex'),
+        signature,
+      )),
   };
 }
 
