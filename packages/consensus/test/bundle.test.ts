@@ -59,12 +59,14 @@ import {
  * The bundle test (CONSENSUS_INTERFACE → Tests): `applyBlock` built for a
  * browser with vite, every Node built-in a module imports failing the build, and
  * the bundle run in a `vm` context holding the ECMAScript built-ins,
- * `TextEncoder` and `TextDecoder` alone — no `crypto`, so the run holds the
- * package's no-randomness rule too (CONSENSUS_INTERFACE → Applying a block).
- * Inside the context a chain of signed blocks is applied over a stub view, both
- * built there from primitives, and the results come back as one string that
- * must equal, byte for byte, what the same function answers from source under
- * Node.
+ * `TextEncoder` and `TextDecoder` alone. The context holds the package's
+ * determinism rule itself (CONSENSUS_INTERFACE → Applying a block →
+ * "Deterministic"): it has no `crypto`, and its `Date`, `Math.random` and
+ * `Intl.DateTimeFormat` throw, so a run that reads a clock or draws a random
+ * number fails. Inside the context a chain of signed blocks is applied over a
+ * stub view, both built there from primitives, and the results come back as one
+ * string that must equal, byte for byte, what the same function answers from
+ * source under Node.
  */
 
 /** Each hook and test that runs a vite build carries this timeout, not vitest's default. */
@@ -202,6 +204,25 @@ const CONTEXT_CODECS = `(utf8Encode, utf8Decode) => {
   globalThis.TextDecoder = TextDecoder;
 }`;
 
+/**
+ * The determinism rule, held by the context (CONSENSUS_INTERFACE → Applying a
+ * block → "Deterministic"): the ECMAScript built-ins that read a clock or draw
+ * a random number throw, each error naming the rule. `Date` throws when called
+ * or constructed and carries no `now`. `Intl.DateTimeFormat` throws too: its
+ * `format` and `formatToParts` read the clock through the engine's own
+ * `Date.now` when handed no date, which no replacement of the global `Date`
+ * reaches. The names on the global object stay as they are.
+ */
+const CONTEXT_DETERMINISM = `(() => {
+  'use strict';
+  const refusal = (name) => new Error(
+    name + ' is refused: CONSENSUS_INTERFACE → Applying a block → "Deterministic" — no clock, no randomness',
+  );
+  globalThis.Date = function Date() { throw refusal('Date'); };
+  Math.random = function random() { throw refusal('Math.random'); };
+  Intl.DateTimeFormat = function DateTimeFormat() { throw refusal('Intl.DateTimeFormat'); };
+})()`;
+
 interface BrowserContext {
   context: Context;
   /** How many times each of the context's codecs reached Node's. */
@@ -211,11 +232,13 @@ interface BrowserContext {
 /**
  * A context holding the ECMAScript built-ins, `TextEncoder` and `TextDecoder`:
  * V8 gives every new context `console` and `WebAssembly` too, neither of them
- * ECMAScript, and both are deleted.
+ * ECMAScript, and both are deleted. Its clock and randomness throw
+ * (`CONTEXT_DETERMINISM`).
  */
 function browserContext(): BrowserContext {
   const context = createContext({});
   runInContext('delete globalThis.console; delete globalThis.WebAssembly;', context);
+  runInContext(CONTEXT_DETERMINISM, context);
   const calls = { encode: 0, decode: 0 };
   const encoder = new TextEncoder();
   const install = runInContext(CONTEXT_CODECS, context) as (
@@ -459,13 +482,24 @@ describe('applyBlock built for a browser runs with browser globals alone', () =>
     expect(workspace.filter((id) => !/^[^/]+\/(src|test)\//.test(id.slice(PACKAGES_DIR.length)))).toEqual([]);
   });
 
-  it('runs in a context holding the ECMAScript built-ins, TextEncoder and TextDecoder, and nothing else', () => {
+  it('runs in a context holding the ECMAScript built-ins, TextEncoder and TextDecoder, and nothing else — its clock and randomness throwing', () => {
     const { context } = browserContext();
     const ecmascript = globalNames(createContext({})).filter((name) => name !== 'console' && name !== 'WebAssembly');
     expect(globalNames(context)).toEqual([...ecmascript, 'TextDecoder', 'TextEncoder'].sort());
     for (const name of ['Buffer', 'process', 'require', 'crypto', 'console', 'setTimeout', 'WebAssembly']) {
       expect(runInContext(`typeof ${name}`, context), name).toBe('undefined');
     }
+
+    // Each expression inside the context, answered as the message it throws.
+    const thrown = (expression: string): unknown =>
+      runInContext(`try { ${expression}; 'no throw' } catch (e) { e instanceof Error ? e.message : 'not an Error' }`, context);
+    const RULE = 'CONSENSUS_INTERFACE → Applying a block → "Deterministic" — no clock, no randomness';
+    expect(thrown('new Date()')).toBe(`Date is refused: ${RULE}`);
+    expect(thrown('Date()')).toBe(`Date is refused: ${RULE}`);
+    expect(thrown('new Date(0)')).toBe(`Date is refused: ${RULE}`);
+    expect(runInContext('typeof Date.now', context)).toBe('undefined');
+    expect(thrown('Math.random()')).toBe(`Math.random is refused: ${RULE}`);
+    expect(thrown('new Intl.DateTimeFormat("en-US").format()')).toBe(`Intl.DateTimeFormat is refused: ${RULE}`);
   });
 
   it("the context's codecs answer the context's own arrays, where an array made outside fails instanceof", () => {
