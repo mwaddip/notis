@@ -73,6 +73,7 @@ import {
   computeTxId,
   decodeTx,
   encodeTx,
+  bytesToHex,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -245,7 +246,7 @@ interface DerivedSettlement {
 }
 
 /** Hex of a raw key, for grouping and for ordering. */
-const hexOf = (b: Uint8Array): string => Buffer.from(b).toString('hex');
+const hexOf = (b: Uint8Array): string => bytesToHex(b);
 
 /**
  * Derive everything the body decides.

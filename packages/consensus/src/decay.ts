@@ -1,4 +1,5 @@
 import {
+  bytesToHex,
   effectiveKarma,
   isIdentityStale,
   owedPeriods,
@@ -79,7 +80,7 @@ export function collectPostBodyKarma(
   for (const id of allInputIds) {
     const box = view.getBox(id);
     if (box?.boxType === 'karma') {
-      const hex = Buffer.from((box as KarmaBox).owner).toString('hex');
+      const hex = bytesToHex((box as KarmaBox).owner);
       if (!touchedOwnerHexes.has(hex)) {
         touchedOwnerHexes.add(hex);
         touchedOwners.set(hex, (box as KarmaBox).owner);
@@ -92,7 +93,7 @@ export function collectPostBodyKarma(
     for (const out of tx.outputs) {
       if (out.boxType === 'karma') {
         const k = out as KarmaBox;
-        const hex = Buffer.from(k.owner).toString('hex');
+        const hex = bytesToHex(k.owner);
         if (touchedOwnerHexes.has(hex)) {
           let arr = bodyKarmaOutputs.get(hex);
           if (!arr) { arr = []; bodyKarmaOutputs.set(hex, arr); }

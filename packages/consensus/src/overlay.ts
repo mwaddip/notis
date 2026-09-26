@@ -1,6 +1,7 @@
 import { isMember } from './utxo-engine.js';
 import type { NetworkRecord, UsernameRow } from './utxo-engine.js';
 import type { PostStanding, StateView } from './state-view.js';
+import { bytesToHex } from '@dagsocial/types';
 import type {
   AnyBox,
   BackerPoolBox,
@@ -70,7 +71,7 @@ export class SpendOfNonLiveBoxError extends Error {
   }
 }
 
-const hex = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex');
+const hex = (bytes: Uint8Array): string => bytesToHex(bytes);
 
 const byId = (a: AnyBox, b: AnyBox): number => (a.id! < b.id! ? -1 : a.id! > b.id! ? 1 : 0);
 
