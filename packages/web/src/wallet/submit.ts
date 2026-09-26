@@ -1,6 +1,6 @@
 import { encodeTx } from '@dagsocial/types';
 import { readBuildContext, readCreditContext } from './reads';
-import { buildPost, buildLike, buildVouch, buildUnvouch, buildInvite, buildWithdraw, buildClaim, buildBurn, buildSend, txToJson, InsufficientKarma, InsufficientCredits, BelowFloor } from './builders';
+import { buildPost, buildLike, buildVouch, buildUnvouch, buildInvite, buildWithdraw, buildClaim, buildBurn, buildSend, txToJson, InsufficientKarma, InsufficientCredits, BelowFloor, InvalidKey } from './builders';
 import { formatCredits } from '../model/credits';
 import type { PendingLedger } from './ledger';
 import type { BuildContext } from './builders';
@@ -119,6 +119,7 @@ export async function submitPostFlow(
     built = buildPost(ctx, content, parent);
   } catch (e) {
     if (e instanceof InsufficientKarma) return clientRejection('not enough rep to post right now.');
+    if (e instanceof InvalidKey) return clientRejection("that post's author key is not valid.");
     throw e;
   }
   // The post's content is the one hint the prompt verifies against the commit
@@ -164,6 +165,7 @@ export async function submitLikeFlow(deps: SubmitDeps, targetId: string): Promis
     built = buildLike(ctx, targetId, target.confirmedAuthor);
   } catch (e) {
     if (e instanceof InsufficientKarma) return clientRejection('not enough rep to like right now.');
+    if (e instanceof InvalidKey) return clientRejection("that post's author key is not valid.");
     throw e;
   }
   const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
@@ -197,6 +199,7 @@ export async function submitVouchFlow(deps: SubmitDeps, targetKey: string): Prom
     built = buildVouch(ctx, targetKey);
   } catch (e) {
     if (e instanceof InsufficientKarma) return clientRejection('not enough rep to vouch right now.');
+    if (e instanceof InvalidKey) return clientRejection('that is not a valid key.');
     throw e;
   }
   const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
@@ -272,6 +275,7 @@ export async function submitInviteFlow(deps: SubmitDeps, inviteeKey: string, bon
     built = buildInvite(ctx, inviteeKey, bond);
   } catch (e) {
     if (e instanceof InsufficientKarma) return clientRejection('not enough rep to cover the bond right now.');
+    if (e instanceof InvalidKey) return clientRejection('that is not a valid key.');
     throw e;
   }
   const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
@@ -413,6 +417,7 @@ export async function submitSendFlow(
     built = buildSend(ctx, toHex, amount);
   } catch (e) {
     if (e instanceof InsufficientCredits) return clientRejection('not enough $NOTIS.');
+    if (e instanceof InvalidKey) return clientRejection('that is not a valid key.');
     if (e instanceof BelowFloor) {
       const floor = formatCredits(e.floor);
       return clientRejection(

@@ -4,6 +4,8 @@ import {
   computeCandidateBoxId,
   selectBoxes,
   boxRecordBytes,
+  bytesToHex,
+  hexToBytes,
   POST_PRICE_THREAD,
   POST_PRICE_REPLY,
   REPLY_AUTHOR_SHARE,
@@ -83,6 +85,26 @@ export class BelowFloor extends Error {
     super(`${which} below the per-byte floor of ${floor} base units`);
     this.name = 'BelowFloor';
   }
+}
+
+/** A foreign key — a vouch target, an invitee, a like's or a reply's accrual
+ *  target, a send's recipient — that is not 64 lowercase hex characters
+ *  (TYPES_INTERFACE → Export table). The reader's own key never reaches this:
+ *  it is the identity module's own bytesToHex output. */
+export class InvalidKey extends Error {
+  constructor(readonly which: string) {
+    super(`${which} is not a valid 64-character key`);
+    this.name = 'InvalidKey';
+  }
+}
+
+const KEY_HEX = /^[0-9a-f]{64}$/;
+
+/** Decode a foreign key, refusing with InvalidKey rather than hexToBytes'
+ *  bare throw (TYPES_INTERFACE → Export table). */
+function keyBytes(hex: string, which: string): Uint8Array {
+  if (!KEY_HEX.test(hex)) throw new InvalidKey(which);
+  return hexToBytes(hex);
 }
 
 /** The reads a builder is fed — the spendable view, the height every output
@@ -178,7 +200,7 @@ export function buildVouch(ctx: BuildContext, targetHex: string): BuiltTx {
     value: VOUCH_KARMA_AMOUNT,
     createdAtBlock: ctx.height,
     voucherId: hexToBytes(ctx.author),
-    targetId: hexToBytes(targetHex),
+    targetId: keyBytes(targetHex, 'vouch target key'),
   };
   const outputs: AnyBoxCandidate[] = [vouch];
   const changeBox = changeBoxOf(change, ctx);
@@ -232,7 +254,7 @@ export function buildInvite(ctx: BuildContext, inviteeHex: string, bond: bigint)
     value: bond,
     createdAtBlock: ctx.height,
     inviterId: hexToBytes(ctx.author),
-    inviteePublicKey: hexToBytes(inviteeHex),
+    inviteePublicKey: keyBytes(inviteeHex, 'invitee key'),
   };
   const outputs: AnyBoxCandidate[] = [bondBox];
   const changeBox = changeBoxOf(change, ctx);
@@ -335,7 +357,7 @@ export function buildSend(ctx: BuildContext, toHex: string, amount: bigint): Bui
     boxType: 'credit',
     value: amount,
     createdAtBlock: ctx.height,
-    owner: hexToBytes(toHex),
+    owner: keyBytes(toHex, 'recipient key'),
   };
   const paymentIndex = outputs.length;
   outputs.push(payment);
@@ -399,7 +421,7 @@ export function txToJson(tx: UtxoTransaction): Record<string, unknown> {
   const body: Record<string, unknown> = {
     inputs: tx.inputs,
     outputs: tx.outputs.map(boxToJson),
-    signatures: Object.fromEntries(Object.entries(tx.signatures).map(([k, v]) => [k, toHex(v)])),
+    signatures: Object.fromEntries(Object.entries(tx.signatures).map(([k, v]) => [k, bytesToHex(v)])),
     protocolVersion: tx.protocolVersion,
   };
   if (tx.likeTarget !== undefined) body.likeTarget = tx.likeTarget;
@@ -446,7 +468,7 @@ function priceBox(value: bigint, height: number): CandidateOf<KarmaPriceBox> {
 }
 
 function accrualBox(value: bigint, authorHex: string, height: number): CandidateOf<LikeAccrualBox> {
-  return { boxType: 'like_accrual', value, createdAtBlock: height, author: hexToBytes(authorHex) };
+  return { boxType: 'like_accrual', value, createdAtBlock: height, author: keyBytes(authorHex, 'author key') };
 }
 
 function finish(
@@ -469,30 +491,17 @@ function boxToJson(box: AnyBoxCandidate): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(box).map(([k, v]) => [
       k,
-      v instanceof Uint8Array ? toHex(v) : typeof v === 'bigint' ? v.toString() : v,
+      v instanceof Uint8Array ? bytesToHex(v) : typeof v === 'bigint' ? v.toString() : v,
     ]),
   );
 }
 
 function postToJson(commit: PostCommit): Record<string, unknown> {
   return {
-    contentHash: toHex(commit.contentHash),
-    author: toHex(commit.author),
+    contentHash: bytesToHex(commit.contentHash),
+    author: bytesToHex(commit.author),
     parentRefs: commit.parentRefs,
     protocolVersion: commit.protocolVersion,
     type: commit.type,
   };
-}
-
-// Hex without a Node `Buffer`: the client holds no Node global.
-function toHex(bytes: Uint8Array): string {
-  let s = '';
-  for (const b of bytes) s += b.toString(16).padStart(2, '0');
-  return s;
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const out = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  return out;
 }

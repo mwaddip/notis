@@ -13,6 +13,7 @@ import {
   InsufficientKarma,
   InsufficientCredits,
   BelowFloor,
+  InvalidKey,
   type BuildContext,
 } from '../src/wallet/builders';
 import {
@@ -55,6 +56,10 @@ const THREAD_CONTENT_HASH = '8bc41f00d29d7adc055bc479bf21e13473a34426470b92aa675
 const VOUCH_TARGET = '11'.repeat(32);
 const INVITEE = '22'.repeat(32);
 const VOUCH_BOX = '33'.repeat(32);
+// A foreign key of the right length but outside the hex alphabet — the shape
+// a node's confirmedAuthor, a vouch target or a pasted key can take when it
+// is not what it claims (TYPES_INTERFACE → Export table).
+const BAD_KEY = 'gg'.repeat(32);
 const VOUCH_TXID = '6b5e1ba32c2bfe23b6db0db940fbadf1166ff2a5cbd472d1a2017934149e3e50';
 const VOUCH_CHANGE = '80626928e3ad938060005951abb752273d45ab6965f7593c955b20670723cf45';
 const INVITE_TXID = '764853c48611aa6d2a6d568d59a048af5a251d0e60caa80b22846e7215437d30';
@@ -172,6 +177,11 @@ describe('builders — structural rules', () => {
     expect(built.tx.inputs).toEqual(['b'.repeat(64)]);
     expect(built.change!.value).toBe(5n);
   });
+
+  it('InvalidKey when a reply\'s or a like\'s confirmed author is not 64 lowercase hex', () => {
+    expect(() => buildPost(ctx(), 'x', { id: PARENT_ID, authorHex: BAD_KEY })).toThrow(InvalidKey);
+    expect(() => buildLike(ctx(), TARGET_ID, BAD_KEY)).toThrow(InvalidKey);
+  });
 });
 
 describe('membership builders — frozen against independent vectors', () => {
@@ -236,6 +246,11 @@ describe('membership builders — structural rules', () => {
     }
     // A vouch is unaffordable below VOUCH_KARMA_AMOUNT.
     expect(() => buildVouch({ ...ctx(), spendable: [] }, VOUCH_TARGET)).toThrow(InsufficientKarma);
+  });
+
+  it('InvalidKey when a vouch target or an invitee is not 64 lowercase hex', () => {
+    expect(() => buildVouch(ctx(), BAD_KEY)).toThrow(InvalidKey);
+    expect(() => buildInvite(ctx(), BAD_KEY, 100n)).toThrow(InvalidKey);
   });
 });
 
@@ -532,6 +547,11 @@ describe('send builder — frozen vectors', () => {
 });
 
 describe('send builder — refusals', () => {
+  it('InvalidKey when the recipient is not 64 lowercase hex', () => {
+    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 500n }], height: 5000, era: 1, author: PUB };
+    expect(() => buildSend(ctx, BAD_KEY, 100n)).toThrow(InvalidKey);
+  });
+
   it('InsufficientCredits when the spendable view cannot cover the amount', () => {
     const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 500n }], height: 5000, era: 1, author: PUB };
     expect(() => buildSend(ctx, RECIPIENT, 100_000_000_000n)).toThrow(InsufficientCredits);
