@@ -6,10 +6,9 @@ import { IdentityModule, IDENTITY_KEY, type Identity } from '../src/identity/ide
 
 // The identity module holds one key as an encrypted envelope, decrypts the seed on
 // demand, and never lets the seed cross its boundary (WEB_INTERFACE → The identity
-// module). Under vitest the vite alias routes @dagsocial/types' `crypto` through the
-// shim, and Node's real `crypto.verify(null, …)` — the node's verifier path —
-// confirms a signature the module makes, the way crypto-shim.test.ts reaches real
-// Node crypto. scrypt runs at the production N here; each create/unlock pays it.
+// module). Node's real `crypto.verify(null, …)` — the node's verifier path —
+// confirms a signature the module makes. scrypt runs at the production N here;
+// each create/unlock pays it.
 
 function toHex(bytes: Uint8Array): string {
   let s = '';

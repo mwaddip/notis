@@ -445,7 +445,7 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
     // The read surface hashes here: recompute the body's commitment with the
     // shared implementation and assert it matches what the node served, showing
     // nothing.
-    // WEB_INTERFACE → The browser reaches @dagsocial/types through a build-time shim
+    // WEB_INTERFACE → The client's builds substitute nothing
     assertContentHash(post.id, post.content, post.contentHash);
     // The content grammar builds the body's nodes (WEB_INTERFACE → Content →
     // "A newline is a line break, a blank line a paragraph").
