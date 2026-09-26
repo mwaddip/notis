@@ -1,7 +1,8 @@
-import { createHash } from 'crypto';
 import { ByteReader, ByteWriter } from '@dagsocial/wire';
+import { hash32 } from './hash.js';
 import {
   u32BE,
+  bytesToHex,
   enum8,
   readArr,
   readBytesN,
@@ -98,11 +99,7 @@ export const POST_CONTENT_DOMAIN = encoder.encode('dagsocial/post-content/1');
  * TYPES_INTERFACE → Hashing functions. Hash-side tag, never on the wire.
  */
 export function computeContentHash(content: string): Uint8Array {
-  return new Uint8Array(createHash('blake2b512')
-    .update(POST_CONTENT_DOMAIN)
-    .update(encoder.encode(content))
-    .digest()
-    .subarray(0, 32));
+  return hash32(POST_CONTENT_DOMAIN, encoder.encode(content));
 }
 
 /**
@@ -213,11 +210,5 @@ export function readPostCommitFields(r: ByteReader): PostCommit {
  * is why it is that function and not `Buffer.writeUInt32BE`.
  */
 export function computePostId(txId: TxId, index: number): PostId {
-  return createHash('blake2b512')
-    .update(POST_ID_DOMAIN)
-    .update(encoder.encode(txId))
-    .update(u32BE(index))
-    .digest()
-    .subarray(0, 32)
-    .toString('hex');
+  return bytesToHex(hash32(POST_ID_DOMAIN, encoder.encode(txId), u32BE(index)));
 }
