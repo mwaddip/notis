@@ -552,7 +552,7 @@ enters the sum once, its coefficients added.
 **The coefficients are derived from the batch, never drawn** — a draw would let one node accept a body
 the rest refuse (`CONSENSUS_INTERFACE → Applying a block`). Once every entry has
 passed its shape check, the transcript is `T = SHA-512( "dagsocial/ed25519-batch/1" ‖ LE32(n) ‖ for
-each entry in order: signature(64) ‖ publicKey(32) ‖ LE32(|message|) ‖ message )`, over the domain's
+each entry in order: signature(64) ‖ publicKey(32) ‖ LE64(|message|) ‖ message )`, over the domain's
 ASCII bytes, and `zᵢ = LE( SHA-512(T ‖ LE32(i))[0..16] )` for entry `i` from 0 — 128 bits, a zero taken
 as 1. `T` binds every entry's bytes and their order, so a forger learns the coefficients only by
 fixing the whole batch: each attempt costs a hash and succeeds with probability at most 2⁻¹²⁸.
