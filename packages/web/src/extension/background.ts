@@ -1,8 +1,7 @@
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { computeTxId, decodeTx, computeContentHash } from '@dagsocial/types';
+import { computeTxId, decodeTx, computeContentHash, bytesToHex, hexToBytes, generateKeyPair } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
-import { seal, open, parseFile, toHex, hexToBytes, IdentityError, type Envelope } from '../identity/envelope';
-import { generateKeyPair } from '@dagsocial/types';
+import { seal, open, parseFile, IdentityError, type Envelope } from '../identity/envelope';
 import {
   isMessage, REFUSED_UNKNOWN,
   type AppSnapshot, type SignAnswer, type SignHint, type SignRecord,
@@ -125,8 +124,8 @@ async function stateSnapshot(api: typeof chrome): Promise<AppSnapshot | null> {
 
 async function draft(api: typeof chrome): Promise<{ pubKeyHex: string }> {
   const kp = generateKeyPair();
-  const pubKeyHex = toHex(kp.publicKey);
-  const seedHex = toHex(kp.secretKey.subarray(16)); // the DER's last 32 bytes
+  const pubKeyHex = bytesToHex(kp.publicKey);
+  const seedHex = bytesToHex(kp.secretKey.subarray(16)); // the DER's last 32 bytes
   await api.storage.session.set({ [K_DRAFT]: { pubKeyHex, seedHex } });
   return { pubKeyHex };
 }
@@ -183,7 +182,7 @@ async function importFile(api: typeof chrome, text: string, passphrase: string):
     return { error: errorMessage(e) };
   }
   await api.storage.local.set({ [K_ENVELOPE]: JSON.stringify(envelope), [K_BACKEDUP]: '1' });
-  await api.storage.session.set({ [K_SEED]: toHex(seed) });
+  await api.storage.session.set({ [K_SEED]: bytesToHex(seed) });
   return { pubKeyHex: envelope.pubKeyHex };
 }
 
@@ -210,7 +209,7 @@ async function unlock(api: typeof chrome, passphrase: string): Promise<'ok' | { 
   } catch (e) {
     return { error: errorMessage(e) };
   }
-  await api.storage.session.set({ [K_SEED]: toHex(seed) });
+  await api.storage.session.set({ [K_SEED]: bytesToHex(seed) });
   return 'ok';
 }
 
@@ -359,7 +358,7 @@ async function signMessage(api: typeof chrome, txBytesHex: string, txIdHex: stri
   if (ledger === 'karma' && policy === 'silent') {
     const seed = await readSeed(api);
     if (seed === null) return { locked: true };
-    return { signature: toHex(ed25519.sign(hexToBytes(txIdHex), seed)) };
+    return { signature: bytesToHex(ed25519.sign(hexToBytes(txIdHex), seed)) };
   }
   // 6. Otherwise, the prompt. One at a time.
   if (await hasOpenPromptRecord(api)) return { refused: 'busy' };
@@ -403,7 +402,7 @@ async function approve(api: typeof chrome, id: string, sender: chrome.runtime.Me
   if (record === null || record.result) return { error: 'no open prompt for that id' };
   const seed = await readSeed(api);
   if (seed === null) return { error: 'locked' };
-  const signature = toHex(ed25519.sign(hexToBytes(record.txIdHex), seed));
+  const signature = bytesToHex(ed25519.sign(hexToBytes(record.txIdHex), seed));
   const updated: SignRecord = { ...record, result: { signature } };
   await api.storage.session.set({ [K_SIGN_PREFIX + id]: updated });
   if (typeof record.windowId === 'number') {
@@ -558,7 +557,7 @@ async function promptPlacement(api: typeof chrome): Promise<{ left: number; top:
 function randomId(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
-  return toHex(bytes);
+  return bytesToHex(bytes);
 }
 
 function verifiedHint(tx: UtxoTransaction, hint: SignHint): SignHint {
@@ -566,8 +565,8 @@ function verifiedHint(tx: UtxoTransaction, hint: SignHint): SignHint {
   // "The summary the prompt shows is derived from the transaction". Any other
   // field the page might sneak in is dropped.
   if (typeof hint.content === 'string' && tx.post) {
-    const computed = toHex(computeContentHash(hint.content));
-    if (computed === toHex(tx.post.contentHash)) return { content: hint.content };
+    const computed = bytesToHex(computeContentHash(hint.content));
+    if (computed === bytesToHex(tx.post.contentHash)) return { content: hint.content };
   }
   return {};
 }
