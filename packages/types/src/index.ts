@@ -225,6 +225,9 @@ export type {
 export {
   VLQ_SENTINEL,
   CodecError,
+  bytesToHex,
+  hexToBytes,
+  equalBytes,
   writeU8OrThrow,
   readU8,
   writeVlqU,

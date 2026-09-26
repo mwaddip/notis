@@ -13,10 +13,13 @@ import {
   CodecError,
   type StructCodec,
   VLQ_SENTINEL,
+  bytesToHex,
   decodeStruct,
   encodeStruct,
   enum8,
+  equalBytes,
   firstDifference,
+  hexToBytes,
   readBytesN,
   readHexN,
   readLp,
@@ -194,6 +197,55 @@ describe('hex ↔ bytes lives here and only here', () => {
   it('an id costs 32 bytes, not 64 — the dialect change', () => {
     expect(bytes((w) => writeHexNOrThrow(w, ID32, 32))).toHaveLength(32);
     expect(new TextEncoder().encode(ID32)).toHaveLength(64);
+  });
+});
+
+describe('bytesToHex / hexToBytes — TYPES_INTERFACE → Export table', () => {
+  it('round-trips arbitrary bytes', () => {
+    const raw = Uint8Array.from({ length: 17 }, (_, i) => (i * 37) & 0xff);
+    expect(hexToBytes(bytesToHex(raw))).toEqual(raw);
+  });
+
+  it('bytesToHex is lowercase, two characters a byte', () => {
+    expect(bytesToHex(Uint8Array.of(0x00, 0xab, 0xff))).toBe('00abff');
+  });
+
+  it('hexToBytes accepts the empty string', () => {
+    expect(hexToBytes('')).toEqual(new Uint8Array(0));
+  });
+
+  it('hexToBytes throws on an odd length', () => {
+    expect(() => hexToBytes('abc')).toThrow(TypeError);
+  });
+
+  it('hexToBytes throws on an uppercase digit', () => {
+    expect(() => hexToBytes('AB')).toThrow(TypeError);
+  });
+
+  it('hexToBytes throws on a non-hex character', () => {
+    expect(() => hexToBytes('zz')).toThrow(TypeError);
+  });
+
+  it('never partially decodes, unlike Buffer.from(hex, "hex")', () => {
+    // Buffer.from stops at the first non-hex character and answers what it
+    // read so far rather than refusing (TYPES_INTERFACE → Export table).
+    expect(Buffer.from('zz', 'hex')).toHaveLength(0);
+    expect(() => hexToBytes('zz')).toThrow(TypeError);
+  });
+});
+
+describe('equalBytes', () => {
+  it('is true for equal-length, equal-content arrays, including empty', () => {
+    expect(equalBytes(Uint8Array.of(1, 2, 3), Uint8Array.of(1, 2, 3))).toBe(true);
+    expect(equalBytes(new Uint8Array(0), new Uint8Array(0))).toBe(true);
+  });
+
+  it('is false for a length mismatch', () => {
+    expect(equalBytes(Uint8Array.of(1, 2), Uint8Array.of(1, 2, 3))).toBe(false);
+  });
+
+  it('is false for a content mismatch of equal length', () => {
+    expect(equalBytes(Uint8Array.of(1, 2, 3), Uint8Array.of(1, 2, 4))).toBe(false);
   });
 });
 
