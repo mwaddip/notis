@@ -18,6 +18,9 @@ import {
   isValidUsernameBytes,
   canonicalUsernameBytes,
   BACKER_UNSTAKE_MIN_PCT,
+  bytesToHex,
+  hexToBytes,
+  equalBytes,
 } from '@dagsocial/types';
 import { isCreditSideTx } from './coinbase-split.js';
 import { effectiveKarma } from '@dagsocial/types';
@@ -250,17 +253,22 @@ export interface UtxoResult {
  */
 function verifyGuardSignature(
   tx: UtxoTransaction,
-  txHash: Buffer,
+  txHash: Uint8Array,
   pubKey: Uint8Array,
   verifySignature: UtxoEngineDeps['verifySignature'],
 ): boolean {
-  const hexKey = Buffer.from(pubKey).toString('hex');
+  const hexKey = bytesToHex(pubKey);
   const signature = tx.signatures[hexKey];
   if (!signature) return false;
   return verifySignature !== undefined
     ? verifySignature(signature, txHash, pubKey)
     : verifyEd25519(signature, txHash, pubKey);
 }
+
+// A username's canonical bytes are `[a-z0-9_]` — a strict subset of ASCII
+// (TYPES_INTERFACE → Content limits) — so `TextDecoder` and a partial-decode
+// reader answer the same string.
+const USERNAME_DECODER = new TextDecoder('utf-8');
 
 /**
  * Check legal box transitions for a given set of inputs and outputs.
@@ -364,9 +372,9 @@ function checkTransitions(
       // deliberately exempt — tradeable, so multi-owner credit inputs are an
       // ordinary multi-party payment.
       const inputKarma = inputs[0] as KarmaBox;
-      const inputOwnerHex = Buffer.from(inputKarma.owner).toString('hex');
+      const inputOwnerHex = bytesToHex(inputKarma.owner);
       for (const box of inputs) {
-        if (Buffer.from((box as KarmaBox).owner).toString('hex') !== inputOwnerHex) {
+        if (bytesToHex((box as KarmaBox).owner) !== inputOwnerHex) {
           return {
             valid: false,
             error: `Karma cannot be transferred (karma inputs have different owners)`,
@@ -390,7 +398,7 @@ function checkTransitions(
             error: `A zero-value karma output is not created; zero means no box`,
           };
         }
-        if (Buffer.from(k.owner).toString('hex') !== Buffer.from(inputKarma.owner).toString('hex')) {
+        if (bytesToHex(k.owner) !== bytesToHex(inputKarma.owner)) {
           return {
             valid: false,
             error: `Karma cannot be transferred (owner change on karma box)`,
@@ -416,7 +424,7 @@ function checkTransitions(
       if (usernameInput !== null) {
         // NODE_INTERFACE → Username transition rules, Burn row.
         const uBox = usernameInput as UsernameBox;
-        if (Buffer.from(uBox.owner).toString('hex') !== inputOwnerHex) {
+        if (bytesToHex(uBox.owner) !== inputOwnerHex) {
           return { valid: false, error: 'Burn: username box owner must match the karma inputs\' owner' };
         }
         if (priceOutputs.length !== 1) {
@@ -448,10 +456,10 @@ function checkTransitions(
         if (!isValidUsernameBytes(uOut.name)) {
           return { valid: false, error: 'name invalid' };
         }
-        if (Buffer.from(uOut.owner).toString('hex') !== inputOwnerHex) {
+        if (bytesToHex(uOut.owner) !== inputOwnerHex) {
           return { valid: false, error: 'Claim: username owner must match the karma inputs\' owner' };
         }
-        const canonical = Buffer.from(canonicalUsernameBytes(uOut.name)).toString('utf8');
+        const canonical = USERNAME_DECODER.decode(canonicalUsernameBytes(uOut.name));
         const existing = deps.getUsername(canonical);
         if (existing !== null) {
           return { valid: false, error: 'name taken' };
@@ -505,18 +513,18 @@ function checkTransitions(
             error: `Like target ${likeTarget} is not confirmed, so it names no author`,
           };
         }
-        if (Buffer.from(marker.author).toString('hex') !==
-            Buffer.from(author).toString('hex')) {
+        if (bytesToHex(marker.author) !==
+            bytesToHex(author)) {
           return {
             valid: false,
             error:
-              `Like marker names ${Buffer.from(marker.author).toString('hex')}, ` +
-              `but ${likeTarget}'s author is ${Buffer.from(author).toString('hex')}`,
+              `Like marker names ${bytesToHex(marker.author)}, ` +
+              `but ${likeTarget}'s author is ${bytesToHex(author)}`,
           };
         }
         // NODE_INTERFACE → Karma transition rules: the liker is not the author.
-        if (Buffer.from(author).toString('hex') ===
-            Buffer.from(inputKarma.owner).toString('hex')) {
+        if (bytesToHex(author) ===
+            bytesToHex(inputKarma.owner)) {
           return {
             valid: false,
             error: `A like of one's own post ${likeTarget} is refused`,
@@ -524,7 +532,7 @@ function checkTransitions(
         }
       } else if (post !== undefined) {
         // NODE_INTERFACE → Legal box transitions (Thread and Reply rows).
-        if (!Buffer.from(post.author).equals(Buffer.from(inputKarma.owner))) {
+        if (!equalBytes(post.author, inputKarma.owner)) {
           return {
             valid: false,
             error: 'Post author must own the karma the transaction spends',
@@ -592,13 +600,13 @@ function checkTransitions(
               error: `Reply parent ${parentId} names no author`,
             };
           }
-          if (Buffer.from(marker.author).toString('hex') !==
-              Buffer.from(parentAuthor).toString('hex')) {
+          if (bytesToHex(marker.author) !==
+              bytesToHex(parentAuthor)) {
             return {
               valid: false,
               error:
-                `Reply marker names ${Buffer.from(marker.author).toString('hex')}, ` +
-                `but parent's author is ${Buffer.from(parentAuthor).toString('hex')}`,
+                `Reply marker names ${bytesToHex(marker.author)}, ` +
+                `but parent's author is ${bytesToHex(parentAuthor)}`,
             };
           }
         }
@@ -615,7 +623,7 @@ function checkTransitions(
         }
         const postAuthor = deps.getTopologyAuthor(postWithdraw.postId);
         if (postAuthor === null ||
-            Buffer.from(postAuthor).toString('hex') !== inputOwnerHex) {
+            bytesToHex(postAuthor) !== inputOwnerHex) {
           return {
             valid: false,
             error: `PostWithdraw post ${postWithdraw.postId} is not authored by the karma input's owner`,
@@ -657,8 +665,8 @@ function checkTransitions(
         // stakes their karma, B unvouches it, and the escrow matures to B — a
         // karma transfer with no invite, the property the whole invite/bond
         // mechanism protects.
-        if (Buffer.from(vouchOut.voucherId).toString('hex') !==
-            Buffer.from(inputKarma.owner).toString('hex')) {
+        if (bytesToHex(vouchOut.voucherId) !==
+            bytesToHex(inputKarma.owner)) {
           return {
             valid: false,
             error: `Vouch voucherId must be the karma input's owner`,
@@ -701,8 +709,8 @@ function checkTransitions(
           };
         }
         // No self-vouch (NODE_INTERFACE → Vouch transition rules).
-        if (Buffer.from(vouchOut.voucherId).toString('hex') ===
-            Buffer.from(vouchOut.targetId).toString('hex')) {
+        if (bytesToHex(vouchOut.voucherId) ===
+            bytesToHex(vouchOut.targetId)) {
           return {
             valid: false,
             error: `Cannot vouch for yourself`,
@@ -781,7 +789,7 @@ function checkTransitions(
         // The bond carries the karma input's owner as `inviterId`. Without this
         // the creator could emit a bond naming someone else as inviter, and the
         // probation-deadline settlement pays that stranger.
-        if (Buffer.from(bondOut.inviterId).toString('hex') !== inputOwnerHex) {
+        if (bytesToHex(bondOut.inviterId) !== inputOwnerHex) {
           return {
             valid: false,
             error: `Bond inviterId must be the karma input's owner`,
@@ -805,7 +813,7 @@ function checkTransitions(
         // never held karma, so it has never posted and never been liked — which
         // is also what makes the grant the record-CREATING event for every legal
         // invitee.
-        const inviteeHex = Buffer.from(bondOut.inviteePublicKey).toString('hex');
+        const inviteeHex = bytesToHex(bondOut.inviteePublicKey);
         const inviteeRecord = deps.getIdentityRecord(bondOut.inviteePublicKey);
         if (inviteeRecord !== null) {
           return {
@@ -919,7 +927,7 @@ function checkTransitions(
             const matched = creditOutputs.some((o) => {
               const c = o as CreditBox;
               return c.value === remainder &&
-                Buffer.from(c.owner).equals(Buffer.from(credit.owner)) &&
+                equalBytes(c.owner, credit.owner) &&
                 c.createdAtBlock === currentBlockHeight;
             });
             if (!matched) {
@@ -1008,8 +1016,8 @@ function checkTransitions(
       }
       // Where the karma returns. A foreign `owner` is the `voucherId` defect in
       // a new box: A stakes, A unvouches, and the escrow matures to B.
-      if (Buffer.from(escrow.owner).toString('hex') !==
-          Buffer.from(staked.voucherId).toString('hex')) {
+      if (bytesToHex(escrow.owner) !==
+          bytesToHex(staked.voucherId)) {
         return {
           valid: false,
           error: `Unvouch escrow owner must be the consumed VouchBox's voucherId`,
@@ -1076,12 +1084,12 @@ function checkTransitions(
         return { valid: false, error: 'unstake below minimum' };
       }
 
-      const stakeOwnerHex = Buffer.from(stake.owner).toString('hex');
-      if (Buffer.from(marker.owner).toString('hex') !== stakeOwnerHex) {
+      const stakeOwnerHex = bytesToHex(stake.owner);
+      if (bytesToHex(marker.owner) !== stakeOwnerHex) {
         return { valid: false, error: 'unstake marker names another owner' };
       }
       if (successor !== null &&
-          Buffer.from(successor.owner).toString('hex') !== stakeOwnerHex) {
+          bytesToHex(successor.owner) !== stakeOwnerHex) {
         return { valid: false, error: 'stake successor names another owner' };
       }
 
@@ -2110,7 +2118,7 @@ function checkAuthorization(
   verifySignature: UtxoEngineDeps['verifySignature'],
 ): UtxoResult {
   const AUTHORIZATION = authorizationTable(storageRentPeriodBlocks);
-  const txHash = Buffer.from(computeTxId(tx), 'hex');
+  const txHash = hexToBytes(computeTxId(tx));
   const requiredKeys = new Set<string>();
 
   for (const box of inputBoxes) {
@@ -2135,7 +2143,7 @@ function checkAuthorization(
     // already verified for this transaction verifies for every later input it
     // signs for: each is checked once (CONSENSUS_INTERFACE → Cost → "A
     // transaction checks each signer once").
-    const signerHex = Buffer.from(signerKey).toString('hex');
+    const signerHex = bytesToHex(signerKey);
     if (requiredKeys.has(signerHex)) continue;
     if (!verifyGuardSignature(tx, txHash, signerKey, verifySignature)) {
       return { valid: false, error: rule.unsigned(box, tx) };
