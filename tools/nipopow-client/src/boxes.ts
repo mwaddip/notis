@@ -6,6 +6,7 @@ import {
   computeCandidateBoxId,
   decayCfgFor,
   effectiveKarma,
+  hexToBytes,
   identityRecordFromBytes,
   identityRecordKey,
 } from '@dagsocial/types';
@@ -295,7 +296,7 @@ export async function proveBoxAtHeight(
 // proven when it is included, its `boxType` is the ledger it was listed under,
 // its `owner` is the loaded key, and its value — and a credit box's lock — are
 // the listing's, both being fixed by the box id. `listed` has passed
-// malformedListedBox.
+// checkListedBox.
 async function proveListedBoxAtHeight(
   nodeUrl: string,
   listed: ListedBox,
@@ -388,19 +389,24 @@ export async function proveFigures(
   for (const b of listing.credits.boxes) allBoxes.push({ listed: b, boxClass: 'credit' });
 
   // Step 1 — every listed box at suffixHead; an entry that is not a listed box,
-  // or names an id the listing named earlier, is unproven and asks for nothing
+  // or names an id the listing named earlier, is unproven and asks for nothing.
+  // `checked` keeps each entry's own (lowercased) form, indexed with `allBoxes`,
+  // for step 3 and the assembly below to reuse without re-validating.
   const firstPass: FirstPassOutcome[] = [];
+  const checked: (ListedBox | null)[] = [];
   const named = new Set<string>();
   for (const { listed, boxClass } of allBoxes) {
-    const malformed = malformedListedBox(listed, named);
-    if (malformed !== null) {
-      firstPass.push({ kind: 'malformed', verdict: malformed });
+    const check = checkListedBox(listed, named);
+    if (!check.ok) {
+      checked.push(null);
+      firstPass.push({ kind: 'malformed', verdict: check.verdict });
       continue;
     }
+    checked.push(check.listed);
     firstPass.push(
       await proveListedBoxAtHeight(
         nodeUrl,
-        listed,
+        check.listed,
         boxClass,
         userLowerHex,
         suffixHeight,
@@ -424,12 +430,12 @@ export async function proveFigures(
   const secondPass = new Map<number, BoxProofOutcome>();
   for (let i = 0; i < allBoxes.length; i++) {
     if (firstPass[i]!.kind !== 'exclusion') continue;
-    const { listed, boxClass } = allBoxes[i]!;
+    const { boxClass } = allBoxes[i]!;
     secondPass.set(
       i,
       await proveListedBoxAtHeight(
         nodeUrl,
-        listed,
+        checked[i]!,
         boxClass,
         userLowerHex,
         tipHeight,
@@ -446,13 +452,14 @@ export async function proveFigures(
   const boxes: FigureBox[] = [];
   let failed = false;
   for (let i = 0; i < allBoxes.length; i++) {
-    const { listed, boxClass } = allBoxes[i]!;
+    const { listed: rawListed, boxClass } = allBoxes[i]!;
     const first = firstPass[i]!;
     if (first.kind === 'malformed') {
-      boxes.push(malformedFigureBox(listed, boxClass, first.verdict));
+      boxes.push(malformedFigureBox(rawListed, boxClass, first.verdict));
       failed = true;
       continue;
     }
+    const listed = checked[i]!;
     const listingValue = BigInt(listed.value);
     const listingLocked =
       boxClass === 'credit' ? listed.lockedUntilBlock ?? null : null;
@@ -668,26 +675,33 @@ function isBlockHeight(v: unknown): v is number {
 export const HEX_64 = /^[0-9a-f]{64}$/i;
 const DECIMAL = /^[0-9]+$/;
 
+type ListedBoxCheck = { ok: true; listed: ListedBox } | { ok: false; verdict: string };
+
 // An entry is asked about only when it is an object whose `boxId` is 64 hex and
 // named nowhere earlier in the listing, in either ledger, and whose `value` is
 // a decimal string (WEB_INTERFACE → The extension → "A run is total";
 // WEB_INTERFACE → The extension → "The verified figures");
 // for any other, the reason it is not, named. `named` holds every 64-hex id the
-// listing named before this entry, lowercased.
-function malformedListedBox(listed: unknown, named: Set<string>): string | null {
-  if (!isRecord(listed)) return `the listed box is not an object: ${shown(listed)}`;
-  const boxId = listed['boxId'];
-  if (typeof boxId !== 'string' || !HEX_64.test(boxId)) {
-    return `the listed boxId is not 64 hex: ${shown(boxId)}`;
+// listing named before this entry, lowercased. A checked entry's own `boxId`
+// comes back lowercased too — the AVL key `hexToBytes` decodes, and the id the
+// proof endpoint is asked with, are the listing's id in the one case it holds
+// in the tree, never the node's own spelling of it.
+function checkListedBox(listed: unknown, named: Set<string>): ListedBoxCheck {
+  if (!isRecord(listed)) return { ok: false, verdict: `the listed box is not an object: ${shown(listed)}` };
+  const rawBoxId = listed['boxId'];
+  if (typeof rawBoxId !== 'string' || !HEX_64.test(rawBoxId)) {
+    return { ok: false, verdict: `the listed boxId is not 64 hex: ${shown(rawBoxId)}` };
   }
-  const id = boxId.toLowerCase();
-  if (named.has(id)) return `the listed boxId is named earlier in the listing: ${shown(boxId)}`;
-  named.add(id);
+  const boxId = rawBoxId.toLowerCase();
+  if (named.has(boxId)) {
+    return { ok: false, verdict: `the listed boxId is named earlier in the listing: ${shown(rawBoxId)}` };
+  }
+  named.add(boxId);
   const value = listed['value'];
   if (typeof value !== 'string' || !DECIMAL.test(value)) {
-    return `the listed value is not a decimal integer: ${shown(value)}`;
+    return { ok: false, verdict: `the listed value is not a decimal integer: ${shown(value)}` };
   }
-  return null;
+  return { ok: true, listed: { ...listed, boxId, value } as ListedBox };
 }
 
 // A malformed entry keeps what reads — its `boxId` where it is a string, its
@@ -728,20 +742,11 @@ function lockShown(v: unknown): string {
   return typeof v === 'number' ? String(v) : shown(v);
 }
 
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
-}
-
-// NODE_INTERFACE → AVL+ State Root — the proof blob is the node's base64
-// (`Buffer.from(proof).toString('base64')`, avl-endpoint.ts), decoded here with
-// `atob`, a global in both browsers and Node 22. Unlike `Buffer.from(_,
-// 'base64')`, which silently skips a character it does not recognize, `atob`
-// throws on one or on a wrong length — caught here so a malformed blob from a
-// lying node is a refused proof, `null`, never an exception out of the library.
+// NODE_INTERFACE → AVL+ State Root — the proof blob is standard base64,
+// decoded here with `atob`, a global in both browsers and Node 22. It throws
+// on a character outside the alphabet or on a wrong length — caught here so a
+// malformed blob from a lying node is a refused proof, `null`, never an
+// exception out of the library.
 function base64ToBytes(b64: string): Uint8Array | null {
   let binary: string;
   try {
