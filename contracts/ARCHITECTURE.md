@@ -2035,8 +2035,7 @@ no object check compares against it and no producer stamps it.
   `validation`'s `verifyEd25519`, or `verifyEd25519Batch` for a block's body — strict RFC 8032 /
   FIPS 186-5 through `@noble/curves`, one implementation for every runtime
   (`VALIDATION_INTERFACE → Acceptance criterion`): `0 ≤ S < L`, canonical `A` and `R`, `A` not of
-  small order, the cofactored equation; one valid signature per message and key (⚠ AHEAD OF CODE (2026-09-26, `ed25519-batch-verify`).
-  `verifyEd25519Batch` does not exist yet). **Every signature in the system is
+  small order, the cofactored equation; one valid signature per message and key. **Every signature in the system is
   excluded from every preimage** — `txIdBytes` omits them and every Merkle leaf is an id — so a
   malleated signature can never move a block hash; what remains is acceptance, and one stated rule
   with one implementation is what keeps two verifiers from disagreeing about a block's validity

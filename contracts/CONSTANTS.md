@@ -280,8 +280,6 @@ holds byte-identical across the whole domain.
 | `ORDERING_TARGET_PRECISION` (literal) | `320n` | the scale the fractional-bit factor table is written at | local | the factors' fixed-point precision; under-precision is safe and one-sided. `validation/src/verify.ts` | CHOSEN | `VALIDATION_INTERFACE → What is not consensus` |
 | `BATCH_COEFFICIENT_BYTES` (literal) | `16` | 128-bit coefficients | consensus | a batch holding a failing entry passes with probability at most 2⁻¹²⁸, the margin an Ed25519 key already rests on; module-private to `validation/src/ed25519-batch.ts` | CHOSEN | `VALIDATION_INTERFACE → verifyEd25519Batch` |
 
-> ⚠ **AHEAD OF CODE (2026-09-26, `ed25519-batch-verify`).** `ed25519-batch.ts` and its literal do not exist yet.
-
 ### net
 
 Relay and codec bounds a peer's messages must respect; a body over one is refused before its first

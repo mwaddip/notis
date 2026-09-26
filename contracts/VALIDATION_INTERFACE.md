@@ -505,9 +505,6 @@ or asks a runtime's verifier. **The rule is this repo's, stated here and impleme
 runtime that runs it — a node, a browser — accepts the same set, and a change to it is a consensus
 change, never a dependency bump.
 
-> ⚠ **AHEAD OF CODE (2026-09-26, `ed25519-batch-verify`).** `verifyEd25519Batch` does not exist yet:
-> `applyBlock` checks each signature through `validateTx`, which calls `verifyEd25519` on every path.
-
 **It is total.** A signature that is not 64 bytes, a key that is not 32, or a key that does not
 decode to a point answers `false`, never a throw — the verifiers above it promise no-panic (→
 Postconditions).
@@ -530,9 +527,6 @@ implementation, not whatever a runtime ships.
 verifyEd25519Batch(entries: ReadonlyArray<Ed25519BatchEntry>): boolean
 Ed25519BatchEntry = { signature: Uint8Array; message: Uint8Array; publicKey: Uint8Array }
 ```
-
-> ⚠ **AHEAD OF CODE (2026-09-26, `ed25519-batch-verify`).** This section is what the unit builds; no
-> such export exists yet.
 
 **A batch answers what its entries would.** `true` exactly when every entry passes `verifyEd25519`
 (→ Acceptance criterion) — except that a batch holding an entry that fails answers `true` with

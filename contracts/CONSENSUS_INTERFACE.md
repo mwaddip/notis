@@ -60,15 +60,19 @@ candidate whose nonce, signature and `stateRoot` are placeholders (`NODE_INTERFA
 `applyBlock` gathers each entry of every embedded transaction's signature map — in body order, and within a
 transaction in its map's decoded order — as the signature, the transaction id's 32 bytes and the key, and makes one
 `verifyEd25519Batch` call (`VALIDATION_INTERFACE → verifyEd25519Batch`). `false` rejects the block: `Rejected block
-height=H: a signature in the body does not verify`. `true` hands the loop the verified set, and the `validateTx` it
-runs answers each signature from it (→ The overlay); an entry outside the set fails its transaction. **Checking every
+height=H: a signature in the body does not verify`. **No transaction may carry more signatures than inputs, and that
+is checked first:** each input requires at most one signer and a map key no input requires refuses its transaction, so
+a map with more entries than its transaction has inputs is refused before the batch runs — `Rejected block height=H:
+embedded UTXO tx <id> carries more signatures than inputs` — and the batch checks at most one entry per input.
+`true` hands the loop the verified set, and the `validateTx` it runs answers each signature from it (→ The overlay);
+an entry outside the set fails its transaction. **Checking every
 entry keeps every verdict:** `validateTx` refuses a map key no input requires, so every entry of a valid transaction's
 map verifies, and a body with a failing entry is a rejected block either way. **A missing signature is not an
 entry**: the loop refuses it with its transaction's reason. The settlement carries no signature, and the header's is
 the node's to check (`NODE_INTERFACE → Ordering block apply-time authorization`).
 
-> ⚠ **AHEAD OF CODE (2026-09-26, `ed25519-batch-verify`).** No body check runs yet and `UtxoEngineDeps` has no
-> `verifySignature`: the loop's `validateTx` calls `verifyEd25519` once per signer, as the mempool's does.
+> ⚠ **AHEAD OF CODE (2026-09-26, `ed25519-batch-verify`).** No signatures-per-input check runs yet: a transaction whose map
+> holds more entries than it has inputs reaches the batch, and the pass refuses it for the unrequired key.
 
 **A rule failure is a `reason`, never a throw.** Every rejection the phase makes answers `{ ok: false, reason }`, the
 reason the text the node logs.
@@ -152,9 +156,6 @@ node builds `UtxoEngineDeps` over its store for admission, where `validateTx` is
 `validateTx` then calls `verifyEd25519` for each signer. Who must sign, and the refusal of a map key no input
 requires, are `validateTx`'s on both paths.
 
-> ⚠ **AHEAD OF CODE (2026-09-26, `ed25519-batch-verify`).** `UtxoEngineDeps` has no `verifySignature` yet; both
-> builds check through `verifyEd25519`.
-
 ## BlockEffects
 
 **What the block did, returned instead of written:**
@@ -210,10 +211,12 @@ OpenSSL on the same two machines takes 0.13–0.15 ms a signature with the key's
 transaction's id, so a signer whose boxes are several of a transaction's inputs is one check, not one per input. The
 worst case is then one check per 128 bytes of body — an extra signer costs 32 bytes of input and 96 of key and
 signature — and `MAX_TX_BYTES` holds at most 77 signers in one transaction (9 903 bytes), so a body at
-`MAX_BLOCK_BODY_BYTES` carries at most **15 497 signatures in 202 transactions: 4.2–4.6 s as a batch on the i9's core
-and 9.2 s on the box's**, where one check at a time takes 20–22 s and 40 s. An ordinary full body — one signer a
-transaction — holds 5 800 to 8 000. `packages/consensus/scripts/bench-apply-block.mjs` reproduces both bodies through
-`applyBlock`. No other term may grow faster than the reads the body makes: each overlay read is a map lookup or one
+`MAX_BLOCK_BODY_BYTES` carries at most **about 15 500 signatures in 202 transactions** (15 496–15 499 as the height
+moves the widths of the values): **4.2–4.6 s as a batch on the i9's core and 9.2 s on the box's**, where one check at a
+time takes 20–22 s and 40 s. An ordinary full body — one signer a transaction — holds 5 800 to about 8 100. **A body
+the rules refuse costs no more to check than that worst case:** the batch checks at most one entry per input
+(→ Applying a block), so every entry still costs 128 bytes of body.
+`packages/consensus/scripts/bench-apply-block.mjs` reproduces both bodies through `applyBlock`. No other term may grow faster than the reads the body makes: each overlay read is a map lookup or one
 composition over the view's answer to it.
 
 > ⚠ **AHEAD OF CODE (2026-09-26, `ed25519-batch-verify`).** The batch column is a prototype's, measured outside
