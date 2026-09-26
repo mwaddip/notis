@@ -180,9 +180,9 @@ makes a title plain.
 - Parent refs: 0–1 per post (`MAX_PARENT_REFS`)
 - **On-chain time is block height**, never wall clock — one named exemption: the ordering-block
   difficulty schedule reads header `createdAt` stamps (`MINING_INTERFACE` → Difficulty Schedule)
-- Signatures: raw Ed25519 — 64 raw bytes on the positional wire, hex at the HTTP JSON edge. Verified by
-  `validation`'s `verifyEd25519` alone — strict RFC 8032 through `@noble/curves` (`VALIDATION_INTERFACE → Acceptance
-  criterion`)
+- Signatures: raw Ed25519 — 64 raw bytes on the positional wire, hex at the HTTP JSON edge. Verified by one rule —
+  `validation`'s `verifyEd25519`, or `verifyEd25519Batch` for a block's body — strict RFC 8032 through `@noble/curves`
+  (`VALIDATION_INTERFACE → Acceptance criterion`)
 - Hashing: `blake2b512` with `.subarray(0, 32)` for every 32-byte output
 - Wire format: positional binary. HTTP API: JSON
 - **Value conservation** — every user transaction conserves, unconditionally: each cost lands in a

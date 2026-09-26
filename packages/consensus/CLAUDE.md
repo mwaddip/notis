@@ -14,7 +14,8 @@ context — read it and the linked docs before touching code.
    depend on, how state reaches them.
 7. `../../contracts/NODE_INTERFACE.md` — **the rules themselves**: `validateTx`, `Legal box transitions`, `The
    settlement transaction`, `Karma decay`, `Membership pass`. The code cites them; a rule change starts there.
-8. `../../contracts/VALIDATION_INTERFACE.md → Acceptance criterion` — every signature check is `verifyEd25519`.
+8. `../../contracts/VALIDATION_INTERFACE.md → Acceptance criterion` and `→ verifyEd25519Batch` — every signature check
+   is one rule, one transaction at a time or a block's body as one batch.
 9. Your task's spec in `../../docs/specs/`.
 
 ## What Notis is
@@ -44,8 +45,9 @@ validates blocks will run the same code.
   `SettlementDeps` and `DecayDeps` over it (`CONSENSUS_INTERFACE → The overlay`). A rule that reaches past them is a
   rule the leaf cannot run.
 - **Workspace dependencies: `@dagsocial/types` and `@dagsocial/validation`, and nothing else — never `node`.**
-- **Every signature check is `verifyEd25519`** — strict RFC 8032 through `@noble/curves`
-  (`VALIDATION_INTERFACE → Acceptance criterion`).
+- **Every signature check is `validation`'s** — `verifyEd25519` for admission's `validateTx`, one `verifyEd25519Batch`
+  over every signature a block's body carries in `applyBlock`, strict RFC 8032 through `@noble/curves`
+  (`VALIDATION_INTERFACE → Acceptance criterion`; `CONSENSUS_INTERFACE → Applying a block`).
 - **A verdict is a function of its inputs and the injected state.** Two runs over the same block and the same state
   answer the same, byte for byte; a difference is a fork.
 

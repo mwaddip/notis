@@ -165,3 +165,61 @@ describe('authorization checks each signer once', () => {
     expect(checks()).toBe(1);
   });
 });
+
+/**
+ * A deps' `verifySignature` is the check each required signer answers to, and
+ * `verifyEd25519` is called only when the deps carry none
+ * (CONSENSUS_INTERFACE → The overlay). Every case above runs with none. Who must
+ * sign, and the refusal of a key no input requires, are the same either way.
+ */
+describe("authorization answers each signer from the deps' verifySignature when they carry one", () => {
+  beforeEach(() => {
+    vi.mocked(verifyEd25519).mockClear();
+  });
+
+  const withCheck = (boxes: AnyBox[], check: (s: Uint8Array, m: Uint8Array, k: Uint8Array) => boolean) =>
+    ({ ...depsOver(boxes), verifySignature: vi.fn(check) });
+
+  it('each required signer is asked once, with its entry, the id and its key, and verifyEd25519 never', () => {
+    const { inputs, tx } = twoSignerPayment();
+    signedBy(tx, a, b);
+    const deps = withCheck(inputs, () => true);
+
+    expect(validateTx(deps, tx, H).valid).toBe(true);
+    const id = computeTxId(tx);
+    expect(deps.verifySignature.mock.calls.map(([s, m, k]) => [hex(s), hex(m), hex(k)])).toEqual([
+      [hex(tx.signatures[hex(a.userId)]!), id, hex(a.userId)],
+      [hex(tx.signatures[hex(b.userId)]!), id, hex(b.userId)],
+    ]);
+    expect(checks()).toBe(0);
+  });
+
+  it('a check answering false fails a correctly signed transaction with its rule\'s text', () => {
+    const { inputs, tx } = twoSignerPayment();
+    signedBy(tx, a, b);
+    expect(validateTx(withCheck(inputs, () => false), tx, H)).toEqual({
+      valid: false,
+      error: `Missing or invalid owner signature for box ${inputs[0]!.id}`,
+    });
+    expect(checks()).toBe(0);
+  });
+
+  it('a check answering true still refuses a missing signature and a key no input requires', () => {
+    const pay = twoSignerPayment();
+    signedBy(pay.tx, a);
+    const payDeps = withCheck(pay.inputs, () => true);
+    expect(validateTx(payDeps, pay.tx, H)).toEqual({
+      valid: false,
+      error: `Missing or invalid owner signature for box ${pay.inputs[1]!.id}`,
+    });
+    expect(payDeps.verifySignature).toHaveBeenCalledTimes(1);
+
+    const wide = wideConsolidation();
+    signedBy(wide.tx, outsider);
+    expect(validateTx(withCheck(wide.inputs, () => true), wide.tx, H)).toEqual({
+      valid: false,
+      error: `Signature map carries unrequired key ${hex(outsider.userId).slice(0, 16)}…`,
+    });
+    expect(checks()).toBe(0);
+  });
+});

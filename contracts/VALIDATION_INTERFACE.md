@@ -480,9 +480,10 @@ authorship is verified by the transaction's signature check and nothing else.
 **No path may reintroduce a post-level signature**: two signatures over one
 object is two places for them to disagree.
 
-**Every signature check is `verifyEd25519`** (→ Acceptance criterion): the raw 32-byte public
-key, the 64-byte signature and the message, verified by one implementation — no key envelope and
-no runtime verifier anywhere in the system.
+**Every signature check is `verifyEd25519` or `verifyEd25519Batch`** (→ Acceptance criterion): one
+rule in two forms — the raw 32-byte public key, the 64-byte signature and the message, one entry at a
+time or a block's entries together — verified by one implementation, with no key envelope and no
+runtime verifier anywhere in the system.
 
 ### Acceptance criterion — strict RFC 8032, stated here and implemented once
 
@@ -490,15 +491,19 @@ no runtime verifier anywhere in the system.
 verifyEd25519(signature: Uint8Array, message: Uint8Array, publicKey: Uint8Array): boolean
 ```
 
-**Every signature check in the system is `verifyEd25519`, and it is `@noble/curves`'
-`ed25519.verify(signature, message, publicKey, { zip215: false })`**: Ed25519 per RFC 8032 and
-FIPS 186-5 in their strict form — the scalar `S` below the group order, the key `A` and the point
-`R` canonical encodings — so a message and a key have one valid signature. Every site calls it and
-nothing else: `verifyValidatorSignature` below, `validateTx`'s authorization check
-(`CONSENSUS_INTERFACE → What it holds`) and the author check at block application; no site builds a
-key object or asks a runtime's verifier. **The rule is this repo's, stated here and implemented
-once**, so every runtime that runs it — a node, a browser — accepts the same set, and a change to
-it is a consensus change, never a dependency bump.
+**Every signature check in the system is one rule, and `verifyEd25519` is it: `@noble/curves`'
+`ed25519.verify(signature, message, publicKey, { zip215: false })`** — Ed25519 per RFC 8032 and
+FIPS 186-5 in their strict form: the scalar `S` below the group order `L`, the key `A` and the point
+`R` canonical encodings (`y < p`, and `x = 0` with the sign bit set refused), `A` not of small order,
+and the **cofactored** equation `[8][S]B = [8]R + [8][k]A`, `k = SHA-512(R ‖ A ‖ M) mod L` — so a
+message and a key have one valid signature. **`verifyEd25519Batch` is the same rule over many
+entries** (→ verifyEd25519Batch). The sites: `verifyValidatorSignature` below calls `verifyEd25519`;
+`validateTx`'s authorization check calls it, or answers from the set a caller's batch verified
+(`CONSENSUS_INTERFACE → The overlay`); `applyBlock` checks every signature a block's body carries
+with one `verifyEd25519Batch` (`CONSENSUS_INTERFACE → Applying a block`). No site builds a key object
+or asks a runtime's verifier. **The rule is this repo's, stated here and implemented once**, so every
+runtime that runs it — a node, a browser — accepts the same set, and a change to it is a consensus
+change, never a dependency bump.
 
 **It is total.** A signature that is not 64 bytes, a key that is not 32, or a key that does not
 decode to a point answers `false`, never a throw — the verifiers above it promise no-panic (→
@@ -515,6 +520,44 @@ UtxoTransaction`), the header preimage omits `validatorSignature`, and every Mer
 verify half**: a block carrying a transaction whose signature one implementation accepts and
 another refuses splits the network — which is why the accepted set is a rule with one
 implementation, not whatever a runtime ships.
+
+### verifyEd25519Batch
+
+```
+verifyEd25519Batch(entries: ReadonlyArray<Ed25519BatchEntry>): boolean
+Ed25519BatchEntry = { signature: Uint8Array; message: Uint8Array; publicKey: Uint8Array }
+```
+
+**A batch answers what its entries would.** `true` exactly when every entry passes `verifyEd25519`
+(→ Acceptance criterion) — except that a batch holding an entry that fails answers `true` with
+probability at most 2⁻¹²⁸ over its coefficients, the margin an Ed25519 key already rests on (about
+2¹²⁶ operations to break one). The same entries in the same order answer the same on every runtime.
+
+**Per entry, the strict checks, each refusing the whole batch:** a signature of 64 bytes and a key of
+32; `S < L`; `A` and `R` decoded canonically; `A` not of small order; `kᵢ = SHA-512(Rᵢ ‖ Aᵢ ‖ Mᵢ) mod L`
+over the entry's own bytes. **Then one cofactored equation for all of them:**
+`[8]( Σ zᵢ·Rᵢ + Σ (zᵢ·kᵢ)·Aᵢ − (Σ zᵢ·Sᵢ)·B ) = 0`, scalars mod `L`, computed as one multi-scalar
+multiplication over `@noble/curves`' `Point`. **The equation agrees with the single check because the
+single check is cofactored:** each entry's `[8](Rᵢ + kᵢ·Aᵢ − Sᵢ·B)` is zero exactly when that entry
+passes, so their sum under coefficients fixed only by the whole batch is zero when every entry passes
+and, with probability at least 1 − 2⁻¹²⁸, only then. A key several entries share is decoded once and
+enters the sum once, its coefficients added.
+
+**The coefficients are derived from the batch, never drawn** — a draw would let one node accept a body
+the rest refuse (`CONSENSUS_INTERFACE → Applying a block`). Once every entry has
+passed its shape check, the transcript is `T = SHA-512( "dagsocial/ed25519-batch/1" ‖ LE32(n) ‖ for
+each entry in order: signature(64) ‖ publicKey(32) ‖ LE64(|message|) ‖ message )`, over the domain's
+ASCII bytes, and `zᵢ = LE( SHA-512(T ‖ LE32(i))[0..16] )` for entry `i` from 0 — 128 bits, a zero taken
+as 1. `T` binds every entry's bytes and their order, so a forger learns the coefficients only by
+fixing the whole batch: each attempt costs a hash and succeeds with probability at most 2⁻¹²⁸.
+
+**It is total**, as `verifyEd25519` is: a malformed entry answers `false`, never a throw. **The empty
+batch is `true`, and a batch of one is `verifyEd25519` itself.**
+
+**Its tests hold it to the single check entry by entry:** the RFC 8032 vectors, Wycheproof's Ed25519
+set and the speccheck cases, each alone and among honest signatures, answer exactly what
+`verifyEd25519` answers; a fixed batch's transcript and coefficients are pinned against values
+computed apart from the implementation.
 
 ### verifyValidatorSignature
 
@@ -1310,6 +1353,7 @@ own.
 - Node.js ≥ 22 (blake2b512 via `crypto.createHash`)
 - `@dagsocial/types` package built and importable
 - `@noble/curves` for Ed25519 (→ Acceptance criterion)
+- `@noble/hashes` for the batch's SHA-512 (→ verifyEd25519Batch)
 
 ## Postconditions
 - All exported functions are pure: same inputs → same outputs, no side effects
@@ -1335,8 +1379,8 @@ own.
 ## Invariants
 - All hashing uses `blake2b512.digest().subarray(0, 32)` — Node.js v22
   lacks blake2b256
-- Signatures verified by `verifyEd25519` alone — strict RFC 8032 through `@noble/curves`
-  (→ Acceptance criterion)
+- Signatures verified by one rule — `verifyEd25519`, or `verifyEd25519Batch` over many entries —
+  strict RFC 8032 through `@noble/curves` (→ Acceptance criterion)
 - **One PoW nonce encoding**: the ordering-block nonce is `encodeLE64`
   (`MINING_INTERFACE.md` → PoW Verification). A post carries no nonce.
 - The integer-range guard (M-6): a nonce or `targetBits` that is not a

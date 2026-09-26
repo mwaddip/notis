@@ -17,7 +17,8 @@ dependencies. **It imports no Node built-in, carries no WASM, performs no I/O, h
 can depend on and reads no clock** — a rule that needs a number the network sets receives it from its caller, and a
 rule that needs state reads it through the interface its caller injects. Its module-level values are constants and the
 two memos of `settlement.ts`' sizing probes, each a pure function of the era it is keyed by. Every signature check it
-makes is `validation`'s `verifyEd25519` (`VALIDATION_INTERFACE → Acceptance criterion`).
+makes is `validation`'s — `verifyEd25519` one transaction at a time, `verifyEd25519Batch` for a block's body
+(`VALIDATION_INTERFACE → Acceptance criterion`).
 
 ## What it holds
 
@@ -47,13 +48,29 @@ ApplyResult = { ok: true; effects: BlockEffects } | { ok: false; reason: string 
 
 **`applyBlock` is the mutation phase** (`NODE_INTERFACE → "Apply funnel: validation and mutation phases"`), in its
 order: the block's posts and their topology rows · the body decoded, every declared id proven, the settlement found by
-position · the pre-body captures (decay's projection and plans, the releasable escrows, the lapsed vouches, the backer
+position · every signature the body carries, checked as one batch · the pre-body captures (decay's projection and
+plans, the releasable escrows, the lapsed vouches, the backer
 pool) · the user transactions in committed order — inputs resolved, `validateTx`, the like binds, one invitee per
 block, `applyTx`, the post's activity bump, the like record, the name claim or burn · the withdrawals · the settlement
 (`checkSettlement`, then applied) · the grants · the like counters · the membership pass · the decay clocks. It runs at
 `block.header.height` and reads no other header field but `validatorId`: the node has run the checks that need the
 chain first (`NODE_INTERFACE → Ordering block apply-time authorization`), and the creator's speculative run passes a
 candidate whose nonce, signature and `stateRoot` are placeholders (`NODE_INTERFACE → Post-block stateRoot`).
+
+**A block's signatures are checked together, before any transaction applies.** Once every declared id is proven,
+`applyBlock` gathers each entry of every embedded transaction's signature map — in body order, and within a
+transaction in its map's decoded order — as the signature, the transaction id's 32 bytes and the key, and makes one
+`verifyEd25519Batch` call (`VALIDATION_INTERFACE → verifyEd25519Batch`). `false` rejects the block: `Rejected block
+height=H: a signature in the body does not verify`. **No transaction may carry more signatures than inputs, and that
+is checked first:** each input requires at most one signer and a map key no input requires refuses its transaction, so
+a map with more entries than its transaction has inputs is refused before the batch runs — `Rejected block height=H:
+embedded UTXO tx <id> carries more signatures than inputs` — and the batch checks at most one entry per input.
+`true` hands the loop the verified set, and the `validateTx` it runs answers each signature from it (→ The overlay);
+an entry outside the set fails its transaction. **Checking every
+entry keeps every verdict:** `validateTx` refuses a map key no input requires, so every entry of a valid transaction's
+map verifies, and a body with a failing entry is a rejected block either way. **A missing signature is not an
+entry**: the loop refuses it with its transaction's reason. The settlement carries no signature, and the header's is
+the node's to check (`NODE_INTERFACE → Ordering block apply-time authorization`).
 
 **A rule failure is a `reason`, never a throw.** Every rejection the phase makes answers `{ ok: false, reason }`, the
 reason the text the node logs.
@@ -62,8 +79,9 @@ reason the text the node logs.
 node's `CorruptChainStateError`, and the node's fail-stop stays the node's; any other throw is a defect, which the
 node's funnel answers as it answers every unexpected throw (`NODE_INTERFACE → "The funnel answers with a class"`).
 
-**Deterministic.** No clock, no randomness, no module state, and no order that a `Map`'s or `Set`'s insertion history
-decides unless the phase fixed that history. Two runs over the same view and the same block answer the same result,
+**Deterministic.** No clock, no randomness — the body check's coefficients are a function of the body
+(`VALIDATION_INTERFACE → verifyEd25519Batch`) — no module state, and no order that a `Map`'s or `Set`'s insertion
+history decides unless the phase fixed that history. Two runs over the same view and the same block answer the same result,
 byte for byte; a difference is a fork.
 
 ## ApplyContext
@@ -131,7 +149,10 @@ the effects are written, and the speculative run writes none.
 **The rules keep their parameters.** `applyBlock` builds `UtxoEngineDeps`, `SettlementDeps` and `DecayDeps` over its
 overlay, so `validateTx`, `applyTx`, `checkSettlement`, `deriveKarmaDecay` and `commitDecayClocks` run unchanged; the
 node builds `UtxoEngineDeps` over its store for admission, where `validateTx` is the pool's check, and runs no
-`applyTx` of its own.
+`applyTx` of its own. **`UtxoEngineDeps.verifySignature` is the one parameter the two builds set apart:**
+`applyBlock`'s answers from the set its body check verified (→ Applying a block); admission's is absent, and
+`validateTx` then calls `verifyEd25519` for each signer. Who must sign, and the refusal of a map key no input
+requires, are `validateTx`'s on both paths.
 
 ## BlockEffects
 
@@ -170,16 +191,42 @@ producer and applier derive from one implementation, and a settlement the build 
 
 ## Cost
 
-**Signature verification is the dominant term of `applyBlock`, and it is the one this contract bounds.** Each check
-through `verifyEd25519` costs **1.1–1.7 ms**, two measurements on 2026-09-25 on one core of an Intel i9-14900HX, 15–17×
-OpenSSL's verify on the same machine.
+**Signature verification is the dominant term of `applyBlock`, and it is the one this contract bounds.** Measured
+2026-09-26 over honest signatures with distinct keys, per signature — `verifyEd25519` one at a time, and the batch over a
+full body:
+
+| Runtime | One at a time | The batch |
+|---|---|---|
+| one core of an Intel i9-14900HX, Node 22 | 1.3–1.4 ms | 0.27–0.30 ms |
+| a testnet box's one Cascade Lake core, Node 22 | 2.6 ms | 0.59 ms |
+| Chromium 149 | 0.52 ms | 0.12 ms |
+| Firefox 156 | 1.1 ms | 0.23 ms |
+| Waterfox 140 (Firefox 140's engine) | 4.1 ms | 0.85 ms |
+
+OpenSSL on the same two machines takes 0.13–0.15 ms a signature with the key's import, which a key new to it needs.
 
 **A transaction checks each signer once.** The signature map holds one signature per required key, over the
 transaction's id, so a signer whose boxes are several of a transaction's inputs is one check, not one per input. The
 worst case is then one check per 128 bytes of body — an extra signer costs 32 bytes of input and 96 of key and
-signature — so a body at `MAX_BLOCK_BODY_BYTES` forces at most about **15 600 checks: 17–27 s** on the measuring core,
-before any browser's slowdown. No other term may grow faster than the reads the body makes: each overlay read is a map
-lookup or one composition over the view's answer to it.
+signature — and `MAX_TX_BYTES` holds at most 77 signers in one transaction (9 903 bytes), so a body at
+`MAX_BLOCK_BODY_BYTES` carries at most **about 15 500 signatures in 202 transactions** (15 496–15 499 as the height
+moves the widths of the values). An ordinary full body — one signer a transaction — holds 5 800 to about 8 100. **A body
+the rules refuse costs about what the valid worst case does:** the batch checks at most one entry per input (→ Applying
+a block), so every entry still costs 128 bytes of body — a refused body spares the bytes a valid one spends on its
+outputs, and fits at most about 0.4% more entries.
+
+**`applyBlock` over those bodies**, measured 2026-09-26 with `packages/consensus/scripts/bench-apply-block.mjs`
+(testnet's numbers, height 1 000) — each signature checked on its own, then the body checked as one batch:
+
+| Body | i9-14900HX core, Node 22 | a testnet box's Cascade Lake core, Node 22 |
+|---|---|---|
+| ordinary: 8 031 one-signer credit sends | 10.7–11.0 s → 2.9 s | 30.6–31.8 s → 9.3–9.7 s |
+| packed: 15 497 signers in 202 transactions | 20.0–20.2 s → 4.5 s | 53.8–55.7 s → 13.8–14.3 s |
+| the packed body, one signature corrupted — refused | 19.9–20.1 s → 4.3 s | 52.2–52.8 s → 12.4–13.5 s |
+| 20 598 entries no input requires — refused | 0.09 s → 0.09 s | 0.25–0.37 s → 0.28–0.36 s |
+
+No other term may grow faster than the reads the body makes: each overlay read is a map lookup or one composition over
+the view's answer to it.
 
 ## Tests
 

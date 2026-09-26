@@ -20,10 +20,11 @@ is a transaction on the UTXO ledger, and withdrawal is the author's only act ove
 
 ## This package (`@dagsocial/validation`)
 **Pure, stateless validation** — the Stage-1 checks that run before an object enters the store or is
-relayed: PoW verification, Ed25519 signature checks, hash/id recomputation, content byte-limits, parent-ref
+relayed: PoW verification, Ed25519 signature checks (one at a time, or a block's as one batch), hash/id
+recomputation, content byte-limits, parent-ref
 counts, protocol version, and block structure. No DB, no network, no chain state.
 
-- **Owns:** `src/*` (`verify.ts`, `index.ts`).
+- **Owns:** `src/*` (`verify.ts`, `ed25519-batch.ts`, `index.ts`).
 - **Does NOT own:** stateful checks (that's `@dagsocial/node` — UTXO liveness, guard evaluation), data
   structures (`@dagsocial/types`), networking (`@dagsocial/net`), wire codec (`@dagsocial/wire`).
 

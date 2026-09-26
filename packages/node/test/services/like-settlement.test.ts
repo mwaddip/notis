@@ -534,7 +534,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
   // -------------------------------------------------------------------------
 
 
-  it('a spare-signature like tx embedded directly in a block is rejected (unrequired key)', async () => {
+  it('a spare-signature like tx embedded directly in a block is rejected (more signatures than inputs)', async () => {
     // A spare signature is an unrequired key (NODE_INTERFACE → Legal box
     // transitions → "The signature map carries no key a transition does not
     // require."), so the block is refused.
