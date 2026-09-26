@@ -1,16 +1,22 @@
 #!/usr/bin/env node
-// Times `applyBlock` over the two bodies `CONSENSUS_INTERFACE → Cost` measures, each built over a stub
-// `StateView` and each valid end to end:
+// Times `applyBlock` over the bodies `CONSENSUS_INTERFACE → Cost` bounds, each built over a stub `StateView`:
 //
-//   ordinary — one-signer credit sends, each spending one whole credit, as many as MAX_BLOCK_BODY_BYTES holds;
-//   packed   — credit payments of as many signers as MAX_TX_BYTES holds, filled to MAX_BLOCK_BODY_BYTES,
-//              the last payment taking the signers the remaining bytes hold.
+//   ordinary   — one-signer credit sends, each spending one whole credit, as many as MAX_BLOCK_BODY_BYTES
+//                holds;
+//   packed     — credit payments of as many signers as MAX_TX_BYTES holds, filled to MAX_BLOCK_BODY_BYTES,
+//                the last payment taking the signers the remaining bytes hold;
+//   corrupted  — the packed body with the signature its last input requires corrupted;
+//   oversigned — one-input credit sends, each signed by its input's owner and by as many keys no input
+//                requires as MAX_TX_BYTES holds, filled to MAX_BLOCK_BODY_BYTES as the packed body is.
 //
 // Every signer owns one credit box created the block before, inside the rent period, so each input needs
 // its owner's signature; every transaction conserves value; the settlement is `buildBlockSettlement`'s,
-// placed last, and the body is weighed with it. Keys come from fixed seeds, so every run builds the same
-// bodies. The script reads this package's build and `@dagsocial/types`' codecs and constants — nothing
-// else — so it times the tree it is built from: `pnpm -r build` first.
+// placed last, and the body is weighed with it. The first two bodies are valid end to end; each of the
+// last two carries one defect and lists the reasons that name it — the body check's and `validateTx`'s
+// own. Each run prints its verdict, and a verdict other than the one its body is built for sets the exit
+// code. Keys come from fixed seeds, so every run builds the same bodies. The script reads this package's
+// build and `@dagsocial/types`' codecs and constants — nothing else — so it times the tree it is built
+// from: `pnpm -r build` first.
 //
 // usage: node packages/consensus/scripts/bench-apply-block.mjs [runs]    (runs defaults to 3)
 import { createHash, createPrivateKey, createPublicKey, sign } from 'node:crypto';
@@ -21,6 +27,7 @@ import {
   computeBoxId,
   computeTxId,
   decayCfgFor,
+  decodeTx,
   encodeTx,
   profileFor,
   protocolVersionAt,
@@ -98,10 +105,12 @@ function transaction(boxes, outputs, signers) {
 }
 
 /**
- * The two bodies' transactions. A send moves a quarter of a whole credit to the recipient and the rest
- * back. A packed payment pays its signers' boxes whole to the recipient in one output, each box holding
- * a little above the credit floor (MIN_BOX_VALUE_PER_BYTE per record byte), so the output carries few
- * value bytes and the body holds the most signers.
+ * The bodies' transactions. A send moves a quarter of a whole credit to the recipient and the rest back.
+ * A packed payment pays its signers' boxes whole to the recipient in one output, each box holding a
+ * little above the credit floor (MIN_BOX_VALUE_PER_BYTE per record byte), so the output carries few value
+ * bytes and the body holds the most signers. An oversigned send pays its first signer's box, of the same
+ * value, whole to the recipient; every later signer is a key no input requires, its signature valid over
+ * the transaction's id. A kind whose body is refused names the reasons for it (`refusals`).
  */
 const KINDS = {
   ordinary: {
@@ -113,6 +122,22 @@ const KINDS = {
     boxValue: 20_000n,
     build: (signers, boxes) =>
       transaction(boxes, [credit(recipient, boxes.reduce((sum, box) => sum + box.value, 0n))], signers),
+  },
+  oversigned: {
+    boxValue: 20_000n,
+    build: (signers, [box]) => transaction([box], [credit(recipient, box.value)], signers),
+    // The first transaction is refused for carrying more signatures than inputs, or for the first key in
+    // its map that no input requires.
+    refusals: ([first], view) => {
+      const txId = computeTxId(first);
+      const owner = hex(view.getBox(first.inputs[0]).owner);
+      const spare = Object.keys(first.signatures).sort().find((key) => key !== owner);
+      return [
+        `Rejected block height=${HEIGHT}: embedded UTXO tx ${txId} carries more signatures than inputs`,
+        `Rejected block height=${HEIGHT}: embedded UTXO tx ${txId} failed re-validation: ` +
+          `Signature map carries unrequired key ${spare.slice(0, 16)}…`,
+      ];
+    },
   },
 };
 
@@ -232,25 +257,37 @@ function shapes() {
       (n) => bodyBytes(new Array(n).fill(length), settlement) <= MAX_BLOCK_BODY_BYTES,
     );
 
-  // A signer adds at least its input's id, its key and its signature: 128 bytes.
-  const perPayment = largest(
-    Math.floor(MAX_TX_BYTES / 128),
-    (n) => n === 0 || weighed(KINDS.packed, n) <= MAX_TX_BYTES,
-  );
-  const full = weighed(KINDS.packed, perPayment);
-  const payments = fillWith(full);
-  const rest = largest(
-    perPayment - 1,
-    (n) => n === 0 || bodyBytes([...new Array(payments).fill(full), weighed(KINDS.packed, n)], settlement) <= MAX_BLOCK_BODY_BYTES,
-  );
+  /**
+   * Transactions of `kind` carrying as many signers as MAX_TX_BYTES holds, as many as the body holds, then
+   * one carrying the signers the remaining bytes hold; a signer adds at least `signerBytes` bytes.
+   */
+  const packedWith = (kind, signerBytes) => {
+    const perTx = largest(
+      Math.floor(MAX_TX_BYTES / signerBytes),
+      (n) => n === 0 || weighed(kind, n) <= MAX_TX_BYTES,
+    );
+    const full = weighed(kind, perTx);
+    const fullTxs = fillWith(full);
+    const rest = largest(
+      perTx - 1,
+      (n) => n === 0 || bodyBytes([...new Array(fullTxs).fill(full), weighed(kind, n)], settlement) <= MAX_BLOCK_BODY_BYTES,
+    );
+    return [...new Array(fullTxs).fill(perTx), ...(rest > 0 ? [rest] : [])];
+  };
 
   return {
     ordinary: new Array(fillWith(weighed(KINDS.ordinary, 1))).fill(1),
-    packed: [...new Array(payments).fill(perPayment), ...(rest > 0 ? [rest] : [])],
+    // A signer adds at least its input's id, its key and its signature: 128 bytes.
+    packed: packedWith(KINDS.packed, 128),
+    // A signer no input requires adds its key and its signature: 96 bytes.
+    oversigned: packedWith(KINDS.oversigned, 96),
   };
 }
 
-/** A body of `groups` transactions of `kind`, over its own view, with every bound it is held to checked. */
+/**
+ * A body of `groups` transactions of `kind`, over its own view of the boxes it spends, with every bound it
+ * is held to checked.
+ */
 function built(name, kind, groups, signers) {
   const boxes = signers.slice(0, count(groups)).map((s, i) => creditBox(s, kind.boxValue, `${name}/${i}`));
   const txs = [];
@@ -259,20 +296,61 @@ function built(name, kind, groups, signers) {
     txs.push(kind.build(signers.slice(next, next + size), boxes.slice(next, next + size)));
     next += size;
   }
-  const view = new StubView([...genesis, ...boxes]);
+  const spent = new Set(txs.flatMap((tx) => tx.inputs));
+  const view = new StubView([...genesis, ...boxes.filter((box) => spent.has(box.id))]);
   const block = blockOf(view, txs);
   const bytes = utxoTxTreeByteLength(block.utxoTxTree);
   const settlement = block.utxoTxTree.utxoTxs.at(-1).length;
   const heaviest = Math.max(...block.utxoTxTree.utxoTxs.slice(0, -1).map((b) => b.length));
   if (bytes > MAX_BLOCK_BODY_BYTES) throw new Error(`${name}: a body of ${bytes} bytes is over ${MAX_BLOCK_BODY_BYTES}`);
   if (heaviest > MAX_TX_BYTES) throw new Error(`${name}: a transaction of ${heaviest} bytes is over ${MAX_TX_BYTES}`);
-  return { name, view, block, signatures: next, txs: txs.length, bytes, settlement, heaviest };
+  const refusals = kind.refusals ? kind.refusals(txs, view) : null;
+  return { name, view, block, signatures: next, txs: txs.length, bytes, settlement, heaviest, refusals };
+}
+
+/**
+ * `body` with the signature its last input requires corrupted: S loses its lowest set bit, so the signature
+ * keeps its shape and a check of it reaches the equation, where it fails. The block is refused by the body
+ * check, or for that input's signature.
+ */
+function corrupted(body) {
+  const { utxoTxIds, utxoTxs } = body.block.utxoTxTree;
+  const last = utxoTxs.length - 2; // the last user transaction; the settlement follows it
+  const tx = decodeTx(utxoTxs[last]);
+  const input = tx.inputs.at(-1);
+  const key = hex(body.view.getBox(input).owner);
+  const signature = Uint8Array.from(tx.signatures[key]);
+  const at = signature.findIndex((byte, i) => i >= 32 && byte !== 0);
+  signature[at] &= signature[at] - 1;
+  tx.signatures[key] = signature;
+  return {
+    ...body,
+    name: 'corrupted',
+    block: {
+      ...body.block,
+      utxoTxTree: { utxoTxIds, utxoTxs: utxoTxs.map((bytes, i) => (i === last ? encodeTx(tx) : bytes)) },
+    },
+    refusals: [
+      `Rejected block height=${HEIGHT}: a signature in the body does not verify`,
+      `Rejected block height=${HEIGHT}: embedded UTXO tx ${utxoTxIds[last]} failed re-validation: ` +
+        `Missing or invalid owner signature for box ${input}`,
+    ],
+  };
 }
 
 const setupStart = performance.now();
-const { ordinary, packed } = shapes();
-const signers = Array.from({ length: Math.max(count(ordinary), count(packed)) }, (_, i) => keyPair(`signer/${i}`));
-const bodies = [built('ordinary', KINDS.ordinary, ordinary, signers), built('packed', KINDS.packed, packed, signers)];
+const { ordinary, packed, oversigned } = shapes();
+const signers = Array.from(
+  { length: Math.max(count(ordinary), count(packed), count(oversigned)) },
+  (_, i) => keyPair(`signer/${i}`),
+);
+const packedBody = built('packed', KINDS.packed, packed, signers);
+const bodies = [
+  built('ordinary', KINDS.ordinary, ordinary, signers),
+  packedBody,
+  corrupted(packedBody),
+  built('oversigned', KINDS.oversigned, oversigned, signers),
+];
 
 console.log(
   `node ${process.version} · testnet profile · height ${HEIGHT} · ` +
@@ -280,7 +358,7 @@ console.log(
 );
 for (const b of bodies) {
   console.log(
-    `${b.name.padEnd(8)} ${b.txs} transactions, ${b.signatures} signatures; body ${b.bytes} of ` +
+    `${b.name.padEnd(10)} ${b.txs} transactions, ${b.signatures} signatures; body ${b.bytes} of ` +
     `${MAX_BLOCK_BODY_BYTES} bytes with a ${b.settlement}-byte settlement; heaviest transaction ` +
     `${b.heaviest} of ${MAX_TX_BYTES}`,
   );
@@ -290,11 +368,13 @@ for (const b of bodies) {
     const start = performance.now();
     const result = applyBlock(b.view, b.block, ctx);
     const seconds = (performance.now() - start) / 1000;
-    if (!result.ok) process.exitCode = 1;
+    const expected = b.refusals === null ? result.ok : !result.ok && b.refusals.includes(result.reason);
+    if (!expected) process.exitCode = 1;
     console.log(
-      `${b.name.padEnd(8)} run ${run}: ${seconds.toFixed(2)} s, ` +
-      `${((seconds * 1e6) / b.signatures).toFixed(0)} µs a signature — ` +
-      (result.ok ? 'ok: true' : `ok: false — ${result.reason}`),
+      `${b.name.padEnd(10)} run ${run}: ${seconds.toFixed(3)} s, ` +
+      `${((seconds * 1e6) / b.signatures).toFixed(1)} µs a signature — ` +
+      (result.ok ? 'ok: true' : `ok: false — ${result.reason}`) +
+      (expected ? '' : ' — not the verdict this body is built for'),
     );
   }
 }
