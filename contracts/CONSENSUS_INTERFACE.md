@@ -13,12 +13,16 @@ reaches them.
 ## Place in the workspace
 
 **Above `@dagsocial/types` and `@dagsocial/validation`, below `@dagsocial/node`.** Those two are its only workspace
-dependencies. **It imports no Node built-in, carries no WASM, performs no I/O, holds no module-level state a result
-can depend on and reads no clock** — a rule that needs a number the network sets receives it from its caller, and a
-rule that needs state reads it through the interface its caller injects. Its module-level values are constants and the
-two memos of `settlement.ts`' sizing probes, each a pure function of the era it is keyed by. Every signature check it
-makes is `validation`'s — `verifyEd25519` one transaction at a time, `verifyEd25519Batch` for a block's body
-(`VALIDATION_INTERFACE → Acceptance criterion`).
+dependencies. **It imports no Node built-in, reads no Node global, carries no WASM, performs no I/O, holds no
+module-level state a result can depend on and reads no clock** — a rule that needs a number the network sets receives
+it from its caller, and a rule that needs state reads it through the interface its caller injects. Its module-level
+values are constants and the two memos of `settlement.ts`' sizing probes, each a pure function of the era it is keyed
+by. Every signature check it makes is `validation`'s — `verifyEd25519` one transaction at a time, `verifyEd25519Batch`
+for a block's body (`VALIDATION_INTERFACE → Acceptance criterion`). The browser runs it as it is written
+(`ARCHITECTURE → Package boundaries`), held there by two checks (→ Tests).
+
+> ⚠ **AHEAD OF CODE (2026-09-26, the consensus package, stage 3)** — six modules read the `Buffer` global, most as
+> `Buffer.from(…).toString('hex')` compared as strings, and neither check of → Tests exists.
 
 ## What it holds
 
@@ -234,6 +238,20 @@ the view's answer to it.
 `packages/consensus/test/`**, with the fixture helpers it needs in `test/helpers.ts` — `applyBlock` over a stub view
 among them. A suite that drives the node's store or block application — `utxo-engine.test.ts` among them, over an
 in-memory database — stays in `packages/node/test/` and imports from the package.
+
+**Two checks hold the package to the browser** (`ARCHITECTURE → Package boundaries`):
+
+- **The browser typecheck.** `typecheck` compiles `src` a second time against the DOM library with no Node types
+  (`tsconfig.browser.json`); a Node built-in or a Node global is a compile error at its line.
+- **The bundle test.** It builds `applyBlock` for a browser with vite, every Node built-in a module imports failing the
+  build, and runs the bundle in a `vm` context holding the ECMAScript built-ins, `TextEncoder` and `TextDecoder` alone
+  — no `crypto`, so the same run holds the determinism rule (→ Applying a block). Inside the context a fixed signed
+  block is applied over a stub view, both built there from primitives, and the effects come back as primitives that
+  must equal, byte for byte, what the source answers under Node. Only primitives cross the context's boundary: a
+  `Uint8Array` made outside it fails `instanceof` inside.
+
+> ⚠ **AHEAD OF CODE (2026-09-26, the consensus package, stage 3)** — neither check exists: the package has no
+> `tsconfig.browser.json` and no bundle test, and `vite` is not among its dependencies.
 
 ## Does NOT own
 

@@ -98,7 +98,32 @@ exactly, and with one it is the write surface with its signing moved out of the 
 still names the website (→ Links): a reader who follows one is brought from that page into the extension, and
 the extension itself sends the website nothing.
 
+## The client's builds substitute nothing
+
+> ⚠ **AHEAD OF CODE (2026-09-26, the consensus package, stage 3)** — the three vite configs alias `crypto` to
+> `src/shim/crypto.ts` and inject `Buffer` from `buffer` 6 (→ The browser reaches `@dagsocial/types` through a
+> build-time shim, the section this one replaces); no plugin refuses a Node built-in; and `src/integrity.ts`,
+> `src/wallet/builders.ts` and `src/identity/envelope.ts` each carry a hand-rolled hex conversion.
+
+**The browser runs every workspace package it reaches as that package is written**
+(`ARCHITECTURE → Package boundaries`): `@dagsocial/types`, `@dagsocial/validation`, `@dagsocial/nipopow` and
+`@dagsocial/nipopow-client`'s library import no Node built-in and read no Node global, each held to it by its own
+browser typecheck. The client supplies nothing in their place — no alias, no injected global, no polyfill — and its hex
+conversions are `@dagsocial/types`' pair (`TYPES_INTERFACE → Export table`), not copies of it.
+
+⛔ **A Node built-in fails every build.** `vite.config.ts`, `vite.background.config.ts` and
+`vite.extension.config.ts` each carry a plugin that refuses any Node built-in a module imports, `node:`-prefixed or
+bare. vite alone refuses only a *named* import from one; a namespace or a default import passes it with a warning and
+fails at run time, and so would a new dependency that reached for one.
+
+⚠ **A test running under Node proves none of this** — under Node the real `crypto` and `Buffer` are present. **The
+binding check runs the built bundle in a browser** and recomputes, against live data, a value the node independently
+produced: the proof that the bundle's hashing is the node's.
+
 ## The browser reaches `@dagsocial/types` through a build-time shim
+
+> ⚠ **SUPERSEDED (2026-09-26, the consensus package, stage 3)** — by → The client's builds substitute nothing. The
+> shim below still ships; stage 3's `web` phase deletes it, and this section goes with it.
 
 `@dagsocial/types` and `@dagsocial/validation` are written against Node: `createHash('blake2b512')` in six
 files, `generateKeyPairSync` in one, and `Buffer` as a **global that is never imported**. A browser has
@@ -1694,6 +1719,8 @@ client that expects to announce itself first is built against an endpoint that d
   check in `@dagsocial/validation` writes its nonce with `writeBigUInt64LE`. The polyfill encodes every byte the
   browser build signs, and the package's tests run under Node's own `Buffer`: a change of it is proven in a real
   browser — the binding check, the extension proof's writes — never by the test run.
+  > ⚠ **SUPERSEDED (2026-09-26, the consensus package, stage 3)** — by → The client's builds substitute nothing. The
+  > polyfill still ships; stage 3's `web` phase removes it, and this line goes with it.
 - **In the workspace the client depends on `@dagsocial/types`, and on `@dagsocial/nipopow-client` for the extension's
   verifier**, which brings `@dagsocial/nipopow` and `@dagsocial/validation` with it; tree-shaking keeps `validation`'s
   signature path out of every bundle, and the web build's assets carry none of the three (→ The extension, the build

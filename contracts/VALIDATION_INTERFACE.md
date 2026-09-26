@@ -410,8 +410,11 @@ the block creator to verify externally-submitted mining solutions.
 ### computePowHash
 
 ```
-computePowHash(header: BlockHeader): Buffer | null
+computePowHash(header: BlockHeader): Uint8Array | null
 ```
+
+> ⚠ **AHEAD OF CODE (2026-09-26, the consensus package, stage 3)** — it answers a `Buffer`, Node's `createHash`
+> digest.
 
 **This function establishes its own domain.** It returns `null` on exactly the inputs
 `verifyHeaderFieldDomains` rejects and the 32-byte preimage otherwise — see `blockHash` below for the
@@ -1350,7 +1353,13 @@ own.
 ---
 
 ## Preconditions
-- Node.js ≥ 22 (blake2b512 via `crypto.createHash`)
+
+> ⚠ **AHEAD OF CODE (2026-09-26, the consensus package, stage 3)** — `verify.ts` imports `createHash` from Node's
+> `crypto` and reads the `Buffer` global (the signature message, the content length, `powHit`'s nonce); the first line
+> below and the first line under Invariants describe the code after stage 3's `validation` phase.
+
+- No Node built-in and no Node global (`ARCHITECTURE → Package boundaries`); every hash is `@dagsocial/types`'
+  `hash32`
 - `@dagsocial/types` package built and importable
 - `@noble/curves` for Ed25519 (→ Acceptance criterion)
 - `@noble/hashes` for the batch's SHA-512 (→ verifyEd25519Batch)
@@ -1377,8 +1386,8 @@ own.
   the naming convention had quietly exempted it.
 
 ## Invariants
-- All hashing uses `blake2b512.digest().subarray(0, 32)` — Node.js v22
-  lacks blake2b256
+- All hashing is `@dagsocial/types`' `hash32` — BLAKE2b-512, the first 32 bytes
+  (`TYPES_INTERFACE → The protocol hash`)
 - Signatures verified by one rule — `verifyEd25519`, or `verifyEd25519Batch` over many entries —
   strict RFC 8032 through `@noble/curves` (→ Acceptance criterion)
 - **One PoW nonce encoding**: the ordering-block nonce is `encodeLE64`
