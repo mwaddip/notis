@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { hexToBuf, identityRecordKey, profileFor } from '@dagsocial/types';
+import { hexToBytes, identityRecordKey, profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
 import { makeTestConfig, mineNextBlock, openAvlDb } from '../helpers.js';
 
@@ -39,7 +39,7 @@ type Store = Awaited<ReturnType<typeof importFresh>>;
 function faucetPubKey(network = 'devnet'): Uint8Array {
   const hex = profileFor(network as NetworkType).faucetPublicKey;
   if (hex === undefined) throw new Error(`${network} names no faucet identity`);
-  return new Uint8Array(hexToBuf(hex));
+  return new Uint8Array(hexToBytes(hex));
 }
 
 function rootOf(s: Store): string {

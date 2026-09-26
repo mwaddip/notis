@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
-import { hexToBuf, profileFor } from '@dagsocial/types';
+import { hexToBytes, profileFor } from '@dagsocial/types';
 import type { KarmaBox, UserId } from '@dagsocial/types';
 import type { IdentityRecord } from '@dagsocial/types';
 import {
@@ -74,7 +74,7 @@ function allKarmaPostBody(s: Store): Map<string, { owner: Uint8Array; boxes: imp
 function faucetPubKey(): Uint8Array {
   const hex = profileFor('devnet').faucetPublicKey;
   if (hex === undefined) throw new Error('devnet names no faucet identity');
-  return new Uint8Array(hexToBuf(hex));
+  return new Uint8Array(hexToBytes(hex));
 }
 
 describe('genesis identity record (Spec G phase D)', () => {
