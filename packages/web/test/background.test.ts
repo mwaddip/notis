@@ -1,14 +1,13 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { encodeTx, computeTxId, computeContentHash } from '@dagsocial/types';
+import { encodeTx, computeTxId, computeContentHash, bytesToHex, hexToBytes } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import { buildPost, buildLike, type BuildContext } from '../src/wallet/builders';
 import { install } from '../src/extension/background';
 import { fakeChrome, freshFixture, type FakeChrome } from './fake-chrome';
 import type { SignRecord, Message } from '../src/extension/protocol';
 import { KNOWN_KINDS } from '../src/extension/protocol';
-import { toHex, hexToBytes } from '../src/identity/envelope';
 
 // The background reloads state from storage on every call. Every `storage.local`
 // write MUST be seed-free — the seed lives in `storage.session` alone
@@ -36,12 +35,12 @@ function ctx(pubKeyHex: string): BuildContext {
 /** Build a thread tx signed by nobody — the background is the one to sign it. */
 function unsignedThreadTx(pubKeyHex: string): { tx: UtxoTransaction; txIdHex: string; txBytesHex: string } {
   const built = buildPost(ctx(pubKeyHex), 'a thread');
-  return { tx: built.tx, txIdHex: built.txId, txBytesHex: toHex(encodeTx(built.tx)) };
+  return { tx: built.tx, txIdHex: built.txId, txBytesHex: bytesToHex(encodeTx(built.tx)) };
 }
 
 function unsignedLikeTx(pubKeyHex: string): { tx: UtxoTransaction; txIdHex: string; txBytesHex: string } {
   const built = buildLike(ctx(pubKeyHex), TARGET_POST, AUTHOR);
-  return { tx: built.tx, txIdHex: built.txId, txBytesHex: toHex(encodeTx(built.tx)) };
+  return { tx: built.tx, txIdHex: built.txId, txBytesHex: bytesToHex(encodeTx(built.tx)) };
 }
 
 // ---------------------------------------------------------------------------
@@ -150,7 +149,7 @@ describe('background — sign steps 1-3 refusals', () => {
     // computeTxId must be re-run on the modified tx, but signatures are not in
     // the txId preimage, so the id equals the original tx's id — good.
     const txIdHex = computeTxId(signedTx);
-    const answer = await c.send({ kind: 'sign', txBytesHex: toHex(signedBytes), txIdHex });
+    const answer = await c.send({ kind: 'sign', txBytesHex: bytesToHex(signedBytes), txIdHex });
     expect(answer).toEqual({ refused: 'already-signed' });
   });
 });
@@ -373,7 +372,7 @@ describe('background — sign hint verification', () => {
     const { tx, txIdHex, txBytesHex } = unsignedThreadTx(await pubKey(c));
     const content = 'a thread';
     // Sanity: the builder computed the hash from this content.
-    expect(toHex(computeContentHash(content))).toBe(toHex(tx.post!.contentHash));
+    expect(bytesToHex(computeContentHash(content))).toBe(bytesToHex(tx.post!.contentHash));
     await c.send({ kind: 'sign', txBytesHex, txIdHex, hint: { content } });
     const [, record] = promptRecords(c)[0]!;
     expect(record.hint.content).toBe(content);

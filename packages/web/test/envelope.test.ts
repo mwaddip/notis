@@ -1,13 +1,11 @@
 // @vitest-environment happy-dom
 import { describe, it, expect } from 'vitest';
 import { scryptSync, createDecipheriv } from 'node:crypto';
-import { generateKeyPair } from '@dagsocial/types';
+import { generateKeyPair, bytesToHex, hexToBytes } from '@dagsocial/types';
 import {
   seal,
   open,
   parseFile,
-  toHex,
-  hexToBytes,
   bytesToBase64,
   ENVELOPE_VERSION,
   SCRYPT_N,
@@ -33,7 +31,7 @@ function freshKey(): { seed: Uint8Array; pubKeyHex: string; privKeyBase64: strin
   const der = kp.secretKey; // 48-byte PKCS8 DER: the 16-byte prefix then the seed
   return {
     seed: new Uint8Array(der.subarray(16)),
-    pubKeyHex: toHex(kp.publicKey),
+    pubKeyHex: bytesToHex(kp.publicKey),
     privKeyBase64: bytesToBase64(der),
   };
 }
@@ -53,7 +51,7 @@ describe('envelope — seal and open', () => {
     expect(env.cipher).toEqual({ name: 'chacha20-poly1305', nonce: expect.any(String) });
     // 32-byte seed ‖ 16-byte tag → 48 bytes → 96 hex.
     expect(env.ciphertext).toHaveLength(96);
-    expect(toHex(await open(env, 'a correct horse'))).toBe(toHex(seed));
+    expect(bytesToHex(await open(env, 'a correct horse'))).toBe(bytesToHex(seed));
   });
 
   it('a fresh salt and nonce every seal', async () => {
@@ -101,7 +99,7 @@ describe('envelope — parseFile distinguishes the shapes', () => {
     expect(parsed.kind).toBe('encrypted');
     expect(parsed.pubKeyHex).toBe(pubKeyHex);
     if (parsed.kind !== 'encrypted') throw new Error('unreachable');
-    expect(toHex(await open(parsed.envelope, 'pw'))).toBe(toHex(seed));
+    expect(bytesToHex(await open(parsed.envelope, 'pw'))).toBe(bytesToHex(seed));
   });
 
   it('a clear file parses to its seed', () => {
@@ -110,7 +108,7 @@ describe('envelope — parseFile distinguishes the shapes', () => {
     expect(parsed.kind).toBe('clear');
     expect(parsed.pubKeyHex).toBe(pubKeyHex);
     if (parsed.kind !== 'clear') throw new Error('unreachable');
-    expect(toHex(parsed.seed)).toBe(toHex(seed));
+    expect(bytesToHex(parsed.seed)).toBe(bytesToHex(seed));
   });
 
   it('a clear file is refused for a wrong length, a wrong prefix, a mismatched key', () => {
@@ -184,7 +182,7 @@ describe('envelope — interop and no Web Crypto', () => {
     const recovered = new Uint8Array(head.length + rest.length);
     recovered.set(head, 0);
     recovered.set(rest, head.length);
-    expect(toHex(recovered)).toBe(toHex(seed));
+    expect(bytesToHex(recovered)).toBe(bytesToHex(seed));
   });
 
   it('seals and opens with crypto.subtle stubbed to throw — noble reaches no Web Crypto', async () => {
@@ -199,7 +197,7 @@ describe('envelope — interop and no Web Crypto', () => {
     });
     try {
       const env = await seal(seed, pubKeyHex, 'pw', SMALL);
-      expect(toHex(await open(env, 'pw'))).toBe(toHex(seed));
+      expect(bytesToHex(await open(env, 'pw'))).toBe(bytesToHex(seed));
     } finally {
       if (original) Object.defineProperty(cryptoObj, 'subtle', original);
       else delete cryptoObj.subtle;
@@ -212,7 +210,7 @@ describe('envelope — interop and no Web Crypto', () => {
     const env = await seal(seed, pubKeyHex, 'production cost', { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P });
     const ms = performance.now() - t0;
     expect(env.kdf.N).toBe(SCRYPT_N);
-    expect(toHex(await open(env, 'production cost'))).toBe(toHex(seed));
+    expect(bytesToHex(await open(env, 'production cost'))).toBe(bytesToHex(seed));
     console.log(`scrypt seal at N=${SCRYPT_N} r=${SCRYPT_R} p=${SCRYPT_P}: ${Math.round(ms)}ms`);
   });
 });
