@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { timingSafeEqual } from 'crypto';
 import { computePowHash } from '@dagsocial/validation';
+import { bytesToHex } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 import { postIdsOf } from '@dagsocial/consensus';
 import { resolveIdentityParam, isResolveError } from './page.js';
@@ -154,7 +155,7 @@ export function createRouter(deps: MiningDeps): Router {
       // (TYPES_INTERFACE → Ordering block). A miner hashes `powPreimage` and
       // never reads the body.
       utxoTxIds: tpl.utxoTxTree.utxoTxIds,
-      powPreimage: powPreimage.toString('hex'),
+      powPreimage: bytesToHex(powPreimage),
     });
   });
 

@@ -20,7 +20,7 @@ import { getUnspentBoxes } from '../store/utxo.js';
 import { bootstrapAvlProver, getAvlProver } from '../state/avl-prover.js';
 import type { RecordPut, NetworkPut } from '../state/avl-prover.js';
 import { config } from '../config.js';
-import { hexToBuf, identityRecordKey } from '@dagsocial/types';
+import { hexToBytes, identityRecordKey } from '@dagsocial/types';
 import type { AnyBox } from '@dagsocial/types';
 
 /**
@@ -248,7 +248,7 @@ export function seedGenesisState(): void {
       let faucetKarma = 0n;
       const faucetPubKeyHex = config.profile.faucetPublicKey;
       if (faucetPubKeyHex !== undefined) {
-        const faucetPubKey = new Uint8Array(hexToBuf(faucetPubKeyHex));
+        const faucetPubKey = hexToBytes(faucetPubKeyHex);
         faucetKarma = ensureSystemKarmaBox(faucetPubKey, GENESIS_HEIGHT).value;
         ensureFaucetCreditBox(faucetPubKey, GENESIS_HEIGHT);
       }
@@ -262,7 +262,7 @@ export function seedGenesisState(): void {
       // separates two networks that agree on everything else, and no pair of
       // these three does.
       ensureGenesisProofBox(
-        new Uint8Array(hexToBuf(config.profile.genesisProofPayload)),
+        hexToBytes(config.profile.genesisProofPayload),
         GENESIS_HEIGHT,
       );
 
