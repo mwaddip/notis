@@ -78,6 +78,9 @@ export type { NetworkType, NetworkProfile, ProtocolEra, BackerRow, BackerTable }
 export { generateKeyPair } from './identity.js';
 export type { KeyPair, UserId } from './identity.js';
 
+// The protocol hash — TYPES_INTERFACE → The protocol hash
+export { hash32 } from './hash.js';
+
 // Merkle tree
 export { leafHash, nodeHash, buildMerkleRoot, hexToBuf } from './merkle.js';
 

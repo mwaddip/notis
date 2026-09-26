@@ -18,7 +18,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@dagsocial/wire": "workspace:*"
+    "@dagsocial/wire": "workspace:*",
+    "@noble/hashes": "^2.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
