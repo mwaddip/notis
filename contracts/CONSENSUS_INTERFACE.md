@@ -48,7 +48,8 @@ ApplyResult = { ok: true; effects: BlockEffects } | { ok: false; reason: string 
 
 **`applyBlock` is the mutation phase** (`NODE_INTERFACE → "Apply funnel: validation and mutation phases"`), in its
 order: the block's posts and their topology rows · the body decoded, every declared id proven, the settlement found by
-position · every signature the body carries, checked as one batch · the pre-body captures (decay's projection and plans, the releasable escrows, the lapsed vouches, the backer
+position · every signature the body carries, checked as one batch · the pre-body captures (decay's projection and
+plans, the releasable escrows, the lapsed vouches, the backer
 pool) · the user transactions in committed order — inputs resolved, `validateTx`, the like binds, one invitee per
 block, `applyTx`, the post's activity bump, the like record, the name claim or burn · the withdrawals · the settlement
 (`checkSettlement`, then applied) · the grants · the like counters · the membership pass · the decay clocks. It runs at
@@ -70,9 +71,6 @@ entry keeps every verdict:** `validateTx` refuses a map key no input requires, s
 map verifies, and a body with a failing entry is a rejected block either way. **A missing signature is not an
 entry**: the loop refuses it with its transaction's reason. The settlement carries no signature, and the header's is
 the node's to check (`NODE_INTERFACE → Ordering block apply-time authorization`).
-
-> ⚠ **AHEAD OF CODE (2026-09-26, `ed25519-batch-verify`).** No signatures-per-input check runs yet: a transaction whose map
-> holds more entries than it has inputs reaches the batch, and the pass refuses it for the unrequired key.
 
 **A rule failure is a `reason`, never a throw.** Every rejection the phase makes answers `{ ok: false, reason }`, the
 reason the text the node logs.
@@ -212,15 +210,23 @@ transaction's id, so a signer whose boxes are several of a transaction's inputs 
 worst case is then one check per 128 bytes of body — an extra signer costs 32 bytes of input and 96 of key and
 signature — and `MAX_TX_BYTES` holds at most 77 signers in one transaction (9 903 bytes), so a body at
 `MAX_BLOCK_BODY_BYTES` carries at most **about 15 500 signatures in 202 transactions** (15 496–15 499 as the height
-moves the widths of the values): **4.2–4.6 s as a batch on the i9's core and 9.2 s on the box's**, where one check at a
-time takes 20–22 s and 40 s. An ordinary full body — one signer a transaction — holds 5 800 to about 8 100. **A body
-the rules refuse costs no more to check than that worst case:** the batch checks at most one entry per input
-(→ Applying a block), so every entry still costs 128 bytes of body.
-`packages/consensus/scripts/bench-apply-block.mjs` reproduces both bodies through `applyBlock`. No other term may grow faster than the reads the body makes: each overlay read is a map lookup or one
-composition over the view's answer to it.
+moves the widths of the values). An ordinary full body — one signer a transaction — holds 5 800 to about 8 100. **A body
+the rules refuse costs about what the valid worst case does:** the batch checks at most one entry per input (→ Applying
+a block), so every entry still costs 128 bytes of body — a refused body spares the bytes a valid one spends on its
+outputs, and fits at most about 0.4% more entries.
 
-> ⚠ **AHEAD OF CODE (2026-09-26, `ed25519-batch-verify`).** The batch column is a prototype's, measured outside
-> `applyBlock`; the bench script and its numbers land with the unit.
+**`applyBlock` over those bodies**, measured 2026-09-26 with `packages/consensus/scripts/bench-apply-block.mjs`
+(testnet's numbers, height 1 000) — each signature checked on its own, then the body checked as one batch:
+
+| Body | i9-14900HX core, Node 22 | a testnet box's Cascade Lake core, Node 22 |
+|---|---|---|
+| ordinary: 8 031 one-signer credit sends | 10.7–11.0 s → 2.9 s | 30.6–31.8 s → 9.3–9.7 s |
+| packed: 15 497 signers in 202 transactions | 20.0–20.2 s → 4.5 s | 53.8–55.7 s → 13.8–14.3 s |
+| the packed body, one signature corrupted — refused | 19.9–20.1 s → 4.3 s | 52.2–52.8 s → 12.4–13.5 s |
+| 20 598 entries no input requires — refused | 0.09 s → 0.09 s | 0.25–0.37 s → 0.28–0.36 s |
+
+No other term may grow faster than the reads the body makes: each overlay read is a map lookup or one composition over
+the view's answer to it.
 
 ## Tests
 
