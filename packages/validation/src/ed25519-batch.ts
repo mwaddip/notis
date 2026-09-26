@@ -2,7 +2,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import type { EdwardsPoint } from '@noble/curves/abstract/edwards.js';
 import { bytesToNumberLE } from '@noble/curves/utils.js';
 import { sha512 } from '@noble/hashes/sha2.js';
-import { bytesToHex } from '@noble/hashes/utils.js';
+import { bytesToHex } from '@dagsocial/types';
 import { verifyEd25519 } from './verify.js';
 
 /** One signature a batch checks: the 64-byte signature, the signed message and the raw 32-byte key. */
