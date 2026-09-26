@@ -1,9 +1,9 @@
-// The binding-check harness (WEB_INTERFACE → The browser reaches @dagsocial/types
-// through a build-time shim). run.mjs builds this entry through the SAME crypto
-// alias and Buffer inject the app uses, then evaluates the bundle in headless
-// Chromium and calls __contentHashHex over live node posts. Reaching
-// computeContentHash here means the built bundle's shim actually runs — under
-// Node the substitution never happens, so no committed unit test can prove it.
+// The binding-check harness (WEB_INTERFACE → The client's builds substitute
+// nothing). run.mjs builds this entry through the SAME plugin the app build
+// uses, then evaluates the bundle in headless Chromium and calls
+// __contentHashHex over live node posts — the proof that the bundle's hashing
+// is the node's; under Node the real crypto is present, so no committed unit
+// test can prove it.
 import { computeContentHash } from '@dagsocial/types';
 
 function toHex(b: Uint8Array): string {
