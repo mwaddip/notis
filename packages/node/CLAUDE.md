@@ -56,8 +56,9 @@ the block's effects, the journal built from them (NODE_INTERFACE → Block Journ
   embedded tx, and every user-value mutation rides mempool → block.
 - **Hashing** — `blake2b512` truncated via `.subarray(0, 32)` for every 32-byte output; a browser mirror's
   `blakejs` must match it.
-- **Signatures** — raw Ed25519 (64 bytes), verified by `@dagsocial/validation`'s `verifyEd25519` alone — strict
-  RFC 8032 through `@noble/curves` (`VALIDATION_INTERFACE → Acceptance criterion`).
+- **Signatures** — raw Ed25519 (64 bytes), verified by `@dagsocial/validation`'s one rule — `verifyEd25519`, or
+  `verifyEd25519Batch` over a block's body inside `applyBlock` — strict RFC 8032 through `@noble/curves`
+  (`VALIDATION_INTERFACE → Acceptance criterion`).
 - **On-chain time = block height**, never wall-clock.
 - **Single-transaction atomic writes** for any multi-table mutation.
 - **Secret keys never** appear in API responses or DTOs.
