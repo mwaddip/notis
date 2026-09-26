@@ -48,6 +48,13 @@ const le32 = (n: number): Uint8Array => {
   return out;
 };
 
+/** `LE64(n)`, exact for `n` up to `Number.MAX_SAFE_INTEGER`. */
+const le64 = (n: number): Uint8Array => {
+  const out = new Uint8Array(8);
+  new DataView(out.buffer).setBigUint64(0, BigInt(n), true);
+  return out;
+};
+
 /** SHA-512 through Node's OpenSSL, apart from the implementation's `@noble/hashes`. */
 const sha512 = (...parts: Uint8Array[]): Uint8Array => {
   const hash = createHash('sha512');
@@ -526,24 +533,24 @@ describe('verifyEd25519Batch', () => {
   describe('the coefficients, derived from the batch', () => {
     // VALIDATION_INTERFACE → verifyEd25519Batch → "The coefficients are derived from the batch, never
     // drawn": T = SHA-512("dagsocial/ed25519-batch/1" ‖ LE32(n) ‖ for each entry: signature(64) ‖
-    // publicKey(32) ‖ LE32(|message|) ‖ message), zᵢ = LE(SHA-512(T ‖ LE32(i))[0..16]), a zero taken
+    // publicKey(32) ‖ LE64(|message|) ‖ message), zᵢ = LE(SHA-512(T ‖ LE32(i))[0..16]), a zero taken
     // as 1. The literals are that layout over the four RFC 8032 vectors, hashed apart from this repo's
     // code (Python's hashlib); the test recomputes each with Node's createHash as well.
     const FIXED = RFC8032.map(({ entry }) => entry);
     const PINNED_T =
-      '8644bd2571254ae5f1e3f2d67c0e490afc2487a2d7088be231539cd777cf78b1a0044d5c497ddf1692f9bd2b61ec60eb48bc5736cf2cb4f80415b6db4e31cf95';
+      '498a62fd7efd9c29740064165ea8884520897dc1438602da0ef6aab22774aba191af7fa7159eebcc4d11e1ce2813427d2743bd85c0247e922e36990654b1da76';
     const PINNED_Z = [
-      0x1fe301e0c94fdb9d8dd9c99f69fac4e0n,
-      0x3924e833c7250d6cd27cadc6dd16b75bn,
-      0xf204346e0091f41ca52f33aa1eb03ab2n,
-      0x69a488acadafab315e8c45a8fe1c2febn,
+      0x620155d87ae8df414ea2ecee430f12dcn,
+      0x127689d789613eef0be4403bc19b25fn,
+      0x1c384e8a4050af78435e1fbd084e0685n,
+      0x8785d2ffc562ee01b0014204e006769bn,
     ];
 
     const transcriptHere = (entries: Ed25519BatchEntry[]): Uint8Array =>
       sha512(
         utf8('dagsocial/ed25519-batch/1'),
         le32(entries.length),
-        ...entries.flatMap((e) => [e.signature, e.publicKey, le32(e.message.length), e.message]),
+        ...entries.flatMap((e) => [e.signature, e.publicKey, le64(e.message.length), e.message]),
       );
     const coefficientHere = (transcript: Uint8Array, i: number): bigint => {
       const z = leToBigInt(sha512(transcript, le32(i)).subarray(0, 16));

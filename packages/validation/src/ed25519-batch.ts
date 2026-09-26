@@ -50,15 +50,21 @@ function writeLE32(out: Uint8Array, offset: number, value: number): void {
   out[offset + 3] = (value >>> 24) & 0xff;
 }
 
+/** `LE64(value)` written at `offset`, exact for `value` up to `Number.MAX_SAFE_INTEGER`. */
+function writeLE64(out: Uint8Array, offset: number, value: number): void {
+  writeLE32(out, offset, value >>> 0);
+  writeLE32(out, offset + 4, Math.floor(value / 2 ** 32));
+}
+
 /**
  * `T = SHA-512("dagsocial/ed25519-batch/1" ‖ LE32(n) ‖ for each entry in order: signature(64) ‖
- * publicKey(32) ‖ LE32(|message|) ‖ message)` (VALIDATION_INTERFACE → verifyEd25519Batch → "The
+ * publicKey(32) ‖ LE64(|message|) ‖ message)` (VALIDATION_INTERFACE → verifyEd25519Batch → "The
  * coefficients are derived from the batch, never drawn"). Every entry must have passed its shape
  * check. Exported for the suite, not from the package.
  */
 export function transcriptOf(entries: ReadonlyArray<Ed25519BatchEntry>): Uint8Array {
   let size = DOMAIN_BYTES.length + 4;
-  for (const { message } of entries) size += 64 + 32 + 4 + message.length;
+  for (const { message } of entries) size += 64 + 32 + 8 + message.length;
   const preimage = new Uint8Array(size);
   preimage.set(DOMAIN_BYTES, 0);
   let offset = DOMAIN_BYTES.length;
@@ -69,8 +75,8 @@ export function transcriptOf(entries: ReadonlyArray<Ed25519BatchEntry>): Uint8Ar
     offset += 64;
     preimage.set(publicKey, offset);
     offset += 32;
-    writeLE32(preimage, offset, message.length);
-    offset += 4;
+    writeLE64(preimage, offset, message.length);
+    offset += 8;
     preimage.set(message, offset);
     offset += message.length;
   }
