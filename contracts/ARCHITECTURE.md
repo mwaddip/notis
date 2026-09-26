@@ -2031,7 +2031,8 @@ no object check compares against it and no producer stamps it.
   compute is `@dagsocial/types`' `hash32`**, over `@noble/hashes` — one implementation for the node and the browser
   (`TYPES_INTERFACE → The protocol hash`; the packages: → Package boundaries). Node-only code hashes with
   `node:crypto`'s `createHash('blake2b512')`, which answers the same bytes: the node's network, name and holder record
-  keys, net's frame checksum, and the miner script (`MINING_INTERFACE → Miner Script`)
+  keys, net's frame checksum, the miner script (`MINING_INTERFACE → Miner Script`) and the e2e suite's own miner and
+  test identities
 - Signatures: raw Ed25519 (64 bytes). **Two encodings carry a signature, and base64 is not one of
   them:** raw bytes in the positional encodings (all consensus structures), and **lowercase hex**
   at the HTTP boundary (`json-to-tx.ts`) and in every client. base64 carries no signature anywhere —
@@ -2045,10 +2046,6 @@ no object check compares against it and no producer stamps it.
   with one implementation is what keeps two verifiers from disagreeing about a block's validity
 - Public keys: 32 raw bytes, hex-encoded on wire
 - Secret keys never in API responses, DTOs, or committed data structures
-
-> ⚠ **AHEAD OF CODE (2026-09-26, the consensus package, stage 3)** — `hash32` does not exist: `@dagsocial/types` and
-> `@dagsocial/validation` hash with Node's `createHash('blake2b512')`, and the web client reaches them through a
-> build-time shim over `@noble/hashes`.
 
 
 ### Content sovereignty
@@ -2486,9 +2483,6 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   second time against the DOM library with no Node types (`tsconfig.browser.json`), where a Node built-in or global is
   a compile error; `@dagsocial/consensus`' suite builds `applyBlock` for a browser and runs it with browser globals
   alone (`CONSENSUS_INTERFACE → Tests`). A test running under Node proves none of it — Node supplies both.
-  > ⚠ **AHEAD OF CODE (2026-09-26, the consensus package, stage 3)** — `types` and `validation` import Node's
-  > `crypto`; `types`, `validation`, `consensus` and `nipopow-client` read the `Buffer` global; no package carries a
-  > browser typecheck and no suite builds a bundle.
 - **"Does NOT own" on every package** — each package explicitly lists what
   it is NOT responsible for. Prevents scope creep.
   > **True — every workspace member carries it.** Note it lives in each member's `CLAUDE.md`, not in

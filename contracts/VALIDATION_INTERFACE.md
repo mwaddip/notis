@@ -413,9 +413,6 @@ the block creator to verify externally-submitted mining solutions.
 computePowHash(header: BlockHeader): Uint8Array | null
 ```
 
-> ⚠ **AHEAD OF CODE (2026-09-26, the consensus package, stage 3)** — it answers a `Buffer`, Node's `createHash`
-> digest.
-
 **This function establishes its own domain.** It returns `null` on exactly the inputs
 `verifyHeaderFieldDomains` rejects and the 32-byte preimage otherwise — see `blockHash` below for the
 full reasoning, which applies identically here.
@@ -570,9 +567,9 @@ verifyValidatorSignature(header: BlockHeader, signature: Uint8Array): boolean
 
 Verifies that `signature` is a valid raw Ed25519 signature over the block hash,
 made by the key declared in `header.validatorId`. Recomputes the signed message
-as `Buffer.from(blockHash(header), 'hex')` — the 32 raw bytes of
+as `hexToBytes(blockHash(header))` — the 32 raw bytes of
 `blake2b512(encodeHeader(header))[:32]`, the exact value the block creator signs
-(`crypto.sign(null, Buffer.from(blockHash(header), 'hex'), validatorPrivKey)`).
+(the node's `crypto.sign(null, …)` over the same 32 bytes).
 Calls `verifyEd25519(signature, message, header.validatorId)` (→ Acceptance criterion).
 Returns `true` iff the signature verifies.
 
@@ -1354,10 +1351,6 @@ own.
 
 ## Preconditions
 
-> ⚠ **AHEAD OF CODE (2026-09-26, the consensus package, stage 3)** — `verify.ts` imports `createHash` from Node's
-> `crypto` and reads the `Buffer` global (the signature message, the content length, `powHit`'s nonce); the first line
-> below and the first line under Invariants describe the code after stage 3's `validation` phase.
-
 - No Node built-in and no Node global (`ARCHITECTURE → Package boundaries`); every hash is `@dagsocial/types`'
   `hash32`
 - `@dagsocial/types` package built and importable
@@ -1375,8 +1368,10 @@ own.
   that is not 32 bytes, a block header outside the encodable domain, a nonce that
   is negative / `NaN` / float / beyond `u64`). Every such case is a clean
   rejection, never an exception. Guard the throwing operations
-  (`Buffer.byteLength`, `encodeHeader`,
-  `BigInt`/`writeBigUInt64LE`, `.length`) with type/shape checks first.
+  (`encodeHeader`, noble's `ed25519.verify`, `BigInt` / `DataView.setBigUint64`,
+  `.length`) with type/shape checks first — and a `TextEncoder` measures a
+  non-string by its string form rather than throwing, so `content`'s `typeof`
+  guard is what refuses one.
 
   **Phase 1f extended this rule past the `verify*` functions.** "No exported verify function
   throws" left `blockHash` and `computePowHash` outside the guarantee, because they are not
@@ -1394,7 +1389,7 @@ own.
   (`MINING_INTERFACE.md` → PoW Verification). A post carries no nonce.
 - The integer-range guard (M-6): a nonce or `targetBits` that is not a
   non-negative safe integer within `u64` yields `false`, never a thrown
-  `RangeError` — the guard prevents a throw from `BigInt` / `writeBigUInt64LE`.
+  `RangeError` — the guard prevents a throw from `BigInt` / `DataView.setBigUint64`.
   Validate with `Number.isInteger` (not a loose `typeof === 'number'`, which
   admits `NaN` and floats)
 - Content limits measured in UTF-8 bytes, not characters

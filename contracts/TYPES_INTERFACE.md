@@ -11,10 +11,6 @@ protocol constants. Pure functions only — no side effects, no I/O — but `gen
 `crypto.getRandomValues`. Its one workspace dependency is `@dagsocial/wire`; its others are `@noble/hashes` and
 `@noble/curves`. It imports no Node built-in and reads no Node global (`ARCHITECTURE → Package boundaries`).
 
-> ⚠ **AHEAD OF CODE (2026-09-26, the consensus package, stage 3)** — the package imports Node's `crypto` (`createHash`
-> in five modules, `generateKeyPairSync` in `identity.ts`), depends on neither noble package, and `merkle.ts` exports
-> `hexToBuf`, which answers a `Buffer`.
-
 Exports from `packages/types/src/index.ts`. All types are importable by
 consumers; functions are pure and synchronous.
 
@@ -32,10 +28,6 @@ time a UTXO box references their public key.
 | `UserId` | `Uint8Array` | 32 raw bytes — the Ed25519 public key |
 | `generateKeyPair()` | `() => KeyPair` | A random 32-byte seed through `@noble/curves`' Ed25519 (`randomSecretKey`, `getPublicKey`); `publicKey` the 32 raw bytes, `secretKey` the seed's PKCS8 DER — the RFC 8410 prefix `302e020100300506032b657004220420` ‖ the seed, 48 bytes |
 
-> ⚠ **AHEAD OF CODE (2026-09-26, the consensus package, stage 3)** — `generateKeyPair` calls Node's
-> `generateKeyPairSync('ed25519')` and slices the raw public key out of its SPKI DER; the bytes it answers have the
-> same two shapes.
-
 `UserId` is binary. On the HTTP API wire it is hex-encoded (64 hex chars).
 In the positional codecs it stays raw bytes. There is no `getUserId` hash function — the public
 key IS the identity.
@@ -43,9 +35,6 @@ key IS the identity.
 ---
 
 ## The protocol hash (`hash.ts`)
-
-> ⚠ **AHEAD OF CODE (2026-09-26, the consensus package, stage 3)** — `hash.ts` does not exist: the nine hash sites in
-> this package and the three in `@dagsocial/validation` each call Node's `createHash('blake2b512')` and truncate.
 
 | Export | Signature | Description |
 |--------|-----------|-------------|
@@ -244,10 +233,6 @@ transaction applies and carried on every read; a reader takes it rather than der
 because deriving it is the thing that cannot be done.
 
 ### Merkle primitives (`merkle.ts`)
-
-> ⚠ **AHEAD OF CODE (2026-09-26, the consensus package, stage 3)** — `merkle.ts` also exports `hexToBuf(hex): Buffer`
-> (an even-length check, then `Buffer.from(hex, 'hex')`, which stops at the first non-hex character), called three
-> times by the node; the strict `hexToBytes` (→ Export table) replaces it.
 
 | Export | Description |
 |--------|-------------|
@@ -2613,9 +2598,6 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 | `bytesToHex(bytes)` | `(Uint8Array) => string` | Lowercase hex, two characters a byte — the codec's own conversion, and the one hex encoder in the packages the browser runs. Total |
 | `hexToBytes(hex)` | `(string) => Uint8Array` | Its inverse, strict: even length and `[0-9a-f]` only, or it throws — never the partial decode `Buffer.from(hex, 'hex')` answers. A caller holding hex it did not produce checks it first, so a refusal there is a verdict, not a throw |
 | `equalBytes(a, b)` | `(Uint8Array, Uint8Array) => boolean` | Equal lengths and equal bytes |
-
-> ⚠ **AHEAD OF CODE (2026-09-26, the consensus package, stage 3)** — the last three rows: the codec's hex pair is
-> private (`hexToBytesExact`, `bytesToHex` in `codec.ts`), and no `equalBytes` exists.
 
 
 ### How a dispatch decays this contract, and why nothing catches it

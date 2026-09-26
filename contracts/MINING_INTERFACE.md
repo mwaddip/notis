@@ -402,9 +402,6 @@ domain (`VALIDATION_INTERFACE` → `computePowHash`). The template header is bui
 `block-creator.ts`, so `null` means this node built a header it cannot itself encode — a bug in the
 creator, not a client error.
 
-> ⚠ **AHEAD OF CODE (2026-09-26, the consensus package, stage 3)** — `computePowHash` answers a `Buffer`, and the
-> route hex-encodes it with `Buffer`'s own `toString('hex')`.
-
 **500, not 404.** They are different claims: 404 says no template exists yet and the miner should
 retry, which is routine. 500 says a template exists and is malformed, which is not. A miner that
 retried a 404 forever against a broken creator would never learn anything — and silently omitting

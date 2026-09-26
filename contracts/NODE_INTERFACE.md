@@ -1122,8 +1122,9 @@ consumers assume the per-type field domains: `canonicalBoxBytes` (the id
 preimage) and `serializeBox` (the AVL leaf, so the `stateRoot`) write the
 declared field set for the output's `boxType`, where an out-of-domain value
 throws (`b32`, `vlqU64OrThrow`) or **collides on the sentinel** (`vlqU` —
-TYPES_INTERFACE → Totality), and the transition arms' `Buffer.from`/hash reads
-throw on a wrong type. Transition rules filter on `boxType` and
+TYPES_INTERFACE → Totality), and the transition arms' reads of byte fields
+(`bytesToHex`, `equalBytes`, the hash) assume a `Uint8Array` — on anything else
+they throw or answer garbage. Transition rules filter on `boxType` and
 `checkOutputValues` reads `value`; the schema is what stands between ingress
 and all of them.
 
@@ -1190,7 +1191,7 @@ site. A JSON-edge-only check would leave the gossip and block paths open.
 authorization, and transitions, as the first consumer of `tx.outputs`. Steps 6–9
 dereference output fields under a schema guarantee instead of defending
 per-site: the alternative — per-arm guards before every
-`Buffer.from(karmaOut.owner)`-shaped read — scatters the totality obligation
+`bytesToHex(karmaOut.owner)`-shaped read — scatters the totality obligation
 across every current and future transition arm, which is precisely the pattern
 by which the unpinned-field class keeps producing (an arm added later forgets
 its check). One gate, ahead of all semantic rules, is Ergo's
