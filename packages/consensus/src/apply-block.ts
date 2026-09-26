@@ -228,6 +228,18 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     );
   }
 
+  // No transaction carries more signatures than inputs, checked over the whole
+  // queue before the batch runs, so the batch checks at most one entry per input
+  // (CONSENSUS_INTERFACE → Applying a block → "No transaction may carry more
+  // signatures than inputs, and that is checked first").
+  const overSigned = queue.find(({ tx }) => Object.keys(tx.signatures).length > tx.inputs.length);
+  if (overSigned !== undefined) {
+    return reject(
+      `Rejected block height=${height}: embedded UTXO tx ${overSigned.txId} ` +
+      `carries more signatures than inputs`,
+    );
+  }
+
   // Every signature the body carries, checked as one batch before any
   // transaction applies (CONSENSUS_INTERFACE → Applying a block → "A block's
   // signatures are checked together, before any transaction applies"). The

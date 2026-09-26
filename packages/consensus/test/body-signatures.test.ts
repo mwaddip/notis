@@ -8,6 +8,7 @@ import {
   MemoryStateView,
   applyContextFor,
   candidateBlock,
+  consolidateTx,
   finish,
   hex,
   identityRecord,
@@ -201,20 +202,46 @@ describe('applyBlock checks every signature the body carries as one batch', () =
     expect(verifyEd25519).not.toHaveBeenCalled();
   });
 
-  it('a key no input requires: a signature that verifies passes the batch and the pass refuses the key; one that does not fails the batch', () => {
+  it('a transaction carrying more signatures than inputs is refused before the batch runs, with its own reason', () => {
+    // The last thread spends one input. Its extra entry does not verify, and neither does the first
+    // transaction's own signature below: a batch run first would answer the body check's reason.
     const key = hex(outsider.userId);
-    const spare = signatureBy(outsider, body[3]!.txId);
-    const verifying = withEntry(valid, 3, (tx) => { tx.signatures[key] = spare; });
+    const extra = flipped(signatureBy(outsider, body[3]!.txId));
+    expect(verifyEd25519(extra, Buffer.from(body[3]!.txId, 'hex'), outsider.userId)).toBe(false);
+    const overSigned = withEntry(valid, 3, (tx) => { tx.signatures[key] = extra; });
+    const reason = `Rejected block height=${H}: embedded UTXO tx ${body[3]!.txId} carries more signatures than inputs`;
+
+    expect(apply(overSigned)).toEqual({ ok: false, reason });
+    expect(verifyEd25519Batch).not.toHaveBeenCalled();
+    expect(verifyEd25519).not.toHaveBeenCalled();
+
+    const authorKey = hex(author.userId);
+    const alsoBad = withEntry(overSigned, 0, (tx) => { tx.signatures[authorKey] = flipped(tx.signatures[authorKey]!); });
+    expect(apply(alsoBad)).toEqual({ ok: false, reason });
+    expect(verifyEd25519Batch).not.toHaveBeenCalled();
+    expect(verifyEd25519).not.toHaveBeenCalled();
+  });
+
+  it('a transaction carrying as many signatures as inputs reaches the batch: a key no input requires passes it and the pass refuses the key, or fails it', () => {
+    // Two inputs and one signer, so the outsider's entry is the second of two.
+    const merged = consolidateTx(author, [first, second], H);
+    const block = candidateBlock(view, H, [merged], miner.userId, ctx);
+    expect(apply(block).ok).toBe(true);
+    const key = hex(outsider.userId);
+    const spare = signatureBy(outsider, merged.txId);
+
+    const verifying = withEntry(block, 0, (tx) => { tx.signatures[key] = spare; });
     expect(apply(verifying)).toEqual({
       ok: false,
       reason:
-        `Rejected block height=${H}: embedded UTXO tx ${body[3]!.txId} failed re-validation: ` +
+        `Rejected block height=${H}: embedded UTXO tx ${merged.txId} failed re-validation: ` +
         `Signature map carries unrequired key ${key.slice(0, 16)}…`,
     });
-    expect(batchedEntries()).toContainEqual([body[3]!.txId, key, hex(spare)]);
+    expect(batchedEntries()).toContainEqual([merged.txId, key, hex(spare)]);
 
-    const failing = withEntry(valid, 3, (tx) => { tx.signatures[key] = flipped(spare); });
+    const failing = withEntry(block, 0, (tx) => { tx.signatures[key] = flipped(spare); });
     expect(apply(failing)).toEqual({ ok: false, reason: BODY_REASON });
+    expect(batchedEntries()).toHaveLength(2);
   });
 
   it('a body carrying no signature is an empty batch', () => {
