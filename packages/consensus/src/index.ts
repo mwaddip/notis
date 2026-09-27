@@ -34,6 +34,10 @@ export type { StateView, ApplyContext } from './state-view.js';
 // tree records).
 export type { NetworkRecord, HolderRecord } from '@dagsocial/types';
 
+export { isSentinel } from './tree-session.js';
+export type { TreeSession, TreeLookup } from './tree-session.js';
+export { treeStateView, TreeInconsistencyError } from './tree-view.js';
+export type { TreeStateView } from './tree-view.js';
 export { indexEntriesOfBox, isLapsedMember } from './tree-index.js';
 export { seedTreeWrites } from './tree-writes.js';
 export type { TreeWrite } from './tree-writes.js';
