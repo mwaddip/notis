@@ -34,6 +34,14 @@ for a block's body (`VALIDATION_INTERFACE → Acceptance criterion`). The browse
 | `decay` | `deriveKarmaDecay` · `commitDecayClocks` | `NODE_INTERFACE → Karma decay` | `DecayDeps` |
 | `coinbase-split` | `computeBlockReward` · `splitCoinbase` · `isCreditSideTx` | `MINING_INTERFACE → Emission Schedule` · `→ Coinbase Application` | none |
 | `block-posts` | `postsOf` · `postIdsOf` | `NODE_INTERFACE → Post transactions` · `→ Withdrawal transactions` | none |
+| `tree-session` | — (`TreeSession`, `TreeLookup`, `isSentinel`) | this contract's `The tree session` | — |
+| `tree-view` | `treeStateView` | this contract's `The tree view` | a `TreeSession` |
+| `tree-index` | `indexEntriesOfBox` · `isLapsedMember` | this contract's `The index entries` | none |
+| `tree-writes` | `treeWritesOf` · `seedTreeWrites` | this contract's `The tree writes` | none |
+
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the four `tree-*` modules do not exist; the node
+> answers `StateView` from SQLite (`storeStateView`) and derives its AVL feed itself (`proverFeedFromEffects`,
+> `applyBlockMutations`).
 
 Beside them the barrel exports the types a caller builds their arguments and reads their answers with — `StateView`,
 `ApplyContext`, `ApplyResult`, `BlockEffects`, `HolderRecord`, `UtxoEngineDeps`, `UtxoResult`, `SettlementDeps`,
@@ -97,34 +105,134 @@ The node builds it from its configuration (`applyContextFrom`).
 
 ## StateView
 
-**Read-only, and the whole of what the rules read.** The node answers each read with its store's own query for it,
-order and limit included; a leaf will answer from proofs. **Every read is marked for N2**: a query or a read outside the
-state root becomes a keyed record under the root there — never here, where no committed byte moves.
+**Read-only, and the whole of what the rules read. Every read is a lookup under the state root** — one key, or a
+walk of one key range — answered by the tree view (→ The tree view): the node's over its prover, a leaf's over the
+proof it was handed, the same code on both. The node's SQLite store answers none of them.
 
-| Read | Answers | Order · limit | For N2 |
+| Read | Answers | Order · limit | Under the root (`TYPES_INTERFACE → The tree keys`) |
 |---|---|---|---|
-| a box by id | the box, if live | — | keyed |
-| a box's provenance | `{ txId, index }` for any box the state holds or held, live or spent | — | keyed (the box's own record bytes) |
-| an identity record | the record, or none | — | keyed |
-| the network record | the member count | — | keyed |
-| a name record | the name's row, or none | — | keyed |
-| a holder record | the owner's name row, or none | — | keyed |
-| the emission · treasury · karma pool · backer pool box | the live box of that type, or none | `ORDER BY id LIMIT 1` | found by type |
-| an owner's karma boxes | every live karma box of the owner | `value DESC, id` | query |
-| a voucher's escrows | every live escrow the voucher owns | `id` | query |
-| a pair's vouch boxes | every live vouch box for the (voucher, target) pair | `id` | query |
-| an author's like accrual boxes | every live `like_accrual` box naming the author | `id` | query |
-| the bonds invited by a height | live bonds whose invitee's record holds `0 < invitedAtBlock ≤ h` | `(invitedAtBlock, id)`, a limit | query |
-| the escrows releasable at a height | live escrows with `releaseAtBlock ≤ h` | `(releaseAtBlock, id)`, a limit | query |
-| the lapsed vouches | live vouch boxes whose voucher's record fails `member()` | `id`, a limit | query |
-| a post's author | the `block_topology` author, or none | — | outside the root |
-| a post's confirmation height | the `block_topology` height, or none | — | outside the root |
-| a post's standing | `'live'` · `'withdrawn'` · `'none'` (`dag_posts`) | — | outside the root |
-| a like record | whether `(target, liker)` exists | — | outside the root |
+| a box by id | the box, if live | — | `box ‖ boxId` |
+| a box's provenance | `{ txId, index }` for a live box | — | the box's own record bytes |
+| an identity record | the record, or none | — | `identity ‖ id` |
+| the network record | the member count | — | `network` |
+| a name record | the name's row, or none | — | `name ‖ nameLower`, then the box it names |
+| a holder record | the owner's name row, or none | — | `holder ‖ owner`, then the box it names |
+| the emission · treasury · karma pool · backer pool box | the live box of that type, or none | `id`, the first | the `type ‖ boxType` range's first entry |
+| an owner's karma boxes | every live karma box of the owner | `value DESC, id` | the whole `karmaOf ‖ owner` range, then each box, sorted |
+| a voucher's escrows | every live escrow the voucher owns | `id` | the `escrowOf ‖ voucher` range |
+| a pair's vouch boxes | the pair's live vouch box — one at most (`NODE_INTERFACE → Vouch transition rules`) | — | `vouchPair ‖ voucher ‖ target`, then the box |
+| an author's like accrual boxes | every live `like_accrual` box naming the author | `id` | the `accrualOf ‖ author` range |
+| the bonds invited by a height | live bonds created at `0 < createdAtBlock ≤ h` — the height their invitee's record holds as `invitedAtBlock` | `(createdAtBlock, id)`, a limit | the `bondDue` range while the key's height `≤ h` |
+| the escrows releasable at a height | live escrows with `releaseAtBlock ≤ h` | `(releaseAtBlock, id)`, a limit | the `escrowDue` range while the key's height `≤ h` |
+| the lapsed vouches | live vouch boxes whose voucher is a lapsed member (→ The index entries) | `(voucher, target)`, a limit | the `lapsed` range, and for each voucher its `vouchPair ‖ voucher` range |
+| a post's author | the author, or none | — | `post ‖ postId` |
+| a post's confirmation height | the height, or none | — | `post ‖ postId` |
+| a post's standing | `'live'` · `'withdrawn'` · `'none'` | — | `post ‖ postId` — absent is `'none'` |
+| a like record | whether `(target, liker)` exists | — | `like ‖ postId ‖ liker` |
 
-The members are named for the store reads that answer them (`getBox`, `getKarmaBoxes`, `getBondsInvitedAt`, …). The
-shapes the rules share with the node's store — `NetworkRecord` and `UsernameRow` — live in the package, and the store
-imports them.
+**The lapses run voucher by voucher.** One global order over every lapsed vouch would need every lapsed voucher's
+whole range read at every block, which the leg's limit exists to prevent; voucher by voucher, the walk stops at the
+limit. An owner's karma boxes are read whole — the read has no limit — and sorted.
+
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the node answers every read from SQLite
+> (`storeStateView`): a box's provenance for any box it holds or held, a pair's boxes as a list, the bonds by their
+> invitee's `invitedAtBlock`, the lapsed vouches in one ascending box-id order, a post's reads from `block_topology`
+> and `dag_posts`, a like from `like_records`.
+
+The members share their names with the node's store reads (`getBox`, `getKarmaBoxes`, `getBondsInvitedAt`, …), which
+answer the node's API. The shapes the rules share with the node's store — `NetworkRecord` and `UsernameRow` — live in
+the package, and the store imports them.
+
+## The tree layout
+
+**Everything the rules read is under the state root, and this package owns what the tree holds**: the entities, the
+index entries derived from them, how a read walks them, and the order a block's writes reach the tree. The keys and the
+value codecs are `types`' (`TYPES_INTERFACE → The tree keys`, `→ Layout — tree records`); the AVL+ prover and its
+storage are the node's.
+
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — this section's modules do not exist; the tree holds
+> boxes and the four record kinds under hashed 32-byte keys, and nothing the rules read from a query or outside the
+> root is in it.
+
+### The tree session
+
+```ts
+TreeLookup =
+  | { found: true;  value: Uint8Array; nextKey: Uint8Array }   // the key is a leaf; nextKey the next leaf's key
+  | { found: false; prevKey: Uint8Array; nextKey: Uint8Array } // the key is absent; the keys either side of it
+interface TreeSession { lookup(key: Uint8Array): TreeLookup }
+```
+
+**The one thing the tree view asks of a tree.** The node's session is its prover; a leaf's is the step-by-step
+verifier over a block's proof. **Every neighbour key is authenticated** — it is part of its leaf's label — so a reader
+that walks by `nextKey` sees every key between two it was shown. At the ends of the tree the neighbour is a sentinel:
+all `0x00` below the first key, all `0xff` past the last (`isSentinel`). **No lookup is ever made of a sentinel**: the
+library refuses a key at either bound, and a refusal poisons a verifier.
+
+### The tree view
+
+**`treeStateView(session)` is the `StateView`** (→ StateView, its table), and the one implementation of it the rules
+see. It looks each key up at most once — the first read memoises it — so a block's reads of the tree are the distinct
+keys it asked, in the order it first asked them.
+
+**A range read walks.** It looks up the range's start (`TYPES_INTERFACE → The tree keys`, `rangeStart`), yields that
+key if it is a leaf, and follows `nextKey` for as long as the next key is in the range, is no sentinel and the read's
+limit is not reached, looking each next key up in turn. A next key the tree names and a lookup of it answers absent is
+a tree that contradicts itself: `TreeInconsistencyError`, a throw, never a verdict. An index entry yields a box id; the
+box itself is then a `box` lookup. **The due queues stop at a height**: the `bondDue` and `escrowDue` walks end at the
+first key whose height (`keyHeight`) is above the read's. **The lapses share one limit** across the `lapsed` walk and
+each voucher's `vouchPair` walk.
+
+**The name and holder reads rebuild the row from the box** the record names — `name`, `owner` and
+`claimedAtBlock` (the box's `createdAtBlock`) — so the row is the committed box's, whoever stored it.
+
+### The index entries
+
+**An index entry is a pure function of one entity's own fields**, and `indexEntriesOfBox` / `isLapsedMember` are the
+only derivations. The tree writes (→ The tree writes) place and remove them with their entity; no rule writes one.
+
+| From | Entries |
+|---|---|
+| a karma box | `karmaOf ‖ owner ‖ boxId` |
+| a credit box | `creditOf ‖ owner ‖ boxId` — no rule reads it; a leaf proves its whole holdings from it |
+| a vouch escrow | `escrowOf ‖ owner ‖ boxId` and `escrowDue ‖ releaseAtBlock ‖ boxId` |
+| a bond | `bondDue ‖ createdAtBlock ‖ boxId` |
+| a vouch | `vouchPair ‖ voucherId ‖ targetId`, its value the box id |
+| a like accrual | `accrualOf ‖ author ‖ boxId` |
+| an emission, treasury, karma-pool or backer-pool box | `type ‖ boxType ‖ boxId` |
+| any other box | none |
+| an identity record with `memberSinceBlock > 0 ∧ memberVouches < memberBar` (`isLapsedMember`) | `lapsed ‖ identityId` |
+
+**A bond's creation height is its invitee's `invitedAtBlock`**: the grant writes the invitee's `invitedAtBlock` in the
+block whose body created the bond, and nothing else writes it (`NODE_INTERFACE → Identity Records`). **A lapsed member
+is every voucher that fails `member()`**: only a member casts (`NODE_INTERFACE → Vouch transition rules`) and
+`memberSinceBlock`, once set, is never reset — so the index names every voucher the lapse leg reads, and never a
+resident who has cast nothing.
+
+### The tree writes
+
+**`treeWritesOf(effects, height)` is a block's writes to the tree, and the node and a leaf apply them through it.**
+From the effects (→ BlockEffects):
+
+- **boxes** — a box the block both inserted and spent nets out, its index entries with it; every other box is an
+  `Insert` or a `Remove` of `box ‖ boxId`, its value `boxRecordBytes`, beside the same op on each of its index entries;
+- **identity records** — the last write to each key, an `InsertOrUpdate` of `identity ‖ id`; and **its `lapsed`
+  entry moves only where the predicate flips** between the record's pre-block value (the mutation's `before`) and its
+  last write: an `InsertOrUpdate` where it now holds, a `Remove` where it held and no longer does;
+- **the network record** — an `Update` of `network`;
+- **name and holder records** — as the netting leaves them (→ BlockEffects, `heldBefore`): an `InsertOrUpdate`, a
+  `Remove`, or nothing;
+- **posts** — an `Insert` of `post ‖ postId` for each post the block confirmed, its standing `withdrawn` if the block
+  also withdrew it; an `Update` to `withdrawn` for each earlier post the block withdrew;
+- **likes** — an `Insert` of `like ‖ postId ‖ liker` for each like record.
+
+**The order is a consensus rule, because an AVL+ digest depends on the order of its operations:** every `Remove` in
+ascending key order, then every `Insert`, then every `Update`, then every `InsertOrUpdate`, keys compared bytewise.
+**No key takes two writes in one block but a vouch pair withdrawn and recast**, a `Remove` and then an `Insert`, which
+the order serves.
+
+**`seedTreeWrites(boxes, records, network)` is genesis**: every box with its index entries, every identity record with
+its `lapsed` entry where it holds, the network record — all `Insert`s, in ascending key order.
 
 ## The overlay
 
@@ -143,10 +251,19 @@ The pre-body captures are read before the block writes any box or record, and re
 **A read of what the block wrote answers a copy, shaped as the store's reads are** — every byte field a plain
 `Uint8Array` — so no read aliases the effects, and no answer depends on how the block's bytes were carried.
 
-**The store's backstops stay.** An insert of a box id the state holds or held, live or spent, throws `BoxIdTakenError`;
-a spend of a box that is not live throws `SpendOfNonLiveBoxError` (`NODE_INTERFACE → Store Interface`). Unreachable
-under provenance-derived ids and the phase's own checks; the overlay keeps them because the store's own fire only when
-the effects are written, and the speculative run writes none.
+**The store's backstops stay.** An insert of a box id a live box holds throws `BoxIdTakenError`; a spend of a box
+that is not live throws `SpendOfNonLiveBoxError` (`NODE_INTERFACE → Store Interface`). Unreachable under
+provenance-derived ids and the phase's own checks; the overlay keeps them because the store's own fire only when the
+effects are written, and the speculative run writes none. **A spent box's id cannot recur, and the tree does not hold
+spent boxes**: every user transaction spends an input (`NODE_INTERFACE → validateTx` step 1) and a synthetic mint's id
+commits to its height, so no transaction id — and no box id derived from one — is ever made twice.
+
+**The overlay knows each identity record's pre-block value.** Its first write to a record captures the view's answer
+for that key — a read the rules made before writing, so no lookup the rules did not ask — and every mutation of the
+record carries it as `before` (→ BlockEffects).
+
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — `insertBox` throws for an id the state holds or held,
+> asking the view for a spent box's provenance; a record mutation carries no `before`.
 
 **The rules keep their parameters.** `applyBlock` builds `UtxoEngineDeps`, `SettlementDeps` and `DecayDeps` over its
 overlay, so `validateTx`, `applyTx`, `checkSettlement`, `deriveKarmaDecay` and `commitDecayClocks` run unchanged; the
@@ -162,7 +279,8 @@ requires, are `validateTx`'s on both paths.
 
 - **`mutations`** — every write to committed state, in the order the phase made it: a box inserted (`op: 'insert'`, the
   box as the transaction built it, its final id), a box spent (`op: 'remove'`, its id), an identity record written (the
-  id, the record), the network record written, a name record written or removed (`row`, or `null`), a holder record
+  id, the record, and `before` — the record's pre-block value, or `null`; → The overlay), the network record written,
+  a name record written or removed (`row`, or `null`), a holder record
   written or removed (`record`, or `null`). **The holder record is the phase's own rule**: a claim writes
   `HolderRecord { claimAvailable: false, boxId }` for its owner, a burn removes it (`NODE_INTERFACE → Username
   records`). **Each name and holder mutation carries `heldBefore`** — whether the state held its key just before it,

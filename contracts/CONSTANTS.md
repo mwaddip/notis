@@ -81,6 +81,9 @@ in their Kind cell and appear again under → Per-network values with all three 
 | `BOX_VALUE_BOUND` | `9_223_372_036_854_775_808n` | 2⁶³ | consensus | SQLite `INTEGER` is a signed 64-bit integer, so the accepted value domain stops where storage does | DERIVED | `TYPES_INTERFACE → Box value domain` |
 | `AVL_KEY_LENGTH` | `32` | 32 bytes | consensus | the width of every 32-byte digest in the format | DOMAIN | `TYPES_INTERFACE → State format` |
 
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — `AVL_KEY_LENGTH` becomes `65`, 65 bytes: a one-byte
+> tag and two 32-byte fields, the longest key the tree layout writes (`TYPES_INTERFACE → The tree keys`).
+
 ### Size caps
 
 Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_BYTES < MAX_STREAM_BYTES`

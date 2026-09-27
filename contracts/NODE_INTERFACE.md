@@ -2560,7 +2560,12 @@ the identity record — in the state the block builds on, ascending box id, and 
 a `VouchEscrowBox` of the vouch's value to the voucher with `releaseAtBlock =
 vouch.createdAtBlock + vouchCooldownBlocks`: the unvouch shape exactly (→ Vouch transition
 rules), so the stake returns by the escrow leg and the escrow bars a recast as the voucher's own
-withdrawal would. A member who lapses in this block's body is withdrawn from `h + 1` on; a voucher
+withdrawal would.
+
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the order becomes **voucher by voucher, each voucher's
+> vouches in target order** — the tree's `lapsed` and `vouchPair` walks (`CONSENSUS_INTERFACE → The tree view`) — in
+> place of ascending box id, so the leg reads no more of the tree than its limit takes. A voucher's place in the order
+> is its key's; the leg defers a withdrawal by blocks at most, never denies one (`TYPES_INTERFACE → Settlement caps`). A member who lapses in this block's body is withdrawn from `h + 1` on; a voucher
 who re-qualifies before the leg reaches a box keeps it; a candidate stays eligible until a block
 consumes it or its voucher re-qualifies, and the predicate is derivable from state, so no cursor
 is stored. Each consumption subtracts one from the target's `memberVouches` iff counted, through
@@ -2877,6 +2882,12 @@ apply path runs**, never by a second implementation of the state transition:
    apply does, then restore the prover to the snapshot (`prover.rollback`).
 4. Use the computed digest as `header.stateRoot`, then mine.
 
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — step 1 saves the in-memory prover's `root` and
+> `height`; step 2 runs over the tree view on the prover (→ AVL+ State Root, "The rules read the tree, and nothing
+> else"); step 3 performs `treeWritesOf`'s writes, reads the digest and puts the saved pair back with `restoreRoot` —
+> immediate, because the library never mutates a node — so no template rebuilds the tree from storage
+> (`prover.rollback` resolves every label from SQLite).
+
 The speculative run writes nothing to the store — no block, no effect, no
 journal — and performs no `clearTemplate` and no prover checkpoint.
 
@@ -3039,6 +3050,11 @@ because every box is) until their next liked block.
 
 Storage backends implement this interface. SQLite is the backend.
 Fresh schema — no migration.
+
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — **no store function is a consensus input**: the rules
+> read the tree (→ AVL+ State Root, "The rules read the tree, and nothing else"), so a function below marked
+> **Consensus input** answers the API and the shadow run alone, and the three record keys this section derives are
+> `types`' tree keys (`TYPES_INTERFACE → The tree keys`).
 
 ### Database lifecycle
 
@@ -3305,6 +3321,9 @@ could grind a keypair whose pubkey equals a live box id and collide the two
 entity kinds in the tree. Hashing under a domain tag makes that infeasible and
 is what makes the two kinds provably disjoint.
 
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the key becomes `identity ‖ identityId`
+> (`TYPES_INTERFACE → The tree keys`): its first byte keeps it apart from every box key, raw id or not.
+
 **Table:** `identity_records (identity_id BLOB PRIMARY KEY, last_activity_block
 INTEGER NOT NULL, last_decay_block INTEGER NOT NULL, invited_at_block INTEGER
 NOT NULL DEFAULT 0, lifetime_likes_received INTEGER NOT NULL DEFAULT 0,
@@ -3482,6 +3501,9 @@ like the record's (→ Layout — IdentityRecord). `deserializeBox` refuses the 
 `0x80`; the kind-dispatching decoder gains an arm; the proof endpoint serves it as
 `kind: 'network'`.
 
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the key becomes `network`, the tag alone, and the
+> codec is `types`' (`TYPES_INTERFACE → Layout — tree records`).
+
 **Written** by the membership pass alone, once per block that changes `N`, through
 `putNetworkRecord` — journalled on `putIdentityRecord`'s pattern (→ Block Journal): the value it
 replaces is captured, the put recorded, rollback exact. **Seeded** at genesis with the root count,
@@ -3522,6 +3544,9 @@ HolderRecord {                   // keyed by the identity
 `opt(b32(boxId))` for the holder record: the high bit says "not a box" as `0x80` and `0x81` do (→ Entity
 kinds); `deserializeBox` refuses both tags; the kind-dispatching decoder gains two arms; the proof
 endpoint serves them as `kind: 'username'` and `kind: 'holder'`.
+
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the keys become `name ‖ nameLower` and
+> `holder ‖ identityId`, and both codecs are `types`' (`TYPES_INTERFACE → The tree keys`, `→ Layout — tree records`).
 
 **An absent holder record means `{ claimAvailable: true, boxId: null }`, and a record equal to that
 meaning is never written** — a burn removes the record rather than writing the absent state, so absence
@@ -3770,6 +3795,11 @@ BlockJournal {
 The field names are the `journal_cbor` keys: the journal is the node's local format, with no
 migration path — a store written under a different key set is a different store.
 
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — a record mutation's `key` is its tree key
+> (`TYPES_INTERFACE → The tree keys`), hex, in place of the domain hash the comments above name; the index entries,
+> post and like records the tree gains are derived from what the journal already carries, so the journal holds none of
+> its own (`CONSENSUS_INTERFACE → The tree writes`).
+
 
 **One log, not parallel arrays.** `mutations` is a
 discriminated union over **every committed entity**, not a box-only log with
@@ -3857,6 +3887,17 @@ The `packages/node/src/state/` module provides an authenticated dictionary over
 **committed state** using AVL+ trees — the UTXO set, identity records and
 the network record and the username records (see "Entity kinds" below).
 
+**The rules read the tree, and nothing else.** Block application, the speculative run and the block creator hand
+`applyBlock` `treeStateView` over a session on this node's prover (`CONSENSUS_INTERFACE → The tree view`), and write
+the tree through `treeWritesOf` (`CONSENSUS_INTERFACE → The tree writes`). **The SQLite tables are written from the
+same effects and answer the API only**; no consensus path reads them, so a table and the tree cannot disagree about
+what a rule saw. `storeStateView` — the tables' answers to `StateView` — stays for one caller, the shadow run that
+compares it with the tree view read by read (`packages/node/scripts/shadow-replay.mjs`).
+
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — every consensus read is `storeStateView` over SQLite;
+> the tree holds boxes and the four record kinds only, and the node derives its feed itself (`proverFeedFromEffects`,
+> `applyBlockMutations`).
+
 - **avl-storage:** Persistent AVL+ tree, stateRoot computed at each block
   application and included in block headers
 - **avl-prover:** Generates inclusion/exclusion proofs for any key
@@ -3867,7 +3908,11 @@ the network record and the username records (see "Entity kinds" below).
   of it, both `null` where the key is absent and the proof is one of exclusion. `:boxId` is any 64-hex key of the tree,
   a record's derived key included; `atHeight` must name a height a checkpoint stands at exactly, else 404 `{ error:
   'height not available' }`; without it the proof is against the current version; 400 for a key that is not 64 hex or
-  a height that is not a non-negative integer. **`kind` and `value` are the node's reading and a light client trusts
+  a height that is not a non-negative integer.
+
+  > ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the route takes a tree key, 130 hex
+  > (`TYPES_INTERFACE → The tree keys`), and a 400 answers any other width; `kind` adds `post`, `like` and `index` for
+  > the kinds the layout adds (→ Entity kinds). **`kind` and `value` are the node's reading and a light client trusts
   neither**: it verifies the proof against a `stateRoot` it verified under proof-of-work and decodes the value the
   proof carries (`WEB_INTERFACE → The extension → "The verified figures"`)
 - **Config:** `MAX_PROOF_HISTORY` (prune old proof versions). The check below
@@ -3971,7 +4016,12 @@ the network record and the username records (see "Entity kinds" below).
 - **Canonically ordered (M-12):** `applyBlockMutations` sorts internally —
   all removes, then all inserts, then all record puts, each lexicographically
   by hex key, then the network record's put — so every caller inherits the canonical order; callers MUST NOT
-  rely on their input order reaching the prover. `bootstrapAvlProver` sorts
+  rely on their input order reaching the prover.
+
+  > ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the feed and its order are `consensus`'
+  > `treeWritesOf` (`CONSENSUS_INTERFACE → The tree writes`): the node performs its writes in the order it answers and
+  > throws `DivergedStateTreeError` on a refused `Remove`, `Insert` or `Update`; `bootstrapAvlProver` performs
+  > `seedTreeWrites`. `bootstrapAvlProver` sorts
   the unspent set by boxId the same way. Same mutation set in any input order
   → same digest. ⚠ **That equivalence is unconditional for boxes but holds for
   records only across *distinct* keys** — see "Where record collapsing happens"
@@ -4027,6 +4077,17 @@ Layout — Boxes — NOT a second numbering owned by this package. Decided
 | Network record | `0x81` |
 | Name record | `0x82` |
 | Holder record | `0x83` |
+| Post record | `0x84` |
+| Like record | `0x85` |
+| Index entry | `0x86` |
+| Vouch-pair entry | `0x87` |
+
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the tree holds boxes and the four record kinds, keyed
+> as the paragraph above says. Under the layout **every kind is keyed by its tag** (`TYPES_INTERFACE → The tree
+> keys`) — a box `box ‖ boxId`, a record `identity ‖ id`, `network`, `name ‖ nameLower`, `holder ‖ owner` — and the
+> tree gains the post and like records and the index entries (`CONSENSUS_INTERFACE → The tree layout`), their values
+> opening with `0x84`–`0x87` (`TYPES_INTERFACE → Layout — tree records`). The tag keeps the kinds apart; no key is a
+> hash.
 
 **This replaces a second, disagreeing numbering that this package used to
 carry** (`0x01` karma … `0x07` vouch, with `0x03` reserved). The two were

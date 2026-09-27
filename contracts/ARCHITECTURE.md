@@ -707,6 +707,16 @@ block header carries a `stateRoot` — the root hash of the AVL+ tree over all
 unspent boxes **after this block has been applied**. This enables light clients
 to verify box existence or absence without storing the full UTXO set.
 
+**Every read a consensus rule makes is a lookup under the state root** — one key, or a walk of one key range — so a
+leaf holding only a block's parent root can have each answer proven, and a leaf that proved a tip can prove what it
+holds against it, nothing left out. The tree holds the entities (boxes, identity, network, name and holder records,
+post and like records) and index entries derived from each entity's own fields; the keys are
+`TYPES_INTERFACE → The tree keys`, what the tree holds and how a read walks it `CONSENSUS_INTERFACE → The tree layout`.
+
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the tree holds boxes and four record kinds; the rules
+> also read the node's SQLite tables for a post's author, height and standing, a like record, and every query over an
+> owner's boxes or a due queue.
+
 - **Post-state, not parent-state (H-6).** `stateRoot` commits to the state the
   block *produces*, following Ergo. The block therefore commits to its own
   effect, and the tip's state is provable as soon as the tip exists. The cost
@@ -1500,6 +1510,11 @@ chain or owed one:
 **Outstanding against the live node: nothing.** Testnet's chain began at the 2026-09-15 reset, whose block 1
 the profile pins as `genesisId` (§What varies per network); every reset row is in it, and the usernames row owes
 none.
+
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the register gains **the tree layout**: every AVL key
+> and value width (`AVL_KEY_LENGTH` 65), so every `stateRoot` and all three `genesisStateRoot` pins; the tree gains
+> post, like and index entries; the lapse leg's order, so the settlement of every block with two or more lapsed
+> vouches. It owes the reset, which it rides with the block proof (N3) — and testnet's `genesisId` is unpinned for it.
 
 **When a reset is not owed.** A change that **adds** a box-type tag, an AVL leaf domain, a store table
 or a nullable column, and leaves every existing committed byte and every existing rule's verdict
