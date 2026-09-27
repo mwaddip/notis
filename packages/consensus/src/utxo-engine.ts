@@ -35,12 +35,7 @@ import type { DecayCfg, UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, Cred
 // (NODE_INTERFACE → "Box Identity and Mint Provenance").
 
 import { verifyEd25519, verifyPostCommitDomains, verifyPostWithdrawCommitDomains, verifyTxProtocolVersion } from '@dagsocial/validation';
-import type { IdentityRecord } from '@dagsocial/types';
-
-/** NODE_INTERFACE → Network record. The node's store persists the row; `DecayDeps` reads the same shape. */
-export interface NetworkRecord {
-  memberCount: number;
-}
+import type { IdentityRecord, NetworkRecord } from '@dagsocial/types';
 
 /** NODE_INTERFACE → Username records. The node's store persists the row; `UtxoEngineDeps` reads it by name and by owner. */
 export interface UsernameRow {

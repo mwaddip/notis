@@ -8,12 +8,13 @@ import type {
   KarmaBox,
   KarmaPoolBox,
   LikeAccrualBox,
+  NetworkRecord,
   ProtocolEra,
   TreasuryBox,
   VouchBox,
   VouchEscrowBox,
 } from '@dagsocial/types';
-import type { NetworkRecord, UsernameRow } from './utxo-engine.js';
+import type { UsernameRow } from './utxo-engine.js';
 
 /** A post's standing in the DAG: a row that is live, a row that is withdrawn, or no row. */
 export type PostStanding = 'live' | 'withdrawn' | 'none';

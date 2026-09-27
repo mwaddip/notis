@@ -1,5 +1,5 @@
 import { isMember } from './utxo-engine.js';
-import type { NetworkRecord, UsernameRow } from './utxo-engine.js';
+import type { UsernameRow } from './utxo-engine.js';
 import type { PostStanding, StateView } from './state-view.js';
 import { bytesToHex, hexToBytes } from '@dagsocial/types';
 import type {
@@ -7,24 +7,16 @@ import type {
   BackerPoolBox,
   BondBox,
   EmissionBox,
+  HolderRecord,
   IdentityRecord,
   KarmaBox,
   KarmaPoolBox,
   LikeAccrualBox,
+  NetworkRecord,
   TreasuryBox,
   VouchBox,
   VouchEscrowBox,
 } from '@dagsocial/types';
-
-/**
- * The holder record (NODE_INTERFACE → Username records). An absent record means
- * `{ claimAvailable: true, boxId: null }`, and a record equal to that meaning is
- * never written: a burn removes it.
- */
-export interface HolderRecord {
-  claimAvailable: boolean;
-  boxId: string | null;
-}
 
 /**
  * One write to committed state (CONSENSUS_INTERFACE → BlockEffects).
