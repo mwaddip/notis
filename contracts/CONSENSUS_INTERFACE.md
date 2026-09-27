@@ -35,17 +35,18 @@ for a block's body (`VALIDATION_INTERFACE → Acceptance criterion`). The browse
 | `coinbase-split` | `computeBlockReward` · `splitCoinbase` · `isCreditSideTx` | `MINING_INTERFACE → Emission Schedule` · `→ Coinbase Application` | none |
 | `block-posts` | `postsOf` · `postIdsOf` | `NODE_INTERFACE → Post transactions` · `→ Withdrawal transactions` | none |
 | `tree-session` | — (`TreeSession`, `TreeLookup`, `isSentinel`) | this contract's `The tree session` | — |
-| `tree-view` | `treeStateView` | this contract's `The tree view` | a `TreeSession` |
+| `tree-view` | `treeStateView` (`TreeStateView`, `TreeInconsistencyError`) | this contract's `The tree view` | a `TreeSession` |
 | `tree-index` | `indexEntriesOfBox` · `isLapsedMember` | this contract's `The index entries` | none |
-| `tree-writes` | `treeWritesOf` · `seedTreeWrites` | this contract's `The tree writes` | none |
+| `tree-writes` | `treeWritesOf` · `seedTreeWrites` (`TreeWrite`) | this contract's `The tree writes` | the block's `TreeStateView` |
 
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the four `tree-*` modules do not exist; the node
-> answers `StateView` from SQLite (`storeStateView`) and derives its AVL feed itself (`proverFeedFromEffects`,
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — no node code calls the four `tree-*` modules: the
+> node answers `StateView` from SQLite (`storeStateView`) and derives its AVL feed itself (`proverFeedFromEffects`,
 > `applyBlockMutations`).
 
 Beside them the barrel exports the types a caller builds their arguments and reads their answers with — `StateView`,
 `ApplyContext`, `ApplyResult`, `BlockEffects`, `HolderRecord`, `UtxoEngineDeps`, `UtxoResult`, `SettlementDeps`,
-`SettlementBody`, `DecayDeps`, `DecayPlan`, `EmbeddedTx`, and the two shapes the store shares (`StateView` below).
+`SettlementBody`, `DecayDeps`, `DecayPlan`, `EmbeddedTx`, `TreeSession`, `TreeLookup`, `TreeStateView`, `TreeWrite`,
+and the two shapes the store shares (`StateView` below).
 **The export list is what the node's source and its suites call, not a promise** — a helper nothing there calls leaves
 the barrel, and one a leaf needs joins it with its caller.
 
@@ -142,9 +143,8 @@ The members share their names with the node's store reads (`getBox`, `getKarmaBo
 answer the node's API. The shapes the rules share with the node's store — `NetworkRecord` and `UsernameRow` — live in
 the package, and the store imports them.
 
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — `NetworkRecord` and `HolderRecord` are `@dagsocial/types`'
-> (`TYPES_INTERFACE → Layout — tree records`, beside their codecs) and this package re-exports them; `UsernameRow`
-> stays here. The package defines its own `NetworkRecord` (`utxo-engine`) and `HolderRecord` (`overlay`).
+`NetworkRecord` and `HolderRecord` are `@dagsocial/types`' (`TYPES_INTERFACE → Layout — tree records`, beside their
+codecs), and this package re-exports them; `UsernameRow` is this package's.
 
 ## The tree layout
 
@@ -153,9 +153,9 @@ index entries derived from them, how a read walks them, and the order a block's 
 value codecs are `types`' (`TYPES_INTERFACE → The tree keys`, `→ Layout — tree records`); the AVL+ prover and its
 storage are the node's.
 
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — this section's modules do not exist; the tree holds
-> boxes and the four record kinds under hashed 32-byte keys, and nothing the rules read from a query or outside the
-> root is in it.
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the node's tree is not this layout: it holds boxes and
+> the four record kinds under hashed 32-byte keys, and nothing the rules read from a query or outside the root is in
+> it.
 
 ### The tree session
 
@@ -170,7 +170,8 @@ interface TreeSession { lookup(key: Uint8Array): TreeLookup }
 verifier over a block's proof. **Every neighbour key is authenticated** — it is part of its leaf's label — so a reader
 that walks by `nextKey` sees every key between two it was shown. At the ends of the tree the neighbour is a sentinel:
 all `0x00` below the first key, all `0xff` past the last (`isSentinel`). **No lookup is ever made of a sentinel**: the
-library refuses a key at either bound, and a refusal poisons a verifier.
+library refuses a key at either bound, and a refusal poisons a verifier. **A session's answers are the view's to
+keep**: the view memoises them for the block, so a session never reuses or mutates an array it has returned.
 
 ### The tree view
 
@@ -223,13 +224,15 @@ vouch, and the leg reads no more of the tree than its limit takes.
 it.** `view` is the block's own tree view: **what a write needs from before the block — a spent box's fields, a spent
 bond's invitee's `invitedAtBlock`, an identity record's pre-block value, an earlier post's record, a voucher's cast
 count — it reads there.** All but the cast count are reads the block's rules already made, so the view answers them
-from its memo; the cast count is the writes' own read, one for each voucher whose vouches or record the block
-changes, and the proof carries it like any other. From the effects (→ BlockEffects):
+from its memo. **The cast count is the writes' own read**, and only where a write needs it: for each voucher whose
+vouch boxes the block inserts or spends, and for each identity whose record the block writes where that record is a
+lapsed member before the block or after it — no other. The proof carries it like any other read. From the effects (→ BlockEffects):
 
 - **boxes** — a box the block both inserted and spent nets out, its index entries with it; every other box is an
   `Insert` or a `Remove` of `box ‖ boxId`, its value `boxRecordBytes`, beside the same op on each of its index entries;
 - **cast counts** — for each voucher whose vouch boxes the block inserted or spent, the count before the block plus
-  the block's net change: an `Insert` where there was none, a `Remove` where it falls to `0`, an `Update` otherwise;
+  the block's net change: nothing where the net change is `0`, an `Insert` where there was none, a `Remove` where it
+  falls to `0`, an `Update` otherwise;
 - **identity records** — the last write to each key, an `InsertOrUpdate` of `identity ‖ id`; and **its `lapsed`
   entry moves only where its condition flips** — the lapsed-member predicate over the record, and a cast count held —
   between the block's start and its end: an `InsertOrUpdate` where it now holds, a `Remove` where it held and no
@@ -275,9 +278,6 @@ provenance-derived ids and the phase's own checks; the overlay keeps them becaus
 effects are written, and the speculative run writes none. **A spent box's id cannot recur, and the tree does not hold
 spent boxes**: every user transaction spends an input (`NODE_INTERFACE → validateTx` step 1) and a synthetic mint's id
 commits to its height, so no transaction id — and no box id derived from one — is ever made twice.
-
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — `insertBox` throws for an id the state holds or held,
-> asking the view for a spent box's provenance.
 
 **The rules keep their parameters.** `applyBlock` builds `UtxoEngineDeps`, `SettlementDeps` and `DecayDeps` over its
 overlay, so `validateTx`, `applyTx`, `checkSettlement`, `deriveKarmaDecay` and `commitDecayClocks` run unchanged; the

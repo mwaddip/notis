@@ -2696,9 +2696,13 @@ block-application effect must be derivable from **block content**; an effect key
 table is a fork, not a refactor. That is the load-bearing reason marker boxes exist rather than
 a tidiness argument.
 
-⚠ **Three ordering sources are permitted and no fourth is**: the block's committed transaction order,
-ascending box id, and ascending height. Anything read from a table needs a stated total order or it
-is not one.
+⚠ **Four ordering sources are permitted and no fifth is**: the block's committed transaction order,
+ascending box id, ascending height, and the tree's key order — a range read's walk, which orders the lapses by
+`(voucher, target)` (`CONSENSUS_INTERFACE → The tree view`). Anything read from the tree or a table needs a stated
+total order or it is not one.
+
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the node answers the rules from SQLite, whose lapse
+> query orders by ascending box id; the tree's key order reaches the lapse leg when the node's reads move to the tree.
 
 #### ⛔ It is the LAST entry in `utxoTxIds`, and that is how it is identified
 
