@@ -322,8 +322,8 @@ describe('boxFromRecordBytes', () => {
     expect(box).toEqual({ ...candidate, txId, index: 0, id: boxId });
   });
 
-  it('refuses every record tag 0x80-0x87', () => {
-    for (let tag = 0x80; tag <= 0x87; tag++) {
+  it('refuses every record tag 0x80-0x88', () => {
+    for (let tag = 0x80; tag <= 0x88; tag++) {
       expect(() => boxFromRecordBytes('f'.repeat(64), Uint8Array.of(tag))).toThrow(/record/);
     }
   });

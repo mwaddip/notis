@@ -287,7 +287,7 @@ export function castCountFromBytes(bytes: Uint8Array): number {
  * (the AVL key it was read at names it; no id rides the value itself, per
  * `boxRecordBytes` — TYPES_INTERFACE → Layout — Boxes).
  *
- * Refuses a record tag (`0x80`–`0x87`) with its own message; every other tag
+ * Refuses a record tag (`0x80`–`0x88`) with its own message; every other tag
  * goes through `boxRecordFromBytes`, the one box-record decoder, unchanged.
  *
  * @throws {Error} if the value's first byte is a record tag
@@ -296,7 +296,7 @@ export function castCountFromBytes(bytes: Uint8Array): number {
 export function boxFromRecordBytes(boxId: string, bytes: Uint8Array): AnyBox {
   if (bytes.length > 0) {
     const tag = bytes[0]!;
-    if (tag >= 0x80 && tag <= 0x87) {
+    if (tag >= 0x80 && tag <= 0x88) {
       throw new Error(
         `boxFromRecordBytes: value is a record (tag 0x${tag.toString(16)}), not a box`,
       );
