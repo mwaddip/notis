@@ -33,7 +33,7 @@ export type PostStanding = 'live' | 'withdrawn' | 'none';
 export interface StateView {
   /** The box, if live. */
   getBox(id: string): AnyBox | null;
-  /** `{ txId, index }` for any box the state holds or held, live or spent. */
+  /** `{ txId, index }` for a live box. */
   getBoxProvenance(id: string): { txId: string; index: number } | null;
   getIdentityRecord(identityId: Uint8Array): IdentityRecord | null;
   /** The member count. The record exists from genesis seeding on. */

@@ -135,7 +135,7 @@ export class MemoryStateView implements StateView {
 
   getBoxProvenance(id: string): { txId: string; index: number } | null {
     const entry = this.boxes.get(id);
-    return entry ? { txId: entry.box.txId, index: entry.box.index } : null;
+    return entry && entry.live ? { txId: entry.box.txId, index: entry.box.index } : null;
   }
 
   getIdentityRecord(identityId: Uint8Array): IdentityRecord | null {
