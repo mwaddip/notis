@@ -143,6 +143,10 @@ The members share their names with the node's store reads (`getBox`, `getKarmaBo
 answer the node's API. The shapes the rules share with the node's store — `NetworkRecord` and `UsernameRow` — live in
 the package, and the store imports them.
 
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — `NetworkRecord` and `HolderRecord` are `@dagsocial/types`'
+> (`TYPES_INTERFACE → Layout — tree records`, beside their codecs) and this package re-exports them; `UsernameRow`
+> stays here. The package defines its own `NetworkRecord` (`utxo-engine`) and `HolderRecord` (`overlay`).
+
 ## The tree layout
 
 **Everything the rules read is under the state root, and this package owns what the tree holds**: the entities, the

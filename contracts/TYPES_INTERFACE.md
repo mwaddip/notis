@@ -3236,10 +3236,10 @@ a sentinel (→ Primitives). What each kind holds and which read uses it is
 zero-padded to a key, and `inRange(key, range)` whether a key carries the prefix. `keyHeight(key)`
 reads the `u64` of a due key.
 
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — no tree key exists; box keys are
-> box ids and the four record keys are 32-byte hashes under `IDENTITY_KEY_DOMAIN`,
-> `NETWORK_KEY_DOMAIN`, `USERNAME_KEY_DOMAIN` and `USERNAME_HOLDER_KEY_DOMAIN`, three of them derived in
-> the node.
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the derivations exist and nothing
+> keys the tree with them: the node's tree is keyed by box ids and by 32-byte hashes under
+> `IDENTITY_KEY_DOMAIN`, `NETWORK_KEY_DOMAIN`, `USERNAME_KEY_DOMAIN` and `USERNAME_HOLDER_KEY_DOMAIN`,
+> three of them derived in the node.
 
 ### Layout — tree records
 
@@ -3259,9 +3259,13 @@ at `0x80` and up (`NODE_INTERFACE → Entity kinds`) — and each codec is posit
 | an index entry | `u8(0x86)` | `INDEX_MARKER` |
 | a vouch-pair entry | `u8(0x87) ‖ b32(boxId)` | `vouchPairValue` · `vouchPairBoxId` |
 
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the network, name and holder codecs
-> and the box decoder are the node's (`state/serialize-box.ts`); the post, like, index and vouch-pair
-> values do not exist.
+The record shapes are exported beside their codecs: `NetworkRecord { memberCount }`, `NameRecord { boxId }`,
+`HolderRecord { claimAvailable, boxId | null }`, `PostRecord { author, height, standing }` — a box id as 64 lowercase
+hex, an author as 32 raw bytes.
+
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the codecs exist and the node's tree
+> holds none of the post, like, index or vouch-pair values; the node encodes its network, name and
+> holder records through its own copies (`state/serialize-box.ts`).
 
 ### PoW
 
