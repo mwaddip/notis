@@ -46,8 +46,9 @@ export type TreeWrite =
  *   op on each of its entries, a bond the block created keyed at `height`, the
  *   grant's;
  * - **cast counts** — for each voucher whose vouch boxes the block inserted or
- *   spent, the count before the block plus the net change: an `Insert` where none
- *   stood, a `Remove` where it falls to 0, an `Update` otherwise;
+ *   spent, the count before the block plus the net change: nothing where the net
+ *   change is 0, an `Insert` where none stood, a `Remove` where it falls to 0, an
+ *   `Update` otherwise;
  * - **identity records** — the last write to each, an `InsertOrUpdate`; a
  *   `lapsed` entry moves only where its condition flips between the block's start
  *   and its end, for an identity whose record or cast count the block changed;
@@ -58,8 +59,10 @@ export type TreeWrite =
  *   `withdrawn` per post it withdrew;
  * - **likes** — an `Insert` per like record.
  *
- * The cast counts are read in ascending identity order, a written record's only
- * where the record is a lapsed member before the block or after it.
+ * The cast counts are read in ascending identity order — each voucher's whose
+ * vouch boxes the block moved, and a written record's only where the record is a
+ * lapsed member before the block or after it (CONSENSUS_INTERFACE → The tree
+ * writes → "The cast count is the writes' own read").
  *
  * @throws {TreeInconsistencyError} for a spent bond whose invitee holds no record
  *   and for a cast count the block's spends would take below 0
@@ -141,10 +144,9 @@ export function treeWritesOf(effects: BlockEffects, height: number, view: TreeSt
           `the block spends ${-moved.delta} vouch box(es) of ${identity}, whose cast count is ${countBefore()}`,
         );
       }
-      if (countAfter() === 0) {
-        if (countBefore() > 0) writes.push({ tag: 'Remove', key });
-      } else {
-        writes.push({ tag: countBefore() === 0 ? 'Insert' : 'Update', key, value: castCountBytes(countAfter()) });
+      if (moved.delta !== 0) {
+        if (countAfter() === 0) writes.push({ tag: 'Remove', key });
+        else writes.push({ tag: countBefore() === 0 ? 'Insert' : 'Update', key, value: castCountBytes(countAfter()) });
       }
     }
     const before = view.getIdentityRecord(identityId);

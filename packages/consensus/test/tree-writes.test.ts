@@ -42,7 +42,9 @@ import { mapSessionFrom } from './tree-session-map.js';
  * pre-block view.
  */
 
-const [alice, bob, carol] = [uid('tree-writes/alice'), uid('tree-writes/bob'), uid('tree-writes/carol')];
+const [alice, bob, carol, dave] = ['alice', 'bob', 'carol', 'dave'].map((name) => uid(`tree-writes/${name}`)) as [
+  Uint8Array, Uint8Array, Uint8Array, Uint8Array,
+];
 
 const member = identityRecord({ memberSinceBlock: 1, memberBar: 1, memberVouches: 1 });
 const lapsed = identityRecord({ memberSinceBlock: 1, memberBar: 2, memberVouches: 1 });
@@ -195,6 +197,20 @@ describe('treeWritesOf', () => {
     expect(writesAt(w, vouchPairKey(alice, carol))).toEqual([
       { tag: 'Insert', key: vouchPairKey(alice, carol), value: vouchPairValue(idOf(V2)) },
     ]);
+  });
+
+  it('writes nothing to a cast count whose net change is 0, and leaves its lapsed entry be — the count is still read', () => {
+    // pre-block: bob lapsed, one vouch V1 — count 1, lapsed entry standing; the block spends V1 and inserts V2
+    const [V1, V2] = [vouchBox(bob, carol, 31), vouchBox(bob, dave, 32)];
+    const session = mapSessionFrom(seedTreeWrites([V1], [{ identityId: bob, record: lapsed }], { memberCount: 0 }));
+    const w = treeWritesOf(effectsOf([spend(V1), insert(V2)]), 10, treeStateView(session));
+    expect(writesAt(w, castCountKey(bob))).toEqual([]);
+    expect(writesAt(w, lapsedKey(bob))).toEqual([]);
+    expect(w.map((x) => [x.tag, x.key])).toEqual([
+      ...[boxKey(idOf(V1)), vouchPairKey(bob, carol)].sort(compareBytes).map((key) => ['Remove', key]),
+      ...[boxKey(idOf(V2)), vouchPairKey(bob, dave)].sort(compareBytes).map((key) => ['Insert', key]),
+    ]);
+    expect(session.lookups.some((k) => equalBytes(k, castCountKey(bob)))).toBe(true);
   });
 
   it('places a lapsed entry when a record lapses while its vouches stand', () => {
