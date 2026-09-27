@@ -3175,7 +3175,7 @@ Membership). None moves value it does not owe.
 ### State format
 
 ```typescript
-export const AVL_KEY_LENGTH = 65;   // bytes — a one-byte tag and two 32-byte fields
+export const TREE_KEY_LENGTH = 65;   // bytes — a one-byte tag and two 32-byte fields
 ```
 
 The AVL+ tree's key width. It **sets the shape of every `stateRoot`**
@@ -3185,8 +3185,9 @@ knob. It is universal rather than per-network: a network has no reason to differ
 format width, so it does **not** belong in `NetworkProfile`. **65 is the longest key the layout
 writes** — a tag and two 32-byte fields (→ The tree keys).
 
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — `AVL_KEY_LENGTH` is 32: box ids and
-> hashed record keys.
+> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the width is `AVL_KEY_LENGTH`, 32: box ids and
+> hashed record keys. `TREE_KEY_LENGTH` is the name the layout's width takes, and `AVL_KEY_LENGTH` leaves with its
+> last reader, so no package reads one width while its keys are the other.
 
 `packages/node/src/config.ts` imports it and plumbs it through `Config.avlKeyLength`, which
 `state/avl-prover.ts` reads. That plumbing field is permitted, but its value originates here —
@@ -3197,7 +3198,7 @@ and only the origination comparison fails.
 
 ### The tree keys
 
-**Every key in the tree is `AVL_KEY_LENGTH` (65) bytes: a one-byte tag, then the key's fields in
+**Every key in the tree is `TREE_KEY_LENGTH` (65) bytes: a one-byte tag, then the key's fields in
 the order below, then zero bytes to 65.** A height inside a key is a `u64`, big-endian, so key order
 is numeric order; every other field is a fixed width. **The tag is what keeps the entity kinds
 apart** — two keys with different tags are different keys whatever their fields, so a field an

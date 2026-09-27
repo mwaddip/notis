@@ -1512,7 +1512,7 @@ the profile pins as `genesisId` (§What varies per network); every reset row is 
 none.
 
 > ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the register gains **the tree layout**: every AVL key
-> and value width (`AVL_KEY_LENGTH` 65), so every `stateRoot` and all three `genesisStateRoot` pins; the tree gains
+> and value width (`TREE_KEY_LENGTH` 65), so every `stateRoot` and all three `genesisStateRoot` pins; the tree gains
 > post, like and index entries; the lapse leg's order, so the settlement of every block with two or more lapsed
 > vouches. It owes the reset, which it rides with the block proof (N3) — and testnet's `genesisId` is unpinned for it.
 
