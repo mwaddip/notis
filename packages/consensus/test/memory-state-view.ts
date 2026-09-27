@@ -215,14 +215,18 @@ export class MemoryStateView implements StateView {
       .slice(0, limit);
   }
 
-  /** The store's query joins the voucher's record: `NOT (member_since_block > 0 AND member_vouches >= member_bar)`. */
+  /**
+   * The live vouches whose voucher's record fails `member()`, voucher by voucher
+   * and each voucher's in target order (CONSENSUS_INTERFACE → StateView).
+   */
   getLapsedVouches(limit: number): VouchBox[] {
+    const pairOf = (b: VouchBox): string => `${hex(b.voucherId)}${hex(b.targetId)}`;
     return this.live<VouchBox>((b) => {
       if (b.boxType !== 'vouch') return false;
       const voucher = this.getIdentityRecord(b.voucherId);
       return voucher !== null && !(voucher.memberSinceBlock > 0 && voucher.memberVouches >= voucher.memberBar);
     })
-      .sort(idOrder)
+      .sort((a, b) => (pairOf(a) < pairOf(b) ? -1 : pairOf(a) > pairOf(b) ? 1 : idOrder(a, b)))
       .slice(0, limit);
   }
 

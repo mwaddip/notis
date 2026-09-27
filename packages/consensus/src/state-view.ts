@@ -54,7 +54,7 @@ export interface StateView {
   getKarmaBoxes(owner: Uint8Array): KarmaBox[];
   /** Every live escrow the voucher owns, `id`. */
   getVouchEscrowsFor(voucherId: Uint8Array): VouchEscrowBox[];
-  /** Every live vouch box for the (voucher, target) pair, `id`. */
+  /** The pair's live vouch box — one at most (NODE_INTERFACE → Vouch transition rules). */
   getVouchBoxes(voucherId: Uint8Array, targetId: Uint8Array): VouchBox[];
   /** Every live `like_accrual` box naming the author, `id`. */
   getLikeAccrualBoxes(author: Uint8Array): LikeAccrualBox[];
@@ -65,7 +65,11 @@ export interface StateView {
   getBondsInvitedAt(maxInvitedAt: number, limit: number): BondBox[];
   /** At most `limit` live escrows with `releaseAtBlock ≤ height`, `(releaseAtBlock, id)`. */
   getVouchEscrowsReleasableAt(height: number, limit: number): VouchEscrowBox[];
-  /** At most `limit` live vouch boxes whose voucher's record fails `member()`, `id`. */
+  /**
+   * At most `limit` live vouch boxes whose voucher's record fails `member()`,
+   * voucher by voucher and each voucher's in target order (CONSENSUS_INTERFACE →
+   * StateView → "The lapses run voucher by voucher").
+   */
   getLapsedVouches(limit: number): VouchBox[];
   /** The `block_topology` author, or none. */
   getTopologyAuthor(postId: string): Uint8Array | null;

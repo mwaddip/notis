@@ -188,7 +188,11 @@ export interface SettlementDeps {
   getBondsSettlingAt: (height: number) => BondBox[];
   /** Unspent escrows at or past `releaseAtBlock`, ascending box id, pre-body. */
   getEscrowsReleasableAt: (height: number) => VouchEscrowBox[];
-  /** Unspent vouch boxes whose voucher's record fails member(), ascending box id, pre-body. */
+  /**
+   * Unspent vouch boxes whose voucher's record fails member(), voucher by voucher
+   * and each voucher's in target order (CONSENSUS_INTERFACE → StateView → "The
+   * lapses run voucher by voucher"), pre-body.
+   */
   getLapsedVouches: () => VouchBox[];
   /** `IdentityRecord.lifetimeLikesReceived` — the one field a bond settles against. */
   getLifetimeLikes: (invitee: Uint8Array) => bigint;

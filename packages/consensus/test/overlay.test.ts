@@ -7,7 +7,7 @@ import {
   SpendOfNonLiveBoxError,
 } from '../src/overlay.js';
 import { materializeOutput } from '../src/utxo-engine.js';
-import type { AnyBox, AnyBoxCandidate, IdentityRecord, KarmaBox, UtxoTransaction } from '@dagsocial/types';
+import type { AnyBox, AnyBoxCandidate, IdentityRecord, KarmaBox, UtxoTransaction, VouchBox } from '@dagsocial/types';
 import type { UsernameRow } from '@dagsocial/consensus';
 import {
   MemoryStateView,
@@ -451,6 +451,24 @@ describe('BlockOverlay — a limited query answers the view until the block writ
     overlay.putIdentityRecord(alice, stillMember);
     reference.putIdentityRecord(alice, stillMember);
     expect(overlay.getLapsedVouches(10)).toEqual(reference.getLapsedVouches(10));
+  });
+
+  it('the lapsed vouches: voucher by voucher, each voucher\'s in target order, at most the limit', () => {
+    const [v1, v2, t1, t2] = [0x11, 0x22, 0x44, 0x55].map((byte) => new Uint8Array(32).fill(byte)) as [
+      Uint8Array, Uint8Array, Uint8Array, Uint8Array,
+    ];
+    const view = new MemoryStateView();
+    view.putIdentityRecord(v2, lapsedMember);
+    view.putIdentityRecord(v1, lapsedMember);
+    for (const [n, [voucher, target]] of ([[v2, t2], [v2, t1], [v1, t2], [v1, t1]] as const).entries()) {
+      view.insertBox(vouchBox(voucher, target, 10 + n));
+    }
+    const pairs = (boxes: VouchBox[]): string[] => boxes.map((b) => `${hex(b.voucherId)}:${hex(b.targetId)}`);
+    const ordered = [[v1, t1], [v1, t2], [v2, t1], [v2, t2]].map(([v, t]) => `${hex(v!)}:${hex(t!)}`);
+    const overlay = new BlockOverlay(view);
+
+    expect(pairs(overlay.getLapsedVouches(10))).toEqual(ordered);
+    expect(pairs(overlay.getLapsedVouches(3))).toEqual(ordered.slice(0, 3));
   });
 
   it('the lapsed vouches: a vouch spent, a lapsed voucher\'s vouch, or a record crossing member() trips', () => {
