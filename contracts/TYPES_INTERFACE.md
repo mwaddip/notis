@@ -3266,9 +3266,9 @@ The record shapes are exported beside their codecs: `NetworkRecord { memberCount
 hex, an author as 32 raw bytes.
 
 > ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the codecs exist and the node's tree
-> holds none of the post, like, index or vouch-pair values; the node encodes its network, name and
-> holder records through its own copies (`state/serialize-box.ts`); `types`' name record carries no
-> `claimedAtBlock`, and no cast-count key or codec exists.
+> holds none of the post, like, index, vouch-pair or cast-count values; the node encodes its network,
+> name and holder records through its own copies (`state/serialize-box.ts`), its name record without
+> `claimedAtBlock`.
 
 ### PoW
 
