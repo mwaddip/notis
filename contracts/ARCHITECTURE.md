@@ -1513,8 +1513,8 @@ none.
 
 > ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the register gains **the tree layout**: every AVL key
 > and value width (`TREE_KEY_LENGTH` 65), so every `stateRoot` and all three `genesisStateRoot` pins; the tree gains
-> post, like and index entries; the lapse leg's order, so the settlement of every block with two or more lapsed
-> vouches. It owes the reset, which it rides with the block proof (N3) — and testnet's `genesisId` is unpinned for it.
+> post, like and index entries; `IdentityRecord` gains `vouchesCast` and the name record `claimedAtBlock`; the lapse
+> leg's order, so the settlement of every block with two or more lapsed vouches. It owes the reset, which it rides with the block proof (N3) — and testnet's `genesisId` is unpinned for it.
 
 **When a reset is not owed.** A change that **adds** a box-type tag, an AVL leaf domain, a store table
 or a nullable column, and leaves every existing committed byte and every existing rule's verdict
