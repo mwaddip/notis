@@ -2,9 +2,7 @@
  * The tree-record value codecs — TYPES_INTERFACE → Layout — tree records.
  *
  * Goldens are hand-derived from the layout table, never computed by the
- * codecs under test. The network, name and holder vectors are the same bytes
- * `packages/node/src/state/serialize-box.ts`'s `NETWORK_RECORD` /
- * `USERNAME_RECORD` / `HOLDER_RECORD` produce for the same fields.
+ * codecs under test.
  */
 
 import { describe, it, expect } from 'vitest';

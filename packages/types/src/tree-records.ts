@@ -8,11 +8,6 @@
  * boundary check): schema projection, exhaustion, and the re-encode compare
  * that rejects a non-minimal VLQ.
  *
- * The network, name and holder codecs reproduce
- * `packages/node/src/state/serialize-box.ts`'s `NETWORK_RECORD` /
- * `USERNAME_RECORD` / `HOLDER_RECORD` byte-for-byte — that module's copies
- * leave in a later task.
- *
  * No Node built-in, no Node global: the browser runs this module exactly as
  * written (ARCHITECTURE → Package boundaries).
  */
