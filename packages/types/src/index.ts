@@ -228,6 +228,24 @@ export {
 } from './tree-keys.js';
 export type { TreeRange, TypeKeyBoxType } from './tree-keys.js';
 
+// The tree-record value codecs — TYPES_INTERFACE → Layout — tree records
+export {
+  networkRecordBytes,
+  networkRecordFromBytes,
+  nameRecordBytes,
+  nameRecordFromBytes,
+  holderRecordBytes,
+  holderRecordFromBytes,
+  postRecordBytes,
+  postRecordFromBytes,
+  LIKE_MARKER,
+  INDEX_MARKER,
+  vouchPairValue,
+  vouchPairBoxId,
+  boxFromRecordBytes,
+} from './tree-records.js';
+export type { NetworkRecord, NameRecord, HolderRecord, PostRecord } from './tree-records.js';
+
 // The positional codec layer (`codec.ts`)
 //
 // The field primitives, `enum8` and the four-part boundary check. Exported
