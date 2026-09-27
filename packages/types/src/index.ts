@@ -213,6 +213,7 @@ export {
   lapsedKey,
   accrualOfKey,
   typeKey,
+  castCountKey,
   karmaOfRange,
   creditOfRange,
   escrowOfRange,
@@ -242,6 +243,8 @@ export {
   INDEX_MARKER,
   vouchPairValue,
   vouchPairBoxId,
+  castCountBytes,
+  castCountFromBytes,
   boxFromRecordBytes,
 } from './tree-records.js';
 export type { NetworkRecord, NameRecord, HolderRecord, PostRecord } from './tree-records.js';

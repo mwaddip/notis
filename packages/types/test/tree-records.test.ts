@@ -21,6 +21,8 @@ import {
   INDEX_MARKER,
   vouchPairValue,
   vouchPairBoxId,
+  castCountBytes,
+  castCountFromBytes,
   boxFromRecordBytes,
   type PostRecord,
 } from '../src/tree-records.js';
@@ -218,6 +220,55 @@ describe('vouchPairValue / vouchPairBoxId', () => {
     const padded = new Uint8Array(bytes.length + 1);
     padded.set(bytes);
     expect(failureOf(() => vouchPairBoxId(padded))).toBe('trailing-bytes');
+  });
+});
+
+describe('castCountBytes / castCountFromBytes', () => {
+  it('golden — count 300: u8(0x88) ‖ vlqU(300)', () => {
+    expect(hex(castCountBytes(300))).toBe('88ac02');
+  });
+
+  it('round-trips a multi-byte VLQ count', () => {
+    expect(castCountFromBytes(castCountBytes(300))).toBe(300);
+  });
+
+  it('golden — count 1: u8(0x88) ‖ vlqU(1)', () => {
+    expect(hex(castCountBytes(1))).toBe('8801');
+  });
+
+  it('throws encoding a count of 0 — a count of 0 is no entry', () => {
+    expect(() => castCountBytes(0)).toThrow();
+  });
+
+  it('throws encoding a negative, a fractional and an unsafe count', () => {
+    expect(() => castCountBytes(-1)).toThrow();
+    expect(() => castCountBytes(1.5)).toThrow();
+    expect(() => castCountBytes(Number.MAX_SAFE_INTEGER + 1)).toThrow();
+  });
+
+  it('refuses a stored count of 0 on decode', () => {
+    const err = failureOf(() => castCountFromBytes(Uint8Array.of(0x88, 0x00)));
+    expect(err).toBeInstanceOf(ReaderError);
+    expect((err as ReaderError).code).toBe('out-of-domain');
+  });
+
+  it('refuses a wrong tag', () => {
+    const bytes = castCountBytes(1);
+    const tampered = new Uint8Array(bytes);
+    tampered[0] = 0x87;
+    expect(() => castCountFromBytes(tampered)).toThrow(/not a cast count/);
+  });
+
+  it('refuses trailing bytes', () => {
+    const bytes = castCountBytes(1);
+    const padded = new Uint8Array(bytes.length + 1);
+    padded.set(bytes);
+    expect(failureOf(() => castCountFromBytes(padded))).toBe('trailing-bytes');
+  });
+
+  it('refuses a non-minimal VLQ (88 81 00)', () => {
+    const padded = Uint8Array.of(0x88, 0x81, 0x00);
+    expect(failureOf(() => castCountFromBytes(padded))).toBe('non-canonical');
   });
 });
 

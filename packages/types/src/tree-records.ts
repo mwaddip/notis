@@ -234,6 +234,47 @@ export function vouchPairBoxId(value: Uint8Array): Uint8Array {
 }
 
 // ---------------------------------------------------------------------------
+// Cast count — u8(0x88) ‖ vlqU(count); TYPES_INTERFACE → Layout — tree records:
+// the voucher's live vouch boxes, never 0 — a count of 0 is no entry, so the
+// row itself is absent rather than stored as zero.
+// ---------------------------------------------------------------------------
+
+const CAST_COUNT_TAG = 0x88;
+
+const CAST_COUNT: StructCodec<number> = {
+  name: 'castCount',
+  write(w, count) {
+    if (!Number.isSafeInteger(count) || count <= 0) {
+      throw new RangeError(`castCount: not a positive count: ${count}`);
+    }
+    writeU8OrThrow(w, CAST_COUNT_TAG);
+    writeVlqU(w, count);
+  },
+  read(r) {
+    const tag = readU8(r);
+    if (tag !== CAST_COUNT_TAG) {
+      throw new ReaderError(
+        `castCount: not a cast count: tag 0x${tag.toString(16)}`,
+        'invalid-tag',
+      );
+    }
+    const count = readVlqU(r);
+    if (count === 0) {
+      throw new ReaderError('castCount: a count of 0 is no entry', 'out-of-domain');
+    }
+    return count;
+  },
+};
+
+export function castCountBytes(count: number): Uint8Array {
+  return encodeStruct(CAST_COUNT, count);
+}
+
+export function castCountFromBytes(bytes: Uint8Array): number {
+  return decodeStruct(CAST_COUNT, bytes);
+}
+
+// ---------------------------------------------------------------------------
 // The box decoder — a box's tree value IS `boxRecordBytes`, unchanged
 // ---------------------------------------------------------------------------
 

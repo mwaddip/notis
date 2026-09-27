@@ -23,6 +23,7 @@ import {
   lapsedKey,
   accrualOfKey,
   typeKey,
+  castCountKey,
   karmaOfRange,
   creditOfRange,
   escrowOfRange,
@@ -175,6 +176,16 @@ describe('tree keys (TYPES_INTERFACE → The tree keys)', () => {
   it('typeKey and typeRange throw on a box type outside the four', () => {
     expect(() => typeKey('karma' as TypeKeyBoxType, id(1))).toThrow();
     expect(() => typeRange('karma' as TypeKeyBoxType)).toThrow();
+  });
+
+  it('castCountKey — tag 0x19, one id, padded', () => {
+    const k = castCountKey(id(0x42));
+    expect([...k]).toEqual([TREE_TAG.castCount, ...fill(0x42), ...zeros(32)]);
+  });
+
+  it('castCountKey throws on a wrong-width id rather than padding it', () => {
+    expect(() => castCountKey(new Uint8Array(31))).toThrow();
+    expect(() => castCountKey(new Uint8Array(33))).toThrow();
   });
 
   // ---------------------------------------------------------------------------

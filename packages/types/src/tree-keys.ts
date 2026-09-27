@@ -39,6 +39,7 @@ export const TREE_TAG = Object.freeze({
   lapsed: 0x16,
   accrualOf: 0x17,
   type: 0x18,
+  castCount: 0x19,
 } as const);
 
 /** A 32-byte id field. Throws rather than padding or truncating a wrong width. */
@@ -225,6 +226,11 @@ export function typeKey(boxType: TypeKeyBoxType, boxId: Uint8Array): Uint8Array 
     Uint8Array.of(typeTagByte(boxType)),
     b32(boxId, 'typeKey: boxId'),
   );
+}
+
+/** A voucher's live-vouch count — TYPES_INTERFACE → The tree keys, tag `0x19`. */
+export function castCountKey(voucherId: Uint8Array): Uint8Array {
+  return treeKey(TREE_TAG.castCount, b32(voucherId, 'castCountKey: voucherId'));
 }
 
 // ---------------------------------------------------------------------------
