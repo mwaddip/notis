@@ -33,3 +33,7 @@ export type { StateView, ApplyContext } from './state-view.js';
 // The record shapes are types', beside their codecs (TYPES_INTERFACE → Layout —
 // tree records).
 export type { NetworkRecord, HolderRecord } from '@dagsocial/types';
+
+export { indexEntriesOfBox, isLapsedMember } from './tree-index.js';
+export { seedTreeWrites } from './tree-writes.js';
+export type { TreeWrite } from './tree-writes.js';
