@@ -172,10 +172,10 @@ export function escrowDueKey(releaseAtBlock: number, boxId: Uint8Array): Uint8Ar
   );
 }
 
-export function bondDueKey(createdAtBlock: number, boxId: Uint8Array): Uint8Array {
+export function bondDueKey(invitedAtBlock: number, boxId: Uint8Array): Uint8Array {
   return treeKey(
     TREE_TAG.bondDue,
-    u64be(createdAtBlock, 'bondDueKey: createdAtBlock'),
+    u64be(invitedAtBlock, 'bondDueKey: invitedAtBlock'),
     b32(boxId, 'bondDueKey: boxId'),
   );
 }
