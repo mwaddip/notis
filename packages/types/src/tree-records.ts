@@ -67,11 +67,12 @@ export function networkRecordFromBytes(bytes: Uint8Array): NetworkRecord {
 }
 
 // ---------------------------------------------------------------------------
-// Name record — u8(0x82) ‖ b32(boxId)
+// Name record — u8(0x82) ‖ b32(boxId) ‖ vlqU(claimedAtBlock)
 // ---------------------------------------------------------------------------
 
 export interface NameRecord {
   boxId: string; // 64-char lowercase hex
+  claimedAtBlock: number;
 }
 
 const NAME_RECORD_TAG = 0x82;
@@ -81,6 +82,7 @@ const NAME_RECORD: StructCodec<NameRecord> = {
   write(w, record) {
     writeU8OrThrow(w, NAME_RECORD_TAG);
     writeHexNOrThrow(w, record.boxId, 32);
+    writeVlqU(w, record.claimedAtBlock);
   },
   read(r) {
     const tag = readU8(r);
@@ -90,7 +92,9 @@ const NAME_RECORD: StructCodec<NameRecord> = {
         'invalid-tag',
       );
     }
-    return { boxId: readHexN(r, 32) };
+    const boxId = readHexN(r, 32);
+    const claimedAtBlock = readVlqU(r);
+    return { boxId, claimedAtBlock };
   },
 };
 

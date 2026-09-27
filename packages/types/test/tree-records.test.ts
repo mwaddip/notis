@@ -81,26 +81,37 @@ describe('networkRecordBytes / networkRecordFromBytes', () => {
 describe('nameRecordBytes / nameRecordFromBytes', () => {
   const boxId = 'ab'.repeat(32);
 
-  it('golden — u8(0x82) ‖ b32(boxId)', () => {
-    expect(hex(nameRecordBytes({ boxId }))).toBe(`82${'ab'.repeat(32)}`);
+  it('golden — u8(0x82) ‖ b32(boxId) ‖ vlqU(claimedAtBlock)', () => {
+    expect(hex(nameRecordBytes({ boxId, claimedAtBlock: 300 }))).toBe(
+      `82${'ab'.repeat(32)}ac02`,
+    );
   });
 
   it('round-trips', () => {
-    expect(nameRecordFromBytes(nameRecordBytes({ boxId }))).toEqual({ boxId });
+    expect(nameRecordFromBytes(nameRecordBytes({ boxId, claimedAtBlock: 300 }))).toEqual({
+      boxId,
+      claimedAtBlock: 300,
+    });
   });
 
   it('refuses a wrong tag', () => {
-    const bytes = nameRecordBytes({ boxId });
+    const bytes = nameRecordBytes({ boxId, claimedAtBlock: 300 });
     const tampered = new Uint8Array(bytes);
     tampered[0] = 0x81;
     expect(() => nameRecordFromBytes(tampered)).toThrow(/not a name record/);
   });
 
   it('refuses trailing bytes', () => {
-    const bytes = nameRecordBytes({ boxId });
+    const bytes = nameRecordBytes({ boxId, claimedAtBlock: 300 });
     const padded = new Uint8Array(bytes.length + 1);
     padded.set(bytes);
     expect(failureOf(() => nameRecordFromBytes(padded))).toBe('trailing-bytes');
+  });
+
+  it('refuses the old 33-byte form with no height — reader exhausted before it', () => {
+    const old = Uint8Array.of(0x82, ...Buffer.from(boxId, 'hex'));
+    expect(old.length).toBe(33);
+    expect(() => nameRecordFromBytes(old)).toThrow();
   });
 });
 
