@@ -98,6 +98,9 @@ export const BOX_VALUE_BOUND = 1n << 63n;
 
 // State format
 export const AVL_KEY_LENGTH = 32; // bytes — AVL+ key width; sets the shape of every stateRoot
+// A one-byte tag and two 32-byte fields — the longest row of TYPES_INTERFACE →
+// The tree keys. TYPES_INTERFACE → State format.
+export const TREE_KEY_LENGTH = 65;
 
 // Karma decay (virtual — ARCHITECTURE → Karma decay)
 export const KARMA_STALE_THRESHOLD_BLOCKS = 40320; // 28 days at 60s blocks → profile: karmaStaleThresholdBlocks

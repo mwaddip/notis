@@ -12,6 +12,7 @@ export {
   MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
   BOX_VALUE_BOUND,
   AVL_KEY_LENGTH,
+  TREE_KEY_LENGTH,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
@@ -192,6 +193,40 @@ export type {
   BlockHeader,
   UtxoTxTree,
 } from './block.js';
+
+// The tree keys — TYPES_INTERFACE → The tree keys
+export {
+  TREE_TAG,
+  boxKey,
+  identityKey,
+  networkKey,
+  nameKey,
+  holderKey,
+  postKey,
+  likeKey,
+  karmaOfKey,
+  creditOfKey,
+  escrowOfKey,
+  escrowDueKey,
+  bondDueKey,
+  vouchPairKey,
+  lapsedKey,
+  accrualOfKey,
+  typeKey,
+  karmaOfRange,
+  creditOfRange,
+  escrowOfRange,
+  accrualOfRange,
+  vouchPairRange,
+  escrowDueRange,
+  bondDueRange,
+  lapsedRange,
+  typeRange,
+  rangeStart,
+  inRange,
+  keyHeight,
+} from './tree-keys.js';
+export type { TreeRange, TypeKeyBoxType } from './tree-keys.js';
 
 // The positional codec layer (`codec.ts`)
 //
