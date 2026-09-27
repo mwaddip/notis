@@ -1302,12 +1302,8 @@ IdentityRecord {
   memberVouches: number         // u32 — live counted vouches naming this identity
   memberLikes: bigint           // likes received from members; never decremented
   invitesUsed: number           // u32 — bonds this identity has created; never decremented
-  vouchesCast: number           // u32 — live vouches this identity has cast
 }
 ```
-
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the record has no `vouchesCast`; it ends at
-> `invitesUsed`.
 
 The two `bigint` counters take `vlqU64` — a `number` and a `bigint` of equal value encode identically, so the type guards
 the store's `safeIntegers` row boundary, not the bytes (→ Layout — IdentityRecord). What each field means, who writes
@@ -2183,9 +2179,6 @@ box arm, and the same tree: `Layout — Boxes` governs the box values beside it.
 | 8 | `memberVouches` | `vlqU` |
 | 9 | `memberLikes` | `vlqU64` |
 | 10 | `invitesUsed` | `vlqU` |
-| 11 | `vouchesCast` | `vlqU` |
-
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the layout ends at field 10, `invitesUsed`.
 
 **The tag is part of the layout, not a wrapper around it** — the box arm works the same way, where `enum8(boxType)` is
 field 1 of `boxContentBytes` rather than a prefix bolted on outside it. One encoder, one byte string, no composition
@@ -2200,7 +2193,7 @@ presence is not expressible — and the fields are part of the record. `bigint` 
 so the type guards the store's `safeIntegers` row boundary against a silent `Number()` coercion, not the bytes.
 
 **Domains, and where they are established.** `lastActivityBlock`, `lastDecayBlock`, `invitedAtBlock` and
-`memberSinceBlock` are `u32` block heights, `memberBar`, `memberVouches`, `invitesUsed` and `vouchesCast` are `u32` counts; `vlqU` is
+`memberSinceBlock` are `u32` block heights, `memberBar`, `memberVouches` and `invitesUsed` are `u32` counts; `vlqU` is
 total *by sentinel*, so an out-of-domain value cannot panic the encoder — it collides (→ Totality).
 `lifetimeLikesReceived` and `memberLikes` are `vlqU64` and `writeVlqU64OrThrow` **throws** outside `[0, 2⁶⁴)`; the
 domain belongs upstream of the encoder — the like counters are their only writers, unbounded by design and bounded only
@@ -3230,6 +3223,7 @@ used: the AVL+ library bounds the keyspace with an all-`0x00` and an all-`0xff` 
 | `0x16` | lapsed | `b32(identityId)` | `lapsedKey` |
 | `0x17` | accrual-of | `b32(author) ‖ b32(boxId)` | `accrualOfKey` |
 | `0x18` | type | `enum8(boxType) ‖ b32(boxId)` — emission, treasury, karma pool or backer pool | `typeKey` |
+| `0x19` | cast-count | `b32(voucherId)` | `castCountKey` |
 
 **Every derivation lives here and nowhere else**, so the node and a leaf derive identical keys.
 **Each one throws** on a field of the wrong width, a height that is not a safe non-negative integer, a
@@ -3265,6 +3259,7 @@ at `0x80` and up (`NODE_INTERFACE → Entity kinds`) — and each codec is posit
 | a like record | `u8(0x85)` | `LIKE_MARKER` |
 | an index entry | `u8(0x86)` | `INDEX_MARKER` |
 | a vouch-pair entry | `u8(0x87) ‖ b32(boxId)` | `vouchPairValue` · `vouchPairBoxId` |
+| a cast count | `u8(0x88) ‖ vlqU(count)` — the voucher's live vouch boxes, never `0` (a count of `0` is no entry) | `castCountBytes` · `castCountFromBytes` |
 
 The record shapes are exported beside their codecs: `NetworkRecord { memberCount }`, `NameRecord { boxId, claimedAtBlock }`,
 `HolderRecord { claimAvailable, boxId | null }`, `PostRecord { author, height, standing }` — a box id as 64 lowercase
@@ -3273,7 +3268,7 @@ hex, an author as 32 raw bytes.
 > ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the codecs exist and the node's tree
 > holds none of the post, like, index or vouch-pair values; the node encodes its network, name and
 > holder records through its own copies (`state/serialize-box.ts`); `types`' name record carries no
-> `claimedAtBlock`.
+> `claimedAtBlock`, and no cast-count key or codec exists.
 
 ### PoW
 

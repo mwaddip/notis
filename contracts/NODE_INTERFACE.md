@@ -2032,13 +2032,9 @@ inside the network's reported supply.
   m.memberSinceBlock = 0 ∨ v.memberSinceBlock < m.memberSinceBlock`, two immutable ages
   (`ARCHITECTURE → Membership`). The cast's apply adds one iff counted; the consumption of a
   `vouch` box subtracts one iff counted — whichever transaction consumes it, the user's unvouch
-  or the settlement's lapse leg — through one function that every consuming path calls. **The same function moves the
-  voucher's `vouchesCast`** — `+1` at every cast, `−1` at every consumption, counted or not. Fork
+  or the settlement's lapse leg — through one function that every consuming path calls. Fork
   rollback restores the record through the journal's `replaced` value, never by a second
-  arithmetic step.
-
-  > ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the function moves the target's `memberVouches`
-  > alone; the voucher's record has no `vouchesCast`. Because the target's age is written only by the membership pass, after the
+  arithmetic step. Because the target's age is written only by the membership pass, after the
   transaction loop, and a voucher's age is strictly below any block it casts in, the predicate
   gives one answer for a box's whole life.
 - **An unvouch consumes exactly one VouchBox and produces exactly one
@@ -3264,7 +3260,6 @@ IdentityRecord {
   memberVouches: number         // u32 — live counted vouches naming this identity
   memberLikes: bigint           // likes received from members; never decremented
   invitesUsed: number           // u32 — bonds this identity has created; never decremented
-  vouchesCast: number           // u32 — live vouches this identity has cast
 }
 member(m) ⟺ memberSinceBlock > 0 ∧ memberVouches ≥ memberBar        — derived, stored nowhere
 root(m)   ⟺ memberSinceBlock > 0 ∧ memberBar = 0 ∧ invitedAtBlock = 0 — derived, stored nowhere (ARCHITECTURE → Roots)
@@ -3304,13 +3299,8 @@ and never reset; `memberBar` is `D(N)` at that moment, `0` on a root and on a ro
 `memberVouches` counts the live counted
 vouches naming the identity; `memberLikes` counts likes received from members; `invitesUsed`
 counts the bonds the identity has created. `member(m)` is evaluated from them and stored nowhere.
-**`vouchesCast` counts the live vouches the identity has cast** — what bounds the lapse queue to the lapsed members
-holding one (`CONSENSUS_INTERFACE → The index entries`).
 
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the record has no `vouchesCast`, and `identity_records`
-> no `vouches_cast` column.
-
-⛔ **Eight fields on this record can be silently destroyed by a careless writer.**
+⛔ **Seven fields on this record can be silently destroyed by a careless writer.**
 The record is a full-row upsert and the type forces every field *present*, so a
 writer passing `0` compiles and passes typecheck while erasing a probation clock,
 a like history or a membership. **Every writer other than the one that owns a field carries the
@@ -3322,8 +3312,7 @@ by the membership pass at first set or by the settlement's grant step for a root
 (→ Bond transition rules) — each once, never again — `memberVouches` by the vouch counter's
 one function (cast `+1`, consumption `−1`, each iff counted — → Vouch transition rules),
 `memberLikes` by the like counters beside `lifetimeLikesReceived`, `invitesUsed` by the
-invite-create apply, `vouchesCast` by the vouch counter's one function (every cast `+1`, every consumption `−1`,
-counted or not).
+invite-create apply.
 
 **AVL key** — `blake2b512( IDENTITY_KEY_DOMAIN ‖ identityId )[0:32]`, **never
 the raw `identityId`.** Records and boxes share one 32-byte AVL keyspace, and
@@ -3340,7 +3329,7 @@ INTEGER NOT NULL, last_decay_block INTEGER NOT NULL, invited_at_block INTEGER
 NOT NULL DEFAULT 0, lifetime_likes_received INTEGER NOT NULL DEFAULT 0,
 member_since_block INTEGER NOT NULL DEFAULT 0, member_bar INTEGER NOT NULL DEFAULT 0,
 member_vouches INTEGER NOT NULL DEFAULT 0, member_likes INTEGER NOT NULL DEFAULT 0,
-invites_used INTEGER NOT NULL DEFAULT 0, vouches_cast INTEGER NOT NULL DEFAULT 0)`. The
+invites_used INTEGER NOT NULL DEFAULT 0)`. The
 SQL table keys on the raw 32 bytes; the AVL key is derived. Both are total
 functions of the identity, so the two representations cannot drift.
 
@@ -3414,8 +3403,6 @@ box keyspace, which is a distinct concern from how the bytes are typed.
 - **`memberLikes`** — bumped beside `lifetimeLikesReceived` by the like counters, by the likes
   whose liker was a member at apply; only ever adds.
 - **`invitesUsed`** — `+1` at the invite-create arm's apply; only ever adds.
-- **`vouchesCast`** — the vouch counter's one function, on the voucher: `+1` at every cast's apply, `−1` at every
-  `vouch` box's consumption, by the unvouch or the settlement's lapse leg (→ Vouch transition rules).
 
 **Two heights, and they answer different questions.**
 

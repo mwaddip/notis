@@ -191,8 +191,9 @@ each voucher's `vouchPair` walk.
 
 ### The index entries
 
-**An index entry is a function of committed state** — an entity's own fields, and for a bond its invitee's
-`invitedAtBlock` — and `indexEntriesOfBox` / `isLapsedMember` are the only derivations. The tree writes (→ The tree
+**An index entry is a function of committed state** — an entity's own fields; for a bond, its invitee's
+`invitedAtBlock`; for a voucher, the number of their live vouch boxes — and `indexEntriesOfBox`, `isLapsedMember` and
+the cast count are the only derivations. The tree writes (→ The tree
 writes) place and remove them with their entity; no rule writes one.
 
 | From | Entries |
@@ -205,29 +206,34 @@ writes) place and remove them with their entity; no rule writes one.
 | a like accrual | `accrualOf ‖ author ‖ boxId` |
 | an emission, treasury, karma-pool or backer-pool box | `type ‖ boxType ‖ boxId` |
 | any other box | none |
-| an identity record with `memberSinceBlock > 0 ∧ memberVouches < memberBar ∧ vouchesCast > 0` (`isLapsedMember`) | `lapsed ‖ identityId` |
+| a voucher's live vouch boxes | `castCount ‖ voucherId`, its value their number — no entry at `0` |
+| an identity record with `memberSinceBlock > 0 ∧ memberVouches < memberBar`, whose identity holds a cast count (`isLapsedMember`) | `lapsed ‖ identityId` |
 
 **A bond's due height is its invitee's `invitedAtBlock`**: the grant writes it, once, in the block whose body created
 the bond (`NODE_INTERFACE → Identity Records`), so the probation clock starts at the grant. The bond's own
 `createdAtBlock` is its creator's declaration — a client builds at the tip — and nothing reads it here. **The lapse
 queue is the lapsed members holding a live vouch**: only a member casts (`NODE_INTERFACE → Vouch transition rules`),
-`memberSinceBlock`, once set, is never reset, and `vouchesCast` counts a voucher's live vouches — so a voucher leaves
-the queue when its last vouch is withdrawn or its record re-qualifies, every entry the leg visits yields a vouch, and
-the leg reads no more of the tree than its limit takes.
+`memberSinceBlock`, once set, is never reset, and the cast count is a voucher's live vouch boxes — so a voucher
+leaves the queue when its last vouch is withdrawn or its record re-qualifies, every entry the leg visits yields a
+vouch, and the leg reads no more of the tree than its limit takes.
 
 ### The tree writes
 
 **`treeWritesOf(effects, height, view)` is a block's writes to the tree, and the node and a leaf apply them through
 it.** `view` is the block's own tree view: **what a write needs from before the block — a spent box's fields, a spent
-bond's invitee's `invitedAtBlock`, an identity record's pre-block value, an earlier post's record — it reads there**,
-each a read the block's rules already made, so the view answers from its memo and the writes add no lookup. From the
-effects (→ BlockEffects):
+bond's invitee's `invitedAtBlock`, an identity record's pre-block value, an earlier post's record, a voucher's cast
+count — it reads there.** All but the cast count are reads the block's rules already made, so the view answers them
+from its memo; the cast count is the writes' own read, one for each voucher whose vouches or record the block
+changes, and the proof carries it like any other. From the effects (→ BlockEffects):
 
 - **boxes** — a box the block both inserted and spent nets out, its index entries with it; every other box is an
   `Insert` or a `Remove` of `box ‖ boxId`, its value `boxRecordBytes`, beside the same op on each of its index entries;
+- **cast counts** — for each voucher whose vouch boxes the block inserted or spent, the count before the block plus
+  the block's net change: an `Insert` where there was none, a `Remove` where it falls to `0`, an `Update` otherwise;
 - **identity records** — the last write to each key, an `InsertOrUpdate` of `identity ‖ id`; and **its `lapsed`
-  entry moves only where the predicate flips** between the record's pre-block value (the view's) and its last write:
-  an `InsertOrUpdate` where it now holds, a `Remove` where it held and no longer does;
+  entry moves only where its condition flips** — the lapsed-member predicate over the record, and a cast count held —
+  between the block's start and its end: an `InsertOrUpdate` where it now holds, a `Remove` where it held and no
+  longer does;
 - **the network record** — an `Update` of `network`;
 - **name and holder records** — as the netting leaves them (→ BlockEffects, `heldBefore`): an `InsertOrUpdate`, a
   `Remove`, or nothing;
@@ -243,8 +249,8 @@ records net, and one live vouch per pair with its escrow's lock leaves a pair no
 block.
 
 **`seedTreeWrites(boxes, records, network)` is genesis**: every box with its index entries — a bond's due height from
-its invitee's record among `records` — every identity record with its `lapsed` entry where it holds, the network
-record — all `Insert`s, in ascending key order.
+its invitee's record among `records` — each voucher's cast count, every identity record with its `lapsed` entry where
+it holds, the network record — all `Insert`s, in ascending key order.
 
 ## The overlay
 
