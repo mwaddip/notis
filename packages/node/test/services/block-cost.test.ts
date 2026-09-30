@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { MAX_BLOCK_COST, PROTOCOL_VERSION, W_SIG, bytesToHex, computeTxId, encodeTx } from '@dagsocial/types';
 import type { OrderingBlock, UtxoTransaction } from '@dagsocial/types';
+import type { ApplyResult } from '@dagsocial/consensus';
 import {
   blockBudgetSeam,
   liveProver,
@@ -16,9 +17,10 @@ import {
  * The block's cost (CONSENSUS_INTERFACE → The block's cost; NODE_INTERFACE →
  * The block proof): counted while the block executes and checked once its
  * writes are derived, before they are performed. Apply refuses a block over the
- * budget like any rule's refusal; the speculation answers `over-budget` with
- * the body's cost and puts the prover back as it found it. The budget is lowered
- * through `blockBudgetSeam`, never through `types`' constant.
+ * budget like any rule's refusal; the speculation answers `over-budget` with the
+ * refusal that says so — `checkBlockCost`'s, or `applyBlock`'s flagged one — and
+ * puts the prover back as it found it. The budget is lowered through
+ * `blockBudgetSeam`, never through `types`' constant.
  */
 
 async function freshStore() {
@@ -49,6 +51,53 @@ async function costOf(block: OrderingBlock): Promise<number> {
   if (!result.ok) throw new Error(result.reason);
   const writes = treeWritesOf(result.effects, block.header.height, view);
   return blockCost({ signatures: result.effects.signatures, lookups: view.lookupCount(), writes: writes.length });
+}
+
+/** `count` well-formed transactions, each carrying one signature over one input no tree holds. */
+function signedTxs(count: number): UtxoTransaction[] {
+  return Array.from({ length: count }, (_, i) => {
+    const owner = uid(`block-cost/signer-${i}`);
+    return {
+      inputs: [uidHex(`block-cost/input-${i}`)],
+      outputs: [{ boxType: 'credit', value: 1n, createdAtBlock: 0, owner }],
+      signatures: { [bytesToHex(owner)]: new Uint8Array(64) },
+      protocolVersion: PROTOCOL_VERSION,
+    } as UtxoTransaction;
+  });
+}
+
+/**
+ * The candidate block at height 1 carrying `txs`, then the settlement an empty
+ * body produces — a body whose signatures `applyBlock` counts before it resolves
+ * a single input.
+ */
+async function candidateOf(txs: UtxoTransaction[]): Promise<OrderingBlock> {
+  const { buildBlockSettlement, treeStateView } = await import('@dagsocial/consensus');
+  const { proverSession } = await import('../../src/state/prover-session.js');
+  const { applyContextFrom } = await import('../../src/services/block-apply.js');
+  const { config } = await import('../../src/config.js');
+  const handle = await liveProver();
+  const miner = makeTestIdentity();
+  const settled = buildBlockSettlement(
+    treeStateView(proverSession(handle.prover)), [], 1, miner.userId, miner.userId, applyContextFrom(config),
+  );
+  if ('error' in settled) throw new Error(settled.error);
+  const body = [...txs, settled.tx];
+  return {
+    header: { height: 1, validatorId: miner.userId },
+    utxoTxTree: { utxoTxIds: body.map((tx) => computeTxId(tx)), utxoTxs: body.map((tx) => encodeTx(tx)) },
+    validatorSignature: new Uint8Array(64),
+  } as unknown as OrderingBlock;
+}
+
+/** What the rules answer for `block` over the live tree, read unrecorded. */
+async function rulesOver(block: OrderingBlock): Promise<ApplyResult> {
+  const { applyBlock, treeStateView } = await import('@dagsocial/consensus');
+  const { proverSession } = await import('../../src/state/prover-session.js');
+  const { applyContextFrom } = await import('../../src/services/block-apply.js');
+  const { config } = await import('../../src/config.js');
+  const handle = await liveProver();
+  return applyBlock(treeStateView(proverSession(handle.prover)), block, applyContextFrom(config));
 }
 
 describe('the block\'s cost', () => {
@@ -91,7 +140,7 @@ describe('the block\'s cost', () => {
     expect(getCurrentHeight()).toBe(1);
   });
 
-  it('the speculation answers over budget with the body\'s cost, and leaves the prover as it found it', async () => {
+  it('the speculation answers over budget with the refusal naming the body\'s cost, and leaves the prover as it found it', async () => {
     await freshStore();
     const { sender, boxes } = await seededSender();
     const handle = await liveProver();
@@ -108,7 +157,7 @@ describe('the block\'s cost', () => {
     const rollback = vi.spyOn(handle.storage, 'rollback');
 
     budget.set(cost - 1);
-    expect(computePostBlockStateRoot(block, handle)).toEqual({ kind: 'over-budget', cost });
+    expect(computePostBlockStateRoot(block, handle)).toEqual({ kind: 'over-budget', reason: `cost ${cost} over the budget ${cost - 1}` });
     expect(inner.root).toBe(root);
     expect(inner.height).toBe(height);
     expect(inner.oldTopNode).toBe(root);
@@ -126,44 +175,42 @@ describe('the block\'s cost', () => {
   it('a body whose signatures alone cost more than a block may is over budget, not a body the rules rejected', async () => {
     await freshStore();
     const handle = await liveProver();
-    const { applyContextFrom, computePostBlockStateRoot } = await import('../../src/services/block-apply.js');
-    const { config } = await import('../../src/config.js');
-    const { applyBlock, buildBlockSettlement, treeStateView } = await import('@dagsocial/consensus');
-    const { proverSession } = await import('../../src/state/prover-session.js');
-    const ctx = applyContextFrom(config);
+    const { computePostBlockStateRoot } = await import('../../src/services/block-apply.js');
 
     // One signature more than the budget holds, each a well-formed transaction
     // `applyBlock` counts before it resolves a single input.
     const signatures = MAX_BLOCK_COST / W_SIG + 1;
-    const txs: UtxoTransaction[] = Array.from({ length: signatures }, (_, i) => {
-      const owner = uid(`block-cost/signer-${i}`);
-      return {
-        inputs: [uidHex(`block-cost/input-${i}`)],
-        outputs: [{ boxType: 'credit', value: 1n, createdAtBlock: 0, owner }],
-        signatures: { [bytesToHex(owner)]: new Uint8Array(64) },
-        protocolVersion: PROTOCOL_VERSION,
-      } as UtxoTransaction;
-    });
-    const miner = makeTestIdentity();
-    const settled = buildBlockSettlement(treeStateView(proverSession(handle.prover)), [], 1, miner.userId, miner.userId, ctx);
-    if ('error' in settled) throw new Error(settled.error);
-    const body = [...txs, settled.tx];
-    const candidate = {
-      header: { height: 1, validatorId: miner.userId },
-      utxoTxTree: { utxoTxIds: body.map((tx) => computeTxId(tx)), utxoTxs: body.map((tx) => encodeTx(tx)) },
-      validatorSignature: new Uint8Array(64),
-    } as unknown as OrderingBlock;
+    const candidate = await candidateOf(signedTxs(signatures));
 
     // The rules refuse it for its signatures, before the batch runs, and say so.
-    const refused = applyBlock(treeStateView(proverSession(handle.prover)), candidate, ctx);
-    expect(refused).toEqual({
-      ok: false,
-      reason: `Rejected block height=1: its ${signatures} signatures cost more than a block may`,
-      overBudget: true,
-    });
+    const reason = `Rejected block height=1: its ${signatures} signatures cost more than a block may`;
+    expect(await rulesOver(candidate)).toEqual({ ok: false, reason, overBudget: true });
 
     const root = handle.prover.prover.root;
-    expect(computePostBlockStateRoot(candidate, handle)).toEqual({ kind: 'over-budget', cost: signatures * W_SIG });
+    expect(computePostBlockStateRoot(candidate, handle)).toEqual({ kind: 'over-budget', reason });
+    expect(handle.prover.prover.root).toBe(root);
+  });
+
+  it('a body the rules refuse for a rule is body-rejected, however many signatures it carries: only applyBlock\'s flag says over budget', async () => {
+    await freshStore();
+    const handle = await liveProver();
+    const { computePostBlockStateRoot } = await import('../../src/services/block-apply.js');
+
+    // Two signatures more than the budget holds, the first transaction carrying
+    // a second over its one input: the rules refuse that before they count the
+    // body's signatures, and the refusal is a rule's.
+    const txs = signedTxs(MAX_BLOCK_COST / W_SIG + 1);
+    txs[0]!.signatures[bytesToHex(uid('block-cost/second-signer'))] = new Uint8Array(64);
+    const candidate = await candidateOf(txs);
+    const refused = await rulesOver(candidate);
+    if (refused.ok) throw new Error('the rules applied a body they must refuse');
+    expect(refused.reason).toContain('carries more signatures than inputs');
+    expect(refused.overBudget).toBeUndefined();
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const root = handle.prover.prover.root;
+    expect(computePostBlockStateRoot(candidate, handle)).toEqual({ kind: 'body-rejected' });
+    expect(warn.mock.calls.some(([line]) => String(line) === refused.reason)).toBe(true);
     expect(handle.prover.prover.root).toBe(root);
   });
 });

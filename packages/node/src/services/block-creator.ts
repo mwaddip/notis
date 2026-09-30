@@ -732,7 +732,7 @@ export function createOrderingBlock(): OrderingBlock | null {
     }
     if ('error' in run) return decline(run.error);
     if (run.speculation.kind === 'over-budget') {
-      return decline(`the body with no user transaction costs ${run.speculation.cost}, over the budget`);
+      return decline(`the body with no user transaction is over the budget: ${run.speculation.reason}`);
     }
 
     // 19d. A body the mutation phase rejected is evicted and the build repeats

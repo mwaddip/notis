@@ -1,7 +1,6 @@
 import * as validation from '@dagsocial/validation';
 import {
   applyBlock,
-  blockCost,
   checkBlockCost,
   treeStateView,
   treeWritesOf,
@@ -89,7 +88,6 @@ import { countedVerifyOrderingBlockPoW, noteTip } from '../metrics.js';
 import { getNet } from './net-instance.js';
 import {
   bytesToHex,
-  decodeTx,
   hash32,
   identityKey,
   MAX_FUTURE_DRIFT_MS,
@@ -698,24 +696,6 @@ export function costOf(effects: BlockEffects, view: TreeStateView, writes: reado
 }
 
 /**
- * The cost of a body's signatures alone — each user transaction's signature map,
- * the settlement, last, carrying none (CONSENSUS_INTERFACE → Applying a block) —
- * or `null` for a body whose transactions do not decode, whose signatures
- * `applyBlock` never counts.
- */
-function signatureCostOf(block: OrderingBlock): BlockCost | null {
-  let signatures = 0;
-  try {
-    for (const txBytes of block.utxoTxTree.utxoTxs.slice(0, -1)) {
-      signatures += Object.keys(decodeTx(txBytes).signatures).length;
-    }
-  } catch {
-    return null;
-  }
-  return { signatures, lookups: 0, writes: 0 };
-}
-
-/**
  * The owners whose karma boxes a block's effects insert or spend, as hex — those
  * net's relay gate moves for once the block commits (NODE_INTERFACE → Post
  * transactions → "The set moves after a commit, never inside a transaction").
@@ -782,11 +762,12 @@ export type StateRootSpeculation =
   | { kind: 'computed'; stateRoot: string; adProofsRoot: string; proof: Uint8Array }
   /**
    * The body's cost is over the budget (CONSENSUS_INTERFACE → The block's
-   * cost): trim the selection and build again, evicting nothing. `cost` is
-   * `blockCost` of what the run counted — of the signatures alone for a body
-   * `applyBlock` refused for them before the batch.
+   * cost): trim the selection and build again, evicting nothing. `reason` is
+   * the refusal that says so — `applyBlock`'s, the one refusal it flags
+   * `overBudget`, for a body whose signatures alone cost more than a block may;
+   * otherwise `checkBlockCost`'s, naming the cost the run counted.
    */
-  | { kind: 'over-budget'; cost: number }
+  | { kind: 'over-budget'; reason: string }
   /**
    * Producing this block is forbidden — the body was rejected, or speculating
    * on it threw. One arm because the caller's obligation is one: do not mine,
@@ -820,8 +801,10 @@ export type StateRootSpeculation =
  * The block's cost is checked where apply checks it, once the writes are derived
  * and before they are performed; over the budget, the run answers `over-budget`
  * and performs nothing. A body whose signatures alone cost more than a block may
- * is `applyBlock`'s refusal before the batch, and over the budget here too,
- * whatever else refuses it: its cost is over the budget before any other count.
+ * is `applyBlock`'s refusal before the batch, which says so with `overBudget`
+ * (CONSENSUS_INTERFACE → Applying a block → "This refusal says what it is"),
+ * and over the budget here too; every other refusal of the rules is
+ * `body-rejected`.
  *
  * An unexpected throw maps to `body-rejected`: the apply funnel treats the same
  * throw as a rejection of the block, so a body that crashes speculation is a
@@ -853,10 +836,7 @@ export function computePostBlockStateRoot(
     const view = treeStateView(recordingSession(handle.prover));
     const result = applyBlock(view, block, applyContextFrom(config));
     if (!result.ok) {
-      const signatureCost = signatureCostOf(block);
-      if (signatureCost !== null && checkBlockCost(signatureCost) !== null) {
-        return { kind: 'over-budget', cost: blockCost(signatureCost) };
-      }
+      if (result.overBudget === true) return { kind: 'over-budget', reason: result.reason };
       console.warn(result.reason);
       console.warn(
         `stateRoot speculation at height ${height}: the body was rejected by its ` +
@@ -865,8 +845,8 @@ export function computePostBlockStateRoot(
       return { kind: 'body-rejected' };
     }
     const writes = treeWritesOf(result.effects, height, view);
-    const cost = costOf(result.effects, view, writes);
-    if (checkBlockCost(cost) !== null) return { kind: 'over-budget', cost: blockCost(cost) };
+    const overBudget = checkBlockCost(costOf(result.effects, view, writes));
+    if (overBudget !== null) return { kind: 'over-budget', reason: overBudget };
     const digest = performTreeWrites(handle.prover, height, writes, 'computePostBlockStateRoot');
     const proof = inner.generateProof();
     return {
