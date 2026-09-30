@@ -39,6 +39,7 @@ const TEST_KEYS = [
   'AVL_KEY_LENGTH',
   'MAX_PROOF_HISTORY',
   'PROOF_RETENTION_BLOCKS',
+  'PROOF_RETENTION_BYTES',
 ];
 
 function clearTestEnv() {
@@ -779,6 +780,38 @@ describe('config', () => {
       await expect(importWithRetention('-1')).rejects.toThrow(/PROOF_RETENTION_BLOCKS/);
       vi.resetModules();
       await expect(importWithRetention('2.5')).rejects.toThrow(/PROOF_RETENTION_BLOCKS/);
+    });
+  });
+
+  // NODE_INTERFACE → The block proof: `PROOF_RETENTION_BYTES`, `local`, the
+  // byte cap apply prunes proofs against after the height-based prune, the
+  // tighter of the two settings winning.
+  describe('16. PROOF_RETENTION_BYTES', () => {
+    function importWithBytes(value: string) {
+      process.env['PROOF_RETENTION_BYTES'] = value;
+      return import('../src/config.js');
+    }
+
+    it('defaults to 2147483648 — 2 GiB', async () => {
+      const { loadConfig } = await import('../src/config.js');
+      expect(loadConfig().proofRetentionBytes).toBe(2_147_483_648);
+    });
+
+    it('reads a set value, zero included', async () => {
+      const { loadConfig } = await importWithBytes('1000000');
+      expect(loadConfig().proofRetentionBytes).toBe(1_000_000);
+      vi.resetModules();
+      expect((await importWithBytes('0')).loadConfig().proofRetentionBytes).toBe(0);
+    });
+
+    // Refused rather than defaulted, for the same reason PROOF_RETENTION_BLOCKS
+    // is: a cap nobody can read is a policy nobody chose.
+    it('refuses a value that is not a non-negative integer', async () => {
+      await expect(importWithBytes('two gigs')).rejects.toThrow(/PROOF_RETENTION_BYTES/);
+      vi.resetModules();
+      await expect(importWithBytes('-1')).rejects.toThrow(/PROOF_RETENTION_BYTES/);
+      vi.resetModules();
+      await expect(importWithBytes('2.5')).rejects.toThrow(/PROOF_RETENTION_BYTES/);
     });
   });
 });

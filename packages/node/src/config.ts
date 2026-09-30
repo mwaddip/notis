@@ -118,6 +118,14 @@ export interface Config {
    * Local — what a node serves, not what it accepts.
    */
   proofRetentionBlocks: number;
+  /**
+   * Bytes of proofs this node keeps, on top of `proofRetentionBlocks`: apply
+   * prunes the oldest proofs while those kept exceed this cap, after the
+   * height-based prune — the tighter of the two wins, and the tip's proof is
+   * kept whatever either says (NODE_INTERFACE → The block proof). Local, like
+   * `proofRetentionBlocks`.
+   */
+  proofRetentionBytes: number;
   // Net settings
   bootstrapPeers: string[];
   listenAddrs: string;
@@ -185,6 +193,7 @@ export function loadConfig(): Readonly<Config> {
     ),
     avlKeyLength: TREE_KEY_LENGTH,
     proofRetentionBlocks: parseProofRetention(process.env['PROOF_RETENTION_BLOCKS']),
+    proofRetentionBytes: parseProofRetentionBytes(process.env['PROOF_RETENTION_BYTES']),
     // Net settings
     bootstrapPeers: parseBootstrapPeers(process.env['BOOTSTRAP_PEERS'], profile.bootstrapPeers),
     listenAddrs: process.env['LISTEN_ADDRS'] ?? '/ip4/0.0.0.0/tcp/0',
@@ -283,6 +292,28 @@ function parseProofRetention(raw: string | undefined): number {
     throw new Error(
       `Invalid PROOF_RETENTION_BLOCKS "${raw}" — must be a non-negative whole ` +
         'number of blocks',
+    );
+  }
+  return parsed;
+}
+
+/**
+ * `PROOF_RETENTION_BYTES`, defaulting to 2 147 483 648 — 2 GiB (NODE_INTERFACE
+ * → The block proof).
+ *
+ * Refused rather than defaulted, for the same reason `parseProofRetention` is:
+ * a cap this node cannot read is a policy nobody chose. `parseInt` would
+ * answer `NaN` for a non-numeric value, which prunes nothing for as long as
+ * the node runs, or read `2.5` as 2; a negative value prunes proofs apply has
+ * just stored. Zero holds the tip's proof alone, same as the block retention.
+ */
+function parseProofRetentionBytes(raw: string | undefined): number {
+  if (raw === undefined) return 2_147_483_648;
+  const parsed = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(
+      `Invalid PROOF_RETENTION_BYTES "${raw}" — must be a non-negative whole ` +
+        'number of bytes',
     );
   }
   return parsed;

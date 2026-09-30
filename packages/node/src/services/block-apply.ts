@@ -66,6 +66,7 @@ import {
   getBondsInvitedAt,
   putBlockProof,
   pruneBlockProofs,
+  pruneBlockProofsByBytes,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
 import { insertBlockJournal, purgeOldJournals } from '../store/journal.js';
@@ -551,8 +552,12 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
   purgeOldJournals(height - config.maxReorgDepth);
   purgeRefusedHeaders(height - config.maxReorgDepth);
   // What a node serves, not what it applies: proofs are kept for
-  // PROOF_RETENTION_BLOCKS behind the tip (NODE_INTERFACE → The block proof).
+  // PROOF_RETENTION_BLOCKS behind the tip, then the oldest are pruned while
+  // the kept proofs exceed PROOF_RETENTION_BYTES — the tighter of the two
+  // wins, and the tip's proof is kept whatever either says (NODE_INTERFACE →
+  // The block proof).
   pruneBlockProofs(height - config.proofRetentionBlocks);
+  pruneBlockProofsByBytes(config.proofRetentionBytes);
 
   // The one site where an absence is simply printed. `applyOrderingBlock` ran
   // `verifyOrderingBlockStructure` over this header before calling us, so it is

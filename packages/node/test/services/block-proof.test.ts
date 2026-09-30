@@ -329,6 +329,110 @@ describe('the block proof', () => {
     expect(held).toEqual([[1], [1, 2], [1, 2, 3], [2, 3, 4], [3, 4, 5]]);
   });
 
+  // NODE_INTERFACE → The block proof: PROOF_RETENTION_BYTES, the byte cap
+  // apply prunes against after the height-based prune — the tighter of the
+  // two settings wins, and the tip's proof is kept whatever either says.
+  describe('the byte cap', () => {
+    /**
+     * What the byte-cap prune keeps: the newest-by-height proofs whose
+     * cumulative length is at most `capBytes`, plus the tip regardless of its
+     * own length — recomputed independently of `pruneBlockProofsByBytes`,
+     * from sizes measured after each real apply, as the check on its
+     * arithmetic. Sound against the implementation's incremental deletion:
+     * a row's inclusion depends only on the sizes of rows newer than it, so
+     * recomputing from every size seen so far — even one a prior round
+     * already deleted — answers the same as the incremental process did.
+     */
+    function heldUnderCap(sizes: Map<number, number>, capBytes: number): number[] {
+      const newest = [...sizes.keys()].sort((a, b) => b - a);
+      const held: number[] = [];
+      let total = 0;
+      for (let i = 0; i < newest.length; i++) {
+        const height = newest[i]!;
+        const len = sizes.get(height)!;
+        if (i > 0 && total + len > capBytes) break;
+        total += len;
+        held.push(height);
+      }
+      return held.sort((a, b) => a - b);
+    }
+
+    it('keeps the newest proofs whose total length fits PROOF_RETENTION_BYTES, and none older — the cap tighter than PROOF_RETENTION_BLOCKS', async () => {
+      let mockConfig!: Config;
+      vi.doMock('../../src/config.js', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('../../src/config.js')>();
+        mockConfig = { ...actual.config, proofRetentionBytes: 0 };
+        return { ...actual, config: mockConfig };
+      });
+      await freshStore();
+      const { applyOrderingBlock } = await blockApply();
+
+      const sizes = new Map<number, number>();
+      const held: number[][] = [];
+      const expected: number[][] = [];
+      for (let height = 1; height <= 5; height++) {
+        expect(applyOrderingBlock(await makeApplicableBlock({ height }))).toBe(true);
+        sizes.set(height, (await storedProof(height))!.length);
+        if (height === 1) {
+          // Sized off the first block's real proof: comfortably two of them,
+          // not three, whatever the exact AVL encoding gives.
+          mockConfig.proofRetentionBytes = sizes.get(1)! * 2 + 1;
+        }
+        expected.push(heldUnderCap(sizes, mockConfig.proofRetentionBytes));
+        const heights: number[] = [];
+        for (let h = 1; h <= height; h++) if ((await storedProof(h)) !== null) heights.push(h);
+        held.push(heights);
+      }
+      expect(held).toEqual(expected);
+      // The cap bound something — otherwise this test would prove nothing.
+      expect(held[4]!.length).toBeLessThan(5);
+    });
+
+    it('the tighter setting the other way: a tight PROOF_RETENTION_BLOCKS prunes by height when the byte cap would not', async () => {
+      vi.doMock('../../src/config.js', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('../../src/config.js')>();
+        return {
+          ...actual,
+          config: Object.freeze({ ...actual.config, proofRetentionBlocks: 2, proofRetentionBytes: 1_000_000_000 }),
+        };
+      });
+      await freshStore();
+      const { applyOrderingBlock } = await blockApply();
+      const held: number[][] = [];
+      for (let height = 1; height <= 5; height++) {
+        expect(applyOrderingBlock(await makeApplicableBlock({ height }))).toBe(true);
+        const heights: number[] = [];
+        for (let h = 1; h <= height; h++) if ((await storedProof(h)) !== null) heights.push(h);
+        held.push(heights);
+      }
+      expect(held).toEqual([[1], [1, 2], [1, 2, 3], [2, 3, 4], [3, 4, 5]]);
+    });
+
+    it('a revert after a prune by bytes: what the cap already removed stays gone, and the revert deletes what it had kept', async () => {
+      let mockConfig!: Config;
+      vi.doMock('../../src/config.js', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('../../src/config.js')>();
+        mockConfig = { ...actual.config, proofRetentionBytes: 0 };
+        return { ...actual, config: mockConfig };
+      });
+      await freshStore();
+      const { applyOrderingBlock } = await blockApply();
+
+      for (let height = 1; height <= 5; height++) {
+        expect(applyOrderingBlock(await makeApplicableBlock({ height }))).toBe(true);
+        if (height === 1) mockConfig.proofRetentionBytes = (await storedProof(1))!.length * 2 + 1;
+      }
+      const heights = [1, 2, 3, 4, 5];
+      const before = await Promise.all(heights.map((h) => storedProof(h)));
+      expect(before.some((proof) => proof === null)).toBe(true);
+      expect(before[4]).not.toBeNull(); // the tip survives the cap
+
+      await revertChainTo(0);
+
+      for (const h of heights) expect(await storedProof(h)).toBeNull();
+    });
+  });
+
   it('the proof of a block the creator produced is the one its template\'s speculation made', async () => {
     // Every speculation the creator runs, kept.
     const made: Array<{ stateRoot: string; proof: Uint8Array }> = [];

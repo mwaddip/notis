@@ -177,7 +177,9 @@ const MIGRATIONS = [
 
   // Block proofs — each applied block's AVL+ proof, the one its checkpoint made
   // (NODE_INTERFACE → The block proof): written in the apply transaction,
-  // deleted with its block on a revert, pruned below tip − PROOF_RETENTION_BLOCKS.
+  // deleted with its block on a revert, pruned below tip − PROOF_RETENTION_BLOCKS,
+  // then by PROOF_RETENTION_BYTES — the tighter of the two wins, and the tip's
+  // proof is kept whatever either says.
   `CREATE TABLE IF NOT EXISTS block_proofs (
     height INTEGER PRIMARY KEY,
     proof BLOB NOT NULL
