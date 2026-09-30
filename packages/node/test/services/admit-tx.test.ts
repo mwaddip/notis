@@ -537,3 +537,73 @@ describe('the gate keeps what it measured', () => {
     expect(mem.getPendingEntries(10).map((entry) => entry.costEstimate)).toEqual([null]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The cost gate's signatures-alone refusal (MEMPOOL_INTERFACE → The cost
+// gate): a transaction whose block alone is refused for its signatures alone,
+// before its cost is counted — `applyBlock`'s own pre-batch refusal — is
+// refused at admission by name, not silently admitted uncosted.
+//
+// Reaching this refusal at the real MAX_BLOCK_COST needs more signatures than
+// MAX_TX_BYTES lets one transaction carry (MINING_INTERFACE → Template and
+// submit), so `applyBlock` is mocked to answer it for one chosen transaction
+// — deterministic, and independent of `blockBudgetSeam`, whose `set` reaches
+// `checkBlockCost` and `blockCostBudget`, never the real `MAX_BLOCK_COST`
+// `applyBlock` checks the signatures alone against before the batch runs.
+// ---------------------------------------------------------------------------
+
+describe('the cost gate\'s signatures-alone refusal', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+  afterEach(() => {
+    vi.doUnmock('@dagsocial/consensus');
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('refuses admission of a transaction whose block alone applyBlock refuses for its signatures alone, naming the refusal; the row is not written', async () => {
+    const sender = makeTestIdentity();
+    const box = makeCreditBox(100_000n, sender.userId, 0, 1);
+    const tx = makeCreditTx(sender, [box], 1_000n);
+    const { computeTxId } = await import('@dagsocial/types');
+    const targetTxId = computeTxId(tx);
+    const reason = 'Rejected block height=1: its 9001 signatures cost more than a block may';
+
+    // Registered before `liveProver()` below, which reaches `@dagsocial/consensus`
+    // transitively (`seedEmissionBox` reads `block-creator.js`, which imports it) —
+    // too late to mock afterward.
+    vi.doMock('@dagsocial/consensus', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@dagsocial/consensus')>();
+      return {
+        ...actual,
+        applyBlock: (...args: Parameters<typeof actual.applyBlock>) => {
+          const [, block] = args;
+          const carries = block.utxoTxTree.utxoTxIds.slice(0, -1).includes(targetTxId);
+          if (carries) return { ok: false as const, reason, overBudget: true as const };
+          return actual.applyBlock(...args);
+        },
+      };
+    });
+
+    const db = await import('../../src/store/db.js');
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await import('../../src/store/utxo.js');
+    utxo.insertBox(box);
+    await liveProver();
+
+    const admit = await import('../../src/services/admit-tx.js');
+    const mem = await import('../../src/store/mempool.js');
+    let refusal: unknown;
+    try {
+      admit.admitTx(tx, 1000);
+    } catch (err) {
+      refusal = err;
+    }
+    expect(refusal).toBeInstanceOf(admit.TxOverBlockBudgetError);
+    expect((refusal as Error).message).toContain(reason);
+    expect((refusal as { statusCode: number }).statusCode).toBe(413);
+    expect(mem.getPendingEntries(10)).toHaveLength(0);
+  });
+});

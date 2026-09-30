@@ -36,6 +36,16 @@ export function blockCostBudget(): number {
 const NO_PRODUCER = new Uint8Array(32);
 
 /**
+ * `tx`'s (or `txs`') block alone, or the block-application refusal it drew
+ * (MEMPOOL_INTERFACE → The cost gate): a plain `BlockCost`; the pre-batch
+ * signatures-over-budget refusal alone (`overBudget: true`, `reason`
+ * `applyBlock`'s own text — CONSENSUS_INTERFACE → Applying a block → "This
+ * refusal says what it is"); or `null` for a body the rules refuse on any
+ * other ground, or a node with no tree to cost it over.
+ */
+export type CostAlone = BlockCost | { overBudget: true; reason: string } | null;
+
+/**
  * The cost of the candidate block at `height` carrying `txs` as its user
  * transactions, its settlement built as the creator builds one, the rules and the
  * writes run over this node's tree read unrecorded (MEMPOOL_INTERFACE → The cost
@@ -44,7 +54,8 @@ const NO_PRODUCER = new Uint8Array(32);
  * `null` where there is no such block to cost: a chain that cannot back the
  * settlement produces no block at all, and a body the rules refuse — one spending
  * the output of a transaction still pooled, a like of a post still pooled — rides
- * a block with what it depends on.
+ * a block with what it depends on. The pre-batch signatures-over-budget refusal
+ * is named rather than folded into `null` — see `CostAlone`.
  *
  * The header carries the height and `validatorId`, the only fields the mutation
  * phase reads (CONSENSUS_INTERFACE → Applying a block); every other field is a
@@ -55,7 +66,7 @@ function candidateCost(
   txs: readonly UtxoTransaction[],
   height: number,
   site: string,
-): BlockCost | null {
+): CostAlone {
   const ctx = applyContextFrom(config);
   const bodies = txs.map((tx) => encodeTx(tx));
   try {
@@ -86,7 +97,7 @@ function candidateCost(
     };
     const view = treeStateView(proverSession(handle.prover));
     const result = applyBlock(view, block, ctx);
-    if (!result.ok) return null;
+    if (!result.ok) return result.overBudget === true ? { overBudget: true, reason: result.reason } : null;
     return costOf(result.effects, view, treeWritesOf(result.effects, height, view));
   } catch (err) {
     // A read of this node's own tree that contradicts itself is local
@@ -102,13 +113,12 @@ function candidateCost(
 }
 
 /**
- * The cost of the block carrying `tx` as its only user transaction at the height
- * of the block that would carry it — tip + 1 — or `null` where there is no such
- * block to cost, as on a node with no prover, which has no tree to run it over
- * (MEMPOOL_INTERFACE → The cost gate). `site` names the caller in a fail-stop's
- * diagnostic.
+ * `tx`'s block alone at the height of the block that would carry it — tip + 1
+ * — as a `CostAlone`; `null` where there is no such block to cost, as on a
+ * node with no prover, which has no tree to run it over (MEMPOOL_INTERFACE →
+ * The cost gate). `site` names the caller in a fail-stop's diagnostic.
  */
-export function costAlone(tx: UtxoTransaction, site: string): BlockCost | null {
+export function costAlone(tx: UtxoTransaction, site: string): CostAlone {
   const handle = tryGetAvlProver();
   if (handle === null) return null;
   return candidateCost(handle, [tx], nextBlockHeight(), site);
@@ -131,7 +141,10 @@ export function emptyBlockCost(site: string): number | null {
   const digest = bytesToHex(handle.prover.digest());
   if (emptyAtTip === null || emptyAtTip.height !== height || emptyAtTip.digest !== digest) {
     const cost = candidateCost(handle, [], height, site);
-    emptyAtTip = { height, digest, cost: cost === null ? null : blockCost(cost) };
+    // An empty body carries no signature, so the pre-batch refusal
+    // `candidateCost` can name never fires here; `overBudget` is dead code,
+    // kept for `CostAlone`'s totality rather than asserted away.
+    emptyAtTip = { height, digest, cost: cost === null || 'overBudget' in cost ? null : blockCost(cost) };
   }
   return emptyAtTip.cost;
 }

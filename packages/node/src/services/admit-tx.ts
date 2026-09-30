@@ -74,9 +74,11 @@ export class TxOverBlockBudgetError extends ClientError {
  * differently without either being wrong. That is why it reads an environment
  * variable at all, which no consensus value in this package does. **The cost
  * gate reads the budget, which is consensus**: a transaction whose block alone
- * is over it is one no block can carry, and it would sit in the pool, trimmed
- * from every template, until it expired. A transaction with no block alone to
- * cost is not the gate's to refuse (`costAlone`): it is admitted, and its row
+ * is over it — `checkBlockCost`'s verdict, or `applyBlock`'s own pre-batch
+ * refusal on the signatures alone (`costAlone`'s `overBudget` arm) — is one no
+ * block can carry, and it would sit in the pool, trimmed from every template,
+ * until it expired. A transaction with no block alone to cost is not the
+ * gate's to refuse (`costAlone`'s `null` arm): it is admitted, and its row
  * carries no estimate.
  *
  * **The gate keeps what it measured**: the row carries the transaction's
@@ -119,6 +121,11 @@ export function admitTx(tx: UtxoTransaction, expiresAtHeight: number): number {
   // MEMPOOL_INTERFACE → The cost gate.
   const alone = costAlone(tx, 'admitTx');
   if (alone === null) return insertUtxoTx(tx, expiresAtHeight);
+  // The block alone is refused for its signatures alone, before its cost is
+  // counted — `applyBlock`'s own refusal, named (MEMPOOL_INTERFACE → The cost
+  // gate). No block can carry this transaction any more than one over
+  // `checkBlockCost` below could.
+  if ('overBudget' in alone) throw new TxOverBlockBudgetError(alone.reason);
   const overBudget = checkBlockCost(alone);
   if (overBudget !== null) throw new TxOverBlockBudgetError(overBudget);
 

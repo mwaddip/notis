@@ -163,11 +163,18 @@ function costedOrNothing(what: string, measure: () => number | null): number | n
   }
 }
 
-/** `tx`'s marginal cost at this tip (`costedOrNothing`): its block alone less the empty block. */
+/**
+ * `tx`'s marginal cost at this tip (`costedOrNothing`): its block alone less
+ * the empty block. A block alone refused for its signatures alone
+ * (`costAlone`'s `overBudget` arm) counts as nothing here, exactly as `null`
+ * does: admission is where that refusal is a verdict (MEMPOOL_INTERFACE → The
+ * cost gate); the fill only estimates.
+ */
 function estimateAlone(tx: UtxoTransaction, txId: string): number | null {
   return costedOrNothing(`transaction ${txId} alone`, () => {
     const alone = costAlone(tx, 'createOrderingBlock');
-    return alone === null ? null : marginalCost(alone, 'createOrderingBlock');
+    if (alone === null || 'overBudget' in alone) return null;
+    return marginalCost(alone, 'createOrderingBlock');
   });
 }
 
