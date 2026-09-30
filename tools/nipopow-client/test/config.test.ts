@@ -15,7 +15,7 @@ describe('parseConfig', () => {
     const c = parseConfig([], env());
     expect(c.nodeUrls).toEqual(['http://a:3000', 'http://b:3001']);
     expect(c.profile.networkType).toBe('devnet');
-    expect(c.m).toBe(6);
+    expect(c.m).toBe(24);
     expect(c.k).toBe(20);
     expect(c.user).toBeNull();
     expect(c.allowSingle).toBe(false);

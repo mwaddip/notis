@@ -54,7 +54,8 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
   const nodeUrls = nodeUrlsRaw.split(',').map(u => u.trim()).filter(Boolean);
   if (nodeUrls.length === 0) throw new ConfigError('NODE_URLS is empty');
 
-  let m = 6;
+  // CONSTANTS → Client defaults
+  let m = 24;
   let k = 20;
   let user: string | null = null;
   let allowSingle = false;
