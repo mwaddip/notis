@@ -1240,10 +1240,6 @@ tree collapse into clean rejections:
 > | `MissingStateVersionError` | no AVL version at or before a fork height the walk answers within. `MAX_PROOF_HISTORY < maxReorgDepth` is refused at load (Configuration), so a missing version is a row the store lost | `services/fork-resolution.ts` → `reorg` |
 > | `DuplicateStateVersionError` | a version row already stands at the height being checkpointed — the store's version history has run ahead of its chain. The write path keeps one row per height and `idx_avl_tree_versions_height` refuses a second (AVL+ State Root) | `state/avl-storage.ts` → `update` |
 >
-> ⚠ **AHEAD OF CODE (2026-09-30, N2 state layout, stage A)** — `InconsistentStateTreeError` does not exist: a
-> `TreeInconsistencyError` reaches the apply funnel's totality catch as an unexpected throw, a refusal kept off the
-> mark, and the speculation's catch as `body rejected`.
->
 > The class is outside the totality property's scope by construction, and the argument is about
 > **provenance, not validation** — but it takes two shapes, and only the first is about bytes.
 >
