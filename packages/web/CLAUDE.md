@@ -342,9 +342,10 @@ Ed25519 through `@noble/curves` and hashes through `@dagsocial/types`' `hash32`,
 wallet window`): the extension proves the reader's rep and balance against the verified chain. A tip run answers
 `{ verdict, anchor }` — the reading node's own verified `tip` and `suffixHead`, under `verified` alone —
 and `src/extension/figures-verifier.ts` (`createFiguresVerifier`) runs `proveFigures` of `@dagsocial/nipopow-client`
-over the listings the rows show: every box at `suffixHead`, the identity record at the key `identityRecordKey` of
-`@dagsocial/types` derives, the excluded boxes again at `tip`, then `/blocks/current`; **a box is `proven` only when its
-value hashes to its key, its `owner` is the reader's key and its type the ledger it was listed under**; rep is valued by
+over the listings the rows show: every box at `suffixHead` under its tree key `boxKey`, the identity record under
+`identityKey` (both `@dagsocial/types`'), the excluded boxes again at `tip`, then `/blocks/current`; **a box is `proven`
+only when its value hashes to the box id its key carries, its `owner` is the reader's key and its type the ledger it was
+listed under**; rep is valued by
 `effectiveKarma` of `@dagsocial/types` — the node's own function — at the listing's height. **A run proves a listing
 read after its anchor and never one read before it**: every read of the reader's own listing is stamped at its start
 with the anchor sequence, a verified tip reads `/karma` (and `/credits` with the wallet open) before it proves, and a

@@ -440,10 +440,6 @@ and the figure in clay (→ The wallet window, → The profile window). **What i
 every proven box is real and the key's; a node that withholds a box still serves valid proofs for the rest, and
 omission is what reading both nodes as a union is for.
 
-> ⚠ **AHEAD OF CODE (2026-09-30, N2 state layout, stage A)** — `nipopow-client` asks the proof route for a box
-> by its id and for the identity record by `identityRecordKey`, both 64 hex, and verifies at `AVL_KEY_LENGTH`; its
-> names check proves the box the same way.
-
 **The verified names.** The extension proves every handle it shows, and every handle it sends to, against the state the
 verified chain committed — the figures' anchor, their proofs and their order. **A check** is `proveName` of
 `@dagsocial/nipopow-client` over a claim: a **label** — a key and the name a row carries beside it — or a **typed
