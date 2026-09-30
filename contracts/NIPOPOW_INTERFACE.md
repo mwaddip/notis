@@ -212,10 +212,18 @@ on bytes a client has not screened, but it re-derives nothing a passed verdict e
   own target and verifies no prefix header's difficulty; the published variable-difficulty
   construction keeps own-target levels and adds an online round. The argument is the query-level one:
   a random-oracle query is a level-μ hit with a probability that depends on no target, so at every
-  fully-registering level the counts are the constant-difficulty model's random variables. A
-  cheap-target chain therefore buys no score — the package's property tests pin that a cheap-target
-  chain of equal work does not out-compare an honest one, and that a lower-difficulty chain of more
-  work wins. A lying pointer can skip honest blocks and lower a score, never raise one.
+  fully-registering level the counts are the constant-difficulty model's random variables. **A
+  cheap-target chain therefore buys no score beyond its work**: an honest chain's level-0 count is its length exactly,
+  a cheap chain's a binomial draw whose mean is its work in anchor units, so a cheap chain of equal work wins only as
+  often as chance lets any equal-work chain win — where own-target levels give it the lead every time — and one of
+  materially less work loses. The package's property tests pin all three over independent cheap chains: the
+  own-target control picks the cheap side in all of them; an equal-work cheap side wins in no more than chance allows;
+  a cheap side of at most three quarters of the honest work wins in none — and a lower-difficulty chain of more work
+  wins. A lying pointer can skip honest blocks and lower a score, never raise one.
+
+  > ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — the property test samples one pair of chains, its 20
+  > trials nested prefixes of both, and asserts that an equal-work cheap side never wins; with the header's eleventh
+  > field its fixtures mine other nonces and one trial is won by the cheap side.
 
 `bestArg(headers: BlockHeader[], m: number, anchorBits: number): bigint` is exported beside it — the
 anchor bits are the yardstick its levels are measured against.
