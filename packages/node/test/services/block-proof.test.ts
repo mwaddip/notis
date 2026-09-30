@@ -43,6 +43,20 @@ async function storedProof(height: number): Promise<Uint8Array | null> {
   return (await import('../../src/store/block-proofs.js')).getBlockProof(height);
 }
 
+/** Every table of the store as its rows, each table's in a fixed order — the store as a value. */
+async function storeSnapshot(): Promise<Record<string, string[]>> {
+  const db = (await import('../../src/store/db.js')).getDb();
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>;
+  const snapshot: Record<string, string[]> = {};
+  for (const { name } of tables) {
+    const rows = db.prepare(`SELECT * FROM "${name}"`).safeIntegers().all() as Record<string, unknown>[];
+    snapshot[name] = rows
+      .map((row) => JSON.stringify(row, (_key, value: unknown) => (typeof value === 'bigint' ? value.toString() : value)))
+      .sort();
+  }
+  return snapshot;
+}
+
 /** The rules' context as block application builds it. */
 async function nodeCtx(): Promise<ApplyContext> {
   const { applyContextFrom } = await blockApply();
@@ -232,6 +246,40 @@ describe('the block proof', () => {
     const after = computePostBlockStateRoot(good, handle);
     if (after.kind !== 'computed') throw new Error(`the speculation answered ${after.kind}`);
     expect(after.proof).toEqual(before.proof);
+  });
+
+  it('a block whose adProofsRoot is not its proof\'s is refused: it stores no proof, and the store and the prover are as they were', async () => {
+    await freshStore();
+    const { sender, boxes } = await seededSender();
+    const handle = await liveProver();
+    const miner = makeTestIdentity();
+    const tx = makeCreditTx(sender, [boxes[0]!], 10_000n);
+    const honest = await makeApplicableBlock({ miner, utxoTxs: [tx] });
+    // The same body committing to another proof, its header re-mined and re-signed.
+    const altered = await makeApplicableBlock({
+      miner,
+      utxoTxs: [tx],
+      adProofsRoot: bytesToHex(hash32(hexToBytes(honest.header.adProofsRoot))),
+    });
+    expect(altered.header.stateRoot).toBe(honest.header.stateRoot);
+    expect(altered.header.adProofsRoot).not.toBe(honest.header.adProofsRoot);
+
+    const { applyOrderingBlockVerdict } = await blockApply();
+    const store = await storeSnapshot();
+    const { root, height } = handle.prover.prover;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(applyOrderingBlockVerdict(altered)).toEqual({ applied: false, class: 'consensus' });
+    expect(warn.mock.calls.some(([line]) => String(line).startsWith('adProofsRoot mismatch at height 1'))).toBe(true);
+    expect(await storedProof(1)).toBeNull();
+    expect(await storeSnapshot()).toEqual(store);
+    expect(handle.prover.prover.root).toBe(root);
+    expect(handle.prover.prover.height).toBe(height);
+
+    // The prover's proof cycle is where the refused block found it: the honest
+    // block applies, and the proof it stores is the one its header names.
+    expect(applyOrderingBlockVerdict(honest)).toEqual({ applied: true });
+    expect(bytesToHex(hash32((await storedProof(1))!))).toBe(honest.header.adProofsRoot);
   });
 
   it('is stored in the apply transaction: a block that fails after its checkpoint leaves no proof', async () => {

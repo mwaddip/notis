@@ -2847,6 +2847,56 @@ describe('resolveFork — body-stage refusal → mark → re-serve → continuat
       expect(blockHash(ordering.getOrderingBlock(i + 2)!.header)).toBe(blockHash(block.header));
     }
   });
+
+  it('a branch block committing to a proof its body does not make is refused at the switch, and marked', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const rh = await importRefusedHeaders();
+    const { applyOrderingBlock } = (await import(
+      '../../src/services/block-apply.js'
+    )) as { applyOrderingBlock: (block: OrderingBlock) => boolean };
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Shared height 1
+    await mineNextBlock(bc);
+
+    // Their branch: honest blocks at 2 and 3, then a block at 4 whose header
+    // commits to a proof its body does not make — valid PoW, signed by its
+    // validator.
+    const theirs: OrderingBlock[] = [];
+    for (const h of [2, 3]) {
+      const b = await makeApplicableBlock({ height: h });
+      expect(applyOrderingBlock(b)).toBe(true);
+      theirs.push(b);
+    }
+    const lying = await makeApplicableBlock({ height: 4, adProofsRoot: 'ab'.repeat(32) });
+    theirs.push(lying);
+
+    // Our chain: heights 2 and 3 mined here, lighter than their three.
+    await revertChainTo(1);
+    await mineNextBlock(bc);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(3);
+    const ours = [1, 2, 3].map((h) => blockHash(ordering.getOrderingBlock(h)!.header));
+
+    const theirHeaders = [...theirs].reverse().map((b) => b.header)
+      .concat(ordering.getOrderingBlock(1)!.header);
+    const net = stubNet(theirHeaders, theirs);
+    await forkResolution.resolveFork(lying, net, 'peer-proof');
+
+    // The switch rolled back: our chain stands, the lying block is marked, and
+    // the peer is penalised.
+    expect(ordering.getCurrentHeight()).toBe(3);
+    expect([1, 2, 3].map((h) => blockHash(ordering.getOrderingBlock(h)!.header))).toEqual(ours);
+    expect(rh.anyRefusedHeader([blockHash(lying.header)!])).toBe(true);
+    expect(net.penalties).toEqual([expect.objectContaining({ kind: 'misbehavior' })]);
+  });
 });
 
 // ---------------------------------------------------------------------------

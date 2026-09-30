@@ -229,12 +229,13 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
   }
   // SQLite rollback does not reach the AVL prover's in-memory state, so the
   // funnel saves the prover's root and height before the transaction and puts
-  // them back by reference on every rejection path — explicit rejection
-  // (including the stateRoot mismatch) and the totality catch — immediate,
-  // because the library never mutates a node. The restore also rebases the
-  // proof cycle, so none of a refused block's recorded reads, which leave the
-  // digest where it was, stays in the cycle to enter the next block's proof
-  // (NODE_INTERFACE → The block proof).
+  // them back by reference on every rejection path — explicit rejection (the
+  // stateRoot and adProofsRoot mismatches included, the latter after a
+  // checkpoint whose storage rows roll back with the transaction) and the
+  // totality catch — immediate, because the library never mutates a node. The
+  // restore also rebases the proof cycle, so none of a refused block's recorded
+  // reads, which leave the digest where it was, stays in the cycle to enter the
+  // next block's proof (NODE_INTERFACE → The block proof).
   const avlHandle = tryGetAvlProver();
   const saved = avlHandle
     ? { root: avlHandle.prover.prover.root, height: avlHandle.prover.prover.height }
@@ -526,9 +527,22 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
   const journal = writeBlockEffects(result.effects, height);
 
   // Checkpoint prover state at this height. Its proof is the block's — its
-  // reads, then its writes — stored with the block in this transaction
-  // (NODE_INTERFACE → The block proof).
-  putBlockProof(height, checkpointProver(handle, height));
+  // reads, then its writes — and the header commits to its hash32 as
+  // `adProofsRoot`: a mismatch is refused like the stateRoot's, the funnel's
+  // single rollback point restoring the store and the prover; the proof that
+  // matches is stored with the block in this transaction (NODE_INTERFACE → The
+  // block proof).
+  const proof = checkpointProver(handle, height);
+  const provenRoot = bytesToHex(hash32(proof));
+  if (block.header.adProofsRoot !== provenRoot) {
+    console.warn(
+      `adProofsRoot mismatch at height ${height}: ` +
+      `computed=${provenRoot.slice(0, 16)}... ` +
+      `header=${block.header.adProofsRoot.slice(0, 16)}...`,
+    );
+    return null;
+  }
+  putBlockProof(height, proof);
 
   // 14. Persist journal and purge old ones
   insertBlockJournal(journal);
