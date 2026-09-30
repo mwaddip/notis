@@ -379,7 +379,7 @@ describe('a root\'s invitee, for life', () => {
         },
         { kind: 'network', record: { memberCount: 2 } },
       ],
-      posts: [], likeRecords: [], withdrawals: [], appliedTxs: [],
+      posts: [], likeRecords: [], withdrawals: [], appliedTxs: [], signatures: 0,
     }, 5);
 
     // Verify the writes took effect.
@@ -473,7 +473,7 @@ describe('journal round-trip — membership records and the network record', () 
         { kind: 'record', identityId: identity.userId, record: { ...preBlockRecord, memberSinceBlock: 5, memberBar: 1 } },
         { kind: 'network', record: { memberCount: 2 } },
       ],
-      posts: [], likeRecords: [], withdrawals: [], appliedTxs: [],
+      posts: [], likeRecords: [], withdrawals: [], appliedTxs: [], signatures: 0,
     }, 5);
 
     // Verify the writes took effect.

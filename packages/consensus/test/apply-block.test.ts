@@ -463,5 +463,20 @@ describe('applyBlock — a chain of blocks over a stub view', () => {
       broken.getNetworkRecord = () => { throw corrupt; };
       expect(() => applyBlock(broken, candidateBlock(at2(), 3, [], miner.userId, ctx), ctx)).toThrow(corrupt);
     });
+
+    it("signatures: the batch's entry count — 5 on a five-signer body, 0 on an empty one (CONSENSUS_INTERFACE → BlockEffects)", () => {
+      const body = [
+        threadTx(x, largest(at2(), x), 'thread by x', 3),
+        threadTx(v, largest(at2(), v), 'thread by v', 3),
+        threadTx(l2, largest(at2(), l2), 'thread by l2', 3),
+        threadTx(i1, largest(at2(), i1), 'thread by i1', 3),
+        threadTx(w, largest(at2(), w), 'thread by w', 3),
+      ];
+      const fiveSigner = applied(at2(), candidateBlock(at2(), 3, body, miner.userId, ctx));
+      expect(fiveSigner.signatures).toBe(5);
+
+      const empty = applied(at2(), candidateBlock(at2(), 3, [], miner.userId, ctx));
+      expect(empty.signatures).toBe(0);
+    });
   });
 });

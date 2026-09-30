@@ -973,7 +973,7 @@ export async function seedCommittedState(
   const { writeBlockEffects } = await import('../src/services/block-apply.js');
   const { getCurrentHeight } = await import('../src/store/ordering.js');
   const at = height ?? getCurrentHeight();
-  const full: BlockEffects = { mutations: [], posts: [], likeRecords: [], withdrawals: [], appliedTxs: [], ...effects };
+  const full: BlockEffects = { mutations: [], posts: [], likeRecords: [], withdrawals: [], appliedTxs: [], signatures: 0, ...effects };
   const handle = await liveProver();
   const writes = treeWritesOf(full, at, treeStateView(proverSession(handle.prover)));
   performTreeWrites(handle.prover, at, writes, 'seedCommittedState');

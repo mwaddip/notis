@@ -121,7 +121,7 @@ type Mutation = BlockEffects['mutations'][number];
 type Post = BlockEffects['posts'][number];
 
 const effectsOf = (mutations: Mutation[]): BlockEffects =>
-  ({ mutations, posts: [], likeRecords: [], withdrawals: [], appliedTxs: [] });
+  ({ mutations, posts: [], likeRecords: [], withdrawals: [], appliedTxs: [], signatures: 0 });
 const insert = (box: AnyBox): Mutation => ({ kind: 'box', op: 'insert', boxId: box.id!, box });
 const spend = (box: AnyBox): Mutation => ({ kind: 'box', op: 'remove', boxId: box.id! });
 const network = (memberCount: number): Mutation => ({ kind: 'network', record: { memberCount } });

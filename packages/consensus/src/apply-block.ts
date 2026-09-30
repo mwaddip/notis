@@ -62,6 +62,8 @@ export interface BlockEffects {
   withdrawals: string[];
   /** The user transactions in applied order, each id with its bytes; the settlement is not among them. */
   appliedTxs: Array<{ txId: string; txBytes: Uint8Array }>;
+  /** The signature batch's entry count, the block's cost's first term (CONSENSUS_INTERFACE → The block's cost). */
+  signatures: number;
 }
 
 /** The block's effects, or the reason a rule refused it (CONSENSUS_INTERFACE → Applying a block). */
@@ -815,6 +817,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
       likeRecords: state.likeRecords,
       withdrawals: state.withdrawals,
       appliedTxs: appliedTxBytes,
+      signatures,
     },
   };
 }

@@ -304,7 +304,7 @@ describe('treeStateView — the walks', () => {
   });
 });
 
-describe('treeStateView — lookupCount (CONSENSUS_INTERFACE → The block\'s cost)', () => {
+describe("treeStateView — lookupCount (CONSENSUS_INTERFACE → The block's cost)", () => {
   it('counts the distinct keys the view asked its session: a memoised read adds none', () => {
     const session = fullSession();
     const view = treeStateView(session);
