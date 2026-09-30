@@ -3893,7 +3893,10 @@ the network record and the username records (see "Entity kinds" below).
 
 **The rules read the tree, and nothing else.** Block application, the speculative run and the block creator hand
 `applyBlock` `treeStateView` over a session on this node's prover (`CONSENSUS_INTERFACE → The tree view`), and write
-the tree through `treeWritesOf` (`CONSENSUS_INTERFACE → The tree writes`). **The SQLite tables are written from the
+the tree through `treeWritesOf` (`CONSENSUS_INTERFACE → The tree writes`). **The session reads with the prover's
+unrecorded neighbour lookup** (`@ergots/avltree` 0.5.0's `unauthenticatedLookupWithNeighbors`), its `null` neighbour
+mapped to the sentinel (`CONSENSUS_INTERFACE → The tree session`); a write the prover refuses is
+`DivergedStateTreeError`, fail-stop, as it is today. **The SQLite tables are written from the
 same effects and answer the API only**; no consensus path reads them, so a table and the tree cannot disagree about
 what a rule saw. `storeStateView` — the tables' answers to `StateView` — stays for one caller, the shadow run that
 compares it with the tree view read by read (`packages/node/scripts/shadow-replay.mjs`).

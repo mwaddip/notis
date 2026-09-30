@@ -171,7 +171,9 @@ verifier over a block's proof. **Every neighbour key is authenticated** — it i
 that walks by `nextKey` sees every key between two it was shown. At the ends of the tree the neighbour is a sentinel:
 all `0x00` below the first key, all `0xff` past the last (`isSentinel`). **No lookup is ever made of a sentinel**: the
 library refuses a key at either bound, and a refusal poisons a verifier. **A session's answers are the view's to
-keep**: the view memoises them for the block, so a session never reuses or mutates an array it has returned.
+keep**: the view memoises them for the block, so a session never reuses or mutates an array it has returned. **A
+session over `@ergots/avltree` maps the library's `null` neighbour to the sentinel** — `null` below the first key to
+all `0x00`, past the last to all `0xff` — and treats a lookup's `{ success: false }` as fatal to the block.
 
 ### The tree view
 
@@ -182,7 +184,12 @@ keys it asked, in the order it first asked them.
 **A range read walks.** It looks up the range's start (`TYPES_INTERFACE → The tree keys`, `rangeStart`), yields that
 key if it is a leaf, and follows `nextKey` for as long as the next key is in the range, is no sentinel and the read's
 limit is not reached, looking each next key up in turn. A next key the tree names and a lookup of it answers absent is
-a tree that contradicts itself: `TreeInconsistencyError`, a throw, never a verdict. An index entry yields a box id; the
+a tree that contradicts itself: `TreeInconsistencyError`, a throw, never a verdict. **So is a next key not strictly
+above the key just looked up** — the walk refuses it before looking it up, so a tree without honest provenance cannot
+turn a walk into a loop.
+
+> ⚠ **AHEAD OF CODE (2026-09-30, N2 state layout, stage A)** — the walk does not compare a next key with the key it
+> came from. An index entry yields a box id; the
 box itself is then a `box` lookup. **The due queues stop at a height**: the `bondDue` and `escrowDue` walks end at the
 first key whose height (`keyHeight`) is above the read's. **The lapses share one limit** across the `lapsed` walk and
 each voucher's `vouchPair` walk.
