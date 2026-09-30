@@ -1123,11 +1123,11 @@ export async function makeApplicableBlock(
 
   // Post-block state root (NODE_INTERFACE → Post-block stateRoot), obtained the
   // way the block creator obtains it: by running this body through the apply
-  // path's own mutation phase and rolling it back. It has to be final before
-  // the nonce and the signature, which both cover the header. A `body-rejected`
-  // body keeps the EMPTY_STATE_ROOT placeholder: the helper's job is to hand the
-  // caller its block either way, and the suite's own apply will reject the body
-  // loudly.
+  // path's own mutation phase and restoring the prover after. It has to be final
+  // before the nonce and the signature, which both cover the header. A
+  // `body-rejected` body keeps the EMPTY_STATE_ROOT placeholder: the helper's job
+  // is to hand the caller its block either way, and the suite's own apply will
+  // reject the body loudly.
   const { computePostBlockStateRoot } = await import('../src/services/block-apply.js');
   const speculation = computePostBlockStateRoot(block, handle);
   header.stateRoot =

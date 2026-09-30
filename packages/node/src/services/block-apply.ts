@@ -694,9 +694,12 @@ export type StateRootSpeculation =
  * mining, and the only way to know it without a second implementation of the
  * state transition is to run the block's own body as apply runs it: `applyBlock`
  * over a tree view on the prover, `treeWritesOf` over the same view, the writes
- * performed, the digest read, and the prover restored to its snapshot. It
- * writes nothing to the store — no block, no effect, no journal — and performs
- * no `clearTemplate` and no prover checkpoint.
+ * performed, the digest read. The prover's in-memory root and height are saved
+ * first and put back by reference with `restoreRoot` when the run ends: the
+ * library never mutates a node, so the saved root is the whole tree the run
+ * started from, and nothing is read back from storage. It writes nothing to the
+ * store — no block, no effect, no journal — and performs no `clearTemplate` and
+ * no prover checkpoint.
  *
  * The candidate carries a placeholder header (`powNonce` 0, empty signature):
  * the mutation phase reads neither, and runs at the header's height.
@@ -722,7 +725,9 @@ export function computePostBlockStateRoot(
   block: OrderingBlock,
   handle: AvlProverHandle,
 ): StateRootSpeculation {
-  const snapshot = handle.prover.digest();
+  const inner = handle.prover.prover;
+  const savedRoot = inner.root;
+  const savedHeight = inner.height;
   const height = block.header.height;
 
   try {
@@ -759,8 +764,6 @@ export function computePostBlockStateRoot(
     );
     return { kind: 'body-rejected' };
   } finally {
-    if (!Buffer.from(handle.prover.digest()).equals(Buffer.from(snapshot))) {
-      handle.prover.rollback(snapshot);
-    }
+    inner.restoreRoot(savedRoot, savedHeight);
   }
 }

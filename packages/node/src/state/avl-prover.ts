@@ -154,7 +154,7 @@ export function bootstrapAvlProver(
  * THE TREE IS ASKED"): a write `performOneOperation` refuses is
  * `DivergedStateTreeError`. The throw is the short-circuit: the first refusal
  * stops the writes, leaving the tree wherever it got to, which is why every
- * caller snapshots the digest and restores it.
+ * caller restores the tree it started from.
  *
  * @param height - the block height the writes belong to, for the diagnostic
  * @param site - the caller, for the diagnostic

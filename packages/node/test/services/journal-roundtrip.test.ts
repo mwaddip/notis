@@ -272,8 +272,8 @@ async function assertRoundTrip(
   // holding a prover accepts exactly the blocks a producer builds.
   expect(classBlock.header.stateRoot).toBe(Buffer.from(postDigest).toString('hex'));
 
-  // 2c. …and it left no trace: it wrote nothing to the store, the prover was
-  //     restored to its snapshot, and it persisted no journal row.
+  // 2c. …and it left no trace: it wrote nothing to the store, the prover is
+  //     back at the root it started on, and it persisted no journal row.
   expect(dumpState(db.getDb())).toEqual(pre.state);
   expect(Buffer.from(digestOf(handle)).equals(Buffer.from(pre.digest))).toBe(true);
   expect(journalHeights(db.getDb())).toEqual(journalsBefore);
