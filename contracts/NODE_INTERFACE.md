@@ -572,9 +572,10 @@ which every name system accepts (`ARCHITECTURE → Usernames`).
 |--------|------|----------|--------|
 | `GET` | `/blocks/:height` | OrderingBlock object (JSON with hex fields) | 400 unless `:height` parses as a non-negative safe integer, 404 |
 | `GET` | `/blocks/current` | `{ height, hash }` — **`hash` is nullable** | — |
+| `GET` | `/blocks/:height/proof` | the block's AVL+ proof, raw bytes, `application/octet-stream` (→ The block proof) | 400 unless `:height` parses as a non-negative safe integer; 404 for a height whose proof this node does not hold |
 
-The `header` object in `/blocks/:height`'s response carries all ten header fields, `interlinkRoot`
-included (`TYPES_INTERFACE` → Layout — Block) — the field a client that recomputes the interlink
+The `header` object in `/blocks/:height`'s response carries all eleven header fields, `interlinkRoot` and
+`adProofsRoot` included (`TYPES_INTERFACE` → Layout — Block) — the field a client that recomputes the interlink
 vector from served headers checks.
 
 **`hash` is `string | null`.** It is `blockHash` of the stored tip
@@ -2874,13 +2875,18 @@ know that digest **before** mining — it cannot be filled in afterwards.
 apply path runs**, never by a second implementation of the state transition:
 
 1. Save the in-memory prover's `root` and `height`.
-2. Run `applyBlock` over a tree view on the prover (→ AVL+ State Root, "The rules read the tree, and nothing else")
-   with the candidate block — the mutation phase (see "Apply funnel: validation and mutation phases") at the
-   candidate's height. It writes nothing.
-3. Perform `treeWritesOf`'s writes over the same view and read the digest, exactly as apply does; then put the saved
-   pair back with `restoreRoot`, whatever the outcome — immediate, because the library never mutates a node, so no
-   template rebuilds the tree from storage (`prover.rollback` resolves every label from SQLite).
-4. Use the computed digest as `header.stateRoot`, then mine.
+2. Run `applyBlock` over a **recording** tree view on the prover (→ AVL+ State Root, "The rules read the tree, and
+   nothing else"; → The block proof) with the candidate block — the mutation phase (see "Apply funnel: validation and
+   mutation phases") at the candidate's height. It writes nothing.
+3. Derive `treeWritesOf`'s writes over the same view, check the block's cost (`CONSENSUS_INTERFACE → The block's
+   cost`), perform the writes and read the digest, exactly as apply does; take the inner prover's proof
+   (`generateProof()`), whose `hash32` is `adProofsRoot`; then put the saved pair back with `restoreRoot`, whatever the
+   outcome — immediate, because the library never mutates a node, so no template rebuilds the tree from storage
+   (`prover.rollback` resolves every label from SQLite).
+4. Use the computed digest as `header.stateRoot` and the proof's digest as `header.adProofsRoot`, then mine.
+
+> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — the speculative run reads through the unrecorded session,
+> checks no cost and takes no proof; the header carries no `adProofsRoot` (Task 4).
 
 **The run starts at a proof-cycle boundary** — after a checkpoint, a rollback or a proof, as every caller's does — so
 the pair `restoreRoot` puts back is the whole of the prover's state: it discards the run's recorded directions and
@@ -2889,12 +2895,13 @@ modified nodes and leaves nothing of an earlier cycle to lose.
 The speculative run writes nothing to the store — no block, no effect, no
 journal — and performs no `clearTemplate` and no prover checkpoint.
 
-**The speculation has two outcomes** (the code returns them as a discriminated
+**The speculation has three outcomes** (the code returns them as a discriminated
 union so no caller can conflate them):
 
 | Outcome | Meaning | Creator's obligation |
 |---|---|---|
-| computed | the post-block digest | mine over it |
+| computed | the post-block digest and the proof's | mine over them |
+| **over budget** | the body's cost is over `MAX_BLOCK_COST` | **trim the selection and build again** (`MINING_INTERFACE → Template and submit → "Packing to the budget"`); nothing is evicted |
 | **body rejected** | the mutation phase rejected this body | **produce nothing, and evict the included mempool entries** |
 
 **A node applies and produces over its prover, and has no other way to** — the rules read the tree and nothing else
@@ -4233,6 +4240,32 @@ key it does not hold. The node performs what
 `treeWritesOf` answers, in its order, and derives none of it; the journal keeps every write, because a revert needs
 the first one's `replaced`.
 
+### The block proof
+
+**Every node regenerates a block's proof from its own execution, and refuses a block whose `adProofsRoot` differs.**
+Block application reads through a **recording** session — the prover's `performLookupWithNeighbors`, its `null`
+neighbours the sentinels and a `{ success: false }` local corruption (`InconsistentStateTreeError`) — so the prover's
+cycle for the block is exactly the operations `CONSENSUS_INTERFACE → The block proof` lists. The checkpoint's
+`generateProofAndUpdateStorage` answers that proof; apply compares its `hash32` with `header.adProofsRoot`, and a
+mismatch is a consensus rejection that marks, the funnel's single rollback point restoring the store and the prover.
+A block over the budget (`CONSENSUS_INTERFACE → The block's cost`) is refused the same way, checked before its writes
+are performed.
+
+**Only block application and the speculative run record.** The creator's settlement build, admission
+(`MEMPOOL_INTERFACE → The cost gate`) and every API read use the unrecorded session, and `karmaOwnersOf` reads the
+block view's memo alone: a recorded lookup outside a block's cycle would enter the next block's proof, and this node's
+proof would differ from every peer's.
+
+**The proof is stored with its block and served by height.** `block_proofs (height INTEGER PRIMARY KEY, proof BLOB NOT
+NULL)`, written in the apply transaction, deleted with its block on a revert, pruned below `tip −
+PROOF_RETENTION_BLOCKS` (`local`, default 10 080 — a week at 60 s; a setting, not consensus). `GET
+/blocks/:height/proof` answers the bytes as `application/octet-stream` — **the one route that is not JSON**: a proof of
+about 6 MB would be 12 MB as hex, and a browser takes the bytes as they come.
+
+> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — block application reads through the unrecorded session,
+> checks no cost and no `adProofsRoot`, and the checkpoint's proof is discarded; there is no `block_proofs` table, no
+> `PROOF_RETENTION_BLOCKS` and no proof route (Task 4).
+
 ### No store schema version, and none is owed
 
 **A node does not version its own database and does not refuse to start against an old one.**
@@ -4723,6 +4756,7 @@ its actual reach.
 | `PENALTY_SAFE_INTERVAL_MS` | `local` | `120000` | Quiet interval after which accrued penalty decays — semantics `NET_INTERFACE → Peer Penalty System` |
 | `SYNC_REQUEST_TIMEOUT_MS` | `local` | `10000` | Abort timeout on one sync request — semantics `NET_INTERFACE → Config` |
 | `MAX_PROOF_HISTORY` | `local` | `1440` | AVL versions retained for proof serving |
+| `PROOF_RETENTION_BLOCKS` | `local` | `10080` | blocks whose proofs are kept for `GET /blocks/:height/proof` — a week at 60 s (→ The block proof) |
 | `PORT` | `operational` | `3000` | HTTP listen port |
 | `ADMIN_PORT` | `operational` | `3001` | Admin listener port |
 | `ADMIN_BIND_ADDRESS` | `operational` | `127.0.0.1` | Admin listener bind address. ⚠ The admin listener is **unauthenticated**; binding it off loopback exposes it |
@@ -5013,7 +5047,7 @@ is no "skip the checks" parameter on the apply path.
 |-------|----------|----------------------------------|
 | **Validation** | chain-link, interlink root, genesis pin, header timestamps, protocol version, PoW target + PoW, validator signature, Merkle root, block storage, `clearTemplate` | No — the header does not exist yet |
 | **Mutation** | `applyBlock` over the block's tree view (→ AVL+ State Root, "The rules read the tree, and nothing else"): post confirmation, topology, the body's signatures as one batch, the embedded transactions, the withdrawals, the settlement, the grants, the like counters, the membership pass, the decay clocks — answering the block's effects or a reason | Yes — the same call, over the same view, at the candidate's height |
-| **Commit** | `treeWritesOf`'s writes performed + `stateRoot` verification, then the effects written to the store, the journal built from them and persisted, the prover checkpointed | No — the speculative run performs the writes, reads the digest and restores the prover's root; it writes nothing to the store |
+| **Commit** | the block's cost checked, `treeWritesOf`'s writes performed + `stateRoot` verification, then the effects written to the store, the journal built from them and persisted, the prover checkpointed — its proof `adProofsRoot`'s check — and the proof stored | No — the speculative run checks the cost, performs the writes, reads the digest and the proof's and restores the prover's root; it writes nothing to the store |
 
 **No effect is written before the block's verdict is known.** The mutation phase
 reads the tree and writes nothing, the `stateRoot` is compared before any

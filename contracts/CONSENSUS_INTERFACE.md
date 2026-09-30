@@ -38,6 +38,8 @@ for a block's body (`VALIDATION_INTERFACE → Acceptance criterion`). The browse
 | `tree-view` | `treeStateView` (`TreeStateView`, `TreeInconsistencyError`) | this contract's `The tree view` | a `TreeSession` |
 | `tree-index` | `indexEntriesOfBox` · `isLapsedMember` | this contract's `The index entries` | none |
 | `tree-writes` | `treeWritesOf` · `seedTreeWrites` (`TreeWrite`) | this contract's `The tree writes` | the block's `TreeStateView` |
+| `verifier-session` | `verifierSession` | this contract's `The tree session` | a `BatchAVLVerifier` over a block's proof |
+| `block-cost` | `blockCost` · `checkBlockCost` (`BlockCost`) | this contract's `The block's cost` | none |
 
 Beside them the barrel exports the types a caller builds their arguments and reads their answers with — `StateView`,
 `ApplyContext`, `ApplyResult`, `BlockEffects`, `HolderRecord`, `UtxoEngineDeps`, `UtxoResult`, `SettlementDeps`,
@@ -72,6 +74,9 @@ height=H: a signature in the body does not verify`. **No transaction may carry m
 is checked first:** each input requires at most one signer and a map key no input requires refuses its transaction, so
 a map with more entries than its transaction has inputs is refused before the batch runs — `Rejected block height=H:
 embedded UTXO tx <id> carries more signatures than inputs` — and the batch checks at most one entry per input.
+**The signatures' cost is checked before the batch runs**: `signatures × W_SIG` over `MAX_BLOCK_COST` refuses the
+block — `Rejected block height=H: its N signatures cost more than a block may` — so a body of more signatures than the
+budget holds costs nothing to refuse (→ The block's cost).
 `true` hands the loop the verified set, and the `validateTx` it runs answers each signature from it (→ The overlay);
 an entry outside the set fails its transaction. **Checking every
 entry keeps every verdict:** `validateTx` refuses a map key no input requires, so every entry of a valid transaction's
@@ -164,6 +169,20 @@ session over `@ergots/avltree` maps the library's `null` neighbour to the sentin
 all `0x00`, past the last to all `0xff` — and treats a recorded lookup's `{ success: false }` as fatal to the block;
 an unrecorded lookup has no such answer, and throws on a key the library refuses.
 
+**A session records its lookups or it does not, and only a block's own reads are recorded.** A recording session's
+lookups (`performLookupWithNeighbors`) become part of the proof its prover makes next (→ The block proof); an
+unrecorded one's (`unauthenticatedLookupWithNeighbors`) never do. Which a caller uses is the node's
+(`NODE_INTERFACE → The block proof`).
+
+**`verifierSession(verifier)` is the session over `@ergots/avltree`'s step-by-step verifier** — its
+`performLookupWithNeighbors`, `null` neighbours mapped to the sentinels, a `{ success: false }` thrown as fatal to the
+block. Over it the tree view answers a block's reads from the block's proof alone, anchored at the parent's root, so a
+leaf runs the rules with the code the node runs; after the rules, the block's writes are performed on the same verifier
+and its digest must equal the header's `stateRoot`.
+
+> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — there is no `verifierSession`, and this package does not
+> depend on `@ergots/avltree` (Task 3).
+
 ### The tree view
 
 **`treeStateView(session)` is the `StateView`** (→ StateView, its table), and the one implementation of it the rules
@@ -249,6 +268,34 @@ block.
 its invitee's record among `records` — each voucher's cast count, every identity record with its `lapsed` entry where
 it holds, the network record — all `Insert`s, in ascending key order.
 
+### The block proof
+
+**A block's proof covers, against its parent's root, first every key its tree view looked up — each once, in the
+order the view first asked it — then `treeWritesOf`'s writes in their order.** The reads are the rules' and the writes'
+alike (`applyBlock`, then `treeWritesOf` over the same view); nothing else reads through a recording session while a
+block is proven, so the list is a function of the block and its parent state, and every node, producer and leaf
+derives the same one. Its digest, `hash32(proof)`, is the header's `adProofsRoot` (`TYPES_INTERFACE → Layout — Block`).
+
+## The block's cost
+
+```ts
+BlockCost = { signatures: number; lookups: number; writes: number }
+blockCost(cost: BlockCost): number               // signatures × W_SIG + (lookups + writes) × W_OP
+checkBlockCost(cost: BlockCost): string | null    // the refusal's reason, or null
+```
+
+**A block's cost is counted while it executes, and a block over the budget is refused.** `signatures` is the batch's
+entry count (→ Applying a block), `lookups` the distinct keys the block's tree view looked up (`lookupCount()` — a
+memoised read adds none), `writes` the length of `treeWritesOf`'s answer; the weights and `MAX_BLOCK_COST` are
+`types`' (`TYPES_INTERFACE → The block's cost`). **Every node, the producer and a leaf check it at one point**: once the
+writes are derived and before they are performed — `Rejected block height=H: cost C over the budget B` — so each
+refuses the same blocks. The signatures' term alone is checked earlier, before the batch runs. **The budget bounds a
+leaf's work**: the signatures it verifies and the operations its proof carries.
+
+> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — nothing counts a block's cost: `applyBlock` checks no
+> signature count, `BlockEffects` carries no `signatures`, `TreeStateView` has no `lookupCount()`, and `blockCost` and
+> `checkBlockCost` do not exist (Task 3).
+
 ## The overlay
 
 **`applyBlock` reads through a block-local layer of its own writes, and the view underneath is never written.** A box
@@ -297,15 +344,13 @@ requires, are `validateTx`'s on both paths.
 - **`likeRecords`** — each like record written, `{ targetPostId, likerId }`, in apply order.
 - **`withdrawals`** — each withdrawn post id, in body order.
 - **`appliedTxs`** — the user transactions in applied order, `{ txId, txBytes }`; the settlement is not among them.
+- **`signatures`** — the batch's entry count, the cost's first term (→ The block's cost).
 
 **No karma supply figure.** Nothing reads one: the pool's successor is `checkSettlement`'s own derivation
 (`NODE_INTERFACE → The settlement transaction`).
 
 **The node builds its block journal from the effects** (`NODE_INTERFACE → Block Journal`) and writes its store from
-the same list — one list, so the store, the journal and the AVL feed cannot disagree about what a block did.
-
-**N3's hook, stated now:** a view that records the keys it answered, beside the effects' writes, is the whole list a
-block's proof covers. Nothing here builds it.
+the same list — one list, so the store, the journal and the tree's writes cannot disagree about what a block did.
 
 ## The settlement build
 

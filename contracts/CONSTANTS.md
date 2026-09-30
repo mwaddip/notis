@@ -100,6 +100,17 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 | `MAX_ESCROW_RETURNS_PER_BLOCK` | `64` | escrows returned per block | consensus | same | PROVISIONAL | `TYPES_INTERFACE → Settlement caps` |
 | `MAX_LAPSE_WITHDRAWALS_PER_BLOCK` | `64` | vouches of lapsed members withdrawn per block | consensus | same; a cascade runs one generation per block on top | PROVISIONAL | `TYPES_INTERFACE → Settlement caps` |
 
+### The block's cost
+
+The three numbers of a block's cost (`TYPES_INTERFACE → The block's cost`): a signature's weight, a tree operation's,
+and the budget. **The ruling they serve** (user, 2026-09-27): a full block verifies in about 6 s in Waterfox 140 — the
+extension's Firefox floor — with about 6 000 signatures and a proof of at most about 6 MB. A signature checked in the
+body's batch costs 0.85 ms there (`CONSENSUS_INTERFACE → Cost`), so 6 000 of them are about 5.1 s before any tree
+operation.
+
+> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — the rows are absent: `types` exports none of the three
+> (Task 1), and their values are measured by Task 6.
+
 ### Karma
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
@@ -342,7 +353,7 @@ check can tell an omission from an exclusion.
 | `MAX_UINT32` | the domain bound of a `u32` field |
 | `MSG_HANDSHAKE`, `MSG_SYNC_INFO`, `MSG_INV`, `MSG_MODIFIER_REQUEST`, `MSG_MODIFIER_RESPONSE`, `MSG_GET_PEERS`, `MSG_PEERS`, `MSG_GET_HEADERS`, `MSG_HEADERS`, `MSG_GET_BLOCKS`, `MSG_BLOCKS` | message codes — `NET_INTERFACE → Frame Format` |
 | `MODIFIER_ORDERING_BLOCK`, `MODIFIER_POST_BODY` | modifier type ids — `NET_INTERFACE → ModifierRequest` |
-| `IDENTITY_RECORD_TAG` | field 1 of the identity record's AVL value, `0x80` — a layout discriminator, not a tunable — `TYPES_INTERFACE → Layout — IdentityRecord`; the tree's other tags are `node`'s (`NODE_INTERFACE → Entity kinds`) |
+| `IDENTITY_RECORD_TAG` | field 1 of the identity record's AVL value, `0x80` — a layout discriminator, not a tunable — `TYPES_INTERFACE → Layout — IdentityRecord`; the tree's key tags are `TREE_TAG`'s (`TYPES_INTERFACE → The tree keys`) |
 | `GET_PEERS_INTERVAL_MS`, `OUTBOUND_TICK_INTERVAL_MS` | local cadences — `NET_INTERFACE → Outbound Manager` |
 | `genesisCommitteeKeys`, `faucetPublicKey`, `genesisProofPayload`, `genesisStateRoot`, `genesisId`, `bootstrapPeers`, `backerTable` | identity fields — non-numeric, listed for completeness |
 

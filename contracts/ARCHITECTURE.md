@@ -713,6 +713,16 @@ holds against it, nothing left out. The tree holds the entities (boxes, identity
 post and like records) and index entries derived from each entity's own fields; the keys are
 `TYPES_INTERFACE → The tree keys`, what the tree holds and how a read walks it `CONSENSUS_INTERFACE → The tree layout`.
 
+- **Every block commits to its own proof.** `adProofsRoot = hash32(proof)`, the proof of the block's reads and writes
+  against its parent's root (`CONSENSUS_INTERFACE → The block proof`); every node regenerates it from its own execution
+  and refuses a block whose digest differs, keeps it a week and serves it by height (`NODE_INTERFACE → The block
+  proof`). **A block's cost is bounded**: its signatures and its proof's operations, weighted, under `MAX_BLOCK_COST`
+  (`CONSENSUS_INTERFACE → The block's cost`) — what bounds a leaf's verification, where `MAX_BLOCK_BODY_BYTES` bounds
+  its download.
+
+  > ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — no header carries `adProofsRoot` and no block's cost is
+  > counted (Tasks 1–4).
+
 - **Post-state, not parent-state (H-6).** `stateRoot` commits to the state the
   block *produces*, following Ergo. The block therefore commits to its own
   effect, and the tip's state is provable as soon as the tip exists. The cost
@@ -1503,8 +1513,9 @@ chain or owed one:
 | **posting is activity** (2026-09-12) | the identity leaf's `lastActivityBlock` on every identity that liked, invited, vouched, claimed or withdrew, so every `stateRoot` from the first such spend; the like verdict — a self-like is refused (§Likes); the settlement's `actors` — a bare consolidation counts nobody (MINING_INTERFACE → Coinbase Application) |
 | **the backer pool** (2026-09-12) | the genesis box set on testnet and devnet — one `BackerStakeBox` per table row and the `BackerPoolBox`, so both networks' `genesisStateRoot` pins; the settlement of every block inside the accrual window (the pool box's successor) and of every block carrying an unstake; three box-type tags. Mainnet's genesis is untouched while its table is empty. **Rides the collected reset** with the row above |
 | **the tree layout** (2026-09-30) | every tree key and its width (`TREE_KEY_LENGTH`, 65), so every `stateRoot` and all three `genesisStateRoot` pins; the tree gains post, like and index entries and a cast count per voucher; the name record gains `claimedAtBlock`; the lapse leg's order, so the settlement of every block with two or more lapsed vouches. **Owes the reset**, which it rides with the block proof (N3) |
+| **the block proof** (2026-09-30) | the header's eleventh field, `adProofsRoot`, so every block hash; the budget's verdict — a block over `MAX_BLOCK_COST` is refused, which moves the verdict of a body of more than 6 000 signatures. **Owes the reset**, and rides the tree layout's |
 
-**Outstanding against the live node: the tree layout** (the row above). Testnet's live chain began at the
+**Outstanding against the live node: the tree layout and the block proof** (the two rows above). Testnet's live chain began at the
 2026-09-15 reset; every row above is in it, and the usernames row owes none. The profile leaves testnet's `genesisId`
 empty (§What varies per network) until the reset the tree layout owes mines a new block 1.
 
@@ -2261,7 +2272,7 @@ no object check compares against it and no producer stamps it.
   identity record key carries the network. `@dagsocial/types` stays pure — no module-level
   state, no network argument on a derivation function. Network separation is carried by
   genesis and the wire magic instead — **not** a header field: `networkType` was proposed
-  2026-08-09 and rejected 2026-08-10 (PR #26), and `BlockHeader` has ten fields.
+  2026-08-09 and rejected 2026-08-10 (PR #26), and `BlockHeader` has eleven fields.
 - **The per-network parameter set covers timescale, difficulty and genesis only.** Costs and
   format limits are universal across networks. Adding a parameter to the per-network set
   requires justifying why devnet may behave differently from mainnet in that respect.
@@ -2713,7 +2724,6 @@ backfill — and a withdrawn post keeps its row with `content` `NULL` and its ma
 - **The backer unstake control in the web client**, and the profile window's copyable public key for the
   deposit flow (`WEB_INTERFACE`)
 - **A leaf that validates blocks without holding the state.** Every consensus read is a keyed record under the state
-  root already (`CONSENSUS_INTERFACE → The tree layout`); what remains is a per-block proof of the block's reads and
-  writes committed in the header as `ADProofsRoot` (**N3** — the keys the block's tree view looked up, then its tree
-  writes: `CONSENSUS_INTERFACE → The tree writes`), and the leaf's verifier over them (**N4**). N3 moves committed
-  bytes, so it rides the tree layout's reset (→ Deploy gate)
+  root, and every block commits to the proof of its reads and writes (`CONSENSUS_INTERFACE → The tree layout`, `→ The
+  block proof`); what remains is **N4**, the leaf's verifier: the parent's root, the block and its proof, the rules over
+  `verifierSession`, the header's `stateRoot` reached

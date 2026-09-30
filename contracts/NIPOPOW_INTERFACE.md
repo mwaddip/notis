@@ -29,7 +29,7 @@ Exports from `packages/nipopow/src/index.ts`.
 
 ```
 PoPowHeader {
-  header: BlockHeader            // the ten-field header (TYPES_INTERFACE → Layout — Block)
+  header: BlockHeader            // the eleven-field header (TYPES_INTERFACE → Layout — Block)
   interlinks: string[]           // hex(32) ids — the vector I(h) the header commits to
 }
 ```

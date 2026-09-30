@@ -288,11 +288,12 @@ precedes it, only a holder of the mining secret can redirect the coinbase.
     "height": 123,
     "prevBlockHash": "hex(32)",
     "utxoTxRoot": "hex(32)",
-    "stateRoot": "hex(32)",
+    "stateRoot": "hex(33)",
     "validatorId": "hex(32)",
     "powTargetBits": 20,
     "createdAt": 1234567890000,
-    "interlinkRoot": "hex(32)"
+    "interlinkRoot": "hex(32)",
+    "adProofsRoot": "hex(32)"
   },
   "utxoTxIds": ["hex(32)", ...],
   "postIds": ["hex(32)", ...],
@@ -336,6 +337,16 @@ and the rebuilt settlement against `MAX_SETTLEMENT_BYTES` before the template ex
 (`MEMPOOL_INTERFACE` → The fill budget is bytes; `getPendingEntries` is a count), so the block
 `verifyOrderingBlockStructure` weighs at submit is one the fill already fitted; the rejected-body
 loop above is for a body the **mutation phase** refuses.
+
+**Packing to the budget.** A body's cost is known only by executing it (`CONSENSUS_INTERFACE → The block's cost`), so
+the creator packs by trimming: it speculates the fee-ordered selection, and while the speculation answers **over
+budget** it halves the selection from the tail; once a prefix fits, it grows the prefix back one entry at a time while
+the next still fits — at most `2·log₂(n) + 1` speculations for a selection of `n`. **No template is ever over the
+budget, and nothing is evicted for it**: an entry trimmed stays pooled for a later block. `adProofsRoot` is the
+speculation's, beside `stateRoot` (`NODE_INTERFACE → Post-block stateRoot`).
+
+> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — the creator checks no cost and the template carries no
+> `adProofsRoot` (Task 4).
 
 **Holding one and serving one are separate**, and 404 is routine again for the second: a node that has
 not yet met its peers withholds the template it holds. See *The peer-readiness gate* below. **A 404

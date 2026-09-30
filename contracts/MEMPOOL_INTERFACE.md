@@ -144,6 +144,18 @@ form and `hasPendingClaimBy` one name per identity (`NODE_INTERFACE` → Usernam
 burn needs no gate of its own**: it spends the name box, and a second spend of that box is the
 pending-spend conflict every transaction meets.
 
+### The cost gate
+
+**A transaction that alone cannot fit a block is refused at admission.** The pool runs it as the only user
+transaction of a candidate block at `tip + 1` — the settlement built as the creator builds one — over an **unrecorded**
+tree view (`NODE_INTERFACE → The block proof`), and refuses it when that block's cost is over `MAX_BLOCK_COST`
+(`CONSENSUS_INTERFACE → The block's cost`), the reason naming the cost. Without it a transaction no block can carry
+would sit in the pool, trimmed from every template until it expired. A transaction that fits alone may still be
+trimmed from a full block: that is packing (`MINING_INTERFACE → Template and submit → "Packing to the budget"`), not
+admission.
+
+> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — admission checks no cost (Task 4).
+
 ### getBoxWithPending
 
 ```
