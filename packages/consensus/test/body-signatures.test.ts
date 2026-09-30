@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { sign as cryptoSign } from 'crypto';
-import { PROTOCOL_VERSION, computeTxId, decodeTx, encodeTx, profileFor } from '@dagsocial/types';
+import { MAX_BLOCK_COST, PROTOCOL_VERSION, W_SIG, computeTxId, decodeTx, encodeTx, profileFor } from '@dagsocial/types';
 import type { AnyBoxCandidate, CreditBox, KarmaBox, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import { verifyEd25519, verifyEd25519Batch } from '@dagsocial/validation';
 import { applyBlock } from '@dagsocial/consensus';
@@ -17,6 +17,7 @@ import {
   seedProvenance,
   seededIdentity,
   threadTx,
+  uid,
   type Built,
   type TestIdentity,
 } from './helpers.js';
@@ -248,5 +249,88 @@ describe('applyBlock checks every signature the body carries as one batch', () =
     const empty = candidateBlock(view, H, [], miner.userId, ctx);
     expect(apply(empty).ok).toBe(true);
     expect(batchedEntries()).toEqual([]);
+  });
+});
+
+/**
+ * The signatures' cost, checked before the batch runs (CONSENSUS_INTERFACE →
+ * Applying a block → "The signatures' cost is checked before the batch runs"):
+ * a body whose entries × `W_SIG` is over `MAX_BLOCK_COST` is refused without
+ * the batch, and one exactly at it reaches the batch.
+ */
+describe("applyBlock checks the signatures' cost before the batch", () => {
+  const { view } = genesis();
+  const settled = candidateBlock(view, H, [], miner.userId, ctx);
+  const AT_BUDGET = MAX_BLOCK_COST / W_SIG;
+  // As many signers as `MAX_TX_BYTES` holds in one transaction (CONSENSUS_INTERFACE → Cost → "A transaction
+  // checks each signer once").
+  const SIGNERS_PER_TX = 77;
+
+  /**
+   * A transaction whose signature map carries entries `from` to `from + signers`, over `inputs` inputs of its own
+   * and one output. No entry verifies and no input resolves: nothing past the batch runs.
+   */
+  const bulkTx = (from: number, signers: number, inputs = signers): { txId: string; bytes: Uint8Array } => {
+    const tx: UtxoTransaction = {
+      inputs: [],
+      outputs: [{ boxType: 'credit', value: 1n, createdAtBlock: H, owner: outsider.userId } as AnyBoxCandidate],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    for (let i = from; i < from + inputs; i++) tx.inputs.push(hex(uid(`body-signatures/bulk-input-${i}`)));
+    for (let i = from; i < from + signers; i++) tx.signatures[hex(uid(`body-signatures/bulk-key-${i}`))] = new Uint8Array(64).fill(1);
+    return { txId: computeTxId(tx), bytes: encodeTx(tx) };
+  };
+
+  /** Transactions carrying `total` entries between them, `SIGNERS_PER_TX` a transaction. */
+  const entries = (total: number): Array<{ txId: string; bytes: Uint8Array }> => {
+    const txs: Array<{ txId: string; bytes: Uint8Array }> = [];
+    for (let from = 0; from < total; from += SIGNERS_PER_TX) txs.push(bulkTx(from, Math.min(SIGNERS_PER_TX, total - from)));
+    return txs;
+  };
+
+  /** A block of these user transactions, then the settlement of an empty body. */
+  const withBody = (txs: Array<{ txId: string; bytes: Uint8Array }>): OrderingBlock => ({
+    ...settled,
+    utxoTxTree: {
+      utxoTxIds: [...txs.map((t) => t.txId), ...settled.utxoTxTree.utxoTxIds],
+      utxoTxs: [...txs.map((t) => t.bytes), ...settled.utxoTxTree.utxoTxs],
+    },
+  });
+
+  beforeEach(() => {
+    vi.mocked(verifyEd25519).mockClear();
+    vi.mocked(verifyEd25519Batch).mockClear();
+  });
+
+  it('the budget holds a whole number of signatures', () => {
+    expect(Number.isInteger(AT_BUDGET)).toBe(true);
+  });
+
+  it('a body whose signatures cost more than the budget is refused before the batch runs, with its own reason', () => {
+    expect(applyBlock(view, withBody(entries(AT_BUDGET + 1)), ctx)).toEqual({
+      ok: false,
+      reason: `Rejected block height=${H}: its ${AT_BUDGET + 1} signatures cost more than a block may`,
+    });
+    expect(verifyEd25519Batch).not.toHaveBeenCalled();
+    expect(verifyEd25519).not.toHaveBeenCalled();
+  });
+
+  it('a body whose signatures cost exactly the budget reaches the batch', () => {
+    // The batch's answer is stubbed: the claim is that every entry reaches it, not how it verifies them.
+    vi.mocked(verifyEd25519Batch).mockReturnValueOnce(false);
+    expect(applyBlock(view, withBody(entries(AT_BUDGET)), ctx)).toEqual({ ok: false, reason: BODY_REASON });
+    expect(batchedEntries()).toHaveLength(AT_BUDGET);
+  });
+
+  it('a transaction carrying more signatures than inputs answers before the signatures\' cost', () => {
+    const [first, ...rest] = entries(AT_BUDGET + 1);
+    const overSigned = bulkTx(0, SIGNERS_PER_TX, SIGNERS_PER_TX - 1);
+    expect(first!.txId).not.toBe(overSigned.txId);
+    expect(applyBlock(view, withBody([overSigned, ...rest]), ctx)).toEqual({
+      ok: false,
+      reason: `Rejected block height=${H}: embedded UTXO tx ${overSigned.txId} carries more signatures than inputs`,
+    });
+    expect(verifyEd25519Batch).not.toHaveBeenCalled();
   });
 });

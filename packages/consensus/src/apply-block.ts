@@ -3,6 +3,7 @@ import {
   computeTxId,
   decodeTx,
   encodeTx,
+  MAX_BLOCK_COST,
   MAX_ESCROW_RETURNS_PER_BLOCK,
   MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
   membershipBar as membershipBarFn,
@@ -21,6 +22,7 @@ import type {
 } from '@dagsocial/types';
 import { verifyEd25519Batch } from '@dagsocial/validation';
 import type { Ed25519BatchEntry } from '@dagsocial/validation';
+import { blockCost } from './block-cost.js';
 import { postsOf, withdrawalsOf } from './block-posts.js';
 import type { BlockPost } from './block-posts.js';
 import { computeBlockReward, countKarmaActors, isCreditSideTx, type EmbeddedTx } from './coinbase-split.js';
@@ -246,6 +248,15 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
       `Rejected block height=${height}: embedded UTXO tx ${overSigned.txId} ` +
       `carries more signatures than inputs`,
     );
+  }
+
+  // The batch's entry count, and its cost checked before the batch runs, so a
+  // body of more signatures than the budget holds costs nothing to refuse
+  // (CONSENSUS_INTERFACE → Applying a block → "The signatures' cost is checked
+  // before the batch runs").
+  const signatures = queue.reduce((count, { tx }) => count + Object.keys(tx.signatures).length, 0);
+  if (blockCost({ signatures, lookups: 0, writes: 0 }) > MAX_BLOCK_COST) {
+    return reject(`Rejected block height=${height}: its ${signatures} signatures cost more than a block may`);
   }
 
   // Every signature the body carries, checked as one batch before any
