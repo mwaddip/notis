@@ -679,7 +679,7 @@ export function writeBlockEffects(effects: BlockEffects, height: number): BlockJ
  * What a block's cost counts (CONSENSUS_INTERFACE → The block's cost): the
  * batch's entries, the distinct keys its tree view looked up, and its writes.
  */
-function costOf(effects: BlockEffects, view: TreeStateView, writes: readonly unknown[]): BlockCost {
+export function costOf(effects: BlockEffects, view: TreeStateView, writes: readonly unknown[]): BlockCost {
   return { signatures: effects.signatures, lookups: view.lookupCount(), writes: writes.length };
 }
 

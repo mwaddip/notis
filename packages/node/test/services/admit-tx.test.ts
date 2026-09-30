@@ -19,7 +19,15 @@ import {
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
 } from '@dagsocial/types';
-import type { CreditBox, FeeBox, UtxoTransaction } from '@dagsocial/types';
+import type { CreditBox, FeeBox, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
+import {
+  blockBudgetSeam,
+  liveProver,
+  makeApplicableBlock,
+  makeCreditBox,
+  makeCreditTx,
+  makeTestIdentity,
+} from '../helpers.js';
 
 const originalFloor = process.env['MIN_FEE_RATE_PER_BYTE'];
 
@@ -268,5 +276,115 @@ describe('rent admission refusal', () => {
     expect(result.valid).toBe(true);
 
     dbMod.closeDb();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The cost gate (MEMPOOL_INTERFACE → The cost gate): a transaction whose block
+// — it alone, at tip + 1, its settlement built as the creator builds one — costs
+// more than a block may is refused at admission, and never at the store, which
+// a reorg's re-insertion reaches. The budget is lowered through
+// `blockBudgetSeam`.
+// ---------------------------------------------------------------------------
+
+describe('the cost gate', () => {
+  let budget: { set(budget: number): void };
+
+  beforeEach(() => {
+    vi.resetModules();
+    budget = blockBudgetSeam();
+  });
+  afterEach(() => {
+    vi.doUnmock('@dagsocial/consensus');
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  /** A store holding a sender's credit box ahead of the tree built over it, and a signed transfer spending it. */
+  async function gatedNode() {
+    const db = await import('../../src/store/db.js');
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await import('../../src/store/utxo.js');
+    const sender = makeTestIdentity();
+    const box = makeCreditBox(100_000n, sender.userId, 0, 1);
+    utxo.insertBox(box);
+    const handle = await liveProver();
+    return {
+      handle,
+      tx: makeCreditTx(sender, [box], 1_000n),
+      admit: await import('../../src/services/admit-tx.js'),
+      mem: await import('../../src/store/mempool.js'),
+    };
+  }
+
+  /** The cost of the block carrying `tx` alone at height 1, its settlement built as the creator builds one. */
+  async function aloneCost(tx: UtxoTransaction): Promise<number> {
+    const { applyBlock, blockCost, buildBlockSettlement, treeStateView, treeWritesOf } = await import('@dagsocial/consensus');
+    const { computeTxId, encodeTx } = await import('@dagsocial/types');
+    const { proverSession } = await import('../../src/state/prover-session.js');
+    const { applyContextFrom } = await import('../../src/services/block-apply.js');
+    const { config } = await import('../../src/config.js');
+    const handle = await liveProver();
+    const ctx = applyContextFrom(config);
+    const miner = makeTestIdentity();
+    const txBytes = encodeTx(tx);
+    const built = buildBlockSettlement(treeStateView(proverSession(handle.prover)), [txBytes], 1, miner.userId, miner.userId, ctx);
+    if ('error' in built) throw new Error(built.error);
+    const block = {
+      header: { height: 1, validatorId: miner.userId },
+      utxoTxTree: { utxoTxIds: [computeTxId(tx), computeTxId(built.tx)], utxoTxs: [txBytes, encodeTx(built.tx)] },
+      validatorSignature: new Uint8Array(64),
+    } as unknown as OrderingBlock;
+    const view = treeStateView(proverSession(handle.prover));
+    const result = applyBlock(view, block, ctx);
+    if (!result.ok) throw new Error(result.reason);
+    const writes = treeWritesOf(result.effects, 1, view);
+    return blockCost({ signatures: result.effects.signatures, lookups: view.lookupCount(), writes: writes.length });
+  }
+
+  it('refuses a transaction whose block alone is over the budget, naming its cost; admits one within it', async () => {
+    const { tx, admit, mem } = await gatedNode();
+    const cost = await aloneCost(tx);
+
+    budget.set(cost - 1);
+    let refusal: unknown;
+    try {
+      admit.admitTx(tx, 1000);
+    } catch (err) {
+      refusal = err;
+    }
+    expect(refusal).toBeInstanceOf(admit.TxOverBlockBudgetError);
+    expect((refusal as Error).message).toContain(`cost ${cost} over the budget ${cost - 1}`);
+    expect((refusal as { statusCode: number }).statusCode).toBe(413);
+    expect(mem.getPendingEntries(10)).toHaveLength(0);
+
+    budget.set(cost);
+    expect(() => admit.admitTx(tx, 1000)).not.toThrow();
+    expect(mem.getPendingEntries(10)).toHaveLength(1);
+  });
+
+  it('reads the tree unrecorded: admitting a transaction leaves nothing in the prover\'s proof cycle', async () => {
+    const { handle, tx, admit } = await gatedNode();
+    // A proof made at the boundary the bootstrap left covers no operation.
+    const empty = handle.prover.prover.generateProof();
+
+    expect(() => admit.admitTx(tx, 1000)).not.toThrow();
+    expect(handle.prover.prover.generateProof()).toEqual(empty);
+  });
+
+  it('never refuses a reorg\'s re-insertion of a transaction its chain had carried', async () => {
+    const { tx, admit, mem } = await gatedNode();
+    const cost = await aloneCost(tx);
+    const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
+    expect(applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [tx] }))).toBe(true);
+
+    // Under a budget the gate refuses it by, the revert re-inserts it — the gate
+    // is above the store, where re-insertion never reaches.
+    budget.set(cost - 1);
+    const { reorg } = await import('../../src/services/fork-resolution.js');
+    expect(() => reorg(0, [])).not.toThrow();
+    expect(mem.getPendingEntries(10)).toHaveLength(1);
+    expect(() => admit.admitTx(tx, 1000)).toThrow(`cost ${cost} over the budget ${cost - 1}`);
   });
 });
