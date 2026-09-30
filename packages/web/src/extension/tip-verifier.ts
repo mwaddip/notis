@@ -11,9 +11,9 @@ import { tipVerdict } from '../model/tip-verdict';
 import type { TipRun, TipVerifier } from '../model/state';
 
 // NIPOPOW_INTERFACE → NipopowProof — `m` is the security parameter and `k` the
-// suffix length; the pair `6, 20` is WEB_INTERFACE → The extension → "The
+// suffix length; the pair `24, 20` is WEB_INTERFACE → The extension → "The
 // verified tip"'s, and NODE_INTERFACE → Nipopow serves the same route.
-const M = 6;
+const M = 24;
 const K = 20;
 
 export interface TipVerifierOptions {

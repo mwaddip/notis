@@ -323,7 +323,7 @@ verifier, and a name no network profile answers to refuses the build. ⚠ **A bu
 
 **The verified tip** (`WEB_INTERFACE → The extension → "The verified tip"`, `→ The status corner`): the extension
 checks the chain it reads. `src/extension/tip-verifier.ts` (`createTipVerifier`) asks the reading node first and then
-every other base of the seed list for `GET /nipopow/proof/6/20` through `resolveTip` of `@dagsocial/nipopow-client` —
+every other base of the seed list for `GET /nipopow/proof/24/20` through `resolveTip` of `@dagsocial/nipopow-client` —
 the code the command-line light client runs, never a second implementation — with the profile of the build's
 `notis-network`, **never a node's `/status`**; `src/model/tip-verdict.ts` (`tipVerdict`, pure) reads the result into
 `verified` · `thin` · `refused`, deciding for itself (an unverified reading node never reads `verified`, whatever

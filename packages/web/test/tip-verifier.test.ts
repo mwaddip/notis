@@ -13,7 +13,7 @@ type VerifyResult = NonNullable<NodeTipResult['verifyResult']>;
 // createTipVerifier is the extension's seam over `resolveTip`
 // (WEB_INTERFACE → The extension → "The verified tip"). It asks the reading
 // base first, then every other base of the seed list with duplicates dropped
-// (compare after stripping one trailing `/`), pins `m=6` and `k=20`, and
+// (compare after stripping one trailing `/`), pins `m=24` and `k=20`, and
 // answers `{ verdict, anchor }` — the anchor is the reading node's own
 // verified headers under `verified` alone (→ "The verified figures").
 // `resolve` is an optional injection point for these tests, defaulting to
@@ -92,8 +92,8 @@ describe('createTipVerifier — the seam the App knows', () => {
   });
 
   it('a trailing-slash reading base reaches `resolve` stripped', async () => {
-    // The tool asks `${url}/nipopow/proof/6/20`, so a base ending in `/` would
-    // ask `…//nipopow/proof/6/20`; the verifier strips one trailing `/` before
+    // The tool asks `${url}/nipopow/proof/24/20`, so a base ending in `/` would
+    // ask `…//nipopow/proof/24/20`; the verifier strips one trailing `/` before
     // handing bases in.
     const observed: string[][] = [];
     const resolve = (async (urls: string[]): Promise<TipResult> => {
@@ -134,7 +134,7 @@ describe('createTipVerifier — the seam the App knows', () => {
     expect(observed[0]).toEqual(['https://outside.example', 'https://a.example', 'https://b.example']);
   });
 
-  it('passes m=6, k=20 and profileFor(network) to resolve', async () => {
+  it('passes m=24, k=20 and profileFor(network) to resolve', async () => {
     let mSeen = -1;
     let kSeen = -1;
     let profileSeen: NetworkProfile | null = null;
@@ -160,7 +160,7 @@ describe('createTipVerifier — the seam the App knows', () => {
     });
     await v.run('https://a.example');
 
-    expect(mSeen).toBe(6);
+    expect(mSeen).toBe(24);
     expect(kSeen).toBe(20);
     expect(profileSeen).toBe(profileFor(network));
   });
