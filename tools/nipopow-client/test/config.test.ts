@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseConfig, ConfigError, verifierProfile } from '../src/config.js';
+import { parseConfig, ConfigError, verifierProfile, DEFAULT_M, DEFAULT_K } from '../src/config.js';
 import { NETWORK_PROFILES } from '@dagsocial/types';
 
 function env(overrides: Record<string, string> = {}) {
@@ -15,8 +15,9 @@ describe('parseConfig', () => {
     const c = parseConfig([], env());
     expect(c.nodeUrls).toEqual(['http://a:3000', 'http://b:3001']);
     expect(c.profile.networkType).toBe('devnet');
-    expect(c.m).toBe(6);
-    expect(c.k).toBe(20);
+    // CONSTANTS → Client defaults — the unflagged defaults are the exported constants
+    expect(c.m).toBe(DEFAULT_M);
+    expect(c.k).toBe(DEFAULT_K);
     expect(c.user).toBeNull();
     expect(c.allowSingle).toBe(false);
     expect(c.json).toBe(false);

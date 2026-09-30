@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createTipVerifier } from '../src/extension/tip-verifier';
+import { DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
 import type { Anchor, TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
 import type { BlockHeader, NetworkProfile, NetworkType } from '@dagsocial/types';
 import { profileFor } from '@dagsocial/types';
@@ -13,11 +14,12 @@ type VerifyResult = NonNullable<NodeTipResult['verifyResult']>;
 // createTipVerifier is the extension's seam over `resolveTip`
 // (WEB_INTERFACE → The extension → "The verified tip"). It asks the reading
 // base first, then every other base of the seed list with duplicates dropped
-// (compare after stripping one trailing `/`), pins `m=6` and `k=20`, and
-// answers `{ verdict, anchor }` — the anchor is the reading node's own
-// verified headers under `verified` alone (→ "The verified figures").
-// `resolve` is an optional injection point for these tests, defaulting to
-// the tool's real function.
+// (compare after stripping one trailing `/`), passes the tool's own
+// `DEFAULT_M` and `DEFAULT_K` (`CONSTANTS → Client defaults`), and answers
+// `{ verdict, anchor }` — the anchor is the reading node's own verified
+// headers under `verified` alone (→ "The verified figures").  `resolve` is
+// an optional injection point for these tests, defaulting to the tool's real
+// function.
 
 function verifiedNode(url: string, behind: NodeTipResult['behind'] = 0): NodeTipResult {
   return {
@@ -92,8 +94,8 @@ describe('createTipVerifier — the seam the App knows', () => {
   });
 
   it('a trailing-slash reading base reaches `resolve` stripped', async () => {
-    // The tool asks `${url}/nipopow/proof/6/20`, so a base ending in `/` would
-    // ask `…//nipopow/proof/6/20`; the verifier strips one trailing `/` before
+    // The tool asks `${url}/nipopow/proof/24/20`, so a base ending in `/` would
+    // ask `…//nipopow/proof/24/20`; the verifier strips one trailing `/` before
     // handing bases in.
     const observed: string[][] = [];
     const resolve = (async (urls: string[]): Promise<TipResult> => {
@@ -134,7 +136,7 @@ describe('createTipVerifier — the seam the App knows', () => {
     expect(observed[0]).toEqual(['https://outside.example', 'https://a.example', 'https://b.example']);
   });
 
-  it('passes m=6, k=20 and profileFor(network) to resolve', async () => {
+  it('passes DEFAULT_M and DEFAULT_K of @dagsocial/nipopow-client and profileFor(network) to resolve', async () => {
     let mSeen = -1;
     let kSeen = -1;
     let profileSeen: NetworkProfile | null = null;
@@ -160,9 +162,56 @@ describe('createTipVerifier — the seam the App knows', () => {
     });
     await v.run('https://a.example');
 
-    expect(mSeen).toBe(6);
-    expect(kSeen).toBe(20);
+    expect(mSeen).toBe(DEFAULT_M);
+    expect(kSeen).toBe(DEFAULT_K);
     expect(profileSeen).toBe(profileFor(network));
+  });
+
+  it('reads the pair from @dagsocial/nipopow-client — a mocked DEFAULT_M and DEFAULT_K reach resolve', async () => {
+    // CONSTANTS → Client defaults — the extension asks the tool's DEFAULT_M
+    // and DEFAULT_K, imported, never a copy. A mock of the module changes the
+    // exported pair and the verifier passes the new values to resolve; a
+    // hard-coded literal in tip-verifier would keep 24/20 whatever the tool
+    // exports and this pin would fail.
+    vi.resetModules();
+    vi.doMock('@dagsocial/nipopow-client', async () => {
+      const actual =
+        await vi.importActual<typeof import('@dagsocial/nipopow-client')>(
+          '@dagsocial/nipopow-client',
+        );
+      return { ...actual, DEFAULT_M: 42, DEFAULT_K: 13 };
+    });
+    try {
+      const { createTipVerifier: createFresh } = await import(
+        '../src/extension/tip-verifier'
+      );
+      let mSeen = -1;
+      let kSeen = -1;
+      const resolve = (async (
+        urls: string[],
+        m: number,
+        k: number,
+      ): Promise<TipResult> => {
+        mSeen = m;
+        kSeen = k;
+        return verifiedResult(urls);
+      }) as typeof import('@dagsocial/nipopow-client').resolveTip;
+
+      const v = createFresh({
+        network: 'testnet',
+        nodes: [],
+        fetch: (async () => new Response('')) as typeof fetch,
+        now: () => 0,
+        resolve,
+      });
+      await v.run('https://a.example');
+
+      expect(mSeen).toBe(42);
+      expect(kSeen).toBe(13);
+    } finally {
+      vi.doUnmock('@dagsocial/nipopow-client');
+      vi.resetModules();
+    }
   });
 
   it("the answer's verdict is tipVerdict of what resolve returned — an outworked verdict (the winner's suffix does not carry the reading node's tip) names the winner's URL, and the anchor is null", async () => {

@@ -18,8 +18,9 @@ import {
  * The block proof): counted while the block executes and checked once its
  * writes are derived, before they are performed. Apply refuses a block over the
  * budget like any rule's refusal; the speculation answers `over-budget` with the
- * refusal that says so — `checkBlockCost`'s, or `applyBlock`'s flagged one — and
- * puts the prover back as it found it. The budget is lowered through
+ * refusal that says so — `checkBlockCost`'s, with the cost it counted, or
+ * `applyBlock`'s flagged one, which counted the signatures alone and carries no
+ * cost — and puts the prover back as it found it. The budget is lowered through
  * `blockBudgetSeam`, never through `types`' constant.
  */
 
@@ -109,6 +110,7 @@ describe('the block\'s cost', () => {
   });
   afterEach(() => {
     vi.doUnmock('@dagsocial/consensus');
+    vi.doUnmock('../../src/services/cost-estimate.js');
     vi.restoreAllMocks();
     vi.resetModules();
   });
@@ -157,7 +159,7 @@ describe('the block\'s cost', () => {
     const rollback = vi.spyOn(handle.storage, 'rollback');
 
     budget.set(cost - 1);
-    expect(computePostBlockStateRoot(block, handle)).toEqual({ kind: 'over-budget', reason: `cost ${cost} over the budget ${cost - 1}` });
+    expect(computePostBlockStateRoot(block, handle)).toEqual({ kind: 'over-budget', reason: `cost ${cost} over the budget ${cost - 1}`, cost });
     expect(inner.root).toBe(root);
     expect(inner.height).toBe(height);
     expect(inner.oldTopNode).toBe(root);
@@ -187,7 +189,7 @@ describe('the block\'s cost', () => {
     expect(await rulesOver(candidate)).toEqual({ ok: false, reason, overBudget: true });
 
     const root = handle.prover.prover.root;
-    expect(computePostBlockStateRoot(candidate, handle)).toEqual({ kind: 'over-budget', reason });
+    expect(computePostBlockStateRoot(candidate, handle)).toEqual({ kind: 'over-budget', reason, cost: null });
     expect(handle.prover.prover.root).toBe(root);
   });
 

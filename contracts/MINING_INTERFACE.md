@@ -339,13 +339,34 @@ and the rebuilt settlement against `MAX_SETTLEMENT_BYTES` before the template ex
 loop above is for a body the **mutation phase** refuses.
 
 **Packing to the budget.** A body's cost is known only by executing it (`CONSENSUS_INTERFACE → The block's cost`), so
-the creator packs by trimming: it speculates the fee-ordered selection, and while the speculation answers **over
-budget** it halves the selection from the tail; once a prefix fits, it bisects between that length and the shortest
-one found over the budget, keeping the longest prefix that fits — at most `2·log₂(n) + 1` speculations for a selection
-of `n`. A prefix's cost need not grow with its length (a consolidation nets out inserts), so the search may keep a
-shorter prefix than the longest that fits; it never keeps one over the budget. **No template is ever over the
-budget, and nothing is evicted for it**: an entry trimmed stays pooled for a later block. `adProofsRoot` is the
-speculation's, beside `stateRoot` (`NODE_INTERFACE → Post-block stateRoot`).
+the creator **estimates first and speculates once**: it fills in fee order while the empty body's cost plus the
+entries' `cost_estimate`s (`MEMPOOL_INTERFACE → The cost gate`) stays within the budget less `PACKING_COST_MARGIN`, and
+speculates that selection. An entry with no estimate is costed alone first and its row updated; a rent transaction,
+which has no row, is costed alone and packed by that cost; no entry is costed alone twice in one build.
+
+**An estimate misses both ways.** It is the entry's cost alone at its admission's tip: the state since can move it
+either way, and a transaction costed alone pays settlement reads and writes that a block of its kind pays once —
+measured 2026-09-30, a new thread costs 300 alone and 220 among others, and a pool of posts packed by its estimates
+speculated at 70% of the budget. The speculation corrects the fill:
+
+- **Over budget**, the creator drops from the tail the entries whose estimates cover the overshoot — the speculated
+  cost less the budget — and speculates again, twice at most. A drop that would leave no entry, or an overshoot the
+  speculation does not name (a body refused for its signatures alone, before its cost is counted), goes straight to
+  the search below.
+- **Under**, where the speculated cost less the empty body's is below the selection's estimates, the creator scales
+  every estimate by that ratio and refills once — the whole fill again, both classes and the rent transactions, under
+  the same byte and settlement bounds — and speculates again only when the refill added an entry; that speculation
+  over budget is corrected as above.
+- **Still over**, it halves the selection from the tail and, once a prefix fits, bisects between that length and the
+  shortest found over the budget, keeping the longest prefix that fits. A prefix's cost need not grow with its length
+  (a consolidation nets out inserts), so the search may keep a shorter prefix than the longest that fits.
+
+**No template is ever over the budget, and nothing is evicted for it**: an entry trimmed stays pooled for a later
+block. `adProofsRoot` is the speculation's, beside `stateRoot` (`NODE_INTERFACE → Post-block stateRoot`).
+
+**A throw while costing an entry alone is no verdict on it**: the entry rides the selection with no estimate, counted
+as nothing, and the speculation of the body carrying it answers for it as the apply funnel would; a corrupt chain
+state stops the node (`NODE_INTERFACE → "What the funnel's totality catch is FOR"`).
 
 **Holding one and serving one are separate**, and 404 is routine again for the second: a node that has
 not yet met its peers withholds the template it holds. See *The peer-readiness gate* below. **A 404

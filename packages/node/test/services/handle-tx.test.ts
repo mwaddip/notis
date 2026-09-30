@@ -61,6 +61,7 @@ describe('the relay handler takes a policy refusal as an answer', () => {
     (await import('../../src/store/db.js')).closeDb();
     vi.doUnmock('../../src/config.js');
     vi.doUnmock('@dagsocial/consensus');
+    vi.doUnmock('../../src/services/cost-estimate.js');
     vi.doUnmock('../../src/services/admit-tx.js');
     vi.restoreAllMocks();
     vi.resetModules();

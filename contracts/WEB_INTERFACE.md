@@ -340,7 +340,8 @@ while the tab is visible — a tab that becomes visible again runs one only when
 and when a name check asks for one (→ "The verified names"); one run at a time, a trigger during a run being that run; a change of the node being read drops the verdict and any
 run still in flight for the node before, and runs again; a run that ends without a verdict leaves the corner where
 none has returned; nothing is stored. A run
-asks `GET /nipopow/proof/6/20` (`NODE_INTERFACE → Nipopow`) of the reading node first and then of the others, duplicates
+asks `GET /nipopow/proof/24/20` — the tool's `DEFAULT_M` and `DEFAULT_K`, imported with `resolveTip`, never a second
+copy (`CONSTANTS → Client defaults`; `NODE_INTERFACE → Nipopow`) — of the reading node first and then of the others, duplicates
 dropped, one after another, each under the tool's ten-second timeout — and needs no host permission, since every node
 answers every origin. **The reading node is asked first, so the fold's own rule gives the comparison its meaning**: a
 tie keeps the first, and a winner at index `0` says the reading node holds the best chain or ties for it

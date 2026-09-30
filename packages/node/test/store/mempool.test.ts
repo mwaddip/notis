@@ -1041,3 +1041,45 @@ describe('mempool store', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// The cost estimate (MEMPOOL_INTERFACE → The cost gate → "The gate keeps what it
+// measured"): a row carries the marginal cost the gate measured, or NULL where
+// nothing costed it, and every reader of the pool hands it on.
+// ---------------------------------------------------------------------------
+
+describe('the cost estimate', () => {
+  beforeEach(async () => {
+    vi.resetModules();
+    const db = await importDbFresh();
+    db.initDb(':memory:');
+  });
+
+  afterEach(async () => {
+    const db = await importDbFresh();
+    db.closeDb();
+  });
+
+  it('a row inserted with an estimate carries it to every reader; one inserted without carries NULL', async () => {
+    const mem = await import('../../src/store/mempool.js');
+    const { tx: credit } = seededCreditTx('estimate_credit', 10_000n, 9_000n);
+    mem.insertUtxoTx(credit as never, 100, 340);
+    mem.insertUtxoTx(txWithInput('estimate_karma') as never, 100, 170);
+    mem.insertUtxoTx(txWithInput('estimate_uncosted') as never, 100);
+
+    expect(mem.getPendingEntries(10).map((entry) => entry.costEstimate)).toEqual([340, 170, null]);
+    expect([...mem.iteratePendingEntries()].map((entry) => entry.costEstimate)).toEqual([340, 170, null]);
+    expect([...mem.iteratePendingEntries({ klass: 'credit' })].map((entry) => entry.costEstimate)).toEqual([340]);
+    expect([...mem.iteratePendingEntries({ klass: 'karma' })].map((entry) => entry.costEstimate)).toEqual([170, null]);
+  });
+
+  it('setCostEstimate writes one row\'s estimate and no other\'s', async () => {
+    const mem = await import('../../src/store/mempool.js');
+    const first = mem.insertUtxoTx(txWithInput('estimate_first') as never, 100);
+    mem.insertUtxoTx(txWithInput('estimate_second') as never, 100);
+
+    mem.setCostEstimate(first, 290);
+
+    expect(mem.getPendingEntries(10).map((entry) => entry.costEstimate)).toEqual([290, null]);
+  });
+});

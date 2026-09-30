@@ -1,6 +1,7 @@
 import * as validation from '@dagsocial/validation';
 import {
   applyBlock,
+  blockCost,
   checkBlockCost,
   treeStateView,
   treeWritesOf,
@@ -65,6 +66,7 @@ import {
   getBondsInvitedAt,
   putBlockProof,
   pruneBlockProofs,
+  pruneBlockProofsByBytes,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
 import { insertBlockJournal, purgeOldJournals } from '../store/journal.js';
@@ -550,8 +552,12 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
   purgeOldJournals(height - config.maxReorgDepth);
   purgeRefusedHeaders(height - config.maxReorgDepth);
   // What a node serves, not what it applies: proofs are kept for
-  // PROOF_RETENTION_BLOCKS behind the tip (NODE_INTERFACE → The block proof).
+  // PROOF_RETENTION_BLOCKS behind the tip, then the oldest are pruned while
+  // the kept proofs exceed PROOF_RETENTION_BYTES — the tighter of the two
+  // wins, and the tip's proof is kept whatever either says (NODE_INTERFACE →
+  // The block proof).
   pruneBlockProofs(height - config.proofRetentionBlocks);
+  pruneBlockProofsByBytes(config.proofRetentionBytes);
 
   // The one site where an absence is simply printed. `applyOrderingBlock` ran
   // `verifyOrderingBlockStructure` over this header before calling us, so it is
@@ -757,17 +763,22 @@ export type StateRootSpeculation =
   /**
    * The post-block digest the header must commit to, and the block's proof —
    * its reads, then its writes (NODE_INTERFACE → The block proof) — with the
-   * proof's `hash32` as `adProofsRoot`, hex. Mine over them.
+   * proof's `hash32` as `adProofsRoot`, hex. Mine over them. `cost` is the
+   * body's own, `blockCost` of what the run counted — the creator's refill
+   * reads it to measure an estimate that missed (MINING_INTERFACE → Template
+   * and submit → "An estimate misses both ways").
    */
-  | { kind: 'computed'; stateRoot: string; adProofsRoot: string; proof: Uint8Array }
+  | { kind: 'computed'; stateRoot: string; adProofsRoot: string; proof: Uint8Array; cost: number }
   /**
    * The body's cost is over the budget (CONSENSUS_INTERFACE → The block's
    * cost): trim the selection and build again, evicting nothing. `reason` is
    * the refusal that says so — `applyBlock`'s, the one refusal it flags
    * `overBudget`, for a body whose signatures alone cost more than a block may;
-   * otherwise `checkBlockCost`'s, naming the cost the run counted.
+   * otherwise `checkBlockCost`'s, naming the cost the run counted. `cost` is the
+   * cost `checkBlockCost` refused — `blockCost` of what the run counted — and
+   * `null` for `applyBlock`'s refusal, which counts the signatures alone.
    */
-  | { kind: 'over-budget'; reason: string }
+  | { kind: 'over-budget'; reason: string; cost: number | null }
   /**
    * Producing this block is forbidden — the body was rejected, or speculating
    * on it threw. One arm because the caller's obligation is one: do not mine,
@@ -836,7 +847,7 @@ export function computePostBlockStateRoot(
     const view = treeStateView(recordingSession(handle.prover));
     const result = applyBlock(view, block, applyContextFrom(config));
     if (!result.ok) {
-      if (result.overBudget === true) return { kind: 'over-budget', reason: result.reason };
+      if (result.overBudget === true) return { kind: 'over-budget', reason: result.reason, cost: null };
       console.warn(result.reason);
       console.warn(
         `stateRoot speculation at height ${height}: the body was rejected by its ` +
@@ -845,8 +856,9 @@ export function computePostBlockStateRoot(
       return { kind: 'body-rejected' };
     }
     const writes = treeWritesOf(result.effects, height, view);
-    const overBudget = checkBlockCost(costOf(result.effects, view, writes));
-    if (overBudget !== null) return { kind: 'over-budget', reason: overBudget };
+    const cost = costOf(result.effects, view, writes);
+    const overBudget = checkBlockCost(cost);
+    if (overBudget !== null) return { kind: 'over-budget', reason: overBudget, cost: blockCost(cost) };
     const digest = performTreeWrites(handle.prover, height, writes, 'computePostBlockStateRoot');
     const proof = inner.generateProof();
     return {
@@ -854,6 +866,7 @@ export function computePostBlockStateRoot(
       stateRoot: bytesToHex(digest),
       adProofsRoot: bytesToHex(hash32(proof)),
       proof,
+      cost: blockCost(cost),
     };
   } catch (err) {
     // Above the unclaimed-throw arm, because that arm would swallow it into a

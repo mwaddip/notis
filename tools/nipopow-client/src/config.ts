@@ -10,6 +10,10 @@ import type { VerifyProfile } from '@dagsocial/nipopow';
 
 export type { VerifyProfile };
 
+// CONSTANTS → Client defaults
+export const DEFAULT_M = 24;
+export const DEFAULT_K = 20;
+
 export interface Config {
   nodeUrls: string[];
   profile: NetworkProfile;
@@ -54,8 +58,8 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
   const nodeUrls = nodeUrlsRaw.split(',').map(u => u.trim()).filter(Boolean);
   if (nodeUrls.length === 0) throw new ConfigError('NODE_URLS is empty');
 
-  let m = 6;
-  let k = 20;
+  let m = DEFAULT_M;
+  let k = DEFAULT_K;
   let user: string | null = null;
   let allowSingle = false;
   let json = false;

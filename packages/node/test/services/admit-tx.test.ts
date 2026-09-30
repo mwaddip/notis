@@ -296,6 +296,7 @@ describe('the cost gate', () => {
   });
   afterEach(() => {
     vi.doUnmock('@dagsocial/consensus');
+    vi.doUnmock('../../src/services/cost-estimate.js');
     vi.restoreAllMocks();
     vi.resetModules();
   });
@@ -386,5 +387,223 @@ describe('the cost gate', () => {
     expect(() => reorg(0, [])).not.toThrow();
     expect(mem.getPendingEntries(10)).toHaveLength(1);
     expect(() => admit.admitTx(tx, 1000)).toThrow(`cost ${cost} over the budget ${cost - 1}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The gate keeps what it measured (MEMPOOL_INTERFACE → The cost gate): a costed
+// admission writes the transaction's marginal cost — its block alone less the
+// empty block at the same tip, the empty block's cost computed once a tip — and
+// a row the gate did not cost carries NULL.
+// ---------------------------------------------------------------------------
+
+describe('the gate keeps what it measured', () => {
+  /** The empty body's settlement builds the node's modules made: the empty block's cost, once a tip. */
+  let emptyBuilds: number;
+
+  beforeEach(() => {
+    vi.resetModules();
+    emptyBuilds = 0;
+    vi.doMock('@dagsocial/consensus', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@dagsocial/consensus')>();
+      return {
+        ...actual,
+        buildBlockSettlement: (...args: Parameters<typeof actual.buildBlockSettlement>) => {
+          if (args[1].length === 0) emptyBuilds++;
+          return actual.buildBlockSettlement(...args);
+        },
+      };
+    });
+  });
+  afterEach(() => {
+    vi.doUnmock('@dagsocial/consensus');
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  /** A store holding `senders` credit boxes, each its own sender's, ahead of the tree built over it. */
+  async function nodeWithSenders(senders: number) {
+    const db = await import('../../src/store/db.js');
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await import('../../src/store/utxo.js');
+    const funded = Array.from({ length: senders }, (_, i) => {
+      const sender = makeTestIdentity();
+      const box = makeCreditBox(100_000n, sender.userId, 0, i + 1);
+      utxo.insertBox(box);
+      return { sender, box };
+    });
+    await liveProver();
+    return {
+      funded,
+      admit: await import('../../src/services/admit-tx.js'),
+      mem: await import('../../src/store/mempool.js'),
+    };
+  }
+
+  /**
+   * The cost of the block at height 1 carrying `txs`, then the settlement built
+   * as the creator builds one, counted over the live tree read unrecorded — the
+   * consensus the test file imported, so no build of it is counted above.
+   */
+  async function blockCostOf(txs: UtxoTransaction[]): Promise<number> {
+    const { applyBlock, blockCost, buildBlockSettlement, treeStateView, treeWritesOf } =
+      await vi.importActual<typeof import('@dagsocial/consensus')>('@dagsocial/consensus');
+    const { computeTxId, encodeTx } = await import('@dagsocial/types');
+    const { proverSession } = await import('../../src/state/prover-session.js');
+    const { applyContextFrom } = await import('../../src/services/block-apply.js');
+    const { config } = await import('../../src/config.js');
+    const handle = await liveProver();
+    const ctx = applyContextFrom(config);
+    const miner = makeTestIdentity();
+    const bodies = txs.map((tx) => encodeTx(tx));
+    const built = buildBlockSettlement(treeStateView(proverSession(handle.prover)), bodies, 1, miner.userId, miner.userId, ctx);
+    if ('error' in built) throw new Error(built.error);
+    const block = {
+      header: { height: 1, validatorId: miner.userId },
+      utxoTxTree: {
+        utxoTxIds: [...txs.map((tx) => computeTxId(tx)), computeTxId(built.tx)],
+        utxoTxs: [...bodies, encodeTx(built.tx)],
+      },
+      validatorSignature: new Uint8Array(64),
+    } as unknown as OrderingBlock;
+    const view = treeStateView(proverSession(handle.prover));
+    const result = applyBlock(view, block, ctx);
+    if (!result.ok) throw new Error(result.reason);
+    const writes = treeWritesOf(result.effects, 1, view);
+    return blockCost({ signatures: result.effects.signatures, lookups: view.lookupCount(), writes: writes.length });
+  }
+
+  it('a costed admission writes its marginal cost: its block alone less the empty block at the same tip', async () => {
+    const { funded, admit, mem } = await nodeWithSenders(1);
+    const { sender, box } = funded[0]!;
+    const tx = makeCreditTx(sender, [box], 1_000n);
+    const alone = await blockCostOf([tx]);
+    const empty = await blockCostOf([]);
+    expect(alone).toBeGreaterThan(empty);
+
+    admit.admitTx(tx, 1000);
+
+    expect(mem.getPendingEntries(10).map((entry) => entry.costEstimate)).toEqual([alone - empty]);
+  });
+
+  it('computes the empty block\'s cost once a tip: twice admitted at one tip, once built; the tip moved, built again', async () => {
+    const { funded, admit, mem } = await nodeWithSenders(3);
+    const [first, second, third] = funded.map(({ sender, box }) => makeCreditTx(sender, [box], 1_000n));
+
+    admit.admitTx(first!, 1000);
+    admit.admitTx(second!, 1000);
+    expect(emptyBuilds).toBe(1);
+
+    const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
+    expect(applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [first!, second!] }))).toBe(true);
+    expect(mem.getPendingEntries(10)).toHaveLength(0);
+
+    admit.admitTx(third!, 1000);
+    expect(emptyBuilds).toBe(2);
+    expect(mem.getPendingEntries(10).map((entry) => entry.costEstimate)).toEqual([expect.any(Number)]);
+  });
+
+  it('a transaction admitted uncostable carries NULL: one spending the output of a transaction still pooled', async () => {
+    const { funded, admit, mem } = await nodeWithSenders(1);
+    const { sender, box } = funded[0]!;
+    const parent = makeCreditTx(sender, [box], 1_000n);
+    const { materializeOutput } = await import('@dagsocial/consensus');
+    const { computeTxId } = await import('@dagsocial/types');
+    const change = materializeOutput(parent.outputs[0]!, computeTxId(parent), 0) as CreditBox;
+    const child = makeCreditTx(sender, [change], 500n);
+
+    admit.admitTx(parent, 1000);
+    admit.admitTx(child, 1000);
+
+    const [parentRow, childRow] = mem.getPendingEntries(10);
+    expect(parentRow!.costEstimate).toEqual(expect.any(Number));
+    expect(childRow!.costEstimate).toBeNull();
+  });
+
+  it('a reorg\'s re-insertion carries NULL', async () => {
+    const { funded, admit, mem } = await nodeWithSenders(1);
+    const { sender, box } = funded[0]!;
+    const tx = makeCreditTx(sender, [box], 1_000n);
+    admit.admitTx(tx, 1000);
+    expect(mem.getPendingEntries(10)[0]!.costEstimate).toEqual(expect.any(Number));
+
+    const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
+    expect(applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [tx] }))).toBe(true);
+    expect(mem.getPendingEntries(10)).toHaveLength(0);
+    const { reorg } = await import('../../src/services/fork-resolution.js');
+    expect(() => reorg(0, [])).not.toThrow();
+
+    expect(mem.getPendingEntries(10).map((entry) => entry.costEstimate)).toEqual([null]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The cost gate's signatures-alone refusal (MEMPOOL_INTERFACE → The cost
+// gate): a transaction whose block alone is refused for its signatures alone,
+// before its cost is counted — `applyBlock`'s own pre-batch refusal — is
+// refused at admission by name, not silently admitted uncosted.
+//
+// Reaching this refusal at the real MAX_BLOCK_COST needs more signatures than
+// MAX_TX_BYTES lets one transaction carry (MINING_INTERFACE → Template and
+// submit), so `applyBlock` is mocked to answer it for one chosen transaction
+// — deterministic, and independent of `blockBudgetSeam`, whose `set` reaches
+// `checkBlockCost` and `blockCostBudget`, never the real `MAX_BLOCK_COST`
+// `applyBlock` checks the signatures alone against before the batch runs.
+// ---------------------------------------------------------------------------
+
+describe('the cost gate\'s signatures-alone refusal', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+  afterEach(() => {
+    vi.doUnmock('@dagsocial/consensus');
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('refuses admission of a transaction whose block alone applyBlock refuses for its signatures alone, naming the refusal; the row is not written', async () => {
+    const sender = makeTestIdentity();
+    const box = makeCreditBox(100_000n, sender.userId, 0, 1);
+    const tx = makeCreditTx(sender, [box], 1_000n);
+    const { computeTxId } = await import('@dagsocial/types');
+    const targetTxId = computeTxId(tx);
+    const reason = 'Rejected block height=1: its 9001 signatures cost more than a block may';
+
+    // Registered before `liveProver()` below, which reaches `@dagsocial/consensus`
+    // transitively (`seedEmissionBox` reads `block-creator.js`, which imports it) —
+    // too late to mock afterward.
+    vi.doMock('@dagsocial/consensus', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@dagsocial/consensus')>();
+      return {
+        ...actual,
+        applyBlock: (...args: Parameters<typeof actual.applyBlock>) => {
+          const [, block] = args;
+          const carries = block.utxoTxTree.utxoTxIds.slice(0, -1).includes(targetTxId);
+          if (carries) return { ok: false as const, reason, overBudget: true as const };
+          return actual.applyBlock(...args);
+        },
+      };
+    });
+
+    const db = await import('../../src/store/db.js');
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await import('../../src/store/utxo.js');
+    utxo.insertBox(box);
+    await liveProver();
+
+    const admit = await import('../../src/services/admit-tx.js');
+    const mem = await import('../../src/store/mempool.js');
+    let refusal: unknown;
+    try {
+      admit.admitTx(tx, 1000);
+    } catch (err) {
+      refusal = err;
+    }
+    expect(refusal).toBeInstanceOf(admit.TxOverBlockBudgetError);
+    expect((refusal as Error).message).toContain(reason);
+    expect((refusal as { statusCode: number }).statusCode).toBe(413);
+    expect(mem.getPendingEntries(10)).toHaveLength(0);
   });
 });

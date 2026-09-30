@@ -82,7 +82,21 @@ level (the m-th-from-last anchoring at each level plus the level below's members
 ≈ log₂(work / W_a) levels — levels are measured against the anchor target, so a chain 2⁷ above its
 anchor and below 2³² blocks holds ≤ 39 of them: 9 984 at `m = 128`; the reader bound is 2¹⁴, above
 that with headroom, and `LEVEL_CAP` bounds the level count absolutely. Both numbers are provisional
-(`CONSTANTS → nipopow`). At `m = k = 6` on a million-block chain a proof is ~240 PoPowHeaders, ~200 KB.
+(`CONSTANTS → nipopow`).
+
+**What `m` costs**, measured 2026-09-30 with `packages/nipopow/scripts/bench-proof-m.mjs` on a 100 000-block chain at
+`k = 20` — the proof's decode, `verifyProof` and one `compareProofs` against a second copy, medians of nine runs pinned
+to performance cores of the i9-14900HX:
+
+| `m` | PoPowHeaders | Proof | The route's JSON | Node 22 | Waterfox 140 |
+|---|---|---|---|---|---|
+| 6 | 95 | 60 KB | 121 KB | 27 ms | 45 ms |
+| 12 | 142 | 95 KB | 191 KB | 38 ms | 63 ms |
+| 24 | 280 | 199 KB | 397 KB | 73 ms | 121 ms |
+| 48 | 528 | 385 KB | 769 KB | 142 ms | 228 ms |
+
+The prover keeps about `m` headers a level — the bound above is the ceiling — so a proof grows with `m` and with the
+log of the chain's length: at 20 000 blocks the `m = 24` proof is 177 KB.
 **`k` is a block count, and under a moving target a k-deep suffix is read in work** — the reference's
 own note; `k` is the client's own settlement depth, 20 by default, and not a full node's reorg horizon —
 `maxReorgDepth` is per network and larger (`TYPES_INTERFACE → Chain reorganisation`; `CONSTANTS → Client
@@ -202,8 +216,10 @@ on bytes a client has not screened, but it re-derives nothing a passed verdict e
 - **Above the LCA:** `chainX = headers with height > lca.height`;
   `bestArg(chain, m) = max over μ ≥ 0 of 2^μ · |{ h ∈ chain : level(h, anchorBits) ≥ μ }|`, counting a
   level `μ ≥ 1` only while it holds at least `m` headers (`μ = 0` counts every header **that has a
-  level**; a header below the yardstick counts nowhere). `scoreA > scoreB` → `'a'`; `<` → `'b'`;
-  equal → `'tie'` (the client keeps the proof it already holds).
+  level**; a header below the yardstick counts nowhere). In a proof, `chainX` is the suffix and, below it, only
+  headers of level 1 or above — the prover never walks level 0 (→ proveWithReader) — so its level-0 count is not the
+  chain's length. `scoreA > scoreB` → `'a'`; `<` → `'b'`; equal → `'tie'` (the client keeps the proof it already
+  holds).
 - **The score is work, whatever the headers declare.** Levels are measured against the network's
   anchor target (`VALIDATION_INTERFACE → level`), so a header mined at its own target `T_b` reaches
   level ≥ μ with probability `T_a / (2^μ · T_b)` and a count at level μ estimates `work / (2^μ · W_a)`;
@@ -222,8 +238,9 @@ on bytes a client has not screened, but it re-derives nothing a passed verdict e
   runs where the model puts a re-mining's chance of flipping it far below one in a thousand. **How often a proof of
   less work wins at all is `m`'s to bound, not the yardstick's**: the deciding level holds `m` to about `2m`
   superblocks, so a score carries about `1/√m` relative noise, for a cheap chain and an honest one alike (measured
-  2026-09-30 over independent chains: at `m = 6`, three quarters of the honest work wins about 20% of comparisons, half
-  about 5%, a quarter about 0.2%). A lying pointer can skip honest blocks and lower a score, never raise one.
+  2026-09-30 over independent chains, `packages/nipopow/scripts/bench-proof-m.mjs`: three quarters of the honest work
+  wins about 18% of comparisons at `m = 6`, 8% at 12, 4% at 24 and 2% at 48; half about 5% at 6 and none of 120 pairs
+  from 12; a quarter about 0.2% at 6). The client's `m` is 24 (`CONSTANTS → Client defaults`). A lying pointer can skip honest blocks and lower a score, never raise one.
 
 `bestArg(headers: BlockHeader[], m: number, anchorBits: number): bigint` is exported beside it — the
 anchor bits are the yardstick its levels are measured against.

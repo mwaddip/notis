@@ -323,6 +323,7 @@ the drift test's converse does not reach them and the rows are marked.
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `MAX_RENT_TXS_PER_BLOCK` (literal) | `32` | rent collections a producer selects per block | policy | none stated; creator policy on a body-driven leg. `node/src/services/block-creator.ts` | CHOSEN | `NODE_INTERFACE → The settlement transaction` |
+| `PACKING_COST_MARGIN` (literal) | `5` | percent of the budget the fill leaves unused against estimates that miss | policy | none stated; chosen so the speculation of the fill, and of the refill under the budget, typically fits. `node/src/services/block-creator.ts` | CHOSEN | `MINING_INTERFACE → Template and submit → "Packing to the budget"` |
 
 ## HTTP view bounds
 
@@ -337,11 +338,13 @@ drift test's converse does not reach them and the rows are marked.
 
 ## Client defaults
 
-`tools/nipopow-client` — what the light client asks for when no flag says otherwise.
+`tools/nipopow-client` — what the light client asks for when no flag says otherwise. The library exports the pair as
+`DEFAULT_M` and `DEFAULT_K`, and the extension's verifier asks the same pair, imported, never a copy
+(`WEB_INTERFACE → The extension → "The verified tip"`).
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
-| `m` (default) | `6` | the security parameter | policy | provisional | PROVISIONAL | `NIPOPOW_INTERFACE → Constants` |
+| `m` (default) | `24` | the security parameter | policy | ruled 2026-09-30, to be tuned on testnet's behaviour, on `packages/nipopow/scripts/bench-proof-m.mjs`: at 24 a chain of three quarters of the honest work wins about 4% of comparisons (6: about 18%), and a 100 000-block chain's proof is 199 KB, 397 KB as the route's hex, which Waterfox 140 decodes, verifies and compares in 0.12 s | RULED | `NIPOPOW_INTERFACE → Constants` |
 | `k` (default) | `20` | the suffix — the client's own settlement depth; a block count, read in work under a moving target | policy | provisional; not a full node's reorg horizon, which is per network and larger (`maxReorgDepth`) | PROVISIONAL | `NIPOPOW_INTERFACE → Constants` |
 
 ## Excluded

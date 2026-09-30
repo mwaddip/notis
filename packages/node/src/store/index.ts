@@ -97,6 +97,7 @@ export {
   getBlockProof,
   deleteBlockProof,
   pruneBlockProofs,
+  pruneBlockProofsByBytes,
 } from './block-proofs.js';
 
 export {

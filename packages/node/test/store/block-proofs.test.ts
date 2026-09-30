@@ -4,6 +4,7 @@ import {
   deleteBlockProof,
   getBlockProof,
   pruneBlockProofs,
+  pruneBlockProofsByBytes,
   putBlockProof,
 } from '../../src/store/block-proofs.js';
 
@@ -48,5 +49,34 @@ describe('block proofs', () => {
     // A cutoff at or below the lowest height prunes nothing.
     pruneBlockProofs(-10);
     expect(getBlockProof(4)).toEqual(proofAt(4));
+  });
+
+  // NODE_INTERFACE → The block proof: the byte cap, pruned by the oldest
+  // proofs first, the tip — the highest height held — kept whatever its size.
+  describe('pruneBlockProofsByBytes', () => {
+    it('keeps the newest proofs whose total length fits the cap, and none older', () => {
+      // Lengths 41..45 at heights 1..5 (proofAt(h) is 40 + h bytes). Summed
+      // from the tip down: 45, 89, 132, 174, 215 — a cap of 100 fits the two
+      // newest (45 + 44 = 89) and not the third (+ 43 = 132).
+      for (let height = 1; height <= 5; height++) putBlockProof(height, proofAt(height));
+      pruneBlockProofsByBytes(100);
+      expect([1, 2, 3, 4, 5].map((height) => getBlockProof(height) !== null)).toEqual([false, false, false, true, true]);
+    });
+
+    it('keeps the tip alone when its own length is over the cap', () => {
+      for (let height = 1; height <= 3; height++) putBlockProof(height, proofAt(height));
+      pruneBlockProofsByBytes(1);
+      expect([1, 2, 3].map((height) => getBlockProof(height) !== null)).toEqual([false, false, true]);
+    });
+
+    it('prunes nothing when the total already fits the cap', () => {
+      for (let height = 1; height <= 3; height++) putBlockProof(height, proofAt(height));
+      pruneBlockProofsByBytes(1_000_000);
+      expect([1, 2, 3].map((height) => getBlockProof(height) !== null)).toEqual([true, true, true]);
+    });
+
+    it('does nothing on an empty table', () => {
+      expect(() => pruneBlockProofsByBytes(0)).not.toThrow();
+    });
   });
 });

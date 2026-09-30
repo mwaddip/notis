@@ -4255,10 +4255,16 @@ block view's memo alone: a recorded lookup outside a block's cycle would enter t
 proof would differ from every peer's.
 
 **The proof is stored with its block and served by height.** `block_proofs (height INTEGER PRIMARY KEY, proof BLOB NOT
-NULL)`, written in the apply transaction, deleted with its block on a revert, pruned below `tip −
-PROOF_RETENTION_BLOCKS` (`local`, default 10 080 — a week at 60 s; a setting, not consensus). `GET
-/blocks/:height/proof` answers the bytes as `application/octet-stream` — **the one route that is not JSON**: a proof of
-about 6 MB would be 12 MB as hex, and a browser takes the bytes as they come.
+NULL)`, written in the apply transaction, deleted with its block on a revert. `GET /blocks/:height/proof` answers the
+bytes as `application/octet-stream` — **the one route that is not JSON**: a proof of about 6 MB would be 12 MB as hex,
+and a browser takes the bytes as they come.
+
+**Two settings bound the proofs a node keeps, and the tighter wins.** After each applied block, apply prunes the proofs
+below `tip − PROOF_RETENTION_BLOCKS` (`local`, default 10 080 — a week at 60 s), then the oldest while the proofs kept
+exceed `PROOF_RETENTION_BYTES` (`local`, default 2 GiB); both are settings, not consensus. **The tip's proof is kept
+whatever either says.** A prune sizes a proof by its stored length and never loads its bytes to measure it. The byte
+cap's arithmetic: a week of blocks at the budget's largest measured proof, 6.27 MB (`CONSENSUS_INTERFACE → Cost`), is
+63 GB; 2 GiB holds a week of proofs averaging about 210 KB, or about 340 of the largest.
 
 ### No store schema version, and none is owed
 
@@ -4751,6 +4757,7 @@ its actual reach.
 | `SYNC_REQUEST_TIMEOUT_MS` | `local` | `10000` | Abort timeout on one sync request — semantics `NET_INTERFACE → Config` |
 | `MAX_PROOF_HISTORY` | `local` | `1440` | AVL versions retained for proof serving |
 | `PROOF_RETENTION_BLOCKS` | `local` | `10080` | blocks whose proofs are kept for `GET /blocks/:height/proof` — a week at 60 s (→ The block proof) |
+| `PROOF_RETENTION_BYTES` | `local` | `2147483648` | the most bytes of proofs kept for `GET /blocks/:height/proof`, the oldest pruned first and the tip's always kept — 2 GiB (→ The block proof) |
 | `PORT` | `operational` | `3000` | HTTP listen port |
 | `ADMIN_PORT` | `operational` | `3001` | Admin listener port |
 | `ADMIN_BIND_ADDRESS` | `operational` | `127.0.0.1` | Admin listener bind address. ⚠ The admin listener is **unauthenticated**; binding it off loopback exposes it |

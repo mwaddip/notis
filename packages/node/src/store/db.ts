@@ -119,6 +119,8 @@ const MIGRATIONS = [
   // every row, not a decode-scan of the first 1000. `tx_fee` and `tx_bytes` are
   // the same principle for the pool's two classes and its ordering
   // (MEMPOOL_INTERFACE → Eviction, inside the credit class only).
+  // `cost_estimate` is the cost gate's marginal cost, NULL where nothing costed
+  // the row (MEMPOOL_INTERFACE → The cost gate).
   `CREATE TABLE IF NOT EXISTS mempool (
     rowid INTEGER PRIMARY KEY AUTOINCREMENT,
     entry_type TEXT NOT NULL CHECK(entry_type IN ('utxo_tx')),
@@ -137,7 +139,8 @@ const MIGRATIONS = [
     tx_id TEXT,
     max_valid_height INTEGER,
     username_lower TEXT,
-    username_claimant TEXT
+    username_claimant TEXT,
+    cost_estimate INTEGER
   )`,
 
   // Usernames — NODE_INTERFACE → Username records
@@ -174,7 +177,9 @@ const MIGRATIONS = [
 
   // Block proofs — each applied block's AVL+ proof, the one its checkpoint made
   // (NODE_INTERFACE → The block proof): written in the apply transaction,
-  // deleted with its block on a revert, pruned below tip − PROOF_RETENTION_BLOCKS.
+  // deleted with its block on a revert, pruned below tip − PROOF_RETENTION_BLOCKS,
+  // then by PROOF_RETENTION_BYTES — the tighter of the two wins, and the tip's
+  // proof is kept whatever either says.
   `CREATE TABLE IF NOT EXISTS block_proofs (
     height INTEGER PRIMARY KEY,
     proof BLOB NOT NULL
@@ -363,6 +368,17 @@ function migrateMempoolTxColumns(database: Database.Database): void {
   if (!has('tx_bytes')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_bytes INTEGER`);
   if (!has('username_lower')) database.exec(`ALTER TABLE mempool ADD COLUMN username_lower TEXT`);
   if (!has('username_claimant')) database.exec(`ALTER TABLE mempool ADD COLUMN username_claimant TEXT`);
+  // A row written before this existed holds NULL, as a row the gate did not
+  // cost does (MEMPOOL_INTERFACE → The cost gate).
+  if (!has('cost_estimate')) database.exec(`ALTER TABLE mempool ADD COLUMN cost_estimate INTEGER`);
+  // `vouch_voucher` predates every ALTER column above and needs no guard of
+  // its own; `vouch_target` is its pending-vouch pair, guarded here —
+  // `hasPendingVouch` keys on both (MEMPOOL_INTERFACE → Schema).
+  if (!has('vouch_target')) database.exec(`ALTER TABLE mempool ADD COLUMN vouch_target TEXT`);
+  // A row written before this existed holds NULL, which purgeExpired's
+  // `max_valid_height IS NOT NULL` reads as no ceiling (MEMPOOL_INTERFACE →
+  // Validity ceiling).
+  if (!has('max_valid_height')) database.exec(`ALTER TABLE mempool ADD COLUMN max_valid_height INTEGER`);
 }
 
 /**
