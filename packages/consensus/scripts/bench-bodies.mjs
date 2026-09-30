@@ -1,9 +1,10 @@
 // The bodies the benches build (CONSENSUS_INTERFACE → Cost; CONSENSUS_INTERFACE → The block's cost), each over its
-// own stub state and from fixed seeds, so every run builds the same bytes. Three kinds of transaction:
+// own stub state and from fixed seeds, so every run builds the same bytes. Four kinds of transaction:
 //
 //   ordinary   — a one-signer credit send, spending one whole credit;
 //   packed     — a credit payment of as many signers as MAX_TX_BYTES holds;
-//   oversigned — a one-input credit send signed by its input's owner and by keys no input requires.
+//   oversigned — a one-input credit send signed by its input's owner and by keys no input requires;
+//   a vouch    — from a member holding many karma boxes, every one of which the vouch's balance read walks.
 //
 // Every signer's box was created the block before, inside the rent period, so each input needs its owner's
 // signature; every transaction conserves value; the settlement is `buildBlockSettlement`'s, placed last, and the body
@@ -17,6 +18,7 @@ import {
   MAX_BLOCK_BODY_BYTES,
   MAX_BLOCK_COST,
   MAX_TX_BYTES,
+  VOUCH_KARMA_AMOUNT,
   W_SIG,
   computeBoxId,
   computeTxId,
@@ -162,7 +164,7 @@ const byValueDescThenId = (a, b) =>
  * kind outside `STUB_BOX_KINDS` is refused rather than answered wrong. `applyBlock` never writes it, so every run
  * reads the same state.
  */
-export class StubView {
+class StubView {
   constructor({ network, boxes, records }) {
     const unanswered = boxes.find((box) => !STUB_BOX_KINDS.has(box.boxType));
     if (unanswered) {
@@ -369,6 +371,64 @@ export function corrupted(body) {
         `Missing or invalid owner signature for box ${input}`,
     ],
   };
+}
+
+/** Karma boxes each read-heavy voucher holds. */
+export const KARMA_BOXES_PER_VOUCHER = 1000;
+
+/** A karma box of `value` the view holds for `owner`, created the block before. */
+const karmaBox = (owner, value, label) =>
+  heldBox({ boxType: 'karma', value, createdAtBlock: HEIGHT - 1, owner }, label);
+
+const karma = (owner, value) => ({ boxType: 'karma', value, createdAtBlock: HEIGHT, owner });
+
+const vouch = (voucherId, targetId) =>
+  ({ boxType: 'vouch', value: VOUCH_KARMA_AMOUNT, createdAtBlock: HEIGHT, voucherId, targetId });
+
+/** An identity record with every field zero but the ones given. */
+const identityRecord = (fields) => ({
+  lastActivityBlock: 0,
+  lastDecayBlock: 0,
+  invitedAtBlock: 0,
+  lifetimeLikesReceived: 0n,
+  memberSinceBlock: 0,
+  memberBar: 0,
+  memberVouches: 0,
+  memberLikes: 0n,
+  invitesUsed: 0,
+  ...fields,
+});
+
+/**
+ * `vouchers` vouches for one target (NODE_INTERFACE → Vouch transition rules), one a voucher. Each voucher is a
+ * member, active the block before so no decay moves its boxes (NODE_INTERFACE → Karma decay), and holds
+ * KARMA_BOXES_PER_VOUCHER karma boxes of 10, staking from the first: the vouch's balance read walks every one
+ * (CONSENSUS_INTERFACE → The tree view → "A range read walks"), two lookups a box.
+ */
+export function readHeavy(vouchers) {
+  const target = seed32('read-heavy/target');
+  const boxes = [...genesis];
+  const records = [{ identityId: target, record: identityRecord({}) }];
+  const txs = [];
+  for (let i = 0; i < vouchers; i++) {
+    const voucher = keyPair(`voucher/${i}`);
+    const held = Array.from(
+      { length: KARMA_BOXES_PER_VOUCHER },
+      (_, j) => karmaBox(voucher.publicKey, 10n, `read-heavy/${i}/${j}`),
+    );
+    boxes.push(...held);
+    records.push({
+      identityId: voucher.publicKey,
+      record: identityRecord({ lastActivityBlock: HEIGHT - 1, memberSinceBlock: 1 }),
+    });
+    const [stake] = held;
+    txs.push(transaction(
+      [stake],
+      [karma(voucher.publicKey, stake.value - VOUCH_KARMA_AMOUNT), vouch(voucher.publicKey, target)],
+      [voucher],
+    ));
+  }
+  return bodyOf('read-heavy', { network: { memberCount: vouchers }, boxes, records }, txs, vouchers);
 }
 
 /**
