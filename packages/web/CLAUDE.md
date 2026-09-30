@@ -540,7 +540,17 @@ minutes for two hours; ⛔ **never a bare `ps`**: the rtk hook rewrites a top-le
 read 0 Chromium processes while 16 were up). ⚠ Devnet's storage rent period is a hundred blocks: a box that sits through it is charged
 `STORAGE_RENT_PER_BYTE` per record byte at the producer's next collection, so a long run at a fast pace shows a
 throwaway's grant shrunk — keep a run short, and start the faucet with `FAUCET_CREDIT_AMOUNT=10000000000` (100
-$NOTIS, what step 12a reads) and `FAUCET_BOND_AMOUNT=250`.
+$NOTIS, what step 12a reads) and `FAUCET_BOND_AMOUNT=250`. ⚠ **`TMPDIR` under the scratchpad breaks the harness's
+Chromium launch**: the harness names Chromium's user data directory under `TMPDIR` and its `SingletonSocket` path
+runs past the 108-byte UNIX socket limit — the process is spawned, DevTools never appears, the run dies before any
+step. Keep `TMPDIR` on a short path (unset, or `/tmp`). ⚠ **The extension build moves its zips into the repo
+root**, where the user's release zips may already sit — a proof build in the main tree would overwrite them, and a
+run's cleanup would then delete them. Build the extension in a throwaway detached worktree (`git worktree add
+--detach <scratch path> HEAD`; remove with `git worktree remove --force <path>`), which takes the built zips with
+it and leaves the release ones untouched. ⚠ **The `MINER_PCT` and pace numbers this machine measures** — an
+unpaced `MINER_PCT=25` miner runs at about 35 blocks a second on a fresh chain (about 9× the older 4-blocks-a-second
+figure), and `MINER_PCT=3` under the standard 40 s stop / 3 s continue pacer at about 10 blocks a minute — so a
+"fast start" burns through height fast, and a run's B/C/D still spawn with plenty of head-room.
 
 ⚠ **A `<base>` element resolves fragment references against itself**, so the client carries none: the mark
 is inline markup (`src/view/mark.ts`), never a sprite referenced by `<use>`, and every URL composed from

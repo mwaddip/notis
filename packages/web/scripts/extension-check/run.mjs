@@ -90,14 +90,16 @@ const WEB_DIST = args.get('web-dist') ?? null;
 const PASSPHRASE = 'proof-pass';
 
 // The extension's tip verifier asks every node for `/nipopow/proof/<m>/<k>` at
-// m = 24 and k = 20 (WEB_INTERFACE → The extension → "The verified tip"), and a
-// node answers *too short* while its chain stands below m + k (NODE_INTERFACE →
-// Nipopow). The comparison 19b waits on runs at this pair, and every height the
-// harness mines a chain to or gates on for its proof to exist counts from m + k.
-// The figures and names blocks count their waits and a check's heights by the
-// suffix alone — the tip's last `k` headers, `suffixHead` the first of them.
-const TIP_M = 24;
-const TIP_K = 20;
+// the tool's `DEFAULT_M` and `DEFAULT_K` (WEB_INTERFACE → The extension → "The
+// verified tip"; CONSTANTS → Client defaults), imported below rather than held
+// here as a second copy, and a node answers *too short* while its chain stands
+// below m + k (NODE_INTERFACE → Nipopow). The comparison 19b waits on runs at
+// this pair, and every height the harness mines a chain to or gates on for its
+// proof to exist counts from m + k. The figures and names blocks count their
+// waits and a check's heights by the suffix alone — the tip's last `k`
+// headers, `suffixHead` the first of them.
+let TIP_M = null;
+let TIP_K = null;
 
 // The verified-tip block — WEB_INTERFACE → The extension → "The verified tip",
 // steps 17a · 17 · 17b · 18 · 19a · 19b · 19c · 20. Absent, they read NOT RUN
@@ -185,24 +187,32 @@ if (VERIFIED_TIP) {
   }
 }
 
-// The comparison step 19b waits on is the tool's own (WEB_INTERFACE → The
-// extension → "The verified tip"): `resolveTip` of `@dagsocial/nipopow-client`
-// from its built dist — the code the extension's tip verifier runs — under the
-// profile that verifier takes from the build's network, devnet. A TipResult
-// carries no score, so `compareProofs` of `@dagsocial/nipopow` — the fold's own
-// comparison — reads the two sides' scores off the proofs it does carry. That
-// package is the tool's dependency and not this one's, so it is reached
-// through the tool's own link to it.
+// The pair every block that reads TIP_M / TIP_K takes from the tool it
+// already imports (WEB_INTERFACE → The extension → "The verified tip";
+// CONSTANTS → Client defaults) — the tip block, the figures block and the
+// names block all read them, so the load runs whenever any of the three
+// flags is set. The comparison step 19b waits on is the tool's own
+// `resolveTip` from its built dist — the code the extension's tip verifier
+// runs — under the profile that verifier takes from the build's network,
+// devnet; a TipResult carries no score, so `compareProofs` of
+// `@dagsocial/nipopow` — the fold's own comparison — reads the two sides'
+// scores off the proofs it does carry. That package is the tool's dependency
+// and not this one's, so it is reached through the tool's own link to it,
+// under --verified-tip alone.
 let forkTools = null;
-if (VERIFIED_TIP) {
+if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES) {
   try {
     const clientUrl = import.meta.resolve('@dagsocial/nipopow-client');
-    const { resolveTip, verifierProfile } = await import(clientUrl);
-    const { compareProofs } = await import(new URL('../node_modules/@dagsocial/nipopow/dist/index.js', clientUrl).href);
-    const { profileFor } = await import('@dagsocial/types');
-    forkTools = { resolveTip, verifierProfile, compareProofs, profile: profileFor('devnet') };
+    const { DEFAULT_M, DEFAULT_K, resolveTip, verifierProfile } = await import(clientUrl);
+    TIP_M = DEFAULT_M;
+    TIP_K = DEFAULT_K;
+    if (VERIFIED_TIP) {
+      const { compareProofs } = await import(new URL('../node_modules/@dagsocial/nipopow/dist/index.js', clientUrl).href);
+      const { profileFor } = await import('@dagsocial/types');
+      forkTools = { resolveTip, verifierProfile, compareProofs, profile: profileFor('devnet') };
+    }
   } catch (e) {
-    console.error(`--verified-tip requires the built @dagsocial/nipopow-client, its @dagsocial/nipopow and @dagsocial/types (pnpm -r build): ${e.message}`);
+    console.error(`--verified-{tip,figures,names} requires the built @dagsocial/nipopow-client (its DEFAULT_M, DEFAULT_K, resolveTip and verifierProfile), its @dagsocial/nipopow and @dagsocial/types (pnpm -r build): ${e.message}`);
     process.exit(2);
   }
 }
@@ -1389,8 +1399,19 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
     markVerifiedTipNotRun(`node A did not answer /blocks/current at ${NODE}`);
     return;
   }
-  const preHeightA = await currentHeight(NODE);
-  console.log(`[vt] pre-flight: A height=${preHeightA} at ${NODE}`);
+  // A must have passed m + k before the block reads it — its proof exists
+  // only there (NODE_INTERFACE → Nipopow), and steps 17, 17b, 18 and 19a
+  // all read A. The margin matches 19b's cSyncMin (m + k + 14), so the
+  // suffix's k headers are well past genesis when a step reads them; a
+  // bounded wait names A's height and the target on expiry.
+  const aHeightMin = TIP_M + TIP_K + 14;
+  const aReady = await waitForHeight(NODE, aHeightMin, 600000);
+  if (aReady === null) {
+    const hA = await currentHeight(NODE);
+    markVerifiedTipNotRun(`A never reached height ≥ ${aHeightMin} within 10 minutes (last=${hA}, target=m+k+14 with m=${TIP_M}, k=${TIP_K}); A's miner may be paced too slowly or A has not started mining yet.`);
+    return;
+  }
+  console.log(`[vt] pre-flight: A ready at ${aReady} ≥ ${aHeightMin} (m + k + 14 with m=${TIP_M}, k=${TIP_K}) at ${NODE}`);
 
   // ---- Spawn node B — server, bootstrapped from A's p2p. Step 17 and step 18
   // need a second verified node; the other steps switch the reading node to
@@ -1644,13 +1665,18 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
       // Wait for C to sync to A's tip within 2 blocks, and for its own height
       // to reach m + k + 14 — fourteen blocks past the height where C's own
       // proof exists — so the winner's `k`-header suffix is well past genesis.
+      // Both waits are bounded and polling; a one-shot read of C's height right
+      // after a close-sync would FAIL the step whenever A stood between m + k
+      // and m + k + 14 at the sync moment.
       const cSyncMin = TIP_M + TIP_K + 14;
       const cSync = await waitForHeightsClose(NODE, C_ORIGIN, 2, 600000);
-      const hCsync = await currentHeight(C_ORIGIN);
-      if (cSync === null || hCsync === null || hCsync < cSyncMin) {
-        record('19b', false, `C never synced to A within 2 blocks and reached ≥ ${cSyncMin} (hC=${hCsync}, sync=${JSON.stringify(cSync)}). A's miner may be paced too slowly.`);
+      const hCsync = cSync === null ? null : await waitForHeight(C_ORIGIN, cSyncMin, 600000);
+      if (cSync === null || hCsync === null) {
+        const lastA = await currentHeight(NODE);
+        const lastC = await currentHeight(C_ORIGIN);
+        record('19b', false, `C never synced to A within 2 blocks and reached ≥ ${cSyncMin} (last A=${lastA}, C=${lastC}, sync=${JSON.stringify(cSync)}). A's miner may be paced too slowly.`);
       } else {
-        console.log(`[vt] 19b phase 1: C synced at ${hCsync} (A=${(await currentHeight(NODE))})`);
+        console.log(`[vt] 19b phase 1: C synced at ${hCsync} ≥ ${cSyncMin} (A=${(await currentHeight(NODE))})`);
         // Phase 2 — stop C, restart on the same store, cut off from A. New
         // listen port so A's cached address for C is stale (packages/net/src/
         // peerdb.ts stores the old address); MAX_PEERS=0 and empty
