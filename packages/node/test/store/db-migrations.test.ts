@@ -24,6 +24,8 @@ const ALTER_COLUMNS = [
   'username_lower',
   'username_claimant',
   'cost_estimate',
+  'vouch_target',
+  'max_valid_height',
 ];
 
 // Every index createMempoolGateIndexes declares, derived from db.ts.
@@ -174,13 +176,57 @@ describe('migrateMempoolTxColumns', () => {
 
     const row = db.prepare(
       `SELECT tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes,
-              username_lower, username_claimant, cost_estimate
+              username_lower, username_claimant, cost_estimate,
+              vouch_target, max_valid_height
        FROM mempool WHERE rowid = ?`,
     ).get(inserted.rowid) as Record<string, unknown>;
     expect(row).toBeDefined();
     for (const col of ALTER_COLUMNS) {
       expect(row[col]).toBeNull();
     }
+
+    closeDb();
+  });
+
+  // The migration had no step for `vouch_target` or `max_valid_height`
+  // (MEMPOOL_INTERFACE → Schema; → Validity ceiling): a store migrated from
+  // this pre-column shape failed every `insertUtxoTx` and `purgeExpired`,
+  // because both name the columns directly in SQL the gate-column tests above
+  // never exercised (neither inserts a row through `mempool.ts`).
+  it('a vouch admitted after migrating from the pre-column shape: insertUtxoTx and purgeExpired succeed, and hasPendingVouch answers true', async () => {
+    const dbPath = path.join(tmpDir, 'vouch-migration.db');
+
+    const raw = new Database(dbPath);
+    raw.exec(PRE_COLUMN_MEMPOOL);
+    raw.close();
+
+    const { initDb, closeDb } = await importFresh();
+    initDb(dbPath);
+    const mempool = await import('../../src/store/mempool.js') as {
+      insertUtxoTx: (tx: unknown, expiresAtHeight: number) => number;
+      purgeExpired: (currentHeight: number) => number;
+      hasPendingVouch: (voucherId: string, targetId: string) => boolean;
+    };
+
+    const voucherHex = 'ee'.repeat(32);
+    const targetHex = '11'.repeat(32);
+    const bytes = (hex: string) => new Uint8Array(Buffer.from(hex, 'hex'));
+    const vouchTx = {
+      inputs: [],
+      outputs: [{
+        boxType: 'vouch',
+        value: 10n,
+        createdAtBlock: 0,
+        voucherId: bytes(voucherHex),
+        targetId: bytes(targetHex),
+      }],
+      signatures: {},
+      protocolVersion: 1,
+    };
+
+    expect(() => mempool.insertUtxoTx(vouchTx, 100)).not.toThrow();
+    expect(() => mempool.purgeExpired(0)).not.toThrow();
+    expect(mempool.hasPendingVouch(voucherHex, targetHex)).toBe(true);
 
     closeDb();
   });
