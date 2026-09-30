@@ -363,9 +363,6 @@ the first row that holds:
 | verified, and no other node did | `thin` · *one-node* |
 | verified — best, tied, or behind on the winner's own chain — with at least one other verified | `verified`, with the count |
 
-> ⚠ **AHEAD OF CODE (2026-09-30, client m)** — the tool exports no `DEFAULT_M` or `DEFAULT_K`; the extension and its
-> proof harness each hold their own `24, 20`.
-
 **The verdict is total by itself**: the last four rows hold only for a reading node the result marks verified, beside
 the result's own tip. A reading node left unverified under no code, or a verified one beside no tip, reads `refused` ·
 *invalid-proof* — decided here, never on what the tool is known to fill. A `behind` that is not a non-negative
