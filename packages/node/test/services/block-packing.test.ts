@@ -525,6 +525,61 @@ describe('packing to the budget', () => {
     expect(await estimatesOf(order)).toEqual([parentAlone - empty, null]);
   });
 
+  it('a throw costing an entry alone is no verdict: the entry rides with no estimate, and the speculation answers for it', async () => {
+    let poisoned = '';
+    vi.doMock('../../src/services/cost-estimate.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../../src/services/cost-estimate.js')>();
+      return {
+        ...actual,
+        costAlone: (...args: Parameters<typeof actual.costAlone>) => {
+          if (computeTxId(args[0]) === poisoned) throw new Error('injected: costing alone throws');
+          return actual.costAlone(...args);
+        },
+      };
+    });
+    const speculations = countSpeculations();
+    await freshStore();
+    const order = await poolOf([{ inputs: 1, outputs: 1 }, { inputs: 1, outputs: 2 }]);
+    poisoned = order[1]!;
+    await liveProver();
+    const empty = await prefixCost(order, 0);
+    const first = (await txsCost([order[0]!])) - empty;
+
+    const bc = await import('../../src/services/block-creator.js');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    bc.startBlockCreator(testConfig);
+    const template = bc.getCurrentTemplate();
+
+    expect(speculations.count).toBe(1);
+    expect(userTxIds(template!)).toEqual(order);
+    expect(await estimatesOf(order)).toEqual([first, null]);
+    expect(error.mock.calls.some(([line]) => String(line).startsWith(`INTERNAL: unclaimed throw costing transaction ${poisoned} alone`))).toBe(true);
+  });
+
+  it('a corrupt-state throw costing an entry alone stops the node', async () => {
+    const corrupt = await import('../../src/services/corrupt-state.js');
+    vi.doMock('../../src/services/cost-estimate.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../../src/services/cost-estimate.js')>();
+      return {
+        ...actual,
+        costAlone: () => {
+          throw new corrupt.MissingStoredBlockError('costAlone', 1);
+        },
+      };
+    });
+    await freshStore();
+    await poolOf([{ inputs: 1, outputs: 1 }]);
+    await liveProver();
+
+    const bc = await import('../../src/services/block-creator.js');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit');
+    }) as never);
+    expect(() => bc.startBlockCreator(testConfig)).toThrow('process.exit');
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
   it('costs each rent transaction alone and packs it by that estimate', async () => {
     // Every credit box created at height 0 owes rent at height 1 (NODE_INTERFACE →
     // "Storage rent is a transition requiring no signature").
