@@ -190,6 +190,71 @@ async function prefixCost(order: string[], length: number): Promise<number> {
   return txsCost(order.slice(0, length));
 }
 
+/**
+ * The settlement transaction's own encoded length for the block carrying
+ * `bodies`, built as the creator builds one (MEMPOOL_INTERFACE → The fill
+ * budget is bytes; getPendingEntries is a count → "The fill counts the
+ * settlement's bytes...").
+ */
+async function settlementLength(bodies: Uint8Array[]): Promise<number> {
+  const { buildBlockSettlement, treeStateView } = await import('@dagsocial/consensus');
+  const { proverSession } = await import('../../src/state/prover-session.js');
+  const { applyContextFrom } = await import('../../src/services/block-apply.js');
+  const { config } = await import('../../src/config.js');
+  const { encodeTx } = await import('@dagsocial/types');
+  const handle = await liveProver();
+  const miner = makeTestIdentity();
+  const built = buildBlockSettlement(
+    treeStateView(proverSession(handle.prover)), bodies, 1, miner.userId, miner.userId, applyContextFrom(config),
+  );
+  if ('error' in built) throw new Error(built.error);
+  return encodeTx(built.tx).length;
+}
+
+/** The settlement length for the block carrying the first `length` transactions of `order` (`settlementLength`). */
+async function prefixSettlementLength(order: string[], length: number): Promise<number> {
+  const byId = await pooledBytes();
+  return settlementLength(order.slice(0, length).map((id) => byId.get(id)!));
+}
+
+/**
+ * Lowers `MAX_SETTLEMENT_BYTES` for the node's module graph — nothing in this
+ * package's `src` but `block-creator.ts` reads that export, so nothing else in
+ * the fill or admission path answers differently. `block-creator.js` is
+ * imported transitively well before a test body runs (`seedEmissionBox` reads
+ * `emissionTotal` off it), so the mock has to be live rather than fixed: a
+ * getter, `set` after, the same shape as `blockBudgetSeam`. Register in
+ * `beforeEach`, after `vi.resetModules()` and before any node module import.
+ */
+function settlementBudgetSeam(): { set(bound: number): void } {
+  let bound = Number.MAX_SAFE_INTEGER;
+  vi.doMock('@dagsocial/types', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@dagsocial/types')>();
+    return {
+      ...actual,
+      get MAX_SETTLEMENT_BYTES() { return bound; },
+    };
+  });
+  return { set: (next) => { bound = next; } };
+}
+
+/** Every call the build makes to `buildBlockSettlement`, counted, with `extra` overrides merged alongside. */
+function countSettlementBuilds(extra: Record<string, unknown> = {}): { count: number } {
+  const counter = { count: 0 };
+  vi.doMock('@dagsocial/consensus', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@dagsocial/consensus')>();
+    return {
+      ...actual,
+      ...extra,
+      buildBlockSettlement: (...args: Parameters<typeof actual.buildBlockSettlement>) => {
+        counter.count++;
+        return actual.buildBlockSettlement(...args);
+      },
+    };
+  });
+  return counter;
+}
+
 /** The cost of `block` as the rules count it over the live tree, read unrecorded. */
 async function costOfBlock(block: OrderingBlock): Promise<number> {
   const { applyBlock, blockCost, treeStateView, treeWritesOf } = await import('@dagsocial/consensus');
@@ -615,5 +680,91 @@ describe('packing to the budget', () => {
 
     expect(speculations.count).toBe(1);
     expect(template.utxoTxTree.utxoTxs.slice(0, -1)).toEqual(both.slice(0, 1));
+  });
+});
+
+/**
+ * The settlement in the fill (MEMPOOL_INTERFACE → The fill budget is bytes;
+ * getPendingEntries is a count → "The fill counts the settlement's bytes, so
+ * that loop too runs at most once"): a second accumulator ends a class's fill
+ * at `MAX_SETTLEMENT_BYTES` as the first ends it at the body budget, and a pop
+ * for an overshoot the accumulator missed drops the whole covering tail in one
+ * rebuild rather than one entry a rebuild.
+ */
+describe('the settlement in the fill', () => {
+  let settlementBudget: { set(bound: number): void };
+
+  beforeEach(() => {
+    vi.resetModules();
+    settlementBudget = settlementBudgetSeam();
+  });
+  afterEach(async () => {
+    (await import('../../src/services/block-creator.js')).stopBlockCreator();
+    vi.doUnmock('@dagsocial/types');
+    vi.doUnmock('@dagsocial/consensus');
+    vi.doUnmock('../../src/services/cost-estimate.js');
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('ends the credit class at the longest prefix MAX_SETTLEMENT_BYTES allows, in at most the seeding, the fill\'s and one pop', async () => {
+    const settles = countSettlementBuilds();
+    await freshStore();
+    const order = await admittedPoolOf(Array.from({ length: 30 }, () => ({ inputs: 1, outputs: 1 })));
+    const lengths: number[] = [];
+    for (let length = 0; length <= order.length; length++) lengths.push(await prefixSettlementLength(order, length));
+    const within = 15;
+    expect(lengths[within]!).toBeLessThan(lengths[within + 1]!);
+
+    // The bound set exactly at the prefix's own length: the longest prefix it
+    // allows is that same prefix, by construction — the fill (and, if its
+    // accumulator's few-byte slack needs it, one sizer pop) must land there.
+    // Reset after admission and its own settlement builds — only the creator's
+    // own rebuilds count from here.
+    settlementBudget.set(lengths[within]!);
+    settles.count = 0;
+
+    const bc = await import('../../src/services/block-creator.js');
+    bc.startBlockCreator(testConfig);
+    const template = bc.getCurrentTemplate();
+
+    expect(template).not.toBeNull();
+    const held = userTxIds(template!);
+    expect(held).toEqual(order.slice(0, within));
+    const heldSettlementLen = template!.utxoTxTree.utxoTxs[template!.utxoTxTree.utxoTxs.length - 1]!.length;
+    expect(heldSettlementLen).toBe(lengths[within]);
+    expect(heldSettlementLen).toBeLessThanOrEqual(lengths[within]!);
+    // Seeding + the fill's settlement + at most one pop-rebuild.
+    expect(settles.count).toBeLessThanOrEqual(3);
+  });
+
+  it('a forced overshoot — settlementMarginalBytes mocked to under-count during the fill — is popped in one rebuild, and the template stays legal', async () => {
+    // Mocked to zero: the fill's accumulator never sees the settlement grow, so
+    // it admits the whole pool — a forced overshoot no natural pool reaches,
+    // standing in for the accumulator's real (few-byte) blind spot.
+    const settles = countSettlementBuilds({ settlementMarginalBytes: () => 0 });
+    await freshStore();
+    const order = await admittedPoolOf(Array.from({ length: 30 }, () => ({ inputs: 1, outputs: 1 })));
+    const lengths: number[] = [];
+    for (let length = 0; length <= order.length; length++) lengths.push(await prefixSettlementLength(order, length));
+    const within = 15;
+    expect(lengths[within]!).toBeLessThan(lengths[order.length]!);
+
+    settlementBudget.set(lengths[within]!);
+    settles.count = 0;
+
+    const bc = await import('../../src/services/block-creator.js');
+    bc.startBlockCreator(testConfig);
+    const template = bc.getCurrentTemplate();
+
+    expect(template).not.toBeNull();
+    // Nothing a zero-weighted covering pass can cover short of the whole
+    // selection: the sizer still corrects it, in the one rebuild `settles`
+    // counts beyond the seeding and the fill's own settlement.
+    expect(userTxIds(template!)).toEqual([]);
+    const heldSettlementLen = template!.utxoTxTree.utxoTxs[template!.utxoTxTree.utxoTxs.length - 1]!.length;
+    expect(heldSettlementLen).toBe(lengths[0]);
+    expect(heldSettlementLen).toBeLessThanOrEqual(lengths[within]!);
+    expect(settles.count).toBeLessThanOrEqual(3);
   });
 });
