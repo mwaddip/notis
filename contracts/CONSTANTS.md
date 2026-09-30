@@ -338,7 +338,9 @@ drift test's converse does not reach them and the rows are marked.
 
 ## Client defaults
 
-`tools/nipopow-client` — what the light client asks for when no flag says otherwise.
+`tools/nipopow-client` — what the light client asks for when no flag says otherwise. The library exports the pair as
+`DEFAULT_M` and `DEFAULT_K`, and the extension's verifier asks the same pair, imported, never a copy
+(`WEB_INTERFACE → The extension → "The verified tip"`).
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
