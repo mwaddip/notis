@@ -18,8 +18,9 @@ import {
 /**
  * The block-application pin: what applying a scripted chain of blocks does to
  * the store, frozen once as a fixture — each block's stored journal bytes, its
- * header's stateRoot and hash, and the node-local rows it wrote; the bodies it
- * refuses; and the state a revert of the whole set returns to. Every block
+ * header's stateRoot and hash, the digest of the proof it stored, and the
+ * node-local rows it wrote; the bodies it refuses; and the state a revert of
+ * the whole set returns to. Every block
  * reaches the store through `applyOrderingBlockVerdict`; the scenario is
  * `test/harness/block-apply-pin.ts`.
  *
@@ -49,8 +50,9 @@ const PINS: Pin[] = [
 
 const FIXTURE_PATH = fileURLToPath(new URL('../fixtures/block-apply-pin.json', import.meta.url));
 const CAPTURE = process.env['BLOCK_APPLY_PIN_CAPTURE'] === '1';
-const CAPTURED_FROM = 'n2-state-layout, the node applying over its prover: each stateRoot is the tree '
-  + 'layout\'s digest, and each record mutation\'s key its identityKey in hex';
+const CAPTURED_FROM = 'n3-block-proof, the eleven-field header: each block hashed over its adProofsRoot, '
+  + 'the hash32 of the proof its apply stores; each stateRoot the tree layout\'s digest, and each record '
+  + 'mutation\'s key its identityKey in hex';
 
 interface Fixture {
   capturedFrom: string;
@@ -104,6 +106,7 @@ function expectBlockMatches(actual: PinnedBlock, golden: PinnedBlock): void {
     .toEqual(describeCbor(decodeJournal(golden.journalCbor)));
   expect(actual.journalCbor).toBe(golden.journalCbor);
   expect(actual.stateRoot).toBe(golden.stateRoot);
+  expect(actual.adProofsRoot).toBe(golden.adProofsRoot);
   expect(actual.blockHash).toBe(golden.blockHash);
   expect(actual.blockTopology).toEqual(golden.blockTopology);
   expect(actual.likeRecords).toEqual(golden.likeRecords);

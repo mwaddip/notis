@@ -71,6 +71,7 @@ function blockToJson(block: OrderingBlock): Record<string, unknown> {
       powTargetBits: block.header.powTargetBits,
       createdAt: block.header.createdAt,
       interlinkRoot: block.header.interlinkRoot,
+      adProofsRoot: block.header.adProofsRoot,
     },
     utxoTxTree: {
       utxoTxIds: block.utxoTxTree.utxoTxIds,

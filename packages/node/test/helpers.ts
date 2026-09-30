@@ -787,9 +787,9 @@ export function signHeader(header: BlockHeader, privateKey: KeyObject): Uint8Arr
 /**
  * A hand-built block that passes every apply check: chain-linked at genesis,
  * correct Merkle roots, coinbase paying exactly the scheduled emission with the
- * scheduled maturity lock, the post-block AVL state root, a real PoW solution
- * at the scheduled target, and a real validator signature from the key its
- * header names.
+ * scheduled maturity lock, the post-block AVL state root and the digest of the
+ * block's proof, a real PoW solution at the scheduled target, and a real
+ * validator signature from the key its header names.
  *
  * Each override deviates in exactly one respect, so what a test measures is
  * that deviation and nothing else.
@@ -1020,6 +1020,9 @@ export async function makeApplicableBlock(
     /** Override the post-block state root — a block committing to state it
      *  does not produce. */
     stateRoot?: string;
+    /** Override the header's `adProofsRoot` — a block committing to a proof its
+     *  body does not make. */
+    adProofsRoot?: string;
     /** Sign with this key instead of the miner's — a block whose signature does
      *  not come from the key its `validatorId` names (forged authorship). */
     signWith?: KeyObject;
@@ -1143,6 +1146,7 @@ export async function makeApplicableBlock(
       : scheduledTargetBits(prevStoredBlock!.header)),
     createdAt: opts.createdAt ?? Math.max(nowMs(), (prevStoredBlock?.header.createdAt ?? 0) + 1),
     interlinkRoot: headerInterlinkRoot,
+    adProofsRoot: ZERO_HASH,
   } as BlockHeader;
 
   const block = {
@@ -1151,18 +1155,21 @@ export async function makeApplicableBlock(
     validatorSignature: new Uint8Array(64),
   } as unknown as OrderingBlock;
 
-  // Post-block state root (NODE_INTERFACE → Post-block stateRoot), obtained the
-  // way the block creator obtains it: by running this body through the apply
-  // path's own mutation phase and restoring the prover after. It has to be final
-  // before the nonce and the signature, which both cover the header. A
-  // `body-rejected` body keeps the EMPTY_STATE_ROOT placeholder: the helper's job
-  // is to hand the caller its block either way, and the suite's own apply will
-  // reject the body loudly.
+  // Post-block state root and the block proof's digest (NODE_INTERFACE →
+  // Post-block stateRoot), obtained the way the block creator obtains them: by
+  // running this body through the apply path's own mutation phase and restoring
+  // the prover after. Both have to be final before the nonce and the signature,
+  // which cover the header. A body the speculation does not compute keeps both
+  // placeholders: the helper's job is to hand the caller its block either way,
+  // and the suite's own apply will reject the body loudly.
   const { computePostBlockStateRoot } = await import('../src/services/block-apply.js');
   const speculation = computePostBlockStateRoot(block, handle);
   header.stateRoot =
     opts.stateRoot ??
     (speculation.kind === 'computed' ? speculation.stateRoot : EMPTY_STATE_ROOT);
+  header.adProofsRoot =
+    opts.adProofsRoot ??
+    (speculation.kind === 'computed' ? speculation.adProofsRoot : ZERO_HASH);
 
   header.powNonce = solveHeaderPow(header);
   block.validatorSignature = signHeader(header, opts.signWith ?? miner.privateKey);
@@ -1277,6 +1284,7 @@ export function makeBlock(height: number, createdAt: number): OrderingBlock {
       powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
       createdAt,
       interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
     },
     utxoTxTree: {
       utxoTxIds: ['77'.repeat(32)],
@@ -1373,6 +1381,7 @@ export function buildMinedHeaderChain(opts: {
       powTargetBits: bits,
       createdAt: stamp,
       interlinkRoot: interlinkRoot(expected),
+      adProofsRoot: '00'.repeat(32),
     };
     header.powNonce = solveHeaderPow(header);
     const hash = blockHash(header);

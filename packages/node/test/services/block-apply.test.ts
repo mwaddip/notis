@@ -406,6 +406,7 @@ describe('block-apply journal recording', () => {
         // value here would refuse the block on that mismatch and never reach
         // the check under test.
         interlinkRoot: interlinkRoot([]),
+        adProofsRoot: '00'.repeat(32),
       },
       utxoTxTree: {
         // A body's last entry is its settlement; PoW is refused before anything
@@ -468,6 +469,7 @@ describe('block-apply journal recording', () => {
         powTargetBits: config.orderingBlockPowTargetBits,
         createdAt: Date.now(),
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       },
       utxoTxTree: {
         // A body's last entry is its settlement; PoW is refused before anything
@@ -517,6 +519,7 @@ describe('block-apply journal recording', () => {
         powTargetBits: config.orderingBlockPowTargetBits,
         createdAt: Date.now(),
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       },
       utxoTxTree: {
         // A body's last entry is its settlement; PoW is refused before anything
@@ -2839,6 +2842,7 @@ describe('block-apply funnel totality', () => {
       powTargetBits: config.orderingBlockPowTargetBits,
       createdAt: Date.now(),
       interlinkRoot: 'ff'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
     };
     solveHeaderPow(header);
     const block: OrderingBlock = {

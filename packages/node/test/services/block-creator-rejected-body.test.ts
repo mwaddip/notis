@@ -421,6 +421,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
         powTargetBits: 256 * 12,
         createdAt: 0,
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       },
       // One declared id, no body beside it — the misalignment structure would
       // have caught on every other path into the mutation phase.

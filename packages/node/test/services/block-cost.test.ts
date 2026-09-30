@@ -154,11 +154,12 @@ describe('the block\'s cost', () => {
       validatorSignature: new Uint8Array(64),
     } as unknown as OrderingBlock;
 
-    // The rules refuse it for its signatures, before the batch runs.
+    // The rules refuse it for its signatures, before the batch runs, and say so.
     const refused = applyBlock(treeStateView(proverSession(handle.prover)), candidate, ctx);
     expect(refused).toEqual({
       ok: false,
       reason: `Rejected block height=1: its ${signatures} signatures cost more than a block may`,
+      overBudget: true,
     });
 
     const root = handle.prover.prover.root;

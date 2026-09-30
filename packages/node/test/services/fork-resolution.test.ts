@@ -239,6 +239,7 @@ describe('cumulativeWork', () => {
       powTargetBits: 256 * 10,
       createdAt: 1000,
       interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
     };
     const h2: BlockHeader = {
       ...h1,
@@ -262,6 +263,7 @@ describe('cumulativeWork', () => {
       powTargetBits: 256 * 5,
       createdAt: 1000,
       interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
     };
     const h2: BlockHeader = {
       ...h1,
@@ -280,11 +282,11 @@ describe('cumulativeWork', () => {
     const chainA = [
       {
         protocolVersion: PROTOCOL_VERSION, height: 1, prevBlockHash: '00'.repeat(32),
-        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 5, createdAt: 1000, interlinkRoot: '00'.repeat(32),
+        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 5, createdAt: 1000, interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32),
       },
       {
         protocolVersion: PROTOCOL_VERSION, height: 2, prevBlockHash: 'ff'.repeat(32),
-        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 5, createdAt: 2000, interlinkRoot: '00'.repeat(32),
+        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 5, createdAt: 2000, interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32),
       },
     ] as BlockHeader[];
 
@@ -292,7 +294,7 @@ describe('cumulativeWork', () => {
     const chainB = [
       {
         protocolVersion: PROTOCOL_VERSION, height: 1, prevBlockHash: '00'.repeat(32),
-        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 7, createdAt: 1000, interlinkRoot: '00'.repeat(32),
+        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 7, createdAt: 1000, interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32),
       },
     ] as BlockHeader[];
 
@@ -396,6 +398,7 @@ describe('extendsOurTip', () => {
         powTargetBits: 256 * 4,
         createdAt: Date.now(),
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       },
       utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)] },
       validatorSignature: new Uint8Array(64),
@@ -422,6 +425,7 @@ describe('extendsOurTip', () => {
         powTargetBits: 256 * 4,
         createdAt: Date.now(),
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       },
       utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)] },
       validatorSignature: new Uint8Array(64),
@@ -476,6 +480,7 @@ describe('a stored header that cannot be hashed', () => {
         powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
         createdAt,
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       },
       utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)] },
       validatorSignature: new Uint8Array(64),
@@ -595,6 +600,7 @@ describe('a stored header that cannot be hashed', () => {
         powTargetBits: 65536,
         createdAt: Number.MAX_SAFE_INTEGER,
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       },
       utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)] },
       validatorSignature: new Uint8Array(64),
@@ -698,6 +704,7 @@ describe('a stored header that cannot be hashed', () => {
         powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
         createdAt: 1,
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       },
       utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)] },
       validatorSignature: new Uint8Array(64),
@@ -2266,6 +2273,7 @@ describe('resolveFork — #5(b) pinned closed', () => {
         createdAt: 0,
         validatorId: new Uint8Array(32),
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       });
     }
     // Include the shared block at height 1 for the fork point
@@ -2329,6 +2337,7 @@ describe('resolveFork — tampered headers refused before any block request', ()
         createdAt: 0,
         validatorId: new Uint8Array(32),
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       });
     }
 
@@ -2432,6 +2441,7 @@ describe('resolveFork — refused headers', () => {
         createdAt: 0,
         validatorId: new Uint8Array(32),
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       },
       ordering.getOrderingBlock(1)!.header,
     ];
@@ -2797,6 +2807,7 @@ describe('resolveFork — body-stage refusal → mark → re-serve → continuat
         createdAt: 0,
         validatorId: new Uint8Array(32),
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       } as BlockHeader,
       ...forgedHeaders,
     ];
@@ -3431,6 +3442,7 @@ describe('resolveFork — ASERT timestamp rules and schedule', () => {
       powTargetBits: testConfig.orderingBlockPowTargetBits,
       createdAt: lateStamp,
       interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
     };
     badHeader.powNonce = solveHeaderPow(badHeader);
 
@@ -3570,6 +3582,7 @@ describe('the fork walk', () => {
       powTargetBits: targetBits,
       createdAt: block2.createdAt + 60_000,
       interlinkRoot: (await import('@dagsocial/types')).interlinkRoot(anchorIl),
+      adProofsRoot: '00'.repeat(32),
     };
     peerHeader.powNonce = solveHeaderPow(peerHeader);
     expect(blockHash(peerHeader)).not.toBeNull();
@@ -3675,6 +3688,7 @@ describe('the fork walk', () => {
         createdAt: 1000 + h * 60000,
         validatorId: new Uint8Array(32),
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       });
     }
 
@@ -3764,6 +3778,7 @@ describe('the fork walk', () => {
       createdAt: -1,
       validatorId: new Uint8Array(32),
       interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
     };
     expect(blockHash(poisoned)).toBeNull();
 
@@ -3778,6 +3793,7 @@ describe('the fork walk', () => {
       createdAt: 1000,
       validatorId: new Uint8Array(32),
       interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
     };
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -3869,6 +3885,7 @@ describe('the fork walk', () => {
       createdAt: -1,
       validatorId: new Uint8Array(32),
       interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
     };
     expect(blockHash(poisoned)).toBeNull();
 
@@ -3965,6 +3982,7 @@ describe('the fork walk', () => {
         createdAt: 1000 + h * 60000,
         validatorId: new Uint8Array(32),
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       });
     }
 
@@ -4006,6 +4024,7 @@ describe('the fork walk', () => {
         createdAt: 1000 + h * 60000,
         validatorId: new Uint8Array(32),
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       });
     }
     fakeHeaders.push(shared2);
@@ -4020,6 +4039,7 @@ describe('the fork walk', () => {
       createdAt: 1000 + 60000,
       validatorId: new Uint8Array(32),
       interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
     });
 
     const net = stubNet(fakeHeaders, []);
@@ -4060,6 +4080,7 @@ describe('the fork walk', () => {
       createdAt: 1_000_000,
       validatorId: new Uint8Array(32),
       interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
     };
 
     const net = stubNet([peerHeader], []);
@@ -4115,6 +4136,7 @@ describe('the fork walk', () => {
         createdAt: t1 + h * 60_000,
         validatorId: new Uint8Array(32),
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       });
     }
 
@@ -4183,10 +4205,10 @@ describe('the fork walk', () => {
         headerRequests.push({ startHeight, maxCount });
         // Heights 5, 4, 2, 1 — a hole (missing 3).
         return [
-          { height: 5, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
-          { height: 4, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
-          { height: 2, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
-          { height: 1, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
+          { height: 5, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32) },
+          { height: 4, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32) },
+          { height: 2, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32) },
+          { height: 1, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32) },
         ] as BlockHeader[];
       },
       requestBlocks: async () => [],
@@ -4223,8 +4245,8 @@ describe('the fork walk', () => {
       getConnectedPeers: () => ['peer-repeat'],
       requestHeaders: async () => {
         return [
-          { height: 5, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
-          { height: 5, prevBlockHash: 'bb'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
+          { height: 5, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32) },
+          { height: 5, prevBlockHash: 'bb'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32) },
         ] as BlockHeader[];
       },
       requestBlocks: async () => [],
@@ -4260,8 +4282,8 @@ describe('the fork walk', () => {
       getConnectedPeers: () => ['peer-ascent'],
       requestHeaders: async () => {
         return [
-          { height: 5, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
-          { height: 7, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
+          { height: 5, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32) },
+          { height: 7, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32) },
         ] as BlockHeader[];
       },
       requestBlocks: async () => [],
@@ -4298,8 +4320,8 @@ describe('the fork walk', () => {
       getConnectedPeers: () => ['peer-short'],
       requestHeaders: async () => {
         return [
-          { height: 3, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
-          { height: 2, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
+          { height: 3, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32) },
+          { height: 2, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32) },
         ] as BlockHeader[];
       },
       requestBlocks: async () => [],
@@ -4700,6 +4722,7 @@ describe('resolveFork — paged scoring walk', () => {
           createdAt: t1 + h * 60_000,
           validatorId: new Uint8Array(32),
           interlinkRoot: '00'.repeat(32),
+          adProofsRoot: '00'.repeat(32),
         });
       }
     }
@@ -4808,6 +4831,7 @@ describe('resolveFork — paged scoring walk', () => {
         powTargetBits: bits,
         createdAt: stamp,
         interlinkRoot: computeIlRoot(expected),
+        adProofsRoot: '00'.repeat(32),
       };
       header.powNonce = solveHeaderPow(header);
       const hash = blockHash(header)!;

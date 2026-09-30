@@ -45,6 +45,7 @@ function makeBlock(height: number): OrderingBlock {
       powTargetBits: 256 * 12,
       createdAt: Date.now(),
       interlinkRoot: '00'.repeat(32),
+      adProofsRoot: 'ad'.repeat(32),
     },
     utxoTxTree: {
       // Every body carries a settlement as its last entry, and this one carries
@@ -193,6 +194,7 @@ describe('blocks routes', () => {
     const header = body.header as Record<string, unknown>;
     expect(header.height).toBe(1);
     expect(header.interlinkRoot).toBe('00'.repeat(32));
+    expect(header.adProofsRoot).toBe('ad'.repeat(32));
     expect(typeof body.validatorSignature).toBe('string');
     expect(body.validatorSignature).toBeDefined();
   });

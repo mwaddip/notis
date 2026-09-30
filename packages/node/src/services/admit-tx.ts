@@ -113,6 +113,7 @@ function costRefusal(tx: UtxoTransaction): string | null {
       powTargetBits: 0,
       createdAt: 0,
       interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
     };
     const block: OrderingBlock = {
       header,

@@ -640,9 +640,10 @@ export function createOrderingBlock(): OrderingBlock | null {
       : scheduledTargetBits(prevBlock!.header);
 
     // 19. The header template (powNonce=0). `utxoTxRoot` is the Merkle root of
-    // the body it heads and `stateRoot` a placeholder, replaced in 19b — the
-    // speculative run needs a whole candidate block, and the mutation phase reads
-    // neither the nonce nor the signature.
+    // the body it heads, and `stateRoot` and `adProofsRoot` are placeholders,
+    // replaced from the speculation in 19b — the speculative run needs a whole
+    // candidate block, and the mutation phase reads neither of them, the nonce
+    // or the signature.
     //
     // interlinkRoot: the root the header commits to (TYPES_INTERFACE → Interlink
     // vector). A null level or missing vector on our own tip → the boundary.
@@ -675,6 +676,7 @@ export function createOrderingBlock(): OrderingBlock | null {
         powTargetBits,
         createdAt,
         interlinkRoot: interlinkRoot(templateInterlinks),
+        adProofsRoot: '00'.repeat(32),
       },
       utxoTxTree: tree,
       validatorSignature: new Uint8Array(64),
@@ -682,10 +684,11 @@ export function createOrderingBlock(): OrderingBlock | null {
 
     // 19b. Compute the POST-block state root (H-6) — the digest this block's own
     // body produces, obtained by running that body through the apply path's
-    // mutation phase and restoring the prover after. Never the current (pre-block)
-    // digest: apply compares against the post-mutation digest, so a pre-block
-    // root can never verify. PoW covers the header, so this must be known before
-    // mining.
+    // mutation phase and restoring the prover after — and the digest of the
+    // proof that run makes, `adProofsRoot` (NODE_INTERFACE → Post-block
+    // stateRoot). Never the current (pre-block) digest: apply compares against
+    // the post-mutation digest, so a pre-block root can never verify. PoW covers
+    // the header, so both must be known before mining.
     const speculate = (length: number): Speculated | { error: string } => {
       const built = length === selection.length ? { tree: body } : bodyOf(length);
       if ('error' in built) return built;
@@ -773,11 +776,13 @@ export function createOrderingBlock(): OrderingBlock | null {
     confirmedRowids = rowids;
     const candidate = run.candidate;
     candidate.header.stateRoot = run.speculation.stateRoot;
+    candidate.header.adProofsRoot = run.speculation.adProofsRoot;
 
     // 21. Store the full block template (header + bodies) for the miner. Its
-    // stateRoot is this height's post-block digest, so the template stops being
-    // submittable once a competing block moves the pre-state — which is exactly
-    // what clearTemplate() on apply guarantees.
+    // stateRoot is this height's post-block digest and its adProofsRoot the
+    // digest of the proof over this height's pre-state, so the template stops
+    // being submittable once a competing block moves the pre-state — which is
+    // exactly what clearTemplate() on apply guarantees.
     //
     // This is where a produced block ends on this side: the nonce arrives from
     // `POST /mining/submit`, and `submitMinedBlock` is what finalizes.

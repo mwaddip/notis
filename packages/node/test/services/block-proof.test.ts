@@ -315,4 +315,21 @@ describe('the block proof', () => {
     const stored = await storedProof(1);
     for (const speculation of forMined) expect(stored).toEqual(speculation.proof);
   });
+
+  it('a block the creator produces commits to its proof: its adProofsRoot is hash32 of the proof its apply stores', async () => {
+    await freshStore();
+    const { sender, boxes } = await seededSender();
+    const mempool = await import('../../src/store/mempool.js');
+    mempool.insertUtxoTx(makeCreditTx(sender, [boxes[0]!], 10_000n), 1000);
+    await liveProver();
+    const bc = await import('../../src/services/block-creator.js');
+    bc.startBlockCreator(makeTestConfig({ nodeRole: 'miner', blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES }));
+
+    const mined = await mineNextBlock(bc);
+    expect(mined).not.toBeNull();
+    expect(mined!.utxoTxTree.utxoTxIds).toHaveLength(2);
+    const stored = await storedProof(1);
+    expect(stored).not.toBeNull();
+    expect(mined!.header.adProofsRoot).toBe(bytesToHex(hash32(stored!)));
+  });
 });

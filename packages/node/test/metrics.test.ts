@@ -106,6 +106,7 @@ describe('metrics', () => {
       validatorId: new Uint8Array(32),
       protocolVersion: 1,
       interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
     };
 
     it('counts a failing header', () => {
