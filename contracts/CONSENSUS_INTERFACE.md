@@ -190,7 +190,7 @@ left over. The last is what binds a leaf to the network: a full node refuses any
 (`NODE_INTERFACE → The block proof`), so a proof carrying a trailing byte or an extra read — which a verifier still
 replays to the right digest — is a block the network refuses, and a leaf must refuse it too.
 
-> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — `@ergots/avltree`'s step-by-step verifier reports no
+> ⚠ **AHEAD OF CODE (2026-09-30, N4 the leaf's verifier)** — `@ergots/avltree`'s step-by-step verifier reports no
 > consumption, so nothing can check the last condition; the leaf that needs it is N4's, and the library's answer is a
 > request to it. No node route serves a block's body bytes (`GET /blocks/:height` answers its ids), which a leaf
 > fetching blocks needs.
