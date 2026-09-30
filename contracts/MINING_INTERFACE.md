@@ -339,11 +339,17 @@ and the rebuilt settlement against `MAX_SETTLEMENT_BYTES` before the template ex
 loop above is for a body the **mutation phase** refuses.
 
 **Packing to the budget.** A body's cost is known only by executing it (`CONSENSUS_INTERFACE → The block's cost`), so
-the creator packs by trimming: it speculates the fee-ordered selection, and while the speculation answers **over
-budget** it halves the selection from the tail; once a prefix fits, it bisects between that length and the shortest
-one found over the budget, keeping the longest prefix that fits — at most `2·log₂(n) + 1` speculations for a selection
-of `n`. A prefix's cost need not grow with its length (a consolidation nets out inserts), so the search may keep a
-shorter prefix than the longest that fits; it never keeps one over the budget. **No template is ever over the
+the creator **estimates first and speculates once**: it fills in fee order while the empty body's cost plus the
+entries' `cost_estimate`s (`MEMPOOL_INTERFACE → The cost gate`) stays within the budget less `PACKING_COST_MARGIN` — an
+entry with no estimate costed alone first and its row updated — and speculates that selection. An estimate is the
+entry's cost at its admission's tip, and the state since can move it either way: **over budget**, the creator drops from
+the tail the entries whose estimates cover the overshoot and speculates again, twice at most; still over, it halves the
+selection from the tail and, once a prefix fits, bisects between that length and the shortest found over the budget,
+keeping the longest prefix that fits. A prefix's cost need not grow with its length (a consolidation nets out inserts),
+so the search may keep a shorter prefix than the longest that fits; it never keeps one over the budget.
+
+> ⚠ **AHEAD OF CODE (2026-09-30, packing estimates)** — the creator starts from the whole fee-ordered selection and
+> halves it, with no estimate. **No template is ever over the
 budget, and nothing is evicted for it**: an entry trimmed stays pooled for a later block. `adProofsRoot` is the
 speculation's, beside `stateRoot` (`NODE_INTERFACE → Post-block stateRoot`).
 

@@ -32,7 +32,8 @@ CREATE TABLE mempool (
     max_valid_height INTEGER,                   -- utxo_tx only: validity ceiling, NULL = none (§Validity ceiling)
     tx_inputs TEXT, tx_output_ids TEXT,         -- conflict-gate metadata
     tx_id TEXT,                                 -- the entry's own TxId (confirmed-entry cleanup)
-    username_lower TEXT, username_claimant TEXT -- claim-gate metadata (below)
+    username_lower TEXT, username_claimant TEXT, -- claim-gate metadata (below)
+    cost_estimate INTEGER                       -- the cost gate's marginal cost (§The cost gate); NULL uncosted
 );
 
 CREATE INDEX IF NOT EXISTS idx_mempool_tx_id ON mempool(tx_id) WHERE tx_id IS NOT NULL;
@@ -156,6 +157,14 @@ fit. Without it a transaction no block can carry
 would sit in the pool, trimmed from every template until it expired. A transaction that fits alone may still be
 trimmed from a full block: that is packing (`MINING_INTERFACE → Template and submit → "Packing to the budget"`), not
 admission.
+
+**The gate keeps what it measured.** A row carries the transaction's **marginal cost** as `cost_estimate` — its
+single-transaction block's cost less the empty block's at the same tip, the empty block's computed once a tip — the
+estimate the creator packs by. A row the gate did not cost — a reorg's re-insertion, or a transaction it admitted
+uncostable — carries NULL until the creator costs it.
+
+> ⚠ **AHEAD OF CODE (2026-09-30, packing estimates)** — the pool has no `cost_estimate` column; the gate's cost is
+> measured and dropped.
 
 ### getBoxWithPending
 
