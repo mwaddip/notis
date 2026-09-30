@@ -11,7 +11,6 @@ export {
   MAX_ESCROW_RETURNS_PER_BLOCK,
   MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
   BOX_VALUE_BOUND,
-  AVL_KEY_LENGTH,
   TREE_KEY_LENGTH,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
@@ -111,10 +110,6 @@ export {
   BOX_ID_DOMAIN,
   TX_ID_DOMAIN,
   MINT_ID_DOMAIN,
-  IDENTITY_KEY_DOMAIN,
-  NETWORK_KEY_DOMAIN,
-  USERNAME_KEY_DOMAIN,
-  USERNAME_HOLDER_KEY_DOMAIN,
   BOX_TYPE_TAGS,
 } from './utxo.js';
 export type {
@@ -159,7 +154,6 @@ export type { PostWithdrawCommit } from './post-withdraw.js';
 
 // Identity record — TYPES_INTERFACE → Identity record and karma valuation
 export {
-  identityRecordKey,
   identityRecordBytes,
   identityRecordFromBytes,
   IDENTITY_RECORD_TAG,

@@ -14,7 +14,6 @@ import { CodecError } from '../src/codec.js';
 import {
   identityRecordBytes,
   identityRecordFromBytes,
-  identityRecordKey,
   IDENTITY_RECORD_TAG,
   type IdentityRecord,
 } from '../src/identity-record.js';
@@ -56,9 +55,6 @@ const ZERO: IdentityRecord = {
   memberLikes: 0n,
   invitesUsed: 0,
 };
-
-/** 32 bytes 00 01 02 … 1f — the golden's identity for `identityRecordKey`. */
-const IDENTITY_00_1F = new Uint8Array(32).map((_, i) => i);
 
 describe('identityRecordBytes / identityRecordFromBytes', () => {
   // -------------------------------------------------------------------------
@@ -257,25 +253,5 @@ describe('identityRecordBytes / identityRecordFromBytes', () => {
     expect(len(0n)).toBe(len(3n));
     expect(len(127n)).toBe(len(0n));
     expect(len(128n)).toBe(len(0n) + 1);
-  });
-});
-
-describe('identityRecordKey', () => {
-  it('golden: bytes 00 01 02 … 1f', () => {
-    expect(identityRecordKey(IDENTITY_00_1F)).toBe(
-      'cb5f79b1d894ef2d1b90c068e8f7edb9fa92ab64d1cde52b62056b49701f4669',
-    );
-  });
-
-  it('two identities produce two different keys', () => {
-    const a = new Uint8Array(32).fill(0xaa);
-    const b = new Uint8Array(32).fill(0xbb);
-    expect(identityRecordKey(a)).not.toBe(identityRecordKey(b));
-  });
-
-  it('the key is never the raw identity hex', () => {
-    // Records and boxes share one 32-byte AVL keyspace; a raw pubkey would let
-    // an attacker grind a keypair whose bytes equal a live box id.
-    expect(identityRecordKey(IDENTITY_00_1F)).not.toBe(hex(IDENTITY_00_1F));
   });
 });
