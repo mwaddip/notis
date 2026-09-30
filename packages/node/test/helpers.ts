@@ -25,7 +25,14 @@ import {
   encodeInterlinks,
 } from '@dagsocial/types';
 import { vi } from 'vitest';
-import { verifyOrderingBlockPoW, blockHash, level as headerLevel, asertTargetBits } from '@dagsocial/validation';
+import {
+  verifyOrderingBlockPoW,
+  blockHash,
+  computePowHash,
+  verifyHeaderFieldDomains,
+  level as headerLevel,
+  asertTargetBits,
+} from '@dagsocial/validation';
 import { buildBlockSettlement, computeBlockReward, materializeOutput, treeStateView, treeWritesOf } from '@dagsocial/consensus';
 import type { BlockCost, BlockEffects } from '@dagsocial/consensus';
 import { config } from '../src/config.js';
@@ -717,8 +724,24 @@ export function hex(bytes: Uint8Array): string {
  * Hand-built blocks have to carry a real solution: `powTargetBits` must equal
  * the height schedule, so declaring target 0 to sail past PoW is itself a
  * rejected block and never reaches the checks behind it.
+ *
+ * A header outside the encodable domain has no PoW preimage — `computePowHash`
+ * answers `null` for it whatever its nonce — so no nonce satisfies it, and this
+ * throws before the search, naming the header and its first field outside the
+ * domain: the search would never end, and a synchronous loop is beyond the test
+ * runner's timeout.
  */
 export function solveHeaderPow(header: BlockHeader): number {
+  const template = { ...header, powNonce: 0 };
+  if (computePowHash(template) === null) {
+    // `null` on exactly the headers `verifyHeaderFieldDomains` refuses, so its
+    // reason names the field (VALIDATION_INTERFACE → computePowHash).
+    const { error } = verifyHeaderFieldDomains(template);
+    throw new Error(
+      `solveHeaderPow: the header at height ${header.height} is outside the encodable domain ` +
+      `(${String(error)}) — no nonce solves it`,
+    );
+  }
   for (let nonce = 0; ; nonce++) {
     if (verifyOrderingBlockPoW({ ...header, powNonce: nonce })) return nonce;
   }
