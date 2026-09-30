@@ -38,6 +38,7 @@ const TEST_KEYS = [
   'TREASURY_PUBKEY',
   'AVL_KEY_LENGTH',
   'MAX_PROOF_HISTORY',
+  'PROOF_RETENTION_BLOCKS',
 ];
 
 function clearTestEnv() {
@@ -746,6 +747,38 @@ describe('config', () => {
       process.env['BOOTSTRAP_PEERS'] = '';
       const { loadConfig } = await import('../src/config.js');
       expect(loadConfig().bootstrapPeers).toEqual([]);
+    });
+  });
+
+  // NODE_INTERFACE → Configuration: `PROOF_RETENTION_BLOCKS`, `local`, the
+  // blocks whose proofs `GET /blocks/:height/proof` serves (→ The block proof).
+  describe('15. PROOF_RETENTION_BLOCKS', () => {
+    function importWithRetention(value: string) {
+      process.env['PROOF_RETENTION_BLOCKS'] = value;
+      return import('../src/config.js');
+    }
+
+    it('defaults to 10080 — a week at 60 s', async () => {
+      const { loadConfig } = await import('../src/config.js');
+      expect(loadConfig().proofRetentionBlocks).toBe(10_080);
+    });
+
+    it('reads a set value, zero included — the tip\'s proof alone', async () => {
+      const { loadConfig } = await importWithRetention('30');
+      expect(loadConfig().proofRetentionBlocks).toBe(30);
+      vi.resetModules();
+      expect((await importWithRetention('0')).loadConfig().proofRetentionBlocks).toBe(0);
+    });
+
+    // Refused rather than defaulted: a retention nobody can read is a policy
+    // nobody chose — `NaN` prunes nothing, forever, and a negative one prunes
+    // the proof apply has just stored.
+    it('refuses a value that is not a non-negative integer', async () => {
+      await expect(importWithRetention('a week')).rejects.toThrow(/PROOF_RETENTION_BLOCKS/);
+      vi.resetModules();
+      await expect(importWithRetention('-1')).rejects.toThrow(/PROOF_RETENTION_BLOCKS/);
+      vi.resetModules();
+      await expect(importWithRetention('2.5')).rejects.toThrow(/PROOF_RETENTION_BLOCKS/);
     });
   });
 });

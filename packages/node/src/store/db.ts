@@ -172,6 +172,14 @@ const MIGRATIONS = [
     journal_cbor BLOB NOT NULL
   )`,
 
+  // Block proofs — each applied block's AVL+ proof, the one its checkpoint made
+  // (NODE_INTERFACE → The block proof): written in the apply transaction,
+  // deleted with its block on a revert, pruned below tip − PROOF_RETENTION_BLOCKS.
+  `CREATE TABLE IF NOT EXISTS block_proofs (
+    height INTEGER PRIMARY KEY,
+    proof BLOB NOT NULL
+  )`,
+
   // Discovered peers — persistence behind net's PeerStorage seam (audit L-14).
   // Shaped to net's PeerRecord, keyed by multiaddr: PeerDb dedupes by address,
   // and a libp2p peerId is freely regenerable so it makes a worthless key.

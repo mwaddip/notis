@@ -64,6 +64,8 @@ import {
   getVouchBoxes,
   getLikeAccrualBoxes,
   getBondsInvitedAt,
+  putBlockProof,
+  pruneBlockProofs,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
 import { insertBlockJournal, purgeOldJournals } from '../store/journal.js';
@@ -523,8 +525,10 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
   // The effects written to the store, and the block journal built from them.
   const journal = writeBlockEffects(result.effects, height);
 
-  // Checkpoint prover state at this height
-  checkpointProver(handle, height);
+  // Checkpoint prover state at this height. Its proof is the block's — its
+  // reads, then its writes — stored with the block in this transaction
+  // (NODE_INTERFACE → The block proof).
+  putBlockProof(height, checkpointProver(handle, height));
 
   // 14. Persist journal and purge old ones
   insertBlockJournal(journal);
@@ -533,6 +537,9 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
   // (NODE_INTERFACE → Fork choice decides on verified headers).
   purgeOldJournals(height - config.maxReorgDepth);
   purgeRefusedHeaders(height - config.maxReorgDepth);
+  // What a node serves, not what it applies: proofs are kept for
+  // PROOF_RETENTION_BLOCKS behind the tip (NODE_INTERFACE → The block proof).
+  pruneBlockProofs(height - config.proofRetentionBlocks);
 
   // The one site where an absence is simply printed. `applyOrderingBlock` ran
   // `verifyOrderingBlockStructure` over this header before calling us, so it is

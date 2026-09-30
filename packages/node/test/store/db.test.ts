@@ -22,6 +22,7 @@ const EXPECTED_TABLES = [
   'network_record',
   'ordering_blocks',
   'block_journal',
+  'block_proofs',
   'system_config',
   'utxo_boxes',
 ];

@@ -47,6 +47,8 @@ export interface BlocksDeps {
   /** The profile's era schedule — /status serves the era at blockHeight + 1. */
   protocolVersionSchedule: readonly ProtocolEra[];
   countUsernames(): number;
+  /** The AVL+ proof of the block at a height, or `null` where this node holds none (NODE_INTERFACE → The block proof). */
+  getBlockProof(height: number): Uint8Array | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -125,6 +127,25 @@ export function createRouter(deps: BlocksDeps): Router {
     }
 
     res.json(blockToJson(block));
+  });
+
+  // GET /blocks/:height/proof — NODE_INTERFACE → Blocks: the block's AVL+ proof
+  // as the bytes it is, the one route that is not JSON (NODE_INTERFACE → The
+  // block proof). Its refusals are JSON, as every other route's are.
+  router.get('/blocks/:height/proof', (req, res) => {
+    const height = parseInt(req.params['height']!, 10);
+    if (!Number.isSafeInteger(height) || height < 0) {
+      res.status(400).json({ error: 'Invalid height' });
+      return;
+    }
+
+    const proof = deps.getBlockProof(height);
+    if (proof === null) {
+      res.status(404).json({ error: 'Proof not found' });
+      return;
+    }
+
+    res.type('application/octet-stream').send(Buffer.from(proof.buffer, proof.byteOffset, proof.byteLength));
   });
 
   // GET /status — aggregated node status
