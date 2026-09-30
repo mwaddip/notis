@@ -52,6 +52,7 @@ function makeHeader(
     powTargetBits: P_dev.anchorBits,
     createdAt: t_a,
     interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
     ...overrides,
   };
 }
