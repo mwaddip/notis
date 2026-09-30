@@ -212,12 +212,12 @@ describe('seedGenesisState', () => {
   });
 
   it('the three networks reach three distinct height-0 roots', async () => {
-    // ⚠ **Roots, not payloads.** testnet and devnet share the hardcoded system
-    // identity and both box values, so their karma and credit boxes are
-    // byte-identical and carry the same ids. The proof box is the only thing
-    // separating those two genesis states — a payload that never reached the
-    // tree would leave them colliding silently, and a test over the profile
-    // strings could not see it.
+    // ⚠ **Roots, not payloads.** The inputs that separate the networks — the
+    // proof box's payload, the emission total, the faucet identity and the
+    // backer table (ARCHITECTURE → How the network is committed → "The
+    // mechanism this row names is `genesisStateRoot`, and the node refuses to
+    // run without it.") — separate them only where they reach the tree, which a
+    // test over the profile strings could not see.
     const roots = [];
     for (const network of ['mainnet', 'testnet', 'devnet']) {
       roots.push((await underProfile(network)).root);

@@ -30,7 +30,7 @@ export interface CreditTransferResult {
  * Building the transfer server-side and applying it with
  * `consumeBox`/`insertBox` directly — no block, no journal — bypasses
  * consensus entirely (audit F-consensus-7): the transfer enters no block,
- * produces no journal entries, never reaches the AVL feed, and the divergence
+ * produces no journal entries, never reaches the tree, and the divergence
  * detonates at the next restart-rebuild as a permanent `stateRoot` fork. A
  * server-side builder also has to mirror the client's transaction construction
  * byte-for-byte; taking the client's own transaction means there is no second

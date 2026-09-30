@@ -12,12 +12,12 @@ import {
  * A block whose two transactions name one input is REJECTED, and the tree is
  * never asked to remove that id twice.
  *
- * ⛔ **This is what keeps `DivergedStateTreeError` off the peer-reachable side
- * of the fail-stop boundary** (NODE_INTERFACE → "What the funnel's totality
- * catch is FOR"), and the mechanism is not local to one file. The block's
- * effects list a remove per spend, and the prover feed derived from them cancels
- * insert-then-remove pairs but does **not** dedupe repeated removes — so a
- * `consumed` list carrying one id twice would refuse on the second `Remove`.
+ * ⛔ **This is what keeps a double spend a verdict rather than a throw**
+ * (NODE_INTERFACE → "What the funnel's totality catch is FOR"), and the
+ * mechanism is not local to one file. The block's effects list a remove per
+ * spend, and the tree writes derived from them net insert-then-remove pairs and
+ * throw on a key written twice (CONSENSUS_INTERFACE → The tree writes → "No key
+ * takes two writes in one block") — a defect's throw where a verdict belongs.
  *
  * What prevents it: the single-pass input check resolves against the state as
  * the loop evolves it. Once the first transaction's `applyTx` spends the box,

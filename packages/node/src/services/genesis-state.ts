@@ -105,12 +105,12 @@ function markGenesisCommitted(): void {
  *
  * Genesis has no history to lose. The tree is **empty**, the input is a
  * **fixed, known set** — the proof box, the emission box and the karma supply
- * pool on every network, plus the faucet identity's karma and credit boxes on
- * the profiles that name one —
- * and the order is
- * specified rather than whatever a set read produced. Every node on a network
- * performs the identical operation on an identical empty tree, so the resulting
- * root is reproducible by construction.
+ * pool on every network; the faucet identity's karma and credit boxes on the
+ * profiles that name one; a karma box per committee key; a stake per backer
+ * table row, with the backer pool beside them where the table has rows — and
+ * the order is specified rather than whatever a set read produced. Every node on
+ * a network performs the identical operation on an identical empty tree, so the
+ * resulting root is reproducible by construction.
  *
  * **The insertion order is normative and is NOT this function's to choose.**
  * AVL+ shape is order-dependent, so "the genesis set is these boxes" does not
@@ -333,7 +333,7 @@ export function seedGenesisState(): void {
       // created (TYPES_INTERFACE → EmissionBox's rule, which TreasuryBox
       // inherits). The first block whose `split.treasury` is nonzero creates it.
 
-      // **The feed is read back from the store, never assembled from what the
+      // **The seed is read back from the store, never assembled from what the
       // seeders returned.** What the state root must cover is the UTXO set, so
       // reading the set is what makes the tree cover it *by construction*
       // rather than by each helper happening to hand back everything it wrote.

@@ -14,11 +14,11 @@ export default mergeConfig(
       // reflects the workload instead of per-test annotations chasing it.
       testTimeout: 60_000,
       env: {
-        // The suite mines real PoW at `expectedTarget()`, which reads the
-        // process config singleton — a `Config` a test injects cannot reach
-        // it. Devnet is the profile whose ordering-block target stays
-        // trivially solvable, so the suite runs there and the testnet target
-        // is free to carry a real difficulty.
+        // The suite mines real PoW at `scheduledTargetBits` (MINING_INTERFACE →
+        // Difficulty Schedule), which reads the process config singleton — a
+        // `Config` a test injects cannot reach it. Devnet is the profile whose
+        // ordering-block target stays trivially solvable, so the suite runs
+        // there and the testnet target is free to carry a real difficulty.
         // TYPES_INTERFACE → Network profiles.
         NETWORK_TYPE: 'devnet',
       },

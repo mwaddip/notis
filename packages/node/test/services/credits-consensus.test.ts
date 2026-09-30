@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // A credit transfer is a transaction, and it settles when it is mined
 // (NODE_INTERFACE → Credits): pooled at submission and applied by the block
-// that carries it, so the block's journal, the AVL feed and a prover rebuilt
-// from `getUnspentBoxes()` at restart all hold it.
+// that carries it, so the block's journal, the tree and a prover rebuilt from
+// `getUnspentBoxes()` at restart all hold it.
 // ---------------------------------------------------------------------------
 import { describe, it, expect, vi, onTestFinished } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
@@ -264,7 +264,7 @@ describe('credit transfers ride consensus', () => {
     expect(change!.index).toBe(1);
 
     // The journal carries both sides of the transfer — this is what the
-    // direct-mutation path never produced, and what the AVL feed reads.
+    // direct-mutation path never produced.
     const journal = journalStore.getBlockJournal(1);
     expect(journal).not.toBeNull();
     const muts = boxMutations(journal!);
@@ -372,7 +372,7 @@ describe('credit transfers ride consensus', () => {
     expect(block3!.utxoTxTree.utxoTxIds).toContain(pooled.txId);
     expect(ordering.getCurrentHeight()).toBe(3);
 
-    // The transfer reached the AVL feed: the digest moved at the block, and
+    // The transfer reached the tree: the digest moved at the block, and
     // the live tree now authenticates the transfer outputs and has dropped
     // the spent input.
     expect(digestHex(handle)).not.toBe(preBlockDigest);

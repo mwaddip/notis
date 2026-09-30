@@ -535,8 +535,9 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
 
   it('identity record: an invite grant writes two record mutations and the journal reverts both', async () => {
     // The record mutation class: a block that writes the same record key
-    // **twice**, exercising the prover feed's collapse-to-last-write
-    // rule. An invite grant fires two writers at one height for the invitee:
+    // **twice**, exercising the tree writes' collapse to the last write
+    // (CONSENSUS_INTERFACE → The tree writes → "No key takes two writes in one
+    // block"). An invite grant fires two writers at one height for the invitee:
     //   1. The settlement's karma output → `insertBox` → `bumpActivityClock`
     //      → `putIdentityRecord(lastActivityBlock: H)`
     //   2. The invite loop (§11a-ii) → `putIdentityRecord(invitedAtBlock: H)`

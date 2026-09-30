@@ -130,9 +130,8 @@ export function ensureSystemKarmaBox(systemPubKey: Uint8Array, currentHeight: nu
  * to spend it with. Karma takes the other path because a karma transfer does
  * not exist to be performed.
  *
- * Returns the box for the same reason `ensureSystemKarmaBox` does: the cold-start
- * caller has to hand what it seeded to the AVL feed, and re-reading it from the
- * store afterwards would be a second derivation of the same fact.
+ * Returns the box, as `ensureSystemKarmaBox` does; the genesis seed reads its
+ * input back from the store, never from a seeder's return (`seedGenesisState`).
  */
 export function ensureFaucetCreditBox(
   systemPubKey: Uint8Array,
