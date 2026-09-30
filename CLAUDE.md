@@ -207,7 +207,7 @@ differs between versions branches on the era as passed in, never on a module con
 
 Every 32-byte digest the packages the browser runs compute is `@dagsocial/types`' `hash32`: BLAKE2b-512 over
 `@noble/hashes`, the first 32 bytes — one implementation for the node and the browser
-(`TYPES_INTERFACE → The protocol hash`). Node-only code — the node's own record keys, net's frame checksum, the
-miner script, the e2e suite — uses `createHash('blake2b512')` with `.subarray(0, 32)`, which answers the same bytes;
+(`TYPES_INTERFACE → The protocol hash`). Node-only code — net's frame checksum, the miner script, the e2e suite —
+uses `createHash('blake2b512')` with `.subarray(0, 32)`, which answers the same bytes;
 Node.js v22 has no `blake2b256`, and a 32-byte BLAKE2b digest is a different function from the first 32 bytes of a
 64-byte one.
