@@ -644,7 +644,7 @@ boxes either fully commits or fully fails. The ledger enforces:
 - New boxes are valid under protocol rules
 
 **Canonical bytes are the record; typed views are derived.** A box's identity
-(`canonicalBoxBytes` → id) and its state commitment (`serializeBox` → AVL leaf →
+(`canonicalBoxBytes` → id) and its state commitment (`boxRecordBytes` → tree value →
 `stateRoot`) are both computed from its byte form, so the byte form is the box;
 SQLite rows, DTOs and API JSON are views of it. Two obligations follow, one per
 direction. **Inbound:** any path admitting client-supplied structure into those
@@ -702,20 +702,16 @@ obligation.
 
 #### AVL+ State Root
 
-The UTXO set is indexed by an AVL+ authenticated dictionary. Every ordering
-block header carries a `stateRoot` — the root hash of the AVL+ tree over all
-unspent boxes **after this block has been applied**. This enables light clients
-to verify box existence or absence without storing the full UTXO set.
+The state is indexed by an AVL+ authenticated dictionary. Every ordering
+block header carries a `stateRoot` — the root hash of the AVL+ tree over the state
+**after this block has been applied**. This enables light clients
+to verify a box's or a record's existence or absence without storing the state.
 
 **Every read a consensus rule makes is a lookup under the state root** — one key, or a walk of one key range — so a
 leaf holding only a block's parent root can have each answer proven, and a leaf that proved a tip can prove what it
 holds against it, nothing left out. The tree holds the entities (boxes, identity, network, name and holder records,
 post and like records) and index entries derived from each entity's own fields; the keys are
 `TYPES_INTERFACE → The tree keys`, what the tree holds and how a read walks it `CONSENSUS_INTERFACE → The tree layout`.
-
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the tree holds boxes and four record kinds; the rules
-> also read the node's SQLite tables for a post's author, height and standing, a like record, and every query over an
-> owner's boxes or a due queue.
 
 - **Post-state, not parent-state (H-6).** `stateRoot` commits to the state the
   block *produces*, following Ergo. The block therefore commits to its own
@@ -725,20 +721,20 @@ post and like records) and index entries derived from each entity's own fields; 
   obtained without a second implementation of the state transition.
 
 - **Module:** `packages/node/src/state/` (avl-storage, avl-prover, avl-endpoint)
-- **Proof endpoint:** `GET /api/v1/proof/:boxId?atHeight=N` — returns an
-  inclusion or exclusion proof for a box at a given block height
+- **Proof endpoint:** `GET /api/v1/proof/:key?atHeight=N` — returns an
+  inclusion or exclusion proof for a tree key at a given block height
 - **Config flags:** `MAX_PROOF_HISTORY` (`local` — prune old proof versions). The
   stateRoot check at block apply is unconditional — no variable disables it.
-  **`AVL_KEY_LENGTH`** is no longer configuration at all — it is a
+  The key width is no configuration at all — it is **`TREE_KEY_LENGTH`**, a
   `@dagsocial/types` export (TYPES_INTERFACE → State format), imported by `config.ts` and
   plumbed through `Config.avlKeyLength`. It determines the **shape** of every `stateRoot`,
-  so two nodes differing on it compute different digests for identical state; P2-A removed
-  its environment read and the types export gives a second implementation an authoritative
+  so two nodes differing on it compute different digests for identical state; no environment
+  variable reads it, and the types export gives a second implementation an authoritative
   definition to read.
 - **Deterministic across the same mutation *history*, not across the same
   *content*.** Every node that applies the same blocks in the same order —
-  and holds the same `AVL_KEY_LENGTH` — produces the identical stateRoot. Box
-  `value` serializes through `vlqU64` in `boxRecordBytes`, so the AVL leaf bytes are
+  and holds the same `TREE_KEY_LENGTH` — produces the identical stateRoot. Box
+  `value` serializes through `vlqU64` in `boxRecordBytes`, so the tree's value bytes are
   stable across implementations.
 
   > ⚠ **This bullet used to read "every node computing the AVL+ over the same
@@ -1506,16 +1502,11 @@ chain or owed one:
 | **usernames** (2026-09-10) | **nothing that exists** — box tag 14, two AVL leaf domains, a store table and two nullable mempool columns are *added*; no existing byte, layout or verdict moves. **Owes no reset** (→ "When a reset is not owed") — the first change of its class |
 | **posting is activity** (2026-09-12) | the identity leaf's `lastActivityBlock` on every identity that liked, invited, vouched, claimed or withdrew, so every `stateRoot` from the first such spend; the like verdict — a self-like is refused (§Likes); the settlement's `actors` — a bare consolidation counts nobody (MINING_INTERFACE → Coinbase Application) |
 | **the backer pool** (2026-09-12) | the genesis box set on testnet and devnet — one `BackerStakeBox` per table row and the `BackerPoolBox`, so both networks' `genesisStateRoot` pins; the settlement of every block inside the accrual window (the pool box's successor) and of every block carrying an unstake; three box-type tags. Mainnet's genesis is untouched while its table is empty. **Rides the collected reset** with the row above |
+| **the tree layout** (2026-09-30) | every tree key and its width (`TREE_KEY_LENGTH`, 65), so every `stateRoot` and all three `genesisStateRoot` pins; the tree gains post, like and index entries and a cast count per voucher; the name record gains `claimedAtBlock`; the lapse leg's order, so the settlement of every block with two or more lapsed vouches. **Owes the reset**, which it rides with the block proof (N3) |
 
-**Outstanding against the live node: the tree layout** (the marker below). Testnet's live chain began at the
+**Outstanding against the live node: the tree layout** (the row above). Testnet's live chain began at the
 2026-09-15 reset; every row above is in it, and the usernames row owes none. The profile leaves testnet's `genesisId`
 empty (§What varies per network) until the reset the tree layout owes mines a new block 1.
-
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the register gains **the tree layout**: every AVL key
-> and value width (`TREE_KEY_LENGTH` 65), so every `stateRoot` and all three `genesisStateRoot` pins; the tree gains
-> post, like and index entries and a cast count per voucher; the name record gains `claimedAtBlock`; the lapse
-> leg's order, so the settlement of every block with two or more lapsed vouches. It owes the reset, which it rides with the
-> block proof (N3).
 
 **When a reset is not owed.** A change that **adds** a box-type tag, an AVL leaf domain, a store table
 or a nullable column, and leaves every existing committed byte and every existing rule's verdict
@@ -1802,7 +1793,7 @@ axis rather than opening a fourth.
 > same ASERT with a low ceiling as its cost cap — a relaxed cap, not a different mechanic.
 
 **Universal — every other constant, including consensus ones:** the format limits
-(`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`, `PROTOCOL_VERSION`, `AVL_KEY_LENGTH`) and **every
+(`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`, `PROTOCOL_VERSION`, `TREE_KEY_LENGTH`) and **every
 karma and credit cost** (`LIKE_KARMA_COST`, `LIKES_PER_KARMA_PAYOUT`, `POST_PRICE_*`, `REPLY_AUTHOR_SHARE`,
 `VOUCH_KARMA_AMOUNT`, `INVITE_BOND_VEST_PER_LIKES`, `MEMBER_LIKES_MULTIPLIER`, `KARMA_MINIMUM`,
 `KARMA_DECAY_AMOUNT`,
@@ -2721,8 +2712,8 @@ backfill — and a withdrawn post keeps its row with `content` `NULL` and its ma
   pool). The Solana contract itself is outside this repository
 - **The backer unstake control in the web client**, and the profile window's copyable public key for the
   deposit flow (`WEB_INTERFACE`)
-- **A leaf that validates blocks without holding the state:** every consensus read a keyed record under the state
-  root (**N2** — `CONSENSUS_INTERFACE → StateView` marks each read that moves), and a per-block proof of the block's
-  reads and writes committed in the header as `ADProofsRoot` (**N3** — the keys a recording view answered, beside the
-  effects' writes, are its list: `CONSENSUS_INTERFACE → BlockEffects`); then the leaf's verifier over them (**N4**).
-  N2 and N3 move committed bytes, so they ride one reset together
+- **A leaf that validates blocks without holding the state.** Every consensus read is a keyed record under the state
+  root already (`CONSENSUS_INTERFACE → The tree layout`); what remains is a per-block proof of the block's reads and
+  writes committed in the header as `ADProofsRoot` (**N3** — the keys the block's tree view looked up, then its tree
+  writes: `CONSENSUS_INTERFACE → The tree writes`), and the leaf's verifier over them (**N4**). N3 moves committed
+  bytes, so it rides the tree layout's reset (→ Deploy gate)
