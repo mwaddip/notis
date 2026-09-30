@@ -503,6 +503,7 @@ export function candidateBlock(
       powTargetBits: 0,
       createdAt: 0,
       interlinkRoot: '0'.repeat(64),
+      adProofsRoot: '0'.repeat(64),
     },
     utxoTxTree: {
       utxoTxIds: [...txs.map((b) => b.txId), computeTxId(settled.tx)],
