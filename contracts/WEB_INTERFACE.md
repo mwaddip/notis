@@ -340,7 +340,7 @@ while the tab is visible — a tab that becomes visible again runs one only when
 and when a name check asks for one (→ "The verified names"); one run at a time, a trigger during a run being that run; a change of the node being read drops the verdict and any
 run still in flight for the node before, and runs again; a run that ends without a verdict leaves the corner where
 none has returned; nothing is stored. A run
-asks `GET /nipopow/proof/6/20` (`NODE_INTERFACE → Nipopow`) of the reading node first and then of the others, duplicates
+asks `GET /nipopow/proof/24/20` (`NODE_INTERFACE → Nipopow`; `CONSTANTS → Client defaults`) of the reading node first and then of the others, duplicates
 dropped, one after another, each under the tool's ten-second timeout — and needs no host permission, since every node
 answers every origin. **The reading node is asked first, so the fold's own rule gives the comparison its meaning**: a
 tie keeps the first, and a winner at index `0` says the reading node holds the best chain or ties for it
@@ -361,6 +361,9 @@ the first row that holds:
 | verified, and shares no block with another node's proof | `thin` · *split* |
 | verified, and no other node did | `thin` · *one-node* |
 | verified — best, tied, or behind on the winner's own chain — with at least one other verified | `verified`, with the count |
+
+> ⚠ **AHEAD OF CODE (2026-09-30, client m)** — the extension asks `/nipopow/proof/6/20` and the tool's `--m` defaults to
+> 6; `nipopow`'s comparator pins and `scripts/extension-check/run.mjs` assume 6.
 
 **The verdict is total by itself**: the last four rows hold only for a reading node the result marks verified, beside
 the result's own tip. A reading node left unverified under no code, or a verified one beside no tip, reads `refused` ·
