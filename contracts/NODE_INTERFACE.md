@@ -1119,7 +1119,7 @@ any of them (`genesis_proof` is never spent at all).
 Transaction outputs are attacker-controlled structure (HTTP JSON through
 `jsonToTx`, gossip and block-embedded positional decodes), and their bytes-level
 consumers assume the per-type field domains: `canonicalBoxBytes` (the id
-preimage) and `serializeBox` (the AVL leaf, so the `stateRoot`) write the
+preimage) and `boxRecordBytes` (the tree value, so the `stateRoot`) write the
 declared field set for the output's `boxType`, where an out-of-domain value
 throws (`b32`, `vlqU64OrThrow`) or **collides on the sentinel** (`vlqU` —
 TYPES_INTERFACE → Totality), and the transition arms' reads of byte fields
@@ -2561,17 +2561,14 @@ user transaction spends an escrow (`BLOCK_APPLICATION_ONLY`).
 ⚠ **The lapse leg reads PRE-BODY state too, and its predicate is the record's.** The settlement
 of height `h` consumes **at most `MAX_LAPSE_WITHDRAWALS_PER_BLOCK`** of the unspent `vouch` boxes
 whose `voucherId` fails `member(voucher)` — `memberSinceBlock > 0 ∧ memberVouches ≥ memberBar` on
-the identity record — in the state the block builds on, ascending box id, and emits for each one
-a `VouchEscrowBox` of the vouch's value to the voucher with `releaseAtBlock =
-vouch.createdAtBlock + vouchCooldownBlocks`: the unvouch shape exactly (→ Vouch transition
-rules), so the stake returns by the escrow leg and the escrow bars a recast as the voucher's own
-withdrawal would.
-
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the order becomes **voucher by voucher, each voucher's
-> vouches in target order** — the tree's `lapsed` and `vouchPair` walks (`CONSENSUS_INTERFACE → The tree view`) — in
-> place of ascending box id, so the leg reads no more of the tree than its limit takes. A voucher's place in the order
-> is its key's; the leg defers a withdrawal by blocks at most, never denies one (`TYPES_INTERFACE → Settlement caps`). A member who lapses in this block's body is withdrawn from `h + 1` on; a voucher
-who re-qualifies before the leg reaches a box keeps it; a candidate stays eligible until a block
+the identity record — in the state the block builds on, **voucher by voucher, each voucher's vouches in target
+order** — the tree's `lapsed` and `vouchPair` walks (`CONSENSUS_INTERFACE → The tree view`), so the leg reads no more
+of the tree than its limit takes, and a voucher's place in the order is its key's — and emits for each one a
+`VouchEscrowBox` of the vouch's value to the voucher with `releaseAtBlock = vouch.createdAtBlock +
+vouchCooldownBlocks`: the unvouch shape exactly (→ Vouch transition rules), so the stake returns by the escrow leg and
+the escrow bars a recast as the voucher's own withdrawal would. The leg defers a withdrawal by blocks at most, never
+denies one (`TYPES_INTERFACE → Settlement caps`). A member who lapses in this block's body is withdrawn from `h + 1`
+on; a voucher who re-qualifies before the leg reaches a box keeps it; a candidate stays eligible until a block
 consumes it or its voucher re-qualifies, and the predicate is derivable from state, so no cursor
 is stored. Each consumption subtracts one from the target's `memberVouches` iff counted, through
 the same function the unvouch uses, and the membership pass of the same block records the lapses
@@ -2705,9 +2702,6 @@ a tidiness argument.
 ascending box id, ascending height, and the tree's key order — a range read's walk, which orders the lapses by
 `(voucher, target)` (`CONSENSUS_INTERFACE → The tree view`). Anything read from the tree or a table needs a stated
 total order or it is not one.
-
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the node answers the rules from SQLite, whose lapse
-> query orders by ascending box id; the tree's key order reaches the lapse leg when the node's reads move to the tree.
 
 #### ⛔ It is the LAST entry in `utxoTxIds`, and that is how it is identified
 
@@ -2883,19 +2877,18 @@ know that digest **before** mining — it cannot be filled in afterwards.
 **It is obtained by running this block's own body through the same code the
 apply path runs**, never by a second implementation of the state transition:
 
-1. Snapshot the prover digest.
-2. Run `applyBlock` over the store's `StateView` with the candidate block —
-   the mutation phase (see "Apply funnel: validation and mutation phases") at
-   the candidate's height. It reads the store and writes nothing.
-3. Derive the prover feed from its effects and compute the digest exactly as
-   apply does, then restore the prover to the snapshot (`prover.rollback`).
+1. Save the in-memory prover's `root` and `height`.
+2. Run `applyBlock` over a tree view on the prover (→ AVL+ State Root, "The rules read the tree, and nothing else")
+   with the candidate block — the mutation phase (see "Apply funnel: validation and mutation phases") at the
+   candidate's height. It writes nothing.
+3. Perform `treeWritesOf`'s writes over the same view and read the digest, exactly as apply does; then put the saved
+   pair back with `restoreRoot`, whatever the outcome — immediate, because the library never mutates a node, so no
+   template rebuilds the tree from storage (`prover.rollback` resolves every label from SQLite).
 4. Use the computed digest as `header.stateRoot`, then mine.
 
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — step 1 saves the in-memory prover's `root` and
-> `height`; step 2 runs over the tree view on the prover (→ AVL+ State Root, "The rules read the tree, and nothing
-> else"); step 3 performs `treeWritesOf`'s writes, reads the digest and puts the saved pair back with `restoreRoot` —
-> immediate, because the library never mutates a node — so no template rebuilds the tree from storage
-> (`prover.rollback` resolves every label from SQLite).
+**The run starts at a proof-cycle boundary** — after a checkpoint, a rollback or a proof, as every caller's does — so
+the pair `restoreRoot` puts back is the whole of the prover's state: it discards the run's recorded directions and
+modified nodes and leaves nothing of an earlier cycle to lose.
 
 The speculative run writes nothing to the store — no block, no effect, no
 journal — and performs no `clearTemplate` and no prover checkpoint.
@@ -2913,9 +2906,6 @@ union so no caller can conflate them):
 produces nothing and evicts nothing; an apply funnel that finds none throws, which its catch turns into a refusal kept
 off the mark (→ Fork choice decides on verified headers → "What is remembered, and what is not") — a local fault
 either way, never a block without a root check and never a header carrying `EMPTY_STATE_ROOT`.
-
-> ⚠ **AHEAD OF CODE (2026-09-30, N2 state layout, stage A)** — with no prover initialized, the speculation answers
-> `no-prover`, the creator writes `EMPTY_STATE_ROOT` and produces, and apply skips its root check.
 
 **Body rejected is fatal to production, and the eviction is not optional.**
 Mining over a body this node's own mutation phase refuses produces a block
@@ -3063,10 +3053,8 @@ because every box is) until their next liked block.
 Storage backends implement this interface. SQLite is the backend.
 Fresh schema — no migration.
 
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — **no store function is a consensus input**: the rules
-> read the tree (→ AVL+ State Root, "The rules read the tree, and nothing else"), so a function below marked
-> **Consensus input** answers the API and the shadow run alone, and the three record keys this section derives are
-> `types`' tree keys (`TYPES_INTERFACE → The tree keys`).
+**No store function is a consensus input**: the rules read the tree (→ AVL+ State Root, "The rules read the tree, and nothing else"). A store read answers the API, the pool's
+admission and the shadow run; where it is the store's answer to a rule's read, its row says which.
 
 ### Database lifecycle
 
@@ -3177,9 +3165,9 @@ walks a subtree over topology (the thread's subtree is `dag_parent_refs`', Store
 | `getKarmaOwners()` | `() => string[]` — every identity holding a live karma box, as hex, in no stated order: what net's relay-gate set is seeded from at startup and re-seeded from once a reorg commits (→ Post transactions); a set, so no order reaches anything |
 | `getKarmaBoxes(owner)` | `(Uint8Array) => KarmaBox[]` — multi-box listing: full boxes, keyed on `id` |
 | `getBackerStakeBox(owner)` | `(UserId) => BackerStakeBox \| null` — the identity's live stake, at most one (→ Backer transition rules) |
-| `getBackerPoolBox()` | `() => BackerPoolBox \| null` — the one live pool box, `ORDER BY id LIMIT 1` like the emission, treasury and karma-pool reads; null on a network whose table is empty. **Consensus input**: the settlement's backer leg, read from pre-body state on both sides (§The settlement transaction), never at the check |
+| `getBackerPoolBox()` | `() => BackerPoolBox \| null` — the one live pool box, `ORDER BY id LIMIT 1` like the emission, treasury and karma-pool reads; null on a network whose table is empty. The store's answer to the settlement's backer-leg read (§The settlement transaction), for the API and the shadow run; the rules read the tree's (→ AVL+ State Root, "The rules read the tree, and nothing else") |
 | `getKarmaBoxesPage(owner, page)` | `(Uint8Array, Page<BoxKey>) => { rows: KarmaBox[], next: BoxKey \| null, count: number }` — the view's page of the set `getKarmaBoxes` reads, `ORDER BY value DESC, id` strictly after `after` (two index ranges — `value = ? AND id > ?`, then `value < ?` — concatenated in that order), over the same `KARMA_UNSPENT_WHERE` fragment; never a consensus input — every balance check reads the whole set through `getKarmaBoxes` / `getKarmaValue` |
-| `getKarmaValue(owner)` | `(Uint8Array) => bigint` — **summed** value of every unspent karma box. **Consensus input** (the vouch minimum-balance gate), and the single implementation every validation path shares. It must sum, never read one box: `getKarmaBox` is `LIMIT 1` with no `ORDER BY`, so a single-box read makes the verdict a function of SQLite's physical row order — M-12's class. Kept as one store function rather than a closure per deps literal, because a consensus-critical read reproduced at each call site is the mirror pattern that produced `computeTxIdLocal` and the copied `u32BE`. The predicate is the `KARMA_UNSPENT_WHERE` fragment that `getKarmaTotal`, the `COUNT` and the page share — the set is named once; the sum is computed here, in process |
+| `getKarmaValue(owner)` | `(Uint8Array) => bigint` — **summed** value of every unspent karma box: the pool's admission reads it for the vouch minimum-balance gate, and the shadow run; the rules read the tree's (→ AVL+ State Root, "The rules read the tree, and nothing else"). It must sum, never read one box: `getKarmaBox` is `LIMIT 1` with no `ORDER BY`, so a single-box read makes the verdict a function of SQLite's physical row order — M-12's class. Kept as one store function rather than a closure per deps literal, because a consensus-critical read reproduced at each call site is the mirror pattern that produced `computeTxIdLocal` and the copied `u32BE`. The predicate is the `KARMA_UNSPENT_WHERE` fragment that `getKarmaTotal`, the `COUNT` and the page share — the set is named once; the sum is computed here, in process |
 | `getKarmaTotal(owner)` | `(Uint8Array) => bigint` — the view's total: `COALESCE(SUM(value), 0)` over `KARMA_UNSPENT_WHERE`, an index scan of the owner's unspent entries; `/karma/:userId`'s `total`. Never a consensus input, and equal to `getKarmaValue` on every owner (a test pins it) |
 | `getCreditBoxes(owner)` | `(Uint8Array) => CreditBox[]` — multi-box, `ORDER BY value DESC, id` — a total order, so element `[0]` is a deterministic read; there is deliberately **no single-box credit accessor** (an unordered `LIMIT 1` names an arbitrary row — M-12's class) |
 | `getCreditBoxesPage(owner, page)` | `(Uint8Array, Page<BoxKey>) => { rows: CreditBox[], next: BoxKey \| null, count: number }` — the view's page of the set `getCreditBoxes` reads, the same order and clause, over the `CREDIT_UNSPENT_WHERE` fragment |
@@ -3256,8 +3244,8 @@ read neither height that meets `insertBox` — a box's `createdAtBlock` is
 creator-declared, so a backdated box would backdate its owner's clock, and the
 `created_at_block` column is uncommitted. So the clock lives in committed state.
 
-**The type `IdentityRecord` and the key function `identityRecordKey` are `@dagsocial/types`'** (`TYPES_INTERFACE →
-Identity record and karma valuation`), as the layout is (`TYPES_INTERFACE → Layout — IdentityRecord`), so that a light
+**The type `IdentityRecord` and the record's tree key `identityKey` are `@dagsocial/types`'** (`TYPES_INTERFACE →
+Identity record and karma valuation`, `→ The tree keys`), as the layout is (`TYPES_INTERFACE → Layout — IdentityRecord`), so that a light
 client derives the key it asks a proof for and decodes the value it is served with the code the node runs. This section
 holds what is the store's: the table, its functions, the writers, the lifecycle, and what the fields mean.
 
@@ -3326,15 +3314,9 @@ one function (cast `+1`, consumption `−1`, each iff counted — → Vouch tran
 `memberLikes` by the like counters beside `lifetimeLikesReceived`, `invitesUsed` by the
 invite-create apply.
 
-**AVL key** — `blake2b512( IDENTITY_KEY_DOMAIN ‖ identityId )[0:32]`, **never
-the raw `identityId`.** Records and boxes share one 32-byte AVL keyspace, and
-an `identityId` is 32 *attacker-chosen* bytes (a public key): used raw, someone
-could grind a keypair whose pubkey equals a live box id and collide the two
-entity kinds in the tree. Hashing under a domain tag makes that infeasible and
-is what makes the two kinds provably disjoint.
-
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the key becomes `identity ‖ identityId`
-> (`TYPES_INTERFACE → The tree keys`): its first byte keeps it apart from every box key, raw id or not.
+**Tree key** — `identityKey(identityId)`: the tag `0x02`, then the raw `identityId` (`TYPES_INTERFACE → The tree
+keys`). An `identityId` is 32 *attacker-chosen* bytes (a public key), and the key's first byte — not a hash — is what
+keeps a record apart from every box key and every other entity kind, whatever the id.
 
 **Table:** `identity_records (identity_id BLOB PRIMARY KEY, last_activity_block
 INTEGER NOT NULL, last_decay_block INTEGER NOT NULL, invited_at_block INTEGER
@@ -3342,17 +3324,16 @@ NOT NULL DEFAULT 0, lifetime_likes_received INTEGER NOT NULL DEFAULT 0,
 member_since_block INTEGER NOT NULL DEFAULT 0, member_bar INTEGER NOT NULL DEFAULT 0,
 member_vouches INTEGER NOT NULL DEFAULT 0, member_likes INTEGER NOT NULL DEFAULT 0,
 invites_used INTEGER NOT NULL DEFAULT 0)`. The
-SQL table keys on the raw 32 bytes; the AVL key is derived. Both are total
+SQL table keys on the raw 32 bytes; the tree key is derived. Both are total
 functions of the identity, so the two representations cannot drift.
 
 #### Layout — IdentityRecord
 
 **The layout is `TYPES_INTERFACE → Layout — IdentityRecord`**, and its encoder `identityRecordBytes` /
 `identityRecordFromBytes` of `@dagsocial/types`, so that a light client decodes a proven record with the code the node
-runs. `state/serialize-box.ts` holds the network, name and holder records and dispatches the identity kind (`0x80`, →
-Entity kinds) to types' codec.
+runs; every record kind's codec is `types`' (`TYPES_INTERFACE → Layout — tree records`).
 
-The AVL value is `identityRecordBytes(record)` — no wrapper, no tag of this package's own: the tag is field 1 of the
+The tree value is `identityRecordBytes(record)` — no wrapper, no tag of this package's own: the tag is field 1 of the
 layout, as `enum8(boxType)` is field 1 of a box record, and the four-part boundary check applies on the read
 (`TYPES_INTERFACE → The boundary check`). Every field is always written, zero included; the domains and the
 encodable-versus-storable gap on `lifetimeLikesReceived` are stated with the layout.
@@ -3382,8 +3363,8 @@ that are structurally identical but semantically different; these are
 semantically the same thing, so it buys nothing and costs a cast at every
 boundary. **D5 is withdrawn** (spec corrected 2026-08-05).
 
-`IDENTITY_KEY_DOMAIN` is unaffected — it separates the record's AVL key from the
-box keyspace, which is a distinct concern from how the bytes are typed.
+The record's tree key is unaffected — its tag keeps it apart from the box keys, a distinct concern from how the
+bytes are typed.
 
 #### Populating the record
 
@@ -3505,16 +3486,10 @@ NetworkRecord {
 }
 ```
 
-**AVL key** — `blake2b512( NETWORK_KEY_DOMAIN )[0:32]`: the domain tag alone is the preimage, the
-identity key's hashing rule with nothing after the tag, so the three kinds are disjoint by domain
-separation (TYPES_INTERFACE → Domain tags). **Value** — `u8` **`0x81`** ‖ `vlqU(memberCount)`:
-the high bit says "not a box", as `0x80` does (→ Entity kinds), and the layout is positional
-like the record's (→ Layout — IdentityRecord). `deserializeBox` refuses the tag as it refuses
-`0x80`; the kind-dispatching decoder gains an arm; the proof endpoint serves it as
-`kind: 'network'`.
-
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the key becomes `network`, the tag alone, and the
-> codec is `types`' (`TYPES_INTERFACE → Layout — tree records`).
+**Tree key** — `networkKey()`: the tag `0x03` alone, zero-padded (`TYPES_INTERFACE → The tree keys`). **Value** —
+`u8` **`0x81`** ‖ `vlqU(memberCount)`, `types`' codec (`TYPES_INTERFACE → Layout — tree records`): the high bit says
+"not a box", as `0x80` does (→ Entity kinds). `boxFromRecordBytes` refuses the tag as it refuses `0x80`; the proof
+endpoint serves it as `kind: 'network'`.
 
 **Written** by the membership pass alone, once per block that changes `N`, through
 `putNetworkRecord` — journalled on `putIdentityRecord`'s pattern (→ Block Journal): the value it
@@ -3539,8 +3514,9 @@ The fourth and fifth committed entities: one record per held name and one per ho
 (`ARCHITECTURE → Usernames`; the arms → Username transition rules).
 
 ```
-UsernameRecord {                 // keyed by the name's canonical form
+NameRecord {                     // keyed by the name's canonical form
   boxId: string                  // hex — the live username box
+  claimedAtBlock: number         // the height of the block whose claim created it
 }
 
 HolderRecord {                   // keyed by the identity
@@ -3549,16 +3525,12 @@ HolderRecord {                   // keyed by the identity
 }
 ```
 
-**AVL keys** — `blake2b512( USERNAME_KEY_DOMAIN ‖ canonical(name) )[0:32]` and
-`blake2b512( USERNAME_HOLDER_KEY_DOMAIN ‖ identityId )[0:32]` (`TYPES_INTERFACE → Domain tags`);
+**Tree keys** — `nameKey(canonical(name))` and `holderKey(identityId)` (`TYPES_INTERFACE → The tree keys`);
 `canonical(name)` is the byte-wise ASCII lowercase (`TYPES_INTERFACE → Content limits`). **Values** —
-`u8` **`0x82`** ‖ `b32(boxId)` for the name record, and `u8` **`0x83`** ‖ `u8(claimAvailable)` ‖
-`opt(b32(boxId))` for the holder record: the high bit says "not a box" as `0x80` and `0x81` do (→ Entity
-kinds); `deserializeBox` refuses both tags; the kind-dispatching decoder gains two arms; the proof
-endpoint serves them as `kind: 'username'` and `kind: 'holder'`.
-
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the keys become `name ‖ nameLower` and
-> `holder ‖ identityId`, and both codecs are `types`' (`TYPES_INTERFACE → The tree keys`, `→ Layout — tree records`).
+`u8` **`0x82`** ‖ `b32(boxId)` ‖ `vlqU(claimedAtBlock)` for the name record, and `u8` **`0x83`** ‖
+`u8(claimAvailable)` ‖ `opt(b32(boxId))` for the holder record, both `types`' codecs (`TYPES_INTERFACE → Layout —
+tree records`): the high bit says "not a box" as `0x80` and `0x81` do (→ Entity kinds); `boxFromRecordBytes` refuses
+both tags; the proof endpoint serves them as `kind: 'username'` and `kind: 'holder'`.
 
 **An absent holder record means `{ claimAvailable: true, boxId: null }`, and a record equal to that
 meaning is never written** — a burn removes the record rather than writing the absent state, so absence
@@ -3599,10 +3571,10 @@ effects like any other box's (→ Block Journal); no bespoke side-records exist.
 
 | Function | Signature |
 |----------|-----------|
-| `hasActiveVouchEscrow(voucherId)` | `(UserId) => boolean` — true while any unspent `vouch_escrow` box names the voucher as `owner`. **Consensus input**: the cast gate (§Vouch transition rules) |
+| `hasActiveVouchEscrow(voucherId)` | `(UserId) => boolean` — true while any unspent `vouch_escrow` box names the voucher as `owner`. The store's answer to the cast gate's read (§Vouch transition rules), for the pool's admission and the shadow run; the rules read the tree's (→ AVL+ State Root, "The rules read the tree, and nothing else") |
 | `getVouchEscrowsFor(voucherId)` | `(UserId) => VouchEscrowBox[]` — the API's cooldown listing (`GET /vouches?voucher=X&cooldowns=1`) |
-| `getVouchEscrowsReleasableAt(height, limit)` | `(number, number) => VouchEscrowBox[]` — every unspent `vouch_escrow` with `releaseAtBlock <= height`, **ascending `(releaseAtBlock, box id)`**, capped at `limit`. **Consensus input**: the settlement's escrow leg; read from pre-body state on both sides (§The settlement transaction), never at the check |
-| `getLapsedVouches(limit)` | `(number) => VouchBox[]` — the unspent `vouch` boxes whose `voucherId`'s identity record fails `member(voucher)`, **ascending box id**, at most `limit`. **Consensus input**: the settlement's lapse leg; read from pre-body state on both sides (§The settlement transaction), never at the check |
+| `getVouchEscrowsReleasableAt(height, limit)` | `(number, number) => VouchEscrowBox[]` — every unspent `vouch_escrow` with `releaseAtBlock <= height`, **ascending `(releaseAtBlock, box id)`**, capped at `limit`. The store's answer to the settlement's escrow-leg read (§The settlement transaction), for the shadow run; the rules read the tree's (→ AVL+ State Root, "The rules read the tree, and nothing else") |
+| `getLapsedVouches(limit)` | `(number) => VouchBox[]` — the unspent `vouch` boxes whose `voucherId`'s identity record fails `member(voucher)`, **ascending box id**, at most `limit`. The store's answer to the settlement's lapse-leg read, in its own order — the shadow run compares it with the tree's as a set; the rules read the tree's, voucher by voucher (§The settlement transaction) |
 
 ⛔ **A block-application effect keyed on node-local SQL that no committed root
 covers is a fork waiting to happen** (§the settlement transaction's determinism
@@ -3760,7 +3732,7 @@ BoxMutation {
 
 RecordMutation {                   // identity records
   kind: 'record'
-  key: string                      // hex — H(IDENTITY_KEY_DOMAIN ‖ identityId), the AVL key
+  key: string                      // hex — identityKey(identityId), the record's tree key
   identityId: UserId               // the raw 32 bytes, so rollback can address the SQL row
   record: IdentityRecord           // the value written
   replaced?: IdentityRecord        // prior value — absent iff the key did not exist
@@ -3772,14 +3744,14 @@ NetworkMutation {                  // the network record — the member count
   replaced: NetworkRecord          // the prior value — always present: the record exists from seeding on
 }
 
-UsernameMutation {                 // the name record — key H(USERNAME_KEY_DOMAIN ‖ nameLower)
+UsernameMutation {                 // the name record — tree key nameKey(nameLower)
   kind: 'username'
   nameLower: string
   row: UsernameRow | null          // the row written; null on a burn — the record is removed
   replaced?: UsernameRow           // prior row — absent iff the key did not exist
 }
 
-HolderMutation {                   // the holder record — key H(USERNAME_HOLDER_KEY_DOMAIN ‖ owner)
+HolderMutation {                   // the holder record — tree key holderKey(owner)
   kind: 'holder'
   owner: UserId
   record: HolderRecord | null      // the value written; null on a burn — the record is removed
@@ -3790,7 +3762,7 @@ JournalMutation = BoxMutation | RecordMutation | NetworkMutation | UsernameMutat
 
 BlockJournal {
   blockHeight: number
-  mutations: JournalMutation[]     // ordered, application order — state rollback + AVL feed
+  mutations: JournalMutation[]     // ordered, application order — state rollback
   confirmedPostIds: string[]       // inverse: unconfirmPost — not a mempool key
   appliedUtxoTxs: Array<{ txId: string, txBytes: Uint8Array }>  // mempool re-insertion only
   likeRecordInsertions: Array<{ targetPostId: string, likerId: UserId }>
@@ -3807,23 +3779,16 @@ BlockJournal {
 The field names are the `journal_cbor` keys: the journal is the node's local format, with no
 migration path — a store written under a different key set is a different store.
 
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — a record mutation's `key` is its tree key
-> (`TYPES_INTERFACE → The tree keys`), hex, in place of the domain hash the comments above name; the index entries,
-> post and like records the tree gains are derived from what the journal already carries, so the journal holds none of
-> its own (`CONSENSUS_INTERFACE → The tree writes`).
+**The tree's writes are not the journal's.** `treeWritesOf` derives them from the same effects (`CONSENSUS_INTERFACE
+→ The tree writes`) — the index entries, post and like records included — so the journal carries no entry of the
+tree's own, and a revert restores the tree by its checkpointed version, never by replaying the journal into it.
 
-
-**One log, not parallel arrays.** `mutations` is a
-discriminated union over **every committed entity**, not a box-only log with
-sibling arrays. That is deliberate and load-bearing: a committed entity that
-never reaches the prover feed is silently absent from the `stateRoot`, and
-**no test can catch that** — the producer and the verifier omit it identically,
-so they agree on a digest over incomplete state. Making the feed derivation
-switch on `kind` turns "a new entity kind was added and nobody updated the
-prover feed" into a TypeScript exhaustiveness error. That compile-time check is
-the enforcement mechanism; do not replace it with a parallel
-`recordMutations: RecordMutation[]` array, which reinstates exactly the
-drift-by-omission shape P1 removed.
+**One log, not parallel arrays.** `mutations` is a discriminated union over **every committed entity**, in
+application order, which a revert replays in reverse — one log keeps that order total across kinds, where sibling
+arrays would lose it. A committed entity whose effect reaches no tree write is silently absent from the `stateRoot`,
+and **no test can catch that** — the producer and the verifier omit it identically, so they agree on a digest over
+incomplete state; `treeWritesOf` switches on the effect's `kind` exhaustively, so an entity kind added without its
+tree writes is a TypeScript error, not a drift.
 
 The typed side-records below (`confirmedPostIds`, `likeRecord*`, …) stay
 separate arrays because they are **not** in the `stateRoot` — they are node-local
@@ -3895,49 +3860,44 @@ that keeps the last `replaced`; that restores an intra-block intermediate.
 
 ### AVL+ State Root
 
-The `packages/node/src/state/` module provides an authenticated dictionary over
-**committed state** using AVL+ trees — the UTXO set, identity records and
-the network record and the username records (see "Entity kinds" below).
+The `packages/node/src/state/` module provides an authenticated dictionary over **everything the rules read** using
+AVL+ trees — the boxes, the records, the posts and likes and the index entries derived from them (see "Entity kinds"
+below; `CONSENSUS_INTERFACE → The tree layout`).
 
 **The rules read the tree, and nothing else.** Block application, the speculative run and the block creator hand
 `applyBlock` `treeStateView` over a session on this node's prover (`CONSENSUS_INTERFACE → The tree view`), and write
 the tree through `treeWritesOf` (`CONSENSUS_INTERFACE → The tree writes`). **The session reads with the prover's
 unrecorded neighbour lookup** (`@ergots/avltree` 0.5.0's `unauthenticatedLookupWithNeighbors`), its `null` neighbour
 mapped to the sentinel (`CONSENSUS_INTERFACE → The tree session`); a write the prover refuses is
-`DivergedStateTreeError`, fail-stop, as it is today. **The SQLite tables are written from the
-same effects and answer the API only**; no consensus path reads them, so a table and the tree cannot disagree about
-what a rule saw. `storeStateView` — the tables' answers to `StateView` — stays for one caller, the shadow run that
-compares it with the tree view read by read (`packages/node/scripts/shadow-replay.mjs`).
+`DivergedStateTreeError` and a read that contradicts itself `InconsistentStateTreeError`, both fail-stop (→ "What the
+funnel's totality catch is FOR"). **The SQLite tables are written from the same effects and answer the API only**; no
+consensus path reads them, so a table and the tree cannot disagree about what a rule saw. `storeStateView` — the
+tables' answers to `StateView` — stays for one caller, the shadow run (`packages/node/shadow/`), which compares it with
+the tree view read by read.
 
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — every consensus read is `storeStateView` over SQLite;
-> the tree holds boxes and the four record kinds only, and the node derives its feed itself (`proverFeedFromEffects`,
-> `applyBlockMutations`).
+> ⚠ **AHEAD OF CODE (2026-09-30, N2 state layout, stage A)** — the shadow run does not exist yet: `storeStateView` has
+> no caller.
 
 - **avl-storage:** Persistent AVL+ tree, stateRoot computed at each block
   application and included in block headers
 - **avl-prover:** Generates inclusion/exclusion proofs for any key
-- **avl-endpoint:** `GET /api/v1/proof/:boxId?atHeight=N` — serves proofs to
-  light clients. It answers `{ boxId, atHeight, stateRoot, proof, kind, value }`: `stateRoot` the digest of the
-  version the proof is made against, hex; `proof` the lookup proof's bytes, base64; `kind` the entity kind the key
-  resolves to — `box`, `record`, `network`, `username` or `holder` (→ Entity kinds) — and `value` the node's decoding
-  of it, both `null` where the key is absent and the proof is one of exclusion. `:boxId` is any 64-hex key of the tree,
-  a record's derived key included; `atHeight` must name a height a checkpoint stands at exactly, else 404 `{ error:
-  'height not available' }`; without it the proof is against the current version; 400 for a key that is not 64 hex or
-  a height that is not a non-negative integer.
-
-  > ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the route is `GET /api/v1/proof/:key`: a tree key,
-  > 130 hex (`TYPES_INTERFACE → The tree keys`), echoed in the answer as `key` where it reads `boxId`; a 400 answers
-  > any other width; `kind` adds `post`, `like` and `index` for the kinds the layout adds (→ Entity kinds). **`kind` and `value` are the node's reading and a light client trusts
-  neither**: it verifies the proof against a `stateRoot` it verified under proof-of-work and decodes the value the
+- **avl-endpoint:** `GET /api/v1/proof/:key?atHeight=N` — serves proofs to light clients. `:key` is a tree key,
+  130 hex (`TYPES_INTERFACE → The tree keys`). It answers `{ key, atHeight, stateRoot, proof, kind, value }`:
+  `stateRoot` the digest of the version the proof is made against, hex; `proof` the lookup proof's bytes, base64;
+  `kind` the entity kind the key resolves to — `box`, `record`, `network`, `username`, `holder`, `post`, `like` or
+  `index` (the index marker, a vouch pair and a cast count) (→ Entity kinds) — and `value` the node's decoding of it,
+  both `null` where the key is absent and the proof is one of exclusion. `atHeight` must name a height a checkpoint
+  stands at exactly, else 404 `{ error: 'height not available' }`; without it the proof is against the current
+  version; 400 for a key that is not 130 hex or a height that is not a non-negative integer. **`kind` and `value` are
+  the node's reading and a light client trusts neither**: it verifies the proof against a `stateRoot` it verified under proof-of-work and decodes the value the
   proof carries (`WEB_INTERFACE → The extension → "The verified figures"`)
 - **Config:** `MAX_PROOF_HISTORY` (prune old proof versions). The check below
   is not configurable — no variable disables it
 - **Verification:** apply computes the post-mutation digest and rejects the
   block unless it equals `header.stateRoot`, on every node — no node applies a block
-  without its prover (→ Post-block stateRoot). Both sides are post-block (H-6),
-  both feeds are canonically ordered (M-12), and the mutation set is
-  journal-derived (P1) — so a mismatch means genuine state divergence, not a
-  representation difference. A rejected block leaves the prover restored by
+  without its prover (→ Post-block stateRoot). Both sides are post-block (H-6) and both perform `treeWritesOf`'s
+  writes in their consensus order (`CONSENSUS_INTERFACE → The tree writes`) — so a mismatch means genuine state
+  divergence, not a representation difference. A rejected block leaves the prover restored by
   the funnel's single rollback point
 - ⛔ **AVL+ tree shape is history-dependent.** A tree rebuilt by re-inserting a full state set
   forks against one grown incrementally to the same content, so AVL storage is never wiped
@@ -3987,19 +3947,19 @@ compares it with the tree view read by read (`packages/node/scripts/shadow-repla
   from heights in between resolves the same, because resolution starts from each version's root. No
   node byte and no label changes, so every version's root is exactly what it was and nothing is
   rebuilt (→ "AVL+ tree shape is history-dependent").
-- ⛔ **A box block application SPENDS must already be in the tree, and THE TREE IS ASKED.**
-  `applyBlockMutations` and `bootstrapAvlProver` read `performOneOperation`'s verdict at every
-  operation that can refuse one — `Remove` of an absent key, `Insert` of a present one — and throw
-  `DivergedStateTreeError` on a refusal. The first refusal stops the feed. `InsertOrUpdate` is
-  total and carries no verdict to read. The genesis boxes satisfy the rule by construction:
-  `bootstrapAvlProver` runs over `getUnspentBoxes()` at height 0, before any block — seed a box
-  *after* the prover bootstrap and block 1 removes a key that was never inserted.
+- ⛔ **Every write is performed, and THE TREE'S ANSWER IS READ.** The node performs `treeWritesOf`'s writes —
+  `seedTreeWrites`' at genesis, through `bootstrapAvlProver` — with `performOneOperation` and reads its verdict at
+  every write that can refuse one — `Remove` or `Update` of an absent key, `Insert` of a present one — throwing
+  `DivergedStateTreeError` on a refusal; the first refusal stops the block. `InsertOrUpdate` is total and carries no
+  verdict to read. The genesis state satisfies the rule by construction: `bootstrapAvlProver` runs over
+  `getUnspentBoxes()`, the records and the network record at height 0, before any block — seed a box *after* it, other
+  than through the store-and-tree helper below, and block 1 removes a key that was never inserted.
 
   ⛔ **A refusal is a FAIL-STOP, not a block rejection, and that is the half a later reader must
-  not "correct".** The tree mirrors `utxo_boxes`, so both arms say the mirror has drifted rather
-  than that a peer sent something wrong — the two-arm provenance argument is under "The one
-  condition this node stops for". A drifted tree refuses the *next* block identically, so
-  rejecting would reject forever while staying up.
+  not "correct".** A block's writes are derived from its own view of the tree, so a refusal says the tree contradicts
+  itself rather than that a peer sent something wrong (→ "What the funnel's totality catch is FOR"). A tree that
+  refuses one block's write refuses the *next* block's identically, so rejecting would reject forever while staying
+  up.
 
   ⚠ **A single-node ROOT COMPARISON cannot catch this class.** Producer and verifier are the same
   process, so both compute the same wrong root and it matches. **What is assertable is the throw**;
@@ -4008,9 +3968,9 @@ compares it with the tree view read by read (`packages/node/scripts/shadow-repla
   ⛔ **A FIXTURE'S SEED ORDERING IS LOAD-BEARING IN BOTH DIRECTIONS, and no count of suites states
   it.** Committed state enters the store first and the tree is built from it second — the order
   `seedGenesisState` runs in, and the one `test/helpers.ts`'s `activateProverOverStore` exists to
-  own. A box seeded
-  *behind* the bootstrap is absent from the tree, so the first block spending it is refused; a seed
-  already *ahead* of it must not be moved back. **The two mistakes are different populations of
+  own; state a fixture adds after that goes through `seedCommittedState`, which writes the store and the tree
+  together. A box seeded *behind* the bootstrap any other way is absent from the tree, so the first block spending it
+  is refused; a seed already *ahead* of it must not be moved back. **The two mistakes are different populations of
   suite and they overlap** — one file can hold both — which is why the rule names the ordering
   rather than a number of files.
 
@@ -4020,28 +3980,14 @@ compares it with the tree view read by read (`packages/node/scripts/shadow-repla
   same `getUnspentBoxes()` read, and `assertGenesisRoot` refuses the pinned root inside the seeding
   transaction. Such a fixture mines **coinbase-only** blocks, which still move state off genesis by
   releasing the emission box.
-- **Effects-fed:** the per-block mutation set is derived from the block's
-  effects' `mutations` (`CONSENSUS_INTERFACE → BlockEffects`) — intra-block
-  insert+remove pairs for the same boxId net out, and so does a name or holder
-  key the block both creates and removes (→ "Where record collapsing happens");
-  inserted box bytes come from the effect's box, never a store re-fetch
-  (`getBox` returns null for a created-then-consumed box). One derivation serves
-  the apply path and the speculative run. It switches on `kind` and **must be
-  exhaustive** — see "One log, not parallel arrays" above
-- **Canonically ordered (M-12):** `applyBlockMutations` sorts internally —
-  all removes, then all inserts, then all record puts, each lexicographically
-  by hex key, then the network record's put — so every caller inherits the canonical order; callers MUST NOT
-  rely on their input order reaching the prover.
-
-  > ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the feed and its order are `consensus`'
-  > `treeWritesOf` (`CONSENSUS_INTERFACE → The tree writes`): the node performs its writes in the order it answers and
-  > throws `DivergedStateTreeError` on a refused `Remove`, `Insert` or `Update`; `bootstrapAvlProver` performs
-  > `seedTreeWrites`. `bootstrapAvlProver` sorts
-  the unspent set by boxId the same way. Same mutation set in any input order
-  → same digest. ⚠ **That equivalence is unconditional for boxes but holds for
-  records only across *distinct* keys** — see "Where record collapsing happens"
-  below. Repeated writes to one record key are order-dependent, and sorting
-  cannot recover which was last
+- **Effects-fed:** a block's writes are `treeWritesOf` over its effects (`CONSENSUS_INTERFACE → BlockEffects`) and its
+  own view of the tree (`CONSENSUS_INTERFACE → The tree writes`) — a box the block creates and spends nets out, a key
+  written twice takes its last value, and the index entries follow their boxes. One derivation serves the apply path
+  and the speculative run; it switches on the effect's `kind` exhaustively (→ "One log, not parallel arrays")
+- **Canonically ordered (M-12):** the writes' order is `consensus`' — every `Remove`, then every `Insert`, every
+  `Update`, every `InsertOrUpdate`, each by key bytewise, no key taking two writes in one block (`CONSENSUS_INTERFACE →
+  The tree writes`) — and the node performs them in the order they come; genesis's are `seedTreeWrites`', all
+  `Insert`s in key order
 - **Rejection-safe:** the apply funnel snapshots the prover digest before any
   mutation and rolls the prover back on **every** rejection path — explicit
   rejection, stateRoot mismatch, and the totality catch (closes the open
@@ -4068,17 +4014,16 @@ compares it with the tree view read by read (`packages/node/scripts/shadow-repla
 
 #### Entity kinds
 
-The tree holds **boxes** (key = `boxId`), **identity records**
-(key = `H(IDENTITY_KEY_DOMAIN ‖ identityId)`; see Store Interface → Identity
-Records), **the network record** (key = `H(NETWORK_KEY_DOMAIN)`; see Store Interface →
-Network record), and the two username records — **the name record** (key =
-`H(USERNAME_KEY_DOMAIN ‖ canonical(name))`) and **the holder record** (key =
-`H(USERNAME_HOLDER_KEY_DOMAIN ‖ identityId)`; both Store Interface → Username records). Three things
-follow, and all three are consensus-critical.
+The tree holds every entity kind the rules read, **each keyed by its tag** (`TYPES_INTERFACE → The tree keys`):
+**boxes** (`box ‖ boxId`), **identity records** (`identity ‖ identityId`; see Store Interface → Identity Records),
+**the network record** (`network`; see Store Interface → Network record), the **name** and **holder** records
+(`name ‖ nameLower`, `holder ‖ owner`; both Store Interface → Username records), and the **post** and **like** records
+and the **index entries** derived from the boxes (`CONSENSUS_INTERFACE → The tree layout`). The tag keeps the kinds
+apart; no key is a hash. Three things follow, and all three are consensus-critical.
 
 **1. The value bytes must be self-describing.** The first byte is the
-discriminator; `deserializeBox` MUST reject a non-box tag rather than mis-decode
-it, and a kind-dispatching decoder is what any value-reading caller uses.
+discriminator; `boxFromRecordBytes` MUST reject a non-box tag rather than mis-decode
+it (`TYPES_INTERFACE → Layout — tree records`), and a kind-dispatching decoder is what any value-reading caller uses.
 
 ⚠ **The box discriminator is `enum8(boxType)` from `TYPES_INTERFACE` →
 Layout — Boxes — NOT a second numbering owned by this package. Decided
@@ -4096,13 +4041,7 @@ Layout — Boxes — NOT a second numbering owned by this package. Decided
 | Like record | `0x85` |
 | Index entry | `0x86` |
 | Vouch-pair entry | `0x87` |
-
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the tree holds boxes and the four record kinds, keyed
-> as the paragraph above says. Under the layout **every kind is keyed by its tag** (`TYPES_INTERFACE → The tree
-> keys`) — a box `box ‖ boxId`, a record `identity ‖ id`, `network`, `name ‖ nameLower`, `holder ‖ owner` — and the
-> tree gains the post and like records and the index entries (`CONSENSUS_INTERFACE → The tree layout`), their values
-> opening with `0x84`–`0x87` (`TYPES_INTERFACE → Layout — tree records`). The tag keeps the kinds apart; no key is a
-> hash.
+| Cast count | `0x88` |
 
 **This replaces a second, disagreeing numbering that this package used to
 carry** (`0x01` karma … `0x07` vouch, with `0x03` reserved). The two were
@@ -4134,19 +4073,19 @@ retired *name* `like` stays reserved — not by precedent from this paragraph.
 and renumbering an assigned one are different operations, and only the first is
 available.
 
-**1a. The AVL value carries provenance, and an absent key is not an
-`undefined` key.** `serializeBox` **is** `boxRecordBytes` — the content bytes
+**1a. The tree value carries provenance, and an absent key is not an
+`undefined` key.** A box's tree value **is** `boxRecordBytes` — the content bytes
 (`enum8(boxType)` first) with `txId` and `index` appended (TYPES_INTERFACE →
 Layout — Boxes). The provenance stays in the value, and must, because "a box id
 is a total function of the stored box" is only *checkable from a proof* if the
-proof's value carries everything the derivation consumes. The AVL key already
-commits to them; the redundancy is what lets a light client verify honesty
+proof's value carries everything the derivation consumes. The key already
+commits to them, through the box id it carries; the redundancy is what lets a light client verify honesty
 rather than trust it.
 
 > ✅ **The exact-key-set hazard is retired by the positional layout.** The
 > writer reads only the fields it declares — a present-but-`undefined` key is
 > unrepresentable, and `writeOpt` gives an absent optional exactly one encoding
-> (`serialize-box.ts` states this at `serializeBox`). The record of the
+> (`boxRecordBytes`' positional writer). The record of the
 > cbor-era hazard it replaces: cbor-x distinguished an absent key from a
 > present-but-`undefined` one — a key set to `undefined` encoded as `f7` *and*
 > incremented the fixed two-byte map header (measured: `{value, guard}` →
@@ -4254,12 +4193,11 @@ value carried, and one rule rather than two is one chance rather than two to
 get it wrong.
 
 **2. The proof endpoint must not throw on a record, and must say which kind it
-served.** `GET /api/v1/proof/:boxId` decodes whatever value the key resolves to;
-a record-shaped value would throw under a box-only decoder. Keys are
-indistinguishable from outside — both kinds are 32 bytes of hash output — so a
-client *can* ask for one. Landed in phase D, alongside populating the record.
+served.** `GET /api/v1/proof/:key` decodes whatever value the key resolves to; a record-shaped value would throw under
+a box-only decoder, and a client can ask for any key of the tree.
 
-The response carries **`kind: 'box' | 'record' | 'network' | 'username' | 'holder' | null`**. This is required, not
+The response carries **`kind: 'box' | 'record' | 'network' | 'username' | 'holder' | 'post' | 'like' | 'index' |
+null`**, read from the value's first byte (→ 1). This is required, not
 cosmetic: the proof verifies the value bytes whichever kind they are, so without
 an explicit discriminant a light client would verify a valid proof and then read
 a record as a box with every field `undefined` — treating committed state as a
@@ -4276,14 +4214,9 @@ every later block until restart. The lookup-and-proof window therefore runs in
 a `try` whose `finally` restores the live version; the `catch`'s 500 is the
 response, never the state.
 
-*(The route parameter is still named `boxId` while addressing three entity kinds.
-Renaming it is a public API change and deliberately not done here.)*
-
-**3. Disjointness rests on provenance, not on height.** That box ids commit to
-`createdAtBlock` does not establish it: two boxes built at one height with one
-content would still collide. `avl-prover.ts` justifies the remove-group /
-insert-group split from `(candidate, txId, index)`, and that argument is what
-holds:
+**3. A block's writes never touch one key twice, and for boxes that rests on provenance, not on height.** That box ids
+commit to `createdAtBlock` does not establish it: two boxes built at one height with one content would still collide.
+The argument from `(candidate, txId, index)` is what holds:
 
 - *Removes vs inserts.* A key in the remove group was in the tree before this
   block; a key in the insert group is created by it. Under provenance-derived
@@ -4294,59 +4227,17 @@ holds:
   UTXO engine enforces by rejecting empty-input txs; a zero-input user tx would
   be replayable and would break this argument, so that rejection is load-bearing
   for identity, not just for value. A synthetic mint tx cannot be either:
-  `mintTxId` commits to the height. Intra-block insert+remove pairs for one id
-  were already netted out upstream. So the two groups are disjoint, and the
-  split can never reorder ops on a single key. This is *stronger* than the old
-  argument, which only ruled out same-block recurrence.
-- *Boxes, records and the network record.* Disjoint by domain separation, not by luck — box
-  ids, record keys and the network key are hashes under three domain tags. This is why the record
-  key is hashed rather than the raw 32-byte pubkey, which an attacker chooses.
+  `mintTxId` commits to the height. A box the block creates and spends nets out
+  in `treeWritesOf`. So a block never removes and inserts one box key.
+- *Every kind against every other.* Disjoint by tag, not by luck — every key opens with its kind's tag
+  (`TYPES_INTERFACE → The tree keys`), so no box key equals a record key or an index entry whatever the bytes
+  after it, and an attacker-chosen public key cannot reach another kind's key.
 
-**Record ops use `InsertOrUpdate`**, the network record's among them. A record put is a create
-on first write and an update afterwards, and the feed does not know which — `InsertOrUpdate`
-collapses that distinction so the prover feed needs no existence lookup. Two
-puts to the same key in one block collapse to the **last** value (last write
-wins, identical final tree); the journal keeps both entries because rollback
-needs the first one's `replaced`. Netting is per-kind: boxes cancel
-insert+remove pairs, records keep the last write — do not share one code path.
-
-**A removable record the block creates and removes nets out, as a box does.** The name and
-holder records are the two a block can remove (→ Username records), so their last write in a
-block may be a removal — and **a removal reaches the prover only for a key the state held
-before the block.** A key the block both created and removed has no net effect: the feed
-carries neither a put nor a remove for it, so the tree is never asked to `Remove` a key it does
-not hold (which `applyBlockMutations` refuses as `DivergedStateTreeError`). Whether the state
-held a key before the block is said by the key's first mutation in the block
-(`CONSENSUS_INTERFACE → BlockEffects`). A block claiming a name and burning it is valid under
-every rule, so this is what lets every node apply it.
-
-**Where record collapsing happens, and why it is not arbitrary.** The collapse
-belongs to **the feed derivation**, not to `applyBlockMutations`. Box
-mutations commute: cancel the insert+remove pairs in any order and the surviving
-set is the same, which is why `applyBlockMutations` can own box canonicalisation
-by sorting. **Record puts do not commute** — two writes to one key differ in
-*which came last*, and that is carried by the effects' application order alone. Once
-`applyBlockMutations` sorts by hex key, that information is gone; a sort cannot
-recover it, and any behaviour that appeared to work would be relying on sort
-stability. So the collapse must happen while that order is still
-authoritative, and `applyBlockMutations` receives **at most one entry per record
-key**. The natural reading — "`applyBlockMutations` owns canonical ordering,
-therefore it owns this too" — is wrong, and wrong in a way that produces a
-silently order-dependent digest.
-
-`applyBlockMutations`' `recordPuts` parameter is **optional and defaults to
-empty**, so the many existing four-argument call sites keep working. That
-default is a convenience for tests only: **every production caller MUST pass the
-feed derivation's own `recordPuts`**, never omit it and never assemble one by
-hand. Omitting it silently drops records from the digest, and if one of the two
-callers omitted it, the producer and the verifier would disagree — the exact
-failure H-6 exists to prevent.
-
-**`applyBlockMutations` takes the block height as its second parameter**, ahead
-of both feeds and required, because a `DivergedStateTreeError` carries `site`
-and `height` as *fields* and the state layer has no other way to know the
-height. Second rather than last, because a required parameter cannot follow the
-defaulted `recordPuts`.
+**The operation each write takes, and how a block's writes to one key net to one, are `consensus`'s**
+(`CONSENSUS_INTERFACE → The tree writes`): a record written twice keeps its last value, a key the block both creates
+and removes takes no write, and the tree is never asked to `Remove` a key it does not hold. The node performs what
+`treeWritesOf` answers, in its order, and derives none of it; the journal keeps every write, because a revert needs
+the first one's `replaced`.
 
 ### No store schema version, and none is owed
 
@@ -4397,7 +4288,7 @@ the handler.
 | `credits.ts` | Credit transfer validation and execution | UTXO engine internals |
 | `invites.ts` | Invite lifecycle (create, commit, claim, cancel) | Bond box internals |
 | `block-creator.ts` | Block creation, mining, template assembly | Post validation |
-| `block-apply.ts` | Block application — the header checks, the store's `StateView`, `applyBlock` over it, the effects written and journalled | Block creation, the rules and their order |
+| `block-apply.ts` | Block application — the header checks, `applyBlock` over the block's tree view, its tree writes performed and checked against `stateRoot`, the effects written and journalled; `storeStateView` for the shadow run | Block creation, the rules and their order |
 | `@dagsocial/consensus` | The rules' implementation — `applyBlock` (the mutation phase, whole), the transaction engine, the settlement and its build, decay, the coinbase split and the reward, the block's post readers (`CONSENSUS_INTERFACE → What it holds`) | Persistence, I/O, the header checks |
 | `fork-resolution.ts` | Chain fork detection and reorg | Block creation |
 | `genesis-state.ts` | Cold-start seeding of the height-0 state, and the root check over it | Which boxes exist (`store/system.ts`) |
@@ -4792,8 +4683,8 @@ its actual reach.
 > silently ignored if set.** See `ARCHITECTURE §Network Identity` and
 > `TYPES_INTERFACE §Network profiles`.
 >
-> All ten are now fully closed: `AVL_KEY_LENGTH` was the last half-done one, and it is now a
-> `@dagsocial/types` export (TYPES_INTERFACE → State format) that `config.ts` imports.
+> All ten are closed: the tree's key width is `TREE_KEY_LENGTH`, a `@dagsocial/types` export
+> (TYPES_INTERFACE → State format) that `config.ts` imports.
 
 **Where each consensus value went:**
 
@@ -4807,12 +4698,12 @@ its actual reach.
 | `KARMA_MINIMUM` | universal constant | Economics |
 | `COINBASE_TREASURY_PCT`, `COINBASE_MINER_FLOOR_PCT`, `COINBASE_BACKER_PCT`, `COINBASE_BONUS_PCT`, `INCLUSION_BONUS_K` | universal constant | Economics — the coinbase split |
 | `CREDIT_INITIAL_REWARD` | universal constant | Economics — separately, it is read and never used (A5) |
-| `AVL_KEY_LENGTH` | universal constant | Format. No network has a reason to differ |
+| `TREE_KEY_LENGTH` | universal constant | Format. No network has a reason to differ |
 
 | Variable | Class | Default | Description |
 |----------|-------|---------|-------------|
 | `NETWORK_TYPE` | `network-identity` | `testnet` | **The profile selector — `mainnet` \| `testnet` \| `devnet`.** The only environment variable that may change a consensus parameter, and it changes every one of them together. An unrecognised value **throws at startup** rather than defaulting. ⚠ **It no longer gates a faucet** — whether a network seeds a faucet identity is `faucetPublicKey`'s presence in the profile, which reaches `genesisStateRoot`; `isFaucetNetwork` is deleted |
-| ~~`AVL_KEY_LENGTH`~~ | **removed** | ~~`32`~~ | AVL tree key length — **sets the shape of every `stateRoot`** (`avl-prover.ts`). Env read deleted by P2-A; now a `@dagsocial/types` export (TYPES_INTERFACE → State format) that `config.ts` imports and plumbs through `Config.avlKeyLength` |
+| ~~`AVL_KEY_LENGTH`~~ | **removed** | ~~`32`~~ | AVL tree key length — **sets the shape of every `stateRoot`** (`avl-prover.ts`). No environment read: the width is `TREE_KEY_LENGTH`, a `@dagsocial/types` export (TYPES_INTERFACE → State format) that `config.ts` imports and plumbs through `Config.avlKeyLength` |
 | ~~`KARMA_DECAY_AMOUNT`~~ | **removed** | ~~`5`~~ | → universal constant `KARMA_DECAY_AMOUNT` (`@dagsocial/types`). Devnet decays *often*, not *harder* |
 | ~~`KARMA_DECAY_INTERVAL_BLOCKS`~~ | **removed** | ~~`720`~~ | → profile field `karmaDecayIntervalBlocks`. Value corrected to `1440` by P2-A (60s blocks) |
 | ~~`KARMA_STALE_THRESHOLD_BLOCKS`~~ | **removed** | ~~`20160`~~ | → profile field `karmaStaleThresholdBlocks`. Value corrected to `40320` by P2-A (60s blocks) |
@@ -5127,11 +5018,11 @@ is no "skip the checks" parameter on the apply path.
 | Phase | Contents | Runs in speculative computation? |
 |-------|----------|----------------------------------|
 | **Validation** | chain-link, interlink root, genesis pin, header timestamps, protocol version, PoW target + PoW, validator signature, Merkle root, block storage, `clearTemplate` | No — the header does not exist yet |
-| **Mutation** | `applyBlock` over a `StateView` of the store: post confirmation, topology, the body's signatures as one batch, the embedded transactions, the withdrawals, the settlement, the grants, the like counters, the membership pass, the decay clocks — answering the block's effects or a reason | Yes — the same call, over the same view, at the candidate's height |
-| **Commit** | the AVL feed from the effects + `stateRoot` verification, then the effects written to the store, the journal built from them and persisted, the prover checkpointed | No — the speculative run derives the feed, reads the digest and restores the prover; it writes nothing to the store |
+| **Mutation** | `applyBlock` over the block's tree view (→ AVL+ State Root, "The rules read the tree, and nothing else"): post confirmation, topology, the body's signatures as one batch, the embedded transactions, the withdrawals, the settlement, the grants, the like counters, the membership pass, the decay clocks — answering the block's effects or a reason | Yes — the same call, over the same view, at the candidate's height |
+| **Commit** | `treeWritesOf`'s writes performed + `stateRoot` verification, then the effects written to the store, the journal built from them and persisted, the prover checkpointed | No — the speculative run performs the writes, reads the digest and restores the prover's root; it writes nothing to the store |
 
 **No effect is written before the block's verdict is known.** The mutation phase
-reads the store and writes nothing, the `stateRoot` is compared before any
+reads the tree and writes nothing, the `stateRoot` is compared before any
 effect is persisted, and the writes that follow are the effects in their order
 (→ Block Journal). A body-level rejection (embedded-tx
 re-validation, the withdrawal phase's binds, the settlement) answers the same
@@ -5314,8 +5205,8 @@ no per-post serve path. `onPeerActive` is wired to peer-readiness
 - Every mutation of a **committed entity** during block application — boxes and
   records alike — is listed exactly once, in `applyBlock`'s effects, in
   application order; the store's writes and the block journal are built from
-  that one list; rollback replays inverses in reverse order; the AVL feed derives
-  from the same list (record-once, Spec B P1; Spec G phase B).
+  that one list; rollback replays inverses in reverse order; the tree's writes derive
+  from the same list (`CONSENSUS_INTERFACE → The tree writes`).
 - **Consensus code never reads the `created_at_block` column.** It is not in
   the `stateRoot`, so a node bootstrapping from an AVL snapshot cannot
   reconstruct it. Unenforceable by test — contract and review only.
