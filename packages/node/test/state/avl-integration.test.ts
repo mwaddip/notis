@@ -2,13 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import {
   createAvlProver,
-  applyBlockMutations,
+  performTreeWrites,
   checkpointProver,
 } from '../../src/state/avl-prover.js';
-import {
-  deserializeBoxWithId,
-  deserializeBox,
-} from '../../src/state/serialize-box.js';
+import type { PersistentBatchAVLProver } from '@ergots/avltree';
+import { boxFromRecordBytes, boxKey, boxRecordBytes, hexToBytes } from '@dagsocial/types';
 import type { AnyBox } from '@dagsocial/types';
 import { fixtureProvenance, openAvlDb } from '../helpers.js';
 
@@ -20,8 +18,8 @@ import { fixtureProvenance, openAvlDb } from '../helpers.js';
  */
 type StoredBox = AnyBox & { id: string };
 
-/** Generate sequential, non-zero 64-char hex IDs starting from 1 to avoid
- *  the all-zeros key which collides with the AVL neg-inf sentinel. */
+/** Generate sequential 64-char hex ids — each is keyed under the box tag, so no
+ *  id reaches the AVL sentinels (TYPES_INTERFACE → The tree keys). */
 function makeIdGenerator() {
   let counter = 1;
   return (): string => (counter++).toString(16).padStart(64, '0');
@@ -29,7 +27,7 @@ function makeIdGenerator() {
 
 /**
  * The `id` here is the generator's, NOT `computeBoxId(box)`: this suite keys the
- * AVL by a *controlled* 32-byte value (see `makeIdGenerator` above), which is
+ * AVL by a *controlled* box id (see `makeIdGenerator` above), which is
  * what makes insertion order, rollback and per-height lookups readable. Nothing
  * in the file asserts id integrity, and nothing seeds a store.
  *
@@ -62,6 +60,22 @@ function makeCreditBox(id: string, value: bigint, block: number, seed: number): 
   return { id, ...candidate, ...fixtureProvenance(candidate, block, seed) };
 }
 
+/** The box's tree key (TYPES_INTERFACE → The tree keys). */
+const keyOf = (id: string): Uint8Array => boxKey(hexToBytes(id));
+
+/** One block's box writes, performed: its spends, then its creations. */
+function applyBoxes(
+  prover: PersistentBatchAVLProver,
+  height: number,
+  consumed: string[],
+  created: StoredBox[],
+): Uint8Array {
+  return performTreeWrites(prover, height, [
+    ...consumed.map((id) => ({ tag: 'Remove' as const, key: keyOf(id) })),
+    ...created.map((b) => ({ tag: 'Insert' as const, key: keyOf(b.id), value: boxRecordBytes(b, b.txId, b.index) })),
+  ], 'test');
+}
+
 describe('AVL integration — full pipeline', () => {
   let db: Database.Database;
 
@@ -83,7 +97,7 @@ describe('AVL integration — full pipeline', () => {
       makeKarmaBox(nextId(), BigInt(100 + i), 1, i),
     );
     for (const b of created1) allBoxes.set(b.id, b);
-    const d1 = applyBlockMutations(handle.prover, 1, [], created1);
+    const d1 = applyBoxes(handle.prover, 1, [], created1);
     checkpointProver(handle, 1);
 
     expect(d1).toBeInstanceOf(Uint8Array);
@@ -91,10 +105,10 @@ describe('AVL integration — full pipeline', () => {
 
     // Verify: all 5 boxes are present via unauthenticatedLookup
     for (const box of created1) {
-      const key = Buffer.from(box.id, 'hex');
+      const key = keyOf(box.id);
       const raw = handle.prover.unauthenticatedLookup(key);
       expect(raw, `box ${box.id} should be found after block 1`).not.toBeNull();
-      const deserialized = deserializeBoxWithId(box.id, raw!);
+      const deserialized = boxFromRecordBytes(box.id, raw!);
       expect(deserialized.id).toBe(box.id);
       expect(deserialized.boxType).toBe('karma');
     }
@@ -108,7 +122,7 @@ describe('AVL integration — full pipeline', () => {
     );
     for (const b of created2) allBoxes.set(b.id, b);
 
-    const d2 = applyBlockMutations(handle.prover, 2, consumed2, created2);
+    const d2 = applyBoxes(handle.prover, 2, consumed2, created2);
     checkpointProver(handle, 2);
 
     expect(d2).toBeInstanceOf(Uint8Array);
@@ -116,12 +130,12 @@ describe('AVL integration — full pipeline', () => {
     expect(Buffer.from(d2).equals(Buffer.from(d1))).toBe(false);
 
     // Verify: consumed box is gone
-    const consumedKey = Buffer.from(created1[0]!.id, 'hex');
+    const consumedKey = keyOf(created1[0]!.id);
     expect(handle.prover.unauthenticatedLookup(consumedKey)).toBeNull();
 
     // Verify: new credit boxes are present
     for (const box of created2) {
-      const key = Buffer.from(box.id, 'hex');
+      const key = keyOf(box.id);
       expect(handle.prover.unauthenticatedLookup(key)).not.toBeNull();
     }
 
@@ -145,7 +159,7 @@ describe('AVL integration — full pipeline', () => {
 
       for (const b of created) allBoxes.set(b.id, b);
 
-      applyBlockMutations(handle.prover, block, consumed, created);
+      applyBoxes(handle.prover, block, consumed, created);
       checkpointProver(handle, block);
 
       const digest = handle.prover.digest();
@@ -156,7 +170,7 @@ describe('AVL integration — full pipeline', () => {
       // Verify: every consumed box is truly gone
       for (const cid of consumed) {
         expect(
-          handle.prover.unauthenticatedLookup(Buffer.from(cid, 'hex')),
+          handle.prover.unauthenticatedLookup(keyOf(cid)),
           `consumed box ${cid} should not be found after block ${block}`,
         ).toBeNull();
       }
@@ -168,11 +182,11 @@ describe('AVL integration — full pipeline', () => {
     let found = 0;
 
     for (const [boxId, expectedBox] of allBoxes) {
-      const key = Buffer.from(boxId, 'hex');
+      const key = keyOf(boxId);
       const value = handle.prover.unauthenticatedLookup(key);
       if (value) {
         found++;
-        const box = deserializeBoxWithId(boxId, value);
+        const box = boxFromRecordBytes(boxId, value);
         expect(box.id).toBe(boxId);
         expect(box.boxType).toBe(expectedBox.boxType);
       }
@@ -189,17 +203,17 @@ describe('AVL integration — full pipeline', () => {
 
     // All 5 original boxes should be present at height 1
     for (const box of created1) {
-      const key = Buffer.from(box.id, 'hex');
+      const key = keyOf(box.id);
       const raw = handle.prover.unauthenticatedLookup(key);
       expect(raw, `box ${box.id} should exist after rollback to height 1`).not.toBeNull();
-      const deserialized = deserializeBoxWithId(box.id, raw!);
+      const deserialized = boxFromRecordBytes(box.id, raw!);
       expect(deserialized.boxType).toBe('karma');
       expect(deserialized.value).toBe(box.value);
     }
 
     // Boxes created after block 1 should NOT exist after rollback
     for (const box of created2) {
-      const key = Buffer.from(box.id, 'hex');
+      const key = keyOf(box.id);
       expect(
         handle.prover.unauthenticatedLookup(key),
         `box ${box.id} should not exist after rollback to height 1`,
@@ -211,7 +225,7 @@ describe('AVL integration — full pipeline', () => {
     // real rollback from a tree that only ever removes: the two assertions above
     // both hold for a prover that discards later blocks without restoring
     // earlier ones.
-    const recreatedKey = Buffer.from(created1[0]!.id, 'hex');
+    const recreatedKey = keyOf(created1[0]!.id);
     const recreatedValue = handle.prover.unauthenticatedLookup(recreatedKey);
     expect(recreatedValue, 'box consumed at height 2 should be alive after rollback to height 1').not.toBeNull();
 
@@ -222,18 +236,14 @@ describe('AVL integration — full pipeline', () => {
 
     // -- Verify roundtrip for a sample box -------------------------------------
     const sampleBox = created1[1]!;
-    const sampleKey = Buffer.from(sampleBox.id, 'hex');
+    const sampleKey = keyOf(sampleBox.id);
     const sampleRaw = handle.prover.unauthenticatedLookup(sampleKey);
     expect(sampleRaw).not.toBeNull();
 
-    // deserializeBox (without id) + deserializeBoxWithId (with id)
-    const withoutId = deserializeBox(sampleRaw!);
-    expect(withoutId.boxType).toBe('karma');
-    expect(withoutId.value).toBe(sampleBox.value);
-
-    const withId = deserializeBoxWithId(sampleBox.id, sampleRaw!);
+    const withId = boxFromRecordBytes(sampleBox.id, sampleRaw!);
     expect(withId.id).toBe(sampleBox.id);
     expect(withId.boxType).toBe('karma');
+    expect(withId.value).toBe(sampleBox.value);
     // The AVL value carries provenance, and must: NODE_INTERFACE → Invariants
     // requires that a box id be a total function of the stored box, which is
     // only checkable *from a proof* if the proof's value carries everything the

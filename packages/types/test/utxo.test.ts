@@ -14,10 +14,6 @@ import {
   BOX_ID_DOMAIN,
   TX_ID_DOMAIN,
   MINT_ID_DOMAIN,
-  IDENTITY_KEY_DOMAIN,
-  NETWORK_KEY_DOMAIN,
-  USERNAME_KEY_DOMAIN,
-  USERNAME_HOLDER_KEY_DOMAIN,
   POST_ID_DOMAIN,
   POST_CONTENT_DOMAIN,
   INTERLINK_DOMAIN,
@@ -1791,16 +1787,15 @@ describe('computeMintTxId', () => {
   });
 });
 
-// TYPES_INTERFACE → Domain tags: all ten derivation domain tags, imported
+// TYPES_INTERFACE → Domain tags: all six derivation domain tags, imported
 // from the barrel.
 const ALL_DERIVATION_TAGS = [
-  BOX_ID_DOMAIN, TX_ID_DOMAIN, MINT_ID_DOMAIN, IDENTITY_KEY_DOMAIN,
-  NETWORK_KEY_DOMAIN, USERNAME_KEY_DOMAIN, USERNAME_HOLDER_KEY_DOMAIN,
+  BOX_ID_DOMAIN, TX_ID_DOMAIN, MINT_ID_DOMAIN,
   POST_ID_DOMAIN, POST_CONTENT_DOMAIN, INTERLINK_DOMAIN,
 ];
 
 describe('domain separation', () => {
-  it('the ten derivation domain tags are pairwise distinct', () => {
+  it('the six derivation domain tags are pairwise distinct', () => {
     const tags = ALL_DERIVATION_TAGS.map((t) => Buffer.from(t).toString('hex'));
     expect(new Set(tags).size).toBe(ALL_DERIVATION_TAGS.length);
   });
@@ -1831,9 +1826,8 @@ describe('transactions', () => {
   describe('domain separation (found by G3b mutation testing)', () => {
     // Dropping `TX_ID_DOMAIN` from `computeTxId` is caught only by the frozen
     // goldens — assertions of the form "this id equals this constant". Nothing
-    // pins what the tag is *for*: that box ids,
-    // transaction ids, mint txIds, identity-record keys and the network key
-    // share one 32-byte keyspace and must be provably disjoint
+    // pins what the tag is *for*: that box ids, transaction ids and mint txIds
+    // are 32 bytes of one digest and must be provably disjoint
     // (TYPES_INTERFACE → Domain tags).
     //
     // A golden catches removal only because the golden was regenerated after the

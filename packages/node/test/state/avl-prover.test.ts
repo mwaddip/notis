@@ -1,18 +1,55 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { SqliteAvlStorage } from '../../src/state/avl-storage.js';
+import {
+  TREE_KEY_LENGTH,
+  boxKey,
+  boxRecordBytes,
+  hexToBytes,
+} from '@dagsocial/types';
+import type { AnyBox, IdentityRecord, KarmaBox } from '@dagsocial/types';
+import { seedTreeWrites } from '@dagsocial/consensus';
+import type { TreeWrite } from '@dagsocial/consensus';
 import {
   createAvlProver,
-  applyBlockMutations,
   bootstrapAvlProver,
   checkpointProver,
+  performTreeWrites,
 } from '../../src/state/avl-prover.js';
-import { config } from '../../src/config.js';
-import { fixtureProvenance, openAvlDb } from '../helpers.js';
-import type { AnyBox } from '@dagsocial/types';
+import type { AvlProverHandle } from '../../src/state/avl-prover.js';
+import { openAvlDb, seedProvenance, uid } from '../helpers.js';
 
-/** Storage codec config -- must match the prover createAvlProver() builds. */
-const AVL_CONFIG = { keyLength: config.avlKeyLength, valueLengthOpt: null };
+/**
+ * The node's prover (NODE_INTERFACE → AVL+ State Root): `TREE_KEY_LENGTH` wide,
+ * performing the writes it is handed in the order handed — a block's are
+ * `treeWritesOf`'s, whose order is consensus's (CONSENSUS_INTERFACE → The tree
+ * writes) — and seeding genesis as `seedTreeWrites`.
+ */
+
+const owner = uid('avl-prover/owner');
+
+function karma(value: bigint, nonce: number): KarmaBox & { id: string } {
+  return seedProvenance<KarmaBox>({ boxType: 'karma', value, createdAtBlock: 1, owner }, 1, nonce);
+}
+
+function record(lastActivityBlock: number): IdentityRecord {
+  return {
+    lastActivityBlock,
+    lastDecayBlock: 1,
+    invitedAtBlock: 0,
+    lifetimeLikesReceived: 0n,
+    memberSinceBlock: 0,
+    memberBar: 0,
+    memberVouches: 0,
+    memberLikes: 0n,
+    invitesUsed: 0,
+  };
+}
+
+const insertOf = (box: AnyBox): TreeWrite =>
+  ({ tag: 'Insert', key: boxKey(hexToBytes(box.id!)), value: boxRecordBytes(box, box.txId, box.index) });
+const removeOf = (box: AnyBox): TreeWrite => ({ tag: 'Remove', key: boxKey(hexToBytes(box.id!)) });
+
+const hexOf = (digest: Uint8Array): string => Buffer.from(digest).toString('hex');
 
 describe('avl-prover', () => {
   let db: Database.Database;
@@ -29,44 +66,53 @@ describe('avl-prover', () => {
     // Empty tree still has a digest (the sentinel neg-inf leaf)
   });
 
-  it('applyBlockMutations() updates the prover and returns new digest', () => {
+  it('the prover is TREE_KEY_LENGTH wide: a key of another width is the library\'s throw', () => {
     const { prover } = createAvlProver(db);
-    const initialDigest = prover.digest()!;
+    const box = karma(100n, 1);
+    expect(boxKey(hexToBytes(box.id)).length).toBe(TREE_KEY_LENGTH);
+    expect(() => prover.performOneOperation({ tag: 'Insert', key: hexToBytes(box.id), value: new Uint8Array([1]) }))
+      .toThrow(/key length/i);
+    expect(prover.performOneOperation(insertOf(box)).success).toBe(true);
+  });
 
-    // Create a box
-    const box = makeKarmaBox('aa'.repeat(32), 100n, 1);
-    const consumed: string[] = [];
-    const created = [box];
+  it('performTreeWrites() updates the prover and returns the new digest', () => {
+    const { prover } = createAvlProver(db);
+    const initialDigest = hexOf(prover.digest());
 
-    const newDigest = applyBlockMutations(prover, 1, consumed, created);
-    expect(newDigest).not.toEqual(initialDigest);
+    const newDigest = performTreeWrites(prover, 1, [insertOf(karma(100n, 1))], 'test');
+    expect(hexOf(newDigest)).not.toBe(initialDigest);
     expect(newDigest.length).toBe(33);
+    expect(hexOf(newDigest)).toBe(hexOf(prover.digest()));
   });
 
-  it('consume + create produces different digest than create alone', () => {
+  it('a remove and an insert produce a different digest than the insert alone', () => {
     const { prover } = createAvlProver(db);
+    const box1 = karma(100n, 1);
+    const box2 = karma(50n, 2);
 
-    const box1 = makeKarmaBox('aa'.repeat(32), 100n, 1);
-    const box2 = makeKarmaBox('bb'.repeat(32), 50n, 2);
+    const d1 = performTreeWrites(prover, 1, [insertOf(box1)], 'test');
+    const d2 = performTreeWrites(prover, 2, [removeOf(box1), insertOf(box2)], 'test');
 
-    // Create box1
-    const d1 = applyBlockMutations(prover, 1, [], [box1]);
-
-    // Create box2, consume box1
-    const d2 = applyBlockMutations(prover, 2, ['aa'.repeat(32)], [box2]);
-
-    expect(Buffer.from(d1).equals(Buffer.from(d2))).toBe(false);
+    expect(hexOf(d1)).not.toBe(hexOf(d2));
   });
 
-  it('deterministic: same operations produce same digest', () => {
+  it('deterministic: same writes produce same digest', () => {
     const { prover: p1 } = createAvlProver(db);
     const { prover: p2 } = createAvlProver(db);
 
-    const box = makeKarmaBox('cc'.repeat(32), 42n, 1);
-    const d1 = applyBlockMutations(p1, 1, [], [box]);
-    const d2 = applyBlockMutations(p2, 1, [], [box]);
+    const box = karma(42n, 1);
+    const d1 = performTreeWrites(p1, 1, [insertOf(box)], 'test');
+    const d2 = performTreeWrites(p2, 1, [insertOf(box)], 'test');
 
-    expect(Buffer.from(d1).equals(Buffer.from(d2))).toBe(true);
+    expect(hexOf(d1)).toBe(hexOf(d2));
+  });
+
+  it('no writes leave the digest unchanged', () => {
+    const { prover } = createAvlProver(db);
+    performTreeWrites(prover, 1, [insertOf(karma(10n, 1))], 'test');
+    const before = hexOf(prover.digest());
+
+    expect(hexOf(performTreeWrites(prover, 2, [], 'test'))).toBe(before);
   });
 });
 
@@ -79,48 +125,49 @@ describe('block-apply integration', () => {
 
   afterEach(() => { db.close(); });
 
-  it('prover tracks insertBox and consumeBox correctly', () => {
-    const { prover: handle } = createAvlProver(db);
+  it('the prover tracks an insert and a later remove across checkpoints', () => {
+    const handle = createAvlProver(db);
 
     // Simulate block application: create two boxes, consume one
-    const box1 = makeKarmaBox('11'.repeat(32), 100n, 1);
-    const box2 = makeKarmaBox('22'.repeat(32), 50n, 1);
-
-    applyBlockMutations(handle, 1, [], [box1, box2]);
-    checkpointProver({ prover: handle, storage: new SqliteAvlStorage(db, AVL_CONFIG) }, 1);
-    const digestAfterCreate = handle.digest()!;
+    const box1 = karma(100n, 1);
+    const box2 = karma(50n, 2);
+    performTreeWrites(handle.prover, 1, [insertOf(box1), insertOf(box2)], 'test');
+    checkpointProver(handle, 1);
+    const digestAfterCreate = hexOf(handle.prover.digest());
 
     // Consume box1, create box3
-    const box3 = makeKarmaBox('33'.repeat(32), 25n, 2);
-    applyBlockMutations(handle, 2, ['11'.repeat(32)], [box3]);
-    checkpointProver({ prover: handle, storage: new SqliteAvlStorage(db, AVL_CONFIG) }, 2);
-    const digestAfterConsume = handle.digest()!;
+    const box3 = karma(25n, 3);
+    performTreeWrites(handle.prover, 2, [removeOf(box1), insertOf(box3)], 'test');
+    checkpointProver(handle, 2);
+    const digestAfterConsume = hexOf(handle.prover.digest());
 
-    expect(Buffer.from(digestAfterCreate).equals(Buffer.from(digestAfterConsume))).toBe(false);
+    expect(digestAfterCreate).not.toBe(digestAfterConsume);
+    expect(handle.storage.versionAtOrBeforeHeight(1)).toEqual(hexToBytes(digestAfterCreate));
+    expect(handle.storage.versionAtOrBeforeHeight(2)).toEqual(hexToBytes(digestAfterConsume));
   });
 
   it('prover state survives checkpoint and can be queried', () => {
-    const { prover: handle } = createAvlProver(db);
+    const handle = createAvlProver(db);
 
-    const box1 = makeKarmaBox('aa'.repeat(32), 100n, 1);
-    applyBlockMutations(handle, 1, [], [box1]);
-    checkpointProver({ prover: handle, storage: new SqliteAvlStorage(db, AVL_CONFIG) }, 1);
+    const box1 = karma(100n, 1);
+    performTreeWrites(handle.prover, 1, [insertOf(box1)], 'test');
+    checkpointProver(handle, 1);
 
-    // After checkpoint, digest should still be accessible
-    const digest = handle.digest();
-    expect(digest).not.toBeNull();
-    expect(digest!.length).toBe(33);
+    // After checkpoint, digest should still be accessible, and the box's value
+    const digest = handle.prover.digest();
+    expect(digest.length).toBe(33);
+    expect(handle.prover.unauthenticatedLookup(boxKey(hexToBytes(box1.id))))
+      .toEqual(boxRecordBytes(box1, box1.txId, box1.index));
   });
 });
 
 // ---------------------------------------------------------------------------
-// The AVL digest is insertion-order-sensitive, so the prover boundary sorts
-// every feed (NODE_INTERFACE → AVL+ State Root). Same box sets in any input
-// order must land on the identical digest — two nodes ordering one block's
-// mutations differently is a silent chain split, not a caught error.
+// Genesis is `seedTreeWrites` performed (CONSENSUS_INTERFACE → The tree writes
+// → "`seedTreeWrites(boxes, records, network)` is genesis"): its order is the
+// seed's, never the caller's, and every input is committed.
 // ---------------------------------------------------------------------------
 
-describe('canonical prover-feed ordering (M-12)', () => {
+describe('bootstrapAvlProver', () => {
   let db: Database.Database;
   let db2: Database.Database;
 
@@ -134,155 +181,52 @@ describe('canonical prover-feed ordering (M-12)', () => {
     db2.close();
   });
 
-  /** Ids deliberately NOT in sorted order, so input order ≠ canonical order. */
-  const BASE_IDS = ['55', 'aa', '11', 'ee', '88'].map((b) => b.repeat(32));
+  const digestOf = (h: AvlProverHandle): string => hexOf(h.prover.digest());
+  const boxes = (): Array<KarmaBox & { id: string }> => [5, 1, 4, 2, 3].map((n) => karma(12n, n));
+  const records = (clock = 4) => ['ee', '77', '55'].map((label) => ({
+    identityId: uid(`avl-prover/${label}`),
+    record: record(clock),
+  }));
 
-  /** Fresh prover with the same five-box starting tree. */
-  function seededProver(database: Database.Database) {
-    const { prover } = createAvlProver(database);
-    applyBlockMutations(prover, 1, [], BASE_IDS.map((id) => makeKarmaBox(id, 10n, 1)));
-    return prover;
-  }
+  it('is the performance of seedTreeWrites, checkpointed at its height', () => {
+    const seeded = createAvlProver(db);
+    bootstrapAvlProver(seeded, boxes(), 0, records(), { memberCount: 3 });
 
-  it('same consumed/created sets in shuffled orders → identical digest', () => {
-    const p1 = seededProver(db);
-    const p2 = seededProver(db2);
+    const performed = createAvlProver(db2);
+    performTreeWrites(performed.prover, 0, seedTreeWrites(boxes(), records(), { memberCount: 3 }), 'test');
 
-    const consumed = ['ee'.repeat(32), '11'.repeat(32), '88'.repeat(32)];
-    const created = ['cc', '22', '99'].map((b) => makeKarmaBox(b.repeat(32), 7n, 2));
-
-    const d1 = applyBlockMutations(p1, 1, consumed, created);
-    const d2 = applyBlockMutations(
-      p2,
-      1,
-      [consumed[2]!, consumed[0]!, consumed[1]!],
-      [created[1]!, created[2]!, created[0]!],
-    );
-
-    expect(Buffer.from(d1).equals(Buffer.from(d2))).toBe(true);
+    expect(digestOf(seeded)).toBe(digestOf(performed));
+    expect(seeded.storage.versionAtOrBeforeHeight(0)).toEqual(seeded.prover.digest());
   });
 
-  it('empty mutation set leaves the digest unchanged on both provers', () => {
-    const p1 = seededProver(db);
-    const p2 = seededProver(db2);
-    const before = new Uint8Array(p1.digest()!);
-
-    const d1 = applyBlockMutations(p1, 1, [], []);
-    const d2 = applyBlockMutations(p2, 1, [], []);
-
-    expect(Buffer.from(d1).equals(Buffer.from(before))).toBe(true);
-    expect(Buffer.from(d1).equals(Buffer.from(d2))).toBe(true);
-  });
-
-  it('removes-only in shuffled orders → identical digest', () => {
-    const p1 = seededProver(db);
-    const p2 = seededProver(db2);
-
-    const d1 = applyBlockMutations(
-      p1,
-      1,
-      ['aa'.repeat(32), '55'.repeat(32), 'ee'.repeat(32)],
-      [],
-    );
-    const d2 = applyBlockMutations(
-      p2,
-      1,
-      ['ee'.repeat(32), 'aa'.repeat(32), '55'.repeat(32)],
-      [],
-    );
-
-    expect(Buffer.from(d1).equals(Buffer.from(d2))).toBe(true);
-  });
-
-  it('inserts-only in shuffled orders → identical digest', () => {
-    const p1 = seededProver(db);
-    const p2 = seededProver(db2);
-
-    const boxes = ['cc', '22', '99', '44'].map((b) => makeKarmaBox(b.repeat(32), 5n, 2));
-    const d1 = applyBlockMutations(p1, 1, [], boxes);
-    const d2 = applyBlockMutations(p2, 1, [], [...boxes].reverse());
-
-    expect(Buffer.from(d1).equals(Buffer.from(d2))).toBe(true);
-  });
-
-  it('bootstrapAvlProver: same unspent set in shuffled orders → identical digest', () => {
+  it('same unspent set in shuffled orders → identical digest', () => {
     const h1 = createAvlProver(db);
     const h2 = createAvlProver(db2);
 
-    const boxes = ['bb', '33', 'dd', '66', '11'].map((b) =>
-      makeKarmaBox(b.repeat(32), 12n, 0),
-    );
-    bootstrapAvlProver(h1, boxes, 0, []);
-    bootstrapAvlProver(h2, [...boxes].reverse(), 0, []);
+    bootstrapAvlProver(h1, boxes(), 0, [], { memberCount: 0 });
+    bootstrapAvlProver(h2, [...boxes()].reverse(), 0, [], { memberCount: 0 });
 
-    const d1 = h1.prover.digest();
-    const d2 = h2.prover.digest();
-    expect(d1).not.toBeNull();
-    expect(d2).not.toBeNull();
-    expect(Buffer.from(d1!).equals(Buffer.from(d2!))).toBe(true);
+    expect(digestOf(h1)).toBe(digestOf(h2));
   });
 
-  // --- Five entity kinds through bootstrap ----------------------------------
-
-  it('bootstrapAvlProver: shuffled records → identical digest', () => {
+  it('shuffled records → identical digest', () => {
     const h1 = createAvlProver(db);
     const h2 = createAvlProver(db2);
 
-    const records = ['ee', '77', '55'].map((b) => ({
-      key: b.repeat(32),
-      record: { lastActivityBlock: 4, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 },
-    }));
-    bootstrapAvlProver(h1, [], 0, records);
-    bootstrapAvlProver(h2, [], 0, [...records].reverse());
+    bootstrapAvlProver(h1, [], 0, records(), { memberCount: 3 });
+    bootstrapAvlProver(h2, [], 0, [...records()].reverse(), { memberCount: 3 });
 
-    expect(
-      Buffer.from(h1.prover.digest()!).equals(Buffer.from(h2.prover.digest()!)),
-    ).toBe(true);
+    expect(digestOf(h1)).toBe(digestOf(h2));
   });
 
-  it('a bootstrapped tree and a live tree agree once records exist', () => {
-    // The restart fork this parameter exists to prevent. A node that stays up
-    // grows its tree block by block through `applyBlockMutations`; a node that
-    // restarts with empty AVL storage rebuilds it from the store through
-    // `bootstrapAvlProver`. Both hold two committed entity kinds, and if the
-    // rebuild fed only boxes the two nodes would disagree on `stateRoot` while
-    // agreeing on every committed byte — undetectable until a block is rejected.
-    const boxes = ['bb', '33', 'dd'].map((b) => makeKarmaBox(b.repeat(32), 12n, 0));
-    const records = ['ee', '77'].map((b, i) => ({
-      key: b.repeat(32),
-      record: { lastActivityBlock: 10 + i, lastDecayBlock: i, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 },
-    }));
+  it('a seed without the records does NOT reach the seed with them', () => {
+    const h1 = createAvlProver(db);
+    const h2 = createAvlProver(db2);
 
-    // Live: boxes and records arrive together, as one block's mutations.
-    const live = createAvlProver(db);
-    applyBlockMutations(live.prover, 1, [], boxes, records);
+    bootstrapAvlProver(h1, boxes(), 0, records(), { memberCount: 3 });
+    bootstrapAvlProver(h2, boxes(), 0, [], { memberCount: 3 });
 
-    // Restarted: same committed state, rebuilt from the store.
-    const restarted = createAvlProver(db2);
-    bootstrapAvlProver(restarted, boxes, 0, records);
-
-    expect(
-      Buffer.from(live.prover.digest()!).equals(Buffer.from(restarted.prover.digest()!)),
-    ).toBe(true);
-  });
-
-  it('a bootstrap that drops the records does NOT agree with the live tree', () => {
-    // Non-vacuity for the test above: if the digests matched with the records
-    // omitted, the comparison would prove nothing about them.
-    const boxes = ['bb', '33'].map((b) => makeKarmaBox(b.repeat(32), 12n, 0));
-    const records = [
-      { key: 'ee'.repeat(32), record: { lastActivityBlock: 10, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 } },
-    ];
-
-    const live = createAvlProver(db);
-    applyBlockMutations(live.prover, 1, [], boxes, records);
-
-    const restarted = createAvlProver(db2);
-    bootstrapAvlProver(restarted, boxes, 0, []); // the forgotten argument
-
-    expect(
-      Buffer.from(live.prover.digest()!).equals(Buffer.from(restarted.prover.digest()!)),
-    ).toBe(false);
+    expect(digestOf(h1)).not.toBe(digestOf(h2));
   });
 
   it('bootstrap record values are committed, not just their keys', () => {
@@ -290,34 +234,20 @@ describe('canonical prover-feed ordering (M-12)', () => {
     // record would be a membership marker rather than committed state.
     const a = createAvlProver(db);
     const b = createAvlProver(db2);
-    const key = 'ee'.repeat(32);
 
-    bootstrapAvlProver(a, [], 0, [{ key, record: { lastActivityBlock: 10, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 } }]);
-    bootstrapAvlProver(b, [], 0, [{ key, record: { lastActivityBlock: 11, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 } }]);
+    bootstrapAvlProver(a, [], 0, records(10), { memberCount: 3 });
+    bootstrapAvlProver(b, [], 0, records(11), { memberCount: 3 });
 
-    expect(
-      Buffer.from(a.prover.digest()!).equals(Buffer.from(b.prover.digest()!)),
-    ).toBe(false);
+    expect(digestOf(a)).not.toBe(digestOf(b));
+  });
+
+  it('the network record is committed too', () => {
+    const a = createAvlProver(db);
+    const b = createAvlProver(db2);
+
+    bootstrapAvlProver(a, [], 0, [], { memberCount: 1 });
+    bootstrapAvlProver(b, [], 0, [], { memberCount: 2 });
+
+    expect(digestOf(a)).not.toBe(digestOf(b));
   });
 });
-
-/**
- * A karma box with a **caller-chosen id**, which is what this suite is for: the
- * id is the AVL key, and the ordering tests need to control sort order directly,
- * so `BASE_IDS` is deliberately unsorted. These boxes therefore do NOT satisfy
- * `id === computeBoxId(box)` — nothing here asserts that, and nothing here seeds
- * a store.
- *
- * `txId`/`index` are real regardless: they are required box fields and they ride
- * the AVL *value*, so a fixture without them serializes to leaf bytes no
- * production box could produce. `height` is the provenance seed.
- */
-function makeKarmaBox(id: string, value: bigint, height: number): AnyBox & { id: string } {
-  const candidate = {
-    boxType: 'karma' as const,
-    value,
-    createdAtBlock: height,
-    owner: new Uint8Array(32).fill(0x77),
-  };
-  return { id, ...candidate, ...fixtureProvenance(candidate, height) };
-}

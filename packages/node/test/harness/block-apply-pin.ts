@@ -7,7 +7,6 @@ import {
   computeTxId,
   decodeOrderingBlock,
   encodeOrderingBlock,
-  identityRecordKey,
   LIKE_KARMA_COST,
   POST_PRICE_REPLY,
   POST_PRICE_THREAD,
@@ -126,6 +125,8 @@ export interface ApplyPinCapture {
   postRevert: StateCapture;
   /** The same blocks applied again over the reverted store. */
   reapplied: PinnedBlock[];
+  /** The blocks the set applied, in height order, as the funnel took them. */
+  chain: OrderingBlock[];
 }
 
 // ---------------------------------------------------------------------------
@@ -538,7 +539,8 @@ function residentRecord(): IdentityRecord {
   };
 }
 
-export async function runApplyPinScenario(carrier: PinCarrier = 'Uint8Array'): Promise<ApplyPinCapture> {
+/** The modules, once the suite's config mock holds every number the scenario needs. */
+async function loadPinModules(): Promise<Modules> {
   const m = await loadModules();
   for (const [field, value] of Object.entries(PIN_CONFIG)) {
     const read = (m.config as unknown as Record<string, unknown>)[field];
@@ -547,7 +549,11 @@ export async function runApplyPinScenario(carrier: PinCarrier = 'Uint8Array'): P
       throw new Error(`config ${field} reads ${String(read)} / profile ${String(profileRead)}, the pin needs ${value}`);
     }
   }
+  return m;
+}
 
+export async function runApplyPinScenario(carrier: PinCarrier = 'Uint8Array'): Promise<ApplyPinCapture> {
+  const m = await loadPinModules();
   m.db.initDb(':memory:');
   m.difficulty.setClock(() => CLOCK_MS);
   try {
@@ -558,18 +564,80 @@ export async function runApplyPinScenario(carrier: PinCarrier = 'Uint8Array'): P
   }
 }
 
+/**
+ * The pre-set state the scenario's blocks are built over, in a fresh
+ * `:memory:` store with the prover bootstrapped over it — without the pending
+ * row of the thread block 1 confirms, which is no input of the tree — for a
+ * replay of a capture's `chain`. The caller closes the store.
+ */
+export async function openApplyPinPreSet(): Promise<void> {
+  const m = await loadPinModules();
+  m.db.initDb(':memory:');
+  await seedPreSetState(m, preSetIdentities());
+  bootstrapOverStore(m);
+}
+
+/** The identities the pre-set state holds boxes and records for, each from a fixed seed. */
+function preSetIdentities() {
+  return {
+    r1: seeded('root-1'),
+    r2: seeded('root-2'),
+    t: seeded('target'),
+    x: seeded('second-target'),
+    l1: seeded('liker-1'),
+    l2: seeded('liker-2'),
+    w1: seeded('withdrawer-full'),
+    w2: seeded('withdrawer-placeholder'),
+    u: seeded('name-holder'),
+    d1: seeded('dormant'),
+    c1: seeded('credit-sender'),
+    c3: seeded('rent-payer'),
+  };
+}
+
+/** A credit's base units. */
+const CREDIT = 10n ** 8n;
+
+/**
+ * The pre-set state, in the store: two roots and the backer stakes as genesis
+ * seeds them (ARCHITECTURE → Genesis); residents holding karma and a record; two
+ * credit holders; the protocol boxes.
+ */
+async function seedPreSetState(m: Modules, ids: ReturnType<typeof preSetIdentities>): Promise<void> {
+  const { r1, r2, t, x, l1, l2, w1, w2, u, d1, c1, c3 } = ids;
+  m.system.seedGenesisCommittee([hex(r1.userId), hex(r2.userId)], 1000n, 0);
+  const residents: Array<[TestIdentity, bigint]> = [
+    [t, 200n], [x, 50n], [l1, 20n], [l2, 50n], [w1, 50n], [w2, 50n], [u, 100n], [d1, 100n],
+  ];
+  for (const [who, value] of residents) {
+    m.utxo.insertBox(makeKarmaBox(value, who.userId, 0));
+    m.records.putIdentityRecord(who.userId, residentRecord());
+  }
+  m.utxo.insertBox(makeCreditBox(100n * CREDIT, c1.userId, 0));
+  m.utxo.insertBox(makeCreditBox(10n * CREDIT, c3.userId, 0));
+  await seedEmissionBox();
+  await seedKarmaPoolBox();
+  m.system.ensureBackerPoolBox(m.system.seedGenesisBackers(m.config.profile.backerTable, 0), 0);
+  m.records.putNetworkRecord({ memberCount: 2 });
+}
+
+/** The prover, bootstrapped at height 0 over everything the store holds. */
+function bootstrapOverStore(m: Modules): void {
+  const handle = m.avl.createAvlProver();
+  m.avl.bootstrapAvlProver(
+    handle,
+    m.utxo.getUnspentBoxes(),
+    0,
+    m.records.getAllIdentityRecords(),
+    m.records.getNetworkRecord(),
+  );
+}
+
 async function runScenario(m: Modules, carrier: PinCarrier): Promise<ApplyPinCapture> {
   const miner = seeded('miner');
-  const [r1, r2] = [seeded('root-1'), seeded('root-2')];
-  const t = seeded('target');
-  const x = seeded('second-target');
-  const l1 = seeded('liker-1');
-  const l2 = seeded('liker-2');
-  const w1 = seeded('withdrawer-full');
-  const w2 = seeded('withdrawer-placeholder');
-  const u = seeded('name-holder');
-  const d1 = seeded('dormant');
-  const [c1, c2, c3] = [seeded('credit-sender'), seeded('credit-recipient'), seeded('rent-payer')];
+  const ids = preSetIdentities();
+  const { r1, r2, t, x, l1, l2, w1, w2, u, d1, c1, c3 } = ids;
+  const c2 = seeded('credit-recipient');
   const [i1, i2, i3] = [seeded('invitee-1'), seeded('invitee-2'), seeded('invitee-3')];
 
   // The profile's first backer row is the key of the seed
@@ -581,25 +649,9 @@ async function runScenario(m: Modules, carrier: PinCarrier): Promise<ApplyPinCap
   }
 
   const cooldown = m.config.vouchCooldownBlocks;
-  const credit = 10n ** 8n;
 
   // ---- the pre-set state ----
-  // Two roots and the backer stakes as genesis seeds them (ARCHITECTURE → Genesis);
-  // residents holding karma and a record; two credit holders; the protocol boxes.
-  m.system.seedGenesisCommittee([hex(r1.userId), hex(r2.userId)], 1000n, 0);
-  const residents: Array<[TestIdentity, bigint]> = [
-    [t, 200n], [x, 50n], [l1, 20n], [l2, 50n], [w1, 50n], [w2, 50n], [u, 100n], [d1, 100n],
-  ];
-  for (const [who, value] of residents) {
-    m.utxo.insertBox(makeKarmaBox(value, who.userId, 0));
-    m.records.putIdentityRecord(who.userId, residentRecord());
-  }
-  m.utxo.insertBox(makeCreditBox(100n * credit, c1.userId, 0));
-  m.utxo.insertBox(makeCreditBox(10n * credit, c3.userId, 0));
-  await seedEmissionBox();
-  await seedKarmaPoolBox();
-  m.system.ensureBackerPoolBox(m.system.seedGenesisBackers(backerTable, 0), 0);
-  m.records.putNetworkRecord({ memberCount: 2 });
+  await seedPreSetState(m, ids);
 
   const karma = (who: TestIdentity): KarmaBox[] => m.utxo.getKarmaBoxes(who.userId);
   const largest = (who: TestIdentity): KarmaBox => {
@@ -614,17 +666,7 @@ async function runScenario(m: Modules, carrier: PinCarrier): Promise<ApplyPinCap
   const pFull = thread(w1, largest(w1), fullContent, 1);
   m.posts.insertPost(pFull.postId, pFull.commit, fullContent);
 
-  const handle = m.avl.createAvlProver();
-  m.avl.bootstrapAvlProver(
-    handle,
-    m.utxo.getUnspentBoxes(),
-    0,
-    m.records.getAllIdentityRecords().map(({ identityId, record }) => ({
-      key: identityRecordKey(identityId),
-      record,
-    })),
-    [{ key: m.records.networkRecordKey(), network: m.records.getNetworkRecord() }],
-  );
+  bootstrapOverStore(m);
   const preSet = captureState(m);
 
   // ---- the set ----
@@ -651,7 +693,7 @@ async function runScenario(m: Modules, carrier: PinCarrier): Promise<ApplyPinCap
   const refuse = async (name: string, rule: string, txs: Built[]): Promise<void> => {
     const before = captureState(m);
     const block = await build(txs);
-    const speculation = m.blockApply.computePostBlockStateRoot(block).kind;
+    const speculation = m.blockApply.computePostBlockStateRoot(block, m.avl.getAvlProver()).kind;
     const logged: string[] = [];
     const record = (...args: unknown[]): void => { logged.push(args.map(String).join(' ')); };
     const warn = vi.spyOn(console, 'warn').mockImplementation(record);
@@ -693,7 +735,7 @@ async function runScenario(m: Modules, carrier: PinCarrier): Promise<ApplyPinCap
       r2Like,
       r2Invite,
       claim(u, largest(u), 'Pinned', 2),
-      creditSend(c1, c1Box, 40n * credit, c2, credit, 2),
+      creditSend(c1, c1Box, 40n * CREDIT, c2, CREDIT, 2),
       reply(l2, largest(l2), 'a reply to an earlier thread', pT.postId, t, 2),
     ]);
   }
@@ -842,5 +884,5 @@ async function runScenario(m: Modules, carrier: PinCarrier): Promise<ApplyPinCap
     reapplied.push(pinBlock(m, block));
   }
 
-  return { preSet, blocks: pinned, refusals, postRevert, reapplied };
+  return { preSet, blocks: pinned, refusals, postRevert, reapplied, chain: blocks };
 }

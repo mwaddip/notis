@@ -208,7 +208,7 @@ async function openNode() {
   const spentBox = seededKarmaBox(POST_PRICE_THREAD, spareBoxPoster.userId, 0, 3);
   const spareBox = seededKarmaBox(50n, spareBoxPoster.userId, 0, 4);
   for (const box of [inviterKarma, lastBox, spentBox, spareBox]) utxo.insertBox(box);
-  await activateProverOverStore();
+  const handle = await activateProverOverStore();
 
   const net = recordingNet();
   (await import('../../src/services/net-instance.js')).setNet(net.node);
@@ -218,6 +218,7 @@ async function openNode() {
   return {
     db,
     net,
+    handle,
     txs: [
       inviteTx(inviterKarma),
       exactPostTx(lastBoxPoster, lastBox, 'paid from the last box'),
@@ -299,7 +300,7 @@ describe("net's karma membership moves after a commit", () => {
     const before = sorted(node.net.members);
     const block = await makeApplicableBlock({ utxoTxs: node.txs });
 
-    expect(node.blockApply.computePostBlockStateRoot(block)).toEqual({ kind: 'computed', stateRoot: block.header.stateRoot });
+    expect(node.blockApply.computePostBlockStateRoot(block, node.handle)).toEqual({ kind: 'computed', stateRoot: block.header.stateRoot });
     expect(sorted(node.net.members)).toEqual(before);
     expect(node.net.calls).toEqual([]);
   });

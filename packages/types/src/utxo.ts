@@ -42,20 +42,16 @@ const encoder = new TextEncoder();
 /**
  * Domain separators — TYPES_INTERFACE → BoxId.
  *
- * Box ids, transaction ids and identity-record keys all live in one 32-byte
- * keyspace, and the AVL tree holds more than one entity kind, so the
- * separation has to be in the preimage rather than in the caller's head.
- * `computePostId` already works this way via its module-local `POST_ID_DOMAIN`;
- * these are exported because the node's AVL key derivation and identity-record
- * store import them.
+ * Box ids, transaction ids and mint transaction ids are 32 bytes of one
+ * digest, like post ids and content hashes (`post.ts`), so each preimage
+ * carries its own tag rather than relying on the caller to keep them apart.
+ * `computePostId` already works this way via its module-local `POST_ID_DOMAIN`.
+ * The tree's keys are not digests and do not use these tags — its entity
+ * kinds are kept apart by a key's first byte (→ The tree keys).
  */
 export const BOX_ID_DOMAIN = encoder.encode('dagsocial/box-id/1');
 export const TX_ID_DOMAIN = encoder.encode('dagsocial/tx-id/1');
 export const MINT_ID_DOMAIN = encoder.encode('dagsocial/mint-tx-id/1');
-export const IDENTITY_KEY_DOMAIN = encoder.encode('dagsocial/identity-key/1');
-export const NETWORK_KEY_DOMAIN = encoder.encode('dagsocial/network-key/1');
-export const USERNAME_KEY_DOMAIN = encoder.encode('dagsocial/username-key/1');
-export const USERNAME_HOLDER_KEY_DOMAIN = encoder.encode('dagsocial/username-holder-key/1');
 
 /**
  * The `boxType` tag table — **the single source of the box-type numbering.**
@@ -1308,12 +1304,11 @@ function txIdBytes(tx: UtxoTransaction): Uint8Array {
  * depend on ids that cannot exist until that id is known. Under this encoder
  * those fields are not merely stripped: they have no writer.
  *
- * `TX_ID_DOMAIN` separates this preimage. Box ids, transaction ids and
- * identity-record keys share one 32-byte keyspace and the AVL tree holds two
- * entity kinds, so the separation has to be in the preimage. This is also **the
- * only implementation**, and must stay so — a second one that omitted the tag
- * would verify signatures against an untagged id while every builder signed a
- * tagged one.
+ * `TX_ID_DOMAIN` separates this preimage from every other 32-byte digest the
+ * format derives — box ids and mint ids among them — so the separation has to
+ * be in the preimage. This is also **the only implementation**, and must stay
+ * so — a second one that omitted the tag would verify signatures against an
+ * untagged id while every builder signed a tagged one.
  *
  * ⚠ **This function throws on an out-of-domain transaction.** `checkTxEnvelope`
  * establishes the domain of `inputs` and `likeTarget` (both pinned at 64

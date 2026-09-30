@@ -12,12 +12,12 @@ import {
  * A block whose two transactions name one input is REJECTED, and the tree is
  * never asked to remove that id twice.
  *
- * ⛔ **This is what keeps `DivergedStateTreeError` off the peer-reachable side
- * of the fail-stop boundary** (NODE_INTERFACE → "What the funnel's totality
- * catch is FOR"), and the mechanism is not local to one file. The block's
- * effects list a remove per spend, and the prover feed derived from them cancels
- * insert-then-remove pairs but does **not** dedupe repeated removes — so a
- * `consumed` list carrying one id twice would refuse on the second `Remove`.
+ * ⛔ **This is what keeps a double spend a verdict rather than a throw**
+ * (NODE_INTERFACE → "What the funnel's totality catch is FOR"), and the
+ * mechanism is not local to one file. The block's effects list a remove per
+ * spend, and the tree writes derived from them net insert-then-remove pairs and
+ * throw on a key written twice (CONSENSUS_INTERFACE → The tree writes → "No key
+ * takes two writes in one block") — a defect's throw where a verdict belongs.
  *
  * What prevents it: the single-pass input check resolves against the state as
  * the loop evolves it. Once the first transaction's `applyTx` spends the box,
@@ -34,6 +34,7 @@ async function importDb() {
   return (await import('../../src/store/db.js')) as {
     initDb: (path: string) => void;
     closeDb: () => void;
+    getDb: () => import('better-sqlite3').Database;
   };
 }
 
@@ -61,11 +62,17 @@ describe('PROBE: two txs, one input', () => {
 
     const db = await importDb();
     db.initDb(':memory:');
+    // Every chain holds its network record from genesis on; the tree's seed carries it.
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
 
     const sender = makeTestIdentity();
     const miner = makeTestIdentity();
-    const box = makeCreditBox(1000n, sender.userId, 0, 1) as CreditBox;
+    // 50_000n, not a round thousand: at either fee the change output clears
+    // the credit per-byte minimum (TYPES_INTERFACE → Box value domain), so
+    // the block is refused for the double spend under test and not for an
+    // undersized output.
+    const box = makeCreditBox(50_000n, sender.userId, 0, 1) as CreditBox;
     utxo.insertBox(box);
 
     // Live prover over the whole store — so the tree really does hold the box
@@ -83,12 +90,20 @@ describe('PROBE: two txs, one input', () => {
       applyOrderingBlock: (block: OrderingBlock) => boolean;
     };
 
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const block = await makeApplicableBlock({ miner, utxoTxs: [txA, txB] });
     const applied = blockApply.applyOrderingBlock(block);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
 
-    // The measurement: an ordinary rejection, not a halt.
+    // The measurement: an ordinary rejection, not a halt — and refused for the
+    // second transaction's unresolved input, not for another rule.
     expect(exited).toEqual([]);
     expect(applied).toBe(false);
+    expect(
+      warnings.some((w) => w.includes('unresolved input')),
+      `expected an unresolved-input reason, got ${JSON.stringify(warnings)}`,
+    ).toBe(true);
     expect(Buffer.from(handle.prover.digest()!).toString('hex')).toBe(before);
   });
 });

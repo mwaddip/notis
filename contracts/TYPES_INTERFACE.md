@@ -453,19 +453,13 @@ computes different ids.
 | `BOX_ID_DOMAIN` | box id |
 | `TX_ID_DOMAIN` | transaction id |
 | `MINT_ID_DOMAIN` | synthetic mint transaction id |
-| `IDENTITY_KEY_DOMAIN` | per-identity record key in the AVL tree |
-| `NETWORK_KEY_DOMAIN` | the network record's key in the AVL tree — the tag alone is the preimage (`NODE_INTERFACE` → Network record) |
-| `USERNAME_KEY_DOMAIN` | the name record's key in the AVL tree — the tag ‖ the name's canonical form (`NODE_INTERFACE` → Username records) |
-| `USERNAME_HOLDER_KEY_DOMAIN` | the holder record's key in the AVL tree — the tag ‖ the identity (`NODE_INTERFACE` → Username records) |
 | `POST_ID_DOMAIN` | post id (→ Post identity) |
 | `POST_CONTENT_DOMAIN` | a post's content hash (→ Post) |
 | `INTERLINK_DOMAIN` | the interlink vector's commitment in a block header (→ Interlink vector) |
 
-Box ids, tx ids, identity-record keys, the network key and the two username keys share one 32-byte
-keyspace and the AVL tree holds five entity kinds, so the separation must be in the preimage; post ids
-and content hashes are 32 bytes of the same digest and carry their tags for the same reason. All ten
-are exported, so a test over their distinctness reads the code's tags and not a copy. (`computePostId` already works
-this way via `POST_ID_DOMAIN`; box ids previously had no tag.)
+Box ids, tx ids, mint tx ids, post ids, content hashes and the interlink commitment are 32 bytes of one digest, so
+each preimage carries its tag. All six are exported, so a test over their distinctness reads the code's tags and not a
+copy. The tree's keys are not digests: its entity kinds are kept apart by a key's first byte (→ The tree keys).
 
 #### Canonical encoding
 
@@ -473,9 +467,9 @@ Exactly one encoder defines the content bytes for identity: `canonicalBoxBytes(c
 `utxo.ts` — the positional writer for the layout's `boxContentBytes` (→ Layout — Boxes): the
 shared prefix `enum8(boxType) ‖ vlqU64(value) ‖ vlqU(createdAtBlock)`, then the per-type tail
 (`writeBoxTypeFields`, whose field order is normative). Tests and mirror implementations assert
-against the encoder that actually computes ids. Node's AVL value (`state/serialize-box.ts`) is
-`boxRecordBytes` — the same content bytes with provenance appended — so the two encodings share
-the one content writer and cannot drift. `serialization.ts` exports no second box encoder;
+against the encoder that actually computes ids. A box's tree value is `boxRecordBytes`
+(→ Layout — tree records) — the same content bytes with provenance appended — so the two encodings
+share the one content writer and cannot drift. `serialization.ts` exports no second box encoder;
 `computeTxId` hashes its outputs through `canonicalBoxBytes` for the same reason: one writer, so
 tx and box derivation cannot drift.
 
@@ -488,7 +482,7 @@ Full bytes are pinned as golden vectors in `test/utxo.test.ts`.
 The positional layout is what enforces this now: **field order is fixed by the writer**
 (`canonicalBoxBytes`' shared prefix, then `writeBoxTypeFields`' per-type table), a producer's
 object never chooses it, and an extra key is unrepresentable because the encoder reads only the
-fields it declares. Node's `serializeBox` reproduces the identical layout.
+fields it declares.
 
 This retires contract hazards **1b and 1c** in `NODE_INTERFACE.md` **by construction**: under
 cbor-x a producer's field order was consensus-visible (the same box built two ways hashed to two
@@ -1304,10 +1298,9 @@ The two `bigint` counters take `vlqU64` — a `number` and a `bigint` of equal v
 the store's `safeIntegers` row boundary, not the bytes (→ Layout — IdentityRecord). What each field means, who writes
 it and what is derived from it is `NODE_INTERFACE → Identity Records`; the bytes are → Layout — IdentityRecord.
 
-**The AVL key** is `blake2b512( IDENTITY_KEY_DOMAIN ‖ identityId )[0:32]`, hex — **never the raw `identityId`**. Records
-and boxes share one 32-byte keyspace and a public key is 32 attacker-chosen bytes: used raw, a keypair could be ground
-whose key equals a live box id. Hashing under the domain tag (→ Domain tags) is what makes the entity kinds provably
-disjoint (`NODE_INTERFACE → Entity kinds`).
+**The tree key** is `identityKey(identityId)`: the tag `0x02`, then the raw `identityId` (→ The tree keys). A public key
+is 32 attacker-chosen bytes, and the tag — not a hash — is what keeps a record's key apart from every box key and every
+other entity kind's (`NODE_INTERFACE → Entity kinds`).
 
 **The valuation** is over committed state, at every karma-sufficiency read; face values move only when a block's
 settlement touches the identity (`NODE_INTERFACE → Karma decay` holds the rule and its derivation; `ARCHITECTURE →
@@ -1337,8 +1330,7 @@ its cfg through it; a client builds the same from `profileFor(network)` — neve
 
 | Export | Signature | Description |
 |--------|-----------|-------------|
-| `identityRecordKey(identityId)` | `(UserId) => string` | The record's AVL key, hex — `blake2b512(IDENTITY_KEY_DOMAIN ‖ identityId)[0:32]` |
-| `identityRecordBytes(record)` | `(IdentityRecord) => Uint8Array` | The AVL value — see Layout — IdentityRecord |
+| `identityRecordBytes(record)` | `(IdentityRecord) => Uint8Array` | The tree value — see Layout — IdentityRecord |
 | `identityRecordFromBytes(bytes)` | `(Uint8Array) => IdentityRecord` | Inverse of `identityRecordBytes`, with the four-part boundary check (→ The boundary check); a first byte other than `IDENTITY_RECORD_TAG` is refused as `invalid-tag` |
 | `IDENTITY_RECORD_TAG` | `0x80` | Field 1 of the layout — the record discriminator among the tree's entity kinds (`NODE_INTERFACE → Entity kinds`) |
 | `decayCfgFor(profile)` | `(NetworkProfile) => DecayCfg` | The one derivation of the valuation's four numbers |
@@ -2431,7 +2423,7 @@ wire form and preimage byte-identical rather than merely parallel.
 
 ⚠ **No `...FromBytes` pair is added, and that does not breach the pairing rule under Layout —
 Boxes.** What that rule forbids is one layout whose writer and reader live in **different packages**
-and are free to drift — the `boxRecordBytes` / node-`deserializeBox` split. `postWithdrawFieldBytes`
+and are free to drift. `postWithdrawFieldBytes`
 and the reader that recovers a `PostWithdrawCommit` from `txIdBytes` both live in this package, and the
 transaction round-trip exercises the pair. Nothing crosses a package boundary unpaired.
 
@@ -2563,13 +2555,8 @@ discriminate are the VLQ width boundaries and the sentinel branches above.
 >
 > Nothing in this package encodes CBOR. Every row below describes the positional codec it names.
 
-`serializeBox` was removed here by Spec G phase 0. No `src` caller existed — box serialization
-goes through node's tagged `state/serialize-box.ts` (AVL values) or the identity encoder in
-`utxo.ts` (ids) — but **two test files did call it, and it was the wrong encoder for what they
-asserted**: `serialization.ts` used cbor-x's default `encode`, not the configured `hashEncoder`
-that computes identity, so the P0 golden test pinning the `0x1b` uint64 value form was pinning
-bytes no production path produces. Those assertions were re-pointed at the identity encoder,
-which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under BoxId.
+A box has one encoder, in `utxo.ts`: `canonicalBoxBytes` for its identity and `boxRecordBytes` — the same content
+bytes with provenance appended — for its tree value (→ Canonical encoding); this module exports no second one.
 
 | Export | Signature | Description |
 |--------|-----------|-------------|
@@ -2939,10 +2926,9 @@ overridden explicitly and `network.test.ts` asserts the override rather than the
 **`genesisId` pins block 1, and is empty until a network has one.** Hex(32) of the height-1 block's
 `blockHash`, or `''`. When set, the height-1 chain-link refuses any other block 1 (`NODE_INTERFACE` →
 Ordering block apply-time authorization, genesis pin) and a NiPoPoW proof must anchor on it
-(→ Interlink vector). Devnet is always `''` — every run mines its own block 1. **Testnet is pinned to
-`39ef01d11ccd9b10e0c6f7f87031a90f8a12faa94f77e5520843b30bc37a44fe`**, its block 1, mined 2026-09-15 on the chain
-that began at that day's reset (`ARCHITECTURE → Deploy gate`). Mainnet is `''` until its block 1 exists and is pinned in the release
-after: a value, not a format, so pinning it moves no bytes. Field-only and per-network like the other genesis fields; `network.test.ts`
+(→ Interlink vector). Devnet is always `''` — every run mines its own block 1. **Testnet is `''` until the reset
+the tree layout owes mines its block 1** (`ARCHITECTURE → Deploy gate`), and mainnet until its block 1 exists; each is
+pinned in the release after: a value, not a format, so pinning it moves no bytes. Field-only and per-network like the other genesis fields; `network.test.ts`
 asserts each profile's own value rather than the spread.
 
 **`membershipBarMultiplier` is field-only, and the case says so.** It scales the membership bar
@@ -2953,7 +2939,7 @@ asserts each profile's own value rather than the spread.
 
 **Every constant not listed in `NetworkProfile` is universal across networks**, including
 consensus ones — the format limits (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`,
-`PROTOCOL_VERSION`, `AVL_KEY_LENGTH`) and every karma and credit cost. The split is
+`PROTOCOL_VERSION`, `TREE_KEY_LENGTH`) and every karma and credit cost. The split is
 normative and stated in `ARCHITECTURE §Network Identity`: **compress time, never
 economics.** A constant moved into `NetworkProfile` is a place devnet may behave unlike
 mainnet, which is where a defect hides from the test meant to catch it.
@@ -2972,9 +2958,8 @@ here because this is where it is cited from: `KARMA_STALE_THRESHOLD_BLOCKS`'s du
 
 ### Domain tags are network-agnostic — deliberately
 
-The seven derivation domain tags — `BOX_ID_DOMAIN`, `TX_ID_DOMAIN`, `MINT_ID_DOMAIN`,
-`IDENTITY_KEY_DOMAIN`, `NETWORK_KEY_DOMAIN`, `POST_ID_DOMAIN`, `POST_CONTENT_DOMAIN` — **do
-not carry the network, and must not be changed to.** No derivation function takes a network argument, and this package holds no
+The derivation domain tags (→ Domain tags) and the tree's tags (→ The tree keys) **do not carry the network, and must
+not be changed to.** No derivation function takes a network argument, and this package holds no
 module-level network state.
 
 This was proposed and **rejected on 2026-08-06**. Recorded here because the proposal is
@@ -3166,14 +3151,15 @@ Membership). None moves value it does not owe.
 ### State format
 
 ```typescript
-export const AVL_KEY_LENGTH = 32;   // bytes
+export const TREE_KEY_LENGTH = 65;   // bytes — a one-byte tag and two 32-byte fields
 ```
 
 The AVL+ tree's key width. It **sets the shape of every `stateRoot`**
 (`packages/node/src/state/avl-prover.ts`), so two nodes holding different values compute
 different digests for identical state — which makes it a consensus constant, not a tuning
 knob. It is universal rather than per-network: a network has no reason to differ on a
-format width, so it does **not** belong in `NetworkProfile`.
+format width, so it does **not** belong in `NetworkProfile`. **65 is the longest key the layout
+writes** — a tag and two 32-byte fields (→ The tree keys).
 
 `packages/node/src/config.ts` imports it and plumbs it through `Config.avlKeyLength`, which
 `state/avl-prover.ts` reads. That plumbing field is permitted, but its value originates here —
@@ -3181,6 +3167,70 @@ format width, so it does **not** belong in `NetworkProfile`.
 node ever regrows a divergent local definition. A value pin alone cannot catch that: if this
 constant moves while a stale local pin holds node at the old number, both remain self-consistent
 and only the origination comparison fails.
+
+### The tree keys
+
+**Every key in the tree is `TREE_KEY_LENGTH` (65) bytes: a one-byte tag, then the key's fields in
+the order below, then zero bytes to 65.** A height inside a key is a `u64`, big-endian, so key order
+is numeric order; every other field is a fixed width. **The tag is what keeps the entity kinds
+apart** — two keys with different tags are different keys whatever their fields, so a field an
+attacker chooses (a public key) is written raw and hashed nowhere. Tags `0x00` and `0xff` are never
+used: the AVL+ library bounds the keyspace with an all-`0x00` and an all-`0xff` sentinel.
+
+| Tag | Name | Fields after the tag | Derivation |
+|---|---|---|---|
+| `0x01` | box | `b32(boxId)` | `boxKey` |
+| `0x02` | identity | `b32(identityId)` | `identityKey` |
+| `0x03` | network | — | `networkKey` |
+| `0x04` | name | the canonical name, 1–`USERNAME_MAX_BYTES` bytes of `[a-z0-9_]` — no zero byte, so the padding is unambiguous | `nameKey` |
+| `0x05` | holder | `b32(owner)` | `holderKey` |
+| `0x06` | post | `b32(postId)` | `postKey` |
+| `0x07` | like | `b32(postId) ‖ b32(likerId)` | `likeKey` |
+| `0x10` | karma-of | `b32(owner) ‖ b32(boxId)` | `karmaOfKey` |
+| `0x11` | credit-of | `b32(owner) ‖ b32(boxId)` | `creditOfKey` |
+| `0x12` | escrow-of | `b32(owner) ‖ b32(boxId)` | `escrowOfKey` |
+| `0x13` | escrow-due | `u64(releaseAtBlock) ‖ b32(boxId)` | `escrowDueKey` |
+| `0x14` | bond-due | `u64(invitedAtBlock) ‖ b32(boxId)` — the invitee's grant height | `bondDueKey` |
+| `0x15` | vouch-pair | `b32(voucherId) ‖ b32(targetId)` | `vouchPairKey` |
+| `0x16` | lapsed | `b32(identityId)` | `lapsedKey` |
+| `0x17` | accrual-of | `b32(author) ‖ b32(boxId)` | `accrualOfKey` |
+| `0x18` | type | `enum8(boxType) ‖ b32(boxId)` — emission, treasury, karma pool or backer pool | `typeKey` |
+| `0x19` | cast-count | `b32(voucherId)` | `castCountKey` |
+
+**Every derivation lives here and nowhere else**, so the node and a leaf derive identical keys.
+**Each one throws** on a field of the wrong width, a height that is not a safe non-negative integer, a
+name that is not valid and canonical, a box type outside the four — the fixed-width discipline, never
+a sentinel (→ Primitives). What each kind holds and which read uses it is
+`CONSENSUS_INTERFACE → The tree layout`.
+
+**A range is a prefix**: `karmaOfRange(owner)`, `creditOfRange(owner)`, `escrowOfRange(owner)`,
+`accrualOfRange(author)`, `vouchPairRange(voucherId)`, `escrowDueRange()`, `bondDueRange()`,
+`lapsedRange()` and `typeRange(boxType)` each answer `{ prefix }`; `rangeStart(range)` is the prefix
+zero-padded to a key, and `inRange(key, range)` whether a key carries the prefix. `keyHeight(key)`
+reads the `u64` of a due key.
+
+### Layout — tree records
+
+**Every value the tree holds opens with its discriminator** — a box's `enum8(boxType)`, a record's tag
+at `0x80` and up (`NODE_INTERFACE → Entity kinds`) — and each codec is positional, decoded by
+`decodeStruct` (re-encode and byte-compare).
+
+| Value | Layout | Codec |
+|---|---|---|
+| a box | `boxRecordBytes` (→ Layout — Boxes) | `boxFromRecordBytes(boxId, bytes)` decodes it |
+| an identity record | → Layout — IdentityRecord (`0x80`) | `identityRecordBytes` · `identityRecordFromBytes` |
+| the network record | `u8(0x81) ‖ vlqU(memberCount)` | `networkRecordBytes` · `networkRecordFromBytes` |
+| a name record | `u8(0x82) ‖ b32(boxId) ‖ vlqU(claimedAtBlock)` | `nameRecordBytes` · `nameRecordFromBytes` |
+| a holder record | `u8(0x83) ‖ u8(claimAvailable) ‖ opt(b32(boxId))` | `holderRecordBytes` · `holderRecordFromBytes` |
+| a post record | `u8(0x84) ‖ b32(author) ‖ vlqU(height) ‖ u8(standing)` — `0` live, `1` withdrawn | `postRecordBytes` · `postRecordFromBytes` |
+| a like record | `u8(0x85)` | `LIKE_MARKER` |
+| an index entry | `u8(0x86)` | `INDEX_MARKER` |
+| a vouch-pair entry | `u8(0x87) ‖ b32(boxId)` | `vouchPairValue` · `vouchPairBoxId` |
+| a cast count | `u8(0x88) ‖ vlqU(count)` — the voucher's live vouch boxes, never `0` (a count of `0` is no entry) | `castCountBytes` · `castCountFromBytes` |
+
+The record shapes are exported beside their codecs: `NetworkRecord { memberCount }`, `NameRecord { boxId, claimedAtBlock }`,
+`HolderRecord { claimAvailable, boxId | null }`, `PostRecord { author, height, standing }` — a box id as 64 lowercase
+hex, an author as 32 raw bytes.
 
 ### PoW
 

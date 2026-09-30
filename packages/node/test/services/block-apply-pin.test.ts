@@ -49,9 +49,8 @@ const PINS: Pin[] = [
 
 const FIXTURE_PATH = fileURLToPath(new URL('../fixtures/block-apply-pin.json', import.meta.url));
 const CAPTURE = process.env['BLOCK_APPLY_PIN_CAPTURE'] === '1';
-const CAPTURED_FROM = '9de7bbe9 on consensus-package-stage-2, before any stage-2 source change; the holder '
-  + 'mutations\' owner values re-recorded under tag 64 on consensus-package-stage-3, where the overlay '
-  + 'decodes the owner to a plain Uint8Array';
+const CAPTURED_FROM = 'n2-state-layout, the node applying over its prover: each stateRoot is the tree '
+  + 'layout\'s digest, and each record mutation\'s key its identityKey in hex';
 
 interface Fixture {
   capturedFrom: string;

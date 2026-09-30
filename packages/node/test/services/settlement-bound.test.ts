@@ -23,10 +23,14 @@ import type {
   BondBox,
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
+import type { AnyBox, IdentityRecord, PostCommit } from '@dagsocial/types';
+import type { BlockEffects } from '@dagsocial/consensus';
 import {
-  hex,
   makeApplicableBlock,
+  makePostCommit,
   makeTestIdentity,
+  seedBoxes,
+  seedCommittedState,
   seedProvenance,
   makeLikeTx,
 } from '../helpers.js';
@@ -57,22 +61,27 @@ async function importBlockCreator() {
     stopBlockCreator: () => void;
     createOrderingBlock: () => OrderingBlock | null;
   };
-  const { storeStateView, applyContextFrom } = await import('../../src/services/block-apply.js');
+  const { applyContextFrom } = await import('../../src/services/block-apply.js');
   const { config: nodeConfig } = await import('../../src/config.js');
-  const { buildBlockSettlement } = await import('@dagsocial/consensus');
+  const { buildBlockSettlement, treeStateView } = await import('@dagsocial/consensus');
+  const { getAvlProver } = await import('../../src/state/avl-prover.js');
+  const { proverSession } = await import('../../src/state/prover-session.js');
   return {
     startBlockCreator: creator.startBlockCreator,
     stopBlockCreator: creator.stopBlockCreator,
     createOrderingBlock: creator.createOrderingBlock,
-    // The settlement build the creator runs: over the store's view, under the
-    // context of the process config.
+    // The settlement build the creator runs: over a tree view on the live
+    // prover, under the context of the process config.
     buildBlockSettlement: (
       txBytesList: Uint8Array[],
       height: number,
       validator: Uint8Array,
       minerOwner: Uint8Array,
     ): { tx: UtxoTransaction } | { error: string } =>
-      buildBlockSettlement(storeStateView, txBytesList, height, validator, minerOwner, applyContextFrom(nodeConfig)),
+      buildBlockSettlement(
+        treeStateView(proverSession(getAvlProver().prover)),
+        txBytesList, height, validator, minerOwner, applyContextFrom(nodeConfig),
+      ),
   };
 }
 
@@ -84,10 +93,6 @@ async function importUtxo() {
     getKarmaValue: (owner: Uint8Array) => bigint;
     getVouchEscrowsReleasableAt: (height: number, limit: number) => VouchEscrowBox[];
   };
-}
-
-async function importTopology() {
-  return await import('../../src/store/topology.js');
 }
 
 // ---------------------------------------------------------------------------
@@ -125,16 +130,17 @@ describe('T1 — escrow cap and multi-block drain', () => {
     expect(blockApply.applyOrderingBlock(block1)).toBe(true);
 
     // Seed 150 vouch escrow boxes all releasing at height 2
+    const escrows: AnyBox[] = [];
     for (let i = 0; i < TOTAL; i++) {
-      const box = seedProvenance<VouchEscrowBox>({
+      escrows.push(seedProvenance<VouchEscrowBox>({
         boxType: 'vouch_escrow' as const,
         value: BigInt(10 + i),
         createdAtBlock: 1,
         owner: owners[i]!.userId,
         releaseAtBlock: RELEASE_HEIGHT,
-      }, 1000 + i);
-      utxo.insertBox(box);
+      }, 1000 + i));
     }
+    await seedBoxes(escrows);
 
     // Blocks 2, 3, 4: each settles up to MAX_ESCROW_RETURNS_PER_BLOCK
     let totalReturned = 0;
@@ -177,8 +183,6 @@ describe('T2 — like storm', () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const utxo = await importUtxo();
-    const topology = await importTopology();
     const blockApply = await importBlockApply();
     const bc = await importBlockCreator();
 
@@ -186,23 +190,26 @@ describe('T2 — like storm', () => {
     const block1 = await makeApplicableBlock({ utxoTxs: [] });
     expect(blockApply.applyOrderingBlock(block1)).toBe(true);
 
-    // One target post (all likes target the same author)
+    // One target post (all likes target the same author), confirmed, and the
+    // author's karma box (the carry needs one to exist).
     const postAuthor = makeTestIdentity();
     const targetPostId = (9000).toString(16).padStart(64, '0');
-    topology.insertBlockTopology(targetPostId, [], hex(postAuthor.userId), 1);
-
-    // Seed the author's karma box (the carry needs one to exist)
+    const target: PostCommit = makePostCommit(postAuthor.userId, 'the storm target');
     const authorKarma = seedProvenance<KarmaBox>({
       boxType: 'karma' as const,
       value: 1000n,
       createdAtBlock: 1,
       owner: postAuthor.userId,
     }, 9999);
-    utxo.insertBox(authorKarma);
+    await seedCommittedState({
+      mutations: [{ kind: 'box', op: 'insert', boxId: authorKarma.id!, box: authorKarma }],
+      posts: [{ postId: targetPostId, txId: targetPostId, post: target }],
+    });
 
     // Build like tx bytes — each liker contributes one marker input
-    function makeLikeTxBytes(count: number): Uint8Array[] {
+    async function makeLikeTxBytes(count: number): Promise<Uint8Array[]> {
       const txBytes: Uint8Array[] = [];
+      const boxes: KarmaBox[] = [];
       for (let i = 0; i < count; i++) {
         const liker = makeTestIdentity();
         const karmaBox = seedProvenance<KarmaBox>({
@@ -211,17 +218,18 @@ describe('T2 — like storm', () => {
           createdAtBlock: 1,
           owner: liker.userId,
         }, 10_000 + i);
-        utxo.insertBox(karmaBox);
+        boxes.push(karmaBox);
         const tx = makeLikeTx(liker, karmaBox, targetPostId, postAuthor.userId);
         txBytes.push(encodeTx(tx));
       }
+      await seedBoxes(boxes);
       return txBytes;
     }
 
     const miner = makeTestIdentity();
 
     // (a) 320 likes: exceeds old MAX_TX_BYTES, fits MAX_SETTLEMENT_BYTES
-    const likesA = makeLikeTxBytes(320);
+    const likesA = await makeLikeTxBytes(320);
     const resultA = bc.buildBlockSettlement(likesA, 2, miner.userId, miner.userId);
     expect('tx' in resultA).toBe(true);
     if ('tx' in resultA) {
@@ -231,7 +239,7 @@ describe('T2 — like storm', () => {
     }
 
     // (b) 3,200 likes: exceeds MAX_SETTLEMENT_BYTES — the fill must trim
-    const likesB = makeLikeTxBytes(3200);
+    const likesB = await makeLikeTxBytes(3200);
     const resultB = bc.buildBlockSettlement(likesB, 2, miner.userId, miner.userId);
     expect('tx' in resultB).toBe(true);
     if ('tx' in resultB) {
@@ -254,8 +262,6 @@ describe('T3 — liveness relation', () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const utxo = await importUtxo();
-    const records = await import('../../src/store/identity-records.js');
     const blockApply = await importBlockApply();
     const bc = await importBlockCreator();
 
@@ -263,34 +269,36 @@ describe('T3 — liveness relation', () => {
     const block1 = await makeApplicableBlock({ utxoTxs: [] });
     expect(blockApply.applyOrderingBlock(block1)).toBe(true);
 
-    // Seed 64 bonds, 64 escrows, and 64 lapsed vouches — the three capped legs
+    // Seed 64 bonds, 64 escrows, and 64 lapsed vouches — the three capped legs.
+    // Committed at height 1, so each bond's due key is 1 (CONSENSUS_INTERFACE →
+    // The tree writes): due by `settleHeight`, whose sweep reads the bonds
+    // invited at or below `BOND_HEIGHT`.
     const BOND_HEIGHT = 2;
     const probation = config.inviteProbationBlocks;
     const settleHeight = BOND_HEIGHT + probation;
+    const mutations: BlockEffects['mutations'] = [];
+    const insert = (box: AnyBox): void => { mutations.push({ kind: 'box', op: 'insert', boxId: box.id!, box }); };
 
     for (let i = 0; i < MAX_BOND_SETTLEMENTS_PER_BLOCK; i++) {
       const owner = makeTestIdentity();
-      const box = seedProvenance<BondBox>({
+      insert(seedProvenance<BondBox>({
         boxType: 'bond' as const,
         value: 25n,
         createdAtBlock: 1,
         inviterId: owner.userId,
         inviteePublicKey: makeTestIdentity().userId,
-        invitedAtBlock: BOND_HEIGHT,
-      }, 2000 + i);
-      utxo.insertBox(box);
+      }, 2000 + i));
     }
 
     for (let i = 0; i < MAX_ESCROW_RETURNS_PER_BLOCK; i++) {
       const owner = makeTestIdentity();
-      const box = seedProvenance<VouchEscrowBox>({
+      insert(seedProvenance<VouchEscrowBox>({
         boxType: 'vouch_escrow' as const,
         value: 10n,
         createdAtBlock: 1,
         owner: owner.userId,
         releaseAtBlock: settleHeight,
-      }, 3000 + i);
-      utxo.insertBox(box);
+      }, 3000 + i));
     }
 
     for (let i = 0; i < MAX_LAPSE_WITHDRAWALS_PER_BLOCK; i++) {
@@ -298,20 +306,21 @@ describe('T3 — liveness relation', () => {
       const target = makeTestIdentity();
       // The voucher's record fails member(): memberSinceBlock > 0 but
       // memberVouches (0) < memberBar (1).
-      records.putIdentityRecord(voucher.userId, {
+      const record: IdentityRecord = {
         lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
         lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 1,
         memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
-      });
-      const box = seedProvenance<VouchBox>({
+      };
+      mutations.push({ kind: 'record', identityId: voucher.userId, record });
+      insert(seedProvenance<VouchBox>({
         boxType: 'vouch' as const,
         value: 1n,
         createdAtBlock: 1,
         voucherId: voucher.userId,
         targetId: target.userId,
-      }, 4000 + i);
-      utxo.insertBox(box);
+      }, 4000 + i));
     }
+    await seedCommittedState({ mutations });
 
     // Build the settlement at settleHeight with an empty body
     const miner = makeTestIdentity();

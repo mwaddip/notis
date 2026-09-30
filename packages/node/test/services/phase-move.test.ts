@@ -14,6 +14,7 @@ import {
   makeKarmaBox,
   makeLikeTx,
   makeTestIdentity,
+  seedBoxes,
   seedPostTx,
   signTransaction,
 } from '../helpers.js';
@@ -38,14 +39,6 @@ async function importBlockApply() {
 
 async function importPosts() {
   return await import('../../src/store/posts.js');
-}
-
-async function importUtxo() {
-  return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown) => void;
-    getBox: (boxId: string) => unknown;
-    getKarmaValue: (owner: Uint8Array) => bigint;
-  };
 }
 
 async function importLikes() {
@@ -87,7 +80,6 @@ describe('phase-move: like(P) + postWithdraw(P) in one block', () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const utxo = await importUtxo();
     const posts = await importPosts();
     const blockApply = await importBlockApply();
 
@@ -102,11 +94,10 @@ describe('phase-move: like(P) + postWithdraw(P) in one block', () => {
 
     // Block 2: like(P) + postWithdraw(P)
     const likerKarma = makeKarmaBox(100n, liker.userId, 0, 200);
-    utxo.insertBox(likerKarma);
     const likeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
 
     const withdrawKarma = makeKarmaBox(100n, author.userId, 0, 201);
-    utxo.insertBox(withdrawKarma);
+    await seedBoxes([likerKarma, withdrawKarma]);
     const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
 
     const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [likeTx, withdrawTx] });
@@ -119,7 +110,6 @@ describe('phase-move: a withdrawal does not erase a same-block like', () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const utxo = await importUtxo();
     const posts = await importPosts();
     const blockApply = await importBlockApply();
     const likes = await importLikes();
@@ -137,11 +127,10 @@ describe('phase-move: a withdrawal does not erase a same-block like', () => {
     // the withdrawal (NODE_INTERFACE → Withdrawal transactions; the withdrawal
     // moves no value and empties no record but the post's own content).
     const likerKarma = makeKarmaBox(100n, liker.userId, 0, 400);
-    utxo.insertBox(likerKarma);
     const likeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
 
     const withdrawKarma = makeKarmaBox(100n, author.userId, 0, 401);
-    utxo.insertBox(withdrawKarma);
+    await seedBoxes([likerKarma, withdrawKarma]);
     const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
 
     const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [likeTx, withdrawTx] });
@@ -157,7 +146,6 @@ describe('phase-move: creator/applier settlement agreement', () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const utxo = await importUtxo();
     const posts = await importPosts();
     const blockApply = await importBlockApply();
 
@@ -174,11 +162,10 @@ describe('phase-move: creator/applier settlement agreement', () => {
     // buildBlockSettlement, and applyOrderingBlock independently derives its
     // own settlement. If the two disagree, the block is rejected.
     const likerKarma = makeKarmaBox(100n, liker.userId, 0, 500);
-    utxo.insertBox(likerKarma);
     const likeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
 
     const withdrawKarma = makeKarmaBox(100n, author.userId, 0, 501);
-    utxo.insertBox(withdrawKarma);
+    await seedBoxes([likerKarma, withdrawKarma]);
     const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
 
     // The block's settlement is the creator's derivation. If the applier's

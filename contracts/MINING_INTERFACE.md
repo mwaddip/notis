@@ -624,7 +624,7 @@ successor forks its author out at the next header.
 > What every verifier must reach identically is the **same verdict** — each **derived** quantity
 > recomputed and compared, each **producer-chosen** one read and constrained by a stated rule,
 > and no field neither. Every ordering the derivation depends on must be one the block already
-> fixes — NODE_INTERFACE → the settlement transaction admits exactly three sources and no fourth.
+> fixes — NODE_INTERFACE → "Four ordering sources are permitted and no fifth is".
 
 ## Config
 

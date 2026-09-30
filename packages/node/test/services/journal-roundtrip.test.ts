@@ -8,8 +8,8 @@ import {
 } from 'vitest';
 import {
   computeTxId,
+  identityKey,
   identityRecordFromBytes,
-  identityRecordKey,
   PROTOCOL_VERSION,
   MAX_BLOCK_BODY_BYTES,
 } from '@dagsocial/types';
@@ -22,6 +22,7 @@ import type {
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 import type { Config } from '../../src/config.js';
+import type { AvlProverHandle } from '../../src/state/avl-prover.js';
 import {
   FIXTURE_BOND_KARMA,
   hex,
@@ -105,6 +106,7 @@ async function importBlockApply() {
     applyOrderingBlock: (block: OrderingBlock) => boolean;
     computePostBlockStateRoot: (
       block: OrderingBlock,
+      handle: AvlProverHandle,
     ) => import('../../src/services/block-apply.js').StateRootSpeculation;
   };
 }
@@ -233,7 +235,7 @@ function takeSnapshot(
  */
 async function assertRoundTrip(
   db: DbModule,
-  handle: { prover: { digest(): Uint8Array | null } },
+  handle: AvlProverHandle,
   pre: Snapshot,
   classBlock: OrderingBlock,
 ): Promise<void> {
@@ -261,7 +263,7 @@ async function assertRoundTrip(
   //     transition, not two.
   const blockApply = await importBlockApply();
   const journalsBefore = journalHeights(db.getDb());
-  const speculative = blockApply.computePostBlockStateRoot(classBlock);
+  const speculative = blockApply.computePostBlockStateRoot(classBlock, handle);
   expect(speculative).toEqual({
     kind: 'computed',
     stateRoot: Buffer.from(postDigest).toString('hex'),
@@ -270,8 +272,8 @@ async function assertRoundTrip(
   // holding a prover accepts exactly the blocks a producer builds.
   expect(classBlock.header.stateRoot).toBe(Buffer.from(postDigest).toString('hex'));
 
-  // 2c. …and it left no trace: it wrote nothing to the store, the prover was
-  //     restored to its snapshot, and it persisted no journal row.
+  // 2c. …and it left no trace: it wrote nothing to the store, the prover is
+  //     back at the root it started on, and it persisted no journal row.
   expect(dumpState(db.getDb())).toEqual(pre.state);
   expect(Buffer.from(digestOf(handle)).equals(Buffer.from(pre.digest))).toBe(true);
   expect(journalHeights(db.getDb())).toEqual(journalsBefore);
@@ -533,8 +535,9 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
 
   it('identity record: an invite grant writes two record mutations and the journal reverts both', async () => {
     // The record mutation class: a block that writes the same record key
-    // **twice**, exercising the prover feed's collapse-to-last-write
-    // rule. An invite grant fires two writers at one height for the invitee:
+    // **twice**, exercising the tree writes' collapse to the last write
+    // (CONSENSUS_INTERFACE → The tree writes → "No key takes two writes in one
+    // block"). An invite grant fires two writers at one height for the invitee:
     //   1. The settlement's karma output → `insertBox` → `bumpActivityClock`
     //      → `putIdentityRecord(lastActivityBlock: H)`
     //   2. The invite loop (§11a-ii) → `putIdentityRecord(invitedAtBlock: H)`
@@ -603,7 +606,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     expect(recordMutations[0]).toMatchObject({ record: { invitedAtBlock: 2 } });
 
     // The TREE holds the LAST write — the collapse rule's subject.
-    const key = Buffer.from(identityRecordKey(invitee.userId), 'hex');
+    const key = identityKey(invitee.userId);
     const lookup = handle.prover.performOneOperation({ tag: 'Lookup', key });
     if (!lookup.success) throw new Error('lookup failed');
     expect(lookup.value).toBeTruthy();

@@ -13,15 +13,13 @@ import {
 import { emissionTotal } from './block-creator.js';
 import {
   getAllIdentityRecords,
-  putNetworkRecord, getNetworkRecord, networkRecordKey,
+  putNetworkRecord, getNetworkRecord,
 } from '../store/identity-records.js';
 import { getCurrentHeight } from '../store/ordering.js';
 import { getUnspentBoxes } from '../store/utxo.js';
 import { bootstrapAvlProver, getAvlProver } from '../state/avl-prover.js';
-import type { RecordPut, NetworkPut } from '../state/avl-prover.js';
 import { config } from '../config.js';
-import { hexToBytes, identityRecordKey } from '@dagsocial/types';
-import type { AnyBox } from '@dagsocial/types';
+import { hexToBytes } from '@dagsocial/types';
 
 /**
  * The height the genesis state sits at. **Genesis is state, not a block** —
@@ -107,22 +105,23 @@ function markGenesisCommitted(): void {
  *
  * Genesis has no history to lose. The tree is **empty**, the input is a
  * **fixed, known set** — the proof box, the emission box and the karma supply
- * pool on every network, plus the faucet identity's karma and credit boxes on
- * the profiles that name one —
- * and the order is
- * specified rather than whatever a set read produced. Every node on a network
- * performs the identical operation on an identical empty tree, so the resulting
- * root is reproducible by construction.
+ * pool on every network; the faucet identity's karma and credit boxes on the
+ * profiles that name one; a karma box per committee key; a stake per backer
+ * table row, with the backer pool beside them where the table has rows — and
+ * the order is specified rather than whatever a set read produced. Every node on
+ * a network performs the identical operation on an identical empty tree, so the
+ * resulting root is reproducible by construction.
  *
  * **The insertion order is normative and is NOT this function's to choose.**
  * AVL+ shape is order-dependent, so "the genesis set is these boxes" does not
- * determine a root — "these boxes, in this order" does. The order is the
- * canonical prover-feed order already binding on every block (M-12,
- * `NODE_INTERFACE` → "AVL+ State Root"): **all boxes lexicographically by hex
- * box id, then all identity records lexicographically by hex key.**
- * `bootstrapAvlProver` sorts the feed itself, so the order in which the calls
- * below happen to run is deliberately not consensus-visible — genesis and block
- * application share one ordering rule rather than agreeing by coincidence.
+ * determine a root — "these boxes, in this order" does. The order is
+ * `seedTreeWrites`' (CONSENSUS_INTERFACE → The tree writes → "`seedTreeWrites(boxes,
+ * records, network)` is genesis"): **every box, its index entries, each
+ * voucher's cast count, every identity record with its `lapsed` entry where it
+ * holds and the network record, all `Insert`s in ascending key order.** The
+ * ordering is consensus's, so the order in which the calls below happen to run
+ * is deliberately not consensus-visible — genesis and block application share
+ * one ordering rule rather than agreeing by coincidence.
  * `test/services/genesis-state.test.ts` pins that by seeding a reversed feed and
  * asserting the same root.
  *
@@ -334,7 +333,7 @@ export function seedGenesisState(): void {
       // created (TYPES_INTERFACE → EmissionBox's rule, which TreasuryBox
       // inherits). The first block whose `split.treasury` is nonzero creates it.
 
-      // **The feed is read back from the store, never assembled from what the
+      // **The seed is read back from the store, never assembled from what the
       // seeders returned.** What the state root must cover is the UTXO set, so
       // reading the set is what makes the tree cover it *by construction*
       // rather than by each helper happening to hand back everything it wrote.
@@ -342,21 +341,17 @@ export function seedGenesisState(): void {
       // store may hold several, and `ensureSystemKarmaBox` writes the system
       // identity record only on its create path, so the branch that returns a
       // pre-existing box is exactly the one that cannot promise the record the
-      // tree needs. `bootstrapAvlProver` sorts the feed (M-12), so reading in
-      // store order is not a second ordering rule.
-      const boxes: AnyBox[] = getUnspentBoxes();
-      const records: RecordPut[] = getAllIdentityRecords().map((r) => ({
-        key: identityRecordKey(r.identityId),
-        record: r.record,
-      }));
-      const nr = getNetworkRecord();
-      const networkPuts: NetworkPut[] = [
-        { key: networkRecordKey(), network: nr },
-      ];
+      // tree needs. `seedTreeWrites` orders the writes, so reading in store
+      // order is not a second ordering rule.
+      bootstrapAvlProver(
+        handle,
+        getUnspentBoxes(),
+        GENESIS_HEIGHT,
+        getAllIdentityRecords(),
+        getNetworkRecord(),
+      );
 
-      bootstrapAvlProver(handle, boxes, GENESIS_HEIGHT, records, networkPuts);
-
-      // The postcondition of the two lines above: the genesis this node just
+      // The postcondition of the bootstrap above: the genesis this node just
       // built is the genesis its network pins. Inside the transaction, so a
       // divergent one is refused *and* rolled back rather than committed and
       // then complained about once.

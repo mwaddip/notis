@@ -104,11 +104,12 @@ async function activateProver(
 ) {
   const avlMod = await importAvl();
   const utxo = await importUtxo();
+  const records = await import('../../src/store/identity-records.js');
   const handle = avlMod.createAvlProver();
   const raw = utxo.getUnspentBoxes();
   const unspent = permute ? permute(raw) : raw;
   expect(unspent.length).toBeGreaterThan(0);
-  avlMod.bootstrapAvlProver(handle, unspent, 0, []);
+  avlMod.bootstrapAvlProver(handle, unspent, 0, records.getAllIdentityRecords(), records.getNetworkRecord());
   expect(avlMod.tryGetAvlProver()).not.toBeNull();
   return {
     handle,

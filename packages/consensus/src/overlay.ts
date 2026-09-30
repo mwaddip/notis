@@ -1,5 +1,5 @@
 import { isMember } from './utxo-engine.js';
-import type { NetworkRecord, UsernameRow } from './utxo-engine.js';
+import type { UsernameRow } from './utxo-engine.js';
 import type { PostStanding, StateView } from './state-view.js';
 import { bytesToHex, hexToBytes } from '@dagsocial/types';
 import type {
@@ -7,24 +7,16 @@ import type {
   BackerPoolBox,
   BondBox,
   EmissionBox,
+  HolderRecord,
   IdentityRecord,
   KarmaBox,
   KarmaPoolBox,
   LikeAccrualBox,
+  NetworkRecord,
   TreasuryBox,
   VouchBox,
   VouchEscrowBox,
 } from '@dagsocial/types';
-
-/**
- * The holder record (NODE_INTERFACE → Username records). An absent record means
- * `{ claimAvailable: true, boxId: null }`, and a record equal to that meaning is
- * never written: a burn removes it.
- */
-export interface HolderRecord {
-  claimAvailable: boolean;
-  boxId: string | null;
-}
 
 /**
  * One write to committed state (CONSENSUS_INTERFACE → BlockEffects).
@@ -55,10 +47,10 @@ export class LimitedQueryAfterWriteError extends Error {
   }
 }
 
-/** An insert of a box id the state holds or held, live or spent (CONSENSUS_INTERFACE → The overlay). */
+/** An insert of a box id a live box holds, or one the block inserted (CONSENSUS_INTERFACE → The overlay). */
 export class BoxIdTakenError extends Error {
   constructor(readonly boxId: string) {
-    super(`insertBox: ${boxId} is a box id the state holds or held`);
+    super(`insertBox: ${boxId} is a box id a live box holds, or one the block inserted`);
     this.name = 'BoxIdTakenError';
   }
 }
@@ -152,9 +144,9 @@ function readBackRow(row: UsernameRow | null): UsernameRow | null {
  *   in.
  * - **A limited query** answers the view's answer while the block has written
  *   nothing into its set, and throws `LimitedQueryAfterWriteError` after.
- * - **The store's backstops**: an insert of a box id the state holds or held
- *   throws `BoxIdTakenError`; a spend of a box that is not live throws
- *   `SpendOfNonLiveBoxError`.
+ * - **The store's backstops**: an insert of a box id a live box holds, or one
+ *   the block inserted, throws `BoxIdTakenError`; a spend of a box that is not
+ *   live throws `SpendOfNonLiveBoxError`.
  * - **A read of what the block wrote answers a copy** — of a box, a record, a
  *   name row or a post's author — with every byte field a plain `Uint8Array`
  *   and a record's fields in its declared order, whatever carried the bytes the
@@ -201,6 +193,7 @@ export class BlockOverlay implements StateView {
   }
 
   getBoxProvenance(id: string): { txId: string; index: number } | null {
+    if (this.spent.has(id)) return null;
     const box = this.inserted.get(id);
     return box !== undefined ? { txId: box.txId, index: box.index } : this.view.getBoxProvenance(id);
   }
@@ -389,7 +382,7 @@ export class BlockOverlay implements StateView {
   insertBox(box: AnyBox): void {
     const id = box.id;
     if (id === undefined) throw new Error('insertBox: the box carries no id');
-    if (this.inserted.has(id) || this.view.getBoxProvenance(id) !== null) {
+    if (this.inserted.has(id) || this.view.getBox(id) !== null) {
       throw new BoxIdTakenError(id);
     }
     this.inserted.set(id, box);

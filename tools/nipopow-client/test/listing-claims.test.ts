@@ -6,13 +6,15 @@ import {
   buildAvlWithInsertions,
   boxInsertion,
   recordInsertion,
+  boxProofKeyHex,
+  identityProofKeyHex,
   avlProofJson,
   hexToBytes,
   jsonResponse,
   makeAnchor,
   devnetProfile,
 } from './helpers.js';
-import { computeCandidateBoxId, identityRecordKey } from '@dagsocial/types';
+import { computeCandidateBoxId } from '@dagsocial/types';
 import type { AnyBoxCandidate, IdentityRecord, TxId, UserId } from '@dagsocial/types';
 
 // WEB_INTERFACE → The extension → "The verified figures" — the listing is a list
@@ -21,7 +23,7 @@ import type { AnyBoxCandidate, IdentityRecord, TxId, UserId } from '@dagsocial/t
 
 const USER_HEX = 'ab'.repeat(32);
 const USER_BYTES = hexToBytes(USER_HEX) as UserId;
-const RECORD_KEY = identityRecordKey(USER_BYTES);
+const RECORD_KEY = identityProofKeyHex(USER_BYTES);
 const TXID = 'cd'.repeat(32) as TxId;
 const SUFFIX_H = 100;
 const TIP_H = 119;
@@ -58,7 +60,7 @@ const SUFFIX = buildAvlWithInsertions(
     boxInsertion(UNLOCKED, TXID, 2),
     recordInsertion(USER_BYTES, RECORD),
   ],
-  [YOUNG_ID],
+  [boxProofKeyHex(YOUNG_ID)],
 );
 const TIP = buildAvlWithInsertions([
   boxInsertion(KARMA, TXID, 0),
@@ -110,7 +112,7 @@ describe('an id the listing names more than once is unproven from its second pla
     expect(result.boxes[1]!.verdict).toBe(`unproven: the listed boxId is named earlier in the listing: '${KARMA_ID}'`);
     expect(result.karma.proven).toBe(100n);
     expect(result.failed).toBe(true);
-    expect(boxProofs(proofCalls, KARMA_ID)).toEqual([`/api/v1/proof/${KARMA_ID}?atHeight=${SUFFIX_H}`]);
+    expect(boxProofs(proofCalls, boxProofKeyHex(KARMA_ID))).toEqual([`/api/v1/proof/${boxProofKeyHex(KARMA_ID)}?atHeight=${SUFFIX_H}`]);
   });
 
   it('an id listed under karma and again under credits is unproven in the credits place, no proof asked', async () => {
@@ -119,7 +121,7 @@ describe('an id the listing names more than once is unproven from its second pla
     expect(result.boxes.map(b => [b.boxClass, b.status])).toEqual([['karma', 'proven'], ['credit', 'unproven']]);
     expect(result.boxes[1]!.verdict).toBe(`unproven: the listed boxId is named earlier in the listing: '${KARMA_ID}'`);
     expect(result.credits.proven).toBe(0n);
-    expect(boxProofs(proofCalls, KARMA_ID)).toHaveLength(1);
+    expect(boxProofs(proofCalls, boxProofKeyHex(KARMA_ID))).toHaveLength(1);
   });
 
   it('an id named again in another case is the same id, unproven in its second place', async () => {
@@ -143,7 +145,7 @@ describe('an id the listing names more than once is unproven from its second pla
     expect(result.boxes[0]!.boxId).toBe(KARMA_ID);
     expect(result.karma.proven).toBe(100n);
     expect(result.failed).toBe(false);
-    expect(boxProofs(proofCalls, KARMA_ID)).toEqual([`/api/v1/proof/${KARMA_ID}?atHeight=${SUFFIX_H}`]);
+    expect(boxProofs(proofCalls, boxProofKeyHex(KARMA_ID))).toEqual([`/api/v1/proof/${boxProofKeyHex(KARMA_ID)}?atHeight=${SUFFIX_H}`]);
   });
 });
 

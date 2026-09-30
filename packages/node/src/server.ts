@@ -499,7 +499,7 @@ export function createApp(config: Config): express.Express {
     }),
   );
 
-  // Proof endpoint — GET /api/v1/proof/:boxId (light-client AVL proofs)
+  // Proof endpoint — GET /api/v1/proof/:key (light-client AVL proofs)
   const proverHandle = tryGetAvlProver();
   if (proverHandle) {
     registerProofEndpoint(app, proverHandle);

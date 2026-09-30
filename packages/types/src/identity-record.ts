@@ -2,16 +2,14 @@
  * The per-identity decay clock and standing — the second committed entity
  * alongside boxes (TYPES_INTERFACE → Identity record and karma valuation).
  *
- * The type, its AVL key and its layout live here so that a light client
- * derives the key, decodes the value it is served, and values it with the
- * same function the node runs — one implementation of the valuation, never a
- * second one a client would have to trust.
+ * The type and its layout live here so that a light client decodes the value
+ * it is served and values it with the same function the node runs — one
+ * implementation of the valuation, never a second one a client would have to
+ * trust. The tree key is `identityKey` (`tree-keys.ts`).
  */
 
 import { ReaderError } from '@dagsocial/wire';
-import { hash32 } from './hash.js';
 import {
-  bytesToHex,
   encodeStruct,
   decodeStruct,
   readU8,
@@ -22,8 +20,6 @@ import {
   writeVlqU64OrThrow,
 } from './codec.js';
 import type { StructCodec } from './codec.js';
-import { IDENTITY_KEY_DOMAIN } from './utxo.js';
-import type { UserId } from './identity.js';
 
 /**
  * The per-identity decay clock — the second committed entity alongside boxes.
@@ -90,21 +86,6 @@ export interface IdentityRecord {
   memberLikes: bigint;
   /** u32 — bonds this identity has created; never decremented. */
   invitesUsed: number;
-}
-
-/**
- * The record's **AVL** key: `blake2b512(IDENTITY_KEY_DOMAIN ‖ identityId)[0:32]`,
- * hex — never the raw `identityId`.
- *
- * Records and boxes share one 32-byte AVL keyspace, and an `identityId` is 32
- * *attacker-chosen* bytes (a public key): used raw, someone could grind a
- * keypair whose pubkey equals a live box id and collide the five entity kinds in
- * the tree. Hashing under a domain tag makes that infeasible, and is what makes
- * the kinds provably disjoint (NODE_INTERFACE → Entity kinds) — by domain
- * separation, not by luck.
- */
-export function identityRecordKey(identityId: UserId): string {
-  return bytesToHex(hash32(IDENTITY_KEY_DOMAIN, identityId));
 }
 
 /** Field 1 of the layout — the record discriminator (NODE_INTERFACE → Entity kinds). */

@@ -1,8 +1,9 @@
 import * as validation from '@dagsocial/validation';
-import { applyBlock } from '@dagsocial/consensus';
+import { applyBlock, treeStateView, treeWritesOf, TreeInconsistencyError } from '@dagsocial/consensus';
 import type { ApplyContext, BlockEffects, StateView } from '@dagsocial/consensus';
 import {
   CorruptChainStateError,
+  InconsistentStateTreeError,
   MissingStoredBlockError,
   UnhashableStoredHeaderError,
   failStopIfCorruptChain,
@@ -41,7 +42,6 @@ import {
   getInterlinks,
   getNetworkRecord,
   putNetworkRecord,
-  networkRecordKey,
   getLapsedVouches,
   getBackerPoolBox,
   putUsername,
@@ -69,18 +69,18 @@ import type {
 } from '../store/journal.js';
 import {
   tryGetAvlProver,
-  applyBlockMutations,
+  getAvlProver,
+  performTreeWrites,
   checkpointProver,
-  usernameRecordKey,
-  holderRecordKey,
 } from '../state/avl-prover.js';
-import type { RecordPut, NetworkPut, UsernamePut, HolderPut } from '../state/avl-prover.js';
+import type { AvlProverHandle } from '../state/avl-prover.js';
+import { proverSession } from '../state/prover-session.js';
 import { emitPostIndexed } from '../journal.js';
 import { countedVerifyOrderingBlockPoW, noteTip } from '../metrics.js';
 import { getNet } from './net-instance.js';
 import {
-  canonicalUsernameBytes,
-  identityRecordKey,
+  bytesToHex,
+  identityKey,
   MAX_FUTURE_DRIFT_MS,
   GENESIS_PREV_BLOCK_HASH,
   protocolVersionAt,
@@ -111,8 +111,11 @@ export type ApplyVerdict =
   | { applied: false; class: 'consensus' | 'acceptance' | 'local'; detail?: string };
 
 /**
- * The rules' reads over this node's store (CONSENSUS_INTERFACE → StateView):
- * each is the store's own query for it, its order and its limit included.
+ * The store's answers to `StateView` — each the store's own query for its read,
+ * its order and its limit included — for the shadow run that compares them
+ * with the tree view read by read, and nothing else: the rules read the tree
+ * (NODE_INTERFACE → AVL+ State Root → "The rules read the tree, and nothing
+ * else").
  */
 export const storeStateView: StateView = {
   getBox,
@@ -305,6 +308,11 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
  * transaction has committed.
  */
 function applyBlockBody(block: OrderingBlock): Set<string> | null {
+  // The rules read the tree and nothing else, so a node with no prover applies
+  // nothing: the throw is the funnel's catch's, a refusal kept off the mark
+  // (NODE_INTERFACE → Post-block stateRoot → "A node applies and produces over
+  // its prover, and has no other way to").
+  const handle = getAvlProver();
   const currentHeight = getCurrentHeight();
 
   // 1. Chain-link check + interlink root + genesis pin
@@ -440,50 +448,60 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
   clearTemplate();
 
   // 7–13. The mutation phase (NODE_INTERFACE → "Apply funnel: validation and
-  // mutation phases"): the rules over the store's view, answering the block's
-  // effects or the reason a rule refused it, and writing nothing. The block
-  // creator runs the same call over the same view to obtain the post-block
+  // mutation phases"): the rules over the block's tree view, answering the
+  // block's effects or the reason a rule refused it, and writing nothing. The
+  // block creator runs the same call over its own view to obtain the post-block
   // stateRoot before mining (NODE_INTERFACE → Post-block stateRoot).
   const height = block.header.height;
-  const result = applyBlock(storeStateView, block, applyContextFrom(config));
-  if (!result.ok) {
-    // A refusal is a verdict, not an error.
-    console.warn(result.reason);
-    return null;
-  }
-
-  // The AVL feed from the effects and the stateRoot compare, before any effect
-  // is written — unconditional on every node holding a prover (NODE_INTERFACE →
-  // AVL+ State Root). The prover is restored by the funnel's single rollback
-  // point, not here.
-  const handle = tryGetAvlProver();
-  if (handle) {
-    const feed = proverFeedFromEffects(result.effects);
-    const computedDigest = applyBlockMutations(
-      handle.prover, height,
-      feed.consumed, feed.created, feed.recordPuts, feed.networkPuts,
-      feed.usernamePuts, feed.holderPuts, feed.removedRecordKeys,
-    );
-    const expectedHex = Buffer.from(computedDigest).toString('hex');
-    if (block.header.stateRoot !== expectedHex) {
-      console.warn(
-        `stateRoot mismatch at height ${height}: ` +
-        `computed=${expectedHex.slice(0, 16)}... ` +
-        `header=${block.header.stateRoot.slice(0, 16)}...`,
-      );
+  const view = treeStateView(proverSession(handle.prover));
+  // A read of the tree that contradicts itself is local corruption, never a
+  // verdict on the block — `TreeInconsistencyError` becomes
+  // `InconsistentStateTreeError` here and nowhere else in this function, so
+  // `treeWritesOf`'s and `karmaOwnersOf`'s own plain `Error`s (a defect in
+  // code) stay the funnel's unexpected throws
+  // (NODE_INTERFACE → "What the funnel's totality catch is FOR").
+  let result: ReturnType<typeof applyBlock>;
+  let writes: ReturnType<typeof treeWritesOf>;
+  let karmaOwners: Set<string>;
+  try {
+    result = applyBlock(view, block, applyContextFrom(config));
+    if (!result.ok) {
+      // A refusal is a verdict, not an error.
+      console.warn(result.reason);
       return null;
     }
+    // The block's writes to the tree, from its effects over the same view
+    // (CONSENSUS_INTERFACE → The tree writes), and the owners whose karma
+    // boxes it moved — read from that view before the writes move the tree
+    // under it.
+    writes = treeWritesOf(result.effects, height, view);
+    karmaOwners = karmaOwnersOf(result.effects, view);
+  } catch (err) {
+    if (err instanceof TreeInconsistencyError) {
+      throw new InconsistentStateTreeError('applyOrderingBlock', height, err);
+    }
+    throw err;
   }
 
-  // Read before the effects are written: a box the block spends names its owner
-  // in the store until the spend lands.
-  const karmaOwners = karmaOwnersOf(result.effects, storeStateView);
+  // The writes and the stateRoot compare, before any effect is written —
+  // unconditional (NODE_INTERFACE → AVL+ State Root). The prover is restored by
+  // the funnel's single rollback point, not here.
+  const computedDigest = performTreeWrites(handle.prover, height, writes, 'applyOrderingBlock');
+  const expectedHex = bytesToHex(computedDigest);
+  if (block.header.stateRoot !== expectedHex) {
+    console.warn(
+      `stateRoot mismatch at height ${height}: ` +
+      `computed=${expectedHex.slice(0, 16)}... ` +
+      `header=${block.header.stateRoot.slice(0, 16)}...`,
+    );
+    return null;
+  }
 
   // The effects written to the store, and the block journal built from them.
   const journal = writeBlockEffects(result.effects, height);
 
   // Checkpoint prover state at this height
-  if (handle) checkpointProver(handle, height);
+  checkpointProver(handle, height);
 
   // 14. Persist journal and purge old ones
   insertBlockJournal(journal);
@@ -502,127 +520,6 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
   const appliedHash = validation.blockHash(block.header);
   console.log(`Applied ordering block height=${height} hash=${appliedHash} (${block.utxoTxTree.utxoTxIds.length} txs)`);
   return karmaOwners;
-}
-
-/** The mutation set one block hands the prover, each group in any order. */
-export interface ProverFeed {
-  consumed: string[];
-  created: AnyBox[];
-  recordPuts: RecordPut[];
-  networkPuts: NetworkPut[];
-  usernamePuts: UsernamePut[];
-  holderPuts: HolderPut[];
-  removedRecordKeys: string[];
-}
-
-/**
- * The prover feed a block's effects imply — the one derivation the apply commit
- * and the creator's speculative run both use, so producer and verifier cannot
- * disagree by construction (NODE_INTERFACE → AVL+ State Root).
- *
- * - A box inserted and later removed in the block never existed outside it: the
- *   pair nets out. An inserted box's bytes are the effect's box, never a store
- *   re-fetch, which answers nothing for a box created and spent in one block.
- * - An identity or the network record keeps its last write
- *   (NODE_INTERFACE → "Where record collapsing happens, and why it is not
- *   arbitrary").
- * - A name or holder key keeps its last write too, and a last write that
- *   removes the key reaches the prover only for a key the state held before the
- *   block, which its first mutation in the block says: a key the block both
- *   creates and removes gives the feed nothing (NODE_INTERFACE → "A removable
- *   record the block creates and removes nets out, as a box does").
- *
- * `applyBlockMutations` puts each group in canonical order (M-12). The switch
- * on `kind` is exhaustive (NODE_INTERFACE → "One log, not parallel arrays").
- */
-export function proverFeedFromEffects(effects: BlockEffects): ProverFeed {
-  const mutations = effects.mutations;
-  const cancelled = new Set<number>();
-  const pendingInsertIndex = new Map<string, number>();
-  for (let i = 0; i < mutations.length; i++) {
-    const m = mutations[i]!;
-    if (m.kind !== 'box') continue;
-    if (m.op === 'insert') {
-      pendingInsertIndex.set(m.boxId, i);
-    } else {
-      const insertIdx = pendingInsertIndex.get(m.boxId);
-      if (insertIdx !== undefined) {
-        cancelled.add(insertIdx);
-        cancelled.add(i);
-        pendingInsertIndex.delete(m.boxId);
-      }
-    }
-  }
-
-  const consumed: string[] = [];
-  const created: AnyBox[] = [];
-  const recordByKey = new Map<string, RecordPut>();
-  let latestNetwork: NetworkPut | null = null;
-  // Per removable key: whether the state held it before the block, and the
-  // block's last write to it — a put, or null for a removal.
-  const usernameByKey = new Map<string, { heldBefore: boolean; last: UsernamePut | null }>();
-  const holderByKey = new Map<string, { heldBefore: boolean; last: HolderPut | null }>();
-  for (let i = 0; i < mutations.length; i++) {
-    if (cancelled.has(i)) continue;
-    const m = mutations[i]!;
-    switch (m.kind) {
-      case 'box':
-        if (m.op === 'remove') consumed.push(m.boxId);
-        else created.push(m.box);
-        break;
-      case 'record': {
-        const key = identityRecordKey(m.identityId);
-        recordByKey.set(key, { key, record: m.record });
-        break;
-      }
-      case 'network':
-        latestNetwork = { key: networkRecordKey(), network: { memberCount: m.record.memberCount } };
-        break;
-      case 'username': {
-        const key = usernameRecordKey(canonicalUsernameBytes(Buffer.from(m.nameLower, 'utf8')));
-        const last = m.row ? { key, username: { boxId: m.row.boxId } } : null;
-        const seen = usernameByKey.get(key);
-        if (seen) seen.last = last;
-        else usernameByKey.set(key, { heldBefore: m.heldBefore, last });
-        break;
-      }
-      case 'holder': {
-        const key = holderRecordKey(m.owner);
-        const last = m.record ? { key, holder: m.record } : null;
-        const seen = holderByKey.get(key);
-        if (seen) seen.last = last;
-        else holderByKey.set(key, { heldBefore: m.heldBefore, last });
-        break;
-      }
-      default: {
-        const _exhaustive: never = m;
-        void _exhaustive;
-        break;
-      }
-    }
-  }
-
-  const usernamePuts: UsernamePut[] = [];
-  const holderPuts: HolderPut[] = [];
-  const removedRecordKeys: string[] = [];
-  for (const [key, { heldBefore, last }] of usernameByKey) {
-    if (last) usernamePuts.push(last);
-    else if (heldBefore) removedRecordKeys.push(key);
-  }
-  for (const [key, { heldBefore, last }] of holderByKey) {
-    if (last) holderPuts.push(last);
-    else if (heldBefore) removedRecordKeys.push(key);
-  }
-
-  return {
-    consumed,
-    created,
-    recordPuts: [...recordByKey.values()],
-    networkPuts: latestNetwork ? [latestNetwork] : [],
-    usernamePuts,
-    holderPuts,
-    removedRecordKeys,
-  };
 }
 
 /**
@@ -669,7 +566,7 @@ export function writeBlockEffects(effects: BlockEffects, height: number): BlockJ
         putIdentityRecord(m.identityId, m.record);
         const entry: RecordMutation = {
           kind: 'record',
-          key: identityRecordKey(m.identityId),
+          key: bytesToHex(identityKey(m.identityId)),
           identityId: m.identityId,
           record: m.record,
         };
@@ -752,8 +649,8 @@ export function writeBlockEffects(effects: BlockEffects, height: number): BlockJ
  * The owners whose karma boxes a block's effects insert or spend, as hex — those
  * net's relay gate moves for once the block commits (NODE_INTERFACE → Post
  * transactions → "The set moves after a commit, never inside a transaction").
- * A box the block spends and did not insert is read through `view`, so this
- * runs before the effects are written.
+ * A box the block spends and did not insert is read through `view` — the
+ * block's own tree view, before its writes are performed.
  */
 function karmaOwnersOf(effects: BlockEffects, view: Pick<StateView, 'getBox'>): Set<string> {
   const inserted = new Set<string>();
@@ -797,8 +694,6 @@ function moveKarmaMembers(owners: Set<string>): void {
 export type StateRootSpeculation =
   /** The post-block digest the header must commit to. Mine over it. */
   | { kind: 'computed'; stateRoot: string }
-  /** No usable prover — test-only; the caller writes `EMPTY_STATE_ROOT`. */
-  | { kind: 'no-prover' }
   /**
    * Producing this block is forbidden — the body was rejected, or speculating
    * on it threw. One arm because the caller's obligation is one: do not mine,
@@ -814,19 +709,21 @@ export type StateRootSpeculation =
  *
  * PoW covers the header, so the producer has to know this digest *before*
  * mining, and the only way to know it without a second implementation of the
- * state transition is to run the block's own body: `applyBlock` over the
- * store's view, the prover feed derived from its effects exactly as apply
- * derives it, the digest read, and the prover restored to its snapshot. It
- * writes nothing to the store — no block, no effect, no journal — and performs
- * no `clearTemplate` and no prover checkpoint.
+ * state transition is to run the block's own body as apply runs it: `applyBlock`
+ * over a tree view on the prover, `treeWritesOf` over the same view, the writes
+ * performed, the digest read. The prover's in-memory root and height are saved
+ * first and put back by reference with `restoreRoot` when the run ends: the
+ * library never mutates a node, so the saved root is the whole tree the run
+ * started from, and nothing is read back from storage. It writes nothing to the
+ * store — no block, no effect, no journal — and performs no `clearTemplate` and
+ * no prover checkpoint.
  *
  * The candidate carries a placeholder header (`powNonce` 0, empty signature):
  * the mutation phase reads neither, and runs at the header's height.
  *
- * An unexpected throw maps to `body-rejected`, not to the proverless fallback:
- * the apply funnel treats the same throw as a rejection of the block, so a
- * body that crashes speculation is a body no node — this one included —
- * will apply.
+ * An unexpected throw maps to `body-rejected`: the apply funnel treats the same
+ * throw as a rejection of the block, so a body that crashes speculation is a
+ * body no node — this one included — will apply.
  *
  * ⛔ **`CorruptChainStateError` is the exception, and it calls the boundary
  * here rather than re-throwing.** Producing is where the fault would otherwise
@@ -841,15 +738,18 @@ export type StateRootSpeculation =
  * ending and nothing reads the tree afterwards — but a reader who assumes
  * `finally` always runs will mis-reason about it.
  */
-export function computePostBlockStateRoot(block: OrderingBlock): StateRootSpeculation {
-  const handle = tryGetAvlProver();
-  if (!handle) return { kind: 'no-prover' };
-  const snapshot = handle.prover.digest();
-  if (!snapshot) return { kind: 'no-prover' };
+export function computePostBlockStateRoot(
+  block: OrderingBlock,
+  handle: AvlProverHandle,
+): StateRootSpeculation {
+  const inner = handle.prover.prover;
+  const savedRoot = inner.root;
+  const savedHeight = inner.height;
   const height = block.header.height;
 
   try {
-    const result = applyBlock(storeStateView, block, applyContextFrom(config));
+    const view = treeStateView(proverSession(handle.prover));
+    const result = applyBlock(view, block, applyContextFrom(config));
     if (!result.ok) {
       console.warn(result.reason);
       console.warn(
@@ -858,16 +758,21 @@ export function computePostBlockStateRoot(block: OrderingBlock): StateRootSpecul
       );
       return { kind: 'body-rejected' };
     }
-    const feed = proverFeedFromEffects(result.effects);
-    const digest = applyBlockMutations(
-      handle.prover, height,
-      feed.consumed, feed.created, feed.recordPuts, feed.networkPuts,
-      feed.usernamePuts, feed.holderPuts, feed.removedRecordKeys,
-    );
-    return { kind: 'computed', stateRoot: Buffer.from(digest).toString('hex') };
+    const writes = treeWritesOf(result.effects, height, view);
+    const digest = performTreeWrites(handle.prover, height, writes, 'computePostBlockStateRoot');
+    return { kind: 'computed', stateRoot: bytesToHex(digest) };
   } catch (err) {
     // Above the unclaimed-throw arm, because that arm would swallow it into a
-    // verdict about the block. Never returns.
+    // verdict about the block. Never returns. A read of the tree that
+    // contradicts itself is local corruption, not a body the mutation phase
+    // rejected — `body-rejected` would repeat the speculation forever while
+    // this node stayed up producing nothing (NODE_INTERFACE → "What the
+    // funnel's totality catch is FOR").
+    if (err instanceof TreeInconsistencyError) {
+      failStopIfCorruptChain(
+        new InconsistentStateTreeError('computePostBlockStateRoot', height, err),
+      );
+    }
     if (err instanceof CorruptChainStateError) {
       failStopIfCorruptChain(err);
     }
@@ -885,9 +790,6 @@ export function computePostBlockStateRoot(block: OrderingBlock): StateRootSpecul
     );
     return { kind: 'body-rejected' };
   } finally {
-    const current = handle.prover.digest();
-    if (!current || !Buffer.from(current).equals(Buffer.from(snapshot))) {
-      handle.prover.rollback(snapshot);
-    }
+    inner.restoreRoot(savedRoot, savedHeight);
   }
 }

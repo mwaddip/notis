@@ -9,7 +9,7 @@ export {
   isMember,
   isRoot,
 } from './utxo-engine.js';
-export type { UtxoEngineDeps, UtxoResult, NetworkRecord, UsernameRow } from './utxo-engine.js';
+export type { UtxoEngineDeps, UtxoResult, UsernameRow } from './utxo-engine.js';
 
 export {
   buildBlockSettlement,
@@ -30,4 +30,14 @@ export { postsOf, postIdsOf } from './block-posts.js';
 export { applyBlock } from './apply-block.js';
 export type { ApplyResult, BlockEffects } from './apply-block.js';
 export type { StateView, ApplyContext } from './state-view.js';
-export type { HolderRecord } from './overlay.js';
+// The record shapes are types', beside their codecs (TYPES_INTERFACE → Layout —
+// tree records).
+export type { NetworkRecord, HolderRecord } from '@dagsocial/types';
+
+export { isSentinel } from './tree-session.js';
+export type { TreeSession, TreeLookup } from './tree-session.js';
+export { treeStateView, TreeInconsistencyError } from './tree-view.js';
+export type { TreeStateView } from './tree-view.js';
+export { indexEntriesOfBox, isLapsedMember } from './tree-index.js';
+export { seedTreeWrites, treeWritesOf } from './tree-writes.js';
+export type { TreeWrite } from './tree-writes.js';

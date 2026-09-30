@@ -27,12 +27,14 @@ them as ordinary transactions. TypeScript, pnpm workspaces, Node.js ≥ 22.
 
 ## This package (`@dagsocial/node`)
 The full node: Express HTTP API, PoW verifier, SQLite store, block creator + application, invites/vouch,
-withdrawal, AVL+ state — running `@dagsocial/consensus`'s `applyBlock` over a `StateView` of its store and writing
-the block's effects, the journal built from them (NODE_INTERFACE → Block Journal). The node serves no client
+withdrawal, AVL+ state — running `@dagsocial/consensus`'s `applyBlock` over the block's tree view on its prover,
+performing the block's tree writes and writing its effects to the store, the journal built from them
+(NODE_INTERFACE → AVL+ State Root, NODE_INTERFACE → Block Journal). The node serves no client
 (NODE_INTERFACE → The node serves no client).
 
 - **Owns:** `src/server.ts`, `src/routes/*`, `src/services/*`, `src/store/*`, `src/state/*` (AVL+).
-- **Does NOT own:** the state-transition rules (`@dagsocial/consensus` — the node answers its `StateView` over its store),
+- **Does NOT own:** the state-transition rules (`@dagsocial/consensus` — the node hands them a tree view over its
+  prover), the tree's keys and value codecs (`@dagsocial/types`),
   shared structures/hashing (`@dagsocial/types`), stateless validation
   (`@dagsocial/validation`), networking (`@dagsocial/net`), wire codec (`@dagsocial/wire`). Need a change
   there? Describe it back to the main session — do not edit sibling packages.
@@ -55,8 +57,8 @@ the block's effects, the journal built from them (NODE_INTERFACE → Block Journ
   `validateTx` checks the equality as one total per side, block application re-validates every
   embedded tx, and every user-value mutation rides mempool → block.
 - **Hashing** — every protocol digest the node reads through `@dagsocial/types` and `@dagsocial/validation` is
-  `hash32` (`TYPES_INTERFACE → The protocol hash`); the node's own `createHash('blake2b512')` sites — the network, name
-  and holder record keys — truncate to 32 bytes and answer the same bytes (`ARCHITECTURE → Cryptographic`).
+  `hash32` (`TYPES_INTERFACE → The protocol hash`); `src` computes no digest of its own, and the miner script's
+  `createHash('blake2b512')` truncates to 32 bytes and answers the same bytes (`ARCHITECTURE → Cryptographic`).
 - **Signatures** — raw Ed25519 (64 bytes), verified by `@dagsocial/validation`'s one rule — `verifyEd25519`, or
   `verifyEd25519Batch` over a block's body inside `applyBlock` — strict RFC 8032 through `@noble/curves`
   (`VALIDATION_INTERFACE → Acceptance criterion`).

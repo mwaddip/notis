@@ -48,10 +48,18 @@ import {
   applyContextFrom,
   applyOrderingBlock,
   computePostBlockStateRoot,
-  storeStateView,
 } from './block-apply.js';
-import { bondOutputOf, buildBlockSettlement, materializeOutput } from '@dagsocial/consensus';
 import {
+  bondOutputOf,
+  buildBlockSettlement,
+  materializeOutput,
+  treeStateView,
+  TreeInconsistencyError,
+} from '@dagsocial/consensus';
+import { tryGetAvlProver } from '../state/avl-prover.js';
+import { proverSession } from '../state/prover-session.js';
+import {
+  InconsistentStateTreeError,
   MissingStoredBlockError,
   UnhashableStoredHeaderError,
   failStopIfCorruptChain,
@@ -298,6 +306,18 @@ export function createOrderingBlock(): OrderingBlock | null {
     return null;
   }
 
+  // The settlement is built over the tree and the stateRoot computed on it, so a
+  // node with no prover produces nothing and evicts nothing — a missing prover is
+  // not the body's fault (NODE_INTERFACE → Post-block stateRoot → "A node applies
+  // and produces over its prover, and has no other way to").
+  const handle = tryGetAvlProver();
+  if (handle === null) {
+    console.warn(`Not producing block at height ${newHeight}: no prover`);
+    currentTemplate = null;
+    confirmedRowids = new Set();
+    return null;
+  }
+
   // A body-rejected build repeats until it holds a template or a body
   // carrying no pool row is rejected. Every repetition strictly shrinks the
   // pool, which is what bounds the loop (MINING_INTERFACE → Template and
@@ -349,13 +369,32 @@ export function createOrderingBlock(): OrderingBlock | null {
 
     /**
      * Re-derive the settlement from the user transactions currently selected and
-     * write the whole body — the users' entries then the settlement, last.
+     * write the whole body — the users' entries then the settlement, last. Read
+     * through one tree view of the pre-body state (NODE_INTERFACE → AVL+ State
+     * Root → "The rules read the tree, and nothing else"); the tree does not move
+     * until the speculation below, and the build repeats with a fresh view.
      */
+    const view = treeStateView(proverSession(handle.prover));
     const rebuildBody = (): { valid: boolean; error?: string } => {
-      const built = buildBlockSettlement(
-        storeStateView, userTxBytesList, newHeight, validatorId,
-        currentMinerPubkey ?? validatorId, applyContextFrom(nodeConfig),
-      );
+      // A read of the tree that contradicts itself is local corruption, never
+      // a body the settlement declines to build — the boundary directly, like
+      // this function's other corrupt-state checks below, because nothing
+      // above `createOrderingBlock` on this path catches for it
+      // (NODE_INTERFACE → "What the funnel's totality catch is FOR").
+      let built: ReturnType<typeof buildBlockSettlement>;
+      try {
+        built = buildBlockSettlement(
+          view, userTxBytesList, newHeight, validatorId,
+          currentMinerPubkey ?? validatorId, applyContextFrom(nodeConfig),
+        );
+      } catch (err) {
+        if (err instanceof TreeInconsistencyError) {
+          failStopIfCorruptChain(
+            new InconsistentStateTreeError('createOrderingBlock', newHeight, err),
+          );
+        }
+        throw err;
+      }
       if ('error' in built) return { valid: false, error: built.error };
       utxoTxTree.utxoTxIds = [...userTxIds, computeTxId(built.tx)];
       utxoTxTree.utxoTxs = [...userTxBytesList, encodeTx(built.tx)];
@@ -625,10 +664,8 @@ export function createOrderingBlock(): OrderingBlock | null {
     // mutation phase and restoring the prover after. Never the current (pre-block)
     // digest: apply compares against the post-mutation digest, so a pre-block
     // root can never verify. PoW covers the header, so this must be known before
-    // mining. A node with no prover falls back to EMPTY_STATE_ROOT — test-only,
-    // since production initializes one at startup, and a peer holding a prover
-    // rejects such a block, which is correct.
-    const speculation = computePostBlockStateRoot(candidate);
+    // mining.
+    const speculation = computePostBlockStateRoot(candidate, handle);
 
     // 19c. A body the mutation phase rejected is evicted and the build repeats
     // from purgeExpired, until the body holds or no pool row remains to evict
@@ -665,8 +702,7 @@ export function createOrderingBlock(): OrderingBlock | null {
       continue;
     }
 
-    headerTemplate.stateRoot =
-      speculation.kind === 'computed' ? speculation.stateRoot : EMPTY_STATE_ROOT;
+    headerTemplate.stateRoot = speculation.stateRoot;
 
     // 21. Store the full block template (header + bodies) for the miner. Its
     // stateRoot is this height's post-block digest, so the template stops being

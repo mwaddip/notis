@@ -7,7 +7,7 @@ import {
   SpendOfNonLiveBoxError,
 } from '../src/overlay.js';
 import { materializeOutput } from '../src/utxo-engine.js';
-import type { AnyBox, AnyBoxCandidate, IdentityRecord, KarmaBox, UtxoTransaction } from '@dagsocial/types';
+import type { AnyBox, AnyBoxCandidate, IdentityRecord, KarmaBox, UtxoTransaction, VouchBox } from '@dagsocial/types';
 import type { UsernameRow } from '@dagsocial/consensus';
 import {
   MemoryStateView,
@@ -93,19 +93,29 @@ describe('BlockOverlay — keyed reads answer the block\'s own entry first', () 
     expect(view.getBox(held.id)).toBe(held);
   });
 
-  it('a box\'s provenance answers for any box the state holds or held, the block\'s included', () => {
+  it('a box\'s provenance answers for a live box — the view\'s and the block\'s — and none once spent', () => {
     const view = new MemoryStateView();
+    const held = karmaBox(alice, 10n, 1);
     const spentBefore = karmaBox(alice, 11n, 2);
+    view.insertBox(held);
     view.insertBox(spentBefore);
     view.consumeBox(spentBefore.id);
     const overlay = new BlockOverlay(view);
     const made = karmaBox(bob, 5n, 3);
+    const kept = karmaBox(bob, 6n, 4);
     overlay.insertBox(made);
+    overlay.insertBox(kept);
     overlay.consumeBox(made.id);
 
-    expect(overlay.getBoxProvenance(spentBefore.id)).toEqual({ txId: spentBefore.txId, index: spentBefore.index });
-    expect(overlay.getBoxProvenance(made.id)).toEqual({ txId: made.txId, index: made.index });
+    expect(overlay.getBoxProvenance(held.id)).toEqual({ txId: held.txId, index: held.index });
+    expect(overlay.getBoxProvenance(kept.id)).toEqual({ txId: kept.txId, index: kept.index });
+    expect(overlay.getBoxProvenance(spentBefore.id)).toBeNull();
+    expect(overlay.getBoxProvenance(made.id)).toBeNull();
     expect(overlay.getBoxProvenance('00'.repeat(32))).toBeNull();
+
+    overlay.consumeBox(held.id);
+    expect(overlay.getBoxProvenance(held.id)).toBeNull();
+    expect(view.getBoxProvenance(held.id)).toEqual({ txId: held.txId, index: held.index });
     expect(view.getBoxProvenance(made.id)).toBeNull();
   });
 
@@ -443,6 +453,24 @@ describe('BlockOverlay — a limited query answers the view until the block writ
     expect(overlay.getLapsedVouches(10)).toEqual(reference.getLapsedVouches(10));
   });
 
+  it('the lapsed vouches: voucher by voucher, each voucher\'s in target order, at most the limit', () => {
+    const [v1, v2, t1, t2] = [0x11, 0x22, 0x44, 0x55].map((byte) => new Uint8Array(32).fill(byte)) as [
+      Uint8Array, Uint8Array, Uint8Array, Uint8Array,
+    ];
+    const view = new MemoryStateView();
+    view.putIdentityRecord(v2, lapsedMember);
+    view.putIdentityRecord(v1, lapsedMember);
+    for (const [n, [voucher, target]] of ([[v2, t2], [v2, t1], [v1, t2], [v1, t1]] as const).entries()) {
+      view.insertBox(vouchBox(voucher, target, 10 + n));
+    }
+    const pairs = (boxes: VouchBox[]): string[] => boxes.map((b) => `${hex(b.voucherId)}:${hex(b.targetId)}`);
+    const ordered = [[v1, t1], [v1, t2], [v2, t1], [v2, t2]].map(([v, t]) => `${hex(v!)}:${hex(t!)}`);
+    const overlay = new BlockOverlay(view);
+
+    expect(pairs(overlay.getLapsedVouches(10))).toEqual(ordered);
+    expect(pairs(overlay.getLapsedVouches(3))).toEqual(ordered.slice(0, 3));
+  });
+
   it('the lapsed vouches: a vouch spent, a lapsed voucher\'s vouch, or a record crossing member() trips', () => {
     const view = new MemoryStateView();
     view.putIdentityRecord(alice, member);
@@ -463,20 +491,26 @@ describe('BlockOverlay — a limited query answers the view until the block writ
 });
 
 describe('BlockOverlay — the store\'s backstops', () => {
-  it('an insert of a box id the state holds or held, live or spent, or the block inserted, throws and writes nothing', () => {
+  /** A view whose provenance read throws: the box-id tripwire reads the live set alone. */
+  const withoutProvenance = (view: MemoryStateView): MemoryStateView => {
+    view.getBoxProvenance = () => { throw new Error('the box-id tripwire reads no provenance'); };
+    return view;
+  };
+
+  it('an insert of a box id a live box holds, or the block inserted, throws and writes nothing', () => {
     const view = new MemoryStateView();
     const live = karmaBox(alice, 1n, 1);
-    const spent = karmaBox(alice, 2n, 2);
+    const spentInBlock = karmaBox(alice, 5n, 5);
     view.insertBox(live);
-    view.insertBox(spent);
-    view.consumeBox(spent.id);
-    const overlay = new BlockOverlay(view);
+    view.insertBox(spentInBlock);
+    const overlay = new BlockOverlay(withoutProvenance(view));
     const made = karmaBox(bob, 3n, 3);
     overlay.insertBox(made);
     overlay.consumeBox(made.id);
+    overlay.consumeBox(spentInBlock.id);
     const written = overlay.mutations.length;
 
-    for (const box of [live, spent, made]) {
+    for (const box of [live, spentInBlock, made]) {
       try {
         overlay.insertBox({ ...box });
         expect.unreachable(`${box.id} must be refused`);
@@ -489,6 +523,18 @@ describe('BlockOverlay — the store\'s backstops', () => {
     expect(() => overlay.insertBox(unnamed as AnyBox)).toThrow(/no id/);
     expect(overlay.mutations).toHaveLength(written);
     expect(overlay.getBox(made.id)).toBeNull();
+  });
+
+  it('an insert of an id only a spent box once had is no box id taken', () => {
+    const view = new MemoryStateView();
+    const spent = karmaBox(alice, 2n, 2);
+    view.insertBox(spent);
+    view.consumeBox(spent.id);
+    const overlay = new BlockOverlay(withoutProvenance(view));
+
+    overlay.insertBox({ ...spent });
+    expect(overlay.mutations).toEqual([{ kind: 'box', op: 'insert', boxId: spent.id, box: { ...spent } }]);
+    expect(overlay.getBox(spent.id)).toEqual(spent);
   });
 
   it('a spend of a box that is not live throws and writes nothing', () => {

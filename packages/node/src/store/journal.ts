@@ -20,7 +20,7 @@ export interface BoxMutation {
 /** One identity-record write, in application order. */
 export interface RecordMutation {
   kind: 'record';
-  /** hex — H(IDENTITY_KEY_DOMAIN ‖ identityId), the AVL key. */
+  /** hex — `identityKey(identityId)`, the record's tree key (TYPES_INTERFACE → The tree keys). */
   key: string;
   /** The raw 32 bytes, so rollback can address the SQL row. */
   identityId: UserId;
@@ -37,7 +37,7 @@ export interface NetworkMutation {
   replaced: NetworkRecord;
 }
 
-/** The name record — key H(USERNAME_KEY_DOMAIN ‖ nameLower). */
+/** The name record — tree key `nameKey(nameLower)`. */
 export interface UsernameMutation {
   kind: 'username';
   nameLower: string;
@@ -45,7 +45,7 @@ export interface UsernameMutation {
   replaced?: UsernameRow;
 }
 
-/** The holder record — key H(USERNAME_HOLDER_KEY_DOMAIN ‖ owner). */
+/** The holder record — tree key `holderKey(owner)`. */
 export interface HolderMutation {
   kind: 'holder';
   owner: UserId;
@@ -54,14 +54,11 @@ export interface HolderMutation {
 }
 
 /**
- * A mutation of any **committed** entity.
- *
- * NODE_INTERFACE → Block Journal. One discriminated union rather than parallel
- * arrays, and that is load-bearing: a committed entity that never reaches the
- * prover feed is silently absent from the `stateRoot`, and **no test can catch
- * it** — producer and verifier omit it identically. Making the feed derivation
- * switch on `kind` turns "a new entity kind was added and nobody updated the
- * prover feed" into a TypeScript exhaustiveness error.
+ * A mutation of any **committed** entity (NODE_INTERFACE → Block Journal): one
+ * discriminated union rather than parallel arrays, in the block's application
+ * order, which a revert replays in reverse. The tree's writes come from the same
+ * effects through `treeWritesOf` (CONSENSUS_INTERFACE → The tree writes), not
+ * from this log.
  */
 export type JournalMutation = BoxMutation | RecordMutation | NetworkMutation | UsernameMutation | HolderMutation;
 

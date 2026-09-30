@@ -164,9 +164,8 @@ export interface SettlementBody {
  * ⛔ **EVERY LISTED READ CARRIES A STATED TOTAL ORDER**, because each one feeds
  * a list this transaction hashes: two nodes reading a table in different orders
  * derive two different settlements (NODE_INTERFACE → Determinism is this
- * mechanism's whole risk). Three ordering sources are permitted and no fourth
- * is — the block's committed transaction order, ascending box id, and ascending
- * height.
+ * mechanism's whole risk), and each order is one the contract permits
+ * (NODE_INTERFACE → "Four ordering sources are permitted and no fifth is").
  */
 export interface SettlementDeps {
   getEmissionBox: () => EmissionBox | null;
@@ -184,11 +183,18 @@ export interface SettlementDeps {
    * thing that separates them.
    */
   getLikeCarryBox: (author: Uint8Array, exclude: Set<string>) => LikeAccrualBox | null;
-  /** Bonds whose probation deadline is this height, ascending box id. */
+  /**
+   * Bonds whose probation deadline is at or before this height — every invitee's
+   * `invitedAtBlock` up to `height − inviteProbationBlocks` — `(invitedAtBlock, id)`.
+   */
   getBondsSettlingAt: (height: number) => BondBox[];
-  /** Unspent escrows at or past `releaseAtBlock`, ascending box id, pre-body. */
+  /** Unspent escrows at or past `releaseAtBlock`, `(releaseAtBlock, id)`, pre-body. */
   getEscrowsReleasableAt: (height: number) => VouchEscrowBox[];
-  /** Unspent vouch boxes whose voucher's record fails member(), ascending box id, pre-body. */
+  /**
+   * Unspent vouch boxes whose voucher's record fails member(), voucher by voucher
+   * and each voucher's in target order (CONSENSUS_INTERFACE → StateView → "The
+   * lapses run voucher by voucher"), pre-body.
+   */
   getLapsedVouches: () => VouchBox[];
   /** `IdentityRecord.lifetimeLikesReceived` — the one field a bond settles against. */
   getLifetimeLikes: (invitee: Uint8Array) => bigint;
@@ -1159,8 +1165,8 @@ export function settlementDepsWith(
  * because a transaction may spend a box an earlier one in the same block
  * creates. Order does not matter to the actor count — a set is commutative — and
  * the fee box ids and invitees are collected in the order the body itself fixes:
- * committed transaction order, one of the three orders NODE_INTERFACE → "Three
- * ordering sources are permitted and no fourth is" permits, and the order the
+ * committed transaction order, one of the four orders NODE_INTERFACE → "Four
+ * ordering sources are permitted and no fifth is" permits, and the order the
  * applier collects the settlement body in. An input that resolves to neither
  * leaves the body unappliable, which the applier refuses.
  */

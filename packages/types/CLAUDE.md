@@ -23,7 +23,8 @@ is a transaction on the UTXO ledger, and withdrawal is the author's only act ove
 The shared data model and cryptographic/encoding primitives: posts, blocks, boxes, identity,
 merkle, positional serialization, protocol constants, the hash/id helpers (`computePostId`,
 `computeBoxId`, `computeTxId`), the identity record and the karma valuation
-(`identityRecordBytes`, `identityRecordKey`, `effectiveKarma`). **Pure functions only** — no I/O, no state.
+(`identityRecordBytes`, `effectiveKarma`; the tree key is `identityKey`, in `tree-keys.ts`).
+**Pure functions only** — no I/O, no state.
 
 - **Owns:** `src/*` (post, post-withdraw, block, utxo, identity, codec, merkle, serialization, interlinks, membership, network, constants, identity-record, karma-valuation, index).
 - **Does NOT own:** node logic, networking, stateless validation, wire codec. Depends on `@dagsocial/wire`,

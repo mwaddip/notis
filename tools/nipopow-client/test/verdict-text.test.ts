@@ -11,6 +11,8 @@ import {
   buildAvlWithInsertions,
   boxInsertion,
   recordInsertion,
+  boxProofKeyHex,
+  identityProofKeyHex,
   avlProofJson,
   hexToBytes,
   jsonResponse,
@@ -21,7 +23,7 @@ import {
   proofHexForChain,
   suffixHeadForChain,
 } from './helpers.js';
-import { computeCandidateBoxId, identityRecordKey } from '@dagsocial/types';
+import { computeCandidateBoxId } from '@dagsocial/types';
 import type { AnyBoxCandidate, IdentityRecord, TxId, UserId } from '@dagsocial/types';
 
 // A verdict names at most 120 characters of any one node-supplied string, and
@@ -33,7 +35,7 @@ const NAMED = `${'Z'.repeat(120)}…`;
 
 const USER_HEX = 'ab'.repeat(32);
 const USER_BYTES = hexToBytes(USER_HEX) as UserId;
-const RECORD_KEY = identityRecordKey(USER_BYTES);
+const RECORD_KEY = identityProofKeyHex(USER_BYTES);
 const TXID = 'cd'.repeat(32) as TxId;
 const SUFFIX_H = 100;
 const TIP_H = 119;
@@ -138,7 +140,7 @@ describe('proveFigures — a verdict caps the node text it names', () => {
   it('a box proof answering 500 with a body of 10 000 characters', async () => {
     const result = await prove(
       [{ boxId: BOX_ID, value: '100' }],
-      node((key) => (key === BOX_ID ? textResponse(500, LONG) : undefined)),
+      node((key) => (key === boxProofKeyHex(BOX_ID) ? textResponse(500, LONG) : undefined)),
     );
     expect(result.boxes[0]!.status).toBe('no-proof');
     expect(result.boxes[0]!.verdict).toBe(`no proof at suffixHead: HTTP 500: ${NAMED}`);
@@ -148,7 +150,7 @@ describe('proveFigures — a verdict caps the node text it names', () => {
     const result = await prove(
       [{ boxId: BOX_ID, value: '100' }],
       node((key) => {
-        if (key === BOX_ID) throw new TypeError(LONG);
+        if (key === boxProofKeyHex(BOX_ID)) throw new TypeError(LONG);
         return undefined;
       }),
     );
@@ -257,7 +259,7 @@ describe('a proof route answering 500 with a body carrying ESC [2K, CR and a C1 
   it('the box verdict holds them as escapes, and no raw control', async () => {
     const result = await prove(
       [{ boxId: BOX_ID, value: '100' }],
-      node((key) => (key === BOX_ID ? textResponse(500, ERASING) : undefined)),
+      node((key) => (key === boxProofKeyHex(BOX_ID) ? textResponse(500, ERASING) : undefined)),
     );
     const verdict = result.boxes[0]!.verdict;
     expect(verdict).toBe(`no proof at suffixHead: HTTP 500: ${ERASING_SHOWN}`);
@@ -276,7 +278,7 @@ describe('a proof route answering 500 with a body carrying ESC [2K, CR and a C1 
     const plain = 'Internal Server Error — naïve 😀';
     const result = await prove(
       [{ boxId: BOX_ID, value: '100' }],
-      node((key) => (key === BOX_ID ? textResponse(500, plain) : undefined)),
+      node((key) => (key === boxProofKeyHex(BOX_ID) ? textResponse(500, plain) : undefined)),
     );
     expect(result.boxes[0]!.verdict).toBe(`no proof at suffixHead: HTTP 500: ${plain}`);
   });

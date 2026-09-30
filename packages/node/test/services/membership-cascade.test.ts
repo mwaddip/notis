@@ -24,7 +24,6 @@ import {
   makeApplicableBlock,
   type Stored,
 } from '../helpers.js';
-import { identityRecordKey } from '@dagsocial/types';
 import type { IdentityRecord } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 
@@ -168,11 +167,7 @@ describe('membership cascade across blocks', () => {
     const sock1Karma = makeKarmaBox(10n, sock1.userId, 0, 802);
     utxo.insertBox(sock1Karma);
 
-    const recordPuts = [root, sock1, sock2].map((id) => ({
-      key: identityRecordKey(id.userId),
-      record: records.getIdentityRecord(id.userId)!,
-    }));
-    await activateProverOverStore(recordPuts);
+    await activateProverOverStore();
 
     const { applyOrderingBlock } = await importBlockApply();
 
@@ -245,11 +240,7 @@ describe('membership cascade across blocks', () => {
     const vouchBToC = makeVouchBox(b.userId, c.userId, 2, 712);
     utxo.insertBox(vouchBToC);
 
-    const recordPuts = [a, b, c].map((id) => ({
-      key: identityRecordKey(id.userId),
-      record: records.getIdentityRecord(id.userId)!,
-    }));
-    await activateProverOverStore(recordPuts);
+    await activateProverOverStore();
 
     const { applyOrderingBlock } = await importBlockApply();
     const aBefore = records.getIdentityRecord(a.userId)!;
@@ -313,11 +304,7 @@ describe('membership cascade across blocks', () => {
     const vouch = makeVouchBox(lapsed.userId, target.userId, 2, 701);
     utxo.insertBox(vouch);
 
-    const recordPuts = [root, lapsed, target].map((id) => ({
-      key: identityRecordKey(id.userId),
-      record: records.getIdentityRecord(id.userId)!,
-    }));
-    await activateProverOverStore(recordPuts);
+    await activateProverOverStore();
 
     const { applyOrderingBlock } = await importBlockApply();
     const { config } = await import('../../src/config.js');
@@ -375,11 +362,7 @@ describe('membership cascade across blocks', () => {
     const vouch = makeVouchBox(requalifier.userId, target.userId, 2, 701);
     utxo.insertBox(vouch);
 
-    const recordPuts = [root, requalifier, target].map((id) => ({
-      key: identityRecordKey(id.userId),
-      record: records.getIdentityRecord(id.userId)!,
-    }));
-    await activateProverOverStore(recordPuts);
+    await activateProverOverStore();
 
     const { applyOrderingBlock } = await importBlockApply();
 
@@ -419,11 +402,7 @@ describe('membership cascade across blocks', () => {
     const rootKarma = makeKarmaBox(100n, root.userId, 0, 801);
     utxo.insertBox(rootKarma);
 
-    const recordPuts = [root, candidate].map((id) => ({
-      key: identityRecordKey(id.userId),
-      record: records.getIdentityRecord(id.userId)!,
-    }));
-    await activateProverOverStore(recordPuts);
+    await activateProverOverStore();
 
     const { applyOrderingBlock } = await importBlockApply();
 

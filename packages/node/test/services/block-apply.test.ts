@@ -20,6 +20,7 @@ import {
   POST_PRICE_THREAD,
   POST_PRICE_REPLY,
   REPLY_AUTHOR_SHARE,
+  interlinkRoot,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type {
@@ -54,9 +55,9 @@ import {
   seedProvenance,
   signHeader,
   signTransaction,
-  seedPostTx, fillerTx, makePostTx,
+  seedPostTx, fillerTx, makePostTx, seedCommittedState, seedBoxes, liveProver,
   coinbaseOf, withCoinbase,
-  seedEmissionBox, seedKarmaPoolBox, nodeRewardSchedule } from '../helpers.js';
+  nodeRewardSchedule } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -380,6 +381,10 @@ describe('block-apply journal recording', () => {
     const blockApply = await importBlockApply();
     const { config } = await import('../../src/config.js');
 
+    // A prover over the store, so apply reaches the check under test: a node
+    // with none refuses every block before it, off the mark.
+    await liveProver();
+
     // A block that passes the genesis and difficulty-schedule checks and then
     // fails on the solution: the target is the scheduled one, the nonce is the
     // first that does not satisfy it. Picking the nonce deterministically is
@@ -396,7 +401,11 @@ describe('block-apply journal recording', () => {
         powNonce: 0,
         powTargetBits: config.orderingBlockPowTargetBits,
         createdAt: Date.now(),
-        interlinkRoot: '00'.repeat(32),
+        // Genesis's real interlinkRoot (TYPES_INTERFACE → Interlink vector),
+        // not a placeholder — the interlink check runs before PoW, so a wrong
+        // value here would refuse the block on that mismatch and never reach
+        // the check under test.
+        interlinkRoot: interlinkRoot([]),
       },
       utxoTxTree: {
         // A body's last entry is its settlement; PoW is refused before anything
@@ -412,8 +421,16 @@ describe('block-apply journal recording', () => {
     // the only thing wrong with this block.
     block.validatorSignature = signHeader(block.header, miner.privateKey);
 
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const result = blockApply.applyOrderingBlock(block);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+
     expect(result).toBe(false);
+    expect(
+      warnings.some((w) => w.includes('PoW invalid')),
+      `expected a PoW-invalid reason, got ${JSON.stringify(warnings)}`,
+    ).toBe(true);
 
     // No journal should exist for height 1
     const journal = await importJournalStore();
@@ -432,6 +449,10 @@ describe('block-apply journal recording', () => {
 
     const blockApply = await importBlockApply();
     const { config } = await import('../../src/config.js');
+
+    // A prover over the store, so apply reaches the check under test: a node
+    // with none refuses every block before it, off the mark.
+    await liveProver();
 
     const miner = makeTestIdentity();
     const block: OrderingBlock = {
@@ -478,6 +499,10 @@ describe('block-apply journal recording', () => {
 
     const blockApply = await importBlockApply();
     const { config } = await import('../../src/config.js');
+
+    // A prover over the store, so apply reaches the check under test: a node
+    // with none refuses every block before it, off the mark.
+    await liveProver();
 
     const miner = makeTestIdentity();
     const block: OrderingBlock = {
@@ -1124,11 +1149,11 @@ describe('block-apply embedded tx re-validation', () => {
   /**
    * Mine and apply a block over whatever sits in the mempool.
    *
-   * The block creator does not validate what it picks up, so putting a
-   * transaction into the mempool directly — around the service layer that
-   * would have refused it — reproduces the malicious-producer case exactly:
-   * validator selection is permissionless PoW, so a producer can embed a
-   * transaction that passed validation on no node at all.
+   * The creator's speculation runs the rules over the body it builds, so it
+   * never produces a body carrying a transaction that fails them. The
+   * malicious-producer case — validator selection is permissionless PoW, so a
+   * producer can embed a transaction that passed validation on no node at all —
+   * is a block built by hand (`makeApplicableBlock`) and handed to apply.
    */
   async function mineBlockOverMempool() {
     const bc = await importBlockCreator();
@@ -1142,7 +1167,6 @@ describe('block-apply embedded tx re-validation', () => {
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
-    const mempool = await importMempoolFresh();
 
     const victim = makeTestIdentity();
     const victimBox = makeKarmaBox(100n, victim.userId, 0);
@@ -1160,9 +1184,9 @@ describe('block-apply embedded tx re-validation', () => {
     // missing signature long before them.
     const forged = makeLikeTx(victim, victimBox, ZERO_HASH, victim.userId);
     forged.signatures = {};
-    mempool.insertUtxoTx(forged, 1000);
 
-    await mineBlockOverMempool();
+    const block = await makeApplicableBlock({ utxoTxs: [forged] });
+    expect((await importBlockApply()).applyOrderingBlock(block)).toBe(false);
 
     // Nothing the block would have done survives — not the block row, not the
     // coinbase mint, not the spend.
@@ -1184,7 +1208,6 @@ describe('block-apply embedded tx re-validation', () => {
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
-    const mempool = await importMempoolFresh();
 
     const attacker = makeTestIdentity();
     const attackerBox = makeKarmaBox(100n, attacker.userId, 0);
@@ -1216,9 +1239,9 @@ describe('block-apply embedded tx re-validation', () => {
       attacker.privateKey,
       Buffer.from(attacker.userId).toString('hex'),
     );
-    mempool.insertUtxoTx(inflating, 1000);
 
-    await mineBlockOverMempool();
+    const block = await makeApplicableBlock({ utxoTxs: [inflating] });
+    expect((await importBlockApply()).applyOrderingBlock(block)).toBe(false);
 
     const ordering = await importOrdering();
     expect(ordering.getOrderingBlock(1)).toBeNull();
@@ -2369,8 +2392,11 @@ describe('block-apply H-3 post authorship', () => {
     const parentA = 'a1'.repeat(32);
     const parentAuthor = makeTestIdentity();
 
-    const topology = await import('../../src/store/topology.js');
-    topology.insertBlockTopology(parentA, [], Buffer.from(parentAuthor.userId).toString('hex'), 0);
+    // The parent is confirmed committed state — its post record in the tree
+    // the rules read, its topology row in the store.
+    await seedCommittedState({
+      posts: [{ postId: parentA, txId: parentA, post: makePostCommit(parentAuthor.userId, 'parent post') }],
+    });
 
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'child post', { parentRefs: [parentA] }, parentAuthor.userId);
 
@@ -2408,6 +2434,7 @@ describe('block-apply funnel totality', () => {
       // Module might not have been imported
     }
     vi.doUnmock('../../src/store/journal.js');
+    vi.doUnmock('../../src/state/prover-session.js');
     vi.resetModules();
   });
 
@@ -2454,6 +2481,79 @@ describe('block-apply funnel totality', () => {
       getCreditBoxes: (owner: Uint8Array) => unknown[];
     };
     expect(getCreditBoxes(coinbaseOf(block)[0]!.owner)).toHaveLength(0);
+  });
+
+  // -----------------------------------------------------------------------
+  // A tree that contradicts itself is fail-stop, not a rejection
+  // (NODE_INTERFACE → "What the funnel's totality catch is FOR")
+  // -----------------------------------------------------------------------
+
+  it('a tree that contradicts itself on read stops the node during apply, and is not a rejection', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    // Registered before the candidate is built, inert until armed — the
+    // fixture's own reads (a live prover, a real speculative run) must not
+    // trip the injected fault, so `armed` gates it rather than the mock's
+    // presence (the block-creator suite's own pattern for this class of
+    // injection).
+    let armed = false;
+    vi.doMock('../../src/state/prover-session.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../../src/state/prover-session.js')>();
+      return {
+        ...actual,
+        proverSession: (
+          ...args: Parameters<typeof actual.proverSession>
+        ): ReturnType<typeof actual.proverSession> => {
+          const real = actual.proverSession(...args);
+          if (!armed) return real;
+          // A next key not strictly above the key looked up — the tree
+          // view's own check (CONSENSUS_INTERFACE → The tree view → "An
+          // answer is checked as it arrives"), so the very first read
+          // `applyBlock` makes throws `TreeInconsistencyError`.
+          return {
+            lookup: (key: Uint8Array) => ({ ...real.lookup(key), nextKey: key }),
+          };
+        },
+      };
+    });
+
+    const block = await makeApplicableBlock();
+    armed = true;
+
+    const exited: number[] = [];
+    vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      exited.push(code ?? 0);
+      throw new Error('process.exit');
+    }) as never);
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((msg: unknown) => {
+      errors.push(String(msg));
+    });
+
+    const blockApply = await importBlockApply();
+    const { failStopIfCorruptChain } = await import('../../src/services/corrupt-state.js');
+
+    // `applyOrderingBlock` re-throws a `CorruptChainStateError` for its
+    // caller's boundary to decide (NODE_INTERFACE → "What the funnel's
+    // totality catch is FOR") — every real caller wraps it exactly this way
+    // (gossip and pull registrations, the launched reorg, the block creator).
+    // The funnel does not refuse the block: no `false`, no swallow — the
+    // throw reaches this boundary as `InconsistentStateTreeError`.
+    expect(() => {
+      try {
+        blockApply.applyOrderingBlock(block);
+      } catch (err) {
+        failStopIfCorruptChain(err);
+      }
+    }).toThrow('process.exit');
+
+    expect(exited).toEqual([1]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('FATAL');
+    expect(errors[0]).toContain('applyOrderingBlock');
+    expect(errors[0]).toContain('Nothing a peer sent can have caused this');
   });
 
   it('applies the same block with no stub in place (control)', async () => {
@@ -2565,7 +2665,6 @@ describe('block-apply funnel totality', () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const utxo = await importUtxo();
     const posts = await importPosts();
     const blockApply = await importBlockApply();
 
@@ -2577,7 +2676,7 @@ describe('block-apply funnel totality', () => {
     expect(blockApply.applyOrderingBlock(block1)).toBe(true);
 
     const withdrawKarma = makeKarmaBox(100n, author.userId, 0, 98);
-    utxo.insertBox(withdrawKarma);
+    await seedBoxes([withdrawKarma]);
     const withdrawTx: UtxoTransaction = {
       inputs: [withdrawKarma.id!],
       outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: author.userId }],
@@ -2595,9 +2694,9 @@ describe('block-apply funnel totality', () => {
   // Both fixtures name the rejection they expect: a bare `toBe(false)` on this
   // cluster can pass for the wrong reason, as the H-3 note above records.
 
-  function makePostWithdrawTx(author: TestIdentity, postId: string, nonce: number, utxo: { insertBox: (b: KarmaBox) => void }): UtxoTransaction {
+  async function makePostWithdrawTx(author: TestIdentity, postId: string, nonce: number): Promise<UtxoTransaction> {
     const karma = makeKarmaBox(100n, author.userId, 0, nonce);
-    utxo.insertBox(karma);
+    await seedBoxes([karma]);
     const tx: UtxoTransaction = {
       inputs: [karma.id!],
       outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: author.userId }],
@@ -2613,7 +2712,6 @@ describe('block-apply funnel totality', () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const utxo = await importUtxo();
     const posts = await importPosts();
     const blockApply = await importBlockApply();
 
@@ -2623,13 +2721,13 @@ describe('block-apply funnel totality', () => {
     expect(blockApply.applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [postTx] }))).toBe(true);
 
     expect(blockApply.applyOrderingBlock(
-      await makeApplicableBlock({ height: 2, utxoTxs: [makePostWithdrawTx(author, postId, 95, utxo)] }),
+      await makeApplicableBlock({ height: 2, utxoTxs: [await makePostWithdrawTx(author, postId, 95)] }),
     )).toBe(true);
     expect(posts.isLivePost(posts.getPost(postId))).toBe(false);
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(blockApply.applyOrderingBlock(
-      await makeApplicableBlock({ height: 3, utxoTxs: [makePostWithdrawTx(author, postId, 94, utxo)] }),
+      await makeApplicableBlock({ height: 3, utxoTxs: [await makePostWithdrawTx(author, postId, 94)] }),
     )).toBe(false);
     expect(warn.mock.calls.some(([m]) => String(m).includes('already-withdrawn or unknown'))).toBe(true);
     warn.mockRestore();
@@ -2639,7 +2737,6 @@ describe('block-apply funnel totality', () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const utxo = await importUtxo();
     const posts = await importPosts();
     const blockApply = await importBlockApply();
 
@@ -2652,7 +2749,7 @@ describe('block-apply funnel totality', () => {
 
     // The stranger builds a withdrawal for the author's post.
     const strangerKarma = makeKarmaBox(100n, stranger.userId, 0, 97);
-    utxo.insertBox(strangerKarma);
+    await seedBoxes([strangerKarma]);
     const withdrawTx: UtxoTransaction = {
       inputs: [strangerKarma.id!],
       outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: stranger.userId }],
@@ -2714,13 +2811,17 @@ describe('block-apply funnel totality', () => {
     const { solveHeaderPow } = await import('../helpers.js');
     const miner = makeTestIdentity();
     const { computeUtxoTxRoot } = await import('../../src/services/block-creator.js');
-    const { storeStateView, applyContextFrom } = await import('../../src/services/block-apply.js');
-    const { buildBlockSettlement } = await import('@dagsocial/consensus');
+    const { applyContextFrom } = await import('../../src/services/block-apply.js');
+    const { buildBlockSettlement, treeStateView } = await import('@dagsocial/consensus');
+    const { proverSession } = await import('../../src/state/prover-session.js');
     const { config } = await import('../../src/config.js');
     const { encodeTx, interlinkRoot } = await import('@dagsocial/types');
-    await seedEmissionBox();
-    await seedKarmaPoolBox();
-    const built = buildBlockSettlement(storeStateView, [], 1, miner.userId, miner.userId, applyContextFrom(config));
+    // A prover over the store, emission box and pool included: the settlement is
+    // built over its tree, and apply reaches the interlink check only with one.
+    const handle = await liveProver();
+    const built = buildBlockSettlement(
+      treeStateView(proverSession(handle.prover)), [], 1, miner.userId, miner.userId, applyContextFrom(config),
+    );
     if ('error' in built) throw new Error(built.error);
     const tree = {
       utxoTxIds: [computeTxId(built.tx)],
@@ -2856,9 +2957,8 @@ describe('T4: activity clock in the user-transaction loop', () => {
     await mineNextBlock(bc);
 
     // Give the liker exactly LIKE_KARMA_COST — an exact spend.
-    const utxo = await importUtxo();
     const likerKarma = makeKarmaBox(LIKE_KARMA_COST, liker.userId, 0, 42);
-    utxo.insertBox(likerKarma);
+    await seedBoxes([likerKarma]);
 
     const likeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
     mempool.insertUtxoTx(likeTx, 1000);
@@ -2890,9 +2990,8 @@ describe('T4: activity clock in the user-transaction loop', () => {
     bc.startBlockCreator(testConfig);
     await mineNextBlock(bc);
 
-    const utxo = await importUtxo();
     const likerKarma = makeKarmaBox(100n, liker.userId, 0, 77);
-    utxo.insertBox(likerKarma);
+    await seedBoxes([likerKarma]);
 
     const likeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
     mempool.insertUtxoTx(likeTx, 1000);
@@ -2929,9 +3028,8 @@ describe('T4: activity clock in the user-transaction loop', () => {
     bc.startBlockCreator(testConfig);
     await mineNextBlock(bc);
 
-    const utxo = await importUtxo();
     const replierKarma = makeKarmaBox(100n, replier.userId, 0, 51);
-    utxo.insertBox(replierKarma);
+    await seedBoxes([replierKarma]);
 
     const replyCommit = makePostCommit(replier.userId, 'T4 reply', { parentRefs: [postId] });
     const replyTx: UtxoTransaction = {
@@ -3133,9 +3231,8 @@ describe('T4: activity clock in the user-transaction loop', () => {
     const afterPost = records.getIdentityRecord(author.userId);
     const clockAfterPost = afterPost!.lastActivityBlock;
 
-    const utxo = await importUtxo();
     const withdrawKarma = makeKarmaBox(100n, author.userId, 0, 56);
-    utxo.insertBox(withdrawKarma);
+    await seedBoxes([withdrawKarma]);
     const withdrawTx: UtxoTransaction = {
       inputs: [withdrawKarma.id!],
       outputs: [{ boxType: 'karma', value: 100n, createdAtBlock: 0, owner: author.userId } as never],
@@ -3295,7 +3392,7 @@ describe('a self-like is refused at block application', () => {
     expect(blockApply.applyOrderingBlock(block1)).toBe(true);
 
     const selfKarma = makeKarmaBox(100n, author.userId, 0, 60);
-    utxo.insertBox(selfKarma);
+    await seedBoxes([selfKarma]);
     const selfLikeTx = makeLikeTx(author, selfKarma, postId, author.userId);
 
     const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [selfLikeTx] });
@@ -3320,7 +3417,7 @@ describe('a self-like is refused at block application', () => {
     expect(blockApply.applyOrderingBlock(block1)).toBe(true);
 
     const likerKarma = makeKarmaBox(100n, liker.userId, 0, 61);
-    utxo.insertBox(likerKarma);
+    await seedBoxes([likerKarma]);
     const otherLikeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
 
     const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [otherLikeTx] });

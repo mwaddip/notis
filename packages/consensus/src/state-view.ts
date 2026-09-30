@@ -8,12 +8,13 @@ import type {
   KarmaBox,
   KarmaPoolBox,
   LikeAccrualBox,
+  NetworkRecord,
   ProtocolEra,
   TreasuryBox,
   VouchBox,
   VouchEscrowBox,
 } from '@dagsocial/types';
-import type { NetworkRecord, UsernameRow } from './utxo-engine.js';
+import type { UsernameRow } from './utxo-engine.js';
 
 /** A post's standing in the DAG: a row that is live, a row that is withdrawn, or no row. */
 export type PostStanding = 'live' | 'withdrawn' | 'none';
@@ -32,7 +33,7 @@ export type PostStanding = 'live' | 'withdrawn' | 'none';
 export interface StateView {
   /** The box, if live. */
   getBox(id: string): AnyBox | null;
-  /** `{ txId, index }` for any box the state holds or held, live or spent. */
+  /** `{ txId, index }` for a live box. */
   getBoxProvenance(id: string): { txId: string; index: number } | null;
   getIdentityRecord(identityId: Uint8Array): IdentityRecord | null;
   /** The member count. The record exists from genesis seeding on. */
@@ -53,7 +54,7 @@ export interface StateView {
   getKarmaBoxes(owner: Uint8Array): KarmaBox[];
   /** Every live escrow the voucher owns, `id`. */
   getVouchEscrowsFor(voucherId: Uint8Array): VouchEscrowBox[];
-  /** Every live vouch box for the (voucher, target) pair, `id`. */
+  /** The pair's live vouch box — one at most (NODE_INTERFACE → Vouch transition rules). */
   getVouchBoxes(voucherId: Uint8Array, targetId: Uint8Array): VouchBox[];
   /** Every live `like_accrual` box naming the author, `id`. */
   getLikeAccrualBoxes(author: Uint8Array): LikeAccrualBox[];
@@ -64,7 +65,11 @@ export interface StateView {
   getBondsInvitedAt(maxInvitedAt: number, limit: number): BondBox[];
   /** At most `limit` live escrows with `releaseAtBlock ≤ height`, `(releaseAtBlock, id)`. */
   getVouchEscrowsReleasableAt(height: number, limit: number): VouchEscrowBox[];
-  /** At most `limit` live vouch boxes whose voucher's record fails `member()`, `id`. */
+  /**
+   * At most `limit` live vouch boxes whose voucher's record fails `member()`,
+   * voucher by voucher and each voucher's in target order (CONSENSUS_INTERFACE →
+   * StateView → "The lapses run voucher by voucher").
+   */
   getLapsedVouches(limit: number): VouchBox[];
   /** The `block_topology` author, or none. */
   getTopologyAuthor(postId: string): Uint8Array | null;

@@ -18,7 +18,7 @@ export interface BlockHeader {
   height: number;
   prevBlockHash: string;        // hex(32) — hash of previous header
   utxoTxRoot: string;           // hex(32) — Merkle root over the block body
-  stateRoot: string;            // hex(33) — AVL+ digest (zeroed for MVP)
+  stateRoot: string;            // hex(33) — the AVL+ digest after this block is applied (TYPES_INTERFACE → Block header)
   validatorId: UserId;
   powNonce: number;
   powTargetBits: number;

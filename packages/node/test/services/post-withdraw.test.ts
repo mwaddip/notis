@@ -16,15 +16,16 @@ import type {
   UtxoTransaction,
 } from '@dagsocial/types';
 import type { BlockJournal, BoxMutation } from '../../src/store/journal.js';
-import type { AnyBox } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 import type { Config } from '../../src/config.js';
 import type { TestIdentity } from '../helpers.js';
 import {
   makeApplicableBlock,
   makeKarmaBox,
+  makeLikeTx,
   makeTestConfig,
   makeTestIdentity,
+  seedBoxes,
   seedPostTx,
   signTransaction,
   toHex,
@@ -94,16 +95,6 @@ async function importJournalStore() {
   };
 }
 
-async function importUtxo() {
-  return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown) => void;
-    getBox: (boxId: string) => unknown;
-    getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
-    getKarmaValue: (owner: Uint8Array) => bigint;
-    getUnspentBoxes: () => AnyBox[];
-  };
-}
-
 async function importTopology() {
   return (await import('../../src/store/topology.js')) as {
     getTopologyHeight: (postId: string) => number | null;
@@ -148,7 +139,6 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
   let bc: BlockCreatorModule;
   let apply: Awaited<ReturnType<typeof importBlockApply>>;
   let posts: Awaited<ReturnType<typeof importPosts>>;
-  let utxo: Awaited<ReturnType<typeof importUtxo>>;
   let journalStore: Awaited<ReturnType<typeof importJournalStore>>;
   let topology: Awaited<ReturnType<typeof importTopology>>;
 
@@ -162,7 +152,6 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     bc = await importBlockCreator();
     apply = await importBlockApply();
     posts = await importPosts();
-    utxo = await importUtxo();
     journalStore = await importJournalStore();
     topology = await importTopology();
     miner = makeTestIdentity();
@@ -197,7 +186,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
 
     // The post is confirmed — give the author karma for the withdrawal tx
     const withdrawKarma = makeKarmaBox(10n, author.userId, 1, 99);
-    utxo.insertBox(withdrawKarma);
+    await seedBoxes([withdrawKarma]);
     const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
 
     const block2 = await makeApplicableBlock({
@@ -242,11 +231,11 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
 
     // Block 3: withdraw(reply) + withdraw(root)
     const replyWithdrawKarma = makeKarmaBox(10n, replyAuthor.userId, 2, 77);
-    utxo.insertBox(replyWithdrawKarma);
+    await seedBoxes([replyWithdrawKarma]);
     const replyWithdrawTx = makePostWithdrawTx(replyAuthor, replyId, replyWithdrawKarma);
 
     const rootWithdrawKarma = makeKarmaBox(10n, rootAuthor.userId, 2, 88);
-    utxo.insertBox(rootWithdrawKarma);
+    await seedBoxes([rootWithdrawKarma]);
     const rootWithdrawTx = makePostWithdrawTx(rootAuthor, rootId, rootWithdrawKarma);
 
     const block3 = await makeApplicableBlock({
@@ -278,8 +267,8 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
 
     const karma1 = makeKarmaBox(10n, author.userId, 1, 51);
     const karma2 = makeKarmaBox(10n, author.userId, 1, 52);
-    utxo.insertBox(karma1);
-    utxo.insertBox(karma2);
+    await seedBoxes([karma1]);
+    await seedBoxes([karma2]);
 
     const tx1 = makePostWithdrawTx(author, postId, karma1);
     const tx2 = makePostWithdrawTx(author, postId, karma2);
@@ -300,7 +289,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     const { tx: postTx, postId } = await seedPostTx(author, 'same-block');
 
     const withdrawKarma = makeKarmaBox(10n, author.userId, 0, 55);
-    utxo.insertBox(withdrawKarma);
+    await seedBoxes([withdrawKarma]);
     const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
 
     const block = await makeApplicableBlock({
@@ -325,7 +314,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     expect(before!.withdrawnAtHeight).toBeNull();
 
     const withdrawKarma = makeKarmaBox(10n, author.userId, 1, 60);
-    utxo.insertBox(withdrawKarma);
+    await seedBoxes([withdrawKarma]);
     const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
 
     const block2 = await makeApplicableBlock({
@@ -382,7 +371,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
 
     // Withdraw the placeholder
     const withdrawKarma = makeKarmaBox(10n, author.userId, 1, 61);
-    utxo.insertBox(withdrawKarma);
+    await seedBoxes([withdrawKarma]);
     const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
 
     const block2 = await makeApplicableBlock({
@@ -418,7 +407,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
 
     // Withdraw at height 2
     const withdrawKarma = makeKarmaBox(10n, author.userId, 1, 70);
-    utxo.insertBox(withdrawKarma);
+    await seedBoxes([withdrawKarma]);
     const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
     const block2 = await makeApplicableBlock({
       miner,
@@ -427,27 +416,32 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     });
     expect(apply.applyOrderingBlock(block2)).toBe(true);
 
-    // Attempt like at height 3
+    // Attempt like at height 3. Seeded at height 0, like `makeLikeTx`'s own
+    // fixtures elsewhere: its output declares `createdAtBlock: 0`, which is
+    // only monotonic (TYPES_INTERFACE → Monotonic creation height) above an
+    // input seeded no later — height 2 here would refuse the tx on that bound
+    // before the withdrawn-post rule under test is ever reached.
     const { LIKE_KARMA_COST } = await import('@dagsocial/types');
-    const likerKarma = makeKarmaBox(LIKE_KARMA_COST + 1n, liker.userId, 2, 71);
-    utxo.insertBox(likerKarma);
-    const likeTx: UtxoTransaction = {
-      inputs: [likerKarma.id!],
-      outputs: [
-        { boxType: 'karma', value: 1n, createdAtBlock: 0, owner: liker.userId } as never,
-      ],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-      likeTarget: postId,
-    };
-    signTransaction(likeTx, liker.privateKey, toHex(liker.userId));
+    const likerKarma = makeKarmaBox(LIKE_KARMA_COST + 1n, liker.userId, 0, 71);
+    await seedBoxes([likerKarma]);
+    const likeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
 
     const block3 = await makeApplicableBlock({
       miner,
       utxoTxs: [likeTx],
       height: 3,
     });
-    expect(apply.applyOrderingBlock(block3)).toBe(false);
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const applied = apply.applyOrderingBlock(block3);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+
+    expect(applied).toBe(false);
+    expect(
+      warnings.some((w) => w.includes('withdrawn or unknown post')),
+      `expected the withdrawn-post reason, got ${JSON.stringify(warnings)}`,
+    ).toBe(true);
   });
 
   // -----------------------------------------------------------------------
@@ -479,7 +473,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     // Block 3: C likes P
     const { LIKE_KARMA_COST } = await import('@dagsocial/types');
     const likerKarma = makeKarmaBox(LIKE_KARMA_COST + 1n, C.userId, 2, 90);
-    utxo.insertBox(likerKarma);
+    await seedBoxes([likerKarma]);
     const likeTx: UtxoTransaction = {
       inputs: [likerKarma.id!],
       outputs: [
@@ -501,7 +495,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
 
     // Block 4: B withdraws P
     const withdrawKarma = makeKarmaBox(10n, B.userId, 2, 91);
-    utxo.insertBox(withdrawKarma);
+    await seedBoxes([withdrawKarma]);
     const withdrawTx = makePostWithdrawTx(B, replyId, withdrawKarma);
     const block4 = await makeApplicableBlock({
       miner,
@@ -521,7 +515,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     const { postId } = await postAndConfirm(author, 'creator-match');
 
     const withdrawKarma = makeKarmaBox(10n, author.userId, 1, 80);
-    utxo.insertBox(withdrawKarma);
+    await seedBoxes([withdrawKarma]);
     const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
 
     // The makeApplicableBlock helper builds the settlement the creator would

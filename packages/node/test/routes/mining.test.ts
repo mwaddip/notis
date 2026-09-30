@@ -8,12 +8,12 @@ import {
   markDiscoveryUnavailable,
   resetPeerReadiness,
 } from '../../src/services/peer-readiness.js';
-import { initDb, closeDb } from '../../src/store/db.js';
+import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import { createApp } from '../../src/server.js';
 import type { Config } from '../../src/config.js';
 import type { OrderingBlock } from '@dagsocial/types';
 import { profileFor } from '@dagsocial/types';
-import { seedEmissionBox } from '../helpers.js';
+import { liveProver } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -401,6 +401,8 @@ function makeConfig(overrides?: Partial<Config>): Config {
 describe('mining routes — mount policy', () => {
   beforeAll(() => {
     initDb(':memory:');
+    // Every chain holds its network record from genesis on.
+    getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
   });
 
   afterAll(() => {
@@ -469,10 +471,11 @@ describe('mining routes — mount policy', () => {
 
     it('withholds a template that exists while readiness says no', async () => {
       const bc = await import('../../src/services/block-creator.js');
-      // ⛔ **A miner below the terminus cannot build a template without an
-      // emission box**: the settlement SPENDS the emission for its coinbase, so
-      // a store with nothing to spend from yields no template at all.
-      await seedEmissionBox();
+      // ⛔ **A miner builds a template over its prover, and below the terminus
+      // not without an emission box**: the settlement SPENDS the emission for
+      // its coinbase, so a store with nothing to spend from yields no template
+      // at all. The prover is activated over the store, emission box included.
+      await liveProver();
       const cfg = makeConfig({ miningSecret: SECRET });
       bc.startBlockCreator(cfg);
       bc.createOrderingBlock();
@@ -491,7 +494,7 @@ describe('mining routes — mount policy', () => {
 
     it('control: the same app serves that template once readiness says yes', async () => {
       const bc = await import('../../src/services/block-creator.js');
-      await seedEmissionBox();
+      await liveProver();
       const cfg = makeConfig({ miningSecret: SECRET });
       bc.startBlockCreator(cfg);
       bc.createOrderingBlock();

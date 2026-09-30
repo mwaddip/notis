@@ -1,6 +1,6 @@
 import {
   MIN_FEE_RATE_PER_BYTE,
-  AVL_KEY_LENGTH,
+  TREE_KEY_LENGTH,
   MAX_BLOCK_BODY_BYTES,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   decayCfgFor,
@@ -177,7 +177,7 @@ export function loadConfig(): Readonly<Config> {
       process.env['MAX_PROOF_HISTORY'] ?? '1440',
       10,
     ),
-    avlKeyLength: AVL_KEY_LENGTH,
+    avlKeyLength: TREE_KEY_LENGTH,
     // Net settings
     bootstrapPeers: parseBootstrapPeers(process.env['BOOTSTRAP_PEERS'], profile.bootstrapPeers),
     listenAddrs: process.env['LISTEN_ADDRS'] ?? '/ip4/0.0.0.0/tcp/0',

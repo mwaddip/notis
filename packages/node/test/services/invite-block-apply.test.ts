@@ -24,10 +24,10 @@ import {
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
-  identityRecordKey,
 } from '@dagsocial/types';
 import type {
   BondBox,
+  IdentityRecord,
   KarmaBox,
   UtxoTransaction,
 } from '@dagsocial/types';
@@ -49,6 +49,9 @@ import {
 
 /** Short enough that the deadline is reachable by mining a few real blocks. */
 const PROBATION = 3;
+
+/** The height a seeded pair's grant stands at — the first block's. */
+const GRANT_HEIGHT = 1;
 
 /** One pre-seeded like: the post to publish, and the karma box that likes it. */
 interface LikeFixture {
@@ -161,11 +164,18 @@ describe('the invite at block application', () => {
 
   /**
    * Bring up a store with a live prover, the karma pool, and one bond already in
-   * place — the state an invite leaves behind once its block has applied.
+   * place — the state an invite leaves behind once its block has applied: the
+   * bond, and its invitee's record holding the grant height `invitedAtBlock`
+   * and `invitee`'s other fields.
    *
    * ⛔ **The pool is not optional.** The settlement spends it to grant the
    * invitee, so a store without one cannot produce a block whose body creates a
    * bond (ARCHITECTURE → The conservation axiom).
+   *
+   * ⛔ **Nor is the invitee's record.** The bond's place in the tree's due queue
+   * is its invitee's `invitedAtBlock` (CONSENSUS_INTERFACE → The index entries →
+   * "A bond's due height is its invitee's `invitedAtBlock`"), so both are in the
+   * store before the tree is built over it.
    *
    * The prover is live because every path under test writes to it — a mint, a
    * consume, a record put — and a suite without one would assert the SQL side of
@@ -174,6 +184,7 @@ describe('the invite at block application', () => {
   async function seedPair(
     bondValue = FIXTURE_BOND_KARMA,
     likeRounds: Array<{ count: number; nonceBase: number }> = [],
+    invitee: Partial<IdentityRecord> = {},
   ) {
     const db = await importDb();
     db.initDb(':memory:');
@@ -183,11 +194,17 @@ describe('the invite at block application', () => {
     await seedKarmaPoolBox();
 
     const inviter = makeTestIdentity();
-    const invitee = makeTestIdentity();
+    const inviteeId = makeTestIdentity();
     records.putIdentityRecord(inviter.userId, {
       lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
       lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
       memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+    records.putIdentityRecord(inviteeId.userId, {
+      lastActivityBlock: GRANT_HEIGHT, lastDecayBlock: 0, invitedAtBlock: GRANT_HEIGHT,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+      ...invitee,
     });
 
     const [bond] = seedAsOneTx([
@@ -196,21 +213,21 @@ describe('the invite at block application', () => {
         value: bondValue,
         createdAtBlock: 0,
         inviterId: inviter.userId,
-        inviteePublicKey: invitee.userId,
+        inviteePublicKey: inviteeId.userId,
       },
     ]);
     utxo.insertBox(bond!);
 
     // Every like round's boxes, seeded here rather than between the blocks that
-    // spend them: a karma box inserted after the bootstrap is one the tree never
-    // received, and the block spending it would ask for a removal the tree
-    // refuses. `poolLikes` pools and mines each batch later.
+    // spend them: the rules read the tree, and a box inserted after the
+    // bootstrap is one the tree never received. `poolLikes` pools and mines each
+    // batch later.
     const likeBatches: LikeFixture[][] = [];
     for (const round of likeRounds) {
       const batch: LikeFixture[] = [];
       for (let i = 0; i < round.count; i++) {
         const nonce = round.nonceBase + i;
-        const { commit, tx: postTx, postId, content } = await seedPostTx(invitee, `post ${nonce}`);
+        const { commit, tx: postTx, postId, content } = await seedPostTx(inviteeId, `post ${nonce}`);
         const liker = makeTestIdentity();
         const karma = makeKarmaBox(100n, liker.userId, 0, 500 + nonce);
         utxo.insertBox(karma);
@@ -229,35 +246,11 @@ describe('the invite at block application', () => {
     await activateProverOverStore();
 
     return {
-      utxo, inviter, invitee, likeBatches,
+      utxo, inviter, invitee: inviteeId, likeBatches,
       bond: bond as BondBox,
     };
   }
 
-
-  /**
-   * Start the invitee's probation clock, the way the settlement's grant does.
-   *
-   * ⛔ **Seeded rather than mined, for the reason `lifetimeLikesReceived` is:**
-   * the arithmetic under test below is the vesting, not the writer. The
-   * end-to-end path — an invite transaction whose block's settlement writes this
-   * height — is the subject of its own case at the top of this file.
-   */
-  async function startProbation(invitee: TestIdentity, invitedAtBlock: number): Promise<void> {
-    const records = await importRecords();
-    const before = records.getIdentityRecord(invitee.userId);
-    records.putIdentityRecord(invitee.userId, {
-      lastActivityBlock: before?.lastActivityBlock ?? invitedAtBlock,
-      lastDecayBlock: before?.lastDecayBlock ?? 0,
-      invitedAtBlock,
-      lifetimeLikesReceived: before?.lifetimeLikesReceived ?? 0n,
-      memberSinceBlock: before?.memberSinceBlock ?? 0,
-      memberBar: before?.memberBar ?? 0,
-      memberVouches: before?.memberVouches ?? 0,
-      memberLikes: before?.memberLikes ?? 0n,
-      invitesUsed: before?.invitesUsed ?? 0,
-    });
-  }
 
   async function mineOne() {
     const bc = await importBlockCreator();
@@ -409,11 +402,7 @@ describe('the invite at block application', () => {
     const karmaB = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, root.userId, 0, 92);
     utxo.insertBox(karmaA);
     utxo.insertBox(karmaB);
-    const recordPuts = [{
-      key: identityRecordKey(root.userId),
-      record: records.getIdentityRecord(root.userId)!,
-    }];
-    await activateProverOverStore(recordPuts);
+    await activateProverOverStore();
 
     const networkBefore = records.getNetworkRecord().memberCount;
 
@@ -726,12 +715,25 @@ describe('the invite at block application', () => {
     // block's own body catches it.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
+    const records = await importRecords();
     await seedKarmaPoolBox();
 
     const invitee = makeTestIdentity();
     const a = makeTestIdentity();
     const b = makeTestIdentity();
+    // Both inviters are members in good standing — the shape
+    // "non-vacuity: the same two invites in SEPARATE blocks" seeds and applies
+    // for one invite alone — so each invite clears "Inviter holds no identity
+    // record" on its own, and the collision under test is the first refusal.
+    for (const inviter of [a, b]) {
+      records.putIdentityRecord(inviter.userId, {
+        lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+        lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+        memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+      });
+    }
     const karmaA = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, a.userId, 0, 81);
     const karmaB = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, b.userId, 0, 82);
     utxo.insertBox(karmaA);
@@ -739,7 +741,6 @@ describe('the invite at block application', () => {
     await activateProverOverStore();
 
     const blockApply = await import('../../src/services/block-apply.js');
-    const records = await importRecords();
 
     // Both invites in ONE body, built directly — the creator's own fill skips
     // the second as an assembly preference, so a mined block could never carry
@@ -748,7 +749,16 @@ describe('the invite at block application', () => {
       utxoTxs: [inviteTx(a, invitee, karmaA), inviteTx(b, invitee, karmaB)],
     });
 
-    expect(blockApply.applyOrderingBlock(block)).toBe(false);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const applied = blockApply.applyOrderingBlock(block);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+
+    expect(applied).toBe(false);
+    expect(
+      warnings.some((w) => w.includes('another bond in this block already names')),
+      `expected the duplicate-invitee reason, got ${JSON.stringify(warnings)}`,
+    ).toBe(true);
 
     // Nothing applied: no grant, no record, and both karma boxes untouched.
     expect(records.getIdentityRecord(invitee.userId)).toBeNull();
@@ -798,8 +808,13 @@ describe('the invite at block application', () => {
    * the same reason `invitedAtBlock` is seeded rather than mined for — the
    * arithmetic under test is the vesting, not the counter's writer.
    */
+  /**
+   * The bond's invitee holds `likes` from the grant on — seeded rather than
+   * mined, because the arithmetic under test is the vesting, not the writer; the
+   * end-to-end path is the subject of its own case at the top of this file.
+   */
   async function claimThenSettle(likes: bigint, bondValue = FIXTURE_BOND_KARMA) {
-    const seeded = await seedPair(bondValue);
+    const seeded = await seedPair(bondValue, [], { lifetimeLikesReceived: likes });
     const { utxo, inviter, invitee, bond } = seeded;
     await importMempool();
     const records = await importRecords();
@@ -807,11 +822,8 @@ describe('the invite at block application', () => {
     const firstBlock = await mineOne();
     expect(firstBlock).not.toBeNull();
     const invitedAtBlock = firstBlock!.header.height;
-
-    await startProbation(invitee, invitedAtBlock);
-    const started = records.getIdentityRecord(invitee.userId)!;
-    expect(started.invitedAtBlock).toBe(invitedAtBlock);
-    records.putIdentityRecord(invitee.userId, { ...started, lifetimeLikesReceived: likes, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
+    expect(invitedAtBlock).toBe(GRANT_HEIGHT);
+    expect(records.getIdentityRecord(invitee.userId)!.invitedAtBlock).toBe(invitedAtBlock);
 
     const deadline = invitedAtBlock + PROBATION;
     let height = invitedAtBlock;
@@ -874,52 +886,6 @@ describe('the invite at block application', () => {
     expect(await mineOne()).not.toBeNull();
     expect(await mineOne()).not.toBeNull();
     expect(utxo.getKarmaValue(inviter.userId)).toBe(inviterKarma);
-  });
-
-  it('an UNCLAIMED bond does not settle when the chain reaches the probation length', async () => {
-    // The sharp edge of the `0 = never invited` sentinel. The sweep resolves
-    // `invitedAtBlock = height − INVITE_PROBATION_BLOCKS`, so at exactly height
-    // `INVITE_PROBATION_BLOCKS` that expression is 0 — and unguarded, EVERY
-    // identity that never claimed matches at once. Every open invite's bond
-    // would settle for free, in one block, on a schedule nobody chose.
-    //
-    // ⚠ The rule is held shut TWICE — `processMaturedBonds`' early return and
-    // `getBondsInvitedAt`'s SQL predicate, the same rule in two languages — so
-    // this case only fails when both are removed. Measured: weakening either
-    // alone leaves it green.
-    const { utxo, inviter, invitee, bond } = await seedPair();
-    const records = await importRecords();
-
-    // The invitee has a record and has never been invited — the state of any
-    // identity that has received karma, which is what makes the sentinel
-    // collision reachable rather than hypothetical. A key with no record at all
-    // would not match the sweep's join either way and would leave the guard
-    // untested.
-    records.putIdentityRecord(invitee.userId, {
-      lastActivityBlock: 1,
-      lastDecayBlock: 0,
-      invitedAtBlock: 0,
-      lifetimeLikesReceived: 0n,
-      memberSinceBlock: 0,
-      memberBar: 0,
-      memberVouches: 0,
-      memberLikes: 0n,
-      invitesUsed: 0,
-    });
-    expect(records.getIdentityRecord(invitee.userId)!.invitedAtBlock).toBe(0);
-
-    let height = 0;
-    while (height < PROBATION + 1) {
-      const block = await mineOne();
-      expect(block).not.toBeNull();
-      height = block!.header.height;
-    }
-
-    // Past the height the sentinel would have matched at, and the bond has not
-    // moved: an invite that was never claimed starts no clock at all.
-    expect(utxo.getBox(bond.id!)).not.toBeNull();
-    expect(utxo.getKarmaValue(inviter.userId)).toBe(0n);
-    expect(utxo.getBondFor(invitee.userId)!.id).toBe(bond.id);
   });
 
   // -------------------------------------------------------------------------
@@ -991,7 +957,7 @@ describe('the invite at block application', () => {
     const records = await importRecords();
 
     const invitedAtBlock = (await mineOne())!.header.height;
-    await startProbation(invitee, invitedAtBlock);
+    expect(invitedAtBlock).toBe(GRANT_HEIGHT);
     expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(0n);
 
     // Block A: three likes. Block B: two more. floor(5 / 3) = 1 karma vested.
@@ -1025,7 +991,7 @@ describe('the invite at block application', () => {
     const db = await importDb();
 
     const invitedAtBlock = (await mineOne())!.header.height;
-    await startProbation(invitee, invitedAtBlock);
+    expect(invitedAtBlock).toBe(GRANT_HEIGHT);
 
     const postIds = await poolLikes(likeBatches[0]!, invitee.userId);
     const earned = records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived;

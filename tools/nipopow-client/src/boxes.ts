@@ -1,14 +1,15 @@
 import { verifyAvlLookup } from '@ergots/avltree';
 import {
-  AVL_KEY_LENGTH,
+  TREE_KEY_LENGTH,
+  boxKey,
   boxRecordFromBytes,
   bytesToHex,
   computeCandidateBoxId,
   decayCfgFor,
   effectiveKarma,
   hexToBytes,
+  identityKey,
   identityRecordFromBytes,
-  identityRecordKey,
 } from '@dagsocial/types';
 import type {
   BlockHeader,
@@ -215,24 +216,26 @@ type RecordProofOutcome =
   | { kind: 'unproven'; verdict: string }
   | { kind: 'no-proof'; verdict: string };
 
-// NODE_INTERFACE → AVL+ State Root — one key, one height, one lookup proof,
-// verified against the stateRoot the caller verified under proof-of-work. The
-// answer's `kind` is the node's reading, trusted only to refuse; its `value` is
-// never read — the value is the one the proof carries. An answer of another
-// shape — a body that is not an object, a `stateRoot` that is not the header's,
-// a `proof` that is not a string — is unproven (WEB_INTERFACE → The extension →
-// "A run is total"). The tool's one AVL verification.
+// NODE_INTERFACE → AVL+ State Root — one tree key, one height, one lookup
+// proof, verified against the stateRoot the caller verified under
+// proof-of-work. The answer's `kind` is the node's reading, trusted only to
+// refuse; its `value` is never read — the value is the one the proof carries.
+// An answer of another shape — a body that is not an object, a `stateRoot`
+// that is not the header's, a `proof` that is not a string — is unproven
+// (WEB_INTERFACE → The extension → "A run is total"). The tool's one AVL
+// verification.
 async function proveKeyAtHeight(
   nodeUrl: string,
-  key: string,
+  treeKey: Uint8Array,
   entity: 'box' | 'record',
   atHeight: number,
   expectedStateRoot: string,
   httpFetch: HttpFetch,
 ): Promise<KeyProofOutcome> {
+  const keyHex = bytesToHex(treeKey);
   const proofRes = await fetchJson<unknown>(
     httpFetch,
-    `${nodeUrl}/api/v1/proof/${key}?atHeight=${atHeight}`,
+    `${nodeUrl}/api/v1/proof/${keyHex}?atHeight=${atHeight}`,
   );
   if (!proofRes.ok) {
     if (proofRes.status === 0) {
@@ -259,17 +262,18 @@ async function proveKeyAtHeight(
   const avlResult = verifyAvlLookup(
     hexToBytes(expectedStateRoot),
     proofBytes,
-    { keyLength: AVL_KEY_LENGTH, valueLengthOpt: null },
-    hexToBytes(key),
+    { keyLength: TREE_KEY_LENGTH, valueLengthOpt: null },
+    treeKey,
   );
   if (avlResult === null) return { kind: 'unproven', verdict: 'proof rejected' };
   if (avlResult.value === null) return { kind: 'exclusion' };
   return { kind: 'included', value: avlResult.value };
 }
 
-// NODE_INTERFACE → Entity kinds — a box at one height: included, its value
-// decoded and hashed back to the key it was proven under. What the box must
-// further be — its type, its owner — is each caller's check on the candidate.
+// NODE_INTERFACE → Entity kinds — a box at one height: included under its tree
+// key `boxKey(boxId)` (TYPES_INTERFACE → The tree keys), its value decoded and
+// hashed back to the box id that key carries. What the box must further be —
+// its type, its owner — is each caller's check on the candidate.
 export async function proveBoxAtHeight(
   nodeUrl: string,
   boxId: string,
@@ -277,7 +281,7 @@ export async function proveBoxAtHeight(
   expectedStateRoot: string,
   httpFetch: HttpFetch,
 ): Promise<BoxAtHeight> {
-  const outcome = await proveKeyAtHeight(nodeUrl, boxId, 'box', atHeight, expectedStateRoot, httpFetch);
+  const outcome = await proveKeyAtHeight(nodeUrl, boxKey(hexToBytes(boxId)), 'box', atHeight, expectedStateRoot, httpFetch);
   if (outcome.kind !== 'included') return outcome;
   let record;
   try {
@@ -345,17 +349,18 @@ async function proveListedBoxAtHeight(
   return { kind: 'proven', value: at.candidate.value, lockedUntilBlock };
 }
 
-// The record key is derived from `user` under IDENTITY_KEY_DOMAIN — the caller's
-// own derivation, so the lookup proof binds the key to the value; no owner
-// check applies.
+// TYPES_INTERFACE → The tree keys — the identity record's tree key is
+// `identityKey(identityId)`: tag `0x02`, then the raw `identityId`. The tag
+// alone keeps it apart from a box key, so the lookup proof binds this key to
+// the value and no owner check applies beyond it.
 async function proveRecordAtHeight(
   nodeUrl: string,
-  recordKey: string,
+  identityId: UserId,
   atHeight: number,
   expectedStateRoot: string,
   httpFetch: HttpFetch,
 ): Promise<RecordProofOutcome> {
-  const outcome = await proveKeyAtHeight(nodeUrl, recordKey, 'record', atHeight, expectedStateRoot, httpFetch);
+  const outcome = await proveKeyAtHeight(nodeUrl, identityKey(identityId), 'record', atHeight, expectedStateRoot, httpFetch);
   if (outcome.kind !== 'included') return outcome;
   let record: IdentityRecord;
   try {
@@ -419,7 +424,7 @@ export async function proveFigures(
   // Step 2 — the identity record at suffixHead
   const recordOutcome = await proveRecordAtHeight(
     nodeUrl,
-    identityRecordKey(userBytes),
+    userBytes,
     suffixHeight,
     suffixStateRoot,
     httpFetch,

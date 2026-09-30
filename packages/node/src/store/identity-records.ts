@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-import { NETWORK_KEY_DOMAIN } from '@dagsocial/types';
 import { getDb } from './db.js';
 import type { UserId, IdentityRecord } from '@dagsocial/types';
 import type { NetworkRecord } from '@dagsocial/consensus';
@@ -16,9 +14,10 @@ export type { NetworkRecord };
  * (NODE_INTERFACE → Populating the record); `ensureSystemKarmaBox` writes
  * genesis's own record, since it runs outside block application.
  *
- * The SQL table keys on the raw identity bytes (`UserId`); the AVL key is
- * derived from them by `identityRecordKey` in `@dagsocial/types`. Both are
- * total functions of the identity, so the two representations cannot drift.
+ * The SQL table keys on the raw identity bytes (`UserId`); the tree key is
+ * `identityKey(identityId)` in `@dagsocial/types` (TYPES_INTERFACE → The tree
+ * keys). Both are total functions of the identity, so the two representations
+ * cannot drift.
  */
 
 /** The record for an identity, or null if it has none yet. */
@@ -63,8 +62,8 @@ export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
  * full-set feed is sound (NODE_INTERFACE → AVL+ State Root → "AVL+ tree
  * shape is history-dependent"). Store unit tests also use it.
  *
- * The SQL `ORDER BY` is not the canonical order — the AVL key is a *hash* of
- * these bytes, so a prover feed sorts by that instead. This ordering only
+ * The SQL `ORDER BY` is not the canonical order — `seedTreeWrites` orders the
+ * seed by tree key (CONSENSUS_INTERFACE → The tree writes). This ordering only
  * makes the read deterministic.
  */
 export function getAllIdentityRecords(): Array<{ identityId: UserId; record: IdentityRecord }> {
@@ -155,19 +154,6 @@ export function deleteIdentityRecord(identityId: UserId): void {
 // ---------------------------------------------------------------------------
 // Network record — NODE_INTERFACE → Network record
 // ---------------------------------------------------------------------------
-
-/**
- * The network record's AVL key: `blake2b512(NETWORK_KEY_DOMAIN)[0:32]`, hex.
- * The tag alone is the preimage — the identity key's hashing rule with nothing
- * after the tag. Five entity kinds, five disjoint domain tags.
- */
-export function networkRecordKey(): string {
-  return createHash('blake2b512')
-    .update(NETWORK_KEY_DOMAIN)
-    .digest()
-    .subarray(0, 32)
-    .toString('hex');
-}
 
 /** The one row; throws where none exists (a store never seeded). */
 export function getNetworkRecord(): NetworkRecord {

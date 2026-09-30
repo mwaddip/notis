@@ -79,7 +79,7 @@ in their Kind cell and appear again under → Per-network values with all three 
 | `MAX_GENESIS_PROOF_PAYLOAD_BYTES` | `512` | 512 bytes | format | roughly Ergo's five-register no-premine payload plus headroom, derived from no measurement; the three profile payloads are ~35 bytes | PROVISIONAL | `TYPES_INTERFACE → Content limits` |
 | `USERNAME_MAX_BYTES` | `24` | 24 bytes of `[A-Za-z0-9_]` | consensus | user ruling, 2026-09-09; the alphabet and the lowercase canonical form are ruled with it | RULED | `TYPES_INTERFACE → Content limits` |
 | `BOX_VALUE_BOUND` | `9_223_372_036_854_775_808n` | 2⁶³ | consensus | SQLite `INTEGER` is a signed 64-bit integer, so the accepted value domain stops where storage does | DERIVED | `TYPES_INTERFACE → Box value domain` |
-| `AVL_KEY_LENGTH` | `32` | 32 bytes | consensus | the width of every 32-byte digest in the format | DOMAIN | `TYPES_INTERFACE → State format` |
+| `TREE_KEY_LENGTH` | `65` | 65 bytes | consensus | a one-byte tag and two 32-byte fields, the longest key the tree layout writes (`TYPES_INTERFACE → The tree keys`) | DERIVED | `TYPES_INTERFACE → State format` |
 
 ### Size caps
 

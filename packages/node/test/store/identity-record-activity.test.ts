@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
-import { computeBoxId, identityRecordKey } from '@dagsocial/types';
+import { bytesToHex, computeBoxId, identityKey } from '@dagsocial/types';
 import type {
   CreditBox,
   IdentityRecord,
@@ -164,7 +164,7 @@ describe('the activity clock', () => {
     expect(getIdentityRecord(resident.userId)).toEqual(carried);
 
     const writesTo = (who: UserId) => getBlockJournal(2)!.mutations.filter(
-      (m): m is RecordMutation => m.kind === 'record' && m.key === identityRecordKey(who),
+      (m): m is RecordMutation => m.kind === 'record' && m.key === bytesToHex(identityKey(who)),
     );
     const newcomerWrites = writesTo(newcomer.userId);
     expect(newcomerWrites.map((m) => m.record)).toEqual([created]);

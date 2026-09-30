@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { hexToBytes, identityRecordKey, profileFor } from '@dagsocial/types';
+import { hexToBytes, profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
 import { makeTestConfig, mineNextBlock, openAvlDb } from '../helpers.js';
 
@@ -147,17 +147,11 @@ describe('seedGenesisState', () => {
     const { root, s } = await seededRoot(':memory:');
 
     const boxes = s.utxo.getUnspentBoxes();
-    const records = s.records.getAllIdentityRecords().map((r) => ({
-      key: identityRecordKey(r.identityId),
-      record: r.record,
-    }));
-
-    const nr = s.records.getNetworkRecord();
-    const networkPuts = [{ key: s.records.networkRecordKey(), network: nr }];
+    const records = s.records.getAllIdentityRecords();
 
     const mirrorDb = openAvlDb();
     const mirror = s.prover.createAvlProver(mirrorDb);
-    s.prover.bootstrapAvlProver(mirror, boxes, 0, records, networkPuts);
+    s.prover.bootstrapAvlProver(mirror, boxes, 0, records, s.records.getNetworkRecord());
     expect(Buffer.from(mirror.prover.digest()!).toString('hex')).toBe(root);
 
     mirrorDb.close();
@@ -168,16 +162,11 @@ describe('seedGenesisState', () => {
     const { root, s } = await seededRoot(':memory:');
     const boxes = s.utxo.getUnspentBoxes();
     expect(boxes.length).toBeGreaterThan(1);
-    const records = s.records.getAllIdentityRecords().map((r) => ({
-      key: identityRecordKey(r.identityId),
-      record: r.record,
-    }));
-    const nr = s.records.getNetworkRecord();
-    const networkPuts = [{ key: s.records.networkRecordKey(), network: nr }];
+    const records = s.records.getAllIdentityRecords();
 
     const mirrorDb = openAvlDb();
     const mirror = s.prover.createAvlProver(mirrorDb);
-    s.prover.bootstrapAvlProver(mirror, [...boxes].reverse(), 0, [...records].reverse(), networkPuts);
+    s.prover.bootstrapAvlProver(mirror, [...boxes].reverse(), 0, [...records].reverse(), s.records.getNetworkRecord());
     expect(Buffer.from(mirror.prover.digest()!).toString('hex')).toBe(root);
 
     mirrorDb.close();
@@ -223,12 +212,12 @@ describe('seedGenesisState', () => {
   });
 
   it('the three networks reach three distinct height-0 roots', async () => {
-    // ⚠ **Roots, not payloads.** testnet and devnet share the hardcoded system
-    // identity and both box values, so their karma and credit boxes are
-    // byte-identical and carry the same ids. The proof box is the only thing
-    // separating those two genesis states — a payload that never reached the
-    // tree would leave them colliding silently, and a test over the profile
-    // strings could not see it.
+    // ⚠ **Roots, not payloads.** The inputs that separate the networks — the
+    // proof box's payload, the emission total, the faucet identity and the
+    // backer table (ARCHITECTURE → How the network is committed → "The
+    // mechanism this row names is `genesisStateRoot`, and the node refuses to
+    // run without it.") — separate them only where they reach the tree, which a
+    // test over the profile strings could not see.
     const roots = [];
     for (const network of ['mainnet', 'testnet', 'devnet']) {
       roots.push((await underProfile(network)).root);
@@ -432,10 +421,7 @@ describe('seedGenesisState — a store that is not empty', () => {
     // everything it wrote.
     const { root, s } = await seededRoot(':memory:');
     const boxes = s.utxo.getUnspentBoxes();
-    const records = s.records.getAllIdentityRecords().map((r) => ({
-      key: identityRecordKey(r.identityId),
-      record: r.record,
-    }));
+    const records = s.records.getAllIdentityRecords();
     // devnet: karma, credit, proof, emission, karma_pool, plus backer stakes
     // and the backer pool box when the table is non-empty.
     const table = profileFor('devnet').backerTable;
@@ -443,12 +429,9 @@ describe('seedGenesisState — a store that is not empty', () => {
     expect(boxes.length).toBe(5 + backerBoxes);
     expect(records.length).toBe(1);
 
-    const nr = s.records.getNetworkRecord();
-    const networkPuts = [{ key: s.records.networkRecordKey(), network: nr }];
-
     const mirrorDb = openAvlDb();
     const mirror = s.prover.createAvlProver(mirrorDb);
-    s.prover.bootstrapAvlProver(mirror, boxes, 0, records, networkPuts);
+    s.prover.bootstrapAvlProver(mirror, boxes, 0, records, s.records.getNetworkRecord());
     expect(Buffer.from(mirror.prover.digest()!).toString('hex')).toBe(root);
 
     mirrorDb.close();

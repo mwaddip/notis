@@ -65,9 +65,9 @@ const MIGRATIONS = [
   // (NODE_INTERFACE → Populating the record).
   //
   // Keyed on the raw 32 Ed25519 public-key bytes (UserId — Spec G D5 withdrawn,
-  // there is no separate IdentityId type). The AVL key is DERIVED as
-  // blake2b512(IDENTITY_KEY_DOMAIN ‖ identityId)[0:32], never the raw bytes —
-  // both are total functions of the identity, so the two cannot drift.
+  // there is no separate IdentityId type). The tree key is identityKey(identityId)
+  // — the identity after its tag (TYPES_INTERFACE → The tree keys) — and both are
+  // total functions of the identity, so the two cannot drift.
   //
   // invited_at_block: the height an invite claim applied, 0 = never invited.
   // Written only by block application when a claim applies, and read by the
@@ -494,6 +494,11 @@ export function initDb(path: string): void {
 export function getDb(): Database.Database {
   if (!db) throw new Error('Database not initialized. Call initDb() first.');
   return db;
+}
+
+/** Whether `candidate` is the open global database — false once it is closed. */
+export function isCurrentDb(candidate: Database.Database): boolean {
+  return db === candidate;
 }
 
 export function closeDb(): void {

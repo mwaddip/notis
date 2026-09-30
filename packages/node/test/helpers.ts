@@ -24,11 +24,12 @@ import {
   encodeInterlinks,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW, blockHash, level as headerLevel, asertTargetBits } from '@dagsocial/validation';
-import { buildBlockSettlement, computeBlockReward, materializeOutput } from '@dagsocial/consensus';
+import { buildBlockSettlement, computeBlockReward, materializeOutput, treeStateView, treeWritesOf } from '@dagsocial/consensus';
+import type { BlockEffects } from '@dagsocial/consensus';
 import { config } from '../src/config.js';
 import type { Config } from '../src/config.js';
 import { AVL_SCHEMA } from '../src/store/db.js';
-import type { AvlProverHandle, RecordPut } from '../src/state/avl-prover.js';
+import type { AvlProverHandle } from '../src/state/avl-prover.js';
 import type {
   UtxoTransaction,
   AnyBox,
@@ -201,8 +202,8 @@ export function makePostTx(
 }
 
 /**
- * `makePostTx` with its karma input already in the store — what a test wants
- * whenever a block or the pool is going to carry the transaction.
+ * `makePostTx` with its karma input already committed (`seedBoxes`) — what a
+ * test wants whenever a block or the pool is going to carry the transaction.
  *
  * The store module is reached by DYNAMIC import, which is what makes this safe
  * under `vi.resetModules()`: a static import here would bind one module instance
@@ -217,9 +218,27 @@ export async function seedPostTx(
   parentAuthor?: Uint8Array,
 ): Promise<{ post: Post; commit: PostCommit; tx: UtxoTransaction; postId: string; karmaBox: KarmaBox; content: string }> {
   const made = makePostTx(author, content, overrides, parentAuthor);
-  const { insertBox } = await import('../src/store/utxo.js');
-  insertBox(made.karmaBox);
+  await seedBoxes([made.karmaBox]);
   return made;
+}
+
+/**
+ * Put boxes in the committed state: into the store alone while no prover is
+ * live — activation carries them into the tree — and through
+ * `seedCommittedState` once one is, so the tree holds what the store holds and
+ * the rules read them (NODE_INTERFACE → AVL+ State Root → "The rules read the
+ * tree, and nothing else").
+ */
+export async function seedBoxes(boxes: AnyBox[]): Promise<void> {
+  const { tryGetAvlProver } = await import('../src/state/avl-prover.js');
+  if (tryGetAvlProver() === null) {
+    const { insertBox } = await import('../src/store/utxo.js');
+    for (const box of boxes) insertBox(box);
+    return;
+  }
+  await seedCommittedState({
+    mutations: boxes.map((box) => ({ kind: 'box' as const, op: 'insert' as const, boxId: box.id!, box })),
+  });
 }
 
 /**
@@ -726,17 +745,10 @@ export async function mineNextBlock(bc: {
   getCurrentTemplate: () => OrderingBlock | null;
   submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;
 }): Promise<OrderingBlock | null> {
-  // The store needs this network's emission box before a block below the
-  // terminus can be produced at all — see `seedEmissionBox`. The creator's own
-  // speculative mutation phase releases from it, so a body built without one is
-  // `body-rejected` and this returns null.
-  await seedEmissionBox();
-  // ⛔ **And its karma pool, for the same reason and a wider one.** Under the
-  // settlement's karma legs a block that pays a like, releases an escrow,
-  // settles a bond or charges decay touches the pool — and decay is derived on
-  // EVERY block, so an idle chain with one stale identity needs a pool as much
-  // as a busy one does (NODE_INTERFACE → The settlement transaction).
-  await seedKarmaPoolBox();
+  // The creator produces over the prover alone, so a store with none gets one
+  // here, built over what it holds — its emission box and karma pool included
+  // (`activateProverOverStore`).
+  await liveProver();
   bc.createOrderingBlock();
   const tpl = bc.getCurrentTemplate();
   if (tpl === null) return null;
@@ -861,19 +873,22 @@ export async function seedKarmaPoolBox(): Promise<void> {
  * `bootstrapAvlProver`, one function).
  *
  * ⛔ **The ordering is the whole contract of this helper, and it is
- * load-bearing** (NODE_INTERFACE → AVL+ State Root). A box that enters the store
- * *after* the bootstrap is absent from the tree, so the first block that spends
- * it asks the tree to remove a key it never held — a `DivergedStateTreeError`,
- * and a node that stops. `makeApplicableBlock` seeds the emission box lazily on
- * its first call, which is why the seed belongs here rather than in each suite:
- * a fixture that mines a block and bootstraps by hand has no way to get this
- * right by accident.
+ * load-bearing** (NODE_INTERFACE → AVL+ State Root). The rules read the tree and
+ * nothing else, so a box that enters the store *after* the bootstrap is absent
+ * for them: a block spending it is refused as spending an input that is not
+ * live. The seed is the store's boxes, identity records and network record —
+ * `seedTreeWrites`' three inputs — so a fixture's bond needs its invitee's
+ * record in the store, as on every real chain. `mineNextBlock` and
+ * `makeApplicableBlock` call this through `liveProver` when no prover is live,
+ * which is why the emission and pool seeds belong here rather than in each
+ * suite: a fixture that mines a block and bootstraps by hand has no way to get
+ * this right by accident.
  *
- * ⚠ **It owns the ordering and nothing else.** Boxes a test wants in the tree
- * must be inserted before it is called; anything a test wants *outside* the tree
- * it inserts after, deliberately. Identity records are the caller's too — pass
- * them, because a feed of only boxes produces a tree missing every record and a
- * different `stateRoot`.
+ * ⚠ **It owns the ordering and nothing else.** State a test wants in the tree
+ * must be in the store before it is called. Posts, likes and names are none of
+ * the seed's inputs, and state a test adds after its first block is too late for
+ * it: both go through `seedCommittedState`, which writes the store and the tree
+ * together.
  *
  * ⛔ **A fixture that runs the real `seedGenesisState` CANNOT use this, and
  * cannot hand-seed a box at all.** That seeder does this same ordering itself,
@@ -887,10 +902,7 @@ export async function seedKarmaPoolBox(): Promise<void> {
  *
  * Returns the handle so a caller can read the digest it starts from.
  */
-export async function activateProverOverStore(
-  records: RecordPut[] = [],
-  height = 0,
-): Promise<AvlProverHandle> {
+export async function activateProverOverStore(height = 0): Promise<AvlProverHandle> {
   await seedEmissionBox();
   // ⛔ **The pool belongs here for the emission box's reason, and the need is
   // wider than it was.** Under the settlement's karma legs a block that pays a
@@ -902,9 +914,72 @@ export async function activateProverOverStore(
   await seedKarmaPoolBox();
   const { createAvlProver, bootstrapAvlProver } = await import('../src/state/avl-prover.js');
   const { getUnspentBoxes } = await import('../src/store/utxo.js');
+  const { getAllIdentityRecords, getNetworkRecord } = await import('../src/store/identity-records.js');
   const handle = createAvlProver();
-  bootstrapAvlProver(handle, getUnspentBoxes(), height, records);
+  bootstrapAvlProver(handle, getUnspentBoxes(), height, getAllIdentityRecords(), getNetworkRecord());
   return handle;
+}
+
+/**
+ * The live prover, activated over the store (`activateProverOverStore`) when
+ * none is — what `mineNextBlock` and `makeApplicableBlock` build their block
+ * over, so a suite that seeds everything before its first block needs no call
+ * of its own.
+ */
+export async function liveProver(): Promise<AvlProverHandle> {
+  const { tryGetAvlProver } = await import('../src/state/avl-prover.js');
+  return tryGetAvlProver() ?? await activateProverOverStore();
+}
+
+/**
+ * Revert the chain to `height` the way `reorg` reverts it: every block above it
+ * through `revertBlock`, then the live prover back to the version at `height`
+ * (NODE_INTERFACE → Block Journal → "Rollback") — `revertBlock` restores the
+ * store and deletes the height's version rows, and the tree is restored once,
+ * at the end, so the rules again read what the store holds.
+ */
+export async function revertChainTo(height: number): Promise<void> {
+  const { revertBlock } = await import('../src/services/fork-resolution.js');
+  const { getCurrentHeight } = await import('../src/store/ordering.js');
+  const { tryGetAvlProver } = await import('../src/state/avl-prover.js');
+  for (let h = getCurrentHeight(); h > height; h--) revertBlock(h);
+  const handle = tryGetAvlProver();
+  if (handle === null) return;
+  const version = handle.storage.versionAtOrBeforeHeight(height);
+  if (version === null) throw new Error(`revertChainTo: no tree version at or below height ${height}`);
+  handle.prover.rollback(version);
+}
+
+/**
+ * Committed state a fixture adds outside a block — as a block's effects —
+ * written the way a block writes it: the store through `writeBlockEffects`, the
+ * tree through `treeWritesOf` over a view of the live prover (CONSENSUS_INTERFACE
+ * → The tree writes), and the tree's version at `height` replaced by the result.
+ * The tree then holds exactly what the rules will read. For state the bootstrap
+ * never carries — posts, likes, names — and for state a test adds after its first
+ * block; a bond among `mutations` is keyed at `height`, so its invitee's record
+ * holds `invitedAtBlock` equal to it (CONSENSUS_INTERFACE → The index entries).
+ *
+ * ⚠ **No journal records it.** A revert below `height` rolls the tree back past
+ * it and leaves the store holding it, so a test that reverts below its first
+ * block seeds that state before the block instead.
+ */
+export async function seedCommittedState(
+  effects: Partial<BlockEffects>,
+  height?: number,
+): Promise<void> {
+  const { performTreeWrites, HEIGHT_SENTINEL, encodeHeight } = await import('../src/state/avl-prover.js');
+  const { proverSession } = await import('../src/state/prover-session.js');
+  const { writeBlockEffects } = await import('../src/services/block-apply.js');
+  const { getCurrentHeight } = await import('../src/store/ordering.js');
+  const at = height ?? getCurrentHeight();
+  const full: BlockEffects = { mutations: [], posts: [], likeRecords: [], withdrawals: [], appliedTxs: [], ...effects };
+  const handle = await liveProver();
+  const writes = treeWritesOf(full, at, treeStateView(proverSession(handle.prover)));
+  performTreeWrites(handle.prover, at, writes, 'seedCommittedState');
+  writeBlockEffects(full, at);
+  handle.storage.deleteVersionAtHeight(at);
+  handle.prover.generateProofAndUpdateStorage([[HEIGHT_SENTINEL, encodeHeight(at)]]);
 }
 
 export async function makeApplicableBlock(
@@ -944,18 +1019,16 @@ export async function makeApplicableBlock(
   } = {},
 ): Promise<OrderingBlock> {
   const { computeUtxoTxRoot } = await import('../src/services/block-creator.js');
-  const { storeStateView, applyContextFrom } = await import('../src/services/block-apply.js');
+  const { applyContextFrom } = await import('../src/services/block-apply.js');
+  const { proverSession } = await import('../src/state/prover-session.js');
   const { config: nodeConfig } = await import('../src/config.js');
   const { scheduledTargetBits, nowMs } = await import('../src/services/difficulty.js');
 
-  await seedEmissionBox();
-  // ⛔ **A block that touches the pool cannot be built without one, and most
-  // blocks touch it now.** The settlement's karma legs — the like payout's
-  // remainder, a bond forfeit, decay's burn, the invite grant — all settle
-  // against the pool (NODE_INTERFACE → The settlement transaction), so this is
-  // the emission box's rule applied to the karma side. Idempotent, so a fixture
-  // that seeded its own pool keeps it.
-  await seedKarmaPoolBox();
+  // The block is built over the prover alone, so a store with none gets one here,
+  // over what it holds — its emission box and karma pool included: a block that
+  // releases emission or touches the pool cannot be built without them
+  // (`activateProverOverStore`).
+  const handle = await liveProver();
 
   const height = opts.height ?? 1;
   let prevBlockHash = ZERO_HASH;
@@ -984,7 +1057,7 @@ export async function makeApplicableBlock(
   // body's LAST entry, which is the whole of how apply identifies it
   // (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`).
   const built = buildBlockSettlement(
-    storeStateView,
+    treeStateView(proverSession(handle.prover)),
     txBytesList,
     height,
     miner.userId,
@@ -1050,15 +1123,13 @@ export async function makeApplicableBlock(
 
   // Post-block state root (NODE_INTERFACE → Post-block stateRoot), obtained the
   // way the block creator obtains it: by running this body through the apply
-  // path's own mutation phase and rolling it back. It has to be final before
-  // the nonce and the signature,
-  // which both cover the header. No prover — most suites — speculates
-  // `no-prover`, and apply skips the check there, so EMPTY_STATE_ROOT stands
-  // in. A `body-rejected` body gets EMPTY_STATE_ROOT too: the helper's job is
-  // to hand the caller its block either way, and the suite's own apply will
+  // path's own mutation phase and restoring the prover after. It has to be final
+  // before the nonce and the signature, which both cover the header. A
+  // `body-rejected` body keeps the EMPTY_STATE_ROOT placeholder: the helper's job
+  // is to hand the caller its block either way, and the suite's own apply will
   // reject the body loudly.
   const { computePostBlockStateRoot } = await import('../src/services/block-apply.js');
-  const speculation = computePostBlockStateRoot(block);
+  const speculation = computePostBlockStateRoot(block, handle);
   header.stateRoot =
     opts.stateRoot ??
     (speculation.kind === 'computed' ? speculation.stateRoot : EMPTY_STATE_ROOT);
