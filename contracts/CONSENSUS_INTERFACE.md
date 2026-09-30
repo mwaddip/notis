@@ -180,9 +180,6 @@ block. Over it the tree view answers a block's reads from the block's proof alon
 leaf runs the rules with the code the node runs; after the rules, the block's writes are performed on the same verifier
 and its digest must equal the header's `stateRoot`.
 
-> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — there is no `verifierSession`, and this package does not
-> depend on `@ergots/avltree` (Task 3).
-
 ### The tree view
 
 **`treeStateView(session)` is the `StateView`** (→ StateView, its table), and the one implementation of it the rules
@@ -288,13 +285,12 @@ checkBlockCost(cost: BlockCost): string | null    // the refusal's reason, or nu
 entry count (→ Applying a block), `lookups` the distinct keys the block's tree view looked up (`lookupCount()` — a
 memoised read adds none), `writes` the length of `treeWritesOf`'s answer; the weights and `MAX_BLOCK_COST` are
 `types`' (`TYPES_INTERFACE → The block's cost`). **Every node, the producer and a leaf check it at one point**: once the
-writes are derived and before they are performed — `Rejected block height=H: cost C over the budget B` — so each
-refuses the same blocks. The signatures' term alone is checked earlier, before the batch runs. **The budget bounds a
+writes are derived and before they are performed — `checkBlockCost` answers `cost C over the budget B`, which the
+caller's refusal names with the block's height — so each refuses the same blocks. The signatures' term alone is checked earlier, before the batch runs. **The budget bounds a
 leaf's work**: the signatures it verifies and the operations its proof carries.
 
-> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — nothing counts a block's cost: `applyBlock` checks no
-> signature count, `BlockEffects` carries no `signatures`, `TreeStateView` has no `lookupCount()`, and `blockCost` and
-> `checkBlockCost` do not exist (Task 3).
+> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — `BlockEffects` carries no `signatures`: the count is
+> computed and checked inside `applyBlock` and not returned.
 
 ## The overlay
 
@@ -382,7 +378,9 @@ transaction's id, so a signer whose boxes are several of a transaction's inputs 
 worst case is then one check per 128 bytes of body — an extra signer costs 32 bytes of input and 96 of key and
 signature — and `MAX_TX_BYTES` holds at most 77 signers in one transaction (9 903 bytes), so a body at
 `MAX_BLOCK_BODY_BYTES` carries at most **about 15 500 signatures in 202 transactions** (15 496–15 499 as the height
-moves the widths of the values). An ordinary full body — one signer a transaction — holds 5 800 to about 8 100. **A body
+moves the widths of the values). An ordinary full body — one signer a transaction — holds 5 800 to about 8 100. **The
+budget caps a block below both** — 6 000 signatures and nothing else (→ The block's cost) — so the bodies measured
+below are refused by it now; they measure the batch's speed, not a block's limit. **A body
 the rules refuse costs about what the valid worst case does:** the batch checks at most one entry per input (→ Applying
 a block), so every entry still costs 128 bytes of body — a refused body spares the bytes a valid one spends on its
 outputs, and fits at most about 0.4% more entries.
@@ -425,7 +423,10 @@ in-memory database — stays in `packages/node/test/` and imports from the packa
   chain of signed blocks — one of them refused for a corrupted signature — is applied over a stub view, both built
   there from primitives, and the results come back as canonical text that must equal, byte for byte, what the same
   entry answers from source under Node. Only strings cross the context's boundary: a `Uint8Array` made outside it
-  fails `instanceof` inside, and so would the output of Node's own codecs.
+  fails `instanceof` inside, and so would the output of Node's own codecs. **The same chain replays from its proofs**:
+  the Node side proves each block on a prover (its reads recorded, then its writes), and inside the context each block
+  runs over `verifierSession` from its parent's digest and its proof alone — the digests it reaches equal the Node
+  side's, byte for byte.
 
 ## Does NOT own
 
