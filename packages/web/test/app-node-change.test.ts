@@ -250,7 +250,7 @@ function fakeHeader(height: number, tag: string): BlockHeader {
   return {
     protocolVersion: 1, height, prevBlockHash: '00'.repeat(32), utxoTxRoot: '00'.repeat(32),
     stateRoot: '11'.repeat(31) + tag, validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 0x1d00ffff,
-    createdAt: 0, interlinkRoot: '00'.repeat(32),
+    createdAt: 0, interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32),
   };
 }
 const anchorAt = (height: number, tag: string): Anchor => ({
