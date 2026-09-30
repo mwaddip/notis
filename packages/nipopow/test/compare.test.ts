@@ -96,7 +96,7 @@ describe('attack pins — NIPOPOW_INTERFACE → compareProofs', () => {
   const m = 3;
   const k = 5;
   // the client's m (CONSTANTS → Client defaults)
-  const clientM = 6;
+  const clientM = 24;
   const { anchorBits, floorBits } = DEVNET_RETARGET;
   // stretched stamps: 200× idealMs → target walks to floor (2304) by block 7
   const cheapStampMs = 200 * 60_000;
@@ -186,18 +186,22 @@ describe('attack pins — NIPOPOW_INTERFACE → compareProofs', () => {
 
   // NIPOPOW_INTERFACE → compareProofs → "A cheap-target chain therefore buys no score beyond its
   // work": a lower-difficulty chain of more work wins. The honest side is the prover's shortest
-  // chain at the client's m and k = 5 — eleven headers, ten above the LCA and ten anchor units of
-  // work — against the fixture cheap chain's 500 headers and about 64. The honest proof scores at
-  // most its ten headers unless six of them reach a common level μ ≥ 1, when it scores 2^μ times
-  // their count; the likeliest way past the cheap side is six at level 3 or above, scoring 48 with
-  // probability P(Binomial(10, 1/8) ≥ 6) = 5.1e-4, while the cheap proof scores 48 or less in about
-  // one draw in eight. Modelled over 800 000 draws of this shape — honest levels geometric, a cheap
-  // header meeting the anchor with probability its work in anchor units, the prover's walk and
-  // bestArg as written — the verdict is not 'b' in 55, about 7e-5 per mining of these fixtures;
-  // each honest header added roughly doubles it.
+  // chain at the client's m and k = 5 — 29 headers, 28 above the LCA and 28 anchor units of work —
+  // against the fixture cheap chain's 700 headers and about 89. The prover never walks level 0
+  // (NIPOPOW_INTERFACE → proveWithReader), so above block 1 a proof carries its five suffix headers
+  // and, below them, only headers of level 1 or above. The honest proof scores its level-0 count —
+  // five plus Binomial(23, 1/2), at most 28 — unless 24 of its 28 headers reach level 1, scoring 48
+  // or more with probability P(Binomial(28, 1/2) ≥ 24) = 9.0e-5. The cheap proof scores 48 or more
+  // while 24 of its headers reach level 1 — a count of mean 44.6 — and below that only its level-0
+  // count, at most 28; the likeliest way past it is 23 or fewer at level 1, probability 1.9e-4, with
+  // the honest level-0 count reaching the cheap one's in about one of those in 40. Modelled over
+  // 20 000 000 draws of this shape — honest levels geometric, a cheap header meeting the anchor with
+  // probability its work in anchor units, the prover's walk and bestArg as written — the verdict is
+  // not 'b' in 94, about 5e-6 per mining of these fixtures; at 600 cheap headers it is 1.5e-4, at
+  // 500 3e-3.
   it('(b) cheap chain with strictly more work wins', () => {
     const honest = buildMinedChain({ count: clientM + k });
-    const cheap = buildMinedChain({ count: 500, stampIntervalMs: cheapStampMs });
+    const cheap = buildMinedChain({ count: 700, stampIntervalMs: cheapStampMs });
 
     const gH = blockHash(honest.headers[0]!);
     const gC = blockHash(cheap.headers[0]!);
@@ -219,20 +223,23 @@ describe('attack pins — NIPOPOW_INTERFACE → compareProofs', () => {
     expect(result.verdict).toBe('b');
   });
 
-  // The control's verdict over the equal-work trials — honest prefixes of 15..25 headers, each
-  // against the longest cheap prefix of no more work. The cheap side's own-target level-0 count is
-  // its header count, about seven times the honest length; the honest side's own-target score is
-  // its anchor score, which passes that only through a fluke at its top level. The verdict is
-  // scored at the client's m (CONSTANTS → Client defaults): a top level of three headers lets such a
-  // fluke through in about one mining of these fixtures in 200, a top level of six in about one in
-  // 18 000.
+  // The control's verdict over the equal-work trials — honest prefixes of 25..35 headers, 24 to 34
+  // above the LCA and so at least the client's m at level 0, each against the longest cheap prefix
+  // of no more work. The cheap side's own-target level-0 count is its header count, about seven and
+  // a half times the honest length; the honest side's own-target score is its anchor score, which
+  // passes that only through a fluke at its top level. The verdict is scored at the client's m
+  // (CONSTANTS → Client defaults): a top level of three headers lets such a fluke through in about
+  // one mining of these fixtures in 230, a top level of six in about one in 19 000, and a top level
+  // of 24 — 24 honest headers at level 4 or above, or all but at most one at level 3 — in fewer than
+  // one in 10^20.
   it('(c) the own-target control picks the cheap side in every equal-work trial', () => {
-    const honest = buildMinedChain({ count: 30 });
-    const cheap = buildMinedChain({ count: 250, stampIntervalMs: cheapStampMs });
+    const honest = buildMinedChain({ count: 35 });
+    const cheap = buildMinedChain({ count: 300, stampIntervalMs: cheapStampMs });
     expect(blockHash(honest.headers[0]!)).toBe(blockHash(cheap.headers[0]!));
 
-    for (let hLen = 15; hLen <= 25; hLen++) {
+    for (let hLen = 25; hLen <= 35; hLen++) {
       const honestAbove = honest.headers.slice(1, hLen);
+      expect(honestAbove.length).toBeGreaterThanOrEqual(clientM);
       const honestWork = sumWork(honestAbove);
 
       let cLen = 1;
