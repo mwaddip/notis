@@ -2895,18 +2895,22 @@ apply path runs**, never by a second implementation of the state transition:
 The speculative run writes nothing to the store — no block, no effect, no
 journal — and performs no `clearTemplate` and no prover checkpoint.
 
-**The speculation has three outcomes, not two** (the code
-returns them as a discriminated union so no caller can conflate them):
+**The speculation has two outcomes** (the code returns them as a discriminated
+union so no caller can conflate them):
 
 | Outcome | Meaning | Creator's obligation |
 |---|---|---|
 | computed | the post-block digest | mine over it |
-| no prover | no prover initialized — test-only | write `EMPTY_STATE_ROOT` and produce |
 | **body rejected** | the mutation phase rejected this body | **produce nothing, and evict the included mempool entries** |
 
-A producer with no prover initialized writes `EMPTY_STATE_ROOT`. Production
-nodes always initialize one at startup, so this is a test-only path — and a
-node holding a prover rejects such a block, which is correct.
+**A node applies and produces over its prover, and has no other way to** — the rules read the tree and nothing else
+(→ AVL+ State Root). Production creates the prover at startup, before the genesis seed. A producer that finds none
+produces nothing and evicts nothing; an apply funnel that finds none throws, which its catch turns into a refusal kept
+off the mark (→ Fork choice decides on verified headers → "What is remembered, and what is not") — a local fault
+either way, never a block without a root check and never a header carrying `EMPTY_STATE_ROOT`.
+
+> ⚠ **AHEAD OF CODE (2026-09-30, N2 state layout, stage A)** — with no prover initialized, the speculation answers
+> `no-prover`, the creator writes `EMPTY_STATE_ROOT` and produces, and apply skips its root check.
 
 **Body rejected is fatal to production, and the eviction is not optional.**
 Mining over a body this node's own mutation phase refuses produces a block
@@ -2917,10 +2921,9 @@ is worse still: the creator rebuilds the identical body every interval, and
 height that stops advancing the moment the node stops producing — a permanent
 silent stall. Eviction-on-rejection is the same semantics the finalize path
 already applies to a rejected block, and it is load-bearing for exactly this
-reason. An unexpected throw during speculation counts as **body rejected**,
-not as "no prover": the apply funnel's totality doctrine treats the same throw
-as a block rejection, so a body that crashes speculation is one no node will
-apply.
+reason. An unexpected throw during speculation counts as **body rejected**: the apply
+funnel's totality doctrine treats the same throw as a block rejection, so a body
+that crashes speculation is one no node will apply.
 
 Residual, recorded rather than hidden: entries that rode into the same body
 are evicted with the offending one. Transaction-level drop-and-retry — evict
@@ -3925,8 +3928,8 @@ compares it with the tree view read by read (`packages/node/scripts/shadow-repla
 - **Config:** `MAX_PROOF_HISTORY` (prune old proof versions). The check below
   is not configurable — no variable disables it
 - **Verification:** apply computes the post-mutation digest and rejects the
-  block unless it equals `header.stateRoot`, on every node holding a prover
-  (production always). Both sides are post-block (H-6),
+  block unless it equals `header.stateRoot`, on every node — no node applies a block
+  without its prover (→ Post-block stateRoot). Both sides are post-block (H-6),
   both feeds are canonically ordered (M-12), and the mutation set is
   journal-derived (P1) — so a mismatch means genuine state divergence, not a
   representation difference. A rejected block leaves the prover restored by
@@ -4581,7 +4584,7 @@ body. **The mark records a consensus rejection and nothing else** — a rejectio
 local configuration or policy must not mark, because a persisted mark is only as right as the node
 that wrote it; the schedule is checked at step 5 precisely so that a wrong-profile node never
 reaches step 10. No check in the funnel is configuration-gated: the `stateRoot` comparison runs on
-every node holding a prover, so a root mismatch is a consensus rejection and marks. Two arms of the
+every node, so a root mismatch is a consensus rejection and marks. Two arms of the
 funnel are not verdicts on the chain, and step 10's abort keeps both off the mark: the future bound,
 an acceptance rule re-run against this node's clock at apply, and the catch that converts an
 unexpected throw into a refusal. Every other rejection in the funnel is consensus-determined
@@ -4813,7 +4816,7 @@ its actual reach.
 | ~~`CREDIT_TREASURY_PCT`~~ | **removed** | ~~`10`~~ | → universal constant `COINBASE_TREASURY_PCT` (`@dagsocial/types`). The **env key** keeps this name; only the constant renamed, so a rename sweep that rewrites the string here changes what `config.test.ts` guards |
 | ~~`TREASURY_PUBKEY`~~ | **removed** | ~~`""`~~ | Gone entirely, with no destination. The treasury's share accrues to a `TreasuryBox` that block application holds no release path for, so no key names it — see MINING_INTERFACE → Coinbase Application |
 | ~~`CREDIT_INITIAL_REWARD`~~ | **removed** | ~~`10000000000`~~ | → universal constant `CREDIT_INITIAL_REWARD` (`@dagsocial/types`), which `block-creator.ts` imports directly. The dead `Config.creditInitialReward` field it left behind was pruned 2026-08-07 (audit **A5**, closed) |
-| ~~`VERIFY_STATE_ROOT`~~ | **removed** | ~~`true`~~ | Gone, with no destination: the `stateRoot` check at apply is unconditional on every node holding a prover (→ AVL+ State Root). It is the sole backstop against the `computeTxId`-collision class, where two distinct block bodies share a header, and no variable may switch it off |
+| ~~`VERIFY_STATE_ROOT`~~ | **removed** | ~~`true`~~ | Gone, with no destination: the `stateRoot` check at apply is unconditional on every node (→ AVL+ State Root). It is the sole backstop against the `computeTxId`-collision class, where two distinct block bodies share a header, and no variable may switch it off |
 | ~~`NETWORK_MODE`~~ | **renamed** | ~~`testnet`~~ | → `NETWORK_TYPE`. The name changes because the meaning does: it selected a faucet flag, it now selects the whole consensus parameter table |
 | ~~`MAX_SUB_BLOCKS_PER_BLOCK`~~ | **replaced** | ~~`1000`~~ | → `BLOCK_BODY_BUDGET_BYTES`. A count, named for a structure that no longer exists, capping every entry type at once. Its "CONSENSUS GAP" note is closed by `MAX_BLOCK_BODY_BYTES` (`TYPES_INTERFACE` → Size caps), which is enforced in structure validation |
 | `BLOCK_BODY_BUDGET_BYTES` | `local` | `MAX_BLOCK_BODY_BYTES` | Body bytes this node fills blocks **it produces** to. Genuinely local: a miner may publish smaller blocks. **Clamped to `MAX_BLOCK_BODY_BYTES`** — a node cannot raise its own consensus bound, and a value above it would build blocks every peer rejects |
