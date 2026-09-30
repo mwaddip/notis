@@ -182,6 +182,19 @@ block. Over it the tree view answers a block's reads from the block's proof alon
 leaf runs the rules with the code the node runs; after the rules, the block's writes are performed on the same verifier
 and its digest must equal the header's `stateRoot`.
 
+**A leaf accepts a block only on all of these**, in this order: the body's `utxoTxRoot` is the header's; `hash32(proof)`
+is the header's `adProofsRoot`; the verifier anchors at the parent's root; the rules over `verifierSession` accept the
+block; its cost is within the budget (→ The block's cost); each of `treeWritesOf`'s writes succeeds on the verifier; the
+verifier's digest is the header's `stateRoot`; and **the verifier consumed the proof exactly** — no operation and no byte
+left over. The last is what binds a leaf to the network: a full node refuses any proof but the one it regenerates
+(`NODE_INTERFACE → The block proof`), so a proof carrying a trailing byte or an extra read — which a verifier still
+replays to the right digest — is a block the network refuses, and a leaf must refuse it too.
+
+> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — `@ergots/avltree`'s step-by-step verifier reports no
+> consumption, so nothing can check the last condition; the leaf that needs it is N4's, and the library's answer is a
+> request to it. No node route serves a block's body bytes (`GET /blocks/:height` answers its ids), which a leaf
+> fetching blocks needs.
+
 ### The tree view
 
 **`treeStateView(session)` is the `StateView`** (→ StateView, its table), and the one implementation of it the rules
