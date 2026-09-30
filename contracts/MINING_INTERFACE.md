@@ -353,9 +353,10 @@ speculated at 70% of the budget. The speculation corrects the fill:
   cost less the budget — and speculates again, twice at most. A drop that would leave no entry, or an overshoot the
   speculation does not name (a body refused for its signatures alone, before its cost is counted), goes straight to
   the search below.
-- **Under**, where the fill ended on an entry the cost budget did not fit and the speculated cost less the empty
-  body's is below the selection's estimates, the creator scales every estimate by that ratio, refills once, and
-  speculates again when the refill added an entry; that speculation over budget is corrected as above.
+- **Under**, where the speculated cost less the empty body's is below the selection's estimates, the creator scales
+  every estimate by that ratio and refills once — the whole fill again, both classes and the rent transactions, under
+  the same byte and settlement bounds — and speculates again only when the refill added an entry; that speculation
+  over budget is corrected as above.
 - **Still over**, it halves the selection from the tail and, once a prefix fits, bisects between that length and the
   shortest found over the budget, keeping the longest prefix that fits. A prefix's cost need not grow with its length
   (a consolidation nets out inserts), so the search may keep a shorter prefix than the longest that fits.
@@ -366,9 +367,6 @@ block. `adProofsRoot` is the speculation's, beside `stateRoot` (`NODE_INTERFACE 
 **A throw while costing an entry alone is no verdict on it**: the entry rides the selection with no estimate, counted
 as nothing, and the speculation of the body carrying it answers for it as the apply funnel would; a corrupt chain
 state stops the node (`NODE_INTERFACE → "What the funnel's totality catch is FOR"`).
-
-> ⚠ **AHEAD OF CODE (2026-09-30, packing follow-ups)** — the refill under the budget: the creator keeps the template of
-> its first speculation however far under the budget it is.
 
 **Holding one and serving one are separate**, and 404 is routine again for the second: a node that has
 not yet met its peers withholds the template it holds. See *The peer-readiness gate* below. **A 404

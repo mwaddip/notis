@@ -4266,9 +4266,6 @@ whatever either says.** A prune sizes a proof by its stored length and never loa
 cap's arithmetic: a week of blocks at the budget's largest measured proof, 6.27 MB (`CONSENSUS_INTERFACE → Cost`), is
 63 GB; 2 GiB holds a week of proofs averaging about 210 KB, or about 340 of the largest.
 
-> ⚠ **AHEAD OF CODE (2026-09-30, proof byte cap)** — `PROOF_RETENTION_BYTES` and the prune by bytes; the code prunes
-> by height alone.
-
 ### No store schema version, and none is owed
 
 **A node does not version its own database and does not refuse to start against an old one.**

@@ -182,9 +182,6 @@ single-transaction block's cost less the empty block's at the same tip, the empt
 estimate the creator packs by. A row the gate did not cost — a reorg's re-insertion, or a transaction it admitted
 uncostable — carries NULL until the creator costs it.
 
-> ⚠ **AHEAD OF CODE (2026-09-30, packing follow-ups)** — a transaction whose block alone is refused for its signatures
-> alone is admitted, uncosted.
-
 ### getBoxWithPending
 
 ```
@@ -447,11 +444,9 @@ body's settlement plus each entry's `settlementMarginalBytes` — ends a class's
 above `MAX_SETTLEMENT_BYTES`, as the first ends it at the body budget; it is blind to the settlement's count prefixes and
 to its first protocol-box input, a few bytes across the body. **A pop for the settlement drops the tail entries whose
 marginal bytes cover the overshoot**, never one entry a rebuild: an entry that adds nothing to the settlement — an
-ordinary karma transfer — takes nothing off it. Measured 2026-09-30, a pool of fee-paying transfers meets the settlement's
+ordinary karma transfer — takes nothing off it. The settlement's pop runs after the body's, and popping only shrinks
+the body, so it cannot reopen the body's bound. Measured 2026-09-30, a pool of fee-paying transfers meets the settlement's
 bound at 3 122 entries, 88.5% of the cost budget, before the body's.
-
-> ⚠ **AHEAD OF CODE (2026-09-30, packing follow-ups)** — the fill counts body bytes and cost, not the settlement's
-> bytes, and the loop pops one entry a settlement rebuild.
 
 ### Confirmed-entry cleanup reaches every row, and it is a lookup rather than a scan
 
