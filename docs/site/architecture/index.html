@@ -88,7 +88,7 @@
       </div>
       <p><em>How</em> rep and $NOTIS are earned, spent, and kept honest — invites, likes, decay, mining, the fair launch — is the whole subject of the <a href="/economy/">Economy</a> page. The third kind, the username, is below. This page is about the container they live in.</p>
       <h3>Authenticated state — the AVL+ root</h3>
-      <p>The unspent-box set is indexed by an <strong>authenticated dictionary</strong> (an AVL+ tree). Every block header carries a <code>stateRoot</code> — a single hash committing to the entire ledger at that height. That lets a light client prove a given box <em>does</em> or <em>doesn't</em> exist, with a short proof, without downloading the whole ledger.</p>
+      <p>The ledger's state — every box, every account's record, each post's author and standing, every like, and the indexes the rules look things up by — is held in an <strong>authenticated dictionary</strong> (an AVL+ tree). Every block header carries a <code>stateRoot</code> — a single hash committing to that whole state at that height. Every read the rules make is a lookup in it, so a light client can prove a given box or record <em>does</em> or <em>doesn't</em> exist, with a short proof, without downloading the whole ledger.</p>
     </section>
 
     <section>
