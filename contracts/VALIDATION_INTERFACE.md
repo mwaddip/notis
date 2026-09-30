@@ -806,8 +806,6 @@ The domain, by field:
 | `interlinkRoot` | `/^[0-9a-f]{64}$/` | `b32` |
 | `adProofsRoot` | `/^[0-9a-f]{64}$/` | `b32` |
 
-> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — the table's code has no `adProofsRoot` row (Task 2).
-
 ⛔ **The table used to carry a `networkType` row, marked AHEAD OF CODE for Phase 3. That header field
 is REJECTED (2026-08-10)** — see `TYPES_INTERFACE` → Block header and `ARCHITECTURE §How the network
 is committed`. The row is deleted rather than deferred; there is no header field for it to describe.
