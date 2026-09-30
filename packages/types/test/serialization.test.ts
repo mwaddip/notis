@@ -74,6 +74,7 @@ function makeBlockHeader(): BlockHeader {
     powTargetBits: 3072,
     createdAt: 1700000000000,
     interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
   };
 }
 
@@ -391,6 +392,51 @@ describe('positional serialization', () => {
       expect(back.interlinkRoot).toHaveLength(64);
     });
 
+    it('adProofsRoot (field 11) throws on a 63-char value', () => {
+      const h = { ...makeBlockHeader(), adProofsRoot: 'aa'.repeat(31) + 'a' };
+      expect(() => encodeHeader(h)).toThrow();
+    });
+
+    it('adProofsRoot (field 11) throws on a 65-char value', () => {
+      const h = { ...makeBlockHeader(), adProofsRoot: 'aa'.repeat(32) + 'a' };
+      expect(() => encodeHeader(h)).toThrow();
+    });
+
+    it('adProofsRoot (field 11) throws on non-hex', () => {
+      const h = { ...makeBlockHeader(), adProofsRoot: 'zz'.repeat(32) };
+      expect(() => encodeHeader(h)).toThrow();
+    });
+
+    it('adProofsRoot (field 11) throws on uppercase hex', () => {
+      const h = { ...makeBlockHeader(), adProofsRoot: 'AA'.repeat(32) };
+      expect(() => encodeHeader(h)).toThrow();
+    });
+
+    it('adProofsRoot decodes as a hex string', () => {
+      const back = decodeHeader(encodeHeader(makeBlockHeader()));
+      expect(typeof back.adProofsRoot).toBe('string');
+      expect(back.adProofsRoot).toHaveLength(64);
+    });
+
+    it('adProofsRoot is field 11, last: changing it moves only its own trailing 32 bytes', () => {
+      const a = encodeHeader(makeBlockHeader());
+      const b = encodeHeader({ ...makeBlockHeader(), adProofsRoot: 'ab'.repeat(32) });
+      expect(a.length).toBe(b.length);
+      expect(hex(a.subarray(0, a.length - 32))).toBe(hex(b.subarray(0, b.length - 32)));
+      expect(hex(a.subarray(a.length - 32))).not.toBe(hex(b.subarray(b.length - 32)));
+    });
+
+    it('a header short by exactly one field (the old ten) fails to decode', () => {
+      // adProofsRoot is the last 32 bytes (proven above); dropping exactly
+      // them reproduces the pre-field-11 encoding, which wire refuses as a
+      // short read rather than silently returning ten fields.
+      const bytes = encodeHeader(makeBlockHeader());
+      const tenFieldsOnly = bytes.subarray(0, bytes.length - 32);
+      const err = failureOf(() => decodeHeader(tenFieldsOnly));
+      expect(err).toBeInstanceOf(ReaderError);
+      expect(err).not.toBeInstanceOf(CodecError);
+    });
+
     // ⛔ **NO FIELD IN `UtxoTxTree` REACHES `writeVlqU64OrThrow`**, so this
     // section does not pin that writer. **It is pinned one struct over**, in
     // `utxo.test.ts`: box `value` is the `vlqU64` row. A `bigint` field added
@@ -645,15 +691,15 @@ describe('positional serialization', () => {
       expect(id).toBe(POST_COMMIT_ID);
     });
 
-    it('BlockHeader: ten fields, 172 positional bytes', () => {
-      // ⛔ Ten fields, 172 positional bytes: five VLQ
-      // integers (1+1+1+2+6) plus 32+32+33+32+32 raw bytes. A reader with the
-      // right length and wrong offsets is still 172 bytes and hashes
+    it('BlockHeader: eleven fields, 204 positional bytes', () => {
+      // ⛔ Eleven fields, 204 positional bytes: five VLQ
+      // integers (1+1+1+2+6) plus 32+32+33+32+32+32 raw bytes. A reader with the
+      // right length and wrong offsets is still 204 bytes and hashes
       // differently, which is why the hash is pinned beside the length rather
       // than instead of it.
       const bytes = encodeHeader(makeBlockHeader());
-      expect(bytes.length).toBe(172);
-      expect(hash(bytes)).toBe('a7ac7ad921c04409944cf5b7695c62bd93853b5e71553b441e249df362582132');
+      expect(bytes.length).toBe(204);
+      expect(hash(bytes)).toBe('3792bef7be09dccd8a43b0156852184d72f23158930fd931f0033deddd464bb2');
       expect(hex(bytes)).not.toContain(Buffer.from('prevBlockHash', 'utf8').toString('hex'));
     });
 
@@ -674,7 +720,7 @@ describe('positional serialization', () => {
       // them apart. The pins that decide are elsewhere: the BlockHeader pin above
       // for the header, and the frozen ids in `utxo.test.ts` for consensus. **Read
       // this one only as "the frame changed" — never as evidence about what.**
-      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('16eb1fa2a5ead687aba9bf45864da2c825481e2546edfd9dde15d9b1246a6aa9');
+      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('c4a85c46ad538de0652f025e6e48704910ad91173404830532166bc47b3bdcf5');
     });
 
     it('Post: the wire codec IS the payload preimage, with no tail at all', () => {

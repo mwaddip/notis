@@ -178,32 +178,32 @@ export function decodeTxPacket(bytes: Uint8Array): TxPacket {
 }
 
 // ---------------------------------------------------------------------------
-// Block header — TYPES_INTERFACE → Layout — Block, fields 1–10
+// Block header — TYPES_INTERFACE → Layout — Block, fields 1–11
 // ---------------------------------------------------------------------------
 
 /**
- * Ten fields. `protocolVersion` is **first** so it can be read before any
+ * Eleven fields. `protocolVersion` is **first** so it can be read before any
  * version-dependent dispatch exists to need it (TYPES_INTERFACE → Layout —
  * Block); there is exactly one
  * version today, and this pins the seam without building the version-keyed rule
  * table, which does not exist. Do not write code here that assumes it does.
  *
- * ⚠ **`validatorId` is `b32` from BYTES; its two table-neighbours are `b32`
+ * ⚠ **`validatorId` is `b32` from BYTES; its table-neighbours are `b32`
  * from HEX.** `UserId = Uint8Array` (`identity.ts`), so `validatorId` takes
- * `writeBytesNOrThrow` while `prevBlockHash` / `utxoTxRoot`
- * take `writeHexNOrThrow`, even though the contract's table writes all three as
+ * `writeBytesNOrThrow` while `prevBlockHash` / `utxoTxRoot` / `interlinkRoot` /
+ * `adProofsRoot` take `writeHexNOrThrow`, even though the contract's table writes all five as
  * `b32` and its totality note groups them. Reading the row off its
  * neighbours rather than off the field's schema type gives a writer that throws
  * on **every** block — the `bond.inviteePublicKey` failure exactly, which is why
  * `TYPES_INTERFACE` → Layout — Boxes requires each writer to be checked against
  * its field's schema type, one row at a time.
  * `verifyHeaderFieldDomains`' own table agrees:
- * `isHex32` for the three, `isBytesOfLength(v, 32)` for this one.
+ * `isHex32` for the four, `isBytesOfLength(v, 32)` for this one.
  *
  * ## Totality
  *
- * Five throwing rows (`b32` ×4, `b33` ×1) and five `vlqU`, which are total by
- * sentinel and therefore **collide rather than throw**. All ten are pinned by
+ * Six throwing rows (`b32` ×5, `b33` ×1) and five `vlqU`, which are total by
+ * sentinel and therefore **collide rather than throw**. All eleven are pinned by
  * `verifyHeaderFieldDomains`, which is the only header domain in the
  * repo and which `blockHash` / `computePowHash` run internally — so the two
  * functions that reach this encoder establish their own precondition rather than
@@ -222,6 +222,7 @@ const HEADER: StructCodec<BlockHeader> = {
     writeVlqU(w, h.powTargetBits);
     writeVlqU(w, h.createdAt);
     writeHexNOrThrow(w, h.interlinkRoot, 32);
+    writeHexNOrThrow(w, h.adProofsRoot, 32);
   },
   read(r) {
     return {
@@ -235,6 +236,7 @@ const HEADER: StructCodec<BlockHeader> = {
       powTargetBits: readVlqU(r),
       createdAt: readVlqU(r),
       interlinkRoot: readHexN(r, 32),
+      adProofsRoot: readHexN(r, 32),
     };
   },
 };

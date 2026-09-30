@@ -396,13 +396,14 @@ const blockHeaderCodec: ValueCodec<BlockHeader> = {
       prevBlockHash: j.prevBlockHash as string,
       utxoTxRoot: j.utxoTxRoot as string,
       stateRoot: j.stateRoot as string,
-      // Bytes, where its two `b32` table-neighbours are hex. The JSON spells
+      // Bytes, where its `b32` table-neighbours are hex. The JSON spells
       // it as hex like everything else; the in-memory type is what differs.
       validatorId: hex(j.validatorId as string),
       powNonce: j.powNonce as number,
       powTargetBits: j.powTargetBits as number,
       createdAt: j.createdAt as number,
       interlinkRoot: j.interlinkRoot as string,
+      adProofsRoot: j.adProofsRoot as string,
     };
   },
   write(w: ByteWriter, h: BlockHeader): void {
@@ -420,6 +421,7 @@ const blockHeaderCodec: ValueCodec<BlockHeader> = {
       powTargetBits: readVlqU(r),
       createdAt: readVlqU(r),
       interlinkRoot: readHexN(r, 32),
+      adProofsRoot: readHexN(r, 32),
     };
   },
 };
