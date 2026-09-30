@@ -717,11 +717,23 @@ describe('the invite at block application', () => {
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
+    const records = await importRecords();
     await seedKarmaPoolBox();
 
     const invitee = makeTestIdentity();
     const a = makeTestIdentity();
     const b = makeTestIdentity();
+    // Both inviters are members in good standing — the shape
+    // "non-vacuity: the same two invites in SEPARATE blocks" seeds and applies
+    // for one invite alone — so each invite clears "Inviter holds no identity
+    // record" on its own, and the collision under test is the first refusal.
+    for (const inviter of [a, b]) {
+      records.putIdentityRecord(inviter.userId, {
+        lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+        lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+        memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+      });
+    }
     const karmaA = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, a.userId, 0, 81);
     const karmaB = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, b.userId, 0, 82);
     utxo.insertBox(karmaA);
@@ -729,7 +741,6 @@ describe('the invite at block application', () => {
     await activateProverOverStore();
 
     const blockApply = await import('../../src/services/block-apply.js');
-    const records = await importRecords();
 
     // Both invites in ONE body, built directly — the creator's own fill skips
     // the second as an assembly preference, so a mined block could never carry
@@ -738,7 +749,16 @@ describe('the invite at block application', () => {
       utxoTxs: [inviteTx(a, invitee, karmaA), inviteTx(b, invitee, karmaB)],
     });
 
-    expect(blockApply.applyOrderingBlock(block)).toBe(false);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const applied = blockApply.applyOrderingBlock(block);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+
+    expect(applied).toBe(false);
+    expect(
+      warnings.some((w) => w.includes('another bond in this block already names')),
+      `expected the duplicate-invitee reason, got ${JSON.stringify(warnings)}`,
+    ).toBe(true);
 
     // Nothing applied: no grant, no record, and both karma boxes untouched.
     expect(records.getIdentityRecord(invitee.userId)).toBeNull();

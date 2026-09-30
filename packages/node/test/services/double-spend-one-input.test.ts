@@ -68,7 +68,11 @@ describe('PROBE: two txs, one input', () => {
 
     const sender = makeTestIdentity();
     const miner = makeTestIdentity();
-    const box = makeCreditBox(1000n, sender.userId, 0, 1) as CreditBox;
+    // 50_000n, not a round thousand: at either fee the change output clears
+    // the credit per-byte minimum (TYPES_INTERFACE → Box value domain), so
+    // the block is refused for the double spend under test and not for an
+    // undersized output.
+    const box = makeCreditBox(50_000n, sender.userId, 0, 1) as CreditBox;
     utxo.insertBox(box);
 
     // Live prover over the whole store — so the tree really does hold the box
@@ -86,12 +90,20 @@ describe('PROBE: two txs, one input', () => {
       applyOrderingBlock: (block: OrderingBlock) => boolean;
     };
 
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const block = await makeApplicableBlock({ miner, utxoTxs: [txA, txB] });
     const applied = blockApply.applyOrderingBlock(block);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
 
-    // The measurement: an ordinary rejection, not a halt.
+    // The measurement: an ordinary rejection, not a halt — and refused for the
+    // second transaction's unresolved input, not for another rule.
     expect(exited).toEqual([]);
     expect(applied).toBe(false);
+    expect(
+      warnings.some((w) => w.includes('unresolved input')),
+      `expected an unresolved-input reason, got ${JSON.stringify(warnings)}`,
+    ).toBe(true);
     expect(Buffer.from(handle.prover.digest()!).toString('hex')).toBe(before);
   });
 });

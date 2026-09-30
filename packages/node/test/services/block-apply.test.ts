@@ -20,6 +20,7 @@ import {
   POST_PRICE_THREAD,
   POST_PRICE_REPLY,
   REPLY_AUTHOR_SHARE,
+  interlinkRoot,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type {
@@ -400,7 +401,11 @@ describe('block-apply journal recording', () => {
         powNonce: 0,
         powTargetBits: config.orderingBlockPowTargetBits,
         createdAt: Date.now(),
-        interlinkRoot: '00'.repeat(32),
+        // Genesis's real interlinkRoot (TYPES_INTERFACE → Interlink vector),
+        // not a placeholder — the interlink check runs before PoW, so a wrong
+        // value here would refuse the block on that mismatch and never reach
+        // the check under test.
+        interlinkRoot: interlinkRoot([]),
       },
       utxoTxTree: {
         // A body's last entry is its settlement; PoW is refused before anything
@@ -416,8 +421,16 @@ describe('block-apply journal recording', () => {
     // the only thing wrong with this block.
     block.validatorSignature = signHeader(block.header, miner.privateKey);
 
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const result = blockApply.applyOrderingBlock(block);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+
     expect(result).toBe(false);
+    expect(
+      warnings.some((w) => w.includes('PoW invalid')),
+      `expected a PoW-invalid reason, got ${JSON.stringify(warnings)}`,
+    ).toBe(true);
 
     // No journal should exist for height 1
     const journal = await importJournalStore();

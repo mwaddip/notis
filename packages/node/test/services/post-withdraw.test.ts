@@ -22,6 +22,7 @@ import type { TestIdentity } from '../helpers.js';
 import {
   makeApplicableBlock,
   makeKarmaBox,
+  makeLikeTx,
   makeTestConfig,
   makeTestIdentity,
   seedBoxes,
@@ -415,27 +416,32 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     });
     expect(apply.applyOrderingBlock(block2)).toBe(true);
 
-    // Attempt like at height 3
+    // Attempt like at height 3. Seeded at height 0, like `makeLikeTx`'s own
+    // fixtures elsewhere: its output declares `createdAtBlock: 0`, which is
+    // only monotonic (TYPES_INTERFACE → Monotonic creation height) above an
+    // input seeded no later — height 2 here would refuse the tx on that bound
+    // before the withdrawn-post rule under test is ever reached.
     const { LIKE_KARMA_COST } = await import('@dagsocial/types');
-    const likerKarma = makeKarmaBox(LIKE_KARMA_COST + 1n, liker.userId, 2, 71);
+    const likerKarma = makeKarmaBox(LIKE_KARMA_COST + 1n, liker.userId, 0, 71);
     await seedBoxes([likerKarma]);
-    const likeTx: UtxoTransaction = {
-      inputs: [likerKarma.id!],
-      outputs: [
-        { boxType: 'karma', value: 1n, createdAtBlock: 0, owner: liker.userId } as never,
-      ],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-      likeTarget: postId,
-    };
-    signTransaction(likeTx, liker.privateKey, toHex(liker.userId));
+    const likeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
 
     const block3 = await makeApplicableBlock({
       miner,
       utxoTxs: [likeTx],
       height: 3,
     });
-    expect(apply.applyOrderingBlock(block3)).toBe(false);
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const applied = apply.applyOrderingBlock(block3);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+
+    expect(applied).toBe(false);
+    expect(
+      warnings.some((w) => w.includes('withdrawn or unknown post')),
+      `expected the withdrawn-post reason, got ${JSON.stringify(warnings)}`,
+    ).toBe(true);
   });
 
   // -----------------------------------------------------------------------
