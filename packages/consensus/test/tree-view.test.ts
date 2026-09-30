@@ -8,6 +8,7 @@ import {
   STORAGE_RENT_PER_BYTE,
   TREE_TAG,
   bondDueKey,
+  boxKey,
   boxRecordBytes,
   bytesToHex,
   castCountKey,
@@ -369,6 +370,86 @@ describe('treeStateView — a tree that contradicts itself', () => {
     };
     expect(() => treeStateView(lying).getVouchEscrowsReleasableAt(9, 4)).toThrow(TreeInconsistencyError);
     expect(session.lookups.filter((k) => equalBytes(k, lowKey)).length).toBe(1);
+  });
+
+  it('throws TreeInconsistencyError for a range-start answer naming a next key below the range', () => {
+    const owner = byte32(0x05);
+    const before = byte32(0x01);
+    const session = mapSessionFrom(seedTreeWrites([karma(owner, 5n, 'below-range')], [], { memberCount: 0 }));
+    const start = rangeStart(karmaOfRange(owner));
+    const below = karmaOfKey(before, byte32(0x01));
+    const lying: TreeSession = {
+      lookup: (key) => {
+        const answer = session.lookup(key);
+        return equalBytes(key, start) ? { ...answer, nextKey: below } : answer;
+      },
+    };
+    expect(() => treeStateView(lying).getKarmaBoxes(owner)).toThrow(TreeInconsistencyError);
+  });
+
+  it('throws TreeInconsistencyError for a range-start answer naming the all-0x00 sentinel as its next key', () => {
+    const owner = uid('tree-view/sentinel-next-owner');
+    const session = mapSessionFrom(seedTreeWrites([karma(owner, 5n, 'sentinel-next')], [], { memberCount: 0 }));
+    const start = rangeStart(karmaOfRange(owner));
+    const bottom = new Uint8Array(start.length).fill(0x00);
+    const lying: TreeSession = {
+      lookup: (key) => {
+        const answer = session.lookup(key);
+        return equalBytes(key, start) ? { ...answer, nextKey: bottom } : answer;
+      },
+    };
+    expect(() => treeStateView(lying).getKarmaBoxes(owner)).toThrow(TreeInconsistencyError);
+  });
+
+  it('throws TreeInconsistencyError for a walk at its limit whose last lookup names a backwards next key', () => {
+    const owner = uid('tree-view/limit-backwards-owner');
+    const low = escrowBox(owner, 5, 501);
+    const lowKey = escrowDueKey(5, hexToBytes(low.id));
+    const session = mapSessionFrom(seedTreeWrites([low], [], { memberCount: 0 }));
+    const lying: TreeSession = {
+      lookup: (key) => {
+        const answer = session.lookup(key);
+        return equalBytes(key, lowKey) ? { ...answer, nextKey: lowKey } : answer;
+      },
+    };
+    // The limit stops the walk at this one entry — it would never follow this next key — yet the check still fires.
+    expect(() => treeStateView(lying).getVouchEscrowsReleasableAt(9, 1)).toThrow(TreeInconsistencyError);
+  });
+
+  it('throws TreeInconsistencyError for an absent answer whose prevKey is not below the key looked up', () => {
+    const who = uid('tree-view/absent-prevkey-owner');
+    const key = identityKey(who);
+    const session = mapSessionFrom([]);
+
+    const equalPrev: TreeSession = {
+      lookup: (k) => {
+        const answer = session.lookup(k);
+        return equalBytes(k, key) ? { ...answer, prevKey: key } : answer;
+      },
+    };
+    expect(() => treeStateView(equalPrev).getIdentityRecord(who)).toThrow(TreeInconsistencyError);
+
+    const above = Uint8Array.from([...key, 0x00]); // one byte longer, same prefix — strictly greater by length
+    const abovePrev: TreeSession = {
+      lookup: (k) => {
+        const answer = session.lookup(k);
+        return equalBytes(k, key) ? { ...answer, prevKey: above } : answer;
+      },
+    };
+    expect(() => treeStateView(abovePrev).getIdentityRecord(who)).toThrow(TreeInconsistencyError);
+  });
+
+  it('throws TreeInconsistencyError for a point read whose found answer names a backwards next key', () => {
+    const target = karma(uid('tree-view/point-read-owner'), 6n, 'point-read');
+    const key = boxKey(hexToBytes(target.id!));
+    const session = mapSessionFrom(seedTreeWrites([target], [], { memberCount: 0 }));
+    const lying: TreeSession = {
+      lookup: (k) => {
+        const answer = session.lookup(k);
+        return equalBytes(k, key) ? { ...answer, nextKey: key } : answer;
+      },
+    };
+    expect(() => treeStateView(lying).getBox(target.id!)).toThrow(TreeInconsistencyError);
   });
 });
 

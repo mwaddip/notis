@@ -61,10 +61,11 @@ export interface TreeStateView extends StateView {
 }
 
 /**
- * A tree that contradicts itself — a next key it names with no leaf, a next
- * key no farther along than the one just looked up, an entry naming a box or
- * a record it does not hold, a `lapsed` entry with no vouch under it: a
- * throw, never a verdict (CONSENSUS_INTERFACE → The tree view).
+ * A tree that contradicts itself — an answer whose neighbours are out of
+ * order, a next key it names with no leaf, an entry naming a box or a record
+ * it does not hold, a `lapsed` entry with no vouch under it: a throw, never a
+ * verdict (CONSENSUS_INTERFACE → The tree view → "An answer is checked as it
+ * arrives").
  */
 export class TreeInconsistencyError extends Error {
   constructor(message: string) {
@@ -123,11 +124,29 @@ class TreeView implements TreeStateView {
   // Lookups and walks
   // ---------------------------------------------------------------------------
 
+  /**
+   * The one place a session answer enters the view (CONSENSUS_INTERFACE → The
+   * tree view → "An answer is checked as it arrives"): checked before it is
+   * memoised — its `nextKey` strictly above `key`, and, for an absent answer,
+   * its `prevKey` strictly below `key` — or `TreeInconsistencyError`, naming
+   * both keys in hex. A sentinel needs no special case: all `0x00` compares
+   * below, all `0xff` above, every real key.
+   */
   private look(key: Uint8Array): TreeLookup {
     const hex = bytesToHex(key);
     const known = this.memo.get(hex);
     if (known !== undefined) return known;
     const answer = this.session.lookup(key);
+    if (compareBytes(answer.nextKey, key) <= 0) {
+      throw new TreeInconsistencyError(
+        `the tree names ${bytesToHex(answer.nextKey)} as a next key of ${bytesToHex(key)}, no farther along`,
+      );
+    }
+    if (!answer.found && compareBytes(answer.prevKey, key) >= 0) {
+      throw new TreeInconsistencyError(
+        `the tree names ${bytesToHex(answer.prevKey)} as a previous key of ${bytesToHex(key)}, not below it`,
+      );
+    }
     this.memo.set(hex, answer);
     return answer;
   }
@@ -137,8 +156,11 @@ class TreeView implements TreeStateView {
    * range read walks"): the range's start looked up, then each next key while it
    * is in the range, no sentinel, `within` the read, and the limit not reached.
    * A next key is looked up only when it is yielded, so a walk never looks up a
-   * sentinel or a key past where it stops. A next key not strictly above the
-   * one just looked up is refused before that lookup, never looked up itself.
+   * sentinel or a key past where it stops. Each next key's order against the key
+   * that named it is `look()`'s check, already settled by the time the walk
+   * reads it (CONSENSUS_INTERFACE → The tree view → "An answer is checked as it
+   * arrives"); the walk keeps only the throw for a next key the tree names and
+   * holds no leaf for.
    */
   private *walk(
     range: TreeRange,
@@ -153,21 +175,14 @@ class TreeView implements TreeStateView {
       yield { key: start, value: first.value };
       count++;
     }
-    let lastKey = start;
     let next = first.nextKey;
     while (count < limit && !isSentinel(next) && inRange(next, range) && within(next)) {
-      if (compareBytes(next, lastKey) <= 0) {
-        throw new TreeInconsistencyError(
-          `the tree names ${bytesToHex(next)} as a next key of ${bytesToHex(lastKey)}, no farther along`,
-        );
-      }
       const step = this.look(next);
       if (!step.found) {
         throw new TreeInconsistencyError(`the tree names ${bytesToHex(next)} as a next key and holds no leaf for it`);
       }
       yield { key: next, value: step.value };
       count++;
-      lastKey = next;
       next = step.nextKey;
     }
   }
