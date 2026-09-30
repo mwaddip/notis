@@ -8,13 +8,15 @@ import {
   buildAvlWithInsertions,
   boxInsertion,
   recordInsertion,
+  boxProofKeyHex,
+  identityProofKeyHex,
   avlProofJson,
   hexToBytes,
   jsonResponse,
   makeAnchor,
   devnetProfile,
 } from './helpers.js';
-import { computeCandidateBoxId, identityRecordKey } from '@dagsocial/types';
+import { computeCandidateBoxId } from '@dagsocial/types';
 import type { AnyBoxCandidate, IdentityRecord, TxId, UserId } from '@dagsocial/types';
 
 // WEB_INTERFACE → The extension → "A run is total" — each test hands the tool
@@ -23,7 +25,7 @@ import type { AnyBoxCandidate, IdentityRecord, TxId, UserId } from '@dagsocial/t
 
 const USER_HEX = 'ab'.repeat(32);
 const USER_BYTES = hexToBytes(USER_HEX) as UserId;
-const RECORD_KEY = identityRecordKey(USER_BYTES);
+const RECORD_KEY = identityProofKeyHex(USER_BYTES);
 const TXID = 'cd'.repeat(32) as TxId;
 const SUFFIX_H = 100;
 const TIP_H = 119;
@@ -48,7 +50,7 @@ const GONE_ID = 'ee'.repeat(32);
 // One tree stands at both heights: the box, the record, an exclusion for GONE_ID.
 const AVL = buildAvlWithInsertions(
   [boxInsertion(CANDIDATE, TXID, 0), recordInsertion(USER_BYTES, RECORD)],
-  [GONE_ID],
+  [boxProofKeyHex(GONE_ID)],
 );
 const ANCHOR = makeAnchor(TIP_H, AVL.digest, SUFFIX_H, AVL.digest);
 
@@ -119,8 +121,8 @@ function prove(listing: Listing, fetch: HttpFetch) {
   return proveFigures('http://a', USER_HEX, listing, ANCHOR, devnetProfile(), fetch);
 }
 
-const GOOD_PROOF = Buffer.from(AVL.entries.get(BOX_ID)!.proof).toString('base64');
-const SHORT_PROOF = Buffer.from(AVL.entries.get(BOX_ID)!.proof.slice(0, 10)).toString('base64');
+const GOOD_PROOF = Buffer.from(AVL.entries.get(boxProofKeyHex(BOX_ID))!.proof).toString('base64');
+const SHORT_PROOF = Buffer.from(AVL.entries.get(boxProofKeyHex(BOX_ID))!.proof.slice(0, 10)).toString('base64');
 
 describe('fetchJson', () => {
   it('a body cut off in flight is a transport failure, never a throw', async () => {
@@ -240,7 +242,7 @@ describe('proveFigures — a proof answer of another shape is unproven', () => {
       'node returned kind an object for a box id',
     ],
   ])('a box proof answer with %s is unproven, never a throw', async (_shape, body, verdict) => {
-    const { fetch } = node({ proof: (key) => (key === BOX_ID ? jsonResponse(200, body) : undefined) });
+    const { fetch } = node({ proof: (key) => (key === boxProofKeyHex(BOX_ID) ? jsonResponse(200, body) : undefined) });
     const result = await prove(listingOf([{ boxId: BOX_ID, value: '100' }]), fetch);
     expect(result.boxes[0]!.status).toBe('unproven');
     expect(result.boxes[0]!.verdict).toBe(`unproven at suffixHead: ${verdict}`);
@@ -259,7 +261,7 @@ describe('proveFigures — a proof answer of another shape is unproven', () => {
   });
 
   it('a proof answer cut off in flight is no-proof, never a throw', async () => {
-    const { fetch } = node({ proof: (key) => (key === BOX_ID ? cutOff() : undefined) });
+    const { fetch } = node({ proof: (key) => (key === boxProofKeyHex(BOX_ID) ? cutOff() : undefined) });
     const result = await prove(listingOf([{ boxId: BOX_ID, value: '100' }]), fetch);
     expect(result.boxes[0]!.status).toBe('no-proof');
     expect(result.boxes[0]!.verdict).toBe('no proof at suffixHead: transport failure: terminated');

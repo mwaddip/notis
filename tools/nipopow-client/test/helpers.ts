@@ -4,11 +4,13 @@ import {
   GENESIS_PREV_BLOCK_HASH,
   interlinkRoot,
   updateInterlinks,
-  AVL_KEY_LENGTH,
+  TREE_KEY_LENGTH,
+  boxKey,
   boxRecordBytes,
+  bytesToHex,
   computeCandidateBoxId,
+  identityKey,
   identityRecordBytes,
-  identityRecordKey,
   protocolVersionAt,
   RETARGET_HALFLIFE_BLOCKS,
   NETWORK_PROFILES,
@@ -213,6 +215,19 @@ export function suffixHeadForChain(chain: MinedChain, m: number, k: number): PoP
   return proof.suffixHead;
 }
 
+// TYPES_INTERFACE → The tree keys — the one place a test turns a box id (or
+// anything shaped like one: absent, gone, a fake key standing in for a real
+// box) into the key the endpoint now serves proofs under and `verifyAvlLookup`
+// verifies against.
+export function boxProofKeyHex(boxId: string): string {
+  return bytesToHex(boxKey(hexToBytes(boxId)));
+}
+
+// TYPES_INTERFACE → The tree keys — an identity's proof key, hex.
+export function identityProofKeyHex(identityId: UserId): string {
+  return bytesToHex(identityKey(identityId));
+}
+
 export interface AvlFixture {
   digest: string;
   entries: Map<string, { proof: Uint8Array; value: Uint8Array }>;
@@ -221,24 +236,25 @@ export interface AvlFixture {
 export function buildAvlFixture(
   boxes: { candidate: BoxCandidate; txId: TxId; index: number }[],
 ): AvlFixture {
-  const prover = new BatchAVLProver(AVL_KEY_LENGTH, null);
+  const prover = new BatchAVLProver(TREE_KEY_LENGTH, null);
   const entries = new Map<string, { proof: Uint8Array; value: Uint8Array }>();
 
   for (const box of boxes) {
     const boxId = computeCandidateBoxId(box.candidate, box.txId, box.index);
-    const keyBytes = hexToBytes(boxId);
+    const keyHex = boxProofKeyHex(boxId);
+    const keyBytes = hexToBytes(keyHex);
     const valueBytes = boxRecordBytes(box.candidate, box.txId, box.index);
     prover.performOneOperation({ tag: 'Insert', key: keyBytes, value: valueBytes });
     prover.generateProof();
-    entries.set(boxId, { proof: new Uint8Array(0), value: valueBytes });
+    entries.set(keyHex, { proof: new Uint8Array(0), value: valueBytes });
   }
 
-  for (const [boxId] of entries) {
-    const keyBytes = hexToBytes(boxId);
+  for (const [keyHex] of entries) {
+    const keyBytes = hexToBytes(keyHex);
     prover.performOneOperation({ tag: 'Lookup', key: keyBytes });
     const proof = prover.generateProof();
-    const entry = entries.get(boxId)!;
-    entries.set(boxId, { proof: Uint8Array.from(proof), value: entry.value });
+    const entry = entries.get(keyHex)!;
+    entries.set(keyHex, { proof: Uint8Array.from(proof), value: entry.value });
   }
 
   const digestHex = Buffer.from(prover.digest()).toString('hex');
@@ -251,15 +267,16 @@ export function buildMismatchedAvlFixture(
   txId: TxId,
   index: number,
 ): AvlFixture {
-  const prover = new BatchAVLProver(AVL_KEY_LENGTH, null);
-  const keyBytes = hexToBytes(fakeKey);
+  const prover = new BatchAVLProver(TREE_KEY_LENGTH, null);
+  const keyHex = boxProofKeyHex(fakeKey);
+  const keyBytes = hexToBytes(keyHex);
   const valueBytes = boxRecordBytes(candidate, txId, index);
   prover.performOneOperation({ tag: 'Insert', key: keyBytes, value: valueBytes });
   prover.generateProof();
   prover.performOneOperation({ tag: 'Lookup', key: keyBytes });
   const proof = prover.generateProof();
   const entries = new Map<string, { proof: Uint8Array; value: Uint8Array }>();
-  entries.set(fakeKey, { proof: Uint8Array.from(proof), value: valueBytes });
+  entries.set(keyHex, { proof: Uint8Array.from(proof), value: valueBytes });
   return { digest: Buffer.from(prover.digest()).toString('hex'), entries };
 }
 
@@ -267,15 +284,15 @@ export function buildAvlExclusionProof(
   presentBoxes: { candidate: BoxCandidate; txId: TxId; index: number }[],
   absentKey: string,
 ): { digest: string; proof: Uint8Array } {
-  const prover = new BatchAVLProver(AVL_KEY_LENGTH, null);
+  const prover = new BatchAVLProver(TREE_KEY_LENGTH, null);
   for (const box of presentBoxes) {
     const boxId = computeCandidateBoxId(box.candidate, box.txId, box.index);
-    const keyBytes = hexToBytes(boxId);
+    const keyBytes = hexToBytes(boxProofKeyHex(boxId));
     const valueBytes = boxRecordBytes(box.candidate, box.txId, box.index);
     prover.performOneOperation({ tag: 'Insert', key: keyBytes, value: valueBytes });
     prover.generateProof();
   }
-  prover.performOneOperation({ tag: 'Lookup', key: hexToBytes(absentKey) });
+  prover.performOneOperation({ tag: 'Lookup', key: hexToBytes(boxProofKeyHex(absentKey)) });
   const proof = prover.generateProof();
   return { digest: Buffer.from(prover.digest()).toString('hex'), proof: Uint8Array.from(proof) };
 }
@@ -340,22 +357,22 @@ export function createFakeNode(opts: {
       return jsonResponse(404, { error: 'not found' });
     }
 
-    const avlMatch = path.match(/^\/api\/v1\/proof\/([0-9a-f]{64})\?atHeight=(\d+)$/);
+    const avlMatch = path.match(/^\/api\/v1\/proof\/([0-9a-f]{130})\?atHeight=(\d+)$/);
     if (avlMatch) {
-      const boxId = avlMatch[1]!;
+      const key = avlMatch[1]!;
       const atHeight = Number(avlMatch[2]!);
 
-      if (overrideAvlResponses?.has(boxId)) {
-        const override = overrideAvlResponses.get(boxId)!;
+      if (overrideAvlResponses?.has(key)) {
+        const override = overrideAvlResponses.get(key)!;
         return jsonResponse(200, override);
       }
 
       if (!avl) return jsonResponse(404, { error: 'no AVL' });
 
-      const entry = avl.entries.get(boxId);
+      const entry = avl.entries.get(key);
       if (!entry) {
         return jsonResponse(200, {
-          boxId,
+          key,
           atHeight,
           stateRoot: avl.digest,
           proof: Buffer.from(new Uint8Array(0)).toString('base64'),
@@ -365,7 +382,7 @@ export function createFakeNode(opts: {
       }
 
       return jsonResponse(200, {
-        boxId,
+        key,
         atHeight,
         stateRoot: suffixHead.header.stateRoot,
         proof: Buffer.from(entry.proof).toString('base64'),
@@ -446,7 +463,7 @@ export function buildAvlWithInsertions(
   insertions: AvlInsertion[],
   extraLookups: string[] = [],
 ): AvlBuild {
-  const prover = new BatchAVLProver(AVL_KEY_LENGTH, null);
+  const prover = new BatchAVLProver(TREE_KEY_LENGTH, null);
   for (const ins of insertions) {
     prover.performOneOperation({
       tag: 'Insert',
@@ -471,20 +488,20 @@ export function buildAvlWithInsertions(
 
 export function boxInsertion(candidate: BoxCandidate, txId: TxId, index: number): AvlInsertion {
   return {
-    keyHex: computeCandidateBoxId(candidate, txId, index),
+    keyHex: boxProofKeyHex(computeCandidateBoxId(candidate, txId, index)),
     valueBytes: boxRecordBytes(candidate, txId, index),
   };
 }
 
 export function recordInsertion(userBytes: UserId, record: IdentityRecord): AvlInsertion {
   return {
-    keyHex: identityRecordKey(userBytes),
+    keyHex: identityProofKeyHex(userBytes),
     valueBytes: identityRecordBytes(record),
   };
 }
 
 // A minimal AVL proof response in the endpoint's own shape — `stateRoot`,
-// `proof` base64, `kind`, `value` — as `GET /api/v1/proof/:boxId` serves it
+// `proof` base64, `kind`, `value` — as `GET /api/v1/proof/:key` serves it
 // (NODE_INTERFACE → AVL+ State Root). The test wires it per request so
 // proveFigures reads what the node would return.
 export function avlProofJson(

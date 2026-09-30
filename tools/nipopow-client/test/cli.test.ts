@@ -7,6 +7,8 @@ import {
   buildAvlWithInsertions,
   boxInsertion,
   recordInsertion,
+  boxProofKeyHex,
+  identityProofKeyHex,
   createFakeNode,
   devnetProfile,
   clockAfterChain,
@@ -14,7 +16,7 @@ import {
   hexToBytes,
   jsonResponse,
 } from './helpers.js';
-import { computeCandidateBoxId, identityRecordKey } from '@dagsocial/types';
+import { computeCandidateBoxId } from '@dagsocial/types';
 import type { AnyBoxCandidate, IdentityRecord, TxId, UserId } from '@dagsocial/types';
 
 const M = 6;
@@ -23,7 +25,7 @@ const CHAIN_LEN = M + K + 10;
 const FAKE_USER = 'ab'.repeat(32);
 const FAKE_USER_BYTES = hexToBytes(FAKE_USER) as UserId;
 const FAKE_TXID = 'cd'.repeat(32) as TxId;
-const RECORD_KEY = identityRecordKey(FAKE_USER_BYTES);
+const RECORD_KEY = identityProofKeyHex(FAKE_USER_BYTES);
 
 const RECORD_STANDING: IdentityRecord = {
   lastActivityBlock: 5,
@@ -77,8 +79,8 @@ describe('end-to-end: tip + figures', () => {
         if (u.pathname === `/credits/${FAKE_USER}`) {
           return jsonResponse(404, { error: 'not found' });
         }
-        if (u.pathname === `/api/v1/proof/${boxId}`) {
-          const e = avl.entries.get(boxId)!;
+        if (u.pathname === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
+          const e = avl.entries.get(boxProofKeyHex(boxId))!;
           return jsonResponse(200, {
             boxId, atHeight: suffixHead.header.height, stateRoot: avl.digest,
             proof: Buffer.from(e.proof).toString('base64'),

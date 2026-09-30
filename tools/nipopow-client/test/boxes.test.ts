@@ -5,6 +5,8 @@ import {
   buildAvlWithInsertions,
   boxInsertion,
   recordInsertion,
+  boxProofKeyHex,
+  identityProofKeyHex,
   hexToBytes,
   jsonResponse,
   makeAnchor,
@@ -12,7 +14,6 @@ import {
 } from './helpers.js';
 import {
   computeCandidateBoxId,
-  identityRecordKey,
 } from '@dagsocial/types';
 import type {
   AnyBoxCandidate,
@@ -27,7 +28,7 @@ import type { HttpFetch } from '../src/http.js';
 // extension → "The verified figures").
 const USER_HEX = 'ab'.repeat(32);
 const USER_BYTES = hexToBytes(USER_HEX) as UserId;
-const RECORD_KEY = identityRecordKey(USER_BYTES);
+const RECORD_KEY = identityProofKeyHex(USER_BYTES);
 
 const FAKE_TXID = 'cd'.repeat(32) as TxId;
 
@@ -136,8 +137,8 @@ describe('proveFigures — every status once, titled by its rule', () => {
     const anchor = makeAnchor(TIP_H, avl.digest, SUFFIX_H, avl.digest);
 
     const httpFetch = makeFetch((path) => {
-      if (path === `/api/v1/proof/${boxId}`) {
-        const e = avl.entries.get(boxId)!;
+      if (path === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
+        const e = avl.entries.get(boxProofKeyHex(boxId))!;
         return jsonResponse(200, {
           boxId, atHeight: SUFFIX_H, stateRoot: avl.digest,
           proof: Buffer.from(e.proof).toString('base64'),
@@ -179,7 +180,7 @@ describe('proveFigures — every status once, titled by its rule', () => {
     // Tip AVL: box present.
     const suffixAvl = buildAvlWithInsertions(
       [recordInsertion(USER_BYTES, RECORD_STANDING)],
-      [boxId],
+      [boxProofKeyHex(boxId)],
     );
     const tipAvl = buildAvlWithInsertions([
       boxInsertion(cand, FAKE_TXID, 0),
@@ -189,9 +190,9 @@ describe('proveFigures — every status once, titled by its rule', () => {
 
     const httpFetch = makeFetch((path, q) => {
       const at = Number(q.get('atHeight'));
-      if (path === `/api/v1/proof/${boxId}`) {
+      if (path === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
         if (at === SUFFIX_H) {
-          const e = suffixAvl.entries.get(boxId)!;
+          const e = suffixAvl.entries.get(boxProofKeyHex(boxId))!;
           return jsonResponse(200, {
             boxId, atHeight: at, stateRoot: suffixAvl.digest,
             proof: Buffer.from(e.proof).toString('base64'),
@@ -199,7 +200,7 @@ describe('proveFigures — every status once, titled by its rule', () => {
           });
         }
         if (at === TIP_H) {
-          const e = tipAvl.entries.get(boxId)!;
+          const e = tipAvl.entries.get(boxProofKeyHex(boxId))!;
           return jsonResponse(200, {
             boxId, atHeight: at, stateRoot: tipAvl.digest,
             proof: Buffer.from(e.proof).toString('base64'),
@@ -236,19 +237,19 @@ describe('proveFigures — every status once, titled by its rule', () => {
     const absentKey = 'bb'.repeat(32);
     const suffixAvl = buildAvlWithInsertions(
       [recordInsertion(USER_BYTES, RECORD_STANDING)],
-      [absentKey],
+      [boxProofKeyHex(absentKey)],
     );
     const tipAvl = buildAvlWithInsertions(
       [recordInsertion(USER_BYTES, RECORD_STANDING)],
-      [absentKey],
+      [boxProofKeyHex(absentKey)],
     );
     const anchor = makeAnchor(TIP_H, tipAvl.digest, SUFFIX_H, suffixAvl.digest);
 
     const httpFetch = makeFetch((path, q) => {
       const at = Number(q.get('atHeight'));
-      if (path === `/api/v1/proof/${absentKey}`) {
+      if (path === `/api/v1/proof/${boxProofKeyHex(absentKey)}`) {
         const src = at === SUFFIX_H ? suffixAvl : tipAvl;
-        const e = src.entries.get(absentKey)!;
+        const e = src.entries.get(boxProofKeyHex(absentKey))!;
         return jsonResponse(200, {
           boxId: absentKey, atHeight: at, stateRoot: src.digest,
           proof: Buffer.from(e.proof).toString('base64'),
@@ -283,15 +284,15 @@ describe('proveFigures — every status once, titled by its rule', () => {
     const absentKey = 'bc'.repeat(32);
     const suffixAvl = buildAvlWithInsertions(
       [recordInsertion(USER_BYTES, RECORD_STANDING)],
-      [absentKey],
+      [boxProofKeyHex(absentKey)],
     );
     const tipAvl = suffixAvl;
     const anchor = makeAnchor(TIP_H, tipAvl.digest, SUFFIX_H, suffixAvl.digest);
 
     const httpFetch = makeFetch((path, q) => {
       const at = Number(q.get('atHeight'));
-      if (path === `/api/v1/proof/${absentKey}`) {
-        const e = suffixAvl.entries.get(absentKey)!;
+      if (path === `/api/v1/proof/${boxProofKeyHex(absentKey)}`) {
+        const e = suffixAvl.entries.get(boxProofKeyHex(absentKey))!;
         return jsonResponse(200, {
           boxId: absentKey, atHeight: at, stateRoot: suffixAvl.digest,
           proof: Buffer.from(e.proof).toString('base64'),
@@ -326,14 +327,14 @@ describe('proveFigures — every status once, titled by its rule', () => {
     const absentKey = 'bd'.repeat(32);
     const suffixAvl = buildAvlWithInsertions(
       [recordInsertion(USER_BYTES, RECORD_STANDING)],
-      [absentKey],
+      [boxProofKeyHex(absentKey)],
     );
     const anchor = makeAnchor(TIP_H, suffixAvl.digest, SUFFIX_H, suffixAvl.digest);
 
     const httpFetch = makeFetch((path, q) => {
       const at = Number(q.get('atHeight'));
-      if (path === `/api/v1/proof/${absentKey}`) {
-        const e = suffixAvl.entries.get(absentKey)!;
+      if (path === `/api/v1/proof/${boxProofKeyHex(absentKey)}`) {
+        const e = suffixAvl.entries.get(boxProofKeyHex(absentKey))!;
         return jsonResponse(200, {
           boxId: absentKey, atHeight: at, stateRoot: suffixAvl.digest,
           proof: Buffer.from(e.proof).toString('base64'),
@@ -367,14 +368,14 @@ describe('proveFigures — every status once, titled by its rule', () => {
     const absentKey = 'be'.repeat(32);
     const suffixAvl = buildAvlWithInsertions(
       [recordInsertion(USER_BYTES, RECORD_STANDING)],
-      [absentKey],
+      [boxProofKeyHex(absentKey)],
     );
     const anchor = makeAnchor(TIP_H, suffixAvl.digest, SUFFIX_H, suffixAvl.digest);
 
     const httpFetch = makeFetch((path, q) => {
       const at = Number(q.get('atHeight'));
-      if (path === `/api/v1/proof/${absentKey}`) {
-        const e = suffixAvl.entries.get(absentKey)!;
+      if (path === `/api/v1/proof/${boxProofKeyHex(absentKey)}`) {
+        const e = suffixAvl.entries.get(boxProofKeyHex(absentKey))!;
         return jsonResponse(200, {
           boxId: absentKey, atHeight: at, stateRoot: suffixAvl.digest,
           proof: Buffer.from(e.proof).toString('base64'),
@@ -414,8 +415,8 @@ describe('proveFigures — every status once, titled by its rule', () => {
     const anchor = makeAnchor(TIP_H, avl.digest, SUFFIX_H, avl.digest);
 
     const httpFetch = makeFetch((path) => {
-      if (path === `/api/v1/proof/${boxId}`) {
-        const e = avl.entries.get(boxId)!;
+      if (path === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
+        const e = avl.entries.get(boxProofKeyHex(boxId))!;
         return jsonResponse(200, {
           boxId, atHeight: SUFFIX_H, stateRoot: '01'.repeat(32),
           proof: Buffer.from(e.proof).toString('base64'),
@@ -453,12 +454,12 @@ describe('proveFigures — every status once, titled by its rule', () => {
       recordInsertion(USER_BYTES, RECORD_STANDING),
     ]);
     const anchor = makeAnchor(TIP_H, avl.digest, SUFFIX_H, avl.digest);
-    const entry = avl.entries.get(boxId)!;
+    const entry = avl.entries.get(boxProofKeyHex(boxId))!;
     const tampered = Uint8Array.from(entry.proof);
     if (tampered.length > 2) tampered[2] = (tampered[2] ?? 0) ^ 0xff;
 
     const httpFetch = makeFetch((path) => {
-      if (path === `/api/v1/proof/${boxId}`) {
+      if (path === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
         return jsonResponse(200, {
           boxId, atHeight: SUFFIX_H, stateRoot: avl.digest,
           proof: Buffer.from(tampered).toString('base64'),
@@ -496,14 +497,14 @@ describe('proveFigures — every status once, titled by its rule', () => {
     // succeeds, but `computeCandidateBoxId` of the decoded value is `cand`'s
     // real id, not fakeKey.
     const avlReal = buildAvlWithInsertions([
-      { keyHex: fakeKey, valueBytes: boxRecordBytes(cand, FAKE_TXID, 0) },
+      { keyHex: boxProofKeyHex(fakeKey), valueBytes: boxRecordBytes(cand, FAKE_TXID, 0) },
       recordInsertion(USER_BYTES, RECORD_STANDING),
     ]);
     const anchor = makeAnchor(TIP_H, avlReal.digest, SUFFIX_H, avlReal.digest);
 
     const httpFetch = makeFetch((path) => {
-      if (path === `/api/v1/proof/${fakeKey}`) {
-        const e = avlReal.entries.get(fakeKey)!;
+      if (path === `/api/v1/proof/${boxProofKeyHex(fakeKey)}`) {
+        const e = avlReal.entries.get(boxProofKeyHex(fakeKey))!;
         return jsonResponse(200, {
           boxId: fakeKey, atHeight: SUFFIX_H, stateRoot: avlReal.digest,
           proof: Buffer.from(e.proof).toString('base64'),
@@ -543,7 +544,7 @@ describe('proveFigures — every status once, titled by its rule', () => {
     const anchor = makeAnchor(TIP_H, avl.digest, SUFFIX_H, avl.digest);
 
     const httpFetch = makeFetch((path) => {
-      if (path === `/api/v1/proof/${boxId}`) {
+      if (path === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
         return jsonResponse(200, {
           boxId, atHeight: SUFFIX_H, stateRoot: avl.digest,
           proof: Buffer.from(new Uint8Array(0)).toString('base64'),
@@ -583,7 +584,7 @@ describe('proveFigures — every status once, titled by its rule', () => {
     const anchor = makeAnchor(TIP_H, avl.digest, SUFFIX_H, avl.digest);
 
     const httpFetch = makeFetch((path) => {
-      if (path === `/api/v1/proof/${boxId}`) {
+      if (path === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
         return jsonResponse(200, {
           boxId, atHeight: SUFFIX_H, stateRoot: avl.digest,
           proof: Buffer.from(new Uint8Array(0)).toString('base64'),
@@ -625,8 +626,8 @@ describe('proveFigures — every status once, titled by its rule', () => {
     const anchor = makeAnchor(TIP_H, avl.digest, SUFFIX_H, avl.digest);
 
     const httpFetch = makeFetch((path) => {
-      if (path === `/api/v1/proof/${boxId}`) {
-        const e = avl.entries.get(boxId)!;
+      if (path === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
+        const e = avl.entries.get(boxProofKeyHex(boxId))!;
         return jsonResponse(200, {
           boxId, atHeight: SUFFIX_H, stateRoot: avl.digest,
           proof: Buffer.from(e.proof).toString('base64'),
@@ -666,8 +667,8 @@ describe('proveFigures — every status once, titled by its rule', () => {
     const anchor = makeAnchor(TIP_H, avl.digest, SUFFIX_H, avl.digest);
 
     const httpFetch = makeFetch((path) => {
-      if (path === `/api/v1/proof/${boxId}`) {
-        const e = avl.entries.get(boxId)!;
+      if (path === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
+        const e = avl.entries.get(boxProofKeyHex(boxId))!;
         return jsonResponse(200, {
           boxId, atHeight: SUFFIX_H, stateRoot: avl.digest,
           proof: Buffer.from(e.proof).toString('base64'),
@@ -705,7 +706,7 @@ describe('proveFigures — every status once, titled by its rule', () => {
     const anchor = makeAnchor(TIP_H, avl.digest, SUFFIX_H, avl.digest);
 
     const httpFetch = makeFetch((path) => {
-      if (path === `/api/v1/proof/${boxId}`) {
+      if (path === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
         return jsonResponse(404, { error: 'height not available' });
       }
       if (path === `/api/v1/proof/${RECORD_KEY}`) {
@@ -736,15 +737,15 @@ describe('proveFigures — every status once, titled by its rule', () => {
     // Excluded at suffixHead (exclusion proof against suffix root).
     const suffixAvl = buildAvlWithInsertions(
       [recordInsertion(USER_BYTES, RECORD_STANDING)],
-      [boxId],
+      [boxProofKeyHex(boxId)],
     );
     const anchor = makeAnchor(TIP_H, suffixAvl.digest, SUFFIX_H, suffixAvl.digest);
 
     const httpFetch = makeFetch((path, q) => {
       const at = Number(q.get('atHeight'));
-      if (path === `/api/v1/proof/${boxId}`) {
+      if (path === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
         if (at === SUFFIX_H) {
-          const e = suffixAvl.entries.get(boxId)!;
+          const e = suffixAvl.entries.get(boxProofKeyHex(boxId))!;
           return jsonResponse(200, {
             boxId, atHeight: at, stateRoot: suffixAvl.digest,
             proof: Buffer.from(e.proof).toString('base64'),
@@ -792,7 +793,7 @@ describe('proveFigures — the AVL proof blob decode is total', () => {
     const anchor = makeAnchor(TIP_H, avl.digest, SUFFIX_H, avl.digest);
 
     const httpFetch = makeFetch((path) => {
-      if (path === `/api/v1/proof/${boxId}`) {
+      if (path === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
         return jsonResponse(200, {
           boxId, atHeight: SUFFIX_H, stateRoot: avl.digest,
           proof: 'abc$def=',
@@ -832,7 +833,7 @@ describe('proveFigures — the AVL proof blob decode is total', () => {
     const anchor = makeAnchor(TIP_H, avl.digest, SUFFIX_H, avl.digest);
 
     const httpFetch = makeFetch((path) => {
-      if (path === `/api/v1/proof/${boxId}`) {
+      if (path === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
         return jsonResponse(200, {
           boxId, atHeight: SUFFIX_H, stateRoot: avl.digest,
           // Five characters, all in the base64 alphabet: length mod 4 === 1,
@@ -874,8 +875,8 @@ describe('proveFigures — the AVL proof blob decode is total', () => {
     const anchor = makeAnchor(TIP_H, avl.digest, SUFFIX_H, avl.digest);
 
     const httpFetch = makeFetch((path) => {
-      if (path === `/api/v1/proof/${boxId}`) {
-        const e = avl.entries.get(boxId)!;
+      if (path === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
+        const e = avl.entries.get(boxProofKeyHex(boxId))!;
         return jsonResponse(200, {
           boxId, atHeight: SUFFIX_H, stateRoot: avl.digest,
           proof: Buffer.from(e.proof).toString('base64'),
@@ -1035,8 +1036,8 @@ describe('proveFigures — effective karma', () => {
     const anchor = makeAnchor(TIP_H, avl.digest, SUFFIX_H, avl.digest);
 
     const httpFetch = makeFetch((path) => {
-      if (path === `/api/v1/proof/${boxId}`) {
-        const e = avl.entries.get(boxId)!;
+      if (path === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
+        const e = avl.entries.get(boxProofKeyHex(boxId))!;
         return jsonResponse(200, {
           boxId, atHeight: SUFFIX_H, stateRoot: avl.digest,
           proof: Buffer.from(e.proof).toString('base64'),
@@ -1086,8 +1087,8 @@ describe('proveFigures — effective karma', () => {
     const anchor = makeAnchor(TIP_H, avl.digest, SUFFIX_H, avl.digest);
 
     const httpFetch = makeFetch((path) => {
-      if (path === `/api/v1/proof/${boxId}`) {
-        const e = avl.entries.get(boxId)!;
+      if (path === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
+        const e = avl.entries.get(boxProofKeyHex(boxId))!;
         return jsonResponse(200, {
           boxId, atHeight: SUFFIX_H, stateRoot: avl.digest,
           proof: Buffer.from(e.proof).toString('base64'),
@@ -1129,7 +1130,7 @@ describe('the run order is the rule', () => {
     const boxId = computeCandidateBoxId(cand, FAKE_TXID, 0);
     const suffixAvl = buildAvlWithInsertions(
       [recordInsertion(USER_BYTES, RECORD_STANDING)],
-      [boxId],
+      [boxProofKeyHex(boxId)],
     );
     const tipAvl = buildAvlWithInsertions([
       boxInsertion(cand, FAKE_TXID, 0),
@@ -1145,16 +1146,16 @@ describe('the run order is the rule', () => {
         atHeight: u.searchParams.get('atHeight') ? Number(u.searchParams.get('atHeight')) : null,
       });
       const at = Number(u.searchParams.get('atHeight'));
-      if (u.pathname === `/api/v1/proof/${boxId}`) {
+      if (u.pathname === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
         if (at === SUFFIX_H) {
-          const e = suffixAvl.entries.get(boxId)!;
+          const e = suffixAvl.entries.get(boxProofKeyHex(boxId))!;
           return jsonResponse(200, {
             boxId, atHeight: at, stateRoot: suffixAvl.digest,
             proof: Buffer.from(e.proof).toString('base64'),
             kind: null, value: null,
           });
         }
-        const e = tipAvl.entries.get(boxId)!;
+        const e = tipAvl.entries.get(boxProofKeyHex(boxId))!;
         return jsonResponse(200, {
           boxId, atHeight: at, stateRoot: tipAvl.digest,
           proof: Buffer.from(e.proof).toString('base64'),
@@ -1185,10 +1186,102 @@ describe('the run order is the rule', () => {
     //   3. /api/v1/proof/<boxId>?atHeight=TIP_H
     //   4. /blocks/current
     expect(calls.length).toBe(4);
-    expect(calls[0]).toEqual({ path: `/api/v1/proof/${boxId}`, atHeight: SUFFIX_H });
+    expect(calls[0]).toEqual({ path: `/api/v1/proof/${boxProofKeyHex(boxId)}`, atHeight: SUFFIX_H });
     expect(calls[1]).toEqual({ path: `/api/v1/proof/${RECORD_KEY}`, atHeight: SUFFIX_H });
-    expect(calls[2]).toEqual({ path: `/api/v1/proof/${boxId}`, atHeight: TIP_H });
+    expect(calls[2]).toEqual({ path: `/api/v1/proof/${boxProofKeyHex(boxId)}`, atHeight: TIP_H });
     expect(calls[3]).toEqual({ path: '/blocks/current', atHeight: null });
+  });
+});
+
+describe('proveBoxAtHeight — the proof route is asked and verified under the tree key', () => {
+  it('a node answering only the old 64-hex box-id path is never asked there — the box is no-proof', async () => {
+    const cand = karmaCandidate(40n);
+    const boxId = computeCandidateBoxId(cand, FAKE_TXID, 0);
+    const avl = buildAvlWithInsertions([
+      boxInsertion(cand, FAKE_TXID, 0),
+      recordInsertion(USER_BYTES, RECORD_STANDING),
+    ]);
+    const anchor = makeAnchor(TIP_H, avl.digest, SUFFIX_H, avl.digest);
+
+    const calls: string[] = [];
+    const httpFetch: HttpFetch = async (url: string) => {
+      const u = new URL(url);
+      calls.push(u.pathname);
+      // The old shape: a route keyed by the bare box id, 64 hex — never asked.
+      if (u.pathname === `/api/v1/proof/${boxId}`) {
+        const e = avl.entries.get(boxProofKeyHex(boxId))!;
+        return jsonResponse(200, {
+          boxId, atHeight: SUFFIX_H, stateRoot: avl.digest,
+          proof: Buffer.from(e.proof).toString('base64'),
+          kind: 'box', value: null,
+        });
+      }
+      if (u.pathname === `/api/v1/proof/${RECORD_KEY}`) {
+        const e = avl.entries.get(RECORD_KEY)!;
+        return jsonResponse(200, {
+          boxId: RECORD_KEY, atHeight: SUFFIX_H, stateRoot: avl.digest,
+          proof: Buffer.from(e.proof).toString('base64'),
+          kind: 'record', value: null,
+        });
+      }
+      if (u.pathname === '/blocks/current') return jsonResponse(200, { height: TIP_H, hash: null });
+      return jsonResponse(404, { error: 'not found' });
+    };
+
+    const listing: Listing = {
+      karma: { boxes: [{ boxId, value: '40' }], height: TIP_H, effective: '40' },
+      credits: { boxes: [] },
+    };
+    const result = await proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), httpFetch);
+
+    expect(calls).not.toContain(`/api/v1/proof/${boxId}`);
+    expect(calls).toContain(`/api/v1/proof/${boxProofKeyHex(boxId)}`);
+    expect(result.boxes[0]!.status).toBe('no-proof');
+    expect(result.record.status).toBe('proven');
+  });
+
+  it('a proof made over a tree keyed by the box id at 32 bytes (the old width) does not verify', async () => {
+    const { boxRecordBytes } = await import('@dagsocial/types');
+    const { BatchAVLProver } = await import('@ergots/avltree');
+    const cand = karmaCandidate(60n);
+    const boxId = computeCandidateBoxId(cand, FAKE_TXID, 0);
+
+    // The old shape: the tree's key is the box id itself, 32 bytes — never
+    // `boxKey(boxId)`'s 65 (TYPES_INTERFACE → The tree keys). A lookup proof
+    // made over it cannot verify at TREE_KEY_LENGTH, whatever its digest.
+    const oldProver = new BatchAVLProver(32, null);
+    const oldKeyBytes = hexToBytes(boxId);
+    oldProver.performOneOperation({
+      tag: 'Insert', key: oldKeyBytes, value: boxRecordBytes(cand, FAKE_TXID, 0),
+    });
+    oldProver.generateProof();
+    oldProver.performOneOperation({ tag: 'Lookup', key: oldKeyBytes });
+    const oldProof = Uint8Array.from(oldProver.generateProof());
+    const oldDigest = Buffer.from(oldProver.digest()).toString('hex');
+
+    const anchor = makeAnchor(TIP_H, oldDigest, SUFFIX_H, oldDigest);
+
+    const httpFetch = makeFetch((path) => {
+      if (path === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
+        return jsonResponse(200, {
+          boxId, atHeight: SUFFIX_H, stateRoot: oldDigest,
+          proof: Buffer.from(oldProof).toString('base64'),
+          kind: 'box', value: null,
+        });
+      }
+      if (path === '/blocks/current') return jsonResponse(200, { height: TIP_H, hash: null });
+      return undefined;
+    });
+
+    const listing: Listing = {
+      karma: { boxes: [{ boxId, value: '60' }], height: TIP_H, effective: '60' },
+      credits: { boxes: [] },
+    };
+    const result = await proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), httpFetch);
+
+    expect(result.boxes[0]!.status).toBe('unproven');
+    expect(result.boxes[0]!.verdict).toContain('proof rejected');
+    expect(result.failed).toBe(true);
   });
 });
 
@@ -1320,8 +1413,8 @@ describe('proveBoxes — composes fetchListing and proveFigures', () => {
       if (path === `/credits/${USER_HEX}`) {
         return jsonResponse(200, creditPage([]));
       }
-      if (path === `/api/v1/proof/${boxId}`) {
-        const e = avl.entries.get(boxId)!;
+      if (path === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
+        const e = avl.entries.get(boxProofKeyHex(boxId))!;
         return jsonResponse(200, {
           boxId, atHeight: SUFFIX_H, stateRoot: avl.digest,
           proof: Buffer.from(e.proof).toString('base64'),

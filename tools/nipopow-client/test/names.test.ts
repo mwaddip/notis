@@ -5,6 +5,7 @@ import type { HttpFetch } from '../src/http.js';
 import {
   buildAvlWithInsertions,
   boxInsertion,
+  boxProofKeyHex,
   avlProofJson,
   hexToBytes,
   jsonResponse,
@@ -62,8 +63,8 @@ const HELD = [
   boxInsertion(BOB_KARMA, TXID, 5),
 ];
 // suffixHead's state; the tip's adds BOB_YOUNG.
-const SUFFIX = buildAvlWithInsertions(HELD, [BOB_YOUNG_ID, GONE_ID]);
-const TIP = buildAvlWithInsertions([...HELD, boxInsertion(BOB_YOUNG, TXID, 6)], [GONE_ID]);
+const SUFFIX = buildAvlWithInsertions(HELD, [boxProofKeyHex(BOB_YOUNG_ID), boxProofKeyHex(GONE_ID)]);
+const TIP = buildAvlWithInsertions([...HELD, boxInsertion(BOB_YOUNG, TXID, 6)], [boxProofKeyHex(GONE_ID)]);
 const ANCHOR = makeAnchor(TIP_H, TIP.digest, SUFFIX_H, SUFFIX.digest);
 
 // The two /usernames routes' answer (NODE_INTERFACE → Usernames).
@@ -125,7 +126,7 @@ function check(claim: NameClaim, fetch: HttpFetch): Promise<NameResult> {
 
 const LABEL: NameClaim = { key: BOB, name: 'Bob' };
 const ownerLookup = (key: string) => `/usernames?owner=${key}`;
-const proofAt = (id: string, height: number) => `/api/v1/proof/${id}?atHeight=${height}`;
+const proofAt = (id: string, height: number) => `/api/v1/proof/${boxProofKeyHex(id)}?atHeight=${height}`;
 
 // A response whose status line arrived and whose body did not.
 function cutOff(): Response {
@@ -228,7 +229,7 @@ describe('proveName — a label: this key carries this name', () => {
   });
 
   it('unproven — a stateRoot other than the header\'s', async () => {
-    const entry = SUFFIX.entries.get(BOB_NAME_ID)!;
+    const entry = SUFFIX.entries.get(boxProofKeyHex(BOB_NAME_ID))!;
     const { fetch } = node({
       byOwner: { [BOB]: answer('Bob', BOB, BOB_NAME_ID) },
       proof: (key, at) => jsonResponse(200, avlProofJson(key, at, '01'.repeat(33), entry.proof, 'box', null)),
@@ -239,7 +240,7 @@ describe('proveName — a label: this key carries this name', () => {
   });
 
   it('unproven — a tampered proof', async () => {
-    const tampered = Uint8Array.from(SUFFIX.entries.get(BOB_NAME_ID)!.proof);
+    const tampered = Uint8Array.from(SUFFIX.entries.get(boxProofKeyHex(BOB_NAME_ID))!.proof);
     tampered[2] = (tampered[2] ?? 0) ^ 0xff;
     const { fetch } = node({
       byOwner: { [BOB]: answer('Bob', BOB, BOB_NAME_ID) },
@@ -251,7 +252,7 @@ describe('proveName — a label: this key carries this name', () => {
   });
 
   it('unproven — kind: \'record\' for the box id', async () => {
-    const entry = SUFFIX.entries.get(BOB_NAME_ID)!;
+    const entry = SUFFIX.entries.get(boxProofKeyHex(BOB_NAME_ID))!;
     const { fetch } = node({
       byOwner: { [BOB]: answer('Bob', BOB, BOB_NAME_ID) },
       proof: (key, at) => jsonResponse(200, avlProofJson(key, at, SUFFIX.digest, entry.proof, 'record', null)),
