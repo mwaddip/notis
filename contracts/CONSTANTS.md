@@ -110,9 +110,9 @@ operation.
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
-| `W_SIG` | `100` | a signature's weight | consensus | a signature is the costlier term: 0.85 ms batched in Waterfox 140 against a tree operation's hashes; measured by the stage's measurement | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
-| `W_OP` | `10` | a tree operation's weight — a lookup or a write | consensus | a tenth of a signature until measured | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
-| `MAX_BLOCK_COST` | `600_000` | 6 000 signatures and nothing else, or fewer and up to 60 000 tree operations | consensus | the ruling above — about 6 s in Waterfox 140 — at the provisional weights | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
+| `W_SIG` | `100` | a signature's weight | consensus | measured 2026-09-30 in Waterfox 140: a signature ~0.8 ms of the batch, an operation 40–51 µs (`CONSENSUS_INTERFACE → Cost`) | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
+| `W_OP` | `10` | a tree operation's weight — a lookup or a write | consensus | between time and size: by time an operation is ~1/16–1/21 of a signature (~6), by the proof's size (~107 bytes a random lookup, ≤ ~6 MB at the budget) ~11; at 10 the largest proof measured is 6.27 MB (5.98 MiB) | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
+| `MAX_BLOCK_COST` | `600_000` | 6 000 signatures' worth; a valid body ~4 600 signatures packed or 3 156 one-signer sends; ≤ 60 000 tree operations | consensus | measured 2026-09-30 at the budget in Waterfox 140: 4.12 s for the one-signer body, 2.39 s and 6.27 MB for the read-heavy one — within the ruling's about 6 s | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
 
 ### Karma
 

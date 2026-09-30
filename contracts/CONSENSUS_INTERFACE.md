@@ -400,6 +400,22 @@ times on a busier machine): the ordinary body **+0.46 s (+12%)** — the most ha
 the packed body +0.33 s (+6%), the corrupted packed body +0.28 s, the refused one +0.01 s. Of the packed body's, the
 hashing itself is about 0.05 s (1 014 digests); the rest is unattributed. The testnet box is not measured.
 
+**A leaf's replay of a block from its proof**, measured 2026-09-30 with `packages/consensus/scripts/bench-leaf-replay.mjs`
+(the verifier built over the parent's digest and the proof, `applyBlock` over `verifierSession`, the writes and the
+digest; medians of 9 runs, pinned to performance cores of the i9-14900HX, testnet's numbers at height 1 000), in
+seconds — the bodies at the budget but the last:
+
+| Body | Proof | Operations | Signatures | Node 22 | Chromium 149 | Firefox 156 | Waterfox 140 |
+|---|---|---|---|---|---|---|---|
+| one-signer credit sends at the budget | 0.73 MB | 28 423 | 3 156 | 2.39 | 1.19 | 2.06 | 4.12 |
+| read-heavy: vouchers of 1 000 karma boxes | 6.27 MB | 58 427 | 29 | 2.03 | 1.18 | 2.12 | 2.39 |
+| 6 000 signers packed — over the budget | 1.32 MB | 18 253 | 6 000 | 2.55 | 1.18 | 2.13 | 5.61 |
+
+In Waterfox 140 a signature costs about 0.8 ms of the batch and an operation 40–51 µs, and a random lookup about 107 bytes
+of proof. Against `W_SIG` = 100, time alone would weigh an operation about 6, and the proof's size — at most about
+6 MB at the budget — about 11; `W_OP` stands between (`TYPES_INTERFACE → The block's cost`). At the budget a valid body holds at most about
+4 600 signatures packed, or 3 156 one-signer transactions.
+
 No other term may grow faster than the reads the body makes: each overlay read is a map lookup or one composition over
 the view's answer to it.
 
