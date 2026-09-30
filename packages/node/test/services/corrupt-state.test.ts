@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { TreeInconsistencyError } from '@dagsocial/consensus';
 import {
   UnhashableStoredHeaderError,
   MissingStoredBlockError,
   MissingJournalError,
   MissingStateVersionError,
   DuplicateStateVersionError,
+  InconsistentStateTreeError,
   CorruptChainStateError,
   failStopIfCorruptChain,
   guardStoreRead,
@@ -103,7 +105,7 @@ describe('failStopIfCorruptChain', () => {
     expect(errors[0]).toContain('not contiguous');
   });
 
-  it('a third kind must not need a boundary edit to be fatal — journal, version and duplicate', () => {
+  it('a third kind must not need a boundary edit to be fatal — journal, version, duplicate and inconsistent tree', () => {
     const journal = new MissingJournalError('revertBlock', 5);
     expect(journal.site).toBe('revertBlock');
     expect(journal.height).toBe(5);
@@ -122,8 +124,18 @@ describe('failStopIfCorruptChain', () => {
     expect(duplicate.name).toBe('DuplicateStateVersionError');
     expect(duplicate).toBeInstanceOf(CorruptChainStateError);
 
-    // All seven members are fatal through the same boundary, keyed on the base
-    // class. No boundary edit required for these three.
+    const inconsistent = new InconsistentStateTreeError(
+      'applyOrderingBlock',
+      11,
+      new TreeInconsistencyError('the tree names ab12 as a next key of ab12, no farther along'),
+    );
+    expect(inconsistent.site).toBe('applyOrderingBlock');
+    expect(inconsistent.height).toBe(11);
+    expect(inconsistent.name).toBe('InconsistentStateTreeError');
+    expect(inconsistent).toBeInstanceOf(CorruptChainStateError);
+
+    // All eight members are fatal through the same boundary, keyed on the base
+    // class. No boundary edit required for these four.
     const exited: number[] = [];
     vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
       exited.push(code ?? 0);
@@ -134,7 +146,8 @@ describe('failStopIfCorruptChain', () => {
     expect(() => failStopIfCorruptChain(journal)).toThrow('process.exit');
     expect(() => failStopIfCorruptChain(version)).toThrow('process.exit');
     expect(() => failStopIfCorruptChain(duplicate)).toThrow('process.exit');
-    expect(exited).toEqual([1, 1, 1]);
+    expect(() => failStopIfCorruptChain(inconsistent)).toThrow('process.exit');
+    expect(exited).toEqual([1, 1, 1, 1]);
   });
 
   it('guardStoreRead wraps a family error into a fail-stop', () => {

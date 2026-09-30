@@ -49,10 +49,17 @@ import {
   applyOrderingBlock,
   computePostBlockStateRoot,
 } from './block-apply.js';
-import { bondOutputOf, buildBlockSettlement, materializeOutput, treeStateView } from '@dagsocial/consensus';
+import {
+  bondOutputOf,
+  buildBlockSettlement,
+  materializeOutput,
+  treeStateView,
+  TreeInconsistencyError,
+} from '@dagsocial/consensus';
 import { tryGetAvlProver } from '../state/avl-prover.js';
 import { proverSession } from '../state/prover-session.js';
 import {
+  InconsistentStateTreeError,
   MissingStoredBlockError,
   UnhashableStoredHeaderError,
   failStopIfCorruptChain,
@@ -369,10 +376,25 @@ export function createOrderingBlock(): OrderingBlock | null {
      */
     const view = treeStateView(proverSession(handle.prover));
     const rebuildBody = (): { valid: boolean; error?: string } => {
-      const built = buildBlockSettlement(
-        view, userTxBytesList, newHeight, validatorId,
-        currentMinerPubkey ?? validatorId, applyContextFrom(nodeConfig),
-      );
+      // A read of the tree that contradicts itself is local corruption, never
+      // a body the settlement declines to build — the boundary directly, like
+      // this function's other corrupt-state checks below, because nothing
+      // above `createOrderingBlock` on this path catches for it
+      // (NODE_INTERFACE → "What the funnel's totality catch is FOR").
+      let built: ReturnType<typeof buildBlockSettlement>;
+      try {
+        built = buildBlockSettlement(
+          view, userTxBytesList, newHeight, validatorId,
+          currentMinerPubkey ?? validatorId, applyContextFrom(nodeConfig),
+        );
+      } catch (err) {
+        if (err instanceof TreeInconsistencyError) {
+          failStopIfCorruptChain(
+            new InconsistentStateTreeError('createOrderingBlock', newHeight, err),
+          );
+        }
+        throw err;
+      }
       if ('error' in built) return { valid: false, error: built.error };
       utxoTxTree.utxoTxIds = [...userTxIds, computeTxId(built.tx)];
       utxoTxTree.utxoTxs = [...userTxBytesList, encodeTx(built.tx)];

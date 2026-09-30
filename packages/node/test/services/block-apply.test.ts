@@ -2421,6 +2421,7 @@ describe('block-apply funnel totality', () => {
       // Module might not have been imported
     }
     vi.doUnmock('../../src/store/journal.js');
+    vi.doUnmock('../../src/state/prover-session.js');
     vi.resetModules();
   });
 
@@ -2467,6 +2468,80 @@ describe('block-apply funnel totality', () => {
       getCreditBoxes: (owner: Uint8Array) => unknown[];
     };
     expect(getCreditBoxes(coinbaseOf(block)[0]!.owner)).toHaveLength(0);
+  });
+
+  // -----------------------------------------------------------------------
+  // A tree that contradicts itself is fail-stop, not a rejection
+  // (NODE_INTERFACE → "What the funnel's totality catch is FOR" →
+  // InconsistentStateTreeError)
+  // -----------------------------------------------------------------------
+
+  it('a tree that contradicts itself on read stops the node during apply, and is not a rejection', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    // Registered before the candidate is built, inert until armed — the
+    // fixture's own reads (a live prover, a real speculative run) must not
+    // trip the injected fault, so `armed` gates it rather than the mock's
+    // presence (the block-creator suite's own pattern for this class of
+    // injection).
+    let armed = false;
+    vi.doMock('../../src/state/prover-session.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../../src/state/prover-session.js')>();
+      return {
+        ...actual,
+        proverSession: (
+          ...args: Parameters<typeof actual.proverSession>
+        ): ReturnType<typeof actual.proverSession> => {
+          const real = actual.proverSession(...args);
+          if (!armed) return real;
+          // A next key not strictly above the key looked up — the tree
+          // view's own check (CONSENSUS_INTERFACE → The tree view → "An
+          // answer is checked as it arrives"), so the very first read
+          // `applyBlock` makes throws `TreeInconsistencyError`.
+          return {
+            lookup: (key: Uint8Array) => ({ ...real.lookup(key), nextKey: key }),
+          };
+        },
+      };
+    });
+
+    const block = await makeApplicableBlock();
+    armed = true;
+
+    const exited: number[] = [];
+    vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      exited.push(code ?? 0);
+      throw new Error('process.exit');
+    }) as never);
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((msg: unknown) => {
+      errors.push(String(msg));
+    });
+
+    const blockApply = await importBlockApply();
+    const { failStopIfCorruptChain } = await import('../../src/services/corrupt-state.js');
+
+    // `applyOrderingBlock` re-throws a `CorruptChainStateError` for its
+    // caller's boundary to decide (NODE_INTERFACE → "What the funnel's
+    // totality catch is FOR") — every real caller wraps it exactly this way
+    // (gossip and pull registrations, the launched reorg, the block creator).
+    // The funnel does not refuse the block: no `false`, no swallow — the
+    // throw reaches this boundary as `InconsistentStateTreeError`.
+    expect(() => {
+      try {
+        blockApply.applyOrderingBlock(block);
+      } catch (err) {
+        failStopIfCorruptChain(err);
+      }
+    }).toThrow('process.exit');
+
+    expect(exited).toEqual([1]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('FATAL');
+    expect(errors[0]).toContain('applyOrderingBlock');
+    expect(errors[0]).toContain('Nothing a peer sent can have caused this');
   });
 
   it('applies the same block with no stub in place (control)', async () => {

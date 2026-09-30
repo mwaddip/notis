@@ -1,8 +1,9 @@
 import * as validation from '@dagsocial/validation';
-import { applyBlock, treeStateView, treeWritesOf } from '@dagsocial/consensus';
+import { applyBlock, treeStateView, treeWritesOf, TreeInconsistencyError } from '@dagsocial/consensus';
 import type { ApplyContext, BlockEffects, StateView } from '@dagsocial/consensus';
 import {
   CorruptChainStateError,
+  InconsistentStateTreeError,
   MissingStoredBlockError,
   UnhashableStoredHeaderError,
   failStopIfCorruptChain,
@@ -453,18 +454,34 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
   // stateRoot before mining (NODE_INTERFACE → Post-block stateRoot).
   const height = block.header.height;
   const view = treeStateView(proverSession(handle.prover));
-  const result = applyBlock(view, block, applyContextFrom(config));
-  if (!result.ok) {
-    // A refusal is a verdict, not an error.
-    console.warn(result.reason);
-    return null;
+  // A read of the tree that contradicts itself is local corruption, never a
+  // verdict on the block — `TreeInconsistencyError` becomes
+  // `InconsistentStateTreeError` here and nowhere else in this function, so
+  // `treeWritesOf`'s and `karmaOwnersOf`'s own plain `Error`s (a defect in
+  // code) stay the funnel's unexpected throws
+  // (NODE_INTERFACE → "What the funnel's totality catch is FOR").
+  let result: ReturnType<typeof applyBlock>;
+  let writes: ReturnType<typeof treeWritesOf>;
+  let karmaOwners: Set<string>;
+  try {
+    result = applyBlock(view, block, applyContextFrom(config));
+    if (!result.ok) {
+      // A refusal is a verdict, not an error.
+      console.warn(result.reason);
+      return null;
+    }
+    // The block's writes to the tree, from its effects over the same view
+    // (CONSENSUS_INTERFACE → The tree writes), and the owners whose karma
+    // boxes it moved — read from that view before the writes move the tree
+    // under it.
+    writes = treeWritesOf(result.effects, height, view);
+    karmaOwners = karmaOwnersOf(result.effects, view);
+  } catch (err) {
+    if (err instanceof TreeInconsistencyError) {
+      throw new InconsistentStateTreeError('applyOrderingBlock', height, err);
+    }
+    throw err;
   }
-
-  // The block's writes to the tree, from its effects over the same view
-  // (CONSENSUS_INTERFACE → The tree writes), and the owners whose karma boxes it
-  // moved — read from that view before the writes move the tree under it.
-  const writes = treeWritesOf(result.effects, height, view);
-  const karmaOwners = karmaOwnersOf(result.effects, view);
 
   // The writes and the stateRoot compare, before any effect is written —
   // unconditional (NODE_INTERFACE → AVL+ State Root). The prover is restored by
@@ -746,7 +763,16 @@ export function computePostBlockStateRoot(
     return { kind: 'computed', stateRoot: bytesToHex(digest) };
   } catch (err) {
     // Above the unclaimed-throw arm, because that arm would swallow it into a
-    // verdict about the block. Never returns.
+    // verdict about the block. Never returns. A read of the tree that
+    // contradicts itself is local corruption, not a body the mutation phase
+    // rejected — `body-rejected` would repeat the speculation forever while
+    // this node stayed up producing nothing (NODE_INTERFACE → "What the
+    // funnel's totality catch is FOR").
+    if (err instanceof TreeInconsistencyError) {
+      failStopIfCorruptChain(
+        new InconsistentStateTreeError('computePostBlockStateRoot', height, err),
+      );
+    }
     if (err instanceof CorruptChainStateError) {
       failStopIfCorruptChain(err);
     }

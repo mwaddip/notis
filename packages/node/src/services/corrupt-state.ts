@@ -21,6 +21,7 @@
 
 import { TREE_TAG } from '@dagsocial/types';
 import type { TreeWrite } from '@dagsocial/consensus';
+import { TreeInconsistencyError } from '@dagsocial/consensus';
 
 /**
  * The ordering store is not what this node put there.
@@ -193,6 +194,33 @@ function kindOfKey(keyHex: string): string {
   const tag = Number.parseInt(keyHex.slice(0, 2), 16);
   const named = Object.entries(TREE_TAG).find(([, value]) => value === tag);
   return named === undefined ? `untagged (0x${keyHex.slice(0, 2)})` : named[0];
+}
+
+/**
+ * A read of this node's own AVL+ tree contradicts itself.
+ *
+ * `treeStateView`'s checked reads throw `consensus`'s `TreeInconsistencyError`
+ * on an answer that cannot be honest — a `nextKey` not strictly above the key
+ * looked up, an absent key's `prevKey` not strictly below it, a next key
+ * naming a leaf the tree holds none for (CONSENSUS_INTERFACE → The tree
+ * view). The session reads only this node's own prover, so the throw
+ * examines nothing a peer sent — local corruption, or a bug in us, outside
+ * the totality property's scope by construction
+ * (NODE_INTERFACE → "What the funnel's totality catch is FOR"). `cause` is
+ * the `TreeInconsistencyError` kept whole, for the reason
+ * `UnreadableStoredBlockError` keeps its own: which neighbour disagreed is
+ * the only thing that says what is corrupt, and re-deriving it from the
+ * message is the prose-parsing this family refuses to do.
+ */
+export class InconsistentStateTreeError extends CorruptChainStateError {
+  constructor(site: string, height: number, cause: TreeInconsistencyError) {
+    super(
+      site,
+      height,
+      `a read of this node's own tree contradicts itself at height ${height} — ${cause.message}`,
+    );
+    this.cause = cause;
+  }
 }
 
 /**
