@@ -39,10 +39,6 @@ for a block's body (`VALIDATION_INTERFACE → Acceptance criterion`). The browse
 | `tree-index` | `indexEntriesOfBox` · `isLapsedMember` | this contract's `The index entries` | none |
 | `tree-writes` | `treeWritesOf` · `seedTreeWrites` (`TreeWrite`) | this contract's `The tree writes` | the block's `TreeStateView` |
 
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — no node code calls the four `tree-*` modules: the
-> node answers `StateView` from SQLite (`storeStateView`) and derives its AVL feed itself (`proverFeedFromEffects`,
-> `applyBlockMutations`).
-
 Beside them the barrel exports the types a caller builds their arguments and reads their answers with — `StateView`,
 `ApplyContext`, `ApplyResult`, `BlockEffects`, `HolderRecord`, `UtxoEngineDeps`, `UtxoResult`, `SettlementDeps`,
 `SettlementBody`, `DecayDeps`, `DecayPlan`, `EmbeddedTx`, `TreeSession`, `TreeLookup`, `TreeStateView`, `TreeWrite`,
@@ -123,7 +119,7 @@ proof it was handed, the same code on both. The node's SQLite store answers none
 | a voucher's escrows | every live escrow the voucher owns | `id` | the `escrowOf ‖ voucher` range |
 | a pair's vouch boxes | the pair's live vouch box — one at most (`NODE_INTERFACE → Vouch transition rules`) | — | `vouchPair ‖ voucher ‖ target`, then the box |
 | an author's like accrual boxes | every live `like_accrual` box naming the author | `id` | the `accrualOf ‖ author` range |
-| the bonds invited by a height | live bonds whose invitee's record holds `0 < invitedAtBlock ≤ h` | `(invitedAtBlock, id)`, a limit | the `bondDue` range while the key's height `≤ h` |
+| the bonds invited by a height | live bonds whose invitee's record holds `invitedAtBlock ≤ h` — the height of the block that created the bond, so never `0` | `(invitedAtBlock, id)`, a limit | the `bondDue` range while the key's height `≤ h` |
 | the escrows releasable at a height | live escrows with `releaseAtBlock ≤ h` | `(releaseAtBlock, id)`, a limit | the `escrowDue` range while the key's height `≤ h` |
 | the lapsed vouches | live vouch boxes whose voucher fails `member()` | `(voucher, target)`, a limit | the `lapsed` range — the lapsed members holding a live vouch — and for each its `vouchPair ‖ voucher` range |
 | a post's author | the author, or none | — | `post ‖ postId` |
@@ -134,10 +130,6 @@ proof it was handed, the same code on both. The node's SQLite store answers none
 **The lapses run voucher by voucher.** One global order over every lapsed vouch would need every lapsed voucher's
 whole range read at every block, which the leg's limit exists to prevent; voucher by voucher, the walk stops at the
 limit. An owner's karma boxes are read whole — the read has no limit — and sorted.
-
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the node answers every read from SQLite
-> (`storeStateView`): a box's provenance for any box it holds or held, a pair's boxes as a list, the lapsed vouches in
-> one ascending box-id order, a post's reads from `block_topology` and `dag_posts`, a like from `like_records`.
 
 The members share their names with the node's store reads (`getBox`, `getKarmaBoxes`, `getBondsInvitedAt`, …), which
 answer the node's API. The shapes the rules share with the node's store — `NetworkRecord` and `UsernameRow` — live in
@@ -152,10 +144,6 @@ codecs), and this package re-exports them; `UsernameRow` is this package's.
 index entries derived from them, how a read walks them, and the order a block's writes reach the tree. The keys and the
 value codecs are `types`' (`TYPES_INTERFACE → The tree keys`, `→ Layout — tree records`); the AVL+ prover and its
 storage are the node's.
-
-> ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the node's tree is not this layout: it holds boxes and
-> the four record kinds under hashed 32-byte keys, and nothing the rules read from a query or outside the root is in
-> it.
 
 ### The tree session
 
