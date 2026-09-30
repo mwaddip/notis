@@ -173,7 +173,8 @@ all `0x00` below the first key, all `0xff` past the last (`isSentinel`). **No lo
 library refuses a key at either bound, and a refusal poisons a verifier. **A session's answers are the view's to
 keep**: the view memoises them for the block, so a session never reuses or mutates an array it has returned. **A
 session over `@ergots/avltree` maps the library's `null` neighbour to the sentinel** — `null` below the first key to
-all `0x00`, past the last to all `0xff` — and treats a lookup's `{ success: false }` as fatal to the block.
+all `0x00`, past the last to all `0xff` — and treats a recorded lookup's `{ success: false }` as fatal to the block;
+an unrecorded lookup has no such answer, and throws on a key the library refuses.
 
 ### The tree view
 
@@ -183,10 +184,6 @@ keys it asked, in the order it first asked them. **An answer is checked as it ar
 the key looked up, or an absent key's `prevKey` not strictly below it, is a tree that contradicts itself —
 `TreeInconsistencyError`, a throw, never a verdict — so a tree without honest provenance can neither turn a walk into
 a loop nor end one with a key that goes backwards.
-
-> ⚠ **AHEAD OF CODE (2026-09-30, N2 state layout, stage A)** — the view checks an answer's order only inside a walk,
-> and only for a next key the walk would follow: a `prevKey`, a point read's `nextKey`, a backwards next key below the
-> range or the all-`0x00` sentinel, and any next key once the limit is reached pass unrefused.
 
 **A range read walks.** It looks up the range's start (`TYPES_INTERFACE → The tree keys`, `rangeStart`), yields that
 key if it is a leaf, and follows `nextKey` for as long as the next key is in the range, is no sentinel and the read's

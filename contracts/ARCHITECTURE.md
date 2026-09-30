@@ -1507,14 +1507,15 @@ chain or owed one:
 | **posting is activity** (2026-09-12) | the identity leaf's `lastActivityBlock` on every identity that liked, invited, vouched, claimed or withdrew, so every `stateRoot` from the first such spend; the like verdict — a self-like is refused (§Likes); the settlement's `actors` — a bare consolidation counts nobody (MINING_INTERFACE → Coinbase Application) |
 | **the backer pool** (2026-09-12) | the genesis box set on testnet and devnet — one `BackerStakeBox` per table row and the `BackerPoolBox`, so both networks' `genesisStateRoot` pins; the settlement of every block inside the accrual window (the pool box's successor) and of every block carrying an unstake; three box-type tags. Mainnet's genesis is untouched while its table is empty. **Rides the collected reset** with the row above |
 
-**Outstanding against the live node: nothing.** Testnet's chain began at the 2026-09-15 reset, whose block 1
-the profile pins as `genesisId` (§What varies per network); every reset row is in it, and the usernames row owes
-none.
+**Outstanding against the live node: the tree layout** (the marker below). Testnet's live chain began at the
+2026-09-15 reset; every row above is in it, and the usernames row owes none. The profile leaves testnet's `genesisId`
+empty (§What varies per network) until the reset the tree layout owes mines a new block 1.
 
 > ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the register gains **the tree layout**: every AVL key
 > and value width (`TREE_KEY_LENGTH` 65), so every `stateRoot` and all three `genesisStateRoot` pins; the tree gains
 > post, like and index entries and a cast count per voucher; the name record gains `claimedAtBlock`; the lapse
-> leg's order, so the settlement of every block with two or more lapsed vouches. It owes the reset, which it rides with the block proof (N3) — and testnet's `genesisId` is unpinned for it.
+> leg's order, so the settlement of every block with two or more lapsed vouches. It owes the reset, which it rides with the
+> block proof (N3).
 
 **When a reset is not owed.** A change that **adds** a box-type tag, an AVL leaf domain, a store table
 or a nullable column, and leaves every existing committed byte and every existing rule's verdict
@@ -1854,9 +1855,11 @@ is the one that cannot be circumvented.
 it.** Each profile pins the height-0 AVL+ root over its own genesis box set, cold-start
 seeding computes that root and compares, and a mismatch is fail-stop rather than a warning —
 `assertGenesisRoot` in `node/src/services/genesis-state.ts`, checked inside the seeding
-transaction so a divergent genesis is never committed. The per-network input is the
-`genesis_proof` box's payload: the system karma and faucet credit boxes are byte-identical on
-testnet and devnet, so the proof box is the whole of what separates those two roots.
+transaction so a divergent genesis is never committed. The per-network inputs are the
+`genesis_proof` box's payload, the emission box's value (`creditEmissionTotal`), the faucet identity
+(`faucetPublicKey`, which owns the faucet's karma and credit boxes and their index entries) and the backer table
+(a `BackerStakeBox` per row and the `BackerPoolBox`); the payload is the one input that differs between every pair
+of networks.
 
 **When a profile pins `genesisId`, the chain layer commits to block 1's hash as well.** The height-1
 chain-link refuses any other block 1 (`NODE_INTERFACE` → Ordering block apply-time authorization,
