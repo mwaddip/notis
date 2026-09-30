@@ -2485,8 +2485,7 @@ describe('block-apply funnel totality', () => {
 
   // -----------------------------------------------------------------------
   // A tree that contradicts itself is fail-stop, not a rejection
-  // (NODE_INTERFACE → "What the funnel's totality catch is FOR" →
-  // InconsistentStateTreeError)
+  // (NODE_INTERFACE → "What the funnel's totality catch is FOR")
   // -----------------------------------------------------------------------
 
   it('a tree that contradicts itself on read stops the node during apply, and is not a rejection', async () => {
