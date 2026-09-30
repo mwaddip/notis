@@ -56,6 +56,7 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
     powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_000_000,
     interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
     ...overrides,
   };
 }
@@ -195,6 +196,7 @@ describe('Two-node integration', () => {
       powTargetBits: 12 * 256,
       createdAt: Date.now(),
       interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
     };
     let blockNonce = -1;
     for (let n = 0; n < 10_000_000; n++) {

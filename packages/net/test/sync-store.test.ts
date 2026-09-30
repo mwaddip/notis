@@ -31,6 +31,7 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
     powTargetBits: 4 * 256,
     createdAt: 1_000_000,
     interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
     ...overrides,
   };
 }

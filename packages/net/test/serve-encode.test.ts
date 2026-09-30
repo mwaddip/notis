@@ -68,6 +68,7 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
     powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_000_000,
     interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
     ...overrides,
   };
 }

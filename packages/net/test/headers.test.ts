@@ -108,6 +108,7 @@ function makeMockHeader(
     powTargetBits: targetBits,
     createdAt: 1000000 + height * 10000,
     interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
   };
 }
 

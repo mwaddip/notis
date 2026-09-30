@@ -234,6 +234,7 @@ function makeQueryHeader(height: number): BlockHeader {
     powTargetBits: 4 * 256,
     createdAt: 1_000_000 + height,
     interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
   };
 }
 
