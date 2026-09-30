@@ -244,14 +244,15 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // no-premine evidence later is a value change on a network that has not
   // launched, not a format change. hex("dagsocial/mainnet/genesis-proof/mock")
   genesisProofPayload: '646167736f6369616c2f6d61696e6e65742f67656e657369732d70726f6f662f6d6f636b',
-  // Over FOUR leaves — the proof box, the emission box, the karma pool box and
-  // the network record. The faucet's karma and credit boxes are absent because
-  // this profile names no `faucetPublicKey`; the backer pool box and per-row
-  // stake boxes are absent because its `backerTable` is empty. The other two
-  // networks seed these four, the faucet identity's boxes and record, a backer
-  // stake box per `backerTable` row and the backer pool box — which is why this
-  // root's trailing height byte (`03`) differs from theirs (`04`).
-  genesisStateRoot: 'e2a156c44ddb8cc40587b28fc3ce7a8c01c2657f94e5752a063d9b13912b322703',
+  // Six leaves, height byte `03`: `0x01` box ×3 (the genesis proof, the emission
+  // box, the karma pool box), `0x18` type ×2 (the emission box, the karma pool
+  // box), `0x03` network ×1. No name, holder, post, like, bond-due, vouch-pair,
+  // lapsed or cast-count leaf, and the genesis proof box carries no index entry.
+  // The faucet's karma and credit boxes are absent because this profile names no
+  // `faucetPublicKey`; the backer pool box and per-row stake boxes are absent
+  // because its `backerTable` is empty — the other two networks seed all of
+  // these, which is why their height byte (`04`) differs from this one.
+  genesisStateRoot: 'c5996d8349a7bb27eca6e287f77ceb85a37e26e319b754c7f27e45052c709b7303',
   genesisId: '',
 
   backerSupply: MAINNET_BACKERS.supply,
@@ -297,13 +298,20 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // hex("dagsocial/testnet/genesis-proof/mock")
   genesisProofPayload: '646167736f6369616c2f746573746e65742f67656e657369732d70726f6f662f6d6f636b',
   // Overridden for the same reason as the payload above — the spread would hand
-  // testnet mainnet's root. Four things separate this root from mainnet's: the
-  // proof payload, the faucet identity's boxes and record, a backer stake box
-  // per `backerTable` row, and the backer pool box.
-  genesisStateRoot: 'e889005d151873c962856f0475059405746e12a067db573e495bf88c864d3efd04',
-  // Block 1, mined 2026-09-15 (TYPES_INTERFACE → "genesisId pins block 1, and
-  // is empty until a network has one").
-  genesisId: '39ef01d11ccd9b10e0c6f7f87031a90f8a12faa94f77e5520843b30bc37a44fe',
+  // testnet mainnet's root. Fourteen leaves, height byte `04`: `0x01` box ×7 (the
+  // genesis proof, the emission box, the karma pool box, the backer pool box, one
+  // backer stake box, the faucet's karma box and its credit box), `0x18` type ×3
+  // (the emission, karma pool and backer pool boxes), `0x10` karma-of ×1 and
+  // `0x11` credit-of ×1 (the faucet's two boxes), `0x02` identity ×1 (the
+  // faucet's record), `0x03` network ×1. No name, holder, post, like, bond-due,
+  // vouch-pair, lapsed or cast-count leaf, and the genesis proof box and the
+  // backer stake box carry no index entry. What separates this root from
+  // mainnet's: the proof payload, the faucet identity (mainnet names none) and
+  // the backer table (mainnet's is empty; this one seeds a single row).
+  genesisStateRoot: '15dbea0c403cf8a1b553e3d5215129e833c91938b507ca0e133dcef82f42800104',
+  // TYPES_INTERFACE → "genesisId pins block 1, and is empty until a network
+  // has one" — testnet has none pinned.
+  genesisId: '',
 
   backerSupply: TESTNET_BACKERS.supply,
   backerTable: Object.freeze(TESTNET_BACKERS.rows),
@@ -382,13 +390,15 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   genesisKarmaPerMember: GENESIS_KARMA_PER_MEMBER,
   // hex("dagsocial/devnet/genesis-proof/mock") — mock, see mainnet above
   genesisProofPayload: '646167736f6369616c2f6465766e65742f67656e657369732d70726f6f662f6d6f636b',
-  // Four things separate this root from testnet's: the proof payload, the
+  // Fifteen leaves, height byte `04`: as testnet, with `0x01` box ×8 — two
+  // backer stake boxes rather than one, neither carrying an index entry. Four
+  // things separate this root from testnet's: the proof payload, the
   // emission box's value — carried as `creditEmissionTotal`, smaller here than
   // on the two networks that share mainnet's total — the faucet identity, since
   // the two profiles name DIFFERENT `faucetPublicKey`s and therefore seed
   // differently-owned boxes, and the backer table — two rows here, one on
   // testnet — which seeds a different stake set.
-  genesisStateRoot: '62446ad8644593989ce0ce1858eb3aac32666081edd55d7204c110fe3932cfc204',
+  genesisStateRoot: 'a247e41fb667bbf79622044e56bb1779c2d5dc90cb6fb3de04595cc83449fdca04',
   genesisId: '',
 
   backerSupply: DEVNET_BACKERS.supply,

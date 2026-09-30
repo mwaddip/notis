@@ -453,11 +453,9 @@ describe('NETWORK_PROFILES', () => {
   });
 
   // TYPES_INTERFACE → "genesisId pins block 1, and is empty until a network
-  // has one": testnet pins its block 1; mainnet is '' until it has one.
-  it('testnet genesisId pins its block 1, mainnet is empty', () => {
-    expect(NETWORK_PROFILES.testnet.genesisId)
-      .toBe('39ef01d11ccd9b10e0c6f7f87031a90f8a12faa94f77e5520843b30bc37a44fe');
-    expect(NETWORK_PROFILES.testnet.genesisId).toMatch(/^[0-9a-f]{64}$/);
+  // has one": neither has mined one yet.
+  it('testnet and mainnet genesisId are both empty', () => {
+    expect(NETWORK_PROFILES.testnet.genesisId).toBe('');
     expect(NETWORK_PROFILES.mainnet.genesisId).toBe('');
   });
 });
