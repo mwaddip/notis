@@ -233,6 +233,7 @@ function blockOf(view, txs) {
       powTargetBits: 0,
       createdAt: 0,
       interlinkRoot: '0'.repeat(64),
+      adProofsRoot: '0'.repeat(64),
     },
     utxoTxTree: {
       utxoTxIds: [...txs.map((tx) => computeTxId(tx)), computeTxId(settled.tx)],
