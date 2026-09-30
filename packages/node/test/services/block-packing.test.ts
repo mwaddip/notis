@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { MAX_BLOCK_BODY_BYTES, PROTOCOL_VERSION, bytesToHex, computeTxId, decodeTx } from '@dagsocial/types';
+import { MAX_BLOCK_BODY_BYTES, PROTOCOL_VERSION, bytesToHex, computeTxId, decodeTx, encodeTx, hash32 } from '@dagsocial/types';
 import type { CreditBox, FeeBox, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import type { Config } from '../../src/config.js';
 import {
@@ -9,6 +9,7 @@ import {
   makeTestConfig,
   makeTestIdentity,
   mineNextBlock,
+  seedPostTx,
   signTransaction,
 } from '../helpers.js';
 import type { TestIdentity } from '../helpers.js';
@@ -766,5 +767,245 @@ describe('the settlement in the fill', () => {
     expect(heldSettlementLen).toBe(lengths[0]);
     expect(heldSettlementLen).toBeLessThanOrEqual(lengths[within]!);
     expect(settles.count).toBeLessThanOrEqual(3);
+  });
+});
+
+/**
+ * The refill under the budget (MINING_INTERFACE → Template and submit → "An
+ * estimate misses both ways", the refill arm): an alone estimate prices the
+ * settlement scaffolding a thread's block would pay by itself, which a block
+ * of threads pays once — a new thread's `karma_price` marker and the identity
+ * lookups the membership pass makes are shared, not repeated, once other
+ * threads ride beside it. Where the first speculation computes under the
+ * selection's own estimates, the creator scales every estimate by the
+ * measured ratio and refills once.
+ */
+describe('the creator\'s refill', () => {
+  let budget: { set(budget: number): void };
+
+  beforeEach(() => {
+    vi.resetModules();
+    budget = blockBudgetSeam();
+  });
+  afterEach(async () => {
+    (await import('../../src/services/block-creator.js')).stopBlockCreator();
+    vi.doUnmock('@dagsocial/consensus');
+    vi.doUnmock('../../src/services/cost-estimate.js');
+    vi.doUnmock('../../src/services/block-apply.js');
+    vi.doUnmock('../../src/config.js');
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  /**
+   * `count` new-thread posts, each its own funded author, admitted so each
+   * carries a real cost estimate — karma-side, so `admitTx` never bids them
+   * and the pool holds them FIFO (MEMPOOL_INTERFACE → Ordering); insertion
+   * order is therefore the fill order, with no separate lookup needed.
+   */
+  async function admittedThreadPoolOf(count: number): Promise<UtxoTransaction[]> {
+    const txs: UtxoTransaction[] = [];
+    for (let i = 0; i < count; i++) {
+      const author = makeTestIdentity();
+      const made = await seedPostTx(author, `refill thread ${i}`);
+      txs.push(made.tx);
+    }
+    await liveProver();
+    const { admitTx } = await import('../../src/services/admit-tx.js');
+    for (const tx of txs) admitTx(tx, 5000);
+    return txs;
+  }
+
+  /** The cost of the block carrying `txs` at height 1, settlement built as the creator builds one (`bodiesCost`). */
+  async function txsRealCost(txs: UtxoTransaction[]): Promise<number> {
+    return bodiesCost(txs.map((tx) => encodeTx(tx)));
+  }
+
+  it('a pool of new threads whose alone estimates overstate the batched cost: refills once by the measured ratio, exactly two speculations, within budget', async () => {
+    const speculations = countSpeculations();
+    await freshStore();
+    const order = await admittedThreadPoolOf(20);
+    const ids = order.map((tx) => computeTxId(tx));
+    const estimates = await estimatesOf(ids);
+    expect(estimates.every((estimate) => estimate !== null && estimate > 0)).toBe(true);
+    const empty = await txsRealCost([]);
+    const full = await txsRealCost(order);
+    // The alone-estimate sum overstates the batched total (the shared
+    // scaffolding this unit exists to stop double-charging for), so a budget
+    // set at the real full cost is one the unscaled fill stops short of.
+    expect(empty + estimates.reduce((sum: number, e) => sum + (e ?? 0), 0)).toBeGreaterThan(full);
+    const limit = full;
+    budget.set(limit);
+    const packTo = Math.floor((limit * (100 - PACKING_COST_MARGIN)) / 100);
+    let fits = 0;
+    let unscaled = empty;
+    while (fits < order.length && unscaled + estimates[fits]! <= packTo) unscaled += estimates[fits++]!;
+    expect(fits).toBeLessThan(order.length);
+
+    const bc = await import('../../src/services/block-creator.js');
+    bc.startBlockCreator(testConfig);
+    const template = bc.getCurrentTemplate();
+
+    expect(speculations.count).toBe(2);
+    expect(template).not.toBeNull();
+    const held = userTxIds(template!);
+    expect(held.length).toBeGreaterThan(fits);
+    expect(held).toEqual(ids.slice(0, held.length));
+    const cost = await costOfBlock(template!);
+    expect(cost).toBeLessThanOrEqual(limit);
+    // ε = 10: the ratio is measured against the prefix the FIRST fill found
+    // (`fits` entries) and applied uniformly to the whole pool. Floor-rounding
+    // each scaled estimate costs at most `held.length` units of `packTo`
+    // (negligible here), but the larger source is the ratio itself: if the
+    // true marginal cost keeps falling as more threads share the settlement's
+    // fixed legs — the amortization this unit exists to recover — a ratio
+    // measured at the smaller prefix under-corrects for entries past it, and
+    // the refill lands short of the margin by more than rounding alone
+    // explains (measured up to ~4.6% short on a 20-thread pool here).
+    const eps = 10;
+    expect(cost).toBeGreaterThanOrEqual(Math.floor((limit * (100 - PACKING_COST_MARGIN - eps)) / 100));
+  });
+
+  it('a pool whose refill adds no entry — one speculation: the initial fill already spent the whole pool', async () => {
+    const speculations = countSpeculations();
+    await freshStore();
+    const order = await admittedThreadPoolOf(6);
+    const ids = order.map((tx) => computeTxId(tx));
+    const estimates = await estimatesOf(ids);
+    const empty = await txsRealCost([]);
+    // Generous: the unscaled fill already takes every thread, so nothing is
+    // left in the pool for a refill to add — whatever ratio it measures.
+    const limit = empty + estimates.reduce((sum: number, e) => sum + (e ?? 0), 0) + 10_000;
+    budget.set(limit);
+
+    const bc = await import('../../src/services/block-creator.js');
+    bc.startBlockCreator(testConfig);
+    const template = bc.getCurrentTemplate();
+
+    expect(speculations.count).toBe(1);
+    expect(template).not.toBeNull();
+    expect(userTxIds(template!)).toEqual(ids);
+  });
+
+  it('a refill whose speculation is over — corrected by the drop, within the budget', async () => {
+    // Registered before `block-creator.js` is first imported — it is,
+    // transitively, well before this test body gets to call it directly
+    // (`seedEmissionBox` reads it off `block-creator.js`, which imports
+    // `block-apply.js` itself) — so the mock reads a mutable `state` rather
+    // than closing over `fits`/`limit`, neither known yet at registration.
+    const speculations = { count: 0 };
+    const state = { fits: Number.POSITIVE_INFINITY, limit: 0, computedCost: 0 };
+    vi.doMock('../../src/services/block-apply.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../../src/services/block-apply.js')>();
+      return {
+        ...actual,
+        computePostBlockStateRoot: (...args: Parameters<typeof actual.computePostBlockStateRoot>) => {
+          speculations.count++;
+          const [block, handle] = args;
+          const n = block.utxoTxTree.utxoTxIds.length - 1;
+          if (n <= state.fits) {
+            return {
+              kind: 'computed' as const,
+              stateRoot: bytesToHex(handle.prover.digest()),
+              adProofsRoot: bytesToHex(hash32(new Uint8Array(0))),
+              proof: new Uint8Array(0),
+              cost: state.computedCost,
+            };
+          }
+          return { kind: 'over-budget' as const, reason: `mock: ${n} entries over the budget`, cost: state.limit + 1_000_000 };
+        },
+      };
+    });
+
+    await freshStore();
+    const order = await admittedPoolOf(Array.from({ length: 30 }, () => ({ inputs: 1, outputs: 1 })));
+    // Every row's stored estimate inflated by a known factor — a controlled
+    // stand-in for "an estimate misses both ways" (real credit transfers carry
+    // none of their own: admission's alone estimate already equals the
+    // batched cost exactly, so nothing here would otherwise give the refill a
+    // ratio under 1 to act on).
+    await estimateEvery((measured) => Math.floor((measured! * 3) / 2));
+    const estimates = await estimatesOf(order);
+    const empty = await prefixCost(order, 0);
+    const limit = await prefixCost(order, 20);
+    budget.set(limit);
+    const packTo = Math.floor((limit * (100 - PACKING_COST_MARGIN)) / 100);
+    let fits = 0;
+    let unscaled = empty;
+    while (fits < order.length && unscaled + estimates[fits]! <= packTo) unscaled += estimates[fits++]!;
+    expect(fits).toBeGreaterThan(0);
+    expect(fits).toBeLessThan(order.length);
+
+    // The speculation mocked, deterministically: exactly `fits` entries reads
+    // as computed, at HALF the fill's own (inflated) estimate for them — well
+    // under `limit`, and low enough that the refill's measured ratio (against
+    // this mocked, not the real, cost) is knowably under 1 — so the first
+    // speculation is computed and the refill engages. Anything past `fits`
+    // reads as wildly over, so whatever the refill's looser comparison admits
+    // past it has to be dropped back by the EXISTING drop-twice-then-search
+    // path (19c), not by the refill itself.
+    state.fits = fits;
+    state.limit = limit;
+    state.computedCost = empty + Math.floor((unscaled - empty) / 2);
+
+    const bc = await import('../../src/services/block-creator.js');
+    bc.startBlockCreator(testConfig);
+    const template = bc.getCurrentTemplate();
+
+    expect(speculations.count).toBeGreaterThan(2);
+    expect(template).not.toBeNull();
+    const held = userTxIds(template!);
+    expect(held.length).toBeLessThanOrEqual(fits);
+    expect(held).toEqual(order.slice(0, held.length));
+  });
+
+  it('costs each rent transaction alone once per build: a refill repeats the fill, not the pricing', async () => {
+    vi.doMock('../../src/config.js', async () => {
+      const actual = await vi.importActual<typeof import('../../src/config.js')>('../../src/config.js');
+      return { ...actual, config: Object.freeze({ ...actual.config, storageRentPeriodBlocks: 0 }) };
+    });
+    let aloneCalls = 0;
+    vi.doMock('../../src/services/cost-estimate.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../../src/services/cost-estimate.js')>();
+      return {
+        ...actual,
+        costAlone: (...args: Parameters<typeof actual.costAlone>) => {
+          aloneCalls++;
+          return actual.costAlone(...args);
+        },
+      };
+    });
+    const speculations = countSpeculations();
+    await freshStore();
+    const utxo = await import('../../src/store/utxo.js');
+    const rentBoxCount = 3;
+    for (let i = 0; i < rentBoxCount; i++) utxo.insertBox(makeCreditBox(100_000_000n, makeTestIdentity().userId, 0, i + 1));
+    const order = await admittedThreadPoolOf(20);
+    const ids = order.map((tx) => computeTxId(tx));
+    const estimates = await estimatesOf(ids);
+    const empty = await txsRealCost([]);
+    const full = await txsRealCost(order);
+    expect(empty + estimates.reduce((sum: number, e) => sum + (e ?? 0), 0)).toBeGreaterThan(full);
+    budget.set(full);
+    // Reset after admission's own `costAlone` calls (one per thread) — only
+    // the creator's own build counts from here.
+    aloneCalls = 0;
+
+    const bc = await import('../../src/services/block-creator.js');
+    bc.startBlockCreator(testConfig);
+    const template = bc.getCurrentTemplate();
+
+    // The fill ran more than once — the refill, or the refill plus the
+    // over-budget search past it (MINING_INTERFACE → Template and submit →
+    // "An estimate misses both ways") — otherwise this test cannot tell
+    // "costed once per build" apart from "costed once because the fill only
+    // ran once".
+    expect(speculations.count).toBeGreaterThan(1);
+    expect(template).not.toBeNull();
+    // Every rent transaction rode the fill (no pool row, no persisted
+    // estimate), so its only cache is the build's own — one `costAlone` per
+    // rent box, whatever it costs karma-thread entries whose rows already
+    // carried an estimate on the refill's pass.
+    expect(aloneCalls).toBe(rentBoxCount);
   });
 });

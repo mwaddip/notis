@@ -482,6 +482,18 @@ export function createOrderingBlock(): OrderingBlock | null {
     //    pool row it came from, or none for a rent transaction this node built.
     const selection: SelectedEntry[] = [];
 
+    // No entry is costed alone twice in one build (MINING_INTERFACE → Template
+    // and submit → "Packing to the budget") — the refill below repeats this
+    // fill, and a rent transaction carries no row for `entry.costEstimate` to
+    // cache against, unlike a pooled one (MEMPOOL_INTERFACE → setCostEstimate).
+    const alonePriced = new Map<string, number | null>();
+    const estimateAlonePriced = (tx: UtxoTransaction, txId: string): number | null => {
+      if (alonePriced.has(txId)) return alonePriced.get(txId)!;
+      const estimate = estimateAlone(tx, txId);
+      alonePriced.set(txId, estimate);
+      return estimate;
+    };
+
     /**
      * The whole body for the selection's first `length` entries — their
      * transactions, then the settlement re-derived from them, last. Read through
@@ -580,20 +592,23 @@ export function createOrderingBlock(): OrderingBlock | null {
     //    not fit the bytes does.
     const seeded = bodyOf(0);
     if ('error' in seeded) return decline(seeded.error);
-    let spent = utxoTxTreeByteLength(seeded.tree);
-    // A second accumulator, against the settlement's own bound rather than the
-    // body's: the empty selection's settlement length, plus each entry's
-    // `settlementMarginalBytes` (MEMPOOL_INTERFACE → The fill budget is bytes;
-    // getPendingEntries is a count → "The fill counts the settlement's bytes, so
-    // that loop too runs at most once"). `entryByteCost` already folds the same
-    // marginal bytes into `spent` so the BODY total stays accurate; this tracks
+    const seededSpent = utxoTxTreeByteLength(seeded.tree);
+    // A second baseline, against the settlement's own bound rather than the
+    // body's: the empty selection's settlement length alone
+    // (MEMPOOL_INTERFACE → The fill budget is bytes; getPendingEntries is a
+    // count → "The fill counts the settlement's bytes, so that loop too runs
+    // at most once"). `entryByteCost` already folds the same marginal bytes
+    // into `spent` so the BODY total stays accurate; `settlementSpent` tracks
     // them again, alone, against `MAX_SETTLEMENT_BYTES`.
-    let settlementSpent = seeded.tree.utxoTxs[seeded.tree.utxoTxs.length - 1]!.length;
+    const seededSettlementSpent = seeded.tree.utxoTxs[seeded.tree.utxoTxs.length - 1]!.length;
     const costBudget = blockCostBudget();
     const packTo = Math.floor((costBudget * (100 - PACKING_COST_MARGIN)) / 100);
-    let estimated = costedOrNothing('the empty block', () => emptyBlockCost('createOrderingBlock')) ?? 0;
+    const emptyCost = costedOrNothing('the empty block', () => emptyBlockCost('createOrderingBlock')) ?? 0;
+    let spent = seededSpent;
+    let settlementSpent = seededSettlementSpent;
+    let estimated = emptyCost;
     const invitedThisBlock = new Set<string>();
-    const offerBudgetTo = (klass: 'karma' | 'credit'): void => {
+    const offerBudgetTo = (klass: 'karma' | 'credit', scale: number): void => {
       for (const entry of iteratePendingEntries({ klass })) {
         if (entry.entryType !== 'utxo_tx' || entry.utxoTxBytes === null) continue;
         const tx = decodeTx(entry.utxoTxBytes);
@@ -621,18 +636,20 @@ export function createOrderingBlock(): OrderingBlock | null {
         if (settlementSpent + settlementBytes > MAX_SETTLEMENT_BYTES) return;
         let estimate = entry.costEstimate;
         if (estimate === null) {
-          estimate = estimateAlone(tx, txId);
+          estimate = estimateAlonePriced(tx, txId);
           if (estimate !== null) setCostEstimate(entry.rowid, estimate);
         }
-        if (estimated + (estimate ?? 0) > packTo) return;
+        // `scale` corrects for an alone estimate's own bias (MINING_INTERFACE →
+        // Template and submit → "An estimate misses both ways", the refill arm)
+        // — 1 on the first fill, so this is exactly today's comparison there.
+        const scaled = Math.floor((estimate ?? 0) * scale);
+        if (estimated + scaled > packTo) return;
         spent += cost;
         settlementSpent += settlementBytes;
-        estimated += estimate ?? 0;
+        estimated += scaled;
         selection.push({ txId, txBytes: entry.utxoTxBytes, rowid: entry.rowid, estimate });
       }
     };
-    offerBudgetTo('karma');
-    offerBudgetTo('credit');
 
     // 5b. Rent transactions — the producer selects eligible boxes and builds
     // unsigned credit spends (NODE_INTERFACE → "Storage rent is a transition
@@ -640,45 +657,69 @@ export function createOrderingBlock(): OrderingBlock | null {
     // eligibility and the charge and nothing else. A rent transaction has no
     // row and so no estimate: each is costed alone, as a row without one is,
     // and packed by that cost.
-    const eligible = getRentEligibleCreditBoxes(
-      newHeight, nodeConfig.storageRentPeriodBlocks, MAX_RENT_TXS_PER_BLOCK,
-    );
-    for (const { box, txId: boxTxId, index: boxIndex } of eligible) {
-      const recordLen = BigInt(boxRecordBytes(box, boxTxId, boxIndex).length);
-      const charge = STORAGE_RENT_PER_BYTE * recordLen;
-      const outputs: AnyBoxCandidate[] = [];
-      if (box.value >= charge) {
-        outputs.push({
-          boxType: 'credit',
-          value: box.value - charge,
-          owner: box.owner,
-          createdAtBlock: newHeight,
-        } as AnyBoxCandidate);
+    const offerRent = (scale: number): void => {
+      const eligible = getRentEligibleCreditBoxes(
+        newHeight, nodeConfig.storageRentPeriodBlocks, MAX_RENT_TXS_PER_BLOCK,
+      );
+      for (const { box, txId: boxTxId, index: boxIndex } of eligible) {
+        const recordLen = BigInt(boxRecordBytes(box, boxTxId, boxIndex).length);
+        const charge = STORAGE_RENT_PER_BYTE * recordLen;
+        const outputs: AnyBoxCandidate[] = [];
+        if (box.value >= charge) {
+          outputs.push({
+            boxType: 'credit',
+            value: box.value - charge,
+            owner: box.owner,
+            createdAtBlock: newHeight,
+          } as AnyBoxCandidate);
+        }
+        const feeValue = box.value >= charge ? charge : box.value;
+        outputs.push({ boxType: 'fee', value: feeValue, createdAtBlock: newHeight } as AnyBoxCandidate);
+        const rentTx: UtxoTransaction = {
+          inputs: [box.id!],
+          outputs,
+          signatures: {},
+          protocolVersion: era,
+        };
+        const encoded = encodeTx(rentTx);
+        const cost = entryByteCost(encoded);
+        if (spent + cost > budget) break;
+        // A rent transaction's own fee output is a settlement input like any
+        // other (MEMPOOL_INTERFACE → The fill budget is bytes; getPendingEntries
+        // is a count → "The fill counts the settlement's bytes...").
+        const settlementBytes = settlementMarginalBytes(rentTx);
+        if (settlementSpent + settlementBytes > MAX_SETTLEMENT_BYTES) break;
+        const rentTxId = computeTxId(rentTx);
+        const estimate = estimateAlonePriced(rentTx, rentTxId);
+        const scaled = Math.floor((estimate ?? 0) * scale);
+        if (estimated + scaled > packTo) break;
+        spent += cost;
+        settlementSpent += settlementBytes;
+        estimated += scaled;
+        selection.push({ txId: rentTxId, txBytes: encoded, rowid: null, estimate });
       }
-      const feeValue = box.value >= charge ? charge : box.value;
-      outputs.push({ boxType: 'fee', value: feeValue, createdAtBlock: newHeight } as AnyBoxCandidate);
-      const rentTx: UtxoTransaction = {
-        inputs: [box.id!],
-        outputs,
-        signatures: {},
-        protocolVersion: era,
-      };
-      const encoded = encodeTx(rentTx);
-      const cost = entryByteCost(encoded);
-      if (spent + cost > budget) break;
-      // A rent transaction's own fee output is a settlement input like any
-      // other (MEMPOOL_INTERFACE → The fill budget is bytes; getPendingEntries
-      // is a count → "The fill counts the settlement's bytes...").
-      const settlementBytes = settlementMarginalBytes(rentTx);
-      if (settlementSpent + settlementBytes > MAX_SETTLEMENT_BYTES) break;
-      const rentTxId = computeTxId(rentTx);
-      const estimate = estimateAlone(rentTx, rentTxId);
-      if (estimated + (estimate ?? 0) > packTo) break;
-      spent += cost;
-      settlementSpent += settlementBytes;
-      estimated += estimate ?? 0;
-      selection.push({ txId: rentTxId, txBytes: encoded, rowid: null, estimate });
-    }
+    };
+
+    /**
+     * The whole fill, at `scale` (MINING_INTERFACE → Template and submit →
+     * "An estimate misses both ways", the refill arm): resets the selection
+     * and every accumulator to the empty body's baseline and offers the budget
+     * again, karma first, then credit, then rent — the same fee-ordered fill,
+     * the same byte and settlement bounds, every comparison against `packTo`
+     * scaled. `scale` is 1 for the first fill, so this reproduces exactly
+     * today's single pass there; a refill passes the measured ratio.
+     */
+    const fill = (scale: number): void => {
+      selection.length = 0;
+      spent = seededSpent;
+      settlementSpent = seededSettlementSpent;
+      estimated = emptyCost;
+      invitedThisBlock.clear();
+      offerBudgetTo('karma', scale);
+      offerBudgetTo('credit', scale);
+      offerRent(scale);
+    };
+    fill(1);
 
     // 6. The settlement, from the transactions the fill actually selected, and
     //    appended as the body's LAST entry — which is the whole of how every node
@@ -689,10 +730,7 @@ export function createOrderingBlock(): OrderingBlock | null {
     //    cannot back it (no emission box at a height that releases, a pool short
     //    of the grants the body owes) yields no block: mining a body this node's
     //    own applier refuses spends PoW on a block no peer accepts.
-    const settled = bodyOf(selection.length);
-    if ('error' in settled) return decline(settled.error);
-    let body = settled.tree;
-
+    //
     // 7. The sizer has the last word. `spent` is exact per entry — its own
     //    encoding plus its marginal cost to the settlement — and blind to the two
     //    array count prefixes, which widen with the entry COUNT rather than with
@@ -712,30 +750,43 @@ export function createOrderingBlock(): OrderingBlock | null {
     //
     //    ⚠ **The pop takes a USER entry**, never the settlement: a body with no
     //    last transaction is one `verifyOrderingBlockStructure` refuses outright.
+    //
+    //    Both a first fill and a refill run this: a refill only ever grows the
+    //    selection, so the sizer's last word applies to it exactly as it does
+    //    to the first fill's.
     const settlementExceedsBound = (tree: UtxoTxTree): boolean =>
       tree.utxoTxs[tree.utxoTxs.length - 1]!.length > MAX_SETTLEMENT_BYTES;
-    while (selection.length > 0 && utxoTxTreeByteLength(body) > budget) {
-      selection.pop();
-      const retrimmed = bodyOf(selection.length);
-      if ('error' in retrimmed) return decline(retrimmed.error);
-      body = retrimmed.tree;
-    }
-    // ⛔ **The settlement is trimmed against its own bound separately, in one
-    // more rebuild, never one entry a rebuild** (MEMPOOL_INTERFACE → The fill
-    // budget is bytes; getPendingEntries is a count → "The fill counts the
-    // settlement's bytes, so that loop too runs at most once"). The fill's own
-    // settlement accumulator above already ends a class within a few bytes of
-    // `MAX_SETTLEMENT_BYTES`, so the tail whose `settlementMarginalBytes` cover
-    // the real overshoot is dropped whole, by the same accumulator-then-sizer
-    // shape the body-budget loop above uses. Popping only shrinks the body, so
-    // this cannot reopen the bound the loop above just settled.
-    if (selection.length > 0 && settlementExceedsBound(body)) {
-      const overshoot = body.utxoTxs[body.utxoTxs.length - 1]!.length - MAX_SETTLEMENT_BYTES;
-      selection.length = settlementCoveringLength(selection, selection.length, overshoot);
-      const retrimmed = bodyOf(selection.length);
-      if ('error' in retrimmed) return decline(retrimmed.error);
-      body = retrimmed.tree;
-    }
+    const settleAndSize = (): { tree: UtxoTxTree } | { error: string } => {
+      const settled = bodyOf(selection.length);
+      if ('error' in settled) return settled;
+      let sizedBody = settled.tree;
+      while (selection.length > 0 && utxoTxTreeByteLength(sizedBody) > budget) {
+        selection.pop();
+        const retrimmed = bodyOf(selection.length);
+        if ('error' in retrimmed) return retrimmed;
+        sizedBody = retrimmed.tree;
+      }
+      // ⛔ **The settlement is trimmed against its own bound separately, in one
+      // more rebuild, never one entry a rebuild** (MEMPOOL_INTERFACE → The fill
+      // budget is bytes; getPendingEntries is a count → "The fill counts the
+      // settlement's bytes, so that loop too runs at most once"). The fill's own
+      // settlement accumulator above already ends a class within a few bytes of
+      // `MAX_SETTLEMENT_BYTES`, so the tail whose `settlementMarginalBytes` cover
+      // the real overshoot is dropped whole, by the same accumulator-then-sizer
+      // shape the body-budget loop above uses. Popping only shrinks the body, so
+      // this cannot reopen the bound the loop above just settled.
+      if (selection.length > 0 && settlementExceedsBound(sizedBody)) {
+        const overshoot = sizedBody.utxoTxs[sizedBody.utxoTxs.length - 1]!.length - MAX_SETTLEMENT_BYTES;
+        selection.length = settlementCoveringLength(selection, selection.length, overshoot);
+        const retrimmed = bodyOf(selection.length);
+        if ('error' in retrimmed) return retrimmed;
+        sizedBody = retrimmed.tree;
+      }
+      return { tree: sizedBody };
+    };
+    const sized = settleAndSize();
+    if ('error' in sized) return decline(sized.error);
+    let body = sized.tree;
     if (selection.length === 0 && settlementExceedsBound(body)) {
       console.error(
         `Not producing block at height ${newHeight}: settlement ` +
@@ -839,6 +890,40 @@ export function createOrderingBlock(): OrderingBlock | null {
       return { length, candidate, speculation: computePostBlockStateRoot(candidate, handle) };
     };
     let run = speculate(selection.length);
+
+    // 19c-refill (MINING_INTERFACE → Template and submit → "An estimate misses
+    // both ways", the refill arm). An alone estimate prices what an entry costs
+    // by ITSELF, which overstates what it costs once other entries ride beside
+    // it — a settlement leg, an actor, priced into every alone estimate that
+    // touches it, though the block pays for it once. Where the first
+    // speculation computed and its real cost less the empty block's came in
+    // under the selection's own (unscaled) estimates, the ratio between them is
+    // how far the fill under-filled: scale every estimate by it and refill once
+    // — the same fee-ordered fill, the same byte and settlement bounds, `fill`
+    // reused at the new scale — picking up whatever the looser comparison now
+    // admits. A refill that added nothing changes nothing to re-speculate; one
+    // that did is re-sized (`settleAndSize`, never skipped: a refill only grows
+    // the selection, so the sizer's last word still has to run) and
+    // re-speculated, its outcome falling through to the over-budget correction
+    // below exactly as the first speculation's would.
+    if (isComputed(run)) {
+      // Summed over `selection` as it stands now, never the fill's own
+      // `estimated` accumulator: the sizer above may have popped entries the
+      // fill admitted, and `estimated` is not un-wound when it does.
+      const priorEstimate = selection.reduce((sum, entry) => sum + (entry.estimate ?? 0), 0);
+      const actualMarginal = run.speculation.cost - emptyCost;
+      if (priorEstimate > 0 && actualMarginal < priorEstimate) {
+        const ratio = actualMarginal / priorEstimate;
+        const before = selection.length;
+        fill(ratio);
+        if (selection.length > before) {
+          const resized = settleAndSize();
+          if ('error' in resized) return decline(resized.error);
+          body = resized.tree;
+          run = speculate(selection.length);
+        }
+      }
+    }
 
     // 19c. Packing to the budget (MINING_INTERFACE → Template and submit →
     // "Packing to the budget"). A body's cost is known only by executing it; the

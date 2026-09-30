@@ -122,6 +122,11 @@ function speculationAcceptsEveryBody(): void {
         stateRoot: Buffer.from(handle.prover.digest()).toString('hex'),
         adProofsRoot: bytesToHex(hash32(MOCK_PROOF)),
         proof: MOCK_PROOF,
+        // Large enough that the creator's refill (MINING_INTERFACE → Template
+        // and submit → "An estimate misses both ways") never reads this as an
+        // estimate that missed: this mock is not a real speculation, so it
+        // carries no real cost to compare against the fill's estimates.
+        cost: Number.MAX_SAFE_INTEGER,
       }),
     };
   });

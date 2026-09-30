@@ -763,9 +763,12 @@ export type StateRootSpeculation =
   /**
    * The post-block digest the header must commit to, and the block's proof —
    * its reads, then its writes (NODE_INTERFACE → The block proof) — with the
-   * proof's `hash32` as `adProofsRoot`, hex. Mine over them.
+   * proof's `hash32` as `adProofsRoot`, hex. Mine over them. `cost` is the
+   * body's own, `blockCost` of what the run counted — the creator's refill
+   * reads it to measure an estimate that missed (MINING_INTERFACE → Template
+   * and submit → "An estimate misses both ways").
    */
-  | { kind: 'computed'; stateRoot: string; adProofsRoot: string; proof: Uint8Array }
+  | { kind: 'computed'; stateRoot: string; adProofsRoot: string; proof: Uint8Array; cost: number }
   /**
    * The body's cost is over the budget (CONSENSUS_INTERFACE → The block's
    * cost): trim the selection and build again, evicting nothing. `reason` is
@@ -863,6 +866,7 @@ export function computePostBlockStateRoot(
       stateRoot: bytesToHex(digest),
       adProofsRoot: bytesToHex(hash32(proof)),
       proof,
+      cost: blockCost(cost),
     };
   } catch (err) {
     // Above the unclaimed-throw arm, because that arm would swallow it into a
