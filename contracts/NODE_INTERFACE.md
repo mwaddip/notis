@@ -3917,9 +3917,9 @@ compares it with the tree view read by read (`packages/node/scripts/shadow-repla
   'height not available' }`; without it the proof is against the current version; 400 for a key that is not 64 hex or
   a height that is not a non-negative integer.
 
-  > ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the route takes a tree key, 130 hex
-  > (`TYPES_INTERFACE → The tree keys`), and a 400 answers any other width; `kind` adds `post`, `like` and `index` for
-  > the kinds the layout adds (→ Entity kinds). **`kind` and `value` are the node's reading and a light client trusts
+  > ⚠ **AHEAD OF CODE (2026-09-27, N2 state layout, stage A)** — the route is `GET /api/v1/proof/:key`: a tree key,
+  > 130 hex (`TYPES_INTERFACE → The tree keys`), echoed in the answer as `key` where it reads `boxId`; a 400 answers
+  > any other width; `kind` adds `post`, `like` and `index` for the kinds the layout adds (→ Entity kinds). **`kind` and `value` are the node's reading and a light client trusts
   neither**: it verifies the proof against a `stateRoot` it verified under proof-of-work and decodes the value the
   proof carries (`WEB_INTERFACE → The extension → "The verified figures"`)
 - **Config:** `MAX_PROOF_HISTORY` (prune old proof versions). The check below
