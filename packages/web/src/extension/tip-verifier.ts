@@ -3,18 +3,17 @@
 // the extension build alone; the static `isExtension` in `main.ts` keeps it
 // out of the web bundle.
 
-import { resolveTip } from '@dagsocial/nipopow-client';
+import { resolveTip, DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
 import type { Anchor, TipResult, HttpFetch, NodeTipResult } from '@dagsocial/nipopow-client';
 import { profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
 import { tipVerdict } from '../model/tip-verdict';
 import type { TipRun, TipVerifier } from '../model/state';
 
-// NIPOPOW_INTERFACE → NipopowProof — `m` is the security parameter and `k` the
-// suffix length; the pair `24, 20` is WEB_INTERFACE → The extension → "The
-// verified tip"'s, and NODE_INTERFACE → Nipopow serves the same route.
-const M = 24;
-const K = 20;
+// The pair the extension asks — the tool's own `DEFAULT_M` and `DEFAULT_K`,
+// imported, never a second copy (WEB_INTERFACE → The extension → "The
+// verified tip"; CONSTANTS → Client defaults). NODE_INTERFACE → Nipopow
+// serves the same route.
 
 export interface TipVerifierOptions {
   network: NetworkType;
@@ -50,7 +49,7 @@ export function createTipVerifier(opts: TipVerifierOptions): TipVerifier {
       };
       addIfNew(readingBase);
       for (const b of opts.nodes) addIfNew(b);
-      const result: TipResult = await resolve(urls, M, K, profile, opts.now, opts.fetch);
+      const result: TipResult = await resolve(urls, DEFAULT_M, DEFAULT_K, profile, opts.now, opts.fetch);
       const verdict = tipVerdict(result);
       // The anchor is the reading node's own verified headers — reading node
       // is at index 0, kept at the front of `urls` (WEB_INTERFACE → The
