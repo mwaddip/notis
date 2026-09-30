@@ -648,7 +648,7 @@ export function createOrderingBlock(): OrderingBlock | null {
         }
         // `scale` corrects for an alone estimate's own bias (MINING_INTERFACE →
         // Template and submit → "An estimate misses both ways", the refill arm)
-        // — 1 on the first fill, so this is exactly today's comparison there.
+        // — 1 on the first fill, the refill's measured ratio on the refill.
         const scaled = Math.floor((estimate ?? 0) * scale);
         if (estimated + scaled > packTo) return;
         spent += cost;
@@ -713,8 +713,8 @@ export function createOrderingBlock(): OrderingBlock | null {
      * and every accumulator to the empty body's baseline and offers the budget
      * again, karma first, then credit, then rent — the same fee-ordered fill,
      * the same byte and settlement bounds, every comparison against `packTo`
-     * scaled. `scale` is 1 for the first fill, so this reproduces exactly
-     * today's single pass there; a refill passes the measured ratio.
+     * scaled. `scale` is 1 on the first fill; a refill passes the measured
+     * ratio.
      */
     const fill = (scale: number): void => {
       selection.length = 0;

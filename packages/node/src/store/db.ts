@@ -372,8 +372,8 @@ function migrateMempoolTxColumns(database: Database.Database): void {
   // cost does (MEMPOOL_INTERFACE → The cost gate).
   if (!has('cost_estimate')) database.exec(`ALTER TABLE mempool ADD COLUMN cost_estimate INTEGER`);
   // `vouch_voucher` predates every ALTER column above and needs no guard of
-  // its own; `vouch_target` was added beside it later and, until now, had
-  // none — `hasPendingVouch` keys on the pair (MEMPOOL_INTERFACE → Schema).
+  // its own; `vouch_target` is its pending-vouch pair, guarded here —
+  // `hasPendingVouch` keys on both (MEMPOOL_INTERFACE → Schema).
   if (!has('vouch_target')) database.exec(`ALTER TABLE mempool ADD COLUMN vouch_target TEXT`);
   // A row written before this existed holds NULL, which purgeExpired's
   // `max_valid_height IS NOT NULL` reads as no ceiling (MEMPOOL_INTERFACE →

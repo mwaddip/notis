@@ -188,11 +188,11 @@ describe('migrateMempoolTxColumns', () => {
     closeDb();
   });
 
-  // The migration had no step for `vouch_target` or `max_valid_height`
-  // (MEMPOOL_INTERFACE → Schema; → Validity ceiling): a store migrated from
-  // this pre-column shape failed every `insertUtxoTx` and `purgeExpired`,
-  // because both name the columns directly in SQL the gate-column tests above
-  // never exercised (neither inserts a row through `mempool.ts`).
+  // A store migrated from the pre-column shape must gain `vouch_target` and
+  // `max_valid_height` (MEMPOOL_INTERFACE → Schema; → Validity ceiling): both
+  // are named directly in the SQL `insertUtxoTx` and `purgeExpired` run, which
+  // the gate-column tests above do not exercise (neither inserts a row through
+  // `mempool.ts`).
   it('a vouch admitted after migrating from the pre-column shape: insertUtxoTx and purgeExpired succeed, and hasPendingVouch answers true', async () => {
     const dbPath = path.join(tmpDir, 'vouch-migration.db');
 
