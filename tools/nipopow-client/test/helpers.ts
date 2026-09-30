@@ -135,6 +135,7 @@ export function buildMinedChain(opts: {
       powTargetBits: bits,
       createdAt,
       interlinkRoot: interlinkRoot(expected),
+      adProofsRoot: '00'.repeat(32),
     };
 
     const wantLevel = forceLevels?.get(height);
@@ -434,6 +435,7 @@ export function makeAnchor(
     powTargetBits: DEVNET_POW_TARGET_BITS,
     createdAt: 1_000_000,
     interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
   });
   return {
     tip: bare(tipHeight, tipStateRoot),
