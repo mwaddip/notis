@@ -179,17 +179,19 @@ all `0x00`, past the last to all `0xff` — and treats a lookup's `{ success: fa
 
 **`treeStateView(session)` is the `StateView`** (→ StateView, its table), and the one implementation of it the rules
 see. It looks each key up at most once — the first read memoises it — so a block's reads of the tree are the distinct
-keys it asked, in the order it first asked them.
+keys it asked, in the order it first asked them. **An answer is checked as it arrives**: a `nextKey` not strictly above
+the key looked up, or an absent key's `prevKey` not strictly below it, is a tree that contradicts itself —
+`TreeInconsistencyError`, a throw, never a verdict — so a tree without honest provenance can neither turn a walk into
+a loop nor end one with a key that goes backwards.
+
+> ⚠ **AHEAD OF CODE (2026-09-30, N2 state layout, stage A)** — the view checks an answer's order only inside a walk,
+> and only for a next key the walk would follow: a `prevKey`, a point read's `nextKey`, a backwards next key below the
+> range or the all-`0x00` sentinel, and any next key once the limit is reached pass unrefused.
 
 **A range read walks.** It looks up the range's start (`TYPES_INTERFACE → The tree keys`, `rangeStart`), yields that
 key if it is a leaf, and follows `nextKey` for as long as the next key is in the range, is no sentinel and the read's
 limit is not reached, looking each next key up in turn. A next key the tree names and a lookup of it answers absent is
-a tree that contradicts itself: `TreeInconsistencyError`, a throw, never a verdict. **So is a next key not strictly
-above the key just looked up** — the walk refuses it before looking it up, so a tree without honest provenance cannot
-turn a walk into a loop.
-
-> ⚠ **AHEAD OF CODE (2026-09-30, N2 state layout, stage A)** — the walk does not compare a next key with the key it
-> came from. An index entry yields a box id; the
+a tree that contradicts itself: `TreeInconsistencyError`, a throw, never a verdict. An index entry yields a box id; the
 box itself is then a `box` lookup. **The due queues stop at a height**: the `bondDue` and `escrowDue` walks end at the
 first key whose height (`keyHeight`) is above the read's. **The lapses share one limit** across the `lapsed` walk and
 each voucher's `vouchPair` walk.
