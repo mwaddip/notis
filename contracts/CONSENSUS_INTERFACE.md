@@ -289,9 +289,6 @@ writes are derived and before they are performed — `checkBlockCost` answers `c
 caller's refusal names with the block's height — so each refuses the same blocks. The signatures' term alone is checked earlier, before the batch runs. **The budget bounds a
 leaf's work**: the signatures it verifies and the operations its proof carries.
 
-> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — `BlockEffects` carries no `signatures`: the count is
-> computed and checked inside `applyBlock` and not returned.
-
 ## The overlay
 
 **`applyBlock` reads through a block-local layer of its own writes, and the view underneath is never written.** A box
