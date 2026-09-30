@@ -150,14 +150,17 @@ export function performTreeWrites(
 }
 
 /**
- * Checkpoint the prover state at a block height.
- * Called after all mutations for a block are applied.
+ * Checkpoint the prover state at a block height, once all of the block's
+ * operations are performed, and answer the proof the checkpoint makes: every
+ * operation since the last proof-cycle boundary, which for a block applied
+ * through the recording session is the block's reads, then its writes
+ * (NODE_INTERFACE → The block proof).
  */
 export function checkpointProver(
   handle: AvlProverHandle,
   height: number,
-): void {
-  handle.prover.generateProofAndUpdateStorage([
+): Uint8Array {
+  const proof = handle.prover.generateProofAndUpdateStorage([
     [HEIGHT_SENTINEL, encodeHeight(height)],
   ]);
 
@@ -166,6 +169,7 @@ export function checkpointProver(
   if (cutoff > 0) {
     handle.storage.pruneVersionsBefore(cutoff);
   }
+  return proof;
 }
 
 /** Get the singleton prover handle (throws if not initialized). */

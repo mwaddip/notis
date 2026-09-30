@@ -300,7 +300,7 @@ describe("net's karma membership moves after a commit", () => {
     const before = sorted(node.net.members);
     const block = await makeApplicableBlock({ utxoTxs: node.txs });
 
-    expect(node.blockApply.computePostBlockStateRoot(block, node.handle)).toEqual({ kind: 'computed', stateRoot: block.header.stateRoot });
+    expect(node.blockApply.computePostBlockStateRoot(block, node.handle)).toMatchObject({ kind: 'computed', stateRoot: block.header.stateRoot });
     expect(sorted(node.net.members)).toEqual(before);
     expect(node.net.calls).toEqual([]);
   });

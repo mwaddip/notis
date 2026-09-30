@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
+import { BatchAVLVerifier } from '@ergots/avltree';
+import type { PersistentBatchAVLProver } from '@ergots/avltree';
 import {
   TREE_KEY_LENGTH,
   accrualOfRange,
@@ -14,11 +16,11 @@ import {
   vouchPairRange,
 } from '@dagsocial/types';
 import type { AnyBox, IdentityRecord } from '@dagsocial/types';
-import { seedTreeWrites } from '@dagsocial/consensus';
+import { TreeInconsistencyError, seedTreeWrites, verifierSession } from '@dagsocial/consensus';
 import type { TreeWrite } from '@dagsocial/consensus';
 import { createAvlProver } from '../../src/state/avl-prover.js';
 import type { AvlProverHandle } from '../../src/state/avl-prover.js';
-import { proverSession } from '../../src/state/prover-session.js';
+import { proverSession, recordingSession } from '../../src/state/prover-session.js';
 import { openAvlDb, seedProvenance, uid } from '../helpers.js';
 import { mapSessionFrom } from '../tree-session-map.js';
 
@@ -187,5 +189,96 @@ describe('proverSession', () => {
     expect(bytesToHex(again.value)).toBe(lastValue);
     expect(again.nextKey).toEqual(PAST_LAST);
     expect(session.lookup(successor(BELOW_FIRST))).toEqual({ found: false, prevKey: BELOW_FIRST, nextKey: first });
+  });
+});
+
+/**
+ * The recording session over the node's prover (NODE_INTERFACE → The block
+ * proof; CONSENSUS_INTERFACE → The tree session): the same answers, and each
+ * lookup joins the proof the prover makes next — the reads a block's proof
+ * carries before its writes.
+ */
+describe('recordingSession', () => {
+  let db: Database.Database;
+  let handle: AvlProverHandle;
+
+  beforeEach(() => {
+    db = openAvlDb();
+    handle = createAvlProver(db);
+  });
+
+  afterEach(() => { db.close(); });
+
+  /** The writes performed, then the proof cycle closed: the prover at a proof-cycle boundary. */
+  function seeded(writes: readonly TreeWrite[]): void {
+    for (const write of writes) {
+      expect(handle.prover.performOneOperation(write).success, bytesToHex(write.key)).toBe(true);
+    }
+    handle.prover.prover.generateProof();
+  }
+
+  it('answers every present and absent key as the reference session does', () => {
+    const writes = seedWrites();
+    seeded(writes);
+    const reference = mapSessionFrom(writes);
+    const session = recordingSession(handle.prover);
+    const present = reference.entries().map(([key]) => hexToBytes(key));
+
+    for (const key of [...present, successor(BELOW_FIRST), ...present.map(successor), rangeStart(karmaOfRange(alice))]) {
+      expect(session.lookup(key), bytesToHex(key)).toEqual(reference.lookup(key));
+    }
+  });
+
+  it('records each lookup into the proof the prover makes next, which a verifier replays from the digest before', () => {
+    const writes = seedWrites();
+    seeded(writes);
+    const before = handle.prover.digest();
+    const present = mapSessionFrom(writes).entries().map(([key]) => hexToBytes(key));
+    const keys = [present[3]!, successor(present[0]!), rangeStart(karmaOfRange(alice)), present[present.length - 1]!];
+
+    const session = recordingSession(handle.prover);
+    const answers = keys.map((key) => session.lookup(key));
+    const proof = handle.prover.prover.generateProof();
+
+    const verifier = new BatchAVLVerifier(before, proof, { keyLength: TREE_KEY_LENGTH, valueLengthOpt: null });
+    const replayed = verifierSession(verifier);
+    expect(keys.map((key) => replayed.lookup(key))).toEqual(answers);
+    expect(verifier.digest()).toEqual(before);
+  });
+
+  it('is the only one of the two sessions whose lookups reach a proof', () => {
+    const writes = seedWrites();
+    seeded(writes);
+    const key = hexToBytes(mapSessionFrom(writes).entries()[2]![0]);
+    // A cycle holding no operation, made at the boundary the seed left.
+    const empty = handle.prover.prover.generateProof();
+
+    proverSession(handle.prover).lookup(key);
+    expect(handle.prover.prover.generateProof()).toEqual(empty);
+
+    recordingSession(handle.prover).lookup(key);
+    expect(handle.prover.prover.generateProof()).not.toEqual(empty);
+  });
+
+  it('a lookup the prover refuses is a tree that contradicts itself', () => {
+    const refusing = { performLookupWithNeighbors: () => ({ success: false }) } as unknown as PersistentBatchAVLProver;
+    expect(() => recordingSession(refusing).lookup(successor(BELOW_FIRST))).toThrow(TreeInconsistencyError);
+  });
+
+  it('refuses a lookup of either sentinel, as the library does', () => {
+    seeded(seedWrites());
+    const session = recordingSession(handle.prover);
+    expect(() => session.lookup(Uint8Array.from(BELOW_FIRST))).toThrow();
+    expect(() => session.lookup(Uint8Array.from(PAST_LAST))).toThrow();
+  });
+
+  it('answers the sentinels as fresh arrays — a caller may keep and write every answer', () => {
+    const session = recordingSession(handle.prover);
+    const key = successor(BELOW_FIRST);
+    const first = session.lookup(key);
+    if (first.found) throw new Error('a key in the empty tree is present');
+    first.prevKey.fill(0xff);
+    first.nextKey.fill(0x00);
+    expect(session.lookup(key)).toEqual({ found: false, prevKey: BELOW_FIRST, nextKey: PAST_LAST });
   });
 });

@@ -543,16 +543,18 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     // speculation that builds the candidate runs the real prover, and only
     // the direct call below meets the injected fault (the diverged-tree
     // case's own technique, moved one level up from the write to the read).
+    // The speculation reads through the recording session (NODE_INTERFACE →
+    // The block proof), so that is where the fault goes.
     let armed = false;
     vi.doMock('../../src/state/prover-session.js', async (importOriginal) => {
       const actual =
         await importOriginal<typeof import('../../src/state/prover-session.js')>();
       return {
         ...actual,
-        proverSession: (
-          ...args: Parameters<typeof actual.proverSession>
-        ): ReturnType<typeof actual.proverSession> => {
-          const real = actual.proverSession(...args);
+        recordingSession: (
+          ...args: Parameters<typeof actual.recordingSession>
+        ): ReturnType<typeof actual.recordingSession> => {
+          const real = actual.recordingSession(...args);
           if (!armed) return real;
           // A next key not strictly above the key looked up — the tree
           // view's own check (CONSENSUS_INTERFACE → The tree view → "An

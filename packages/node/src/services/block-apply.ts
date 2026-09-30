@@ -1,6 +1,6 @@
 import * as validation from '@dagsocial/validation';
 import { applyBlock, treeStateView, treeWritesOf, TreeInconsistencyError } from '@dagsocial/consensus';
-import type { ApplyContext, BlockEffects, StateView } from '@dagsocial/consensus';
+import type { ApplyContext, BlockEffects, StateView, TreeStateView } from '@dagsocial/consensus';
 import {
   CorruptChainStateError,
   InconsistentStateTreeError,
@@ -74,12 +74,13 @@ import {
   checkpointProver,
 } from '../state/avl-prover.js';
 import type { AvlProverHandle } from '../state/avl-prover.js';
-import { proverSession } from '../state/prover-session.js';
+import { recordingSession } from '../state/prover-session.js';
 import { emitPostIndexed } from '../journal.js';
 import { countedVerifyOrderingBlockPoW, noteTip } from '../metrics.js';
 import { getNet } from './net-instance.js';
 import {
   bytesToHex,
+  hash32,
   identityKey,
   MAX_FUTURE_DRIFT_MS,
   GENESIS_PREV_BLOCK_HASH,
@@ -217,16 +218,19 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
     return { applied: false, class: 'consensus' };
   }
   // SQLite rollback does not reach the AVL prover's in-memory state, so the
-  // funnel snapshots the digest before the transaction and restores it on
-  // every rejection path — explicit rejection (including the stateRoot
-  // mismatch, whose §13-local rollback this replaces) and the totality catch.
+  // funnel saves the prover's root and height before the transaction and puts
+  // them back by reference on every rejection path — explicit rejection
+  // (including the stateRoot mismatch) and the totality catch — immediate,
+  // because the library never mutates a node. The restore also rebases the
+  // proof cycle, so none of a refused block's recorded reads, which leave the
+  // digest where it was, stays in the cycle to enter the next block's proof
+  // (NODE_INTERFACE → The block proof).
   const avlHandle = tryGetAvlProver();
-  const preDigest = avlHandle ? avlHandle.prover.digest() : null;
+  const saved = avlHandle
+    ? { root: avlHandle.prover.prover.root, height: avlHandle.prover.prover.height }
+    : null;
   const restoreProver = (): void => {
-    if (!avlHandle || !preDigest) return;
-    const current = avlHandle.prover.digest();
-    if (current && Buffer.from(current).equals(Buffer.from(preDigest))) return;
-    avlHandle.prover.rollback(preDigest);
+    if (avlHandle && saved) avlHandle.prover.prover.restoreRoot(saved.root, saved.height);
   };
   let karmaOwners: Set<string>;
   try {
@@ -451,9 +455,11 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
   // mutation phases"): the rules over the block's tree view, answering the
   // block's effects or the reason a rule refused it, and writing nothing. The
   // block creator runs the same call over its own view to obtain the post-block
-  // stateRoot before mining (NODE_INTERFACE → Post-block stateRoot).
+  // stateRoot before mining (NODE_INTERFACE → Post-block stateRoot). The view
+  // reads through the recording session, so the block's reads open the proof
+  // its checkpoint makes (NODE_INTERFACE → The block proof).
   const height = block.header.height;
-  const view = treeStateView(proverSession(handle.prover));
+  const view = treeStateView(recordingSession(handle.prover));
   // A read of the tree that contradicts itself is local corruption, never a
   // verdict on the block — `TreeInconsistencyError` becomes
   // `InconsistentStateTreeError` here and nowhere else in this function, so
@@ -649,10 +655,15 @@ export function writeBlockEffects(effects: BlockEffects, height: number): BlockJ
  * The owners whose karma boxes a block's effects insert or spend, as hex — those
  * net's relay gate moves for once the block commits (NODE_INTERFACE → Post
  * transactions → "The set moves after a commit, never inside a transaction").
+ *
  * A box the block spends and did not insert is read through `view` — the
- * block's own tree view, before its writes are performed.
+ * block's own tree view, before its writes are performed — from its memo alone:
+ * `treeWritesOf` has read every such box already, and a lookup here would be
+ * recorded outside the block's reads and enter its proof (NODE_INTERFACE → The
+ * block proof). A lookup it did make is a defect, thrown.
  */
-function karmaOwnersOf(effects: BlockEffects, view: Pick<StateView, 'getBox'>): Set<string> {
+function karmaOwnersOf(effects: BlockEffects, view: TreeStateView): Set<string> {
+  const looked = view.lookupCount();
   const inserted = new Set<string>();
   const owners = new Set<string>();
   for (const m of effects.mutations) {
@@ -667,6 +678,11 @@ function karmaOwnersOf(effects: BlockEffects, view: Pick<StateView, 'getBox'>): 
       box = view.getBox(m.boxId);
     }
     if (box?.boxType === 'karma') owners.add(Buffer.from(box.owner).toString('hex'));
+  }
+  if (view.lookupCount() !== looked) {
+    throw new Error(
+      `karmaOwnersOf: ${view.lookupCount() - looked} spent box(es) were not among the block's reads`,
+    );
   }
   return owners;
 }
@@ -692,8 +708,12 @@ function moveKarmaMembers(owners: Set<string>): void {
  * to prevent — mining a body its own mutation phase has already rejected.
  */
 export type StateRootSpeculation =
-  /** The post-block digest the header must commit to. Mine over it. */
-  | { kind: 'computed'; stateRoot: string }
+  /**
+   * The post-block digest the header must commit to, and the block's proof —
+   * its reads, then its writes (NODE_INTERFACE → The block proof) — with the
+   * proof's `hash32` as `adProofsRoot`, hex. Mine over them.
+   */
+  | { kind: 'computed'; stateRoot: string; adProofsRoot: string; proof: Uint8Array }
   /**
    * Producing this block is forbidden — the body was rejected, or speculating
    * on it threw. One arm because the caller's obligation is one: do not mine,
@@ -710,13 +730,16 @@ export type StateRootSpeculation =
  * PoW covers the header, so the producer has to know this digest *before*
  * mining, and the only way to know it without a second implementation of the
  * state transition is to run the block's own body as apply runs it: `applyBlock`
- * over a tree view on the prover, `treeWritesOf` over the same view, the writes
- * performed, the digest read. The prover's in-memory root and height are saved
- * first and put back by reference with `restoreRoot` when the run ends: the
- * library never mutates a node, so the saved root is the whole tree the run
- * started from, and nothing is read back from storage. It writes nothing to the
- * store — no block, no effect, no journal — and performs no `clearTemplate` and
- * no prover checkpoint.
+ * over a tree view on the prover's recording session, `treeWritesOf` over the
+ * same view, the writes performed, the digest read, and the proof the inner
+ * prover's `generateProof()` makes of the reads and writes (NODE_INTERFACE →
+ * The block proof). The run starts at a proof-cycle boundary, as every
+ * caller's does. The prover's in-memory root and height are saved first and put
+ * back by reference with `restoreRoot` when the run ends, which also rebases the
+ * proof cycle: the library never mutates a node, so the saved root is the whole
+ * tree the run started from, and nothing is read back from storage. It writes
+ * nothing to the store — no block, no effect, no journal — and performs no
+ * `clearTemplate` and no prover checkpoint.
  *
  * The candidate carries a placeholder header (`powNonce` 0, empty signature):
  * the mutation phase reads neither, and runs at the header's height.
@@ -748,7 +771,7 @@ export function computePostBlockStateRoot(
   const height = block.header.height;
 
   try {
-    const view = treeStateView(proverSession(handle.prover));
+    const view = treeStateView(recordingSession(handle.prover));
     const result = applyBlock(view, block, applyContextFrom(config));
     if (!result.ok) {
       console.warn(result.reason);
@@ -760,7 +783,13 @@ export function computePostBlockStateRoot(
     }
     const writes = treeWritesOf(result.effects, height, view);
     const digest = performTreeWrites(handle.prover, height, writes, 'computePostBlockStateRoot');
-    return { kind: 'computed', stateRoot: bytesToHex(digest) };
+    const proof = inner.generateProof();
+    return {
+      kind: 'computed',
+      stateRoot: bytesToHex(digest),
+      adProofsRoot: bytesToHex(hash32(proof)),
+      proof,
+    };
   } catch (err) {
     // Above the unclaimed-throw arm, because that arm would swallow it into a
     // verdict about the block. Never returns. A read of the tree that
