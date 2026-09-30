@@ -11,9 +11,10 @@
 //   - a cast carrying a foreign voucherId applied cleanly and its escrow row
 //     keyed to the foreign identity — a karma transfer with no invite.
 //
-// Transactions are placed straight into the mempool, around the service layer
-// that would refuse them: the block creator embeds whatever it picks up, which
-// reproduces the malicious-producer case exactly.
+// V1's transaction is placed straight into the mempool, around the service
+// layer that would refuse it, and the block creator embeds it. V2's block is
+// built by hand, around the service layer and the producer's own speculation,
+// which would both refuse its body — the malicious-producer case exactly.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -31,6 +32,7 @@ import type {
 } from '@dagsocial/types';
 import {
   hex,
+  makeApplicableBlock,
   makeKarmaBox,
   makeTestConfig,
   makeTestIdentity,
@@ -262,7 +264,6 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
-    const mempool = await importMempool();
     const escrows = await importVouchEscrows();
 
     const staker = makeTestIdentity(); // A — owns and signs away the karma
@@ -294,11 +295,12 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(castTx, staker.privateKey, hex(staker.userId));
-    mempool.insertUtxoTx(castTx, 100000);
 
-    const bc = await importBlockCreator();
-    bc.startBlockCreator(testConfig);
-    await mineNextBlock(bc);
+    // Built by hand: a producer whose speculation refuses the body never
+    // templates it, so the block has to reach apply by another route.
+    const block = await makeApplicableBlock({ utxoTxs: [castTx] });
+    const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
+    expect(applyOrderingBlock(block)).toBe(false);
 
     // Nothing the block would have done survives: no block, the staker's box
     // unspent, no vouch box, and no escrow row for either identity — the

@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { boxKey, bytesToHex, hexToBytes } from '@dagsocial/types';
 import type { AnyBox, OrderingBlock } from '@dagsocial/types';
+import type { TreeWrite } from '@dagsocial/consensus';
 import type { BlockJournal, BoxMutation } from '../../src/store/journal.js';
 import {
   feeBoxOf,
@@ -17,12 +19,13 @@ import {
  *
  * ⛔ **This is the one claim the whole fee-box design rests on, and a root
  * comparison cannot check it.** A fee box is created by a credit-side
- * transaction and consumed by the same block's application, so the prover
- * feed derived from the block's effects cancels the insert/remove pair and
- * neither operation is presented to the AVL tree. Feeding the pair through instead would leave
- * the *same* digest — an insert followed by a remove of one key returns the
- * tree to where it started — so the two hypotheses are indistinguishable
- * everywhere downstream. The feed is the only place they differ.
+ * transaction and consumed by the same block's application, so the block's
+ * tree writes cancel the insert/remove pair (CONSENSUS_INTERFACE → The tree
+ * writes) and neither operation is presented to the AVL tree. Performing the
+ * pair instead would leave the *same* digest — an insert followed by a remove of
+ * one key returns the tree to where it started — so the two hypotheses are
+ * indistinguishable everywhere downstream. The writes are the only place they
+ * differ.
  *
  * The file is its own because it mocks `state/avl-prover.js`: the mock survives
  * `vi.resetModules()` within a file, so a suite sharing it would run its later
@@ -53,13 +56,13 @@ describe('the fee box never reaches the prover', () => {
     vi.resetModules();
   });
 
-  it('feeds the prover no fee box id, having journalled both halves of the pair', async () => {
-    // Every feed the prover is handed while this block is processed. There is
-    // more than one: the header's `stateRoot` comes from a speculative run that
-    // derives its feed the same way, and the claim has to hold for both — a
-    // creator and an applier disagreeing about the feed is the fork this
-    // netting rule exists inside.
-    const feeds: Array<{ consumed: string[]; created: AnyBox[] }> = [];
+  it('hands the prover no write of the fee box, having journalled both halves of the pair', async () => {
+    // Every set of writes the prover is handed while this block is processed.
+    // There is more than one: the header's `stateRoot` comes from a speculative
+    // run that derives its writes the same way, and the claim has to hold for
+    // both — a creator and an applier disagreeing about the writes is the fork
+    // this netting rule exists inside.
+    const performed: TreeWrite[][] = [];
     vi.doMock('../../src/state/avl-prover.js', async () => {
       // Real apart from the one wrapped export, so the singleton
       // `tryGetAvlProver` hands block-apply is the one activated below.
@@ -68,15 +71,9 @@ describe('the fee box never reaches the prover', () => {
       >('../../src/state/avl-prover.js');
       return {
         ...actual,
-        applyBlockMutations: (
-          prover: Parameters<typeof actual.applyBlockMutations>[0],
-          height: Parameters<typeof actual.applyBlockMutations>[1],
-          consumed: string[],
-          created: AnyBox[],
-          recordPuts: Parameters<typeof actual.applyBlockMutations>[4],
-        ) => {
-          feeds.push({ consumed: [...consumed], created: [...created] });
-          return actual.applyBlockMutations(prover, height, consumed, created, recordPuts);
+        performTreeWrites: (...args: Parameters<typeof actual.performTreeWrites>) => {
+          performed.push([...args[2]]);
+          return actual.performTreeWrites(...args);
         },
       };
     });
@@ -117,11 +114,12 @@ describe('the fee box never reaches the prover', () => {
     );
     expect(boxOps.map((m) => m.op)).toEqual(['insert', 'remove']);
 
-    // ...and no feed carries either half.
-    expect(feeds.length).toBeGreaterThan(0);
-    for (const feed of feeds) {
-      expect(feed.consumed).not.toContain(feeBox.id);
-      expect(feed.created.map((b) => b.id)).not.toContain(feeBox.id);
+    // ...and no set of writes carries either half: the block's own two (the
+    // speculation's and the apply's), each without the fee box's key.
+    const feeKey = bytesToHex(boxKey(hexToBytes(feeBox.id!)));
+    expect(performed.length).toBeGreaterThanOrEqual(2);
+    for (const writes of performed) {
+      expect(writes.map((w) => bytesToHex(w.key))).not.toContain(feeKey);
     }
 
     // The value went to the miner regardless, so the box really was a fee and

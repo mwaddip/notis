@@ -3,8 +3,13 @@ import {
   EMPTY_STATE_ROOT,
   PROTOCOL_VERSION,
   USERNAME_BURN_PRICE,
-  canonicalUsernameBytes,
+  boxKey,
   computeTxId,
+  hexToBytes,
+  holderKey,
+  holderRecordBytes,
+  nameKey,
+  nameRecordBytes,
 } from '@dagsocial/types';
 import type { AnyBox, AnyBoxCandidate, KarmaBox, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import { materializeOutput } from '@dagsocial/consensus';
@@ -76,10 +81,6 @@ async function openNode() {
   utxo.insertBox(makeKarmaBox(100n, holder.userId, 0, 1));
   utxo.insertBox(makeKarmaBox(100n, other.userId, 0, 2));
   const handle = await activateProverOverStore();
-  const avl = await import('../../src/state/avl-prover.js');
-  const nameKey = (name: string): Uint8Array =>
-    Buffer.from(avl.usernameRecordKey(canonicalUsernameBytes(new TextEncoder().encode(name))), 'hex');
-  const holderKey = (who: TestIdentity): Uint8Array => Buffer.from(avl.holderRecordKey(who.userId), 'hex');
   return {
     db,
     utxo,
@@ -89,9 +90,10 @@ async function openNode() {
       const value = handle.prover.unauthenticatedLookup(key);
       return value ? hexOf(value) : null;
     },
-    nameKey,
-    holderKey,
-    serialize: await import('../../src/state/serialize-box.js'),
+    /** The name record's tree key (TYPES_INTERFACE → The tree keys). */
+    nameKey: (name: string): Uint8Array => nameKey(new TextEncoder().encode(name)),
+    /** The holder record's tree key. */
+    holderKey: (who: TestIdentity): Uint8Array => holderKey(who.userId),
     usernames: await import('../../src/store/usernames.js'),
     journal: await import('../../src/store/journal.js'),
     blockApply: await import('../../src/services/block-apply.js'),
@@ -105,7 +107,7 @@ type Node = Awaited<ReturnType<typeof openNode>>;
 function expectSpeculatesTo(node: Node, block: OrderingBlock): void {
   const before = node.digest();
   expect(block.header.stateRoot).not.toBe(EMPTY_STATE_ROOT);
-  expect(node.blockApply.computePostBlockStateRoot(block)).toEqual({ kind: 'computed', stateRoot: block.header.stateRoot });
+  expect(node.blockApply.computePostBlockStateRoot(block, node.handle)).toEqual({ kind: 'computed', stateRoot: block.header.stateRoot });
   expect(node.digest()).toBe(before);
 }
 
@@ -143,7 +145,7 @@ describe('a removable record the block creates and removes', () => {
     // The tree holds neither record, nor the name box the block made and spent.
     expect(node.lookup(node.nameKey('alpha'))).toBeNull();
     expect(node.lookup(node.holderKey(holder))).toBeNull();
-    expect(node.lookup(Buffer.from(nameBox.id!, 'hex'))).toBeNull();
+    expect(node.lookup(boxKey(hexToBytes(nameBox.id!)))).toBeNull();
     expect(node.usernames.getUsername('alpha')).toBeNull();
     expect(node.usernames.getUsernameByOwner(holder.userId)).toBeNull();
     // The journal holds all four writes, each removal with the row the claim wrote.
@@ -183,9 +185,9 @@ describe('a removable record the block creates and removes', () => {
     expect(node.digest()).toBe(block.header.stateRoot);
 
     expect(node.lookup(node.holderKey(holder))).toBeNull();
-    expect(node.lookup(node.nameKey('beta'))).toBe(hexOf(node.serialize.serializeUsernameRecord({ boxId: reclaimedBox.id! })));
+    expect(node.lookup(node.nameKey('beta'))).toBe(hexOf(nameRecordBytes({ boxId: reclaimedBox.id!, claimedAtBlock: 1 })));
     expect(node.lookup(node.holderKey(other))).toBe(
-      hexOf(node.serialize.serializeHolderRecord({ claimAvailable: false, boxId: reclaimedBox.id! })),
+      hexOf(holderRecordBytes({ claimAvailable: false, boxId: reclaimedBox.id! })),
     );
     expect(node.usernames.getUsername('beta')?.owner).toBe(hexOf(other.userId));
 

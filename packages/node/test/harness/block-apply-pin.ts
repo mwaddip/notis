@@ -7,7 +7,6 @@ import {
   computeTxId,
   decodeOrderingBlock,
   encodeOrderingBlock,
-  identityRecordKey,
   LIKE_KARMA_COST,
   POST_PRICE_REPLY,
   POST_PRICE_THREAD,
@@ -619,11 +618,8 @@ async function runScenario(m: Modules, carrier: PinCarrier): Promise<ApplyPinCap
     handle,
     m.utxo.getUnspentBoxes(),
     0,
-    m.records.getAllIdentityRecords().map(({ identityId, record }) => ({
-      key: identityRecordKey(identityId),
-      record,
-    })),
-    [{ key: m.records.networkRecordKey(), network: m.records.getNetworkRecord() }],
+    m.records.getAllIdentityRecords(),
+    m.records.getNetworkRecord(),
   );
   const preSet = captureState(m);
 
@@ -651,7 +647,7 @@ async function runScenario(m: Modules, carrier: PinCarrier): Promise<ApplyPinCap
   const refuse = async (name: string, rule: string, txs: Built[]): Promise<void> => {
     const before = captureState(m);
     const block = await build(txs);
-    const speculation = m.blockApply.computePostBlockStateRoot(block).kind;
+    const speculation = m.blockApply.computePostBlockStateRoot(block, m.avl.getAvlProver()).kind;
     const logged: string[] = [];
     const record = (...args: unknown[]): void => { logged.push(args.map(String).join(' ')); };
     const warn = vi.spyOn(console, 'warn').mockImplementation(record);

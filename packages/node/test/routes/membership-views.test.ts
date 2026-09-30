@@ -15,8 +15,11 @@ import {
   KARMA_MINIMUM,
   VOUCH_KARMA_AMOUNT,
   PROTOCOL_VERSION,
+  bytesToHex,
   membershipBar,
   memberLikesBar,
+  networkKey,
+  networkRecordBytes,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -57,10 +60,6 @@ import { registerProofEndpoint } from '../../src/state/avl-endpoint.js';
 import {
   createAvlProver,
 } from '../../src/state/avl-prover.js';
-import {
-  serializeNetworkRecord,
-} from '../../src/state/serialize-box.js';
-import { networkRecordKey } from '../../src/store/identity-records.js';
 import {
   rawPublicKey,
   seedProvenance,
@@ -671,7 +670,7 @@ describe('POST /invites — membership 400', () => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/v1/proof/:boxId — kind: 'network' for the network key
+// GET /api/v1/proof/:key — kind: 'network' for the network key
 // ---------------------------------------------------------------------------
 
 describe('proof endpoint — kind: network', () => {
@@ -679,13 +678,13 @@ describe('proof endpoint — kind: network', () => {
     const proofDb = openAvlDb();
 
     const handle = createAvlProver(proofDb);
-    const nrKey = networkRecordKey();
-    const nrBytes = serializeNetworkRecord({ memberCount: 42 });
+    const nrKey = bytesToHex(networkKey());
+    const nrBytes = networkRecordBytes({ memberCount: 42 });
 
     // Insert via InsertOrUpdate
     handle.prover.performOneOperation({
       tag: 'InsertOrUpdate',
-      key: Buffer.from(nrKey, 'hex'),
+      key: networkKey(),
       value: nrBytes,
     });
     handle.prover.generateProofAndUpdateStorage([

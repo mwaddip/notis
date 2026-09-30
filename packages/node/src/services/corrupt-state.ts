@@ -19,6 +19,9 @@
  * indistinguishable from a quiet network until somebody reads the logs.
  */
 
+import { TREE_TAG } from '@dagsocial/types';
+import type { TreeWrite } from '@dagsocial/consensus';
+
 /**
  * The ordering store is not what this node put there.
  *
@@ -138,59 +141,58 @@ export class MissingStoredBlockError extends CorruptChainStateError {
 }
 
 /**
- * The AVL+ tree refuses an operation the UTXO store implies must succeed.
+ * The AVL+ tree refuses one of its writes (NODE_INTERFACE → AVL+ State Root →
+ * "The rules read the tree, and nothing else").
  *
- * `performOneOperation` answers `{ success: false }` for exactly two engine-level
- * preconditions: `Insert` on a key already present, `Remove` on a key that is
- * absent. The tree mirrors `utxo_boxes`, so either answer says **the mirror has
- * drifted** — and the two arms are one fault seen from opposite sides, which is
- * why they share a class. The detail sentence says which side; the boundary must
- * not act differently on them.
+ * `performOneOperation` answers `{ success: false }` for a `Remove` or an
+ * `Update` of a key the tree lacks and an `Insert` of a key it holds;
+ * `InsertOrUpdate` is total. A block's writes are `treeWritesOf` over the
+ * block's own view of this tree (CONSENSUS_INTERFACE → The tree writes) and
+ * genesis's are `seedTreeWrites` into the empty tree, so a refusal says **the
+ * tree contradicts itself** — local state, never anything a peer sent. The
+ * detail names the write, the key and the key's kind by its tag
+ * (TYPES_INTERFACE → The tree keys), never a box for a key that is not one.
  *
- * **Why this is corruption and not a rejection, stated per arm as provenance.**
- *
- * The **`Insert`** arm: `utxo_boxes.id` is `TEXT PRIMARY KEY` and the writer is a
- * plain `INSERT`, deliberately not `INSERT OR REPLACE` — stated on
- * `store/utxo.ts`'s `insertBox`. A duplicate box id therefore dies on the
- * constraint inside the applying transaction, **before the prover feed is built
- * from the journal**. An `Insert` reaching the tree with its key already present
- * means the tree holds a box the store does not.
- *
- * The **`Remove`** arm: consumed ids reach the feed only as `kind: 'box'`,
- * `op: 'remove'` journal entries, and the sole writer of those is `consumeBox`
- * — stated on `store/utxo.ts`'s `consumeBox`. Its `UPDATE` carries `AND
- * spent_at_block IS NULL` and refuses a zero row count, so the property that
- * every journalled remove spent a live row is kept by the **primitive**, not by
- * its callers. A consume naming an absent or already-spent id throws
- * `BoxNotLiveError` inside the applying transaction, which the funnel's
- * totality catch converts to a block rejection — the shape this arm's `Insert`
- * sibling already takes, and the reason a second remove of one id cannot be
- * journalled at all. A key that does reach the feed and the tree does not hold
- * means the tree lacks a box the store had.
- *
- * Neither arm is reachable from peer input, which is what puts the condition
- * outside the funnel's totality promise. And a drifted tree refuses the *next*
- * block identically — so rejecting rather than stopping would reject forever
- * while staying up, the precise failure this file exists to prevent.
+ * Unreachable from peer input, which is what puts the condition outside the
+ * funnel's totality promise. And a tree that refuses one block's write refuses
+ * the *next* block's identically — so rejecting rather than stopping would reject
+ * forever while staying up, the precise failure this file exists to prevent.
  */
 export class DivergedStateTreeError extends CorruptChainStateError {
   constructor(
     site: string,
     height: number,
-    readonly op: 'Insert' | 'Remove',
+    readonly op: TreeWrite['tag'],
     readonly key: string,
   ) {
     super(
       site,
       height,
-      `the AVL+ tree refused ${op} of key ${key} at height ${height} — ` +
-      (op === 'Remove'
-        ? `the tree lacks a box the UTXO store held ` +
-          `(store/utxo.ts → consumeBox, via the journal feed)`
-        : `the tree holds a box the UTXO store does not ` +
-          `(store/utxo.ts → insertBox)`),
+      `the AVL+ tree refused ${op} of the ${kindOfKey(key)} key ${key} at height ${height} — ` +
+      refusalOf(op),
     );
   }
+}
+
+/** What a refused write says about the tree. */
+function refusalOf(op: TreeWrite['tag']): string {
+  switch (op) {
+    case 'Remove':
+      return 'the tree lacks the key the write removes';
+    case 'Insert':
+      return 'the tree already holds the key the write inserts';
+    case 'Update':
+      return 'the tree lacks the key the write updates';
+    case 'InsertOrUpdate':
+      return 'the library refused a write it performs whatever the key holds';
+  }
+}
+
+/** A tree key's kind, named by its tag byte (TYPES_INTERFACE → The tree keys). */
+function kindOfKey(keyHex: string): string {
+  const tag = Number.parseInt(keyHex.slice(0, 2), 16);
+  const named = Object.entries(TREE_TAG).find(([, value]) => value === tag);
+  return named === undefined ? `untagged (0x${keyHex.slice(0, 2)})` : named[0];
 }
 
 /**

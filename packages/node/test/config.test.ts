@@ -4,7 +4,7 @@ import {
   MAGIC_MAINNET,
   MAGIC_TESTNET,
   MAGIC_DEVNET,
-  AVL_KEY_LENGTH,
+  TREE_KEY_LENGTH,
   CREDIT_INITIAL_REWARD,
   CREDIT_REWARD_REDUCTION,
   MAX_BLOCK_BODY_BYTES,
@@ -312,7 +312,7 @@ describe('config', () => {
       expect(cfg.karmaStaleThresholdBlocks).toBe(40320);
       expect(cfg.karmaDecayAmount).toBe(5n);
       expect(cfg.karmaMinimum).toBe(10n);
-      expect(cfg.avlKeyLength).toBe(32);
+      expect(cfg.avlKeyLength).toBe(65);
 
       // `TREASURY_PUBKEY` has no `Config` field to assert against: the treasury
       // is a box no key can spend (ARCHITECTURE → Treasury), so no field on any
@@ -323,18 +323,18 @@ describe('config', () => {
     });
   });
 
-  // AVL_KEY_LENGTH sets the shape of every stateRoot, so the authoritative
+  // TREE_KEY_LENGTH sets the shape of every stateRoot, so the authoritative
   // definition lives in @dagsocial/types (TYPES_INTERFACE → State format) and
   // config only plumbs it. Comparing the plumbed field against the import goes
   // red if config.ts regrows a local definition that diverges — section 7's
-  // baked 32 cannot catch the converse drift (types moves, a stale local pin
-  // keeps node at 32 and 32 === 32 still passes).
+  // baked 65 cannot catch the converse drift (types moves, a stale local pin
+  // keeps node at 65 and 65 === 65 still passes).
   describe('8. avlKeyLength originates in @dagsocial/types', () => {
-    it('plumbs the AVL_KEY_LENGTH export, not a local definition', async () => {
+    it('plumbs the TREE_KEY_LENGTH export, not a local definition', async () => {
       const { loadConfig } = await import('../src/config.js');
       const cfg = loadConfig();
 
-      expect(cfg.avlKeyLength).toBe(AVL_KEY_LENGTH);
+      expect(cfg.avlKeyLength).toBe(TREE_KEY_LENGTH);
     });
   });
 

@@ -15,17 +15,15 @@
 //
 // Reachable: castVouch's one-vouch-at-a-time is service-layer only, so a
 // block-embedded pair of casts gives one voucher two live VouchBoxes; two
-// colluding owners reach it directly. As in the phase 2 suite, the
-// transaction is placed straight into the mempool, around the service layer
-// that would refuse it — the block creator embeds whatever it picks up, which
-// reproduces the malicious-producer case exactly.
+// colluding owners reach it directly. The block is built by hand, around the
+// service layer and the producer's own speculation, which would both refuse the
+// transaction — the malicious-producer case exactly.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   PROTOCOL_VERSION,
   VOUCH_KARMA_AMOUNT,
-  MAX_BLOCK_BODY_BYTES,
 } from '@dagsocial/types';
 import type {
   KarmaBox,
@@ -35,9 +33,8 @@ import type {
 } from '@dagsocial/types';
 import {
   hex,
-  makeTestConfig,
+  makeApplicableBlock,
   makeTestIdentity,
-  mineNextBlock,
   seedProvenance,
   signTransaction,
   type Stored,
@@ -45,26 +42,11 @@ import {
 import type { TestIdentity } from '../helpers.js';
 import type { Config } from '../../src/config.js';
 
-// Every field below is kept verbatim; `makeTestConfig` fills only the thirteen
-// `Config` requires this literal never stated. Hazard removal, not error removal:
-// as a bare literal its type is what `startBlockCreator`'s parameter was declared
-// against, so a newly-required `Config` field would have gone unnoticed here.
-const testConfig = makeTestConfig({
-  port: 3000,
-  dbPath: ':memory:',
-  networkType: 'testnet' as const,
-  nodeRole: 'miner' as const,
-  blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES,
-  orderingBlockPowTargetBits: 3072,
-  bootstrapPeers: [] as string[],
-  listenAddrs: '/ip4/127.0.0.1/tcp/0',
-  maxPeers: 50,
-});
-
 async function importDb() {
   return (await import('../../src/store/db.js')) as {
     initDb: (path: string) => void;
     closeDb: () => void;
+    getDb: () => import('better-sqlite3').Database;
   };
 }
 
@@ -83,12 +65,6 @@ async function importUtxo() {
     insertBox: (box: unknown) => void;
     getBox: (boxId: string) => unknown;
     getKarmaBoxes: (owner: Uint8Array) => KarmaBox[];
-  };
-}
-
-async function importMempool() {
-  return (await import('../../src/store/mempool.js')) as {
-    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
   };
 }
 
@@ -181,9 +157,10 @@ describe('P2-B phase 4 — multi-VouchBox unvouch money flow', () => {
     // ("Unvouch must consume exactly one VouchBox"), which rejects the block.
     const db = await importDb();
     db.initDb(':memory:');
+    // Every chain holds its network record from genesis on; the tree's seed carries it.
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
-    const mempool = await importMempool();
     const escrows = await importVouchEscrows();
 
     const voucher = makeTestIdentity();
@@ -202,14 +179,13 @@ describe('P2-B phase 4 — multi-VouchBox unvouch money flow', () => {
     // second stake is consumed and nothing holds it. It no longer conserves
     // either, so the bound and conservation both fire — the bound is what names
     // WHY (NODE_INTERFACE → Vouch transition rules).
-    mempool.insertUtxoTx(
-      makeUnvouchTx([v1.id!, v2.id!], voucher, VOUCH_KARMA_AMOUNT),
-      100000,
-    );
-
-    const bc = await importBlockCreator();
-    bc.startBlockCreator(testConfig);
-    await mineNextBlock(bc);
+    // Built by hand: a producer whose speculation refuses the body never
+    // templates it, so the block has to reach apply by another route.
+    const block = await makeApplicableBlock({
+      utxoTxs: [makeUnvouchTx([v1.id!, v2.id!], voucher, VOUCH_KARMA_AMOUNT)],
+    });
+    const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
+    expect(applyOrderingBlock(block)).toBe(false);
 
     // Nothing the block would have done survives: no block, both stakes
     // still live in their boxes, and no escrow row — the destruction is

@@ -309,40 +309,41 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     expect(ordering.getCurrentHeight()).toBe(1);
   });
 
-  it('a creator with no prover still produces a block carrying EMPTY_STATE_ROOT', async () => {
-    // The contractual test-only fallback (NODE_INTERFACE → Post-block
-    // stateRoot): no prover means nothing to speculate against, and the
-    // creator mines over EMPTY_STATE_ROOT rather than stalling. Discriminating
-    // the fatal arm must not have collapsed this one into it.
+  it('a creator with no prover produces nothing and evicts nothing', async () => {
+    // NODE_INTERFACE → Post-block stateRoot → "A node applies and produces over
+    // its prover, and has no other way to": the settlement is built over the
+    // tree and the root computed on it, so with no prover there is nothing to
+    // build over — and a missing prover is not the body's fault, so the pooled
+    // entry stays for the node that has one.
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    await seedStaleVouchCast();
 
     const avlMod = await importAvl();
     expect(avlMod.tryGetAvlProver()).toBeNull();
+    const mempool = await import('../../src/store/mempool.js');
+    const pooled = mempool.getPendingEntries(10).length;
+    expect(pooled).toBeGreaterThan(0);
 
+    const warns: string[] = [];
+    vi.spyOn(console, 'warn').mockImplementation((msg: unknown) => { warns.push(String(msg)); });
     const ordering = await importOrdering();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    const block = await mineNextBlock(bc);
+    expect(bc.createOrderingBlock()).toBeNull();
 
-    expect(block).not.toBeNull();
-    expect(block!.header.stateRoot).toBe(EMPTY_STATE_ROOT);
-    // Proverless apply skips the stateRoot gate, so the node accepts its own
-    // block — the fallback keeps producing, it does not just emit and fail.
-    expect(ordering.getCurrentHeight()).toBe(1);
-    expect(ordering.getOrderingBlock(1)).not.toBeNull();
+    expect(bc.getCurrentTemplate()).toBeNull();
+    expect(mempool.getPendingEntries(10)).toHaveLength(pooled);
+    expect(ordering.getCurrentHeight()).toBe(0);
+    expect(warns.some((w) => w.includes('no prover'))).toBe(true);
   });
 
-  it('an unexpected speculation crash is fatal — produce nothing, not EMPTY_STATE_ROOT', async () => {
+  it('an unexpected speculation crash is fatal — produce nothing', async () => {
     // Pins computePostBlockStateRoot's catch-all arm to `body-rejected`. The
     // mapping rides the apply funnel's totality doctrine: the funnel turns the
     // same throw into a block rejection, so a body that crashes speculation is
-    // a body no node — this one included — will apply. Mapping it to
-    // `no-prover` instead would solve real PoW over EMPTY_STATE_ROOT on that
-    // body: the 1c defect in a second costume. Until this test the arm was
-    // unpinned — flipping it to `no-prover` left all 909 tests green
-    // (2026-08-07 probe).
+    // a body no node — this one included — will apply.
     //
     // Reached by injection at the module seam, not by crafted data: the
     // creator builds its candidate from locally validated state, so a plain
@@ -352,23 +353,23 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
-    // applyBlockMutations is the speculation's last in-transaction call and
-    // runs only after the mutation phase succeeded — so the injected Error is
-    // neither a SpeculativeRollback nor a BlockRejected, and only the
-    // catch-all can field it. Everything else passes through untouched.
+    // performTreeWrites is the speculation's last call and runs only after the
+    // mutation phase succeeded — so the injected Error is not a rejection the
+    // phase decided, and only the catch-all can field it. The bootstrap's own
+    // writes go through the module's internal binding, not this export.
     vi.doMock('../../src/state/avl-prover.js', async (importOriginal) => {
       const actual =
         await importOriginal<typeof import('../../src/state/avl-prover.js')>();
       return {
         ...actual,
-        applyBlockMutations: (): Uint8Array => {
+        performTreeWrites: (): Uint8Array => {
           throw new Error('injected: prover mutation crashed mid-speculation');
         },
       };
     });
 
-    // Live prover with a real digest, so the no-prover early bails cannot be
-    // what keeps the block away.
+    // Live prover with a real digest, so a missing prover cannot be what keeps
+    // the block away.
     const utxo = await importUtxo();
     utxo.insertBox(makeKarmaBox(24n, makeTestIdentity().userId, 0));
     const handle = await activateProver();
@@ -428,7 +429,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
 
     // A stated rejection, not the catch-all: the arm returns false, so the
     // speculation exits through `BlockRejected` and the prover is restored.
-    expect(computePostBlockStateRoot(candidate)).toEqual({ kind: 'body-rejected' });
+    expect(computePostBlockStateRoot(candidate, handle)).toEqual({ kind: 'body-rejected' });
     expect(Buffer.from(handle.prover.digest()!).toString('hex')).toBe(preDigest);
   });
 
@@ -453,7 +454,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     // meets the refusal. A fixture cannot express the condition any other way —
     // a store and a tree that disagree is not something a body can carry.
     let armed = false;
-    const badKey = 'ab'.repeat(32);
+    const badKey = '01' + 'ab'.repeat(64); // a box key (TYPES_INTERFACE → The tree keys)
     // ⚠ **Resolved here, not by a static import at the top of the file.**
     // `vi.resetModules()` gives each module graph its own copy of
     // `corrupt-state.js`, so a statically-imported class is a *different object*
@@ -466,13 +467,13 @@ describe('block creator vs a body its own mutation phase rejects', () => {
         await importOriginal<typeof import('../../src/state/avl-prover.js')>();
       return {
         ...actual,
-        applyBlockMutations: (
-          ...args: Parameters<typeof actual.applyBlockMutations>
+        performTreeWrites: (
+          ...args: Parameters<typeof actual.performTreeWrites>
         ): Uint8Array => {
           if (armed) {
-            throw new DivergedStateTreeError('applyBlockMutations', 1, 'Remove', badKey);
+            throw new DivergedStateTreeError('performTreeWrites', 1, 'Remove', badKey);
           }
-          return actual.applyBlockMutations(...args);
+          return actual.performTreeWrites(...args);
         },
       };
     });
@@ -501,7 +502,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     armed = true;
     // It never returns a verdict: the boundary is reached instead, and the
     // stubbed exit is what comes back out.
-    expect(() => computePostBlockStateRoot(candidate)).toThrow('process.exit');
+    expect(() => computePostBlockStateRoot(candidate, handle)).toThrow('process.exit');
     expect(exited).toEqual([1]);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain('FATAL');

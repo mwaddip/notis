@@ -1,23 +1,16 @@
 import { BatchAVLProver, PersistentBatchAVLProver } from '@ergots/avltree';
 import { SqliteAvlStorage } from './avl-storage.js';
-import {
-  serializeBox,
-  serializeNetworkRecord,
-  serializeUsernameRecord,
-  serializeHolderRecord,
-} from './serialize-box.js';
-import type { UsernameAvlRecord } from './serialize-box.js';
-import { getDb } from '../store/db.js';
+import { getDb, isCurrentDb } from '../store/db.js';
 import { config } from '../config.js';
 import { DivergedStateTreeError } from '../services/corrupt-state.js';
-import type { AnyBox, IdentityRecord } from '@dagsocial/types';
+import type { AnyBox, IdentityRecord, NetworkRecord, UserId } from '@dagsocial/types';
 import {
   USERNAME_KEY_DOMAIN,
   USERNAME_HOLDER_KEY_DOMAIN,
-  identityRecordBytes,
+  bytesToHex,
 } from '@dagsocial/types';
-import type { NetworkRecord } from '../store/identity-records.js';
-import type { HolderRecord } from '../store/usernames.js';
+import { seedTreeWrites } from '@dagsocial/consensus';
+import type { TreeWrite } from '@dagsocial/consensus';
 import crypto from 'node:crypto';
 
 /** Sentinel key for block height metadata in additionalData. */
@@ -32,6 +25,18 @@ export function encodeHeight(h: number): Uint8Array {
 
 let persistentProver: PersistentBatchAVLProver | null = null;
 let storage: SqliteAvlStorage | null = null;
+/**
+ * The global database the singleton was built over. The singleton is that
+ * database's prover and no other's: a database closed and opened again is
+ * another store, holding its own tree, with no prover until one is created.
+ */
+let singletonDb: import('better-sqlite3').Database | null = null;
+
+/** The singleton, while the database it was built over is the open one. */
+function singleton(): AvlProverHandle | null {
+  if (!persistentProver || !storage || !singletonDb || !isCurrentDb(singletonDb)) return null;
+  return { prover: persistentProver, storage };
+}
 
 export interface AvlProverHandle {
   prover: PersistentBatchAVLProver;
@@ -49,7 +54,8 @@ export function createAvlProver(db?: import('better-sqlite3').Database): AvlProv
   // Singleton only when using the global database (production mode).
   // When an explicit db is passed (testing), always create a fresh prover
   // so callers can get independent provers sharing the same underlying store.
-  if (!db && persistentProver && storage) return { prover: persistentProver, storage };
+  const live = db ? null : singleton();
+  if (live) return live;
 
   const database = db ?? getDb();
   const keyLength = config.avlKeyLength;
@@ -66,35 +72,10 @@ export function createAvlProver(db?: import('better-sqlite3').Database): AvlProv
   if (!db) {
     storage = newStorage;
     persistentProver = newProver;
+    singletonDb = database;
   }
 
   return { prover: newProver, storage: newStorage };
-}
-
-/** One identity-record write destined for the tree, keyed by its AVL key. */
-export interface RecordPut {
-  /** hex — H(IDENTITY_KEY_DOMAIN ‖ identityId). */
-  key: string;
-  record: IdentityRecord;
-}
-
-/** One network-record write destined for the tree, keyed by its AVL key. */
-export interface NetworkPut {
-  /** hex — H(NETWORK_KEY_DOMAIN). */
-  key: string;
-  network: NetworkRecord;
-}
-
-/** One name-record write destined for the tree. */
-export interface UsernamePut {
-  key: string;
-  username: UsernameAvlRecord;
-}
-
-/** One holder-record write destined for the tree. */
-export interface HolderPut {
-  key: string;
-  holder: HolderRecord;
 }
 
 /** NODE_INTERFACE → Username records — H(USERNAME_KEY_DOMAIN ‖ canonical(name)). */
@@ -118,7 +99,10 @@ export function holderRecordKey(identityId: Uint8Array): string {
 }
 
 /**
- * Build a prover's tree from a full set of committed state.
+ * Build a prover's tree from a full set of committed state: the performance of
+ * `seedTreeWrites(boxes, records, network)` (CONSENSUS_INTERFACE → The tree
+ * writes → "`seedTreeWrites(boxes, records, network)` is genesis") — every write
+ * an `Insert`, in the order it answers — then the checkpoint at `height`.
  *
  * ⚠ **Exactly one production caller — `seedGenesisState` — and there must not
  * be a second.** AVL+ tree shape is history-dependent, so a tree rebuilt from a
@@ -133,205 +117,61 @@ export function holderRecordKey(identityId: Uint8Array): string {
  * caller is test tooling (order-independence, restart-comparison, journal
  * round-trip scaffolding).
  *
- * **`records` is required, and deliberately not defaulted.** The tree holds two
- * committed entity kinds; a feed of only boxes produces a tree missing every
- * record and therefore a different `stateRoot`. `applyBlockMutations`' analogous
- * parameter *is* defaulted, for its existing three-argument call sites;
- * requiring it here makes the omission a compile error.
- *
- * Both feeds are sorted by hex key, matching `applyBlockMutations`' canonical
- * order: all boxes, then all records. Boxes and records cannot collide — their
- * keys are hashes under different domain tags.
+ * **`records` and `network` are required, as `seedTreeWrites`' are**: a seed
+ * without them is a tree missing the records and a different `stateRoot`. An
+ * `Insert` the tree refuses stops the seed (`performTreeWrites`).
  */
 export function bootstrapAvlProver(
   handle: AvlProverHandle,
-  unspentBoxes: AnyBox[],
-  currentHeight: number,
-  records: RecordPut[],
-  networkPuts: NetworkPut[] = [],
+  boxes: readonly AnyBox[],
+  height: number,
+  records: ReadonlyArray<{ identityId: UserId; record: IdentityRecord }>,
+  network: NetworkRecord,
 ): void {
-  // Sorted here rather than in getUnspentBoxes' SQL: the canonical order is a
-  // property of the prover feed, so it lives at this boundary and every other
-  // caller of getUnspentBoxes keeps its own ordering.
-  for (const box of sortByBoxId(unspentBoxes)) {
-    const key = hexToBytes(box.id!);
-    const value = serializeBox(box);
-    const result = handle.prover.performOneOperation({ tag: 'Insert', key, value });
-    if (!result.success) {
-      throw new DivergedStateTreeError(
-        'bootstrapAvlProver', currentHeight, 'Insert', box.id!,
-      );
-    }
+  const writes = seedTreeWrites(boxes, records, network);
+  const other = writes.find((write) => write.tag !== 'Insert');
+  if (other !== undefined) {
+    throw new Error(`bootstrapAvlProver: seedTreeWrites answered ${other.tag}; a seed is Inserts only`);
   }
-  // `Insert`, not `InsertOrUpdate`: the tree is empty and the store holds one
-  // row per identity, so a repeat here would mean a duplicate key and should
-  // fail loudly rather than silently keep the last one — which is what reading
-  // the verdict is for. The choice of operation only sets up the refusal; the
-  // throw is what makes it loud.
-  for (const put of [...records].sort((a, b) => byHexBoxId(a.key, b.key))) {
-    const result = handle.prover.performOneOperation({
-      tag: 'Insert',
-      key: hexToBytes(put.key),
-      value: identityRecordBytes(put.record),
-    });
-    if (!result.success) {
-      throw new DivergedStateTreeError(
-        'bootstrapAvlProver', currentHeight, 'Insert', put.key,
-      );
-    }
-  }
-  for (const np of [...networkPuts].sort((a, b) => byHexBoxId(a.key, b.key))) {
-    const result = handle.prover.performOneOperation({
-      tag: 'Insert',
-      key: hexToBytes(np.key),
-      value: serializeNetworkRecord(np.network),
-    });
-    if (!result.success) {
-      throw new DivergedStateTreeError(
-        'bootstrapAvlProver', currentHeight, 'Insert', np.key,
-      );
-    }
-  }
+  performTreeWrites(handle.prover, height, writes, 'bootstrapAvlProver');
   // The constructor writes the empty tree's version at height 0 on a fresh
   // store; the bootstrap replaces the version at its height — at genesis,
   // that row (NODE_INTERFACE → AVL+ State Root).
-  handle.storage.deleteVersionAtHeight(currentHeight);
+  handle.storage.deleteVersionAtHeight(height);
   // Checkpoint at current tip
   handle.prover.generateProofAndUpdateStorage([
-    [HEIGHT_SENTINEL, encodeHeight(currentHeight)],
+    [HEIGHT_SENTINEL, encodeHeight(height)],
   ]);
 }
 
 /**
- * Apply a block's committed-state mutations to the prover and return the new
- * 33-byte digest.
- *
- * The feed is sorted internally, so callers MUST NOT rely on their input order
- * reaching the tree — it is deliberately discarded.
+ * Perform tree writes on the prover in the order given and answer the digest
+ * they leave — a block's writes are `treeWritesOf`'s, in the order it answers
+ * (CONSENSUS_INTERFACE → The tree writes).
  *
  * **The tree is asked, and a refusal stops the node** (NODE_INTERFACE → AVL+
- * State Root). `Remove` of an absent key and `Insert` of a present one are the
- * two answers `performOneOperation` can refuse, and each says the tree and
- * `utxo_boxes` have drifted — see `DivergedStateTreeError` for the per-arm
- * provenance. The throw is the short-circuit: the first refusal stops the feed,
- * leaving the tree wherever it got to, which is why every caller snapshots the
- * digest and restores it.
+ * State Root → "A box block application SPENDS must already be in the tree, and
+ * THE TREE IS ASKED"): a write `performOneOperation` refuses is
+ * `DivergedStateTreeError`. The throw is the short-circuit: the first refusal
+ * stops the writes, leaving the tree wherever it got to, which is why every
+ * caller snapshots the digest and restores it.
  *
- * `height` is second, not last, because a required parameter cannot follow the
- * defaulted `recordPuts`.
- *
- * @param height - the block height these mutations belong to, for the diagnostic
- * @param consumed - hex-encoded box IDs consumed in this block, any order
- * @param created - full box objects created in this block, any order
- * @param recordPuts - identity-record writes, any order, **one entry per key**
- *   (the journal feed collapses duplicates to the last write before this point;
- *   record puts are not commutative, so that collapse must happen where
- *   application order is still authoritative)
+ * @param height - the block height the writes belong to, for the diagnostic
+ * @param site - the caller, for the diagnostic
  * @returns 33-byte digest (root label || height)
  */
-export function applyBlockMutations(
+export function performTreeWrites(
   prover: PersistentBatchAVLProver,
   height: number,
-  consumed: string[],
-  created: AnyBox[],
-  recordPuts: RecordPut[] = [],
-  networkPuts: NetworkPut[] = [],
-  usernamePuts: UsernamePut[] = [],
-  holderPuts: HolderPut[] = [],
-  removedRecordKeys: string[] = [],
+  writes: readonly TreeWrite[],
+  site: string,
 ): Uint8Array {
-  // Canonical order (M-12): all removes, then all inserts, then all record
-  // puts, each lexicographically by hex key.
-  //
-  // The remove and insert groups are disjoint by construction. A key in the
-  // remove group was in the tree before this block; a key in the insert group
-  // is created by it. Under provenance-derived ids a box id is a function of
-  // (candidate, txId, index), so two boxes share an id only if they share all
-  // three — i.e. the same transaction applied at two heights. A real tx cannot
-  // be: its inputs are consumed on first application. **That step depends on
-  // every user tx having at least one input**, which the UTXO engine enforces
-  // by rejecting empty-input txs — a zero-input user tx would be replayable and
-  // would break this argument, so that rejection is load-bearing for identity,
-  // not merely for value. A synthetic mint tx cannot recur either: mintTxId
-  // commits to the height. Intra-block insert+remove pairs for one id were
-  // netted out upstream. So the split can never reorder ops on a single key.
-  //
-  // Note how strong that is: an id cannot recur across blocks at all, not
-  // merely within one.
-  //
-  // Boxes and records are disjoint by **domain separation**, not by luck: box
-  // ids and record keys are hashes under different domain tags. That is why the
-  // record key is hashed rather than the raw 32-byte pubkey, which an attacker
-  // chooses.
-  for (const boxId of [...consumed].sort(byHexBoxId)) {
-    const key = hexToBytes(boxId);
-    const result = prover.performOneOperation({ tag: 'Remove', key });
-    if (!result.success) {
-      throw new DivergedStateTreeError('applyBlockMutations', height, 'Remove', boxId);
+  for (const write of writes) {
+    if (!prover.performOneOperation(write).success) {
+      throw new DivergedStateTreeError(site, height, write.tag, bytesToHex(write.key));
     }
   }
-
-  // Insert created boxes, same canonical order
-  for (const box of sortByBoxId(created)) {
-    const key = hexToBytes(box.id!);
-    const value = serializeBox(box);
-    const result = prover.performOneOperation({ tag: 'Insert', key, value });
-    if (!result.success) {
-      throw new DivergedStateTreeError('applyBlockMutations', height, 'Insert', box.id!);
-    }
-  }
-
-  // Record puts use InsertOrUpdate: a put is a create on first write and an
-  // update afterwards, and the feed does not know which — InsertOrUpdate
-  // collapses that distinction so the feed needs no existence lookup.
-  //
-  // The one discarded verdict in this file, and the only one that carries no
-  // information: `InsertOrUpdate` is total. Its update function returns the new
-  // value unconditionally, so both the key-present and key-absent descents
-  // succeed and `{ success: false }` has no path here. Narrowing it would add a
-  // branch nothing can enter.
-  for (const put of [...recordPuts].sort((a, b) => byHexBoxId(a.key, b.key))) {
-    prover.performOneOperation({
-      tag: 'InsertOrUpdate',
-      key: hexToBytes(put.key),
-      value: identityRecordBytes(put.record),
-    });
-  }
-
-  for (const np of [...networkPuts].sort((a, b) => byHexBoxId(a.key, b.key))) {
-    prover.performOneOperation({
-      tag: 'InsertOrUpdate',
-      key: hexToBytes(np.key),
-      value: serializeNetworkRecord(np.network),
-    });
-  }
-
-  for (const up of [...usernamePuts].sort((a, b) => byHexBoxId(a.key, b.key))) {
-    prover.performOneOperation({
-      tag: 'InsertOrUpdate',
-      key: hexToBytes(up.key),
-      value: serializeUsernameRecord(up.username),
-    });
-  }
-
-  for (const hp of [...holderPuts].sort((a, b) => byHexBoxId(a.key, b.key))) {
-    prover.performOneOperation({
-      tag: 'InsertOrUpdate',
-      key: hexToBytes(hp.key),
-      value: serializeHolderRecord(hp.holder),
-    });
-  }
-
-  for (const rk of [...removedRecordKeys].sort(byHexBoxId)) {
-    const result = prover.performOneOperation({ tag: 'Remove', key: hexToBytes(rk) });
-    if (!result.success) {
-      throw new DivergedStateTreeError('applyBlockMutations', height, 'Remove', rk);
-    }
-  }
-
-  const digest = prover.digest();
-  if (!digest) throw new Error('Prover digest is null after block mutations');
-  return digest;
+  return prover.digest();
 }
 
 /**
@@ -353,35 +193,16 @@ export function checkpointProver(
   }
 }
 
-/** Decode hex string to bytes. */
-function hexToBytes(hex: string): Uint8Array {
-  return new Uint8Array(Buffer.from(hex, 'hex'));
-}
-
-/**
- * Lexicographic order over hex box ids — the canonical prover-feed order
- * (M-12; NODE_INTERFACE → AVL+ State Root). Ids are fixed-width lowercase hex,
- * so code-unit order is byte order over the underlying key.
- */
-function byHexBoxId(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
-/** Boxes in canonical id order, without mutating the caller's array. */
-function sortByBoxId<T extends { id?: string }>(boxes: T[]): T[] {
-  return [...boxes].sort((a, b) => byHexBoxId(a.id!, b.id!));
-}
-
 /** Get the singleton prover handle (throws if not initialized). */
 export function getAvlProver(): AvlProverHandle {
-  if (!persistentProver || !storage) {
+  const live = singleton();
+  if (!live) {
     throw new Error('AVL prover not initialized. Call createAvlProver() first.');
   }
-  return { prover: persistentProver, storage };
+  return live;
 }
 
 /** Get the singleton prover handle, or null if not initialized. */
 export function tryGetAvlProver(): AvlProverHandle | null {
-  if (!persistentProver || !storage) return null;
-  return { prover: persistentProver, storage };
+  return singleton();
 }

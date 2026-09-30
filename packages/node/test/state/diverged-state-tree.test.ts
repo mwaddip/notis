@@ -1,15 +1,24 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import {
+  boxKey,
+  boxRecordBytes,
+  bytesToHex,
+  hexToBytes,
+  identityKey,
+  identityRecordBytes,
+  networkKey,
+  networkRecordBytes,
+} from '@dagsocial/types';
+import type { AnyBox, IdentityRecord, KarmaBox } from '@dagsocial/types';
+import type { TreeWrite } from '@dagsocial/consensus';
+import {
   createAvlProver,
-  applyBlockMutations,
   bootstrapAvlProver,
-  type RecordPut,
+  performTreeWrites,
 } from '../../src/state/avl-prover.js';
 import { DivergedStateTreeError } from '../../src/services/corrupt-state.js';
-import { fixtureProvenance, openAvlDb } from '../helpers.js';
-import type { AnyBox } from '@dagsocial/types';
-import type { IdentityRecord } from '@dagsocial/types';
+import { openAvlDb, seedProvenance, uid } from '../helpers.js';
 
 /**
  * The tree is asked, and a refusal is raised (NODE_INTERFACE → AVL+ State Root).
@@ -20,10 +29,6 @@ import type { IdentityRecord } from '@dagsocial/types';
  * matches. A test that seeded a divergence and compared roots would pass for the
  * wrong reason, which is why every case here asserts the class and the key it
  * names instead.
- *
- * Every rule below had **no incidental coverage** before it was written — the
- * suite's existing removes all name keys inserted earlier into the same prover,
- * so no fixture ever handed the tree an operation it could refuse.
  */
 
 const REC: IdentityRecord = {
@@ -38,15 +43,21 @@ const REC: IdentityRecord = {
   invitesUsed: 0,
 };
 
-/** A karma box with a chosen id — provenance filled the way a real one carries it. */
-function makeKarmaBox(id: string, value = 100n, height = 1): AnyBox & { id: string } {
-  const candidate = {
-    boxType: 'karma' as const,
-    value,
-    createdAtBlock: height,
-    owner: new Uint8Array(32).fill(0x77),
-  };
-  return { id, ...candidate, ...fixtureProvenance(candidate, height) };
+const owner = uid('diverged-state-tree/owner');
+
+function karma(nonce: number, value = 100n): KarmaBox & { id: string } {
+  return seedProvenance<KarmaBox>({ boxType: 'karma', value, createdAtBlock: 1, owner }, 1, nonce);
+}
+
+const keyOf = (box: AnyBox): Uint8Array => boxKey(hexToBytes(box.id!));
+const insertOf = (box: AnyBox): TreeWrite =>
+  ({ tag: 'Insert', key: keyOf(box), value: boxRecordBytes(box, box.txId, box.index) });
+
+function refusal(run: () => unknown): DivergedStateTreeError {
+  let caught: unknown;
+  try { run(); } catch (err) { caught = err; }
+  expect(caught).toBeInstanceOf(DivergedStateTreeError);
+  return caught as DivergedStateTreeError;
 }
 
 describe('a refused AVL+ operation raises DivergedStateTreeError', () => {
@@ -59,45 +70,47 @@ describe('a refused AVL+ operation raises DivergedStateTreeError', () => {
   afterEach(() => { db.close(); });
 
   // -------------------------------------------------------------------------
-  // applyBlockMutations — the two arms
+  // performTreeWrites — the three refusals
   // -------------------------------------------------------------------------
 
-  it('throws when `consumed` names a key the tree never held — the whole unit', () => {
+  it('throws when a Remove names a key the tree never held — the whole unit', () => {
     const { prover } = createAvlProver(db);
-    const absent = 'ab'.repeat(32);
+    const absent = karma(9);
 
     // The tree holds one box, and the block spends a different one.
-    applyBlockMutations(prover, 1, [], [makeKarmaBox('11'.repeat(32))]);
+    performTreeWrites(prover, 1, [insertOf(karma(1))], 'test');
 
-    let caught: unknown;
-    try {
-      applyBlockMutations(prover, 2, [absent], []);
-    } catch (err) { caught = err; }
-
-    expect(caught).toBeInstanceOf(DivergedStateTreeError);
-    const err = caught as DivergedStateTreeError;
-    // The key is the only thing that says *which* box the two stores disagree
-    // about, so it has to survive into the message an operator reads.
-    expect(err.message).toContain(absent);
+    const err = refusal(() => performTreeWrites(prover, 2, [{ tag: 'Remove', key: keyOf(absent) }], 'applyOrderingBlock'));
+    // The key is the only thing that says *which* entry the tree lacks, so it
+    // has to survive into the message an operator reads — and its kind with it.
+    const hex = bytesToHex(keyOf(absent));
+    expect(err.message).toContain(hex);
+    expect(err.message).toContain('the box key');
     expect(err.op).toBe('Remove');
-    expect(err.key).toBe(absent);
+    expect(err.key).toBe(hex);
     expect(err.height).toBe(2);
-    expect(err.site).toBe('applyBlockMutations');
+    expect(err.site).toBe('applyOrderingBlock');
   });
 
-  it('throws when `created` carries a box id the tree already holds', () => {
+  it('throws when an Insert carries a key the tree already holds', () => {
     const { prover } = createAvlProver(db);
-    const id = 'cd'.repeat(32);
-    applyBlockMutations(prover, 1, [], [makeKarmaBox(id)]);
+    const box = karma(1);
+    performTreeWrites(prover, 1, [insertOf(box)], 'test');
 
-    let caught: unknown;
-    try {
-      applyBlockMutations(prover, 2, [], [makeKarmaBox(id, 50n, 2)]);
-    } catch (err) { caught = err; }
+    const err = refusal(() => performTreeWrites(prover, 2, [insertOf(box)], 'test'));
+    expect(err.op).toBe('Insert');
+    expect(err.message).toContain(bytesToHex(keyOf(box)));
+  });
 
-    expect(caught).toBeInstanceOf(DivergedStateTreeError);
-    expect((caught as DivergedStateTreeError).op).toBe('Insert');
-    expect((caught as DivergedStateTreeError).message).toContain(id);
+  it('throws when an Update names a key the tree lacks, naming the kind by its tag and never a box', () => {
+    const { prover } = createAvlProver(db);
+
+    const err = refusal(() =>
+      performTreeWrites(prover, 3, [{ tag: 'Update', key: networkKey(), value: networkRecordBytes({ memberCount: 1 }) }], 'test'));
+    expect(err.op).toBe('Update');
+    expect(err.key).toBe(bytesToHex(networkKey()));
+    expect(err.message).toContain('the network key');
+    expect(err.message).not.toMatch(/\bbox\b/);
   });
 
   // -------------------------------------------------------------------------
@@ -106,80 +119,69 @@ describe('a refused AVL+ operation raises DivergedStateTreeError', () => {
 
   it('stops at the FIRST refusal — the tree is never asked for the second', () => {
     const { prover } = createAvlProver(db);
-    applyBlockMutations(prover, 1, [], [makeKarmaBox('11'.repeat(32))]);
-    const before = Buffer.from(prover.digest()!).toString('hex');
+    performTreeWrites(prover, 1, [insertOf(karma(1))], 'test');
+    const before = bytesToHex(prover.digest());
 
-    // Two removes, both absent. The feed is sorted, so `22…` is asked first and
-    // `99…` is never reached.
+    // Two removes, both absent: the first refusal ends the writes.
     expect(() =>
-      applyBlockMutations(prover, 2, ['99'.repeat(32), '22'.repeat(32)], []),
+      performTreeWrites(prover, 2, [{ tag: 'Remove', key: keyOf(karma(8)) }, { tag: 'Remove', key: keyOf(karma(9)) }], 'test'),
     ).toThrow(DivergedStateTreeError);
 
     // The digest is asserted rather than the call count: what matters is that
     // the tree did not move, not how the loop was written.
-    expect(Buffer.from(prover.digest()!).toString('hex')).toBe(before);
+    expect(bytesToHex(prover.digest())).toBe(before);
   });
 
-  it('names the first key in canonical order, not the caller order', () => {
+  it('names the first write refused, in the order the writes are handed', () => {
     const { prover } = createAvlProver(db);
-    let caught: unknown;
-    try {
-      applyBlockMutations(prover, 1, ['99'.repeat(32), '22'.repeat(32)], []);
-    } catch (err) { caught = err; }
-    expect((caught as DivergedStateTreeError).key).toBe('22'.repeat(32));
+    const [second, first] = [karma(8), karma(9)];
+    const err = refusal(() =>
+      performTreeWrites(prover, 1, [{ tag: 'Remove', key: keyOf(first) }, { tag: 'Remove', key: keyOf(second) }], 'test'));
+    expect(err.key).toBe(bytesToHex(keyOf(first)));
   });
 
   // -------------------------------------------------------------------------
-  // bootstrapAvlProver — both feeds
+  // bootstrapAvlProver
   // -------------------------------------------------------------------------
 
-  it('bootstrapAvlProver throws on a duplicate box id', () => {
+  it('bootstrapAvlProver throws on a key the tree already holds', () => {
     const handle = createAvlProver(db);
-    const id = 'ef'.repeat(32);
+    const box = karma(1);
+    bootstrapAvlProver(handle, [box], 0, [], { memberCount: 0 });
 
-    let caught: unknown;
-    try {
-      bootstrapAvlProver(handle, [makeKarmaBox(id), makeKarmaBox(id, 50n, 2)], 0, []);
-    } catch (err) { caught = err; }
-
-    expect(caught).toBeInstanceOf(DivergedStateTreeError);
-    const err = caught as DivergedStateTreeError;
+    const err = refusal(() => bootstrapAvlProver(handle, [box], 0, [], { memberCount: 0 }));
     expect(err.site).toBe('bootstrapAvlProver');
     expect(err.op).toBe('Insert');
-    expect(err.key).toBe(id);
+    expect(err.key).toBe(bytesToHex(keyOf(box)));
   });
 
-  it('bootstrapAvlProver throws on a duplicate record key', () => {
+  it('bootstrapAvlProver refuses a seed that writes one key twice, before the tree moves', () => {
     const handle = createAvlProver(db);
-    const key = '5a'.repeat(32);
-    const puts: RecordPut[] = [{ key, record: REC }, { key, record: REC }];
+    const before = bytesToHex(handle.prover.digest());
+    const identityId = uid('diverged-state-tree/record');
 
-    let caught: unknown;
-    try {
-      bootstrapAvlProver(handle, [], 0, puts);
-    } catch (err) { caught = err; }
-
-    expect(caught).toBeInstanceOf(DivergedStateTreeError);
-    expect((caught as DivergedStateTreeError).key).toBe(key);
-    expect((caught as DivergedStateTreeError).site).toBe('bootstrapAvlProver');
+    expect(() => bootstrapAvlProver(handle, [], 0, [
+      { identityId, record: REC },
+      { identityId: Uint8Array.from(identityId), record: REC },
+    ], { memberCount: 1 })).toThrow(/two writes/);
+    expect(bytesToHex(handle.prover.digest())).toBe(before);
   });
 
   // -------------------------------------------------------------------------
-  // The one result that stays discarded
+  // The one write with no refusal
   // -------------------------------------------------------------------------
 
   it('a repeated record put does NOT throw — InsertOrUpdate is total', () => {
     const { prover } = createAvlProver(db);
-    const key = '7b'.repeat(32);
+    const key = identityKey(uid('diverged-state-tree/record'));
 
-    // The counterpart to the two bootstrap cases: the same repetition that is a
-    // refusal on `Insert` is a legal overwrite here, which is why the record-put
-    // loop's result carries no verdict to read.
-    applyBlockMutations(prover, 1, [], [], [{ key, record: REC }]);
+    // The same repetition that is a refusal on `Insert` is a legal overwrite
+    // here, which is why an `InsertOrUpdate` is never refused.
+    performTreeWrites(prover, 1, [{ tag: 'InsertOrUpdate', key, value: identityRecordBytes(REC) }], 'test');
     expect(() =>
-      applyBlockMutations(prover, 2, [], [], [
-        { key, record: { ...REC, lastActivityBlock: 99 } },
-      ]),
+      performTreeWrites(prover, 2, [
+        { tag: 'InsertOrUpdate', key, value: identityRecordBytes({ ...REC, lastActivityBlock: 99 }) },
+      ], 'test'),
     ).not.toThrow();
   });
 });

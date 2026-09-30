@@ -20,6 +20,7 @@ import {
   signTransaction,
   type TestIdentity,
   activateProverOverStore,
+  seedBoxes,
 } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -194,16 +195,14 @@ async function confirmPostBlock(
   return makeApplicableBlock({ height, utxoTxs: [postTx] });
 }
 
-/** n fresh likers, each with a seeded 2n karma box (nonce-distinct). */
+/** n fresh likers, each with a committed 2n karma box (nonce-distinct). */
 async function seedLikers(n: number, nonceBase = 0): Promise<Array<{ id: TestIdentity; box: KarmaBox }>> {
-  const utxo = await importUtxo();
   const likers: Array<{ id: TestIdentity; box: KarmaBox }> = [];
   for (let i = 0; i < n; i++) {
     const id = makeTestIdentity();
-    const box = makeKarmaBox(2n, id.userId, 0, nonceBase + i);
-    utxo.insertBox(box);
-    likers.push({ id, box });
+    likers.push({ id, box: makeKarmaBox(2n, id.userId, 0, nonceBase + i) });
   }
+  await seedBoxes(likers.map(({ box }) => box));
   return likers;
 }
 
@@ -471,8 +470,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const liker = makeTestIdentity();
     const box1 = makeKarmaBox(2n, liker.userId, 0, 0);
     const box2 = makeKarmaBox(2n, liker.userId, 0, 1);
-    utxo.insertBox(box1);
-    utxo.insertBox(box2);
+    await seedBoxes([box1, box2]);
 
     const tx1 = makeLikeTx(liker, box1, postId, author.userId);
     const tx2 = makeLikeTx(liker, box2, postId, author.userId);
@@ -508,8 +506,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const liker = makeTestIdentity();
     const box1 = makeKarmaBox(2n, liker.userId, 0, 0);
     const box2 = makeKarmaBox(2n, liker.userId, 0, 1);
-    utxo.insertBox(box1);
-    utxo.insertBox(box2);
+    await seedBoxes([box1, box2]);
 
     expect(
       blockApply.applyOrderingBlock(
@@ -541,7 +538,6 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const utxo = await importUtxo();
     const posts = await importPosts();
     const blockApply = await importBlockApply();
 
@@ -553,7 +549,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const liker = makeTestIdentity();
     const spare = makeTestIdentity();
     const box = makeKarmaBox(2n, liker.userId, 0);
-    utxo.insertBox(box);
+    await seedBoxes([box]);
 
     const tx: UtxoTransaction = {
       inputs: [box.id!],
@@ -693,7 +689,6 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const utxo = await importUtxo();
     const posts = await importPosts();
     await importRecords();
     const blockApply = await importBlockApply();
@@ -707,7 +702,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
     // Block 2: withdraw the post through the real path.
     const withdrawKarma = makeKarmaBox(1n, author.userId, 0, 8001);
-    utxo.insertBox(withdrawKarma);
+    await seedBoxes([withdrawKarma]);
     const withdrawTx: UtxoTransaction = {
       inputs: [withdrawKarma.id!],
       outputs: [

@@ -63,8 +63,8 @@ export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
  * full-set feed is sound (NODE_INTERFACE → AVL+ State Root → "AVL+ tree
  * shape is history-dependent"). Store unit tests also use it.
  *
- * The SQL `ORDER BY` is not the canonical order — the AVL key is a *hash* of
- * these bytes, so a prover feed sorts by that instead. This ordering only
+ * The SQL `ORDER BY` is not the canonical order — `seedTreeWrites` orders the
+ * seed by tree key (CONSENSUS_INTERFACE → The tree writes). This ordering only
  * makes the read deterministic.
  */
 export function getAllIdentityRecords(): Array<{ identityId: UserId; record: IdentityRecord }> {

@@ -496,6 +496,11 @@ export function getDb(): Database.Database {
   return db;
 }
 
+/** Whether `candidate` is the open global database — false once it is closed. */
+export function isCurrentDb(candidate: Database.Database): boolean {
+  return db === candidate;
+}
+
 export function closeDb(): void {
   if (db) {
     db.close();

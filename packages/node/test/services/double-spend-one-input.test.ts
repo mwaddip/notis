@@ -34,6 +34,7 @@ async function importDb() {
   return (await import('../../src/store/db.js')) as {
     initDb: (path: string) => void;
     closeDb: () => void;
+    getDb: () => import('better-sqlite3').Database;
   };
 }
 
@@ -61,6 +62,8 @@ describe('PROBE: two txs, one input', () => {
 
     const db = await importDb();
     db.initDb(':memory:');
+    // Every chain holds its network record from genesis on; the tree's seed carries it.
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
 
     const sender = makeTestIdentity();

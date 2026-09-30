@@ -38,8 +38,8 @@ import {
   mineNextBlock,
   signHeader,
   signTransaction,
-  solveHeaderPow, seedPostTx, fillerTx, activateProverOverStore, insertPoisonedBlock,
-  buildMinedHeaderChain, changeBoxOf } from '../helpers.js';
+  solveHeaderPow, seedPostTx, activateProverOverStore, insertPoisonedBlock,
+  buildMinedHeaderChain, changeBoxOf, revertChainTo, seedBoxes } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -192,6 +192,26 @@ async function importRefusedHeaders() {
     anyRefusedHeader: (hashes: string[]) => boolean;
     purgeRefusedHeaders: (belowHeight: number) => void;
   };
+}
+
+/**
+ * A pool entry any template can carry: a karma box spent back to its owner,
+ * signed. The box is committed now, so a test calls this before its first block
+ * — the fork point a reorg returns to then holds the box, and the template the
+ * reorg rebuilds keeps the entry rather than evicting it.
+ */
+async function seededSelfSpend(): Promise<UtxoTransaction> {
+  const owner = makeTestIdentity();
+  const box = makeKarmaBox(10n, owner.userId, 0);
+  await seedBoxes([box]);
+  const tx: UtxoTransaction = {
+    inputs: [box.id!],
+    outputs: [{ boxType: 'karma', value: box.value, createdAtBlock: 0, owner: owner.userId }],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  };
+  signTransaction(tx, owner.privateKey, hex(owner.userId));
+  return tx;
 }
 
 // ---------------------------------------------------------------------------
@@ -484,6 +504,11 @@ describe('a stored header that cannot be hashed', () => {
     // stays because the argument above is a claim about the rest of the tree
     // rather than a property of this function, and these tests pin the behaviour
     // the claim would have to survive.
+    // A prover over the store, so apply reaches the chain-link read: a node
+    // with none refuses every block before it (NODE_INTERFACE → Post-block
+    // stateRoot → "A node applies and produces over its prover, and has no
+    // other way to").
+    await activateProverOverStore();
     const block = buildBlock(1, -1);
     insertPoisonedBlock(db.getDb(), block);
     expect(ordering.getCurrentHeight()).toBe(1);
@@ -1082,8 +1107,12 @@ describe('reorg', () => {
     bc.startBlockCreator(testConfig);
 
     // Build 3 blocks
-    for (let i = 0; i < 3; i++) {
-      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `reorg test ${i}`);
+    // Every post's karma box is committed before the first block, so the fork
+    // point the reorg returns to holds it — a box `seedCommittedState` adds
+    // mid-chain has no journal, and a revert past it leaves it in the store alone.
+    const seededPosts = [];
+    for (let i = 0; i < 3; i++) seededPosts.push(await seedPostTx(author, `reorg test ${i}`));
+    for (const { commit, tx: postTx, postId, content } of seededPosts) {
       posts.insertPost(postId, commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
@@ -1208,11 +1237,16 @@ describe('reorg', () => {
     await mineNextBlock(bc);
     expect(mempool.getPendingEntries(100)).toHaveLength(0);
 
-    // An entry admitted since, spending the box the block's tx spent.
-    mempool.insertUtxoTx(
-      { inputs: [karmaBox.id!], outputs: [], signatures: {}, protocolVersion: 1 } as never,
-      1000,
-    );
+    // An entry admitted since, spending the box the block's tx spent — a
+    // well-formed spend, so the template the reorg rebuilds keeps it.
+    const incumbent: UtxoTransaction = {
+      inputs: [karmaBox.id!],
+      outputs: [{ boxType: 'karma', value: karmaBox.value, createdAtBlock: 0, owner: liker.userId }],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(incumbent, liker.privateKey, hex(liker.userId));
+    mempool.insertUtxoTx(incumbent, 1000);
 
     const forkResolution = await importForkResolution();
     expect(() => forkResolution.reorg(0, [])).not.toThrow();
@@ -1249,8 +1283,12 @@ describe('reorg', () => {
     bc.startBlockCreator(testConfig);
 
     // Build 2 blocks
-    for (let i = 0; i < 2; i++) {
-      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `chain a ${i}`);
+    // Every post's karma box is committed before the first block, so the fork
+    // point the reorg returns to holds it — a box `seedCommittedState` adds
+    // mid-chain has no journal, and a revert past it leaves it in the store alone.
+    const seededPosts = [];
+    for (let i = 0; i < 2; i++) seededPosts.push(await seedPostTx(author, `chain a ${i}`));
+    for (const { commit, tx: postTx, postId, content } of seededPosts) {
       posts.insertPost(postId, commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
@@ -1296,8 +1334,12 @@ describe('reorg', () => {
     bc.startBlockCreator(testConfig);
 
     // Build 3 blocks
-    for (let i = 0; i < 3; i++) {
-      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `original ${i}`);
+    // Every post's karma box is committed before the first block, so the fork
+    // point the reorg returns to holds it — a box `seedCommittedState` adds
+    // mid-chain has no journal, and a revert past it leaves it in the store alone.
+    const seededPosts = [];
+    for (let i = 0; i < 3; i++) seededPosts.push(await seedPostTx(author, `original ${i}`));
+    for (const { commit, tx: postTx, postId, content } of seededPosts) {
       posts.insertPost(postId, commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
@@ -1318,8 +1360,7 @@ describe('reorg', () => {
 
     // Delete block 3 and 2, but keep block 1 (simulate fork at height 1)
     const forkResolution = await importForkResolution();
-    forkResolution.revertBlock(3);
-    forkResolution.revertBlock(2);
+    await revertChainTo(1);
 
     expect(ordering.getCurrentHeight()).toBe(1);
 
@@ -1363,8 +1404,13 @@ describe('reorg', () => {
 
       // Two blocks, one post transaction each. Each insert sits alone in the pool
       // (cap 1) and is consumed by its block, so building the chain is fine.
-      for (let i = 0; i < 2; i++) {
-        const { commit, tx: postTx, postId, content } = await seedPostTx(author, `full pool ${i}`);
+      // Every post's karma box is committed before the first block, so the fork
+      // point the reorg returns to holds it — a box `seedCommittedState` adds
+      // mid-chain has no journal, and a revert past it leaves it in the store alone.
+      const occupier = await seededSelfSpend();
+      const seededPosts = [];
+      for (let i = 0; i < 2; i++) seededPosts.push(await seedPostTx(author, `full pool ${i}`));
+      for (const { commit, tx: postTx, postId, content } of seededPosts) {
         posts.insertPost(postId, commit, content);
         mempool.insertUtxoTx(postTx, 1000);
         await mineNextBlock(bc);
@@ -1375,7 +1421,7 @@ describe('reorg', () => {
       expect(mempool.getPendingEntries(100)).toHaveLength(0);
 
       // Fill the pool to its cap, so every re-insertion below is rejected.
-      mempool.insertUtxoTx(fillerTx('occupier'), 1000);
+      mempool.insertUtxoTx(occupier, 1000);
       expect(mempool.getPendingEntries(100)).toHaveLength(1);
 
       const forkResolution = await importForkResolution();
@@ -1407,14 +1453,19 @@ describe('reorg', () => {
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
 
-    for (let i = 0; i < 2; i++) {
-      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `room in pool ${i}`);
+    // Every post's karma box is committed before the first block, so the fork
+    // point the reorg returns to holds it — a box `seedCommittedState` adds
+    // mid-chain has no journal, and a revert past it leaves it in the store alone.
+    const occupier = await seededSelfSpend();
+    const seededPosts = [];
+    for (let i = 0; i < 2; i++) seededPosts.push(await seedPostTx(author, `room in pool ${i}`));
+    for (const { commit, tx: postTx, postId, content } of seededPosts) {
       posts.insertPost(postId, commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
 
-    mempool.insertUtxoTx(fillerTx('occupier'), 1000);
+    mempool.insertUtxoTx(occupier, 1000);
 
     const forkResolution = await importForkResolution();
     forkResolution.reorg(0, []);
@@ -1639,8 +1690,7 @@ async function buildForkScenario(): Promise<ForkScenario> {
   }
   expect(ordering.getCurrentHeight()).toBe(4);
 
-  const forkResolution = await importForkResolution();
-  for (const height of [4, 3, 2]) forkResolution.revertBlock(height);
+  await revertChainTo(1);
   expect(ordering.getCurrentHeight()).toBe(1);
 
   // Our chain: two blocks the creator mines to its own validator id, so they
@@ -2146,7 +2196,7 @@ describe('resolveFork — identity mismatch', () => {
       chainABlocks.push(b);
     }
     // Revert chain A
-    for (let h = 4; h > 1; h--) forkResolution.revertBlock(h);
+    await revertChainTo(1);
 
     // Chain B: three blocks at the same heights, different content
     const chainBBlocks: OrderingBlock[] = [];
@@ -2156,7 +2206,7 @@ describe('resolveFork — identity mismatch', () => {
       chainBBlocks.push(b);
     }
     // Revert chain B, rebuild our chain (2 blocks)
-    for (let h = 4; h > 1; h--) forkResolution.revertBlock(h);
+    await revertChainTo(1);
     await mineNextBlock(bc);
     await mineNextBlock(bc);
     expect(ordering.getCurrentHeight()).toBe(3);
@@ -2326,7 +2376,7 @@ describe('resolveFork — work rule', () => {
     // Build one competing block at height 2 (same work as ours)
     const theirBlock = await makeApplicableBlock({ height: 2 });
     expect(applyOrderingBlock(theirBlock)).toBe(true);
-    forkResolution.revertBlock(2);
+    await revertChainTo(1);
 
     // Mine our own height 2
     await mineNextBlock(bc);
@@ -2691,7 +2741,7 @@ describe('resolveFork — body-stage refusal → mark → re-serve → continuat
     forgedBlocks.push(forgedB4);
 
     // Revert the honest ones and rebuild our chain (height 2-3)
-    for (let h = 3; h > 1; h--) forkResolution.revertBlock(h);
+    await revertChainTo(1);
     await mineNextBlock(bc);
     await mineNextBlock(bc);
     expect(ordering.getCurrentHeight()).toBe(3);
@@ -2762,7 +2812,7 @@ describe('resolveFork — body-stage refusal → mark → re-serve → continuat
 
     // --- Step 4: unrelated valid heavier chain from the same peer → adopted ---
     // Build an honest, heavier chain
-    for (let h = 3; h > 1; h--) forkResolution.revertBlock(h);
+    await revertChainTo(1);
     const honestBlocks: OrderingBlock[] = [];
     for (const h of [2, 3, 4]) {
       const b = await makeApplicableBlock({ height: h });
@@ -2770,7 +2820,7 @@ describe('resolveFork — body-stage refusal → mark → re-serve → continuat
       honestBlocks.push(b);
     }
     // Revert and restore our chain
-    for (let h = 4; h > 1; h--) forkResolution.revertBlock(h);
+    await revertChainTo(1);
     await mineNextBlock(bc);
     await mineNextBlock(bc);
     expect(ordering.getCurrentHeight()).toBe(3);
@@ -2845,8 +2895,12 @@ describe('reorg — ceiling screen', () => {
       bc.startBlockCreator(testConfig);
 
       // Build 7 blocks so reorg(0, chain) has newTipHeight = 7
-      for (let i = 0; i < 7; i++) {
-        const { commit, tx: postTx, postId, content } = await seedPostTx(author, `ceiling ${i}`);
+      // Every post's karma box is committed before the first block, so the fork
+      // point the reorg returns to holds it — a box `seedCommittedState` adds
+      // mid-chain has no journal, and a revert past it leaves it in the store alone.
+      const seededPosts = [];
+      for (let i = 0; i < 7; i++) seededPosts.push(await seedPostTx(author, `ceiling ${i}`));
+      for (const { commit, tx: postTx, postId, content } of seededPosts) {
         posts.insertPost(postId, commit, content);
         mempool.insertUtxoTx(postTx, 1000);
         await mineNextBlock(bc);
@@ -2885,8 +2939,12 @@ describe('reorg — ceiling screen', () => {
       bc.startBlockCreator(testConfig);
 
       // Build 6 blocks so reorg(0, chain) has newTipHeight = 6
-      for (let i = 0; i < 6; i++) {
-        const { commit, tx: postTx, postId, content } = await seedPostTx(author, `no-screen ${i}`);
+      // Every post's karma box is committed before the first block, so the fork
+      // point the reorg returns to holds it — a box `seedCommittedState` adds
+      // mid-chain has no journal, and a revert past it leaves it in the store alone.
+      const seededPosts = [];
+      for (let i = 0; i < 6; i++) seededPosts.push(await seedPostTx(author, `no-screen ${i}`));
+      for (const { commit, tx: postTx, postId, content } of seededPosts) {
         posts.insertPost(postId, commit, content);
         mempool.insertUtxoTx(postTx, 1000);
         await mineNextBlock(bc);
@@ -2924,8 +2982,12 @@ describe('reorg — ceiling screen', () => {
       const bc = await importBlockCreator();
       bc.startBlockCreator(testConfig);
 
-      for (let i = 0; i < 7; i++) {
-        const { commit, tx: postTx, postId, content } = await seedPostTx(author, `null-ceiling ${i}`);
+      // Every post's karma box is committed before the first block, so the fork
+      // point the reorg returns to holds it — a box `seedCommittedState` adds
+      // mid-chain has no journal, and a revert past it leaves it in the store alone.
+      const seededPosts = [];
+      for (let i = 0; i < 7; i++) seededPosts.push(await seedPostTx(author, `null-ceiling ${i}`));
+      for (const { commit, tx: postTx, postId, content } of seededPosts) {
         posts.insertPost(postId, commit, content);
         mempool.insertUtxoTx(postTx, 1000);
         await mineNextBlock(bc);
@@ -3163,7 +3225,7 @@ describe('resolveFork — interlink root verification (step 7)', () => {
     expect(ordering.getCurrentHeight()).toBe(6);
 
     // Revert back to height 1 and mine our chain (3 blocks, strictly less work)
-    for (let h = 6; h > 1; h--) forkResolution.revertBlock(h);
+    await revertChainTo(1);
     expect(ordering.getCurrentHeight()).toBe(1);
     await mineNextBlock(bc);
     await mineNextBlock(bc);
@@ -3418,7 +3480,7 @@ describe('resolveFork — ASERT timestamp rules and schedule', () => {
       .toBeLessThanOrEqual(competingBlocks[0]!.header.powTargetBits);
 
     // Revert to height 1 and mine our shorter chain (2 blocks)
-    for (let h = 5; h > 1; h--) forkResolution.revertBlock(h);
+    await revertChainTo(1);
     expect(ordering.getCurrentHeight()).toBe(1);
     setClock(() => t1 + 60_000);
     await mineNextBlock(bc);
@@ -4298,7 +4360,7 @@ describe('resolveFork — paged scoring walk', () => {
       theirBlocks.push(b);
     }
     expect(ordering.getCurrentHeight()).toBe(32);
-    for (let h = 32; h >= 2; h--) forkResolution.revertBlock(h);
+    await revertChainTo(1);
     expect(ordering.getCurrentHeight()).toBe(1);
 
     // Our chain: 30 blocks (heights 2..31) at the same stamps.
@@ -4896,7 +4958,7 @@ describe('resolveFork — paged scoring walk', () => {
       theirBlocks.push(b);
     }
     expect(ordering.getCurrentHeight()).toBe(42);
-    for (let h = 42; h >= 2; h--) forkResolution.revertBlock(h);
+    await revertChainTo(1);
     expect(ordering.getCurrentHeight()).toBe(1);
 
     // Our chain: 40 blocks (heights 2..41) at the same stamps.
@@ -5606,7 +5668,7 @@ describe('resolveFork — reorg abort classes', () => {
     }
     const theirHeaders = [...theirBlocks].reverse().map(b => b.header)
       .concat(sharedH1);
-    for (let h = 4; h > 1; h--) forkResolution.revertBlock(h);
+    await revertChainTo(1);
     expect(ordering.getCurrentHeight()).toBe(1);
 
     // Mine our chain to 2 blocks so the fork is meaningful.
@@ -5727,7 +5789,7 @@ describe('resolveFork — reorg abort classes', () => {
     }
     const theirHeaders = [...theirBlocks].reverse().map(b => b.header)
       .concat(ordering.getOrderingBlock(1)!.header);
-    for (let h = 4; h > 1; h--) forkResolution.revertBlock(h);
+    await revertChainTo(1);
     expect(ordering.getCurrentHeight()).toBe(1);
 
     // Mine our chain to 2 blocks

@@ -13,10 +13,11 @@ import {
 } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
-// The stateRoot check is unconditional on every node holding a prover
-// (NODE_INTERFACE → AVL+ State Root). A block whose header commits to state
-// it does not produce is rejected, and rejecting it costs nothing — the DB
-// is untouched and the AVL prover is back at its pre-block digest.
+// The stateRoot check runs on every block a node applies (NODE_INTERFACE →
+// Post-block stateRoot → "A node applies and produces over its prover, and has
+// no other way to"). A block whose header commits to state it does not produce
+// is rejected, and rejecting it costs nothing — the DB is untouched and the AVL
+// prover is back at its pre-block digest.
 //
 // The producer side (the header carries the post-block digest) is covered
 // end-to-end by every suite that builds a block through the creator or through
@@ -162,7 +163,7 @@ describe('stateRoot verification (P3 acceptance)', () => {
     expect(dumpBoxes(db.getDb()).length).toBeGreaterThan(0);
   });
 
-  it('rejects a block carrying EMPTY_STATE_ROOT when a prover is running', async () => {
+  it('rejects a block carrying EMPTY_STATE_ROOT', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -171,9 +172,10 @@ describe('stateRoot verification (P3 acceptance)', () => {
     const blockApply = await importBlockApply();
     const preDigest = digestHex(handle);
 
-    // The producer's no-prover fallback (NODE_INTERFACE → Post-block
-    // stateRoot). A verifier that does have
-    // one must reject it — the contract says so explicitly.
+    // The empty tree's digest is never a header's: the root check refuses it as
+    // it refuses any root the block's writes do not leave (NODE_INTERFACE →
+    // Post-block stateRoot → "A node applies and produces over its prover, and
+    // has no other way to").
     const rootless = await makeApplicableBlock({ stateRoot: EMPTY_STATE_ROOT });
     expect(rootless.header.stateRoot).toBe(EMPTY_STATE_ROOT);
     expect(blockApply.applyOrderingBlock(rootless)).toBe(false);

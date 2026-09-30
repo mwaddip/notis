@@ -137,9 +137,10 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     );
     expect(checkEnvelope(malformed).valid).toBe(false);
 
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
+    // Built before the spy: the producer's speculation refuses the same body,
+    // and what this measures is the apply's own stated rejection.
     const block = await makeApplicableBlock({ utxoTxs: [valid, malformed] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const applied = (await importBlockApply()).applyOrderingBlock(block);
 
     const warnings = warn.mock.calls.map((c) => String(c[0]));

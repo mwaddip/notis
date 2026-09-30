@@ -10,12 +10,13 @@ import {
 } from '../../src/state/serialize-box.js';
 import {
   createAvlProver,
-  applyBlockMutations,
-  type RecordPut,
+  performTreeWrites,
 } from '../../src/state/avl-prover.js';
-import { identityRecordBytes } from '@dagsocial/types';
+import type { PersistentBatchAVLProver } from '@ergots/avltree';
+import { boxKey, boxRecordBytes, hexToBytes, identityKey, identityRecordBytes } from '@dagsocial/types';
 import type { IdentityRecord, KarmaBox, AnyBox } from '@dagsocial/types';
-import { fixtureProvenance, openAvlDb } from '../helpers.js';
+import type { TreeWrite } from '@dagsocial/consensus';
+import { fixtureProvenance, openAvlDb, uid } from '../helpers.js';
 
 /**
  * Identity records as the AVL tree's second entity kind — NODE_INTERFACE →
@@ -33,6 +34,15 @@ function makeKarmaBox(id: string, value = 10n): KarmaBox {
 }
 
 const REC: IdentityRecord = { lastActivityBlock: 42, lastDecayBlock: 7, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 };
+
+/** A record write as a block's writes carry it — an `InsertOrUpdate` under `identity ‖ id`. */
+const put = (label: string, record: IdentityRecord): TreeWrite =>
+  ({ tag: 'InsertOrUpdate', key: identityKey(uid(`identity-record-avl/${label}`)), value: identityRecordBytes(record) });
+const insertOf = (box: AnyBox): TreeWrite =>
+  ({ tag: 'Insert', key: boxKey(hexToBytes(box.id!)), value: boxRecordBytes(box, box.txId, box.index) });
+const hexOf = (d: Uint8Array): string => Buffer.from(d).toString('hex');
+const perform = (prover: PersistentBatchAVLProver, writes: TreeWrite[]): string =>
+  hexOf(performTreeWrites(prover, 1, writes, 'test'));
 
 describe('identity records in the AVL tree (Spec G phase B3)', () => {
   let db: Database.Database;
@@ -129,127 +139,54 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
   it('a record reaching the tree changes the digest', () => {
     const { prover: p1 } = createAvlProver(db);
     const { prover: p2 } = createAvlProver(db2);
+    const box = makeKarmaBox('11'.repeat(32));
 
-    const boxes = [makeKarmaBox('11'.repeat(32))];
-    const puts: RecordPut[] = [{ key: 'ab'.repeat(32), record: REC }];
+    const without = perform(p1, [insertOf(box)]);
+    const with_ = perform(p2, [insertOf(box), put('ab', REC)]);
 
-    const without = applyBlockMutations(p1, 1, [], boxes);
-    const with_ = applyBlockMutations(p2, 1, [], boxes, puts);
-
-    expect(Buffer.from(with_).toString('hex')).not.toBe(
-      Buffer.from(without).toString('hex'),
-    );
+    expect(with_).not.toBe(without);
   });
 
   it('a different record value gives a different digest', () => {
     const { prover: p1 } = createAvlProver(db);
     const { prover: p2 } = createAvlProver(db2);
 
-    const d1 = applyBlockMutations(p1, 1, [], [], [{ key: 'cd'.repeat(32), record: REC }]);
-    const d2 = applyBlockMutations(p2, 1, [], [], [
-      { key: 'cd'.repeat(32), record: { lastActivityBlock: 43, lastDecayBlock: 7, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 } },
-    ]);
+    const d1 = perform(p1, [put('cd', REC)]);
+    const d2 = perform(p2, [put('cd', { ...REC, lastActivityBlock: 43 })]);
 
-    expect(Buffer.from(d1).toString('hex')).not.toBe(Buffer.from(d2).toString('hex'));
+    expect(d1).not.toBe(d2);
   });
 
   it('a record put is InsertOrUpdate: writing the same key twice succeeds', () => {
     const { prover } = createAvlProver(db);
-    const key = 'ef'.repeat(32);
 
     // First block creates it, second updates it — no existence lookup needed.
-    applyBlockMutations(prover, 1, [], [], [{ key, record: REC }]);
-    expect(() =>
-      applyBlockMutations(prover, 1, [], [], [
-        { key, record: { lastActivityBlock: 99, lastDecayBlock: 7, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 } },
-      ]),
-    ).not.toThrow();
+    perform(prover, [put('ef', REC)]);
+    expect(() => perform(prover, [put('ef', { ...REC, lastActivityBlock: 99 })])).not.toThrow();
   });
 
   it('updating a record moves the digest; rewriting the same value does not', () => {
     const { prover: p1 } = createAvlProver(db);
-    const key = '55'.repeat(32);
 
-    const afterCreate = Buffer.from(
-      applyBlockMutations(p1, 1, [], [], [{ key, record: REC }]),
-    ).toString('hex');
-    const afterSame = Buffer.from(
-      applyBlockMutations(p1, 1, [], [], [{ key, record: REC }]),
-    ).toString('hex');
+    const afterCreate = perform(p1, [put('55', REC)]);
+    const afterSame = perform(p1, [put('55', REC)]);
     expect(afterSame).toBe(afterCreate);
 
-    const afterChange = Buffer.from(
-      applyBlockMutations(p1, 1, [], [], [
-        { key, record: { lastActivityBlock: 100, lastDecayBlock: 7, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 } },
-      ]),
-    ).toString('hex');
+    const afterChange = perform(p1, [put('55', { ...REC, lastActivityBlock: 100 })]);
     expect(afterChange).not.toBe(afterCreate);
-  });
-
-  // --- canonical ordering extends to records ------------------------------
-
-  it('feed ordering is input-order-independent for a mixed box+record set', () => {
-    const { prover: p1 } = createAvlProver(db);
-    const { prover: p2 } = createAvlProver(db2);
-
-    const boxes: AnyBox[] = ['cc', '22', '99', '44'].map((b) =>
-      makeKarmaBox(b.repeat(32), 5n),
-    );
-    const puts: RecordPut[] = ['bb', '33', 'dd'].map((k) => ({
-      key: k.repeat(32),
-      record: { lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 },
-    }));
-
-    const d1 = applyBlockMutations(p1, 1, [], boxes, puts);
-    const d2 = applyBlockMutations(p2, 1, [], [...boxes].reverse(), [...puts].reverse());
-
-    expect(Buffer.from(d1).toString('hex')).toBe(Buffer.from(d2).toString('hex'));
-  });
-
-  it('record ordering is independent of the box ordering it arrives with', () => {
-    const { prover: p1 } = createAvlProver(db);
-    const { prover: p2 } = createAvlProver(db2);
-
-    const boxes: AnyBox[] = ['77', '10'].map((b) => makeKarmaBox(b.repeat(32), 5n));
-    const puts: RecordPut[] = ['fe', '01', '8a'].map((k) => ({
-      key: k.repeat(32),
-      record: { lastActivityBlock: 9, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 },
-    }));
-
-    const d1 = applyBlockMutations(p1, 1, [], boxes, puts);
-    const d2 = applyBlockMutations(p2, 1, [], [...boxes].reverse(), [
-      puts[2]!, puts[0]!, puts[1]!,
-    ]);
-
-    expect(Buffer.from(d1).toString('hex')).toBe(Buffer.from(d2).toString('hex'));
   });
 
   it('removes, inserts and record puts coexist in one block', () => {
     const { prover } = createAvlProver(db);
     const pre = makeKarmaBox('12'.repeat(32), 100n);
-    applyBlockMutations(prover, 1, [], [pre]);
+    perform(prover, [insertOf(pre)]);
 
-    const digest = applyBlockMutations(
-      prover,
-      1,
-      ['12'.repeat(32)],
-      [makeKarmaBox('34'.repeat(32), 90n)],
-      [{ key: '9a'.repeat(32), record: REC }],
-    );
+    const digest = performTreeWrites(prover, 2, [
+      { tag: 'Remove', key: boxKey(hexToBytes(pre.id!)) },
+      insertOf(makeKarmaBox('34'.repeat(32), 90n)),
+      put('9a', REC),
+    ], 'test');
     expect(digest.length).toBe(33);
-  });
-
-  it('an empty recordPuts array leaves the digest exactly as before', () => {
-    const { prover: p1 } = createAvlProver(db);
-    const { prover: p2 } = createAvlProver(db2);
-    const boxes = [makeKarmaBox('ee'.repeat(32))];
-
-    // `recordPuts` is inert when empty: a caller that passes no records reaches
-    // the same digest as one that omits the argument. Without this, adding a
-    // record kind to the feed would silently move every box-only caller's root.
-    const d1 = applyBlockMutations(p1, 1, [], boxes);
-    const d2 = applyBlockMutations(p2, 1, [], boxes, []);
-    expect(Buffer.from(d1).toString('hex')).toBe(Buffer.from(d2).toString('hex'));
   });
 });
 
@@ -266,33 +203,20 @@ describe('record puts reaching the digest', () => {
   beforeEach(() => { db = openAvlDb(); db2 = openAvlDb(); });
   afterEach(() => { db.close(); db2.close(); });
 
+  const withLikes = (lifetimeLikesReceived: bigint): IdentityRecord => ({ ...REC, lifetimeLikesReceived });
+
   it('two provers fed the same record put agree on the digest', () => {
     const { prover: p1 } = createAvlProver(db);
     const { prover: p2 } = createAvlProver(db2);
-    const put: RecordPut = {
-      key: 'a1'.repeat(32),
-      record: { lastActivityBlock: 42, lastDecayBlock: 7, invitedAtBlock: 0, lifetimeLikesReceived: 2n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 },
-    };
 
-    const d1 = applyBlockMutations(p1, 1, [], [], [put]);
-    const d2 = applyBlockMutations(p2, 1, [], [], [put]);
-    expect(Buffer.from(d1).toString('hex')).toBe(Buffer.from(d2).toString('hex'));
+    expect(perform(p1, [put('a1', withLikes(2n))])).toBe(perform(p2, [put('a1', withLikes(2n))]));
   });
 
   it('a record updated lifetimeLikesReceived 0n → 3n changes the digest', () => {
     const { prover } = createAvlProver(db);
-    const key = 'b2'.repeat(32);
 
-    const at0 = Buffer.from(
-      applyBlockMutations(prover, 1, [], [], [
-        { key, record: { lastActivityBlock: 42, lastDecayBlock: 7, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 } },
-      ]),
-    ).toString('hex');
-    const at3 = Buffer.from(
-      applyBlockMutations(prover, 1, [], [], [
-        { key, record: { lastActivityBlock: 42, lastDecayBlock: 7, invitedAtBlock: 0, lifetimeLikesReceived: 3n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 } },
-      ]),
-    ).toString('hex');
+    const at0 = perform(prover, [put('b2', withLikes(0n))]);
+    const at3 = perform(prover, [put('b2', withLikes(3n))]);
 
     expect(at3).not.toBe(at0);
   });
@@ -300,15 +224,8 @@ describe('record puts reaching the digest', () => {
   it('records differing ONLY in the like counter give different digests across provers', () => {
     const { prover: p1 } = createAvlProver(db);
     const { prover: p2 } = createAvlProver(db2);
-    const key = 'c3'.repeat(32);
 
-    const d1 = applyBlockMutations(p1, 1, [], [], [
-      { key, record: { lastActivityBlock: 42, lastDecayBlock: 7, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 } },
-    ]);
-    const d2 = applyBlockMutations(p2, 1, [], [], [
-      { key, record: { lastActivityBlock: 42, lastDecayBlock: 7, invitedAtBlock: 0, lifetimeLikesReceived: 3n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 } },
-    ]);
-    expect(Buffer.from(d1).toString('hex')).not.toBe(Buffer.from(d2).toString('hex'));
+    expect(perform(p1, [put('c3', withLikes(0n))])).not.toBe(perform(p2, [put('c3', withLikes(3n))]));
   });
 });
 

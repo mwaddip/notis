@@ -8,8 +8,8 @@ import {
 } from 'vitest';
 import {
   computeTxId,
+  identityKey,
   identityRecordFromBytes,
-  identityRecordKey,
   PROTOCOL_VERSION,
   MAX_BLOCK_BODY_BYTES,
 } from '@dagsocial/types';
@@ -22,6 +22,7 @@ import type {
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 import type { Config } from '../../src/config.js';
+import type { AvlProverHandle } from '../../src/state/avl-prover.js';
 import {
   FIXTURE_BOND_KARMA,
   hex,
@@ -105,6 +106,7 @@ async function importBlockApply() {
     applyOrderingBlock: (block: OrderingBlock) => boolean;
     computePostBlockStateRoot: (
       block: OrderingBlock,
+      handle: AvlProverHandle,
     ) => import('../../src/services/block-apply.js').StateRootSpeculation;
   };
 }
@@ -233,7 +235,7 @@ function takeSnapshot(
  */
 async function assertRoundTrip(
   db: DbModule,
-  handle: { prover: { digest(): Uint8Array | null } },
+  handle: AvlProverHandle,
   pre: Snapshot,
   classBlock: OrderingBlock,
 ): Promise<void> {
@@ -261,7 +263,7 @@ async function assertRoundTrip(
   //     transition, not two.
   const blockApply = await importBlockApply();
   const journalsBefore = journalHeights(db.getDb());
-  const speculative = blockApply.computePostBlockStateRoot(classBlock);
+  const speculative = blockApply.computePostBlockStateRoot(classBlock, handle);
   expect(speculative).toEqual({
     kind: 'computed',
     stateRoot: Buffer.from(postDigest).toString('hex'),
@@ -603,7 +605,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     expect(recordMutations[0]).toMatchObject({ record: { invitedAtBlock: 2 } });
 
     // The TREE holds the LAST write — the collapse rule's subject.
-    const key = Buffer.from(identityRecordKey(invitee.userId), 'hex');
+    const key = identityKey(invitee.userId);
     const lookup = handle.prover.performOneOperation({ tag: 'Lookup', key });
     if (!lookup.success) throw new Error('lookup failed');
     expect(lookup.value).toBeTruthy();

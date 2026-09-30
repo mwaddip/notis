@@ -6,8 +6,9 @@ import {
   computePostId,
   computeTxId,
   decodeOrderingBlock,
+  bytesToHex,
   encodeOrderingBlock,
-  identityRecordKey,
+  identityKey,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -32,6 +33,9 @@ import {
   uid,
   type TestIdentity,
 } from '../helpers.js';
+
+/** A record mutation's journal key — its tree key, hex (NODE_INTERFACE → Block Journal). */
+const treeKeyHex = (identityId: Uint8Array): string => bytesToHex(identityKey(identityId));
 
 /**
  * The writer of a block's effects (NODE_INTERFACE → Block Journal): the entry
@@ -231,7 +235,7 @@ describe('the effects writer — the entry each effect journals', () => {
     expect(journal.mutations).toEqual([
       { kind: 'box', op: 'insert', boxId: first.id, box: first },
       { kind: 'box', op: 'remove', boxId: held.id },
-      { kind: 'record', key: identityRecordKey(who), identityId: who, record },
+      { kind: 'record', key: treeKeyHex(who), identityId: who, record },
       { kind: 'box', op: 'remove', boxId: vouch.id },
       { kind: 'box', op: 'insert', boxId: second.id, box: second },
     ]);
@@ -273,8 +277,8 @@ describe('the effects writer — the entry each effect journals', () => {
     }), 6);
 
     expect(journal.mutations).toEqual([
-      { kind: 'record', key: identityRecordKey(created), identityId: created, record: createdRecord },
-      { kind: 'record', key: identityRecordKey(kept), identityId: kept, record: keptRecord, replaced: prior },
+      { kind: 'record', key: treeKeyHex(created), identityId: created, record: createdRecord },
+      { kind: 'record', key: treeKeyHex(kept), identityId: kept, record: keptRecord, replaced: prior },
     ]);
     // Absent, not undefined: the key did not exist.
     expect('replaced' in journal.mutations[0]!).toBe(false);
@@ -297,7 +301,7 @@ describe('the effects writer — the entry each effect journals', () => {
       ],
     }), 40);
 
-    const key = identityRecordKey(who);
+    const key = treeKeyHex(who);
     expect(journal.mutations).toEqual([
       { kind: 'record', key, identityId: who, record: bumped, replaced: preBlock },
       { kind: 'record', key, identityId: who, record: decayed, replaced: bumped },

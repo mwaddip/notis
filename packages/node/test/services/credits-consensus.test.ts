@@ -10,8 +10,10 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
 import {
+  boxKey,
+  boxRecordBytes,
   computeTxId,
-  identityRecordKey,
+  hexToBytes,
   selectBoxes,
   PROTOCOL_VERSION,
   MAX_BLOCK_BODY_BYTES,
@@ -21,6 +23,7 @@ import {
   KARMA_MINIMUM,
 } from '@dagsocial/types';
 import type {
+  AnyBox,
   CandidateOf,
   CreditBox,
   UtxoTransaction,
@@ -36,6 +39,9 @@ import {
   rawPublicKey,
   seedProvenance,
   type Stored, seedPostTx, activateProverOverStore } from '../helpers.js';
+
+/** A box's tree value — its record bytes (TYPES_INTERFACE → Layout — Boxes). */
+const recordBytesOf = (box: AnyBox): Uint8Array => boxRecordBytes(box, box.txId, box.index);
 
 // Same shape as block-apply.test.ts — small epoch, internal miner. Every field
 // below is kept verbatim; `makeTestConfig` only fills the thirteen `Config`
@@ -269,10 +275,9 @@ describe('credit transfers ride consensus', () => {
 
     // The settled outputs round-trip byte-identically through the store —
     // the insert-time bytes are the read-back bytes.
-    const { serializeBox } = await import('../../src/state/serialize-box.js');
     const inserted = muts.find((m) => m.op === 'insert' && m.boxId === bobBoxes[0]!.id)!;
-    expect(Buffer.from(serializeBox(utxo.getBox(bobBoxes[0]!.id!)!)).toString('hex'))
-      .toBe(Buffer.from(serializeBox(inserted.box!)).toString('hex'));
+    expect(Buffer.from(recordBytesOf(utxo.getBox(bobBoxes[0]!.id!)!)).toString('hex'))
+      .toBe(Buffer.from(recordBytesOf(inserted.box!)).toString('hex'));
 
     db.closeDb();
   }, 30_000);
@@ -302,7 +307,6 @@ describe('credit transfers ride consensus', () => {
     await importAvl();
     const blockApply = await importBlockApply();
     let ordering = await importOrdering();
-    const { serializeBox } = await import('../../src/state/serialize-box.js');
 
     const alice = generateKeyPairSync('ed25519');
     const alicePub = rawPublicKey(alice.publicKey);
@@ -374,18 +378,18 @@ describe('credit transfers ride consensus', () => {
     expect(digestHex(handle)).not.toBe(preBlockDigest);
     const bobBox = utxo.getCreditBoxes(bob.userId)[0]!;
     expect(bobBox.txId).toBe(pooled.txId);
-    const bobLive = handle.prover.unauthenticatedLookup(Buffer.from(bobBox.id!, 'hex'));
+    const bobLive = handle.prover.unauthenticatedLookup(boxKey(hexToBytes(bobBox.id!)));
     expect(bobLive).not.toBeNull();
     expect(Buffer.from(bobLive!).toString('hex'))
-      .toBe(Buffer.from(serializeBox(bobBox)).toString('hex'));
-    expect(handle.prover.unauthenticatedLookup(Buffer.from(seeded.id!, 'hex'))).toBeNull();
+      .toBe(Buffer.from(recordBytesOf(bobBox)).toString('hex'));
+    expect(handle.prover.unauthenticatedLookup(boxKey(hexToBytes(seeded.id!)))).toBeNull();
 
     // What the live tree authenticates for every unspent box — the content a
     // restart must reproduce.
     const unspentA = utxo.getUnspentBoxes();
     const liveContent = new Map(
       unspentA.map((b) => {
-        const v = handle.prover.unauthenticatedLookup(Buffer.from(b.id!, 'hex'));
+        const v = handle.prover.unauthenticatedLookup(boxKey(hexToBytes(b.id!)));
         expect(v, `live tree must hold ${b.id}`).not.toBeNull();
         return [b.id!, Buffer.from(v!).toString('hex')];
       }),
@@ -417,22 +421,18 @@ describe('credit transfers ride consensus', () => {
     const handleB = avlB.createAvlProver();
     const currentHeight = ordering.getCurrentHeight();
     expect(currentHeight).toBe(3);
-    const records = idr.getAllIdentityRecords().map((r) => ({
-      key: identityRecordKey(r.identityId),
-      record: r.record,
-    }));
     const unspentB = utxo.getUnspentBoxes();
-    avlB.bootstrapAvlProver(handleB, unspentB, currentHeight, records);
+    avlB.bootstrapAvlProver(handleB, unspentB, currentHeight, idr.getAllIdentityRecords(), idr.getNetworkRecord());
 
     // Same box set...
     expect(unspentB.map((b) => b.id!).sort()).toEqual([...liveContent.keys()].sort());
     // ...authenticated with byte-identical values, spent input still gone.
     for (const [id, bytesHex] of liveContent) {
-      const v = handleB.prover.unauthenticatedLookup(Buffer.from(id, 'hex'));
+      const v = handleB.prover.unauthenticatedLookup(boxKey(hexToBytes(id)));
       expect(v, `rebuilt tree must hold ${id}`).not.toBeNull();
       expect(Buffer.from(v!).toString('hex')).toBe(bytesHex);
     }
-    expect(handleB.prover.unauthenticatedLookup(Buffer.from(seeded.id!, 'hex'))).toBeNull();
+    expect(handleB.prover.unauthenticatedLookup(boxKey(hexToBytes(seeded.id!)))).toBeNull();
 
     db.closeDb();
   }, 30_000);

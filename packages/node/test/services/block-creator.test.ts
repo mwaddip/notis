@@ -5,7 +5,8 @@ import {
   signTransaction,
   solveHeaderPow,
   makePostTx, seedPostTx, fillerTx, coinbaseOf,
-  seedEmissionBox, makeApplicableBlock } from '../helpers.js';
+  seedEmissionBox, makeApplicableBlock, liveProver, seedBoxes } from '../helpers.js';
+import type { AvlProverHandle } from '../../src/state/avl-prover.js';
 import {
   describe,
   it,
@@ -95,6 +96,25 @@ async function importBlockCreator(): Promise<BlockCreatorModule> {
   return (await import(
     '../../src/services/block-creator.js'
   )) as unknown as BlockCreatorModule;
+}
+
+/**
+ * The producer's speculation, answering `computed` over the live tree's digest
+ * for every body. For the cases whose subject is what the fill SELECTS and whose
+ * pools hold entries the rules refuse (`fillerTx`, unsigned spends): the real
+ * speculation would evict those before any template stood. The speculation is
+ * not under test here — its own cases are block-creator-rejected-body's.
+ * Registered before the creator is imported.
+ */
+function speculationAcceptsEveryBody(): void {
+  vi.doMock('../../src/services/block-apply.js', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../src/services/block-apply.js')>();
+    return {
+      ...actual,
+      computePostBlockStateRoot: (_block: OrderingBlock, handle: AvlProverHandle) =>
+        ({ kind: 'computed' as const, stateRoot: Buffer.from(handle.prover.digest()).toString('hex') }),
+    };
+  });
 }
 
 async function importPosts() {
@@ -324,6 +344,7 @@ describe('block-creator', () => {
 
     afterEach(() => {
       vi.doUnmock('../../src/config.js');
+      vi.doUnmock('../../src/services/block-apply.js');
     });
 
     it('the template header and its coinbase settlement declare the era at the built height', async () => {
@@ -331,6 +352,7 @@ describe('block-creator', () => {
       db.initDb(':memory:');
       db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       const bc = await importBlockCreator();
+      await liveProver();
       bc.startBlockCreator(testConfig);
 
       const template = bc.getCurrentTemplate();
@@ -345,6 +367,7 @@ describe('block-creator', () => {
     });
 
     it('the fill excludes a pooled transaction whose version is not the era, leaving it pooled', async () => {
+      speculationAcceptsEveryBody();
       const db = await importDb();
       db.initDb(':memory:');
       db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -359,6 +382,7 @@ describe('block-creator', () => {
       const foreignRow = mempool.insertUtxoTx(foreignTx, 1000);
       mempool.insertUtxoTx(eraTx, 1000);
 
+      await liveProver();
       bc.startBlockCreator(testConfig);
       const template = bc.getCurrentTemplate();
       expect(template).not.toBeNull();
@@ -388,6 +412,7 @@ describe('block-creator', () => {
       );
       utxo.insertBox(box);
 
+      await liveProver();
       bc.startBlockCreator(testConfig);
       const template = bc.getCurrentTemplate();
       expect(template).not.toBeNull();
@@ -584,7 +609,6 @@ describe('block-creator', () => {
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const posts = await importPosts();
-    const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
     const blockApply = (await import('../../src/services/block-apply.js')).applyOrderingBlock;
@@ -602,20 +626,17 @@ describe('block-creator', () => {
     // Insert post transaction into mempool
     mempool.insertUtxoTx(postTx, 1000);
 
-    // Set up: standalone UTXO transaction in mempool
-    const karmaBox = makeKarmaBox(100n, author.userId, 0);
-    utxo.insertBox(karmaBox);
-    // A real post id that is deliberately not `postId` — `likeTarget` is
-    // `opt(b32)` in the txId preimage now, so the old `'some_post_id_not_matching'`
-    // placeholder has no encoding. What the test needs is "not this post", and a
-    // well-formed id that differs says that just as well.
-    const likeTx = makeLikeTx(author, karmaBox, 'ee'.repeat(32));
+    // Set up: standalone UTXO transaction in mempool — another identity's like
+    // of the post the same block confirms (topology lands before the
+    // transaction loop), so the body is one the rules apply.
+    const liker = makeTestIdentity();
+    const karmaBox = makeKarmaBox(100n, liker.userId, 0);
+    await seedBoxes([karmaBox]);
+    const likeTx = makeLikeTx(liker, karmaBox, postId, author.userId);
     mempool.insertUtxoTx(likeTx, 1000);
 
     // The subject is the body the creator assembles, so the template is what
-    // this reads. The like names a post no block confirms, which apply rejects
-    // — a chain the block never joins still had a body, and that body is the
-    // claim here.
+    // this reads.
     bc.startBlockCreator(testConfig);
     bc.createOrderingBlock();
     const template = bc.getCurrentTemplate();
@@ -636,7 +657,7 @@ describe('block-creator', () => {
       expect(computeTxId(tx)).toBe(template!.utxoTxTree.utxoTxIds[i]);
     }
 
-    // Entries the body claimed leave the pool at finalize, accepted or not.
+    // Entries the body claimed leave the pool at finalize.
     const nonce = solveHeaderPow(template!.header);
     expect(bc.submitMinedBlock(nonce, template!.header.height)).not.toBeNull();
     const remaining = mempool.getPendingEntries(100);
@@ -652,7 +673,6 @@ describe('block-creator', () => {
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     await importPosts();
-    const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
     const blockApply = (await import('../../src/services/block-apply.js')).applyOrderingBlock;
@@ -666,14 +686,14 @@ describe('block-creator', () => {
     const { computeTxId } = await import('@dagsocial/types');
     mempool.insertUtxoTx(postTx, 1000);
 
-    const karmaBox = makeKarmaBox(100n, author.userId, 0);
-    utxo.insertBox(karmaBox);
-    // Well-formed and deliberately unrelated — see the note above.
-    const likeTx = makeLikeTx(author, karmaBox, 'ee'.repeat(32));
+    // Another identity's like of the post the same block confirms.
+    const liker = makeTestIdentity();
+    const karmaBox = makeKarmaBox(100n, liker.userId, 0);
+    await seedBoxes([karmaBox]);
+    const likeTx = makeLikeTx(liker, karmaBox, postId, author.userId);
     mempool.insertUtxoTx(likeTx, 1000);
 
-    // Assembly again, so again the template: the like names a post no block
-    // confirms and apply rejects the body it rides in.
+    // Assembly again, so again the template.
     bc.startBlockCreator(testConfig);
     bc.createOrderingBlock();
     const template = bc.getCurrentTemplate();
@@ -735,6 +755,7 @@ describe('block-creator', () => {
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
 
+    await liveProver();
     bc.startBlockCreator(testConfig);
     expect(bc.getCurrentTemplate()?.header.height).toBe(1);
 
@@ -752,6 +773,9 @@ describe('block-creator', () => {
   // -----------------------------------------------------------------------
 
   describe('block body budget', () => {
+    beforeEach(() => { speculationAcceptsEveryBody(); });
+    afterEach(() => { vi.doUnmock('../../src/services/block-apply.js'); });
+
     /**
      * Fill a pool with distinct, identically-sized transactions and return
      * their rowids in insertion order.
@@ -789,6 +813,7 @@ describe('block-creator', () => {
       // growth on top (MEMPOOL_INTERFACE → The fill budget is bytes). These
       // fillers add nothing to it — no fee box,
       // no bond — so the baseline is exact here.
+      await liveProver();
       bc.startBlockCreator(testConfig);
       const full = bc.getCurrentTemplate();
       expect(full).not.toBeNull();
@@ -852,6 +877,7 @@ describe('block-creator', () => {
       const POOL = 1_100;
       await fillPool(POOL, 'page');
 
+      await liveProver();
       bc.startBlockCreator(testConfig);
       const template = bc.getCurrentTemplate();
       expect(template).not.toBeNull();
@@ -898,6 +924,7 @@ describe('block-creator', () => {
         }
       })();
 
+      await liveProver();
       bc.startBlockCreator({
         ...testConfig,
         blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES * 2,
@@ -926,6 +953,9 @@ describe('block-creator', () => {
   // -------------------------------------------------------------------------
 
   describe('fill order', () => {
+    beforeEach(() => { speculationAcceptsEveryBody(); });
+    afterEach(() => { vi.doUnmock('../../src/services/block-apply.js'); });
+
     /**
      * A credit box in the store and a transfer spending it, naming `fee` in a
      * `FeeBox` output. `padding` widens the transaction without changing the
@@ -1006,6 +1036,7 @@ describe('block-creator', () => {
       // The fill's own reserve: the settlement an empty body produces. Measured
       // by asking for a budget no user entry can fit into, so what comes back is
       // the settlement alone — the same seed the fill starts from.
+      await liveProver();
       bc.startBlockCreator({ ...testConfig, blockBodyBudgetBytes: 1 });
       const empty = bc.getCurrentTemplate();
       expect(empty).not.toBeNull();
@@ -1044,6 +1075,7 @@ describe('block-creator', () => {
       mempool.insertUtxoTx(mid, 5000);
       mempool.insertUtxoTx(rich, 5000);
 
+      await liveProver();
       bc.startBlockCreator(testConfig);
       const block = bc.getCurrentTemplate();
       expect(idsIn(block!)).toEqual([
@@ -1066,6 +1098,7 @@ describe('block-creator', () => {
       mempool.insertUtxoTx(fat, 5000);
       mempool.insertUtxoTx(lean, 5000);
 
+      await liveProver();
       bc.startBlockCreator(testConfig);
       const block = bc.getCurrentTemplate();
       // Both fit at the default budget, so this asserts the ORDER rather than
@@ -1119,6 +1152,7 @@ describe('block-creator', () => {
 
       const { config } = await import('../../src/config.js');
       const bc = await importBlockCreator();
+      await liveProver();
       bc.startBlockCreator(testConfig);
       const template = bc.getCurrentTemplate();
       expect(template).not.toBeNull();
