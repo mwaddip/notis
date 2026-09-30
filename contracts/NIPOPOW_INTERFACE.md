@@ -216,8 +216,10 @@ on bytes a client has not screened, but it re-derives nothing a passed verdict e
 - **Above the LCA:** `chainX = headers with height > lca.height`;
   `bestArg(chain, m) = max over μ ≥ 0 of 2^μ · |{ h ∈ chain : level(h, anchorBits) ≥ μ }|`, counting a
   level `μ ≥ 1` only while it holds at least `m` headers (`μ = 0` counts every header **that has a
-  level**; a header below the yardstick counts nowhere). `scoreA > scoreB` → `'a'`; `<` → `'b'`;
-  equal → `'tie'` (the client keeps the proof it already holds).
+  level**; a header below the yardstick counts nowhere). In a proof, `chainX` is the suffix and, below it, only
+  headers of level 1 or above — the prover never walks level 0 (→ proveWithReader) — so its level-0 count is not the
+  chain's length. `scoreA > scoreB` → `'a'`; `<` → `'b'`; equal → `'tie'` (the client keeps the proof it already
+  holds).
 - **The score is work, whatever the headers declare.** Levels are measured against the network's
   anchor target (`VALIDATION_INTERFACE → level`), so a header mined at its own target `T_b` reaches
   level ≥ μ with probability `T_a / (2^μ · T_b)` and a count at level μ estimates `work / (2^μ · W_a)`;
