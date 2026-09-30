@@ -157,8 +157,6 @@ would sit in the pool, trimmed from every template until it expired. A transacti
 trimmed from a full block: that is packing (`MINING_INTERFACE → Template and submit → "Packing to the budget"`), not
 admission.
 
-> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — admission checks no cost (Task 4).
-
 ### getBoxWithPending
 
 ```

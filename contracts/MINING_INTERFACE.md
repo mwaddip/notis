@@ -347,9 +347,6 @@ shorter prefix than the longest that fits; it never keeps one over the budget. *
 budget, and nothing is evicted for it**: an entry trimmed stays pooled for a later block. `adProofsRoot` is the
 speculation's, beside `stateRoot` (`NODE_INTERFACE → Post-block stateRoot`).
 
-> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — the creator checks no cost and the template carries no
-> `adProofsRoot` (Task 4).
-
 **Holding one and serving one are separate**, and 404 is routine again for the second: a node that has
 not yet met its peers withholds the template it holds. See *The peer-readiness gate* below. **A 404
 from a miner node is one of two things** — that gate, or a terminal decline, which is on the node's

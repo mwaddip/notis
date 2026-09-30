@@ -570,9 +570,9 @@ which every name system accepts (`ARCHITECTURE → Usernames`).
 
 | Method | Path | Response | Errors |
 |--------|------|----------|--------|
-| `GET` | `/blocks/:height` | OrderingBlock object (JSON with hex fields) | 400 unless `:height` parses as a non-negative safe integer, 404 |
+| `GET` | `/blocks/:height` | OrderingBlock object (JSON with hex fields) | 400 unless `:height` is a non-negative safe integer written in decimal digits alone, 404 |
 | `GET` | `/blocks/current` | `{ height, hash }` — **`hash` is nullable** | — |
-| `GET` | `/blocks/:height/proof` | the block's AVL+ proof, raw bytes, `application/octet-stream` (→ The block proof) | 400 unless `:height` parses as a non-negative safe integer; 404 for a height whose proof this node does not hold |
+| `GET` | `/blocks/:height/proof` | the block's AVL+ proof, raw bytes, `application/octet-stream` (→ The block proof) | 400 unless `:height` is a non-negative safe integer written in decimal digits alone; 404 for a height whose proof this node does not hold |
 
 The `header` object in `/blocks/:height`'s response carries all eleven header fields, `interlinkRoot` and
 `adProofsRoot` included (`TYPES_INTERFACE` → Layout — Block) — the field a client that recomputes the interlink
@@ -2885,9 +2885,6 @@ apply path runs**, never by a second implementation of the state transition:
    (`prover.rollback` resolves every label from SQLite).
 4. Use the computed digest as `header.stateRoot` and the proof's digest as `header.adProofsRoot`, then mine.
 
-> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — the speculative run reads through the unrecorded session,
-> checks no cost and takes no proof; the header carries no `adProofsRoot` (Task 4).
-
 **The run starts at a proof-cycle boundary** — after a checkpoint, a rollback or a proof, as every caller's does — so
 the pair `restoreRoot` puts back is the whole of the prover's state: it discards the run's recorded directions and
 modified nodes and leaves nothing of an earlier cycle to lose.
@@ -4262,10 +4259,6 @@ NULL)`, written in the apply transaction, deleted with its block on a revert, pr
 PROOF_RETENTION_BLOCKS` (`local`, default 10 080 — a week at 60 s; a setting, not consensus). `GET
 /blocks/:height/proof` answers the bytes as `application/octet-stream` — **the one route that is not JSON**: a proof of
 about 6 MB would be 12 MB as hex, and a browser takes the bytes as they come.
-
-> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — block application reads through the unrecorded session,
-> checks no cost and no `adProofsRoot`, and the checkpoint's proof is discarded; there is no `block_proofs` table, no
-> `PROOF_RETENTION_BLOCKS` and no proof route (Task 4).
 
 ### No store schema version, and none is owed
 

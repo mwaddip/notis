@@ -720,9 +720,6 @@ post and like records) and index entries derived from each entity's own fields; 
   (`CONSENSUS_INTERFACE → The block's cost`) — what bounds a leaf's verification, where `MAX_BLOCK_BODY_BYTES` bounds
   its download.
 
-  > ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — no header carries `adProofsRoot` and no block's cost is
-  > counted (Tasks 1–4).
-
 - **Post-state, not parent-state (H-6).** `stateRoot` commits to the state the
   block *produces*, following Ergo. The block therefore commits to its own
   effect, and the tip's state is provable as soon as the tip exists. The cost
