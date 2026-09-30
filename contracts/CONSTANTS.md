@@ -323,7 +323,7 @@ the drift test's converse does not reach them and the rows are marked.
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `MAX_RENT_TXS_PER_BLOCK` (literal) | `32` | rent collections a producer selects per block | policy | none stated; creator policy on a body-driven leg. `node/src/services/block-creator.ts` | CHOSEN | `NODE_INTERFACE → The settlement transaction` |
-| `PACKING_COST_MARGIN` (literal) | `5` | percent of the budget the fill leaves unused against estimates that miss | policy | none stated; chosen so one speculation is the typical full build. `node/src/services/block-creator.ts` | CHOSEN | `MINING_INTERFACE → Template and submit → "Packing to the budget"` |
+| `PACKING_COST_MARGIN` (literal) | `5` | percent of the budget the fill leaves unused against estimates that miss | policy | none stated; chosen so the speculation of the fill, and of the refill under the budget, typically fits. `node/src/services/block-creator.ts` | CHOSEN | `MINING_INTERFACE → Template and submit → "Packing to the budget"` |
 
 ## HTTP view bounds
 

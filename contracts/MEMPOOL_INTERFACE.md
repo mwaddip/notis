@@ -27,7 +27,8 @@ CREATE TABLE mempool (
     expires_at_height INTEGER NOT NULL, -- Block height after which entry is purged
     created_at        TEXT NOT NULL DEFAULT (datetime('now')),
     like_target TEXT, like_liker TEXT,          -- gate metadata (below)
-    invite_inviter TEXT, vouch_voucher TEXT,    -- gate metadata (below)
+    invite_inviter TEXT,                        -- gate metadata (below)
+    vouch_voucher TEXT, vouch_target TEXT,      -- gate metadata (below)
     tx_fee INTEGER, tx_bytes INTEGER,           -- fee-class metadata (§Eviction)
     max_valid_height INTEGER,                   -- utxo_tx only: validity ceiling, NULL = none (§Validity ceiling)
     tx_inputs TEXT, tx_output_ids TEXT,         -- conflict-gate metadata
@@ -65,8 +66,12 @@ interface PoolEntry {
   utxoTxBytes: Uint8Array | null;
   expiresAtHeight: number;
   createdAt: string;
+  costEstimate: number | null;
 }
 ```
+
+`costEstimate` is the row's `cost_estimate` — the estimate the creator packs by (→ The cost gate), `null` where
+nothing has costed the row.
 
 **One member, and the discriminator is kept rather than removed** — a second entry kind would
 have to widen it, which is a compiler signal a bare row shape would not give. The payload is
@@ -89,6 +94,7 @@ Nullable, populated by `insertUtxoTx` from the transaction outputs, indexed
 | `like_liker` | `likeTarget` set AND `tx.signatures` has exactly one key | that key (hex). **Any other key count → NULL** — an unpaired row matches no `hasPendingLike` query. First-key-wins was rejected: a spare signature could pin a victim's `(liker, target)` pair and DoS their like at the gateway |
 | `invite_inviter` | a `bond` output | `inviterId` (hex) — **the bond is what names an inviter**, one transaction per invite |
 | `vouch_voucher` | a `vouch` output | `voucherId` (hex) |
+| `vouch_target` | a `vouch` output | `targetId` (hex) — `hasPendingVouch` keys on the pair |
 | `username_lower` | a `username` output — a claim | the name's canonical form, the byte-wise ASCII lowercase (`TYPES_INTERFACE` → Content limits) |
 | `username_claimant` | a `username` output — a claim | its `owner` (hex) |
 
@@ -99,7 +105,7 @@ Nullable, populated by `insertUtxoTx` from the transaction outputs, indexed
 ### insertUtxoTx
 
 ```
-insertUtxoTx(tx: UtxoTransaction, expiresAtHeight: number): number
+insertUtxoTx(tx: UtxoTransaction, expiresAtHeight: number, costEstimate?: number | null): number
 ```
 
 Encodes the UTXO transaction (`encodeTx`) and inserts a `utxo_tx` entry, populating
@@ -125,6 +131,18 @@ switch and strands the node on the lighter chain. `TxTooLargeError` is dropped a
 refuses those — so the path should never trip it, and it is defended anyway.
 
 - `expiresAtHeight` is the block height at which the entry becomes invalid.
+- `costEstimate` is the cost gate's marginal cost, written as the row's `cost_estimate` (→ The cost gate); a caller
+  that did not cost the transaction — a reorg's re-insertion — passes none, and the row carries NULL.
+
+### setCostEstimate
+
+```
+setCostEstimate(rowid: number, costEstimate: number): void
+```
+
+Writes a row's `cost_estimate` once the creator has costed it alone (→ The cost gate; `MINING_INTERFACE → Template and
+submit → "Packing to the budget"`). It is the one write the fill makes to the pool while it reads it, and it moves
+neither a row's class nor its rate, so the fill's order stands (→ Ordering).
 
 ### Correctness gates (audit M-8)
 
@@ -148,13 +166,14 @@ pending-spend conflict every transaction meets.
 ### The cost gate
 
 **A transaction that alone cannot fit a block is refused at admission.** The pool runs it as the only user
-transaction of a candidate block at `tip + 1` — the settlement built as the creator builds one, its producer this
-node's key or, on a node that holds none, the all-zero key — over an **unrecorded** tree view (`NODE_INTERFACE → The
-block proof`), and refuses it when that block's cost is over `MAX_BLOCK_COST` (`CONSENSUS_INTERFACE → The block's
-cost`), the reason naming the cost. **A transaction that cannot be costed alone is admitted on the other gates** —
-one spending a pooled output, a settlement the tip cannot build, a node with no prover: packing trims it if it does not
-fit. Without it a transaction no block can carry
-would sit in the pool, trimmed from every template until it expired. A transaction that fits alone may still be
+transaction of a candidate block at `tip + 1` — the settlement built as the creator builds one, its producer the
+all-zero key, which signs nothing, so the settlement counts every actor the transaction carries and the cost is the same
+whoever mines — over an **unrecorded** tree view (`NODE_INTERFACE → The block proof`), and refuses it when that block's
+cost is over `MAX_BLOCK_COST` (`CONSENSUS_INTERFACE → The block's cost`), the reason naming the cost, or when that
+block is refused for its signatures alone, before its cost is counted. **A transaction that cannot be costed alone is
+admitted on the other gates** — one spending a pooled output, a settlement the tip cannot build, a node with no prover:
+packing trims it if it does not fit. Without it a transaction no block can carry would sit in the pool, trimmed from
+every template until it expired. A transaction that fits alone may still be
 trimmed from a full block: that is packing (`MINING_INTERFACE → Template and submit → "Packing to the budget"`), not
 admission.
 
@@ -163,8 +182,8 @@ single-transaction block's cost less the empty block's at the same tip, the empt
 estimate the creator packs by. A row the gate did not cost — a reorg's re-insertion, or a transaction it admitted
 uncostable — carries NULL until the creator costs it.
 
-> ⚠ **AHEAD OF CODE (2026-09-30, packing estimates)** — the pool has no `cost_estimate` column; the gate's cost is
-> measured and dropped.
+> ⚠ **AHEAD OF CODE (2026-09-30, packing follow-ups)** — a transaction whose block alone is refused for its signatures
+> alone is admitted, uncosted.
 
 ### getBoxWithPending
 
@@ -290,10 +309,13 @@ leaves the bound unchanged.
                                ▼
                  ┌───────────────────────────┐
                  │ 1. purgeExpired           │
-                 │ 2. fill to the byte budget│
+                 │ 2. fill to the byte and   │
+                 │    cost budgets           │
                  │ 3. assemble body +        │
                  │    settlement transaction │
                  │ 4. speculate the body;    │
+                 │    over budget → trim,    │
+                 │    under → refill once;   │
                  │    rejected → removeEntry │
                  │    per rowid, back to 1   │
                  │ 5. mine / sign            │
@@ -351,7 +373,9 @@ The block creator (`services/block-creator.ts`) is the sole consumer of
 pending entries:
 
 1. Calls `purgeExpired(currentHeight)` — drops stale entries
-2. Draws pending entries in FIFO order and fills up to `BLOCK_BODY_BUDGET_BYTES`, **skipping an
+2. Draws pending entries — the karma class in FIFO order, then the credit class by fee rate (→ Ordering) — and fills
+   to `BLOCK_BODY_BUDGET_BYTES`, `MAX_SETTLEMENT_BYTES` and the cost budget less `PACKING_COST_MARGIN`
+   (`MINING_INTERFACE → Template and submit → "Packing to the budget"`), **skipping an
    entry whose declared `protocolVersion` is not the era of the block being built**
    (`protocolVersionAt(schedule, height)`, `ARCHITECTURE → Protocol Versioning`). A skipped entry
    stays pooled and leaves by expiry (→ What takes an entry out of the pool, 2) — never evicted for
@@ -417,6 +441,17 @@ touched identities, carry boxes, grants, withdrawal locks) shrinks with the body
 is monotone for the same reason the first is. The state-driven legs are capped by consensus and
 cannot push an empty body's settlement over the bound, so the loop always terminates with a legal
 settlement, and a size refusal at submit is unreachable (`MINING_INTERFACE` → Template and submit).
+
+⛔ **The fill counts the settlement's bytes, so that loop too runs at most once.** A second accumulator — the empty
+body's settlement plus each entry's `settlementMarginalBytes` — ends a class's fill at the entry that would take it
+above `MAX_SETTLEMENT_BYTES`, as the first ends it at the body budget; it is blind to the settlement's count prefixes and
+to its first protocol-box input, a few bytes across the body. **A pop for the settlement drops the tail entries whose
+marginal bytes cover the overshoot**, never one entry a rebuild: an entry that adds nothing to the settlement — an
+ordinary karma transfer — takes nothing off it. Measured 2026-09-30, a pool of fee-paying transfers meets the settlement's
+bound at 3 122 entries, 88.5% of the cost budget, before the body's.
+
+> ⚠ **AHEAD OF CODE (2026-09-30, packing follow-ups)** — the fill counts body bytes and cost, not the settlement's
+> bytes, and the loop pops one entry a settlement rebuild.
 
 ### Confirmed-entry cleanup reaches every row, and it is a lookup rather than a scan
 
