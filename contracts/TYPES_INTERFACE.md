@@ -2304,9 +2304,6 @@ biconditional is a check, not a property of the bytes.
 | 10 | `interlinkRoot` | `b32` — the interlink vector's commitment (→ Interlink vector) |
 | 11 | `adProofsRoot` | `b32` — `hash32` of the block's AVL+ proof (`NODE_INTERFACE → The block proof`); **last, so no earlier field's number depends on it** |
 
-> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — the codec writes and reads ten fields: `BlockHeader` has
-> no `adProofsRoot` (Task 1).
-
 ⛔ **Eleven fields, and a positional layout with no keys — removing a field is never a
 deletion in place; it renumbers everything after it.** (`subBlockRoot`'s removal renumbered
 `utxoTxRoot` through `createdAt`: a reader keeping the old offsets decodes `stateRoot` out
