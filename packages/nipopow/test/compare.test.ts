@@ -95,6 +95,8 @@ describe('attack pins — NIPOPOW_INTERFACE → compareProofs', () => {
   const profile = { ...devnetProfile(), nowMs: 10_000_000_000 };
   const m = 3;
   const k = 5;
+  // the client's m (CONSTANTS → Client defaults)
+  const clientM = 6;
   const { anchorBits, floorBits } = DEVNET_RETARGET;
   // stretched stamps: 200× idealMs → target walks to floor (2304) by block 7
   const cheapStampMs = 200 * 60_000;
@@ -182,9 +184,20 @@ describe('attack pins — NIPOPOW_INTERFACE → compareProofs', () => {
     expect(controlBestArg(honestAbove, m)).toBe(bestArg(honestAbove, m, anchorBits));
   });
 
+  // NIPOPOW_INTERFACE → compareProofs → "A cheap-target chain therefore buys no score beyond its
+  // work": a lower-difficulty chain of more work wins. The honest side is the prover's shortest
+  // chain at the client's m and k = 5 — eleven headers, ten above the LCA and ten anchor units of
+  // work — against the fixture cheap chain's 500 headers and about 64. The honest proof scores at
+  // most its ten headers unless six of them reach a common level μ ≥ 1, when it scores 2^μ times
+  // their count; the likeliest way past the cheap side is six at level 3 or above, scoring 48 with
+  // probability P(Binomial(10, 1/8) ≥ 6) = 5.1e-4, while the cheap proof scores 48 or less in about
+  // one draw in eight. Modelled over 800 000 draws of this shape — honest levels geometric, a cheap
+  // header meeting the anchor with probability its work in anchor units, the prover's walk and
+  // bestArg as written — the verdict is not 'b' in 55, about 7e-5 per mining of these fixtures;
+  // each honest header added roughly doubles it.
   it('(b) cheap chain with strictly more work wins', () => {
-    const honest = buildMinedChain({ count: 25 });
-    const cheap = buildMinedChain({ count: 500, stampIntervalMs: 200 * 60_000 });
+    const honest = buildMinedChain({ count: clientM + k });
+    const cheap = buildMinedChain({ count: 500, stampIntervalMs: cheapStampMs });
 
     const gH = blockHash(honest.headers[0]!);
     const gC = blockHash(cheap.headers[0]!);
@@ -199,10 +212,10 @@ describe('attack pins — NIPOPOW_INTERFACE → compareProofs', () => {
 
     const hReader = makeReader(honest);
     const cReader = makeReader(cheap);
-    const proofH = proveWithReader(hReader, { m, k });
-    const proofC = proveWithReader(cReader, { m, k });
+    const proofH = proveWithReader(hReader, { m: clientM, k });
+    const proofC = proveWithReader(cReader, { m: clientM, k });
 
-    const result = compareProofs(proofH, proofC, m, profile);
+    const result = compareProofs(proofH, proofC, clientM, profile);
     expect(result.verdict).toBe('b');
   });
 
@@ -214,7 +227,6 @@ describe('attack pins — NIPOPOW_INTERFACE → compareProofs', () => {
   // fluke through in about one mining of these fixtures in 200, a top level of six in about one in
   // 18 000.
   it('(c) the own-target control picks the cheap side in every equal-work trial', () => {
-    const clientM = 6;
     const honest = buildMinedChain({ count: 30 });
     const cheap = buildMinedChain({ count: 250, stampIntervalMs: cheapStampMs });
     expect(blockHash(honest.headers[0]!)).toBe(blockHash(cheap.headers[0]!));
