@@ -49,6 +49,7 @@ import {
   applyOrderingBlock,
   computePostBlockStateRoot,
 } from './block-apply.js';
+import type { StateRootSpeculation } from './block-apply.js';
 import {
   bondOutputOf,
   buildBlockSettlement,
@@ -114,6 +115,42 @@ export function computeUtxoTxRoot(tree: UtxoTxTree): string {
 // NODE_INTERFACE → "Storage rent is a transition requiring no signature";
 // CONSTANTS → Producer policy.
 const MAX_RENT_TXS_PER_BLOCK = 32;
+
+// ---------------------------------------------------------------------------
+// The selection and its speculations
+// ---------------------------------------------------------------------------
+
+/** One entry of the fill's selection: a pooled transaction and its row, or a rent transaction this node built, which has none. */
+interface SelectedEntry {
+  txId: string;
+  txBytes: Uint8Array;
+  rowid: number | null;
+}
+
+/** The speculation over the selection's first `length` entries, and the candidate block it ran over. */
+interface Speculated {
+  length: number;
+  candidate: OrderingBlock;
+  speculation: StateRootSpeculation;
+}
+
+type Computed = Speculated & { speculation: Extract<StateRootSpeculation, { kind: 'computed' }> };
+type OverBudget = Speculated & { speculation: Extract<StateRootSpeculation, { kind: 'over-budget' }> };
+
+function isComputed(run: Speculated | { error: string }): run is Computed {
+  return 'speculation' in run && run.speculation.kind === 'computed';
+}
+
+function isOverBudget(run: Speculated | { error: string }): run is OverBudget {
+  return 'speculation' in run && run.speculation.kind === 'over-budget';
+}
+
+/** The pool rows `entries` carry. */
+function rowidsOf(entries: readonly SelectedEntry[]): Set<number> {
+  const rowids = new Set<number>();
+  for (const { rowid } of entries) if (rowid !== null) rowids.add(rowid);
+  return rowids;
+}
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -355,27 +392,24 @@ export function createOrderingBlock(): OrderingBlock | null {
     //    than read off the pool row, because that derivation is the property
     //    block application re-checks and rejects on.
     //
-    //    ⚠ **These two hold the USER transactions, and the tree holds the body.**
-    //    The settlement is appended to the tree by `rebuildBody` rather than
-    //    pushed here, so the fill and the trim both operate on the list they
-    //    select from and never on the tail they do not own.
-    const userTxIds: string[] = [];
-    const userTxBytesList: Uint8Array[] = [];
-    const includedRowids: number[] = [];
-    const utxoTxTree: UtxoTxTree = {
-      utxoTxIds: [],
-      utxoTxs: [],
-    };
+    //    ⚠ **The selection holds the USER transactions, and the body is built
+    //    from it.** The settlement is appended by `bodyOf` rather than pushed
+    //    here, so the fill, the trim and the packing all operate on the list they
+    //    select from and never on the tail they do not own. Each entry carries the
+    //    pool row it came from, or none for a rent transaction this node built.
+    const selection: SelectedEntry[] = [];
 
     /**
-     * Re-derive the settlement from the user transactions currently selected and
-     * write the whole body — the users' entries then the settlement, last. Read
-     * through one tree view of the pre-body state (NODE_INTERFACE → AVL+ State
-     * Root → "The rules read the tree, and nothing else"); the tree does not move
-     * until the speculation below, and the build repeats with a fresh view.
+     * The whole body for the selection's first `length` entries — their
+     * transactions, then the settlement re-derived from them, last. Read through
+     * one tree view of the pre-body state (NODE_INTERFACE → AVL+ State Root →
+     * "The rules read the tree, and nothing else"), unrecorded (NODE_INTERFACE →
+     * The block proof); every speculation puts the tree back where the view read
+     * it, and the build repeats with a fresh view.
      */
     const view = treeStateView(proverSession(handle.prover));
-    const rebuildBody = (): { valid: boolean; error?: string } => {
+    const bodyOf = (length: number): { tree: UtxoTxTree } | { error: string } => {
+      const entries = selection.slice(0, length);
       // A read of the tree that contradicts itself is local corruption, never
       // a body the settlement declines to build — the boundary directly, like
       // this function's other corrupt-state checks below, because nothing
@@ -384,7 +418,7 @@ export function createOrderingBlock(): OrderingBlock | null {
       let built: ReturnType<typeof buildBlockSettlement>;
       try {
         built = buildBlockSettlement(
-          view, userTxBytesList, newHeight, validatorId,
+          view, entries.map((entry) => entry.txBytes), newHeight, validatorId,
           currentMinerPubkey ?? validatorId, applyContextFrom(nodeConfig),
         );
       } catch (err) {
@@ -395,10 +429,21 @@ export function createOrderingBlock(): OrderingBlock | null {
         }
         throw err;
       }
-      if ('error' in built) return { valid: false, error: built.error };
-      utxoTxTree.utxoTxIds = [...userTxIds, computeTxId(built.tx)];
-      utxoTxTree.utxoTxs = [...userTxBytesList, encodeTx(built.tx)];
-      return { valid: true };
+      if ('error' in built) return { error: built.error };
+      return {
+        tree: {
+          utxoTxIds: [...entries.map((entry) => entry.txId), computeTxId(built.tx)],
+          utxoTxs: [...entries.map((entry) => entry.txBytes), encodeTx(built.tx)],
+        },
+      };
+    };
+
+    /** No template, and nothing evicted: a build this chain state cannot finish. */
+    const decline = (reason: string): null => {
+      console.warn(`Not producing block at height ${newHeight}: ${reason}`);
+      currentTemplate = null;
+      confirmedRowids = new Set();
+      return null;
     };
 
     // 5. Spend what the mandatory sections left. Karma-side entries are offered
@@ -440,14 +485,9 @@ export function createOrderingBlock(): OrderingBlock | null {
     //
     //    ⚠ **A chain that cannot back even the empty settlement produces
     //    nothing**, and says so here rather than after a wasted fill.
-    const seeded = rebuildBody();
-    if (!seeded.valid) {
-      console.warn(`Not producing block at height ${newHeight}: ${seeded.error}`);
-      currentTemplate = null;
-      confirmedRowids = new Set();
-      return null;
-    }
-    let spent = utxoTxTreeByteLength(utxoTxTree);
+    const seeded = bodyOf(0);
+    if ('error' in seeded) return decline(seeded.error);
+    let spent = utxoTxTreeByteLength(seeded.tree);
     const invitedThisBlock = new Set<string>();
     const offerBudgetTo = (klass: 'karma' | 'credit'): void => {
       for (const entry of iteratePendingEntries({ klass })) {
@@ -470,9 +510,7 @@ export function createOrderingBlock(): OrderingBlock | null {
         const cost = entryByteCost(entry.utxoTxBytes);
         if (spent + cost > budget) return;
         spent += cost;
-        userTxIds.push(txId);
-        userTxBytesList.push(entry.utxoTxBytes);
-        includedRowids.push(entry.rowid);
+        selection.push({ txId, txBytes: entry.utxoTxBytes, rowid: entry.rowid });
       }
     };
     offerBudgetTo('karma');
@@ -509,9 +547,7 @@ export function createOrderingBlock(): OrderingBlock | null {
       const cost = entryByteCost(encoded);
       if (spent + cost > budget) break;
       spent += cost;
-      const txId = computeTxId(rentTx);
-      userTxIds.push(txId);
-      userTxBytesList.push(encoded);
+      selection.push({ txId: computeTxId(rentTx), txBytes: encoded, rowid: null });
     }
 
     // 6. The settlement, from the transactions the fill actually selected, and
@@ -523,13 +559,9 @@ export function createOrderingBlock(): OrderingBlock | null {
     //    cannot back it (no emission box at a height that releases, a pool short
     //    of the grants the body owes) yields no block: mining a body this node's
     //    own applier refuses spends PoW on a block no peer accepts.
-    const settled = rebuildBody();
-    if (!settled.valid) {
-      console.warn(`Not producing block at height ${newHeight}: ${settled.error}`);
-      currentTemplate = null;
-      confirmedRowids = new Set();
-      return null;
-    }
+    const settled = bodyOf(selection.length);
+    if ('error' in settled) return decline(settled.error);
+    let body = settled.tree;
 
     // 7. The sizer has the last word. `spent` is exact per entry — its own
     //    encoding plus its marginal cost to the settlement — and blind to the two
@@ -545,32 +577,26 @@ export function createOrderingBlock(): OrderingBlock | null {
     //    fee, its actor and its bond, so the income can only fall, the
     //    settlement's input and output counts can only fall, and the body shrinks.
     //    The split moves value between the miner and the treasury without changing
-    //    their total, so it cannot widen the encoding on its own.
+    //    their total, so it cannot widen the encoding on its own. Every prefix of
+    //    the selection this leaves fits the same two bounds, for the same reason.
     //
     //    ⚠ **The pop takes a USER entry**, never the settlement: a body with no
     //    last transaction is one `verifyOrderingBlockStructure` refuses outright.
-    const settlementExceedsBound = (): boolean =>
-      utxoTxTree.utxoTxs.length > 0 &&
-      utxoTxTree.utxoTxs[utxoTxTree.utxoTxs.length - 1]!.length > MAX_SETTLEMENT_BYTES;
+    const settlementExceedsBound = (tree: UtxoTxTree): boolean =>
+      tree.utxoTxs[tree.utxoTxs.length - 1]!.length > MAX_SETTLEMENT_BYTES;
     while (
-      userTxIds.length > 0 &&
-      (utxoTxTreeByteLength(utxoTxTree) > budget || settlementExceedsBound())
+      selection.length > 0 &&
+      (utxoTxTreeByteLength(body) > budget || settlementExceedsBound(body))
     ) {
-      userTxIds.pop();
-      userTxBytesList.pop();
-      includedRowids.pop();
-      const retrimmed = rebuildBody();
-      if (!retrimmed.valid) {
-        console.warn(`Not producing block at height ${newHeight}: ${retrimmed.error}`);
-        currentTemplate = null;
-        confirmedRowids = new Set();
-        return null;
-      }
+      selection.pop();
+      const retrimmed = bodyOf(selection.length);
+      if ('error' in retrimmed) return decline(retrimmed.error);
+      body = retrimmed.tree;
     }
-    if (userTxIds.length === 0 && settlementExceedsBound()) {
+    if (selection.length === 0 && settlementExceedsBound(body)) {
       console.error(
         `Not producing block at height ${newHeight}: settlement ` +
-        `${utxoTxTree.utxoTxs[utxoTxTree.utxoTxs.length - 1]!.length} bytes ` +
+        `${body.utxoTxs[body.utxoTxs.length - 1]!.length} bytes ` +
         `exceeds MAX_SETTLEMENT_BYTES ${MAX_SETTLEMENT_BYTES} with no user entries`,
       );
       currentTemplate = null;
@@ -583,10 +609,6 @@ export function createOrderingBlock(): OrderingBlock | null {
     //     the settlement there carries no credit output at all; the block is
     //     produced either way, because the chain advancing is not conditional on
     //     income.
-
-    // 12. Track confirmed rowids for finalizeBlock cleanup (MEMPOOL_INTERFACE →
-    //     Block Creator Integration step 4).
-    confirmedRowids = new Set<number>(includedRowids);
 
     // 16. Previous block hash. `prevBlock` is our own stored tip: `currentHeight`
     // is `MAX(height)` over the same table, so on a non-empty chain the row is
@@ -617,12 +639,10 @@ export function createOrderingBlock(): OrderingBlock | null {
       ? config.orderingBlockPowTargetBits
       : scheduledTargetBits(prevBlock!.header);
 
-    // 18. Compute the Merkle root
-    const utxoTxRoot = computeUtxoTxRoot(utxoTxTree);
-
-    // 19. Build header template (powNonce=0). `stateRoot` is a placeholder here
-    // and is replaced in 19b — the speculative run needs a whole candidate block,
-    // and the mutation phase reads neither the nonce nor the signature.
+    // 19. The header template (powNonce=0). `utxoTxRoot` is the Merkle root of
+    // the body it heads and `stateRoot` a placeholder, replaced in 19b — the
+    // speculative run needs a whole candidate block, and the mutation phase reads
+    // neither the nonce nor the signature.
     //
     // interlinkRoot: the root the header commits to (TYPES_INTERFACE → Interlink
     // vector). A null level or missing vector on our own tip → the boundary.
@@ -640,24 +660,25 @@ export function createOrderingBlock(): OrderingBlock | null {
     } else {
       templateInterlinks = [];
     }
-    const headerTemplate: BlockHeader = {
-      protocolVersion: era,
-      height: newHeight,
-      prevBlockHash,
-      utxoTxRoot,
-      stateRoot: EMPTY_STATE_ROOT,
-      validatorId,
-      powNonce: 0,
-      powTargetBits,
-      // MINING_INTERFACE → Header timestamp rules, producer side
-      createdAt: Math.max(nowMs(), (prevBlock?.header.createdAt ?? 0) + 1),
-      interlinkRoot: interlinkRoot(templateInterlinks),
-    };
-    const candidate: OrderingBlock = {
-      header: headerTemplate,
-      utxoTxTree,
+    // MINING_INTERFACE → Header timestamp rules, producer side
+    const createdAt = Math.max(nowMs(), (prevBlock?.header.createdAt ?? 0) + 1);
+    const candidateOf = (tree: UtxoTxTree): OrderingBlock => ({
+      header: {
+        protocolVersion: era,
+        height: newHeight,
+        prevBlockHash,
+        // 18. The Merkle root
+        utxoTxRoot: computeUtxoTxRoot(tree),
+        stateRoot: EMPTY_STATE_ROOT,
+        validatorId,
+        powNonce: 0,
+        powTargetBits,
+        createdAt,
+        interlinkRoot: interlinkRoot(templateInterlinks),
+      },
+      utxoTxTree: tree,
       validatorSignature: new Uint8Array(64),
-    };
+    });
 
     // 19b. Compute the POST-block state root (H-6) — the digest this block's own
     // body produces, obtained by running that body through the apply path's
@@ -665,9 +686,53 @@ export function createOrderingBlock(): OrderingBlock | null {
     // digest: apply compares against the post-mutation digest, so a pre-block
     // root can never verify. PoW covers the header, so this must be known before
     // mining.
-    const speculation = computePostBlockStateRoot(candidate, handle);
+    const speculate = (length: number): Speculated | { error: string } => {
+      const built = length === selection.length ? { tree: body } : bodyOf(length);
+      if ('error' in built) return built;
+      const candidate = candidateOf(built.tree);
+      return { length, candidate, speculation: computePostBlockStateRoot(candidate, handle) };
+    };
+    let run = speculate(selection.length);
 
-    // 19c. A body the mutation phase rejected is evicted and the build repeats
+    // 19c. Packing to the budget (MINING_INTERFACE → Template and submit →
+    // "Packing to the budget"). A body's cost is known only by executing it, so a
+    // selection over the budget is trimmed from the tail: halved until a prefix
+    // fits, then grown back across the gap between the longest length known to
+    // fit and the shortest known not to, halving the gap each time — every
+    // length a speculation, at most 2·log₂(n) + 1 after the selection's own. The
+    // template is always a prefix whose speculation answered `computed`, so no
+    // template is ever over the budget, and nothing is evicted for it: an entry
+    // trimmed stays pooled for a later block. A speculation that answers
+    // `body-rejected` ends the search, and 19d evicts the body it rejected.
+    if (isOverBudget(run)) {
+      let over = selection.length;
+      while (isOverBudget(run) && over > 0) {
+        run = speculate(Math.floor(over / 2));
+        if (isOverBudget(run)) over = run.length;
+      }
+      if (isComputed(run)) {
+        let fits = run;
+        while (over - fits.length > 1) {
+          run = speculate(Math.floor((fits.length + over) / 2));
+          if (isOverBudget(run)) over = run.length;
+          else if (isComputed(run)) fits = run;
+          else break;
+        }
+        if (isOverBudget(run) || isComputed(run)) {
+          run = fits;
+          console.log(
+            `Block at height ${newHeight}: ${fits.length} of ${selection.length} ` +
+            `selected transactions fit the block's budget; the rest stay pooled`,
+          );
+        }
+      }
+    }
+    if ('error' in run) return decline(run.error);
+    if (run.speculation.kind === 'over-budget') {
+      return decline(`the body with no user transaction costs ${run.speculation.cost}, over the budget`);
+    }
+
+    // 19d. A body the mutation phase rejected is evicted and the build repeats
     // from purgeExpired, until the body holds or no pool row remains to evict
     // (MINING_INTERFACE → Template and submit). Reachable with unmutated code:
     // a pooled tx whose validity reads third-party state (a bond settlement's
@@ -678,8 +743,9 @@ export function createOrderingBlock(): OrderingBlock | null {
     // rejected body that carried no pool row is terminal: the chain state cannot
     // back even the empty body, or a defect is throwing, and no repetition
     // changes either.
-    if (speculation.kind === 'body-rejected') {
-      if (confirmedRowids.size === 0) {
+    const rowids = rowidsOf(selection.slice(0, run.length));
+    if (run.speculation.kind === 'body-rejected') {
+      if (rowids.size === 0) {
         console.warn(
           `Not producing block at height ${newHeight}: speculation returned ` +
           `body-rejected on a body with no pool rows`,
@@ -693,28 +759,20 @@ export function createOrderingBlock(): OrderingBlock | null {
       // mutation phase here would assert a diagnosis this frame does not have.
       console.warn(
         `Block at height ${newHeight}: speculation returned body-rejected; ` +
-        `evicting ${confirmedRowids.size} mempool entries and rebuilding`,
+        `evicting ${rowids.size} mempool entries and rebuilding`,
       );
-      for (const rowid of confirmedRowids) {
+      for (const rowid of rowids) {
         removeEntry(rowid);
       }
       confirmedRowids = new Set();
       continue;
     }
 
-    // 19d. No template is ever over the budget, and nothing is evicted for it
-    // (NODE_INTERFACE → Post-block stateRoot → "The speculation has three outcomes").
-    if (speculation.kind === 'over-budget') {
-      console.warn(
-        `Not producing block at height ${newHeight}: the body costs ` +
-        `${speculation.cost}, over the budget`,
-      );
-      currentTemplate = null;
-      confirmedRowids = new Set();
-      return null;
-    }
-
-    headerTemplate.stateRoot = speculation.stateRoot;
+    // 12. Track confirmed rowids for finalizeBlock cleanup (MEMPOOL_INTERFACE →
+    //     Block Creator Integration step 4) — every row the template carries.
+    confirmedRowids = rowids;
+    const candidate = run.candidate;
+    candidate.header.stateRoot = run.speculation.stateRoot;
 
     // 21. Store the full block template (header + bodies) for the miner. Its
     // stateRoot is this height's post-block digest, so the template stops being
