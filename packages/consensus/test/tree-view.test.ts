@@ -304,6 +304,35 @@ describe('treeStateView — the walks', () => {
   });
 });
 
+describe('treeStateView — lookupCount (CONSENSUS_INTERFACE → The block\'s cost)', () => {
+  it('counts the distinct keys the view asked its session: a memoised read adds none', () => {
+    const session = fullSession();
+    const view = treeStateView(session);
+    expect(view.lookupCount()).toBe(0);
+    view.getIdentityRecord(alice); // identity ‖ alice
+    expect(view.lookupCount()).toBe(1);
+    view.getIdentityRecord(alice);
+    view.getBox(alpha.id); // box ‖ alpha
+    view.getBoxProvenance(alpha.id);
+    view.getUsername('alpha'); // name ‖ alpha, then box ‖ alpha again
+    expect(view.lookupCount()).toBe(3);
+    expect(view.lookupCount()).toBe(session.lookups.length);
+  });
+
+  it('counts each key a walk looks up: the range start, each next key it follows, and each box an entry names', () => {
+    const owner = uid('tree-view/counted-owner');
+    const held = [karma(owner, 5n, 'counted-1'), karma(owner, 9n, 'counted-2'), karma(owner, 7n, 'counted-3')];
+    const session = mapSessionFrom(seedTreeWrites(held, [], { memberCount: 0 }));
+    const view = treeStateView(session);
+    expect(view.getKarmaBoxes(owner)).toHaveLength(3);
+    // The range's start, absent; its three entries, the last naming the sentinel; the three boxes they name.
+    expect(view.lookupCount()).toBe(7);
+    expect(new Set(session.lookups.map(bytesToHex)).size).toBe(7);
+    view.getKarmaBoxes(owner);
+    expect(view.lookupCount()).toBe(7);
+  });
+});
+
 describe('treeStateView — a tree that contradicts itself', () => {
   it('throws TreeInconsistencyError for a next key the tree holds no leaf for', () => {
     const owner = uid('tree-view/phantom-owner');
