@@ -213,17 +213,19 @@ on bytes a client has not screened, but it re-derives nothing a passed verdict e
   construction keeps own-target levels and adds an online round. The argument is the query-level one:
   a random-oracle query is a level-μ hit with a probability that depends on no target, so at every
   fully-registering level the counts are the constant-difficulty model's random variables. **A
-  cheap-target chain therefore buys no score beyond its work**: an honest chain's level-0 count is its length exactly,
-  a cheap chain's a binomial draw whose mean is its work in anchor units, so a cheap chain of equal work wins only as
-  often as chance lets any equal-work chain win — where own-target levels give it the lead every time — and one of
-  materially less work loses. The package's property tests pin all three over independent cheap chains: the
-  own-target control picks the cheap side in all of them; an equal-work cheap side wins in no more than chance allows;
-  a cheap side of at most three quarters of the honest work wins in none — and a lower-difficulty chain of more work
-  wins. A lying pointer can skip honest blocks and lower a score, never raise one.
+  cheap-target chain therefore buys no score beyond its work**: its headers register levels against the anchor at the
+  rate its work allows, so its proof scores as an honest proof of the same work would — where own-target levels gave
+  it the lead every time. The package's property tests pin the mechanism over one cheap chain — `bestArg` against the
+  anchor tracks the chain's work, own-target levels inflate it by the target ratio — and that the own-target control
+  picks the cheap side in every comparison; and that a lower-difficulty chain of more work wins. **How often a proof of
+  less work wins at all is `m`'s to bound, not the yardstick's**: the deciding level holds `m` to about `2m`
+  superblocks, so a score carries about `1/√m` relative noise, for a cheap chain and an honest one alike (measured
+  2026-09-30 over independent chains: at `m = 6`, three quarters of the honest work wins about 20% of comparisons, half
+  about 5%, a quarter about 0.2%). A lying pointer can skip honest blocks and lower a score, never raise one.
 
-  > ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — the property test samples one pair of chains, its 20
-  > trials nested prefixes of both, and asserts that an equal-work cheap side never wins; with the header's eleventh
-  > field its fixtures mine other nonces and one trial is won by the cheap side.
+  > ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — the property test asserts that an equal-work cheap
+  > side never wins over 20 nested prefixes of one pair of chains; with the header's eleventh field its fixtures mine
+  > other nonces and one trial is won by the cheap side.
 
 `bestArg(headers: BlockHeader[], m: number, anchorBits: number): bigint` is exported beside it — the
 anchor bits are the yardstick its levels are measured against.
