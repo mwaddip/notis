@@ -385,11 +385,11 @@ prove at, where the winner's tip may be a block it has not seen. The anchor is h
 run that writes it, cleared with it, dropped with it on a node change; nothing is stored. **The run** is `proveFigures`
 of `@dagsocial/nipopow-client` — the code the command-line light client runs — over **the listing the rows rendered**,
 in this order: every listed box proven at `suffixHead.height` against its `stateRoot` (`NODE_INTERFACE → AVL+ State
-Root`, the endpoint), and the key's identity record at the key `identityRecordKey` derives (`TYPES_INTERFACE →
-Identity record and karma valuation`); every box the first pass excluded proven once more at `tip.height`; then one
+Root`, the endpoint), under its tree key `boxKey`, and the key's identity record under `identityKey`
+(`TYPES_INTERFACE → The tree keys`); every box the first pass excluded proven once more at `tip.height`; then one
 `GET /blocks/current`, `heightAfter`. **A box is `proven`** when it is included at `suffixHead`, its value hashes back
-to its key (`NODE_INTERFACE → Entity kinds`), **its `owner` is the loaded key and its `boxType` the ledger it was listed
-under** — a node that lists another key's real box, or the wrong ledger's, gets nothing for it. Otherwise: `young` —
+to the box id its key carries (`NODE_INTERFACE → Entity kinds`), **its `owner` is the loaded key and its `boxType` the
+ledger it was listed under** — a node that lists another key's real box, or the wrong ledger's, gets nothing for it. Otherwise: `young` —
 excluded at `suffixHead`, included at `tip`: real, inside the region a reorg can still move; `unchecked` — excluded at
 both and `heightAfter` above `tip.height`: a block landed since the anchor, the next run decides — so a landing's
 own re-read, proven against the anchor standing, reads its new box *not checked yet* until the next verified tip;
@@ -440,6 +440,10 @@ and the figure in clay (→ The wallet window, → The profile window). **What i
 every proven box is real and the key's; a node that withholds a box still serves valid proofs for the rest, and
 omission is what reading both nodes as a union is for.
 
+> ⚠ **AHEAD OF CODE (2026-09-30, N2 state layout, stage A)** — `nipopow-client` asks the proof route for a box
+> by its id and for the identity record by `identityRecordKey`, both 64 hex, and verifies at `AVL_KEY_LENGTH`; its
+> names check proves the box the same way.
+
 **The verified names.** The extension proves every handle it shows, and every handle it sends to, against the state the
 verified chain committed — the figures' anchor, their proofs and their order. **A check** is `proveName` of
 `@dagsocial/nipopow-client` over a claim: a **label** — a key and the name a row carries beside it — or a **typed
@@ -455,7 +459,7 @@ records`). **The statuses**: `proven` — included at `suffixHead`, every check 
 included at `tip`, every check holding; `unchecked` — excluded at both and `heightAfter` above `tip.height` or unread;
 **`absent`** — excluded at both and `heightAfter` equal to `tip.height`: **the node points at a box the chain does not
 hold**, exact for the reason a listing's `absent` is, since the lookup follows the anchor; `unproven` — a proof that
-fails, a value that does not decode or hash to its key, a `kind` or `boxType` not a username box's, an owner or a name
+fails, a value that does not decode or hash to the box id its key carries, a `kind` or `boxType` not a username box's, an owner or a name
 not the claim's, and — with no request — a label whose key is not 64 hex or whose name is not a well-formed name
 (`TYPES_INTERFACE → Content limits`), since no box can carry it; `no-proof` — the lookup or a proof not served; `none` —
 the lookup answered 404, or — with no request — a typed handle that is not a well-formed name, which no one can hold.
