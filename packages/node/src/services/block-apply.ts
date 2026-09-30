@@ -1,6 +1,13 @@
 import * as validation from '@dagsocial/validation';
-import { applyBlock, treeStateView, treeWritesOf, TreeInconsistencyError } from '@dagsocial/consensus';
-import type { ApplyContext, BlockEffects, StateView, TreeStateView } from '@dagsocial/consensus';
+import {
+  applyBlock,
+  blockCost,
+  checkBlockCost,
+  treeStateView,
+  treeWritesOf,
+  TreeInconsistencyError,
+} from '@dagsocial/consensus';
+import type { ApplyContext, BlockCost, BlockEffects, StateView, TreeStateView } from '@dagsocial/consensus';
 import {
   CorruptChainStateError,
   InconsistentStateTreeError,
@@ -80,6 +87,7 @@ import { countedVerifyOrderingBlockPoW, noteTip } from '../metrics.js';
 import { getNet } from './net-instance.js';
 import {
   bytesToHex,
+  decodeTx,
   hash32,
   identityKey,
   MAX_FUTURE_DRIFT_MS,
@@ -489,6 +497,15 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
     throw err;
   }
 
+  // The block's cost, once its writes are derived and before they are
+  // performed: a block over the budget is refused like any rule's refusal
+  // (CONSENSUS_INTERFACE → The block's cost).
+  const overBudget = checkBlockCost(costOf(result.effects, view, writes));
+  if (overBudget !== null) {
+    console.warn(`Rejected block height=${height}: ${overBudget}`);
+    return null;
+  }
+
   // The writes and the stateRoot compare, before any effect is written —
   // unconditional (NODE_INTERFACE → AVL+ State Root). The prover is restored by
   // the funnel's single rollback point, not here.
@@ -652,6 +669,32 @@ export function writeBlockEffects(effects: BlockEffects, height: number): BlockJ
 }
 
 /**
+ * What a block's cost counts (CONSENSUS_INTERFACE → The block's cost): the
+ * batch's entries, the distinct keys its tree view looked up, and its writes.
+ */
+function costOf(effects: BlockEffects, view: TreeStateView, writes: readonly unknown[]): BlockCost {
+  return { signatures: effects.signatures, lookups: view.lookupCount(), writes: writes.length };
+}
+
+/**
+ * The cost of a body's signatures alone — each user transaction's signature map,
+ * the settlement, last, carrying none (CONSENSUS_INTERFACE → Applying a block) —
+ * or `null` for a body whose transactions do not decode, whose signatures
+ * `applyBlock` never counts.
+ */
+function signatureCostOf(block: OrderingBlock): BlockCost | null {
+  let signatures = 0;
+  try {
+    for (const txBytes of block.utxoTxTree.utxoTxs.slice(0, -1)) {
+      signatures += Object.keys(decodeTx(txBytes).signatures).length;
+    }
+  } catch {
+    return null;
+  }
+  return { signatures, lookups: 0, writes: 0 };
+}
+
+/**
  * The owners whose karma boxes a block's effects insert or spend, as hex — those
  * net's relay gate moves for once the block commits (NODE_INTERFACE → Post
  * transactions → "The set moves after a commit, never inside a transaction").
@@ -702,10 +745,12 @@ function moveKarmaMembers(owners: Set<string>): void {
 }
 
 /**
- * What the speculative state-root run answered. The two non-computed arms are
- * deliberately not one `null`: they demand opposite reactions from the block
+ * What the speculative state-root run answered — its three outcomes
+ * (NODE_INTERFACE → Post-block stateRoot). The non-computed arms are
+ * deliberately not one `null`: they demand different reactions from the block
  * creator, and conflating them puts a node back on the defect this type exists
- * to prevent — mining a body its own mutation phase has already rejected.
+ * to prevent — mining a body its own mutation phase has already rejected, or
+ * evicting entries whose only fault is that too many rode together.
  */
 export type StateRootSpeculation =
   /**
@@ -714,6 +759,13 @@ export type StateRootSpeculation =
    * proof's `hash32` as `adProofsRoot`, hex. Mine over them.
    */
   | { kind: 'computed'; stateRoot: string; adProofsRoot: string; proof: Uint8Array }
+  /**
+   * The body's cost is over the budget (CONSENSUS_INTERFACE → The block's
+   * cost): trim the selection and build again, evicting nothing. `cost` is
+   * `blockCost` of what the run counted — of the signatures alone for a body
+   * `applyBlock` refused for them before the batch.
+   */
+  | { kind: 'over-budget'; cost: number }
   /**
    * Producing this block is forbidden — the body was rejected, or speculating
    * on it threw. One arm because the caller's obligation is one: do not mine,
@@ -743,6 +795,12 @@ export type StateRootSpeculation =
  *
  * The candidate carries a placeholder header (`powNonce` 0, empty signature):
  * the mutation phase reads neither, and runs at the header's height.
+ *
+ * The block's cost is checked where apply checks it, once the writes are derived
+ * and before they are performed; over the budget, the run answers `over-budget`
+ * and performs nothing. A body whose signatures alone cost more than a block may
+ * is `applyBlock`'s refusal before the batch, and over the budget here too,
+ * whatever else refuses it: its cost is over the budget before any other count.
  *
  * An unexpected throw maps to `body-rejected`: the apply funnel treats the same
  * throw as a rejection of the block, so a body that crashes speculation is a
@@ -774,6 +832,10 @@ export function computePostBlockStateRoot(
     const view = treeStateView(recordingSession(handle.prover));
     const result = applyBlock(view, block, applyContextFrom(config));
     if (!result.ok) {
+      const signatureCost = signatureCostOf(block);
+      if (signatureCost !== null && checkBlockCost(signatureCost) !== null) {
+        return { kind: 'over-budget', cost: blockCost(signatureCost) };
+      }
       console.warn(result.reason);
       console.warn(
         `stateRoot speculation at height ${height}: the body was rejected by its ` +
@@ -782,6 +844,8 @@ export function computePostBlockStateRoot(
       return { kind: 'body-rejected' };
     }
     const writes = treeWritesOf(result.effects, height, view);
+    const cost = costOf(result.effects, view, writes);
+    if (checkBlockCost(cost) !== null) return { kind: 'over-budget', cost: blockCost(cost) };
     const digest = performTreeWrites(handle.prover, height, writes, 'computePostBlockStateRoot');
     const proof = inner.generateProof();
     return {

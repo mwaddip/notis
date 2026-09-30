@@ -702,6 +702,18 @@ export function createOrderingBlock(): OrderingBlock | null {
       continue;
     }
 
+    // 19d. No template is ever over the budget, and nothing is evicted for it
+    // (NODE_INTERFACE → Post-block stateRoot → "The speculation has three outcomes").
+    if (speculation.kind === 'over-budget') {
+      console.warn(
+        `Not producing block at height ${newHeight}: the body costs ` +
+        `${speculation.cost}, over the budget`,
+      );
+      currentTemplate = null;
+      confirmedRowids = new Set();
+      return null;
+    }
+
     headerTemplate.stateRoot = speculation.stateRoot;
 
     // 21. Store the full block template (header + bodies) for the miner. Its

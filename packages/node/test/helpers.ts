@@ -18,14 +18,16 @@ import {
   POST_PRICE_REPLY,
   REPLY_AUTHOR_SHARE,
   EMPTY_STATE_ROOT,
+  MAX_BLOCK_COST,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   interlinkRoot,
   updateInterlinks,
   encodeInterlinks,
 } from '@dagsocial/types';
+import { vi } from 'vitest';
 import { verifyOrderingBlockPoW, blockHash, level as headerLevel, asertTargetBits } from '@dagsocial/validation';
 import { buildBlockSettlement, computeBlockReward, materializeOutput, treeStateView, treeWritesOf } from '@dagsocial/consensus';
-import type { BlockEffects } from '@dagsocial/consensus';
+import type { BlockCost, BlockEffects } from '@dagsocial/consensus';
 import { config } from '../src/config.js';
 import type { Config } from '../src/config.js';
 import { AVL_SCHEMA } from '../src/store/db.js';
@@ -807,6 +809,34 @@ export async function nodeRewardSchedule(): Promise<(height: number) => bigint> 
   const { config: nodeConfig } = await import('../src/config.js');
   const ctx = applyContextFrom(nodeConfig);
   return (height) => computeBlockReward(height, ctx);
+}
+
+/**
+ * The seam that lowers the block budget for the node's module graph
+ * (CONSENSUS_INTERFACE → The block's cost). Every budget decision the node makes
+ * — apply's refusal, the speculation's `over-budget`, admission's cost gate —
+ * calls `consensus`' `checkBlockCost`, and this replaces that one export in the
+ * modules imported after it, answering against `set`'s budget in the same words.
+ * `types`' `MAX_BLOCK_COST` is never touched: `applyBlock`'s own check of the
+ * signatures alone still reads it.
+ *
+ * Register it after `vi.resetModules()` and before the node's modules are
+ * imported, and `vi.doUnmock('@dagsocial/consensus')` in the suite's teardown.
+ * The budget starts at `MAX_BLOCK_COST`, and `set` moves it at any point after.
+ */
+export function blockBudgetSeam(): { set(budget: number): void } {
+  let budget = MAX_BLOCK_COST;
+  vi.doMock('@dagsocial/consensus', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@dagsocial/consensus')>();
+    return {
+      ...actual,
+      checkBlockCost: (cost: BlockCost): string | null => {
+        const total = actual.blockCost(cost);
+        return total > budget ? `cost ${total} over the budget ${budget}` : null;
+      },
+    };
+  });
+  return { set: (next) => { budget = next; } };
 }
 
 /**
