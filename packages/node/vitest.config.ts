@@ -1,4 +1,4 @@
-import { defineConfig, mergeConfig } from 'vitest/config';
+import { configDefaults, defineConfig, mergeConfig } from 'vitest/config';
 import shared from '../../vitest.shared.js';
 
 export default mergeConfig(
@@ -6,6 +6,9 @@ export default mergeConfig(
   defineConfig({
     test: {
       globals: true,
+      // The shadow replay is `vitest.shadow.config.ts`'s alone, run against a
+      // stored chain; this suite neither runs nor counts it.
+      exclude: [...configDefaults.exclude, 'shadow/**'],
       // Block-application suites mine real PoW solutions (the powTargetBits
       // schedule is enforced at apply, so fixtures cannot fake it) and are
       // compute-bound by design. Under a full-repo parallel run the 5s

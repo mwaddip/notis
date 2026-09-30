@@ -1,5 +1,5 @@
 {
-  // Typechecks the TEST tree as well as src (ARCHITECTURE → "Build and test
+  // Typechecks the TEST and SHADOW trees as well as src (ARCHITECTURE → "Build and test
   // resolution", rule 5). Three constraints, all measured — none is a style
   // choice:
   //
@@ -28,5 +28,5 @@
       "@dagsocial/*": ["../*/src/index.ts"]
     }
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", "shadow"]
 }
