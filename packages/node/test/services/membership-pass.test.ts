@@ -4,7 +4,13 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import type Database from 'better-sqlite3';
-import { PROTOCOL_VERSION, VOUCH_KARMA_AMOUNT } from '@dagsocial/types';
+import {
+  PROTOCOL_VERSION,
+  VOUCH_KARMA_AMOUNT,
+  networkKey,
+  networkRecordBytes,
+  networkRecordFromBytes,
+} from '@dagsocial/types';
 import type { UtxoTransaction, VouchBox } from '@dagsocial/types';
 import {
   makeTestIdentity,
@@ -413,16 +419,12 @@ describe('genesis network record', () => {
     const nr = records.getNetworkRecord();
     expect(nr.memberCount).toBe(1);
 
-    // The network record key is derivable and stable.
-    const key = records.networkRecordKey();
-    expect(key).toMatch(/^[0-9a-f]{64}$/);
-
-    // The serialize/deserialize round-trips.
-    const { serializeNetworkRecord, deserializeNetworkRecord } =
-      await import('../../src/state/serialize-box.js');
-    const bytes = serializeNetworkRecord(nr);
-    const decoded = deserializeNetworkRecord(bytes);
-    expect(decoded.memberCount).toBe(1);
+    // The tree holds the record under the network key, in types' encoding
+    // (TYPES_INTERFACE → Layout — tree records).
+    const handle = await activateProverOverStore();
+    const bytes = handle.prover.unauthenticatedLookup(networkKey());
+    expect(bytes).toEqual(networkRecordBytes(nr));
+    expect(networkRecordFromBytes(bytes!).memberCount).toBe(1);
 
     db.closeDb();
   });

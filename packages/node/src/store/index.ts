@@ -144,7 +144,6 @@ export {
   deleteIdentityRecord,
   getNetworkRecord,
   putNetworkRecord,
-  networkRecordKey,
 } from './identity-records.js';
 export type { NetworkRecord } from './identity-records.js';
 

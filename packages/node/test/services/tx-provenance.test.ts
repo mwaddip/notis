@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { AnyBox, AnyBoxCandidate, CandidateOf, CreditBox, KarmaBox, BondBox, KarmaPriceBox, VouchBox, VouchEscrowBox, LikeAccrualBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, UsernameBox, BackerStakeBox, BackerUnstakeBox, BackerPoolBox } from '@dagsocial/types';
+import { boxRecordBytes } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 
 /**
@@ -15,6 +16,11 @@ import type Database from 'better-sqlite3';
  * box read back through `rowToBox` — and a node that restarted would compute a
  * different `stateRoot` than one that stayed up.
  */
+
+/** A box's tree leaf value (TYPES_INTERFACE → Layout — tree records). */
+function leafOf(box: AnyBox): Uint8Array {
+  return boxRecordBytes(box, box.txId, box.index);
+}
 
 async function importDbFresh() {
   return (await import('../../src/store/db.js')) as {
@@ -91,7 +97,6 @@ describe('transaction output provenance (Spec G phase C3)', () => {
   it('the store reconstruction is byte-identical (key order is canonical now)', async () => {
     const { initDb } = await importDbFresh();
     const { insertBox, getBox } = await importUtxoFresh();
-    const { serializeBox } = await import('../../src/state/serialize-box.js');
     const { materializeOutput } = await import('@dagsocial/consensus');
     initDb(':memory:');
 
@@ -101,15 +106,14 @@ describe('transaction output provenance (Spec G phase C3)', () => {
 
     insertBox(produced);
     const restored = getBox(produced.id!)!;
-    expect(Buffer.from(serializeBox(restored)).toString('hex')).toBe(
-      Buffer.from(serializeBox(produced)).toString('hex'),
+    expect(Buffer.from(leafOf(restored)).toString('hex')).toBe(
+      Buffer.from(leafOf(produced)).toString('hex'),
     );
   });
 
   it('strips client-supplied provenance rather than overwriting it in place', async () => {
     const { initDb } = await importDbFresh();
     const { insertBox, getBox } = await importUtxoFresh();
-    const { serializeBox } = await import('../../src/state/serialize-box.js');
     const { materializeOutput } = await import('@dagsocial/consensus');
     initDb(':memory:');
 
@@ -136,15 +140,14 @@ describe('transaction output provenance (Spec G phase C3)', () => {
 
     insertBox(produced);
     const restored = getBox(produced.id!)!;
-    expect(Buffer.from(serializeBox(restored)).toString('hex')).toBe(
-      Buffer.from(serializeBox(produced)).toString('hex'),
+    expect(Buffer.from(leafOf(restored)).toString('hex')).toBe(
+      Buffer.from(leafOf(produced)).toString('hex'),
     );
   });
 
   it('is total over every box type, appending after each type\'s own fields', async () => {
     const { initDb } = await importDbFresh();
     const { insertBox, getBox } = await importUtxoFresh();
-    const { serializeBox } = await import('../../src/state/serialize-box.js');
     const { materializeOutput } = await import('@dagsocial/consensus');
     initDb(':memory:');
 
@@ -220,8 +223,8 @@ describe('transaction output provenance (Spec G phase C3)', () => {
 
       insertBox(produced);
       const restored = getBox(produced.id!)!;
-      expect(Buffer.from(serializeBox(restored)).toString('hex')).toBe(
-        Buffer.from(serializeBox(produced)).toString('hex'),
+      expect(Buffer.from(leafOf(restored)).toString('hex')).toBe(
+        Buffer.from(leafOf(produced)).toString('hex'),
       );
     });
   });
@@ -237,7 +240,6 @@ describe('transaction output provenance (Spec G phase C3)', () => {
     // a height this assertion refuses.
     const { initDb } = await importDbFresh();
     const { insertBox, getBox } = await importUtxoFresh();
-    const { serializeBox } = await import('../../src/state/serialize-box.js');
     const { materializeOutput, applyTx } = await import(
       '@dagsocial/consensus'
     );
@@ -269,8 +271,8 @@ describe('transaction output provenance (Spec G phase C3)', () => {
     expect(restored.index).toBe(0);
     expect('createdAtBlock' in restored).toBe(true);
     expect('lastTouchBlock' in restored).toBe(false);
-    expect(Buffer.from(serializeBox(restored)).toString('hex')).toBe(
-      Buffer.from(serializeBox({ ...produced })).toString('hex'),
+    expect(Buffer.from(leafOf(restored)).toString('hex')).toBe(
+      Buffer.from(leafOf({ ...produced })).toString('hex'),
     );
   });
 });

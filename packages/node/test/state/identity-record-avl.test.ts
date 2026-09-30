@@ -2,13 +2,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
 import {
-  serializeBox,
-  deserializeBox,
-  deserializeAvlValue,
-  serializeNetworkRecord,
-  NETWORK_RECORD_TAG,
-} from '../../src/state/serialize-box.js';
-import {
   createAvlProver,
   performTreeWrites,
 } from '../../src/state/avl-prover.js';
@@ -51,88 +44,9 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
   beforeEach(() => { db = openAvlDb(); db2 = openAvlDb(); });
   afterEach(() => { db.close(); db2.close(); });
 
-  // Round-trip and codec-refusal cases live in `@dagsocial/types`'
-  // `identity-record.test.ts`. The cases below prove that a record REACHES the
-  // AVL tree and dispatches correctly against every box type — the
-  // integration surface node owns.
-
-  it('a box still round-trips unchanged', () => {
-    const box = makeKarmaBox('aa'.repeat(32));
-    const restored = deserializeBox(serializeBox(box));
-    expect(restored.boxType).toBe('karma');
-    expect((restored as KarmaBox).value).toBe(10n);
-  });
-
-  it('NO box type is shadowed by the record tag', () => {
-    // Every box type, not just karma: a record tag chosen inside the assigned
-    // range of `BOX_TYPE_TAGS` would make one real box type decode as a record
-    // (deserializeAvlValue tests the record tag first) and make deserializeBox
-    // reject it outright. Asserting only the tag literal would leave that
-    // consequence untested.
-    const owner = new Uint8Array(randomBytes(32));
-    // `withProvenance` mirrors `makeKarmaBox` above: a caller-chosen id (the AVL
-    // key, controlled so the tag-collision assertions below are readable) plus
-    // real `txId`/`index`, which ride the AVL *value* and so must be present for
-    // the serialized leaf to be a shape production could produce.
-    const withProvenance = <B extends AnyBox>(id: string, c: object): B =>
-      ({ id, ...c, ...fixtureProvenance(c, 1, hashSeed(id)) }) as B;
-
-    const boxes: AnyBox[] = [
-      makeKarmaBox('01'.repeat(32)),
-      withProvenance('02'.repeat(32), { boxType: 'credit', value: 5n, createdAtBlock: 0,
-        owner }),
-      // ⚠ These fills are AVL **keys**, chosen so the assertions below read
-      // in order — they are not box tags and do not track the tag table.
-      // `genesis_proof` is the type with no row: it carries an `lp` payload no
-      // fixture here needs, and its tag is covered by the two ownerless rows
-      // at the end.
-      withProvenance('05'.repeat(32), { boxType: 'bond', value: 10n, createdAtBlock: 0,
-        inviterId: owner, inviteePublicKey: new Uint8Array(randomBytes(32)) }),
-      withProvenance('06'.repeat(32), { boxType: 'karma_price', value: 5n, createdAtBlock: 0 }),
-      withProvenance('07'.repeat(32), { boxType: 'vouch', value: 1n, createdAtBlock: 0,
-        voucherId: owner, targetId: owner }),
-      // The two ownerless block-application boxes. Their serialized leaf is the
-      // shared prefix alone — `enum8(boxType) ‖ vlqU64(value)` and nothing else
-      // (TYPES_INTERFACE → EmissionBox / TreasuryBox) — which makes them the
-      // shortest values the tree ever holds and so the sharpest case for a tag
-      // that must not be mistaken for a record.
-      withProvenance('08'.repeat(32), { boxType: 'emission', value: 4226400000000n,  createdAtBlock: 0,}),
-      withProvenance('09'.repeat(32), { boxType: 'treasury', value: 500n, createdAtBlock: 0 }),
-      // The pool joins them: karma-bearing, ownerless, and the widest value the
-      // tree holds (TYPES_INTERFACE → KarmaPoolBox).
-      withProvenance('0a'.repeat(32), { boxType: 'karma_pool', value: 500n,  createdAtBlock: 0,}),
-    ];
-
-    for (const box of boxes) {
-      const bytes = serializeBox(box);
-      // Must not be mistaken for a record...
-      const val = deserializeAvlValue(bytes);
-      expect(val.kind).toBe('box');
-      if (val.kind === 'box') expect(val.box.boxType).toBe(box.boxType);
-      // ...and must still decode as a box.
-      expect(deserializeBox(bytes).boxType).toBe(box.boxType);
-    }
-  });
-
-  it('a record is not mistaken for any box type', () => {
-    const bytes = identityRecordBytes(REC);
-    const val = deserializeAvlValue(bytes);
-    expect(val.kind).toBe('record');
-  });
-
-  it('deserializeBox REJECTS a record rather than mis-decoding it', () => {
-    const bytes = identityRecordBytes(REC);
-    expect(() => deserializeBox(bytes)).toThrow(/identity record, not a box/i);
-  });
-
-  it('the kind-dispatching decoder handles either value', () => {
-    const boxVal = deserializeAvlValue(serializeBox(makeKarmaBox('cc'.repeat(32))));
-    expect(boxVal.kind).toBe('box');
-
-    const recVal = deserializeAvlValue(identityRecordBytes(REC));
-    expect(recVal.kind).toBe('record');
-    if (recVal.kind === 'record') expect(recVal.record).toEqual(REC);
-  });
+  // The codecs are `@dagsocial/types`' (TYPES_INTERFACE → Layout — tree
+  // records). The cases below prove that a record reaches the tree and moves
+  // its digest — the integration surface node owns.
 
   // --- the record must actually reach the digest --------------------------
 
@@ -226,23 +140,6 @@ describe('record puts reaching the digest', () => {
     const { prover: p2 } = createAvlProver(db2);
 
     expect(perform(p1, [put('c3', withLikes(0n))])).not.toBe(perform(p2, [put('c3', withLikes(3n))]));
-  });
-});
-
-describe('network record — the third entity kind (§9)', () => {
-  it('deserializeBox refuses 0x81 (the network record tag)', () => {
-    const bytes = serializeNetworkRecord({ memberCount: 42 });
-    expect(bytes[0]).toBe(NETWORK_RECORD_TAG);
-    expect(() => deserializeBox(bytes)).toThrow('network record');
-  });
-
-  it('deserializeAvlValue on 0x81 returns kind: network', () => {
-    const bytes = serializeNetworkRecord({ memberCount: 7 });
-    const val = deserializeAvlValue(bytes);
-    expect(val.kind).toBe('network');
-    if (val.kind === 'network') {
-      expect(val.network.memberCount).toBe(7);
-    }
   });
 });
 

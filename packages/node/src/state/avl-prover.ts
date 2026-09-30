@@ -4,14 +4,9 @@ import { getDb, isCurrentDb } from '../store/db.js';
 import { config } from '../config.js';
 import { DivergedStateTreeError } from '../services/corrupt-state.js';
 import type { AnyBox, IdentityRecord, NetworkRecord, UserId } from '@dagsocial/types';
-import {
-  USERNAME_KEY_DOMAIN,
-  USERNAME_HOLDER_KEY_DOMAIN,
-  bytesToHex,
-} from '@dagsocial/types';
+import { bytesToHex } from '@dagsocial/types';
 import { seedTreeWrites } from '@dagsocial/consensus';
 import type { TreeWrite } from '@dagsocial/consensus';
-import crypto from 'node:crypto';
 
 /** Sentinel key for block height metadata in additionalData. */
 export const HEIGHT_SENTINEL = new Uint8Array(32); // all zeros
@@ -76,26 +71,6 @@ export function createAvlProver(db?: import('better-sqlite3').Database): AvlProv
   }
 
   return { prover: newProver, storage: newStorage };
-}
-
-/** NODE_INTERFACE → Username records — H(USERNAME_KEY_DOMAIN ‖ canonical(name)). */
-export function usernameRecordKey(canonicalNameBytes: Uint8Array): string {
-  return crypto.createHash('blake2b512')
-    .update(USERNAME_KEY_DOMAIN)
-    .update(canonicalNameBytes)
-    .digest()
-    .subarray(0, 32)
-    .toString('hex');
-}
-
-/** NODE_INTERFACE → Username records — H(USERNAME_HOLDER_KEY_DOMAIN ‖ identityId). */
-export function holderRecordKey(identityId: Uint8Array): string {
-  return crypto.createHash('blake2b512')
-    .update(USERNAME_HOLDER_KEY_DOMAIN)
-    .update(identityId)
-    .digest()
-    .subarray(0, 32)
-    .toString('hex');
 }
 
 /**

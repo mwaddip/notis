@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
 import type { AnyBox, KarmaBox, CreditBox } from '@dagsocial/types';
+import { boxRecordBytes } from '@dagsocial/types';
 import { fixtureProvenance, openAvlDb } from '../helpers.js';
 
 /**
@@ -124,19 +125,18 @@ describe('box provenance columns (Spec G phase B)', () => {
 
   // --- the AVL-value byte identity that makes a restart safe ---------------
 
-  it('serializeBox is byte-identical for a producer box and its rowToBox reconstruction', async () => {
+  it('the tree leaf is byte-identical for a producer box and its rowToBox reconstruction', async () => {
     const { initDb } = await importDbFresh();
     const { insertBox, getBox } = await importUtxoFresh();
-    const { serializeBox } = await import('../../src/state/serialize-box.js');
     initDb(':memory:');
 
     const producer = makeKarmaBox('ab'.repeat(32));
     insertBox(producer);
     const restored = getBox(producer.id!)!;
 
-    expect(Buffer.from(serializeBox(restored)).toString('hex')).toBe(
-      Buffer.from(serializeBox(producer)).toString('hex'),
-    );
+    // The leaf value is `boxRecordBytes` (TYPES_INTERFACE → Layout — tree records).
+    const leafOf = (box: AnyBox): string => Buffer.from(boxRecordBytes(box, box.txId, box.index)).toString('hex');
+    expect(leafOf(restored)).toBe(leafOf(producer));
   });
 
   it('bootstrap-from-store and live-producer provers agree on the digest', async () => {
