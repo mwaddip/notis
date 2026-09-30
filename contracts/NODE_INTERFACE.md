@@ -1226,7 +1226,7 @@ tree collapse into clean rejections:
 > **It is not a promise that no condition may halt the node**, and a whole *class* of conditions
 > deliberately does. **The allowlist keys on `CorruptChainStateError`, the base class — not on any
 > one subclass** — which is the property `corrupt-state.test.ts` pins as *"a third kind must not need
-> a boundary edit to be fatal"*. Seven subclasses, and every boundary is fatal for all of them with no
+> a boundary edit to be fatal"*. Eight subclasses, and every boundary is fatal for all of them with no
 > boundary edit.
 >
 > | Subclass | Raised when | Raising site |
@@ -1234,10 +1234,15 @@ tree collapse into clean rejections:
 > | `UnhashableStoredHeaderError` | a header already in our store cannot be hashed | ⚠ **now dead `src`** — see below |
 > | `MissingStoredBlockError` | a block the chain refers to is absent from the store | `services/block-apply.ts`, `services/fork-resolution.ts`, `services/block-creator.ts` |
 > | `UnreadableStoredBlockError` | a stored block's bytes will not decode | `store/ordering.ts` → `rowToOrderingBlock` |
-> | `DivergedStateTreeError` | the AVL+ tree refuses an operation the UTXO store implies must succeed | `state/avl-prover.ts` |
+> | `DivergedStateTreeError` | the AVL+ tree refuses one of a block's writes or of genesis's — writes derived from the tree's own state, so the tree contradicts itself | `state/avl-prover.ts` |
+> | `InconsistentStateTreeError` | a read of this node's own tree contradicts itself — `consensus`'s `TreeInconsistencyError` over the node's prover session (`CONSENSUS_INTERFACE → The tree view`), in block application, the speculative run or the settlement's build | `services/block-apply.ts`, `services/block-creator.ts` |
 > | `MissingJournalError` | a block journal inside retention is absent. Every height `revertBlock` can be asked for lies inside what `purgeOldJournals` keeps: deletion is strictly below `tip − maxReorgDepth`, the fork walk's lowest non-genesis answer is `tip − maxReorgDepth + 1` and the revert starts one above it, and its genesis answer is reachable only while `tip ≤ maxReorgDepth` | `services/fork-resolution.ts` → `revertBlock` |
 > | `MissingStateVersionError` | no AVL version at or before a fork height the walk answers within. `MAX_PROOF_HISTORY < maxReorgDepth` is refused at load (Configuration), so a missing version is a row the store lost | `services/fork-resolution.ts` → `reorg` |
 > | `DuplicateStateVersionError` | a version row already stands at the height being checkpointed — the store's version history has run ahead of its chain. The write path keeps one row per height and `idx_avl_tree_versions_height` refuses a second (AVL+ State Root) | `state/avl-storage.ts` → `update` |
+>
+> ⚠ **AHEAD OF CODE (2026-09-30, N2 state layout, stage A)** — `InconsistentStateTreeError` does not exist: a
+> `TreeInconsistencyError` reaches the apply funnel's totality catch as an unexpected throw, a refusal kept off the
+> mark, and the speculation's catch as `body rejected`.
 >
 > The class is outside the totality property's scope by construction, and the argument is about
 > **provenance, not validation** — but it takes two shapes, and only the first is about bytes.
