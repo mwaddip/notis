@@ -232,6 +232,14 @@ describe('blocks routes', () => {
     expect(res.status).toBe(400);
   });
 
+  it('GET /blocks/:height returns 400 unless the height is written in decimal digits alone', async () => {
+    // Each begins with the digits of a height this store holds.
+    for (const height of ['1abc', '1e3', '1.0', '+1', '0x1']) {
+      const res = await request(`/blocks/${height}`);
+      expect(res.status, height).toBe(400);
+    }
+  });
+
   it('GET /blocks/:height with unknown height returns 404', async () => {
     const res = await request('/blocks/99999');
     expect(res.status).toBe(404);
@@ -481,6 +489,14 @@ describe('GET /blocks/:height/proof', () => {
 
   it('answers 400 unless the height parses as a non-negative safe integer', async () => {
     for (const height of ['abc', '-1', '9007199254740993']) {
+      const res = await requestBytes(`/blocks/${height}/proof`);
+      expect(res.status, height).toBe(400);
+    }
+  });
+
+  it('answers 400 unless the height is written in decimal digits alone', async () => {
+    // Each begins with the digits of the height whose proof this store holds.
+    for (const height of ['7abc', '7e3', '7.0', '+7', '0x7']) {
       const res = await requestBytes(`/blocks/${height}/proof`);
       expect(res.status, height).toBe(400);
     }
