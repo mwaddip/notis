@@ -12,6 +12,7 @@ import {
   bytesToHex,
   castCountKey,
   equalBytes,
+  escrowDueKey,
   hexToBytes,
   holderKey,
   holderRecordBytes,
@@ -336,6 +337,38 @@ describe('treeStateView — a tree that contradicts itself', () => {
 
   it('throws TreeInconsistencyError for a tree holding no network record', () => {
     expect(() => treeStateView(mapSessionFrom([])).getNetworkRecord()).toThrow(TreeInconsistencyError);
+  });
+
+  it('throws TreeInconsistencyError for a next key equal to the one just looked up, never looking it up again', () => {
+    const owner = uid('tree-view/stalled-owner');
+    const held = escrowBox(owner, 5, 401);
+    const heldKey = escrowDueKey(5, hexToBytes(held.id));
+    const session = mapSessionFrom(seedTreeWrites([held], [], { memberCount: 0 }));
+    const lying: TreeSession = {
+      lookup: (key) => {
+        const answer = session.lookup(key);
+        return equalBytes(key, heldKey) ? { ...answer, nextKey: heldKey } : answer;
+      },
+    };
+    expect(() => treeStateView(lying).getVouchEscrowsReleasableAt(9, 4)).toThrow(TreeInconsistencyError);
+    expect(session.lookups.filter((k) => equalBytes(k, heldKey)).length).toBe(1);
+  });
+
+  it('throws TreeInconsistencyError for a next key below the one just looked up, never looking it up again', () => {
+    const owner = uid('tree-view/stalled-owner-below');
+    const low = escrowBox(owner, 5, 402);
+    const high = escrowBox(owner, 9, 403);
+    const lowKey = escrowDueKey(5, hexToBytes(low.id));
+    const highKey = escrowDueKey(9, hexToBytes(high.id));
+    const session = mapSessionFrom(seedTreeWrites([low, high], [], { memberCount: 0 }));
+    const lying: TreeSession = {
+      lookup: (key) => {
+        const answer = session.lookup(key);
+        return equalBytes(key, highKey) ? { ...answer, nextKey: lowKey } : answer;
+      },
+    };
+    expect(() => treeStateView(lying).getVouchEscrowsReleasableAt(9, 4)).toThrow(TreeInconsistencyError);
+    expect(session.lookups.filter((k) => equalBytes(k, lowKey)).length).toBe(1);
   });
 });
 
