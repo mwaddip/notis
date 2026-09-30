@@ -3166,8 +3166,6 @@ export const MAX_BLOCK_COST = 600_000;    // consensus — the budget: 6 000 sig
 body's signatures and the block's proof — where `MAX_BLOCK_BODY_BYTES` bounds what it downloads. The three numbers are
 provisional until a leaf's verification of a full block is measured (`CONSTANTS → The block's cost`).
 
-> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — the three constants do not exist (Task 1).
-
 ### State format
 
 ```typescript
