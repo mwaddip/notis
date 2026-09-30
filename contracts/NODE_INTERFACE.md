@@ -3868,7 +3868,7 @@ mapped to the sentinel (`CONSENSUS_INTERFACE → The tree session`); a write the
 `DivergedStateTreeError` and a read that contradicts itself `InconsistentStateTreeError`, both fail-stop (→ "What the
 funnel's totality catch is FOR"). **The SQLite tables are written from the same effects and answer the API only**; no
 consensus path reads them, so a table and the tree cannot disagree about what a rule saw. `storeStateView` — the
-tables' answers to `StateView` — stays for one caller, the shadow run (`packages/node/shadow/`), which compares it with
+tables' answers to `StateView` — has one caller, the shadow run (`packages/node/shadow/`), which compares it with
 the tree view read by read.
 
 - **avl-storage:** Persistent AVL+ tree, stateRoot computed at each block
