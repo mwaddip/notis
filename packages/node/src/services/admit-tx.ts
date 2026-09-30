@@ -1,21 +1,10 @@
-import {
-  applyBlock,
-  buildBlockSettlement,
-  checkBlockCost,
-  treeStateView,
-  treeWritesOf,
-  TreeInconsistencyError,
-} from '@dagsocial/consensus';
-import { EMPTY_STATE_ROOT, computeTxId, encodeTx } from '@dagsocial/types';
-import type { BlockHeader, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
+import { checkBlockCost } from '@dagsocial/consensus';
+import { encodeTx } from '@dagsocial/types';
+import type { UtxoTransaction } from '@dagsocial/types';
 import { bidOf, entryByteCost, insertUtxoTx } from '../store/mempool.js';
-import { nextBlockHeight } from '../store/index.js';
-import { tryGetAvlProver } from '../state/avl-prover.js';
-import { proverSession } from '../state/prover-session.js';
 import { config } from '../config.js';
-import { applyContextFrom, costOf } from './block-apply.js';
 import { ClientError } from './client-error.js';
-import { InconsistentStateTreeError, failStopIfCorruptChain } from './corrupt-state.js';
+import { costAlone, marginalCost } from './cost-estimate.js';
 
 /**
  * Thrown when a credit transaction's fee rate is beneath this node's floor.
@@ -68,78 +57,6 @@ export class TxOverBlockBudgetError extends ClientError {
 }
 
 /**
- * The producer of the block the cost gate runs: none. Its coinbase pays an
- * all-zero key, which signs nothing, so the settlement counts every actor the
- * transaction carries — the cost does not depend on who would mine it.
- */
-const NO_PRODUCER = new Uint8Array(32);
-
-/**
- * `checkBlockCost`'s refusal of the block carrying `tx` as its only user
- * transaction at the height of the block that would carry it — tip + 1 — its
- * settlement built as the creator builds one, the rules and the writes run over
- * this node's tree read unrecorded (MEMPOOL_INTERFACE → The cost gate;
- * NODE_INTERFACE → The block proof); `null` for a block within the budget.
- *
- * Also `null` where there is no such block to cost, which is not the gate's to
- * refuse: a node with no prover has no tree to run it over, a chain that cannot
- * back the settlement produces no block at all, and a transaction the rules
- * refuse alone — one spending the output of a transaction still pooled, a like
- * of a post still pooled — rides a block with what it depends on.
- *
- * The candidate's header carries the height and `validatorId`, the only fields
- * the mutation phase reads (CONSENSUS_INTERFACE → Applying a block); every other
- * field is a zero.
- */
-function costRefusal(tx: UtxoTransaction): string | null {
-  const handle = tryGetAvlProver();
-  if (handle === null) return null;
-  const height = nextBlockHeight();
-  const ctx = applyContextFrom(config);
-  const txBytes = encodeTx(tx);
-  try {
-    const built = buildBlockSettlement(
-      treeStateView(proverSession(handle.prover)), [txBytes], height, NO_PRODUCER, NO_PRODUCER, ctx,
-    );
-    if ('error' in built) return null;
-    const header: BlockHeader = {
-      protocolVersion: tx.protocolVersion,
-      height,
-      prevBlockHash: '00'.repeat(32),
-      utxoTxRoot: '00'.repeat(32),
-      stateRoot: EMPTY_STATE_ROOT,
-      validatorId: NO_PRODUCER,
-      powNonce: 0,
-      powTargetBits: 0,
-      createdAt: 0,
-      interlinkRoot: '00'.repeat(32),
-      adProofsRoot: '00'.repeat(32),
-    };
-    const block: OrderingBlock = {
-      header,
-      utxoTxTree: {
-        utxoTxIds: [computeTxId(tx), computeTxId(built.tx)],
-        utxoTxs: [txBytes, encodeTx(built.tx)],
-      },
-      validatorSignature: new Uint8Array(64),
-    };
-    const view = treeStateView(proverSession(handle.prover));
-    const result = applyBlock(view, block, ctx);
-    if (!result.ok) return null;
-    return checkBlockCost(costOf(result.effects, view, treeWritesOf(result.effects, height, view)));
-  } catch (err) {
-    // A read of this node's own tree that contradicts itself is local
-    // corruption, never a verdict on the transaction — the boundary directly,
-    // because the routes that call admission answer a throw as a 500 and stay
-    // up (NODE_INTERFACE → "What the funnel's totality catch is FOR").
-    if (err instanceof TreeInconsistencyError) {
-      failStopIfCorruptChain(new InconsistentStateTreeError('admitTx', height, err));
-    }
-    throw err;
-  }
-}
-
-/**
  * Admission: this node's relay policy and the cost gate, then the pool.
  *
  * ⛔ **The floor and the cost gate live here and must never move into
@@ -158,7 +75,13 @@ function costRefusal(tx: UtxoTransaction): string | null {
  * variable at all, which no consensus value in this package does. **The cost
  * gate reads the budget, which is consensus**: a transaction whose block alone
  * is over it is one no block can carry, and it would sit in the pool, trimmed
- * from every template, until it expired.
+ * from every template, until it expired. A transaction with no block alone to
+ * cost is not the gate's to refuse (`costAlone`): it is admitted, and its row
+ * carries no estimate.
+ *
+ * **The gate keeps what it measured**: the row carries the transaction's
+ * marginal cost — its block alone less the empty block at the same tip
+ * (MEMPOOL_INTERFACE → The cost gate).
  *
  * `validateTx` is deliberately **not** folded in here. Every caller already
  * runs it against its own dependency set and turns a failure into its own
@@ -194,8 +117,10 @@ export function admitTx(tx: UtxoTransaction, expiresAtHeight: number): number {
   }
 
   // MEMPOOL_INTERFACE → The cost gate.
-  const overBudget = costRefusal(tx);
+  const alone = costAlone(tx, 'admitTx');
+  if (alone === null) return insertUtxoTx(tx, expiresAtHeight);
+  const overBudget = checkBlockCost(alone);
   if (overBudget !== null) throw new TxOverBlockBudgetError(overBudget);
 
-  return insertUtxoTx(tx, expiresAtHeight);
+  return insertUtxoTx(tx, expiresAtHeight, marginalCost(alone, 'admitTx'));
 }

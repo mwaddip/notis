@@ -169,7 +169,8 @@ export class TxTooLargeError extends ClientError {
 /**
  * In-memory representation of a pending pool entry (MEMPOOL_INTERFACE →
  * PoolEntry). `entryType` is the single value `'utxo_tx'` — nothing else
- * rides the pool.
+ * rides the pool. `costEstimate` is the row's marginal cost, `null` where
+ * nothing costed it (MEMPOOL_INTERFACE → The cost gate).
  */
 export interface PoolEntry {
   rowid: number;
@@ -177,6 +178,7 @@ export interface PoolEntry {
   utxoTxBytes: Uint8Array | null;
   expiresAtHeight: number;
   createdAt: string;
+  costEstimate: number | null;
 }
 
 interface MempoolRow {
@@ -185,6 +187,7 @@ interface MempoolRow {
   utxo_tx_bytes: Buffer | null;
   expires_at_height: number;
   created_at: string;
+  cost_estimate: number | null;
 }
 
 function rowToEntry(row: MempoolRow): PoolEntry {
@@ -194,6 +197,7 @@ function rowToEntry(row: MempoolRow): PoolEntry {
     utxoTxBytes: row.utxo_tx_bytes ? new Uint8Array(row.utxo_tx_bytes) : null,
     expiresAtHeight: row.expires_at_height,
     createdAt: row.created_at,
+    costEstimate: row.cost_estimate,
   };
 }
 
@@ -426,9 +430,15 @@ export function bidOf(tx: UtxoTransaction): bigint | null {
     .reduce((sum, out) => sum + out.value, 0n);
 }
 
+/**
+ * `costEstimate` is the cost gate's marginal cost for `tx`, kept with its row; a
+ * caller that did not cost it — a reorg's re-insertion — passes none, and the
+ * row carries NULL (MEMPOOL_INTERFACE → The cost gate).
+ */
 export function insertUtxoTx(
   tx: UtxoTransaction,
   expiresAtHeight: number,
+  costEstimate: number | null = null,
 ): number {
   const db = getDb();
 
@@ -462,8 +472,9 @@ export function insertUtxoTx(
                           vouch_target,
                           tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes,
                           max_valid_height,
-                          username_lower, username_claimant)
-     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                          username_lower, username_claimant,
+                          cost_estimate)
+     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     Buffer.from(encoded),
     expiresAtHeight,
@@ -480,8 +491,17 @@ export function insertUtxoTx(
     ceiling,
     meta.usernameLower,
     meta.usernameClaimant,
+    costEstimate,
   );
   return Number(result.lastInsertRowid);
+}
+
+/**
+ * Write the marginal cost of the row `rowid`, a row costed after it was pooled
+ * (MEMPOOL_INTERFACE → The cost gate).
+ */
+export function setCostEstimate(rowid: number, costEstimate: number): void {
+  getDb().prepare('UPDATE mempool SET cost_estimate = ? WHERE rowid = ?').run(costEstimate, rowid);
 }
 
 // ---------------------------------------------------------------------------
@@ -604,6 +624,10 @@ export function getBoxWithPending(boxId: string): AnyBox | null {
   return getBox(boxId) ?? findPendingOutput(boxId);
 }
 
+/** The columns a `PoolEntry` is read from — every reader of the pool selects these. */
+const ENTRY_COLUMNS = `rowid, entry_type, utxo_tx_bytes,
+                       expires_at_height, created_at, cost_estimate`;
+
 /**
  * Pending entries in FIFO order, at most `limit` of them, starting after
  * `afterRowid`.
@@ -617,8 +641,7 @@ export function getBoxWithPending(boxId: string): AnyBox | null {
 export function getPendingEntries(limit: number, afterRowid = 0): PoolEntry[] {
   const db = getDb();
   const rows = db.prepare(
-    `SELECT rowid, entry_type, utxo_tx_bytes,
-            expires_at_height, created_at
+    `SELECT ${ENTRY_COLUMNS}
      FROM mempool
      WHERE rowid > ?
      ORDER BY rowid ASC
@@ -638,9 +661,6 @@ export function getPendingEntries(limit: number, afterRowid = 0): PoolEntry[] {
  * `getPendingEntries` is a count").
  */
 const PENDING_PAGE_SIZE = 256;
-
-const ENTRY_COLUMNS = `rowid, entry_type, utxo_tx_bytes,
-                       expires_at_height, created_at`;
 
 /**
  * The karma-side class in FIFO order, paged by the keyset cursor above.

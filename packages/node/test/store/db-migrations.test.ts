@@ -13,7 +13,7 @@ async function importFresh() {
   };
 }
 
-// The five columns migrateMempoolTxColumns adds to an existing mempool table
+// The columns migrateMempoolTxColumns adds to an existing mempool table
 // (MEMPOOL_INTERFACE → Schema).
 const ALTER_COLUMNS = [
   'tx_inputs',
@@ -23,6 +23,7 @@ const ALTER_COLUMNS = [
   'tx_bytes',
   'username_lower',
   'username_claimant',
+  'cost_estimate',
 ];
 
 // Every index createMempoolGateIndexes declares, derived from db.ts.
@@ -173,7 +174,7 @@ describe('migrateMempoolTxColumns', () => {
 
     const row = db.prepare(
       `SELECT tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes,
-              username_lower, username_claimant
+              username_lower, username_claimant, cost_estimate
        FROM mempool WHERE rowid = ?`,
     ).get(inserted.rowid) as Record<string, unknown>;
     expect(row).toBeDefined();
