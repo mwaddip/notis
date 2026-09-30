@@ -206,7 +206,8 @@ type HeaderField =
   | 'powNonce'
   | 'powTargetBits'
   | 'createdAt'
-  | 'interlinkRoot';
+  | 'interlinkRoot'
+  | 'adProofsRoot';
 
 interface HeaderDomainRule {
   readonly field: HeaderField;
@@ -242,6 +243,9 @@ const HEADER_DOMAIN: readonly HeaderDomainRule[] = [
   { field: 'createdAt', ok: isU64Safe, error: 'Block header createdAt must be a non-negative safe integer' },
   // b32 — the interlink vector's commitment (TYPES_INTERFACE → Interlink vector)
   { field: 'interlinkRoot', ok: isHex32, error: 'Block header interlinkRoot must be 64 lowercase hex characters' },
+  // b32 — hash32 of the block's AVL+ proof (NODE_INTERFACE → The block proof); last, so no
+  // earlier field's number depends on it (TYPES_INTERFACE → Layout — Block)
+  { field: 'adProofsRoot', ok: isHex32, error: 'Block header adProofsRoot must be 64 lowercase hex characters' },
 ];
 
 /**
@@ -265,7 +269,7 @@ function firstHeaderDomainFailure(h: unknown): HeaderDomainRule | null {
  * encodable domain.
  *
  * Only declared fields are checked, and that is the whole domain: `encodeHeader`
- * writes the ten declared fields positionally and reads nothing else, so an
+ * writes the eleven declared fields positionally and reads nothing else, so an
  * *extra* property on a header — a symbol, a function, a reference cycle —
  * reaches no writer and has no bytes.
  *
@@ -807,6 +811,7 @@ const BLOCK_HEADER_FIELD_ERROR: Record<HeaderField, string> = {
   powTargetBits: 'Ordering block missing or invalid powTargetBits',
   createdAt: 'Ordering block header missing or invalid createdAt',
   interlinkRoot: 'Ordering block header missing or invalid interlinkRoot',
+  adProofsRoot: 'Ordering block header missing or invalid adProofsRoot',
 };
 
 export function verifyOrderingBlockStructure(

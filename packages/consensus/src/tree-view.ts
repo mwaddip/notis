@@ -54,10 +54,16 @@ import { isSentinel } from './tree-session.js';
 import type { TreeLookup, TreeSession } from './tree-session.js';
 import type { UsernameRow } from './utxo-engine.js';
 
-/** The `StateView` the rules see, and the one read the tree writes add to it (CONSENSUS_INTERFACE → The tree view). */
+/**
+ * The `StateView` the rules see, the one read the tree writes add to it, and the
+ * count of what it looked up (CONSENSUS_INTERFACE → The tree view;
+ * CONSENSUS_INTERFACE → The block's cost).
+ */
 export interface TreeStateView extends StateView {
   /** The voucher's cast count — 0 where no entry stands. The writes' own read; no rule makes it. */
   castCountOf(voucherId: Uint8Array): number;
+  /** The distinct keys this view has asked its session — a memoised read adds none. */
+  lookupCount(): number;
 }
 
 /**
@@ -149,6 +155,10 @@ class TreeView implements TreeStateView {
     }
     this.memo.set(hex, answer);
     return answer;
+  }
+
+  lookupCount(): number {
+    return this.memo.size;
   }
 
   /**

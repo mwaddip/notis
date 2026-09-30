@@ -124,6 +124,7 @@ function mineHeaders(
       powTargetBits,
       createdAt,
       interlinkRoot: interlinkRoot(expected),
+      adProofsRoot: '00'.repeat(32),
     };
 
     const wantLevel = forceLevels?.get(height);

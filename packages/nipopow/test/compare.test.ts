@@ -95,6 +95,11 @@ describe('attack pins — NIPOPOW_INTERFACE → compareProofs', () => {
   const profile = { ...devnetProfile(), nowMs: 10_000_000_000 };
   const m = 3;
   const k = 5;
+  // the client's m (CONSTANTS → Client defaults)
+  const clientM = 6;
+  const { anchorBits, floorBits } = DEVNET_RETARGET;
+  // stretched stamps: 200× idealMs → target walks to floor (2304) by block 7
+  const cheapStampMs = 200 * 60_000;
 
   // 2^((3072 - 2304) / 256) = 2^3 = 8: a floor-difficulty block is 1/8 the work
   // of an anchor-difficulty block, and registers a level with probability 1/8.
@@ -102,98 +107,97 @@ describe('attack pins — NIPOPOW_INTERFACE → compareProofs', () => {
   // A cheap chain of C floor blocks has C/8 anchor-units of work.
   // For equal work: C = 8H (plus a few transition blocks).
 
-  it('(a) equal-work cheap chain does not out-compare the honest one', () => {
+  // Work measured from the headers: blockWork(bits) = 2^256 / (target + 1)
+  function sumWork(headers: BlockHeader[]): bigint {
+    let w = 0n;
+    for (const h of headers) w += blockWork(h.powTargetBits) ?? 0n;
+    return w;
+  }
+
+  // The control: bestArg with every level measured against the header's own target, as Ergo
+  // measures it (NIPOPOW_INTERFACE → compareProofs → "The score is work, whatever the headers declare")
+  function controlBestArg(headers: BlockHeader[], m: number): bigint {
+    const levels = headers.map(h => level(h, h.powTargetBits));
+    const count0 = levels.filter(lvl => lvl !== null).length;
+    const acc: Array<[number, number]> = [[0, count0]];
+    let mu = 1;
+    for (;;) {
+      const count = levels.filter(lvl => lvl !== null && lvl >= mu).length;
+      if (count >= m) { acc.push([mu, count]); mu++; } else break;
+    }
+    let best = 0n;
+    for (const [lvl, cnt] of acc) {
+      const score = (2n ** BigInt(lvl)) * BigInt(cnt);
+      if (score > best) best = score;
+    }
+    return best;
+  }
+
+  // NIPOPOW_INTERFACE → compareProofs → "A cheap-target chain therefore buys no score beyond its
+  // work", over the cheap chain's floor headers — heights 7..500; the difficulty walk's headers
+  // 2..6 carry targets between the anchor's and the floor's.
+  //
+  // Identity: T_floor + 1 = 2^247 = 8 · (T_anchor + 1) (VALIDATION_INTERFACE → orderingPowTarget),
+  // so a floor header whose hit meets the anchor has an own-target level of its anchor level plus
+  // three (VALIDATION_INTERFACE → level), and one whose hit misses it an own-target level of 0, 1
+  // or 2. The own-target count at μ + 3 is the anchor count at μ, so the own-target score is at
+  // least eight times the anchor score. An honest header's own target is the anchor, so its two
+  // scores are one.
+  //
+  // Binomial: a floor header's hit is uniform below its own target, so it meets the anchor with
+  // probability 1/8, its work in anchor units. The registered count of the 494 floor headers is
+  // Binomial(494, 1/8) — mean W = 61.75, sd 7.35 — and the band [W/2, 2W] lies 4.25 sd below the
+  // mean and 8.4 sd above it: exact tails 1.8e-6 and 2.0e-14. bestArg's maximum includes level 0,
+  // so the anchor score is at least W/2. Above that the maximum is decided at the top level holding
+  // m headers, whose noise is m's (NIPOPOW_INTERFACE → compareProofs → "How often a proof of less
+  // work wins at all is `m`'s to bound, not the yardstick's") and has no overwhelming bound at m = 3.
+  it('(a) one cheap chain: bestArg against the anchor tracks its work, own-target levels inflate it eightfold', () => {
     const honest = buildMinedChain({ count: 30 });
-    // stretched stamps: 200× idealMs → target walks to floor (2304) by block 7
-    const cheap = buildMinedChain({ count: 250, stampIntervalMs: 200 * 60_000 });
+    const cheap = buildMinedChain({ count: 500, stampIntervalMs: cheapStampMs });
 
-    const gH = blockHash(honest.headers[0]!);
-    const gC = blockHash(cheap.headers[0]!);
-    expect(gH).toBe(gC);
+    const floor = cheap.headers.slice(6);
+    expect(floor[0]!.height).toBe(7);
+    for (const h of floor) expect(h.powTargetBits).toBe(floorBits);
 
-    // Work measured from the headers: blockWork(bits) = 2^256 / (target + 1)
-    function sumWork(headers: BlockHeader[]): bigint {
-      let w = 0n;
-      for (const h of headers) w += blockWork(h.powTargetBits) ?? 0n;
-      return w;
+    for (const h of floor) {
+      const againstAnchor = level(h, anchorBits);
+      const againstOwn = level(h, h.powTargetBits);
+      if (againstAnchor === null) expect([0, 1, 2]).toContain(againstOwn);
+      else expect(againstOwn).toBe(againstAnchor + 3);
     }
 
-    // The cheap chain's registered fraction should be roughly 1/8
-    const cheapAll = cheap.headers.slice(1);
-    const registeredCount = cheapAll.filter(h =>
-      level(h, DEVNET_RETARGET.anchorBits) !== null,
-    ).length;
-    const registrationFraction = registeredCount / cheapAll.length;
-    expect(registrationFraction).toBeLessThan(0.25);
-    expect(registrationFraction).toBeGreaterThan(0.05);
+    const work = sumWork(floor);
+    const anchorWork = blockWork(anchorBits)!;
+    const registered = BigInt(floor.filter(h => level(h, anchorBits) !== null).length);
+    expect(2n * registered * anchorWork).toBeGreaterThanOrEqual(work);   // registered ≥ W/2
+    expect(registered * anchorWork).toBeLessThanOrEqual(2n * work);      // registered ≤ 2W
 
-    // 20 trials: for each honest length, find the longest cheap prefix whose
-    // work ≤ the honest side's, then compare proofs
-    let neverCheap = true;
-    const trials = 20;
-    for (let i = 0; i < trials; i++) {
-      const hLen = 15 + i;
-      if (hLen + k > honest.headers.length) continue;
-      if (hLen < m + k) continue;
+    const anchorScore = bestArg(floor, m, anchorBits);
+    const ownScore = controlBestArg(floor, m);
+    expect(2n * anchorScore * anchorWork).toBeGreaterThanOrEqual(work);  // anchor score ≥ W/2
+    expect(ownScore).toBeGreaterThanOrEqual(8n * anchorScore);
+    // every header meets its own target: the own-target level-0 count is the header count, 8W
+    expect(ownScore).toBeGreaterThanOrEqual(BigInt(floor.length));
 
-      const honestAbove = honest.headers.slice(1, hLen);
-      const honestWork = sumWork(honestAbove);
-
-      // Find the longest cheap prefix whose work ≤ honest work
-      let cLen = 1;
-      let cheapWork = 0n;
-      for (let j = 1; j < cheap.headers.length; j++) {
-        const w = blockWork(cheap.headers[j]!.powTargetBits) ?? 0n;
-        if (cheapWork + w > honestWork) break;
-        cheapWork += w;
-        cLen = j + 1;
-      }
-      if (cLen < m + k) continue;
-
-      // The premise: cheap work ≤ honest work
-      expect(cheapWork).toBeLessThanOrEqual(honestWork);
-
-      const hSlice = { ...honest, headers: honest.headers.slice(0, hLen), popowHeaders: honest.popowHeaders.slice(0, hLen), interlinksPerHeader: honest.interlinksPerHeader.slice(0, hLen) };
-      const cSlice = { ...cheap, headers: cheap.headers.slice(0, cLen), popowHeaders: cheap.popowHeaders.slice(0, cLen), interlinksPerHeader: cheap.interlinksPerHeader.slice(0, cLen) };
-
-      const hReader = makeReader(hSlice);
-      const cReader = makeReader(cSlice);
-      const proofH = proveWithReader(hReader, { m, k });
-      const proofC = proveWithReader(cReader, { m, k });
-
-      const result = compareProofs(proofH, proofC, m, profile);
-      if (result.verdict === 'b') neverCheap = false;
-    }
-    expect(neverCheap).toBe(true);
-
-    // The mechanism: a control bestArg using the OLD definition (own-target
-    // levels) picks the cheap chain — the attack the yardstick defeats
-    function controlBestArg(headers: BlockHeader[], m: number): bigint {
-      const levels = headers.map(h => level(h, h.powTargetBits));
-      const count0 = levels.filter(lvl => lvl !== null).length;
-      const acc: Array<[number, number]> = [[0, count0]];
-      let mu = 1;
-      for (;;) {
-        const count = levels.filter(lvl => lvl !== null && lvl >= mu).length;
-        if (count >= m) { acc.push([mu, count]); mu++; } else break;
-      }
-      let best = 0n;
-      for (const [lvl, cnt] of acc) {
-        const score = (2n ** BigInt(lvl)) * BigInt(cnt);
-        if (score > best) best = score;
-      }
-      return best;
-    }
-    const honestAbove = honest.headers.slice(1, 25);
-    const cheapAboveSlice = cheapAll.slice(0, 200);
-    const controlH = controlBestArg(honestAbove, m);
-    const controlC = controlBestArg(cheapAboveSlice, m);
-    expect(controlC).toBeGreaterThan(controlH);
+    const honestAbove = honest.headers.slice(1);
+    for (const h of honestAbove) expect(h.powTargetBits).toBe(anchorBits);
+    expect(controlBestArg(honestAbove, m)).toBe(bestArg(honestAbove, m, anchorBits));
   });
 
+  // NIPOPOW_INTERFACE → compareProofs → "A cheap-target chain therefore buys no score beyond its
+  // work": a lower-difficulty chain of more work wins. The honest side is the prover's shortest
+  // chain at the client's m and k = 5 — eleven headers, ten above the LCA and ten anchor units of
+  // work — against the fixture cheap chain's 500 headers and about 64. The honest proof scores at
+  // most its ten headers unless six of them reach a common level μ ≥ 1, when it scores 2^μ times
+  // their count; the likeliest way past the cheap side is six at level 3 or above, scoring 48 with
+  // probability P(Binomial(10, 1/8) ≥ 6) = 5.1e-4, while the cheap proof scores 48 or less in about
+  // one draw in eight. Modelled over 800 000 draws of this shape — honest levels geometric, a cheap
+  // header meeting the anchor with probability its work in anchor units, the prover's walk and
+  // bestArg as written — the verdict is not 'b' in 55, about 7e-5 per mining of these fixtures;
+  // each honest header added roughly doubles it.
   it('(b) cheap chain with strictly more work wins', () => {
-    const honest = buildMinedChain({ count: 25 });
-    const cheap = buildMinedChain({ count: 500, stampIntervalMs: 200 * 60_000 });
+    const honest = buildMinedChain({ count: clientM + k });
+    const cheap = buildMinedChain({ count: 500, stampIntervalMs: cheapStampMs });
 
     const gH = blockHash(honest.headers[0]!);
     const gC = blockHash(cheap.headers[0]!);
@@ -208,11 +212,44 @@ describe('attack pins — NIPOPOW_INTERFACE → compareProofs', () => {
 
     const hReader = makeReader(honest);
     const cReader = makeReader(cheap);
-    const proofH = proveWithReader(hReader, { m, k });
-    const proofC = proveWithReader(cReader, { m, k });
+    const proofH = proveWithReader(hReader, { m: clientM, k });
+    const proofC = proveWithReader(cReader, { m: clientM, k });
 
-    const result = compareProofs(proofH, proofC, m, profile);
+    const result = compareProofs(proofH, proofC, clientM, profile);
     expect(result.verdict).toBe('b');
+  });
+
+  // The control's verdict over the equal-work trials — honest prefixes of 15..25 headers, each
+  // against the longest cheap prefix of no more work. The cheap side's own-target level-0 count is
+  // its header count, about seven times the honest length; the honest side's own-target score is
+  // its anchor score, which passes that only through a fluke at its top level. The verdict is
+  // scored at the client's m (CONSTANTS → Client defaults): a top level of three headers lets such a
+  // fluke through in about one mining of these fixtures in 200, a top level of six in about one in
+  // 18 000.
+  it('(c) the own-target control picks the cheap side in every equal-work trial', () => {
+    const honest = buildMinedChain({ count: 30 });
+    const cheap = buildMinedChain({ count: 250, stampIntervalMs: cheapStampMs });
+    expect(blockHash(honest.headers[0]!)).toBe(blockHash(cheap.headers[0]!));
+
+    for (let hLen = 15; hLen <= 25; hLen++) {
+      const honestAbove = honest.headers.slice(1, hLen);
+      const honestWork = sumWork(honestAbove);
+
+      let cLen = 1;
+      let cheapWork = 0n;
+      for (let j = 1; j < cheap.headers.length; j++) {
+        const w = blockWork(cheap.headers[j]!.powTargetBits) ?? 0n;
+        if (cheapWork + w > honestWork) break;
+        cheapWork += w;
+        cLen = j + 1;
+      }
+      // the prefix ends on work, not on the fixture's last header
+      expect(cLen).toBeLessThan(cheap.headers.length);
+      expect(cheapWork).toBeLessThanOrEqual(honestWork);
+
+      const cheapAbove = cheap.headers.slice(1, cLen);
+      expect(controlBestArg(cheapAbove, clientM)).toBeGreaterThan(controlBestArg(honestAbove, clientM));
+    }
   });
 });
 

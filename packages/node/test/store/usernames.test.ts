@@ -95,6 +95,7 @@ function nameEffects(row: UsernameRow, burn: boolean): BlockEffects {
     likeRecords: [],
     withdrawals: [],
     appliedTxs: [],
+    signatures: 0,
   };
 }
 

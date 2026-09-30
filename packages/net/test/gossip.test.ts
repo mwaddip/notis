@@ -134,6 +134,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
     powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR, // the structure floor
     createdAt: 1_722_470_400_000,
     interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
   };
 
   function makeBlock(header: BlockHeader): OrderingBlock {
@@ -563,6 +564,7 @@ describe('gossip dispatch listener', () => {
     powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_722_470_400_000,
     interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
   };
   const dispatchBlock: OrderingBlock = {
     header: dispatchHeader,
@@ -718,6 +720,7 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
     powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_722_470_400_000,
     interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
   });
   const vBlock = (height: number, protocolVersion: number): OrderingBlock => ({
     header: vHeader(height, protocolVersion),
@@ -853,6 +856,7 @@ describe('ordering-block topic validator — network floor and schedule', () => 
     powTargetBits: NETWORK_FLOOR,
     createdAt: 1_722_470_400_000,
     interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
   };
 
   function makeBlock(header: BlockHeader): OrderingBlock {

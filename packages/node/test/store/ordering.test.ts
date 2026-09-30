@@ -50,6 +50,7 @@ function makeOrderingBlock(
       powTargetBits: 256 * 12,
       createdAt: Date.now(),
       interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
     },
     utxoTxTree: {
       utxoTxIds: ['1a'.repeat(32)],
@@ -103,6 +104,7 @@ describe('ordering store', () => {
         powTargetBits: 256 * 14,
         createdAt: 1234567890,
         interlinkRoot: 'ee'.repeat(32),
+        adProofsRoot: 'ad'.repeat(32),
       },
       utxoTxTree: {
         // The settlement is the last entry, and here it is the only one — the
@@ -129,6 +131,7 @@ describe('ordering store', () => {
     expect(h.powTargetBits).toBe(256 * 14);
     expect(h.createdAt).toBe(1234567890);
     expect(h.interlinkRoot).toBe(block.header.interlinkRoot);
+    expect(h.adProofsRoot).toBe('ad'.repeat(32));
 
     expect(result!.validatorSignature).toEqual(
       new Uint8Array(64).fill(0xcd),

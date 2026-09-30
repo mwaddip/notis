@@ -170,6 +170,7 @@ describe('route boundary (real wiring)', () => {
       membershipBarMultiplier: 1,
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
       countUsernames: () => 0,
+      getBlockProof: () => null,
     }));
 
     await new Promise<void>((resolve) => {

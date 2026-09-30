@@ -5,7 +5,7 @@ import { MemoryStateView } from './memory-state-view.js';
 
 // What the bundle test's entry and its Node side share (CONSENSUS_INTERFACE →
 // Tests): the scenario, its text, the view it seeds, and the text of its
-// results. This module imports nothing Node and reads no Node global, so the
+// answer. This module imports nothing Node and reads no Node global, so the
 // bundle carries it.
 
 /** The state the view holds before the first block. */
@@ -16,11 +16,24 @@ export interface Seed {
   records: Array<{ identityId: Uint8Array; record: IdentityRecord }>;
 }
 
-/** What `run` applies: the context, the seed, and each block as the hex of `encodeOrderingBlock`, in order. */
+/** A block as `run` takes it: its bytes (`encodeOrderingBlock`), and its proof against its parent's digest (CONSENSUS_INTERFACE → The block proof). */
+export interface ScenarioBlock {
+  block: Uint8Array;
+  parentDigest: Uint8Array;
+  proof: Uint8Array;
+}
+
+/** What `run` applies: the context, the seed, and each block, in order. */
 export interface Scenario {
   ctx: ApplyContext;
   seed: Seed;
-  blocks: string[];
+  blocks: ScenarioBlock[];
+}
+
+/** What `run` answers: each block's result over the stub view, and the digest its replay over its proof reached. */
+export interface Answer {
+  results: readonly ApplyResult[];
+  digests: ReadonlyArray<Uint8Array | null>;
 }
 
 const BIGINT = '$bigint';
@@ -59,17 +72,18 @@ export function viewOf(seed: Seed): MemoryStateView {
 }
 
 /**
- * The results as text, one line a value: its path, its kind, and the value — a
- * bigint in decimal, bytes in lowercase hex, a string as JSON. A list keeps its
- * order, which is the order `BlockEffects` carries (CONSENSUS_INTERFACE →
- * BlockEffects), and an object's keys are sorted, so the text is a function of
- * the values alone and never of how an object was built.
+ * The answer as text, one line a value: its path, its kind, and the value — a
+ * bigint in decimal, bytes in lowercase hex, a string as JSON. The results come
+ * first, then the digests. A list keeps its order, which is the order
+ * `BlockEffects` carries (CONSENSUS_INTERFACE → BlockEffects), and an object's
+ * keys are sorted, so the text is a function of the values alone and never of
+ * how an object was built.
  *
  * A value of any other kind throws rather than rendering: a `Map` or a `Set`,
  * an instance of a class, and an object or a byte array made in another realm,
  * whose prototypes are not this realm's.
  */
-export function canonical(results: readonly ApplyResult[]): string {
+export function canonical(answer: Answer): string {
   const lines: string[] = [];
   const render = (value: unknown, path: string): void => {
     if (value === null || value === undefined) {
@@ -95,6 +109,7 @@ export function canonical(results: readonly ApplyResult[]): string {
       throw new TypeError(`canonical: ${path} holds a value it does not render`);
     }
   };
-  render(results, 'results');
+  render(answer.results, 'results');
+  render(answer.digests, 'digests');
   return lines.join('\n');
 }

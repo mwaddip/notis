@@ -107,7 +107,7 @@ type Node = Awaited<ReturnType<typeof openNode>>;
 function expectSpeculatesTo(node: Node, block: OrderingBlock): void {
   const before = node.digest();
   expect(block.header.stateRoot).not.toBe(EMPTY_STATE_ROOT);
-  expect(node.blockApply.computePostBlockStateRoot(block, node.handle)).toEqual({ kind: 'computed', stateRoot: block.header.stateRoot });
+  expect(node.blockApply.computePostBlockStateRoot(block, node.handle)).toMatchObject({ kind: 'computed', stateRoot: block.header.stateRoot });
   expect(node.digest()).toBe(before);
 }
 

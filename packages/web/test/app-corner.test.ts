@@ -562,6 +562,7 @@ const fakeHeader = (height: number, tag: string): BlockHeader => ({
   powTargetBits: 0x1d00ffff,
   createdAt: 0,
   interlinkRoot: '00'.repeat(32),
+  adProofsRoot: '00'.repeat(32),
 });
 const fakePopow = (h: BlockHeader): PoPowHeader => ({ header: h, interlinks: [] });
 const anchorFor = (height: number, tag: string): Anchor => ({

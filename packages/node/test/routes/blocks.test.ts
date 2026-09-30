@@ -9,6 +9,7 @@ import {
   getCurrentHeight,
   createOrderingBlock,
 } from '../../src/store/ordering.js';
+import { getBlockProof, putBlockProof } from '../../src/store/block-proofs.js';
 import { createRouter, KARMA_SUPPLY_TYPES } from '../../src/routes/blocks.js';
 import type { BlocksDeps } from '../../src/routes/blocks.js';
 import { PROTOCOL_VERSION } from '@dagsocial/types';
@@ -44,6 +45,7 @@ function makeBlock(height: number): OrderingBlock {
       powTargetBits: 256 * 12,
       createdAt: Date.now(),
       interlinkRoot: '00'.repeat(32),
+      adProofsRoot: 'ad'.repeat(32),
     },
     utxoTxTree: {
       // Every body carries a settlement as its last entry, and this one carries
@@ -126,6 +128,7 @@ async function request(
       membershipBarMultiplier: 1,
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
       countUsernames: () => 0,
+      getBlockProof,
     };
 
     const app = express();
@@ -191,6 +194,7 @@ describe('blocks routes', () => {
     const header = body.header as Record<string, unknown>;
     expect(header.height).toBe(1);
     expect(header.interlinkRoot).toBe('00'.repeat(32));
+    expect(header.adProofsRoot).toBe('ad'.repeat(32));
     expect(typeof body.validatorSignature).toBe('string');
     expect(body.validatorSignature).toBeDefined();
   });
@@ -226,6 +230,14 @@ describe('blocks routes', () => {
   it('GET /blocks/:height with a negative height returns 400', async () => {
     const res = await request('/blocks/-1');
     expect(res.status).toBe(400);
+  });
+
+  it('GET /blocks/:height returns 400 unless the height is written in decimal digits alone', async () => {
+    // Each begins with the digits of a height this store holds.
+    for (const height of ['1abc', '1e3', '1.0', '+1', '0x1']) {
+      const res = await request(`/blocks/${height}`);
+      expect(res.status, height).toBe(400);
+    }
   });
 
   it('GET /blocks/:height with unknown height returns 404', async () => {
@@ -341,6 +353,7 @@ describe('/status reports the era at blockHeight + 1', () => {
       membershipBarMultiplier: 1,
       protocolVersionSchedule: SCHEDULE,
       countUsernames: () => 0,
+      getBlockProof: () => null,
     };
     const app = express();
     app.use(createRouter(deps));
@@ -382,6 +395,7 @@ describe('/status carries usernameCount', () => {
       membershipBarMultiplier: 1,
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
       countUsernames: () => count,
+      getBlockProof: () => null,
     };
     const app = express();
     app.use(createRouter(deps));
@@ -400,5 +414,91 @@ describe('/status carries usernameCount', () => {
   it('/status carries usernameCount — 0, then 1 after a claim is applied', async () => {
     expect((await statusWithCount(0)).usernameCount).toBe(0);
     expect((await statusWithCount(1)).usernameCount).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /blocks/:height/proof — the block's AVL+ proof, the one route that is not
+// JSON (NODE_INTERFACE → Blocks; NODE_INTERFACE → The block proof)
+// ---------------------------------------------------------------------------
+
+/** The raw answer: status, content type and body bytes, whatever the type. */
+async function requestBytes(path: string): Promise<{ status: number; type: string; body: Buffer }> {
+  const app = express();
+  app.use(createRouter({
+    getOrderingBlock: () => null,
+    getOrderingBlockHash: () => null,
+    getCurrentHeight: () => 0,
+    getPostCount: () => 0,
+    getPendingPostCount: () => 0,
+    getTotalKarma: () => 0n,
+    getLiquidKarma: () => 0n,
+    getTotalCredits: () => 0n,
+    networkType: 'testnet',
+    inviteProbationBlocks: 43200,
+    vouchCooldownBlocks: 60,
+    inviteBondMin: 100n,
+    inviteBondMax: 10000n,
+    getNetworkRecord: () => ({ memberCount: 1 }),
+    membershipBarMultiplier: 1,
+    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+    countUsernames: () => 0,
+    getBlockProof,
+  }));
+  return new Promise((resolve) => {
+    const server = app.listen(0, () => {
+      const { port } = server.address() as { port: number };
+      http.get({ hostname: 'localhost', port, path }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => {
+          server.close();
+          resolve({ status: res.statusCode ?? 0, type: String(res.headers['content-type']), body: Buffer.concat(chunks) });
+        });
+      });
+    });
+  });
+}
+
+describe('GET /blocks/:height/proof', () => {
+  // A proof of every byte value, so a text encoding anywhere on the way would show.
+  const proof = Uint8Array.from({ length: 1024 }, (_, i) => i & 0xff);
+
+  beforeAll(() => {
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-routes-block-proofs-'));
+    initDb(join(testDir, 'store.sqlite'));
+    putBlockProof(7, proof);
+  });
+
+  afterAll(() => {
+    closeDb();
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('answers the stored proof\'s bytes as application/octet-stream', async () => {
+    const res = await requestBytes('/blocks/7/proof');
+    expect(res.status).toBe(200);
+    expect(res.type).toBe('application/octet-stream');
+    expect(new Uint8Array(res.body)).toEqual(proof);
+  });
+
+  it('answers 404 for a height whose proof this node does not hold', async () => {
+    expect((await requestBytes('/blocks/8/proof')).status).toBe(404);
+    expect((await requestBytes('/blocks/0/proof')).status).toBe(404);
+  });
+
+  it('answers 400 unless the height parses as a non-negative safe integer', async () => {
+    for (const height of ['abc', '-1', '9007199254740993']) {
+      const res = await requestBytes(`/blocks/${height}/proof`);
+      expect(res.status, height).toBe(400);
+    }
+  });
+
+  it('answers 400 unless the height is written in decimal digits alone', async () => {
+    // Each begins with the digits of the height whose proof this store holds.
+    for (const height of ['7abc', '7e3', '7.0', '+7', '0x7']) {
+      const res = await requestBytes(`/blocks/${height}/proof`);
+      expect(res.status, height).toBe(400);
+    }
   });
 });

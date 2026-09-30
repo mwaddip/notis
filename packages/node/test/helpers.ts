@@ -18,14 +18,23 @@ import {
   POST_PRICE_REPLY,
   REPLY_AUTHOR_SHARE,
   EMPTY_STATE_ROOT,
+  MAX_BLOCK_COST,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   interlinkRoot,
   updateInterlinks,
   encodeInterlinks,
 } from '@dagsocial/types';
-import { verifyOrderingBlockPoW, blockHash, level as headerLevel, asertTargetBits } from '@dagsocial/validation';
+import { vi } from 'vitest';
+import {
+  verifyOrderingBlockPoW,
+  blockHash,
+  computePowHash,
+  verifyHeaderFieldDomains,
+  level as headerLevel,
+  asertTargetBits,
+} from '@dagsocial/validation';
 import { buildBlockSettlement, computeBlockReward, materializeOutput, treeStateView, treeWritesOf } from '@dagsocial/consensus';
-import type { BlockEffects } from '@dagsocial/consensus';
+import type { BlockCost, BlockEffects } from '@dagsocial/consensus';
 import { config } from '../src/config.js';
 import type { Config } from '../src/config.js';
 import { AVL_SCHEMA } from '../src/store/db.js';
@@ -715,8 +724,24 @@ export function hex(bytes: Uint8Array): string {
  * Hand-built blocks have to carry a real solution: `powTargetBits` must equal
  * the height schedule, so declaring target 0 to sail past PoW is itself a
  * rejected block and never reaches the checks behind it.
+ *
+ * A header outside the encodable domain has no PoW preimage — `computePowHash`
+ * answers `null` for it whatever its nonce — so no nonce satisfies it, and this
+ * throws before the search, naming the header and its first field outside the
+ * domain: the search would never end, and a synchronous loop is beyond the test
+ * runner's timeout.
  */
 export function solveHeaderPow(header: BlockHeader): number {
+  const template = { ...header, powNonce: 0 };
+  if (computePowHash(template) === null) {
+    // `null` on exactly the headers `verifyHeaderFieldDomains` refuses, so its
+    // reason names the field (VALIDATION_INTERFACE → computePowHash).
+    const { error } = verifyHeaderFieldDomains(template);
+    throw new Error(
+      `solveHeaderPow: the header at height ${header.height} is outside the encodable domain ` +
+      `(${String(error)}) — no nonce solves it`,
+    );
+  }
   for (let nonce = 0; ; nonce++) {
     if (verifyOrderingBlockPoW({ ...header, powNonce: nonce })) return nonce;
   }
@@ -785,9 +810,9 @@ export function signHeader(header: BlockHeader, privateKey: KeyObject): Uint8Arr
 /**
  * A hand-built block that passes every apply check: chain-linked at genesis,
  * correct Merkle roots, coinbase paying exactly the scheduled emission with the
- * scheduled maturity lock, the post-block AVL state root, a real PoW solution
- * at the scheduled target, and a real validator signature from the key its
- * header names.
+ * scheduled maturity lock, the post-block AVL state root and the digest of the
+ * block's proof, a real PoW solution at the scheduled target, and a real
+ * validator signature from the key its header names.
  *
  * Each override deviates in exactly one respect, so what a test measures is
  * that deviation and nothing else.
@@ -807,6 +832,34 @@ export async function nodeRewardSchedule(): Promise<(height: number) => bigint> 
   const { config: nodeConfig } = await import('../src/config.js');
   const ctx = applyContextFrom(nodeConfig);
   return (height) => computeBlockReward(height, ctx);
+}
+
+/**
+ * The seam that lowers the block budget for the node's module graph
+ * (CONSENSUS_INTERFACE → The block's cost). Every budget decision the node makes
+ * — apply's refusal, the speculation's `over-budget`, admission's cost gate —
+ * calls `consensus`' `checkBlockCost`, and this replaces that one export in the
+ * modules imported after it, answering against `set`'s budget in the same words.
+ * `types`' `MAX_BLOCK_COST` is never touched: `applyBlock`'s own check of the
+ * signatures alone still reads it.
+ *
+ * Register it after `vi.resetModules()` and before the node's modules are
+ * imported, and `vi.doUnmock('@dagsocial/consensus')` in the suite's teardown.
+ * The budget starts at `MAX_BLOCK_COST`, and `set` moves it at any point after.
+ */
+export function blockBudgetSeam(): { set(budget: number): void } {
+  let budget = MAX_BLOCK_COST;
+  vi.doMock('@dagsocial/consensus', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@dagsocial/consensus')>();
+    return {
+      ...actual,
+      checkBlockCost: (cost: BlockCost): string | null => {
+        const total = actual.blockCost(cost);
+        return total > budget ? `cost ${total} over the budget ${budget}` : null;
+      },
+    };
+  });
+  return { set: (next) => { budget = next; } };
 }
 
 /**
@@ -973,7 +1026,7 @@ export async function seedCommittedState(
   const { writeBlockEffects } = await import('../src/services/block-apply.js');
   const { getCurrentHeight } = await import('../src/store/ordering.js');
   const at = height ?? getCurrentHeight();
-  const full: BlockEffects = { mutations: [], posts: [], likeRecords: [], withdrawals: [], appliedTxs: [], ...effects };
+  const full: BlockEffects = { mutations: [], posts: [], likeRecords: [], withdrawals: [], appliedTxs: [], signatures: 0, ...effects };
   const handle = await liveProver();
   const writes = treeWritesOf(full, at, treeStateView(proverSession(handle.prover)));
   performTreeWrites(handle.prover, at, writes, 'seedCommittedState');
@@ -990,6 +1043,9 @@ export async function makeApplicableBlock(
     /** Override the post-block state root — a block committing to state it
      *  does not produce. */
     stateRoot?: string;
+    /** Override the header's `adProofsRoot` — a block committing to a proof its
+     *  body does not make. */
+    adProofsRoot?: string;
     /** Sign with this key instead of the miner's — a block whose signature does
      *  not come from the key its `validatorId` names (forged authorship). */
     signWith?: KeyObject;
@@ -1113,6 +1169,7 @@ export async function makeApplicableBlock(
       : scheduledTargetBits(prevStoredBlock!.header)),
     createdAt: opts.createdAt ?? Math.max(nowMs(), (prevStoredBlock?.header.createdAt ?? 0) + 1),
     interlinkRoot: headerInterlinkRoot,
+    adProofsRoot: ZERO_HASH,
   } as BlockHeader;
 
   const block = {
@@ -1121,18 +1178,21 @@ export async function makeApplicableBlock(
     validatorSignature: new Uint8Array(64),
   } as unknown as OrderingBlock;
 
-  // Post-block state root (NODE_INTERFACE → Post-block stateRoot), obtained the
-  // way the block creator obtains it: by running this body through the apply
-  // path's own mutation phase and restoring the prover after. It has to be final
-  // before the nonce and the signature, which both cover the header. A
-  // `body-rejected` body keeps the EMPTY_STATE_ROOT placeholder: the helper's job
-  // is to hand the caller its block either way, and the suite's own apply will
-  // reject the body loudly.
+  // Post-block state root and the block proof's digest (NODE_INTERFACE →
+  // Post-block stateRoot), obtained the way the block creator obtains them: by
+  // running this body through the apply path's own mutation phase and restoring
+  // the prover after. Both have to be final before the nonce and the signature,
+  // which cover the header. A body the speculation does not compute keeps both
+  // placeholders: the helper's job is to hand the caller its block either way,
+  // and the suite's own apply will reject the body loudly.
   const { computePostBlockStateRoot } = await import('../src/services/block-apply.js');
   const speculation = computePostBlockStateRoot(block, handle);
   header.stateRoot =
     opts.stateRoot ??
     (speculation.kind === 'computed' ? speculation.stateRoot : EMPTY_STATE_ROOT);
+  header.adProofsRoot =
+    opts.adProofsRoot ??
+    (speculation.kind === 'computed' ? speculation.adProofsRoot : ZERO_HASH);
 
   header.powNonce = solveHeaderPow(header);
   block.validatorSignature = signHeader(header, opts.signWith ?? miner.privateKey);
@@ -1247,6 +1307,7 @@ export function makeBlock(height: number, createdAt: number): OrderingBlock {
       powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
       createdAt,
       interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
     },
     utxoTxTree: {
       utxoTxIds: ['77'.repeat(32)],
@@ -1343,6 +1404,7 @@ export function buildMinedHeaderChain(opts: {
       powTargetBits: bits,
       createdAt: stamp,
       interlinkRoot: interlinkRoot(expected),
+      adProofsRoot: '00'.repeat(32),
     };
     header.powNonce = solveHeaderPow(header);
     const hash = blockHash(header);

@@ -186,7 +186,7 @@ const NO_RECORD: IdentityRecord = {
 };
 
 function effectsOf(parts: Partial<BlockEffects>): BlockEffects {
-  return { mutations: [], posts: [], likeRecords: [], withdrawals: [], appliedTxs: [], ...parts };
+  return { mutations: [], posts: [], likeRecords: [], withdrawals: [], appliedTxs: [], signatures: 0, ...parts };
 }
 
 /** A fresh store, its network record at 3, and the writer over it. */

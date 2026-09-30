@@ -51,6 +51,26 @@ describe('the speculative run restores the prover by reference', () => {
     expect(bytesToHex(handle.prover.digest())).toBe(digest);
   });
 
+  it('leaves the proof cycle as it found it: its own proof is taken before the restore, and nothing of the run is left to prove', async () => {
+    await freshStore();
+    const handle = await activateProverOverStore();
+    const inner = handle.prover.prover;
+    // A proof made at the boundary the bootstrap left covers no operation.
+    const empty = inner.generateProof();
+
+    const block = await makeApplicableBlock();
+    const { computePostBlockStateRoot } = await import('../../src/services/block-apply.js');
+    const speculation = computePostBlockStateRoot(block, handle);
+
+    expect(speculation.kind).toBe('computed');
+    if (speculation.kind !== 'computed') return;
+    // The block's reads and writes are in its proof, and in no later one.
+    expect(speculation.proof).toBeInstanceOf(Uint8Array);
+    expect(speculation.proof.length).toBeGreaterThan(empty.length);
+    expect(inner.oldTopNode).toBe(inner.root);
+    expect(inner.generateProof()).toEqual(empty);
+  });
+
   it('the next applied block\'s root is the one a prover no run has touched computes', async () => {
     const db = await freshStore();
     const handle = await activateProverOverStore();

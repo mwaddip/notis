@@ -1,5 +1,5 @@
 import { loadConfig } from './config.js';
-import { initDb, getDb, closeDb } from './store/db.js';
+import { initDb, closeDb } from './store/db.js';
 import { setMempoolCap } from './store/mempool.js';
 import { seedGenesisState } from './services/genesis-state.js';
 import { getNetworkRecord } from './store/identity-records.js';
@@ -13,7 +13,6 @@ import {
   emitShutdownSignalReceived,
   emitServerShuttingDown,
   emitPostReceived,
-  emitPostValidated,
   emitPeerConnected,
   emitPeerDisconnected,
   emitPeerPenalised,
@@ -22,42 +21,25 @@ import {
 import { NetNode } from '@dagsocial/net';
 import * as validation from '@dagsocial/validation';
 import { countedVerifyOrderingBlockPoW } from './metrics.js';
-import { validateTx } from '@dagsocial/consensus';
-import { admitTx } from './services/admit-tx.js';
 import { setNet } from './services/net-instance.js';
 import { enterDiscovery, notePeerMet } from './services/peer-readiness.js';
 import { createAvlProver } from './state/avl-prover.js';
 import { handleOrderingBlock, pullBlocksHandler } from './services/handle-block.js';
+import { handleRelayedTx } from './services/handle-tx.js';
 import { failStopIfCorruptChain, guardStoreRead } from './services/corrupt-state.js';
 import { scheduledPowTargetBits } from './services/difficulty.js';
 import {
-  getKarmaValue,
-  hasActiveVouchEscrow,
-  getTopologyAuthorBytes,
-  getPendingPostAuthor,
-  getIdentityRecord,
   getPost,
   isLivePost,
-  insertPost,
   setPostBody,
   getMissingBodies,
-  getBox,
-  getBoxProvenance,
   getCurrentHeight,
-  nextBlockHeight,
-  MempoolFullError,
-  PendingSpendConflictError,
   getOrderingBlock,
   getOrderingBlockHash,
   getHeightByBlockHash,
   peerStorage,
   getKarmaOwners,
-  getVouchBox,
-  putIdentityRecord,
-  getUsername,
-  getUsernameByOwner,
 } from './store/index.js';
-import { MEMPOOL_EXPIRY_BLOCKS, computePostId } from '@dagsocial/types';
 import { initBackfill } from './services/backfill.js';
 import { verifyPostBody } from '@dagsocial/validation';
 
@@ -177,90 +159,9 @@ net.onOrderingBlock((block, fromPeerId) => {
   }
 });
 
-net.onTx((tx, content, fromPeerId) => {
-  const deps = {
-    getBox,
-      insertBox: () => {},
-    consumeBox: () => {},
-    // The vouch cast's minimum-balance gate (ARCHITECTURE → "Vouch boxes").
-    // Relay validation has to reach the same verdict the block path will — the
-    // store's getKarmaValue is the single implementation all three paths share.
-    getKarmaValue,
-    // The vouch cast's cooldown gate (NODE_INTERFACE → "Vouch transition
-    // rules") — same rule.
-    hasActiveVouchEscrow,
-    vouchCooldownBlocks: config.vouchCooldownBlocks,
-    inviteBondMin: config.inviteBondMin,
-    inviteBondMax: config.inviteBondMax,
-    decayCfg: {
-      staleThresholdBlocks: config.karmaStaleThresholdBlocks,
-      decayIntervalBlocks: config.karmaDecayIntervalBlocks,
-      decayAmount: config.karmaDecayAmount,
-      karmaMinimum: config.karmaMinimum,
-    },
-    // The like marker's author pin (NODE_INTERFACE → Karma transition rules) —
-    // same rule again: a relayed like whose marker names the wrong author must
-    // be refused here as well as at the block path.
-    getTopologyAuthor: getTopologyAuthorBytes,
-    getPendingPostAuthor,
-    // The invite-create not-already-an-account bar (NODE_INTERFACE → "Bond
-    // transition rules") — same rule again: a relayed invite naming an existing
-    // account must be refused here as well as at the block path.
-    getIdentityRecord,
-    storageRentPeriodBlocks: config.storageRentPeriodBlocks,
-    getBoxProvenance,
-    runInTransaction: (fn: () => void) => fn(),
-    getVouchBox,
-    getNetworkRecord,
-    membershipBarMultiplier: config.membershipBarMultiplier,
-    putIdentityRecord,
-    protocolVersionSchedule: config.protocolVersionSchedule,
-    getUsername,
-    getUsernameByOwner,
-  };
-  // Admission judges a transaction at the height of the block that would carry
-  // it — tip + 1 (NODE_INTERFACE → validateTx).
-  const currentHeight = nextBlockHeight();
-  const validationStart = performance.now();
-  const result = validateTx(deps, tx, currentHeight);
-  if (!result.valid) {
-    // Boxes referenced by relayed txs may not have arrived yet via header sync.
-    // The tx will be included in the ordering block that carries the boxes.
-    // Only log at debug level — this is expected during normal operation.
-    if (result.error?.includes('Missing or invalid owner signature') || result.error?.includes('not found')) {
-      // silently skip — tx will arrive via block sync
-    } else {
-      console.warn(`Relayed tx rejected: ${result.error}`);
-    }
-    return;
-  }
-  const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
-  try {
-    // NODE_INTERFACE → Post transactions — the packet is the unit: admitTx and
-    // the pending row in one store transaction for a post, or admitTx alone.
-    const db = getDb();
-    db.transaction(() => {
-      admitTx(tx, expiresAtHeight);
-      if (tx.post && result.txId) {
-        const postId = computePostId(result.txId, 0);
-        insertPost(postId, tx.post, content ?? null);
-        emitPostReceived(postId, fromPeerId, 'packet');
-        emitPostValidated(postId, performance.now() - validationStart);
-      }
-    })();
-  } catch (err) {
-    if (err instanceof MempoolFullError) {
-      console.warn(`Relayed tx dropped, mempool full: ${result.txId}`);
-      return;
-    }
-    if (err instanceof PendingSpendConflictError) {
-      console.warn(`Relayed tx dropped, input spent by a pending entry: ${result.txId}`);
-      return;
-    }
-    throw err;
-  }
-  console.log(`Relayed tx queued in mempool: ${result.txId}`);
-});
+// Relayed transactions are validated and admitted by `handleRelayedTx`
+// (NODE_INTERFACE → Relay handlers).
+net.onTx(handleRelayedTx);
 
 net.setBlocksHandler(pullBlocksHandler(net));
 

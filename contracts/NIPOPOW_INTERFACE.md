@@ -29,7 +29,7 @@ Exports from `packages/nipopow/src/index.ts`.
 
 ```
 PoPowHeader {
-  header: BlockHeader            // the ten-field header (TYPES_INTERFACE → Layout — Block)
+  header: BlockHeader            // the eleven-field header (TYPES_INTERFACE → Layout — Block)
   interlinks: string[]           // hex(32) ids — the vector I(h) the header commits to
 }
 ```
@@ -212,10 +212,18 @@ on bytes a client has not screened, but it re-derives nothing a passed verdict e
   own target and verifies no prefix header's difficulty; the published variable-difficulty
   construction keeps own-target levels and adds an online round. The argument is the query-level one:
   a random-oracle query is a level-μ hit with a probability that depends on no target, so at every
-  fully-registering level the counts are the constant-difficulty model's random variables. A
-  cheap-target chain therefore buys no score — the package's property tests pin that a cheap-target
-  chain of equal work does not out-compare an honest one, and that a lower-difficulty chain of more
-  work wins. A lying pointer can skip honest blocks and lower a score, never raise one.
+  fully-registering level the counts are the constant-difficulty model's random variables. **A
+  cheap-target chain therefore buys no score beyond its work**: its headers register levels against the anchor at the
+  rate its work allows, so its proof scores as an honest proof of the same work would — where own-target levels gave
+  it the lead every time. The package's property tests pin the mechanism over one cheap chain's floor headers — the
+  registered count a binomial draw about its work, `bestArg` against the anchor at least half its work, own-target
+  levels inflating the score by the target ratio (8×: the floor target is exactly 8× the anchor's) — and that the
+  own-target control picks the cheap side in every comparison; and that a lower-difficulty chain of more work wins. Each
+  runs where the model puts a re-mining's chance of flipping it far below one in a thousand. **How often a proof of
+  less work wins at all is `m`'s to bound, not the yardstick's**: the deciding level holds `m` to about `2m`
+  superblocks, so a score carries about `1/√m` relative noise, for a cheap chain and an honest one alike (measured
+  2026-09-30 over independent chains: at `m = 6`, three quarters of the honest work wins about 20% of comparisons, half
+  about 5%, a quarter about 0.2%). A lying pointer can skip honest blocks and lower a score, never raise one.
 
 `bestArg(headers: BlockHeader[], m: number, anchorBits: number): bigint` is exported beside it — the
 anchor bits are the yardstick its levels are measured against.

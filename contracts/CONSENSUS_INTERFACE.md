@@ -38,6 +38,8 @@ for a block's body (`VALIDATION_INTERFACE → Acceptance criterion`). The browse
 | `tree-view` | `treeStateView` (`TreeStateView`, `TreeInconsistencyError`) | this contract's `The tree view` | a `TreeSession` |
 | `tree-index` | `indexEntriesOfBox` · `isLapsedMember` | this contract's `The index entries` | none |
 | `tree-writes` | `treeWritesOf` · `seedTreeWrites` (`TreeWrite`) | this contract's `The tree writes` | the block's `TreeStateView` |
+| `verifier-session` | `verifierSession` | this contract's `The tree session` | a `BatchAVLVerifier` over a block's proof |
+| `block-cost` | `blockCost` · `checkBlockCost` (`BlockCost`) | this contract's `The block's cost` | none |
 
 Beside them the barrel exports the types a caller builds their arguments and reads their answers with — `StateView`,
 `ApplyContext`, `ApplyResult`, `BlockEffects`, `HolderRecord`, `UtxoEngineDeps`, `UtxoResult`, `SettlementDeps`,
@@ -72,6 +74,11 @@ height=H: a signature in the body does not verify`. **No transaction may carry m
 is checked first:** each input requires at most one signer and a map key no input requires refuses its transaction, so
 a map with more entries than its transaction has inputs is refused before the batch runs — `Rejected block height=H:
 embedded UTXO tx <id> carries more signatures than inputs` — and the batch checks at most one entry per input.
+**The signatures' cost is checked before the batch runs**: `signatures × W_SIG` over `MAX_BLOCK_COST` refuses the
+block — `Rejected block height=H: its N signatures cost more than a block may` — so a body of more signatures than the
+budget holds costs nothing to refuse (→ The block's cost). **This refusal says what it is**: `{ ok: false, reason,
+overBudget: true }`, the one refusal carrying the flag, so a producer trims such a body rather than evicting it
+(`NODE_INTERFACE → Post-block stateRoot`).
 `true` hands the loop the verified set, and the `validateTx` it runs answers each signature from it (→ The overlay);
 an entry outside the set fails its transaction. **Checking every
 entry keeps every verdict:** `validateTx` refuses a map key no input requires, so every entry of a valid transaction's
@@ -164,6 +171,30 @@ session over `@ergots/avltree` maps the library's `null` neighbour to the sentin
 all `0x00`, past the last to all `0xff` — and treats a recorded lookup's `{ success: false }` as fatal to the block;
 an unrecorded lookup has no such answer, and throws on a key the library refuses.
 
+**A session records its lookups or it does not, and only a block's own reads are recorded.** A recording session's
+lookups (`performLookupWithNeighbors`) become part of the proof its prover makes next (→ The block proof); an
+unrecorded one's (`unauthenticatedLookupWithNeighbors`) never do. Which a caller uses is the node's
+(`NODE_INTERFACE → The block proof`).
+
+**`verifierSession(verifier)` is the session over `@ergots/avltree`'s step-by-step verifier** — its
+`performLookupWithNeighbors`, `null` neighbours mapped to the sentinels, a `{ success: false }` thrown as fatal to the
+block. Over it the tree view answers a block's reads from the block's proof alone, anchored at the parent's root, so a
+leaf runs the rules with the code the node runs; after the rules, the block's writes are performed on the same verifier
+and its digest must equal the header's `stateRoot`.
+
+**A leaf accepts a block only on all of these**, in this order: the body's `utxoTxRoot` is the header's; `hash32(proof)`
+is the header's `adProofsRoot`; the verifier anchors at the parent's root; the rules over `verifierSession` accept the
+block; its cost is within the budget (→ The block's cost); each of `treeWritesOf`'s writes succeeds on the verifier; the
+verifier's digest is the header's `stateRoot`; and **the verifier consumed the proof exactly** — no operation and no byte
+left over. The last is what binds a leaf to the network: a full node refuses any proof but the one it regenerates
+(`NODE_INTERFACE → The block proof`), so a proof carrying a trailing byte or an extra read — which a verifier still
+replays to the right digest — is a block the network refuses, and a leaf must refuse it too.
+
+> ⚠ **AHEAD OF CODE (2026-09-30, N4 the leaf's verifier)** — `@ergots/avltree`'s step-by-step verifier reports no
+> consumption, so nothing can check the last condition; the leaf that needs it is N4's, and the library's answer is a
+> request to it. No node route serves a block's body bytes (`GET /blocks/:height` answers its ids), which a leaf
+> fetching blocks needs.
+
 ### The tree view
 
 **`treeStateView(session)` is the `StateView`** (→ StateView, its table), and the one implementation of it the rules
@@ -249,6 +280,30 @@ block.
 its invitee's record among `records` — each voucher's cast count, every identity record with its `lapsed` entry where
 it holds, the network record — all `Insert`s, in ascending key order.
 
+### The block proof
+
+**A block's proof covers, against its parent's root, first every key its tree view looked up — each once, in the
+order the view first asked it — then `treeWritesOf`'s writes in their order.** The reads are the rules' and the writes'
+alike (`applyBlock`, then `treeWritesOf` over the same view); nothing else reads through a recording session while a
+block is proven, so the list is a function of the block and its parent state, and every node, producer and leaf
+derives the same one. Its digest, `hash32(proof)`, is the header's `adProofsRoot` (`TYPES_INTERFACE → Layout — Block`).
+
+## The block's cost
+
+```ts
+BlockCost = { signatures: number; lookups: number; writes: number }
+blockCost(cost: BlockCost): number               // signatures × W_SIG + (lookups + writes) × W_OP
+checkBlockCost(cost: BlockCost): string | null    // the refusal's reason, or null
+```
+
+**A block's cost is counted while it executes, and a block over the budget is refused.** `signatures` is the batch's
+entry count (→ Applying a block), `lookups` the distinct keys the block's tree view looked up (`lookupCount()` — a
+memoised read adds none), `writes` the length of `treeWritesOf`'s answer; the weights and `MAX_BLOCK_COST` are
+`types`' (`TYPES_INTERFACE → The block's cost`). **Every node, the producer and a leaf check it at one point**: once the
+writes are derived and before they are performed — `checkBlockCost` answers `cost C over the budget B`, which the
+caller's refusal names with the block's height — so each refuses the same blocks. The signatures' term alone is checked earlier, before the batch runs. **The budget bounds a
+leaf's work**: the signatures it verifies and the operations its proof carries.
+
 ## The overlay
 
 **`applyBlock` reads through a block-local layer of its own writes, and the view underneath is never written.** A box
@@ -297,15 +352,13 @@ requires, are `validateTx`'s on both paths.
 - **`likeRecords`** — each like record written, `{ targetPostId, likerId }`, in apply order.
 - **`withdrawals`** — each withdrawn post id, in body order.
 - **`appliedTxs`** — the user transactions in applied order, `{ txId, txBytes }`; the settlement is not among them.
+- **`signatures`** — the batch's entry count, the cost's first term (→ The block's cost).
 
 **No karma supply figure.** Nothing reads one: the pool's successor is `checkSettlement`'s own derivation
 (`NODE_INTERFACE → The settlement transaction`).
 
 **The node builds its block journal from the effects** (`NODE_INTERFACE → Block Journal`) and writes its store from
-the same list — one list, so the store, the journal and the AVL feed cannot disagree about what a block did.
-
-**N3's hook, stated now:** a view that records the keys it answered, beside the effects' writes, is the whole list a
-block's proof covers. Nothing here builds it.
+the same list — one list, so the store, the journal and the tree's writes cannot disagree about what a block did.
 
 ## The settlement build
 
@@ -337,7 +390,9 @@ transaction's id, so a signer whose boxes are several of a transaction's inputs 
 worst case is then one check per 128 bytes of body — an extra signer costs 32 bytes of input and 96 of key and
 signature — and `MAX_TX_BYTES` holds at most 77 signers in one transaction (9 903 bytes), so a body at
 `MAX_BLOCK_BODY_BYTES` carries at most **about 15 500 signatures in 202 transactions** (15 496–15 499 as the height
-moves the widths of the values). An ordinary full body — one signer a transaction — holds 5 800 to about 8 100. **A body
+moves the widths of the values). An ordinary full body — one signer a transaction — holds 5 800 to about 8 100. **The
+budget caps a block below both** — 6 000 signatures and nothing else (→ The block's cost) — so the bodies measured
+below are refused by it now; they measure the batch's speed, not a block's limit. **A body
 the rules refuse costs about what the valid worst case does:** the batch checks at most one entry per input (→ Applying
 a block), so every entry still costs 128 bytes of body — a refused body spares the bytes a valid one spends on its
 outputs, and fits at most about 0.4% more entries.
@@ -357,6 +412,22 @@ same i9 core against the tree before it, interleaved (medians of nine runs each;
 times on a busier machine): the ordinary body **+0.46 s (+12%)** — the most hashing, 56 221 digests over 6.2 MB —
 the packed body +0.33 s (+6%), the corrupted packed body +0.28 s, the refused one +0.01 s. Of the packed body's, the
 hashing itself is about 0.05 s (1 014 digests); the rest is unattributed. The testnet box is not measured.
+
+**A leaf's replay of a block from its proof**, measured 2026-09-30 with `packages/consensus/scripts/bench-leaf-replay.mjs`
+(the verifier built over the parent's digest and the proof, `applyBlock` over `verifierSession`, the writes and the
+digest; medians of 9 runs, pinned to performance cores of the i9-14900HX, testnet's numbers at height 1 000), in
+seconds — the bodies at the budget but the last:
+
+| Body | Proof | Operations | Signatures | Node 22 | Chromium 149 | Firefox 156 | Waterfox 140 |
+|---|---|---|---|---|---|---|---|
+| one-signer credit sends at the budget | 0.73 MB | 28 423 | 3 156 | 2.39 | 1.19 | 2.06 | 4.12 |
+| read-heavy: vouchers of 1 000 karma boxes | 6.27 MB | 58 427 | 29 | 2.03 | 1.18 | 2.12 | 2.39 |
+| 6 000 signers packed — over the budget | 1.32 MB | 18 253 | 6 000 | 2.55 | 1.18 | 2.13 | 5.61 |
+
+In Waterfox 140 a signature costs about 0.8 ms of the batch and an operation 40–51 µs, and a random lookup about 107 bytes
+of proof. Against `W_SIG` = 100, time alone would weigh an operation about 6, and the proof's size — at most about
+6 MB at the budget — about 11; `W_OP` stands between (`TYPES_INTERFACE → The block's cost`). At the budget a valid body holds at most about
+4 600 signatures packed, or 3 156 one-signer transactions.
 
 No other term may grow faster than the reads the body makes: each overlay read is a map lookup or one composition over
 the view's answer to it.
@@ -380,7 +451,10 @@ in-memory database — stays in `packages/node/test/` and imports from the packa
   chain of signed blocks — one of them refused for a corrupted signature — is applied over a stub view, both built
   there from primitives, and the results come back as canonical text that must equal, byte for byte, what the same
   entry answers from source under Node. Only strings cross the context's boundary: a `Uint8Array` made outside it
-  fails `instanceof` inside, and so would the output of Node's own codecs.
+  fails `instanceof` inside, and so would the output of Node's own codecs. **The same chain replays from its proofs**:
+  the Node side proves each block on a prover (its reads recorded, then its writes), and inside the context each block
+  runs over `verifierSession` from its parent's digest and its proof alone — the digests it reaches equal the Node
+  side's, byte for byte.
 
 ## Does NOT own
 

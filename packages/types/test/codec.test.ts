@@ -368,6 +368,7 @@ describe('decoded byte fields do not alias the input', () => {
         powTargetBits: 3072,
         createdAt: 1700000000000,
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       },
       utxoTxTree: { utxoTxIds: ['f'.repeat(64)], utxoTxs: [encodeTx(tx)] },
       validatorSignature: new Uint8Array(64).fill(6),

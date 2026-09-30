@@ -398,7 +398,8 @@ export function createApp(config: Config): express.Express {
     );
   }
 
-  // Blocks + Status — mounts at /, routes include /blocks/current, /blocks/:height, /status
+  // Blocks + Status — mounts at /, routes include /blocks/current, /blocks/:height,
+  // /blocks/:height/proof, /status
   const db = getDb();
   app.use(
     '/',
@@ -481,6 +482,7 @@ export function createApp(config: Config): express.Express {
       membershipBarMultiplier: config.membershipBarMultiplier,
       protocolVersionSchedule: config.protocolVersionSchedule,
       countUsernames: store.countUsernames,
+      getBlockProof: store.getBlockProof,
     }),
   );
 

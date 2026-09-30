@@ -1370,6 +1370,7 @@ BlockHeader {
   powTargetBits: number          // Difficulty target for this block
   createdAt: number              // Unix ms — stamped at TEMPLATE BUILD, not at solve
   interlinkRoot: string          // hex(32) — commitment to the interlink vector (→ Interlink vector)
+  adProofsRoot: string           // hex(32) — hash32 of the block's AVL+ proof (NODE_INTERFACE → The block proof)
 }
 ```
 
@@ -1391,8 +1392,8 @@ and `→ verifyCreatedAtBound`.
 
 > ⛔ **`networkType` was proposed as a header field twice and is REJECTED — decided
 > 2026-08-10, reversing 2026-08-06.** It was never implemented; nothing is being removed from
-> code. **The header is ten fields**, `interlinkRoot` the tenth (→ Interlink vector). Read this
-> before proposing it a third time.
+> code. **The header is eleven fields**, `interlinkRoot` the tenth and `adProofsRoot` the eleventh (→ Layout — Block).
+> Read this before proposing it a third time.
 >
 > The argument for it was legibility: id derivation is network-agnostic by decision (§Domain
 > tags are network-agnostic), so a header field would be the only consensus-visible network
@@ -2300,9 +2301,10 @@ biconditional is a check, not a property of the bytes.
 | 7 | `powNonce` | `vlqU` |
 | 8 | `powTargetBits` | `vlqU` |
 | 9 | `createdAt` | `vlqU` |
-| 10 | `interlinkRoot` | `b32` — the interlink vector's commitment (→ Interlink vector); **last, so no earlier field's number depends on it** |
+| 10 | `interlinkRoot` | `b32` — the interlink vector's commitment (→ Interlink vector) |
+| 11 | `adProofsRoot` | `b32` — `hash32` of the block's AVL+ proof (`NODE_INTERFACE → The block proof`); **last, so no earlier field's number depends on it** |
 
-⛔ **Ten fields, and a positional layout with no keys — removing a field is never a
+⛔ **Eleven fields, and a positional layout with no keys — removing a field is never a
 deletion in place; it renumbers everything after it.** (`subBlockRoot`'s removal renumbered
 `utxoTxRoot` through `createdAt`: a reader keeping the old offsets decodes `stateRoot` out
 of `utxoTxRoot`'s bytes and every later field one slot late — a silent wrong `blockHash`,
@@ -2353,13 +2355,13 @@ authority alone.
 throwing-writer obligation is now larger in proportion, not smaller.** The withdrawn `networkType`
 row was the header's only `enum8` — a **total** writer whose presence was explicitly argued to add
 nothing to that obligation. Removing it removes the one row that was already discharged. What is left
-is **five throwing rows and five `vlqU`** — but ⚠ **`b32` is TWO different writers and this note
+is **six throwing rows and five `vlqU`** — but ⚠ **`b32` is TWO different writers and this note
 first grouped them as one, which is the `bond.inviteePublicKey` failure committed inside the note
 warning about it:**
 
 | Rows | In-memory type | Writer |
 |---|---|---|
-| `prevBlockHash`, `utxoTxRoot`, `interlinkRoot` | `string` (hex) | `writeHexNOrThrow(…, 32)` |
+| `prevBlockHash`, `utxoTxRoot`, `interlinkRoot`, `adProofsRoot` | `string` (hex) | `writeHexNOrThrow(…, 32)` |
 | **`validatorId`** | **`Uint8Array`** (`UserId`) | **`writeBytesNOrThrow(…, 32)`** |
 | `stateRoot` | `string` (hex) | `writeHexNOrThrow(…, 33)` |
 
@@ -3147,6 +3149,19 @@ bond may vest more in the meantime (`ARCHITECTURE` → Bond outcomes), a cooling
 long to recast (`ARCHITECTURE` → Vouch boxes), a lapsed member's `n` vouches are withdrawn over
 that many blocks and a cascade runs one generation per block on top (`ARCHITECTURE` →
 Membership). None moves value it does not owe.
+
+### The block's cost
+
+```typescript
+export const W_SIG = 100;                 // consensus — a signature's weight in a block's cost
+export const W_OP = 10;                   // consensus — a tree operation's weight in a block's cost
+export const MAX_BLOCK_COST = 600_000;    // consensus — the budget: 6 000 signatures and nothing else
+```
+
+**A block's cost is `signatures × W_SIG + (lookups + writes) × W_OP`, and a block over `MAX_BLOCK_COST` is refused**
+(`CONSENSUS_INTERFACE → The block's cost`, which counts and checks it). The budget bounds what a leaf verifies — the
+body's signatures and the block's proof — where `MAX_BLOCK_BODY_BYTES` bounds what it downloads. The three numbers are
+provisional until a leaf's verification of a full block is measured (`CONSTANTS → The block's cost`).
 
 ### State format
 

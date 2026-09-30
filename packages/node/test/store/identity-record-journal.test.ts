@@ -44,6 +44,7 @@ async function freshStore() {
       likeRecords: [],
       withdrawals: [],
       appliedTxs: [],
+      signatures: 0,
     };
     const built = writeBlockEffects(effects, height);
     journal.insertBlockJournal(built);

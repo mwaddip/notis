@@ -93,6 +93,13 @@ export {
 } from './journal.js';
 
 export {
+  putBlockProof,
+  getBlockProof,
+  deleteBlockProof,
+  pruneBlockProofs,
+} from './block-proofs.js';
+
+export {
   insertBlockTopology,
   getTopologyAuthor,
   getTopologyAuthorBytes,

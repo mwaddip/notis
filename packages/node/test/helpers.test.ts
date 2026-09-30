@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { computeBoxId } from '@dagsocial/types';
-import { seedBond, uid, openAvlDb } from './helpers.js';
+import { computePowHash } from '@dagsocial/validation';
+import { makeBlock, seedBond, solveHeaderPow, uid, openAvlDb } from './helpers.js';
 import { initDb, getDb, closeDb } from '../src/store/db.js';
 
 /** The AVL table/index rows a fresh database carries, keyed for comparison. */
@@ -98,5 +99,24 @@ describe('openAvlDb — one schema source with the fresh-database path', () => {
     closeDb();
 
     expect(fixtureRows).toEqual(liveRows);
+  });
+});
+
+/**
+ * `solveHeaderPow` searches nonces over a header whose other fields it holds
+ * fixed. A header outside the encodable domain has no PoW preimage —
+ * `computePowHash` answers `null` — so no nonce satisfies it, and the search
+ * throws, naming the header, rather than running without end: a synchronous
+ * loop is beyond the test runner's timeout, and the suite would hang silently.
+ */
+describe('solveHeaderPow — a header outside the encodable domain', () => {
+  it('throws, naming the header and the field outside the domain', () => {
+    const header = { ...makeBlock(7, 1_000).header, adProofsRoot: 'ad'.repeat(33) };
+    expect(computePowHash(header)).toBeNull();
+
+    expect(() => solveHeaderPow(header)).toThrow(
+      'solveHeaderPow: the header at height 7 is outside the encodable domain ' +
+      '(Block header adProofsRoot must be 64 lowercase hex characters) — no nonce solves it',
+    );
   });
 });

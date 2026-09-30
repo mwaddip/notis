@@ -303,6 +303,7 @@ describe('/status membership fields', () => {
         membershipBarMultiplier: 1,
         protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
         countUsernames: () => 0,
+        getBlockProof: () => null,
       };
       const app = express();
       app.use(express.json());

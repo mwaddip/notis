@@ -14,6 +14,7 @@ import {
   getHeadersAbove,
   getBlockJournal,
   deleteBlockJournal,
+  deleteBlockProof,
   deleteOrderingBlock,
   unconsumeBox,
   deleteBox,
@@ -152,16 +153,18 @@ export function revertBlock(height: number): void {
   // boxes are not keyed, so a second escrow is a second box rather than an
   // overwrite something has to restore.
 
-  // 3. Roll back block_topology entries, delete block + journal + the
+  // 3. Roll back block_topology entries, delete block + journal + proof + the
   // height's AVL version rows. The version rows are per-block derived state
   // exactly like the block and journal rows: left behind, they make
   // versionAtOrBeforeHeight resolve rolled-back state, and re-applying a
   // block at this height (reorg back to a previously-reverted chain) would
   // find a row already standing at its height, which `update` refuses as
-  // `DuplicateStateVersionError` (NODE_INTERFACE → AVL+ State Root).
+  // `DuplicateStateVersionError` (NODE_INTERFACE → AVL+ State Root). The proof
+  // goes with its block (NODE_INTERFACE → The block proof).
   rollbackBlockTopology(height);
   deleteOrderingBlock(height);
   deleteBlockJournal(height);
+  deleteBlockProof(height);
   tryGetAvlProver()?.storage.deleteVersionAtHeight(height);
 }
 

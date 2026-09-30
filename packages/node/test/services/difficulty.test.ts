@@ -54,6 +54,7 @@ function seedBlock(
     powTargetBits,
     createdAt,
     interlinkRoot: interlinkRoot([ZERO_HASH]),
+    adProofsRoot: '00'.repeat(32),
   };
   header.powNonce = solveHeaderPow(header);
   ordering.createOrderingBlock(
@@ -112,6 +113,7 @@ describe('difficulty schedule', () => {
         powTargetBits: anchorBits,
         createdAt: t2,
         interlinkRoot: interlinkRoot([ZERO_HASH]),
+        adProofsRoot: '00'.repeat(32),
       };
 
       const scheduled = difficulty.scheduledTargetBits(parent);
@@ -161,6 +163,7 @@ describe('difficulty schedule', () => {
         powTargetBits: anchorBits,
         createdAt: t2 + 120_000,
         interlinkRoot: interlinkRoot([ZERO_HASH]),
+        adProofsRoot: '00'.repeat(32),
       };
 
       const result = difficulty.scheduledPowTargetBits(headerAt3);
@@ -181,6 +184,7 @@ describe('difficulty schedule', () => {
         powTargetBits: config.orderingBlockPowTargetBits,
         createdAt: 1_000_000,
         interlinkRoot: interlinkRoot([ZERO_HASH]),
+        adProofsRoot: '00'.repeat(32),
       };
       expect(difficulty.scheduledPowTargetBits(headerAt1)).toBe(config.orderingBlockPowTargetBits);
     });
@@ -197,6 +201,7 @@ describe('difficulty schedule', () => {
         powTargetBits: 20,
         createdAt: 1_000_000,
         interlinkRoot: interlinkRoot([ZERO_HASH]),
+        adProofsRoot: '00'.repeat(32),
       };
       expect(difficulty.scheduledPowTargetBits(headerAt5)).toBeNull();
     });
@@ -216,6 +221,7 @@ describe('difficulty schedule', () => {
         powTargetBits: config.orderingBlockPowTargetBits,
         createdAt: 2_000_000,
         interlinkRoot: interlinkRoot([ZERO_HASH]),
+        adProofsRoot: '00'.repeat(32),
       };
       expect(difficulty.scheduledPowTargetBits(headerAt2)).toBeNull();
     });
@@ -245,6 +251,7 @@ describe('difficulty schedule', () => {
         powTargetBits: 20,
         createdAt: 1_000_000,
         interlinkRoot: interlinkRoot([ZERO_HASH]),
+        adProofsRoot: '00'.repeat(32),
       };
 
       vi.spyOn(process, 'exit').mockImplementation((() => {

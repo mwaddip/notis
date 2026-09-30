@@ -85,6 +85,7 @@ async function seedChainAt(height: number): Promise<void> {
       powTargetBits: config.orderingBlockPowTargetBits,
       createdAt: 1_000_000 + h,
       interlinkRoot: interlinkRoot(seedInterlinks),
+      adProofsRoot: '00'.repeat(32),
     };
     hdr.powNonce = solveHeaderPow(hdr as import('@dagsocial/types').BlockHeader);
     ordering.createOrderingBlock({

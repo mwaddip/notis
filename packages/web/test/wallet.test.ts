@@ -913,7 +913,7 @@ function stubHeader(over: Partial<BlockHeader> = {}): BlockHeader {
     protocolVersion: 1, height: 9020, prevBlockHash: '00'.repeat(32),
     utxoTxRoot: '00'.repeat(32), stateRoot: '00'.repeat(32),
     validatorId: new Uint8Array(32) as UserId, powNonce: 0, powTargetBits: 0,
-    createdAt: 0, interlinkRoot: '00'.repeat(32),
+    createdAt: 0, interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32),
     ...over,
   };
 }

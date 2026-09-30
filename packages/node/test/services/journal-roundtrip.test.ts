@@ -264,7 +264,7 @@ async function assertRoundTrip(
   const blockApply = await importBlockApply();
   const journalsBefore = journalHeights(db.getDb());
   const speculative = blockApply.computePostBlockStateRoot(classBlock, handle);
-  expect(speculative).toEqual({
+  expect(speculative).toMatchObject({
     kind: 'computed',
     stateRoot: Buffer.from(postDigest).toString('hex'),
   });

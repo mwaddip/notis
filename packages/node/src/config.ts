@@ -112,6 +112,12 @@ export interface Config {
   // AVL state root
   maxProofHistory: number;
   avlKeyLength: number;
+  /**
+   * Blocks whose proofs this node keeps for `GET /blocks/:height/proof`: apply
+   * prunes below `tip − proofRetentionBlocks` (NODE_INTERFACE → The block proof).
+   * Local — what a node serves, not what it accepts.
+   */
+  proofRetentionBlocks: number;
   // Net settings
   bootstrapPeers: string[];
   listenAddrs: string;
@@ -178,6 +184,7 @@ export function loadConfig(): Readonly<Config> {
       10,
     ),
     avlKeyLength: TREE_KEY_LENGTH,
+    proofRetentionBlocks: parseProofRetention(process.env['PROOF_RETENTION_BLOCKS']),
     // Net settings
     bootstrapPeers: parseBootstrapPeers(process.env['BOOTSTRAP_PEERS'], profile.bootstrapPeers),
     listenAddrs: process.env['LISTEN_ADDRS'] ?? '/ip4/0.0.0.0/tcp/0',
@@ -257,6 +264,28 @@ function parseBlockBodyBudget(raw: string | undefined): number {
     );
   }
   return Math.min(parsed, MAX_BLOCK_BODY_BYTES);
+}
+
+/**
+ * `PROOF_RETENTION_BLOCKS`, defaulting to 10 080 — a week of proofs at 60 s
+ * (NODE_INTERFACE → Configuration).
+ *
+ * Refused rather than defaulted when it names no non-negative integer: a
+ * retention this node cannot read is a policy nobody chose. `parseInt` would
+ * answer `NaN`, which prunes nothing for as long as the node runs, or read
+ * `2.5` as 2; a negative value prunes the proof apply has just stored. Zero
+ * keeps the tip's proof alone.
+ */
+function parseProofRetention(raw: string | undefined): number {
+  if (raw === undefined) return 10_080;
+  const parsed = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(
+      `Invalid PROOF_RETENTION_BLOCKS "${raw}" — must be a non-negative whole ` +
+        'number of blocks',
+    );
+  }
+  return parsed;
 }
 
 /**

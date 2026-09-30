@@ -7,6 +7,7 @@ import {
   makePostTx, seedPostTx, fillerTx, coinbaseOf,
   seedEmissionBox, makeApplicableBlock, liveProver, seedBoxes } from '../helpers.js';
 import type { AvlProverHandle } from '../../src/state/avl-prover.js';
+import type { StateRootSpeculation } from '../../src/services/block-apply.js';
 import {
   describe,
   it,
@@ -23,7 +24,7 @@ import {
 import {
   MAX_BLOCK_BODY_BYTES,
   PROTOCOL_VERSION,
-  LIKE_KARMA_COST, computeTxId, decodeTx, utxoTxTreeByteLength } from '@dagsocial/types';
+  LIKE_KARMA_COST, bytesToHex, computeTxId, decodeTx, hash32, utxoTxTreeByteLength } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import type {
   CreditBox,
@@ -98,21 +99,30 @@ async function importBlockCreator(): Promise<BlockCreatorModule> {
   )) as unknown as BlockCreatorModule;
 }
 
+/** The proof `speculationAcceptsEveryBody` answers: a proof of no operation. */
+const MOCK_PROOF = new Uint8Array(0);
+
 /**
- * The producer's speculation, answering `computed` over the live tree's digest
- * for every body. For the cases whose subject is what the fill SELECTS and whose
- * pools hold entries the rules refuse (`fillerTx`, unsigned spends): the real
- * speculation would evict those before any template stood. The speculation is
- * not under test here — its own cases are block-creator-rejected-body's.
- * Registered before the creator is imported.
+ * The producer's speculation, answering `computed` for every body — the live
+ * tree's digest as `stateRoot`, and `MOCK_PROOF` with its `hash32` as
+ * `adProofsRoot`, the computed arm's whole shape (NODE_INTERFACE → Post-block
+ * stateRoot), held to it by the answer's type. For the cases whose subject is
+ * what the fill SELECTS and whose pools hold entries the rules refuse
+ * (`fillerTx`, unsigned spends): the real speculation would evict those before
+ * any template stood. The speculation is not under test here — its own cases
+ * are block-creator-rejected-body's. Registered before the creator is imported.
  */
 function speculationAcceptsEveryBody(): void {
   vi.doMock('../../src/services/block-apply.js', async (importOriginal) => {
     const actual = await importOriginal<typeof import('../../src/services/block-apply.js')>();
     return {
       ...actual,
-      computePostBlockStateRoot: (_block: OrderingBlock, handle: AvlProverHandle) =>
-        ({ kind: 'computed' as const, stateRoot: Buffer.from(handle.prover.digest()).toString('hex') }),
+      computePostBlockStateRoot: (_block: OrderingBlock, handle: AvlProverHandle): StateRootSpeculation => ({
+        kind: 'computed',
+        stateRoot: Buffer.from(handle.prover.digest()).toString('hex'),
+        adProofsRoot: bytesToHex(hash32(MOCK_PROOF)),
+        proof: MOCK_PROOF,
+      }),
     };
   });
 }
@@ -942,6 +952,30 @@ describe('block-creator', () => {
       // Every entry but the settlement's, so a body that took the whole pool
       // would still measure `pooled + 1` here.
       expect(template!.utxoTxTree.utxoTxIds.length - 1).toBeLessThan(pooled);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The template's header commits to what the speculation answered
+  // (NODE_INTERFACE → Post-block stateRoot, step 4)
+  // -------------------------------------------------------------------------
+
+  describe('the template commits to its speculation', () => {
+    beforeEach(() => { speculationAcceptsEveryBody(); });
+    afterEach(() => { vi.doUnmock('../../src/services/block-apply.js'); });
+
+    it('the header carries the speculation\'s stateRoot and adProofsRoot', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+      const bc = await importBlockCreator();
+      const handle = await liveProver();
+      bc.startBlockCreator(testConfig);
+
+      const template = bc.getCurrentTemplate();
+      expect(template).not.toBeNull();
+      expect(template!.header.stateRoot).toBe(Buffer.from(handle.prover.digest()).toString('hex'));
+      expect(template!.header.adProofsRoot).toBe(bytesToHex(hash32(MOCK_PROOF)));
     });
   });
 

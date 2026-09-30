@@ -2,11 +2,13 @@ import { vi } from 'vitest';
 import { createHash, createPrivateKey, createPublicKey } from 'node:crypto';
 import {
   boxRecordBytes,
+  bytesToHex,
   computeContentHash,
   computePostId,
   computeTxId,
   decodeOrderingBlock,
   encodeOrderingBlock,
+  hash32,
   LIKE_KARMA_COST,
   POST_PRICE_REPLY,
   POST_PRICE_THREAD,
@@ -86,6 +88,8 @@ export interface PinnedBlock {
   height: number;
   blockHash: string;
   stateRoot: string;
+  /** `hash32` of `block_proofs.proof` at this height, hex — the digest the header commits to. */
+  adProofsRoot: string;
   /** `block_journal.journal_cbor` at this height, hex. */
   journalCbor: string;
   /** The `block_topology` rows at this height. */
@@ -219,6 +223,7 @@ export const CONSENSUS_TABLES: ReadonlyArray<readonly [table: string, order: str
   ['dag_parent_refs', 'post_id, parent_id'],
   ['ordering_blocks', 'height'],
   ['block_journal', 'block_height'],
+  ['block_proofs', 'height'],
 ];
 
 /** The digest a state capture holds for a table's rows. */
@@ -246,12 +251,21 @@ function pinBlock(m: Modules, block: OrderingBlock): PinnedBlock {
     .prepare('SELECT journal_cbor FROM block_journal WHERE block_height = ?')
     .get(height) as { journal_cbor: Buffer } | undefined;
   if (!stored) throw new Error(`block ${height} left no journal row`);
+  const proof = m.db.getDb()
+    .prepare('SELECT proof FROM block_proofs WHERE height = ?')
+    .get(height) as { proof: Buffer } | undefined;
+  if (!proof) throw new Error(`block ${height} left no proof row`);
+  const adProofsRoot = bytesToHex(hash32(new Uint8Array(proof.proof)));
+  if (adProofsRoot !== block.header.adProofsRoot) {
+    throw new Error(`block ${height} stored a proof its header does not name`);
+  }
   const hash = blockHash(block.header);
   if (hash === null) throw new Error(`block ${height} has no hash`);
   return {
     height,
     blockHash: hash,
     stateRoot: block.header.stateRoot,
+    adProofsRoot,
     journalCbor: Buffer.from(stored.journal_cbor).toString('hex'),
     blockTopology: rows(m, 'SELECT * FROM block_topology WHERE block_height = ? ORDER BY post_id', height),
     likeRecords: rows(

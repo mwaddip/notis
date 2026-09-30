@@ -100,6 +100,20 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 | `MAX_ESCROW_RETURNS_PER_BLOCK` | `64` | escrows returned per block | consensus | same | PROVISIONAL | `TYPES_INTERFACE → Settlement caps` |
 | `MAX_LAPSE_WITHDRAWALS_PER_BLOCK` | `64` | vouches of lapsed members withdrawn per block | consensus | same; a cascade runs one generation per block on top | PROVISIONAL | `TYPES_INTERFACE → Settlement caps` |
 
+### The block's cost
+
+The three numbers of a block's cost (`TYPES_INTERFACE → The block's cost`): a signature's weight, a tree operation's,
+and the budget. **The ruling they serve** (user, 2026-09-27): a full block verifies in about 6 s in Waterfox 140 — the
+extension's Firefox floor — with about 6 000 signatures and a proof of at most about 6 MB. A signature checked in the
+body's batch costs 0.85 ms there (`CONSENSUS_INTERFACE → Cost`), so 6 000 of them are about 5.1 s before any tree
+operation.
+
+| Name | Value | Reads as | Kind | Argument | Status | Rule |
+|---|---|---|---|---|---|---|
+| `W_SIG` | `100` | a signature's weight | consensus | measured 2026-09-30 in Waterfox 140: a signature ~0.8 ms of the batch, an operation 40–51 µs (`CONSENSUS_INTERFACE → Cost`) | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
+| `W_OP` | `10` | a tree operation's weight — a lookup or a write | consensus | between time and size: by time an operation is ~1/16–1/21 of a signature (~6), by the proof's size (~107 bytes a random lookup, ≤ ~6 MB at the budget) ~11; at 10 the largest proof measured is 6.27 MB (5.98 MiB) | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
+| `MAX_BLOCK_COST` | `600_000` | 6 000 signatures' worth; a valid body ~4 600 signatures packed or 3 156 one-signer sends; ≤ 60 000 tree operations | consensus | measured 2026-09-30 at the budget in Waterfox 140: 4.12 s for the one-signer body, 2.39 s and 6.27 MB for the read-heavy one — within the ruling's about 6 s | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
+
 ### Karma
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
@@ -342,7 +356,7 @@ check can tell an omission from an exclusion.
 | `MAX_UINT32` | the domain bound of a `u32` field |
 | `MSG_HANDSHAKE`, `MSG_SYNC_INFO`, `MSG_INV`, `MSG_MODIFIER_REQUEST`, `MSG_MODIFIER_RESPONSE`, `MSG_GET_PEERS`, `MSG_PEERS`, `MSG_GET_HEADERS`, `MSG_HEADERS`, `MSG_GET_BLOCKS`, `MSG_BLOCKS` | message codes — `NET_INTERFACE → Frame Format` |
 | `MODIFIER_ORDERING_BLOCK`, `MODIFIER_POST_BODY` | modifier type ids — `NET_INTERFACE → ModifierRequest` |
-| `IDENTITY_RECORD_TAG` | field 1 of the identity record's AVL value, `0x80` — a layout discriminator, not a tunable — `TYPES_INTERFACE → Layout — IdentityRecord`; the tree's other tags are `node`'s (`NODE_INTERFACE → Entity kinds`) |
+| `IDENTITY_RECORD_TAG` | field 1 of the identity record's AVL value, `0x80` — a layout discriminator, not a tunable — `TYPES_INTERFACE → Layout — IdentityRecord`; the tree's key tags are `TREE_TAG`'s (`TYPES_INTERFACE → The tree keys`) |
 | `GET_PEERS_INTERVAL_MS`, `OUTBOUND_TICK_INTERVAL_MS` | local cadences — `NET_INTERFACE → Outbound Manager` |
 | `genesisCommitteeKeys`, `faucetPublicKey`, `genesisProofPayload`, `genesisStateRoot`, `genesisId`, `bootstrapPeers`, `backerTable` | identity fields — non-numeric, listed for completeness |
 

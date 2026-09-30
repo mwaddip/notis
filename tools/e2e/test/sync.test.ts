@@ -123,6 +123,7 @@ describe('sync', () => {
           powTargetBits: hdr['powTargetBits'] as number,
           createdAt: hdr['createdAt'] as number,
           interlinkRoot: hdr['interlinkRoot'] as string,
+          adProofsRoot: hdr['adProofsRoot'] as string,
         };
 
         const hash = blockHash(header);

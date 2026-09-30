@@ -406,6 +406,7 @@ describe('block-apply journal recording', () => {
         // value here would refuse the block on that mismatch and never reach
         // the check under test.
         interlinkRoot: interlinkRoot([]),
+        adProofsRoot: '00'.repeat(32),
       },
       utxoTxTree: {
         // A body's last entry is its settlement; PoW is refused before anything
@@ -468,6 +469,7 @@ describe('block-apply journal recording', () => {
         powTargetBits: config.orderingBlockPowTargetBits,
         createdAt: Date.now(),
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       },
       utxoTxTree: {
         // A body's last entry is its settlement; PoW is refused before anything
@@ -517,6 +519,7 @@ describe('block-apply journal recording', () => {
         powTargetBits: config.orderingBlockPowTargetBits,
         createdAt: Date.now(),
         interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
       },
       utxoTxTree: {
         // A body's last entry is its settlement; PoW is refused before anything
@@ -2497,16 +2500,17 @@ describe('block-apply funnel totality', () => {
     // fixture's own reads (a live prover, a real speculative run) must not
     // trip the injected fault, so `armed` gates it rather than the mock's
     // presence (the block-creator suite's own pattern for this class of
-    // injection).
+    // injection). Block application reads through the recording session
+    // (NODE_INTERFACE → The block proof), so that is where the fault goes.
     let armed = false;
     vi.doMock('../../src/state/prover-session.js', async (importOriginal) => {
       const actual = await importOriginal<typeof import('../../src/state/prover-session.js')>();
       return {
         ...actual,
-        proverSession: (
-          ...args: Parameters<typeof actual.proverSession>
-        ): ReturnType<typeof actual.proverSession> => {
-          const real = actual.proverSession(...args);
+        recordingSession: (
+          ...args: Parameters<typeof actual.recordingSession>
+        ): ReturnType<typeof actual.recordingSession> => {
+          const real = actual.recordingSession(...args);
           if (!armed) return real;
           // A next key not strictly above the key looked up — the tree
           // view's own check (CONSENSUS_INTERFACE → The tree view → "An
@@ -2838,6 +2842,7 @@ describe('block-apply funnel totality', () => {
       powTargetBits: config.orderingBlockPowTargetBits,
       createdAt: Date.now(),
       interlinkRoot: 'ff'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
     };
     solveHeaderPow(header);
     const block: OrderingBlock = {

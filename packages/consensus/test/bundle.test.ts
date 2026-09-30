@@ -1,15 +1,12 @@
-import { builtinModules } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { createContext, runInContext, type Context } from 'node:vm';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { build, type Plugin, type Rollup } from 'vite';
 import {
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
   PROTOCOL_VERSION,
   STORAGE_RENT_PER_BYTE,
   boxRecordBytes,
-  bytesToHex,
   decodeTx,
   encodeOrderingBlock,
   encodeTx,
@@ -24,10 +21,12 @@ import type {
   UtxoTransaction,
   VouchBox,
 } from '@dagsocial/types';
-import { applyBlock } from '@dagsocial/consensus';
+import { applyBlock, seedTreeWrites } from '@dagsocial/consensus';
 import type { ApplyContext, ApplyResult } from '@dagsocial/consensus';
+import { proveBlock, proverFrom } from './block-proof.js';
+import { PACKAGES_DIR, PACKAGE_DIR, buildIife, entrySource, type Bundle } from './browser-bundle.js';
 import { run } from './bundle-entry.js';
-import { canonical, encodeScenario, viewOf, type Seed } from './bundle-scenario.js';
+import { canonical, encodeScenario, viewOf, type Answer, type ScenarioBlock, type Seed } from './bundle-scenario.js';
 import {
   applyContextFor,
   burnTx,
@@ -64,88 +63,18 @@ import {
  * "Deterministic"): it has no `crypto`, and its `Date`, `Math.random` and
  * `Intl.DateTimeFormat` throw, so a run that reads a clock or draws a random
  * number fails. Inside the context a chain of signed blocks is applied over a
- * stub view, both built there from primitives, and the results come back as one
- * string that must equal, byte for byte, what the same function answers from
- * source under Node.
+ * stub view, both built there from primitives, and each block is replayed over
+ * `verifierSession` from its parent's digest and its proof alone
+ * (CONSENSUS_INTERFACE → The tree session); the results and the digests the
+ * replays reached come back as one string that must equal, byte for byte, what
+ * the same function answers from source under Node — and the digests, the ones
+ * the Node side's prover reached.
  */
 
 /** Each hook and test that runs a vite build carries this timeout, not vitest's default. */
 const BUILD_TIMEOUT = 60_000;
 
-const PACKAGES_DIR = fileURLToPath(new URL('../../', import.meta.url));
-const PACKAGE_DIR = fileURLToPath(new URL('../', import.meta.url));
 const ENTRY = fileURLToPath(new URL('./bundle-entry.ts', import.meta.url));
-
-// Every `@dagsocial/*` import resolves to that package's `src/index.ts`, the
-// mapping every suite resolves by (ARCHITECTURE → Build and test resolution),
-// so the bundle and the Node run execute one tree and no `dist` can make the
-// comparison stale.
-const WORKSPACE_ALIAS = Object.fromEntries(
-  ['types', 'wire', 'validation', 'nipopow', 'consensus', 'net', 'node'].map((pkg) => [
-    `@dagsocial/${pkg}`,
-    `${PACKAGES_DIR}${pkg}/src/index.ts`,
-  ]),
-);
-
-/**
- * Fails the build at an import of a Node built-in — `node:`-prefixed, or bare
- * as `node:module`'s `builtinModules` lists it. vite alone refuses only a named
- * import from one: a namespace or a default import builds against an empty
- * stand-in, and a bare `Buffer` or `process` builds untouched. This plugin is
- * the refusal.
- */
-function refuseNodeBuiltins(): Plugin {
-  const builtins = new Set(builtinModules);
-  return {
-    name: 'refuse-node-builtins',
-    enforce: 'pre',
-    resolveId(source, importer) {
-      if (source.startsWith('node:') || builtins.has(source)) {
-        throw new Error(`refuse-node-builtins: "${source}" is a Node built-in, imported by ${importer ?? 'the entry'}`);
-      }
-      return null;
-    },
-  };
-}
-
-/** Serves `code` as the module `id`, which is no file: a throwaway entry. */
-function entrySource(id: string, code: string): Plugin {
-  return {
-    name: 'entry-source',
-    enforce: 'pre',
-    resolveId: (source) => (source === id ? id : null),
-    load: (loaded) => (loaded === id ? code : null),
-  };
-}
-
-interface Bundle {
-  code: string;
-  /** Every module the bundle holds, by id. */
-  modules: string[];
-}
-
-/** `entry` as vite builds it for a browser: one IIFE, ES2022, unminified, nothing written. */
-async function buildIife(entry: string, plugins: Plugin[] = []): Promise<Bundle> {
-  const result = await build({
-    configFile: false,
-    logLevel: 'silent',
-    root: PACKAGE_DIR,
-    resolve: { alias: WORKSPACE_ALIAS },
-    plugins: [refuseNodeBuiltins(), ...plugins],
-    build: {
-      write: false,
-      minify: false,
-      target: 'es2022',
-      lib: { entry, formats: ['iife'], name: 'ConsensusBundle' },
-    },
-  });
-  const chunks = (Array.isArray(result) ? result : [result])
-    .flatMap((output) => ('output' in output ? output.output : []))
-    .filter((file): file is Rollup.OutputChunk => file.type === 'chunk');
-  const [chunk] = chunks;
-  if (chunks.length !== 1 || chunk === undefined) throw new Error(`the build answered ${chunks.length} chunks, not one`);
-  return { code: chunk.code, modules: Object.keys(chunk.modules) };
-}
 
 /**
  * `TextEncoder` and `TextDecoder` as classes of the context's own realm: the
@@ -349,19 +278,30 @@ const REFUSED = 'Rejected block height=2: a signature in the body does not verif
  * The chain both runs apply, built and signed under Node: genesis, then blocks
  * 1 to 6 and 8, each settled by the producer's build over the state the blocks
  * before it left — and ahead of block 2, block 2 with the name claim's
- * signature corrupted, which the body check refuses. Beside the text `run`
- * takes, the results the blocks answered as they were built.
+ * signature corrupted, which the body check refuses. Each block is proven on a
+ * prover seeded with the same genesis, through a recording session
+ * (CONSENSUS_INTERFACE → The block proof), and carries its parent's digest and
+ * its proof. Beside the text `run` takes, the Node side's answer: the results
+ * the blocks answered as they were built, and the prover's digest after each.
  */
-function scenario(): { input: string; results: ApplyResult[] } {
+function scenario(): { input: string; answer: Answer } {
   const { seed, credit } = genesis();
   const view = viewOf(seed);
-  const blocks: OrderingBlock[] = [];
+  const prover = proverFrom(seedTreeWrites(seed.boxes, seed.records, seed.network));
+  const blocks: ScenarioBlock[] = [];
   const results: ApplyResult[] = [];
+  const digests: Uint8Array[] = [];
   const apply = (block: OrderingBlock): ApplyResult => {
     const result = applyBlock(view, block, ctx);
     if (result.ok) writeEffects(view, result.effects, block.header.height);
-    blocks.push(block);
+    const parentDigest = prover.digest();
+    const proven = proveBlock(prover, block, ctx);
+    if (canonical({ results: [proven.result], digests: [] }) !== canonical({ results: [result], digests: [] })) {
+      throw new Error(`block ${block.header.height} answers otherwise over the prover's tree`);
+    }
+    blocks.push({ block: encodeOrderingBlock(block), parentDigest, proof: proven.proof });
     results.push(result);
+    digests.push(proven.digest);
     return result;
   };
   const accepted = (block: OrderingBlock): void => {
@@ -445,10 +385,7 @@ function scenario(): { input: string; results: ApplyResult[] } {
   }, null);
   step(8, [consolidateTx(l2, view.getKarmaBoxes(l2.userId), 8), threadTx(x, largest(x), 'a stale owner posts', 8), rent]);
 
-  return {
-    input: encodeScenario({ ctx, seed, blocks: blocks.map((block) => bytesToHex(encodeOrderingBlock(block))) }),
-    results,
-  };
+  return { input: encodeScenario({ ctx, seed, blocks }), answer: { results, digests } };
 }
 
 // ---------------------------------------------------------------------------
@@ -469,17 +406,19 @@ describe('the build refuses a Node built-in', () => {
 
 describe('applyBlock built for a browser runs with browser globals alone', () => {
   let bundle: Bundle;
-  let scene: { input: string; results: ApplyResult[] };
+  let scene: { input: string; answer: Answer };
 
   beforeAll(async () => {
     scene = scenario();
     bundle = await buildIife(ENTRY);
   }, BUILD_TIMEOUT);
 
-  it('is built from source: every workspace module it holds is a src or test file', () => {
+  it('is built from source: every workspace module it holds is a src or test file, and the verifier is the library\'s own code', () => {
     const workspace = bundle.modules.filter((id) => id.startsWith(PACKAGES_DIR) && !id.includes('/node_modules/'));
     expect(workspace).toContain(`${PACKAGES_DIR}consensus/src/apply-block.ts`);
+    expect(workspace).toContain(`${PACKAGES_DIR}consensus/src/verifier-session.ts`);
     expect(workspace.filter((id) => !/^[^/]+\/(src|test)\//.test(id.slice(PACKAGES_DIR.length)))).toEqual([]);
+    expect(bundle.modules.filter((id) => id.includes('/@ergots/avltree/'))).not.toEqual([]);
   });
 
   it('runs in a context holding the ECMAScript built-ins, TextEncoder and TextDecoder, and nothing else — its clock and randomness throwing', () => {
@@ -516,7 +455,7 @@ describe('applyBlock built for a browser runs with browser globals alone', () =>
   });
 
   it('the scenario reaches signed transactions, posts, likes, names and a withdrawal, and refuses block 2 first for its corrupted signature', () => {
-    const reach = scene.results.map((result) => result.ok
+    const reach = scene.answer.results.map((result) => result.ok
       ? {
           txs: result.effects.appliedTxs.length,
           posts: result.effects.posts.length,
@@ -537,11 +476,17 @@ describe('applyBlock built for a browser runs with browser globals alone', () =>
     ]);
   });
 
-  it('crosses as primitives whole: the source run over its text answers what the blocks answered as they were built', () => {
-    expect(run(scene.input)).toBe(canonical(scene.results));
+  it("the Node side's prover reaches a digest of its own at each accepted block, and the refused block leaves its parent's", () => {
+    const digests = scene.answer.digests.map((digest) => hex(digest!));
+    expect(digests[1]).toBe(digests[0]);
+    expect(new Set(digests).size).toBe(digests.length - 1);
   });
 
-  it('answers inside the context what the source answers under Node, byte for byte', () => {
+  it("crosses as primitives whole: the source run over its text answers the Node side's results and digests", () => {
+    expect(run(scene.input)).toBe(canonical(scene.answer));
+  });
+
+  it("answers inside the context what the source answers under Node, byte for byte — the digests the Node side's prover reached among it", () => {
     const { context, calls } = browserContext();
     const before = globalNames(context);
     runInContext(bundle.code, context);
@@ -550,6 +495,8 @@ describe('applyBlock built for a browser runs with browser globals alone', () =>
     const fromBundle: unknown = runInContext(`ConsensusBundle.run(${JSON.stringify(scene.input)})`, context);
     expect(typeof fromBundle).toBe('string');
     expect(firstDifference(fromBundle as string, run(scene.input))).toBeNull();
+    expect(firstDifference(fromBundle as string, canonical(scene.answer))).toBeNull();
+    expect((fromBundle as string).split('\n').filter((line) => /^digests\[\d+\] bytes [0-9a-f]{66}$/.test(line))).toHaveLength(8);
     // The run reached both codecs, and the bundle left no global but its own name.
     expect(calls.encode).toBeGreaterThan(0);
     expect(calls.decode).toBeGreaterThan(0);

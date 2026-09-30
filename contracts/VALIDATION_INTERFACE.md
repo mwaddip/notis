@@ -804,6 +804,7 @@ The domain, by field:
 | `powTargetBits` | non-negative safe integer | `vlqU` |
 | **`createdAt`** | non-negative safe integer — **and a consensus input**: the order and future-bound rules (→ verifyCreatedAtOrder, → verifyCreatedAtBound) and the difficulty schedule's clock (→ asertTargetBits) read it | `vlqU` |
 | `interlinkRoot` | `/^[0-9a-f]{64}$/` | `b32` |
+| `adProofsRoot` | `/^[0-9a-f]{64}$/` | `b32` |
 
 ⛔ **The table used to carry a `networkType` row, marked AHEAD OF CODE for Phase 3. That header field
 is REJECTED (2026-08-10)** — see `TYPES_INTERFACE` → Block header and `ARCHITECTURE §How the network

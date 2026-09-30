@@ -28,7 +28,7 @@ async function importAll() {
 }
 
 function likesOnly(likeRecords: BlockEffects['likeRecords']): BlockEffects {
-  return { mutations: [], posts: [], likeRecords, withdrawals: [], appliedTxs: [] };
+  return { mutations: [], posts: [], likeRecords, withdrawals: [], appliedTxs: [], signatures: 0 };
 }
 
 const LIKER_A = uid('lr-liker-a');

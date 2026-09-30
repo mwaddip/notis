@@ -146,6 +146,7 @@ export function createRouter(deps: MiningDeps): Router {
         powTargetBits: tpl.header.powTargetBits,
         createdAt: tpl.header.createdAt,
         interlinkRoot: tpl.header.interlinkRoot,
+        adProofsRoot: tpl.header.adProofsRoot,
       },
       // The ids of the posts this template creates, derived from its
       // post-bearing transactions.

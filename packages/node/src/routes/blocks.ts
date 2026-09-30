@@ -47,11 +47,26 @@ export interface BlocksDeps {
   /** The profile's era schedule — /status serves the era at blockHeight + 1. */
   protocolVersionSchedule: readonly ProtocolEra[];
   countUsernames(): number;
+  /** The AVL+ proof of the block at a height, or `null` where this node holds none (NODE_INTERFACE → The block proof). */
+  getBlockProof(height: number): Uint8Array | null;
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+const DECIMAL_INT = /^\d+$/;
+
+/**
+ * `:height` as a non-negative safe integer written in decimal digits alone, or
+ * `null` for anything else — `12abc`, `1e3` and `-1` included (NODE_INTERFACE →
+ * Blocks).
+ */
+function parseHeight(raw: string): number | null {
+  if (!DECIMAL_INT.test(raw)) return null;
+  const height = Number(raw);
+  return Number.isSafeInteger(height) ? height : null;
+}
 
 /**
  * Convert an OrderingBlock to a JSON-safe shape.
@@ -69,6 +84,7 @@ function blockToJson(block: OrderingBlock): Record<string, unknown> {
       powTargetBits: block.header.powTargetBits,
       createdAt: block.header.createdAt,
       interlinkRoot: block.header.interlinkRoot,
+      adProofsRoot: block.header.adProofsRoot,
     },
     utxoTxTree: {
       utxoTxIds: block.utxoTxTree.utxoTxIds,
@@ -112,8 +128,8 @@ export function createRouter(deps: BlocksDeps): Router {
 
   // GET /blocks/:height — NODE_INTERFACE → Blocks
   router.get('/blocks/:height', (req, res) => {
-    const height = parseInt(req.params['height']!, 10);
-    if (!Number.isSafeInteger(height) || height < 0) {
+    const height = parseHeight(req.params['height']!);
+    if (height === null) {
       res.status(400).json({ error: 'Invalid height' });
       return;
     }
@@ -125,6 +141,25 @@ export function createRouter(deps: BlocksDeps): Router {
     }
 
     res.json(blockToJson(block));
+  });
+
+  // GET /blocks/:height/proof — NODE_INTERFACE → Blocks: the block's AVL+ proof
+  // as the bytes it is, the one route that is not JSON (NODE_INTERFACE → The
+  // block proof). Its refusals are JSON, as every other route's are.
+  router.get('/blocks/:height/proof', (req, res) => {
+    const height = parseHeight(req.params['height']!);
+    if (height === null) {
+      res.status(400).json({ error: 'Invalid height' });
+      return;
+    }
+
+    const proof = deps.getBlockProof(height);
+    if (proof === null) {
+      res.status(404).json({ error: 'Proof not found' });
+      return;
+    }
+
+    res.type('application/octet-stream').send(Buffer.from(proof.buffer, proof.byteOffset, proof.byteLength));
   });
 
   // GET /status — aggregated node status

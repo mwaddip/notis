@@ -1,6 +1,12 @@
 import * as validation from '@dagsocial/validation';
-import { applyBlock, treeStateView, treeWritesOf, TreeInconsistencyError } from '@dagsocial/consensus';
-import type { ApplyContext, BlockEffects, StateView } from '@dagsocial/consensus';
+import {
+  applyBlock,
+  checkBlockCost,
+  treeStateView,
+  treeWritesOf,
+  TreeInconsistencyError,
+} from '@dagsocial/consensus';
+import type { ApplyContext, BlockCost, BlockEffects, StateView, TreeStateView } from '@dagsocial/consensus';
 import {
   CorruptChainStateError,
   InconsistentStateTreeError,
@@ -57,6 +63,8 @@ import {
   getVouchBoxes,
   getLikeAccrualBoxes,
   getBondsInvitedAt,
+  putBlockProof,
+  pruneBlockProofs,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
 import { insertBlockJournal, purgeOldJournals } from '../store/journal.js';
@@ -74,12 +82,13 @@ import {
   checkpointProver,
 } from '../state/avl-prover.js';
 import type { AvlProverHandle } from '../state/avl-prover.js';
-import { proverSession } from '../state/prover-session.js';
+import { recordingSession } from '../state/prover-session.js';
 import { emitPostIndexed } from '../journal.js';
 import { countedVerifyOrderingBlockPoW, noteTip } from '../metrics.js';
 import { getNet } from './net-instance.js';
 import {
   bytesToHex,
+  hash32,
   identityKey,
   MAX_FUTURE_DRIFT_MS,
   GENESIS_PREV_BLOCK_HASH,
@@ -217,16 +226,20 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
     return { applied: false, class: 'consensus' };
   }
   // SQLite rollback does not reach the AVL prover's in-memory state, so the
-  // funnel snapshots the digest before the transaction and restores it on
-  // every rejection path — explicit rejection (including the stateRoot
-  // mismatch, whose §13-local rollback this replaces) and the totality catch.
+  // funnel saves the prover's root and height before the transaction and puts
+  // them back by reference on every rejection path — explicit rejection (the
+  // stateRoot and adProofsRoot mismatches included, the latter after a
+  // checkpoint whose storage rows roll back with the transaction) and the
+  // totality catch — immediate, because the library never mutates a node. The
+  // restore also rebases the proof cycle, so none of a refused block's recorded
+  // reads, which leave the digest where it was, stays in the cycle to enter the
+  // next block's proof (NODE_INTERFACE → The block proof).
   const avlHandle = tryGetAvlProver();
-  const preDigest = avlHandle ? avlHandle.prover.digest() : null;
+  const saved = avlHandle
+    ? { root: avlHandle.prover.prover.root, height: avlHandle.prover.prover.height }
+    : null;
   const restoreProver = (): void => {
-    if (!avlHandle || !preDigest) return;
-    const current = avlHandle.prover.digest();
-    if (current && Buffer.from(current).equals(Buffer.from(preDigest))) return;
-    avlHandle.prover.rollback(preDigest);
+    if (avlHandle && saved) avlHandle.prover.prover.restoreRoot(saved.root, saved.height);
   };
   let karmaOwners: Set<string>;
   try {
@@ -451,9 +464,11 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
   // mutation phases"): the rules over the block's tree view, answering the
   // block's effects or the reason a rule refused it, and writing nothing. The
   // block creator runs the same call over its own view to obtain the post-block
-  // stateRoot before mining (NODE_INTERFACE → Post-block stateRoot).
+  // stateRoot before mining (NODE_INTERFACE → Post-block stateRoot). The view
+  // reads through the recording session, so the block's reads open the proof
+  // its checkpoint makes (NODE_INTERFACE → The block proof).
   const height = block.header.height;
-  const view = treeStateView(proverSession(handle.prover));
+  const view = treeStateView(recordingSession(handle.prover));
   // A read of the tree that contradicts itself is local corruption, never a
   // verdict on the block — `TreeInconsistencyError` becomes
   // `InconsistentStateTreeError` here and nowhere else in this function, so
@@ -483,6 +498,15 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
     throw err;
   }
 
+  // The block's cost, once its writes are derived and before they are
+  // performed: a block over the budget is refused like any rule's refusal
+  // (CONSENSUS_INTERFACE → The block's cost).
+  const overBudget = checkBlockCost(costOf(result.effects, view, writes));
+  if (overBudget !== null) {
+    console.warn(`Rejected block height=${height}: ${overBudget}`);
+    return null;
+  }
+
   // The writes and the stateRoot compare, before any effect is written —
   // unconditional (NODE_INTERFACE → AVL+ State Root). The prover is restored by
   // the funnel's single rollback point, not here.
@@ -500,8 +524,23 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
   // The effects written to the store, and the block journal built from them.
   const journal = writeBlockEffects(result.effects, height);
 
-  // Checkpoint prover state at this height
-  checkpointProver(handle, height);
+  // Checkpoint prover state at this height. Its proof is the block's — its
+  // reads, then its writes — and the header commits to its hash32 as
+  // `adProofsRoot`: a mismatch is refused like the stateRoot's, the funnel's
+  // single rollback point restoring the store and the prover; the proof that
+  // matches is stored with the block in this transaction (NODE_INTERFACE → The
+  // block proof).
+  const proof = checkpointProver(handle, height);
+  const provenRoot = bytesToHex(hash32(proof));
+  if (block.header.adProofsRoot !== provenRoot) {
+    console.warn(
+      `adProofsRoot mismatch at height ${height}: ` +
+      `computed=${provenRoot.slice(0, 16)}... ` +
+      `header=${block.header.adProofsRoot.slice(0, 16)}...`,
+    );
+    return null;
+  }
+  putBlockProof(height, proof);
 
   // 14. Persist journal and purge old ones
   insertBlockJournal(journal);
@@ -510,6 +549,9 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
   // (NODE_INTERFACE → Fork choice decides on verified headers).
   purgeOldJournals(height - config.maxReorgDepth);
   purgeRefusedHeaders(height - config.maxReorgDepth);
+  // What a node serves, not what it applies: proofs are kept for
+  // PROOF_RETENTION_BLOCKS behind the tip (NODE_INTERFACE → The block proof).
+  pruneBlockProofs(height - config.proofRetentionBlocks);
 
   // The one site where an absence is simply printed. `applyOrderingBlock` ran
   // `verifyOrderingBlockStructure` over this header before calling us, so it is
@@ -646,13 +688,26 @@ export function writeBlockEffects(effects: BlockEffects, height: number): BlockJ
 }
 
 /**
+ * What a block's cost counts (CONSENSUS_INTERFACE → The block's cost): the
+ * batch's entries, the distinct keys its tree view looked up, and its writes.
+ */
+export function costOf(effects: BlockEffects, view: TreeStateView, writes: readonly unknown[]): BlockCost {
+  return { signatures: effects.signatures, lookups: view.lookupCount(), writes: writes.length };
+}
+
+/**
  * The owners whose karma boxes a block's effects insert or spend, as hex — those
  * net's relay gate moves for once the block commits (NODE_INTERFACE → Post
  * transactions → "The set moves after a commit, never inside a transaction").
+ *
  * A box the block spends and did not insert is read through `view` — the
- * block's own tree view, before its writes are performed.
+ * block's own tree view, before its writes are performed — from its memo alone:
+ * `treeWritesOf` has read every such box already, and a lookup here would be
+ * recorded outside the block's reads and enter its proof (NODE_INTERFACE → The
+ * block proof). A lookup it did make is a defect, thrown.
  */
-function karmaOwnersOf(effects: BlockEffects, view: Pick<StateView, 'getBox'>): Set<string> {
+function karmaOwnersOf(effects: BlockEffects, view: TreeStateView): Set<string> {
+  const looked = view.lookupCount();
   const inserted = new Set<string>();
   const owners = new Set<string>();
   for (const m of effects.mutations) {
@@ -667,6 +722,11 @@ function karmaOwnersOf(effects: BlockEffects, view: Pick<StateView, 'getBox'>): 
       box = view.getBox(m.boxId);
     }
     if (box?.boxType === 'karma') owners.add(Buffer.from(box.owner).toString('hex'));
+  }
+  if (view.lookupCount() !== looked) {
+    throw new Error(
+      `karmaOwnersOf: ${view.lookupCount() - looked} spent box(es) were not among the block's reads`,
+    );
   }
   return owners;
 }
@@ -686,14 +746,28 @@ function moveKarmaMembers(owners: Set<string>): void {
 }
 
 /**
- * What the speculative state-root run answered. The two non-computed arms are
- * deliberately not one `null`: they demand opposite reactions from the block
+ * What the speculative state-root run answered — its three outcomes
+ * (NODE_INTERFACE → Post-block stateRoot). The non-computed arms are
+ * deliberately not one `null`: they demand different reactions from the block
  * creator, and conflating them puts a node back on the defect this type exists
- * to prevent — mining a body its own mutation phase has already rejected.
+ * to prevent — mining a body its own mutation phase has already rejected, or
+ * evicting entries whose only fault is that too many rode together.
  */
 export type StateRootSpeculation =
-  /** The post-block digest the header must commit to. Mine over it. */
-  | { kind: 'computed'; stateRoot: string }
+  /**
+   * The post-block digest the header must commit to, and the block's proof —
+   * its reads, then its writes (NODE_INTERFACE → The block proof) — with the
+   * proof's `hash32` as `adProofsRoot`, hex. Mine over them.
+   */
+  | { kind: 'computed'; stateRoot: string; adProofsRoot: string; proof: Uint8Array }
+  /**
+   * The body's cost is over the budget (CONSENSUS_INTERFACE → The block's
+   * cost): trim the selection and build again, evicting nothing. `reason` is
+   * the refusal that says so — `applyBlock`'s, the one refusal it flags
+   * `overBudget`, for a body whose signatures alone cost more than a block may;
+   * otherwise `checkBlockCost`'s, naming the cost the run counted.
+   */
+  | { kind: 'over-budget'; reason: string }
   /**
    * Producing this block is forbidden — the body was rejected, or speculating
    * on it threw. One arm because the caller's obligation is one: do not mine,
@@ -710,16 +784,27 @@ export type StateRootSpeculation =
  * PoW covers the header, so the producer has to know this digest *before*
  * mining, and the only way to know it without a second implementation of the
  * state transition is to run the block's own body as apply runs it: `applyBlock`
- * over a tree view on the prover, `treeWritesOf` over the same view, the writes
- * performed, the digest read. The prover's in-memory root and height are saved
- * first and put back by reference with `restoreRoot` when the run ends: the
- * library never mutates a node, so the saved root is the whole tree the run
- * started from, and nothing is read back from storage. It writes nothing to the
- * store — no block, no effect, no journal — and performs no `clearTemplate` and
- * no prover checkpoint.
+ * over a tree view on the prover's recording session, `treeWritesOf` over the
+ * same view, the writes performed, the digest read, and the proof the inner
+ * prover's `generateProof()` makes of the reads and writes (NODE_INTERFACE →
+ * The block proof). The run starts at a proof-cycle boundary, as every
+ * caller's does. The prover's in-memory root and height are saved first and put
+ * back by reference with `restoreRoot` when the run ends, which also rebases the
+ * proof cycle: the library never mutates a node, so the saved root is the whole
+ * tree the run started from, and nothing is read back from storage. It writes
+ * nothing to the store — no block, no effect, no journal — and performs no
+ * `clearTemplate` and no prover checkpoint.
  *
  * The candidate carries a placeholder header (`powNonce` 0, empty signature):
  * the mutation phase reads neither, and runs at the header's height.
+ *
+ * The block's cost is checked where apply checks it, once the writes are derived
+ * and before they are performed; over the budget, the run answers `over-budget`
+ * and performs nothing. A body whose signatures alone cost more than a block may
+ * is `applyBlock`'s refusal before the batch, which says so with `overBudget`
+ * (CONSENSUS_INTERFACE → Applying a block → "This refusal says what it is"),
+ * and over the budget here too; every other refusal of the rules is
+ * `body-rejected`.
  *
  * An unexpected throw maps to `body-rejected`: the apply funnel treats the same
  * throw as a rejection of the block, so a body that crashes speculation is a
@@ -748,9 +833,10 @@ export function computePostBlockStateRoot(
   const height = block.header.height;
 
   try {
-    const view = treeStateView(proverSession(handle.prover));
+    const view = treeStateView(recordingSession(handle.prover));
     const result = applyBlock(view, block, applyContextFrom(config));
     if (!result.ok) {
+      if (result.overBudget === true) return { kind: 'over-budget', reason: result.reason };
       console.warn(result.reason);
       console.warn(
         `stateRoot speculation at height ${height}: the body was rejected by its ` +
@@ -759,8 +845,16 @@ export function computePostBlockStateRoot(
       return { kind: 'body-rejected' };
     }
     const writes = treeWritesOf(result.effects, height, view);
+    const overBudget = checkBlockCost(costOf(result.effects, view, writes));
+    if (overBudget !== null) return { kind: 'over-budget', reason: overBudget };
     const digest = performTreeWrites(handle.prover, height, writes, 'computePostBlockStateRoot');
-    return { kind: 'computed', stateRoot: bytesToHex(digest) };
+    const proof = inner.generateProof();
+    return {
+      kind: 'computed',
+      stateRoot: bytesToHex(digest),
+      adProofsRoot: bytesToHex(hash32(proof)),
+      proof,
+    };
   } catch (err) {
     // Above the unclaimed-throw arm, because that arm would swallow it into a
     // verdict about the block. Never returns. A read of the tree that
