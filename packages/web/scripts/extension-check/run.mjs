@@ -89,6 +89,16 @@ const PUBLIC = args.get('public') ?? null;
 const WEB_DIST = args.get('web-dist') ?? null;
 const PASSPHRASE = 'proof-pass';
 
+// The extension's tip verifier asks every node for `/nipopow/proof/<m>/<k>` at
+// m = 24 and k = 20 (WEB_INTERFACE → The extension → "The verified tip"), and a
+// node answers *too short* while its chain stands below m + k (NODE_INTERFACE →
+// Nipopow). The comparison 19b waits on runs at this pair, and every height the
+// harness mines a chain to or gates on for its proof to exist counts from m + k.
+// The figures and names blocks count their waits and a check's heights by the
+// suffix alone — the tip's last `k` headers, `suffixHead` the first of them.
+const TIP_M = 24;
+const TIP_K = 20;
+
 // The verified-tip block — WEB_INTERFACE → The extension → "The verified tip",
 // steps 17a · 17 · 17b · 18 · 19a · 19b · 19c · 20. Absent, they read NOT RUN
 // by name, as 13–16 do without --public / --web-dist.
@@ -850,17 +860,19 @@ async function waitForHeightsClose(originA, originB, tolerance, ms = 300000) {
 // Step 19b's precondition, read as the extension's tip verifier reads it with
 // C as the reading node (WEB_INTERFACE → The extension → "The verified tip"):
 // `resolveTip` over [C, A] — C first, so a tie keeps C — at the verifier's
-// m = 6 and k = 20, under devnet's profile. `outworked` is the verdict table's
-// row: C verified, A the winner, C's `behind` null. The scores are
+// `TIP_M` and `TIP_K`, under devnet's profile. `outworked` is the verdict
+// table's row: C verified, A the winner, C's `behind` null. The scores are
 // `compareProofs`'s over the two proofs the result carries, in the fold's
-// order (C as `a`), and absent where either side did not verify.
+// order (C as `a`) and at the `m` the proofs were asked for — a proof of
+// another `m` is `incomparable` (NIPOPOW_INTERFACE → compareProofs) — and
+// absent where either side did not verify.
 async function readForkComparison() {
   const aOrigin = NODE.replace(/\/+$/, '');
-  const result = await forkTools.resolveTip([C_ORIGIN, aOrigin], 6, 20, forkTools.profile, Date.now, fetch);
+  const result = await forkTools.resolveTip([C_ORIGIN, aOrigin], TIP_M, TIP_K, forkTools.profile, Date.now, fetch);
   const [c, a] = result.nodes;
   const tipOf = (n) => (n.verifyResult?.ok === true ? n.verifyResult.tip.height : null);
   const cmp = c.verified && a.verified
-    ? forkTools.compareProofs(c.proof, a.proof, 6, forkTools.verifierProfile(forkTools.profile, Date.now()))
+    ? forkTools.compareProofs(c.proof, a.proof, TIP_M, forkTools.verifierProfile(forkTools.profile, Date.now()))
     : null;
   return {
     c: { verified: c.verified, refuseCode: c.refuseCode, tip: tipOf(c), behind: c.behind },
@@ -1410,8 +1422,8 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
 
   // ---- Spawn node D — isolated, miner role with its own secret, no miner
   // script yet. D serves 17a's *too-short* at height 0 and, later, 19c's
-  // *share no block* once its own miner runs it past 30. The secret is random
-  // and per-run — nothing of it lands in the tree.
+  // *share no block* once its own miner runs it past m + k + 4. The secret is
+  // random and per-run — nothing of it lands in the tree.
   const dDbPath = join(SCRATCH, 'd.db');
   for (const suffix of ['', '-shm', '-wal']) {
     try { rmSync(dDbPath + suffix, { force: true }); } catch {}
@@ -1630,11 +1642,13 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
       record('19b', false, `node C did not come up at ${C_ORIGIN}`);
     } else {
       // Wait for C to sync to A's tip within 2 blocks, and for its own height
-      // to reach ≥ 40 so the winner's `k`-header suffix is well past genesis.
+      // to reach m + k + 14 — fourteen blocks past the height where C's own
+      // proof exists — so the winner's `k`-header suffix is well past genesis.
+      const cSyncMin = TIP_M + TIP_K + 14;
       const cSync = await waitForHeightsClose(NODE, C_ORIGIN, 2, 600000);
       const hCsync = await currentHeight(C_ORIGIN);
-      if (cSync === null || hCsync === null || hCsync < 40) {
-        record('19b', false, `C never synced to A within 2 blocks and reached ≥ 40 (hC=${hCsync}, sync=${JSON.stringify(cSync)}). A's miner may be paced too slowly.`);
+      if (cSync === null || hCsync === null || hCsync < cSyncMin) {
+        record('19b', false, `C never synced to A within 2 blocks and reached ≥ ${cSyncMin} (hC=${hCsync}, sync=${JSON.stringify(cSync)}). A's miner may be paced too slowly.`);
       } else {
         console.log(`[vt] 19b phase 1: C synced at ${hCsync} (A=${(await currentHeight(NODE))})`);
         // Phase 2 — stop C, restart on the same store, cut off from A. New
@@ -1782,20 +1796,22 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
     }
   }
 
-  // ---- Step 19c — thin (split), on fresh isolated D with its own miner past 30.
+  // ---- Step 19c — thin (split), on fresh isolated D with its own miner past
+  // m + k + 4: four blocks past the height where D's own proof exists.
   {
-    console.log(`[vt] 19c: starting D's miner until D passes height 30`);
+    const dPast = TIP_M + TIP_K + 4;
+    console.log(`[vt] 19c: starting D's miner until D passes height ${dPast}`);
     spawnDaemon('d-miner', MINER_SCRIPT, {
       NODE_URL: D_ORIGIN,
       MINING_SECRET: dSecret,
       MINER_PCT: '100',
     });
-    const dHeight = await waitForHeight(D_ORIGIN, 31, 600000);
+    const dHeight = await waitForHeight(D_ORIGIN, dPast + 1, 600000);
     await stopChild('d-miner');
     await sleep(1500);
     const hDafter = await currentHeight(D_ORIGIN);
     if (dHeight === null) {
-      record('19c', false, `node D never reached height 31 within 10 minutes (last=${hDafter})`);
+      record('19c', false, `node D never reached height ${dPast + 1} within 10 minutes (last=${hDafter})`);
     } else {
       const {
         applied, stored, reached, reading, proofs,
@@ -1917,11 +1933,6 @@ function tallyLeds(readings) {
 // build. Pacing is external: the paced miner runs outside the harness, started
 // before promote.mjs and kept to the end.
 // ---------------------------------------------------------------------------
-
-// K in the tip verifier — packages/web/src/extension/tip-verifier.ts:18. The
-// wait for silence is at least K + 1 blocks past the landing block, so the
-// tool proves the new box at suffixHead and silence fires (row 6).
-const FIGURES_K = 20;
 
 // The App's figures verifier fetches `/api/v1/proof/<key>?atHeight=<h>` for
 // each listed box and the identity record; the request pattern is the
@@ -2255,7 +2266,7 @@ async function runFiguresStep21(cx) {
       && youngShape.test(before.figHintText);
 
     // Wait for the tip to reach landedH21 + K + 1 (~ 6 min at 3.4 blocks/min).
-    const targetH = landedH21 + FIGURES_K + 1;
+    const targetH = landedH21 + TIP_K + 1;
     const wait = await waitForNodeTip(targetH);
     const rate = wait.last !== null
       ? ((wait.last - landedH21) / (wait.elapsedMs / 60000)).toFixed(2)
@@ -2263,7 +2274,7 @@ async function runFiguresStep21(cx) {
     if (!wait.reached) {
       record(21, false,
         `before: gold=${JSON.stringify(before.goldText)} clay=${before.goldHasClay} figHint=${JSON.stringify(before.figHintText)} shape ok=${beforeOk}; ` +
-        `tip did not reach ${targetH} within ${(wait.elapsedMs / 1000).toFixed(0)}s (last=${wait.last}, ~${rate} blocks/min from landed=${landedH21}, K+1=${FIGURES_K + 1})`);
+        `tip did not reach ${targetH} within ${(wait.elapsedMs / 1000).toFixed(0)}s (last=${wait.last}, ~${rate} blocks/min from landed=${landedH21}, K+1=${TIP_K + 1})`);
       return;
     }
 
@@ -2311,7 +2322,7 @@ async function runFiguresStep24(cx) {
     const initialRepNum = Number(initialRep);
     // Drain over the K+1 wait — at 3 blocks per interval, that's
     // ceil((K+1)/3) intervals × 5 rep. Plus 5 for the post. Plus KARMA_MINIMUM.
-    const drainOverKPlus1 = Math.ceil((FIGURES_K + 1) / 3) * 5;
+    const drainOverKPlus1 = Math.ceil((TIP_K + 1) / 3) * 5;
     const buffer = drainOverKPlus1 + 5 + 10;
     if (!Number.isFinite(initialRepNum) || initialRepNum < buffer) {
       record(24, false,
@@ -2402,7 +2413,7 @@ async function runFiguresStep24(cx) {
     // is measured and reported; a drain below KARMA_MINIMUM (10) means R runs
     // out during the wait and the row's silence would come from an empty
     // ledger rather than a proven state.
-    const targetH24 = landedH24 + FIGURES_K + 1;
+    const targetH24 = landedH24 + TIP_K + 1;
     const wait24 = await waitForNodeTip(targetH24);
     const rate24 = wait24.last !== null
       ? ((wait24.last - landedH24) / (wait24.elapsedMs / 60000)).toFixed(2)
@@ -2416,7 +2427,7 @@ async function runFiguresStep24(cx) {
     if (!wait24.reached) {
       record(24, false,
         `before: silence ok=${beforeOk}; landing number ok=${numberOk}; during: hint=${JSON.stringify(during.hintText)} shape ok=${duringOk}; ` +
-        `tip did not reach ${targetH24} within ${(wait24.elapsedMs / 1000).toFixed(0)}s (last=${wait24.last}, ~${rate24} blocks/min from landed=${landedH24}, K+1=${FIGURES_K + 1}); ` +
+        `tip did not reach ${targetH24} within ${(wait24.elapsedMs / 1000).toFixed(0)}s (last=${wait24.last}, ~${rate24} blocks/min from landed=${landedH24}, K+1=${TIP_K + 1}); ` +
         `initial rep=${initialRep}, rep after wait=${repAfterWait}, drain estimate=${drainOverWait}`);
       return;
     }
@@ -3204,7 +3215,7 @@ function nameChecksFromRelayLog(log, since, boxId) {
     const u = new URL(e.path, 'http://relay');
     if (u.pathname.toLowerCase() === proofPath) {
       const height = Number(u.searchParams.get('atHeight'));
-      if (open !== null && open.tip === null && height === open.suffixHead + FIGURES_K - 1) {
+      if (open !== null && open.tip === null && height === open.suffixHead + TIP_K - 1) {
         open.tip = height;
         open.tipDoneAt = e.doneAt;
       } else {
@@ -4216,10 +4227,10 @@ async function runVerifiedBlocks(bcx) {
   // The verified-tip block after the 1–16 pass and before the browser-context
   // arm — 17a's D is fresh and isolated, so its readings hold whatever A's
   // height is by now. 17b's press train runs under A's live miner; 19b makes
-  // its own fork on C; 19c uses D's own miner past 30. The block runs on the
-  // extension page live at this moment — 16(d)'s bridge takeover leaves one;
-  // where none is open, `Target.createTarget` a fresh `index.html`, the way
-  // the harness opens every other extension page (WEB_INTERFACE → The
+  // its own fork on C; 19c uses D's own miner past m + k + 4. The block runs
+  // on the extension page live at this moment — 16(d)'s bridge takeover leaves
+  // one; where none is open, `Target.createTarget` a fresh `index.html`, the
+  // way the harness opens every other extension page (WEB_INTERFACE → The
   // extension → "The verified tip").
   if (VERIFIED_TIP) {
     let vtPage = await findExt('index.html');

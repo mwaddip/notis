@@ -465,7 +465,7 @@ rejoins; **19a** the row on the relay — *this node's proof did not verify*, th
 rendering; **19b** the row on C once A's proof out-scores C's fork — `resolveTip` over `[C, A]` read until C verifies,
 A wins and C's `behind` is `null`, since a fork a few blocks deep can tie A on the score and a tie keeps the reading
 node — *127.0.0.1:19740 holds more work than this node*; **19c**
-the row on D mined past 30 — *the nodes share no block to compare*; **20** the hosted web build — the first
+the row on D mined past `m + k + 4` (48) — *the nodes share no block to compare*; **20** the hosted web build — the first
 paragraph's title and no `/nipopow/` request. In a full run the block runs after step 16 on a session opened on
 the extension page live at that moment (step 15 closes the first one), and the browser-context arm runs last. The
 extension for it is built with `VITE_NETWORK=devnet` and `VITE_NODES` naming A then B; the harness refuses
