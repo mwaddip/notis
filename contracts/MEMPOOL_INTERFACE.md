@@ -147,9 +147,12 @@ pending-spend conflict every transaction meets.
 ### The cost gate
 
 **A transaction that alone cannot fit a block is refused at admission.** The pool runs it as the only user
-transaction of a candidate block at `tip + 1` — the settlement built as the creator builds one — over an **unrecorded**
-tree view (`NODE_INTERFACE → The block proof`), and refuses it when that block's cost is over `MAX_BLOCK_COST`
-(`CONSENSUS_INTERFACE → The block's cost`), the reason naming the cost. Without it a transaction no block can carry
+transaction of a candidate block at `tip + 1` — the settlement built as the creator builds one, its producer this
+node's key or, on a node that holds none, the all-zero key — over an **unrecorded** tree view (`NODE_INTERFACE → The
+block proof`), and refuses it when that block's cost is over `MAX_BLOCK_COST` (`CONSENSUS_INTERFACE → The block's
+cost`), the reason naming the cost. **A transaction that cannot be costed alone is admitted on the other gates** —
+one spending a pooled output, a settlement the tip cannot build, a node with no prover: packing trims it if it does not
+fit. Without it a transaction no block can carry
 would sit in the pool, trimmed from every template until it expired. A transaction that fits alone may still be
 trimmed from a full block: that is packing (`MINING_INTERFACE → Template and submit → "Packing to the budget"`), not
 admission.

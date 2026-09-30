@@ -2901,7 +2901,7 @@ union so no caller can conflate them):
 | Outcome | Meaning | Creator's obligation |
 |---|---|---|
 | computed | the post-block digest and the proof's | mine over them |
-| **over budget** | the body's cost is over `MAX_BLOCK_COST` | **trim the selection and build again** (`MINING_INTERFACE → Template and submit → "Packing to the budget"`); nothing is evicted |
+| **over budget** | the body's cost is over `MAX_BLOCK_COST` — `applyBlock`'s own refusal saying so, or `checkBlockCost`'s | **trim the selection and build again** (`MINING_INTERFACE → Template and submit → "Packing to the budget"`); nothing is evicted |
 | **body rejected** | the mutation phase rejected this body | **produce nothing, and evict the included mempool entries** |
 
 **A node applies and produces over its prover, and has no other way to** — the rules read the tree and nothing else
@@ -3870,8 +3870,9 @@ below; `CONSENSUS_INTERFACE → The tree layout`).
 **The rules read the tree, and nothing else.** Block application, the speculative run and the block creator hand
 `applyBlock` `treeStateView` over a session on this node's prover (`CONSENSUS_INTERFACE → The tree view`), and write
 the tree through `treeWritesOf` (`CONSENSUS_INTERFACE → The tree writes`). **The session reads with the prover's
-unrecorded neighbour lookup** (`@ergots/avltree` 0.5.0's `unauthenticatedLookupWithNeighbors`), its `null` neighbour
-mapped to the sentinel (`CONSENSUS_INTERFACE → The tree session`); a write the prover refuses is
+unrecorded neighbour lookup** (`@ergots/avltree` 0.5.0's `unauthenticatedLookupWithNeighbors`) — every reader's
+session but block application's and the speculative run's, whose lookups are recorded into the block's proof
+(→ The block proof) — its `null` neighbour mapped to the sentinel (`CONSENSUS_INTERFACE → The tree session`); a write the prover refuses is
 `DivergedStateTreeError` and a read that contradicts itself `InconsistentStateTreeError`, both fail-stop (→ "What the
 funnel's totality catch is FOR"). **The SQLite tables are written from the same effects and answer the API only**; no
 consensus path reads them, so a table and the tree cannot disagree about what a rule saw. `storeStateView` — the
@@ -3988,10 +3989,10 @@ the tree view read by read.
   `Update`, every `InsertOrUpdate`, each by key bytewise, no key taking two writes in one block (`CONSENSUS_INTERFACE →
   The tree writes`) — and the node performs them in the order they come; genesis's are `seedTreeWrites`', all
   `Insert`s in key order
-- **Rejection-safe:** the apply funnel snapshots the prover digest before any
-  mutation and rolls the prover back on **every** rejection path — explicit
-  rejection, stateRoot mismatch, and the totality catch (closes the open
-  f4a683f remnant). ⚠ **The fail-stop is where restoring stops mattering, and
+- **Rejection-safe:** the apply funnel saves the prover's root and height before the block and puts them back with
+  `restoreRoot` on **every** rejection path — explicit rejection, the cost's refusal, a `stateRoot` or `adProofsRoot`
+  mismatch, and the totality catch — which also ends the block's proof cycle, so a refused block's recorded reads never
+  reach the next block's proof; the apply transaction's rollback takes back the storage rows. ⚠ **The fail-stop is where restoring stops mattering, and
   the two paths reach that differently.** The funnel's corrupt-state arm
   restores before re-throwing; `computePostBlockStateRoot` calls the boundary
   inside its `catch`, and `process.exit(1)` does not unwind, so its `finally`

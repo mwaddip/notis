@@ -340,8 +340,10 @@ loop above is for a body the **mutation phase** refuses.
 
 **Packing to the budget.** A body's cost is known only by executing it (`CONSENSUS_INTERFACE → The block's cost`), so
 the creator packs by trimming: it speculates the fee-ordered selection, and while the speculation answers **over
-budget** it halves the selection from the tail; once a prefix fits, it grows the prefix back one entry at a time while
-the next still fits — at most `2·log₂(n) + 1` speculations for a selection of `n`. **No template is ever over the
+budget** it halves the selection from the tail; once a prefix fits, it bisects between that length and the shortest
+one found over the budget, keeping the longest prefix that fits — at most `2·log₂(n) + 1` speculations for a selection
+of `n`. A prefix's cost need not grow with its length (a consolidation nets out inserts), so the search may keep a
+shorter prefix than the longest that fits; it never keeps one over the budget. **No template is ever over the
 budget, and nothing is evicted for it**: an entry trimmed stays pooled for a later block. `adProofsRoot` is the
 speculation's, beside `stateRoot` (`NODE_INTERFACE → Post-block stateRoot`).
 

@@ -76,7 +76,12 @@ a map with more entries than its transaction has inputs is refused before the ba
 embedded UTXO tx <id> carries more signatures than inputs` — and the batch checks at most one entry per input.
 **The signatures' cost is checked before the batch runs**: `signatures × W_SIG` over `MAX_BLOCK_COST` refuses the
 block — `Rejected block height=H: its N signatures cost more than a block may` — so a body of more signatures than the
-budget holds costs nothing to refuse (→ The block's cost).
+budget holds costs nothing to refuse (→ The block's cost). **This refusal says what it is**: `{ ok: false, reason,
+overBudget: true }`, the one refusal carrying the flag, so a producer trims such a body rather than evicting it
+(`NODE_INTERFACE → Post-block stateRoot`).
+
+> ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — the refusal carries no `overBudget`; the node recounts
+> the body's signatures to tell it from a rule's refusal (Task 3c, then 4b).
 `true` hands the loop the verified set, and the `validateTx` it runs answers each signature from it (→ The overlay);
 an entry outside the set fails its transaction. **Checking every
 entry keeps every verdict:** `validateTx` refuses a map key no input requires, so every entry of a valid transaction's
