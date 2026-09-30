@@ -61,6 +61,11 @@ export const MAX_BOND_SETTLEMENTS_PER_BLOCK = 64;
 export const MAX_ESCROW_RETURNS_PER_BLOCK = 64;
 export const MAX_LAPSE_WITHDRAWALS_PER_BLOCK = 64;
 
+// The block's cost — TYPES_INTERFACE → The block's cost
+export const W_SIG = 100;                 // consensus — a signature's weight in a block's cost
+export const W_OP = 10;                   // consensus — a tree operation's weight in a block's cost
+export const MAX_BLOCK_COST = 600_000;    // consensus — the budget: 6 000 signatures and nothing else
+
 /**
  * The accepted domain of a box `value` — TYPES_INTERFACE → Box value domain.
  *

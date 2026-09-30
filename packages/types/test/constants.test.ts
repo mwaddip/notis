@@ -34,6 +34,9 @@ import {
   STORAGE_RENT_PER_BYTE,
   MAX_BLOCK_BODY_BYTES,
   MAX_SETTLEMENT_BYTES,
+  W_SIG,
+  W_OP,
+  MAX_BLOCK_COST,
   VOUCH_CAST_HEIGHT_WINDOW,
   SYSTEM_KARMA_INITIAL,
   FAUCET_CREDITS_INITIAL,
@@ -341,6 +344,32 @@ describe('invite economics', () => {
 describe('settlement size caps', () => {
   it('a legal settlement fits inside a legal body', () => {
     expect(MAX_SETTLEMENT_BYTES).toBeLessThan(MAX_BLOCK_BODY_BYTES);
+  });
+});
+
+/**
+ * TYPES_INTERFACE → The block's cost. Provisional weights, pinned here so a
+ * retune that moves one and forgets the ruling it derives from is caught.
+ */
+describe("the block's cost", () => {
+  it('pins the three weights', () => {
+    expect(W_SIG).toBe(100);
+    expect(W_OP).toBe(10);
+    expect(MAX_BLOCK_COST).toBe(600_000);
+  });
+
+  it('denominates all three as number, not bigint', () => {
+    expect(typeof W_SIG).toBe('number');
+    expect(typeof W_OP).toBe('number');
+    expect(typeof MAX_BLOCK_COST).toBe('number');
+  });
+
+  // CONSTANTS → The block's cost: the budget is 6 000 signatures and nothing
+  // else — the ruling this row derives from, so a change to either constant
+  // that breaks the relationship fails here rather than at the first block a
+  // full signature count can no longer fit.
+  it('MAX_BLOCK_COST is exactly 6 000 signatures and nothing else', () => {
+    expect(MAX_BLOCK_COST).toBe(6_000 * W_SIG);
   });
 });
 
