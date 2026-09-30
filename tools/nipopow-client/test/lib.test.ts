@@ -24,6 +24,8 @@ describe('library entry', () => {
     // Runtime exports — the value names, sorted. The types above are checked
     // at compile time and carry no runtime name.
     expect(Object.keys(lib).sort()).toEqual([
+      'DEFAULT_K',
+      'DEFAULT_M',
       'fetchListing',
       'proveBoxes',
       'proveFigures',
@@ -35,6 +37,13 @@ describe('library entry', () => {
     exitSpy.mockRestore();
     stderrSpy.mockRestore();
     argvGet.mockRestore();
+  });
+
+  // CONSTANTS → Client defaults
+  it('exports DEFAULT_M === 24 and DEFAULT_K === 20', async () => {
+    const lib = await import('../src/lib.js');
+    expect(lib.DEFAULT_M).toBe(24);
+    expect(lib.DEFAULT_K).toBe(20);
   });
 
   it('the exported types are usable from outside', () => {

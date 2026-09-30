@@ -20,7 +20,7 @@ export type {
 export { proveName } from './names.js';
 export type { NameClaim, NameStatus, NameResult } from './names.js';
 
-export { verifierProfile } from './config.js';
+export { verifierProfile, DEFAULT_M, DEFAULT_K } from './config.js';
 export type { VerifyProfile } from './config.js';
 
 export type { HttpFetch } from './http.js';
