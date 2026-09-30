@@ -30,7 +30,9 @@ phase, answering the block's effects or a reason), what a transaction may do (`v
 the output shape, the transitions), what a block's settlement consumes and emits (`buildSettlement`, the producer's
 `buildBlockSettlement`, `checkSettlement`), decay, the coinbase split and the reward, the block's post and withdrawal
 readers — and **what the tree holds**: the tree view (`treeStateView`, the one `StateView` the rules see, over a
-`TreeSession`), the index entries and the block's tree writes (`CONSENSUS_INTERFACE → The tree layout`). **The one
+`TreeSession`), the index entries and the block's tree writes (`CONSENSUS_INTERFACE → The tree layout`), the block's
+cost and its budget (`CONSENSUS_INTERFACE → The block's cost`), and the session over a block's proof
+(`verifierSession`). **The one
 implementation**: the node runs it over a session on its prover, and a browser leaf that validates blocks will run the
 same code over a verifier's.
 

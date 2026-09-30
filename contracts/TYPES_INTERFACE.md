@@ -1392,8 +1392,8 @@ and `→ verifyCreatedAtBound`.
 
 > ⛔ **`networkType` was proposed as a header field twice and is REJECTED — decided
 > 2026-08-10, reversing 2026-08-06.** It was never implemented; nothing is being removed from
-> code. **The header is ten fields**, `interlinkRoot` the tenth (→ Interlink vector). Read this
-> before proposing it a third time.
+> code. **The header is eleven fields**, `interlinkRoot` the tenth and `adProofsRoot` the eleventh (→ Layout — Block).
+> Read this before proposing it a third time.
 >
 > The argument for it was legibility: id derivation is network-agnostic by decision (§Domain
 > tags are network-agnostic), so a header field would be the only consensus-visible network

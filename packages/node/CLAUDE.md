@@ -29,7 +29,9 @@ them as ordinary transactions. TypeScript, pnpm workspaces, Node.js ≥ 22.
 The full node: Express HTTP API, PoW verifier, SQLite store, block creator + application, invites/vouch,
 withdrawal, AVL+ state — running `@dagsocial/consensus`'s `applyBlock` over the block's tree view on its prover,
 performing the block's tree writes and writing its effects to the store, the journal built from them
-(NODE_INTERFACE → AVL+ State Root, NODE_INTERFACE → Block Journal). The node serves no client
+(NODE_INTERFACE → AVL+ State Root, NODE_INTERFACE → Block Journal); each block's proof regenerated from its own
+execution, checked against the header's `adProofsRoot`, stored a week and served by height, and its cost held to the
+budget, the creator packing to it (NODE_INTERFACE → The block proof). The node serves no client
 (NODE_INTERFACE → The node serves no client).
 
 - **Owns:** `src/server.ts`, `src/routes/*`, `src/services/*`, `src/store/*`, `src/state/*` (AVL+).
