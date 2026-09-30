@@ -41,6 +41,7 @@ export type { TreeStateView } from './tree-view.js';
 export { indexEntriesOfBox, isLapsedMember } from './tree-index.js';
 export { seedTreeWrites, treeWritesOf } from './tree-writes.js';
 export type { TreeWrite } from './tree-writes.js';
+export { verifierSession } from './verifier-session.js';
 
 export { blockCost, checkBlockCost } from './block-cost.js';
 export type { BlockCost } from './block-cost.js';
