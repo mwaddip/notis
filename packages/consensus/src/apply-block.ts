@@ -66,8 +66,12 @@ export interface BlockEffects {
   signatures: number;
 }
 
-/** The block's effects, or the reason a rule refused it (CONSENSUS_INTERFACE → Applying a block). */
-export type ApplyResult = { ok: true; effects: BlockEffects } | { ok: false; reason: string };
+/**
+ * The block's effects, or the reason a rule refused it (CONSENSUS_INTERFACE → Applying a block). The signatures-
+ * over-budget refusal alone carries `overBudget: true` (CONSENSUS_INTERFACE → Applying a block →
+ * "This refusal says what it is"); every other refusal carries none.
+ */
+export type ApplyResult = { ok: true; effects: BlockEffects } | { ok: false; reason: string; overBudget?: true };
 
 /**
  * The block's state transition — the mutation phase, whole (CONSENSUS_INTERFACE
@@ -255,10 +259,16 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // The batch's entry count, and its cost checked before the batch runs, so a
   // body of more signatures than the budget holds costs nothing to refuse
   // (CONSENSUS_INTERFACE → Applying a block → "The signatures' cost is checked
-  // before the batch runs").
+  // before the batch runs"). This refusal alone says what it is, so a producer
+  // trims such a body rather than evicting it (CONSENSUS_INTERFACE → Applying a
+  // block → "This refusal says what it is").
   const signatures = queue.reduce((count, { tx }) => count + Object.keys(tx.signatures).length, 0);
   if (blockCost({ signatures, lookups: 0, writes: 0 }) > MAX_BLOCK_COST) {
-    return reject(`Rejected block height=${height}: its ${signatures} signatures cost more than a block may`);
+    return {
+      ok: false,
+      reason: `Rejected block height=${height}: its ${signatures} signatures cost more than a block may`,
+      overBudget: true,
+    };
   }
 
   // Every signature the body carries, checked as one batch before any

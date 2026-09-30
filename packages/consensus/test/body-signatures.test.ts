@@ -307,10 +307,11 @@ describe("applyBlock checks the signatures' cost before the batch", () => {
     expect(Number.isInteger(AT_BUDGET)).toBe(true);
   });
 
-  it('a body whose signatures cost more than the budget is refused before the batch runs, with its own reason', () => {
+  it('a body whose signatures cost more than the budget is refused before the batch runs, carrying overBudget: true', () => {
     expect(applyBlock(view, withBody(entries(AT_BUDGET + 1)), ctx)).toEqual({
       ok: false,
       reason: `Rejected block height=${H}: its ${AT_BUDGET + 1} signatures cost more than a block may`,
+      overBudget: true,
     });
     expect(verifyEd25519Batch).not.toHaveBeenCalled();
     expect(verifyEd25519).not.toHaveBeenCalled();
@@ -332,5 +333,26 @@ describe("applyBlock checks the signatures' cost before the batch", () => {
       reason: `Rejected block height=${H}: embedded UTXO tx ${overSigned.txId} carries more signatures than inputs`,
     });
     expect(verifyEd25519Batch).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `overBudget` is the one refusal's alone (CONSENSUS_INTERFACE → Applying a
+   * block → "This refusal says what it is"): a rule refusal — a bad signature
+   * the batch itself catches, or a transaction's own unresolved input — carries
+   * none.
+   */
+  it('a rule refusal carries no overBudget flag: a bad signature, and an unresolved input', () => {
+    vi.mocked(verifyEd25519Batch).mockReturnValueOnce(false);
+    const badSignature = applyBlock(view, withBody(entries(AT_BUDGET)), ctx);
+    expect(badSignature).toEqual({ ok: false, reason: BODY_REASON });
+    expect(badSignature).not.toHaveProperty('overBudget');
+
+    vi.mocked(verifyEd25519Batch).mockReturnValueOnce(true);
+    const unresolvedInput = applyBlock(view, withBody(entries(1)), ctx);
+    expect(unresolvedInput).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('has an unresolved input'),
+    });
+    expect(unresolvedInput).not.toHaveProperty('overBudget');
   });
 });
