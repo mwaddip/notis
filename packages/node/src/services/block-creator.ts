@@ -60,16 +60,19 @@ import {
 import { tryGetAvlProver } from '../state/avl-prover.js';
 import { proverSession } from '../state/prover-session.js';
 import {
+  CorruptChainStateError,
   InconsistentStateTreeError,
   MissingStoredBlockError,
   UnhashableStoredHeaderError,
   failStopIfCorruptChain,
 } from './corrupt-state.js';
+import { blockCostBudget, costAlone, emptyBlockCost, marginalCost } from './cost-estimate.js';
 import {
   iteratePendingEntries,
   purgeExpired,
   removeEntry,
   entryByteCost,
+  setCostEstimate,
 } from '../store/mempool.js';
 import {
   getOrderingBlock,
@@ -116,15 +119,55 @@ export function computeUtxoTxRoot(tree: UtxoTxTree): string {
 // CONSTANTS → Producer policy.
 const MAX_RENT_TXS_PER_BLOCK = 32;
 
+// The percent of the block's cost budget the fill leaves unused against
+// estimates that miss (MINING_INTERFACE → Template and submit → "Packing to the
+// budget"); CONSTANTS → Producer policy.
+const PACKING_COST_MARGIN = 5;
+
 // ---------------------------------------------------------------------------
 // The selection and its speculations
 // ---------------------------------------------------------------------------
 
-/** One entry of the fill's selection: a pooled transaction and its row, or a rent transaction this node built, which has none. */
+/**
+ * One entry of the fill's selection: a pooled transaction and its row, or a rent
+ * transaction this node built, which has none — and its estimate, the marginal
+ * cost the fill packed it by (MEMPOOL_INTERFACE → The cost gate), `null` for one
+ * with no block alone to cost, which the fill counts as nothing.
+ */
 interface SelectedEntry {
   txId: string;
   txBytes: Uint8Array;
   rowid: number | null;
+  estimate: number | null;
+}
+
+/**
+ * A cost the fill measures as the cost gate measures it (MEMPOOL_INTERFACE →
+ * The cost gate) — the empty block's at this tip, or an entry's marginal cost
+ * where it carries none — and `null`, counted as nothing, where there is none.
+ *
+ * A throw that is no fail-stop is not a verdict on what was costed: the entry
+ * rides the selection with no estimate, and the speculation of the body carrying
+ * it answers for it as the apply funnel would, with the body's eviction
+ * (NODE_INTERFACE → "What the funnel's totality catch is FOR"). Without this a
+ * pooled transaction that throws alone would stop every build.
+ */
+function costedOrNothing(what: string, measure: () => number | null): number | null {
+  try {
+    return measure();
+  } catch (err) {
+    if (err instanceof CorruptChainStateError) failStopIfCorruptChain(err);
+    console.error(`INTERNAL: unclaimed throw costing ${what} — the fill counts it as nothing`, err);
+    return null;
+  }
+}
+
+/** `tx`'s marginal cost at this tip (`costedOrNothing`): its block alone less the empty block. */
+function estimateAlone(tx: UtxoTransaction, txId: string): number | null {
+  return costedOrNothing(`transaction ${txId} alone`, () => {
+    const alone = costAlone(tx, 'createOrderingBlock');
+    return alone === null ? null : marginalCost(alone, 'createOrderingBlock');
+  });
 }
 
 /** The speculation over the selection's first `length` entries, and the candidate block it ran over. */
@@ -143,6 +186,25 @@ function isComputed(run: Speculated | { error: string }): run is Computed {
 
 function isOverBudget(run: Speculated | { error: string }): run is OverBudget {
   return 'speculation' in run && run.speculation.kind === 'over-budget';
+}
+
+/**
+ * The length the selection's first `length` entries keep once the tail whose
+ * estimates cover `overshoot` is dropped — one entry at least — or `null` where
+ * covering it would leave none: estimates that cover the overshoot only with the
+ * whole selection carry nothing to trim by, and the halving decides
+ * (MINING_INTERFACE → Template and submit → "Packing to the budget"). An entry
+ * with no estimate covers nothing.
+ */
+function coveringLength(selection: readonly SelectedEntry[], length: number, overshoot: number): number | null {
+  let kept = length;
+  let covered = 0;
+  while (kept > 0) {
+    kept--;
+    covered += selection[kept]!.estimate ?? 0;
+    if (covered >= overshoot) return kept > 0 ? kept : null;
+  }
+  return null;
 }
 
 /** The pool rows `entries` carry. */
@@ -485,9 +547,22 @@ export function createOrderingBlock(): OrderingBlock | null {
     //
     //    ⚠ **A chain that cannot back even the empty settlement produces
     //    nothing**, and says so here rather than after a wasted fill.
+    //
+    //    ⛔ **The fill packs to the block's cost budget as well, by estimates**
+    //    (MINING_INTERFACE → Template and submit → "Packing to the budget"): the
+    //    empty body's cost plus each selected entry's `cost_estimate` stays within
+    //    the budget less `PACKING_COST_MARGIN`, so the one speculation below
+    //    typically fits. A row that carries no estimate is costed alone first and
+    //    its row written (MEMPOOL_INTERFACE → The cost gate); one with no block
+    //    alone to cost counts as nothing, and the speculation measures it. An
+    //    entry that does not fit the cost ends its class's fill, as one that does
+    //    not fit the bytes does.
     const seeded = bodyOf(0);
     if ('error' in seeded) return decline(seeded.error);
     let spent = utxoTxTreeByteLength(seeded.tree);
+    const costBudget = blockCostBudget();
+    const packTo = Math.floor((costBudget * (100 - PACKING_COST_MARGIN)) / 100);
+    let estimated = costedOrNothing('the empty block', () => emptyBlockCost('createOrderingBlock')) ?? 0;
     const invitedThisBlock = new Set<string>();
     const offerBudgetTo = (klass: 'karma' | 'credit'): void => {
       for (const entry of iteratePendingEntries({ klass })) {
@@ -509,8 +584,15 @@ export function createOrderingBlock(): OrderingBlock | null {
         }
         const cost = entryByteCost(entry.utxoTxBytes);
         if (spent + cost > budget) return;
+        let estimate = entry.costEstimate;
+        if (estimate === null) {
+          estimate = estimateAlone(tx, txId);
+          if (estimate !== null) setCostEstimate(entry.rowid, estimate);
+        }
+        if (estimated + (estimate ?? 0) > packTo) return;
         spent += cost;
-        selection.push({ txId, txBytes: entry.utxoTxBytes, rowid: entry.rowid });
+        estimated += estimate ?? 0;
+        selection.push({ txId, txBytes: entry.utxoTxBytes, rowid: entry.rowid, estimate });
       }
     };
     offerBudgetTo('karma');
@@ -519,7 +601,9 @@ export function createOrderingBlock(): OrderingBlock | null {
     // 5b. Rent transactions — the producer selects eligible boxes and builds
     // unsigned credit spends (NODE_INTERFACE → "Storage rent is a transition
     // requiring no signature"). Selection is discretionary; a verifier checks
-    // eligibility and the charge and nothing else.
+    // eligibility and the charge and nothing else. A rent transaction has no
+    // row and so no estimate: each is costed alone, as a row without one is,
+    // and packed by that cost.
     const eligible = getRentEligibleCreditBoxes(
       newHeight, nodeConfig.storageRentPeriodBlocks, MAX_RENT_TXS_PER_BLOCK,
     );
@@ -546,8 +630,12 @@ export function createOrderingBlock(): OrderingBlock | null {
       const encoded = encodeTx(rentTx);
       const cost = entryByteCost(encoded);
       if (spent + cost > budget) break;
+      const rentTxId = computeTxId(rentTx);
+      const estimate = estimateAlone(rentTx, rentTxId);
+      if (estimated + (estimate ?? 0) > packTo) break;
       spent += cost;
-      selection.push({ txId: computeTxId(rentTx), txBytes: encoded, rowid: null });
+      estimated += estimate ?? 0;
+      selection.push({ txId: rentTxId, txBytes: encoded, rowid: null, estimate });
     }
 
     // 6. The settlement, from the transactions the fill actually selected, and
@@ -698,17 +786,30 @@ export function createOrderingBlock(): OrderingBlock | null {
     let run = speculate(selection.length);
 
     // 19c. Packing to the budget (MINING_INTERFACE → Template and submit →
-    // "Packing to the budget"). A body's cost is known only by executing it, so a
-    // selection over the budget is trimmed from the tail: halved until a prefix
-    // fits, then grown back across the gap between the longest length known to
-    // fit and the shortest known not to, halving the gap each time — every
-    // length a speculation, at most 2·log₂(n) + 1 after the selection's own. The
-    // template is always a prefix whose speculation answered `computed`, so no
-    // template is ever over the budget, and nothing is evicted for it: an entry
-    // trimmed stays pooled for a later block. A speculation that answers
-    // `body-rejected` ends the search, and 19d evicts the body it rejected.
+    // "Packing to the budget"). A body's cost is known only by executing it; the
+    // fill packed by estimates, so the one speculation above typically fits. An
+    // estimate is its entry's cost at its admission's tip, and the state since
+    // can move it: over the budget, the tail entries whose estimates cover the
+    // overshoot — the speculated cost less the budget — are dropped and the
+    // rest speculated again, twice at most (`coveringLength`). Still over, the
+    // selection is halved from the tail until a prefix fits, then grown back
+    // across the gap between the longest length known to fit and the shortest
+    // known not to, halving the gap each time — at most 2·log₂(n) + 1 more
+    // speculations for n entries. The template is always a prefix whose
+    // speculation answered `computed`, so no template is ever over the budget,
+    // and nothing is evicted for it: an entry trimmed stays pooled for a later
+    // block. A speculation that answers `body-rejected` ends the search, and 19d
+    // evicts the body it rejected.
+    let retries = 0;
+    while (retries < 2 && isOverBudget(run)) {
+      retries++;
+      const { cost } = run.speculation;
+      const kept = cost === null ? null : coveringLength(selection, run.length, cost - costBudget);
+      if (kept === null) break;
+      run = speculate(kept);
+    }
     if (isOverBudget(run)) {
-      let over = selection.length;
+      let over = run.length;
       while (isOverBudget(run) && over > 0) {
         run = speculate(Math.floor(over / 2));
         if (isOverBudget(run)) over = run.length;
@@ -721,14 +822,14 @@ export function createOrderingBlock(): OrderingBlock | null {
           else if (isComputed(run)) fits = run;
           else break;
         }
-        if (isOverBudget(run) || isComputed(run)) {
-          run = fits;
-          console.log(
-            `Block at height ${newHeight}: ${fits.length} of ${selection.length} ` +
-            `selected transactions fit the block's budget; the rest stay pooled`,
-          );
-        }
+        if (isOverBudget(run) || isComputed(run)) run = fits;
       }
+    }
+    if (isComputed(run) && run.length < selection.length) {
+      console.log(
+        `Block at height ${newHeight}: ${run.length} of ${selection.length} ` +
+        `selected transactions fit the block's budget; the rest stay pooled`,
+      );
     }
     if ('error' in run) return decline(run.error);
     if (run.speculation.kind === 'over-budget') {

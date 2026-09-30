@@ -7,7 +7,7 @@ import {
   TreeInconsistencyError,
 } from '@dagsocial/consensus';
 import type { BlockCost } from '@dagsocial/consensus';
-import { EMPTY_STATE_ROOT, bytesToHex, computeTxId, encodeTx } from '@dagsocial/types';
+import { EMPTY_STATE_ROOT, MAX_BLOCK_COST, bytesToHex, computeTxId, encodeTx } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import { nextBlockHeight } from '../store/index.js';
 import { tryGetAvlProver } from '../state/avl-prover.js';
@@ -16,6 +16,17 @@ import { proverSession } from '../state/prover-session.js';
 import { config } from '../config.js';
 import { applyContextFrom, costOf } from './block-apply.js';
 import { InconsistentStateTreeError, failStopIfCorruptChain } from './corrupt-state.js';
+
+/**
+ * The budget a block's cost is held to (CONSENSUS_INTERFACE → The block's cost),
+ * as the creator reads it: it packs to this less `PACKING_COST_MARGIN` and
+ * measures a speculation's overshoot against it (MINING_INTERFACE → Template and
+ * submit → "Packing to the budget"). Every verdict on a block's cost is
+ * `checkBlockCost`'s, never this.
+ */
+export function blockCostBudget(): number {
+  return MAX_BLOCK_COST;
+}
 
 /**
  * The producer of every block costed here: none. Its coinbase pays an all-zero
@@ -80,8 +91,9 @@ function candidateCost(
   } catch (err) {
     // A read of this node's own tree that contradicts itself is local
     // corruption, never a verdict on the body — the boundary directly, because
-    // the routes that call admission answer a throw as a 500 and stay up
-    // (NODE_INTERFACE → "What the funnel's totality catch is FOR").
+    // no caller's path reaches one: the routes that call admission answer a
+    // throw as a 500 and stay up, and nothing above the creator's build catches
+    // for it (NODE_INTERFACE → "What the funnel's totality catch is FOR").
     if (err instanceof TreeInconsistencyError) {
       failStopIfCorruptChain(new InconsistentStateTreeError(site, height, err));
     }
@@ -92,8 +104,9 @@ function candidateCost(
 /**
  * The cost of the block carrying `tx` as its only user transaction at the height
  * of the block that would carry it — tip + 1 — or `null` where there is no such
- * block to cost, which a node with no prover never has (MEMPOOL_INTERFACE → The
- * cost gate). `site` names the caller in a fail-stop's diagnostic.
+ * block to cost, as on a node with no prover, which has no tree to run it over
+ * (MEMPOOL_INTERFACE → The cost gate). `site` names the caller in a fail-stop's
+ * diagnostic.
  */
 export function costAlone(tx: UtxoTransaction, site: string): BlockCost | null {
   const handle = tryGetAvlProver();

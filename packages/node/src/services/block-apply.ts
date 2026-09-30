@@ -1,6 +1,7 @@
 import * as validation from '@dagsocial/validation';
 import {
   applyBlock,
+  blockCost,
   checkBlockCost,
   treeStateView,
   treeWritesOf,
@@ -765,9 +766,11 @@ export type StateRootSpeculation =
    * cost): trim the selection and build again, evicting nothing. `reason` is
    * the refusal that says so — `applyBlock`'s, the one refusal it flags
    * `overBudget`, for a body whose signatures alone cost more than a block may;
-   * otherwise `checkBlockCost`'s, naming the cost the run counted.
+   * otherwise `checkBlockCost`'s, naming the cost the run counted. `cost` is the
+   * cost `checkBlockCost` refused — `blockCost` of what the run counted — and
+   * `null` for `applyBlock`'s refusal, which counts the signatures alone.
    */
-  | { kind: 'over-budget'; reason: string }
+  | { kind: 'over-budget'; reason: string; cost: number | null }
   /**
    * Producing this block is forbidden — the body was rejected, or speculating
    * on it threw. One arm because the caller's obligation is one: do not mine,
@@ -836,7 +839,7 @@ export function computePostBlockStateRoot(
     const view = treeStateView(recordingSession(handle.prover));
     const result = applyBlock(view, block, applyContextFrom(config));
     if (!result.ok) {
-      if (result.overBudget === true) return { kind: 'over-budget', reason: result.reason };
+      if (result.overBudget === true) return { kind: 'over-budget', reason: result.reason, cost: null };
       console.warn(result.reason);
       console.warn(
         `stateRoot speculation at height ${height}: the body was rejected by its ` +
@@ -845,8 +848,9 @@ export function computePostBlockStateRoot(
       return { kind: 'body-rejected' };
     }
     const writes = treeWritesOf(result.effects, height, view);
-    const overBudget = checkBlockCost(costOf(result.effects, view, writes));
-    if (overBudget !== null) return { kind: 'over-budget', reason: overBudget };
+    const cost = costOf(result.effects, view, writes);
+    const overBudget = checkBlockCost(cost);
+    if (overBudget !== null) return { kind: 'over-budget', reason: overBudget, cost: blockCost(cost) };
     const digest = performTreeWrites(handle.prover, height, writes, 'computePostBlockStateRoot');
     const proof = inner.generateProof();
     return {

@@ -838,14 +838,16 @@ export async function nodeRewardSchedule(): Promise<(height: number) => bigint> 
  * The seam that lowers the block budget for the node's module graph
  * (CONSENSUS_INTERFACE → The block's cost). Every budget decision the node makes
  * — apply's refusal, the speculation's `over-budget`, admission's cost gate —
- * calls `consensus`' `checkBlockCost`, and this replaces that one export in the
- * modules imported after it, answering against `set`'s budget in the same words.
- * `types`' `MAX_BLOCK_COST` is never touched: `applyBlock`'s own check of the
- * signatures alone still reads it.
+ * calls `consensus`' `checkBlockCost`, and the creator's packing reads the
+ * budget itself through `services/cost-estimate.ts`' `blockCostBudget`; this
+ * replaces both exports in the modules imported after it, answering against
+ * `set`'s budget. `types`' `MAX_BLOCK_COST` is never touched: `applyBlock`'s own
+ * check of the signatures alone still reads it.
  *
  * Register it after `vi.resetModules()` and before the node's modules are
- * imported, and `vi.doUnmock('@dagsocial/consensus')` in the suite's teardown.
- * The budget starts at `MAX_BLOCK_COST`, and `set` moves it at any point after.
+ * imported, and in the suite's teardown `vi.doUnmock` both modules —
+ * `'@dagsocial/consensus'` and `services/cost-estimate.js`. The budget starts at
+ * `MAX_BLOCK_COST`, and `set` moves it at any point after.
  */
 export function blockBudgetSeam(): { set(budget: number): void } {
   let budget = MAX_BLOCK_COST;
@@ -858,6 +860,10 @@ export function blockBudgetSeam(): { set(budget: number): void } {
         return total > budget ? `cost ${total} over the budget ${budget}` : null;
       },
     };
+  });
+  vi.doMock('../src/services/cost-estimate.js', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../src/services/cost-estimate.js')>();
+    return { ...actual, blockCostBudget: (): number => budget };
   });
   return { set: (next) => { budget = next; } };
 }

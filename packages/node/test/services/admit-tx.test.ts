@@ -296,6 +296,7 @@ describe('the cost gate', () => {
   });
   afterEach(() => {
     vi.doUnmock('@dagsocial/consensus');
+    vi.doUnmock('../../src/services/cost-estimate.js');
     vi.restoreAllMocks();
     vi.resetModules();
   });

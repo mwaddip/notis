@@ -572,6 +572,7 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
     node?.creator.stopBlockCreator();
     node?.db.closeDb();
     vi.doUnmock('@dagsocial/consensus');
+    vi.doUnmock('../../src/services/cost-estimate.js');
     vi.resetModules();
   });
 

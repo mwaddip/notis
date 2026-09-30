@@ -80,8 +80,8 @@ export class TxOverBlockBudgetError extends ClientError {
  * carries no estimate.
  *
  * **The gate keeps what it measured**: the row carries the transaction's
- * marginal cost — its block alone less the empty block at the same tip
- * (MEMPOOL_INTERFACE → The cost gate).
+ * marginal cost — its block alone less the empty block at the same tip — the
+ * estimate the creator packs by (MEMPOOL_INTERFACE → The cost gate).
  *
  * `validateTx` is deliberately **not** folded in here. Every caller already
  * runs it against its own dependency set and turns a failure into its own
