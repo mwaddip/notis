@@ -3947,9 +3947,9 @@ the tree view read by read.
   from heights in between resolves the same, because resolution starts from each version's root. No
   node byte and no label changes, so every version's root is exactly what it was and nothing is
   rebuilt (→ "AVL+ tree shape is history-dependent").
-- ⛔ **Every write is performed, and THE TREE'S ANSWER IS READ.** The node performs `treeWritesOf`'s writes —
-  `seedTreeWrites`' at genesis, through `bootstrapAvlProver` — with `performOneOperation` and reads its verdict at
-  every write that can refuse one — `Remove` or `Update` of an absent key, `Insert` of a present one — throwing
+- ⛔ **A box block application SPENDS must already be in the tree, and THE TREE IS ASKED.** The node performs
+  `treeWritesOf`'s writes — `seedTreeWrites`' at genesis, through `bootstrapAvlProver` — with `performOneOperation`
+  and reads its verdict at every write that can refuse one — `Remove` or `Update` of an absent key, `Insert` of a present one — throwing
   `DivergedStateTreeError` on a refusal; the first refusal stops the block. `InsertOrUpdate` is total and carries no
   verdict to read. The genesis state satisfies the rule by construction: `bootstrapAvlProver` runs over
   `getUnspentBoxes()`, the records and the network record at height 0, before any block — seed a box *after* it, other
@@ -4234,8 +4234,9 @@ The argument from `(candidate, txId, index)` is what holds:
   after it, and an attacker-chosen public key cannot reach another kind's key.
 
 **The operation each write takes, and how a block's writes to one key net to one, are `consensus`'s**
-(`CONSENSUS_INTERFACE → The tree writes`): a record written twice keeps its last value, a key the block both creates
-and removes takes no write, and the tree is never asked to `Remove` a key it does not hold. The node performs what
+(`CONSENSUS_INTERFACE → The tree writes`): a record written twice keeps its last value, and **a removable record the
+block creates and removes nets out, as a box does** — the key takes no write, so the tree is never asked to `Remove` a
+key it does not hold. The node performs what
 `treeWritesOf` answers, in its order, and derives none of it; the journal keeps every write, because a revert needs
 the first one's `replaced`.
 
