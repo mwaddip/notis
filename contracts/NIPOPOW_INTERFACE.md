@@ -215,17 +215,15 @@ on bytes a client has not screened, but it re-derives nothing a passed verdict e
   fully-registering level the counts are the constant-difficulty model's random variables. **A
   cheap-target chain therefore buys no score beyond its work**: its headers register levels against the anchor at the
   rate its work allows, so its proof scores as an honest proof of the same work would — where own-target levels gave
-  it the lead every time. The package's property tests pin the mechanism over one cheap chain — `bestArg` against the
-  anchor tracks the chain's work, own-target levels inflate it by the target ratio — and that the own-target control
-  picks the cheap side in every comparison; and that a lower-difficulty chain of more work wins. **How often a proof of
+  it the lead every time. The package's property tests pin the mechanism over one cheap chain's floor headers — the
+  registered count a binomial draw about its work, `bestArg` against the anchor at least half its work, own-target
+  levels inflating the score by the target ratio (8×: the floor target is exactly 8× the anchor's) — and that the
+  own-target control picks the cheap side in every comparison; and that a lower-difficulty chain of more work wins. Each
+  runs where the model puts a re-mining's chance of flipping it far below one in a thousand. **How often a proof of
   less work wins at all is `m`'s to bound, not the yardstick's**: the deciding level holds `m` to about `2m`
   superblocks, so a score carries about `1/√m` relative noise, for a cheap chain and an honest one alike (measured
   2026-09-30 over independent chains: at `m = 6`, three quarters of the honest work wins about 20% of comparisons, half
   about 5%, a quarter about 0.2%). A lying pointer can skip honest blocks and lower a score, never raise one.
-
-  > ⚠ **AHEAD OF CODE (2026-09-30, N3 block proof, stage B)** — the property test asserts that an equal-work cheap
-  > side never wins over 20 nested prefixes of one pair of chains; with the header's eleventh field its fixtures mine
-  > other nonces and one trial is won by the cheap side.
 
 `bestArg(headers: BlockHeader[], m: number, anchorBits: number): bigint` is exported beside it — the
 anchor bits are the yardstick its levels are measured against.
