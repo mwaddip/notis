@@ -183,20 +183,56 @@ describe('holdingsPage — `from`', () => {
   });
 });
 
-describe('holdingsPage — the arguments it refuses', () => {
+describe('pageRange — the arguments it refuses', () => {
   const view = () => treeStateView(mapSessionFrom(seed()));
-  it('`from` outside the kind\'s range for the owner — a RangeError naming the argument', () => {
-    const outside = new Uint8Array(TREE_KEY_LENGTH);
-    outside.set(karmaOfRange(bob).prefix, 0); // Bob's karma range, not Alice's
-    expect(() => holdingsPage(view(), 'karma', alice, outside, 2)).toThrow(/^holdingsPage: from /);
-  });
   for (const limit of [0, -1, 1.5, Number.NaN]) {
     it(`\`limit\` ${String(limit)} — a RangeError naming the argument`, () => {
-      expect(() => holdingsPage(view(), 'karma', alice, null, limit)).toThrow(/^holdingsPage: limit/);
+      const call = () => view().pageRange(karmaOfRange(alice), null, limit);
+      expect(call).toThrow(RangeError);
+      expect(call).toThrow(/^pageRange: limit/);
     });
   }
+  it('`from` of 40 bytes — a RangeError naming the length', () => {
+    const forty = new Uint8Array(40);
+    forty.set(karmaOfRange(alice).prefix, 0);
+    const call = () => view().pageRange(karmaOfRange(alice), forty, 2);
+    expect(call).toThrow(RangeError);
+    expect(call).toThrow(/^pageRange: from must be \d+ bytes, got 40/);
+  });
+  it(`\`from\` outside the range — a RangeError naming the prefix`, () => {
+    const outside = new Uint8Array(TREE_KEY_LENGTH);
+    outside.set(karmaOfRange(bob).prefix, 0); // Bob's karma range, not Alice's
+    const call = () => view().pageRange(karmaOfRange(alice), outside, 2);
+    expect(call).toThrow(RangeError);
+    expect(call).toThrow(/^pageRange: from .* does not carry the range's prefix/);
+  });
+});
+
+describe('holdingsPage — the arguments it refuses', () => {
+  const view = () => treeStateView(mapSessionFrom(seed()));
   it('an `owner` of 31 bytes — a RangeError naming the argument', () => {
-    expect(() => holdingsPage(view(), 'karma', new Uint8Array(31), null, 2)).toThrow(/^holdingsPage: owner/);
+    const call = () => holdingsPage(view(), 'karma', new Uint8Array(31), null, 2);
+    expect(call).toThrow(RangeError);
+    expect(call).toThrow(/^holdingsPage: owner/);
+  });
+  it('`limit` and `from` are the view\'s to refuse: a `limit` of 0 reaches `pageRange`\'s message', () => {
+    const call = () => holdingsPage(view(), 'karma', alice, null, 0);
+    expect(call).toThrow(RangeError);
+    expect(call).toThrow(/^pageRange: limit/);
+  });
+  it('a 40-byte `from` carrying the prefix reaches `pageRange`\'s length message', () => {
+    const forty = new Uint8Array(40);
+    forty.set(karmaOfRange(alice).prefix, 0);
+    const call = () => holdingsPage(view(), 'karma', alice, forty, 2);
+    expect(call).toThrow(RangeError);
+    expect(call).toThrow(/^pageRange: from must be \d+ bytes, got 40/);
+  });
+  it('a `from` outside the kind\'s range for the owner reaches `pageRange`\'s prefix message', () => {
+    const outside = new Uint8Array(TREE_KEY_LENGTH);
+    outside.set(karmaOfRange(bob).prefix, 0);
+    const call = () => holdingsPage(view(), 'karma', alice, outside, 2);
+    expect(call).toThrow(RangeError);
+    expect(call).toThrow(/^pageRange: from .* does not carry the range's prefix/);
   });
 });
 
