@@ -40,33 +40,17 @@ export interface KeptRoot {
  * above the capacity.
  */
 export class RecentRoots {
-  private capacity: number;
+  private readonly capacity: number;
   /** Keyed by block height, insertion-ordered. */
   private roots = new Map<number, KeptRoot>();
 
   constructor(capacity: number) {
-    RecentRoots.checkCapacity(capacity);
-    this.capacity = capacity;
-  }
-
-  private static checkCapacity(capacity: number): void {
     if (!Number.isSafeInteger(capacity) || capacity < 0) {
       throw new RangeError(
         `RecentRoots: capacity must be a non-negative safe integer, got ${capacity}`,
       );
     }
-  }
-
-  /**
-   * Resize the ring (`PROOF_WINDOW_BLOCKS` is `local`, so a reconfigured node
-   * may change it; the test suite uses this to drive the window-size cases
-   * the brief asks). Lowers evict the oldest kept roots down to the new cap;
-   * raises just raise the ceiling.
-   */
-  resize(capacity: number): void {
-    RecentRoots.checkCapacity(capacity);
     this.capacity = capacity;
-    this.evictBelowCapacity();
   }
 
   /**

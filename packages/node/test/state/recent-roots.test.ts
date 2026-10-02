@@ -107,15 +107,6 @@ describe('RecentRoots — the class', () => {
     expect(ring.size()).toBe(0);
     expect(ring.heights()).toEqual([]);
   });
-
-  it('resize lowers evict the oldest kept roots', () => {
-    const ring = new RecentRoots(5);
-    for (let h = 1; h <= 5; h++) ring.record(h, dummyLeaf(h), h);
-    ring.resize(3);
-    expect(ring.heights()).toEqual([3, 4, 5]);
-    ring.resize(0);
-    expect(ring.heights()).toEqual([]);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -195,10 +186,9 @@ describe('the ring tracks the chain the node holds', () => {
     it('a block claiming height 1 while the ring holds three heights or more', async () => {
       const { handle, applyOrderingBlock } = await appliedChain(3);
       const snap = snapshotRing(handle);
-      // Height-1 block built now would be refused on the chain-link check,
-      // which runs inside the funnel's transaction (NODE_INTERFACE → Ordering
-      // block apply-time authorization). Before the fix, its claimed
-      // `height - 1 = 0` would have cleared every kept root above 0.
+      // A height-1 block the chain-link check refuses, which runs inside
+      // the funnel's transaction (NODE_INTERFACE → Ordering block
+      // apply-time authorization).
       const { makeApplicableBlock } = await import('../helpers.js');
       const refused = await makeApplicableBlock({ height: 1 });
       vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -209,8 +199,8 @@ describe('the ring tracks the chain the node holds', () => {
     it('the tip block sent a second time', async () => {
       const { handle, applied, applyOrderingBlock } = await appliedChain(3);
       const snap = snapshotRing(handle);
-      // Re-apply the tip's block — its chain-link check refuses it; its
-      // claimed `height - 1 = tip - 1` would have dropped the tip's kept root.
+      // Re-apply the tip's block — its chain-link check refuses it (the
+      // tip's parent at `tip - 1` has a hash the block does not name).
       const { getOrderingBlock } = await import('../../src/store/ordering.js');
       const tip = getOrderingBlock(applied[applied.length - 1]!.height);
       expect(tip).not.toBeNull();
@@ -223,7 +213,7 @@ describe('the ring tracks the chain the node holds', () => {
       const { handle, applied, applyOrderingBlock } = await appliedChain(3);
       const snap = snapshotRing(handle);
       // A block at the next height with a protocol version in no era — a
-      // rule's refusal (step 2, protocol version), outside the state-root arm.
+      // rule's refusal (VALIDATION_INTERFACE → Protocol Version).
       const { makeApplicableBlock } = await import('../helpers.js');
       const refused = await makeApplicableBlock({ height: applied[applied.length - 1]!.height + 1, protocolVersion: 999 });
       vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -323,62 +313,81 @@ describe('the ring tracks the chain the node holds', () => {
     }
   });
 
-  it('`PROOF_WINDOW_BLOCKS = 3` — blocks 1..5 leave {3, 4, 5} in the ring, routes answer them, 2 and 6 are 404', async () => {
-    await freshStore();
-    const { activateProverOverStore, makeApplicableBlock, makeTestConfig } = await import('../helpers.js');
-    const handle = await activateProverOverStore();
-    // The ring is resized to the window-under-test — the brief's case.
-    handle.recentRoots.resize(3);
-    const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
-    const roots: Record<number, string> = {};
-    for (let h = 1; h <= 5; h++) {
-      const block = await makeApplicableBlock({ height: h });
-      expect(applyOrderingBlock(block)).toBe(true);
-      roots[h] = block.header.stateRoot;
+  /**
+   * `PROOF_WINDOW_BLOCKS` reaches `new RecentRoots(…)` through the
+   * environment → `parseProofWindow` → `config.proofWindowBlocks` →
+   * `createAvlProver`, read once at module load. The two window cases
+   * reset the module graph with the variable set, as the suite's other
+   * configuration tests do (NODE_INTERFACE → Configuration).
+   */
+  async function withProofWindow<T>(value: string, body: () => Promise<T>): Promise<T> {
+    const prev = process.env['PROOF_WINDOW_BLOCKS'];
+    process.env['PROOF_WINDOW_BLOCKS'] = value;
+    try {
+      vi.resetModules();
+      return await body();
+    } finally {
+      if (prev === undefined) delete process.env['PROOF_WINDOW_BLOCKS'];
+      else process.env['PROOF_WINDOW_BLOCKS'] = prev;
     }
-    expect(handle.recentRoots.heights()).toEqual([3, 4, 5]);
+  }
 
-    // The route answers the three in the ring at their roots, and 404s 2 and 6.
-    const { createApp } = await import('../../src/server.js');
-    const supertest = await import('supertest');
-    const app = createApp(makeTestConfig({ nodeRole: 'server' }));
-    // A benign tree key: the network record's — present at every height.
-    const { bytesToHex: bh, networkKey } = await import('@dagsocial/types');
-    const key = bh(networkKey());
-    for (const h of [3, 4, 5]) {
-      const r = await supertest.default(app).get(`/api/v1/proof/${key}?atHeight=${h}`).expect(200);
-      expect(r.body.stateRoot, `height ${h}`).toBe(roots[h]);
-    }
-    for (const h of [2, 6]) {
-      await supertest.default(app).get(`/api/v1/proof/${key}?atHeight=${h}`).expect(404);
-    }
+  it('`PROOF_WINDOW_BLOCKS = 3` — blocks 1..5 leave {3, 4, 5} in the ring, routes answer them, 2 and 6 are 404', async () => {
+    await withProofWindow('3', async () => {
+      const dbMod = await import('../../src/store/db.js');
+      dbMod.initDb(':memory:');
+      dbMod.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+      const { activateProverOverStore, makeApplicableBlock, makeTestConfig } = await import('../helpers.js');
+      const handle = await activateProverOverStore();
+      const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
+      const roots: Record<number, string> = {};
+      for (let h = 1; h <= 5; h++) {
+        const block = await makeApplicableBlock({ height: h });
+        expect(applyOrderingBlock(block)).toBe(true);
+        roots[h] = block.header.stateRoot;
+      }
+      expect(handle.recentRoots.heights()).toEqual([3, 4, 5]);
+
+      const { createApp } = await import('../../src/server.js');
+      const supertest = await import('supertest');
+      const app = createApp(makeTestConfig({ nodeRole: 'server' }));
+      const { bytesToHex: bh, networkKey } = await import('@dagsocial/types');
+      const key = bh(networkKey());
+      for (const h of [3, 4, 5]) {
+        const r = await supertest.default(app).get(`/api/v1/proof/${key}?atHeight=${h}`).expect(200);
+        expect(r.body.stateRoot, `height ${h}`).toBe(roots[h]);
+      }
+      for (const h of [2, 6]) {
+        await supertest.default(app).get(`/api/v1/proof/${key}?atHeight=${h}`).expect(404);
+      }
+    });
   });
 
   it('`PROOF_WINDOW_BLOCKS = 0` — the tip answers, every older height is 404', async () => {
-    await freshStore();
-    const { activateProverOverStore, makeApplicableBlock, makeTestConfig } = await import('../helpers.js');
-    const handle = await activateProverOverStore();
-    handle.recentRoots.resize(0);
-    const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
-    for (let h = 1; h <= 3; h++) {
-      expect(applyOrderingBlock(await makeApplicableBlock({ height: h }))).toBe(true);
-    }
-    // Zero keeps no root; the tip is the live tree's, which the route
-    // answers without one.
-    expect(handle.recentRoots.heights()).toEqual([]);
+    await withProofWindow('0', async () => {
+      const dbMod = await import('../../src/store/db.js');
+      dbMod.initDb(':memory:');
+      dbMod.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+      const { activateProverOverStore, makeApplicableBlock, makeTestConfig } = await import('../helpers.js');
+      const handle = await activateProverOverStore();
+      const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
+      for (let h = 1; h <= 3; h++) {
+        expect(applyOrderingBlock(await makeApplicableBlock({ height: h }))).toBe(true);
+      }
+      // Zero keeps no root; the tip is the live tree's, which the route
+      // answers without one.
+      expect(handle.recentRoots.heights()).toEqual([]);
 
-    const { createApp } = await import('../../src/server.js');
-    const supertest = await import('supertest');
-    const app = createApp(makeTestConfig({ nodeRole: 'server' }));
-    const { bytesToHex: bh, networkKey } = await import('@dagsocial/types');
-    const key = bh(networkKey());
-    // The tip (no `atHeight`): 200.
-    await supertest.default(app).get(`/api/v1/proof/${key}`).expect(200);
-    // The explicit tip height: 200.
-    await supertest.default(app).get(`/api/v1/proof/${key}?atHeight=3`).expect(200);
-    // Any older height: 404.
-    for (const h of [0, 1, 2]) {
-      await supertest.default(app).get(`/api/v1/proof/${key}?atHeight=${h}`).expect(404);
-    }
+      const { createApp } = await import('../../src/server.js');
+      const supertest = await import('supertest');
+      const app = createApp(makeTestConfig({ nodeRole: 'server' }));
+      const { bytesToHex: bh, networkKey } = await import('@dagsocial/types');
+      const key = bh(networkKey());
+      await supertest.default(app).get(`/api/v1/proof/${key}`).expect(200);
+      await supertest.default(app).get(`/api/v1/proof/${key}?atHeight=3`).expect(200);
+      for (const h of [0, 1, 2]) {
+        await supertest.default(app).get(`/api/v1/proof/${key}?atHeight=${h}`).expect(404);
+      }
+    });
   });
 });
