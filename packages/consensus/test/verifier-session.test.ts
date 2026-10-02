@@ -10,6 +10,7 @@ import {
   TREE_TAG,
   boxKey,
   boxRecordBytes,
+  bytesToHex,
   castCountKey,
   decodeTx,
   encodeTx,
@@ -28,7 +29,7 @@ import type {
   UtxoTransaction,
   VouchBox,
 } from '@dagsocial/types';
-import { applyBlock, isSentinel, seedTreeWrites, treeStateView, verifierSession } from '@dagsocial/consensus';
+import { applyBlock, isSentinel, seedTreeWrites, treeStateView, treeWritesOf, verifierSession } from '@dagsocial/consensus';
 import type { ApplyContext } from '@dagsocial/consensus';
 import {
   MemoryStateView,
@@ -372,6 +373,34 @@ describe('verifierSession — a proof that does not verify', () => {
 
     const healthy = new BatchAVLVerifier(at('block 1').parent.digest, proven.proof, TREE_CONFIG);
     expect(() => verifierSession(healthy).lookup(new Uint8Array(TREE_KEY_LENGTH))).toThrow(': key-out-of-bounds');
+  });
+});
+
+describe('replayBlock — the proof is consumed exactly', () => {
+  it('an honest proof replays; the same proof with one zero byte appended is refused — a plain BatchAVLVerifier replays it to the right digest', () => {
+    const { block, parent, proven } = at('block 2');
+    expect(() => replayBlock(parent.digest, proven.proof, block, ctx)).not.toThrow();
+
+    const padded = new Uint8Array(proven.proof.length + 1);
+    padded.set(proven.proof);
+    // The plain verifier accepts it: a step-by-step verifier reads only the
+    // bits an operation names, so a trailing byte is unseen there. The rules'
+    // reads and `treeWritesOf`'s own cast-count read are each a lookup through
+    // the view; the writes are then performed on the verifier.
+    const plain = new BatchAVLVerifier(parent.digest, padded, TREE_CONFIG);
+    const view = treeStateView(verifierSession(plain));
+    const result = applyBlock(view, block, ctx);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const writes = treeWritesOf(result.effects, block.header.height, view);
+    for (const write of writes) {
+      expect(plain.performOneOperation(write).success, bytesToHex(write.key)).toBe(true);
+    }
+    expect(plain.digest()).toEqual(proven.digest);
+
+    // The strict helper refuses — isFullyConsumed() is what adds this check.
+    expect(() => replayBlock(parent.digest, padded, block, ctx))
+      .toThrow('bytes the replay did not consume');
   });
 });
 

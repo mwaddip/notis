@@ -4,7 +4,7 @@
 import { applyBlock, treeStateView, treeWritesOf, verifierSession } from '@dagsocial/consensus';
 import { bytesToHex, decodeOrderingBlock, decodeTx, hexToBytes } from '@dagsocial/types';
 import { verifyEd25519Batch } from '@dagsocial/validation';
-import { BatchAVLVerifier } from '@ergots/avltree';
+import { StrictBatchAVLVerifier } from '@ergots/avltree';
 import { TREE_CONFIG } from '../test/block-proof.ts';
 
 /**
@@ -35,7 +35,7 @@ export function batchOf(block) {
  */
 export function replay(block, parentDigest, proof, digest, ctx, batch) {
   const start = performance.now();
-  const verifier = new BatchAVLVerifier(parentDigest, proof, TREE_CONFIG);
+  const verifier = new StrictBatchAVLVerifier(parentDigest, proof, TREE_CONFIG);
   const anchored = verifier.digest() !== null;
   const decoded = performance.now();
   if (!anchored) throw new Error(`the proof does not anchor at the parent's digest: ${verifier.getLastFailReason()}`);
@@ -52,6 +52,11 @@ export function replay(block, parentDigest, proof, digest, ctx, batch) {
   const reached = bytesToHex(verifier.digest());
   const written = performance.now();
   if (reached !== digest) throw new Error(`the replay reaches ${reached}, not ${digest}`);
+  // CONSENSUS_INTERFACE → The tree session → "A block replays from its proof
+  // only on all of these" — asked once, after the last write and the digest.
+  if (!verifier.isFullyConsumed()) {
+    throw new Error('the proof carries bytes the replay did not consume');
+  }
   const batchStart = performance.now();
   const verified = verifyEd25519Batch(batch);
   const batchEnd = performance.now();
