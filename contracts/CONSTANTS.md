@@ -106,12 +106,15 @@ The three numbers of a block's cost (`TYPES_INTERFACE → The block's cost`): a 
 and the budget. **The ruling they serve** (user, 2026-09-27): a full block verifies in about 6 s in Waterfox 140 — the
 extension's Firefox floor — with about 6 000 signatures and a proof of at most about 6 MB. A signature checked in the
 body's batch costs 0.85 ms there (`CONSENSUS_INTERFACE → Cost`), so 6 000 of them are about 5.1 s before any tree
-operation.
+operation. **Each measurement in the table below is over the bench's own small tree.** Over a tree of 10⁶ leaves the
+one-signer body proves in 8.28 MB, and its replay's tree operations alone take 3.1 s on Node 22
+(`CONSENSUS_INTERFACE → Cost`) — past the ruling's 6 MB, and unmeasured in a browser; no client waits on it while
+none replays a block (`CONSENSUS_INTERFACE → The tree session`).
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `W_SIG` | `100` | a signature's weight | consensus | measured 2026-09-30 in Waterfox 140: a signature ~0.8 ms of the batch, an operation 40–51 µs (`CONSENSUS_INTERFACE → Cost`) | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
-| `W_OP` | `10` | a tree operation's weight — a lookup or a write | consensus | between time and size: by time an operation is ~1/16–1/21 of a signature (~6), by the proof's size (~107 bytes a random lookup, ≤ ~6 MB at the budget) ~11; at 10 the largest proof measured is 6.27 MB (5.98 MiB) | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
+| `W_OP` | `10` | a tree operation's weight — a lookup or a write | consensus | between time and size: by time an operation is ~1/16–1/21 of a signature (~6), by the proof's size (~107 bytes a random lookup, ≤ ~6 MB at the budget) ~11; at 10 the largest proof measured over the bench's own tree is 6.27 MB (5.98 MiB), and over a 10⁶-leaf tree an operation is 291 bytes of proof | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
 | `MAX_BLOCK_COST` | `600_000` | 6 000 signatures' worth; a valid body ~4 600 signatures packed or 3 156 one-signer sends; ≤ 60 000 tree operations | consensus | measured 2026-09-30 at the budget in Waterfox 140: 4.12 s for the one-signer body, 2.39 s and 6.27 MB for the read-heavy one — within the ruling's about 6 s | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
 
 ### Karma
@@ -335,7 +338,7 @@ drift test's converse does not reach them and the rows are marked.
 |---|---|---|---|---|---|---|
 | `PAGE_LIMIT_DEFAULT` (literal) | `50` | rows a view returns when no `limit` is named | policy | none stated. `node/src/routes/page.ts` | CHOSEN | `NODE_INTERFACE → "Every list a view returns is a page"` |
 | `PAGE_LIMIT_MAX` (literal) | `100` | the most rows one page carries, whatever `limit` names | policy | none stated. `node/src/routes/page.ts` | CHOSEN | `NODE_INTERFACE → "Every list a view returns is a page"` |
-| `RANGE_PAGE_MAX` (literal) | `256` | the most entries one page of `GET /api/v1/range` carries, and the page served when no `limit` is named | policy | provisional: a page looks up at most `1 + 2 · 256` keys. `node/src/state/avl-endpoint.ts` | PROVISIONAL | `NODE_INTERFACE → AVL+ State Root` |
+| `RANGE_PAGE_MAX` (literal) | `256` | the most entries one page of `GET /api/v1/range` carries, and the page served when no `limit` is named | policy | provisional: a page looks up at most `1 + 2 · 256` keys — about 110 KB of proof and 17–20 ms over a 10⁶-leaf tree (`NODE_INTERFACE → AVL+ State Root`). `node/src/state/avl-endpoint.ts` | PROVISIONAL | `NODE_INTERFACE → AVL+ State Root` |
 
 ## Client defaults
 

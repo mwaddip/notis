@@ -4258,6 +4258,27 @@ light client's `suffixHead` — `k − 1` blocks behind its tip (`CONSTANTS → 
 that many blocks have applied, nor for as long as `PROOF_WINDOW_NODES` holds the kept roots fewer than `k` deep. `MAX_PROOF_HISTORY` is the versions the store keeps for a reorg's walk (→ Configuration) and bounds
 no route.
 
+**Cost, so the exposure is a number** — measured 2026-10-02 over a 10⁶-leaf tree with `packages/node/bench/` (the
+store on a SQLite file, both routes on an Express app, Node 22, pinned to performance cores of the i9-14900HX). A
+single-key proof is one path: about 920 bytes, 1 ms. A page looks up at most `1 + 2 · RANGE_PAGE_MAX` keys: a full
+page is about 110 KB of proof — 146 KB as the JSON answer — and 17–20 ms, the same at the tip and 60 blocks back, a
+kept root being restored by reference. A key's 21 700 boxes are 85 pages, 9.4 MB and 4.7 s, and nothing of a route
+outlives its call: the heap and the array buffers read the same before and after. Both routes are unauthenticated
+reads that do real work per call, as `GET /nipopow/proof` is (→ Nipopow prover); a call is bounded by the page, and
+no route is rate limited.
+
+**What the kept roots hold, in bytes** — the same run. The tree itself is 1.9 GiB of heap and 0.3 GiB of array
+buffers at 10⁶ leaves. A node counted costs about 650 bytes — 570 of heap and 85 of array buffers, which V8's heap
+limit does not count — so the default `PROOF_WINDOW_NODES` bounds the kept roots near 155 MiB, whatever the blocks
+carry. A block of 3 156 credit sends over that tree replaces about 114 000 nodes, 71 MiB a kept root: 64 such roots
+hold 4.4 GiB, and the default keeps 3 of them; under blocks a hundredth that size — 2 300 nodes, 1.4 MiB a root — it
+keeps all 64, as it does while a block replaces under about 3 900 nodes. **The count is of labels, the memory of
+objects**: a node a block rebuilds to the label it had — two objects, one label — is held and not counted, one node
+in 90 000 under mixed writes and a path's length for a write that leaves a leaf's bytes as they were — the one such
+write found in the rules is a vouch cast and withdrawn for one target in one block. **Where a reorg's fork point is no
+longer kept, the resolve from the store re-reads the tree**: 51 s and a second tree of 1.5 GiB over 10⁶ leaves,
+built while the first is still held.
+
 > ⚠ **AHEAD OF CODE (2026-10-02, N4 PR A — `node`)** — a sentinel key answers 500 from the single-key route, and an
 > `atHeight` or a `limit` of digits past 2⁵³ answers 400.
 
@@ -4307,15 +4328,16 @@ block's begins.
 
 **The proof is stored with its block and served by height.** `block_proofs (height INTEGER PRIMARY KEY, proof BLOB NOT
 NULL)`, written in the apply transaction, deleted with its block on a revert. `GET /blocks/:height/proof` answers the
-bytes as `application/octet-stream` — **the one route that is not JSON**: a proof of about 6 MB would be 12 MB as hex,
+bytes as `application/octet-stream` — **the one route that is not JSON**: a proof of 10 MB would be 20 MB as hex,
 and a browser takes the bytes as they come.
 
 **Two settings bound the proofs a node keeps, and the tighter wins.** After each applied block, apply prunes the proofs
 below `tip − PROOF_RETENTION_BLOCKS` (`local`, default 10 080 — a week at 60 s), then the oldest while the proofs kept
 exceed `PROOF_RETENTION_BYTES` (`local`, default 2 GiB); both are settings, not consensus. **The tip's proof is kept
 whatever either says.** A prune sizes a proof by its stored length and never loads its bytes to measure it. The byte
-cap's arithmetic: a week of blocks at the budget's largest measured proof, 6.27 MB (`CONSENSUS_INTERFACE → Cost`), is
-63 GB; 2 GiB holds a week of proofs averaging about 210 KB, or about 340 of the largest.
+cap's arithmetic: a week of blocks at the largest proof measured, 10.45 MB — a block of sends over a 6·10⁶-leaf tree
+(`CONSENSUS_INTERFACE → Cost`) — is 105 GB; 2 GiB holds a week of proofs averaging about 210 KB, or about 200 of the
+largest.
 
 ### No store schema version, and none is owed
 

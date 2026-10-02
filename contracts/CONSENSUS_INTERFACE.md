@@ -474,10 +474,28 @@ proof's size grows with the tree's depth, a 33-byte label for each level an oper
 operation of the block, so these sizes and times are the bodies' over a small tree, and `W_OP`'s argument from them is
 an argument over one.
 
-> ⚠ **AHEAD OF CODE (2026-10-01, N4 PR A — the measurement)** — no script in the tree measures a proof against the
-> tree it is made over. Measured by hand on 2026-10-01 with `@ergots/avltree` 0.5.0: a synthetic block of the first
-> row's operation counts — 9 468 lookups and 18 936 writes over random keys — proves in 1.3 MB over 10⁴ leaves, 5.4 MB
-> over 10⁵, 8.7 MB over 10⁶ and 10.1 MB over 3·10⁶. The replay's time over such a tree is not measured.
+**The first row's body over a tree the size a chain's would be**, measured 2026-10-02 with
+`packages/consensus/scripts/bench-proof-size.mjs` (`@ergots/avltree` 0.6.0, Node 22, pinned to performance cores of
+the i9-14900HX): 3 156 one-signer credit sends — 9 468 recorded lookups and 18 936 writes — over a tree of box
+records and owner-index entries at their own widths, the proof replayed from the pre-state digest by a
+`StrictBatchAVLVerifier` (the median of five; the tree's operations alone — no signature, no rule):
+
+| Leaves | Proof | Bytes an operation | The strict replay |
+|---|---|---|---|
+| 2·10⁴ | 2.05 MB | 72 | 0.70 s |
+| 2·10⁵ | 6.26 MB | 221 | 2.2 s |
+| 10⁶ | 8.28 MB | 291 | 3.1 s |
+| 2·10⁶ | 9.14 MB | 322 | 3.8 s |
+| 6·10⁶ | 10.45 MB | 368 | 15.7 s |
+
+The sizes repeat from run to run; the times are with the whole tree held in the replay's own heap, on a machine
+other work shared, and a second pinned run read 8.8 s at 6·10⁶.
+
+**The budget's numbers are a small tree's.** Over 10⁶ leaves the body the budget admits proves in 8.28 MB — past the
+6 MB `CONSTANTS → The block's cost` argues `W_OP` and `MAX_BLOCK_COST` from — and its replay's tree operations alone
+take 3.1 s on Node 22, where the whole replay over the bench's own tree, signatures and rules included, takes
+2.39 s. No browser is measured over a large tree. No client replays a block (→ The tree session), so nothing waits
+on that replay; the proof's size is what a node stores and serves (`NODE_INTERFACE → The block proof`).
 
 No other term may grow faster than the reads the body makes: each overlay read is a map lookup or one composition over
 the view's answer to it.
