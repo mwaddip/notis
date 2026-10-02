@@ -296,16 +296,21 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
   }
 
   // The block applied — record the kept root (NODE_INTERFACE → "A proof at an
-  // older height restores a kept root"). After the transaction has returned,
-  // where `block.header.height` is the height that applied: a refused block
-  // never has a root to drop, and the refusal path does not touch the ring.
-  // Nested in a reorg the record happens per applied block; the reorg's
-  // snapshot restores the ring on abort.
+  // older height restores a kept root") with the store's count of nodes the
+  // block's checkpoint orphaned (NODE_INTERFACE → "The count is the store's").
+  // After the transaction has returned, where `block.header.height` is the
+  // height that applied: a refused block never has a root to drop, and the
+  // refusal path does not touch the ring. Nested in a reorg the record
+  // happens per applied block; the reorg's snapshot restores the ring on
+  // abort. The count is this block's: nothing between `checkpointProver`
+  // (which calls `update` through `generateProofAndUpdateStorage`) and here
+  // calls `update` on the storage.
   if (avlHandle) {
     avlHandle.recentRoots.record(
       block.header.height,
       avlHandle.prover.prover.root,
       avlHandle.prover.prover.height,
+      avlHandle.storage.lastRemovedCount(),
     );
   }
 

@@ -74,17 +74,19 @@ export function createAvlProver(db?: import('better-sqlite3').Database): AvlProv
 
   // The ring is per-handle: tests spin up fresh provers over the same store,
   // and a module-level ring would leak between them.
-  const newRecentRoots = new RecentRoots(config.proofWindowBlocks);
+  const newRecentRoots = new RecentRoots(config.proofWindowBlocks, config.proofWindowNodes);
   // NODE_INTERFACE → "After a restart the node holds its tip's root alone".
   // The ring is seeded with the version the constructor loaded, whatever its
   // height — on a store with a chain, that is the tip; on a fresh store, it
   // is the empty tree at height 0, which `bootstrapAvlProver` replaces
-  // during genesis seeding and `genesis-state`'s failure clears.
+  // during genesis seeding and `genesis-state`'s failure clears. The seed
+  // records `0` — nothing was replaced to make the loaded root, it is the
+  // store's own version.
   const loadedVersion = newStorage.version();
   if (loadedVersion !== null) {
     const loadedHeight = newStorage.versionHeight(loadedVersion);
     if (loadedHeight !== null) {
-      newRecentRoots.record(loadedHeight, innerProver.root, innerProver.height);
+      newRecentRoots.record(loadedHeight, innerProver.root, innerProver.height, 0);
     }
   }
 
@@ -144,8 +146,14 @@ export function bootstrapAvlProver(
     [HEIGHT_SENTINEL, encodeHeight(height)],
   ]);
   // The checkpoint stands — record the kept root (NODE_INTERFACE → "A proof
-  // at an older height restores a kept root").
-  handle.recentRoots.record(height, handle.prover.prover.root, handle.prover.prover.height);
+  // at an older height restores a kept root") with the store's count of nodes
+  // the checkpoint orphaned (NODE_INTERFACE → "The count is the store's").
+  handle.recentRoots.record(
+    height,
+    handle.prover.prover.root,
+    handle.prover.prover.height,
+    handle.storage.lastRemovedCount(),
+  );
 }
 
 /**

@@ -179,7 +179,9 @@ function makeHandle(dbPath: string, capacity: number): { handle: AvlProverHandle
   const prover = new PersistentBatchAVLProver(inner, storage as VersionedAVLStorage, [
     [HEIGHT_SENTINEL, encodeHeight(0)],
   ]);
-  const recentRoots = new RecentRoots(capacity);
+  // The bench measures what the count bound would reach: `Number.MAX_SAFE_INTEGER`
+  // leaves `capacity` as the only cap on the ring.
+  const recentRoots = new RecentRoots(capacity, Number.MAX_SAFE_INTEGER);
   return { handle: { prover, storage, recentRoots } };
 }
 
@@ -243,9 +245,15 @@ function applyBlockLike(
   }
   performTreeWrites(handle.prover, height, [...firstWrites, ...secondInserts], 'block-apply-sim-inserts');
   performTreeWrites(handle.prover, height, secondRemoves, 'block-apply-sim-removes');
-  // Checkpoint the block (src/state/avl-prover.ts:188) and record the kept root (src/services/block-apply.ts:305).
+  // Checkpoint the block (src/state/avl-prover.ts:188) and record the kept root (src/services/block-apply.ts:305)
+  // with the store's count of the nodes the checkpoint orphaned.
   checkpointProver(handle, height);
-  handle.recentRoots.record(height, handle.prover.prover.root, handle.prover.prover.height);
+  handle.recentRoots.record(
+    height,
+    handle.prover.prover.root,
+    handle.prover.prover.height,
+    handle.storage.lastRemovedCount(),
+  );
 }
 
 /**

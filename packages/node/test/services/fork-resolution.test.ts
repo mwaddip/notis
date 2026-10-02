@@ -1874,7 +1874,7 @@ describe('reorg — the ring and the by-reference restore', () => {
       Uint8Array.of(0xaa),
       new Uint8Array(65).fill(0xff),
     );
-    avl.recentRoots.record(1, bogus, 1);
+    avl.recentRoots.record(1, bogus, 1, 0);
 
     const storageSpy = vi.spyOn(avl.storage, 'rollback');
     const forkResolution = await importForkResolution();
