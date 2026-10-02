@@ -91,19 +91,33 @@ describe('a route\'s cycle does not leak into the next block\'s', () => {
     // prover's `performLookupWithNeighbors` throwing on its third call (the
     // range walk's first lookup is the range's start; its box lookup is the
     // second; the next walk step is the third). The route answers 500 and
-    // the live digest is still what it was.
+    // the live digest is still what it was. **Both at the tip and at an
+    // older height**: the older-height path restores a kept root first, so
+    // its recorded lookups under the cycle are not the live tree's — the
+    // close has to drop them with `restoreRoot`.
     const original = handle.prover.performLookupWithNeighbors.bind(handle.prover);
-    let calls = 0;
-    const spy = vi.spyOn(handle.prover, 'performLookupWithNeighbors').mockImplementation((key: Uint8Array) => {
-      calls++;
-      if (calls === 3) throw new Error('injected throw inside the cycle');
-      return original(key);
-    });
+    function throwOnThird(): () => void {
+      let calls = 0;
+      const spy = vi.spyOn(handle.prover, 'performLookupWithNeighbors').mockImplementation((key: Uint8Array) => {
+        calls++;
+        if (calls === 3) throw new Error('injected throw inside the cycle');
+        return original(key);
+      });
+      return () => { expect(calls).toBeGreaterThanOrEqual(3); spy.mockRestore(); };
+    }
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    await request(app).get(`/api/v1/range/credit/${ownerHex}?limit=10`).expect(500);
-    spy.mockRestore();
-    expect(calls).toBeGreaterThanOrEqual(3);
-    await assertLiveDigestUnchanged();
+    {
+      const done = throwOnThird();
+      await request(app).get(`/api/v1/range/credit/${ownerHex}?limit=10`).expect(500);
+      done();
+      await assertLiveDigestUnchanged();
+    }
+    {
+      const done = throwOnThird();
+      await request(app).get(`/api/v1/range/credit/${ownerHex}?atHeight=2&limit=10`).expect(500);
+      done();
+      await assertLiveDigestUnchanged();
+    }
 
     // A height outside the ring — 404.
     await request(app).get(`/api/v1/proof/${anyKey}?atHeight=999`).expect(404);
