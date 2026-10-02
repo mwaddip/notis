@@ -10,7 +10,7 @@
 // against a second stack the harness owns — node B (server, bootstrapped from
 // A), node C (used for the real-fork test in 19b), node D (isolated, 17a's
 // too-short and 19c's share-no-block) and the lying relay (19a). The
-// verified-figures block brings up a B of its own and, for its five lie arms,
+// verified-figures block brings up a B of its own and, for its six lie arms,
 // the figures relay (22a · 22b · 22c · 22d · 22e · 23). The verified-names block
 // brings up a B of its own too, and the figures relay again for its lie arms,
 // in its name modes (27a–d · 28a–b).
@@ -107,7 +107,7 @@ let TIP_K = null;
 const VERIFIED_TIP = args.get('verified-tip') === true;
 // The verified-figures block — WEB_INTERFACE → The extension → "The verified
 // figures", steps 21 · 24 · 22a · 22b · 22c · 22d · 22e · 23 · 25: the honest
-// states read A, and the five lie arms read the figures relay. Absent, every
+// states read A, and the six lie arms read the figures relay. Absent, every
 // step reads NOT RUN by name.
 const VERIFIED_FIGURES = args.get('verified-figures') === true;
 // The verified-names block — WEB_INTERFACE → The extension → "The verified
@@ -2058,8 +2058,9 @@ function tallyLeds(readings) {
 // (WEB_INTERFACE → The extension → "The verified figures"). The figures run
 // hangs on a verified tip, which needs a second verified node, so the block
 // runs B as the tip block does — bringUpNodeB verbatim after the A pre-flight
-// and stopChild('b') at the end. 21 and 24 read A; the lie arms 22a · 22b · 23
-// read the figures relay, after 24 and while B is up; 25 reads the hosted web
+// and stopChild('b') at the end. 21 and 24 read A; the lie arms 22a · 22b · 22c
+// · 22d · 22e · 23 read the figures relay, after 24 and while B is up; 25
+// reads the hosted web
 // build. Pacing is external: the paced miner runs outside the harness, started
 // before promote.mjs and kept to the end.
 // ---------------------------------------------------------------------------
@@ -2299,8 +2300,9 @@ async function verifiedFiguresSteps(cx, targetId = 'unknown') {
     // ---- Step 24 — rep: silent → post → landed since → silent after K+1 blocks.
     await runFiguresStep24(cx);
 
-    // ---- Steps 22a · 22b · 23 — the lie arms, through the figures relay,
-    // while B is up: the relay's verdict is read across the relay, A and B.
+    // ---- Steps 22a · 22b · 22c · 22d · 22e · 23 — the lie arms, through the
+    // figures relay, while B is up: the relay's verdict is read across the
+    // relay, A and B.
     await runFiguresLieArms(cx);
 
     // ---- Step 25 — no verifier, no /api/v1/proof/ request on the hosted origin.
