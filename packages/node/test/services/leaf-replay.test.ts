@@ -807,25 +807,28 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
   });
 
   it('a set padding bit in the last direction byte is total over both outcomes', async () => {
-    // The directions' unused bits are the last byte's high bits. Bit 7 is
-    // padding when the directions do not fill the byte, and a direction when
-    // they do. The test asserts the full triple in both outcomes.
+    // Flip bit 7 of the honest proof's last byte. Whether that bit is padding
+    // or a direction depends on how many directions this run emitted — bits
+    // beyond the direction count are padding, bits inside it are directions.
+    // **The outcome is what the plain replay says, not what the bit was**: a
+    // padding flip leaves the digest unchanged, a direction flip changes
+    // what the replay reads.
     const last = proven.proof.length - 1;
     const altered = Uint8Array.from(proven.proof);
-    // Flip bit 7: if it was 0 it becomes a set padding bit; if it was 1 it
-    // becomes a cleared direction. Either way the proof differs.
     altered[last] = altered[last]! ^ 0x80;
     const alteredBlock = await committingTo(bytesToHex(hash32(altered)));
     const plainReplay = replayPlainOverTip(alteredBlock, altered);
-    if ((proven.proof[last]! & 0x80) === 0) {
-      // Bit 7 was padding; setting it leaves the digest unchanged — plain
-      // replays to the right stateRoot, strict refuses as `NOT_EXACT_REASON`.
+    if (plainReplay.ok) {
+      // Bit 7 was padding — the flip leaves the digest unchanged. The honest
+      // bit was 0, since the plain verifier would never replay to the right
+      // stateRoot with a direction cleared; assert that, then the full
+      // triple through `expectAltered`.
+      expect(proven.proof[last]! & 0x80, 'padding bit: the honest bit was 0').toBe(0);
       await expectAltered('padding bit set', altered);
     } else {
-      // Bit 7 was a direction; clearing it changes a read's path — plain
-      // refuses, strict refuses, the node refuses on `adProofsRoot`.
-      expect(plainReplay.ok, 'padding bit cleared: plain verifier').toBe(false);
-      expect(replayOverTip(alteredBlock, altered).ok, 'padding bit cleared: strict verifier').toBe(false);
+      // Bit 7 was a direction — the flip changes a read's path. Strict
+      // refuses too, the node refuses on `adProofsRoot`.
+      expect(replayOverTip(alteredBlock, altered).ok, 'direction bit flipped: strict verifier').toBe(false);
       expectNodeRefuses(
         alteredBlock,
         `adProofsRoot mismatch at height 4: computed=${honest.header.adProofsRoot.slice(0, 16)}... ` +
