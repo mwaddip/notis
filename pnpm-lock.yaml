@@ -17,8 +17,8 @@ importers:
         specifier: workspace:*
         version: link:../validation
       '@ergots/avltree':
-        specifier: ^0.5.0
-        version: 0.5.0
+        specifier: ^0.6.0
+        version: 0.6.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -407,6 +407,10 @@ packages:
 
   '@ergots/avltree@0.5.0':
     resolution: {integrity: sha512-nwpPkJQAZML0PceLLI/8KE3Ym7Q+l8/roDvXpJ6rDj9jQcN+/22HUClH0Qv8zNcR0pt4GTA4I3dr1KDtFHCWrg==}
+    engines: {node: '>=20'}
+
+  '@ergots/avltree@0.6.0':
+    resolution: {integrity: sha512-OXJdNgxUK+NQu2nxbNrNELf99oxqe6Z+WKqoEGtZh/5TXLQ639t+h4L7ZWxMVhaQzR62XQJvsOeMidJFUd6pmg==}
     engines: {node: '>=20'}
 
   '@esbuild/aix-ppc64@0.21.5':
@@ -2323,6 +2327,10 @@ snapshots:
       '@noble/hashes': 2.2.0
 
   '@ergots/avltree@0.5.0':
+    dependencies:
+      '@noble/hashes': 2.2.0
+
+  '@ergots/avltree@0.6.0':
     dependencies:
       '@noble/hashes': 2.2.0
 

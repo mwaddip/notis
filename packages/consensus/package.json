@@ -20,7 +20,7 @@
   "dependencies": {
     "@dagsocial/types": "workspace:*",
     "@dagsocial/validation": "workspace:*",
-    "@ergots/avltree": "^0.5.0"
+    "@ergots/avltree": "^0.6.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
