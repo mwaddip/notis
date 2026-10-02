@@ -45,7 +45,7 @@ chain the proof committed. Bytes in, verdict out, exit.
 
 **It answers twice: as a command line (`dist/index.js`, the package's `bin`) and as a library
 (`src/lib.ts` → `dist/lib.js`, the package's `exports`)** — `resolveTip`, `fetchListing`, `proveFigures`,
-`proveBoxes`, `proveRange`, `proveHoldings`, `proveName`, `verifierProfile` and their types, re-exports with no side effect at import. **The web
+`proveRange`, `proveName`, `verifierProfile` and their types, re-exports with no side effect at import. **The web
 client's extension build is the library's caller**: its tip verifier runs `resolveTip` in the page with
 the browser's `fetch` (`WEB_INTERFACE → The extension → "The verified tip"`), and its figures verifier
 runs `proveFigures` after every verified tip against the listing the rows rendered
@@ -60,8 +60,9 @@ no Node global (the command line's `index.ts` alone does) — held by the browse
 `src/lib.ts` and what it imports against the DOM library (`tsconfig.browser.json`, `ARCHITECTURE → Package boundaries`).
 
 **The figures.** `fetchListing(nodeUrl, user, fetch)` reads `/karma/:user` and `/credits/:user`
-following `next` to the end, `height` and `effective` from the first karma page — a 404 is an empty
-listing; any other non-ok, or a page that is not an object with a `boxes` array and a `next` that is
+following `next` to the end, `height` and `effective` from the first karma page — the node answers a key it has
+never seen with an empty page at its height, so any non-ok, a 404 among them, or a page that is not an object
+with a `boxes` array and a `next` that is
 null or a non-empty string with no lone surrogate (the next request carries it through `encodeURIComponent`),
 surfaces as `{ ok: false, reason }`. `proveFigures(nodeUrl, user, listing,
 anchor, profile, fetch)` reads **what the key holds, whole, by range**, and judges the listing against it, in this
@@ -81,21 +82,26 @@ since), or below (the node's height fell — a reorg), or unread (undecided read
 **`absent`** — not held at `tip` and `heightAfter` equal to `tip.height`, the node listing what the chain does not
 hold; **`unlisted`** — held at `tip`, named nowhere in its ledger's listing, and `heightAfter` equal to
 `tip.height`: the chain holds what the node did not list, a box of the run's own after the listed ones, its sum
-apart from theirs — with a block landed since, a held box the listing lacks is in no class, since the reader's own
-transaction spends its inputs; **`unproven`** — a listed value or lock that is not the held box's, an entry that
-is not an object with a 64-hex `boxId` and a decimal `value` or that names an id the listing named earlier in
-either ledger, and every listed box of a ledger whose read does not verify (a `stateRoot` other than the header's,
-a page that does not replay, an answer of another shape); **`no-proof`** — every listed box of a ledger whose
-read was not served, a height the node keeps no root of among it. The record is `proven` or `absent` at
-`suffixHead` — the same `null` the node values — or `unproven` / `no-proof` by the same rules; the
-valuation is `effectiveKarma(karma.proven, record, listing.karma.height, decayCfgFor(profile))`, the
-one implementation shared with the node, and `null` where `listing.karma.height` is not a block height.
+apart from theirs; **`undecided`** — the same box where `heightAfter` is not `tip.height`: a block landed since
+and may have spent it, as the reader's own transaction spends its inputs, or the node withheld it — the run
+cannot say which, says so, and does not fail (the node chooses what `/blocks/current` answers, so a class that
+fell silent there would be the node's to switch off); **`unproven`** — a listed value or lock that is not the
+held box's, an entry that is not an object with a 64-hex `boxId` and a decimal `value` or that names an id the
+listing named earlier in either ledger, and every listed box of a ledger whose read does not verify (a
+`stateRoot` other than the header's at `suffixHead`, a page that does not replay, an answer of another shape);
+**`no-proof`** — every listed box of a ledger whose read was not served, a height the node keeps no root of
+among it. **A `stateRoot` other than the header's at `tip` is a replaced tip, not a failed proof**: `proveRange`
+answers it `stale`, the ledger's `holdings` is `stale`, every listed box of it `unchecked`, and the run does
+not fail. The record is `proven` or `absent` at `suffixHead` — the same `null` the node values — or `unproven` /
+`no-proof` by the same rules; the valuation is `effectiveKarma(karma.proven, record, listing.karma.height,
+decayCfgFor(profile))`, the one implementation shared with the node, **only where that height lies from
+`tip.height` to `heightAfter`** (the lower bound alone where `heightAfter` is unread) — the height is the node's
+word — and `null`, the run failed, where it does not or is no block height.
 **The run is total**: an answer of any shape ends in a status, never a throw
 (`WEB_INTERFACE → The extension → "A run is total"`). **`failed`** — any box `unproven`, `absent` or `unlisted`,
-a ledger's read `unproven`, the record `unproven`, or a listing height that is not a block height — is the command
-line's exit 1. `proveBoxes` composes the two for the command line's own
-use; the CLI itself calls `fetchListing` and `proveFigures` so it can print the row's `listing.karma
-.height` beside `effective`.
+a ledger's read `unproven`, the record `unproven`, or a listing height the valuation does not take — is the
+command line's exit 1. The command line's run and its `--json` object are `src/cli.ts` (`runCli`, `toJson`);
+`src/index.ts` parses argv and prints.
 
 **The names.** `proveName(nodeUrl, claim, anchor, fetch)` proves a **label** — `{ key, name }`, a key
 and the name a row carries beside it — or a **typed handle** — `{ name }`, without its `@` — through

@@ -348,8 +348,10 @@ over the listings the rows show: the identity record at `suffixHead` under `iden
 `consensus`' `holdingsPage` over the node's proof — then `/blocks/current`; **a listed box is `proven` only when the
 key holds it at both heights, in the ledger it was listed under, with the listing's value and lock** — the range
 fixes its owner and its type — **a box the key holds that the listing lacks is `unlisted`** where no block landed
-since the anchor, and each ledger carries the status of its own read (`holdings`); rep is valued by
-`effectiveKarma` of `@dagsocial/types` — the node's own function — at the listing's height. **A run proves a listing
+since the anchor **and `undecided` where one did**, a tip the node has since replaced makes the ledger's read
+`stale`, and each ledger carries the status of its own read (`holdings`); rep is valued by
+`effectiveKarma` of `@dagsocial/types` — the node's own function — at the listing's height, taken only from the
+anchor's tip to `heightAfter`. **A run proves a listing
 read after its anchor and never one read before it**: every read of the reader's own listing is stamped at its start
 with the anchor sequence, a verified tip reads `/karma` (and `/credits` with the wallet open) before it proves, and a
 listing not read after the current anchor goes to the run as not read (`null`, never empty), its row reading *not
@@ -362,7 +364,8 @@ asked for, a refresh lands on the rows standing as it lands, and `withdrawnSeen`
 withdrawn post out of every write of rows. `src/model/figures-line.ts` (`figuresLine`, pure) turns a result into the
 row's line: nothing when every box proved (silence is the green), muted for what could not be proven yet, **clay with
 the figure clay** when a proof did not verify, the node lists what the chain does not hold, or the chain holds what
-the node did not list; **an empty listing takes the same lines**, beneath the faucet step or the words standing
+the node did not list; **muted *not checked yet* where the run cannot decide** — an `undecided` box, a `stale`
+read — never silence; **an empty listing takes the same lines**, beneath the faucet step or the words standing
 there, since that the key holds nothing is a claim the range decides. The numbers update in
 their slots whenever a read brings a new one (`HOUSE_STYLE → Motion`). The web build is handed no figures verifier, and
 `build-release.sh` refuses `api/v1/proof` and `api/v1/range` in its assets beside `nipopow/proof`. **The run is total**: a node's answer of
@@ -480,16 +483,20 @@ the verified-figures block** runs next, owning a B of its own (a verified tip ne
 **figures relay** on its own port that passes every `/nipopow/proof/` answer through — so the corner stays green —
 and lies in one mode at a time: `credits-fake` (a fabricated box on R's first `/credits` page), `credits-foreign` (the
 devnet faucet's largest credit box listed under R), `credits-drop` and `karma-drop` (one box withheld from R's first
-`/credits` or `/karma` page), `avl-flip` (one byte flipped in every `/api/v1/proof/` and `/api/v1/range/` proof): **21** a
+`/credits` or `/karma` page), `credits-drop-tipplus1` (the credits drop, and `/blocks/current` answered one above the
+node's own), `avl-flip` (one byte flipped in every `/api/v1/proof/` and `/api/v1/range/` proof): **21** a
 send's young change reads *… landed since* after a press and silence after K + 1 blocks; **24** R's post — the rep
 number the node's new `effective` with no press (the landing's run reads *… not checked yet*: its anchor predates the
 post), *… landed since* after a press, silence after K + 1; **22a** clay *the node lists … the chain does not hold*, the
 figure clay; **22b** the same line with the foreign box's own amount — the range R's boxes are read from does not
 hold another key's; **22c** clay *the chain holds … $NOTIS the node does not list*, beneath the empty state where the
-drop emptied the listing; **22d** clay *the chain holds … rep the node does not list*; **23** both rows clay, *this
-node's proof of … did not verify*; each arm compares the amount its line names with the box the relay lied about,
-presses again while a block landed between the anchor and the run's `/blocks/current` (the two listing classes are
-decided only where none did), and is switched back to A and silent again; **25** the hosted web build — no line and
+drop emptied the listing; **22d** clay *the chain holds … rep the node does not list*; **22e** the node that
+withholds and answers another height — the balance row muted *not checked yet* after the change and after each of
+two presses, never silent and never clay; **23** both rows clay, *this node's proof of … did not verify*; each arm
+compares the amount its line names with the box the relay lied about, presses again while a block landed between
+the anchor and the run's `/blocks/current` — the lying row reading *not checked yet* there, and any silent or
+honest-looking reading of it failing the arm — and is switched back to A and silent again; **25** the hosted web
+build — no line and
 no `/api/v1/proof/` or `/api/v1/range/` request. A figures run asks the record, each ledger's range at the two
 heights, and `/blocks/current` — ten requests with the wallet open. ⚠ **The figures block needs a throwaway that has
 not run steps 11–12**: on a key already granted `$NOTIS` the faucet step is not on screen and step 11 times out.
