@@ -1,4 +1,4 @@
-import { BatchAVLVerifier } from '@ergots/avltree';
+import { StrictBatchAVLVerifier } from '@ergots/avltree';
 import type { AvlTreeConfig } from '@ergots/avltree';
 import { TREE_KEY_LENGTH, bytesToHex, hash32 } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, UtxoTxTree } from '@dagsocial/types';
@@ -50,8 +50,13 @@ export function replayAsLeaf({ parentRoot, header, body, proof, ctx }: LeafBlock
     return { ok: false, reason: `the header's adProofsRoot ${header.adProofsRoot} is not the proof's hash32 ${proofRoot}` };
   }
 
-  // A proof that fails to decode or anchor poisons the verifier at construction.
-  const verifier = new BatchAVLVerifier(parentRoot, proof, TREE_CONFIG);
+  // A proof that fails to decode or anchor poisons the verifier at
+  // construction. `StrictBatchAVLVerifier` so `isFullyConsumed()` can refuse
+  // a proof carrying a trailing byte, an operation the replay never asks, a
+  // set padding bit or an unvisited node written in full
+  // (CONSENSUS_INTERFACE → The tree session, "A block replays from its proof
+  // only on all of these").
+  const verifier = new StrictBatchAVLVerifier(parentRoot, proof, TREE_CONFIG);
   if (verifier.digest() === null) {
     return { ok: false, reason: `the proof does not anchor at the parent root: ${verifier.getLastFailReason()}` };
   }
@@ -96,5 +101,14 @@ export function replayAsLeaf({ parentRoot, header, body, proof, ctx }: LeafBlock
   if (reached !== header.stateRoot) {
     return { ok: false, reason: `the proof reaches ${reached}, the header's stateRoot is ${header.stateRoot}` };
   }
+  // The proof is byte for byte the proof `BatchAVLProver.generateProof`
+  // writes for the operations the replay performed (CONSENSUS_INTERFACE →
+  // The tree session). Asked once, after the last write.
+  if (!verifier.isFullyConsumed()) {
+    return { ok: false, reason: NOT_EXACT };
+  }
   return { ok: true };
 }
+
+/** The reason a strict verifier refuses a proof `BatchAVLProver.generateProof` would never write. */
+export const NOT_EXACT = 'the proof is not byte for byte the proof its operations write';

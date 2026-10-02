@@ -685,4 +685,160 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
     expect(node.ordering.getCurrentHeight()).toBe(tip.header.height);
     expect(bytesToHex(node.avl.getAvlProver().prover.digest())).toBe(tip.header.stateRoot);
   });
+
+  // =========================================================================
+  // The five altered proofs — proofs a `BatchAVLVerifier` replays to the right
+  // digest but `StrictBatchAVLVerifier.isFullyConsumed()` refuses
+  // (CONSENSUS_INTERFACE → The tree session, "A block replays from its proof
+  // only on all of these"). Each is committed by a header re-mined around its
+  // hash, accepted by a plain verifier, refused by `replayAsLeaf`, refused by
+  // the funnel's `adProofsRoot` mismatch.
+  // =========================================================================
+
+  const NOT_EXACT_REASON = 'the proof is not byte for byte the proof its operations write';
+
+  /** The block's cycle, then one more recorded lookup after the writes. */
+  function proveOverTipWithExtraRead(block: OrderingBlock, extraKey: Uint8Array): Uint8Array {
+    const handle = node.avl.getAvlProver();
+    const inner = handle.prover.prover;
+    const root = inner.root;
+    const height = inner.height;
+    const recording = node.sessions.recordingSession(handle.prover);
+    try {
+      const view = node.consensus.treeStateView(recording);
+      const result = node.consensus.applyBlock(view, block, ctx);
+      if (!result.ok) throw new Error(`the rules refuse the block: ${result.reason}`);
+      const writes = node.consensus.treeWritesOf(result.effects, block.header.height, view);
+      node.avl.performTreeWrites(handle.prover, block.header.height, writes, 'proveOverTipWithExtraRead');
+      recording.lookup(extraKey);
+      return inner.generateProof();
+    } finally {
+      inner.restoreRoot(root, height);
+    }
+  }
+
+  /** The offset just past the packed tree's END_OF_TREE token — where directions begin. */
+  function directionsStart(proof: Uint8Array): number {
+    let previousLeaf = false;
+    let at = 0;
+    for (;;) {
+      const token = proof[at++];
+      if (token === undefined) throw new Error('directionsStart: the proof ends inside its tree');
+      if (token === 4) return at;
+      if (token === 3) {
+        at += 32;
+        previousLeaf = false;
+        continue;
+      }
+      if (token !== 2) continue;
+      if (!previousLeaf) at += TREE_KEY_LENGTH;
+      at += TREE_KEY_LENGTH;
+      at += 4 + new DataView(proof.buffer, proof.byteOffset + at, 4).getUint32(0);
+      previousLeaf = true;
+    }
+  }
+
+  /** Every leaf key of the tree at the tip, walked by `nextKey`. */
+  function leafKeysAtTip(): string[] {
+    const plain = node.sessions.proverSession(node.avl.getAvlProver().prover);
+    const keys: string[] = [];
+    const first = new Uint8Array(TREE_KEY_LENGTH);
+    first[TREE_KEY_LENGTH - 1] = 1;
+    let next = plain.lookup(first).nextKey;
+    while (!next.every((byte) => byte === 0xff)) {
+      keys.push(bytesToHex(next));
+      next = plain.lookup(next).nextKey;
+    }
+    return keys;
+  }
+
+  /** A leaf the honest proof leaves under a label — a recorded lookup of it widens the proof's tree. */
+  function wideningKey(): Uint8Array {
+    const honestTree = bytesToHex(proven.proof.subarray(0, directionsStart(proven.proof)));
+    const inFull = new Set(packedLeaves(proven.proof).map((leaf) => leaf.key));
+    const all = leafKeysAtTip();
+    const unvisited = all.filter((key) => !inFull.has(key));
+    for (const key of unvisited) {
+      const wider = proveOverTipWithExtraRead(honest, hexToBytes(key));
+      if (bytesToHex(wider.subarray(0, directionsStart(wider))) !== honestTree) return hexToBytes(key);
+    }
+    throw new Error('no unvisited leaf widens the packed tree');
+  }
+
+  async function expectAltered(label: string, tampered: Uint8Array): Promise<void> {
+    expect(tampered, `${label}: differs from the honest proof`).not.toEqual(proven.proof);
+    const altered = await committingTo(bytesToHex(hash32(tampered)));
+    // A plain BatchAVLVerifier replays to the same digest (the altered proof
+    // decodes and anchors) — the ambient `replayAsLeaf` built with the strict
+    // verifier is what refuses, with `isFullyConsumed`'s reason.
+    const { BatchAVLVerifier } = await import('@ergots/avltree');
+    const verifier = new BatchAVLVerifier(hexToBytes(tip.header.stateRoot), tampered, { keyLength: TREE_KEY_LENGTH, valueLengthOpt: null });
+    expect(verifier.digest(), `${label}: plain verifier anchors`).not.toBeNull();
+    // Strict (the harness) refuses with the exact reason.
+    expect(replayOverTip(altered, tampered), `${label}: strict verifier`).toEqual({ ok: false, reason: NOT_EXACT_REASON });
+    expectNodeRefuses(
+      altered,
+      `adProofsRoot mismatch at height 4: computed=${honest.header.adProofsRoot.slice(0, 16)}... ` +
+      `header=${altered.header.adProofsRoot.slice(0, 16)}...`,
+    );
+  }
+
+  it('one zero byte appended is refused with the strict reason', async () => {
+    const padded = new Uint8Array(proven.proof.length + 1);
+    padded.set(proven.proof);
+    await expectAltered('zero byte appended', padded);
+  });
+
+  it('one recorded lookup after the writes, of a key the block already read, is refused', async () => {
+    const reread = proven.lookups.find((read) => !proven.written.has(read.key));
+    if (reread === undefined) throw new Error('the block reads no key it does not write');
+    await expectAltered('extra re-read', proveOverTipWithExtraRead(honest, hexToBytes(reread.key)));
+  });
+
+  it('one recorded lookup after the writes, of a leaf the proof leaves under a label, is refused', async () => {
+    await expectAltered('extra fresh read', proveOverTipWithExtraRead(honest, wideningKey()));
+  });
+
+  it('a set padding bit in the last direction byte is total over both outcomes', async () => {
+    // The directions' unused bits are the last byte's high bits. Bit 7 is
+    // padding unless the directions fill the byte; in roughly one run in
+    // eight they do and bit 7 is a direction, in which case both verifiers
+    // refuse. Total over both.
+    const last = proven.proof.length - 1;
+    const flipped = Uint8Array.from(proven.proof);
+    flipped[last] = flipped[last]! | 0x80;
+    if (flipped[last] === proven.proof[last]) {
+      // Bit 7 was already set — the directions use it, nothing to flip.
+      return;
+    }
+    const altered = await committingTo(bytesToHex(hash32(flipped)));
+    const plainReplay = replayOverTip(altered, flipped);
+    if (!plainReplay.ok) {
+      // Bit 7 is a direction the replay reads: both verifiers refuse (plain
+      // on the altered proof's digest, strict on exactness-or-digest). The
+      // node refuses on `adProofsRoot`.
+      expect(plainReplay.ok).toBe(false);
+      expectNodeRefuses(
+        altered,
+        `adProofsRoot mismatch at height 4: computed=${honest.header.adProofsRoot.slice(0, 16)}... ` +
+        `header=${altered.header.adProofsRoot.slice(0, 16)}...`,
+      );
+      return;
+    }
+    // Bit 7 is padding — the plain verifier replays to the right digest, the
+    // strict verifier refuses as `NOT_EXACT_REASON`.
+    await expectAltered('padding bit', flipped);
+  });
+
+  it('an unvisited node written in full is refused', async () => {
+    // The tree part of a wider proof grafted onto the honest proof's directions —
+    // the same operations, a tree with a node a prover would never write.
+    const wider = proveOverTipWithExtraRead(honest, wideningKey());
+    const widerTree = wider.subarray(0, directionsStart(wider));
+    const honestDirections = proven.proof.subarray(directionsStart(proven.proof));
+    const tampered = new Uint8Array(widerTree.length + honestDirections.length);
+    tampered.set(widerTree);
+    tampered.set(honestDirections, widerTree.length);
+    await expectAltered('unvisited node in full', tampered);
+  });
 });
