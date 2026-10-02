@@ -48,7 +48,7 @@ import {
   makeKarmaBox,
   makeLikeTx,
   makeTestConfig,
-  makeTestIdentity,
+  makeTestIdentityFromSeed,
   mineNextBlock,
   revertChainTo,
   signTransaction,
@@ -464,24 +464,48 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
   }
 
   beforeAll(async () => {
+    // Pin the block creator's validator keypair so validatorId does not
+    // change run-to-run (block-creator's startBlockCreator calls
+    // generateKeyPairSync). vi.doMock replaces the module before
+    // importNode re-imports it.
+    const validator = makeTestIdentityFromSeed('leaf-replay/validator');
+    vi.doMock('crypto', async () => {
+      const actual = await vi.importActual<typeof import('crypto')>('crypto');
+      const { createPublicKey } = actual;
+      const pinned = { publicKey: createPublicKey(validator.privateKey), privateKey: validator.privateKey };
+      return {
+        ...actual,
+        default: actual,
+        generateKeyPairSync: ((algo: string) => {
+          if (algo === 'ed25519') return pinned;
+          return actual.generateKeyPairSync(algo as 'ed25519');
+        }) as typeof actual.generateKeyPairSync,
+      };
+    });
     vi.resetModules();
     budget = blockBudgetSeam();
     node = await importNode();
     ctx = node.blockApply.applyContextFrom(node.config);
+    // Pin the difficulty-schedule clock so every createdAt is fixed.
+    let fakeNow = 1_700_000_000_000;
+    const { setClock } = await import('../../src/services/difficulty.js');
+    setClock(() => (fakeNow += 1000));
     node.db.initDb(':memory:');
 
     // Five roots, two accounts, a credit holder — committed before the tree is
-    // built over them, as genesis is.
-    const author = makeTestIdentity();
-    const replier = makeTestIdentity();
-    const liker = makeTestIdentity();
-    const voucher = makeTestIdentity();
-    const inviter = makeTestIdentity();
-    const target = makeTestIdentity();
-    const namer = makeTestIdentity();
-    const invitee = makeTestIdentity();
-    const payer = makeTestIdentity();
-    const payee = makeTestIdentity();
+    // built over them, as genesis is. Identities are seeded so the chain
+    // the suite builds is byte-for-byte the same every run; the padding-bit
+    // case below reads one outcome.
+    const author = makeTestIdentityFromSeed('leaf-replay/author');
+    const replier = makeTestIdentityFromSeed('leaf-replay/replier');
+    const liker = makeTestIdentityFromSeed('leaf-replay/liker');
+    const voucher = makeTestIdentityFromSeed('leaf-replay/voucher');
+    const inviter = makeTestIdentityFromSeed('leaf-replay/inviter');
+    const target = makeTestIdentityFromSeed('leaf-replay/target');
+    const namer = makeTestIdentityFromSeed('leaf-replay/namer');
+    const invitee = makeTestIdentityFromSeed('leaf-replay/invitee');
+    const payer = makeTestIdentityFromSeed('leaf-replay/payer');
+    const payee = makeTestIdentityFromSeed('leaf-replay/payee');
     for (const root of [author, replier, liker, voucher, inviter]) node.records.putIdentityRecord(root.userId, ROOT);
     for (const account of [target, namer]) node.records.putIdentityRecord(account.userId, ACCOUNT);
     node.records.putNetworkRecord({ memberCount: 5 });
@@ -544,7 +568,7 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
 
     // The next block — a like, a vouch cast again, a credit send — by a miner
     // whose key the suite holds, so the cases below can mine and sign it again.
-    miner = makeTestIdentity();
+    miner = makeTestIdentityFromSeed('leaf-replay/miner');
     nextTraffic = [
       makeLikeTx(liker, changeBoxOf(like), granted.postId, invitee.userId),
       vouchTx(voucher, outputOf<KarmaBox>(vouch, 0), target, 3),
@@ -571,6 +595,9 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
     }
     node?.creator.stopBlockCreator();
     node?.db.closeDb();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    setClock(null);
+    vi.doUnmock('crypto');
     vi.doUnmock('@dagsocial/consensus');
     vi.doUnmock('../../src/services/cost-estimate.js');
     vi.resetModules();
@@ -806,35 +833,21 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
     await expectAltered('extra fresh read', proveOverTipWithExtraRead(honest, wideningKey()));
   });
 
-  it('a set padding bit in the last direction byte is total over both outcomes', async () => {
-    // Flip bit 7 of the honest proof's last byte. Whether that bit is padding
-    // or a direction depends on how many directions this run emitted — bits
-    // beyond the direction count are padding, bits inside it are directions.
-    // **The outcome is what the plain replay says, not what the bit was**: a
-    // padding flip leaves the digest unchanged, a direction flip changes
-    // what the replay reads.
+  it('a set padding bit in the last direction byte is refused — the seeded chain lands on the padding outcome', async () => {
+    // Flip bit 7 of the honest proof's last byte. The suite's identities are
+    // seeded, so the number of directions the proof emits is the same every
+    // run and bit 7 of the last byte is padding — the flip leaves the digest
+    // unchanged. The honest bit is 0, since the plain verifier would never
+    // replay to the right stateRoot with a direction cleared; the full
+    // triple goes through expectAltered.
     const last = proven.proof.length - 1;
     const altered = Uint8Array.from(proven.proof);
     altered[last] = altered[last]! ^ 0x80;
     const alteredBlock = await committingTo(bytesToHex(hash32(altered)));
     const plainReplay = replayPlainOverTip(alteredBlock, altered);
-    if (plainReplay.ok) {
-      // Bit 7 was padding — the flip leaves the digest unchanged. The honest
-      // bit was 0, since the plain verifier would never replay to the right
-      // stateRoot with a direction cleared; assert that, then the full
-      // triple through `expectAltered`.
-      expect(proven.proof[last]! & 0x80, 'padding bit: the honest bit was 0').toBe(0);
-      await expectAltered('padding bit set', altered);
-    } else {
-      // Bit 7 was a direction — the flip changes a read's path. Strict
-      // refuses too, the node refuses on `adProofsRoot`.
-      expect(replayOverTip(alteredBlock, altered).ok, 'direction bit flipped: strict verifier').toBe(false);
-      expectNodeRefuses(
-        alteredBlock,
-        `adProofsRoot mismatch at height 4: computed=${honest.header.adProofsRoot.slice(0, 16)}... ` +
-        `header=${alteredBlock.header.adProofsRoot.slice(0, 16)}...`,
-      );
-    }
+    expect(plainReplay.ok, 'the padding flip leaves the digest unchanged').toBe(true);
+    expect(proven.proof[last]! & 0x80, 'padding bit: the honest bit was 0').toBe(0);
+    await expectAltered('padding bit set', altered);
   });
 
   it('an unvisited node written in full is refused', async () => {

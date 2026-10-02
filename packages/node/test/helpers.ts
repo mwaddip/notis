@@ -1,4 +1,4 @@
-import { createHash, generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
 import Database from 'better-sqlite3';
 import {
   computeTxId,
@@ -125,6 +125,26 @@ export function makeTestIdentity(): TestIdentity {
   const pubKey = rawPublicKey(publicKey);
   const userId = pubKey;
   return { userId, publicKey: pubKey, privateKey };
+}
+
+/**
+ * A deterministic Ed25519 identity from a fixed seed string. The seed hashes
+ * to 32 bytes that fill the PKCS#8 Ed25519 private-key DER, so a run reads
+ * the same `(publicKey, privateKey)` and a signature of the same message is
+ * byte-for-byte the same.
+ */
+export function makeTestIdentityFromSeed(seed: string): TestIdentity {
+  const seedBytes = createHash('sha256').update(seed).digest();
+  // PKCS#8 Ed25519 private key prefix: 16 bytes, then the 32-byte seed.
+  const prefix = Buffer.from([
+    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06,
+    0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
+  ]);
+  const pkcs8 = Buffer.concat([prefix, seedBytes]);
+  const privateKey = createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' });
+  const publicKey = createPublicKey(privateKey);
+  const pubKey = rawPublicKey(publicKey);
+  return { userId: pubKey, publicKey: pubKey, privateKey };
 }
 
 export function makePost(authorId: Uint8Array, content = 'test post'): Post {
