@@ -642,10 +642,17 @@ describe('the verified figures across a node or identity change', () => {
 
     const runs = h.figuresCalls.slice(before);
     expect(runs.length).toBeGreaterThan(0);
+    // A credits listing not read after the new anchor is handed to the run
+    // as not read, never as the old node's; runs after /credits lands at B
+    // carry NODE_B's credit box (WEB_INTERFACE → The extension → "The verified
+    // figures" — "A listing not read after the current anchor is handed to
+    // the run as not read — never as an empty one").
     for (const r of runs) {
       expect(r.readingBase).toBe(B);
       expect(r.listing.karma.boxes.map((b) => b.boxId)).toEqual([NODE_B.karmaBox]);
-      expect(r.listing.credits!.boxes.every((b) => b.boxId === NODE_B.creditBox)).toBe(true);
+      if (r.listing.credits !== null) {
+        expect(r.listing.credits.boxes.every((b) => b.boxId === NODE_B.creditBox)).toBe(true);
+      }
     }
     expect(runs[runs.length - 1]!.listing.credits!.boxes.map((b) => b.boxId)).toEqual([NODE_B.creditBox]);
   });

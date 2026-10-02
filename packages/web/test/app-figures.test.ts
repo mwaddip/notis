@@ -247,10 +247,11 @@ describe('the App verified figures — the triggers', () => {
     expect(call.readingBase).toBe('https://a.example');
     expect(call.user).toBe(PUB);
     expect(call.anchor).toBe(anchor);
-    // The karma listing is the one the App holds; credits was read too when
-    // the wallet's own open happened — the profile alone leaves credits empty.
+    // The karma listing is the one the App holds; a credits listing not read
+    // after the current anchor is handed to the run as not read, never as an
+    // empty one (WEB_INTERFACE → The extension → "The verified figures").
     expect(call.listing.karma.boxes.length).toBe(1);
-    expect(call.listing.credits?.boxes.length ?? 0).toBe(0);
+    expect(call.listing.credits).toBeNull();
   });
 
   it('does not run after a tip run that ends `thin` — no anchor stands', async () => {
@@ -466,11 +467,12 @@ describe('the App verified figures — the verdict and the row', () => {
     };
     // The verified tip reads both listings first (WEB_INTERFACE → The extension
     // → "The verified figures"): the karma write starts a run with the wallet's
-    // listing — read before the anchor — passed empty, and the credits write
-    // marks one more. That first run's listing has moved when it answers, so
-    // its result is dropped and the run over the current listing follows.
+    // listing — read before the anchor — passed as not read, and the credits
+    // write marks one more. That first run's listing has moved when it
+    // answers, so its result is dropped and the run over the current listing
+    // follows.
     const first = h.figuresCalls[h.figuresCalls.length - 1]!;
-    expect(first.listing.credits?.boxes ?? []).toHaveLength(0);
+    expect(first.listing.credits).toBeNull();
     first.resolve(emptyResult());
     await flush();
     // Resolve the last figures run that reflects the current listing.
