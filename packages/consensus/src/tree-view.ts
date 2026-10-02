@@ -54,6 +54,18 @@ import { isSentinel } from './tree-session.js';
 import type { TreeLookup, TreeSession } from './tree-session.js';
 import type { UsernameRow } from './utxo-engine.js';
 
+/** One leaf of a range the view walked (CONSENSUS_INTERFACE → The holdings page). */
+export interface TreeRangeEntry {
+  key: Uint8Array;
+  value: Uint8Array;
+}
+
+/** A page of a range's leaves and the first key not taken that is still in the range (CONSENSUS_INTERFACE → The holdings page). */
+export interface TreeRangePage {
+  entries: TreeRangeEntry[];
+  next: Uint8Array | null;
+}
+
 /**
  * The `StateView` the rules see, the one read the tree writes add to it, and the
  * count of what it looked up (CONSENSUS_INTERFACE → The tree view;
@@ -64,6 +76,17 @@ export interface TreeStateView extends StateView {
   castCountOf(voucherId: Uint8Array): number;
   /** The distinct keys this view has asked its session — a memoised read adds none. */
   lookupCount(): number;
+  /**
+   * A page of `range`'s leaves, in key order (CONSENSUS_INTERFACE → The
+   * holdings page). The walk starts at `rangeStart(range)` when `from` is
+   * null and at `from` otherwise, as a range read walks (CONSENSUS_INTERFACE
+   * → The tree view → "A range read walks"): a key that is a leaf is yielded,
+   * an absent one is stepped over to its next key. At most `limit` entries
+   * are taken. `next` is the first key the walk did not take that is still
+   * in `range`, or `null` where the range ends. A next key the tree names
+   * and a lookup of it answers absent is a tree that contradicts itself.
+   */
+  pageRange(range: TreeRange, from: Uint8Array | null, limit: number): TreeRangePage;
 }
 
 /**
@@ -176,13 +199,14 @@ class TreeView implements TreeStateView {
     range: TreeRange,
     limit = Infinity,
     within: (key: Uint8Array) => boolean = () => true,
-  ): Generator<{ key: Uint8Array; value: Uint8Array }> {
+    from: Uint8Array | null = null,
+  ): Generator<{ key: Uint8Array; value: Uint8Array; nextKey: Uint8Array }> {
     if (limit <= 0) return;
-    const start = rangeStart(range);
+    const start = from ?? rangeStart(range);
     const first = this.look(start);
     let count = 0;
     if (first.found && within(start)) {
-      yield { key: start, value: first.value };
+      yield { key: start, value: first.value, nextKey: first.nextKey };
       count++;
     }
     let next = first.nextKey;
@@ -191,10 +215,30 @@ class TreeView implements TreeStateView {
       if (!step.found) {
         throw new TreeInconsistencyError(`the tree names ${bytesToHex(next)} as a next key and holds no leaf for it`);
       }
-      yield { key: next, value: step.value };
+      yield { key: next, value: step.value, nextKey: step.nextKey };
       count++;
       next = step.nextKey;
     }
+  }
+
+  /**
+   * A page of `range`'s leaves (CONSENSUS_INTERFACE → The holdings page): the
+   * `walk` from `rangeStart(range)` or `from`, at most `limit` entries, and
+   * `next` the first key the walk did not take that is still in the range,
+   * or `null` where the range ends. A page looks up at most `1 + 2 · limit`
+   * keys through the view, and a reader of its proof knows from the proof
+   * alone whether the page ended its range — `next`'s leaf authenticates it,
+   * or the key past the walk's last answer is a sentinel.
+   */
+  pageRange(range: TreeRange, from: Uint8Array | null, limit: number): TreeRangePage {
+    const entries: TreeRangeEntry[] = [];
+    let last: Uint8Array | null = null;
+    for (const step of this.walk(range, limit, undefined, from)) {
+      entries.push({ key: step.key, value: step.value });
+      last = step.nextKey;
+    }
+    const next = last !== null && !isSentinel(last) && inRange(last, range) ? last : null;
+    return { entries, next };
   }
 
   /** The live box `id` names, of `boxType` — an entry naming no such box is a tree that contradicts itself. */
