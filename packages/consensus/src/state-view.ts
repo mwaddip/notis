@@ -71,9 +71,9 @@ export interface StateView {
    * StateView → "The lapses run voucher by voucher").
    */
   getLapsedVouches(limit: number): VouchBox[];
-  /** The `block_topology` author, or none. */
+  /** The post's recorded author — the post record under the state root (NODE_INTERFACE → Block Topology → "Block application reads the record, through the tree view"), or none. */
   getTopologyAuthor(postId: string): Uint8Array | null;
-  /** The `block_topology` height, or none. */
+  /** The post's recorded height — the post record under the state root (NODE_INTERFACE → Block Topology → "Block application reads the record, through the tree view"), or none. */
   getTopologyHeight(postId: string): number | null;
   getPostStanding(postId: string): PostStanding;
   /** Whether the `(target, liker)` like record exists. */

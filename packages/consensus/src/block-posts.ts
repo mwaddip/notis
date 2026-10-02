@@ -72,7 +72,9 @@ export interface BlockWithdrawal {
  *
  * `author` is the karma inputs' owner from the input boxes. The transaction's
  * own validation (the postWithdraw transition arm) has already verified that
- * `inputKarma.owner` equals the topology author.
+ * `inputKarma.owner` equals the post's recorded author (NODE_INTERFACE →
+ * Block Topology → "Block application reads the record, through the tree
+ * view").
  */
 export function withdrawalsOf(
   block: OrderingBlock,

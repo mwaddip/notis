@@ -167,7 +167,9 @@ export interface UtxoEngineDeps {
    * when no applied block has confirmed it.
    *
    * ⛔ **Consensus input, and the source is the whole of its correctness.** It
-   * reads `block_topology` and never `dag_posts.author` (ARCHITECTURE → Likes):
+   * reads the view's answer — the post record under the state root
+   * (NODE_INTERFACE → Block Topology → "Block application reads the record,
+   * through the tree view") — never `dag_posts.author` (ARCHITECTURE → Likes):
    * a placeholder row carries a zeroed author, so a marker built from the wrong
    * source earmarks the liker's karma to the zero key.
    *
@@ -182,7 +184,9 @@ export interface UtxoEngineDeps {
    * NODE_INTERFACE → Post transactions → "A reply's parent may still be pending
    * at admission." The post arm's fallback after `getTopologyAuthor` returns
    * null: the pending `dag_posts` row's author. Admission deps wire the real
-   * query; apply deps set `() => null` — at apply only `block_topology` is read.
+   * query; apply deps set `() => null` — at apply only the view's recorded
+   * answer is read (NODE_INTERFACE → Block Topology → "Block application
+   * reads the record, through the tree view").
    */
   getPendingPostAuthor: (postId: string) => Uint8Array | null;
   /** Wrap fn in a better-sqlite3 transaction. */
@@ -498,9 +502,12 @@ function checkTransitions(
               `${marker.value}`,
           };
         }
-        // ⛔ **Resolved from `block_topology`, never `dag_posts.author`** — a
-        // placeholder row carries a zeroed author, so a marker built from the
-        // wrong source earmarks the liker's karma to the zero key.
+        // ⛔ **Resolved from the view's recorded answer — the post record
+        // under the state root** (NODE_INTERFACE → Block Topology → "Block
+        // application reads the record, through the tree view"), never
+        // `dag_posts.author` — a placeholder row carries a zeroed author, so
+        // a marker built from the wrong source earmarks the liker's karma to
+        // the zero key.
         const author = deps.getTopologyAuthor(likeTarget);
         if (author === null) {
           return {
