@@ -23,7 +23,7 @@ const OWNER_HEX_LEN = 64;
 const OWNER_HEX = /^[0-9a-f]{64}$/i;
 
 /** A well-formed stateRoot is the 33-byte AVL+ digest in hex — the shape
- *  the header carries (TYPES_INTERFACE → Layout — Block header). */
+ *  the header carries (TYPES_INTERFACE → Layout — Block). */
 const STATE_ROOT_HEX = /^[0-9a-f]{66}$/i;
 
 /**
@@ -118,8 +118,8 @@ export async function proveRange(
     // well-formed root that is not the header's is `stale` — the node holds
     // another block at that height (WEB_INTERFACE → The extension → "A
     // `stateRoot` other than the header's at `tip` is no failed proof"); an
-    // answer of another shape is `unproven`, as a run of any shape ends in
-    // a status (WEB_INTERFACE → The extension → "The verified figures" —
+    // answer of another shape is `unproven`, as an answer of any shape ends
+    // in a status (WEB_INTERFACE → The extension → "The verified figures" —
     // "A run is total").
     const answerRoot = body['stateRoot'];
     if (typeof answerRoot !== 'string' || !STATE_ROOT_HEX.test(answerRoot)) {
