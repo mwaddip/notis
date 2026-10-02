@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Measures a block's proof against the tree it is made over (CONSENSUS_INTERFACE → Cost; CONSENSUS_INTERFACE → The
-// block proof) and the strict replay's time, for trees of 10^4, 10^5, 10^6 and 3*10^6 leaves. The block's shape is the
-// first row of the replay table by its counts — 3 156 one-signer credit sends: 9 468 lookups and 18 936 writes — the
-// lookups recorded as the node records them (`performLookupWithNeighbors`), then the writes, then `generateProof()`.
-// Each tree holds box records under `boxKey` and owner-index entries under `creditOfKey`, built through this package's
-// own key and record builders (`@dagsocial/types`), so the keys and values are the real widths. Each size names leaves:
-// `size / 2` boxes, each with its index entry, so the heading and the body agree. An odd size is refused.
+// block proof) and the strict replay's time, for trees of 2·10^4, 2·10^5, 10^6, 2·10^6 and 6·10^6 leaves. The block's
+// shape is the first row of the replay table by its counts — 3 156 one-signer credit sends: 9 468 lookups and 18 936
+// writes — the lookups recorded as the node records them (`performLookupWithNeighbors`), then the writes, then
+// `generateProof()`. Each tree holds box records under `boxKey` and owner-index entries under `creditOfKey`, built
+// through this package's own key and record builders (`@dagsocial/types`), so the keys and values are the real widths.
+// Each size names leaves: `size / 2` boxes, each with its index entry, so the heading and the body agree. An odd size
+// is refused.
 //
 // Per tree the script prints the proof's bytes, bytes per operation, the prover's time for the set, and the strict
 // replay's time — a `StrictBatchAVLVerifier` over the pre-state digest and the proof, the same lookups and writes
@@ -14,9 +15,9 @@
 //
 // The script reads this package's build and `@dagsocial/types`' key and record builders: `pnpm -r build` first, on
 // Node 22.18 or later. Runs on one CPU; a 10^6-leaf tree costs the order of a GB of RAM to hold and several minutes to
-// seed, and 3*10^6 the order of 15 minutes.
+// seed, and 6·10^6 several more.
 //
-// usage: node packages/consensus/scripts/bench-proof-size.mjs [sizes]  (sizes defaults to `20000,200000,2000000,6000000`)
+// usage: node packages/consensus/scripts/bench-proof-size.mjs [sizes]  (sizes defaults to `20000,200000,1000000,2000000,6000000`)
 import { createHash, randomBytes } from 'node:crypto';
 import { BatchAVLProver, StrictBatchAVLVerifier } from '@ergots/avltree';
 import {
@@ -28,7 +29,7 @@ import {
   creditOfKey,
 } from '@dagsocial/types';
 
-const DEFAULT_SIZES = [2e4, 2e5, 2e6, 6e6];
+const DEFAULT_SIZES = [2e4, 2e5, 1e6, 2e6, 6e6];
 const sizes = (process.argv[2] ?? DEFAULT_SIZES.join(','))
   .split(',')
   .map((s) => Number(s.trim()))
@@ -47,7 +48,9 @@ const WRITES_PER_TX = 6;
 const TOTAL_LOOKUPS = TXS * LOOKUPS_PER_TX;
 const TOTAL_WRITES = TXS * WRITES_PER_TX;
 
-/** A 32-byte owner derived from an index, so a run is deterministic in `size`. */
+/** A 32-byte owner derived from an index, so the owner set is reproducible for a given `size`.
+ *  Box ids come from `randomBytes` below — the tree only sees them under keys, so a run's
+ *  prover and replayer agree on their value, not on their byte sequence across runs. */
 const ownerOf = (i) => {
   const h = createHash('blake2b512').update(`dagsocial/bench-proof-size/owner/${i}`).digest();
   return new Uint8Array(h.subarray(0, 32));
