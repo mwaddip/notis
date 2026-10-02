@@ -151,6 +151,25 @@ export async function getBlock(
   return jsonGet(node, `/blocks/${height}`);
 }
 
+// NODE_INTERFACE → Blocks — the header fields a proof route's reader anchors
+// at: `height` and `stateRoot`. 404 is `null`; other non-2xx throws.
+export interface BlockHeaderView {
+  readonly height: number;
+  readonly stateRoot: string;
+}
+
+export async function getBlockHeader(
+  node: NodeProcess,
+  height: number,
+): Promise<BlockHeaderView | null> {
+  const res = await fetch(`${node.url}/blocks/${height}`);
+  if (res.status === 404) return null;
+  const data = await res.json();
+  if (!res.ok) throw new NodeError(res.status, data as Record<string, unknown>);
+  const block = data as { header: BlockHeaderView };
+  return { height: block.header.height, stateRoot: block.header.stateRoot };
+}
+
 export async function getBlockCurrent(
   node: NodeProcess,
 ): Promise<{ height: number; hash: string | null }> {
