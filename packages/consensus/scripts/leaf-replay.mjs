@@ -55,7 +55,7 @@ export function replay(block, parentDigest, proof, digest, ctx, batch) {
   // CONSENSUS_INTERFACE → The tree session → "A block replays from its proof
   // only on all of these" — asked once, after the last write and the digest.
   if (!verifier.isFullyConsumed()) {
-    throw new Error('the proof carries bytes the replay did not consume');
+    throw new Error('the proof is not byte for byte the proof its operations write');
   }
   const batchStart = performance.now();
   const verified = verifyEd25519Batch(batch);

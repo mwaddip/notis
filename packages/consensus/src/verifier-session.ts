@@ -16,7 +16,7 @@ import type { TreeLookup, TreeSession } from './tree-session.js';
  *
  * A `null` neighbour is the sentinel — all `0x00` below the first key, all
  * `0xff` past the last — a fresh array each, so every answer is the view's to
- * keep. A `{ success: false }` is fatal to the block: it throws, naming the
+ * keep. A `{ success: false }` is fatal to the proof: it throws, naming the
  * verifier's `getLastFailReason()`, and the verifier stays poisoned. A key the
  * library refuses by its shape is the library's throw.
  */

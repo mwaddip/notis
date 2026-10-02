@@ -111,8 +111,8 @@ export function proveBlock(
  * the writes derived over the same view and performed on the verifier, and the
  * digest they reach. A write the verifier refuses throws, naming its reason.
  * The verifier is `StrictBatchAVLVerifier`, so `isFullyConsumed()` is asked
- * once, after the last write and the digest, and a replay whose proof carries
- * bytes it did not consume throws
+ * once, after the last write and the digest, and a replay whose proof is not
+ * byte for byte the proof its operations write throws
  * (CONSENSUS_INTERFACE → The tree session → "A block replays from its proof
  * only on all of these").
  */
@@ -132,7 +132,7 @@ export function replayBlock(
   }
   const digest = verifier.digest();
   if (digest !== null && !verifier.isFullyConsumed()) {
-    throw new Error("the block's proof carries bytes the replay did not consume");
+    throw new Error("the block's proof is not byte for byte the proof its operations write");
   }
   return { ...run, keys: log.keys, answers: log.answers, digest };
 }

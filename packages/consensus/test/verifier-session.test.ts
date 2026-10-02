@@ -400,7 +400,7 @@ describe('replayBlock — the proof is consumed exactly', () => {
 
     // The strict helper refuses — isFullyConsumed() is what adds this check.
     expect(() => replayBlock(parent.digest, padded, block, ctx))
-      .toThrow('bytes the replay did not consume');
+      .toThrow('is not byte for byte the proof its operations write');
   });
 });
 
