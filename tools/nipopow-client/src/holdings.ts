@@ -5,6 +5,7 @@ import { holdingsPage, treeStateView, verifierSession } from '@dagsocial/consens
 import type { HoldingKind } from '@dagsocial/consensus';
 import type { HttpFetch } from './http.js';
 import { base64ToBytes, capped, fetchJson, isRecord, shown } from './http.js';
+export type { HoldingKind };
 
 /**
  * The page size this client asks the node for. A node may answer with any
@@ -23,23 +24,17 @@ const OWNER_HEX = /^[0-9a-f]{64}$/i;
 
 /**
  * The outcome of one call to `proveRange`: the full range's boxes under one
- * header, or the first failure's status and verdict. A `no-proof` or
- * `unproven` is the answer for the whole range — no box of a range that did
+ * header, or the first failure's status and verdict. A `no-proof`, `unproven`
+ * or `stale` is the answer for the whole range — no box of a range that did
  * not finish is answered (WEB_INTERFACE → The extension → "The verified
- * figures").
+ * figures"). `stale` names a `stateRoot` other than the header's: the node
+ * holds another block at that height, so no proof under the anchor's root
+ * backs the ledger (WEB_INTERFACE → The extension → "A `stateRoot` other than
+ * the header's at `tip` is no failed proof").
  */
 export type RangeResult =
   | { ok: true; boxes: AnyBox[] }
-  | { ok: false; status: 'unproven' | 'no-proof'; verdict: string };
-
-/**
- * The outcome of one call to `proveHoldings`: a record from each asked kind
- * to its proven boxes, or the first failure. A ledger not asked for carries
- * `undefined` in the result.
- */
-export type HoldingsResult =
-  | { ok: true; boxes: Record<HoldingKind, AnyBox[] | undefined> }
-  | { ok: false; status: 'unproven' | 'no-proof'; verdict: string };
+  | { ok: false; status: 'unproven' | 'no-proof' | 'stale'; verdict: string };
 
 /**
  * NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the range route" — one
@@ -115,10 +110,13 @@ export async function proveRange(
       return { ok: false, status: 'unproven', verdict: `page body is not an object: ${shown(body)}` };
     }
 
-    // The answer's `stateRoot` is the header's before the proof is read.
+    // The answer's `stateRoot` is the header's before the proof is read. A
+    // mismatch is `stale` — the node holds another block at that height
+    // (WEB_INTERFACE → The extension → "A `stateRoot` other than the header's
+    // at `tip` is no failed proof").
     const answerRoot = body['stateRoot'];
     if (answerRoot !== header.stateRoot) {
-      return { ok: false, status: 'unproven', verdict: 'stateRoot mismatch' };
+      return { ok: false, status: 'stale', verdict: `node answers another block at height ${atHeight}: stateRoot ${shown(answerRoot)}` };
     }
 
     const answerLimit = body['limit'];
@@ -158,37 +156,6 @@ export async function proveRange(
     if (page.next === null) return { ok: true, boxes };
     from = page.next;
   }
-}
-
-/**
- * NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the range route" — the
- * key's holdings of several kinds at one height, in the order given. The
- * first failure answers the run; no later kind is read. An `owner` that is
- * not 64 hex is `unproven` with no request made.
- */
-export async function proveHoldings(
-  nodeUrl: string,
-  owner: string,
-  kinds: readonly HoldingKind[],
-  header: { height: number; stateRoot: string },
-  httpFetch: HttpFetch,
-): Promise<HoldingsResult> {
-  if (typeof owner !== 'string' || !OWNER_HEX.test(owner)) {
-    return { ok: false, status: 'unproven', verdict: `owner is not ${OWNER_HEX_LEN} hex: ${shown(owner)}` };
-  }
-  const boxes: Record<HoldingKind, AnyBox[] | undefined> = {
-    karma: undefined,
-    credit: undefined,
-    escrow: undefined,
-    vouch: undefined,
-    accrual: undefined,
-  };
-  for (const kind of kinds) {
-    const r = await proveRange(nodeUrl, kind, owner, header, httpFetch);
-    if (!r.ok) return r;
-    boxes[kind] = r.boxes;
-  }
-  return { ok: true, boxes };
 }
 
 // A page's `limit` is an integer from 1 to the limit asked

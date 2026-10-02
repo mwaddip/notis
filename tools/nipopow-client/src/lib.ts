@@ -4,7 +4,7 @@
 export { resolveTip } from './tip.js';
 export type { TipResult, NodeTipResult } from './tip.js';
 
-export { fetchListing, proveFigures, proveBoxes } from './boxes.js';
+export { fetchListing, proveFigures } from './boxes.js';
 export type {
   ListedBox,
   Listing,
@@ -18,8 +18,8 @@ export type {
   HoldingsRead,
 } from './boxes.js';
 
-export { proveHoldings, proveRange } from './holdings.js';
-export type { HoldingsResult, RangeResult } from './holdings.js';
+export { proveRange } from './holdings.js';
+export type { RangeResult, HoldingKind } from './holdings.js';
 
 export { proveName } from './names.js';
 export type { NameClaim, NameStatus, NameResult } from './names.js';

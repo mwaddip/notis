@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fetchListing, proveBoxes, proveFigures } from '../src/boxes.js';
+import { fetchListing, proveFigures } from '../src/boxes.js';
 import type { Listing } from '../src/boxes.js';
 import type { HttpFetch } from '../src/http.js';
 import {
@@ -24,20 +24,19 @@ import type { IdentityRecord, UserId } from '@dagsocial/types';
 // WEB_INTERFACE → The extension → "The verified figures" — proveFigures reads
 // the key's holdings whole, by range, at `suffixHead` and at `tip`, then
 // judges the listing against them. This file covers:
-//   - each class (`proven`, `young`, `absent`, `unchecked`, `unlisted`)
-//     over the two heights' holdings;
+//   - each class (`proven`, `young`, `absent`, `unchecked`, `unlisted`,
+//     `undecided`) over the two heights' holdings;
 //   - the record proven/absent/unproven/no-proof paths at `suffixHead`;
-//   - the valuation at `listing.karma.height`;
+//   - the valuation at `listing.karma.height`, bounded between `tip.height`
+//     and `heightAfter`;
 //   - a ledger whose `listing.credits` is `null` (not read);
 //   - a holdings read failing at `suffixHead` or at `tip`;
+//   - a `stale` tip read: listed boxes `unchecked`, nothing `unlisted` or
+//     `undecided` of it, the ledger not failed;
 //   - the AVL proof blob decode's totality;
 //   - the run's call order: record at `suffixHead`, then the ranges, then
 //     `/blocks/current`;
-//   - `fetchListing` paged reads and failure cases;
-//   - `proveBoxes` composition.
-// The per-box proof walk the OLD rule took is retired: `proveFigures` no
-// longer asks `/api/v1/proof/<boxKey>` for a listed box, so cases that pinned
-// that behaviour move to `test/holdings.test.ts` or go.
+//   - `fetchListing` paged reads and failure cases.
 
 const USER_HEX = 'ab'.repeat(32);
 const USER_BYTES = hexToBytes(USER_HEX) as UserId;
@@ -121,7 +120,7 @@ describe('proveFigures — each class in turn, over the two heights\' ranges', (
     const anchor = makeAnchor(TIP_H, fixture.stateRoot, SUFFIX_H, fixture.stateRoot);
     const node = twoHeightNode({ suffix: fixture, suffixHeight: SUFFIX_H, tip: fixture, tipHeight: TIP_H, heightAfter: TIP_H });
     const listing: Listing = {
-      karma: { boxes: [{ boxId: karma.id!, value: '100' }], height: SUFFIX_H, effective: '100' },
+      karma: { boxes: [{ boxId: karma.id!, value: '100' }], height: TIP_H, effective: '100' },
       credits: { boxes: [] },
     };
     const result = await proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), node.fetch);
@@ -200,14 +199,21 @@ describe('proveFigures — each class in turn, over the two heights\' ranges', (
     });
     const anchor = makeAnchor(TIP_H, emptyFixture.stateRoot, SUFFIX_H, emptyFixture.stateRoot);
     const node = twoHeightNode({ suffix: emptyFixture, suffixHeight: SUFFIX_H, tip: emptyFixture, tipHeight: TIP_H, heightAfter: TIP_H - 3 });
+    // The listing's height is TIP_H - 3, below the anchor's tip: the valuation
+    // range (`tip.height` .. `heightAfter`) collapses to the one point
+    // TIP_H - 3, so the listing's height stays inside and the box is still
+    // `unchecked` against the empty tip range.
     const listing: Listing = {
-      karma: { boxes: [{ boxId: absentBoxId, value: '7' }], height: TIP_H, effective: '7' },
+      karma: { boxes: [{ boxId: absentBoxId, value: '7' }], height: TIP_H - 3, effective: '7' },
       credits: { boxes: [] },
     };
     const result = await proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), node.fetch);
+    // The valuation is still refused — listing.height < tip.height — so
+    // effective is null and the run `failed`, as D4 requires.
     expect(result.boxes.map((b) => b.status)).toEqual(['unchecked']);
     expect(result.heightAfter).toBe(TIP_H - 3);
-    expect(result.failed).toBe(false);
+    expect(result.karma.effective).toBeNull();
+    expect(result.failed).toBe(true);
   });
 
   it('unchecked — /blocks/current unavailable', async () => {
@@ -290,9 +296,8 @@ describe('proveFigures — each class in turn, over the two heights\' ranges', (
 
   it.each([
     ['above the tip', TIP_H + 1],
-    ['below the tip', TIP_H - 1],
     ['unread', null],
-  ])('a held, unlisted karma box with heightAfter %s: no FigureBox, every sum zero, failed false', async (_name, heightAfter) => {
+  ])('a held, unlisted karma box with heightAfter %s: an undecided FigureBox, undecided sum = box value, failed false', async (_name, heightAfter) => {
     const held = karmaBoxFor(USER_BYTES, 42n, 1);
     const fixture = buildHoldingsFixture({
       boxes: [held],
@@ -305,22 +310,52 @@ describe('proveFigures — each class in turn, over the two heights\' ranges', (
       credits: { boxes: [] },
     };
     const result = await proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), node.fetch);
-    expect(result.boxes).toEqual([]);
-    expect(result.karma.proven).toBe(0n);
-    expect(result.karma.young).toBe(0n);
-    expect(result.karma.unchecked).toBe(0n);
-    expect(result.karma.absent).toBe(0n);
+    // The held karma box the listing lacks reads `undecided`: a block may
+    // have spent it or the node withheld it, and the run cannot say
+    // (WEB_INTERFACE → The extension → "The verified figures" — "`undecided`
+    // — held at `tip`, named nowhere in the listing of its ledger, and
+    // `heightAfter` not `tip.height`"). The sum rides apart; failed stays
+    // false — the run cannot decide what no block has refuted.
+    expect(result.boxes.map((b) => b.status)).toEqual(['undecided']);
+    expect(result.boxes[0]!.boxId).toBe(held.id!);
+    expect(result.boxes[0]!.value).toBe(42n);
+    expect(result.karma.undecided).toBe(42n);
     expect(result.karma.unlisted).toBe(0n);
     expect(result.failed).toBe(false);
+  });
+
+  // D4 — a listing height below `tip.height` is outside the valuation range
+  // (WEB_INTERFACE → The extension → "The verified figures" — "That height is
+  // the node's word, and is taken only from `tip.height` to `heightAfter`"),
+  // so the run `failed` on the valuation; the held karma box still reads
+  // `undecided`.
+  it('a held, unlisted karma box with heightAfter below the tip reads undecided, and the run fails on the valuation range', async () => {
+    const held = karmaBoxFor(USER_BYTES, 42n, 1);
+    const fixture = buildHoldingsFixture({
+      boxes: [held],
+      records: [{ identityId: USER_BYTES, record: RECORD_STANDING }],
+    });
+    const anchor = makeAnchor(TIP_H, fixture.stateRoot, SUFFIX_H, fixture.stateRoot);
+    const node = twoHeightNode({ suffix: fixture, suffixHeight: SUFFIX_H, tip: fixture, tipHeight: TIP_H, heightAfter: TIP_H - 1 });
+    const listing: Listing = {
+      karma: { boxes: [], height: TIP_H, effective: '0' },
+      credits: { boxes: [] },
+    };
+    const result = await proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), node.fetch);
+    expect(result.boxes.map((b) => b.status)).toEqual(['undecided']);
+    expect(result.karma.undecided).toBe(42n);
+    expect(result.karma.effective).toBeNull();
+    expect(result.failed).toBe(true);
   });
 
   // WEB_INTERFACE → The extension → "The verified figures" — the reader's own
   // send: the listing was built after the anchor and holds the change box; the
   // chain holds the input the send spent, not the change box, and one block
-  // landed since. `absent`'s guard — a held box the listing lacks is in no
-  // class and no `FigureBox` when `heightAfter` is not `tip.height` — is what
-  // keeps the input out of the figures.
-  it('the reader\'s own send: change is unchecked, input is in no class, failed false', async () => {
+  // landed since. The input box the listing lacks reads `undecided` — a block
+  // landed and may have spent it or the node withheld it; the run cannot say
+  // which. The change box the chain does not hold reads `unchecked` where
+  // `heightAfter` is above the tip. The run does not `failed`.
+  it('the reader\'s own send: change is unchecked, the spent input is undecided, failed false', async () => {
     const inputBox = creditBoxFor(USER_BYTES, 100n, 1);
     const changeBoxId = 'aa'.repeat(32);
     const fixture = buildHoldingsFixture({
@@ -335,8 +370,13 @@ describe('proveFigures — each class in turn, over the two heights\' ranges', (
       credits: { boxes: [{ boxId: changeBoxId, value: '100' }] },
     };
     const result = await proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), node.fetch);
-    expect(result.boxes.map((b) => b.status)).toEqual(['unchecked']);
+    expect(result.boxes.map((b) => [b.boxClass, b.status])).toEqual([
+      ['credit', 'unchecked'],
+      ['credit', 'undecided'],
+    ]);
     expect(result.boxes[0]!.boxId).toBe(changeBoxId);
+    expect(result.boxes[1]!.boxId).toBe(inputBox.id!);
+    expect(result.credits.undecided).toBe(100n);
     expect(result.failed).toBe(false);
   });
 });
@@ -610,7 +650,7 @@ describe('proveFigures — a listing whose credits is null is not read', () => {
     const result = await proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), node.fetch);
     // No credit request was made.
     expect(node.calls.filter((c) => c.includes('/range/credit/'))).toEqual([]);
-    expect(result.credits).toEqual({ proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'not-read', holdingsVerdict: null });
+    expect(result.credits).toEqual({ proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, holdings: 'not-read', holdingsVerdict: null });
     expect(result.karma.holdings).toBe('read');
   });
 });
@@ -621,8 +661,8 @@ describe('proveFigures — a holdings read failure', () => {
     const fetch: HttpFetch = async (url: string): Promise<Response> => {
       const u = new URL(url);
       if (u.pathname === '/api/v1/proof/' + RECORD_KEY) {
-        // Record proven; the fixture doesn't matter here since the range
-        // read fails and no listing-box replay runs.
+        // The record route answers 500 — the record lands `no-proof`; the
+        // range read fails below, so no listing-box replay runs.
         return jsonResponse(500, { error: 'internal' });
       }
       if (u.pathname.startsWith('/api/v1/range/')) {
@@ -840,8 +880,12 @@ describe('proveFigures — effective karma', () => {
       records: [{ identityId: USER_BYTES, record: RECORD_STANDING }],
     });
     const listingHeight = 300;
-    const anchor = makeAnchor(TIP_H, fixture.stateRoot, SUFFIX_H, fixture.stateRoot);
-    const node = twoHeightNode({ suffix: fixture, suffixHeight: SUFFIX_H, tip: fixture, tipHeight: TIP_H, heightAfter: TIP_H });
+    // The listing's height values rep only inside `tip.height` to
+    // `heightAfter` (WEB_INTERFACE → The extension → "The verified
+    // figures"), so the anchor and the node's `/blocks/current` here reach
+    // out to listingHeight for the valuation to run.
+    const anchor = makeAnchor(listingHeight, fixture.stateRoot, SUFFIX_H, fixture.stateRoot);
+    const node = twoHeightNode({ suffix: fixture, suffixHeight: SUFFIX_H, tip: fixture, tipHeight: listingHeight, heightAfter: listingHeight });
 
     const listing: Listing = {
       karma: { boxes: [{ boxId: karma.id!, value: '200' }], height: listingHeight, effective: '200' },
@@ -864,8 +908,10 @@ describe('proveFigures — effective karma', () => {
       boxes: [karma],
       records: [{ identityId: USER_BYTES, record: staleRecord }],
     });
-    const anchor = makeAnchor(TIP_H, fixture.stateRoot, SUFFIX_H, fixture.stateRoot);
-    const node = twoHeightNode({ suffix: fixture, suffixHeight: SUFFIX_H, tip: fixture, tipHeight: TIP_H, heightAfter: TIP_H });
+    // The listing's height must lie between `tip.height` and `heightAfter`
+    // for the valuation to run (D4); anchor at listingHeight.
+    const anchor = makeAnchor(listingHeight, fixture.stateRoot, SUFFIX_H, fixture.stateRoot);
+    const node = twoHeightNode({ suffix: fixture, suffixHeight: SUFFIX_H, tip: fixture, tipHeight: listingHeight, heightAfter: listingHeight });
 
     const listing: Listing = {
       karma: { boxes: [{ boxId: karma.id!, value: '1000' }], height: listingHeight, effective: '999' },
@@ -1029,43 +1075,199 @@ describe('fetchListing — paged reads', () => {
   });
 });
 
-describe('proveBoxes — composes fetchListing and proveFigures', () => {
-  it('a listing followed by a proven karma box', async () => {
-    const karma = karmaBoxFor(USER_BYTES, 15n, 1);
-    const fixture = buildHoldingsFixture({
+// WEB_INTERFACE → The extension → "The verified figures" — the `undecided`
+// rule. Fixed listing and proofs; only `heightAfter` moves. At `tip.height`,
+// the held box the listing lacks reads `unlisted` and `failed` is true. At
+// another height — a block landed, or unread — it reads `undecided`, apart
+// from the five sums, and `failed` stays false.
+describe("proveFigures — a held box the listing lacks is undecided at a height the anchor's tip did not match", () => {
+  const held = karmaBoxFor(USER_BYTES, 12n, 1);
+  const fixture = buildHoldingsFixture({
+    boxes: [held],
+    records: [{ identityId: USER_BYTES, record: RECORD_STANDING }],
+  });
+  const anchor = makeAnchor(TIP_H, fixture.stateRoot, SUFFIX_H, fixture.stateRoot);
+
+  function run(heightAfter: number | null, karmaBoxes: Listing['karma']['boxes']) {
+    const node = twoHeightNode({ suffix: fixture, suffixHeight: SUFFIX_H, tip: fixture, tipHeight: TIP_H, heightAfter });
+    const listing: Listing = {
+      karma: { boxes: karmaBoxes, height: TIP_H, effective: '0' },
+      credits: { boxes: [] },
+    };
+    return proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), node.fetch);
+  }
+
+  it('under a non-empty listing: heightAfter == tip reads unlisted and failed; tip + 1 reads undecided, failed false', async () => {
+    const other = karmaBoxFor(USER_BYTES, 1n, 2);
+    const twoBoxFixture = buildHoldingsFixture({
+      boxes: [held, other],
+      records: [{ identityId: USER_BYTES, record: RECORD_STANDING }],
+    });
+    const anchor2 = makeAnchor(TIP_H, twoBoxFixture.stateRoot, SUFFIX_H, twoBoxFixture.stateRoot);
+    const listing: Listing = {
+      karma: { boxes: [{ boxId: other.id!, value: '1' }], height: TIP_H, effective: '1' },
+      credits: { boxes: [] },
+    };
+    const atTip = await proveFigures('http://a', USER_HEX, listing, anchor2, devnetProfile(),
+      twoHeightNode({ suffix: twoBoxFixture, suffixHeight: SUFFIX_H, tip: twoBoxFixture, tipHeight: TIP_H, heightAfter: TIP_H }).fetch);
+    expect(atTip.boxes.map((b) => b.status)).toEqual(['proven', 'unlisted']);
+    expect(atTip.karma.unlisted).toBe(12n);
+    expect(atTip.karma.undecided).toBe(0n);
+    expect(atTip.failed).toBe(true);
+
+    const atTipPlus1 = await proveFigures('http://a', USER_HEX, listing, anchor2, devnetProfile(),
+      twoHeightNode({ suffix: twoBoxFixture, suffixHeight: SUFFIX_H, tip: twoBoxFixture, tipHeight: TIP_H, heightAfter: TIP_H + 1 }).fetch);
+    expect(atTipPlus1.boxes.map((b) => b.status)).toEqual(['proven', 'undecided']);
+    expect(atTipPlus1.karma.unlisted).toBe(0n);
+    expect(atTipPlus1.karma.undecided).toBe(12n);
+    expect(atTipPlus1.failed).toBe(false);
+  });
+
+  it('under an empty listing: heightAfter == tip reads unlisted and failed; tip + 1 reads undecided; unread reads undecided', async () => {
+    const atTip = await run(TIP_H, []);
+    expect(atTip.boxes.map((b) => b.status)).toEqual(['unlisted']);
+    expect(atTip.karma.unlisted).toBe(12n);
+    expect(atTip.failed).toBe(true);
+
+    const atTipPlus1 = await run(TIP_H + 1, []);
+    expect(atTipPlus1.boxes.map((b) => b.status)).toEqual(['undecided']);
+    expect(atTipPlus1.karma.undecided).toBe(12n);
+    expect(atTipPlus1.karma.unlisted).toBe(0n);
+    expect(atTipPlus1.failed).toBe(false);
+
+    const unread = await run(null, []);
+    expect(unread.boxes.map((b) => b.status)).toEqual(['undecided']);
+    expect(unread.karma.undecided).toBe(12n);
+    expect(unread.failed).toBe(false);
+  });
+});
+
+// WEB_INTERFACE → The extension → "The verified figures" — "A `stateRoot`
+// other than the header's at `tip` is no failed proof". At `tip` the ledger
+// is `stale`, every listed box of it `unchecked`, nothing `unlisted` or
+// `undecided` of it, and `failed` is not set by the stale. The other
+// ledger's reads are untouched.
+describe("proveFigures — a tip range answering another block's state is stale, not unproven", () => {
+  it("a credit tip range whose stateRoot is not the header's: credits stale, boxes unchecked, karma reads, failed false", async () => {
+    const karma = karmaBoxFor(USER_BYTES, 100n, 1);
+    const credit = creditBoxFor(USER_BYTES, 50n, 2);
+    const otherCredit = creditBoxFor(USER_BYTES, 60n, 3);
+    const fixtureA = buildHoldingsFixture({
+      boxes: [karma, credit],
+      records: [{ identityId: USER_BYTES, record: RECORD_STANDING }],
+    });
+    // A different fixture (another `stateRoot`) answers the credit tip read.
+    const fixtureB = buildHoldingsFixture({
+      boxes: [karma, otherCredit],
+      records: [{ identityId: USER_BYTES, record: RECORD_STANDING }],
+    });
+    const anchor = makeAnchor(TIP_H, fixtureA.stateRoot, SUFFIX_H, fixtureA.stateRoot);
+    const fetch: HttpFetch = async (url: string): Promise<Response> => {
+      const u = new URL(url);
+      const m = u.pathname.match(/^\/api\/v1\/range\/([a-z]+)\/[0-9a-f]{64}$/);
+      if (m && m[1] === 'credit' && Number(u.searchParams.get('atHeight')) === TIP_H) {
+        const limit = Number(u.searchParams.get('limit') ?? '256');
+        return jsonResponse(200, rangeAnswerFromProver(fixtureB.prover, fixtureB.stateRoot, TIP_H, 'credit', USER_BYTES, null, limit));
+      }
+      return twoHeightNode({ suffix: fixtureA, suffixHeight: SUFFIX_H, tip: fixtureA, tipHeight: TIP_H, heightAfter: TIP_H }).fetch(url);
+    };
+    const listing: Listing = {
+      karma: { boxes: [{ boxId: karma.id!, value: '100' }], height: TIP_H, effective: '100' },
+      credits: { boxes: [{ boxId: credit.id!, value: '50' }] },
+    };
+    const result = await proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), fetch);
+    expect(result.credits.holdings).toBe('stale');
+    expect(result.boxes.map((b) => [b.boxClass, b.status])).toEqual([
+      ['karma', 'proven'],
+      ['credit', 'unchecked'],
+    ]);
+    expect(result.credits.unlisted).toBe(0n);
+    expect(result.credits.undecided).toBe(0n);
+    expect(result.credits.unchecked).toBe(50n);
+    expect(result.karma.holdings).toBe('read');
+    expect(result.karma.proven).toBe(100n);
+    expect(result.failed).toBe(false);
+  });
+
+  it("a credit suffix range whose stateRoot is not the header's: credits unproven at suffixHead, karma reads, failed true", async () => {
+    const karma = karmaBoxFor(USER_BYTES, 100n, 1);
+    const credit = creditBoxFor(USER_BYTES, 50n, 2);
+    const fixtureA = buildHoldingsFixture({
+      boxes: [karma, credit],
+      records: [{ identityId: USER_BYTES, record: RECORD_STANDING }],
+    });
+    const fixtureB = buildHoldingsFixture({
       boxes: [karma],
       records: [{ identityId: USER_BYTES, record: RECORD_STANDING }],
     });
-    const anchor = makeAnchor(TIP_H, fixture.stateRoot, SUFFIX_H, fixture.stateRoot);
-    const node = twoHeightNode({ suffix: fixture, suffixHeight: SUFFIX_H, tip: fixture, tipHeight: TIP_H, heightAfter: TIP_H });
-
-    // Add karma/credits listing routes to the fetch
+    const anchor = makeAnchor(TIP_H, fixtureA.stateRoot, SUFFIX_H, fixtureA.stateRoot);
     const fetch: HttpFetch = async (url: string): Promise<Response> => {
       const u = new URL(url);
-      if (u.pathname === `/karma/${USER_HEX}`) {
-        return jsonResponse(200, karmaPage([{ boxId: karma.id!, value: '15' }], { height: SUFFIX_H, effective: '15' }));
+      const m = u.pathname.match(/^\/api\/v1\/range\/([a-z]+)\/[0-9a-f]{64}$/);
+      if (m && m[1] === 'credit' && Number(u.searchParams.get('atHeight')) === SUFFIX_H) {
+        const limit = Number(u.searchParams.get('limit') ?? '256');
+        return jsonResponse(200, rangeAnswerFromProver(fixtureB.prover, fixtureB.stateRoot, SUFFIX_H, 'credit', USER_BYTES, null, limit));
       }
-      if (u.pathname === `/credits/${USER_HEX}`) return jsonResponse(200, creditPage([]));
-      return node.fetch(url);
+      return twoHeightNode({ suffix: fixtureA, suffixHeight: SUFFIX_H, tip: fixtureA, tipHeight: TIP_H, heightAfter: TIP_H }).fetch(url);
     };
+    const listing: Listing = {
+      karma: { boxes: [{ boxId: karma.id!, value: '100' }], height: TIP_H, effective: '100' },
+      credits: { boxes: [{ boxId: credit.id!, value: '50' }] },
+    };
+    const result = await proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), fetch);
+    expect(result.credits.holdings).toBe('unproven');
+    expect(result.boxes.map((b) => [b.boxClass, b.status])).toEqual([
+      ['karma', 'proven'],
+      ['credit', 'unproven'],
+    ]);
+    expect(result.karma.holdings).toBe('read');
+    expect(result.failed).toBe(true);
+  });
+});
 
-    const result = await proveBoxes('http://a', USER_HEX, anchor, devnetProfile(), fetch);
-    expect(result.failed).toBe(false);
-    expect(result.boxes[0]!.status).toBe('proven');
-    expect(result.karma.proven).toBe(15n);
+// WEB_INTERFACE → The extension → "The verified figures" — "That height is
+// the node's word, and is taken only from `tip.height` to `heightAfter`". A
+// listing height below `tip.height`, or above `heightAfter` where
+// `heightAfter` was read, fails the valuation.
+describe('proveFigures — the valuation is bounded between tip.height and heightAfter', () => {
+  const karma = karmaBoxFor(USER_BYTES, 100n, 1);
+  const fixture = buildHoldingsFixture({
+    boxes: [karma],
+    records: [{ identityId: USER_BYTES, record: RECORD_STANDING }],
   });
 
-  it("a listing failure lands as failed:true with no boxes and both holdings 'not-read'", async () => {
-    const anchor = makeAnchor(TIP_H, '00'.repeat(33), SUFFIX_H, '00'.repeat(33));
-    const fetch = makeFetch((path) => {
-      if (path === `/karma/${USER_HEX}`) return jsonResponse(500, { error: 'internal' });
-      return undefined;
-    });
-    const result = await proveBoxes('http://a', USER_HEX, anchor, devnetProfile(), fetch);
-    expect(result.failed).toBe(true);
-    expect(result.boxes.length).toBe(0);
-    expect(result.karma.holdings).toBe('not-read');
-    expect(result.credits.holdings).toBe('not-read');
+  function runWith(listingHeight: number, heightAfter: number | null) {
+    const anchor = makeAnchor(TIP_H, fixture.stateRoot, SUFFIX_H, fixture.stateRoot);
+    const node = twoHeightNode({ suffix: fixture, suffixHeight: SUFFIX_H, tip: fixture, tipHeight: TIP_H, heightAfter });
+    const listing: Listing = {
+      karma: { boxes: [{ boxId: karma.id!, value: '100' }], height: listingHeight, effective: '100' },
+      credits: null,
+    };
+    return proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), node.fetch);
+  }
+
+  it('listing height below tip.height: effective null, failed true', async () => {
+    const r = await runWith(TIP_H - 1, TIP_H);
+    expect(r.karma.effective).toBeNull();
+    expect(r.failed).toBe(true);
+  });
+
+  it('listing height above heightAfter: effective null, failed true', async () => {
+    const r = await runWith(TIP_H + 2, TIP_H + 1);
+    expect(r.karma.effective).toBeNull();
+    expect(r.failed).toBe(true);
+  });
+
+  it('heightAfter unread, listing height at tip.height: effective is a value, failed false', async () => {
+    const r = await runWith(TIP_H, null);
+    expect(r.karma.effective).not.toBeNull();
+    expect(r.failed).toBe(false);
+  });
+
+  it('heightAfter unread, listing height above tip.height: effective is a value, failed false', async () => {
+    const r = await runWith(TIP_H + 100, null);
+    expect(r.karma.effective).not.toBeNull();
+    expect(r.failed).toBe(false);
   });
 });
 

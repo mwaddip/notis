@@ -3,7 +3,7 @@ import type { BatchAVLProver } from '@ergots/avltree';
 import { hexToBytes } from '@dagsocial/types';
 import type { AnyBox, UserId } from '@dagsocial/types';
 import type { HoldingKind } from '@dagsocial/consensus';
-import { proveHoldings, proveRange } from '../src/holdings.js';
+import { proveRange } from '../src/holdings.js';
 import type { HttpFetch } from '../src/http.js';
 import {
   buildHoldingsFixture,
@@ -13,14 +13,14 @@ import {
   rangeAnswerFromProver,
 } from './helpers.js';
 
-// `proveRange` and `proveHoldings` (NODE_INTERFACE → AVL+ State Root →
-// "avl-endpoint, the range route"; CONSENSUS_INTERFACE → The holdings page).
-// Each test wires a
+// `proveRange` (NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the range
+// route"; CONSENSUS_INTERFACE → The holdings page). Each test wires a
 // `httpFetch` that answers `GET /api/v1/range/<kind>/<owner>?atHeight=N&
 // from=K&limit=L` from a real `BatchAVLProver` — what the node's route does.
 // Every lookup replays through `verifierSession` on the answered proof: a
-// malformed body, a wrong `stateRoot`, a non-base64 proof or a limit outside
-// `[1, 256]` is `unproven`; a transport failure or a non-2xx is `no-proof`.
+// malformed body, a non-base64 proof or a limit outside `[1, 256]` is
+// `unproven`; an answer whose `stateRoot` is not the header's is `stale`;
+// a transport failure or a non-2xx is `no-proof`.
 
 const OWNER_HEX = 'ab'.repeat(32);
 const OWNER = hexToBytes(OWNER_HEX) as UserId;
@@ -123,8 +123,8 @@ describe('proveRange — a kind\'s whole range at one height', () => {
   });
 });
 
-describe('proveRange — a wrong stateRoot is unproven, and the proof is never decoded', () => {
-  it('a header stateRoot other than the answer\'s is unproven; no proof decode runs', async () => {
+describe("proveRange — a stateRoot other than the header's is stale, read before the proof", () => {
+  it("a header stateRoot other than the answer's is stale, with the node named as answering another block", async () => {
     const { prover, stateRoot } = buildHoldingsFixture({ boxes: [karmaBoxFor(OWNER, 5n, 1)] });
     const differentRoot = '00'.repeat(33);
     // A fetch that answers the real proof but under the ANSWER's stateRoot.
@@ -144,7 +144,32 @@ describe('proveRange — a wrong stateRoot is unproven, and the proof is never d
     };
 
     const result = await proveRange('http://a', 'karma', OWNER_HEX, { height: HEIGHT, stateRoot: differentRoot }, fetch);
-    expect(result).toEqual({ ok: false, status: 'unproven', verdict: 'stateRoot mismatch' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe('stale');
+      expect(result.verdict).toContain(`height ${HEIGHT}`);
+    }
+  });
+
+  it("a stateRoot other than the header's is read before the proof: the stale verdict wins over a non-base64 proof", async () => {
+    // The answer carries both a wrong `stateRoot` AND a non-base64 `proof`.
+    // The root check runs before the proof decode, so the status is `stale`,
+    // not `unproven`. This pins the order of the two checks: a reader of a
+    // `stale` result cannot have run the proof decoder.
+    const differentRoot = '00'.repeat(33);
+    const answerRoot = 'aa'.repeat(33);
+    const fetch: HttpFetch = async () => jsonResponse(200, {
+      stateRoot: answerRoot,
+      from: null,
+      limit: 256,
+      proof: '!!not*base64@@',
+    });
+    const result = await proveRange('http://a', 'karma', OWNER_HEX, { height: HEIGHT, stateRoot: differentRoot }, fetch);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe('stale');
+      expect(result.verdict).not.toContain('proof rejected');
+    }
   });
 });
 
@@ -312,46 +337,6 @@ describe('proveRange — a transport failure or non-2xx is no-proof for the whol
   it('a 500 is no-proof', async () => {
     const fetch: HttpFetch = async () => jsonResponse(500, { error: 'internal' });
     const r = await proveRange('http://a', 'karma', OWNER_HEX, { height: HEIGHT, stateRoot: '00'.repeat(33) }, fetch);
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.status).toBe('no-proof');
-      expect(r.verdict).toContain('HTTP 500');
-    }
-  });
-});
-
-describe('proveHoldings — several kinds at one header', () => {
-  it("over ['karma', 'credit'] answers both", async () => {
-    const boxes: AnyBox[] = [
-      karmaBoxFor(OWNER, 10n, 1),
-      creditBoxFor(OWNER, 100n, 2),
-    ];
-    const { prover, stateRoot } = buildHoldingsFixture({ boxes });
-    const { fetch } = nodeFromProver({ url: 'http://a', prover, stateRoot, atHeightDefault: HEIGHT });
-
-    const r = await proveHoldings('http://a', OWNER_HEX, ['karma', 'credit'], { height: HEIGHT, stateRoot }, fetch);
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.boxes.karma?.length).toBe(1);
-      expect(r.boxes.credit?.length).toBe(1);
-      expect(r.boxes.karma?.[0]!.value).toBe(10n);
-      expect(r.boxes.credit?.[0]!.value).toBe(100n);
-    }
-  });
-
-  it('a failure in the second kind answers the failure and no boxes', async () => {
-    const boxes: AnyBox[] = [karmaBoxFor(OWNER, 10n, 1)];
-    const { prover, stateRoot } = buildHoldingsFixture({ boxes });
-    // Karma works; credits returns 500.
-    const fetch: HttpFetch = async (reqUrl: string): Promise<Response> => {
-      const u = new URL(reqUrl);
-      if (u.pathname.startsWith('/api/v1/range/karma/')) {
-        return jsonResponse(200, rangeAnswerFromProver(prover, stateRoot, HEIGHT, 'karma', OWNER, null, 256));
-      }
-      return jsonResponse(500, { error: 'internal' });
-    };
-
-    const r = await proveHoldings('http://a', OWNER_HEX, ['karma', 'credit'], { height: HEIGHT, stateRoot }, fetch);
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.status).toBe('no-proof');

@@ -46,9 +46,13 @@ export function textLines(tip: TipResult, run: Run | null): string[] {
       lines.push('no boxes');
     } else {
       for (const b of figures.boxes) {
-        // `unlisted` and `young` carry the proven box's value, as `proven`
-        // does (WEB_INTERFACE → The extension → "The verified figures").
-        const hasProvenValue = b.status === 'proven' || b.status === 'young' || b.status === 'unlisted';
+        // `unlisted`, `undecided` and `young` carry the proven box's value,
+        // as `proven` does (WEB_INTERFACE → The extension → "The verified
+        // figures").
+        const hasProvenValue = b.status === 'proven'
+          || b.status === 'young'
+          || b.status === 'unlisted'
+          || b.status === 'undecided';
         const valueSuffix = hasProvenValue ? ` value=${b.value}` : '';
         lines.push(`  ${b.boxClass} ${capped(b.boxId)}: ${b.verdict}${valueSuffix}`);
       }
@@ -103,15 +107,16 @@ function holdingsLines(
   return [`${label} holdings: ${side.holdings}${verdict}`];
 }
 
-// The tail sums are young / unchecked / absent / unlisted — proven is already
-// the row's total, printed above. `unlisted` sums apart from the four
-// (WEB_INTERFACE → The extension → "The verified figures"). Silence on a zero
-// is the row's rule.
+// The tail sums are young / unchecked / absent / unlisted / undecided —
+// proven is already the row's total, printed above. `unlisted` and
+// `undecided` sum apart from the four (WEB_INTERFACE → The extension → "The
+// verified figures"). Silence on a zero is the row's rule.
 function nonZeroTailSums(label: 'karma' | 'credit', sums: LedgerSums): string[] {
   const out: string[] = [];
   if (sums.young !== 0n) out.push(`${label} young: ${sums.young}`);
   if (sums.unchecked !== 0n) out.push(`${label} unchecked: ${sums.unchecked}`);
   if (sums.absent !== 0n) out.push(`${label} absent: ${sums.absent}`);
   if (sums.unlisted !== 0n) out.push(`${label} unlisted: ${sums.unlisted}`);
+  if (sums.undecided !== 0n) out.push(`${label} undecided: ${sums.undecided}`);
   return out;
 }

@@ -54,9 +54,12 @@ export interface Anchor {
  * The classes a listed or held box falls into (WEB_INTERFACE → The extension
  * → "The verified figures"). `unlisted` names a box the key holds at `tip`
  * that is named nowhere in its ledger's listing while `heightAfter` equals
- * `tip.height` — the chain holds what the node did not list.
+ * `tip.height` — the chain holds what the node did not list. `undecided`
+ * names the same box where `heightAfter` is not `tip.height`: a block landed
+ * since the anchor and may have spent it, or the node withheld it; the run
+ * cannot say which, and sets no `failed`.
  */
-export type FigureStatus = 'proven' | 'young' | 'unchecked' | 'absent' | 'unlisted' | 'unproven' | 'no-proof';
+export type FigureStatus = 'proven' | 'young' | 'unchecked' | 'absent' | 'unlisted' | 'undecided' | 'unproven' | 'no-proof';
 
 export interface FigureBox {
   boxId: string;
@@ -74,9 +77,9 @@ export type RecordResult =
 
 /**
  * The sums each class contributes to a ledger (WEB_INTERFACE → The extension
- * → "The verified figures"). `unlisted` sums apart from the four — the chain
- * holds what the node did not list — and sets `failed` as an `absent` box
- * does.
+ * → "The verified figures"). `unlisted` and `undecided` sum apart from the
+ * four — the chain holds what the node did not list, or the run cannot say.
+ * `unlisted` sets `failed`; `undecided` does not.
  */
 export interface LedgerSums {
   proven: bigint;
@@ -84,14 +87,21 @@ export interface LedgerSums {
   unchecked: bigint;
   absent: bigint;
   unlisted: bigint;
+  undecided: bigint;
 }
 
 /**
  * Each ledger's holdings read, beside its boxes'
  * (WEB_INTERFACE → The extension → "The verified figures").
  * - `read` — the key's whole range at both heights was proven;
- * - `unproven` — one height's range failed `unproven` (`suffixHead` before
- *   `tip`); every listed box of the ledger carries it, and the run `failed`;
+ * - `unproven` — one height's range failed `unproven` (the suffix read did
+ *   not verify); every listed box of the ledger carries it, and the run
+ *   `failed`;
+ * - `stale` — the `tip` range answers a `stateRoot` other than the header's
+ *   (WEB_INTERFACE → The extension → "A `stateRoot` other than the header's
+ *   at `tip` is no failed proof"): every listed box of the ledger is
+ *   `unchecked`, nothing `unlisted` or `undecided` of it, and the run keeps
+ *   its state;
  * - `no-proof` — one height's range failed `no-proof`; every listed box
  *   carries it, and the run keeps its state;
  * - `not-read` — the listing was handed as `null`: no range request was
@@ -102,7 +112,7 @@ export interface LedgerSums {
  * follows WEB_INTERFACE → The extension → "The verified figures" — *"Each
  * ledger's read carries a status of its own beside its boxes'"*.
  */
-export type HoldingsRead = 'read' | 'unproven' | 'no-proof' | 'not-read';
+export type HoldingsRead = 'read' | 'unproven' | 'stale' | 'no-proof' | 'not-read';
 
 export interface FiguresResult {
   boxes: FigureBox[];
@@ -257,8 +267,8 @@ type RecordProofOutcome =
 // that is not the header's, a `proof` that is not a string — is unproven
 // (WEB_INTERFACE → The extension → "A run is total"). The tool's one
 // single-key AVL verification; a key's holdings read whole go through
-// `proveHoldings` (NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the
-// range route").
+// `proveRange` (NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the range
+// route").
 async function proveKeyAtHeight(
   nodeUrl: string,
   treeKey: Uint8Array,
@@ -369,7 +379,8 @@ type LedgerReads =
   | { suffix: Extract<RangeResult, { ok: true }>; tip: RangeResult };
 
 /** The computed state of one ledger's reads: its `holdings` status, its
- *  verdict (if not `read`/`not-read`), and the proven box indexes. */
+ *  verdict (if not `read`/`not-read`), and the proven box indexes. A `stale`
+ *  tip read keeps `atSuffix` populated and leaves `atTip` empty. */
 interface LedgerState {
   holdings: HoldingsRead;
   holdingsVerdict: string | null;
@@ -380,8 +391,12 @@ interface LedgerState {
 /**
  * One ledger's `holdings` state from its two reads
  * (WEB_INTERFACE → The extension → "The verified figures"). Each ledger
- * stands on its own: a `no-proof` or `unproven` on one does not reach the
- * other's status.
+ * stands on its own: a `no-proof`, `unproven` or `stale` on one does not
+ * reach the other's status. A `stale` on the suffix read fails `unproven`
+ * at the suffix: the node answers another block at `suffixHead`, and that
+ * ledger's listed boxes read `unproven`. A `stale` on the tip read keeps
+ * the ledger `stale` — listed boxes read `unchecked`, nothing `unlisted`
+ * or `undecided` of it.
  */
 function stateOf(reads: LedgerReads): LedgerState {
   const atSuffix = new Map<string, AnyBox>();
@@ -390,8 +405,12 @@ function stateOf(reads: LedgerReads): LedgerState {
     return { holdings: 'not-read', holdingsVerdict: null, atSuffix, atTip };
   }
   if (reads.tip === undefined) {
+    // A failure at `suffixHead` cannot leave the suffix read `stale`, since a
+    // run cannot anchor there under another block's root — it reads as
+    // `unproven`, with the node named as answering another block.
+    const status: 'unproven' | 'no-proof' = reads.suffix.status === 'no-proof' ? 'no-proof' : 'unproven';
     return {
-      holdings: reads.suffix.status,
+      holdings: status,
       holdingsVerdict: `holdings read failed at suffixHead: ${reads.suffix.verdict}`,
       atSuffix,
       atTip,
@@ -424,10 +443,14 @@ function stateOf(reads: LedgerReads): LedgerState {
 //   credit box) its lock;
 // - `young` — held in `T` and not in `S`;
 // - `absent` — not held in `T` and `heightAfter` equals `tip.height`;
-// - `unchecked` — not held in `T` and `heightAfter` differs or is unread;
+// - `unchecked` — not held in `T` and `heightAfter` differs or is unread, or
+//   every listed box of a ledger whose `tip` read is `stale`;
 // - `unlisted` — held in `T`, named nowhere in its ledger's listing, and
 //   `heightAfter` equals `tip.height`; a `FigureBox` of the run's own, after
-//   the listed ones, summed apart from the four;
+//   the listed ones, summed apart from the five;
+// - `undecided` — held in `T`, named nowhere in its ledger's listing, and
+//   `heightAfter` not `tip.height`; a `FigureBox` of the run's own, summed
+//   apart from the five, that does not fail the run;
 // - `unproven` — a listed value or lock that differs from the held box's, a
 //   malformed entry, or an id named twice in the listing; a failed holdings
 //   read (`unproven`) also hands this status to every listed box of the
@@ -437,7 +460,11 @@ function stateOf(reads: LedgerReads): LedgerState {
 // A ledger whose listing is `null` is not read: no range request, no box of
 // it, every sum zero. Each ledger's read status rides as `karma.holdings` /
 // `credits.holdings`, with the failure's verdict in `karma.holdingsVerdict`
-// / `credits.holdingsVerdict` (`null` for `read` and `not-read`).
+// / `credits.holdingsVerdict` (`null` for `read` and `not-read`). A `stale`
+// tip read is `karma.holdings`/`credits.holdings` `stale`, listed boxes
+// `unchecked`, nothing `unlisted` or `undecided` of it, and the run keeps
+// its state (WEB_INTERFACE → The extension → "A `stateRoot` other than the
+// header's at `tip` is no failed proof").
 export async function proveFigures(
   nodeUrl: string,
   user: string,
@@ -513,7 +540,11 @@ export async function proveFigures(
     // If this ledger's holdings read failed, every listed box of it carries
     // the failure. The other ledger's reads are not reached — each ledger
     // stands on its own (WEB_INTERFACE → The extension → "The verified
-    // figures" — "Each ledger's read carries a status of its own").
+    // figures" — "Each ledger's read carries a status of its own"). A `stale`
+    // tip read reads every listed box `unchecked`: the node holds another
+    // block at `tip`, and the next verified tip decides it
+    // (WEB_INTERFACE → The extension → "A `stateRoot` other than the header's
+    // at `tip` is no failed proof").
     if (ledgerState.holdings === 'unproven' || ledgerState.holdings === 'no-proof') {
       const verdict = ledgerState.holdingsVerdict!;
       const listingValue = BigInt(check.listed.value);
@@ -527,6 +558,19 @@ export async function proveFigures(
         verdict,
       });
       if (ledgerState.holdings === 'unproven') failed = true;
+      continue;
+    }
+    if (ledgerState.holdings === 'stale') {
+      const listingValue = BigInt(check.listed.value);
+      const listingLocked = boxClass === 'credit' ? check.listed.lockedUntilBlock ?? null : null;
+      boxes.push({
+        boxId: check.listed.boxId,
+        boxClass,
+        value: listingValue,
+        lockedUntilBlock: listingLocked,
+        status: 'unchecked',
+        verdict: `unchecked — ${ledgerState.holdingsVerdict}`,
+      });
       continue;
     }
 
@@ -600,33 +644,49 @@ export async function proveFigures(
     }
   }
 
-  // Unlisted boxes: for each successfully-read ledger, every box in `T` the
-  // listing names nowhere becomes an `unlisted` figure with `heightAfter`
-  // equal to `tip.height`; otherwise it is in no class and no sum
-  // (WEB_INTERFACE → The extension → "The verified figures" — a held box
-  // the listing lacks while `heightAfter` is not `tip.height` is in no class
-  // and no `FigureBox`).
-  if (heightAfter === tipHeight) {
-    for (const ledger of KINDS) {
-      const state = stateOfLedger(ledger);
-      if (state.holdings !== 'read') continue;
-      // Deterministic order: by box id ascending.
-      const unlisted: AnyBox[] = [];
-      for (const [id, box] of state.atTip) {
-        if (!listedIds[ledger].has(id)) unlisted.push(box);
-      }
-      unlisted.sort((a, b) => (a.id! < b.id! ? -1 : a.id! > b.id! ? 1 : 0));
-      for (const held of unlisted) {
-        const provenLock = ledger === 'credit' ? (held as CreditBox).lockedUntilBlock ?? null : null;
+  // Unlisted and undecided boxes: for each successfully-read ledger, every
+  // box in `T` the listing names nowhere becomes an `unlisted` figure where
+  // `heightAfter` equals `tip.height` (the chain holds what the node did not
+  // list), and an `undecided` figure otherwise — a block landed since the
+  // anchor and may have spent it, or the node withheld it; the run cannot
+  // say which (WEB_INTERFACE → The extension → "The verified figures" —
+  // "`undecided` — held at `tip`, named nowhere in the listing of its
+  // ledger, and `heightAfter` not `tip.height`"). The run `failed` on
+  // `unlisted` and not on `undecided`.
+  for (const ledger of KINDS) {
+    const state = stateOfLedger(ledger);
+    if (state.holdings !== 'read') continue;
+    // Deterministic order: by box id ascending.
+    const held: AnyBox[] = [];
+    for (const [id, box] of state.atTip) {
+      if (!listedIds[ledger].has(id)) held.push(box);
+    }
+    held.sort((a, b) => (a.id! < b.id! ? -1 : a.id! > b.id! ? 1 : 0));
+    for (const box of held) {
+      const provenLock = ledger === 'credit' ? (box as CreditBox).lockedUntilBlock ?? null : null;
+      if (heightAfter === tipHeight) {
         boxes.push({
-          boxId: held.id!,
+          boxId: box.id!,
           boxClass: ledger,
-          value: held.value,
+          value: box.value,
           lockedUntilBlock: provenLock,
           status: 'unlisted',
           verdict: `unlisted — the chain holds what the node did not list at height ${tipHeight}`,
         });
         failed = true;
+      } else {
+        // excludedAtBoth returns `absent: false` on this branch, naming the
+        // reason the two heights disagree.
+        const decided = excludedAtBoth(heightAfter, tipHeight);
+        const why = decided.absent ? '' : decided.why;
+        boxes.push({
+          boxId: box.id!,
+          boxClass: ledger,
+          value: box.value,
+          lockedUntilBlock: provenLock,
+          status: 'undecided',
+          verdict: `undecided — ${why}`,
+        });
       }
     }
   }
@@ -658,6 +718,7 @@ export async function proveFigures(
     let unchecked = 0n;
     let absent = 0n;
     let unlisted = 0n;
+    let undecided = 0n;
     for (const b of boxes) {
       if (b.boxClass !== cls) continue;
       if (b.status === 'proven') proven += b.value;
@@ -665,19 +726,29 @@ export async function proveFigures(
       else if (b.status === 'unchecked') unchecked += b.value;
       else if (b.status === 'absent') absent += b.value;
       else if (b.status === 'unlisted') unlisted += b.value;
+      else if (b.status === 'undecided') undecided += b.value;
     }
-    return { proven, young, unchecked, absent, unlisted };
+    return { proven, young, unchecked, absent, unlisted, undecided };
   };
   const karmaSums = sums('karma');
   const creditsSums = sums('credit');
 
   // TYPES_INTERFACE → Identity record and karma valuation — one implementation
   // of the valuation shared by the node and the client; valued at the row's
-  // own height, so an unchanged state reproduces the number exactly. A height
-  // that is not a block height values nothing and fails the run.
+  // own height, so an unchanged state reproduces the number exactly. The
+  // listing's height is the node's word, and the run values rep only where
+  // it is a block height from `tip.height` up — and no higher than
+  // `heightAfter` where that was read (WEB_INTERFACE → The extension → "The
+  // verified figures" — "That height is the node's word, and is taken only
+  // from `tip.height` to `heightAfter`"). Outside those bounds `effective`
+  // is null and the run `failed`, as for a height that is not a block
+  // height.
   const valuedAt: unknown = listing.karma.height;
+  const heightInRange = isBlockHeight(valuedAt)
+    && valuedAt >= tipHeight
+    && (heightAfter === null || valuedAt <= heightAfter);
   let effective: bigint | null;
-  if (!isBlockHeight(valuedAt)) {
+  if (!heightInRange) {
     effective = null;
     failed = true;
   } else if (record.status === 'proven') {
@@ -705,30 +776,6 @@ export async function proveFigures(
     heightAfter,
     failed,
   };
-}
-
-// The command line's entry: fetch the listing and prove it. A listing
-// failure answers a FiguresResult carrying `not-read` for both ledgers'
-// `holdings` (WEB_INTERFACE → The extension → "The verified figures").
-export async function proveBoxes(
-  nodeUrl: string,
-  user: string,
-  anchor: Anchor,
-  profile: NetworkProfile,
-  httpFetch: HttpFetch,
-): Promise<FiguresResult> {
-  const listingResult = await fetchListing(nodeUrl, user, httpFetch);
-  if (!listingResult.ok) {
-    return {
-      boxes: [],
-      record: { status: 'no-proof', verdict: `listing failed: ${listingResult.reason}` },
-      karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: null, holdings: 'not-read', holdingsVerdict: null },
-      credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'not-read', holdingsVerdict: null },
-      heightAfter: null,
-      failed: true,
-    };
-  }
-  return proveFigures(nodeUrl, user, listingResult.listing, anchor, profile, httpFetch);
 }
 
 // NODE_INTERFACE → Blocks — `GET /blocks/current` answers `{ height, hash }`; no
