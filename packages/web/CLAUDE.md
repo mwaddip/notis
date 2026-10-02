@@ -72,8 +72,9 @@ unlocked seed in `storage.session`, never a worker global), every write signed t
 *sign each rep action* row says ask; the `notSigned` arm and the fourth ending — the composer still open;
 the shell's `notis-nodes` seed list and `notis-public` link origin; one manifest template → two zips; **the
 chain it reads checked by NiPoPoW proofs from the seed list's nodes, the verdict folded into the status corner**
-(`WEB_INTERFACE → The extension → "The verified tip"`), **and the wallet's balance and the profile's rep proven box by
-box against that chain, a line beneath a figure only when something is not whole** (`→ "The verified figures"`), **and
+(`WEB_INTERFACE → The extension → "The verified tip"`), **and the wallet's balance and the profile's rep judged against
+everything the key holds on that chain, each ledger's range read whole, a line beneath a figure only when something is
+not whole** (`→ "The verified figures"`), **and
 every handle it shows and sends to proven through its name's box — clay where the node's answer does not verify, a send
 going to the proven key** (`→ "The verified names"`). **Links into
 the extension** (`WEB_INTERFACE → The extension → "Links into the extension"`, `→ The way into the workspace`): a
@@ -342,14 +343,17 @@ Ed25519 through `@noble/curves` and hashes through `@dagsocial/types`' `hash32`,
 wallet window`): the extension proves the reader's rep and balance against the verified chain. A tip run answers
 `{ verdict, anchor }` — the reading node's own verified `tip` and `suffixHead`, under `verified` alone —
 and `src/extension/figures-verifier.ts` (`createFiguresVerifier`) runs `proveFigures` of `@dagsocial/nipopow-client`
-over the listings the rows show: every box at `suffixHead` under its tree key `boxKey`, the identity record under
-`identityKey` (both `@dagsocial/types`'), the excluded boxes again at `tip`, then `/blocks/current`; **a box is `proven`
-only when its value hashes to the box id its key carries, its `owner` is the reader's key and its type the ledger it was
-listed under**; rep is valued by
+over the listings the rows show: the identity record at `suffixHead` under `identityKey`, each ledger's range at
+`suffixHead` and again at `tip` — `GET /api/v1/range/:kind/:owner`, page by page, each page replayed by
+`consensus`' `holdingsPage` over the node's proof — then `/blocks/current`; **a listed box is `proven` only when the
+key holds it at both heights, in the ledger it was listed under, with the listing's value and lock** — the range
+fixes its owner and its type — **a box the key holds that the listing lacks is `unlisted`** where no block landed
+since the anchor, and each ledger carries the status of its own read (`holdings`); rep is valued by
 `effectiveKarma` of `@dagsocial/types` — the node's own function — at the listing's height. **A run proves a listing
 read after its anchor and never one read before it**: every read of the reader's own listing is stamped at its start
 with the anchor sequence, a verified tip reads `/karma` (and `/credits` with the wallet open) before it proves, and a
-listing not read after the current anchor goes to the run empty, its row reading *not checked yet*. **The reader's own
+listing not read after the current anchor goes to the run as not read (`null`, never empty), its row reading *not
+checked yet*. **The reader's own
 state is re-read, never predicted**: a landing of the reader's own transaction re-reads the listing it changed, a node
 or identity change drops the reader's state and reads it again (`dropReaderState` / `rereadReaderState`), and **no
 answer overwrites a newer one** — `readerGen` drops a read across a node or identity change, `readsBegun` /
@@ -357,9 +361,11 @@ answer overwrites a newer one** — `readerGen` drops a read across a node or id
 asked for, a refresh lands on the rows standing as it lands, and `withdrawnSeen` — a withdrawal is final — keeps a
 withdrawn post out of every write of rows. `src/model/figures-line.ts` (`figuresLine`, pure) turns a result into the
 row's line: nothing when every box proved (silence is the green), muted for what could not be proven yet, **clay with
-the figure clay** when a proof did not verify or the node lists what the chain does not hold. The numbers update in
+the figure clay** when a proof did not verify, the node lists what the chain does not hold, or the chain holds what
+the node did not list; **an empty listing takes the same lines**, beneath the faucet step or the words standing
+there, since that the key holds nothing is a claim the range decides. The numbers update in
 their slots whenever a read brings a new one (`HOUSE_STYLE → Motion`). The web build is handed no figures verifier, and
-`build-release.sh` refuses `api/v1/proof` in its assets beside `nipopow/proof`. **The run is total**: a node's answer of
+`build-release.sh` refuses `api/v1/proof` and `api/v1/range` in its assets beside `nipopow/proof`. **The run is total**: a node's answer of
 any shape ends in a status, never a thrown run — and `NodeClient`'s paged reads refuse a page whose list is not an
 array or whose `next` is neither `null` nor a non-empty string with no lone surrogate (`PageError`, taken where a
 non-2xx's `ApiError` is), so no read loops on a malformed cursor.
@@ -473,12 +479,20 @@ otherwise. **With `--verified-figures` as well (it needs `--r-key` and the lifec
 the verified-figures block** runs next, owning a B of its own (a verified tip needs a second verified node) and a
 **figures relay** on its own port that passes every `/nipopow/proof/` answer through — so the corner stays green —
 and lies in one mode at a time: `credits-fake` (a fabricated box on R's first `/credits` page), `credits-foreign` (the
-devnet faucet's largest credit box listed under R), `avl-flip` (one byte of each decoded box proof flipped): **21** a
+devnet faucet's largest credit box listed under R), `credits-drop` and `karma-drop` (one box withheld from R's first
+`/credits` or `/karma` page), `avl-flip` (one byte flipped in every `/api/v1/proof/` and `/api/v1/range/` proof): **21** a
 send's young change reads *… landed since* after a press and silence after K + 1 blocks; **24** R's post — the rep
 number the node's new `effective` with no press (the landing's run reads *… not checked yet*: its anchor predates the
 post), *… landed since* after a press, silence after K + 1; **22a** clay *the node lists … the chain does not hold*, the
-figure clay; **22b** clay *this node's proof of the balance did not verify* — the owner check; **23** both rows clay;
-each arm switched back to A and silent again; **25** the hosted web build — no line and no `/api/v1/proof/` request.
+figure clay; **22b** the same line with the foreign box's own amount — the range R's boxes are read from does not
+hold another key's; **22c** clay *the chain holds … $NOTIS the node does not list*, beneath the empty state where the
+drop emptied the listing; **22d** clay *the chain holds … rep the node does not list*; **23** both rows clay, *this
+node's proof of … did not verify*; each arm compares the amount its line names with the box the relay lied about,
+presses again while a block landed between the anchor and the run's `/blocks/current` (the two listing classes are
+decided only where none did), and is switched back to A and silent again; **25** the hosted web build — no line and
+no `/api/v1/proof/` or `/api/v1/range/` request. A figures run asks the record, each ledger's range at the two
+heights, and `/blocks/current` — ten requests with the wallet open. ⚠ **The figures block needs a throwaway that has
+not run steps 11–12**: on a key already granted `$NOTIS` the faucet step is not on screen and step 11 times out.
 **With `--verified-names` as well (it needs `--s-key` beside what the figures block needs) the verified-names block**
 runs on a B of its own, a second identity **S** holding a name — S promoted as R is and its name claimed by
 `scripts/extension-check/claim-name.mjs` through the web's own `submitClaimFlow` (⚠ a second `promote.mjs` is refused

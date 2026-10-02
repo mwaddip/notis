@@ -32,9 +32,12 @@ the output shape, the transitions), what a block's settlement consumes and emits
 readers — and **what the tree holds**: the tree view (`treeStateView`, the one `StateView` the rules see, over a
 `TreeSession`), the index entries and the block's tree writes (`CONSENSUS_INTERFACE → The tree layout`), the block's
 cost and its budget (`CONSENSUS_INTERFACE → The block's cost`), and the session over a block's proof
-(`verifierSession`). **The one
-implementation**: the node runs it over a session on its prover, and a browser leaf that validates blocks will run the
-same code over a verifier's.
+(`verifierSession`), and the page of a key's holdings read through the view (`holdingsPage`,
+`CONSENSUS_INTERFACE → The holdings page`). **The one
+implementation**: the node runs the rules over a session on its prover; the node and the light client both run the
+holdings page, the node over its prover and the client over a verifier on the node's proof. **No client replays a
+block** — the suites do, over a verifier's session that requires the proof consumed exactly
+(`CONSENSUS_INTERFACE → The tree session`).
 
 - **Owns:** `src/*`, `test/*`.
 - **Does NOT own:** persistence — the store, the journal, the AVL prover (`@dagsocial/node`); the header checks
@@ -49,7 +52,7 @@ same code over a verifier's.
   throw. A rule that needs a number the network sets takes it from its caller (`ApplyContext`); a rule that
   needs state reads it through `StateView` — `applyBlock` through its overlay, which builds `UtxoEngineDeps`,
   `SettlementDeps` and `DecayDeps` over it (`CONSENSUS_INTERFACE → The overlay`). A rule that reaches past them is a
-  rule the leaf cannot run.
+  rule a replay from a proof cannot run.
 - **Workspace dependencies: `@dagsocial/types` and `@dagsocial/validation`, and nothing else — never `node`.**
 - **Every signature check is `validation`'s** — `verifyEd25519` for admission's `validateTx`, one `verifyEd25519Batch`
   over every signature a block's body carries in `applyBlock`, strict RFC 8032 through `@noble/curves`

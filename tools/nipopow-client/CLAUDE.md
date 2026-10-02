@@ -12,8 +12,9 @@ your standing context — read it and the linked docs before touching code.
 4. `../../contracts/NIPOPOW_INTERFACE.md` — **the contract this tool CONSUMES first**: `verifyProof`,
    `compareProofs`, and **The trust model** (the three rules this tool embodies).
 5. `../../contracts/NODE_INTERFACE.md` — the routes it reads: `Nipopow` (HTTP API), `Nipopow prover`,
-   the `/api/v1/proof/:boxId` endpoint (the "avl-endpoint" bullet and "The AVL value carries
-   provenance"), `/karma/:userId` and `/credits/:userId` in `HTTP API`, `/usernames/:name` and
+   the two proof routes — `/api/v1/proof/:key`, one key, and `/api/v1/range/:kind/:owner`, a page of a key's
+   holdings (the two "avl-endpoint" bullets, "The AVL value carries provenance" and "A proof at an older height
+   restores a kept root"), `/karma/:userId` and `/credits/:userId` in `HTTP API`, `/usernames/:name` and
    `/usernames?owner=` in `Usernames`, and `Username records` (a name is unique on its canonical form, an identity
    holds at most one).
 6. `../../contracts/TYPES_INTERFACE.md` — `BoxId` / `Layout — Boxes` (`boxRecordFromBytes`,
@@ -44,7 +45,7 @@ chain the proof committed. Bytes in, verdict out, exit.
 
 **It answers twice: as a command line (`dist/index.js`, the package's `bin`) and as a library
 (`src/lib.ts` → `dist/lib.js`, the package's `exports`)** — `resolveTip`, `fetchListing`, `proveFigures`,
-`proveBoxes`, `proveName`, `verifierProfile` and their types, re-exports with no side effect at import. **The web
+`proveBoxes`, `proveRange`, `proveHoldings`, `proveName`, `verifierProfile` and their types, re-exports with no side effect at import. **The web
 client's extension build is the library's caller**: its tip verifier runs `resolveTip` in the page with
 the browser's `fetch` (`WEB_INTERFACE → The extension → "The verified tip"`), and its figures verifier
 runs `proveFigures` after every verified tip against the listing the rows rendered
@@ -63,28 +64,36 @@ following `next` to the end, `height` and `effective` from the first karma page 
 listing; any other non-ok, or a page that is not an object with a `boxes` array and a `next` that is
 null or a non-empty string with no lone surrogate (the next request carries it through `encodeURIComponent`),
 surfaces as `{ ok: false, reason }`. `proveFigures(nodeUrl, user, listing,
-anchor, profile, fetch)` runs, in this order the run's whole meaning rests on: every listed box at
-`suffixHead`, then the identity record at `suffixHead`, then every box excluded at `suffixHead` once
-more at `tip`, then one `GET /blocks/current`. A box is **`proven`** when it is included at
-`suffixHead`, its value hashes back to its key, its `owner` is the loaded key, its `boxType` the
-ledger it was listed under, and its value and (for a credit box) its lock the listing's, both fixed
-by the box id — a node that lists another key's real box, the wrong ledger's, or a real box at another
-value or lock, gets `unproven`. Otherwise: **`young`** — excluded at `suffixHead`, included at `tip`; **`unchecked`** —
-excluded at both and `heightAfter` above `tip.height` (a block landed since), or below (the node's
-height fell — a reorg), or unread — `/blocks/current` gave no block height (undecided reads as
-unchecked, never as a lie); **`absent`** — excluded at both and `heightAfter` equal to `tip.height`,
-the node listing what the chain does not hold; **`unproven`** — a `stateRoot` other than the header's,
-a rejected lookup, a proof answer that is not an object or whose `proof` is not a string, a value that
-does not decode or hash to the key, a `kind` that is not a box's, an owner, a type, a value or a lock
-that is not the listing's, or an entry that is not an object with a 64-hex `boxId` and a decimal `value`, or that
-names an id the listing named earlier in either ledger — for which no proof is asked;
-**`no-proof`** — nothing served. The record is `proven` or `absent` at
+anchor, profile, fetch)` reads **what the key holds, whole, by range**, and judges the listing against it, in this
+order the run's whole meaning rests on: the identity record at `suffixHead`; each ledger's range at `suffixHead` —
+`karma`, and `credit` where the listing's `credits` is not `null` (`null` is *not read*, never an empty listing);
+the same ranges at `tip`; then one `GET /blocks/current`. A range is `proveRange`'s (`src/holdings.ts`): page by
+page from `GET /api/v1/range/:kind/:owner`, each answer's `stateRoot` held to the header's before its proof is
+read, each page replayed by `consensus`' `holdingsPage` over `verifierSession` on the node's proof, and the next
+page's `from` read from the proof — never from the answer — so a range ends where the proof says it does.
+**Each ledger is read on its own** and carries its read's status — `holdings`: `read` · `unproven` · `no-proof` ·
+`not-read` — with the failed read's verdict (`holdingsVerdict`). A listed box is **`proven`** when the key holds it
+at both heights, in the ledger it was listed under, with the listing's value and (for a credit box) lock, both
+fixed by the box id — the range a box is read from fixes its owner and its type, so a node that lists another
+key's real box, or the wrong ledger's, lists a box the range does not hold. Otherwise: **`young`** — held at `tip`,
+not at `suffixHead`; **`unchecked`** — not held at `tip` and `heightAfter` above `tip.height` (a block landed
+since), or below (the node's height fell — a reorg), or unread (undecided reads as unchecked, never as a lie);
+**`absent`** — not held at `tip` and `heightAfter` equal to `tip.height`, the node listing what the chain does not
+hold; **`unlisted`** — held at `tip`, named nowhere in its ledger's listing, and `heightAfter` equal to
+`tip.height`: the chain holds what the node did not list, a box of the run's own after the listed ones, its sum
+apart from theirs — with a block landed since, a held box the listing lacks is in no class, since the reader's own
+transaction spends its inputs; **`unproven`** — a listed value or lock that is not the held box's, an entry that
+is not an object with a 64-hex `boxId` and a decimal `value` or that names an id the listing named earlier in
+either ledger, and every listed box of a ledger whose read does not verify (a `stateRoot` other than the header's,
+a page that does not replay, an answer of another shape); **`no-proof`** — every listed box of a ledger whose
+read was not served, a height the node keeps no root of among it. The record is `proven` or `absent` at
 `suffixHead` — the same `null` the node values — or `unproven` / `no-proof` by the same rules; the
 valuation is `effectiveKarma(karma.proven, record, listing.karma.height, decayCfgFor(profile))`, the
 one implementation shared with the node, and `null` where `listing.karma.height` is not a block height.
 **The run is total**: an answer of any shape ends in a status, never a throw
-(`WEB_INTERFACE → The extension → "A run is total"`). **`failed`** — any box `unproven` or `absent`,
-the record `unproven`, or a listing height that is not a block height — is the command line's exit 1. `proveBoxes` composes the two for the command line's own
+(`WEB_INTERFACE → The extension → "A run is total"`). **`failed`** — any box `unproven`, `absent` or `unlisted`,
+a ledger's read `unproven`, the record `unproven`, or a listing height that is not a block height — is the command
+line's exit 1. `proveBoxes` composes the two for the command line's own
 use; the CLI itself calls `fetchListing` and `proveFigures` so it can print the row's `listing.karma
 .height` beside `effective`.
 
@@ -120,13 +129,15 @@ does; `--json` carries the node's data raw.
 ## ⛔ Three properties a change here must not undo
 
 **1. It trusts nothing it did not verify.** The PoW target comes from the profile the tool was built
-with, never from a header; a proof is accepted only by `verifyProof`; a box only by `verifyAvlLookup`
+with, never from a header; a proof is accepted only by `verifyProof`; a name's box only by `verifyAvlLookup`
 against a `stateRoot` the tool verified under PoW, and only when `computeCandidateBoxId` of the value
-reproduces the key. A node's listing of box ids is used as a *list to prove*, never as a fact.
+reproduces the key; what a key holds only by `holdingsPage` replayed over a verifier on the node's proof, under
+that `stateRoot`. A node's listing of box ids is a claim judged against the range, never a fact.
 
 **2. No local encoding, no local consensus.** `boxRecordFromBytes`, `computeCandidateBoxId`,
 `profileFor` come from `@dagsocial/types`; `verifyProof`, `compareProofs`, `decodeNipopowProof`
-from `@dagsocial/nipopow`; `blockHash` from `@dagsocial/validation`; `verifyAvlLookup` from
+from `@dagsocial/nipopow`; `blockHash` from `@dagsocial/validation`; `holdingsPage`, `treeStateView` and
+`verifierSession` from `@dagsocial/consensus`; `verifyAvlLookup` and `BatchAVLVerifier` from
 `@ergots/avltree`. This tool hashes nothing and
 decodes nothing of its own — a third implementation of any of these would be the first one a user
 trusts with a balance.
