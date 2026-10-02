@@ -1,30 +1,26 @@
 import { describe, it, expect } from 'vitest';
 import { proveFigures } from '../src/boxes.js';
 import type { Listing } from '../src/boxes.js';
-import type { HttpFetch } from '../src/http.js';
 import {
-  buildAvlWithInsertions,
-  boxInsertion,
-  recordInsertion,
-  boxProofKeyHex,
-  identityProofKeyHex,
-  avlProofJson,
-  hexToBytes,
-  jsonResponse,
-  makeAnchor,
+  buildHoldingsFixture,
+  creditBoxFor,
   devnetProfile,
+  hexToBytes,
+  karmaBoxFor,
+  makeAnchor,
+  twoHeightNode,
 } from './helpers.js';
-import { computeCandidateBoxId } from '@dagsocial/types';
-import type { AnyBoxCandidate, IdentityRecord, TxId, UserId } from '@dagsocial/types';
+import type { IdentityRecord, UserId } from '@dagsocial/types';
 
 // WEB_INTERFACE → The extension → "The verified figures" — the listing is a list
-// to prove, never a fact: an id it names more than once is proven once, and a
-// value or a lock it states is the box's own or the box is unproven.
+// to prove, never a fact: an id it names more than once is proven once from
+// the second place on, and a value or a lock it states is the box's own or
+// the box is unproven. The rule stands under the range run: a range already
+// fixes a box's owner and type, so the value and lock are what the listing
+// must match.
 
 const USER_HEX = 'ab'.repeat(32);
 const USER_BYTES = hexToBytes(USER_HEX) as UserId;
-const RECORD_KEY = identityProofKeyHex(USER_BYTES);
-const TXID = 'cd'.repeat(32) as TxId;
 const SUFFIX_H = 100;
 const TIP_H = 119;
 
@@ -40,161 +36,125 @@ const RECORD: IdentityRecord = {
   invitesUsed: 0,
 };
 
-const KARMA: AnyBoxCandidate = { boxType: 'karma', value: 100n, createdAtBlock: 1, owner: USER_BYTES };
-const LOCKED: AnyBoxCandidate = {
-  boxType: 'credit', value: 40n, createdAtBlock: 1, owner: USER_BYTES, lockedUntilBlock: 500,
-};
-const UNLOCKED: AnyBoxCandidate = { boxType: 'credit', value: 25n, createdAtBlock: 1, owner: USER_BYTES };
-const YOUNG: AnyBoxCandidate = { boxType: 'karma', value: 7n, createdAtBlock: 110, owner: USER_BYTES };
+// Three boxes held at both heights, plus a `young` box only at tip.
+const KARMA = karmaBoxFor(USER_BYTES, 100n, 1);
+const LOCKED = creditBoxFor(USER_BYTES, 40n, 2, 1, 500);
+const UNLOCKED = creditBoxFor(USER_BYTES, 25n, 3);
+const YOUNG = karmaBoxFor(USER_BYTES, 7n, 4, 110);
 
-const KARMA_ID = computeCandidateBoxId(KARMA, TXID, 0);
-const LOCKED_ID = computeCandidateBoxId(LOCKED, TXID, 1);
-const UNLOCKED_ID = computeCandidateBoxId(UNLOCKED, TXID, 2);
-const YOUNG_ID = computeCandidateBoxId(YOUNG, TXID, 3);
+const SUFFIX = buildHoldingsFixture({
+  boxes: [KARMA, LOCKED, UNLOCKED],
+  records: [{ identityId: USER_BYTES, record: RECORD }],
+});
+const TIP = buildHoldingsFixture({
+  boxes: [KARMA, LOCKED, UNLOCKED, YOUNG],
+  records: [{ identityId: USER_BYTES, record: RECORD }],
+});
+const ANCHOR = makeAnchor(TIP_H, TIP.stateRoot, SUFFIX_H, SUFFIX.stateRoot);
 
-// suffixHead's state holds three boxes and the record; the tip's adds YOUNG.
-const SUFFIX = buildAvlWithInsertions(
-  [
-    boxInsertion(KARMA, TXID, 0),
-    boxInsertion(LOCKED, TXID, 1),
-    boxInsertion(UNLOCKED, TXID, 2),
-    recordInsertion(USER_BYTES, RECORD),
-  ],
-  [boxProofKeyHex(YOUNG_ID)],
-);
-const TIP = buildAvlWithInsertions([
-  boxInsertion(KARMA, TXID, 0),
-  boxInsertion(LOCKED, TXID, 1),
-  boxInsertion(UNLOCKED, TXID, 2),
-  boxInsertion(YOUNG, TXID, 3),
-  recordInsertion(USER_BYTES, RECORD),
-]);
-const ANCHOR = makeAnchor(TIP_H, TIP.digest, SUFFIX_H, SUFFIX.digest);
-
-// An honest node: each height's proofs from that height's tree; each proof
-// request's path and query is logged in order.
-function node(): { fetch: HttpFetch; proofCalls: string[] } {
-  const proofCalls: string[] = [];
-  const fetch: HttpFetch = async (url: string) => {
-    const u = new URL(url);
-    const proofMatch = u.pathname.match(/^\/api\/v1\/proof\/(.+)$/);
-    if (proofMatch) {
-      proofCalls.push(`${u.pathname}${u.search}`);
-      const key = proofMatch[1]!;
-      const at = Number(u.searchParams.get('atHeight'));
-      const tree = at === SUFFIX_H ? SUFFIX : TIP;
-      const entry = tree.entries.get(key);
-      if (!entry) return jsonResponse(404, { error: 'height not available' });
-      const kind = entry.value === null ? null : key === RECORD_KEY ? 'record' : 'box';
-      return jsonResponse(200, avlProofJson(key, at, tree.digest, entry.proof, kind, null));
-    }
-    if (u.pathname === '/blocks/current') return jsonResponse(200, { height: TIP_H, hash: null });
-    return jsonResponse(404, { error: 'not found' });
-  };
-  return { fetch, proofCalls };
-}
-
-function prove(karma: unknown[], credits: unknown[], fetch: HttpFetch) {
+function prove(karma: unknown[], credits: unknown[]) {
+  // `heightAfter: TIP_H + 1` keeps a held box the listing lacks out of the
+  // run — "no class, no FigureBox" (WEB_INTERFACE → The extension → "The
+  // verified figures"). The duplicate-id and value/lock mismatch rules the
+  // tests below pin do not depend on heightAfter.
+  const node = twoHeightNode({ suffix: SUFFIX, suffixHeight: SUFFIX_H, tip: TIP, tipHeight: TIP_H, heightAfter: TIP_H + 1 });
   const listing: Listing = {
     karma: { boxes: karma as Listing['karma']['boxes'], height: TIP_H, effective: '0' },
-    credits: { boxes: credits as Listing['credits']['boxes'] },
+    credits: { boxes: credits as NonNullable<Listing['credits']>['boxes'] },
   };
-  return proveFigures('http://a', USER_HEX, listing, ANCHOR, devnetProfile(), fetch);
+  return { fetch: node.fetch, calls: node.calls, result: proveFigures('http://a', USER_HEX, listing, ANCHOR, devnetProfile(), node.fetch) };
 }
 
-const boxProofs = (calls: string[], id: string) => calls.filter(c => c.startsWith(`/api/v1/proof/${id}?`));
-
 describe('an id the listing names more than once is unproven from its second place on', () => {
-  it('a box listed twice in one ledger is proven once, the second place unproven with no proof asked', async () => {
-    const { fetch, proofCalls } = node();
-    const result = await prove([{ boxId: KARMA_ID, value: '100' }, { boxId: KARMA_ID, value: '100' }], [], fetch);
-    expect(result.boxes.map(b => b.status)).toEqual(['proven', 'unproven']);
-    expect(result.boxes[1]!.verdict).toBe(`unproven: the listed boxId is named earlier in the listing: '${KARMA_ID}'`);
-    expect(result.karma.proven).toBe(100n);
-    expect(result.failed).toBe(true);
-    expect(boxProofs(proofCalls, boxProofKeyHex(KARMA_ID))).toEqual([`/api/v1/proof/${boxProofKeyHex(KARMA_ID)}?atHeight=${SUFFIX_H}`]);
+  it('a box listed twice in one ledger is proven once, the second place unproven and listed as unlisted at the second occurrence', async () => {
+    // KARMA.id listed TWICE under karma. The first entry proves the box; the
+    // second is a duplicate — unproven, listed by its listingbox fingerprint,
+    // not the chain's. The box itself appears in the range once, so the first
+    // listing takes credit for it. The second entry adds an `unproven` box.
+    const { result } = prove([{ boxId: KARMA.id!, value: '100' }, { boxId: KARMA.id!, value: '100' }], []);
+    const r = await result;
+    expect(r.boxes.map((b) => b.status)).toEqual(['proven', 'unproven']);
+    expect(r.boxes[1]!.verdict).toBe(`unproven: the listed boxId is named earlier in the listing: '${KARMA.id!}'`);
+    expect(r.karma.proven).toBe(100n);
+    expect(r.failed).toBe(true);
   });
 
-  it('an id listed under karma and again under credits is unproven in the credits place, no proof asked', async () => {
-    const { fetch, proofCalls } = node();
-    const result = await prove([{ boxId: KARMA_ID, value: '100' }], [{ boxId: KARMA_ID, value: '100' }], fetch);
-    expect(result.boxes.map(b => [b.boxClass, b.status])).toEqual([['karma', 'proven'], ['credit', 'unproven']]);
-    expect(result.boxes[1]!.verdict).toBe(`unproven: the listed boxId is named earlier in the listing: '${KARMA_ID}'`);
-    expect(result.credits.proven).toBe(0n);
-    expect(boxProofs(proofCalls, boxProofKeyHex(KARMA_ID))).toHaveLength(1);
+  it('an id listed under karma and again under credits is unproven in the credits place, no range retry', async () => {
+    const { result } = prove([{ boxId: KARMA.id!, value: '100' }], [{ boxId: KARMA.id!, value: '100' }]);
+    const r = await result;
+    expect(r.boxes.map((b) => [b.boxClass, b.status])).toEqual([['karma', 'proven'], ['credit', 'unproven']]);
+    expect(r.boxes[1]!.verdict).toBe(`unproven: the listed boxId is named earlier in the listing: '${KARMA.id!}'`);
+    expect(r.credits.proven).toBe(0n);
   });
 
   it('an id named again in another case is the same id, unproven in its second place', async () => {
-    const { fetch, proofCalls } = node();
-    const upper = KARMA_ID.toUpperCase();
-    const result = await prove([{ boxId: KARMA_ID, value: '100' }, { boxId: upper, value: '100' }], [], fetch);
-    expect(result.boxes.map(b => b.status)).toEqual(['proven', 'unproven']);
-    expect(result.boxes[1]!.verdict).toBe(`unproven: the listed boxId is named earlier in the listing: '${upper}'`);
-    expect(boxProofs(proofCalls, upper)).toEqual([]);
+    const upper = KARMA.id!.toUpperCase();
+    const { result } = prove([{ boxId: KARMA.id!, value: '100' }, { boxId: upper, value: '100' }], []);
+    const r = await result;
+    expect(r.boxes.map((b) => b.status)).toEqual(['proven', 'unproven']);
+    expect(r.boxes[1]!.verdict).toBe(`unproven: the listed boxId is named earlier in the listing: '${upper}'`);
   });
 
-  // TYPES_INTERFACE → Export table — hexToBytes is strict, lowercase only, or
-  // it throws. An uppercase listing entry is checked case-insensitively above,
-  // so it must reach the AVL key decode in its one lowercase form, never the
-  // node's own spelling of it — the box the listing named, proven, not thrown.
+  // TYPES_INTERFACE → Export table — hexToBytes is strict, lowercase only.
+  // An uppercase listing entry is checked case-insensitively, so it must
+  // reach the AVL key decode in its one lowercase form.
   it('an uppercase boxId, listed once, is proven in its one lowercase form', async () => {
-    const { fetch, proofCalls } = node();
-    const upper = KARMA_ID.toUpperCase();
-    const result = await prove([{ boxId: upper, value: '100' }], [], fetch);
-    expect(result.boxes[0]!.status).toBe('proven');
-    expect(result.boxes[0]!.boxId).toBe(KARMA_ID);
-    expect(result.karma.proven).toBe(100n);
-    expect(result.failed).toBe(false);
-    expect(boxProofs(proofCalls, boxProofKeyHex(KARMA_ID))).toEqual([`/api/v1/proof/${boxProofKeyHex(KARMA_ID)}?atHeight=${SUFFIX_H}`]);
+    const upper = KARMA.id!.toUpperCase();
+    const { result } = prove([{ boxId: upper, value: '100' }], []);
+    const r = await result;
+    expect(r.boxes[0]!.status).toBe('proven');
+    expect(r.boxes[0]!.boxId).toBe(KARMA.id!);
+    expect(r.karma.proven).toBe(100n);
+    expect(r.failed).toBe(false);
   });
 });
 
 describe('a listed value or lock that is not the box\'s own is unproven', () => {
   it('a real box listed at another value is unproven, the verdict naming both values', async () => {
-    const { fetch } = node();
-    const result = await prove([{ boxId: KARMA_ID, value: '500' }], [], fetch);
-    expect(result.boxes[0]!.status).toBe('unproven');
-    expect(result.boxes[0]!.verdict).toBe('unproven at suffixHead: candidate value 100 does not match listing 500');
-    expect(result.karma.proven).toBe(0n);
-    expect(result.failed).toBe(true);
+    const { result } = prove([{ boxId: KARMA.id!, value: '500' }], []);
+    const r = await result;
+    expect(r.boxes[0]!.status).toBe('unproven');
+    expect(r.boxes[0]!.verdict).toBe('unproven: candidate value 100 does not match listing 500');
+    expect(r.karma.proven).toBe(0n);
+    expect(r.failed).toBe(true);
   });
 
-  it('a young box listed at another value is unproven at tip', async () => {
-    const { fetch } = node();
-    const result = await prove([{ boxId: YOUNG_ID, value: '9' }], [], fetch);
-    expect(result.boxes[0]!.status).toBe('unproven');
-    expect(result.boxes[0]!.verdict).toBe('unproven at tip: candidate value 7 does not match listing 9');
-    expect(result.karma.young).toBe(0n);
+  it('a young box listed at another value is unproven', async () => {
+    const { result } = prove([{ boxId: YOUNG.id!, value: '9' }], []);
+    const r = await result;
+    expect(r.boxes[0]!.status).toBe('unproven');
+    expect(r.boxes[0]!.verdict).toBe('unproven: candidate value 7 does not match listing 9');
+    expect(r.karma.young).toBe(0n);
   });
 
   it('a credit box listed with its own lock is proven, the lock the candidate\'s', async () => {
-    const { fetch } = node();
-    const result = await prove([], [{ boxId: LOCKED_ID, value: '40', lockedUntilBlock: 500 }], fetch);
-    expect(result.boxes[0]!.status).toBe('proven');
-    expect(result.boxes[0]!.lockedUntilBlock).toBe(500);
-    expect(result.credits.proven).toBe(40n);
-    expect(result.failed).toBe(false);
+    const { result } = prove([], [{ boxId: LOCKED.id!, value: '40', lockedUntilBlock: 500 }]);
+    const r = await result;
+    expect(r.boxes[0]!.status).toBe('proven');
+    expect(r.boxes[0]!.lockedUntilBlock).toBe(500);
+    expect(r.credits.proven).toBe(40n);
+    expect(r.failed).toBe(false);
   });
 
   it('an unlocked credit box listed without a lock is proven', async () => {
-    const { fetch } = node();
-    const result = await prove([], [{ boxId: UNLOCKED_ID, value: '25' }], fetch);
-    expect(result.boxes[0]!.status).toBe('proven');
-    expect(result.boxes[0]!.lockedUntilBlock).toBeNull();
+    const { result } = prove([], [{ boxId: UNLOCKED.id!, value: '25' }]);
+    const r = await result;
+    expect(r.boxes[0]!.status).toBe('proven');
+    expect(r.boxes[0]!.lockedUntilBlock).toBeNull();
   });
 
   it.each([
-    ['without its lock', { boxId: LOCKED_ID, value: '40' }, 'candidate lockedUntilBlock 500 does not match listing none'],
-    ['with another lock', { boxId: LOCKED_ID, value: '40', lockedUntilBlock: 499 }, 'candidate lockedUntilBlock 500 does not match listing 499'],
-    ['with a lock that is a string', { boxId: LOCKED_ID, value: '40', lockedUntilBlock: '500' }, "candidate lockedUntilBlock 500 does not match listing '500'"],
-    ['with a lock that refuses conversion to a string', { boxId: LOCKED_ID, value: '40', lockedUntilBlock: { toString: 1 } }, 'candidate lockedUntilBlock 500 does not match listing an object'],
-    ['with a lock it does not carry', { boxId: UNLOCKED_ID, value: '25', lockedUntilBlock: 10 }, 'candidate lockedUntilBlock none does not match listing 10'],
+    ['without its lock', { boxId: LOCKED.id!, value: '40' }, 'candidate lockedUntilBlock 500 does not match listing none'],
+    ['with another lock', { boxId: LOCKED.id!, value: '40', lockedUntilBlock: 499 }, 'candidate lockedUntilBlock 500 does not match listing 499'],
+    ['with a lock that is a string', { boxId: LOCKED.id!, value: '40', lockedUntilBlock: '500' }, "candidate lockedUntilBlock 500 does not match listing '500'"],
+    ['with a lock that refuses conversion to a string', { boxId: LOCKED.id!, value: '40', lockedUntilBlock: { toString: 1 } }, 'candidate lockedUntilBlock 500 does not match listing an object'],
+    ['with a lock it does not carry', { boxId: UNLOCKED.id!, value: '25', lockedUntilBlock: 10 }, 'candidate lockedUntilBlock none does not match listing 10'],
   ])('a credit box listed %s is unproven, the verdict naming both locks', async (_shape, entry, verdict) => {
-    const { fetch } = node();
-    const result = await prove([], [entry], fetch);
-    expect(result.boxes[0]!.status).toBe('unproven');
-    expect(result.boxes[0]!.verdict).toBe(`unproven at suffixHead: ${verdict}`);
-    expect(result.credits.proven).toBe(0n);
-    expect(result.failed).toBe(true);
+    const { result } = prove([], [entry]);
+    const r = await result;
+    expect(r.boxes[0]!.status).toBe('unproven');
+    expect(r.boxes[0]!.verdict).toBe(`unproven: ${verdict}`);
+    expect(r.credits.proven).toBe(0n);
+    expect(r.failed).toBe(true);
   });
 });

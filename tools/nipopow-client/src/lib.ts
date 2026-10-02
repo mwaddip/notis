@@ -15,7 +15,11 @@ export type {
   RecordResult,
   LedgerSums,
   FiguresResult,
+  HoldingsRead,
 } from './boxes.js';
+
+export { proveHoldings, proveRange } from './holdings.js';
+export type { HoldingsResult, RangeResult } from './holdings.js';
 
 export { proveName } from './names.js';
 export type { NameClaim, NameStatus, NameResult } from './names.js';

@@ -3,29 +3,29 @@ import { resolveTip } from '../src/tip.js';
 import { fetchListing, proveFigures } from '../src/boxes.js';
 import type { Anchor } from '../src/boxes.js';
 import {
+  buildHoldingsFixture,
   buildMinedChain,
-  buildAvlWithInsertions,
-  boxInsertion,
-  recordInsertion,
-  boxProofKeyHex,
-  identityProofKeyHex,
+  clockAfterChain,
   createFakeNode,
   devnetProfile,
-  clockAfterChain,
-  suffixHeadForChain,
   hexToBytes,
   jsonResponse,
+  karmaBoxFor,
+  rangeAnswerFromProver,
+  singleKeyAnswerFromProver,
+  suffixHeadForChain,
 } from './helpers.js';
-import { computeCandidateBoxId } from '@dagsocial/types';
-import type { AnyBoxCandidate, IdentityRecord, TxId, UserId } from '@dagsocial/types';
+import { identityKey } from '@dagsocial/types';
+import type { HoldingKind } from '@dagsocial/consensus';
+import type { IdentityRecord, UserId } from '@dagsocial/types';
 
 const M = 6;
 const K = 6;
 const CHAIN_LEN = M + K + 10;
 const FAKE_USER = 'ab'.repeat(32);
 const FAKE_USER_BYTES = hexToBytes(FAKE_USER) as UserId;
-const FAKE_TXID = 'cd'.repeat(32) as TxId;
-const RECORD_KEY = identityProofKeyHex(FAKE_USER_BYTES);
+const RECORD_KEY_BYTES = identityKey(FAKE_USER_BYTES);
+const RECORD_KEY_HEX = Buffer.from(RECORD_KEY_BYTES).toString('hex');
 
 const RECORD_STANDING: IdentityRecord = {
   lastActivityBlock: 5,
@@ -39,32 +39,22 @@ const RECORD_STANDING: IdentityRecord = {
   invitesUsed: 0,
 };
 
-function karmaCandidate(value: bigint): AnyBoxCandidate {
-  return {
-    boxType: 'karma' as const,
-    value,
-    createdAtBlock: 1,
-    owner: FAKE_USER_BYTES,
-  };
-}
-
 describe('end-to-end: tip + figures', () => {
-  it('proven flow — the CLI\'s composition, all four surfaces wired', async () => {
-    const cand = karmaCandidate(100n);
-    const boxId = computeCandidateBoxId(cand, FAKE_TXID, 0);
-    const avl = buildAvlWithInsertions([
-      boxInsertion(cand, FAKE_TXID, 0),
-      recordInsertion(FAKE_USER_BYTES, RECORD_STANDING),
-    ]);
-    // A mined chain whose header carries the AVL digest — the tip's stateRoot
-    // is what proveFigures binds tip proofs to.
-    const chain = buildMinedChain({ count: CHAIN_LEN, stateRoot: avl.digest });
+  it("proven flow — the CLI's composition, all four surfaces wired", async () => {
+    // One karma box held in both heights' states, under the chain's stateRoot.
+    const karma = karmaBoxFor(FAKE_USER_BYTES, 100n, 1);
+    const fixture = buildHoldingsFixture({
+      boxes: [karma],
+      records: [{ identityId: FAKE_USER_BYTES, record: RECORD_STANDING }],
+    });
+    const chain = buildMinedChain({ count: CHAIN_LEN, stateRoot: fixture.stateRoot });
     const suffixHead = suffixHeadForChain(chain, M, K);
     const profile = devnetProfile();
     const now = clockAfterChain(chain);
 
-    // Wire the two nodes' figure surface (karma listing, credits 404, proof
-    // endpoint, /blocks/current) beside the existing tip endpoints.
+    // The figure surface served over the chain: /karma listing, /credits
+    // 404, the range route for both ledgers at both heights, the single-key
+    // route for the identity record, and /blocks/current.
     function figureFetch(nodeUrl: string, base: (url: string) => Promise<Response>) {
       return async (url: string): Promise<Response> => {
         const u = new URL(url);
@@ -72,28 +62,25 @@ describe('end-to-end: tip + figures', () => {
         if (u.pathname === `/karma/${FAKE_USER}`) {
           return jsonResponse(200, {
             userId: FAKE_USER, total: '100', effective: '100',
-            boxes: [{ boxId, value: '100' }],
+            boxes: [{ boxId: karma.id!, value: '100' }],
             next: null, height: chain.headers.length,
           });
         }
         if (u.pathname === `/credits/${FAKE_USER}`) {
           return jsonResponse(404, { error: 'not found' });
         }
-        if (u.pathname === `/api/v1/proof/${boxProofKeyHex(boxId)}`) {
-          const e = avl.entries.get(boxProofKeyHex(boxId))!;
-          return jsonResponse(200, {
-            boxId, atHeight: suffixHead.header.height, stateRoot: avl.digest,
-            proof: Buffer.from(e.proof).toString('base64'),
-            kind: 'box', value: null,
-          });
+        const rangeMatch = u.pathname.match(/^\/api\/v1\/range\/([a-z]+)\/[0-9a-f]{64}$/);
+        if (rangeMatch) {
+          const kind = rangeMatch[1] as HoldingKind;
+          const atHeight = Number(u.searchParams.get('atHeight'));
+          const fromHex = u.searchParams.get('from');
+          const from = fromHex === null ? null : hexToBytes(fromHex);
+          const limit = Number(u.searchParams.get('limit') ?? '256');
+          return jsonResponse(200, rangeAnswerFromProver(fixture.prover, fixture.stateRoot, atHeight, kind, FAKE_USER_BYTES, from, limit));
         }
-        if (u.pathname === `/api/v1/proof/${RECORD_KEY}`) {
-          const e = avl.entries.get(RECORD_KEY)!;
-          return jsonResponse(200, {
-            boxId: RECORD_KEY, atHeight: suffixHead.header.height, stateRoot: avl.digest,
-            proof: Buffer.from(e.proof).toString('base64'),
-            kind: 'record', value: null,
-          });
+        if (u.pathname === `/api/v1/proof/${RECORD_KEY_HEX}`) {
+          const atHeight = Number(u.searchParams.get('atHeight'));
+          return jsonResponse(200, singleKeyAnswerFromProver(fixture.prover, fixture.stateRoot, atHeight, RECORD_KEY_BYTES, 'record'));
         }
         if (u.pathname === '/blocks/current') {
           return jsonResponse(200, { height: chain.headers.length, hash: null });
@@ -116,6 +103,8 @@ describe('end-to-end: tip + figures', () => {
     );
     expect(tipResult.winner).not.toBeNull();
     expect(tipResult.splits).toEqual([]);
+    // Silence an unused warning on `suffixHead` — it's a sanity reference.
+    expect(suffixHead.header.height).toBeGreaterThan(0);
 
     const anchor: Anchor = { tip: tipResult.tip!, suffixHead: tipResult.suffixHead! };
     const listing = await fetchListing(tipResult.winner!.url, FAKE_USER, combinedFetch);
@@ -127,14 +116,15 @@ describe('end-to-end: tip + figures', () => {
     );
     expect(figures.failed).toBe(false);
     expect(figures.karma.proven).toBe(100n);
+    expect(figures.karma.holdings).toBe('read');
+    expect(figures.credits.holdings).toBe('read');
     expect(figures.boxes[0]!.status).toBe('proven');
 
-    // The --json shape at index.ts: assert the field names and their round-trip.
     const jsonObj: Record<string, unknown> = {
       tip: tipResult.tip ? { height: tipResult.tip.height } : null,
-      nodes: tipResult.nodes.map(n => ({ url: n.url, verified: n.verified })),
+      nodes: tipResult.nodes.map((n) => ({ url: n.url, verified: n.verified })),
       splits: tipResult.splits,
-      boxes: figures.boxes.map(b => ({
+      boxes: figures.boxes.map((b) => ({
         boxId: b.boxId, class: b.boxClass,
         value: b.value.toString(), lockedUntilBlock: b.lockedUntilBlock,
         status: b.status, verdict: b.verdict,

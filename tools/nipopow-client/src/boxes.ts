@@ -12,15 +12,19 @@ import {
   identityRecordFromBytes,
 } from '@dagsocial/types';
 import type {
+  AnyBox,
   BlockHeader,
+  CreditBox,
   DecodedBoxCandidate,
   IdentityRecord,
   NetworkProfile,
   UserId,
 } from '@dagsocial/types';
 import type { PoPowHeader } from '@dagsocial/nipopow';
+import type { HoldingKind } from '@dagsocial/consensus';
 import type { HttpFetch } from './http.js';
-import { capped, fetchJson, isRecord } from './http.js';
+import { capped, fetchJson, isRecord, shown } from './http.js';
+import { proveHoldings } from './holdings.js';
 
 export interface ListedBox {
   boxId: string;
@@ -30,7 +34,13 @@ export interface ListedBox {
 
 export interface Listing {
   karma: { boxes: ListedBox[]; height: number; effective: string };
-  credits: { boxes: ListedBox[] };
+  /**
+   * The credits listing the caller handed in, or `null` meaning *not read*:
+   * the run reads no credit range, answers no credit box, zeroes every credit
+   * sum, and sets `credits.holdings` to `'not-read'`
+   * (WEB_INTERFACE → The extension → "The verified figures").
+   */
+  credits: { boxes: ListedBox[] } | null;
 }
 
 export type ListingResult = { ok: true; listing: Listing } | { ok: false; reason: string };
@@ -40,7 +50,13 @@ export interface Anchor {
   suffixHead: PoPowHeader;
 }
 
-export type FigureStatus = 'proven' | 'young' | 'unchecked' | 'absent' | 'unproven' | 'no-proof';
+/**
+ * The classes a listed or held box falls into (WEB_INTERFACE → The extension
+ * → "The verified figures"). `unlisted` names a box the key holds at `tip`
+ * that is named nowhere in its ledger's listing while `heightAfter` equals
+ * `tip.height` — the chain holds what the node did not list.
+ */
+export type FigureStatus = 'proven' | 'young' | 'unchecked' | 'absent' | 'unlisted' | 'unproven' | 'no-proof';
 
 export interface FigureBox {
   boxId: string;
@@ -56,18 +72,38 @@ export type RecordResult =
   | { status: 'absent' }
   | { status: 'unproven' | 'no-proof'; verdict: string };
 
+/**
+ * The sums each class contributes to a ledger (WEB_INTERFACE → The extension
+ * → "The verified figures"). `unlisted` sums apart from the four — the chain
+ * holds what the node did not list — and sets `failed` as an `absent` box
+ * does.
+ */
 export interface LedgerSums {
   proven: bigint;
   young: bigint;
   unchecked: bigint;
   absent: bigint;
+  unlisted: bigint;
 }
+
+/**
+ * Each ledger's holdings read, beside its boxes'
+ * (WEB_INTERFACE → The extension → "The verified figures").
+ * - `read` — the key's whole range at both heights was proven;
+ * - `unproven` — one height's range failed `unproven` (`suffixHead` before
+ *   `tip`); every listed box of the ledger carries it, and the run `failed`;
+ * - `no-proof` — one height's range failed `no-proof`; every listed box
+ *   carries it, and the run keeps its state;
+ * - `not-read` — the listing was handed as `null`: no range request was
+ *   made.
+ */
+export type HoldingsRead = 'read' | 'unproven' | 'no-proof' | 'not-read';
 
 export interface FiguresResult {
   boxes: FigureBox[];
   record: RecordResult;
-  karma: LedgerSums & { effective: bigint | null };
-  credits: LedgerSums;
+  karma: LedgerSums & { effective: bigint | null; holdings: HoldingsRead };
+  credits: LedgerSums & { holdings: HoldingsRead };
   heightAfter: number | null;
   failed: boolean;
 }
@@ -202,14 +238,6 @@ type BoxAtHeight =
   | { kind: 'unproven'; verdict: string }
   | { kind: 'no-proof'; verdict: string };
 
-type BoxProofOutcome =
-  | { kind: 'proven'; value: bigint; lockedUntilBlock: number | null }
-  | { kind: 'exclusion' }
-  | { kind: 'unproven'; verdict: string }
-  | { kind: 'no-proof'; verdict: string };
-
-type FirstPassOutcome = BoxProofOutcome | { kind: 'malformed'; verdict: string };
-
 type RecordProofOutcome =
   | { kind: 'proven'; record: IdentityRecord }
   | { kind: 'exclusion' }
@@ -222,8 +250,10 @@ type RecordProofOutcome =
 // refuse; its `value` is never read — the value is the one the proof carries.
 // An answer of another shape — a body that is not an object, a `stateRoot`
 // that is not the header's, a `proof` that is not a string — is unproven
-// (WEB_INTERFACE → The extension → "A run is total"). The tool's one AVL
-// verification.
+// (WEB_INTERFACE → The extension → "A run is total"). The tool's one
+// single-key AVL verification; a key's holdings read whole go through
+// `proveHoldings` (NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the
+// range route").
 async function proveKeyAtHeight(
   nodeUrl: string,
   treeKey: Uint8Array,
@@ -296,59 +326,6 @@ export async function proveBoxAtHeight(
   return { kind: 'included', candidate: record.candidate };
 }
 
-// WEB_INTERFACE → The extension → "The verified figures" — a listed box is
-// proven when it is included, its `boxType` is the ledger it was listed under,
-// its `owner` is the loaded key, and its value — and a credit box's lock — are
-// the listing's, both being fixed by the box id. `listed` has passed
-// checkListedBox.
-async function proveListedBoxAtHeight(
-  nodeUrl: string,
-  listed: ListedBox,
-  boxClass: 'karma' | 'credit',
-  userLowerHex: string,
-  atHeight: number,
-  expectedStateRoot: string,
-  httpFetch: HttpFetch,
-): Promise<BoxProofOutcome> {
-  const at = await proveBoxAtHeight(nodeUrl, listed.boxId, atHeight, expectedStateRoot, httpFetch);
-  if (at.kind !== 'included') return at;
-  if (at.candidate.boxType !== boxClass) {
-    return {
-      kind: 'unproven',
-      verdict: `candidate boxType '${at.candidate.boxType}' does not match listing '${boxClass}'`,
-    };
-  }
-  // Both karma and credit carry `owner` (TYPES_INTERFACE → Layout — Boxes).
-  const cand = at.candidate as { owner: Uint8Array; lockedUntilBlock?: number };
-  const ownerHex = bytesToHex(cand.owner);
-  if (ownerHex !== userLowerHex) {
-    return {
-      kind: 'unproven',
-      verdict: `candidate owner '${ownerHex}' does not match user '${userLowerHex}'`,
-    };
-  }
-  if (at.candidate.value !== BigInt(listed.value)) {
-    return {
-      kind: 'unproven',
-      verdict: `candidate value ${at.candidate.value} does not match listing ${capped(listed.value)}`,
-    };
-  }
-  const lockedUntilBlock =
-    boxClass === 'credit'
-      ? cand.lockedUntilBlock === undefined
-        ? null
-        : cand.lockedUntilBlock
-      : null;
-  const listedLock: unknown = listed.lockedUntilBlock ?? null;
-  if (boxClass === 'credit' && listedLock !== lockedUntilBlock) {
-    return {
-      kind: 'unproven',
-      verdict: `candidate lockedUntilBlock ${lockShown(lockedUntilBlock)} does not match listing ${lockShown(listedLock)}`,
-    };
-  }
-  return { kind: 'proven', value: at.candidate.value, lockedUntilBlock };
-}
-
 // TYPES_INTERFACE → The tree keys — the identity record's tree key is
 // `identityKey(identityId)`: tag `0x02`, then the raw `identityId`. The tag
 // alone keeps it apart from a box key, so the lookup proof binds this key to
@@ -371,9 +348,34 @@ async function proveRecordAtHeight(
   return { kind: 'proven', record };
 }
 
-// WEB_INTERFACE → The extension → "The verified figures" — the run's order is
-// the rule: every listed box at suffixHead, then the identity record, then
-// every excluded box at tip, then one /blocks/current for `heightAfter`.
+/** The ledgers each listing kind commits to, in the run's order. */
+const KINDS: readonly ('karma' | 'credit')[] = ['karma', 'credit'];
+type LedgerKind = (typeof KINDS)[number];
+
+// WEB_INTERFACE → The extension → "The verified figures" — the run reads the
+// key's holdings whole, by range, at `suffixHead` and at `tip`, then judges
+// the listing against them. Order of the run: the identity record at
+// `suffixHead`; `proveHoldings` at `suffixHead` for `karma` and, where
+// `listing.credits` is not `null`, `credit`; the same at `tip`; then
+// `readHeightAfter`. The classes:
+// - `proven` — the ledger's listing names a box held in both `S` and `T`, in
+//   the ledger it was listed under, with the listing's value and (for a
+//   credit box) its lock;
+// - `young` — held in `T` and not in `S`;
+// - `absent` — not held in `T` and `heightAfter` equals `tip.height`;
+// - `unchecked` — not held in `T` and `heightAfter` differs or is unread;
+// - `unlisted` — held in `T`, named nowhere in its ledger's listing, and
+//   `heightAfter` equals `tip.height`; a `FigureBox` of the run's own, after
+//   the listed ones, summed apart from the four;
+// - `unproven` — a listed value or lock that differs from the held box's, a
+//   malformed entry, or an id named twice in the listing; a failed holdings
+//   read (`unproven`) also hands this status to every listed box of the
+//   ledger;
+// - `no-proof` — a failed holdings read (`no-proof`) hands this status to
+//   every listed box of the ledger.
+// A ledger whose listing is `null` is not read: no range request, no box of
+// it, every sum zero. Each ledger's read status is `karma.holdings` and
+// `credits.holdings`.
 export async function proveFigures(
   nodeUrl: string,
   user: string,
@@ -389,174 +391,210 @@ export async function proveFigures(
   const tipHeight = anchor.tip.height;
   const tipStateRoot = anchor.tip.stateRoot;
 
-  const allBoxes: { listed: ListedBox; boxClass: 'karma' | 'credit' }[] = [];
-  for (const b of listing.karma.boxes) allBoxes.push({ listed: b, boxClass: 'karma' });
-  for (const b of listing.credits.boxes) allBoxes.push({ listed: b, boxClass: 'credit' });
+  // Step 1 — the identity record at suffixHead.
+  const recordOutcome = await proveRecordAtHeight(nodeUrl, userBytes, suffixHeight, suffixStateRoot, httpFetch);
 
-  // Step 1 — every listed box at suffixHead; an entry that is not a listed box,
-  // or names an id the listing named earlier, is unproven and asks for nothing.
-  // `checked` keeps each entry's own (lowercased) form, indexed with `allBoxes`,
-  // for step 3 and the assembly below to reuse without re-validating.
-  const firstPass: FirstPassOutcome[] = [];
-  const checked: (ListedBox | null)[] = [];
-  const named = new Set<string>();
-  for (const { listed, boxClass } of allBoxes) {
-    const check = checkListedBox(listed, named);
-    if (!check.ok) {
-      checked.push(null);
-      firstPass.push({ kind: 'malformed', verdict: check.verdict });
-      continue;
-    }
-    checked.push(check.listed);
-    firstPass.push(
-      await proveListedBoxAtHeight(
-        nodeUrl,
-        check.listed,
-        boxClass,
-        userLowerHex,
-        suffixHeight,
-        suffixStateRoot,
-        httpFetch,
-      ),
-    );
-  }
+  // The kinds of range to read, in the run's order. A `null` credits listing
+  // means *not read*; the credit range is not asked.
+  const askedKinds: HoldingKind[] = ['karma'];
+  if (listing.credits !== null) askedKinds.push('credit');
 
-  // Step 2 — the identity record at suffixHead
-  const recordOutcome = await proveRecordAtHeight(
-    nodeUrl,
-    userBytes,
-    suffixHeight,
-    suffixStateRoot,
-    httpFetch,
-  );
+  // Step 2 — holdings at suffixHead (S).
+  const S = await proveHoldings(nodeUrl, userLowerHex, askedKinds, { height: suffixHeight, stateRoot: suffixStateRoot }, httpFetch);
 
-  // Step 3 — every box the first pass excluded, once more at tip, each kept by
-  // its place in the listing
-  const secondPass = new Map<number, BoxProofOutcome>();
-  for (let i = 0; i < allBoxes.length; i++) {
-    if (firstPass[i]!.kind !== 'exclusion') continue;
-    const { boxClass } = allBoxes[i]!;
-    secondPass.set(
-      i,
-      await proveListedBoxAtHeight(
-        nodeUrl,
-        checked[i]!,
-        boxClass,
-        userLowerHex,
-        tipHeight,
-        tipStateRoot,
-        httpFetch,
-      ),
-    );
-  }
+  // Step 3 — holdings at tip (T), only when S succeeded. A ledger that
+  // failed at `suffixHead` ends there — its listed boxes carry S's failure.
+  const T = S.ok
+    ? await proveHoldings(nodeUrl, userLowerHex, askedKinds, { height: tipHeight, stateRoot: tipStateRoot }, httpFetch)
+    : null;
 
-  // Step 4 — one GET /blocks/current
+  // Step 4 — one GET /blocks/current.
   const heightAfter = await readHeightAfter(nodeUrl, httpFetch);
 
-  // Assemble the per-box verdicts
+  // Each ledger's read status (`holdings`): `not-read` for a `null` listing,
+  // the first failure's status for a read that failed, `read` otherwise.
+  const holdingsStatus = (ledger: LedgerKind): HoldingsRead => {
+    if (ledger === 'credit' && listing.credits === null) return 'not-read';
+    if (!S.ok) return S.status;
+    if (T !== null && !T.ok) return T.status;
+    return 'read';
+  };
+
+  const holdingsVerdict = (ledger: LedgerKind): string | null => {
+    if (ledger === 'credit' && listing.credits === null) return null;
+    if (!S.ok) return `holdings read failed at suffixHead: ${S.verdict}`;
+    if (T !== null && !T.ok) return `holdings read failed at tip: ${T.verdict}`;
+    return null;
+  };
+
+  // Build an index of the held boxes at each height, per ledger. Each key
+  // appears once in a ledger's range (`CONSENSUS_INTERFACE → The holdings
+  // page`). A credit box's `lockedUntilBlock` is read from the proven box.
+  const atSuffix: Record<LedgerKind, Map<string, AnyBox>> = { karma: new Map(), credit: new Map() };
+  const atTip: Record<LedgerKind, Map<string, AnyBox>> = { karma: new Map(), credit: new Map() };
+  if (S.ok) {
+    for (const kind of askedKinds) {
+      if (kind !== 'karma' && kind !== 'credit') continue;
+      const boxes = S.boxes[kind];
+      if (boxes === undefined) continue;
+      for (const b of boxes) atSuffix[kind].set(b.id!.toLowerCase(), b);
+    }
+  }
+  if (T !== null && T.ok) {
+    for (const kind of askedKinds) {
+      if (kind !== 'karma' && kind !== 'credit') continue;
+      const boxes = T.boxes[kind];
+      if (boxes === undefined) continue;
+      for (const b of boxes) atTip[kind].set(b.id!.toLowerCase(), b);
+    }
+  }
+
+  // Walk the listing. `named` holds every 64-hex id the listing named earlier
+  // (lowercased), across both ledgers (WEB_INTERFACE → The extension → "The
+  // verified figures" — an id named twice is unproven in its second place on,
+  // and the chain holds a box once). `checked` is each entry's lowercased
+  // form, indexed by listing position, so the per-ledger set of listed ids
+  // reads from this walk, never from the raw listing.
+  const allListed: { listed: unknown; boxClass: LedgerKind }[] = [];
+  for (const b of listing.karma.boxes) allListed.push({ listed: b, boxClass: 'karma' });
+  if (listing.credits !== null) {
+    for (const b of listing.credits.boxes) allListed.push({ listed: b, boxClass: 'credit' });
+  }
+
+  const named = new Set<string>();
+  const listedIds: Record<LedgerKind, Set<string>> = { karma: new Set(), credit: new Set() };
   const boxes: FigureBox[] = [];
   let failed = false;
-  for (let i = 0; i < allBoxes.length; i++) {
-    const { listed: rawListed, boxClass } = allBoxes[i]!;
-    const first = firstPass[i]!;
-    if (first.kind === 'malformed') {
-      boxes.push(malformedFigureBox(rawListed, boxClass, first.verdict));
+
+  for (const { listed, boxClass } of allListed) {
+    const check = checkListedBox(listed, named);
+    if (!check.ok) {
+      boxes.push(malformedFigureBox(listed, boxClass, check.verdict));
       failed = true;
       continue;
     }
-    const listed = checked[i]!;
-    const listingValue = BigInt(listed.value);
-    const listingLocked =
-      boxClass === 'credit' ? listed.lockedUntilBlock ?? null : null;
+    listedIds[boxClass].add(check.listed.boxId);
 
-    let fb: FigureBox;
-    if (first.kind === 'proven') {
-      fb = {
-        boxId: listed.boxId,
-        boxClass,
-        value: first.value,
-        lockedUntilBlock: first.lockedUntilBlock,
-        status: 'proven',
-        verdict: `proven at suffixHead (height ${suffixHeight})`,
-      };
-    } else if (first.kind === 'unproven') {
-      fb = {
-        boxId: listed.boxId,
+    // If this ledger's holdings read failed, every listed box of it carries
+    // the failure.
+    const status = holdingsStatus(boxClass);
+    if (status === 'unproven' || status === 'no-proof') {
+      const verdict = holdingsVerdict(boxClass)!;
+      const listingValue = BigInt(check.listed.value);
+      const listingLocked = boxClass === 'credit' ? check.listed.lockedUntilBlock ?? null : null;
+      boxes.push({
+        boxId: check.listed.boxId,
         boxClass,
         value: listingValue,
         lockedUntilBlock: listingLocked,
-        status: 'unproven',
-        verdict: `unproven at suffixHead: ${first.verdict}`,
-      };
-      failed = true;
-    } else if (first.kind === 'no-proof') {
-      fb = {
-        boxId: listed.boxId,
-        boxClass,
-        value: listingValue,
-        lockedUntilBlock: listingLocked,
-        status: 'no-proof',
-        verdict: `no proof at suffixHead: ${first.verdict}`,
-      };
-    } else {
-      const second = secondPass.get(i)!;
-      if (second.kind === 'proven') {
-        fb = {
-          boxId: listed.boxId,
-          boxClass,
-          value: second.value,
-          lockedUntilBlock: second.lockedUntilBlock,
-          status: 'young',
-          verdict: `young — proven at tip (height ${tipHeight}), excluded at suffixHead`,
-        };
-      } else if (second.kind === 'unproven') {
-        fb = {
-          boxId: listed.boxId,
+        status,
+        verdict,
+      });
+      if (status === 'unproven') failed = true;
+      continue;
+    }
+
+    // The ledger's reads succeeded. Decide the class from `S` and `T`.
+    const heldT = atTip[boxClass].get(check.listed.boxId);
+    const heldS = atSuffix[boxClass].get(check.listed.boxId);
+    const listingValue = BigInt(check.listed.value);
+    const listingLocked = boxClass === 'credit' ? check.listed.lockedUntilBlock ?? null : null;
+
+    if (heldT !== undefined) {
+      // Held in `T`. Verify the listing's value and (for credit) lock.
+      const mismatch = valueOrLockMismatch(heldT, boxClass, check.listed);
+      if (mismatch !== null) {
+        boxes.push({
+          boxId: check.listed.boxId,
           boxClass,
           value: listingValue,
           lockedUntilBlock: listingLocked,
           status: 'unproven',
-          verdict: `unproven at tip: ${second.verdict}`,
-        };
+          verdict: `unproven: ${mismatch}`,
+        });
         failed = true;
-      } else if (second.kind === 'no-proof') {
-        fb = {
-          boxId: listed.boxId,
-          boxClass,
-          value: listingValue,
-          lockedUntilBlock: listingLocked,
-          status: 'no-proof',
-          verdict: `no proof at tip: ${second.verdict}`,
-        };
-      } else {
-        // Excluded at both — decided by heightAfter.
-        const decided = excludedAtBoth(heightAfter, tipHeight);
-        if (decided.absent) {
-          fb = {
-            boxId: listed.boxId,
-            boxClass,
-            value: listingValue,
-            lockedUntilBlock: listingLocked,
-            status: 'absent',
-            verdict: `absent — the node lists what the chain does not hold at height ${tipHeight}`,
-          };
-          failed = true;
-        } else {
-          fb = {
-            boxId: listed.boxId,
-            boxClass,
-            value: listingValue,
-            lockedUntilBlock: listingLocked,
-            status: 'unchecked',
-            verdict: `unchecked — ${decided.why}`,
-          };
-        }
+        continue;
       }
+      const provenLock = boxClass === 'credit'
+        ? (heldT as CreditBox).lockedUntilBlock ?? null
+        : null;
+      if (heldS !== undefined) {
+        boxes.push({
+          boxId: check.listed.boxId,
+          boxClass,
+          value: heldT.value,
+          lockedUntilBlock: provenLock,
+          status: 'proven',
+          verdict: `proven — held at suffixHead (height ${suffixHeight}) and at tip (height ${tipHeight})`,
+        });
+      } else {
+        boxes.push({
+          boxId: check.listed.boxId,
+          boxClass,
+          value: heldT.value,
+          lockedUntilBlock: provenLock,
+          status: 'young',
+          verdict: `young — held at tip (height ${tipHeight}), not at suffixHead`,
+        });
+      }
+      continue;
     }
-    boxes.push(fb);
+
+    // Not held in `T`. `heightAfter` decides absent vs unchecked.
+    const decided = excludedAtBoth(heightAfter, tipHeight);
+    if (decided.absent) {
+      boxes.push({
+        boxId: check.listed.boxId,
+        boxClass,
+        value: listingValue,
+        lockedUntilBlock: listingLocked,
+        status: 'absent',
+        verdict: `absent — the node lists what the chain does not hold at height ${tipHeight}`,
+      });
+      failed = true;
+    } else {
+      boxes.push({
+        boxId: check.listed.boxId,
+        boxClass,
+        value: listingValue,
+        lockedUntilBlock: listingLocked,
+        status: 'unchecked',
+        verdict: `unchecked — ${decided.why}`,
+      });
+    }
   }
 
-  // The record verdict, and whether it counts as a failure
+  // Unlisted boxes: for each successfully-read ledger, every box in `T` the
+  // listing names nowhere becomes an `unlisted` figure with `heightAfter`
+  // equal to `tip.height`; otherwise it is in no class and no sum
+  // (WEB_INTERFACE → The extension → "The verified figures" — a held box
+  // the listing lacks while `heightAfter` is not `tip.height` is in no class
+  // and no `FigureBox`).
+  if (heightAfter === tipHeight) {
+    for (const ledger of KINDS) {
+      if (holdingsStatus(ledger) !== 'read') continue;
+      // Deterministic order: by box id ascending.
+      const unlisted: AnyBox[] = [];
+      for (const [id, box] of atTip[ledger]) {
+        if (!listedIds[ledger].has(id)) unlisted.push(box);
+      }
+      unlisted.sort((a, b) => (a.id! < b.id! ? -1 : a.id! > b.id! ? 1 : 0));
+      for (const held of unlisted) {
+        const provenLock = ledger === 'credit' ? (held as CreditBox).lockedUntilBlock ?? null : null;
+        boxes.push({
+          boxId: held.id!,
+          boxClass: ledger,
+          value: held.value,
+          lockedUntilBlock: provenLock,
+          status: 'unlisted',
+          verdict: `unlisted — the chain holds what the node did not list at height ${tipHeight}`,
+        });
+        failed = true;
+      }
+    }
+  }
+
+  // The record verdict, and whether it counts as a failure.
   let record: RecordResult;
   if (recordOutcome.kind === 'proven') {
     record = { status: 'proven', record: recordOutcome.record };
@@ -569,19 +607,29 @@ export async function proveFigures(
     record = { status: 'no-proof', verdict: recordOutcome.verdict };
   }
 
-  const sums = (cls: 'karma' | 'credit'): LedgerSums => {
+  // A ledger with an empty listing whose holdings read failed `unproven`
+  // sets `failed` even where no box stands to carry it
+  // (WEB_INTERFACE → The extension → "The verified figures").
+  for (const ledger of KINDS) {
+    if (holdingsStatus(ledger) === 'unproven') failed = true;
+  }
+
+  // Per-ledger sums.
+  const sums = (cls: LedgerKind): LedgerSums => {
     let proven = 0n;
     let young = 0n;
     let unchecked = 0n;
     let absent = 0n;
+    let unlisted = 0n;
     for (const b of boxes) {
       if (b.boxClass !== cls) continue;
       if (b.status === 'proven') proven += b.value;
       else if (b.status === 'young') young += b.value;
       else if (b.status === 'unchecked') unchecked += b.value;
       else if (b.status === 'absent') absent += b.value;
+      else if (b.status === 'unlisted') unlisted += b.value;
     }
-    return { proven, young, unchecked, absent };
+    return { proven, young, unchecked, absent, unlisted };
   };
   const karmaSums = sums('karma');
   const creditsSums = sums('credit');
@@ -596,19 +644,9 @@ export async function proveFigures(
     effective = null;
     failed = true;
   } else if (record.status === 'proven') {
-    effective = effectiveKarma(
-      karmaSums.proven,
-      record.record,
-      valuedAt,
-      decayCfgFor(profile),
-    );
+    effective = effectiveKarma(karmaSums.proven, record.record, valuedAt, decayCfgFor(profile));
   } else if (record.status === 'absent') {
-    effective = effectiveKarma(
-      karmaSums.proven,
-      null,
-      valuedAt,
-      decayCfgFor(profile),
-    );
+    effective = effectiveKarma(karmaSums.proven, null, valuedAt, decayCfgFor(profile));
   } else {
     effective = null;
   }
@@ -616,14 +654,16 @@ export async function proveFigures(
   return {
     boxes,
     record,
-    karma: { ...karmaSums, effective },
-    credits: creditsSums,
+    karma: { ...karmaSums, effective, holdings: holdingsStatus('karma') },
+    credits: { ...creditsSums, holdings: holdingsStatus('credit') },
     heightAfter,
     failed,
   };
 }
 
-// The command line's entry: fetch the listing and prove it.
+// The command line's entry: fetch the listing and prove it. A listing
+// failure answers a FiguresResult carrying `not-read` for both ledgers'
+// `holdings` (WEB_INTERFACE → The extension → "The verified figures").
 export async function proveBoxes(
   nodeUrl: string,
   user: string,
@@ -636,8 +676,8 @@ export async function proveBoxes(
     return {
       boxes: [],
       record: { status: 'no-proof', verdict: `listing failed: ${listingResult.reason}` },
-      karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, effective: null },
-      credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n },
+      karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: null, holdings: 'not-read' },
+      credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'not-read' },
       heightAfter: null,
       failed: true,
     };
@@ -655,8 +695,8 @@ export async function readHeightAfter(nodeUrl: string, httpFetch: HttpFetch): Pr
   return isBlockHeight(height) ? height : null;
 }
 
-// WEB_INTERFACE → The extension → "The verified figures" — a key excluded at
-// both heights is `absent` when the node's height after the run is the anchor's
+// WEB_INTERFACE → The extension → "The verified figures" — a key not held at
+// `tip` is `absent` when the node's height after the run is the anchor's
 // tip; a block landed since, a fallen height or an unread one leaves it
 // `unchecked` — undecided reads as unchecked, never as a lie.
 export function excludedAtBoth(
@@ -730,15 +770,29 @@ function malformedFigureBox(
   };
 }
 
-// A node's value as a verdict names it: a string quoted and capped, anything
-// else by its kind. Never converted — a parsed object can carry a `toString`
-// that is not a function, and converting it throws.
-export function shown(v: unknown): string {
-  if (typeof v === 'string') return `'${capped(v)}'`;
-  if (v === undefined) return 'missing';
-  if (v === null) return 'null';
-  if (Array.isArray(v)) return 'an array';
-  return typeof v === 'object' ? 'an object' : `a ${typeof v}`;
+/**
+ * The listed value and (for credit) lock equal the held box's, both fixed
+ * by its id (WEB_INTERFACE → The extension → "The verified figures"). The
+ * ledger's range already fixes the box's type and its owner, so neither is
+ * checked here.
+ */
+function valueOrLockMismatch(
+  held: AnyBox,
+  boxClass: LedgerKind,
+  listed: ListedBox,
+): string | null {
+  const listingValue = BigInt(listed.value);
+  if (held.value !== listingValue) {
+    return `candidate value ${held.value} does not match listing ${capped(listed.value)}`;
+  }
+  if (boxClass === 'credit') {
+    const listedLock: unknown = listed.lockedUntilBlock ?? null;
+    const heldLock = (held as CreditBox).lockedUntilBlock ?? null;
+    if (listedLock !== heldLock) {
+      return `candidate lockedUntilBlock ${lockShown(heldLock)} does not match listing ${lockShown(listedLock)}`;
+    }
+  }
+  return null;
 }
 
 // A lock as a verdict names it: a number as written, no lock as `none`.

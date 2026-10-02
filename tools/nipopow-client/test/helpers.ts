@@ -17,8 +17,13 @@ import {
   profileFor,
 } from '@dagsocial/types';
 import type {
+  AnyBox,
+  AnyBoxCandidate,
   BlockHeader,
   BoxCandidate,
+  CreditBox,
+  KarmaBox,
+  NetworkRecord,
   TxId,
   NetworkProfile,
   ProtocolEra,
@@ -42,6 +47,12 @@ import {
 } from '@dagsocial/nipopow';
 import type { PoPowHeader, PopowHeaderReader } from '@dagsocial/nipopow';
 import { BatchAVLProver } from '@ergots/avltree';
+import {
+  holdingsPage,
+  seedTreeWrites,
+  treeStateView,
+} from '@dagsocial/consensus';
+import type { HoldingKind, TreeLookup, TreeSession } from '@dagsocial/consensus';
 import type { HttpFetch } from '../src/http.js';
 
 export const DEVNET_POW_TARGET_BITS = 3072;
@@ -522,4 +533,236 @@ export function avlProofJson(
     kind,
     value,
   };
+}
+
+// ---------------------------------------------------------------------------
+// A real prover's state, for the range route and the single-key route.
+//
+// Each test building range proofs seeds a `BatchAVLProver` with
+// `seedTreeWrites` (CONSENSUS_INTERFACE → The tree writes → "seedTreeWrites
+// is genesis"), then draws proofs from it: the range route runs
+// `holdingsPage` over a recording session and generates the proof; the
+// single-key route performs the lookup and generates the proof. Both close
+// one `generateProof()` cycle a request, so the prover stays at a cycle
+// boundary between requests (NODE_INTERFACE → The block proof).
+// ---------------------------------------------------------------------------
+
+/** A deterministic `TxId` for a seeded fixture box — the candidate's bytes, hashed. */
+export function fixtureTxId(candidate: AnyBoxCandidate, nonce: number): TxId {
+  const label = `${JSON.stringify(valuesFor(candidate))}:${nonce}`;
+  const h = Buffer.from(label).toString('hex').padEnd(64, '0').slice(0, 64);
+  return h as TxId;
+}
+
+function valuesFor(c: AnyBoxCandidate): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(c)) {
+    out[k] = v instanceof Uint8Array ? bytesToHex(v) : typeof v === 'bigint' ? v.toString() : v;
+  }
+  return out;
+}
+
+/**
+ * Add `txId`, `index` and `id` to a candidate so `seedTreeWrites` can place
+ * it in the tree. `txId` is derived from the candidate and a nonce, so every
+ * seeded box's id is unique within one fixture.
+ */
+export function storedBox<T extends AnyBox>(
+  candidate: AnyBoxCandidate,
+  nonce: number,
+  index = 0,
+): T {
+  const txId = fixtureTxId(candidate, nonce);
+  const id = computeCandidateBoxId(candidate, txId, index);
+  return { ...candidate, id, txId, index } as unknown as T;
+}
+
+/**
+ * `karmaBoxFor` and `creditBoxFor` are terse helpers for the common cases.
+ */
+export function karmaBoxFor(owner: UserId, value: bigint, nonce: number, createdAtBlock = 1): KarmaBox {
+  return storedBox<KarmaBox>({ boxType: 'karma', value, createdAtBlock, owner }, nonce);
+}
+
+export function creditBoxFor(owner: UserId, value: bigint, nonce: number, createdAtBlock = 1, lockedUntilBlock?: number): CreditBox {
+  const base: AnyBoxCandidate = { boxType: 'credit', value, createdAtBlock, owner, ...(lockedUntilBlock !== undefined ? { lockedUntilBlock } : {}) };
+  return storedBox<CreditBox>(base, nonce);
+}
+
+/**
+ * A recording session over `prover` — each lookup is
+ * `performLookupWithNeighbors`, so it joins the proof the prover makes at
+ * the next `generateProof()` (CONSENSUS_INTERFACE → The tree session).
+ * `null` neighbours are the sentinels: all `0x00` below the first key, all
+ * `0xff` past the last. A `{ success: false }` is a throw.
+ */
+export function recordingSession(prover: BatchAVLProver): TreeSession {
+  return {
+    lookup(key: Uint8Array): TreeLookup {
+      const answer = prover.performLookupWithNeighbors(key);
+      if (!answer.success) throw new Error(`the prover refuses the lookup of ${bytesToHex(key)}`);
+      const nextKey = answer.nextKey ?? new Uint8Array(TREE_KEY_LENGTH).fill(0xff);
+      return answer.found
+        ? { found: true, value: answer.value, nextKey }
+        : { found: false, prevKey: answer.prevKey ?? new Uint8Array(TREE_KEY_LENGTH), nextKey };
+    },
+  };
+}
+
+export interface HoldingsFixture {
+  prover: BatchAVLProver;
+  stateRoot: string;
+}
+
+/**
+ * Build a `BatchAVLProver` with `seedTreeWrites`' writes applied and its
+ * proof cycle closed. The prover is at a cycle boundary ready for the next
+ * proof call. The returned `stateRoot` is the 33-byte digest hex: the root
+ * label and the tree height.
+ */
+export function buildHoldingsFixture(opts: {
+  boxes?: readonly AnyBox[];
+  records?: ReadonlyArray<{ identityId: Uint8Array; record: IdentityRecord }>;
+  network?: NetworkRecord;
+}): HoldingsFixture {
+  const writes = seedTreeWrites(
+    opts.boxes ?? [],
+    opts.records ?? [],
+    opts.network ?? { memberCount: 0 },
+  );
+  const prover = new BatchAVLProver(TREE_KEY_LENGTH, null);
+  for (const w of writes) {
+    const r = prover.performOneOperation(w);
+    if (!r.success) throw new Error(`seedTreeWrites refused ${w.tag} of ${bytesToHex(w.key)}`);
+  }
+  prover.generateProof();
+  return { prover, stateRoot: Buffer.from(prover.digest()).toString('hex') };
+}
+
+/**
+ * The range route's answer, as `GET /api/v1/range/:kind/:owner` serves it
+ * (NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the range route"):
+ * `holdingsPage` run
+ * over a recording session, then `generateProof()` to close the cycle. The
+ * answer carries `{ kind, owner, atHeight, stateRoot, from, limit, proof }`
+ * — no decoded box, no `next`.
+ */
+export function rangeAnswerFromProver(
+  prover: BatchAVLProver,
+  stateRoot: string,
+  atHeight: number,
+  kind: HoldingKind,
+  owner: UserId,
+  from: Uint8Array | null,
+  limit: number,
+): unknown {
+  const session = recordingSession(prover);
+  const view = treeStateView(session);
+  holdingsPage(view, kind, owner, from, limit);
+  const proof = prover.generateProof();
+  return {
+    kind,
+    owner: bytesToHex(owner),
+    atHeight,
+    stateRoot,
+    from: from === null ? null : bytesToHex(from),
+    limit,
+    proof: Buffer.from(proof).toString('base64'),
+  };
+}
+
+/**
+ * The single-key proof route's answer, as `GET /api/v1/proof/:key` serves it
+ * (NODE_INTERFACE → AVL+ State Root). The lookup is performed on the prover
+ * through `performLookupWithNeighbors` (identical directional bits to
+ * `Lookup`), and `generateProof()` closes the cycle.
+ */
+export function singleKeyAnswerFromProver(
+  prover: BatchAVLProver,
+  stateRoot: string,
+  atHeight: number,
+  key: Uint8Array,
+  entity: 'box' | 'record' | 'network' | 'username' | 'holder' | 'post' | 'like' | 'index' | null,
+): unknown {
+  prover.performOneOperation({ tag: 'Lookup', key });
+  const proof = prover.generateProof();
+  return {
+    key: bytesToHex(key),
+    atHeight,
+    stateRoot,
+    proof: Buffer.from(proof).toString('base64'),
+    kind: entity,
+    value: null,
+  };
+}
+
+/**
+ * A test fetch serving a prover's state at `suffixHead` AND at `tip` — one
+ * prover per height, since the client reads the range at both heights.
+ * `heightAfter` names what `GET /blocks/current` answers (`null` for no
+ * answer). The route table:
+ *   - `GET /api/v1/range/:kind/:owner?atHeight=N` → the right prover's page
+ *   - `GET /api/v1/proof/:key?atHeight=N` → the right prover's single key
+ *   - `GET /blocks/current` → `{ height: heightAfter, hash: null }` or 503
+ * Everything else is a 404. `calls` is the list of request URLs for
+ * assertions.
+ */
+export interface TwoHeightNode {
+  fetch: HttpFetch;
+  calls: string[];
+}
+export interface TwoHeightState {
+  suffix: HoldingsFixture;
+  suffixHeight: number;
+  tip: HoldingsFixture;
+  tipHeight: number;
+  heightAfter: number | null;
+}
+
+export function twoHeightNode(state: TwoHeightState): TwoHeightNode {
+  const calls: string[] = [];
+  const pickFixture = (h: number): HoldingsFixture | null => {
+    if (h === state.suffixHeight) return state.suffix;
+    if (h === state.tipHeight) return state.tip;
+    return null;
+  };
+  const fetch: HttpFetch = async (reqUrl: string): Promise<Response> => {
+    const u = new URL(reqUrl);
+    calls.push(`${u.pathname}${u.search}`);
+
+    if (u.pathname === '/blocks/current') {
+      if (state.heightAfter === null) return jsonResponse(503, { error: 'service unavailable' });
+      return jsonResponse(200, { height: state.heightAfter, hash: null });
+    }
+
+    const rangeMatch = u.pathname.match(/^\/api\/v1\/range\/([a-z]+)\/([0-9a-f]{64})$/);
+    if (rangeMatch) {
+      const kind = rangeMatch[1] as HoldingKind;
+      const ownerHex = rangeMatch[2]!;
+      const atHeight = Number(u.searchParams.get('atHeight'));
+      const fix = pickFixture(atHeight);
+      if (fix === null) return jsonResponse(404, { error: 'height not available' });
+      const limitRaw = u.searchParams.get('limit');
+      const limit = limitRaw === null ? 256 : Number(limitRaw);
+      const fromHex = u.searchParams.get('from');
+      const from = fromHex === null ? null : hexToBytes(fromHex);
+      return jsonResponse(
+        200,
+        rangeAnswerFromProver(fix.prover, fix.stateRoot, atHeight, kind, hexToBytes(ownerHex) as UserId, from, limit),
+      );
+    }
+
+    const keyMatch = u.pathname.match(/^\/api\/v1\/proof\/([0-9a-f]+)$/);
+    if (keyMatch) {
+      const keyHex = keyMatch[1]!;
+      const atHeight = Number(u.searchParams.get('atHeight'));
+      const fix = pickFixture(atHeight);
+      if (fix === null) return jsonResponse(404, { error: 'height not available' });
+      const kind = keyHex.startsWith('02') ? 'record' : 'box';
+      return jsonResponse(200, singleKeyAnswerFromProver(fix.prover, fix.stateRoot, atHeight, hexToBytes(keyHex), kind));
+    }
+
+    return jsonResponse(404, { error: 'not found' });
+  };
+  return { fetch, calls };
 }

@@ -5,19 +5,16 @@ import { fetchListing, proveFigures } from '../src/boxes.js';
 import type { Listing } from '../src/boxes.js';
 import type { HttpFetch } from '../src/http.js';
 import {
-  buildAvlWithInsertions,
-  boxInsertion,
-  recordInsertion,
-  boxProofKeyHex,
-  identityProofKeyHex,
-  avlProofJson,
+  buildHoldingsFixture,
+  devnetProfile,
   hexToBytes,
   jsonResponse,
+  karmaBoxFor,
   makeAnchor,
-  devnetProfile,
+  twoHeightNode,
 } from './helpers.js';
-import { computeCandidateBoxId } from '@dagsocial/types';
-import type { AnyBoxCandidate, IdentityRecord, TxId, UserId } from '@dagsocial/types';
+import { identityKey } from '@dagsocial/types';
+import type { IdentityRecord, UserId } from '@dagsocial/types';
 
 // WEB_INTERFACE → The extension → "A run is total" — each test hands the tool
 // one answer of another shape than the route's and asserts the status the run
@@ -25,8 +22,7 @@ import type { AnyBoxCandidate, IdentityRecord, TxId, UserId } from '@dagsocial/t
 
 const USER_HEX = 'ab'.repeat(32);
 const USER_BYTES = hexToBytes(USER_HEX) as UserId;
-const RECORD_KEY = identityProofKeyHex(USER_BYTES);
-const TXID = 'cd'.repeat(32) as TxId;
+const RECORD_KEY_BYTES = identityKey(USER_BYTES);
 const SUFFIX_H = 100;
 const TIP_H = 119;
 
@@ -42,52 +38,48 @@ const RECORD: IdentityRecord = {
   invitesUsed: 0,
 };
 
-const CANDIDATE: AnyBoxCandidate = { boxType: 'karma', value: 100n, createdAtBlock: 1, owner: USER_BYTES };
-const BOX_ID = computeCandidateBoxId(CANDIDATE, TXID, 0);
-// A key the tree does not hold — excluded at both heights.
-const GONE_ID = 'ee'.repeat(32);
-
-// One tree stands at both heights: the box, the record, an exclusion for GONE_ID.
-const AVL = buildAvlWithInsertions(
-  [boxInsertion(CANDIDATE, TXID, 0), recordInsertion(USER_BYTES, RECORD)],
-  [boxProofKeyHex(GONE_ID)],
-);
-const ANCHOR = makeAnchor(TIP_H, AVL.digest, SUFFIX_H, AVL.digest);
+const KARMA = karmaBoxFor(USER_BYTES, 100n, 1);
+const FIXTURE = buildHoldingsFixture({
+  boxes: [KARMA],
+  records: [{ identityId: USER_BYTES, record: RECORD }],
+});
+const ANCHOR = makeAnchor(TIP_H, FIXTURE.stateRoot, SUFFIX_H, FIXTURE.stateRoot);
 
 interface Routes {
-  proof?: (key: string) => Response | undefined;
+  range?: (kind: string, atHeight: number) => Response | undefined;
+  recordKey?: (atHeight: number) => Response | undefined;
   blocksCurrent?: () => Response;
 }
 
-// An honest node over AVL, a route answering otherwise where a test says so;
-// each request's path and query is logged in order.
+// An honest node over FIXTURE, with any route the test overrides. The route
+// handlers are called BEFORE the honest default serves — a test override wins.
 function node(routes: Routes = {}): { fetch: HttpFetch; calls: string[] } {
+  const base = twoHeightNode({ suffix: FIXTURE, suffixHeight: SUFFIX_H, tip: FIXTURE, tipHeight: TIP_H, heightAfter: TIP_H });
   const calls: string[] = [];
-  const fetch: HttpFetch = async (url: string) => {
-    const u = new URL(url);
+  const fetch: HttpFetch = async (reqUrl: string): Promise<Response> => {
+    const u = new URL(reqUrl);
     calls.push(`${u.pathname}${u.search}`);
-    const proofMatch = u.pathname.match(/^\/api\/v1\/proof\/(.+)$/);
-    if (proofMatch) {
-      const key = proofMatch[1]!;
-      const answer = routes.proof?.(key);
-      if (answer) return answer;
-      const entry = AVL.entries.get(key);
-      if (!entry) return jsonResponse(404, { error: 'height not available' });
-      const at = Number(u.searchParams.get('atHeight'));
-      const kind = entry.value === null ? null : key === RECORD_KEY ? 'record' : 'box';
-      return jsonResponse(200, avlProofJson(key, at, AVL.digest, entry.proof, kind, null));
+    const rangeMatch = u.pathname.match(/^\/api\/v1\/range\/([a-z]+)\/[0-9a-f]{64}$/);
+    if (rangeMatch) {
+      const atHeight = Number(u.searchParams.get('atHeight'));
+      const override = routes.range?.(rangeMatch[1]!, atHeight);
+      if (override) return override;
+    }
+    const keyMatch = u.pathname.match(/^\/api\/v1\/proof\/([0-9a-f]+)$/);
+    if (keyMatch) {
+      const atHeight = Number(u.searchParams.get('atHeight'));
+      const override = routes.recordKey?.(atHeight);
+      if (override) return override;
     }
     if (u.pathname === '/blocks/current') {
-      return routes.blocksCurrent?.() ?? jsonResponse(200, { height: TIP_H, hash: null });
+      const override = routes.blocksCurrent?.();
+      if (override) return override;
     }
-    return jsonResponse(404, { error: 'not found' });
+    return base.fetch(reqUrl);
   };
   return { fetch, calls };
 }
 
-// A node answering each path and query `answers` names with its page, and every
-// other request with a 404, which ends a listing — a request the tool should not
-// make shows in the log, and the paging stops there; each request logged in order.
 function pages(answers: Record<string, unknown>): { fetch: HttpFetch; calls: string[] } {
   const calls: string[] = [];
   const fetch: HttpFetch = async (url: string) => {
@@ -100,15 +92,13 @@ function pages(answers: Record<string, unknown>): { fetch: HttpFetch; calls: str
   return { fetch, calls };
 }
 
-// A listing as the caller hands it — entries and height as the node sent them.
 function listingOf(karma: unknown[], height: unknown = TIP_H): Listing {
   return {
     karma: { boxes: karma as Listing['karma']['boxes'], height: height as number, effective: '100' },
-    credits: { boxes: [] },
+    credits: null,
   };
 }
 
-// A response whose status line arrived and whose body did not.
 function cutOff(): Response {
   return {
     ok: true,
@@ -120,9 +110,6 @@ function cutOff(): Response {
 function prove(listing: Listing, fetch: HttpFetch) {
   return proveFigures('http://a', USER_HEX, listing, ANCHOR, devnetProfile(), fetch);
 }
-
-const GOOD_PROOF = Buffer.from(AVL.entries.get(boxProofKeyHex(BOX_ID))!.proof).toString('base64');
-const SHORT_PROOF = Buffer.from(AVL.entries.get(boxProofKeyHex(BOX_ID))!.proof.slice(0, 10)).toString('base64');
 
 describe('fetchJson', () => {
   it('a body cut off in flight is a transport failure, never a throw', async () => {
@@ -227,44 +214,55 @@ describe('fetchListing — a page the paging cannot walk fails the listing, its 
   });
 });
 
-describe('proveFigures — a proof answer of another shape is unproven', () => {
+describe('proveFigures — a range answer of another shape ends the ledger in a status, never a throw', () => {
+  const base = { stateRoot: FIXTURE.stateRoot, from: null, limit: 256, proof: '' };
+
   it.each([
-    ['a body that is null', null, 'stateRoot mismatch'],
-    ['a body that is an array', [], 'stateRoot mismatch'],
-    ['a `proof` that is not a string', { stateRoot: AVL.digest, kind: 'box', proof: 123 }, 'proof rejected'],
-    ['no `proof`', { stateRoot: AVL.digest, kind: 'box' }, 'proof rejected'],
-    ['a `proof` that is not base64', { stateRoot: AVL.digest, kind: 'box', proof: '!!not*base64@@' }, 'proof rejected'],
-    ['an empty `proof`', { stateRoot: AVL.digest, kind: 'box', proof: '' }, 'proof rejected'],
-    ['a `proof` cut short', { stateRoot: AVL.digest, kind: 'box', proof: SHORT_PROOF }, 'proof rejected'],
-    [
-      'a `kind` that refuses conversion to a string',
-      { stateRoot: AVL.digest, kind: { toString: 1 }, proof: GOOD_PROOF },
-      'node returned kind an object for a box id',
-    ],
-  ])('a box proof answer with %s is unproven, never a throw', async (_shape, body, verdict) => {
-    const { fetch } = node({ proof: (key) => (key === boxProofKeyHex(BOX_ID) ? jsonResponse(200, body) : undefined) });
-    const result = await prove(listingOf([{ boxId: BOX_ID, value: '100' }]), fetch);
-    expect(result.boxes[0]!.status).toBe('unproven');
-    expect(result.boxes[0]!.verdict).toBe(`unproven at suffixHead: ${verdict}`);
+    ['a body that is null', null, 'unproven'],
+    ['a body that is an array', [], 'unproven'],
+    ['a `stateRoot` the header does not match', { ...base, stateRoot: '00'.repeat(33) }, 'unproven'],
+    ['a `proof` that is not a string', { ...base, proof: 123 }, 'unproven'],
+    ['no `proof`', { stateRoot: FIXTURE.stateRoot, from: null, limit: 256 }, 'unproven'],
+    ['a `proof` that is not base64', { ...base, proof: '!!not*base64@@' }, 'unproven'],
+    ['a `limit` of 0', { ...base, limit: 0 }, 'unproven'],
+    ['a `limit` of 257', { ...base, limit: 257 }, 'unproven'],
+    ['a `limit` of 1.5', { ...base, limit: 1.5 }, 'unproven'],
+    ['a `limit` as a string', { ...base, limit: '100' }, 'unproven'],
+  ])('a karma range answer with %s fails the listed box as %s, never a throw', async (_shape, body, status) => {
+    const n = node({ range: (kind, h) => (kind === 'karma' && h === SUFFIX_H) ? jsonResponse(200, body) : undefined });
+    const result = await prove(listingOf([{ boxId: KARMA.id!, value: '100' }]), n.fetch);
+    expect(result.boxes[0]!.status).toBe(status);
+    expect(result.karma.holdings).toBe('unproven');
     expect(result.failed).toBe(true);
   });
 
+  it('a range answer cut off in flight is no-proof, never a throw', async () => {
+    const n = node({ range: (kind, h) => (kind === 'karma' && h === SUFFIX_H) ? cutOff() : undefined });
+    const result = await prove(listingOf([{ boxId: KARMA.id!, value: '100' }]), n.fetch);
+    expect(result.boxes[0]!.status).toBe('no-proof');
+    expect(result.karma.holdings).toBe('no-proof');
+  });
+});
+
+describe('proveFigures — a record proof answer of another shape leaves the record unproven', () => {
   it.each([
     ['a body that is null', null, 'stateRoot mismatch'],
-    ['a `proof` that is not a string', { stateRoot: AVL.digest, kind: 'record', proof: false }, 'proof rejected'],
+    ['a `proof` that is not a string', { stateRoot: FIXTURE.stateRoot, kind: 'record', proof: false }, 'proof rejected'],
   ])('a record proof answer with %s leaves the record unproven, never a throw', async (_shape, body, verdict) => {
-    const { fetch } = node({ proof: (key) => (key === RECORD_KEY ? jsonResponse(200, body) : undefined) });
-    const result = await prove(listingOf([]), fetch);
+    const n = node({ recordKey: (h) => h === SUFFIX_H ? jsonResponse(200, body) : undefined });
+    const result = await prove(listingOf([]), n.fetch);
     expect(result.record).toEqual({ status: 'unproven', verdict });
     expect(result.karma.effective).toBeNull();
     expect(result.failed).toBe(true);
   });
 
-  it('a proof answer cut off in flight is no-proof, never a throw', async () => {
-    const { fetch } = node({ proof: (key) => (key === boxProofKeyHex(BOX_ID) ? cutOff() : undefined) });
-    const result = await prove(listingOf([{ boxId: BOX_ID, value: '100' }]), fetch);
-    expect(result.boxes[0]!.status).toBe('no-proof');
-    expect(result.boxes[0]!.verdict).toBe('no proof at suffixHead: transport failure: terminated');
+  it('a record proof answer cut off in flight is no-proof, never a throw', async () => {
+    const n = node({ recordKey: (h) => h === SUFFIX_H ? cutOff() : undefined });
+    const result = await prove(listingOf([]), n.fetch);
+    expect(result.record.status).toBe('no-proof');
+    if (result.record.status === 'no-proof') {
+      expect(result.record.verdict).toContain('transport failure');
+    }
   });
 });
 
@@ -277,8 +275,11 @@ describe('proveFigures — /blocks/current of another shape leaves heightAfter u
     ['a `height` that is not an integer', { height: TIP_H + 0.5, hash: null }],
     ['a `height` that is negative', { height: -1, hash: null }],
   ])('/blocks/current answering %s leaves the excluded box unchecked', async (_shape, body) => {
-    const { fetch } = node({ blocksCurrent: () => jsonResponse(200, body) });
-    const result = await prove(listingOf([{ boxId: GONE_ID, value: '5' }]), fetch);
+    const absentBoxId = 'ee'.repeat(32);
+    // The box is excluded at both heights (FIXTURE holds KARMA, not this id),
+    // and /blocks/current gives nothing readable: the box is unchecked.
+    const n = node({ blocksCurrent: () => jsonResponse(200, body) });
+    const result = await prove(listingOf([{ boxId: absentBoxId, value: '5' }]), n.fetch);
     expect(result.heightAfter).toBeNull();
     expect(result.boxes[0]!.status).toBe('unchecked');
     expect(result.boxes[0]!.verdict).toBe('unchecked — /blocks/current unavailable');
@@ -292,15 +293,20 @@ describe('proveFigures — a listed entry that is not a listed box asks for noth
     ['a boxId that is not a string', { boxId: 7, value: '5' }, 'the listed boxId is not 64 hex: a number'],
     ['no boxId', { value: '5' }, 'the listed boxId is not 64 hex: missing'],
     ['an entry that is not an object', null, 'the listed box is not an object: null'],
-    ['a value that is not a decimal string', { boxId: BOX_ID, value: 'abc' }, "the listed value is not a decimal integer: 'abc'"],
-    ['a value that is a number', { boxId: BOX_ID, value: 100 }, 'the listed value is not a decimal integer: a number'],
-  ])('a listed entry with %s is unproven and no proof is asked for it', async (_shape, entry, verdict) => {
-    const { fetch, calls } = node();
-    const result = await prove(listingOf([entry]), fetch);
+    ['a value that is not a decimal string', { boxId: KARMA.id!, value: 'abc' }, "the listed value is not a decimal integer: 'abc'"],
+    ['a value that is a number', { boxId: KARMA.id!, value: 100 }, 'the listed value is not a decimal integer: a number'],
+  ])('a listed entry with %s is unproven, and no per-key proof request is made for it', async (_shape, entry, verdict) => {
+    const n = node();
+    const result = await prove(listingOf([entry]), n.fetch);
     expect(result.boxes[0]!.status).toBe('unproven');
     expect(result.boxes[0]!.verdict).toBe(`unproven: ${verdict}`);
     expect(result.failed).toBe(true);
-    expect(calls).toEqual([`/api/v1/proof/${RECORD_KEY}?atHeight=${SUFFIX_H}`, '/blocks/current']);
+    // No per-box key proof is ever asked — the only /api/v1/proof call is for
+    // the identity record. The ranges are still read, since they are not keyed
+    // on the entry's id.
+    const keyCalls = n.calls.filter((c) => c.startsWith('/api/v1/proof/'));
+    const recordHex = Buffer.from(RECORD_KEY_BYTES).toString('hex');
+    expect(keyCalls).toEqual([`/api/v1/proof/${recordHex}?atHeight=${SUFFIX_H}`]);
   });
 });
 
@@ -311,11 +317,12 @@ describe('proveFigures — a listing height that is not a block height values no
     ['a fraction', TIP_H + 0.5],
     ['negative', -1],
   ])('a listing height that is %s leaves effective null and fails the run, never a throw', async (_shape, height) => {
-    const { fetch } = node();
-    const result = await prove(listingOf([{ boxId: BOX_ID, value: '100' }], height), fetch);
+    const n = node();
+    const result = await prove(listingOf([{ boxId: KARMA.id!, value: '100' }], height), n.fetch);
     expect(result.boxes[0]!.status).toBe('proven');
     expect(result.karma.proven).toBe(100n);
     expect(result.karma.effective).toBeNull();
     expect(result.failed).toBe(true);
   });
 });
+

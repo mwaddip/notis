@@ -10,18 +10,21 @@ import type { HttpFetch } from '../src/http.js';
 import {
   buildAvlWithInsertions,
   boxInsertion,
+  buildHoldingsFixture,
   recordInsertion,
-  boxProofKeyHex,
   identityProofKeyHex,
   avlProofJson,
+  devnetProfile,
   hexToBytes,
   jsonResponse,
+  karmaBoxFor,
   makeAnchor,
-  devnetProfile,
+  twoHeightNode,
   buildMinedChain,
   clockAfterChain,
   proofHexForChain,
   suffixHeadForChain,
+  rangeAnswerFromProver,
 } from './helpers.js';
 import { computeCandidateBoxId } from '@dagsocial/types';
 import type { AnyBoxCandidate, IdentityRecord, TxId, UserId } from '@dagsocial/types';
@@ -52,31 +55,49 @@ const RECORD: IdentityRecord = {
   invitesUsed: 0,
 };
 
-const CANDIDATE: AnyBoxCandidate = { boxType: 'karma', value: 100n, createdAtBlock: 1, owner: USER_BYTES };
-const BOX_ID = computeCandidateBoxId(CANDIDATE, TXID, 0);
-const AVL = buildAvlWithInsertions([boxInsertion(CANDIDATE, TXID, 0), recordInsertion(USER_BYTES, RECORD)]);
-const ANCHOR = makeAnchor(TIP_H, AVL.digest, SUFFIX_H, AVL.digest);
+// The holdings fixture: one karma box the tests prove in-range, held in both
+// `suffixHead` and `tip` to make the honest case `proven`.
+const KARMA = karmaBoxFor(USER_BYTES, 100n, 1);
+const FIXTURE = buildHoldingsFixture({
+  boxes: [KARMA],
+  records: [{ identityId: USER_BYTES, record: RECORD }],
+});
+const ANCHOR = makeAnchor(TIP_H, FIXTURE.stateRoot, SUFFIX_H, FIXTURE.stateRoot);
 
-// An honest node over AVL, the proof route answering otherwise where a test says so.
-function node(proof?: (key: string) => Response | undefined): HttpFetch {
-  return async (url: string) => {
+// The AVL fixture for proveName tests — the one AVL verification kept in
+// `tools/nipopow-client` is `proveKeyAtHeight`, used by `names.ts` and the
+// record check (TYPES_INTERFACE → The tree keys).
+const CANDIDATE: AnyBoxCandidate = { boxType: 'karma', value: 100n, createdAtBlock: 1, owner: USER_BYTES };
+const AVL = buildAvlWithInsertions([boxInsertion(CANDIDATE, TXID, 0), recordInsertion(USER_BYTES, RECORD)]);
+const AVL_ANCHOR = makeAnchor(TIP_H, AVL.digest, SUFFIX_H, AVL.digest);
+
+// A node that serves FIXTURE's range + record over both heights, with any
+// route the test override takes over. `rangeOverride(kind, atHeight)` returns
+// a response to use in place of the honest range answer; `recordOverride(h)`
+// does likewise for the record route.
+function nodeWithOverride(opts: {
+  rangeOverride?: (kind: string, atHeight: number) => Response | undefined;
+  recordOverride?: (atHeight: number) => Response | undefined;
+} = {}): HttpFetch {
+  const base = twoHeightNode({ suffix: FIXTURE, suffixHeight: SUFFIX_H, tip: FIXTURE, tipHeight: TIP_H, heightAfter: TIP_H });
+  return async (url: string): Promise<Response> => {
     const u = new URL(url);
-    const proofMatch = u.pathname.match(/^\/api\/v1\/proof\/(.+)$/);
-    if (proofMatch) {
-      const key = proofMatch[1]!;
-      const answer = proof?.(key);
-      if (answer) return answer;
-      const entry = AVL.entries.get(key);
-      if (!entry) return jsonResponse(404, { error: 'height not available' });
-      const at = Number(u.searchParams.get('atHeight'));
-      return jsonResponse(200, avlProofJson(key, at, AVL.digest, entry.proof, key === RECORD_KEY ? 'record' : 'box', null));
+    const rangeMatch = u.pathname.match(/^\/api\/v1\/range\/([a-z]+)\/[0-9a-f]{64}$/);
+    if (rangeMatch) {
+      const atHeight = Number(u.searchParams.get('atHeight'));
+      const override = opts.rangeOverride?.(rangeMatch[1]!, atHeight);
+      if (override) return override;
     }
-    if (u.pathname === '/blocks/current') return jsonResponse(200, { height: TIP_H, hash: null });
-    return jsonResponse(404, { error: 'not found' });
+    const keyMatch = u.pathname.match(/^\/api\/v1\/proof\/([0-9a-f]+)$/);
+    if (keyMatch) {
+      const atHeight = Number(u.searchParams.get('atHeight'));
+      const override = opts.recordOverride?.(atHeight);
+      if (override) return override;
+    }
+    return base.fetch(url);
   };
 }
 
-// An answer whose body is the text given, as a node's error page is.
 function textResponse(status: number, text: string): Response {
   return { ok: status >= 200 && status < 300, status, text: async () => text } as unknown as Response;
 }
@@ -84,7 +105,7 @@ function textResponse(status: number, text: string): Response {
 function prove(karma: unknown[], fetch: HttpFetch) {
   const listing: Listing = {
     karma: { boxes: karma as Listing['karma']['boxes'], height: TIP_H, effective: '0' },
-    credits: { boxes: [] },
+    credits: null,
   };
   return proveFigures('http://a', USER_HEX, listing, ANCHOR, devnetProfile(), fetch);
 }
@@ -137,39 +158,41 @@ describe('fetchListing — a failed page names its cursor capped, and the reques
 });
 
 describe('proveFigures — a verdict caps the node text it names', () => {
-  it('a box proof answering 500 with a body of 10 000 characters', async () => {
+  it('a range answer of 500 with a body of 10 000 characters is capped in the verdict', async () => {
     const result = await prove(
-      [{ boxId: BOX_ID, value: '100' }],
-      node((key) => (key === boxProofKeyHex(BOX_ID) ? textResponse(500, LONG) : undefined)),
+      [{ boxId: KARMA.id!, value: '100' }],
+      nodeWithOverride({ rangeOverride: (kind, h) => (kind === 'karma' && h === SUFFIX_H) ? textResponse(500, LONG) : undefined }),
     );
     expect(result.boxes[0]!.status).toBe('no-proof');
-    expect(result.boxes[0]!.verdict).toBe(`no proof at suffixHead: HTTP 500: ${NAMED}`);
+    expect(result.boxes[0]!.verdict).toBe(`holdings read failed at suffixHead: HTTP 500: ${NAMED}`);
   });
 
-  it('a box proof whose transport fails with a message of 10 000 characters', async () => {
+  it('a range whose transport fails with a message of 10 000 characters is capped in the verdict', async () => {
     const result = await prove(
-      [{ boxId: BOX_ID, value: '100' }],
-      node((key) => {
-        if (key === boxProofKeyHex(BOX_ID)) throw new TypeError(LONG);
-        return undefined;
+      [{ boxId: KARMA.id!, value: '100' }],
+      nodeWithOverride({
+        rangeOverride: (kind, h) => {
+          if (kind === 'karma' && h === SUFFIX_H) throw new TypeError(LONG);
+          return undefined;
+        },
       }),
     );
     expect(result.boxes[0]!.status).toBe('no-proof');
-    expect(result.boxes[0]!.verdict).toBe(`no proof at suffixHead: transport failure: ${NAMED}`);
+    expect(result.boxes[0]!.verdict).toBe(`holdings read failed at suffixHead: transport failure: ${NAMED}`);
   });
 
   it('a listed boxId of 10 000 characters — the verdict caps it, the box keeps it whole', async () => {
-    const result = await prove([{ boxId: LONG, value: '5' }], node());
+    const result = await prove([{ boxId: LONG, value: '5' }], nodeWithOverride());
     expect(result.boxes[0]!.status).toBe('unproven');
     expect(result.boxes[0]!.verdict).toBe(`unproven: the listed boxId is not 64 hex: '${NAMED}'`);
     expect(result.boxes[0]!.boxId).toBe(LONG);
   });
 
   it('a real box listed at a value of 10 000 digits', async () => {
-    const result = await prove([{ boxId: BOX_ID, value: '9'.repeat(10_000) }], node());
+    const result = await prove([{ boxId: KARMA.id!, value: '9'.repeat(10_000) }], nodeWithOverride());
     expect(result.boxes[0]!.status).toBe('unproven');
     expect(result.boxes[0]!.verdict).toBe(
-      `unproven at suffixHead: candidate value 100 does not match listing ${'9'.repeat(120)}…`,
+      `unproven: candidate value 100 does not match listing ${'9'.repeat(120)}…`,
     );
   });
 });
@@ -177,14 +200,14 @@ describe('proveFigures — a verdict caps the node text it names', () => {
 describe('proveName — a verdict caps the node text it names', () => {
   it('the lookup answering 500 with a body of 10 000 characters', async () => {
     const fetch: HttpFetch = async () => textResponse(500, LONG);
-    const result = await proveName('http://a', { key: USER_HEX, name: 'Bob' }, ANCHOR, fetch);
+    const result = await proveName('http://a', { key: USER_HEX, name: 'Bob' }, AVL_ANCHOR, fetch);
     expect(result.status).toBe('no-proof');
     expect(result.verdict).toBe(`no answer to the lookup: HTTP 500: ${NAMED}`);
   });
 
   it('the lookup whose transport fails with a message of 10 000 characters', async () => {
     const fetch: HttpFetch = async () => { throw new TypeError(LONG); };
-    const result = await proveName('http://a', { key: USER_HEX, name: 'Bob' }, ANCHOR, fetch);
+    const result = await proveName('http://a', { key: USER_HEX, name: 'Bob' }, AVL_ANCHOR, fetch);
     expect(result.status).toBe('no-proof');
     expect(result.verdict).toBe(`no answer to the lookup: transport failure: ${NAMED}`);
   });
@@ -239,7 +262,7 @@ describe("capped — a node's control characters as their escapes, never raw", (
   });
 
   it('the characters beside the three ranges are shown as they are', () => {
-    expect(capped(' ~\u00a0')).toBe(' ~\u00a0');
+    expect(capped(' ~ ')).toBe(' ~ ');
   });
 
   it('a 120-character body of escapes — the text as shown is capped', () => {
@@ -255,14 +278,14 @@ describe("capped — a node's control characters as their escapes, never raw", (
   });
 });
 
-describe('a proof route answering 500 with a body carrying ESC [2K, CR and a C1 CSI', () => {
+describe('a range route answering 500 with a body carrying ESC [2K, CR and a C1 CSI', () => {
   it('the box verdict holds them as escapes, and no raw control', async () => {
     const result = await prove(
-      [{ boxId: BOX_ID, value: '100' }],
-      node((key) => (key === boxProofKeyHex(BOX_ID) ? textResponse(500, ERASING) : undefined)),
+      [{ boxId: KARMA.id!, value: '100' }],
+      nodeWithOverride({ rangeOverride: (kind, h) => (kind === 'karma' && h === SUFFIX_H) ? textResponse(500, ERASING) : undefined }),
     );
     const verdict = result.boxes[0]!.verdict;
-    expect(verdict).toBe(`no proof at suffixHead: HTTP 500: ${ERASING_SHOWN}`);
+    expect(verdict).toBe(`holdings read failed at suffixHead: HTTP 500: ${ERASING_SHOWN}`);
     expect(verdict).not.toMatch(RAW_CONTROL);
   });
 
@@ -277,10 +300,10 @@ describe('a proof route answering 500 with a body carrying ESC [2K, CR and a C1 
   it('a plain body is named unchanged', async () => {
     const plain = 'Internal Server Error — naïve 😀';
     const result = await prove(
-      [{ boxId: BOX_ID, value: '100' }],
-      node((key) => (key === boxProofKeyHex(BOX_ID) ? textResponse(500, plain) : undefined)),
+      [{ boxId: KARMA.id!, value: '100' }],
+      nodeWithOverride({ rangeOverride: (kind, h) => (kind === 'karma' && h === SUFFIX_H) ? textResponse(500, plain) : undefined }),
     );
-    expect(result.boxes[0]!.verdict).toBe(`no proof at suffixHead: HTTP 500: ${plain}`);
+    expect(result.boxes[0]!.verdict).toBe(`holdings read failed at suffixHead: HTTP 500: ${plain}`);
   });
 });
 
@@ -299,7 +322,6 @@ describe('proveName — a proven username box whose name carries ESC [2K and CR'
   const TREE = buildAvlWithInsertions([boxInsertion(HOSTILE_NAME, TXID, 1)]);
   const TREE_ANCHOR = makeAnchor(TIP_H, TREE.digest, SUFFIX_H, TREE.digest);
 
-  // Both lookups name the box; the proof route proves it from TREE.
   const fetch: HttpFetch = async (url: string) => {
     const u = new URL(url);
     if (u.pathname === '/usernames' || u.pathname === '/usernames/Bob') {
@@ -329,13 +351,17 @@ describe("textLines — the command line's text of a node that sends a newline, 
   it('its refusal, its listed boxId and its record verdict are one line each, the escapes shown', async () => {
     const M = 6;
     const K = 6;
-    const chain = buildMinedChain({ count: M + K + 10, stateRoot: AVL.digest });
+    const chain = buildMinedChain({ count: M + K + 10, stateRoot: FIXTURE.stateRoot });
     const proofHex = proofHexForChain(chain, M, K);
     const height = chain.headers.length;
     const hostile = 'x\ny\u001b[2Kz\r';
     const shown = 'x\\u000ay\\u001b[2Kz\\u000d';
 
-    // Node a serves the chain and the listing; node b answers every request 500.
+    // Node `a` serves the chain and the listing, with a hostile boxId
+    // listed; the record route answers 500 with the hostile body. Node `b`
+    // answers every request 500. Range route for the listing's hostile
+    // boxId won't match (it's not a 64-hex id), so no range request fires
+    // for it; the honest karma/credit ranges just return empty.
     const fetch: HttpFetch = async (url: string) => {
       const u = new URL(url);
       if (u.host !== 'a') return textResponse(500, hostile);
@@ -345,10 +371,15 @@ describe("textLines — the command line's text of a node that sends a newline, 
       }
       if (u.pathname === `/api/v1/proof/${RECORD_KEY}`) return textResponse(500, hostile);
       if (u.pathname === '/blocks/current') return jsonResponse(200, { height, hash: null });
+      // Honest ranges on an empty state: build a FIXTURE empty of boxes.
+      const rangeMatch = u.pathname.match(/^\/api\/v1\/range\/([a-z]+)\/[0-9a-f]{64}$/);
+      if (rangeMatch) {
+        const atHeight = Number(u.searchParams.get('atHeight'));
+        return jsonResponse(200, rangeAnswerFromProver(FIXTURE.prover, FIXTURE.stateRoot, atHeight, rangeMatch[1] as 'karma', USER_BYTES, null, 256));
+      }
       return jsonResponse(404, { error: 'not found' });
     };
 
-    // The command line's composition: the tip, then the listing, then the run.
     const tip = await resolveTip(['http://a', 'http://b'], M, K, devnetProfile(), clockAfterChain(chain), fetch);
     const listed = await fetchListing('http://a', USER_HEX, fetch);
     if (!listed.ok) throw new Error(listed.reason);
@@ -356,16 +387,22 @@ describe("textLines — the command line's text of a node that sends a newline, 
     const figures = await proveFigures('http://a', USER_HEX, listed.listing, anchor, devnetProfile(), fetch);
 
     const lines = textLines(tip, { figures, listing: listed.listing });
+    // FIXTURE holds KARMA with value 100 — but the fixture's prover answers
+    // the range at this height from its state, and KARMA sits at the tip.
+    // The listing names a hostile (non-hex) id, so it is unproven; the
+    // KARMA box the tree holds is `unlisted` (heightAfter === tip).
     expect(lines).toEqual([
       `tip: height ${height}`,
-      `suffixHead: height ${suffixHeadForChain(chain, M, K).header.height}, stateRoot ${AVL.digest}`,
+      `suffixHead: height ${suffixHeadForChain(chain, M, K).header.height}, stateRoot ${FIXTURE.stateRoot}`,
       '  http://a: verified (best)',
       `  http://b: refused — HTTP 500: ${shown}`,
       '',
       `  karma ${shown}: unproven: the listed boxId is not 64 hex: '${shown}'`,
+      `  karma ${KARMA.id!}: unlisted — the chain holds what the node did not list at height ${height} value=100`,
       'karma total (face value at suffixHead): 0',
       'credit total (face value at suffixHead): 0',
       `identity record: no-proof — HTTP 500: ${shown}`,
+      'karma unlisted: 100',
       `heightAfter: ${height}`,
     ]);
     for (const line of lines) expect(line).not.toMatch(RAW_CONTROL);
