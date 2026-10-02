@@ -3054,13 +3054,12 @@ async function liveRootIds(key) {
 
 // A box's proof-endpoint key as hex. The avl-endpoint route serves proofs
 // under the 130-hex tree key (NODE_INTERFACE → AVL+ State Root →
-// "avl-endpoint, the key route" — `:key` is a tree key, 130 hex), not under
-// the box id. The tree key is the tag byte `0x01` plus the 32-byte boxId
-// zero-padded to TREE_KEY_LENGTH=65 (TYPES_INTERFACE → The tree keys;
-// `packages/types/src/tree-keys.ts`'s `boxKey` is the sole derivation). The
-// names block uses this wherever it matches or constructs a box's proof URL
-// — the step-30 count by prefix and the figures relay's `/api/v1/proof/`
-// prefix match stay, since they match any box.
+// "avl-endpoint" — `:key` is a tree key, 130 hex), not under the box id. The
+// tree key is the tag byte `0x01` plus the 32-byte boxId zero-padded to
+// TREE_KEY_LENGTH=65 (TYPES_INTERFACE → The tree keys; `boxKey` is the sole
+// derivation). The names block uses this wherever it matches or constructs a
+// box's proof URL — the step-30 count by prefix and the figures relay's
+// `/api/v1/proof/` prefix match stay, since they match any box.
 function boxProofKeyHex(boxId) {
   return '01' + boxId.toLowerCase() + '0'.repeat(64);
 }
