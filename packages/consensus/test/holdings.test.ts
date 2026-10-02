@@ -2,8 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { BatchAVLVerifier, StrictBatchAVLVerifier } from '@ergots/avltree';
 import {
   TREE_KEY_LENGTH,
+  boxKey,
+  bytesToHex,
   creditOfRange,
+  karmaOfKey,
   karmaOfRange,
+  rangeStart,
 } from '@dagsocial/types';
 import type { AnyBox, CreditBox, IdentityRecord, NetworkRecord, VouchBox } from '@dagsocial/types';
 import {
@@ -23,7 +27,7 @@ import {
   uid,
   vouchBox,
 } from './helpers.js';
-import { TREE_CONFIG, proverFrom, recordingSession } from './block-proof.js';
+import { TREE_CONFIG, loggingSession, proverFrom, recordingSession } from './block-proof.js';
 import { mapSessionFrom } from './tree-session-map.js';
 
 /**
@@ -269,6 +273,67 @@ describe('holdingsPage — the lookup bound', () => {
       const consumed = view.lookupCount() - before;
       expect(consumed, `limit ${limit}`).toBeLessThanOrEqual(1 + 2 * limit);
     }
+  });
+});
+
+describe('holdingsPage — the order of a page\'s lookups is a rule', () => {
+  // Three karma boxes for one owner. The sequence a page's lookups follow is
+  // the walk's keys in key order, then each entry's box in the entries' order
+  // (CONSENSUS_INTERFACE → The holdings page → "The order of the lookups is
+  // the rule itself"). A node and a client of different builds meet over one
+  // proof, so this order stands.
+  const orderOwner = uid('holdings/order-owner');
+  function fixtureThree(): AnyBox[] {
+    return [karmaBox(orderOwner, 10n, 1), karmaBox(orderOwner, 20n, 2), karmaBox(orderOwner, 30n, 3)];
+  }
+
+  it('three karma entries, `from: null`: `rangeStart`, then each entry key in key order, then each box key in the entries\' order', () => {
+    const boxes = fixtureThree();
+    const prover = proverFrom(seedTreeWrites(boxes, [], { memberCount: 0 }));
+    const parentDigest = prover.digest();
+    const log = loggingSession(recordingSession(prover));
+    const view = treeStateView(log);
+    const page = holdingsPage(view, 'karma', orderOwner, null, 3);
+    const sortedIds = page.boxes.map((b) => b.id!);
+    const expected = [
+      bytesToHex(rangeStart(karmaOfRange(orderOwner))),
+      ...sortedIds.map((id) => bytesToHex(karmaOfKey(orderOwner, hexBytes(id)))),
+      ...sortedIds.map((id) => bytesToHex(boxKey(hexBytes(id)))),
+    ];
+    expect(log.keys).toEqual(expected);
+    // The replay reads the same sequence from the proof.
+    const proof = prover.generateProof();
+    const replayLog = loggingSession(verifierSession(new BatchAVLVerifier(parentDigest, proof, TREE_CONFIG)));
+    const replayView = treeStateView(replayLog);
+    const replayed = holdingsPage(replayView, 'karma', orderOwner, null, 3);
+    expect(replayed.boxes.map((b) => b.id!)).toEqual(sortedIds);
+    expect(replayLog.keys).toEqual(expected);
+  });
+
+  it('a `from` that is a leaf: the sequence opens with `from`', () => {
+    const boxes = fixtureThree();
+    const prover = proverFrom(seedTreeWrites(boxes, [], { memberCount: 0 }));
+    const sortedIds = [...boxes.map((b) => b.id!)].sort();
+    const fromKey = karmaOfKey(orderOwner, hexBytes(sortedIds[0]!));
+    const parentDigest = prover.digest();
+    const log = loggingSession(recordingSession(prover));
+    const view = treeStateView(log);
+    const page = holdingsPage(view, 'karma', orderOwner, fromKey, 2);
+    expect(page.boxes.map((b) => b.id!)).toEqual([sortedIds[0], sortedIds[1]]);
+    const expected = [
+      bytesToHex(fromKey),
+      bytesToHex(karmaOfKey(orderOwner, hexBytes(sortedIds[1]!))),
+      bytesToHex(boxKey(hexBytes(sortedIds[0]!))),
+      bytesToHex(boxKey(hexBytes(sortedIds[1]!))),
+    ];
+    expect(log.keys).toEqual(expected);
+    // The replay reads the same sequence.
+    const proof = prover.generateProof();
+    const replayLog = loggingSession(verifierSession(new BatchAVLVerifier(parentDigest, proof, TREE_CONFIG)));
+    const replayView = treeStateView(replayLog);
+    const replayed = holdingsPage(replayView, 'karma', orderOwner, fromKey, 2);
+    expect(replayed.boxes.map((b) => b.id!)).toEqual([sortedIds[0], sortedIds[1]]);
+    expect(replayLog.keys).toEqual(expected);
   });
 });
 
