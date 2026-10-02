@@ -28,26 +28,45 @@ export interface KeptRoot {
  * ring, and a reorg restores the fork point's kept root by reference where
  * it holds one whose digest is the store's version.
  *
- * `record` is called once a block's checkpoint stands and the block applies.
- * Every path that takes the prover back below a height drops what is above
- * it: a refused block (the funnel's `dropAbove`), a revert (`drop`), a reorg
- * that aborts (`snapshot`/`restore`, by reference under the apply funnel's
- * pair), genesis seeding's rollback (`clear`). The capacity is
- * `PROOF_WINDOW_BLOCKS` (NODE_INTERFACE → Configuration); the oldest kept
- * root is evicted when a new one is added above the capacity.
+ * `record` is called once a block's checkpoint stands and the block applies
+ * — only on the funnel's success path, so a refused block never writes to
+ * the ring whatever height it claims (NODE_INTERFACE → "a refused block
+ * leaves the kept roots exactly as they were, whatever height it claims").
+ * A revert drops with its block (`drop`), a reorg that aborts puts the ring
+ * back (`snapshot`/`restore`, by reference under the apply funnel's pair),
+ * a reorg's store resolve clears the ring (`clear`), and genesis seeding's
+ * failure clears it. The capacity is `PROOF_WINDOW_BLOCKS` (NODE_INTERFACE
+ * → Configuration); the oldest kept root is evicted when a new one is added
+ * above the capacity.
  */
 export class RecentRoots {
-  private readonly capacity: number;
+  private capacity: number;
   /** Keyed by block height, insertion-ordered. */
   private roots = new Map<number, KeptRoot>();
 
   constructor(capacity: number) {
+    RecentRoots.checkCapacity(capacity);
+    this.capacity = capacity;
+  }
+
+  private static checkCapacity(capacity: number): void {
     if (!Number.isSafeInteger(capacity) || capacity < 0) {
       throw new RangeError(
         `RecentRoots: capacity must be a non-negative safe integer, got ${capacity}`,
       );
     }
+  }
+
+  /**
+   * Resize the ring (`PROOF_WINDOW_BLOCKS` is `local`, so a reconfigured node
+   * may change it; the test suite uses this to drive the window-size cases
+   * the brief asks). Lowers evict the oldest kept roots down to the new cap;
+   * raises just raise the ceiling.
+   */
+  resize(capacity: number): void {
+    RecentRoots.checkCapacity(capacity);
     this.capacity = capacity;
+    this.evictBelowCapacity();
   }
 
   /**
@@ -61,13 +80,16 @@ export class RecentRoots {
     // keeps the ring sound against a repeat record.
     this.roots.delete(height);
     this.roots.set(height, { root, treeHeight });
+    this.evictBelowCapacity();
+  }
+
+  private evictBelowCapacity(): void {
     while (this.roots.size > this.capacity) {
-      const oldest = this.roots.keys().next().value;
-      if (oldest === undefined) break;
-      // The Map's iteration order is insertion; the oldest insertion is not
-      // necessarily the lowest height after a `dropAbove`+`record` cycle, so
-      // we evict by minimum height instead.
-      let minHeight = oldest;
+      const first = this.roots.keys().next().value;
+      if (first === undefined) break;
+      // The Map's insertion order after a `drop` need not be ascending, so we
+      // evict by minimum height — the oldest root the ring holds.
+      let minHeight = first;
       for (const h of this.roots.keys()) if (h < minHeight) minHeight = h;
       this.roots.delete(minHeight);
     }
@@ -91,11 +113,6 @@ export class RecentRoots {
   /** The number of kept roots. */
   size(): number {
     return this.roots.size;
-  }
-
-  /** Drop every entry strictly above `height`. */
-  dropAbove(height: number): void {
-    for (const h of [...this.roots.keys()]) if (h > height) this.roots.delete(h);
   }
 
   /** Drop the entry at `height`, if any. */

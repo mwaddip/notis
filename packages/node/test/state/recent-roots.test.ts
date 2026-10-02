@@ -1,8 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { AvlNode } from '@ergots/avltree';
-import { newLeaf } from '@ergots/avltree';
+import { label, newLeaf } from '@ergots/avltree';
 import { bytesToHex } from '@dagsocial/types';
 import { RecentRoots } from '../../src/state/recent-roots.js';
+import type { KeptRoot } from '../../src/state/recent-roots.js';
+
+/** The 33-byte digest of a kept root — the root's label and the tree height, hex. */
+function keptDigest(kept: KeptRoot): string {
+  const out = new Uint8Array(33);
+  out.set(label(kept.root), 0);
+  out[32] = kept.treeHeight;
+  return bytesToHex(out);
+}
 
 // ---------------------------------------------------------------------------
 // Unit — the class (NODE_INTERFACE → "A proof at an older height restores a
@@ -62,15 +71,6 @@ describe('RecentRoots — the class', () => {
     expect(ring.size()).toBe(1);
   });
 
-  it('dropAbove drops strictly above', () => {
-    const ring = new RecentRoots(5);
-    for (let h = 1; h <= 5; h++) ring.record(h, dummyLeaf(h), h);
-    ring.dropAbove(3);
-    expect(ring.heights()).toEqual([1, 2, 3]);
-    ring.dropAbove(0);
-    expect(ring.heights()).toEqual([]);
-  });
-
   it('drop removes one entry by height', () => {
     const ring = new RecentRoots(3);
     ring.record(1, dummyLeaf(1), 1);
@@ -107,6 +107,15 @@ describe('RecentRoots — the class', () => {
     expect(ring.size()).toBe(0);
     expect(ring.heights()).toEqual([]);
   });
+
+  it('resize lowers evict the oldest kept roots', () => {
+    const ring = new RecentRoots(5);
+    for (let h = 1; h <= 5; h++) ring.record(h, dummyLeaf(h), h);
+    ring.resize(3);
+    expect(ring.heights()).toEqual([3, 4, 5]);
+    ring.resize(0);
+    expect(ring.heights()).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -124,62 +133,129 @@ describe('the ring tracks the chain the node holds', () => {
   beforeEach(() => { vi.resetModules(); });
   afterEach(() => { vi.restoreAllMocks(); vi.resetModules(); });
 
-  it('records each applied block, each kept root\'s digest the block\'s stateRoot', async () => {
+  it('each kept root\'s digest is its block\'s stateRoot after every block has applied', async () => {
     await freshStore();
     const { activateProverOverStore, makeApplicableBlock } = await import('../helpers.js');
     const handle = await activateProverOverStore();
     const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
 
+    const stateRootOf = new Map<number, string>();
     for (let height = 1; height <= 3; height++) {
       const block = await makeApplicableBlock({ height });
       expect(applyOrderingBlock(block)).toBe(true);
+      stateRootOf.set(height, block.header.stateRoot);
+    }
+
+    // After every block has applied, each kept root the ring answers has the
+    // digest of the block committed at its height — a later block has not
+    // moved an earlier one.
+    expect(handle.recentRoots.heights()).toEqual([0, 1, 2, 3]);
+    for (const [height, root] of stateRootOf) {
       const kept = handle.recentRoots.get(height);
       expect(kept, `height ${height}`).not.toBeNull();
-      // The 33-byte digest = rootLabel || treeHeight; the header's stateRoot
-      // is its hex. The library's digest() is one source of truth.
-      // Compare through the inner prover's current digest, which is this
-      // height's digest.
-      const digestHex = bytesToHex(handle.prover.digest()!);
-      expect(digestHex).toBe(block.header.stateRoot);
+      expect(keptDigest(kept!), `height ${height}`).toBe(root);
     }
-
-    // `activateProverOverStore` seeds genesis and records (0, root), and the
-    // apply funnel records (1, root) through (3, root) on top.
-    expect(handle.recentRoots.heights()).toEqual([0, 1, 2, 3]);
   });
 
-  it('a rule-rejected block leaves the ring as it was', async () => {
-    await freshStore();
-    const { activateProverOverStore, makeApplicableBlock } = await import('../helpers.js');
-    const handle = await activateProverOverStore();
-    const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
-    for (let h = 1; h <= 2; h++) {
-      expect(applyOrderingBlock(await makeApplicableBlock({ height: h }))).toBe(true);
+  describe('a refusal leaves the ring exactly as it was, whatever height the block claims', () => {
+    async function appliedChain(upTo: number) {
+      await freshStore();
+      const { activateProverOverStore, makeApplicableBlock } = await import('../helpers.js');
+      const handle = await activateProverOverStore();
+      const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
+      const applied: Array<{ height: number; stateRoot: string }> = [];
+      for (let h = 1; h <= upTo; h++) {
+        const block = await makeApplicableBlock({ height: h });
+        expect(applyOrderingBlock(block)).toBe(true);
+        applied.push({ height: h, stateRoot: block.header.stateRoot });
+      }
+      return { handle, applied, makeApplicableBlock, applyOrderingBlock };
     }
-    const before = handle.recentRoots.heights();
 
-    // A block whose stateRoot does not match what the body produces.
-    const refused = await makeApplicableBlock({ height: 3, stateRoot: '00'.repeat(33) });
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(applyOrderingBlock(refused)).toBe(false);
-    expect(handle.recentRoots.heights()).toEqual(before);
-    expect(handle.recentRoots.get(3)).toBeNull();
-  });
-
-  it('an adProofsRoot mismatch leaves the ring as it was', async () => {
-    await freshStore();
-    const { activateProverOverStore, makeApplicableBlock } = await import('../helpers.js');
-    const handle = await activateProverOverStore();
-    const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
-    for (let h = 1; h <= 2; h++) {
-      expect(applyOrderingBlock(await makeApplicableBlock({ height: h }))).toBe(true);
+    function snapshotRing(handle: Awaited<ReturnType<typeof appliedChain>>['handle']) {
+      const heights = handle.recentRoots.heights();
+      const byH: Record<number, { root: unknown; digest: string }> = {};
+      for (const h of heights) {
+        const kept = handle.recentRoots.get(h)!;
+        byH[h] = { root: kept.root, digest: keptDigest(kept) };
+      }
+      return { heights, byH };
     }
-    const before = handle.recentRoots.heights();
-    const refused = await makeApplicableBlock({ height: 3, adProofsRoot: '00'.repeat(32) });
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(applyOrderingBlock(refused)).toBe(false);
-    expect(handle.recentRoots.heights()).toEqual(before);
-    expect(handle.recentRoots.get(3)).toBeNull();
+
+    function expectRingUnchanged(handle: Awaited<ReturnType<typeof appliedChain>>['handle'], snap: ReturnType<typeof snapshotRing>) {
+      expect(handle.recentRoots.heights()).toEqual(snap.heights);
+      for (const h of snap.heights) {
+        const kept = handle.recentRoots.get(h)!;
+        // Same root object by reference, and same 33-byte digest.
+        expect(kept.root, `height ${h}`).toBe(snap.byH[h]!.root);
+        expect(keptDigest(kept), `height ${h}`).toBe(snap.byH[h]!.digest);
+      }
+    }
+
+    it('a block claiming height 1 while the ring holds three heights or more', async () => {
+      const { handle, applyOrderingBlock } = await appliedChain(3);
+      const snap = snapshotRing(handle);
+      // Height-1 block built now would be refused on the chain-link check,
+      // which runs inside the funnel's transaction (NODE_INTERFACE → Ordering
+      // block apply-time authorization). Before the fix, its claimed
+      // `height - 1 = 0` would have cleared every kept root above 0.
+      const { makeApplicableBlock } = await import('../helpers.js');
+      const refused = await makeApplicableBlock({ height: 1 });
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      expect(applyOrderingBlock(refused)).toBe(false);
+      expectRingUnchanged(handle, snap);
+    });
+
+    it('the tip block sent a second time', async () => {
+      const { handle, applied, applyOrderingBlock } = await appliedChain(3);
+      const snap = snapshotRing(handle);
+      // Re-apply the tip's block — its chain-link check refuses it; its
+      // claimed `height - 1 = tip - 1` would have dropped the tip's kept root.
+      const { getOrderingBlock } = await import('../../src/store/ordering.js');
+      const tip = getOrderingBlock(applied[applied.length - 1]!.height);
+      expect(tip).not.toBeNull();
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      expect(applyOrderingBlock(tip!)).toBe(false);
+      expectRingUnchanged(handle, snap);
+    });
+
+    it('a block at tip + 1 refused for a rule', async () => {
+      const { handle, applied, applyOrderingBlock } = await appliedChain(3);
+      const snap = snapshotRing(handle);
+      // A block at the next height with a protocol version in no era — a
+      // rule's refusal (step 2, protocol version), outside the state-root arm.
+      const { makeApplicableBlock } = await import('../helpers.js');
+      const refused = await makeApplicableBlock({ height: applied[applied.length - 1]!.height + 1, protocolVersion: 999 });
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      expect(applyOrderingBlock(refused)).toBe(false);
+      expectRingUnchanged(handle, snap);
+    });
+
+    it('a block at tip + 1 refused for a stateRoot mismatch', async () => {
+      const { handle, applied, applyOrderingBlock } = await appliedChain(3);
+      const snap = snapshotRing(handle);
+      const { makeApplicableBlock } = await import('../helpers.js');
+      const refused = await makeApplicableBlock({
+        height: applied[applied.length - 1]!.height + 1,
+        stateRoot: '00'.repeat(33),
+      });
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      expect(applyOrderingBlock(refused)).toBe(false);
+      expectRingUnchanged(handle, snap);
+    });
+
+    it('a block at tip + 1 refused for an adProofsRoot mismatch', async () => {
+      const { handle, applied, applyOrderingBlock } = await appliedChain(3);
+      const snap = snapshotRing(handle);
+      const { makeApplicableBlock } = await import('../helpers.js');
+      const refused = await makeApplicableBlock({
+        height: applied[applied.length - 1]!.height + 1,
+        adProofsRoot: '00'.repeat(32),
+      });
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      expect(applyOrderingBlock(refused)).toBe(false);
+      expectRingUnchanged(handle, snap);
+    });
   });
 
   it('a revert drops the reverted height from the ring', async () => {
@@ -199,23 +275,110 @@ describe('the ring tracks the chain the node holds', () => {
   });
 
   it('a reopened node holds its tip\'s height alone, and gains a height with the next block', async () => {
-    const db = await freshStore();
-    const { activateProverOverStore, makeApplicableBlock } = await import('../helpers.js');
-    const firstHandle = await activateProverOverStore();
+    // A disk-backed store so the restart is a real one: the first graph
+    // writes it, the second graph (`vi.resetModules()` + `initDb(path)`)
+    // reads it back and the module singleton is the reopened one.
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const os = await import('node:os');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dagsocial-recent-roots-'));
+    const dbPath = path.join(dir, 'restart.db');
+    try {
+      vi.resetModules();
+      {
+        const dbMod = await import('../../src/store/db.js');
+        dbMod.initDb(dbPath);
+        dbMod.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+        const { activateProverOverStore, makeApplicableBlock } = await import('../helpers.js');
+        const firstHandle = await activateProverOverStore();
+        const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
+        for (let h = 1; h <= 3; h++) {
+          expect(applyOrderingBlock(await makeApplicableBlock({ height: h }))).toBe(true);
+        }
+        expect(firstHandle.recentRoots.heights()).toEqual([0, 1, 2, 3]);
+        dbMod.closeDb();
+      }
+
+      vi.resetModules();
+      const dbMod = await import('../../src/store/db.js');
+      dbMod.initDb(dbPath);
+      const { createAvlProver } = await import('../../src/state/avl-prover.js');
+      const second = createAvlProver();
+      // After a restart the node holds its tip's height alone.
+      expect(second.recentRoots.heights()).toEqual([3]);
+      const { getOrderingBlock } = await import('../../src/store/ordering.js');
+      const tipStateRoot = getOrderingBlock(3)!.header.stateRoot;
+      expect(keptDigest(second.recentRoots.get(3)!)).toBe(tipStateRoot);
+
+      // The next block applies — the ring gains a height.
+      const { makeApplicableBlock: makeAgain } = await import('../helpers.js');
+      const { applyOrderingBlock: applyAgain } = await import('../../src/services/block-apply.js');
+      const next = await makeAgain({ height: 4 });
+      expect(applyAgain(next)).toBe(true);
+      expect(second.recentRoots.heights()).toEqual([3, 4]);
+      expect(keptDigest(second.recentRoots.get(4)!)).toBe(next.header.stateRoot);
+      dbMod.closeDb();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('`PROOF_WINDOW_BLOCKS = 3` — blocks 1..5 leave {3, 4, 5} in the ring, routes answer them, 2 and 6 are 404', async () => {
+    await freshStore();
+    const { activateProverOverStore, makeApplicableBlock, makeTestConfig } = await import('../helpers.js');
+    const handle = await activateProverOverStore();
+    // The ring is resized to the window-under-test — the brief's case.
+    handle.recentRoots.resize(3);
+    const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
+    const roots: Record<number, string> = {};
+    for (let h = 1; h <= 5; h++) {
+      const block = await makeApplicableBlock({ height: h });
+      expect(applyOrderingBlock(block)).toBe(true);
+      roots[h] = block.header.stateRoot;
+    }
+    expect(handle.recentRoots.heights()).toEqual([3, 4, 5]);
+
+    // The route answers the three in the ring at their roots, and 404s 2 and 6.
+    const { createApp } = await import('../../src/server.js');
+    const supertest = await import('supertest');
+    const app = createApp(makeTestConfig({ nodeRole: 'server' }));
+    // A benign tree key: the network record's — present at every height.
+    const { bytesToHex: bh, networkKey } = await import('@dagsocial/types');
+    const key = bh(networkKey());
+    for (const h of [3, 4, 5]) {
+      const r = await supertest.default(app).get(`/api/v1/proof/${key}?atHeight=${h}`).expect(200);
+      expect(r.body.stateRoot, `height ${h}`).toBe(roots[h]);
+    }
+    for (const h of [2, 6]) {
+      await supertest.default(app).get(`/api/v1/proof/${key}?atHeight=${h}`).expect(404);
+    }
+  });
+
+  it('`PROOF_WINDOW_BLOCKS = 0` — the tip answers, every older height is 404', async () => {
+    await freshStore();
+    const { activateProverOverStore, makeApplicableBlock, makeTestConfig } = await import('../helpers.js');
+    const handle = await activateProverOverStore();
+    handle.recentRoots.resize(0);
     const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
     for (let h = 1; h <= 3; h++) {
       expect(applyOrderingBlock(await makeApplicableBlock({ height: h }))).toBe(true);
     }
-    expect(firstHandle.recentRoots.heights()).toEqual([0, 1, 2, 3]);
+    // Zero keeps no root; the tip is the live tree's, which the route
+    // answers without one.
+    expect(handle.recentRoots.heights()).toEqual([]);
 
-    // Reopen on the same storage — a fresh handle, through the test seam that
-    // bypasses the module-level singleton.
-    const { createAvlProver } = await import('../../src/state/avl-prover.js');
-    const second = createAvlProver(db.getDb());
-    expect(second.recentRoots.heights()).toEqual([3]);
-    // The kept root's digest is the tip's stateRoot.
-    expect(bytesToHex(second.prover.digest()!)).toBe(
-      bytesToHex(firstHandle.prover.digest()!),
-    );
+    const { createApp } = await import('../../src/server.js');
+    const supertest = await import('supertest');
+    const app = createApp(makeTestConfig({ nodeRole: 'server' }));
+    const { bytesToHex: bh, networkKey } = await import('@dagsocial/types');
+    const key = bh(networkKey());
+    // The tip (no `atHeight`): 200.
+    await supertest.default(app).get(`/api/v1/proof/${key}`).expect(200);
+    // The explicit tip height: 200.
+    await supertest.default(app).get(`/api/v1/proof/${key}?atHeight=3`).expect(200);
+    // Any older height: 404.
+    for (const h of [0, 1, 2]) {
+      await supertest.default(app).get(`/api/v1/proof/${key}?atHeight=${h}`).expect(404);
+    }
   });
 });
