@@ -363,6 +363,10 @@ describe('GET /api/v1/range/:kind/:owner — the range route', () => {
     expect(second.body.from).toBe(key);
     const verifier = new BatchAVLVerifier(hexToBytes(second.body.stateRoot as string), Uint8Array.from(Buffer.from(second.body.proof, 'base64')), TREE_CFG);
     const page = holdingsPage(treeStateView(verifierSession(verifier)), 'credit', ctx.owner.userId, hexToBytes(key), 256);
+    expect(page.boxes.length).toBe(1);
+    expect(page.boxes[0]!.id).toBe(ctx.credit.id);
+    expect((page.boxes[0] as CreditBox).value).toBe(ctx.credit.value);
+    expect(page.boxes[0]!.boxType).toBe('credit');
     expect(page.next).toBeNull();
   });
 });
