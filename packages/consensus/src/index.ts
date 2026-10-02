@@ -37,7 +37,7 @@ export type { NetworkRecord, HolderRecord } from '@dagsocial/types';
 export { isSentinel } from './tree-session.js';
 export type { TreeSession, TreeLookup } from './tree-session.js';
 export { treeStateView, TreeInconsistencyError } from './tree-view.js';
-export type { TreeStateView, TreeRangeEntry, TreeRangePage } from './tree-view.js';
+export type { TreeStateView } from './tree-view.js';
 export { holdingsPage } from './holdings.js';
 export type { HoldingKind, HoldingsPage } from './holdings.js';
 export { indexEntriesOfBox, isLapsedMember } from './tree-index.js';
