@@ -2,7 +2,7 @@
 // The extension proof — the twelve steps of WEB_INTERFACE → The extension
 // plus the four links-into-the-extension steps, the verified-tip block
 // (17a · 17 · 17b · 18 · 19a · 19b · 19c · 20), the verified-figures block
-// (21 · 24 · 22a · 22b · 23 · 25) and the verified-names block
+// (21 · 24 · 22a · 22b · 22c · 22d · 23 · 25) and the verified-names block
 // (26 · 29 · 27a–d · 28a–b · 30), each read verbatim, over raw CDP against a
 // live devnet stack. Drives the App's real UI on the extension's own page: the
 // composer, the like word, the profile and wallet windows' rows, and the prompt
@@ -10,10 +10,10 @@
 // against a second stack the harness owns — node B (server, bootstrapped from
 // A), node C (used for the real-fork test in 19b), node D (isolated, 17a's
 // too-short and 19c's share-no-block) and the lying relay (19a). The
-// verified-figures block brings up a B of its own and, for its three lie arms,
-// the figures relay (22a · 22b · 23). The verified-names block brings up a B of
-// its own too, and the figures relay again for its lie arms, in its name modes
-// (27a–d · 28a–b).
+// verified-figures block brings up a B of its own and, for its five lie arms,
+// the figures relay (22a · 22b · 22c · 22d · 23). The verified-names block
+// brings up a B of its own too, and the figures relay again for its lie arms,
+// in its name modes (27a–d · 28a–b).
 //
 // Preconditions:
 //  1. `node packages/node/dist/index.js` running as `NETWORK_TYPE=devnet`
@@ -106,9 +106,9 @@ let TIP_K = null;
 // by name, as 13–16 do without --public / --web-dist.
 const VERIFIED_TIP = args.get('verified-tip') === true;
 // The verified-figures block — WEB_INTERFACE → The extension → "The verified
-// figures", steps 21 · 24 · 22a · 22b · 23 · 25: the honest states read A, and
-// the three lie arms read the figures relay. Absent, every step reads NOT RUN
-// by name.
+// figures", steps 21 · 24 · 22a · 22b · 22c · 22d · 23 · 25: the honest
+// states read A, and the five lie arms read the figures relay. Absent, every
+// step reads NOT RUN by name.
 const VERIFIED_FIGURES = args.get('verified-figures') === true;
 // The verified-names block — WEB_INTERFACE → The extension → "The verified
 // names", steps 26 · 29 · 30: a claimed name in ink on every surface, a send
@@ -130,8 +130,9 @@ const B_P2P_PORT = 19772;
 const B_ORIGIN = `http://127.0.0.1:${B_HTTP_PORT}`;
 const RELAY_PORT = 19780;
 const RELAY_ORIGIN = `http://127.0.0.1:${RELAY_PORT}`;
-// The figures relay — the lie arms 22a · 22b · 23, and in its name modes the
-// lie arms 27a–d · 28a–b, on a port of its own beside 19a's relay.
+// The figures relay — the lie arms 22a · 22b · 22c · 22d · 23, and in its
+// name modes the lie arms 27a–d · 28a–b, on a port of its own beside 19a's
+// relay.
 const FIG_RELAY_PORT = 19785;
 const FIG_RELAY_ORIGIN = `http://127.0.0.1:${FIG_RELAY_PORT}`;
 const C_HTTP_PORT = 19790;
@@ -958,7 +959,7 @@ async function startLyingRelay(upstream) {
 }
 
 // The figures relay — WEB_INTERFACE → The extension → "The verified figures",
-// the lie arms 22a · 22b · 23. Every GET is proxied to `upstream` with
+// the lie arms 22a · 22b · 22c · 22d · 23. Every GET is proxied to `upstream` with
 // `access-control-allow-origin: *`, as 19a's relay does, and every
 // /nipopow/proof/ answer passes verbatim in every mode: the reading node's tip
 // proof is A's own, so the corner stays verified and the anchor stands. The
@@ -1019,11 +1020,23 @@ async function startFiguresRelay(upstream, port, names = null) {
     renamed: 0,
     renameTo: null,
     fakeBoxId: null,
-    // The box ids `credits-drop` / `karma-drop` dropped from R's first page —
-    // the arm records which, so the figures line and the request log can be
-    // read against the specific box.
-    droppedCreditsIds: [],
-    droppedKarmaIds: [],
+    // The box the credits-side lie points at — the arm asserts the line names
+    // this box's value scaled to $NOTIS, so a lie that moved to another
+    // amount is caught.
+    //   `fakeBox`           — the latest fabricated box served in credits-fake
+    //                         (its value is a constant 12.5 $NOTIS, but kept
+    //                         for symmetry with the other arms).
+    //   `foreignBox`        — the faucet's largest credit box, read from
+    //                         upstream the first time credits-foreign serves
+    //                         R's first page.
+    //   `droppedCreditsBox` — the latest box dropped from R's first /credits
+    //                         page under credits-drop.
+    //   `droppedKarmaBox`   — the latest box dropped from R's first /karma
+    //                         page under karma-drop.
+    fakeBox: null,
+    foreignBox: null,
+    droppedCreditsBox: null,
+    droppedKarmaBox: null,
     log: [],
   };
   const ownCreditsPath = `/credits/${R_JSON.pubKeyHex.toLowerCase()}`;
@@ -1077,12 +1090,14 @@ async function startFiguresRelay(upstream, port, names = null) {
           const listing = JSON.parse(body.toString('utf8'));
           const box = mode === 'credits-fake'
             ? { boxId: randomBytes(32).toString('hex'), value: '1250000000' }
-            : await largestCreditBox(upstream, DEVNET_FAUCET_KEY);
+            : (relay.foreignBox ?? await largestCreditBox(upstream, DEVNET_FAUCET_KEY));
           if (box !== null) {
             listing.boxes.push(box);
             listing.boxCount += 1;
             body = Buffer.from(JSON.stringify(listing));
             relay.edits[mode] += 1;
+            if (mode === 'credits-fake') relay.fakeBox = { boxId: box.boxId, value: box.value };
+            else relay.foreignBox = { boxId: box.boxId, value: box.value };
             console.log(`[vf] figures relay ${mode} edit ${relay.edits[mode]}: ${box.boxId.slice(0, 12)}… (${box.value}) listed under R`);
           }
         } else if (mode === 'credits-drop' && ownCreditsFirstPage) {
@@ -1091,6 +1106,8 @@ async function startFiguresRelay(upstream, port, names = null) {
           // reads the dropped box `unlisted` — the chain holds what the node
           // did not list (WEB_INTERFACE → The extension → "The verified
           // figures" — "the chain holds N $NOTIS the node does not list").
+          // The id and value are recorded on `relay.droppedCreditsBox` so the
+          // arm asserts the line names this box's value scaled to $NOTIS.
           const listing = JSON.parse(body.toString('utf8'));
           if (Array.isArray(listing.boxes) && listing.boxes.length > 0) {
             const dropped = listing.boxes.shift();
@@ -1099,7 +1116,7 @@ async function startFiguresRelay(upstream, port, names = null) {
               try { listing.total = (BigInt(listing.total) - BigInt(dropped.value)).toString(); } catch {}
             }
             body = Buffer.from(JSON.stringify(listing));
-            relay.droppedCreditsIds.push(dropped.boxId);
+            relay.droppedCreditsBox = { boxId: dropped.boxId, value: dropped.value };
             relay.edits['credits-drop'] += 1;
             console.log(`[vf] figures relay credits-drop edit ${relay.edits['credits-drop']}: ${dropped.boxId.slice(0, 12)}… (${dropped.value}) withheld from R's listing`);
           }
@@ -1107,7 +1124,9 @@ async function startFiguresRelay(upstream, port, names = null) {
           // Drop one listed karma box from R's first /karma page, keeping
           // boxes/boxCount/total consistent with the listing served and
           // `effective` passed through as served. The run reads the dropped
-          // box `unlisted` — the chain holds what the node did not list.
+          // box `unlisted` — the chain holds what the node did not list. The
+          // id and value are recorded on `relay.droppedKarmaBox` so the arm
+          // asserts the line names this box's value as rep.
           const listing = JSON.parse(body.toString('utf8'));
           if (Array.isArray(listing.boxes) && listing.boxes.length > 0) {
             const dropped = listing.boxes.shift();
@@ -1116,7 +1135,7 @@ async function startFiguresRelay(upstream, port, names = null) {
               try { listing.total = (BigInt(listing.total) - BigInt(dropped.value)).toString(); } catch {}
             }
             body = Buffer.from(JSON.stringify(listing));
-            relay.droppedKarmaIds.push(dropped.boxId);
+            relay.droppedKarmaBox = { boxId: dropped.boxId, value: dropped.value };
             relay.edits['karma-drop'] += 1;
             console.log(`[vf] figures relay karma-drop edit ${relay.edits['karma-drop']}: ${dropped.boxId.slice(0, 12)}… (${dropped.value}) withheld from R's listing`);
           }
@@ -1358,9 +1377,10 @@ async function titleTipNearReadingNode(readingOrigin, reading, tolerance = 5) {
 // ---------------------------------------------------------------------------
 
 const VERIFIED_TIP_STEPS = ['17a', 17, '17b', 18, '19a', '19b', '19c', 20];
-// The verified-figures block — steps 21 · 24 · 22a · 22b · 23 · 25, in the
-// order they run (WEB_INTERFACE → The extension → "The verified figures");
-// 22a · 22b · 23 are the lie arms, read through the figures relay.
+// The verified-figures block — steps 21 · 24 · 22a · 22b · 22c · 22d · 23 ·
+// 25, in the order they run (WEB_INTERFACE → The extension → "The verified
+// figures"); 22a · 22b · 22c · 22d · 23 are the lie arms, read through the
+// figures relay.
 const VERIFIED_FIGURES_STEPS = [21, 24, '22a', '22b', '22c', '22d', 23, 25];
 const LIE_ARM_STEPS = ['22a', '22b', '22c', '22d', 23];
 
@@ -2572,108 +2592,171 @@ async function readNodeKarma() {
 
 const BALANCE_UNPROVEN = "this node's proof of the balance did not verify";
 const REP_UNPROVEN = "this node's proof of your rep did not verify";
-// The relay's fabricated 12.5 $NOTIS box read as `absent`, and as `unchecked`
-// — a block landed between the anchor and the run's /blocks/current, and the
-// next run decides.
-const FAKE_ABSENT_LINE = /^the node lists 12\.5\d* \$NOTIS the chain does not hold$/;
-const FAKE_UNCHECKED_TAIL = / · 12\.5\d* \$NOTIS not checked yet$/;
-// A dropped credit box reads as `unlisted` — the chain holds what the node
-// did not list — only where `heightAfter` equals the anchor's tip. Under the
-// paced miner a run can straddle a block and the dropped box reads nothing
-// (its `unlisted` claim is held back; the figures line reads an honest shape
-// — either silence, where every listed box of R proved and the row's figure
-// reproduced, or the muted *proven at block …* with its young / unchecked
-// tail). The arm presses again where the reading is honest-looking, up to
-// five times.
-const DROP_CREDITS_LINE = /^the chain holds [\d.]+ \$NOTIS the node does not list$/;
-const DROP_KARMA_LINE = /^the chain holds \d+ rep the node does not list$/;
-// An honest-looking balance line — the row reads what it reads without a lie:
-// silence (figHintText is null) or the muted *P $NOTIS proven at block H*
-// line, maybe with a `young` / `not checked yet` tail. A pressable honest
-// reading on the drop arm.
+
+// The three $NOTIS sentences the figures line can read with an amount — the
+// absent branch of row 4, its unchecked tail from row 8, and the unlisted
+// branch of row 4 (WEB_INTERFACE → The extension → "The verified figures").
+// Each regex's one capture group is the amount text — "12.5" or "87" — and
+// `creditsBaseUnits` scales it to base units: a credits amount is $NOTIS on
+// the face and base units on the wire, 10⁸ to one. For rep the integer as
+// written is the base-unit value (rep is counted in units).
+const CREDITS_ABSENT_RE = /^the node lists (\d+(?:\.\d{1,8})?) \$NOTIS the chain does not hold$/;
+const CREDITS_UNLISTED_RE = /^the chain holds (\d+(?:\.\d{1,8})?) \$NOTIS the node does not list$/;
+const CREDITS_UNCHECKED_TAIL_RE = / · (\d+(?:\.\d{1,8})?) \$NOTIS not checked yet$/;
+const KARMA_UNLISTED_RE = /^the chain holds (\d+) rep the node does not list$/;
+
+// An honest-looking row — the row reads what it reads without a lie: silence
+// (hintText is null) or the muted *P proven at block H* line, maybe with a
+// `young` / `not checked yet` tail. On the drop arms a run can straddle a
+// block between the anchor and the run's /blocks/current and read nothing
+// for the dropped box: the arm then reads an honest shape and presses again.
 const HONEST_BALANCE_LINE = (t) => t === null || /^[\d.]+ \$NOTIS proven at block \d+( · [\d.]+ \$NOTIS (landed since|not checked yet))*$/.test(t);
 const HONEST_REP_LINE = (t) => t === null || /^\d+ rep proven at block \d+( · \d+ rep (landed since|not checked yet))*$/.test(t);
 
 const repNotClay = (k) => k.present && k.monoText !== null && !k.hintHasClay && !k.monoHasClay;
 const creditsNotClay = (r) => r.present && !r.figHintHasClay && !r.goldHasClay;
 
-const LIE_ARMS = [
-  {
-    // A fabricated box: `absent` only where `heightAfter` equals the anchor's
-    // tip, so an `unchecked` reading is pressed again, up to five times. The
-    // lie is the credits listing's alone — the rep row is not clay.
-    step: '22a',
-    mode: 'credits-fake',
-    creditsSettled: (r) => r.present && (FAKE_ABSENT_LINE.test(r.figHintText ?? '') || FAKE_UNCHECKED_TAIL.test(r.figHintText ?? '')),
-    creditsOk: (r) => r.present && FAKE_ABSENT_LINE.test(r.figHintText ?? '') && r.figHintHasClay && r.goldHasClay,
-    presses: 5,
-    karmaSettled: (k) => k.present && k.monoText !== null,
-    karmaOk: repNotClay,
-  },
-  {
-    // Another key's real box listed under R: the range a box is read from
-    // fixes its owner, so R's range does not hold the foreign box, which
-    // reads `absent` (where `heightAfter` equals the anchor's tip) or
-    // `unchecked` (where a block landed since; pressed again, as 22a is).
-    // The rep row is not clay.
-    step: '22b',
-    mode: 'credits-foreign',
-    creditsSettled: (r) => r.present && (FAKE_ABSENT_LINE.test(r.figHintText ?? '') || FAKE_UNCHECKED_TAIL.test(r.figHintText ?? '')),
-    creditsOk: (r) => r.present && FAKE_ABSENT_LINE.test(r.figHintText ?? '') && r.figHintHasClay && r.goldHasClay,
-    presses: 5,
-    karmaSettled: (k) => k.present && k.monoText !== null,
-    karmaOk: repNotClay,
-  },
-  {
-    // The relay drops ONE box from R's first /credits page: the chain holds
-    // the box the node did not list, so the figures run reads it `unlisted`
-    // only where `heightAfter` equals the anchor's tip; under the paced miner
-    // a run can straddle a block and read nothing for the dropped box. The
-    // arm presses again where the reading is honest-looking, up to five
-    // times; a reading that is neither the clay line nor an honest-looking
-    // row fails the arm at once. The gold figure, where one stands, is the
-    // node's own — the sum of what it listed — and clay; where the drop
-    // emptied the listing the empty-state stands with the clay line beneath
-    // it. The rep row is not clay.
-    step: '22c',
-    mode: 'credits-drop',
-    creditsSettled: (r) => r.present
-      && (DROP_CREDITS_LINE.test(r.figHintText ?? '') || HONEST_BALANCE_LINE(r.figHintText)),
-    creditsOk: (r) => r.present && DROP_CREDITS_LINE.test(r.figHintText ?? '') && r.figHintHasClay
-      && (r.goldText === null || r.goldHasClay),
-    presses: 5,
-    karmaSettled: (k) => k.present && k.monoText !== null,
-    karmaOk: repNotClay,
-  },
-  {
-    // The relay drops ONE box from R's first /karma page: the rep row reads
-    // *the chain holds N rep the node does not list*, clay, the number clay
-    // where one stands (the node's `effective` is passed through as served).
-    // The balance row is not clay. As 22c, pressed again where the reading
-    // is honest.
-    step: '22d',
-    mode: 'karma-drop',
-    karmaSettled: (k) => k.present
-      && (DROP_KARMA_LINE.test(k.hintText ?? '') || HONEST_REP_LINE(k.hintText)),
-    karmaOk: (k) => k.present && DROP_KARMA_LINE.test(k.hintText ?? '') && k.hintHasClay
-      && (k.monoText === null || k.monoHasClay),
-    presses: 5,
-    creditsSettled: (r) => r.present && (r.figHintText === null || HONEST_BALANCE_LINE(r.figHintText)),
-    creditsOk: creditsNotClay,
-    pressWhen: 'karma',
-  },
-  {
-    // The listing is honest and every proof lies: both rows under the full
-    // rule.
-    step: 23,
-    mode: 'avl-flip',
-    creditsSettled: (r) => r.present && r.figHintText === BALANCE_UNPROVEN,
-    creditsOk: (r) => r.present && r.figHintText === BALANCE_UNPROVEN && r.figHintHasClay && r.goldHasClay,
-    presses: 0,
-    karmaSettled: (k) => k.present && k.hintText === REP_UNPROVEN,
-    karmaOk: (k) => k.present && k.hintText === REP_UNPROVEN && k.hintHasClay && k.monoHasClay,
-  },
-];
+// "12.5" → 1_250_000_000n (base units); "87" → 8_700_000_000n. Null for text
+// outside `/^\d+(\.\d{1,8})?$/`. The scale is credits.ts's `formatCredits`,
+// reversed.
+function creditsBaseUnits(text) {
+  if (typeof text !== 'string' || !/^\d+(\.\d{1,8})?$/.test(text)) return null;
+  const [whole, frac = ''] = text.split('.');
+  const padded = (frac + '00000000').slice(0, 8);
+  return BigInt(whole) * 100_000_000n + BigInt(padded);
+}
+
+// The $NOTIS amount a line's figures text names under `pattern`, in base
+// units, or null when the pattern or the text does not match.
+function creditsAmountIn(text, pattern) {
+  if (typeof text !== 'string') return null;
+  const m = text.match(pattern);
+  return m === null ? null : creditsBaseUnits(m[1]);
+}
+
+// The rep amount a line's figures text names under `pattern`, as a bigint —
+// rep is the integer as written — or null when it does not match.
+function karmaAmountIn(text, pattern) {
+  if (typeof text !== 'string') return null;
+  const m = text.match(pattern);
+  if (m === null || !/^\d+$/.test(m[1])) return null;
+  return BigInt(m[1]);
+}
+
+// `expected.value` is the box's decimal-string value (base units for a credit
+// box, rep for a karma box). The arm's row reads clay in the right pattern
+// AND names the amount the box carries — so a lie that moved to another
+// amount, or that landed somewhere else, is caught here.
+function matchesAmount(amount, expected) {
+  return expected !== null && amount !== null && amount === BigInt(expected.value);
+}
+
+function lieArms(relay) {
+  return [
+    {
+      // A fabricated 12.5 $NOTIS box: `absent` where `heightAfter` equals the
+      // anchor's tip, `unchecked` where a block landed since (pressed again,
+      // up to five times). The amount the line names is the box the relay
+      // listed, scaled: the arm asserts the match against `relay.fakeBox`.
+      // The rep row is not clay.
+      step: '22a',
+      mode: 'credits-fake',
+      box: () => relay.fakeBox,
+      creditsSettled: (r) => r.present && (
+        creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE) !== null
+        || creditsAmountIn(r.figHintText, CREDITS_UNCHECKED_TAIL_RE) !== null
+      ),
+      creditsOk: (r) => r.present
+        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE), relay.fakeBox)
+        && r.figHintHasClay && r.goldHasClay,
+      presses: 5,
+      karmaSettled: (k) => k.present && k.monoText !== null,
+      karmaOk: repNotClay,
+    },
+    {
+      // The faucet's largest credit box listed under R — a real box of
+      // another key, whose amount is whatever that box holds. The arm reads
+      // its id and value from the relay (`relay.foreignBox`): the row's line
+      // names the box's amount scaled to $NOTIS, and under `heightAfter`
+      // slipping past the anchor the line reads the box's amount as the
+      // `unchecked` tail. The rep row is not clay.
+      step: '22b',
+      mode: 'credits-foreign',
+      box: () => relay.foreignBox,
+      creditsSettled: (r) => r.present && (
+        creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE) !== null
+        || creditsAmountIn(r.figHintText, CREDITS_UNCHECKED_TAIL_RE) !== null
+      ),
+      creditsOk: (r) => r.present
+        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE), relay.foreignBox)
+        && r.figHintHasClay && r.goldHasClay,
+      presses: 5,
+      karmaSettled: (k) => k.present && k.monoText !== null,
+      karmaOk: repNotClay,
+    },
+    {
+      // The relay drops ONE box from R's first /credits page: the chain
+      // holds the box the node did not list, so the figures run reads it
+      // `unlisted` only where `heightAfter` equals the anchor's tip; under
+      // the paced miner a run can straddle a block and read nothing for the
+      // dropped box, where the arm presses again, up to five times. The arm
+      // reads the dropped box from `relay.droppedCreditsBox` and asserts the
+      // line names its value scaled to $NOTIS; the gold figure, where one
+      // stands, is the node's own — the sum of what it listed — and clay;
+      // where the drop emptied the listing the empty-state stands with the
+      // clay line beneath it. The rep row is not clay.
+      step: '22c',
+      mode: 'credits-drop',
+      box: () => relay.droppedCreditsBox,
+      creditsSettled: (r) => r.present && (
+        creditsAmountIn(r.figHintText, CREDITS_UNLISTED_RE) !== null
+        || HONEST_BALANCE_LINE(r.figHintText)
+      ),
+      creditsOk: (r) => r.present
+        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_UNLISTED_RE), relay.droppedCreditsBox)
+        && r.figHintHasClay
+        && (r.goldText === null || r.goldHasClay),
+      presses: 5,
+      karmaSettled: (k) => k.present && k.monoText !== null,
+      karmaOk: repNotClay,
+    },
+    {
+      // The relay drops ONE box from R's first /karma page: the rep row
+      // reads *the chain holds N rep the node does not list*, clay, the
+      // number clay where one stands (the node's `effective` is passed
+      // through as served). The arm reads the dropped box from
+      // `relay.droppedKarmaBox` and asserts N equals its value. The balance
+      // row is not clay. As 22c, pressed again where the reading is honest.
+      step: '22d',
+      mode: 'karma-drop',
+      box: () => relay.droppedKarmaBox,
+      karmaSettled: (k) => k.present && (
+        karmaAmountIn(k.hintText, KARMA_UNLISTED_RE) !== null
+        || HONEST_REP_LINE(k.hintText)
+      ),
+      karmaOk: (k) => k.present
+        && matchesAmount(karmaAmountIn(k.hintText, KARMA_UNLISTED_RE), relay.droppedKarmaBox)
+        && k.hintHasClay
+        && (k.monoText === null || k.monoHasClay),
+      presses: 5,
+      creditsSettled: (r) => r.present && (r.figHintText === null || HONEST_BALANCE_LINE(r.figHintText)),
+      creditsOk: creditsNotClay,
+      pressWhen: 'karma',
+    },
+    {
+      // The listing is honest and every proof lies: both rows under the full
+      // rule, no amount in either sentence.
+      step: 23,
+      mode: 'avl-flip',
+      box: () => null,
+      creditsSettled: (r) => r.present && r.figHintText === BALANCE_UNPROVEN,
+      creditsOk: (r) => r.present && r.figHintText === BALANCE_UNPROVEN && r.figHintHasClay && r.goldHasClay,
+      presses: 0,
+      karmaSettled: (k) => k.present && k.hintText === REP_UNPROVEN,
+      karmaOk: (k) => k.present && k.hintText === REP_UNPROVEN && k.hintHasClay && k.monoHasClay,
+    },
+  ];
+}
 
 // A row as the step lines read it — the figures hint and the figure, each
 // with its clay.
@@ -2707,7 +2790,7 @@ async function runFiguresLieArms(cx) {
   }
   console.log(`[vf] figures relay up: ${relay.origin} → ${NODE}`);
   try {
-    for (const arm of LIE_ARMS) await runLieArm(cx, relay, arm);
+    for (const arm of lieArms(relay)) await runLieArm(cx, relay, arm);
   } finally {
     closeRelay(relay);
     console.log(`[vf] figures relay closed; edits=${JSON.stringify(relay.edits)}`);
@@ -2736,9 +2819,12 @@ async function runLieArm(cx, relay, arm) {
     // bound, and pressed again where the arm allows it. `pressWhen` names the
     // row whose reading drives the retry — `credits` by default; `karma` for
     // the karma-drop arm, where the lie is on /karma and the balance row is
-    // the "not clay" side. For the drop arms, a reading that is neither the
-    // clay line nor an honest-looking row fails the arm at once; the arm's
-    // `settled` predicate matches both — the `ok` match is the clay line.
+    // the "not clay" side. For the drop arms, the arm's `settled` predicate
+    // matches both the clay line and an honest-looking row: a honest reading
+    // means a block landed between the anchor and the run's /blocks/current,
+    // so the arm presses again up to `arm.presses` times. The `ok` match is
+    // the clay line, and `arm.presses === 0` means the arm leaves no room for
+    // retry (23's reading is decided on the first run).
     await raiseWindow(cx, 'open wallet');
     const relayRun = verified ? await waitForFiguresRun(cx, changeIdx, 60000, 2000, relay.origin) : [];
     let credits = await waitForRow(readCreditsRow, cx, arm.creditsSettled, 15000);
@@ -2781,8 +2867,14 @@ async function runLieArm(cx, relay, arm) {
     // (4) Back to A: the balance row silent again once A's own run lands.
     const back = await leaveFiguresRelay(cx);
     onRelay = false;
+    // The box the lie points at — the one the arm asserts the line names.
+    // `null` for 23 (avl-flip), whose sentences carry no amount.
+    const lieBox = arm.box ? arm.box() : null;
+    const lieBoxText = lieBox === null
+      ? 'none (the sentence carries no amount)'
+      : `${lieBox.boxId.slice(0, 12)}… (${lieBox.value})`;
     record(arm.step, verified && creditsOk && karmaOk && cornerOk && back.ok,
-      `relay ${arm.mode} edits=${edits}; ` +
+      `relay ${arm.mode} edits=${edits}; lie box=${lieBoxText}; ` +
       `change: stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}, verified=${verified}; ` +
       `through the relay: /credits reads=${creditsReads}, /karma reads=${karmaReads}, figures proof requests=${relayRun.length}; ` +
       `balance ${creditsReadings.join(' | ')} (A's /credits total=${nodeCredits?.total ?? 'null'} base units), ok=${creditsOk}; ` +
