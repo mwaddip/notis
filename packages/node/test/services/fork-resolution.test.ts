@@ -15,10 +15,13 @@ import {
   GENESIS_PREV_BLOCK_HASH,
   bytesToHex,
   encodeTx,
+  hash32,
   updateInterlinks,
 } from '@dagsocial/types';
 import { blockHash, cumulativeWork, level as headerLevel } from '@dagsocial/validation';
 import { MAX_CHAIN_RESPONSE_ITEMS } from '@dagsocial/net';
+import { label as avlLabel } from '@ergots/avltree';
+import type { AvlNode } from '@ergots/avltree';
 import type {
   KarmaBox,
   OrderingBlock,
@@ -201,6 +204,14 @@ async function importRefusedHeaders() {
  * — the fork point a reorg returns to then holds the box, and the template the
  * reorg rebuilds keeps the entry rather than evicting it.
  */
+/** The 33-byte digest of a kept root — the root's label and the tree height, hex. */
+function keptDigest(kept: { root: AvlNode; treeHeight: number }): string {
+  const out = new Uint8Array(33);
+  out.set(avlLabel(kept.root), 0);
+  out[32] = kept.treeHeight;
+  return bytesToHex(out);
+}
+
 async function seededSelfSpend(): Promise<UtxoTransaction> {
   const owner = makeTestIdentity();
   const box = makeKarmaBox(10n, owner.userId, 0);
@@ -1692,7 +1703,7 @@ describe('reorg — the ring and the by-reference restore', () => {
     return { db, theirBlocks: [theirB2, theirB3] };
   }
 
-  it('a fork point in the ring: restoreRoot by reference, zero rollbacks, kept roots below+at fork are the same objects', async () => {
+  it('a fork point in the ring: restoreRoot by reference, zero rollbacks, kept roots below+at fork are the same objects, each new height\'s digest is its block\'s stateRoot', async () => {
     const { theirBlocks } = await setupFork();
     const { tryGetAvlProver } = await import('../../src/state/avl-prover.js');
     const avl = tryGetAvlProver()!;
@@ -1717,27 +1728,23 @@ describe('reorg — the ring and the by-reference restore', () => {
     // Below and at the fork: same root objects as before, by reference.
     expect(avl.recentRoots.get(0)!.root).toBe(genesisKept!.root);
     expect(avl.recentRoots.get(1)!.root).toBe(forkKept!.root);
-    // Above the fork: the new branch's heights are kept, each digest its
-    // block's stateRoot.
+    // Above the fork: the new branch's heights are kept, each kept root's
+    // digest is its block's stateRoot.
     for (const b of theirBlocks) {
       const kept = avl.recentRoots.get(b.header.height);
       expect(kept, `height ${b.header.height}`).not.toBeNull();
+      expect(keptDigest(kept!), `height ${b.header.height}`).toBe(b.header.stateRoot);
     }
     // The tip's digest is the new tip's stateRoot.
     expect(bytesToHex(avl.prover.digest()!)).toBe(theirBlocks[theirBlocks.length - 1]!.header.stateRoot);
   });
 
-  it('a fork point not in the ring: store resolve, ring emptied, then new blocks\' heights kept', async () => {
-    const { theirBlocks, db } = await setupFork();
-
-    // Simulate a node restarted since: open a second handle on the same store
-    // (its ring is seeded from the loaded version alone — the tip's).
-    const { createAvlProver, tryGetAvlProver } = await import('../../src/state/avl-prover.js');
-    void createAvlProver;
+  it('a fork point not in the ring: store resolve, ring emptied, then new blocks\' heights kept and each digest is its block\'s stateRoot', async () => {
+    const { theirBlocks } = await setupFork();
+    const { tryGetAvlProver } = await import('../../src/state/avl-prover.js');
     const avl = tryGetAvlProver()!;
-    // The module-level singleton still holds our rich ring; use its primary
-    // handle for the reorg, but clear every entry below the tip so the fork
-    // point at height 1 is NOT held.
+    // Clear every entry below the tip so the fork point at height 1 is NOT
+    // held — a node restarted since would see this ring shape.
     avl.recentRoots.drop(0);
     avl.recentRoots.drop(1);
     avl.recentRoots.drop(2);
@@ -1751,47 +1758,46 @@ describe('reorg — the ring and the by-reference restore', () => {
     // `storage.rollback` and then `inner.restoreRoot`.
     expect(storageSpy).toHaveBeenCalledTimes(1);
 
-    // The ring was emptied at the resolve; the new blocks' heights are kept.
+    // The ring was emptied at the resolve; the new blocks' heights are kept,
+    // each kept root's digest its block's stateRoot.
     const heights = avl.recentRoots.heights();
-    for (const b of theirBlocks) expect(heights).toContain(b.header.height);
+    for (const b of theirBlocks) {
+      expect(heights).toContain(b.header.height);
+      const kept = avl.recentRoots.get(b.header.height);
+      expect(keptDigest(kept!), `height ${b.header.height}`).toBe(b.header.stateRoot);
+    }
     expect(heights.filter((h) => h <= 1)).toEqual([]);
-
-    void db;
   });
 
-  it('two nodes — one with the fork point in the ring, one that resolves — agree on tip and stored block proofs', async () => {
+  it('one node, both paths taken in turn, agree on tip and stored block proofs', async () => {
     const { theirBlocks, db } = await setupFork();
     const { tryGetAvlProver } = await import('../../src/state/avl-prover.js');
-    const avlA = tryGetAvlProver()!;
-
-    // Snapshot the ring: node A keeps the fork point.
-    const snapA = avlA.recentRoots.snapshot();
+    const avl = tryGetAvlProver()!;
 
     const forkResolution = await importForkResolution();
+    // The first run: fork point in the ring (the by-reference path).
     forkResolution.reorg(1, theirBlocks);
 
-    const tipA = bytesToHex(avlA.prover.digest()!);
+    const tipA = bytesToHex(avl.prover.digest()!);
     const proofsA = theirBlocks.map((b) => {
       const row = db.getDb().prepare('SELECT proof FROM block_proofs WHERE height = ?').get(b.header.height) as { proof: Buffer } | undefined;
       return row ? Buffer.from(row.proof).toString('hex') : null;
     });
 
-    // Revert again and reorg on the twin that resolves from the store.
+    // The twin: revert, mine our chain again, drop every kept root but the
+    // tip so the fork point is NOT held (the store-resolve path).
     await revertChainTo(1);
-    // Our chain at 2 and 3 was built from the pre-revert tree; after the
-    // revert the current tree is the fork again, same as the twin.
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     await mineNextBlock(bc);
     await mineNextBlock(bc);
 
-    // Drop every kept root but the tip, so the fork point is not held.
-    const heights = avlA.recentRoots.heights();
-    for (const h of heights) if (h !== Math.max(...heights)) avlA.recentRoots.drop(h);
+    const heights = avl.recentRoots.heights();
+    for (const h of heights) if (h !== Math.max(...heights)) avl.recentRoots.drop(h);
 
     forkResolution.reorg(1, theirBlocks);
 
-    const tipB = bytesToHex(avlA.prover.digest()!);
+    const tipB = bytesToHex(avl.prover.digest()!);
     const proofsB = theirBlocks.map((b) => {
       const row = db.getDb().prepare('SELECT proof FROM block_proofs WHERE height = ?').get(b.header.height) as { proof: Buffer } | undefined;
       return row ? Buffer.from(row.proof).toString('hex') : null;
@@ -1800,29 +1806,29 @@ describe('reorg — the ring and the by-reference restore', () => {
     expect(tipA).toBe(tipB);
     expect(proofsA).toEqual(proofsB);
     expect(proofsA.every((p) => p !== null)).toBe(true);
-
-    void snapA;
   });
 
-  it('an abort on the by-reference path: zero rollbacks, root objects preserved, next honest block applies', async () => {
+  it('an abort on the by-reference path: zero rollbacks, root objects preserved, the live root is the pre-reorg root object, next honest block applies and its stored proof equals a twin\'s', async () => {
     const { theirBlocks } = await setupFork();
     const { tryGetAvlProver } = await import('../../src/state/avl-prover.js');
     const avl = tryGetAvlProver()!;
 
-    // A doomed reorg: second block is replaced with one whose stateRoot does
-    // not match its body — the funnel refuses it, `reorg` throws.
-    const bad = await makeApplicableBlock({ height: 3, stateRoot: '00'.repeat(33) });
-    void bad;
-    // Simpler: pass a block whose prevBlockHash is wrong.
+    // The twin (no reorg): save our chain's tip stateRoot and compute what
+    // the next honest block over it would produce.
+    const twinTipStateRoot = bytesToHex(avl.prover.digest()!);
+    const nextHonestBlock = await makeApplicableBlock({ height: 4 });
+
+    // A doomed reorg: pass a block whose prevBlockHash is wrong, so the
+    // chain-link check at the inner apply refuses it.
     const broken: typeof theirBlocks[0] = {
       ...theirBlocks[1]!,
       header: { ...theirBlocks[1]!.header, prevBlockHash: '00'.repeat(32) },
     };
 
     const beforeHeights = avl.recentRoots.heights();
+    const preReorgRoot = avl.prover.prover.root;
     const beforeByH: Record<number, unknown> = {};
     for (const h of beforeHeights) beforeByH[h] = avl.recentRoots.get(h)!.root;
-    const beforeDigest = bytesToHex(avl.prover.digest()!);
 
     const storageSpy = vi.spyOn(avl.storage, 'rollback');
     const proverSpy = vi.spyOn(avl.prover, 'rollback');
@@ -1836,14 +1842,26 @@ describe('reorg — the ring and the by-reference restore', () => {
 
     expect(storageSpy).not.toHaveBeenCalled();
     expect(proverSpy).not.toHaveBeenCalled();
-    expect(bytesToHex(avl.prover.digest()!)).toBe(beforeDigest);
+
+    // The live root IS the pre-reorg root object (restored by reference).
+    expect(avl.prover.prover.root).toBe(preReorgRoot);
+    expect(bytesToHex(avl.prover.digest()!)).toBe(twinTipStateRoot);
     expect(avl.recentRoots.heights()).toEqual(beforeHeights);
     for (const h of beforeHeights) {
       expect(avl.recentRoots.get(h)!.root, `height ${h}`).toBe(beforeByH[h]);
     }
+
+    // The next honest block applies, and its stored proof equals the twin's
+    // — the one a node that never saw the reorg would have written.
+    const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
+    expect(applyOrderingBlock(nextHonestBlock)).toBe(true);
+    const { getBlockProof } = await import('../../src/store/block-proofs.js');
+    const stored = getBlockProof(4);
+    expect(stored).not.toBeNull();
+    expect(bytesToHex(hash32(stored!))).toBe(nextHonestBlock.header.adProofsRoot);
   });
 
-  it('a kept root that is not the store\'s version: reorg resolves from store, ring emptied', async () => {
+  it('a kept root that is not the store\'s version: reorg resolves from store, ring emptied, the result equals the twin\'s', async () => {
     const { theirBlocks } = await setupFork();
     const { tryGetAvlProver } = await import('../../src/state/avl-prover.js');
     const { newLeaf } = await import('@ergots/avltree');
@@ -1868,8 +1886,14 @@ describe('reorg — the ring and the by-reference restore', () => {
     expect(storageSpy).toHaveBeenCalledTimes(1);
     expect(avl.recentRoots.get(0)).toBeNull();
     expect(avl.recentRoots.get(1)).toBeNull();
-    // The new blocks' heights are kept.
-    for (const b of theirBlocks) expect(avl.recentRoots.get(b.header.height)).not.toBeNull();
+    // The new blocks' heights are kept, each digest the block's stateRoot —
+    // the tip's `stateRoot` is the new branch's.
+    for (const b of theirBlocks) {
+      const kept = avl.recentRoots.get(b.header.height);
+      expect(kept, `height ${b.header.height}`).not.toBeNull();
+      expect(keptDigest(kept!), `height ${b.header.height}`).toBe(b.header.stateRoot);
+    }
+    expect(bytesToHex(avl.prover.digest()!)).toBe(theirBlocks[theirBlocks.length - 1]!.header.stateRoot);
   });
 });
 

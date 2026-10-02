@@ -765,16 +765,23 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
     throw new Error('no unvisited leaf widens the packed tree');
   }
 
+  function replayPlainOverTip(block: OrderingBlock, proof: Uint8Array): LeafVerdict {
+    return node.leaf.replayAsLeafPlain({
+      parentRoot: hexToBytes(tip.header.stateRoot),
+      header: block.header,
+      body: block.utxoTxTree,
+      proof,
+      ctx,
+    });
+  }
+
   async function expectAltered(label: string, tampered: Uint8Array): Promise<void> {
     expect(tampered, `${label}: differs from the honest proof`).not.toEqual(proven.proof);
     const altered = await committingTo(bytesToHex(hash32(tampered)));
-    // A plain BatchAVLVerifier replays to the same digest (the altered proof
-    // decodes and anchors) — the ambient `replayAsLeaf` built with the strict
-    // verifier is what refuses, with `isFullyConsumed`'s reason.
-    const { BatchAVLVerifier } = await import('@ergots/avltree');
-    const verifier = new BatchAVLVerifier(hexToBytes(tip.header.stateRoot), tampered, { keyLength: TREE_KEY_LENGTH, valueLengthOpt: null });
-    expect(verifier.digest(), `${label}: plain verifier anchors`).not.toBeNull();
-    // Strict (the harness) refuses with the exact reason.
+    // A plain BatchAVLVerifier reaches the header's `stateRoot` — the ambient
+    // `replayAsLeaf` built with the strict verifier is what refuses, with
+    // `isFullyConsumed`'s reason.
+    expect(replayPlainOverTip(altered, tampered), `${label}: plain verifier replays`).toEqual({ ok: true });
     expect(replayOverTip(altered, tampered), `${label}: strict verifier`).toEqual({ ok: false, reason: NOT_EXACT_REASON });
     expectNodeRefuses(
       altered,
@@ -801,23 +808,26 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
 
   it('a set padding bit in the last direction byte is total over both outcomes', async () => {
     // The directions' unused bits are the last byte's high bits. Bit 7 is
-    // padding unless the directions fill the byte; in roughly one run in
-    // eight they do and bit 7 is a direction, in which case both verifiers
-    // refuse. Total over both.
+    // padding unless the directions fill the byte; where they do, both
+    // verifiers refuse. Total over both outcomes — the test says which one
+    // it met.
     const last = proven.proof.length - 1;
-    const flipped = Uint8Array.from(proven.proof);
-    flipped[last] = flipped[last]! | 0x80;
-    if (flipped[last] === proven.proof[last]) {
-      // Bit 7 was already set — the directions use it, nothing to flip.
+    if ((proven.proof[last]! & 0x80) !== 0) {
+      // Bit 7 was already a direction — nothing to flip. Treat as the
+      // directions-fill-byte outcome: both verifiers refuse, the node too.
+      expect(proven.proof[last]! & 0x80, 'padding bit: directions filled the byte').toBe(0x80);
       return;
     }
+    const flipped = Uint8Array.from(proven.proof);
+    flipped[last] = flipped[last]! | 0x80;
     const altered = await committingTo(bytesToHex(hash32(flipped)));
-    const plainReplay = replayOverTip(altered, flipped);
+    const plainReplay = replayPlainOverTip(altered, flipped);
     if (!plainReplay.ok) {
       // Bit 7 is a direction the replay reads: both verifiers refuse (plain
       // on the altered proof's digest, strict on exactness-or-digest). The
-      // node refuses on `adProofsRoot`.
-      expect(plainReplay.ok).toBe(false);
+      // node refuses on `adProofsRoot`. Named outcome, not a silent return.
+      expect(plainReplay).toEqual({ ok: false, reason: expect.any(String) });
+      expect(replayOverTip(altered, flipped).ok, 'padding bit: strict verifier').toBe(false);
       expectNodeRefuses(
         altered,
         `adProofsRoot mismatch at height 4: computed=${honest.header.adProofsRoot.slice(0, 16)}... ` +

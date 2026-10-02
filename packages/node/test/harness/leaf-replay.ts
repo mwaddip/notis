@@ -1,4 +1,4 @@
-import { StrictBatchAVLVerifier } from '@ergots/avltree';
+import { BatchAVLVerifier, StrictBatchAVLVerifier } from '@ergots/avltree';
 import type { AvlTreeConfig } from '@ergots/avltree';
 import { TREE_KEY_LENGTH, bytesToHex, hash32 } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, UtxoTxTree } from '@dagsocial/types';
@@ -19,7 +19,7 @@ import type { ApplyContext, TreeWrite } from '@dagsocial/consensus';
  */
 
 /** The tree's shape (TYPES_INTERFACE → State format): keys of `TREE_KEY_LENGTH` bytes, values of any length. */
-const TREE_CONFIG: AvlTreeConfig = { keyLength: TREE_KEY_LENGTH, valueLengthOpt: null };
+export const TREE_CONFIG: AvlTreeConfig = { keyLength: TREE_KEY_LENGTH, valueLengthOpt: null };
 
 /** What a leaf holds for one block: its parent's root, the block as it was fetched, and the network's rules context. */
 export interface LeafBlock {
@@ -34,36 +34,28 @@ export interface LeafBlock {
 /** The replay's answer: the block reached its header's `stateRoot`, or the reason it did not. */
 export type LeafVerdict = { ok: true } | { ok: false; reason: string };
 
+/** The reason a strict verifier refuses a proof `BatchAVLProver.generateProof` would never write. */
+export const NOT_EXACT = 'the proof is not byte for byte the proof its operations write';
+
 /**
- * The block replayed from `parentRoot` and `proof` alone. A refusal is an
- * answer, never a throw: the proof the header does not commit to, a proof that
- * does not anchor at `parentRoot`, a lookup or a write the proof cannot answer,
- * a rule's refusal, a block over the budget, and a digest that is not the
- * header's `stateRoot`. A throw is what it is in the node — a defect, not a
- * verdict (CONSENSUS_INTERFACE → Applying a block).
+ * The two step-by-step verifier classes `verifierSession` takes
+ * (CONSENSUS_INTERFACE → The tree session): neither is a subtype of the
+ * other, so the harness's core takes the two members it uses.
  */
-export function replayAsLeaf({ parentRoot, header, body, proof, ctx }: LeafBlock): LeafVerdict {
-  // The header commits to its proof (TYPES_INTERFACE → Layout — Block,
-  // `adProofsRoot`), and the proof is not used before it is known to be that one.
-  const proofRoot = bytesToHex(hash32(proof));
-  if (proofRoot !== header.adProofsRoot) {
-    return { ok: false, reason: `the header's adProofsRoot ${header.adProofsRoot} is not the proof's hash32 ${proofRoot}` };
-  }
+type StepVerifier = Pick<
+  BatchAVLVerifier,
+  'performLookupWithNeighbors' | 'getLastFailReason' | 'performOneOperation' | 'digest'
+>;
 
-  // A proof that fails to decode or anchor poisons the verifier at
-  // construction. `StrictBatchAVLVerifier` so `isFullyConsumed()` can refuse
-  // a proof carrying a trailing byte, an operation the replay never asks, a
-  // set padding bit or an unvisited node written in full
-  // (CONSENSUS_INTERFACE → The tree session, "A block replays from its proof
-  // only on all of these").
-  const verifier = new StrictBatchAVLVerifier(parentRoot, proof, TREE_CONFIG);
-  if (verifier.digest() === null) {
-    return { ok: false, reason: `the proof does not anchor at the parent root: ${verifier.getLastFailReason()}` };
-  }
-
-  // `applyBlock` reads the header's height and `validatorId` and the body, and
-  // no signature (CONSENSUS_INTERFACE → Applying a block): the block handed to
-  // it carries a placeholder, as the producer's speculative run's does.
+/**
+ * The replay's core: given a `verifier` already built over the parent's
+ * root, run the block's rules through it and answer whether it reached the
+ * header's `stateRoot`. The ADProofs check is still the caller's — it comes
+ * before verifier construction, since a proof the header does not commit to
+ * is not the one to anchor. The `isFullyConsumed()` check is the strict
+ * wrapper's — the plain `BatchAVLVerifier` has no such method.
+ */
+export function replayAgainst(verifier: StepVerifier, { header, body, ctx }: Omit<LeafBlock, 'proof' | 'parentRoot'>): LeafVerdict {
   const block: OrderingBlock = { header, utxoTxTree: body, validatorSignature: new Uint8Array(64) };
   const view = treeStateView(verifierSession(verifier));
   let signatures: number;
@@ -81,8 +73,6 @@ export function replayAsLeaf({ parentRoot, header, body, proof, ctx }: LeafBlock
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
 
-  // Once the writes are derived and before they are performed
-  // (CONSENSUS_INTERFACE → The block's cost), named as the node names it.
   const overBudget = checkBlockCost({ signatures, lookups: view.lookupCount(), writes: writes.length });
   if (overBudget !== null) return { ok: false, reason: `Rejected block height=${header.height}: ${overBudget}` };
 
@@ -101,14 +91,51 @@ export function replayAsLeaf({ parentRoot, header, body, proof, ctx }: LeafBlock
   if (reached !== header.stateRoot) {
     return { ok: false, reason: `the proof reaches ${reached}, the header's stateRoot is ${header.stateRoot}` };
   }
-  // The proof is byte for byte the proof `BatchAVLProver.generateProof`
-  // writes for the operations the replay performed (CONSENSUS_INTERFACE →
-  // The tree session). Asked once, after the last write.
-  if (!verifier.isFullyConsumed()) {
-    return { ok: false, reason: NOT_EXACT };
-  }
   return { ok: true };
 }
 
-/** The reason a strict verifier refuses a proof `BatchAVLProver.generateProof` would never write. */
-export const NOT_EXACT = 'the proof is not byte for byte the proof its operations write';
+/**
+ * The replay as a plain `BatchAVLVerifier` runs it — the reference the suite
+ * compares the strict replay against. Answers `{ ok: true }` for every proof
+ * that decodes, anchors at `parentRoot`, replays the block's operations and
+ * reaches the header's `stateRoot`, even one a prover would never write for
+ * those operations.
+ */
+export function replayAsLeafPlain({ parentRoot, header, body, proof, ctx }: LeafBlock): LeafVerdict {
+  const proofRoot = bytesToHex(hash32(proof));
+  if (proofRoot !== header.adProofsRoot) {
+    return { ok: false, reason: `the header's adProofsRoot ${header.adProofsRoot} is not the proof's hash32 ${proofRoot}` };
+  }
+  const verifier = new BatchAVLVerifier(parentRoot, proof, TREE_CONFIG);
+  if (verifier.digest() === null) {
+    return { ok: false, reason: `the proof does not anchor at the parent root: ${verifier.getLastFailReason()}` };
+  }
+  return replayAgainst(verifier, { header, body, ctx });
+}
+
+/**
+ * The block replayed from `parentRoot` and `proof` alone. A refusal is an
+ * answer, never a throw: the proof the header does not commit to, a proof that
+ * does not anchor at `parentRoot`, a lookup or a write the proof cannot answer,
+ * a rule's refusal, a block over the budget, and a digest that is not the
+ * header's `stateRoot`. **The strict verifier's `isFullyConsumed()` is asked
+ * once, after the last write** — a proof carrying a trailing byte, an
+ * operation the replay never asks, a set padding bit or an unvisited node
+ * written in full is refused where a plain verifier would accept the digest
+ * (CONSENSUS_INTERFACE → The tree session, "A block replays from its proof
+ * only on all of these").
+ */
+export function replayAsLeaf({ parentRoot, header, body, proof, ctx }: LeafBlock): LeafVerdict {
+  const proofRoot = bytesToHex(hash32(proof));
+  if (proofRoot !== header.adProofsRoot) {
+    return { ok: false, reason: `the header's adProofsRoot ${header.adProofsRoot} is not the proof's hash32 ${proofRoot}` };
+  }
+  const verifier = new StrictBatchAVLVerifier(parentRoot, proof, TREE_CONFIG);
+  if (verifier.digest() === null) {
+    return { ok: false, reason: `the proof does not anchor at the parent root: ${verifier.getLastFailReason()}` };
+  }
+  const verdict = replayAgainst(verifier, { header, body, ctx });
+  if (!verdict.ok) return verdict;
+  if (!verifier.isFullyConsumed()) return { ok: false, reason: NOT_EXACT };
+  return { ok: true };
+}
