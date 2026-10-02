@@ -238,6 +238,48 @@ describe('createFiguresVerifier — a run ends', () => {
     expect(callTimes[1]).toBeGreaterThan(DEADLINE_MS);
   });
 
+  it('a request at exactly 60 000 ms reaches the base fetch; at 60 001 ms it rejects', async () => {
+    // The contract says *later than* 60 seconds — exactly 60 000 ms is still
+    // inside the deadline (WEB_INTERFACE → The extension → "The verified
+    // figures"). A `>=` in place of the `>` on `RUN_DEADLINE_MS` fails this.
+    const clock = { ms: 0 };
+    const now = () => clock.ms;
+    const calledAt: number[] = [];
+    const baseFetch: HttpFetch = (_url) => {
+      calledAt.push(clock.ms);
+      return Promise.resolve(new Response(JSON.stringify({ error: 'not found' }), { status: 404 }));
+    };
+    const prove = (async (
+      _nodeUrl: string,
+      _user: string,
+      _listing: Listing,
+      _anchor: Anchor,
+      _profile: NetworkProfile,
+      f: HttpFetch,
+    ): Promise<FiguresResult> => {
+      clock.ms = DEADLINE_MS;
+      let rejectedAt60000 = false;
+      try { await f('http://a/api/v1/proof/' + KEY_HEX); }
+      catch { rejectedAt60000 = true; }
+      clock.ms = DEADLINE_MS + 1;
+      let rejectedAt60001 = false;
+      try { await f('http://a/api/v1/proof/' + KEY_HEX); }
+      catch { rejectedAt60001 = true; }
+      expect(rejectedAt60000).toBe(false);
+      expect(rejectedAt60001).toBe(true);
+      return emptyResult();
+    }) as typeof proveFigures;
+    const v = createFiguresVerifier({
+      network: 'testnet',
+      fetch: baseFetch,
+      prove,
+      now,
+    });
+    await v.run('https://a.example', KEY_HEX, emptyListing(), anchorFor(500));
+    // The base fetch saw exactly one call, at the 60 000 ms boundary.
+    expect(calledAt).toEqual([DEADLINE_MS]);
+  });
+
   it('through figuresLine the ledger reads muted "the node served no proof for 1 $NOTIS"', async () => {
     const { figuresLine } = await import('../src/model/figures-line');
     const clock = { ms: 0 };
