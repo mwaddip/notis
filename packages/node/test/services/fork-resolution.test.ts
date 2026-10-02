@@ -1829,6 +1829,7 @@ describe('reorg — the ring and the by-reference restore', () => {
     const preReorgRoot = avl.prover.prover.root;
     const beforeByH: Record<number, unknown> = {};
     for (const h of beforeHeights) beforeByH[h] = avl.recentRoots.get(h)!.root;
+    const nodesBeyondBefore = avl.recentRoots.nodesHeldBeyondTree();
 
     const storageSpy = vi.spyOn(avl.storage, 'rollback');
     const proverSpy = vi.spyOn(avl.prover, 'rollback');
@@ -1850,6 +1851,9 @@ describe('reorg — the ring and the by-reference restore', () => {
     for (const h of beforeHeights) {
       expect(avl.recentRoots.get(h)!.root, `height ${h}`).toBe(beforeByH[h]);
     }
+    // The snapshot carries the counts, so the sum beyond the tree stands too
+    // (NODE_INTERFACE → "The count is the store's").
+    expect(avl.recentRoots.nodesHeldBeyondTree()).toBe(nodesBeyondBefore);
 
     // The next honest block applies, and its stored proof equals the twin's
     // — the one a node that never saw the reorg would have written.

@@ -13,6 +13,47 @@ function keptDigest(kept: KeptRoot): string {
   return bytesToHex(out);
 }
 
+/** Collect every object a tree reaches, by object identity (NODE_INTERFACE → "The count is the store's"). */
+function walkTree(node: AvlNode, out: Set<AvlNode>): void {
+  if (out.has(node)) return;
+  out.add(node);
+  if (node.kind === 'internal') {
+    walkTree(node.left, out);
+    walkTree(node.right, out);
+  }
+}
+
+/** The hex labels of a set of nodes. */
+function labelsOf(nodes: Set<AvlNode>): Set<string> {
+  const out = new Set<string>();
+  for (const n of nodes) out.add(bytesToHex(label(n)));
+  return out;
+}
+
+/**
+ * For two roots, the count of objects the first reaches that the second does
+ * not whose label no node of the second carries — a node the block that
+ * produced the second truly orphaned — and the count that is kept as a
+ * different object of the second (a node the block rebuilt to the same
+ * label).
+ */
+function classifyOrphans(before: AvlNode, after: AvlNode): { labelAbsent: number; labelRebuiltSame: number } {
+  const beforeNodes = new Set<AvlNode>();
+  walkTree(before, beforeNodes);
+  const afterNodes = new Set<AvlNode>();
+  walkTree(after, afterNodes);
+  const afterLabels = labelsOf(afterNodes);
+  let labelAbsent = 0;
+  let labelRebuiltSame = 0;
+  for (const n of beforeNodes) {
+    if (afterNodes.has(n)) continue; // shared object identity
+    const lab = bytesToHex(label(n));
+    if (afterLabels.has(lab)) labelRebuiltSame++;
+    else labelAbsent++;
+  }
+  return { labelAbsent, labelRebuiltSame };
+}
+
 // ---------------------------------------------------------------------------
 // Unit — the class (NODE_INTERFACE → "A proof at an older height restores a
 // kept root")
@@ -524,8 +565,7 @@ describe('the ring tracks the chain the node holds', () => {
    * label no node of the second does, counted by object identity over a walk.
    * Any further object the first reaches that the second does not is one
    * whose label a different object of the second carries — a node the block
-   * rebuilt to the same label (main measured 15–31 of these in a block
-   * replacing ~60 000).
+   * rebuilt to the same label.
    */
   it('for each applied block the recorded count is exactly its label-absent orphans; the ring sum equals the recorded counts above the lowest', async () => {
     await freshStore();
@@ -533,47 +573,17 @@ describe('the ring tracks the chain the node holds', () => {
     const handle = await activateProverOverStore();
     const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
 
-    function walk(node: AvlNode, out: Set<AvlNode>): void {
-      if (out.has(node)) return;
-      out.add(node);
-      if (node.kind === 'internal') {
-        walk(node.left, out);
-        walk(node.right, out);
-      }
-    }
-
-    function labelsOf(nodes: Set<AvlNode>): Set<string> {
-      const out = new Set<string>();
-      for (const n of nodes) out.add(bytesToHex(label(n)));
-      return out;
-    }
-
     for (let h = 1; h <= 4; h++) {
       const before = handle.recentRoots.get(h - 1);
       expect(before, `no kept root for height ${h - 1} before block ${h}`).not.toBeNull();
-      const beforeNodes = new Set<AvlNode>();
-      walk(before!.root, beforeNodes);
 
       const block = await makeApplicableBlock({ height: h });
       expect(applyOrderingBlock(block)).toBe(true);
 
       const after = handle.recentRoots.get(h);
       expect(after, `no kept root recorded for applied block ${h}`).not.toBeNull();
-      const afterNodes = new Set<AvlNode>();
-      walk(after!.root, afterNodes);
-      const afterLabels = labelsOf(afterNodes);
 
-      let labelAbsent = 0;
-      let labelRebuiltSame = 0;
-      for (const n of beforeNodes) {
-        if (afterNodes.has(n)) continue; // shared object identity
-        const lab = bytesToHex(label(n));
-        if (afterLabels.has(lab)) labelRebuiltSame++;
-        else labelAbsent++;
-      }
-      // Every object in `before \ after` is one of the two kinds — no third.
-      expect(labelAbsent + labelRebuiltSame).toBe(beforeNodes.size - [...beforeNodes].filter((n) => afterNodes.has(n)).length);
-      // The recorded count is exactly the label-absent count.
+      const { labelAbsent } = classifyOrphans(before!.root, after!.root);
       expect(labelAbsent, `height ${h}: label-absent orphans`).toBe(after!.replaced);
     }
 
@@ -582,6 +592,75 @@ describe('the ring tracks the chain the node holds', () => {
     let expectedSum = 0;
     for (const h of heights) if (h !== low) expectedSum += handle.recentRoots.get(h)!.replaced;
     expect(handle.recentRoots.nodesHeldBeyondTree()).toBe(expectedSum);
+  });
+
+  /**
+   * NODE_INTERFACE → "A proof at an older height restores a kept root" — the
+   * by-reference branch of a reorg: when the ring holds a root at the fork
+   * height whose digest is the store's version, the restore is by reference
+   * on the inner prover and the ring at and below the fork survives
+   * unchanged. The counts those roots carry are their own blocks', so they
+   * stand too; the first new block's count is measured against the fork
+   * point's root — the same object graph the ring holds — and the ring's
+   * sum is still the sum of recorded counts above the lowest.
+   */
+  it('a one-block reorg restored by reference leaves kept roots and their counts, and the new block\'s count classifies against the shared root', async () => {
+    await freshStore();
+    const { activateProverOverStore, makeApplicableBlock } = await import('../helpers.js');
+    const handle = await activateProverOverStore();
+    const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
+
+    // Apply the shared chain, 1 and 2.
+    expect(applyOrderingBlock(await makeApplicableBlock({ height: 1 }))).toBe(true);
+    expect(applyOrderingBlock(await makeApplicableBlock({ height: 2 }))).toBe(true);
+    // Build the competing block at height 3 BEFORE our own, so theirB3
+    // chain-links to our 2 — the fork point.
+    const theirB3 = await makeApplicableBlock({ height: 3 });
+    // Apply our 3 — the tip the reorg will revert.
+    expect(applyOrderingBlock(await makeApplicableBlock({ height: 3 }))).toBe(true);
+
+    expect(handle.recentRoots.heights()).toEqual([0, 1, 2, 3]);
+
+    // Snapshot the ring at and below the fork — the roots and counts the
+    // reorg must preserve by reference.
+    const kept1Before = handle.recentRoots.get(1)!;
+    const kept2Before = handle.recentRoots.get(2)!;
+    const root1Before = kept1Before.root;
+    const root2Before = kept2Before.root;
+    const replaced1Before = kept1Before.replaced;
+    const replaced2Before = kept2Before.replaced;
+
+    // Spy on `storage.rollback` — the by-reference branch calls it zero
+    // times (the ring answers at the fork height).
+    const storageSpy = vi.spyOn(handle.storage, 'rollback');
+    const { reorg } = await import('../../src/services/fork-resolution.js');
+    reorg(2, [theirB3]);
+    expect(storageSpy).toHaveBeenCalledTimes(0);
+
+    // Heights 0..3; roots 1 and 2 are the SAME OBJECTS, with the counts they
+    // carried before the reorg.
+    expect(handle.recentRoots.heights()).toEqual([0, 1, 2, 3]);
+    expect(handle.recentRoots.get(1)!.root).toBe(root1Before);
+    expect(handle.recentRoots.get(2)!.root).toBe(root2Before);
+    expect(handle.recentRoots.get(1)!.replaced).toBe(replaced1Before);
+    expect(handle.recentRoots.get(2)!.replaced).toBe(replaced2Before);
+
+    // The count recorded with the new root at 3 is exactly the label-absent
+    // orphans between the fork-point root (root 2) and the new root 3 — a
+    // measurement against the same object graph the ring holds.
+    const kept3After = handle.recentRoots.get(3)!;
+    const { labelAbsent } = classifyOrphans(root2Before, kept3After.root);
+    expect(kept3After.replaced).toBe(labelAbsent);
+
+    // The ring's sum equals the sum of recorded counts above the lowest.
+    const heights = handle.recentRoots.heights();
+    const low = heights[0]!;
+    let expectedSum = 0;
+    for (const h of heights) if (h !== low) expectedSum += handle.recentRoots.get(h)!.replaced;
+    expect(handle.recentRoots.nodesHeldBeyondTree()).toBe(expectedSum);
+
+    // The live digest is theirB3's stateRoot.
+    expect(bytesToHex(handle.prover.digest()!)).toBe(theirB3.header.stateRoot);
   });
 
   /**

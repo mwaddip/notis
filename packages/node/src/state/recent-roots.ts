@@ -7,8 +7,11 @@ import type { AvlNode } from '@ergots/avltree';
  * checkpoint's `update` orphans
  * (NODE_INTERFACE → "AVL storage shares nodes across versions; a row is a
  * node's lifetime"). Held by reference — the library never mutates a node, so
- * a kept root shares every unchanged node with the live tree and costs the
- * nodes its block replaced.
+ * a kept root shares every unchanged node with the live tree and holds beyond
+ * it only what later blocks replaced. The `replaced` count a kept root
+ * carries is its own block's; it names what the root below this one holds
+ * beyond it, which is why the ring's sum (NODE_INTERFACE → "The count is
+ * the store's") leaves the lowest root's count out.
  */
 export interface KeptRoot {
   root: AvlNode;
@@ -41,10 +44,13 @@ export interface KeptRoot {
  * a reorg's store resolve clears the ring (`clear`), and genesis seeding's
  * failure clears it.
  *
- * **The kept heights are consecutive.** `record` adds the height above the
- * highest, or replaces the one at the highest — a block's apply writes to
- * the ring strictly ascending (`height = tip + 1`), the funnel's single
- * writer. `drop` takes the highest — `revertBlock` runs on the tip and
+ * **The kept heights are consecutive.** Three sites call `record`, and each
+ * holds the shape: the funnel's apply writes the height above the highest
+ * (`height = tip + 1`); `bootstrapAvlProver` replaces the height
+ * `createAvlProver`'s construction seed recorded (genesis loads the store
+ * at the empty tree's height 0 and the bootstrap writes at the same height);
+ * the construction seed itself writes the one entry of an empty ring.
+ * `drop` takes the highest — `revertBlock` runs on the tip and
  * `revertChainTo` walks downward from it. Eviction takes the lowest. So the
  * sum of `replaced` over every kept height but the lowest is the count of
  * nodes the ring holds beyond the oldest tree it reaches — the lowest
