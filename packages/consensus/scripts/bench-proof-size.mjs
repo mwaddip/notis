@@ -98,15 +98,17 @@ function seedTree(size) {
 
 /**
  * The prover's time for the transfer set, then its proof: per tx, three recorded lookups — the spent box, its credit
- * index entry, and one other owner's randomly-picked box — then two removes (the spent box and its index entry) and
- * four inserts (two output boxes with their index entries). All through `performLookupWithNeighbors` and
- * `performOneOperation`, as the node records them (`src/state/prover-session.ts → recordingSession`,
- * `src/state/avl-prover.ts → performTreeWrites`).
+ * index entry, and one other live box — then two removes (the spent box and its index entry) and four inserts (two
+ * output boxes with their index entries). The lookups go through `performLookupWithNeighbors` and the writes through
+ * `performOneOperation`, which is what a block's recording session makes of the rules' reads and `treeWritesOf`'s
+ * writes (NODE_INTERFACE → The block proof).
  */
 function proveTransfers(tree, size) {
   const { prover, owners, boxIds, ownerOfBox, ownerCount } = tree;
   const spentIdx = new Set();
-  // The set and its complement: pick an unspent box deterministically from a wrapping cursor.
+  // The set and its complement: pick an unspent box deterministically from a wrapping cursor. The spent cursor and
+  // the other cursor both advance by one each pick, so no other-lookup lands on a box an earlier send of this block
+  // spent, and the recorded lookup is of a live key.
   let cursor = 0;
   const pickUnspent = () => {
     while (spentIdx.has(cursor)) cursor = (cursor + 1) % size;
@@ -120,8 +122,10 @@ function proveTransfers(tree, size) {
     const spent = pickUnspent();
     spentIdx.add(spent);
     spentPicks[t] = spent;
-    // Second-lookup target: a different box, chosen by shifting through the array.
-    otherLookupPicks[t] = (spent + 1 + (t * 7919 % (size - 1))) % size;
+    // The other-lookup target: another unspent box, picked through the same cursor so no spent box is read.
+    const other = pickUnspent();
+    spentIdx.add(other);
+    otherLookupPicks[t] = other;
   }
   // Pre-build the writes once — the prover and the strict replay perform the SAME bytes, both for the output ids
   // (fresh random) and for the record (contains a random txId inside `boxRecordBytes`). A re-build would give the
@@ -255,8 +259,8 @@ for (const size of sizes) {
   const tree = seedTree(size);
   const prePrint = bytesToHex(tree.prover.digest());
 
-  // Record the picks once (the prover state is spent by the first run and we rebuild it between replay runs to time
-  // just the replay — but a replay only consumes the proof, so the prover is also kept to answer repeatedly).
+  // One proof is replayed `REPLAY_RUNS` times — a strict replay only consumes the proof and the pre-state digest, so
+  // the prover is read once and nothing is rebuilt between runs.
   const run = proveTransfers(tree, size);
   const postPrint = bytesToHex(tree.prover.digest());
   const picks = { spent: run.spentPicks, other: run.otherLookupPicks, outIds: run.outIds, outRecords: run.outRecords };
