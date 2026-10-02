@@ -48,8 +48,9 @@ const YOUNG = karmaBoxFor(USER_BYTES, 7n, 4, 110);
 /**
  * The duplicate-id and value/lock tests set `heightAfter: TIP_H`, build
  * fixtures that hold exactly the boxes they list (plus any `young`-only
- * ones), and name the listed value `TIP_H` for the valuation to run. The
- * caller sets `heldBoxes` so no held box falls outside the listing.
+ * ones), and name the listing's `height` as `TIP_H` for the valuation
+ * to run. The caller sets `heldAtSuffix` and `heldAtTip` so no held box
+ * falls outside the listing.
  */
 function prove(opts: {
   heldAtSuffix: readonly { id?: string }[];

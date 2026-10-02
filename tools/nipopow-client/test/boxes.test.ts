@@ -199,17 +199,17 @@ describe('proveFigures — each class in turn, over the two heights\' ranges', (
     });
     const anchor = makeAnchor(TIP_H, emptyFixture.stateRoot, SUFFIX_H, emptyFixture.stateRoot);
     const node = twoHeightNode({ suffix: emptyFixture, suffixHeight: SUFFIX_H, tip: emptyFixture, tipHeight: TIP_H, heightAfter: TIP_H - 3 });
-    // The listing's height is TIP_H - 3, below the anchor's tip: the valuation
-    // range (`tip.height` .. `heightAfter`) collapses to the one point
-    // TIP_H - 3, so the listing's height stays inside and the box is still
-    // `unchecked` against the empty tip range.
+    // The listing's height is TIP_H - 3, below the anchor's tip, so the
+    // valuation range `[tip.height, heightAfter]` is empty and the valuation
+    // is refused; the box is still `unchecked` against the empty tip range.
     const listing: Listing = {
       karma: { boxes: [{ boxId: absentBoxId, value: '7' }], height: TIP_H - 3, effective: '7' },
       credits: { boxes: [] },
     };
     const result = await proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), node.fetch);
-    // The valuation is still refused — listing.height < tip.height — so
-    // effective is null and the run `failed`, as D4 requires.
+    // The valuation is refused — listing.height < tip.height — so
+    // effective is null and the run `failed`
+    // (WEB_INTERFACE → The extension → "The verified figures").
     expect(result.boxes.map((b) => b.status)).toEqual(['unchecked']);
     expect(result.heightAfter).toBe(TIP_H - 3);
     expect(result.karma.effective).toBeNull();

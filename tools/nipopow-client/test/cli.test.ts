@@ -131,9 +131,9 @@ describe("the command line's composition — runCli + toJson", () => {
     expect(karmaField['height']).toBe(chain.headers.length);
 
     const creditsField = json['credits'] as Record<string, unknown>;
-    // The /credits route answered 404, so fetchListing hands the run an
-    // empty credits listing — a listing the node knows the key by, with
-    // no boxes — and the ledger reads.
+    // The /credits route answered 200 with the empty page — a listing the
+    // node knows the key by, with no boxes — and the ledger reads
+    // (NODE_INTERFACE → UTXO queries).
     expect(creditsField['holdings']).toBe('read');
     expect(creditsField['undecided']).toBe('0');
 

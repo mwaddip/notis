@@ -760,8 +760,8 @@ describe('figuresLine — row 6: undecided or stale reads "not checked yet"', ()
 
   it('credits: an undecided box under a listing every box of which proved → muted "not checked yet" (the silent reviewer case)', () => {
     // One listed credit box, proven. One undecided — a held box the node
-    // did not list, no block landed since so the run cannot decide. The
-    // listed box reproduces `shown`.
+    // did not list, `heightAfter` not `tip.height` so the run cannot say
+    // whether a block spent it. The listed box reproduces `shown`.
     const r = result({
       boxes: [
         box({ boxClass: 'credit', status: 'proven', value: 100n }),
