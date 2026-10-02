@@ -60,7 +60,7 @@
 //     [--public <origin+base> --web-dist <dir>]
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -5075,6 +5075,7 @@ async function main() {
     const shot = await cxp.call('Page.captureScreenshot', { format: 'png' });
     if (shot && typeof shot.data === 'string') {
       const shotPath = join(dirname(new URL(import.meta.url).pathname), '..', '..', '..', '..', 'prompts', 'web-prompt-window-12b.png');
+      mkdirSync(dirname(shotPath), { recursive: true });
       writeFileSync(shotPath, Buffer.from(shot.data, 'base64'));
       shotSaved12b = true;
     }
