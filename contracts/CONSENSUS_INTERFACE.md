@@ -38,15 +38,16 @@ for a block's body (`VALIDATION_INTERFACE → Acceptance criterion`). The browse
 | `tree-view` | `treeStateView` (`TreeStateView`, `TreeInconsistencyError`) | this contract's `The tree view` | a `TreeSession` |
 | `tree-index` | `indexEntriesOfBox` · `isLapsedMember` | this contract's `The index entries` | none |
 | `tree-writes` | `treeWritesOf` · `seedTreeWrites` (`TreeWrite`) | this contract's `The tree writes` | the block's `TreeStateView` |
+| `holdings` | `holdingsPage` (`HoldingKind`, `HoldingsPage`) | this contract's `The holdings page` | a `TreeStateView` |
 | `verifier-session` | `verifierSession` | this contract's `The tree session` | a `BatchAVLVerifier` over a block's proof |
 | `block-cost` | `blockCost` · `checkBlockCost` (`BlockCost`) | this contract's `The block's cost` | none |
 
 Beside them the barrel exports the types a caller builds their arguments and reads their answers with — `StateView`,
 `ApplyContext`, `ApplyResult`, `BlockEffects`, `HolderRecord`, `UtxoEngineDeps`, `UtxoResult`, `SettlementDeps`,
 `SettlementBody`, `DecayDeps`, `DecayPlan`, `EmbeddedTx`, `TreeSession`, `TreeLookup`, `TreeStateView`, `TreeWrite`,
-and the two shapes the store shares (`StateView` below).
-**The export list is what the node's source and its suites call, not a promise** — a helper nothing there calls leaves
-the barrel, and one a leaf needs joins it with its caller.
+`HoldingKind`, `HoldingsPage`, and the two shapes the store shares (`StateView` below).
+**The export list is what the node's source, the light client's and the suites call, not a promise** — a helper
+nothing there calls leaves the barrel, and one a caller needs joins it with its caller.
 
 ## Applying a block
 
@@ -110,8 +111,8 @@ The node builds it from its configuration (`applyContextFrom`).
 ## StateView
 
 **Read-only, and the whole of what the rules read. Every read is a lookup under the state root** — one key, or a
-walk of one key range — answered by the tree view (→ The tree view): the node's over its prover, a leaf's over the
-proof it was handed, the same code on both. The node's SQLite store answers none of them.
+walk of one key range — answered by the tree view (→ The tree view): the node's over its prover, a replay's over the
+block's proof and a light client's over a page's (→ The tree session), the same code on each. The node's SQLite store answers none of them.
 
 | Read | Answers | Order · limit | Under the root (`TYPES_INTERFACE → The tree keys`) |
 |---|---|---|---|
@@ -161,8 +162,8 @@ TreeLookup =
 interface TreeSession { lookup(key: Uint8Array): TreeLookup }
 ```
 
-**The one thing the tree view asks of a tree.** The node's session is its prover; a leaf's is the step-by-step
-verifier over a block's proof. **Every neighbour key is authenticated** — it is part of its leaf's label — so a reader
+**The one thing the tree view asks of a tree.** The node's session is its prover; a replay's, and a light client's,
+is the step-by-step verifier over a proof. **Every neighbour key is authenticated** — it is part of its leaf's label — so a reader
 that walks by `nextKey` sees every key between two it was shown. At the ends of the tree the neighbour is a sentinel:
 all `0x00` below the first key, all `0xff` past the last (`isSentinel`). **No lookup is ever made of a sentinel**: the
 library refuses a key at either bound, and a refusal poisons a verifier. **A session's answers are the view's to
@@ -233,7 +234,7 @@ writes) place and remove them with their entity; no rule writes one.
 | From | Entries |
 |---|---|
 | a karma box | `karmaOf ‖ owner ‖ boxId` |
-| a credit box | `creditOf ‖ owner ‖ boxId` — no rule reads it; a leaf proves its whole holdings from it |
+| a credit box | `creditOf ‖ owner ‖ boxId` — no rule reads it; a light client proves a key's whole holdings from it (→ The holdings page) |
 | a vouch escrow | `escrowOf ‖ owner ‖ boxId` and `escrowDue ‖ releaseAtBlock ‖ boxId` |
 | a bond | `bondDue ‖ invitedAtBlock ‖ boxId` — its invitee's `invitedAtBlock`, the height of the block that created it |
 | a vouch | `vouchPair ‖ voucherId ‖ targetId`, its value the box id |
@@ -284,8 +285,8 @@ holdings are proven whole against a root.
 
 ### The tree writes
 
-**`treeWritesOf(effects, height, view)` is a block's writes to the tree, and the node and a leaf apply them through
-it.** `view` is the block's own tree view: **what a write needs from before the block — a spent box's fields, a spent
+**`treeWritesOf(effects, height, view)` is a block's writes to the tree, and the node and a replay from the block's
+proof perform them through it.** `view` is the block's own tree view: **what a write needs from before the block — a spent box's fields, a spent
 bond's invitee's `invitedAtBlock`, an identity record's pre-block value, an earlier post's record, a voucher's cast
 count — it reads there.** All but the cast count are reads the block's rules already made, so the view answers them
 from its memo. **The cast count is the writes' own read**, and only where a write needs it: for each voucher whose
@@ -338,10 +339,10 @@ checkBlockCost(cost: BlockCost): string | null    // the refusal's reason, or nu
 **A block's cost is counted while it executes, and a block over the budget is refused.** `signatures` is the batch's
 entry count (→ Applying a block), `lookups` the distinct keys the block's tree view looked up (`lookupCount()` — a
 memoised read adds none), `writes` the length of `treeWritesOf`'s answer; the weights and `MAX_BLOCK_COST` are
-`types`' (`TYPES_INTERFACE → The block's cost`). **Every node, the producer and a leaf check it at one point**: once the
+`types`' (`TYPES_INTERFACE → The block's cost`). **Every node, the producer and a replay check it at one point**: once the
 writes are derived and before they are performed — `checkBlockCost` answers `cost C over the budget B`, which the
 caller's refusal names with the block's height — so each refuses the same blocks. The signatures' term alone is checked earlier, before the batch runs. **The budget bounds a
-leaf's work**: the signatures it verifies and the operations its proof carries.
+replay's work**: the signatures it verifies and the operations the block's proof carries.
 
 ## The overlay
 
@@ -452,7 +453,7 @@ times on a busier machine): the ordinary body **+0.46 s (+12%)** — the most ha
 the packed body +0.33 s (+6%), the corrupted packed body +0.28 s, the refused one +0.01 s. Of the packed body's, the
 hashing itself is about 0.05 s (1 014 digests); the rest is unattributed. The testnet box is not measured.
 
-**A leaf's replay of a block from its proof**, measured 2026-09-30 with `packages/consensus/scripts/bench-leaf-replay.mjs`
+**A replay of a block from its proof**, measured 2026-09-30 with `packages/consensus/scripts/bench-leaf-replay.mjs`
 (the verifier built over the parent's digest and the proof, `applyBlock` over `verifierSession`, the writes and the
 digest; medians of 9 runs, pinned to performance cores of the i9-14900HX, testnet's numbers at height 1 000), in
 seconds — the bodies at the budget but the last:
