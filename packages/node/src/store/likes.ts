@@ -5,14 +5,13 @@ import { getDb } from './db.js';
 // Like-records (NODE_INTERFACE → Like-records)
 //
 // `(target_post_id, liker_id)` pairs written ONLY at block application,
-// never by an HTTP route. Content-layer consensus state, the
-// `block_topology` tier: deterministic by replay, journalled with exact
-// inverses, not in the `stateRoot`. **No rule reads this table**: the rule
-// reads the tree's `like ‖ postId ‖ liker` marker under the state root
+// never by an HTTP route. **No rule reads this table**: the rule reads the
+// tree's `like ‖ postId ‖ liker` marker under the state root
 // (NODE_INTERFACE → Like-records; CONSENSUS_INTERFACE → StateView;
-// TYPES_INTERFACE → Layout — tree records). The views and admission's
-// duplicate gate read the table, written from the same effects in the
-// same block. Records survive a withdrawal of their target; nothing
+// TYPES_INTERFACE → Layout — tree records), and the table is a redundant
+// view-side copy — journalled with exact inverses, written from the same
+// effects in the same block — that answers the views and admission's
+// duplicate gate. Records survive a withdrawal of their target; nothing
 // deletes them.
 // ---------------------------------------------------------------------------
 
