@@ -968,26 +968,29 @@ describe('proveFigures — the run order is the rule', () => {
 describe('fetchListing — paged reads', () => {
   it('three karma pages followed to the end — height and effective from the first page', async () => {
     const fetch = makeFetch((path, q) => {
-      if (path !== `/karma/${USER_HEX}`) return undefined;
-      const after = q.get('after');
-      if (after === null) {
-        return jsonResponse(200, karmaPage(
-          [{ boxId: 'a1'.repeat(32), value: '10' }],
-          { height: 555, effective: '30', next: 'cursor-1' },
-        ));
+      if (path === `/karma/${USER_HEX}`) {
+        const after = q.get('after');
+        if (after === null) {
+          return jsonResponse(200, karmaPage(
+            [{ boxId: 'a1'.repeat(32), value: '10' }],
+            { height: 555, effective: '30', next: 'cursor-1' },
+          ));
+        }
+        if (after === 'cursor-1') {
+          return jsonResponse(200, karmaPage(
+            [{ boxId: 'a2'.repeat(32), value: '10' }],
+            { height: 999, effective: 'wrong', next: 'cursor-2' },
+          ));
+        }
+        if (after === 'cursor-2') {
+          return jsonResponse(200, karmaPage(
+            [{ boxId: 'a3'.repeat(32), value: '10' }],
+            { height: 999, effective: 'wrong', next: null },
+          ));
+        }
+        return undefined;
       }
-      if (after === 'cursor-1') {
-        return jsonResponse(200, karmaPage(
-          [{ boxId: 'a2'.repeat(32), value: '10' }],
-          { height: 999, effective: 'wrong', next: 'cursor-2' },
-        ));
-      }
-      if (after === 'cursor-2') {
-        return jsonResponse(200, karmaPage(
-          [{ boxId: 'a3'.repeat(32), value: '10' }],
-          { height: 999, effective: 'wrong', next: null },
-        ));
-      }
+      if (path === `/credits/${USER_HEX}`) return jsonResponse(200, creditPage([]));
       return undefined;
     });
 
@@ -1002,7 +1005,7 @@ describe('fetchListing — paged reads', () => {
 
   it('two credit pages followed to the end', async () => {
     const fetch = makeFetch((path, q) => {
-      if (path === `/karma/${USER_HEX}`) return jsonResponse(404, { error: 'not found' });
+      if (path === `/karma/${USER_HEX}`) return jsonResponse(200, karmaPage([], { height: 555 }));
       if (path !== `/credits/${USER_HEX}`) return undefined;
       const after = q.get('after');
       if (after === null) {
@@ -1029,21 +1032,36 @@ describe('fetchListing — paged reads', () => {
     }
   });
 
-  it('a 404 on karma is an empty listing (an identity the node has never seen)', async () => {
+  // NODE_INTERFACE → UTXO queries — /karma/:userId and /credits/:userId
+  // answer every userId with a page at the node's current height, never a
+  // 404; so a 404 is a listing failure, like any other non-ok.
+  it('a 404 on karma fails the listing, the karma route named', async () => {
     const fetch = makeFetch((path) => {
       if (path === `/karma/${USER_HEX}`) return jsonResponse(404, { error: 'not found' });
+      if (path === `/credits/${USER_HEX}`) return jsonResponse(200, creditPage([]));
+      return undefined;
+    });
+
+    const result = await fetchListing('http://a', USER_HEX, fetch);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain('karma');
+      expect(result.reason).toContain('404');
+    }
+  });
+
+  it('a 404 on credits fails the listing, the credits route named', async () => {
+    const fetch = makeFetch((path) => {
+      if (path === `/karma/${USER_HEX}`) return jsonResponse(200, karmaPage([]));
       if (path === `/credits/${USER_HEX}`) return jsonResponse(404, { error: 'not found' });
       return undefined;
     });
 
     const result = await fetchListing('http://a', USER_HEX, fetch);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.listing.karma.boxes.length).toBe(0);
-      expect(result.listing.karma.height).toBe(0);
-      expect(result.listing.karma.effective).toBe('0');
-      expect(result.listing.credits).not.toBeNull();
-      expect(result.listing.credits!.boxes.length).toBe(0);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain('credits');
+      expect(result.reason).toContain('404');
     }
   });
 
@@ -1062,7 +1080,7 @@ describe('fetchListing — paged reads', () => {
 
   it('a 500 on credits names the route', async () => {
     const fetch = makeFetch((path) => {
-      if (path === `/karma/${USER_HEX}`) return jsonResponse(404, { error: 'not found' });
+      if (path === `/karma/${USER_HEX}`) return jsonResponse(200, karmaPage([]));
       if (path === `/credits/${USER_HEX}`) return jsonResponse(500, { error: 'internal' });
       return undefined;
     });

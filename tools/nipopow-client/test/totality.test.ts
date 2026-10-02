@@ -165,6 +165,7 @@ describe('fetchListing — a page the paging cannot walk fails the listing, its 
         return jsonResponse(200, { boxes: [], next: 'c\u{1F600}', height: 1, effective: '0' });
       }
       if (u.pathname === `/karma/${USER_HEX}`) return jsonResponse(200, { boxes: [], next: null });
+      if (u.pathname === `/credits/${USER_HEX}`) return jsonResponse(200, { boxes: [], next: null });
       return jsonResponse(404, { error: 'not found' });
     };
     const result = await fetchListing('http://a', USER_HEX, fetch);
@@ -195,6 +196,7 @@ describe('fetchListing — a page the paging cannot walk fails the listing, its 
     const { fetch, calls } = pages({
       [`/karma/${USER_HEX}`]: { boxes: [], next: 'c', height: 1, effective: '0' },
       [`/karma/${USER_HEX}?after=c`]: { boxes: [], next: null },
+      [`/credits/${USER_HEX}`]: { boxes: [], next: null },
     });
     const result = await fetchListing('http://a', USER_HEX, fetch);
     expect(result).toEqual({
@@ -206,7 +208,7 @@ describe('fetchListing — a page the paging cannot walk fails the listing, its 
 
   it('a credits page that is malformed fails the listing, the credits route named', async () => {
     const fetch: HttpFetch = async (url: string) => {
-      if (new URL(url).pathname === `/karma/${USER_HEX}`) return jsonResponse(404, { error: 'not found' });
+      if (new URL(url).pathname === `/karma/${USER_HEX}`) return jsonResponse(200, { boxes: [], next: null, height: 1, effective: '0' });
       return jsonResponse(200, { boxes: {}, next: null });
     };
     const result = await fetchListing('http://a', USER_HEX, fetch);

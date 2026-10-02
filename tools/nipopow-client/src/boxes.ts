@@ -160,10 +160,12 @@ function isWellFormedText(s: string): boolean {
   return true;
 }
 
-// NODE_INTERFACE → UTXO queries — /karma/:userId and /credits/:userId are paged
-// by keyset, `after=<next>` on each following request until `next` is null.
-// A 404 is an identity the node has never seen (empty listing); any other
-// non-ok, or a malformed page, is a listing failure carrying the route.
+// NODE_INTERFACE → UTXO queries — /karma/:userId and /credits/:userId are
+// paged by keyset, `after=<next>` on each following request until `next` is
+// null. The node answers a key it has never seen with an empty page at its
+// current height (NODE_INTERFACE → HTTP API: the two rows name a 400 and no
+// 404), so a 404 — like any other non-ok — is a listing failure carrying
+// the route, as is a malformed page.
 export async function fetchListing(
   nodeUrl: string,
   user: string,
@@ -177,30 +179,29 @@ export async function fetchListing(
     httpFetch,
     `${nodeUrl}/karma/${user}`,
   );
-  if (firstKarma.ok) {
-    if (!isPage(firstKarma.data)) {
-      return { ok: false, reason: `GET /karma/${user}: malformed page` };
-    }
-    for (const b of firstKarma.data.boxes) karmaBoxes.push(b);
-    karmaHeight = firstKarma.data.height;
-    karmaEffective = firstKarma.data.effective;
-    let next: string | null = firstKarma.data.next;
-    while (next !== null) {
-      const r = await fetchJson<KarmaPageResponse>(
-        httpFetch,
-        `${nodeUrl}/karma/${user}?after=${encodeURIComponent(next)}`,
-      );
-      if (!r.ok) {
-        return { ok: false, reason: `GET /karma/${user}?after=${capped(next)}: HTTP ${r.status}` };
-      }
-      if (!isPage(r.data)) {
-        return { ok: false, reason: `GET /karma/${user}?after=${capped(next)}: malformed page` };
-      }
-      for (const b of r.data.boxes) karmaBoxes.push(b);
-      next = r.data.next;
-    }
-  } else if (firstKarma.status !== 404) {
+  if (!firstKarma.ok) {
     return { ok: false, reason: `GET /karma/${user}: HTTP ${firstKarma.status}` };
+  }
+  if (!isPage(firstKarma.data)) {
+    return { ok: false, reason: `GET /karma/${user}: malformed page` };
+  }
+  for (const b of firstKarma.data.boxes) karmaBoxes.push(b);
+  karmaHeight = firstKarma.data.height;
+  karmaEffective = firstKarma.data.effective;
+  let karmaNext: string | null = firstKarma.data.next;
+  while (karmaNext !== null) {
+    const r = await fetchJson<KarmaPageResponse>(
+      httpFetch,
+      `${nodeUrl}/karma/${user}?after=${encodeURIComponent(karmaNext)}`,
+    );
+    if (!r.ok) {
+      return { ok: false, reason: `GET /karma/${user}?after=${capped(karmaNext)}: HTTP ${r.status}` };
+    }
+    if (!isPage(r.data)) {
+      return { ok: false, reason: `GET /karma/${user}?after=${capped(karmaNext)}: malformed page` };
+    }
+    for (const b of r.data.boxes) karmaBoxes.push(b);
+    karmaNext = r.data.next;
   }
 
   const creditsBoxes: ListedBox[] = [];
@@ -208,28 +209,27 @@ export async function fetchListing(
     httpFetch,
     `${nodeUrl}/credits/${user}`,
   );
-  if (firstCredit.ok) {
-    if (!isPage(firstCredit.data)) {
-      return { ok: false, reason: `GET /credits/${user}: malformed page` };
-    }
-    for (const b of firstCredit.data.boxes) creditsBoxes.push(b);
-    let next: string | null = firstCredit.data.next;
-    while (next !== null) {
-      const r = await fetchJson<CreditPageResponse>(
-        httpFetch,
-        `${nodeUrl}/credits/${user}?after=${encodeURIComponent(next)}`,
-      );
-      if (!r.ok) {
-        return { ok: false, reason: `GET /credits/${user}?after=${capped(next)}: HTTP ${r.status}` };
-      }
-      if (!isPage(r.data)) {
-        return { ok: false, reason: `GET /credits/${user}?after=${capped(next)}: malformed page` };
-      }
-      for (const b of r.data.boxes) creditsBoxes.push(b);
-      next = r.data.next;
-    }
-  } else if (firstCredit.status !== 404) {
+  if (!firstCredit.ok) {
     return { ok: false, reason: `GET /credits/${user}: HTTP ${firstCredit.status}` };
+  }
+  if (!isPage(firstCredit.data)) {
+    return { ok: false, reason: `GET /credits/${user}: malformed page` };
+  }
+  for (const b of firstCredit.data.boxes) creditsBoxes.push(b);
+  let creditsNext: string | null = firstCredit.data.next;
+  while (creditsNext !== null) {
+    const r = await fetchJson<CreditPageResponse>(
+      httpFetch,
+      `${nodeUrl}/credits/${user}?after=${encodeURIComponent(creditsNext)}`,
+    );
+    if (!r.ok) {
+      return { ok: false, reason: `GET /credits/${user}?after=${capped(creditsNext)}: HTTP ${r.status}` };
+    }
+    if (!isPage(r.data)) {
+      return { ok: false, reason: `GET /credits/${user}?after=${capped(creditsNext)}: malformed page` };
+    }
+    for (const b of r.data.boxes) creditsBoxes.push(b);
+    creditsNext = r.data.next;
   }
 
   return {

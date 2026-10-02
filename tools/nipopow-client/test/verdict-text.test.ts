@@ -145,7 +145,12 @@ describe('fetchListing — a failed page names its cursor capped, and the reques
     const cursors: (string | null)[] = [];
     const fetch: HttpFetch = async (url: string) => {
       const u = new URL(url);
-      if (u.pathname === `/karma/${USER_HEX}` && route === 'credits') return jsonResponse(404, { error: 'not found' });
+      // The non-tested route answers an empty page so the listing reaches
+      // the tested route's cursor-walking failure (NODE_INTERFACE → UTXO
+      // queries: every userId is answered with a page, never a 404).
+      if (u.pathname === `/karma/${USER_HEX}` && route === 'credits') {
+        return jsonResponse(200, { boxes: [], next: null, height: 1, effective: '0' });
+      }
       if (u.pathname !== `/${route}/${USER_HEX}`) return jsonResponse(404, { error: 'not found' });
       if (!u.searchParams.has('after')) return jsonResponse(200, { boxes: [], next: LONG, height: 1, effective: '0' });
       cursors.push(u.searchParams.get('after'));
@@ -422,6 +427,9 @@ describe("textLines — the command line's text of a node that sends a newline, 
       if (u.pathname === `/nipopow/proof/${M}/${K}`) return jsonResponse(200, { proof: proofHex });
       if (u.pathname === `/karma/${USER_HEX}`) {
         return jsonResponse(200, { boxes: [{ boxId: hostile, value: '5' }], next: null, height, effective: '5' });
+      }
+      if (u.pathname === `/credits/${USER_HEX}`) {
+        return jsonResponse(200, { boxes: [], next: null });
       }
       if (u.pathname === `/api/v1/proof/${RECORD_KEY}`) return textResponse(500, hostile);
       if (u.pathname === '/blocks/current') return jsonResponse(200, { height, hash: null });

@@ -63,7 +63,9 @@ describe("the command line's composition — runCli + toJson", () => {
           });
         }
         if (u.pathname === `/credits/${FAKE_USER}`) {
-          return jsonResponse(404, { error: 'not found' });
+          return jsonResponse(200, {
+            userId: FAKE_USER, total: '0', boxes: [], next: null,
+          });
         }
         const rangeMatch = u.pathname.match(/^\/api\/v1\/range\/([a-z]+)\/[0-9a-f]{64}$/);
         if (rangeMatch) {
