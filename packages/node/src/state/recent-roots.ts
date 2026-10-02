@@ -133,21 +133,6 @@ export class RecentRoots {
     return this.roots.get(height) ?? null;
   }
 
-  /** Whether the ring holds an entry at `height`. */
-  has(height: number): boolean {
-    return this.roots.has(height);
-  }
-
-  /** The heights the ring answers, ascending. */
-  heights(): number[] {
-    return [...this.roots.keys()].sort((a, b) => a - b);
-  }
-
-  /** The number of kept roots. */
-  size(): number {
-    return this.roots.size;
-  }
-
   /** Drop the entry at `height`, if any. */
   drop(height: number): void {
     this.roots.delete(height);

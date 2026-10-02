@@ -991,6 +991,26 @@ export async function liveProver(): Promise<AvlProverHandle> {
 }
 
 /**
+ * The ring's heights, ascending, read through `snapshot()` — the one surface the
+ * node's own callers use (NODE_INTERFACE → "A proof at an older height restores
+ * a kept root"). The test tree reads the ring here; `src` reads it through
+ * `snapshot`, `get`, `record`, `drop`, `clear` and `restore`.
+ */
+export function ringHeights(ring: { snapshot(): Map<number, unknown> }): number[] {
+  return [...ring.snapshot().keys()].sort((a, b) => a - b);
+}
+
+/** The number of roots the ring holds. */
+export function ringSize(ring: { snapshot(): Map<number, unknown> }): number {
+  return ring.snapshot().size;
+}
+
+/** Whether the ring answers at `height`. */
+export function ringHas(ring: { get(height: number): unknown | null }, height: number): boolean {
+  return ring.get(height) !== null;
+}
+
+/**
  * Revert the chain to `height` the way `reorg` reverts it: every block above it
  * through `revertBlock`, then the live prover back to the version at `height`
  * (NODE_INTERFACE → Block Journal → "Rollback") — `revertBlock` restores the

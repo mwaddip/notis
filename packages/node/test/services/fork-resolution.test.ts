@@ -43,7 +43,7 @@ import {
   signHeader,
   signTransaction,
   solveHeaderPow, seedPostTx, activateProverOverStore, insertPoisonedBlock,
-  buildMinedHeaderChain, changeBoxOf, revertChainTo, seedBoxes } from '../helpers.js';
+  buildMinedHeaderChain, changeBoxOf, revertChainTo, ringHeights, seedBoxes } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -1709,7 +1709,7 @@ describe('reorg — the ring and the by-reference restore', () => {
     const avl = tryGetAvlProver()!;
 
     // The ring now holds genesis, our 1, our 2, our 3.
-    const beforeHeights = avl.recentRoots.heights();
+    const beforeHeights = ringHeights(avl.recentRoots);
     expect(beforeHeights).toContain(1);
     const forkKept = avl.recentRoots.get(1);
     expect(forkKept).not.toBeNull();
@@ -1748,7 +1748,7 @@ describe('reorg — the ring and the by-reference restore', () => {
     avl.recentRoots.drop(0);
     avl.recentRoots.drop(1);
     avl.recentRoots.drop(2);
-    expect(avl.recentRoots.heights()).toEqual([3]); // just the current tip
+    expect(ringHeights(avl.recentRoots)).toEqual([3]); // just the current tip
 
     const storageSpy = vi.spyOn(avl.storage, 'rollback');
     const forkResolution = await importForkResolution();
@@ -1760,7 +1760,7 @@ describe('reorg — the ring and the by-reference restore', () => {
 
     // The ring was emptied at the resolve; the new blocks' heights are kept,
     // each kept root's digest its block's stateRoot.
-    const heights = avl.recentRoots.heights();
+    const heights = ringHeights(avl.recentRoots);
     for (const b of theirBlocks) {
       expect(heights).toContain(b.header.height);
       const kept = avl.recentRoots.get(b.header.height);
@@ -1792,7 +1792,7 @@ describe('reorg — the ring and the by-reference restore', () => {
     await mineNextBlock(bc);
     await mineNextBlock(bc);
 
-    const heights = avl.recentRoots.heights();
+    const heights = ringHeights(avl.recentRoots);
     for (const h of heights) if (h !== Math.max(...heights)) avl.recentRoots.drop(h);
 
     forkResolution.reorg(1, theirBlocks);
@@ -1825,7 +1825,7 @@ describe('reorg — the ring and the by-reference restore', () => {
       header: { ...theirBlocks[1]!.header, prevBlockHash: '00'.repeat(32) },
     };
 
-    const beforeHeights = avl.recentRoots.heights();
+    const beforeHeights = ringHeights(avl.recentRoots);
     const preReorgRoot = avl.prover.prover.root;
     const beforeByH: Record<number, unknown> = {};
     for (const h of beforeHeights) beforeByH[h] = avl.recentRoots.get(h)!.root;
@@ -1847,7 +1847,7 @@ describe('reorg — the ring and the by-reference restore', () => {
     // The live root IS the pre-reorg root object (restored by reference).
     expect(avl.prover.prover.root).toBe(preReorgRoot);
     expect(bytesToHex(avl.prover.digest()!)).toBe(twinTipStateRoot);
-    expect(avl.recentRoots.heights()).toEqual(beforeHeights);
+    expect(ringHeights(avl.recentRoots)).toEqual(beforeHeights);
     for (const h of beforeHeights) {
       expect(avl.recentRoots.get(h)!.root, `height ${h}`).toBe(beforeByH[h]);
     }

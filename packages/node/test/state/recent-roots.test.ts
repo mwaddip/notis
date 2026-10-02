@@ -4,6 +4,7 @@ import { label, newLeaf } from '@ergots/avltree';
 import { bytesToHex } from '@dagsocial/types';
 import { RecentRoots } from '../../src/state/recent-roots.js';
 import type { KeptRoot } from '../../src/state/recent-roots.js';
+import { ringHas, ringHeights, ringSize } from '../helpers.js';
 
 /** The 33-byte digest of a kept root — the root's label and the tree height, hex. */
 function keptDigest(kept: KeptRoot): string {
@@ -86,16 +87,16 @@ describe('RecentRoots — the class', () => {
   it('capacity 0 holds nothing', () => {
     const ring = new RecentRoots(0, UNBOUNDED);
     ring.record(1, dummyLeaf(1), 1, 0);
-    expect(ring.size()).toBe(0);
+    expect(ringSize(ring)).toBe(0);
     expect(ring.get(1)).toBeNull();
   });
 
   it('holds `capacity` roots, newest; records 1..5 at cap 3 leave {3, 4, 5}', () => {
     const ring = new RecentRoots(3, UNBOUNDED);
     for (let h = 1; h <= 5; h++) ring.record(h, dummyLeaf(h), h, 0);
-    expect(ring.heights()).toEqual([3, 4, 5]);
-    expect(ring.has(2)).toBe(false);
-    expect(ring.has(6)).toBe(false);
+    expect(ringHeights(ring)).toEqual([3, 4, 5]);
+    expect(ringHas(ring, 2)).toBe(false);
+    expect(ringHas(ring, 6)).toBe(false);
     expect(ring.get(3)).not.toBeNull();
     expect(ring.get(6)).toBeNull();
   });
@@ -118,7 +119,7 @@ describe('RecentRoots — the class', () => {
     ring.record(1, second, 2, 0);
     expect(ring.get(1)!.root).toBe(second);
     expect(ring.get(1)!.treeHeight).toBe(2);
-    expect(ring.size()).toBe(1);
+    expect(ringSize(ring)).toBe(1);
   });
 
   it('drop removes one entry by height', () => {
@@ -126,9 +127,9 @@ describe('RecentRoots — the class', () => {
     ring.record(1, dummyLeaf(1), 1, 0);
     ring.record(2, dummyLeaf(2), 2, 0);
     ring.drop(1);
-    expect(ring.heights()).toEqual([2]);
+    expect(ringHeights(ring)).toEqual([2]);
     ring.drop(99);
-    expect(ring.heights()).toEqual([2]);
+    expect(ringHeights(ring)).toEqual([2]);
   });
 
   it('snapshot and restore reinstall the same root objects — a reorg that aborts', () => {
@@ -142,10 +143,10 @@ describe('RecentRoots — the class', () => {
     ring.drop(1);
     const third = dummyLeaf(3);
     ring.record(3, third, 3, 0);
-    expect(ring.heights()).toEqual([2, 3]);
+    expect(ringHeights(ring)).toEqual([2, 3]);
 
     ring.restore(snap);
-    expect(ring.heights()).toEqual([1, 2]);
+    expect(ringHeights(ring)).toEqual([1, 2]);
     expect(ring.get(1)!.root).toBe(first);
     expect(ring.get(2)!.root).toBe(second);
   });
@@ -154,8 +155,8 @@ describe('RecentRoots — the class', () => {
     const ring = new RecentRoots(3, UNBOUNDED);
     ring.record(1, dummyLeaf(1), 1, 0);
     ring.clear();
-    expect(ring.size()).toBe(0);
-    expect(ring.heights()).toEqual([]);
+    expect(ringSize(ring)).toBe(0);
+    expect(ringHeights(ring)).toEqual([]);
   });
 });
 
@@ -187,11 +188,11 @@ describe('RecentRoots — the node bound', () => {
     ring.record(5, dummyLeaf(5), 1, 10);
     ring.record(6, dummyLeaf(6), 1, 20);
     ring.record(7, dummyLeaf(7), 1, 30);
-    expect(ring.heights()).toEqual([5, 6, 7]);
+    expect(ringHeights(ring)).toEqual([5, 6, 7]);
     expect(ring.nodesHeldBeyondTree()).toBe(50);
 
     ring.record(8, dummyLeaf(8), 1, 1);
-    expect(ring.heights()).toEqual([6, 7, 8]);
+    expect(ringHeights(ring)).toEqual([6, 7, 8]);
     expect(ring.nodesHeldBeyondTree()).toBe(31);
   });
 
@@ -199,22 +200,22 @@ describe('RecentRoots — the node bound', () => {
     const ring = new RecentRoots(5, 50);
     ring.record(5, dummyLeaf(5), 1, 10);
     ring.record(6, dummyLeaf(6), 1, 500);
-    expect(ring.heights()).toEqual([6]);
+    expect(ringHeights(ring)).toEqual([6]);
     expect(ring.nodesHeldBeyondTree()).toBe(0);
 
     ring.record(7, dummyLeaf(7), 1, 3);
-    expect(ring.heights()).toEqual([6, 7]);
+    expect(ringHeights(ring)).toEqual([6, 7]);
     expect(ring.nodesHeldBeyondTree()).toBe(3);
   });
 
   it('maxNodes = 0 keeps the highest alone after every non-zero record', () => {
     const ring = new RecentRoots(5, 0);
     ring.record(5, dummyLeaf(5), 1, 1);
-    expect(ring.heights()).toEqual([5]);
+    expect(ringHeights(ring)).toEqual([5]);
     ring.record(6, dummyLeaf(6), 1, 2);
-    expect(ring.heights()).toEqual([6]);
+    expect(ringHeights(ring)).toEqual([6]);
     ring.record(7, dummyLeaf(7), 1, 3);
-    expect(ring.heights()).toEqual([7]);
+    expect(ringHeights(ring)).toEqual([7]);
     expect(ring.nodesHeldBeyondTree()).toBe(0);
   });
 
@@ -223,7 +224,7 @@ describe('RecentRoots — the node bound', () => {
     ring.record(5, dummyLeaf(5), 1, 10);
     ring.record(6, dummyLeaf(6), 1, 20);
     ring.record(7, dummyLeaf(7), 1, 30);
-    expect(ring.heights()).toEqual([6, 7]);
+    expect(ringHeights(ring)).toEqual([6, 7]);
     expect(ring.nodesHeldBeyondTree()).toBe(30);
   });
 
@@ -235,7 +236,7 @@ describe('RecentRoots — the node bound', () => {
     expect(ring.nodesHeldBeyondTree()).toBe(50);
     ring.drop(7);
     // 5, 6 remain; the sum excludes the lowest (5), so it is 20.
-    expect(ring.heights()).toEqual([5, 6]);
+    expect(ringHeights(ring)).toEqual([5, 6]);
     expect(ring.nodesHeldBeyondTree()).toBe(20);
   });
 
@@ -252,7 +253,7 @@ describe('RecentRoots — the node bound', () => {
     expect(ring.nodesHeldBeyondTree()).toBe(20 + 30 + 40 + 50);
 
     ring.restore(snap);
-    expect(ring.heights()).toEqual([5, 6, 7]);
+    expect(ringHeights(ring)).toEqual([5, 6, 7]);
     expect(ring.nodesHeldBeyondTree()).toBe(sumBefore);
   });
 });
@@ -288,7 +289,7 @@ describe('the ring tracks the chain the node holds', () => {
     // After every block has applied, each kept root the ring answers has the
     // digest of the block committed at its height — a later block has not
     // moved an earlier one.
-    expect(handle.recentRoots.heights()).toEqual([0, 1, 2, 3]);
+    expect(ringHeights(handle.recentRoots)).toEqual([0, 1, 2, 3]);
     for (const [height, root] of stateRootOf) {
       const kept = handle.recentRoots.get(height);
       expect(kept, `height ${height}`).not.toBeNull();
@@ -312,7 +313,7 @@ describe('the ring tracks the chain the node holds', () => {
     }
 
     function snapshotRing(handle: Awaited<ReturnType<typeof appliedChain>>['handle']) {
-      const heights = handle.recentRoots.heights();
+      const heights = ringHeights(handle.recentRoots);
       const byH: Record<number, { root: unknown; digest: string }> = {};
       for (const h of heights) {
         const kept = handle.recentRoots.get(h)!;
@@ -322,7 +323,7 @@ describe('the ring tracks the chain the node holds', () => {
     }
 
     function expectRingUnchanged(handle: Awaited<ReturnType<typeof appliedChain>>['handle'], snap: ReturnType<typeof snapshotRing>) {
-      expect(handle.recentRoots.heights()).toEqual(snap.heights);
+      expect(ringHeights(handle.recentRoots)).toEqual(snap.heights);
       for (const h of snap.heights) {
         const kept = handle.recentRoots.get(h)!;
         // Same root object by reference, and same 33-byte digest.
@@ -406,10 +407,10 @@ describe('the ring tracks the chain the node holds', () => {
     for (let h = 1; h <= 5; h++) {
       expect(applyOrderingBlock(await makeApplicableBlock({ height: h }))).toBe(true);
     }
-    expect(handle.recentRoots.heights()).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(ringHeights(handle.recentRoots)).toEqual([0, 1, 2, 3, 4, 5]);
 
     await revertChainTo(3);
-    expect(handle.recentRoots.heights()).toEqual([0, 1, 2, 3]);
+    expect(ringHeights(handle.recentRoots)).toEqual([0, 1, 2, 3]);
     expect(handle.recentRoots.get(4)).toBeNull();
     expect(handle.recentRoots.get(5)).toBeNull();
   });
@@ -435,7 +436,7 @@ describe('the ring tracks the chain the node holds', () => {
         for (let h = 1; h <= 3; h++) {
           expect(applyOrderingBlock(await makeApplicableBlock({ height: h }))).toBe(true);
         }
-        expect(firstHandle.recentRoots.heights()).toEqual([0, 1, 2, 3]);
+        expect(ringHeights(firstHandle.recentRoots)).toEqual([0, 1, 2, 3]);
         dbMod.closeDb();
       }
 
@@ -445,7 +446,7 @@ describe('the ring tracks the chain the node holds', () => {
       const { createAvlProver } = await import('../../src/state/avl-prover.js');
       const second = createAvlProver();
       // After a restart the node holds its tip's height alone.
-      expect(second.recentRoots.heights()).toEqual([3]);
+      expect(ringHeights(second.recentRoots)).toEqual([3]);
       const { getOrderingBlock } = await import('../../src/store/ordering.js');
       const tipStateRoot = getOrderingBlock(3)!.header.stateRoot;
       expect(keptDigest(second.recentRoots.get(3)!)).toBe(tipStateRoot);
@@ -455,7 +456,7 @@ describe('the ring tracks the chain the node holds', () => {
       const { applyOrderingBlock: applyAgain } = await import('../../src/services/block-apply.js');
       const next = await makeAgain({ height: 4 });
       expect(applyAgain(next)).toBe(true);
-      expect(second.recentRoots.heights()).toEqual([3, 4]);
+      expect(ringHeights(second.recentRoots)).toEqual([3, 4]);
       expect(keptDigest(second.recentRoots.get(4)!)).toBe(next.header.stateRoot);
       dbMod.closeDb();
     } finally {
@@ -496,7 +497,7 @@ describe('the ring tracks the chain the node holds', () => {
         expect(applyOrderingBlock(block)).toBe(true);
         roots[h] = block.header.stateRoot;
       }
-      expect(handle.recentRoots.heights()).toEqual([3, 4, 5]);
+      expect(ringHeights(handle.recentRoots)).toEqual([3, 4, 5]);
 
       const { createApp } = await import('../../src/server.js');
       const supertest = await import('supertest');
@@ -526,7 +527,7 @@ describe('the ring tracks the chain the node holds', () => {
       }
       // Zero keeps no root; the tip is the live tree's, which the route
       // answers without one.
-      expect(handle.recentRoots.heights()).toEqual([]);
+      expect(ringHeights(handle.recentRoots)).toEqual([]);
 
       const { createApp } = await import('../../src/server.js');
       const supertest = await import('supertest');
@@ -587,7 +588,7 @@ describe('the ring tracks the chain the node holds', () => {
       expect(labelAbsent, `height ${h}: label-absent orphans`).toBe(after!.replaced);
     }
 
-    const heights = handle.recentRoots.heights();
+    const heights = ringHeights(handle.recentRoots);
     const low = heights[0]!;
     let expectedSum = 0;
     for (const h of heights) if (h !== low) expectedSum += handle.recentRoots.get(h)!.replaced;
@@ -619,7 +620,7 @@ describe('the ring tracks the chain the node holds', () => {
     // Apply our 3 — the tip the reorg will revert.
     expect(applyOrderingBlock(await makeApplicableBlock({ height: 3 }))).toBe(true);
 
-    expect(handle.recentRoots.heights()).toEqual([0, 1, 2, 3]);
+    expect(ringHeights(handle.recentRoots)).toEqual([0, 1, 2, 3]);
 
     // Snapshot the ring at and below the fork — the roots and counts the
     // reorg must preserve by reference.
@@ -639,7 +640,7 @@ describe('the ring tracks the chain the node holds', () => {
 
     // Heights 0..3; roots 1 and 2 are the SAME OBJECTS, with the counts they
     // carried before the reorg.
-    expect(handle.recentRoots.heights()).toEqual([0, 1, 2, 3]);
+    expect(ringHeights(handle.recentRoots)).toEqual([0, 1, 2, 3]);
     expect(handle.recentRoots.get(1)!.root).toBe(root1Before);
     expect(handle.recentRoots.get(2)!.root).toBe(root2Before);
     expect(handle.recentRoots.get(1)!.replaced).toBe(replaced1Before);
@@ -653,7 +654,7 @@ describe('the ring tracks the chain the node holds', () => {
     expect(kept3After.replaced).toBe(labelAbsent);
 
     // The ring's sum equals the sum of recorded counts above the lowest.
-    const heights = handle.recentRoots.heights();
+    const heights = ringHeights(handle.recentRoots);
     const low = heights[0]!;
     let expectedSum = 0;
     for (const h of heights) if (h !== low) expectedSum += handle.recentRoots.get(h)!.replaced;
@@ -690,7 +691,7 @@ describe('the ring tracks the chain the node holds', () => {
 
         // Each applied block's replaced count is above the bound (= 1), so
         // the ring holds only the tip.
-        expect(handle.recentRoots.heights()).toEqual([2]);
+        expect(ringHeights(handle.recentRoots)).toEqual([2]);
         expect(handle.recentRoots.nodesHeldBeyondTree()).toBe(0);
 
         // The route answers the tip and 404s on every older height.
@@ -715,7 +716,7 @@ describe('the ring tracks the chain the node holds', () => {
 
         // After reorg: the ring records theirB2's height, and the live
         // digest matches theirB2's stateRoot.
-        expect(handle.recentRoots.heights()).toEqual([2]);
+        expect(ringHeights(handle.recentRoots)).toEqual([2]);
         expect(bytesToHex(handle.prover.digest()!)).toBe(theirB2.header.stateRoot);
       });
     });
@@ -741,7 +742,7 @@ describe('the ring tracks the chain the node holds', () => {
           expect(applyOrderingBlock(await makeApplicableBlock({ height: h }))).toBe(true);
         }
         // The capacity decided — the three newest, as the window-only case.
-        expect(handle.recentRoots.heights()).toEqual([3, 4, 5]);
+        expect(ringHeights(handle.recentRoots)).toEqual([3, 4, 5]);
       });
     });
   });

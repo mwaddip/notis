@@ -589,9 +589,9 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
       }
       const fullSnaps: Snap[] = [{
         blocksApplied: 0,
-        measuringRoots: handle.recentRoots.size(),
+        measuringRoots: handle.recentRoots.snapshot().size,
         measuringSum: handle.recentRoots.nodesHeldBeyondTree(),
-        boundedRoots: boundedRing.size(),
+        boundedRoots: boundedRing.snapshot().size,
         boundedSum: boundedRing.nodesHeldBeyondTree(),
         heapUsed: afterSeed.heapUsed,
         arrayBuffers: afterSeed.arrayBuffers,
@@ -607,9 +607,9 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
           const m = memNow();
           fullSnaps.push({
             blocksApplied: height,
-            measuringRoots: handle.recentRoots.size(),
+            measuringRoots: handle.recentRoots.snapshot().size,
             measuringSum: handle.recentRoots.nodesHeldBeyondTree(),
-            boundedRoots: boundedRing.size(),
+            boundedRoots: boundedRing.snapshot().size,
             boundedSum: boundedRing.nodesHeldBeyondTree(),
             heapUsed: m.heapUsed,
             arrayBuffers: m.arrayBuffers,
@@ -634,7 +634,7 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
       // -----------------------------------------------------------------
       const app = makeApp(handle);
       const digestBeforeRoutes = bytesToHex(handle.prover.digest()!);
-      const ringHeights = handle.recentRoots.heights();
+      const ringHeights = [...handle.recentRoots.snapshot().keys()].sort((a, b) => a - b);
       const inRingOr = (want: number): number => {
         if (ringHeights.includes(want)) return want;
         return ringHeights[Math.floor(ringHeights.length / 2)] ?? want;
@@ -739,9 +739,9 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
       console.log(`\n==== kept-root cost by difference (full-block phase) ====`);
       const beforeClearFull = memNow();
       const measuringNodes = handle.recentRoots.nodesHeldBeyondTree();
-      const measuringSize = handle.recentRoots.size();
+      const measuringSize = handle.recentRoots.snapshot().size;
       const boundedNodes = boundedRing.nodesHeldBeyondTree();
-      const boundedSize = boundedRing.size();
+      const boundedSize = boundedRing.snapshot().size;
       console.log(`measuring ring full: ${measuringSize} roots, ${measuringNodes} nodes above the lowest`);
       console.log(`bounded ring:        ${boundedSize} roots, ${boundedNodes} nodes above the lowest`);
       console.log(`memory with ring:    heapUsed=${mb(beforeClearFull.heapUsed)} MB, arrayBuffers=${mb(beforeClearFull.arrayBuffers)} MB, rss=${mb(beforeClearFull.rss)} MB`);
@@ -764,9 +764,9 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
       const smallBaseline = memNow();
       const smallSnaps: Snap[] = [{
         blocksApplied: 0,
-        measuringRoots: handle.recentRoots.size(),
+        measuringRoots: handle.recentRoots.snapshot().size,
         measuringSum: handle.recentRoots.nodesHeldBeyondTree(),
-        boundedRoots: boundedRing.size(),
+        boundedRoots: boundedRing.snapshot().size,
         boundedSum: boundedRing.nodesHeldBeyondTree(),
         heapUsed: smallBaseline.heapUsed,
         arrayBuffers: smallBaseline.arrayBuffers,
@@ -781,9 +781,9 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
           const m = memNow();
           smallSnaps.push({
             blocksApplied: i,
-            measuringRoots: handle.recentRoots.size(),
+            measuringRoots: handle.recentRoots.snapshot().size,
             measuringSum: handle.recentRoots.nodesHeldBeyondTree(),
-            boundedRoots: boundedRing.size(),
+            boundedRoots: boundedRing.snapshot().size,
             boundedSum: boundedRing.nodesHeldBeyondTree(),
             heapUsed: m.heapUsed,
             arrayBuffers: m.arrayBuffers,
@@ -804,9 +804,9 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
       console.log(`\n==== kept-root cost by difference (small-block phase) ====`);
       const beforeClearSmall = memNow();
       const smMeasuringNodes = handle.recentRoots.nodesHeldBeyondTree();
-      const smMeasuringSize = handle.recentRoots.size();
+      const smMeasuringSize = handle.recentRoots.snapshot().size;
       const smBoundedNodes = boundedRing.nodesHeldBeyondTree();
-      const smBoundedSize = boundedRing.size();
+      const smBoundedSize = boundedRing.snapshot().size;
       console.log(`measuring ring full: ${smMeasuringSize} roots, ${smMeasuringNodes} nodes above the lowest`);
       console.log(`bounded ring:        ${smBoundedSize} roots, ${smBoundedNodes} nodes above the lowest`);
       console.log(`memory with ring:    heapUsed=${mb(beforeClearSmall.heapUsed)} MB, arrayBuffers=${mb(beforeClearSmall.arrayBuffers)} MB, rss=${mb(beforeClearSmall.rss)} MB`);
