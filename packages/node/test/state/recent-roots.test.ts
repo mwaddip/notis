@@ -199,8 +199,10 @@ describe('the ring tracks the chain the node holds', () => {
     it('the tip block sent a second time', async () => {
       const { handle, applied, applyOrderingBlock } = await appliedChain(3);
       const snap = snapshotRing(handle);
-      // Re-apply the tip's block — its chain-link check refuses it (the
-      // tip's parent at `tip - 1` has a hash the block does not name).
+      // Re-apply the tip's block. The block names its parent's hash — the
+      // block at `tip - 1` — but its height is the tip's, not the tip's
+      // plus one; `verifyBlockChainLink` requires
+      // `block.height === prevBlock.height + 1`, which refuses it.
       const { getOrderingBlock } = await import('../../src/store/ordering.js');
       const tip = getOrderingBlock(applied[applied.length - 1]!.height);
       expect(tip).not.toBeNull();
