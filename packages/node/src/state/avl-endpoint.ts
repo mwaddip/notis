@@ -264,16 +264,18 @@ export function registerProofEndpoint(app: Express, handle: AvlProverHandle): vo
 /**
  * `GET /api/v1/range/:kind/:owner?atHeight=N&from=K&limit=L` — one page of
  * what a key holds of one kind, with its proof (NODE_INTERFACE → AVL+ State
- * Root, "avl-endpoint, the range route"). Validates every parameter before
- * it opens the cycle: `pageRange`'s `TypeError` for a kind outside the five
- * is unreachable here (`:kind` is own-property checked), its `RangeError`
- * for `from` outside the range is a 400. The answer is `{ kind, owner,
- * atHeight, stateRoot, from, limit, proof }` — **no decoded box**: a client
- * reads the page by running `holdingsPage` over `verifierSession` on the
- * proof the node answered (CONSENSUS_INTERFACE → The holdings page). The
- * recording session's lookups are closed with `generateProof` inside one
- * synchronous call — the route records in a cycle of its own
- * (NODE_INTERFACE → The block proof).
+ * Root, "avl-endpoint, the range route"). The kind, owner, from's shape,
+ * limit's shape and atHeight's shape are refused before the cycle opens;
+ * `pageRange`'s `RangeError` for a `from` outside the kind's range throws
+ * inside the cycle, under `withCycle`'s `finally`, and the route answers 400
+ * for it. `pageRange`'s `TypeError` for a kind outside the five is
+ * unreachable here (`:kind` is own-property checked). The answer is
+ * `{ kind, owner, atHeight, stateRoot, from, limit, proof }` — **no decoded
+ * box**: a client reads the page by running `holdingsPage` over
+ * `verifierSession` on the proof the node answered (CONSENSUS_INTERFACE →
+ * The holdings page). The recording session's lookups are closed with
+ * `generateProof` inside one synchronous call — the route records in a cycle
+ * of its own (NODE_INTERFACE → The block proof).
  */
 export function registerRangeEndpoint(app: Express, handle: AvlProverHandle): void {
   app.get('/api/v1/range/:kind/:owner', (req: Request, res: Response) => {
