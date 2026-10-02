@@ -55,12 +55,13 @@ export interface KeptRoot {
  * `drop` takes the highest — `revertBlock` runs on the tip and `reorg`'s
  * revert loop walks downward from it, calling `revertBlock` at each height
  * above the fork point. Eviction takes the lowest. So the sum of `replaced`
- * over every kept height but the lowest is the count of nodes the ring
+ * over every kept height but the lowest is the count of labels the ring
  * holds beyond the live tree at the tip (NODE_INTERFACE → "The count is the
- * store's"): a node a block replaced was in the root below that block's
- * and is in no later root, so the blocks above the lowest kept height
- * account for every node a kept root holds that the tip does not, and
- * their counts sum to it.
+ * store's", → "The count is of labels, the memory of objects"): a label a
+ * block replaced was in the root below that block's and is in no later
+ * root, so the blocks above the lowest kept height account for every
+ * label a kept root holds that the tip does not, and their counts sum to
+ * it.
  *
  * The capacity is `PROOF_WINDOW_BLOCKS` and the node bound is
  * `PROOF_WINDOW_NODES` (NODE_INTERFACE → Configuration). After a `record`
