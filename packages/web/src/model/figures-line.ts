@@ -171,9 +171,11 @@ export function figuresLine(input: FiguresLineInput): FiguresLine {
     return { text: 'not checked yet', weight: 'muted' };
   }
 
-  // Row 7 — the run read the ranges and no box is `unlisted` or
-  // `undecided`: an empty listing is silence here (the faucet step and the
-  // words standing read as they do without a verifier).
+  // Row 7's empty-listing arm — the run read the ranges and no box is
+  // `unlisted` or `undecided`: an empty listing is silence here (the faucet
+  // step and the words standing read as they do without a verifier). The
+  // listed-box arm sits below, where `everyProven` and `proven === shown`
+  // decide.
   if (boxCount === 0) return null;
 
   // The proven figure P.
@@ -197,8 +199,8 @@ export function figuresLine(input: FiguresLineInput): FiguresLine {
     proven = result.karma.effective ?? 0n;
   }
 
-  // Row 7 — every listed box proved and the proven figure equals the row's
-  // own number: silence is the green.
+  // Row 7's listed-box arm — every listed box proved and the proven figure
+  // equals the row's own number: silence is the green.
   const everyProven = listedBoxes.length > 0 && listedBoxes.every((b) => b.status === 'proven');
   if (everyProven && proven === shown) return null;
 
