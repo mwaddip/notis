@@ -4279,9 +4279,6 @@ write found in the rules is a vouch cast and withdrawn for one target in one blo
 longer kept, the resolve from the store re-reads the tree**: 51 s and a second tree of 1.5 GiB over 10⁶ leaves,
 built while the first is still held.
 
-> ⚠ **AHEAD OF CODE (2026-10-02, N4 PR A — `node`)** — a sentinel key answers 500 from the single-key route, and an
-> `atHeight` or a `limit` of digits past 2⁵³ answers 400.
-
 **3. A block's writes never touch one key twice, and for boxes that rests on provenance, not on height.** That box ids
 commit to `createdAtBlock` does not establish it: two boxes built at one height with one content would still collide.
 The argument from `(candidate, txId, index)` is what holds:

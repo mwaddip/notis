@@ -428,7 +428,9 @@ an unchanged state reproduces the number shown exactly. **That height is the nod
 `tip.height` to `heightAfter`** — a listing read after the anchor is no older than it and no newer than the height the
 node answers next, the lower bound alone where `heightAfter` is unread: a listing valued at any other height has no
 valuation, as one whose `height` is no block height has none, since a stale identity valued before its decay would
-reproduce the node's own inflated number; the proven spendable sum is the balance row's rule over the
+reproduce the node's own inflated number. The lower bound is the client's own, and the valuation only falls as the
+height rises, so no listing values a rep above what the anchor's tip gives; the upper bound is the node's word;
+the proven spendable sum is the balance row's rule over the
 `proven` credit boxes, each lock read from the proven candidate. Both remainders are non-negative by construction: the
 proven set is the listed set less what is younger than `suffixHead`, and a record proven there has clocks no later than
 the live one. **It proves a listing read after its anchor, and never one read before it** — the order is what makes
@@ -473,11 +475,6 @@ row's `effective` are the reads the run proved, in every state; the line describ
 and the figure in clay (→ The wallet window, → The profile window). **What it means** is the key's holdings of each ledger read, whole, at the two heights:
 every proven box is real and the key's, and a node that withholds a box from its listing is shown to, in clay, by the
 first run no block lands in, and reads *not checked yet* until then — the range holds the box either way.
-
-> ⚠ **AHEAD OF CODE (2026-10-02, N4 PR A — `nipopow-client`, `web`)** — a held box the listing lacks while
-> `heightAfter` is not `tip.height` is in no class and its row is silent; a `stateRoot` other than the header's at `tip`
-> reads `unproven`, in clay; the run has no `undecided`, no `stale` and no line for either; the valuation takes the
-> listing's `height` unbounded.
 
 **The verified names.** The extension proves every handle it shows, and every handle it sends to, against the state the
 verified chain committed — the figures' anchor, their proofs and their order. **A check** is `proveName` of
