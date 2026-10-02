@@ -324,7 +324,7 @@ describe('proveFigures — each class in turn, over the two heights\' ranges', (
     expect(result.failed).toBe(false);
   });
 
-  // D4 — a listing height below `tip.height` is outside the valuation range
+  // A listing height below `tip.height` is outside the valuation range
   // (WEB_INTERFACE → The extension → "The verified figures" — "That height is
   // the node's word, and is taken only from `tip.height` to `heightAfter`"),
   // so the run `failed` on the valuation; the held karma box still reads
@@ -909,7 +909,8 @@ describe('proveFigures — effective karma', () => {
       records: [{ identityId: USER_BYTES, record: staleRecord }],
     });
     // The listing's height must lie between `tip.height` and `heightAfter`
-    // for the valuation to run (D4); anchor at listingHeight.
+    // for the valuation to run (WEB_INTERFACE → The extension → "The
+    // verified figures"); anchor at listingHeight.
     const anchor = makeAnchor(listingHeight, fixture.stateRoot, SUFFIX_H, fixture.stateRoot);
     const node = twoHeightNode({ suffix: fixture, suffixHeight: SUFFIX_H, tip: fixture, tipHeight: listingHeight, heightAfter: listingHeight });
 

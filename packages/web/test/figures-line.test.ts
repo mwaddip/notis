@@ -758,7 +758,7 @@ describe('figuresLine — row 6: undecided or stale reads "not checked yet"', ()
     expect(line).toEqual({ text: 'not checked yet', weight: 'muted' });
   });
 
-  it('credits: an undecided box under a listing every box of which proved → muted "not checked yet" (the silent reviewer case)', () => {
+  it('credits: an undecided box under a listing every box of which proved → muted "not checked yet"', () => {
     // One listed credit box, proven. One undecided — a held box the node
     // did not list, `heightAfter` not `tip.height` so the run cannot say
     // whether a block spent it. The listed box reproduces `shown`.
