@@ -16,7 +16,7 @@ import {
   postRecordFromBytes,
   vouchPairBoxId,
 } from '@dagsocial/types';
-import { TreeInconsistencyError, holdingsPage, treeStateView } from '@dagsocial/consensus';
+import { TreeInconsistencyError, holdingsPage, isSentinel, treeStateView } from '@dagsocial/consensus';
 import type { HoldingKind } from '@dagsocial/consensus';
 import { label } from '@ergots/avltree';
 import type { AvlProverHandle } from './avl-prover.js';
@@ -238,11 +238,19 @@ export function registerProofEndpoint(app: Express, handle: AvlProverHandle): vo
       res.status(400).json({ error: `key must be ${TREE_KEY_LENGTH * 2} hex characters` });
       return;
     }
+    const key = new Uint8Array(Buffer.from(keyHex, 'hex'));
+    // The two bounds — all 0x00, all 0xff — are not keys of the tree
+    // (CONSENSUS_INTERFACE → The tree session, `isSentinel`), so the single-key
+    // route refuses them before it opens any cycle. Nothing is logged for the
+    // refusal (NODE_INTERFACE → avl-endpoint, "a key that is one of the
+    // tree's two sentinels" is a 400).
+    if (isSentinel(key)) {
+      res.status(400).json({ error: 'key is a sentinel of the tree' });
+      return;
+    }
 
     const resolved = resolveHeight(handle, req.query['atHeight'], res);
     if (!resolved.ok) return;
-
-    const key = new Uint8Array(Buffer.from(keyHex, 'hex'));
 
     try {
       res.json(proofAnswer(handle, keyHex, key, resolved));

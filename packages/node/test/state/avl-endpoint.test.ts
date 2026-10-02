@@ -8,6 +8,7 @@ import request from 'supertest';
 import {
   INDEX_MARKER,
   LIKE_MARKER,
+  TREE_KEY_LENGTH,
   boxKey,
   boxRecordBytes,
   bytesToHex,
@@ -282,5 +283,19 @@ describe('GET /api/v1/proof/:key', () => {
       .get('/api/v1/proof/' + BOX_KEY + '?atHeight=99999999999999999999')
       .expect(404);
     expect(res.body).toEqual({ error: 'height not available' });
+  });
+
+  it('both sentinel keys are a 400, and nothing is logged', async () => {
+    // NODE_INTERFACE → avl-endpoint — "a key that is one of the tree's two
+    // sentinels — all `00`, all `ff`" is a 400 (CONSENSUS_INTERFACE → The
+    // tree session, `isSentinel`). The refusal is before the cycle opens, so
+    // no error is logged.
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (const key of ['00'.repeat(TREE_KEY_LENGTH), 'ff'.repeat(TREE_KEY_LENGTH)]) {
+      const res = await request(app).get('/api/v1/proof/' + key).expect(400);
+      expect(res.body).toEqual({ error: 'key is a sentinel of the tree' });
+    }
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 });
