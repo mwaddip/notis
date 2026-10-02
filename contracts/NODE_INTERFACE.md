@@ -4241,8 +4241,14 @@ recorded lookups for a block's proof to open with (→ The block proof). A tree 
 read is local corruption — `InconsistentStateTreeError`, fail-stop, as under the cost gate (→ "What the funnel's
 totality catch is FOR") — never a 500 the node stays up behind. **A height the node
 keeps no root of is 404 `{ error: 'height not available' }`, and no proof path calls `rollback`** — which re-reads the
-whole tree from the store. A root is kept once its block's checkpoint stands and dropped on every path that takes the
-prover back below its height: a refused block, a revert, a reorg that aborts. **After a restart the node holds its
+whole tree from the store. A root is kept once its block's checkpoint stands and dropped with its block — a refused
+block's, a reverted block's. **Every kept root is a root of the one tree the node holds in memory**: a tree resolved
+from the store shares no node with the roots kept before it, and a node keeping both would hold the tree twice. So
+**a reorg restores the fork point's kept root by reference where the node keeps the root of the store's version at
+that height** — the same tree `rollback(version)` resolves, without the store's re-read — and resolves that version
+from the store only where it does not, a fork below every kept root or a node since restarted, dropping every kept
+root as it does; **a reorg that aborts puts back, by reference, the root and the kept roots it began with**, as the
+apply funnel puts back a refused block's. **After a restart the node holds its
 tip's root alone** and gains one a block, so until `PROOF_WINDOW_BLOCKS` blocks have passed an older height is not
 available from it. `MAX_PROOF_HISTORY` is the versions the store keeps for a reorg's walk (→ Configuration) and bounds
 no route.
@@ -4250,6 +4256,7 @@ no route.
 > ⚠ **AHEAD OF CODE (2026-10-01, N4 PR A — `node`)** — the node keeps no roots and serves no range route.
 > `GET /api/v1/proof/:key?atHeight=` answers any height a stored version stands at through `rollback(version)`, twice a
 > request, under the `finally` of the paragraph above, which retires with it; `PROOF_WINDOW_BLOCKS` is no setting.
+> `reorg` resolves its fork point from the store on every path, and its abort resolves the pre-reorg version again.
 
 **3. A block's writes never touch one key twice, and for boxes that rests on provenance, not on height.** That box ids
 commit to `createdAtBlock` does not establish it: two boxes built at one height with one content would still collide.
