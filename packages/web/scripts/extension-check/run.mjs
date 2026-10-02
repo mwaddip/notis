@@ -3052,6 +3052,19 @@ async function liveRootIds(key) {
     .map((p) => p.id);
 }
 
+// A box's proof-endpoint key as hex. The avl-endpoint route serves proofs
+// under the 130-hex tree key (NODE_INTERFACE → AVL+ State Root →
+// "avl-endpoint, the key route" — `:key` is a tree key, 130 hex), not under
+// the box id. The tree key is the tag byte `0x01` plus the 32-byte boxId
+// zero-padded to TREE_KEY_LENGTH=65 (TYPES_INTERFACE → The tree keys;
+// `packages/types/src/tree-keys.ts`'s `boxKey` is the sole derivation). The
+// names block uses this wherever it matches or constructs a box's proof URL
+// — the step-30 count by prefix and the figures relay's `/api/v1/proof/`
+// prefix match stay, since they match any box.
+function boxProofKeyHex(boxId) {
+  return '01' + boxId.toLowerCase() + '0'.repeat(64);
+}
+
 // The page's requests of a name check from `startIdx` up to `endIdx`
 // (WEB_INTERFACE → The extension → "The verified names"): the lookups by owner
 // of `ownerKey`, the lookups of the typed `handle`, and the proofs of `boxId`,
@@ -3059,6 +3072,7 @@ async function liveRootIds(key) {
 // `/blocks/current` and `/nipopow/proof/` request of the same window.
 function nameRequestsSince(events, startIdx, { ownerKey = null, handle = null, boxId = null, endIdx = events.length } = {}) {
   const out = { ownerLookups: 0, handleLookups: 0, boxProofs: [], blocksCurrent: 0, tipProofs: 0 };
+  const boxProofPath = boxId === null ? null : `/api/v1/proof/${boxProofKeyHex(boxId)}`;
   for (let i = startIdx; i < endIdx; i++) {
     const ev = events[i];
     if (ev.method !== 'Network.requestWillBeSent') continue;
@@ -3068,7 +3082,7 @@ function nameRequestsSince(events, startIdx, { ownerKey = null, handle = null, b
       out.ownerLookups += 1;
     } else if (handle !== null && p.endsWith(`/usernames/${encodeURIComponent(handle)}`)) {
       out.handleLookups += 1;
-    } else if (boxId !== null && p.endsWith(`/api/v1/proof/${boxId}`)) {
+    } else if (boxProofPath !== null && p.toLowerCase().endsWith(boxProofPath)) {
       out.boxProofs.push({ atHeight: Number(u.searchParams.get('atHeight')), requestId: ev.params.requestId });
     } else if (p.endsWith('/blocks/current')) {
       out.blocksCurrent += 1;
@@ -3485,7 +3499,7 @@ const NAME_LINE = "this node's answer for this name did not verify";
 // unless a block lands between the two. A check with no tip proof proved the
 // box at suffixHead, or refused it there.
 function nameChecksFromRelayLog(log, since, boxId) {
-  const proofPath = `/api/v1/proof/${boxId.toLowerCase()}`;
+  const proofPath = `/api/v1/proof/${boxProofKeyHex(boxId)}`;
   const checks = [];
   let open = null;
   for (const e of log.filter((x) => x.at >= since).sort((a, b) => a.at - b.at)) {
