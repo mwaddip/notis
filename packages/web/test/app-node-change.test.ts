@@ -261,8 +261,8 @@ const verified = (height: number): TipVerdict => ({ kind: 'verified', nodes: 2, 
 function emptyResult(): FiguresResult {
   return {
     boxes: [], record: { status: 'absent' },
-    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, effective: 0n },
-    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n },
+    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: 0n, holdings: 'read', holdingsVerdict: null },
+    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'read', holdingsVerdict: null },
     heightAfter: 0, failed: false,
   };
 }
@@ -645,9 +645,9 @@ describe('the verified figures across a node or identity change', () => {
     for (const r of runs) {
       expect(r.readingBase).toBe(B);
       expect(r.listing.karma.boxes.map((b) => b.boxId)).toEqual([NODE_B.karmaBox]);
-      expect(r.listing.credits.boxes.every((b) => b.boxId === NODE_B.creditBox)).toBe(true);
+      expect(r.listing.credits!.boxes.every((b) => b.boxId === NODE_B.creditBox)).toBe(true);
     }
-    expect(runs[runs.length - 1]!.listing.credits.boxes.map((b) => b.boxId)).toEqual([NODE_B.creditBox]);
+    expect(runs[runs.length - 1]!.listing.credits!.boxes.map((b) => b.boxId)).toEqual([NODE_B.creditBox]);
   });
 
   it('a node change landing mid-run: the next verified tip still starts a run, and the stale run touches nothing', async () => {

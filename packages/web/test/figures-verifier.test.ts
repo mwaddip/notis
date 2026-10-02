@@ -41,8 +41,8 @@ function emptyResult(): FiguresResult {
   return {
     boxes: [],
     record: { status: 'absent' },
-    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, effective: 0n },
-    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n },
+    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: 0n, holdings: 'read', holdingsVerdict: null },
+    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'read', holdingsVerdict: null },
     heightAfter: 100,
     failed: false,
   };
@@ -114,7 +114,7 @@ describe('createFiguresVerifier — the seam the App knows', () => {
     const custom: FiguresResult = {
       ...emptyResult(),
       heightAfter: 4242,
-      karma: { proven: 5n, young: 0n, unchecked: 0n, absent: 0n, effective: 5n },
+      karma: { proven: 5n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: 5n, holdings: 'read', holdingsVerdict: null },
     };
     const prove = (async (): Promise<FiguresResult> => custom) as typeof proveFigures;
     const v = createFiguresVerifier({

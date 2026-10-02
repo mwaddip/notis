@@ -236,13 +236,13 @@ const verified = (height: number): { verdict: TipVerdict; anchor: Anchor } => ({
 function emptyResult(): FiguresResult {
   return {
     boxes: [], record: { status: 'absent' },
-    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, effective: 0n },
-    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n },
+    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: 0n, holdings: 'read', holdingsVerdict: null },
+    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'read', holdingsVerdict: null },
     heightAfter: 0, failed: false,
   };
 }
 const karmaIds = (c: FigureCall): string[] => c.listing.karma.boxes.map((b) => b.boxId);
-const creditIds = (c: FigureCall): string[] => c.listing.credits.boxes.map((b) => b.boxId);
+const creditIds = (c: FigureCall): string[] => c.listing.credits?.boxes.map((b) => b.boxId) ?? [];
 
 function confirmed(id: string): PostResult {
   return {

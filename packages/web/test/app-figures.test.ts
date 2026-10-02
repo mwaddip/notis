@@ -85,8 +85,8 @@ function emptyResult(heightAfter = 6001): FiguresResult {
   return {
     boxes: [],
     record: { status: 'absent' },
-    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, effective: 0n },
-    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n },
+    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: 0n, holdings: 'read', holdingsVerdict: null },
+    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'read', holdingsVerdict: null },
     heightAfter,
     failed: false,
   };
@@ -250,7 +250,7 @@ describe('the App verified figures — the triggers', () => {
     // The karma listing is the one the App holds; credits was read too when
     // the wallet's own open happened — the profile alone leaves credits empty.
     expect(call.listing.karma.boxes.length).toBe(1);
-    expect(call.listing.credits.boxes.length).toBe(0);
+    expect(call.listing.credits?.boxes.length ?? 0).toBe(0);
   });
 
   it('does not run after a tip run that ends `thin` — no anchor stands', async () => {
@@ -291,7 +291,7 @@ describe('the App verified figures — the triggers', () => {
     // is now the App's.
     expect(h.figuresCalls.length).toBe(before + 1);
     const call = h.figuresCalls[before]!;
-    expect(call.listing.credits.boxes.length).toBe(1);
+    expect(call.listing.credits!.boxes.length).toBe(1);
   });
 
   it('runs after loadMembershipState (the profile ↻) while an anchor stands', async () => {
@@ -459,8 +459,8 @@ describe('the App verified figures — the verdict and the row', () => {
     const result: FiguresResult = {
       boxes: [{ boxId: '22'.repeat(32), boxClass: 'credit', value: 100000000n, lockedUntilBlock: null, status: 'young', verdict: '' }],
       record: { status: 'absent' },
-      karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, effective: 0n },
-      credits: { proven: 0n, young: 100000000n, unchecked: 0n, absent: 0n },
+      karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: 0n, holdings: 'read', holdingsVerdict: null },
+      credits: { proven: 0n, young: 100000000n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'read', holdingsVerdict: null },
       heightAfter: 6001,
       failed: false,
     };
@@ -470,12 +470,12 @@ describe('the App verified figures — the verdict and the row', () => {
     // marks one more. That first run's listing has moved when it answers, so
     // its result is dropped and the run over the current listing follows.
     const first = h.figuresCalls[h.figuresCalls.length - 1]!;
-    expect(first.listing.credits.boxes).toHaveLength(0);
+    expect(first.listing.credits?.boxes ?? []).toHaveLength(0);
     first.resolve(emptyResult());
     await flush();
     // Resolve the last figures run that reflects the current listing.
     const lastCall = h.figuresCalls[h.figuresCalls.length - 1]!;
-    expect(lastCall.listing.credits.boxes).toHaveLength(1);
+    expect(lastCall.listing.credits!.boxes).toHaveLength(1);
     lastCall.resolve(result);
     await flush();
     const ctx = inner.ctx();
