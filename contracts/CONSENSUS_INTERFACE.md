@@ -39,7 +39,7 @@ for a block's body (`VALIDATION_INTERFACE → Acceptance criterion`). The browse
 | `tree-index` | `indexEntriesOfBox` · `isLapsedMember` | this contract's `The index entries` | none |
 | `tree-writes` | `treeWritesOf` · `seedTreeWrites` (`TreeWrite`) | this contract's `The tree writes` | the block's `TreeStateView` |
 | `holdings` | `holdingsPage` (`HoldingKind`, `HoldingsPage`) | this contract's `The holdings page` | a `TreeStateView` |
-| `verifier-session` | `verifierSession` | this contract's `The tree session` | a `BatchAVLVerifier` over a block's proof |
+| `verifier-session` | `verifierSession` | this contract's `The tree session` | a step-by-step verifier over a proof — a block's, or a page's |
 | `block-cost` | `blockCost` · `checkBlockCost` (`BlockCost`) | this contract's `The block's cost` | none |
 
 Beside them the barrel exports the types a caller builds their arguments and reads their answers with — `StateView`,
@@ -325,8 +325,8 @@ it holds, the network record — all `Insert`s, in ascending key order.
 **A block's proof covers, against its parent's root, first every key its tree view looked up — each once, in the
 order the view first asked it — then `treeWritesOf`'s writes in their order.** The reads are the rules' and the writes'
 alike (`applyBlock`, then `treeWritesOf` over the same view); nothing else reads through a recording session while a
-block is proven, so the list is a function of the block and its parent state, and every node, producer and leaf
-derives the same one. Its digest, `hash32(proof)`, is the header's `adProofsRoot` (`TYPES_INTERFACE → Layout — Block`).
+block is proven, so the list is a function of the block and its parent state, and every node, the producer and a
+replay derive the same one. Its digest, `hash32(proof)`, is the header's `adProofsRoot` (`TYPES_INTERFACE → Layout — Block`).
 
 ## The block's cost
 

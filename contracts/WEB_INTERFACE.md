@@ -448,7 +448,9 @@ one more run, started when it ends; a result for a listing no longer rendered, o
 dropped; a run in flight keeps the line it had. **A run is total**: an answer of any shape from the node — a body that
 is not the route's, a `proof` that is not a string, a key that is not 64 hex, bytes the lookup cannot parse — ends in a
 status (`unproven`, or `heightAfter` unread), never in a thrown run, because a run that does not end writes no line, and
-a figure with no line reads as proven. **What it says** is one
+a figure with no line reads as proven. **A run ends**: a request a run would make later than 60 seconds after it
+began is not sent and reads as not served, so a node that paces its answers — a page an entry, each held to the
+request's timeout — reads *the node served no proof for …* and cannot keep a row without a line. **What it says** is one
 muted line beneath the figure — the element the balance row's locked line is — **and only when something is not whole:
 a figure every box of which proved reads as it reads without a verifier.** The lines, the first that holds: **none** in
 a build with no verifier; *not checked — the
@@ -473,8 +475,12 @@ the valuation.
 row's `effective` are the reads the run proved, in every state; the line describes them. The two weights are the corner's
 (`HOUSE_STYLE → Gold and clay are not interchangeable`): a heads-up is the line alone, the full rule the line in clay
 and the figure in clay (→ The wallet window, → The profile window). **What it means** is the key's holdings of each ledger read, whole, at the two heights:
-every proven box is real and the key's, and a node that withholds a box from its listing is shown to, in clay, by the
-first run no block lands in, and reads *not checked yet* until then — the range holds the box either way.
+every proven box is real and the key's, and a node that withholds a box from its listing is never without a line: in
+clay on a run it answers the anchor's own height to and proves the tip's range under, and muted on every other —
+*not checked yet*, or *the node served no proof for …* where it serves none.
+
+> ⚠ **AHEAD OF CODE (2026-10-02, N4 PR A — `nipopow-client`, `web`)** — a run has no deadline; and a range answer at
+> `tip` whose `stateRoot` is missing or is no root reads `stale`, where an answer of another shape is `unproven`.
 
 **The verified names.** The extension proves every handle it shows, and every handle it sends to, against the state the
 verified chain committed — the figures' anchor, their proofs and their order. **A check** is `proveName` of

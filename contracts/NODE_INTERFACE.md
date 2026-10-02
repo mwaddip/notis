@@ -4258,17 +4258,17 @@ light client's `suffixHead` — `k − 1` blocks behind its tip (`CONSTANTS → 
 that many blocks have applied, nor for as long as `PROOF_WINDOW_NODES` holds the kept roots fewer than `k` deep. `MAX_PROOF_HISTORY` is the versions the store keeps for a reorg's walk (→ Configuration) and bounds
 no route.
 
-**Cost, so the exposure is a number** — measured 2026-10-02 over a 10⁶-leaf tree with `packages/node/bench/` (the
-store on a SQLite file, both routes on an Express app, Node 22, pinned to performance cores of the i9-14900HX). A
-single-key proof is one path: about 920 bytes, 1 ms. A page looks up at most `1 + 2 · RANGE_PAGE_MAX` keys: a full
-page is about 110 KB of proof — 146 KB as the JSON answer — and 17–20 ms, the same at the tip and 60 blocks back, a
-kept root being restored by reference. A key's 21 700 boxes are 85 pages, 9.4 MB and 4.7 s, and nothing of a route
-outlives its call: the heap and the array buffers read the same before and after. Both routes are unauthenticated
-reads that do real work per call, as `GET /nipopow/proof` is (→ Nipopow prover); a call is bounded by the page, and
-no route is rate limited.
+**The proof routes' cost, so the exposure is a number** — measured 2026-10-02 with `packages/node/bench/` (the
+store on a SQLite file, both routes on an Express app, Node 22, pinned to performance cores of the i9-14900HX) over
+a tree seeded at 10⁶ leaves and grown to 1.44·10⁶ by the blocks applied. A single-key proof is one path: about 920
+bytes, about 1 ms. A page looks up at most `1 + 2 · RANGE_PAGE_MAX` keys: a full page is about 110 KB of proof —
+146 KB as the JSON answer — and 17–20 ms, the same at the tip and at a root kept 60 blocks back, restored by
+reference. A key's 21 700 boxes are 85 pages and 9.4 MB, a second and a half of the node's time at that rate, and
+nothing of a route outlives its call: the heap and the array buffers read the same before and after. Both routes
+are unauthenticated reads that do real work per call, as `GET /nipopow/proof` is (→ Nipopow prover); a call is
+bounded by the page, and no route is rate limited.
 
-**What the kept roots hold, in bytes** — the same run. The tree itself is 1.9 GiB of heap and 0.3 GiB of array
-buffers at 10⁶ leaves. A node counted costs about 650 bytes — 570 of heap and 85 of array buffers, which V8's heap
+**What the kept roots hold, in bytes** — the same run. A node counted costs about 650 bytes — 570 of heap and 85 of array buffers, which V8's heap
 limit does not count — so the default `PROOF_WINDOW_NODES` bounds the kept roots near 155 MiB, whatever the blocks
 carry. A block of 3 156 credit sends over that tree replaces about 114 000 nodes, 71 MiB a kept root: 64 such roots
 hold 4.4 GiB, and the default keeps 3 of them; under blocks a hundredth that size — 2 300 nodes, 1.4 MiB a root — it
@@ -4276,8 +4276,9 @@ keeps all 64, as it does while a block replaces under about 3 900 nodes. **The c
 objects**: a node a block rebuilds to the label it had — two objects, one label — is held and not counted, one node
 in 90 000 under mixed writes and a path's length for a write that leaves a leaf's bytes as they were — the one such
 write found in the rules is a vouch cast and withdrawn for one target in one block. **Where a reorg's fork point is no
-longer kept, the resolve from the store re-reads the tree**: 51 s and a second tree of 1.5 GiB over 10⁶ leaves,
-built while the first is still held.
+longer kept, the resolve from the store re-reads the tree**: 51 s for 1.45·10⁶ leaves, and a second tree built while
+the first is still held — 1.2 GiB of heap and 0.3 GiB of array buffers, about 565 bytes a node, which is what the
+tree itself costs.
 
 **3. A block's writes never touch one key twice, and for boxes that rests on provenance, not on height.** That box ids
 commit to `createdAtBlock` does not establish it: two boxes built at one height with one content would still collide.
@@ -4647,8 +4648,8 @@ other corrupt-chain read.
 **Cost, so the exposure is a number:** a proof is O(m · M + k) point reads, `M` the height of the
 tip's vector (~log₂ of the chain height): at `m = k = 6` on a million-block chain ~250 reads and a
 ~200 KB response; at the caps (`m = k = 128`) ~8 500 reads and ~7 MB. No cache and no O(N) walk
-exist in the path. This is the node's second unauthenticated read that does real work per call
-(`GET /api/v1/proof/:key` is the first); the node has no rate limiting anywhere, and this route
+exist in the path. This is one of the node's three unauthenticated reads that do real work per call
+(the two proof routes are the others, → AVL+ State Root); the node has no rate limiting anywhere, and this route
 adds none — a single call is bounded by `MAX_NIPOPOW_PARAM`, and a limiter is a decision across
 every route, not this one's.
 
