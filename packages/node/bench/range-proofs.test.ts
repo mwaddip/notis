@@ -15,6 +15,7 @@ import {
 } from '@ergots/avltree';
 import type { VersionedAVLStorage } from '@ergots/avltree';
 import {
+  INDEX_MARKER,
   TREE_KEY_LENGTH,
   boxKey,
   boxRecordBytes,
@@ -211,7 +212,7 @@ function buildSeedWrites(pool: BoxPool): { writes: Array<{ tag: 'Insert'; key: U
     largeBoxIds.push(boxId);
     const value = BigInt(1_000_000 + (i % 1000));
     writes.push({ tag: 'Insert', key: boxKey(boxId), value: creditRecord(value, largeOwner, 1) });
-    writes.push({ tag: 'Insert', key: creditOfKey(largeOwner, boxId), value: new Uint8Array([0x86]) });
+    writes.push({ tag: 'Insert', key: creditOfKey(largeOwner, boxId), value: Uint8Array.from(INDEX_MARKER) });
   }
   let placed = LARGE_OWNER_BOXES * 2;
   while (placed < SEED_LEAVES) {
@@ -222,7 +223,7 @@ function buildSeedWrites(pool: BoxPool): { writes: Array<{ tag: 'Insert'; key: U
       pool.add(boxId, owner);
       const value = BigInt(1_000 + j);
       writes.push({ tag: 'Insert', key: boxKey(boxId), value: creditRecord(value, owner, 1) });
-      writes.push({ tag: 'Insert', key: creditOfKey(owner, boxId), value: new Uint8Array([0x86]) });
+      writes.push({ tag: 'Insert', key: creditOfKey(owner, boxId), value: Uint8Array.from(INDEX_MARKER) });
       placed += 2;
     }
   }
@@ -310,68 +311,6 @@ function buildBlockPicks(pool: BoxPool, sends: number, height: number): BlockPic
   return { spent, other, outIds, outOwners, outRecords };
 }
 
-/**
- * Apply one block at `height`. The lookups go through `prover.performLookupWithNeighbors`, the writes through
- * `performTreeWrites` ordered as `treeWritesOf` orders them — every `Remove` first in bytewise key order, every
- * `Insert` after in bytewise key order; no key is written twice. `checkpointProver` closes the block and
- * `handle.recentRoots.record` holds its root beside the store's count of the nodes the checkpoint orphaned
- * (`storage.lastRemovedCount`). The shadow ring records the same (height, root, treeHeight, replaced).
- */
-function applyBlockLike(
-  handle: AvlProverHandle,
-  boundedRing: RecentRoots,
-  pool: BoxPool,
-  height: number,
-  sends: number,
-): { lookups: number; writes: number; replaced: number } {
-  const picks = buildBlockPicks(pool, sends, height);
-  const inner = handle.prover.prover;
-
-  // Lookups: three per send — spent box, its index entry, one other live box.
-  for (let t = 0; t < sends; t++) {
-    const spentId = pool.boxId(picks.spent[t]!);
-    const spentOwner = pool.owner(picks.spent[t]!);
-    const otherId = pool.boxId(picks.other[t]!);
-    inner.performLookupWithNeighbors(boxKey(spentId));
-    inner.performLookupWithNeighbors(creditOfKey(spentOwner, spentId));
-    inner.performLookupWithNeighbors(boxKey(otherId));
-  }
-
-  // Writes. Per send: two Removes (box key, index key) and four Inserts (two new boxes × two keys each). Build then
-  // sort by tag then bytewise key — the order `treeWritesOf` answers for a block's writes.
-  const removes: TreeWrite[] = [];
-  for (let t = 0; t < sends; t++) {
-    const spentId = pool.boxId(picks.spent[t]!);
-    const spentOwner = pool.owner(picks.spent[t]!);
-    removes.push({ tag: 'Remove', key: boxKey(spentId) });
-    removes.push({ tag: 'Remove', key: creditOfKey(spentOwner, spentId) });
-  }
-  const inserts: TreeWrite[] = [];
-  for (let i = 0; i < picks.outIds.length; i++) {
-    const outId = picks.outIds[i]!;
-    const outOwner = picks.outOwners[i]!;
-    inserts.push({ tag: 'Insert', key: boxKey(outId), value: picks.outRecords[i]! });
-    inserts.push({ tag: 'Insert', key: creditOfKey(outOwner, outId), value: new Uint8Array([0x86]) });
-  }
-  removes.sort((a, b) => compareBytes(a.key, b.key));
-  inserts.sort((a, b) => compareBytes(a.key, b.key));
-  performTreeWrites(handle.prover, height, [...removes, ...inserts], 'bench-block');
-
-  // The block's checkpoint — same calls the funnel's success path makes.
-  checkpointProver(handle, height);
-  const replaced = handle.storage.lastRemovedCount();
-  handle.recentRoots.record(height, handle.prover.prover.root, handle.prover.prover.height, replaced);
-  boundedRing.record(height, handle.prover.prover.root, handle.prover.prover.height, replaced);
-
-  // Pool: drop every spent, add every new output.
-  pool.removeIndices(picks.spent);
-  for (let i = 0; i < picks.outIds.length; i++) {
-    pool.add(picks.outIds[i]!, picks.outOwners[i]!);
-  }
-
-  return { lookups: sends * LOOKUPS_PER_SEND, writes: sends * WRITES_PER_SEND, replaced };
-}
-
 /** The seed through `performTreeWrites` in 100 000-write chunks, with one `generateProofAndUpdateStorage` at height 0. */
 function performSeed(handle: AvlProverHandle, seedWrites: Array<{ tag: 'Insert'; key: Uint8Array; value: Uint8Array }>): void {
   const CHUNK = 100_000;
@@ -432,25 +371,37 @@ async function callRangeOnce(
   return { bytes, ms, proofBytes, next: page.next };
 }
 
-/** Record block N+1's own operations as the bench performs them, then replay the proof the checkpoint answers. */
+/** A block's recorded operations — lookups first, then removes in bytewise key order, then inserts in the same. */
 interface RecordedBlock {
   lookups: Uint8Array[];
   removes: Uint8Array[];
   inserts: Array<{ key: Uint8Array; value: Uint8Array }>;
 }
 
-/** The block the bench applies, with its lookups and writes captured in order. Used for the strict-replay check. */
-function applyRecordedBlock(
+/**
+ * Apply one block at `height`. The lookups go through
+ * `prover.performLookupWithNeighbors`, the writes through `performTreeWrites`
+ * ordered as `treeWritesOf` orders them — every `Remove` first in bytewise
+ * key order, every `Insert` after in bytewise key order; no key is written
+ * twice. `checkpointProver` closes the block and `handle.recentRoots.record`
+ * holds its root beside the store's count of the nodes the checkpoint
+ * orphaned (`storage.lastRemovedCount`). The shadow ring records the same
+ * (height, root, treeHeight, replaced). The call answers the proof, the
+ * before/after digests, the recorded operations, and the counts; a caller
+ * that needs no record drops it.
+ */
+function applyBlockLike(
   handle: AvlProverHandle,
   boundedRing: RecentRoots,
   pool: BoxPool,
   height: number,
   sends: number,
-): { recorded: RecordedBlock; proof: Uint8Array; digestBefore: Uint8Array; digestAfter: Uint8Array } {
+): { recorded: RecordedBlock; proof: Uint8Array; digestBefore: Uint8Array; digestAfter: Uint8Array; lookups: number; writes: number; replaced: number } {
   const digestBefore = handle.prover.digest()!;
   const picks = buildBlockPicks(pool, sends, height);
   const inner = handle.prover.prover;
 
+  // Lookups: three per send — spent box, its index entry, one other live box.
   const recordedLookups: Uint8Array[] = [];
   for (let t = 0; t < sends; t++) {
     const spentId = pool.boxId(picks.spent[t]!);
@@ -465,6 +416,8 @@ function applyRecordedBlock(
     recordedLookups.push(k1, k2, k3);
   }
 
+  // Writes. Per send: two Removes (box key, index key) and four Inserts (two new boxes × two keys each). Build then
+  // sort by tag then bytewise key — the order `treeWritesOf` answers for a block's writes.
   const removes: TreeWrite[] = [];
   for (let t = 0; t < sends; t++) {
     const spentId = pool.boxId(picks.spent[t]!);
@@ -477,24 +430,27 @@ function applyRecordedBlock(
     const outId = picks.outIds[i]!;
     const outOwner = picks.outOwners[i]!;
     inserts.push({ tag: 'Insert', key: boxKey(outId), value: picks.outRecords[i]! });
-    inserts.push({ tag: 'Insert', key: creditOfKey(outOwner, outId), value: new Uint8Array([0x86]) });
+    inserts.push({ tag: 'Insert', key: creditOfKey(outOwner, outId), value: Uint8Array.from(INDEX_MARKER) });
   }
   removes.sort((a, b) => compareBytes(a.key, b.key));
   inserts.sort((a, b) => compareBytes(a.key, b.key));
   const ordered: TreeWrite[] = [...removes, ...inserts];
   performTreeWrites(handle.prover, height, ordered, 'bench-block');
 
+  // The block's checkpoint — same calls the funnel's success path makes.
   const proof = checkpointProver(handle, height);
   const digestAfter = handle.prover.digest()!;
   const replaced = handle.storage.lastRemovedCount();
   handle.recentRoots.record(height, handle.prover.prover.root, handle.prover.prover.height, replaced);
   boundedRing.record(height, handle.prover.prover.root, handle.prover.prover.height, replaced);
+
+  // Pool: drop every spent, add every new output.
   pool.removeIndices(picks.spent);
   for (let i = 0; i < picks.outIds.length; i++) {
     pool.add(picks.outIds[i]!, picks.outOwners[i]!);
   }
 
-  // Capture the operations in the order the strict replay will perform them: all recorded lookups first, then every
+  // Capture the operations in the order the strict replay performs them: all recorded lookups first, then every
   // Remove in bytewise order, then every Insert in bytewise order — the same order the prover executed.
   const recorded: RecordedBlock = {
     lookups: recordedLookups,
@@ -504,7 +460,7 @@ function applyRecordedBlock(
       return { key: w.key, value: w.value };
     }),
   };
-  return { recorded, proof, digestBefore, digestAfter };
+  return { recorded, proof, digestBefore, digestAfter, lookups: sends * LOOKUPS_PER_SEND, writes: sends * WRITES_PER_SEND, replaced };
 }
 
 /**
@@ -724,7 +680,7 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
       // -----------------------------------------------------------------
       console.log(`\n==== the block after — the proof carries only the block's own operations ====`);
       const nextHeight = tipHeight + 1;
-      const applied = applyRecordedBlock(handle, boundedRing, pool, nextHeight, BLOCK_SENDS);
+      const applied = applyBlockLike(handle, boundedRing, pool, nextHeight, BLOCK_SENDS);
       const reached = strictReplayCarriesBlockOnly(applied.recorded, applied.proof, applied.digestBefore, applied.digestAfter);
       console.log(`block ${nextHeight} applied; strict replay anchored at ${bytesToHex(applied.digestBefore)} reached ${reached}, fully consumed`);
 
