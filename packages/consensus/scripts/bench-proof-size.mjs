@@ -14,8 +14,8 @@
 // A replay that does not reach the prover's digest or is not fully consumed sets the exit code.
 //
 // The script reads this package's build and `@dagsocial/types`' key and record builders: `pnpm -r build` first, on
-// Node 22.18 or later. Runs on one CPU; a 10^6-leaf tree costs the order of a GB of RAM to hold and several minutes to
-// seed, and 6·10^6 several more.
+// Node 22.18 or later. Runs on one CPU; the tree's memory grows with its leaves — a 10^6-leaf tree costs the order
+// of a GB of RAM to hold and several minutes to seed, a 6·10^6-leaf tree the order of 6 GB.
 //
 // usage: node packages/consensus/scripts/bench-proof-size.mjs [sizes]  (sizes defaults to `20000,200000,1000000,2000000,6000000`)
 import { createHash, randomBytes } from 'node:crypto';
@@ -48,9 +48,9 @@ const WRITES_PER_TX = 6;
 const TOTAL_LOOKUPS = TXS * LOOKUPS_PER_TX;
 const TOTAL_WRITES = TXS * WRITES_PER_TX;
 
-/** A 32-byte owner derived from an index, so the owner set is reproducible for a given `size`.
- *  Box ids come from `randomBytes` below — the tree only sees them under keys, so a run's
- *  prover and replayer agree on their value, not on their byte sequence across runs. */
+/** A 32-byte owner derived from an index, so the owner set is the same for a given `size`.
+ *  Box ids come from `randomBytes` below, so each run builds a tree of its own of that shape
+ *  and two runs' proofs differ in their bytes. */
 const ownerOf = (i) => {
   const h = createHash('blake2b512').update(`dagsocial/bench-proof-size/owner/${i}`).digest();
   return new Uint8Array(h.subarray(0, 32));
