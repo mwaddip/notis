@@ -266,6 +266,9 @@ importers:
       '@dagsocial/nipopow':
         specifier: workspace:*
         version: link:../../packages/nipopow
+      '@dagsocial/nipopow-client':
+        specifier: workspace:*
+        version: link:../nipopow-client
       '@dagsocial/types':
         specifier: workspace:*
         version: link:../../packages/types
