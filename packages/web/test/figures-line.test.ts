@@ -607,7 +607,7 @@ describe('figuresLine — row 3: holdings not-read → "not checked yet"', () =>
 // valuation.
 // ---------------------------------------------------------------------------
 describe('figuresLine — an empty listing reads the ledger\'s own facts', () => {
-  it('credits: boxCount 0, unlisted > 0n → the clay line names the unlisted sum, beneath the faucet step', () => {
+  it('credits: boxCount 0, unlisted > 0n → the clay line names the unlisted sum', () => {
     const r = result({
       boxes: [box({ boxClass: 'credit', status: 'unlisted', value: 1_250_000_000n })],
       credits: { ...emptyCredits, unlisted: 1_250_000_000n },
@@ -616,7 +616,7 @@ describe('figuresLine — an empty listing reads the ledger\'s own facts', () =>
     expect(line).toEqual({ text: 'the chain holds 12.5 $NOTIS the node does not list', weight: 'clay' });
   });
 
-  it('karma: boxCount 0, unlisted > 0n → the clay line names the unlisted sum, beneath the faucet step', () => {
+  it('karma: boxCount 0, unlisted > 0n → the clay line names the unlisted sum', () => {
     const r = result({
       boxes: [box({ boxClass: 'karma', status: 'unlisted', value: 5n })],
       karma: { ...emptyKarma, unlisted: 5n },

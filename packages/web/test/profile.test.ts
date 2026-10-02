@@ -989,47 +989,63 @@ describe('profile — the verified-figures line beneath an empty rep listing', (
     ...over,
   });
 
-  it('faucet step + unlisted karma box → the clay line beneath the ask button, no mono number to turn clay', () => {
+  // The hint follows what it stands beneath — the ask button, the words,
+  // *working…*, the lapsed-grant text. `renderKarmaField` appends the
+  // figures hint last, so a `.hint` after each describes it; the index check
+  // against `.children` asserts the order.
+  const childrenOf = (f: HTMLElement): Element[] => Array.from(f.children);
+
+  it('faucet step + unlisted karma box → the clay line follows the ask button, no mono number to turn clay', () => {
     prefs.faucet = '/faucet';
     const fv = pfFigures({
       boxes: [pfBox({ boxClass: 'karma', status: 'unlisted', value: 5n })],
       karma: { ...EMPTY_KARMA, unlisted: 5n },
     });
     const f = rowField(render(handlers(), emptyRepCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
-    expect(f.querySelector('button.word')?.textContent).toBe('ask the faucet for rep');
-    const hint = f.querySelector<HTMLElement>('.hint');
-    expect(hint?.textContent).toBe('the chain holds 5 rep the node does not list');
-    expect(hint?.classList.contains('clay')).toBe(true);
+    const button = f.querySelector<HTMLElement>('button.word')!;
+    const hint = f.querySelector<HTMLElement>('.hint')!;
+    expect(button.textContent).toBe('ask the faucet for rep');
+    expect(hint.textContent).toBe('the chain holds 5 rep the node does not list');
+    expect(hint.classList.contains('clay')).toBe(true);
     expect(f.querySelector('.mono')).toBeNull();
+    const children = childrenOf(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(button));
     prefs.faucet = '';
   });
 
-  it('*no rep yet.* + unlisted → the clay line beneath the words', () => {
+  it('*no rep yet.* + unlisted → the clay line follows the words', () => {
     prefs.faucet = '';
     const fv = pfFigures({
       boxes: [pfBox({ boxClass: 'karma', status: 'unlisted', value: 5n })],
       karma: { ...EMPTY_KARMA, unlisted: 5n },
     });
     const f = rowField(render(handlers(), emptyRepCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
-    expect(f.textContent).toContain('no rep yet.');
-    const hint = f.querySelector<HTMLElement>('.hint');
-    expect(hint?.textContent).toBe('the chain holds 5 rep the node does not list');
-    expect(hint?.classList.contains('clay')).toBe(true);
+    const words = f.querySelector<HTMLElement>('.inkmute')!;
+    const hint = f.querySelector<HTMLElement>('.hint')!;
+    expect(words.textContent).toBe('no rep yet.');
+    expect(hint.textContent).toBe('the chain holds 5 rep the node does not list');
+    expect(hint.classList.contains('clay')).toBe(true);
+    const children = childrenOf(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(words));
   });
 
-  it('faucet step + holdings "no-proof" → muted "the node served no proof for your rep"', () => {
+  it('faucet step + holdings "no-proof" → the muted *the node served no proof for your rep* follows the ask button', () => {
     prefs.faucet = '/faucet';
     const fv = pfFigures({
       karma: { ...EMPTY_KARMA, holdings: 'no-proof', holdingsVerdict: 'HTTP 500' },
     });
     const f = rowField(render(handlers(), emptyRepCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
-    const hint = f.querySelector<HTMLElement>('.hint');
-    expect(hint?.textContent).toBe('the node served no proof for your rep');
-    expect(hint?.classList.contains('clay')).toBe(false);
+    const button = f.querySelector<HTMLElement>('button.word')!;
+    const hint = f.querySelector<HTMLElement>('.hint')!;
+    expect(button.textContent).toBe('ask the faucet for rep');
+    expect(hint.textContent).toBe('the node served no proof for your rep');
+    expect(hint.classList.contains('clay')).toBe(false);
+    const children = childrenOf(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(button));
     prefs.faucet = '';
   });
 
-  it('a grant in flight (*working…*) + unlisted → the clay line beneath *working…*', () => {
+  it('a grant in flight (*working…*) + unlisted → the clay line follows *working…*', () => {
     prefs.faucet = '/faucet';
     const fv = pfFigures({
       boxes: [pfBox({ boxClass: 'karma', status: 'unlisted', value: 3n })],
@@ -1038,14 +1054,17 @@ describe('profile — the verified-figures line beneath an empty rep listing', (
     const f = rowField(render(handlers(), emptyRepCtx({
       verdict: VERIFIED_PF, figures: fv, grant: { state: 'pending' },
     })), 'rep')!;
-    expect(f.textContent).toContain('working…');
-    const hint = f.querySelector<HTMLElement>('.hint');
-    expect(hint?.textContent).toBe('the chain holds 3 rep the node does not list');
-    expect(hint?.classList.contains('clay')).toBe(true);
+    const working = f.querySelector<HTMLElement>('.inkmute')!;
+    const hint = f.querySelector<HTMLElement>('.hint')!;
+    expect(working.textContent).toBe('working…');
+    expect(hint.textContent).toBe('the chain holds 3 rep the node does not list');
+    expect(hint.classList.contains('clay')).toBe(true);
+    const children = childrenOf(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(working));
     prefs.faucet = '';
   });
 
-  it('a lapsed grant + unlisted → the clay line beneath the lapsed-grant text', () => {
+  it('a lapsed grant + unlisted → the clay line follows the lapsed-grant text', () => {
     prefs.faucet = '/faucet';
     const fv = pfFigures({
       boxes: [pfBox({ boxClass: 'karma', status: 'unlisted', value: 3n })],
@@ -1054,10 +1073,13 @@ describe('profile — the verified-figures line beneath an empty rep listing', (
     const f = rowField(render(handlers(), emptyRepCtx({
       verdict: VERIFIED_PF, figures: fv, grant: { state: 'expired', atHeight: 999 },
     })), 'rep')!;
-    expect(f.textContent).toContain("no block took the faucet");
-    const hint = f.querySelector<HTMLElement>('.hint');
-    expect(hint?.textContent).toBe('the chain holds 3 rep the node does not list');
-    expect(hint?.classList.contains('clay')).toBe(true);
+    const lapsed = f.querySelector<HTMLElement>('.inkmute')!;
+    const hint = f.querySelector<HTMLElement>('.hint')!;
+    expect(lapsed.textContent).toContain("no block took the faucet");
+    expect(hint.textContent).toBe('the chain holds 3 rep the node does not list');
+    expect(hint.classList.contains('clay')).toBe(true);
+    const children = childrenOf(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(lapsed));
     prefs.faucet = '';
   });
 

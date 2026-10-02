@@ -327,13 +327,15 @@ function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: Wallet
       hint.append(mono(formatCredits(locked.value)), ' $NOTIS more unlock by block ', mono(String(locked.height)), '.');
       line.appendChild(hint);
     }
-    // The verified-figures line stands beneath every empty state too — the
-    // faucet step, *no $NOTIS yet.*, a grant's *working…*, a lapsed grant's
-    // line — so the ledger's own facts (`holdings`, `unlisted`, the record)
-    // reach the reader there (WEB_INTERFACE → The extension → "The verified
-    // figures" — "An empty listing takes these lines as any listing does";
-    // → The wallet window → "A listing with no box reads its line too").
-    // `shown` is 0 here, with no gold to turn clay.
+    // The verified-figures line stands beneath every state this branch reads
+    // — the faucet step, *no $NOTIS yet.*, a grant's *working…*, a lapsed
+    // grant's line, and a listing whose boxes are all locked at `height` —
+    // so the ledger's own facts (`holdings` and `unlisted`) reach the reader
+    // there, and a fabricated locked box does not pass unremarked
+    // (WEB_INTERFACE → The extension → "The verified figures" — "An empty
+    // listing takes these lines as any listing does"; → The wallet window →
+    // "A listing with no box reads its line too"). `shown` is 0 here, with
+    // no gold to turn clay.
     appendFiguresLine(line, ctx, c.boxCount, height, 0n, null);
     // No spendable box means the form has nothing to spend — drop it.
     formSlot.replaceChildren();

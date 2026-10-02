@@ -1144,48 +1144,67 @@ describe('wallet — the verified-figures line beneath an empty listing', () => 
     ...over,
   });
 
-  it('faucet step + unlisted credit box → the clay line beneath the ask button, no gold to turn clay', () => {
+  // The hint follows what it stands beneath — the ask button, the words,
+  // *working…*, the lapsed-grant text. The figures line is appended last in
+  // `.credits-line`, so a `.hint` after each describes it; the index check
+  // asserts the order (`compareDocumentPosition` yields the same answer by a
+  // different route, but indexOf against `.children` is read directly).
+  const linesInOrder = (f: HTMLElement): Element[] => {
+    const line = f.querySelector<HTMLElement>('.credits-line')!;
+    return Array.from(line.children);
+  };
+
+  it('faucet step + unlisted credit box → the clay line follows the ask button, no gold to turn clay', () => {
     prefs.faucet = '/faucet';
     const fv = figuresView({
       boxes: [figBox({ boxClass: 'credit', status: 'unlisted', value: 1_250_000_000n })],
       credits: { ...EMPTY_CREDITS, unlisted: 1_250_000_000n },
     });
     const f = creditsField(render(handlers(), emptyListingCtx({ verdict: VERIFIED, figures: fv })))!;
-    // The faucet button stands.
-    expect(f.querySelector('button.word')?.textContent).toBe('ask the faucet for $NOTIS');
-    const hint = f.querySelector<HTMLElement>('.credits-line .hint');
-    expect(hint?.textContent).toBe('the chain holds 12.5 $NOTIS the node does not list');
-    expect(hint?.classList.contains('clay')).toBe(true);
+    const button = f.querySelector<HTMLElement>('button.word')!;
+    const hint = f.querySelector<HTMLElement>('.credits-line .hint')!;
+    expect(button.textContent).toBe('ask the faucet for $NOTIS');
+    expect(hint.textContent).toBe('the chain holds 12.5 $NOTIS the node does not list');
+    expect(hint.classList.contains('clay')).toBe(true);
     expect(f.querySelector('.mono.gold')).toBeNull();
+    const children = linesInOrder(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(button));
     prefs.faucet = '';
   });
 
-  it('*no $NOTIS yet.* + unlisted → the clay line beneath the words, no gold to turn clay', () => {
+  it('*no $NOTIS yet.* + unlisted → the clay line follows the words, no gold to turn clay', () => {
     prefs.faucet = '';
     const fv = figuresView({
       boxes: [figBox({ boxClass: 'credit', status: 'unlisted', value: 1_250_000_000n })],
       credits: { ...EMPTY_CREDITS, unlisted: 1_250_000_000n },
     });
     const f = creditsField(render(handlers(), emptyListingCtx({ verdict: VERIFIED, figures: fv })))!;
-    expect(f.querySelector('.credits-line')?.textContent).toContain('no $NOTIS yet.');
-    const hint = f.querySelector<HTMLElement>('.credits-line .hint');
-    expect(hint?.textContent).toBe('the chain holds 12.5 $NOTIS the node does not list');
-    expect(hint?.classList.contains('clay')).toBe(true);
+    const words = f.querySelector<HTMLElement>('.credits-line .inkmute')!;
+    const hint = f.querySelector<HTMLElement>('.credits-line .hint')!;
+    expect(words.textContent).toBe('no $NOTIS yet.');
+    expect(hint.textContent).toBe('the chain holds 12.5 $NOTIS the node does not list');
+    expect(hint.classList.contains('clay')).toBe(true);
+    const children = linesInOrder(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(words));
   });
 
-  it('faucet step + holdings "no-proof" → muted "the node served no proof for the balance"', () => {
+  it('faucet step + holdings "no-proof" → the muted *the node served no proof for the balance* follows the ask button', () => {
     prefs.faucet = '/faucet';
     const fv = figuresView({
       credits: { ...EMPTY_CREDITS, holdings: 'no-proof', holdingsVerdict: 'HTTP 500' },
     });
     const f = creditsField(render(handlers(), emptyListingCtx({ verdict: VERIFIED, figures: fv })))!;
-    const hint = f.querySelector<HTMLElement>('.credits-line .hint');
-    expect(hint?.textContent).toBe('the node served no proof for the balance');
-    expect(hint?.classList.contains('clay')).toBe(false);
+    const button = f.querySelector<HTMLElement>('button.word')!;
+    const hint = f.querySelector<HTMLElement>('.credits-line .hint')!;
+    expect(button.textContent).toBe('ask the faucet for $NOTIS');
+    expect(hint.textContent).toBe('the node served no proof for the balance');
+    expect(hint.classList.contains('clay')).toBe(false);
+    const children = linesInOrder(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(button));
     prefs.faucet = '';
   });
 
-  it('a grant in flight (*working…*) + unlisted → the clay line beneath *working…*', () => {
+  it('a grant in flight (*working…*) + unlisted → the clay line follows *working…*', () => {
     prefs.faucet = '/faucet';
     const fv = figuresView({
       boxes: [figBox({ boxClass: 'credit', status: 'unlisted', value: 500_000_000n })],
@@ -1194,14 +1213,17 @@ describe('wallet — the verified-figures line beneath an empty listing', () => 
     const f = creditsField(render(handlers(), emptyListingCtx({
       verdict: VERIFIED, figures: fv, creditGrant: { state: 'pending' },
     })))!;
-    expect(f.querySelector('.credits-line')?.textContent).toContain('working…');
-    const hint = f.querySelector<HTMLElement>('.credits-line .hint');
-    expect(hint?.textContent).toBe('the chain holds 5 $NOTIS the node does not list');
-    expect(hint?.classList.contains('clay')).toBe(true);
+    const working = f.querySelector<HTMLElement>('.credits-line .inkmute')!;
+    const hint = f.querySelector<HTMLElement>('.credits-line .hint')!;
+    expect(working.textContent).toBe('working…');
+    expect(hint.textContent).toBe('the chain holds 5 $NOTIS the node does not list');
+    expect(hint.classList.contains('clay')).toBe(true);
+    const children = linesInOrder(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(working));
     prefs.faucet = '';
   });
 
-  it('a lapsed grant + unlisted → the clay line beneath the lapsed-grant text', () => {
+  it('a lapsed grant + unlisted → the clay line follows the lapsed-grant text', () => {
     prefs.faucet = '/faucet';
     const fv = figuresView({
       boxes: [figBox({ boxClass: 'credit', status: 'unlisted', value: 500_000_000n })],
@@ -1210,10 +1232,13 @@ describe('wallet — the verified-figures line beneath an empty listing', () => 
     const f = creditsField(render(handlers(), emptyListingCtx({
       verdict: VERIFIED, figures: fv, creditGrant: { state: 'expired', atHeight: 999 },
     })))!;
-    expect(f.querySelector('.credits-line')?.textContent).toContain("no block took the faucet's transfer");
-    const hint = f.querySelector<HTMLElement>('.credits-line .hint');
-    expect(hint?.textContent).toBe('the chain holds 5 $NOTIS the node does not list');
-    expect(hint?.classList.contains('clay')).toBe(true);
+    const lapsed = f.querySelector<HTMLElement>('.credits-line .inkmute')!;
+    const hint = f.querySelector<HTMLElement>('.credits-line .hint')!;
+    expect(lapsed.textContent).toContain("no block took the faucet's transfer");
+    expect(hint.textContent).toBe('the chain holds 5 $NOTIS the node does not list');
+    expect(hint.classList.contains('clay')).toBe(true);
+    const children = linesInOrder(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(lapsed));
     prefs.faucet = '';
   });
 
