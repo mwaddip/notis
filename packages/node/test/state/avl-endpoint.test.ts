@@ -291,8 +291,9 @@ describe('GET /api/v1/proof/:key', () => {
   });
 
   it('an atHeight of digits past 2^53 is a 404 — no kept height carries that number', async () => {
-    // NODE_INTERFACE → avl-endpoint — "an atHeight of any length that names
-    // no kept height is the 404".
+    // An atHeight of digits past the safe-integer range names no kept
+    // height and the ring misses — the route answers 404
+    // (NODE_INTERFACE → AVL+ State Root → "avl-endpoint").
     const res = await request(app)
       .get('/api/v1/proof/' + BOX_KEY + '?atHeight=99999999999999999999')
       .expect(404);
@@ -300,10 +301,10 @@ describe('GET /api/v1/proof/:key', () => {
   });
 
   it('both sentinel keys are a 400, and nothing is logged', async () => {
-    // NODE_INTERFACE → avl-endpoint — "a key that is one of the tree's two
-    // sentinels — all `00`, all `ff`" is a 400 (CONSENSUS_INTERFACE → The
-    // tree session, `isSentinel`). The refusal is before the cycle opens, so
-    // no error is logged.
+    // The two bounds — all `00`, all `ff` — are not keys of the tree
+    // (CONSENSUS_INTERFACE → The tree session, `isSentinel`), so the route
+    // refuses them with a 400 before the cycle opens and nothing is logged
+    // (NODE_INTERFACE → AVL+ State Root → "avl-endpoint").
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     for (const key of ['00'.repeat(TREE_KEY_LENGTH), 'ff'.repeat(TREE_KEY_LENGTH)]) {
       const res = await request(app).get('/api/v1/proof/' + key).expect(400);

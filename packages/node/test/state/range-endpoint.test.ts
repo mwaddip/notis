@@ -263,8 +263,9 @@ describe('GET /api/v1/range/:kind/:owner — the range route', () => {
   });
 
   it('a limit of digits past 2^53 is served at 256', async () => {
-    // NODE_INTERFACE → avl-endpoint, the range route — "`limit` is an integer
-    // from 1, served at `RANGE_PAGE_MAX` where it is above it or absent".
+    // Decimal digits of any length are well-formed; a limit above the cap
+    // is served at `RANGE_PAGE_MAX`, past the safe-integer range included
+    // (NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the range route").
     const res = await request(ctx.app)
       .get(`/api/v1/range/credit/${bytesToHex(ctx.owner.userId)}?limit=99999999999999999999`)
       .expect(200);
@@ -272,8 +273,9 @@ describe('GET /api/v1/range/:kind/:owner — the range route', () => {
   });
 
   it('an atHeight of digits past 2^53 is a 404 — no kept height carries that number', async () => {
-    // NODE_INTERFACE → avl-endpoint, the range route — "a height the node
-    // keeps no root of" is 404; the length of the digits is not the refusal.
+    // The length of the digits is not the refusal — an atHeight past the
+    // safe-integer range names no kept height and the ring misses
+    // (NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the range route").
     const res = await request(ctx.app)
       .get(`/api/v1/range/credit/${bytesToHex(ctx.owner.userId)}?atHeight=99999999999999999999`)
       .expect(404);

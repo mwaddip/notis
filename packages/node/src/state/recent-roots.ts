@@ -9,10 +9,11 @@ import type { AvlNode } from '@ergots/avltree';
  * node's lifetime"). Held by reference — the library never mutates a node, so
  * a kept root shares every unchanged node with the live tree at the tip and
  * holds beyond it only what later blocks replaced (NODE_INTERFACE → "The
- * count is the store's"). The `replaced` count a kept root carries is its
- * own block's; the ring's sum (→ `nodesHeldBeyondTree`) leaves the lowest
- * root's count out, since that root's replacement is held by no kept root
- * the ring records.
+ * count is the store's"). The `replaced` count a kept root carries is of
+ * the nodes its block replaced — nodes the root below this one holds, and
+ * this one does not. The ring's sum (→ `nodesHeldBeyondTree`) leaves the
+ * lowest root's count out: those nodes belong to the root below the lowest,
+ * which the ring does not keep.
  */
 export interface KeptRoot {
   root: AvlNode;
@@ -56,9 +57,10 @@ export interface KeptRoot {
  * above the fork point. Eviction takes the lowest. So the sum of `replaced`
  * over every kept height but the lowest is the count of nodes the ring
  * holds beyond the live tree at the tip (NODE_INTERFACE → "The count is the
- * store's"): each kept root above the lowest shares the tip's nodes except
- * the ones its block (or a later block) replaced, and those replacements
- * sum to the ring's count beyond the tip.
+ * store's"): a node a block replaced was in the root below that block's
+ * and is in no later root, so the blocks above the lowest kept height
+ * account for every node a kept root holds that the tip does not, and
+ * their counts sum to it.
  *
  * The capacity is `PROOF_WINDOW_BLOCKS` and the node bound is
  * `PROOF_WINDOW_NODES` (NODE_INTERFACE → Configuration). After a `record`

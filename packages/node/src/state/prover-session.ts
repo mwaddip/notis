@@ -32,7 +32,7 @@ export function proverSession(prover: PersistentBatchAVLProver): TreeSession {
  * holdings page records in a cycle of its own, which closes with
  * `generateProof()` inside one synchronous call and never enters a block's
  * proof (NODE_INTERFACE → "A proof at an older height restores a kept root";
- * → The block proof, "A proof route records in a cycle of its own").
+ * → The block proof → "A proof route records in a cycle of its own").
  *
  * Its answers are `proverSession`'s — the sentinels, fresh arrays, the library's
  * throw for a key at either bound. A `{ success: false }` is a tree that

@@ -142,11 +142,11 @@ function resolveHeight(
     return { ok: false };
   }
   // Decimal digits of any length are well-formed. One past the safe-integer
-  // range names no kept height (the heights the ring records come from the
-  // store's version row, a safe integer), so it falls through to the ring's
-  // miss and the 404 (NODE_INTERFACE → "A proof at an older height restores a
-  // kept root"; → the single-key route and the range route, "an atHeight of
-  // any length that names no kept height is the 404").
+  // range names no kept height — the heights the ring records come from the
+  // store's version row, a safe integer — so it falls through to the ring's
+  // miss and the 404 (NODE_INTERFACE → "A proof at an older height restores
+  // a kept root"; → AVL+ State Root → "avl-endpoint"; → AVL+ State Root →
+  // "avl-endpoint, the range route").
   const atHeight = Number(atHeightRaw);
   if (Number.isSafeInteger(atHeight) && atHeight === liveHeight) {
     return { ok: true, atHeight, stateRoot: liveVersion, kept: null };
@@ -241,9 +241,9 @@ export function registerProofEndpoint(app: Express, handle: AvlProverHandle): vo
     const key = new Uint8Array(Buffer.from(keyHex, 'hex'));
     // The two bounds — all 0x00, all 0xff — are not keys of the tree
     // (CONSENSUS_INTERFACE → The tree session, `isSentinel`), so the single-key
-    // route refuses them before it opens any cycle. Nothing is logged for the
-    // refusal (NODE_INTERFACE → avl-endpoint, "a key that is one of the
-    // tree's two sentinels" is a 400).
+    // route refuses them with a 400 before it opens any cycle; nothing is
+    // logged for the refusal (NODE_INTERFACE → AVL+ State Root →
+    // "avl-endpoint").
     if (isSentinel(key)) {
       res.status(400).json({ error: 'key is a sentinel of the tree' });
       return;
@@ -264,7 +264,7 @@ export function registerProofEndpoint(app: Express, handle: AvlProverHandle): vo
 /**
  * `GET /api/v1/range/:kind/:owner?atHeight=N&from=K&limit=L` — one page of
  * what a key holds of one kind, with its proof (NODE_INTERFACE → AVL+ State
- * Root, "avl-endpoint, the range route"). The kind, owner, from's shape,
+ * Root → "avl-endpoint, the range route"). The kind, owner, from's shape,
  * limit's shape and atHeight's shape are refused before the cycle opens;
  * `pageRange`'s `RangeError` for a `from` outside the kind's range throws
  * inside the cycle, under `withCycle`'s `finally`, and the route answers 400
@@ -312,10 +312,9 @@ export function registerRangeEndpoint(app: Express, handle: AvlProverHandle): vo
     if (limitRaw !== undefined) {
       // Decimal digits of any length are well-formed; `limit` is served at
       // `RANGE_PAGE_MAX` where the ask is above the cap, which includes every
-      // ask past the safe-integer range (NODE_INTERFACE → avl-endpoint, the
-      // range route, "`limit` is an integer from 1, served at
-      // `RANGE_PAGE_MAX` where it is above it or absent"). `0` and the empty
-      // string stay refused.
+      // ask past the safe-integer range. `0` and the empty string stay
+      // refused (NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the range
+      // route").
       if (typeof limitRaw !== 'string' || !/^\d+$/.test(limitRaw) || /^0+$/.test(limitRaw)) {
         res.status(400).json({ error: 'limit must be a positive integer' });
         return;
