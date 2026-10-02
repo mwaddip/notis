@@ -371,7 +371,10 @@ their slots whenever a read brings a new one (`HOUSE_STYLE → Motion`). The web
 `build-release.sh` refuses `api/v1/proof` and `api/v1/range` in its assets beside `nipopow/proof`. **The run is total**: a node's answer of
 any shape ends in a status, never a thrown run — and `NodeClient`'s paged reads refuse a page whose list is not an
 array or whose `next` is neither `null` nor a non-empty string with no lone surrogate (`PageError`, taken where a
-non-2xx's `ApiError` is), so no read loops on a malformed cursor.
+non-2xx's `ApiError` is), so no read loops on a malformed cursor. **A run ends**: `createFiguresVerifier` hands
+`proveFigures` a `fetch` that rejects a request asked more than 60 seconds after the run began (`RUN_DEADLINE_MS`;
+the clock is an option beside `prove`), which the tool reads as not served — the row reads *the node served no proof
+for …*, never no line.
 
 **The verified names** (`WEB_INTERFACE → The extension → "The verified names"`, `→ The identity display`, `→ The author
 window`, `→ The wallet window`): the extension proves every handle it shows, and every handle it sends to, through
@@ -486,8 +489,8 @@ devnet faucet's largest credit box listed under R), `credits-drop` and `karma-dr
 `/credits` or `/karma` page), `credits-drop-tipplus1` (the credits drop, and `/blocks/current` answered one above the
 node's own), `avl-flip` (one byte flipped in every `/api/v1/proof/` and `/api/v1/range/` proof): **21** a
 send's young change reads *… landed since* after a press and silence after K + 1 blocks; **24** R's post — the rep
-number the node's new `effective` with no press (the landing's run reads *… not checked yet*: its anchor predates the
-post), *… landed since* after a press, silence after K + 1; **22a** clay *the node lists … the chain does not hold*, the
+number the node's new `effective` with no press (the landing's run reads the bare *not checked yet*: its anchor
+predates the post, so the box the post spent is `undecided`), *… landed since* after a press, silence after K + 1; **22a** clay *the node lists … the chain does not hold*, the
 figure clay; **22b** the same line with the foreign box's own amount — the range R's boxes are read from does not
 hold another key's; **22c** clay *the chain holds … $NOTIS the node does not list*, beneath the empty state where the
 drop emptied the listing; **22d** clay *the chain holds … rep the node does not list*; **22e** the node that

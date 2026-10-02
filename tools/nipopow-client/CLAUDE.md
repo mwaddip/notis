@@ -69,12 +69,12 @@ anchor, profile, fetch)` reads **what the key holds, whole, by range**, and judg
 order the run's whole meaning rests on: the identity record at `suffixHead`; each ledger's range at `suffixHead` —
 `karma`, and `credit` where the listing's `credits` is not `null` (`null` is *not read*, never an empty listing);
 the same ranges at `tip`; then one `GET /blocks/current`. A range is `proveRange`'s (`src/holdings.ts`): page by
-page from `GET /api/v1/range/:kind/:owner`, each answer's `stateRoot` held to the header's before its proof is
-read, each page replayed by `consensus`' `holdingsPage` over `verifierSession` on the node's proof, and the next
-page's `from` read from the proof — never from the answer — so a range ends where the proof says it does.
+page from `GET /api/v1/range/:kind/:owner`, each answer's `stateRoot` read for shape and held to the header's
+before its proof is read, each page replayed by `consensus`' `holdingsPage` over `verifierSession` on the node's proof,
+and the next page's `from` read from the proof — never from the answer — so a range ends where the proof says it does.
 **Each ledger is read on its own** and carries its read's status — `holdings`: `read` · `unproven` · `no-proof` ·
-`not-read` — with the failed read's verdict (`holdingsVerdict`). A listed box is **`proven`** when the key holds it
-at both heights, in the ledger it was listed under, with the listing's value and (for a credit box) lock, both
+`stale` · `not-read` — with the failed read's verdict (`holdingsVerdict`). A listed box is **`proven`** when the key
+holds it at both heights, in the ledger it was listed under, with the listing's value and (for a credit box) lock, both
 fixed by the box id — the range a box is read from fixes its owner and its type, so a node that lists another
 key's real box, or the wrong ledger's, lists a box the range does not hold. Otherwise: **`young`** — held at `tip`,
 not at `suffixHead`; **`unchecked`** — not held at `tip` and `heightAfter` above `tip.height` (a block landed
@@ -90,10 +90,11 @@ held box's, an entry that is not an object with a 64-hex `boxId` and a decimal `
 listing named earlier in either ledger, and every listed box of a ledger whose read does not verify (a
 `stateRoot` other than the header's at `suffixHead`, a page that does not replay, an answer of another shape);
 **`no-proof`** — every listed box of a ledger whose read was not served, a height the node keeps no root of
-among it. **A `stateRoot` other than the header's at `tip` is a replaced tip, not a failed proof**: `proveRange`
-answers it `stale`, the ledger's `holdings` is `stale`, every listed box of it `unchecked`, and the run does
-not fail. The record is `proven` or `absent` at `suffixHead` — the same `null` the node values — or `unproven` /
-`no-proof` by the same rules; the valuation is `effectiveKarma(karma.proven, record, listing.karma.height,
+among it. **A well-formed `stateRoot` other than the header's at `tip` is a replaced tip, not a failed proof**:
+`proveRange` reads an answer's `stateRoot` for shape first — one that is missing or no root is `unproven` — and
+answers a well-formed other root `stale`, the ledger's `holdings` is `stale`, every listed box of it `unchecked`, and
+the run does not fail. The record is `proven` or `absent` at `suffixHead` — the same `null` the node values — or
+`unproven` / `no-proof` by the same rules; the valuation is `effectiveKarma(karma.proven, record, listing.karma.height,
 decayCfgFor(profile))`, the one implementation shared with the node, **only where that height lies from
 `tip.height` to `heightAfter`** (the lower bound alone where `heightAfter` is unread) — the height is the node's
 word — and `null`, the run failed, where it does not or is no block height.
