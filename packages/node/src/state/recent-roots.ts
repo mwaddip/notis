@@ -7,11 +7,12 @@ import type { AvlNode } from '@ergots/avltree';
  * checkpoint's `update` orphans
  * (NODE_INTERFACE → "AVL storage shares nodes across versions; a row is a
  * node's lifetime"). Held by reference — the library never mutates a node, so
- * a kept root shares every unchanged node with the live tree and holds beyond
- * it only what later blocks replaced. The `replaced` count a kept root
- * carries is its own block's; it names what the root below this one holds
- * beyond it, which is why the ring's sum (NODE_INTERFACE → "The count is
- * the store's") leaves the lowest root's count out.
+ * a kept root shares every unchanged node with the live tree at the tip and
+ * holds beyond it only what later blocks replaced (NODE_INTERFACE → "The
+ * count is the store's"). The `replaced` count a kept root carries is its
+ * own block's; the ring's sum (→ `nodesHeldBeyondTree`) leaves the lowest
+ * root's count out, since that root's replacement is held by no kept root
+ * the ring records.
  */
 export interface KeptRoot {
   root: AvlNode;
@@ -50,12 +51,14 @@ export interface KeptRoot {
  * `createAvlProver`'s construction seed recorded (genesis loads the store
  * at the empty tree's height 0 and the bootstrap writes at the same height);
  * the construction seed itself writes the one entry of an empty ring.
- * `drop` takes the highest — `revertBlock` runs on the tip and
- * `revertChainTo` walks downward from it. Eviction takes the lowest. So the
- * sum of `replaced` over every kept height but the lowest is the count of
- * nodes the ring holds beyond the oldest tree it reaches — the lowest
- * kept root is that tree, and what its own block replaced belongs to the
- * root the ring does not keep.
+ * `drop` takes the highest — `revertBlock` runs on the tip and `reorg`'s
+ * revert loop walks downward from it, calling `revertBlock` at each height
+ * above the fork point. Eviction takes the lowest. So the sum of `replaced`
+ * over every kept height but the lowest is the count of nodes the ring
+ * holds beyond the live tree at the tip (NODE_INTERFACE → "The count is the
+ * store's"): each kept root above the lowest shares the tip's nodes except
+ * the ones its block (or a later block) replaced, and those replacements
+ * sum to the ring's count beyond the tip.
  *
  * The capacity is `PROOF_WINDOW_BLOCKS` and the node bound is
  * `PROOF_WINDOW_NODES` (NODE_INTERFACE → Configuration). After a `record`
@@ -115,7 +118,7 @@ export class RecentRoots {
 
   /**
    * The sum of `replaced` over every kept height but the lowest — the count
-   * of nodes the ring holds beyond the oldest tree it reaches
+   * of nodes the ring holds beyond the live tree at the tip
    * (NODE_INTERFACE → "The count is the store's"). Empty and single-root
    * rings answer `0`.
    */
