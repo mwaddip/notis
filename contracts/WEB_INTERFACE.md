@@ -479,9 +479,6 @@ every proven box is real and the key's, and a node that withholds a box from its
 clay on a run it answers the anchor's own height to and proves the tip's range under, and muted on every other —
 *not checked yet*, or *the node served no proof for …* where it serves none.
 
-> ⚠ **AHEAD OF CODE (2026-10-02, N4 PR A — `nipopow-client`, `web`)** — a run has no deadline; and a range answer at
-> `tip` whose `stateRoot` is missing or is no root reads `stale`, where an answer of another shape is `unproven`.
-
 **The verified names.** The extension proves every handle it shows, and every handle it sends to, against the state the
 verified chain committed — the figures' anchor, their proofs and their order. **A check** is `proveName` of
 `@dagsocial/nipopow-client` over a claim: a **label** — a key and the name a row carries beside it — or a **typed
