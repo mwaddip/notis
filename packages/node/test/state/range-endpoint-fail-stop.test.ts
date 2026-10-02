@@ -37,9 +37,6 @@ describe('range route — the fail-stop under a tree that contradicts itself', (
     ], 'test');
     checkpointProver(handle, 1);
 
-    // Record the kept root for height 1 so the route resolves against it.
-    handle.recentRoots.record(1, handle.prover.prover.root, handle.prover.prover.height);
-
     // Save the live root so we can assert it is restored across the throw.
     const liveDigestBefore = bytesToHex(handle.prover.digest()!);
 

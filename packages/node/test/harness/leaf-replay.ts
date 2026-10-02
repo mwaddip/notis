@@ -56,6 +56,10 @@ type StepVerifier = Pick<
  * wrapper's — the plain `BatchAVLVerifier` has no such method.
  */
 export function replayAgainst(verifier: StepVerifier, { header, body, ctx }: Omit<LeafBlock, 'proof' | 'parentRoot'>): LeafVerdict {
+  // `applyBlock` reads the header's height and `validatorId` and the body,
+  // and no signature (CONSENSUS_INTERFACE → Applying a block): the block
+  // handed to it carries a placeholder, as the producer's speculative run's
+  // does.
   const block: OrderingBlock = { header, utxoTxTree: body, validatorSignature: new Uint8Array(64) };
   const view = treeStateView(verifierSession(verifier));
   let signatures: number;
@@ -73,6 +77,8 @@ export function replayAgainst(verifier: StepVerifier, { header, body, ctx }: Omi
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
 
+  // Once the writes are derived and before they are performed
+  // (CONSENSUS_INTERFACE → The block's cost), named as the node names it.
   const overBudget = checkBlockCost({ signatures, lookups: view.lookupCount(), writes: writes.length });
   if (overBudget !== null) return { ok: false, reason: `Rejected block height=${header.height}: ${overBudget}` };
 

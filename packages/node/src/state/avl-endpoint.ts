@@ -249,10 +249,6 @@ export function registerProofEndpoint(app: Express, handle: AvlProverHandle): vo
     try {
       res.json(proofAnswer(handle, keyHex, key, resolved));
     } catch (err) {
-      // The single-key route reads through the inner prover directly — it
-      // does not drive the tree view, so no `TreeInconsistencyError` reaches
-      // here. The range route's catch has that arm because `holdingsPage`
-      // reads through the tree view (NODE_INTERFACE → AVL+ State Root).
       console.error('Proof endpoint error:', err);
       res.status(500).json({ error: 'internal error' });
     }
