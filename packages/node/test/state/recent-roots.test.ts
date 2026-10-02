@@ -32,27 +32,25 @@ function labelsOf(nodes: Set<AvlNode>): Set<string> {
 }
 
 /**
- * For two roots, the count of objects the first reaches that the second does
- * not whose label no node of the second carries — a node the block that
- * produced the second truly orphaned — and the count that is kept as a
- * different object of the second (a node the block rebuilt to the same
- * label).
+ * For two roots, the count of objects the first reaches that the second
+ * does not whose label no node of the second carries — a node the block
+ * that produced the second truly orphaned (NODE_INTERFACE → "The count is
+ * the store's"). Both callers read `labelAbsent` alone, so the helper
+ * answers only that count.
  */
-function classifyOrphans(before: AvlNode, after: AvlNode): { labelAbsent: number; labelRebuiltSame: number } {
+function classifyOrphans(before: AvlNode, after: AvlNode): { labelAbsent: number } {
   const beforeNodes = new Set<AvlNode>();
   walkTree(before, beforeNodes);
   const afterNodes = new Set<AvlNode>();
   walkTree(after, afterNodes);
   const afterLabels = labelsOf(afterNodes);
   let labelAbsent = 0;
-  let labelRebuiltSame = 0;
   for (const n of beforeNodes) {
     if (afterNodes.has(n)) continue; // shared object identity
     const lab = bytesToHex(label(n));
-    if (afterLabels.has(lab)) labelRebuiltSame++;
-    else labelAbsent++;
+    if (!afterLabels.has(lab)) labelAbsent++;
   }
-  return { labelAbsent, labelRebuiltSame };
+  return { labelAbsent };
 }
 
 // ---------------------------------------------------------------------------
