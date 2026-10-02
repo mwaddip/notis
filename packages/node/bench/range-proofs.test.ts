@@ -6,7 +6,13 @@ import { randomBytes } from 'node:crypto';
 import Database from 'better-sqlite3';
 import express from 'express';
 import request from 'supertest';
-import { BatchAVLProver, BatchAVLVerifier, PersistentBatchAVLProver, label } from '@ergots/avltree';
+import {
+  BatchAVLProver,
+  BatchAVLVerifier,
+  PersistentBatchAVLProver,
+  StrictBatchAVLVerifier,
+  label,
+} from '@ergots/avltree';
 import type { VersionedAVLStorage } from '@ergots/avltree';
 import {
   TREE_KEY_LENGTH,
@@ -14,6 +20,7 @@ import {
   boxRecordBytes,
   bytesToHex,
   creditOfKey,
+  equalBytes,
   hexToBytes,
 } from '@dagsocial/types';
 import type { CandidateOf, CreditBox } from '@dagsocial/types';
@@ -38,31 +45,36 @@ import { AVL_SCHEMA } from '../src/store/db.js';
 /**
  * The two proof routes and the kept roots over a 10^6-leaf tree
  * (NODE_INTERFACE → AVL+ State Root; → "A proof at an older height restores
- * a kept root"). The seed uses this package's own write path (`performTreeWrites`,
- * `src/state/avl-prover.ts`), each "block" records lookups and performs writes
- * through the same functions block application calls, each checkpoint runs
- * `checkpointProver` and `recentRoots.record` as `applyOrderingBlockVerdict`'s
- * success path does (`src/services/block-apply.ts`), and both routes run on
- * an Express app that registers `registerProofEndpoint` and
- * `registerRangeEndpoint` directly over the handle. The suite excludes
- * `bench/**`; this file is `vitest.bench.config.ts`'s alone.
+ * a kept root"). The seed uses this package's own write path, each block
+ * records lookups and performs writes through the same functions block
+ * application calls, each checkpoint runs `checkpointProver` and
+ * `recentRoots.record` as the funnel's success path does, and both routes
+ * run on an Express app over `registerProofEndpoint` and
+ * `registerRangeEndpoint`. The suite excludes `bench/**`; this file is
+ * `vitest.bench.config.ts`'s alone.
+ *
+ * **A block is a block** (CONSENSUS_INTERFACE → Cost's replay table first
+ * row): `BLOCK_SENDS` one-signer credit sends, each three recorded lookups
+ * — the spent box, its owner-index entry, one other live box — two
+ * `Remove`s and four `Insert`s. The 9 468 lookups go through
+ * `prover.performLookupWithNeighbors`; the 18 936 writes are built as
+ * `treeWritesOf` builds them (CONSENSUS_INTERFACE → The tree writes) and
+ * performed through `performTreeWrites`: every `Remove` first in bytewise
+ * key order, every `Insert` after in bytewise key order. The pool of
+ * spendable boxes starts with the small owners' and grows with every block;
+ * the large owner's boxes are never touched, so its holdings pages read the
+ * same at every height.
  */
 
 const TREE_CFG = { keyLength: TREE_KEY_LENGTH, valueLengthOpt: null };
 
-// A credit transfer's counts (CONSENSUS_INTERFACE → Cost, replay table first row).
-const BLOCK_LOOKUPS = 9468;
-const BLOCK_WRITES = 18936;
-const SMALL_FACTOR = 100;
-const SMALL_LOOKUPS = Math.floor(BLOCK_LOOKUPS / SMALL_FACTOR);
-const SMALL_WRITES = Math.floor(BLOCK_WRITES / SMALL_FACTOR);
+// A credit transfer's counts (CONSENSUS_INTERFACE → Cost's replay table).
+const LOOKUPS_PER_SEND = 3;
+const REMOVES_PER_SEND = 2;
+const INSERTS_PER_SEND = 4;
+const WRITES_PER_SEND = REMOVES_PER_SEND + INSERTS_PER_SEND;
 
-// The large owner's holding count (NODE_INTERFACE → "A page's `limit` is 256"):
-// testnet's miner key holds about this many credit boxes. The default seed
-// is `BENCH_SEED_LEAVES`-leaf (1 000 000 for the real run), with
-// `BENCH_LARGE_OWNER_BOXES` of them under one id; a short sanity run passes
-// smaller values through the environment, which the bench's config carries
-// into the worker.
+/** `BENCH_*` overrides let a sanity sub-run take the same code at smaller sizes. */
 function envOrDefault(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === '') return fallback;
@@ -74,6 +86,8 @@ function envOrDefault(name: string, fallback: number): number {
 const LARGE_OWNER_BOXES = envOrDefault('BENCH_LARGE_OWNER_BOXES', 21_700);
 const SEED_LEAVES = envOrDefault('BENCH_SEED_LEAVES', 1_000_000);
 const BLOCK_COUNT = envOrDefault('BENCH_BLOCK_COUNT', 70);
+const BLOCK_SENDS = envOrDefault('BENCH_BLOCK_SENDS', 3156);
+const SMALL_SENDS = envOrDefault('BENCH_SMALL_SENDS', 32);
 const RANGE_PAGE_COUNT = Math.ceil(LARGE_OWNER_BOXES / RANGE_PAGE_MAX);
 
 function nowMs(): number {
@@ -88,6 +102,15 @@ function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = sorted.length >> 1;
   return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+/** Bytewise order of two keys — the one `treeWritesOf`'s sort reads. */
+function compareBytes(a: Uint8Array, b: Uint8Array): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    if (a[i] !== b[i]) return a[i]! < b[i]! ? -1 : 1;
+  }
+  return a.length - b.length;
 }
 
 /** A 32-byte random owner id. */
@@ -107,7 +130,7 @@ function creditRecord(value: bigint, owner: Uint8Array, createdAtBlock: number):
   return boxRecordBytes(candidate, txId, 0);
 }
 
-/** Call `global.gc()` if available; the bench's config exposes it. */
+/** `global.gc()` runs twice to drive the mark-sweep through once; the config exposes it. */
 function forceGc(): void {
   if (typeof globalThis.gc === 'function') {
     globalThis.gc();
@@ -115,26 +138,71 @@ function forceGc(): void {
   }
 }
 
-/** Memory now, after a forced GC pass. */
-function heap(): { heapUsed: number; rss: number } {
+interface Mem {
+  heapUsed: number;
+  arrayBuffers: number;
+  rss: number;
+}
+
+/** Memory now, after a forced GC pass: V8's heap, every array buffer the handle holds (keys and values live here), rss. */
+function memNow(): Mem {
   forceGc();
   const u = process.memoryUsage();
-  return { heapUsed: u.heapUsed, rss: u.rss };
+  return { heapUsed: u.heapUsed, arrayBuffers: u.arrayBuffers, rss: u.rss };
 }
 
 /**
- * The seed's boxes — a large-owner block of `LARGE_OWNER_BOXES` credit boxes under one id, and the rest a handful each
- * under distinct ids. Returns the owners, their box ids, and the records so the subsequent block simulation can read
- * from a known set.
+ * A pool of live, spendable boxes — small owners' boxes seeded, plus every
+ * output box the blocks have created. The pool never holds the large owner's
+ * boxes, so its holdings pages read the same at every height.
  */
+class BoxPool {
+  private readonly ids: Uint8Array[] = [];
+  private readonly owners: Uint8Array[] = [];
+
+  add(boxId: Uint8Array, owner: Uint8Array): void {
+    this.ids.push(boxId);
+    this.owners.push(owner);
+  }
+
+  size(): number {
+    return this.ids.length;
+  }
+
+  boxId(i: number): Uint8Array {
+    return this.ids[i]!;
+  }
+
+  owner(i: number): Uint8Array {
+    return this.owners[i]!;
+  }
+
+  /** Remove the given indices in bulk (swap-and-pop). Caller passes any order; we sort descending internally. */
+  removeIndices(indices: readonly number[]): void {
+    const sorted = [...indices].sort((a, b) => b - a);
+    for (const idx of sorted) {
+      const last = this.ids.length - 1;
+      if (idx !== last) {
+        this.ids[idx] = this.ids[last]!;
+        this.owners[idx] = this.owners[last]!;
+      }
+      this.ids.pop();
+      this.owners.pop();
+    }
+  }
+}
+
 interface Seeded {
   largeOwner: Uint8Array;
   largeBoxIds: Uint8Array[];
-  smallOwners: Uint8Array[];
-  smallBoxIdsByOwner: Uint8Array[][];
 }
 
-function buildSeedWrites(): { writes: Array<{ tag: 'Insert'; key: Uint8Array; value: Uint8Array }>; seeded: Seeded } {
+/**
+ * The seed's writes and the handle for the pool and the large owner. Returns the writes to perform (every box's
+ * `boxKey` and its `creditOfKey` index entry), the large owner's id and the ids of her boxes (for the proof routes to
+ * read), and the pool filled with the small owners' boxes (never the large owner's).
+ */
+function buildSeedWrites(pool: BoxPool): { writes: Array<{ tag: 'Insert'; key: Uint8Array; value: Uint8Array }>; seeded: Seeded } {
   const writes: Array<{ tag: 'Insert'; key: Uint8Array; value: Uint8Array }> = [];
   const largeOwner = freshOwner();
   const largeBoxIds: Uint8Array[] = [];
@@ -145,31 +213,27 @@ function buildSeedWrites(): { writes: Array<{ tag: 'Insert'; key: Uint8Array; va
     writes.push({ tag: 'Insert', key: boxKey(boxId), value: creditRecord(value, largeOwner, 1) });
     writes.push({ tag: 'Insert', key: creditOfKey(largeOwner, boxId), value: new Uint8Array([0x86]) });
   }
-  const smallOwners: Uint8Array[] = [];
-  const smallBoxIdsByOwner: Uint8Array[][] = [];
-  let placed = LARGE_OWNER_BOXES * 2; // the large owner's leaves (box + index)
-  // Fill the rest with small owners holding a handful of boxes each. One owner takes 4 leaves (2 boxes × box+index).
+  let placed = LARGE_OWNER_BOXES * 2;
   while (placed < SEED_LEAVES) {
     const owner = freshOwner();
-    smallOwners.push(owner);
-    const ids: Uint8Array[] = [];
+    // Each small owner carries two boxes — four leaves (two box records, two index entries).
     for (let j = 0; j < 2 && placed < SEED_LEAVES; j++) {
       const boxId = freshBoxId();
-      ids.push(boxId);
+      pool.add(boxId, owner);
       const value = BigInt(1_000 + j);
       writes.push({ tag: 'Insert', key: boxKey(boxId), value: creditRecord(value, owner, 1) });
       writes.push({ tag: 'Insert', key: creditOfKey(owner, boxId), value: new Uint8Array([0x86]) });
       placed += 2;
     }
-    smallBoxIdsByOwner.push(ids);
   }
-  return { writes, seeded: { largeOwner, largeBoxIds, smallOwners, smallBoxIdsByOwner } };
+  return { writes, seeded: { largeOwner, largeBoxIds } };
 }
 
 /**
- * The handle this bench owns: a fresh `PersistentBatchAVLProver` over a `SqliteAvlStorage` on a `mkdtemp` SQLite file,
- * a `RecentRoots(capacity)`, assembled by hand (not through `createAvlProver`'s singleton: that reads `getDb()`'s
- * global). The sentinel-key height is seeded at 0, as the real constructor does.
+ * The handle the bench owns: a `PersistentBatchAVLProver` over a `SqliteAvlStorage` on a `mkdtemp` SQLite file and a
+ * `RecentRoots(capacity, Number.MAX_SAFE_INTEGER)` — the capacity bound alone, so the measuring ring tracks every
+ * block's root. A second `RecentRoots(capacity, maxNodes)` the caller keeps separately tracks the same roots under
+ * the default count bound (NODE_INTERFACE → Configuration).
  */
 function makeHandle(dbPath: string, capacity: number): { handle: AvlProverHandle } {
   const db = new Database(dbPath);
@@ -179,13 +243,11 @@ function makeHandle(dbPath: string, capacity: number): { handle: AvlProverHandle
   const prover = new PersistentBatchAVLProver(inner, storage as VersionedAVLStorage, [
     [HEIGHT_SENTINEL, encodeHeight(0)],
   ]);
-  // The bench measures what the count bound would reach: `Number.MAX_SAFE_INTEGER`
-  // leaves `capacity` as the only cap on the ring.
   const recentRoots = new RecentRoots(capacity, Number.MAX_SAFE_INTEGER);
   return { handle: { prover, storage, recentRoots } };
 }
 
-/** The Express app that registers both routes over `handle` and nothing else — `src/state/avl-endpoint.ts`. */
+/** The Express app registering both routes over `handle` — `src/state/avl-endpoint.ts`. */
 function makeApp(handle: AvlProverHandle): express.Express {
   const app = express();
   registerProofEndpoint(app, handle);
@@ -193,93 +255,138 @@ function makeApp(handle: AvlProverHandle): express.Express {
   return app;
 }
 
-/**
- * Apply the lookups and writes of one "block" at `height` to `handle` through the same functions block application
- * calls, then checkpoint and record the kept root:
- *   - `prover.performLookupWithNeighbors(key)` — the recording session's inner call (src/state/prover-session.ts → recordingSession, line 42)
- *   - `performTreeWrites(prover, height, writes, 'block-apply-sim')` — src/state/avl-prover.ts, line 167
- *   - `checkpointProver(handle, height)` — src/state/avl-prover.ts, line 188
- *   - `handle.recentRoots.record(height, prover.prover.root, prover.prover.height)` — src/services/block-apply.ts, line 305
- */
-function applyBlockLike(
-  handle: AvlProverHandle,
-  height: number,
-  seeded: Seeded,
-  shape: 'full' | 'small',
-): void {
-  const lookupCount = shape === 'full' ? BLOCK_LOOKUPS : SMALL_LOOKUPS;
-  const writeCount = shape === 'full' ? BLOCK_WRITES : SMALL_WRITES;
-  // Lookups: pick keys from the large owner's and other owners' leaves cyclically. Each real credit transfer does
-  // three lookups (CONSENSUS_INTERFACE → Cost); the keys are read-only, so cycling through them matches the recorded-
-  // read shape without consuming any leaf we need for the writes.
-  const inner = handle.prover.prover;
-  for (let i = 0; i < lookupCount; i++) {
-    const pick = (height * 7919 + i * 1301) % seeded.largeBoxIds.length;
-    const key = i % 2 === 0 ? boxKey(seeded.largeBoxIds[pick]!) : creditOfKey(seeded.largeOwner, seeded.largeBoxIds[pick]!);
-    inner.performLookupWithNeighbors(key);
-  }
-  // Writes: an equal number of Removes and Inserts over fresh ids under a per-block throw-away owner, so the leaf set
-  // the routes read from (the large owner's and the small owners') stays stable. A real block mixes removes and
-  // inserts on existing leaves; the measurement is of the proof's and the kept root's cost, which depends on the
-  // *number* of writes, not on which keys they touch — a run that modified the large owner's leaves would also change
-  // what the pages at later heights answer, and the measurement would be of a different thing per height.
-  const owner = freshOwner();
-  const inserts = writeCount >> 1;
-  const removes = writeCount - inserts;
-  // First phase: insert `inserts` new keys that stay in the tree.
-  const firstWrites: TreeWrite[] = [];
-  for (let i = 0; i < inserts; i++) {
-    const boxId = freshBoxId();
-    firstWrites.push({ tag: 'Insert', key: boxKey(boxId), value: creditRecord(BigInt(i), owner, height) });
-  }
-  // Second phase: insert `removes` keys that we will remove in the next step, so each write counts once and the net
-  // keys added per block are just `inserts`. A real block applies `treeWritesOf` which already orders
-  // Remove-before-Insert; we drive the ops directly so we can keep the total write count at `writeCount` while the
-  // leaf set the routes read from (the large owner's and the small owners') stays stable.
-  const secondInserts: TreeWrite[] = [];
-  const secondRemoves: TreeWrite[] = [];
-  for (let i = 0; i < removes; i++) {
-    const boxId = freshBoxId();
-    secondInserts.push({ tag: 'Insert', key: boxKey(boxId), value: creditRecord(BigInt(i + inserts), owner, height) });
-    secondRemoves.push({ tag: 'Remove', key: boxKey(boxId) });
-  }
-  performTreeWrites(handle.prover, height, [...firstWrites, ...secondInserts], 'block-apply-sim-inserts');
-  performTreeWrites(handle.prover, height, secondRemoves, 'block-apply-sim-removes');
-  // Checkpoint the block (src/state/avl-prover.ts:188) and record the kept root (src/services/block-apply.ts:305)
-  // with the store's count of the nodes the checkpoint orphaned.
-  checkpointProver(handle, height);
-  handle.recentRoots.record(
-    height,
-    handle.prover.prover.root,
-    handle.prover.prover.height,
-    handle.storage.lastRemovedCount(),
-  );
+interface BlockPicks {
+  spent: number[];
+  other: number[];
+  outIds: Uint8Array[];
+  outOwners: Uint8Array[];
+  outRecords: Uint8Array[];
 }
 
 /**
- * The seed through `performTreeWrites` in large batches, with one `checkpointProver` at the end so the store holds
- * one version at height 0. The brief says `few large checkpoints`: at this scale, one batch per 100 000 operations
- * keeps the proof cycle's own working set bounded.
+ * Pick the block's spent indices, other-lookup indices, output ids, output owners and output records. Spent indices
+ * are distinct and come from the pool through a per-block cursor; each other-lookup is picked from the pool's unspent
+ * remainder, so the recorded lookup is of a live key. Output ids are random; each output's owner is either the
+ * spender's or the paid party's — never the large owner's.
  */
+function buildBlockPicks(pool: BoxPool, sends: number, height: number): BlockPicks {
+  if (pool.size() < sends * 2) {
+    throw new Error(`buildBlockPicks: pool holds ${pool.size()} boxes; needs ${sends * 2} unmarked for a block of ${sends} sends`);
+  }
+  const spentSet = new Set<number>();
+  let cursor = (height * 7919) % pool.size();
+  const nextUnspent = (): number => {
+    while (spentSet.has(cursor)) cursor = (cursor + 1) % pool.size();
+    const chosen = cursor;
+    cursor = (cursor + 1) % pool.size();
+    return chosen;
+  };
+  const spent: number[] = [];
+  const other: number[] = [];
+  for (let t = 0; t < sends; t++) {
+    const sp = nextUnspent();
+    spentSet.add(sp);
+    spent.push(sp);
+    // The other-lookup picks another currently-unspent index. We mark it as spent for the pool's cursor so later
+    // sends in this block do not spend it (that would overlap writes: the key would be removed by this block and the
+    // lookup of it would still be live). We never actually remove it from the pool.
+    const ot = nextUnspent();
+    spentSet.add(ot);
+    other.push(ot);
+  }
+  const outIds: Uint8Array[] = [];
+  const outOwners: Uint8Array[] = [];
+  const outRecords: Uint8Array[] = [];
+  for (let t = 0; t < sends; t++) {
+    // One output back to the spender, one to the other-lookup's owner — neither is the large owner's by construction.
+    for (let o = 0; o < 2; o++) {
+      const outOwner = o === 0 ? pool.owner(spent[t]!) : pool.owner(other[t]!);
+      const outId = freshBoxId();
+      outIds.push(outId);
+      outOwners.push(outOwner);
+      outRecords.push(creditRecord(BigInt(100 + t + o), outOwner, height));
+    }
+  }
+  return { spent, other, outIds, outOwners, outRecords };
+}
+
+/**
+ * Apply one block at `height`. The lookups go through `prover.performLookupWithNeighbors`, the writes through
+ * `performTreeWrites` ordered as `treeWritesOf` orders them — every `Remove` first in bytewise key order, every
+ * `Insert` after in bytewise key order; no key is written twice. `checkpointProver` closes the block and
+ * `handle.recentRoots.record` holds its root beside the store's count of the nodes the checkpoint orphaned
+ * (`storage.lastRemovedCount`). The shadow ring records the same (height, root, treeHeight, replaced).
+ */
+function applyBlockLike(
+  handle: AvlProverHandle,
+  boundedRing: RecentRoots,
+  pool: BoxPool,
+  height: number,
+  sends: number,
+): { lookups: number; writes: number; replaced: number } {
+  const picks = buildBlockPicks(pool, sends, height);
+  const inner = handle.prover.prover;
+
+  // Lookups: three per send — spent box, its index entry, one other live box.
+  for (let t = 0; t < sends; t++) {
+    const spentId = pool.boxId(picks.spent[t]!);
+    const spentOwner = pool.owner(picks.spent[t]!);
+    const otherId = pool.boxId(picks.other[t]!);
+    inner.performLookupWithNeighbors(boxKey(spentId));
+    inner.performLookupWithNeighbors(creditOfKey(spentOwner, spentId));
+    inner.performLookupWithNeighbors(boxKey(otherId));
+  }
+
+  // Writes. Per send: two Removes (box key, index key) and four Inserts (two new boxes × two keys each). Build then
+  // sort by tag then bytewise key — the order `treeWritesOf` answers for a block's writes.
+  const removes: TreeWrite[] = [];
+  for (let t = 0; t < sends; t++) {
+    const spentId = pool.boxId(picks.spent[t]!);
+    const spentOwner = pool.owner(picks.spent[t]!);
+    removes.push({ tag: 'Remove', key: boxKey(spentId) });
+    removes.push({ tag: 'Remove', key: creditOfKey(spentOwner, spentId) });
+  }
+  const inserts: TreeWrite[] = [];
+  for (let i = 0; i < picks.outIds.length; i++) {
+    const outId = picks.outIds[i]!;
+    const outOwner = picks.outOwners[i]!;
+    inserts.push({ tag: 'Insert', key: boxKey(outId), value: picks.outRecords[i]! });
+    inserts.push({ tag: 'Insert', key: creditOfKey(outOwner, outId), value: new Uint8Array([0x86]) });
+  }
+  removes.sort((a, b) => compareBytes(a.key, b.key));
+  inserts.sort((a, b) => compareBytes(a.key, b.key));
+  performTreeWrites(handle.prover, height, [...removes, ...inserts], 'bench-block');
+
+  // The block's checkpoint — same calls the funnel's success path makes.
+  checkpointProver(handle, height);
+  const replaced = handle.storage.lastRemovedCount();
+  handle.recentRoots.record(height, handle.prover.prover.root, handle.prover.prover.height, replaced);
+  boundedRing.record(height, handle.prover.prover.root, handle.prover.prover.height, replaced);
+
+  // Pool: drop every spent, add every new output.
+  pool.removeIndices(picks.spent);
+  for (let i = 0; i < picks.outIds.length; i++) {
+    pool.add(picks.outIds[i]!, picks.outOwners[i]!);
+  }
+
+  return { lookups: sends * LOOKUPS_PER_SEND, writes: sends * WRITES_PER_SEND, replaced };
+}
+
+/** The seed through `performTreeWrites` in 100 000-write chunks, with one `generateProofAndUpdateStorage` at height 0. */
 function performSeed(handle: AvlProverHandle, seedWrites: Array<{ tag: 'Insert'; key: Uint8Array; value: Uint8Array }>): void {
   const CHUNK = 100_000;
   for (let i = 0; i < seedWrites.length; i += CHUNK) {
     performTreeWrites(handle.prover, 0, seedWrites.slice(i, i + CHUNK), 'bench-seed');
-    // Rebase the proof cycle so the working set does not grow without bound while we seed. This is the proof-cycle
-    // rebase that `generateProof()` performs, as `BatchAVLProver.generateProof()` describes (@ergots/avltree). It does
-    // not touch storage.
+    // Rebase the proof cycle so the proof-cycle's working set stays bounded while we seed.
     handle.prover.prover.generateProof();
   }
-  // The constructor wrote an empty-tree version at height 0; the bootstrap replaces it with the seed's version at the
-  // same height (NODE_INTERFACE → AVL+ State Root; `bootstrapAvlProver` in src/state/avl-prover.ts does this verbatim).
+  // `bootstrapAvlProver`'s shape: the constructor wrote an empty-tree version at height 0; the bootstrap replaces
+  // that row with the seed's version at the same height.
   handle.storage.deleteVersionAtHeight(0);
   handle.prover.generateProofAndUpdateStorage([[HEIGHT_SENTINEL, encodeHeight(0)]]);
-  // Production's `createAvlProver` records the seed's root in the ring. The bench leaves it out so the ring size the
-  // snapshots record is the number of kept BLOCK roots — the quantity the brief asks for (NODE_INTERFACE → "A proof
-  // at an older height restores a kept root"); the measurement is of the delta from the seed baseline.
 }
 
-/** Call the single-key proof route for `key` at `atHeight`, verify the proof answers under the stated root, return size + ms. */
+/** The single-key proof route — 20 calls per cell, each verified under the answered root. */
 async function callProofOnce(app: express.Express, key: Uint8Array, atHeight: number | 'tip'): Promise<{ bytes: number; ms: number; proofBytes: number }> {
   const path = atHeight === 'tip'
     ? `/api/v1/proof/${bytesToHex(key)}`
@@ -289,7 +396,6 @@ async function callProofOnce(app: express.Express, key: Uint8Array, atHeight: nu
   const ms = nowMs() - t0;
   const bytes = JSON.stringify(res.body).length;
   const proofBytes = Buffer.from(res.body.proof as string, 'base64').length;
-  // Verify against the answered root.
   const rootBytes = hexToBytes(res.body.stateRoot as string);
   const proof = Uint8Array.from(Buffer.from(res.body.proof as string, 'base64'));
   const verifier = new BatchAVLVerifier(rootBytes, proof, TREE_CFG);
@@ -300,7 +406,7 @@ async function callProofOnce(app: express.Express, key: Uint8Array, atHeight: nu
   return { bytes, ms, proofBytes };
 }
 
-/** Call the 256-entry range route for `owner` at `atHeight`, verify the proof answers under the stated root, return size + ms. */
+/** The 256-entry range route — a page's lookups replayed through `holdingsPage` over `verifierSession`. */
 async function callRangeOnce(
   app: express.Express,
   owner: Uint8Array,
@@ -318,7 +424,6 @@ async function callRangeOnce(
   const ms = nowMs() - t0;
   const bytes = JSON.stringify(res.body).length;
   const proofBytes = Buffer.from(res.body.proof as string, 'base64').length;
-  // Verify by replaying `holdingsPage` over `verifierSession` on the proof.
   const rootBytes = hexToBytes(res.body.stateRoot as string);
   const proof = Uint8Array.from(Buffer.from(res.body.proof as string, 'base64'));
   const verifier = new BatchAVLVerifier(rootBytes, proof, TREE_CFG);
@@ -327,98 +432,220 @@ async function callRangeOnce(
   return { bytes, ms, proofBytes, next: page.next };
 }
 
+/** Record block N+1's own operations as the bench performs them, then replay the proof the checkpoint answers. */
+interface RecordedBlock {
+  lookups: Uint8Array[];
+  removes: Uint8Array[];
+  inserts: Array<{ key: Uint8Array; value: Uint8Array }>;
+}
+
+/** The block the bench applies, with its lookups and writes captured in order. Used for the strict-replay check. */
+function applyRecordedBlock(
+  handle: AvlProverHandle,
+  boundedRing: RecentRoots,
+  pool: BoxPool,
+  height: number,
+  sends: number,
+): { recorded: RecordedBlock; proof: Uint8Array; digestBefore: Uint8Array; digestAfter: Uint8Array } {
+  const digestBefore = handle.prover.digest()!;
+  const picks = buildBlockPicks(pool, sends, height);
+  const inner = handle.prover.prover;
+
+  const recordedLookups: Uint8Array[] = [];
+  for (let t = 0; t < sends; t++) {
+    const spentId = pool.boxId(picks.spent[t]!);
+    const spentOwner = pool.owner(picks.spent[t]!);
+    const otherId = pool.boxId(picks.other[t]!);
+    const k1 = boxKey(spentId);
+    const k2 = creditOfKey(spentOwner, spentId);
+    const k3 = boxKey(otherId);
+    inner.performLookupWithNeighbors(k1);
+    inner.performLookupWithNeighbors(k2);
+    inner.performLookupWithNeighbors(k3);
+    recordedLookups.push(k1, k2, k3);
+  }
+
+  const removes: TreeWrite[] = [];
+  for (let t = 0; t < sends; t++) {
+    const spentId = pool.boxId(picks.spent[t]!);
+    const spentOwner = pool.owner(picks.spent[t]!);
+    removes.push({ tag: 'Remove', key: boxKey(spentId) });
+    removes.push({ tag: 'Remove', key: creditOfKey(spentOwner, spentId) });
+  }
+  const inserts: TreeWrite[] = [];
+  for (let i = 0; i < picks.outIds.length; i++) {
+    const outId = picks.outIds[i]!;
+    const outOwner = picks.outOwners[i]!;
+    inserts.push({ tag: 'Insert', key: boxKey(outId), value: picks.outRecords[i]! });
+    inserts.push({ tag: 'Insert', key: creditOfKey(outOwner, outId), value: new Uint8Array([0x86]) });
+  }
+  removes.sort((a, b) => compareBytes(a.key, b.key));
+  inserts.sort((a, b) => compareBytes(a.key, b.key));
+  const ordered: TreeWrite[] = [...removes, ...inserts];
+  performTreeWrites(handle.prover, height, ordered, 'bench-block');
+
+  const proof = checkpointProver(handle, height);
+  const digestAfter = handle.prover.digest()!;
+  const replaced = handle.storage.lastRemovedCount();
+  handle.recentRoots.record(height, handle.prover.prover.root, handle.prover.prover.height, replaced);
+  boundedRing.record(height, handle.prover.prover.root, handle.prover.prover.height, replaced);
+  pool.removeIndices(picks.spent);
+  for (let i = 0; i < picks.outIds.length; i++) {
+    pool.add(picks.outIds[i]!, picks.outOwners[i]!);
+  }
+
+  // Capture the operations in the order the strict replay will perform them: all recorded lookups first, then every
+  // Remove in bytewise order, then every Insert in bytewise order — the same order the prover executed.
+  const recorded: RecordedBlock = {
+    lookups: recordedLookups,
+    removes: removes.map((r) => r.key),
+    inserts: inserts.map((w) => {
+      if (w.tag !== 'Insert') throw new Error('non-Insert in insert list');
+      return { key: w.key, value: w.value };
+    }),
+  };
+  return { recorded, proof, digestBefore, digestAfter };
+}
+
+/**
+ * Strict-replay check: the block's proof carries exactly the operations the block performed, no route's recorded
+ * lookups among them. Anchors at the block's parent digest, performs each operation in the order the prover did,
+ * requires `isFullyConsumed()` and the digest the prover reached.
+ */
+function strictReplayCarriesBlockOnly(
+  recorded: RecordedBlock,
+  proof: Uint8Array,
+  digestBefore: Uint8Array,
+  digestAfter: Uint8Array,
+): string {
+  const verifier = new StrictBatchAVLVerifier(digestBefore, proof, TREE_CFG);
+  if (verifier.digest() === null) {
+    throw new Error(`strictReplayCarriesBlockOnly: proof does not anchor at the parent digest: ${verifier.getLastFailReason()}`);
+  }
+  for (const key of recorded.lookups) {
+    const r = verifier.performOneOperation({ tag: 'Lookup', key });
+    if (!r.success) throw new Error(`lookup refused by proof: ${verifier.getLastFailReason()}`);
+  }
+  for (const key of recorded.removes) {
+    const r = verifier.performOneOperation({ tag: 'Remove', key });
+    if (!r.success) throw new Error(`remove refused by proof: ${verifier.getLastFailReason()}`);
+  }
+  for (const { key, value } of recorded.inserts) {
+    const r = verifier.performOneOperation({ tag: 'Insert', key, value });
+    if (!r.success) throw new Error(`insert refused by proof: ${verifier.getLastFailReason()}`);
+  }
+  const reached = verifier.digest();
+  if (reached === null) throw new Error('verifier answered null for its digest');
+  if (!equalBytes(reached, digestAfter)) {
+    throw new Error(`strict replay reached ${bytesToHex(reached)}, prover reached ${bytesToHex(digestAfter)}`);
+  }
+  if (!verifier.isFullyConsumed()) {
+    throw new Error('strict replay did not fully consume the proof — the proof carries operations the block did not perform');
+  }
+  return bytesToHex(reached);
+}
+
 describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', () => {
-  it('seeds, applies 70 full-sized blocks, times both routes, measures a store resolve', async () => {
+  it('seeds, applies blocks of real send shape, times both routes, measures the kept roots by difference and a store resolve', async () => {
     const startWall = Date.now();
     const scratch = mkdtempSync(join(tmpdir(), 'notis-bench-'));
     const dbPath = join(scratch, 'bench.db');
 
     try {
       // -----------------------------------------------------------------
-      // Seed the 10^6-leaf tree.
+      // Seed the tree.
       // -----------------------------------------------------------------
       console.log(`\n==== seed: a tree of ${SEED_LEAVES} leaves — the large owner holds ${LARGE_OWNER_BOXES} credit boxes ====`);
-      const beforeSeed = heap();
-      console.log(`heap before seed: heapUsed=${mb(beforeSeed.heapUsed)} MB, rss=${mb(beforeSeed.rss)} MB`);
+      const beforeSeed = memNow();
+      console.log(`memory before seed: heapUsed=${mb(beforeSeed.heapUsed)} MB, arrayBuffers=${mb(beforeSeed.arrayBuffers)} MB, rss=${mb(beforeSeed.rss)} MB`);
       const { handle } = makeHandle(dbPath, 64);
+      // The measuring ring is bounded by count alone (`capacity = 64`, `maxNodes = MAX_SAFE_INTEGER`). The default
+      // bound is also tracked, as a second ring with `maxNodes = 250_000` — references only, no second tree. The two
+      // record the same roots and counts; the default bound evicts earlier when the sum of counts rises.
+      const boundedRing = new RecentRoots(64, 250_000);
+      const pool = new BoxPool();
       const seedT0 = nowMs();
-      const { writes: seedWrites, seeded } = buildSeedWrites();
-      console.log(`seed writes: ${seedWrites.length} (box + index entries over ${LARGE_OWNER_BOXES + seeded.smallOwners.length} owners)`);
+      const { writes: seedWrites, seeded } = buildSeedWrites(pool);
+      console.log(`seed writes: ${seedWrites.length} (${LARGE_OWNER_BOXES} large-owner boxes + ${pool.size()} pool boxes, each paired with its creditOfKey entry)`);
       performSeed(handle, seedWrites);
       const seedMs = nowMs() - seedT0;
-      const afterSeed = heap();
-      console.log(`heap after seed:  heapUsed=${mb(afterSeed.heapUsed)} MB, rss=${mb(afterSeed.rss)} MB — seed took ${(seedMs / 1000).toFixed(1)} s`);
+      const afterSeed = memNow();
+      console.log(`memory after seed:  heapUsed=${mb(afterSeed.heapUsed)} MB, arrayBuffers=${mb(afterSeed.arrayBuffers)} MB, rss=${mb(afterSeed.rss)} MB — seed took ${(seedMs / 1000).toFixed(1)} s`);
       console.log(`seed digest: ${bytesToHex(handle.prover.digest()!)}`);
 
       // -----------------------------------------------------------------
-      // Apply 70 full-sized blocks, measuring heap at 1, 21, 64 roots.
+      // Full-block phase.
       // -----------------------------------------------------------------
-      console.log(`\n==== full blocks: apply ${BLOCK_COUNT} blocks of ${BLOCK_LOOKUPS} lookups + ${BLOCK_WRITES} writes ====`);
-      const fullSnapshots: Array<{ roots: number; heapUsed: number; rss: number }> = [];
-      // Baseline reading: after the seed, before any block (ring size 0, since the bench doesn't record the seed's
-      // root — see `performSeed`). Printed above (`heap after seed`).
-      fullSnapshots.push({ roots: 0, heapUsed: afterSeed.heapUsed, rss: afterSeed.rss });
+      console.log(`\n==== full blocks: apply ${BLOCK_COUNT} blocks of ${BLOCK_SENDS} sends (${BLOCK_SENDS * LOOKUPS_PER_SEND} lookups, ${BLOCK_SENDS * WRITES_PER_SEND} writes) ====`);
+      interface Snap {
+        blocksApplied: number;
+        measuringRoots: number;
+        measuringSum: number;
+        boundedRoots: number;
+        boundedSum: number;
+        heapUsed: number;
+        arrayBuffers: number;
+        rss: number;
+      }
+      const fullSnaps: Snap[] = [{
+        blocksApplied: 0,
+        measuringRoots: handle.recentRoots.size(),
+        measuringSum: handle.recentRoots.nodesHeldBeyondTree(),
+        boundedRoots: boundedRing.size(),
+        boundedSum: boundedRing.nodesHeldBeyondTree(),
+        heapUsed: afterSeed.heapUsed,
+        arrayBuffers: afterSeed.arrayBuffers,
+        rss: afterSeed.rss,
+      }];
       let height = 1;
-      const snapshotHeights = new Set([1, 21, 64]);
+      const snapAt = new Set([1, 21, 64]);
+      let totalReplacedFull = 0;
       for (; height <= BLOCK_COUNT; height++) {
-        applyBlockLike(handle, height, seeded, 'full');
-        if (snapshotHeights.has(height)) {
-          const h = heap();
-          fullSnapshots.push({ roots: handle.recentRoots.size(), heapUsed: h.heapUsed, rss: h.rss });
-          console.log(`after block ${height}: ring holds ${handle.recentRoots.size()} roots, heapUsed=${mb(h.heapUsed)} MB, rss=${mb(h.rss)} MB`);
+        const r = applyBlockLike(handle, boundedRing, pool, height, BLOCK_SENDS);
+        totalReplacedFull += r.replaced;
+        if (snapAt.has(height)) {
+          const m = memNow();
+          fullSnaps.push({
+            blocksApplied: height,
+            measuringRoots: handle.recentRoots.size(),
+            measuringSum: handle.recentRoots.nodesHeldBeyondTree(),
+            boundedRoots: boundedRing.size(),
+            boundedSum: boundedRing.nodesHeldBeyondTree(),
+            heapUsed: m.heapUsed,
+            arrayBuffers: m.arrayBuffers,
+            rss: m.rss,
+          });
         }
       }
-      // The tip after the loop is `BLOCK_COUNT`.
       const tipHeight = BLOCK_COUNT;
-      console.log(`\nFull-block memory table:`);
-      console.log(`  roots | heapUsed MB | rss MB`);
-      for (const s of fullSnapshots) {
-        console.log(`  ${String(s.roots).padStart(5)} | ${mb(s.heapUsed).padStart(11)} | ${mb(s.rss).padStart(6)}`);
-      }
-      // Slope: MB per kept root between the 1-root and 64-root rows (if both reached).
-      const low = fullSnapshots.find((s) => s.roots === 1);
-      const high = fullSnapshots.find((s) => s.roots === 64);
-      if (low && high) {
-        const slope = (high.heapUsed - low.heapUsed) / (high.roots - low.roots);
-        console.log(`slope: ${mb(slope)} MB per kept root (full blocks)`);
-      } else {
-        console.log('slope: not enough rings reached to measure under full blocks');
+      console.log(`\nFull-block memory table (each kept root replaced an average of ${Math.round(totalReplacedFull / BLOCK_COUNT)} nodes):`);
+      console.log(`  blocks | measuring | nodes beyond | bounded | nodes beyond | heapUsed MB | arrBuf MB | rss MB`);
+      for (const s of fullSnaps) {
+        console.log(
+          `  ${String(s.blocksApplied).padStart(6)} | ${String(s.measuringRoots).padStart(9)} | ` +
+          `${String(s.measuringSum).padStart(12)} | ${String(s.boundedRoots).padStart(7)} | ` +
+          `${String(s.boundedSum).padStart(12)} | ${mb(s.heapUsed).padStart(11)} | ` +
+          `${mb(s.arrayBuffers).padStart(9)} | ${mb(s.rss).padStart(6)}`,
+        );
       }
 
       // -----------------------------------------------------------------
-      // Latency and size, at tip, -20, -60. We capture the live-tree digest
-      // before the routes and will check it again after the routes — the
-      // route's `withCycle` restores the live root on every path, so the
-      // digest must be unchanged (NODE_INTERFACE → "A proof at an older
-      // height restores a kept root"; pinned by test/state/route-cycle.test.ts).
+      // Latency and size over the full-block ring, before clearing it.
       // -----------------------------------------------------------------
       const app = makeApp(handle);
       const digestBeforeRoutes = bytesToHex(handle.prover.digest()!);
-      // Heights the brief names: tip, 20 blocks back, 60 blocks back. On a tip too shallow to answer either, we fall
-      // back on heights the ring covers so the sanity sub-run can exercise the route; the real run (BLOCK_COUNT=70)
-      // never reaches this branch — the ring holds heights 7..70 and both -20 and -60 land inside it.
       const ringHeights = handle.recentRoots.heights();
       const inRingOr = (want: number): number => {
         if (ringHeights.includes(want)) return want;
-        // Fall back to the ring's middle entry (sanity-run case).
         return ringHeights[Math.floor(ringHeights.length / 2)] ?? want;
       };
       const back20 = inRingOr(tipHeight - 20);
       const back60 = inRingOr(tipHeight - 60);
       const heights: Array<'tip' | number> = ['tip', back20, back60];
       console.log(`\n==== latency and size — single-key proof route and 256-entry page route ====`);
-      console.log(`  height | kind          | median ms | worst ms | proof B median | answer B median`);
-      // Capture latency summary rows so the final report has them explicit.
-      const latencyRows: Array<{
-        heightLabel: string;
-        kind: string;
-        medianMs: number;
-        worstMs: number;
-        medianProof: number;
-        medianAnswer: number;
-      }> = [];
+      console.log(`  height | kind       | median ms | worst ms | proof B median | answer B median`);
+      const latencyRows: Array<{ heightLabel: string; kind: string; medianMs: number; worstMs: number; medianProof: number; medianAnswer: number }> = [];
       for (const h of heights) {
-        // Single-key route — 20 calls, different keys picked from the large owner's box ids.
         const singleResults: Array<{ bytes: number; ms: number; proofBytes: number }> = [];
         for (let i = 0; i < 20; i++) {
           const key = boxKey(seeded.largeBoxIds[(i * 1013) % seeded.largeBoxIds.length]!);
@@ -436,19 +663,14 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
           medianAnswer: median(sBytes),
         };
         latencyRows.push(row1);
-        console.log(`  ${row1.heightLabel.padStart(6)} | ${row1.kind.padEnd(13)} | ${row1.medianMs.toFixed(1).padStart(9)} | ${row1.worstMs.toFixed(1).padStart(8)} | ${String(row1.medianProof).padStart(14)} | ${String(row1.medianAnswer).padStart(15)}`);
+        console.log(`  ${row1.heightLabel.padStart(6)} | ${row1.kind.padEnd(10)} | ${row1.medianMs.toFixed(1).padStart(9)} | ${row1.worstMs.toFixed(1).padStart(8)} | ${String(row1.medianProof).padStart(14)} | ${String(row1.medianAnswer).padStart(15)}`);
 
-        // 256-entry range page — 20 calls, each starting a different page of the large owner's holdings.
         const rangeResults: Array<{ bytes: number; ms: number; proofBytes: number }> = [];
         let from: Uint8Array | null = null;
         for (let i = 0; i < 20; i++) {
           const r = await callRangeOnce(app, seeded.largeOwner, from, h);
           rangeResults.push(r);
           from = r.next;
-          if (from === null) {
-            // The large owner's range ends; wrap back to the start so we have 20 timings.
-            from = null;
-          }
         }
         const rMs = rangeResults.map((r) => r.ms);
         const rProof = rangeResults.map((r) => r.proofBytes);
@@ -462,16 +684,15 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
           medianAnswer: median(rBytes),
         };
         latencyRows.push(row2);
-        console.log(`  ${row2.heightLabel.padStart(6)} | ${row2.kind.padEnd(13)} | ${row2.medianMs.toFixed(1).padStart(9)} | ${row2.worstMs.toFixed(1).padStart(8)} | ${String(row2.medianProof).padStart(14)} | ${String(row2.medianAnswer).padStart(15)}`);
+        console.log(`  ${row2.heightLabel.padStart(6)} | ${row2.kind.padEnd(10)} | ${row2.medianMs.toFixed(1).padStart(9)} | ${row2.worstMs.toFixed(1).padStart(8)} | ${String(row2.medianProof).padStart(14)} | ${String(row2.medianAnswer).padStart(15)}`);
       }
 
       // -----------------------------------------------------------------
-      // Whole-range read — the large owner's holdings at the tip, 85 pages,
-      // heap before + after.
+      // Whole-range read.
       // -----------------------------------------------------------------
       console.log(`\n==== whole-range read — the large owner's ${LARGE_OWNER_BOXES} boxes at the tip (${RANGE_PAGE_COUNT} pages) ====`);
-      const beforeFull = heap();
-      console.log(`heap before: heapUsed=${mb(beforeFull.heapUsed)} MB, rss=${mb(beforeFull.rss)} MB`);
+      const beforeFull = memNow();
+      console.log(`memory before: heapUsed=${mb(beforeFull.heapUsed)} MB, arrayBuffers=${mb(beforeFull.arrayBuffers)} MB, rss=${mb(beforeFull.rss)} MB`);
       const fullT0 = nowMs();
       let fullFrom: Uint8Array | null = null;
       let totalPages = 0;
@@ -481,108 +702,151 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
         totalPages++;
         totalProofBytes += r.proofBytes;
         fullFrom = r.next;
-      } while (fullFrom !== null && totalPages < RANGE_PAGE_COUNT + 2);
+      } while (fullFrom !== null);
       const fullMs = nowMs() - fullT0;
-      const afterFull = heap();
-      console.log(`heap after:  heapUsed=${mb(afterFull.heapUsed)} MB, rss=${mb(afterFull.rss)} MB`);
+      const afterFull = memNow();
+      console.log(`memory after:  heapUsed=${mb(afterFull.heapUsed)} MB, arrayBuffers=${mb(afterFull.arrayBuffers)} MB, rss=${mb(afterFull.rss)} MB`);
       console.log(`pages: ${totalPages}, total proof bytes: ${totalProofBytes}, wall-clock: ${(fullMs / 1000).toFixed(1)} s`);
-      const dropHeapMb = (afterFull.heapUsed - beforeFull.heapUsed) / 1024 / 1024;
-      console.log(`heap delta: ${dropHeapMb.toFixed(1)} MB (within noise = nothing survived the route)`);
-
-      // -----------------------------------------------------------------
-      // The block after — the invariant: its proof's bytes equal a twin's
-      // that served no route (NODE_INTERFACE → The block proof, "A proof
-      // route records in a cycle of its own"). The invariant we rely on
-      // here is pinned by test/state/route-cycle.test.ts: the route's
-      // `withCycle` closes with `restoreRoot`, which rebases the proof
-      // cycle — the recorded reads of every route call this bench made
-      // are gone from the cycle by the time the next block runs. We state
-      // the invariant by checking that the live digest after the routes
-      // equals the live digest BEFORE them, and then apply one more block.
-      // -----------------------------------------------------------------
-      console.log(`\n==== the block after — the route's cycle does not leak into the next proof ====`);
+      console.log(`heap delta: ${mb(afterFull.heapUsed - beforeFull.heapUsed)} MB; arrayBuffers delta: ${mb(afterFull.arrayBuffers - beforeFull.arrayBuffers)} MB`);
+      expect(totalPages, 'the whole range reads to the end in exactly RANGE_PAGE_COUNT pages').toBe(RANGE_PAGE_COUNT);
       const digestAfterRoutes = bytesToHex(handle.prover.digest()!);
-      console.log(`live digest before routes: ${digestBeforeRoutes}`);
-      console.log(`live digest after routes:  ${digestAfterRoutes}`);
-      expect(digestAfterRoutes, 'the routes must restore the live root on every path').toBe(digestBeforeRoutes);
-      const nextHeight = tipHeight + 1;
-      applyBlockLike(handle, nextHeight, seeded, 'full');
-      console.log(`height ${nextHeight} applied; digest after is ${bytesToHex(handle.prover.digest()!)}`);
+      expect(digestAfterRoutes, 'the routes restore the live root on every path').toBe(digestBeforeRoutes);
 
       // -----------------------------------------------------------------
-      // Small-block memory: a hundredth the size — nearer what testnet mines
-      // today. Re-apply the chain in a fresh handle for the comparison, since
-      // the full-block tree now stands and a hundredth-size block over it
-      // would mix the two shapes.
+      // The block after — the route's cycle does not leak into the next
+      // block's proof. Record block N+1's own operations as the bench
+      // performs them, take the proof `checkpointProver` answers and
+      // replay it on a `StrictBatchAVLVerifier` anchored at block N's
+      // digest: the same lookups and writes in order, the digest the
+      // prover reached, `isFullyConsumed()` required. A proof that carried
+      // any route's recorded lookup would not be fully consumed by the
+      // block's operations alone.
       // -----------------------------------------------------------------
-      // In the interest of total run time we instead re-use the same handle:
-      // we drop the ring, apply `BLOCK_COUNT` SMALL blocks, and measure the
-      // ring at 1, 21, 64 roots again. The tree has moved by 70 full blocks
-      // first, so the "slope under small blocks" is measured from the same
-      // starting point as the figures the brief asked for; the slope reads
-      // the ring's own node sharing, not the absolute tree depth.
-      console.log(`\n==== small blocks: apply ${BLOCK_COUNT} blocks of ${SMALL_LOOKUPS} lookups + ${SMALL_WRITES} writes (a hundredth) ====`);
+      console.log(`\n==== the block after — the proof carries only the block's own operations ====`);
+      const nextHeight = tipHeight + 1;
+      const applied = applyRecordedBlock(handle, boundedRing, pool, nextHeight, BLOCK_SENDS);
+      const reached = strictReplayCarriesBlockOnly(applied.recorded, applied.proof, applied.digestBefore, applied.digestAfter);
+      console.log(`block ${nextHeight} applied; strict replay anchored at ${bytesToHex(applied.digestBefore)} reached ${reached}, fully consumed`);
+
+      // -----------------------------------------------------------------
+      // Kept-root cost by difference — with the ring full, read memory and
+      // the ring's sum of nodes; `clear()` the ring; read memory again.
+      // The difference is what the ring held beyond the tree. The ring's
+      // sum of nodes names the 63 kept roots above the lowest; from the
+      // two: bytes a node, and megabytes a kept root. The bounded ring is
+      // cleared with the measuring one so its references do not survive.
+      // -----------------------------------------------------------------
+      console.log(`\n==== kept-root cost by difference (full-block phase) ====`);
+      const beforeClearFull = memNow();
+      const measuringNodes = handle.recentRoots.nodesHeldBeyondTree();
+      const measuringSize = handle.recentRoots.size();
+      const boundedNodes = boundedRing.nodesHeldBeyondTree();
+      const boundedSize = boundedRing.size();
+      console.log(`measuring ring full: ${measuringSize} roots, ${measuringNodes} nodes above the lowest`);
+      console.log(`bounded ring:        ${boundedSize} roots, ${boundedNodes} nodes above the lowest`);
+      console.log(`memory with ring:    heapUsed=${mb(beforeClearFull.heapUsed)} MB, arrayBuffers=${mb(beforeClearFull.arrayBuffers)} MB, rss=${mb(beforeClearFull.rss)} MB`);
       handle.recentRoots.clear();
-      const smallBaseline = heap();
-      const smallSnapshots: Array<{ roots: number; heapUsed: number; rss: number }> = [{
-        roots: 0, heapUsed: smallBaseline.heapUsed, rss: smallBaseline.rss,
+      boundedRing.clear();
+      const afterClearFull = memNow();
+      console.log(`memory after clear:  heapUsed=${mb(afterClearFull.heapUsed)} MB, arrayBuffers=${mb(afterClearFull.arrayBuffers)} MB, rss=${mb(afterClearFull.rss)} MB`);
+      const heapHeldFull = beforeClearFull.heapUsed - afterClearFull.heapUsed;
+      const bufHeldFull = beforeClearFull.arrayBuffers - afterClearFull.arrayBuffers;
+      const bytesPerNodeFull = measuringNodes > 0 ? (heapHeldFull + bufHeldFull) / measuringNodes : 0;
+      const rootsAboveLowest = Math.max(0, measuringSize - 1);
+      const perRootFull = rootsAboveLowest > 0 ? (heapHeldFull + bufHeldFull) / rootsAboveLowest : 0;
+      console.log(`held beyond tree (full blocks): heap ${mb(heapHeldFull)} MB + arrayBuffers ${mb(bufHeldFull)} MB = ${mb(heapHeldFull + bufHeldFull)} MB over ${measuringNodes} nodes = ${bytesPerNodeFull.toFixed(0)} bytes a node; ${mb(perRootFull)} MB a kept root (sum over ${rootsAboveLowest} roots above the lowest)`);
+
+      // -----------------------------------------------------------------
+      // Small-block phase — a hundredth the size, snapshots by blocks
+      // applied, same difference measurement at the end.
+      // -----------------------------------------------------------------
+      console.log(`\n==== small blocks: apply ${BLOCK_COUNT} blocks of ${SMALL_SENDS} sends (${SMALL_SENDS * LOOKUPS_PER_SEND} lookups, ${SMALL_SENDS * WRITES_PER_SEND} writes) ====`);
+      const smallBaseline = memNow();
+      const smallSnaps: Snap[] = [{
+        blocksApplied: 0,
+        measuringRoots: handle.recentRoots.size(),
+        measuringSum: handle.recentRoots.nodesHeldBeyondTree(),
+        boundedRoots: boundedRing.size(),
+        boundedSum: boundedRing.nodesHeldBeyondTree(),
+        heapUsed: smallBaseline.heapUsed,
+        arrayBuffers: smallBaseline.arrayBuffers,
+        rss: smallBaseline.rss,
       }];
       let smallHeight = nextHeight + 1;
-      for (let i = 0; i < BLOCK_COUNT; i++, smallHeight++) {
-        applyBlockLike(handle, smallHeight, seeded, 'small');
-        const r = handle.recentRoots.size();
-        if (r === 1 || r === 21 || r === 64) {
-          const h = heap();
-          smallSnapshots.push({ roots: r, heapUsed: h.heapUsed, rss: h.rss });
-          console.log(`after small block (ring ${r}): heapUsed=${mb(h.heapUsed)} MB, rss=${mb(h.rss)} MB`);
+      let totalReplacedSmall = 0;
+      for (let i = 1; i <= BLOCK_COUNT; i++, smallHeight++) {
+        const r = applyBlockLike(handle, boundedRing, pool, smallHeight, SMALL_SENDS);
+        totalReplacedSmall += r.replaced;
+        if (snapAt.has(i)) {
+          const m = memNow();
+          smallSnaps.push({
+            blocksApplied: i,
+            measuringRoots: handle.recentRoots.size(),
+            measuringSum: handle.recentRoots.nodesHeldBeyondTree(),
+            boundedRoots: boundedRing.size(),
+            boundedSum: boundedRing.nodesHeldBeyondTree(),
+            heapUsed: m.heapUsed,
+            arrayBuffers: m.arrayBuffers,
+            rss: m.rss,
+          });
         }
       }
-      console.log(`\nSmall-block memory table:`);
-      console.log(`  roots | heapUsed MB | rss MB`);
-      for (const s of smallSnapshots) {
-        console.log(`  ${String(s.roots).padStart(5)} | ${mb(s.heapUsed).padStart(11)} | ${mb(s.rss).padStart(6)}`);
+      console.log(`\nSmall-block memory table (each kept root replaced an average of ${Math.round(totalReplacedSmall / BLOCK_COUNT)} nodes):`);
+      console.log(`  blocks | measuring | nodes beyond | bounded | nodes beyond | heapUsed MB | arrBuf MB | rss MB`);
+      for (const s of smallSnaps) {
+        console.log(
+          `  ${String(s.blocksApplied).padStart(6)} | ${String(s.measuringRoots).padStart(9)} | ` +
+          `${String(s.measuringSum).padStart(12)} | ${String(s.boundedRoots).padStart(7)} | ` +
+          `${String(s.boundedSum).padStart(12)} | ${mb(s.heapUsed).padStart(11)} | ` +
+          `${mb(s.arrayBuffers).padStart(9)} | ${mb(s.rss).padStart(6)}`,
+        );
       }
-      const sLow = smallSnapshots.find((s) => s.roots === 1);
-      const sHigh = smallSnapshots.find((s) => s.roots === 64);
-      if (sLow && sHigh) {
-        const slope = (sHigh.heapUsed - sLow.heapUsed) / (sHigh.roots - sLow.roots);
-        console.log(`slope: ${mb(slope)} MB per kept root (small blocks)`);
-      }
+      console.log(`\n==== kept-root cost by difference (small-block phase) ====`);
+      const beforeClearSmall = memNow();
+      const smMeasuringNodes = handle.recentRoots.nodesHeldBeyondTree();
+      const smMeasuringSize = handle.recentRoots.size();
+      const smBoundedNodes = boundedRing.nodesHeldBeyondTree();
+      const smBoundedSize = boundedRing.size();
+      console.log(`measuring ring full: ${smMeasuringSize} roots, ${smMeasuringNodes} nodes above the lowest`);
+      console.log(`bounded ring:        ${smBoundedSize} roots, ${smBoundedNodes} nodes above the lowest`);
+      console.log(`memory with ring:    heapUsed=${mb(beforeClearSmall.heapUsed)} MB, arrayBuffers=${mb(beforeClearSmall.arrayBuffers)} MB, rss=${mb(beforeClearSmall.rss)} MB`);
+      handle.recentRoots.clear();
+      boundedRing.clear();
+      const afterClearSmall = memNow();
+      console.log(`memory after clear:  heapUsed=${mb(afterClearSmall.heapUsed)} MB, arrayBuffers=${mb(afterClearSmall.arrayBuffers)} MB, rss=${mb(afterClearSmall.rss)} MB`);
+      const heapHeldSmall = beforeClearSmall.heapUsed - afterClearSmall.heapUsed;
+      const bufHeldSmall = beforeClearSmall.arrayBuffers - afterClearSmall.arrayBuffers;
+      const bytesPerNodeSmall = smMeasuringNodes > 0 ? (heapHeldSmall + bufHeldSmall) / smMeasuringNodes : 0;
+      const smRootsAboveLowest = Math.max(0, smMeasuringSize - 1);
+      const perRootSmall = smRootsAboveLowest > 0 ? (heapHeldSmall + bufHeldSmall) / smRootsAboveLowest : 0;
+      console.log(`held beyond tree (small blocks): heap ${mb(heapHeldSmall)} MB + arrayBuffers ${mb(bufHeldSmall)} MB = ${mb(heapHeldSmall + bufHeldSmall)} MB over ${smMeasuringNodes} nodes = ${bytesPerNodeSmall.toFixed(0)} bytes a node; ${mb(perRootSmall)} MB a kept root (sum over ${smRootsAboveLowest} roots above the lowest)`);
 
       // -----------------------------------------------------------------
-      // What a resolve from the store costs — the path the routes left and a
-      // reorg leaves wherever it keeps no kept root at the fork point
-      // (NODE_INTERFACE → "A proof at an older height restores a kept root").
-      // One `storage.rollback(<the tip's version>)` over the 10^6-leaf store,
-      // timed, with `heapUsed` before and after while the live tree is still
-      // held — the second copy of the tree, in megabytes.
+      // Resolve from the store — the second tree a route left to resolve,
+      // or a reorg at a fork point with no kept root, would build.
       // -----------------------------------------------------------------
       console.log(`\n==== a resolve from the store — storage.rollback(<tip version>) ====`);
-      const beforeRollback = heap();
-      console.log(`heap before rollback: heapUsed=${mb(beforeRollback.heapUsed)} MB, rss=${mb(beforeRollback.rss)} MB`);
+      const beforeRollback = memNow();
+      console.log(`memory before rollback: heapUsed=${mb(beforeRollback.heapUsed)} MB, arrayBuffers=${mb(beforeRollback.arrayBuffers)} MB, rss=${mb(beforeRollback.rss)} MB`);
       const tipVersion = handle.storage.version();
       if (tipVersion === null) throw new Error('no tip version to roll back to');
       const rbT0 = nowMs();
       const [rolledRoot, rolledHeight] = handle.storage.rollback(tipVersion);
       const rbMs = nowMs() - rbT0;
-      const afterRollback = heap();
-      console.log(`heap after rollback:  heapUsed=${mb(afterRollback.heapUsed)} MB, rss=${mb(afterRollback.rss)} MB`);
-      console.log(`rollback took ${rbMs} ms; second tree holds ${rolledHeight}-depth root (digest ${bytesToHex(label(rolledRoot))})`);
-      const rbDeltaMb = (afterRollback.heapUsed - beforeRollback.heapUsed) / 1024 / 1024;
-      console.log(`second tree cost: ${rbDeltaMb.toFixed(1)} MB`);
-      // Pin that the rolled root is a valid AvlNode — the second graph exists.
-      expect(rolledRoot).not.toBeUndefined();
-      expect(rolledHeight).toBeGreaterThanOrEqual(0);
+      const afterRollback = memNow();
+      console.log(`memory after rollback:  heapUsed=${mb(afterRollback.heapUsed)} MB, arrayBuffers=${mb(afterRollback.arrayBuffers)} MB, rss=${mb(afterRollback.rss)} MB`);
+      console.log(`rollback took ${rbMs} ms; second tree has tree-height ${rolledHeight} and root label ${bytesToHex(label(rolledRoot))}`);
+      const heapDeltaRb = afterRollback.heapUsed - beforeRollback.heapUsed;
+      const bufDeltaRb = afterRollback.arrayBuffers - beforeRollback.arrayBuffers;
+      console.log(`second tree cost: heap ${mb(heapDeltaRb)} MB + arrayBuffers ${mb(bufDeltaRb)} MB = ${mb(heapDeltaRb + bufDeltaRb)} MB`);
+      expect(label(rolledRoot), 'the rolled root has the label the tip version names').toEqual(tipVersion.subarray(0, 32));
 
       const wall = (Date.now() - startWall) / 1000;
       console.log(`\n==== wall-clock: ${wall.toFixed(1)} s ====`);
-      console.log(`latency rows summary:`);
+      console.log(`latency summary:`);
       for (const row of latencyRows) {
         console.log(`  ${row.heightLabel} | ${row.kind} | median ${row.medianMs.toFixed(1)} ms | worst ${row.worstMs.toFixed(1)} ms | proof ${row.medianProof} B | answer ${row.medianAnswer} B`);
       }
-
-      // Minimal structural assertion: the run reached the end.
-      expect(fullSnapshots.length).toBeGreaterThan(0);
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }

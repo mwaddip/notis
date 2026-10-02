@@ -32,6 +32,8 @@ export default mergeConfig(
         BENCH_SEED_LEAVES: process.env['BENCH_SEED_LEAVES'] ?? '',
         BENCH_LARGE_OWNER_BOXES: process.env['BENCH_LARGE_OWNER_BOXES'] ?? '',
         BENCH_BLOCK_COUNT: process.env['BENCH_BLOCK_COUNT'] ?? '',
+        BENCH_BLOCK_SENDS: process.env['BENCH_BLOCK_SENDS'] ?? '',
+        BENCH_SMALL_SENDS: process.env['BENCH_SMALL_SENDS'] ?? '',
       },
     },
   }),
