@@ -274,4 +274,13 @@ describe('GET /api/v1/proof/:key', () => {
       .get('/api/v1/proof/' + BOX_KEY + '?atHeight=999')
       .expect(404);
   });
+
+  it('an atHeight of digits past 2^53 is a 404 — no kept height carries that number', async () => {
+    // NODE_INTERFACE → avl-endpoint — "an atHeight of any length that names
+    // no kept height is the 404".
+    const res = await request(app)
+      .get('/api/v1/proof/' + BOX_KEY + '?atHeight=99999999999999999999')
+      .expect(404);
+    expect(res.body).toEqual({ error: 'height not available' });
+  });
 });

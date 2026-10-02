@@ -262,6 +262,24 @@ describe('GET /api/v1/range/:kind/:owner — the range route', () => {
     expect(res.body.limit).toBe(256);
   });
 
+  it('a limit of digits past 2^53 is served at 256', async () => {
+    // NODE_INTERFACE → avl-endpoint, the range route — "`limit` is an integer
+    // from 1, served at `RANGE_PAGE_MAX` where it is above it or absent".
+    const res = await request(ctx.app)
+      .get(`/api/v1/range/credit/${bytesToHex(ctx.owner.userId)}?limit=99999999999999999999`)
+      .expect(200);
+    expect(res.body.limit).toBe(256);
+  });
+
+  it('an atHeight of digits past 2^53 is a 404 — no kept height carries that number', async () => {
+    // NODE_INTERFACE → avl-endpoint, the range route — "a height the node
+    // keeps no root of" is 404; the length of the digits is not the refusal.
+    const res = await request(ctx.app)
+      .get(`/api/v1/range/credit/${bytesToHex(ctx.owner.userId)}?atHeight=99999999999999999999`)
+      .expect(404);
+    expect(res.body).toEqual({ error: 'height not available' });
+  });
+
   // -------------------------------------------------------------------------
   // Validation — 400 for every bad shape
   // -------------------------------------------------------------------------
