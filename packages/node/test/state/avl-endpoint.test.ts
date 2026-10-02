@@ -158,6 +158,8 @@ describe('GET /api/v1/proof/:key', () => {
 
   it('decodes every kind the layout adds by its first byte', async () => {
     const handle = createAvlProver(db);
+    const localStorageSpy = vi.spyOn(handle.storage, 'rollback');
+    const localProverSpy = vi.spyOn(handle.prover, 'rollback');
     const [postId, liker, voucher, target] = ['post', 'liker', 'voucher', 'target']
       .map((label) => uid(`avl-endpoint/${label}`)) as [Uint8Array, Uint8Array, Uint8Array, Uint8Array];
     const nameBoxId = 'cd'.repeat(32);
@@ -188,12 +190,18 @@ describe('GET /api/v1/proof/:key', () => {
     expect(await served(at('marker'))).toMatchObject({ kind: 'index', value: {} });
     expect(await served(at('pair'))).toMatchObject({ kind: 'index', value: { boxId: nameBoxId } });
     expect(await served(at('count'))).toMatchObject({ kind: 'index', value: { count: 3 } });
+    // NODE_INTERFACE → "A proof at an older height restores a kept root": no
+    // proof path calls `rollback` — pinned on the handle this case uses.
+    expect(localStorageSpy, 'storage.rollback must not be called by the proof route').not.toHaveBeenCalled();
+    expect(localProverSpy, 'prover.rollback must not be called by the proof route').not.toHaveBeenCalled();
   });
 
   it('serves a record from a historical version too', async () => {
     // The historical answer is built by a separate branch from the at-tip one,
     // so covering the tip proves nothing here.
     const handle = createAvlProver(db);
+    const localStorageSpy = vi.spyOn(handle.storage, 'rollback');
+    const localProverSpy = vi.spyOn(handle.prover, 'rollback');
     performTreeWrites(handle.prover, 2, [putRecord(record(9, 9))], 'test');
     checkpointProver(handle, 2);
 
@@ -209,6 +217,8 @@ describe('GET /api/v1/proof/:key', () => {
       .expect(200);
     expect(historical.body.kind).toBe('record');
     expect(historical.body.value).toEqual(recordJson(7, 3));
+    expect(localStorageSpy, 'storage.rollback must not be called by the proof route').not.toHaveBeenCalled();
+    expect(localProverSpy, 'prover.rollback must not be called by the proof route').not.toHaveBeenCalled();
   });
 
   // --- S4: the route closes its cycle and restores the live root on every path -
@@ -219,6 +229,8 @@ describe('GET /api/v1/proof/:key', () => {
     // a throw included — the prover is the one block application uses, so
     // an unrestored root makes the node reject every later block.
     const handle = createAvlProver(db);
+    const localStorageSpy = vi.spyOn(handle.storage, 'rollback');
+    const localProverSpy = vi.spyOn(handle.prover, 'rollback');
     performTreeWrites(handle.prover, 2, [putRecord(record(9, 9))], 'test');
     checkpointProver(handle, 2);
 
@@ -255,6 +267,8 @@ describe('GET /api/v1/proof/:key', () => {
       .get('/api/v1/proof/' + BOX_KEY)
       .expect(200);
     expect(tipRes.body.kind).toBe('box');
+    expect(localStorageSpy, 'storage.rollback must not be called by the proof route').not.toHaveBeenCalled();
+    expect(localProverSpy, 'prover.rollback must not be called by the proof route').not.toHaveBeenCalled();
   });
 
   it('returns 400 for a key that is not hex of the tree key width', async () => {
