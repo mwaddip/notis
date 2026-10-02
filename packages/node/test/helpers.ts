@@ -1031,22 +1031,37 @@ export function ringHas(ring: { get(height: number): unknown | null }, height: n
 }
 
 /**
- * Revert the chain to `height` the way `reorg` reverts it: every block above it
- * through `revertBlock`, then the live prover back to the version at `height`
- * (NODE_INTERFACE → Block Journal → "Rollback") — `revertBlock` restores the
- * store and deletes the height's version rows, and the tree is restored once,
- * at the end, so the rules again read what the store holds.
+ * Revert the chain to `height` the way `reorg` reverts it (NODE_INTERFACE →
+ * "A proof at an older height restores a kept root"): every block above it
+ * through `revertBlock`, then the live prover resolved as reorg's phase 1b
+ * resolves it. Where the ring keeps a root at `height` whose digest is the
+ * store's version at that height, the restore is by reference on the inner
+ * prover — the ring at and below `height` survives, every kept root is a
+ * root of the tree the node holds. Where it does not, `prover.rollback`
+ * resolves from the store and the ring is cleared.
  */
 export async function revertChainTo(height: number): Promise<void> {
   const { revertBlock } = await import('../src/services/fork-resolution.js');
   const { getCurrentHeight } = await import('../src/store/ordering.js');
   const { tryGetAvlProver } = await import('../src/state/avl-prover.js');
+  const { label } = await import('@ergots/avltree');
   for (let h = getCurrentHeight(); h > height; h--) revertBlock(h);
   const handle = tryGetAvlProver();
   if (handle === null) return;
   const version = handle.storage.versionAtOrBeforeHeight(height);
   if (version === null) throw new Error(`revertChainTo: no tree version at or below height ${height}`);
+  const kept = handle.recentRoots.get(height);
+  if (kept !== null && version.length === 33 && version[32] === kept.treeHeight) {
+    const rootLabel = label(kept.root);
+    let same = true;
+    for (let i = 0; i < 32; i++) if (version[i] !== rootLabel[i]) { same = false; break; }
+    if (same) {
+      handle.prover.prover.restoreRoot(kept.root, kept.treeHeight);
+      return;
+    }
+  }
   handle.prover.rollback(version);
+  handle.recentRoots.clear();
 }
 
 /**
