@@ -365,7 +365,7 @@ type LedgerKind = (typeof KINDS)[number];
  */
 type LedgerReads =
   | null
-  | { suffix: Extract<RangeResult, { ok: false }> }
+  | { suffix: Extract<RangeResult, { ok: false }>; tip?: undefined }
   | { suffix: Extract<RangeResult, { ok: true }>; tip: RangeResult };
 
 /** The computed state of one ledger's reads: its `holdings` status, its
@@ -389,7 +389,7 @@ function stateOf(reads: LedgerReads): LedgerState {
   if (reads === null) {
     return { holdings: 'not-read', holdingsVerdict: null, atSuffix, atTip };
   }
-  if (!('tip' in reads)) {
+  if (reads.tip === undefined) {
     return {
       holdings: reads.suffix.status,
       holdingsVerdict: `holdings read failed at suffixHead: ${reads.suffix.verdict}`,
