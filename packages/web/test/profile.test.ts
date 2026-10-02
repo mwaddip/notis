@@ -943,8 +943,9 @@ describe('profile — the verified-figures line beneath the rep number', () => {
 
   it('the empty karma listing (boxCount 0) renders no hint under a verified verdict with no run back yet', () => {
     // `figures: null` means no result stands; under a verified verdict the
-    // line is silence (row 2). Row 7 silence (no run read, nothing unlisted)
-    // is pinned by the next describe block.
+    // line is silence (row 2). Row 7's empty-listing arm — a run that read
+    // the ranges with nothing of the ledger `unlisted` or `undecided` — is
+    // pinned by the next describe block.
     prefs.faucet = '';
     const f = rowField(
       render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 0 }), verdict: VERIFIED_PF, figures: null })),

@@ -128,12 +128,12 @@ describe('createFiguresVerifier — the seam the App knows', () => {
   });
 });
 
-// A node that paces its answers — a page an entry, each held to the request's
-// timeout — keeps a run open past the ten-minute tip run, which re-reads the
-// listing and drops the result as it lands. The verifier bounds a run at 60 s:
-// a request a run would make later is rejected before the network sees it,
-// the tool reads it as not served, and the row has a line
-// (WEB_INTERFACE → The extension → "The verified figures").
+// A run is bounded at 60 seconds: a request a run would make later rejects
+// before the network sees it, the tool reads it as not served, the run ends
+// and the row has a line (WEB_INTERFACE → The extension → "The verified
+// figures"). The cases pin the bound, the deadline being a run's own and
+// the ledger reading muted *the node served no proof for …* through
+// `figuresLine`.
 describe('createFiguresVerifier — a run ends', () => {
   const DEADLINE_MS = 60_000;
   const KEY_HEX = 'aa'.repeat(32);

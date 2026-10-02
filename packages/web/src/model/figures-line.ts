@@ -46,7 +46,7 @@ export interface FiguresLineInput {
    *  never mention it. */
   suffixHeight: number | null;
   /** The row's own listing count — an empty listing reads the ledger's own
-   *  facts under rows 3, 4 and 5 and reads silence under row 7. For the
+   *  facts under rows 3 to 6 and reads silence under row 7. For the
    *  wallet row this is `credits.boxCount`; for the rep row,
    *  `karma.boxCount`. */
   boxCount: number;

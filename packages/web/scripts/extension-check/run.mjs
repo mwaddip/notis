@@ -2058,11 +2058,10 @@ function tallyLeds(readings) {
 // (WEB_INTERFACE → The extension → "The verified figures"). The figures run
 // hangs on a verified tip, which needs a second verified node, so the block
 // runs B as the tip block does — bringUpNodeB verbatim after the A pre-flight
-// and stopChild('b') at the end. 21 and 24 read A; the lie arms 22a · 22b · 22c
-// · 22d · 22e · 23 read the figures relay, after 24 and while B is up; 25
-// reads the hosted web
-// build. Pacing is external: the paced miner runs outside the harness, started
-// before promote.mjs and kept to the end.
+// and stopChild('b') at the end. 21 and 24 read A; the lie arms
+// 22a · 22b · 22c · 22d · 22e · 23 read the figures relay, after 24 and while
+// B is up; 25 reads the hosted web build. Pacing is external: the paced miner
+// runs outside the harness, started before promote.mjs and kept to the end.
 // ---------------------------------------------------------------------------
 
 // The App's figures verifier fetches `/api/v1/proof/<key>?atHeight=<h>` for
@@ -2790,18 +2789,18 @@ function lieArms(relay) {
       // `/blocks/current` one above the node's own. The dropped box is
       // held at tip and the listing lacks it, with `heightAfter` not
       // `tip.height` → the run reads it `undecided` and the balance row
-      // reads muted *not checked yet* (WEB_INTERFACE → The extension →
-      // "The verified figures" — "muted *not checked yet* when a box is
-      // `undecided` or the ledger's read is `stale`"). The gold figure
-      // stands where the node gave one and is never clay — on an empty
-      // listing, where the drop left R with no box, no figure is drawn
-      // ("An empty listing takes these lines as any listing does … with
-      // no figure to turn clay"), and `goldHasClay` reads false either
-      // way. Every reading of the balance row — after the change and
-      // after each of two presses — holds that shape; a node that
-      // answers another height must read undecided however often the
-      // reader asks. `pressesAtLeast: 2` keeps the loop from
-      // short-circuiting on an already-ok first reading.
+      // reads muted *not checked yet*
+      // (WEB_INTERFACE → The extension → "The verified figures"). The
+      // gold figure stands where the node gave one and is never clay —
+      // on an empty listing, where the drop left R with no box, no figure
+      // is drawn to turn clay, and the ledger's own facts speak alone
+      // (→ "An empty listing takes these lines as any listing does"), so
+      // `goldHasClay` reads false either way. Every reading of the
+      // balance row — after the change and after each of two presses —
+      // holds that shape; a node that answers another height must read
+      // undecided however often the reader asks. `pressesAtLeast: 2`
+      // keeps the loop from short-circuiting on an already-ok first
+      // reading.
       step: '22e',
       mode: 'credits-drop-tipplus1',
       box: () => relay.droppedCreditsBox,

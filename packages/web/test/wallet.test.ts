@@ -953,7 +953,7 @@ describe('wallet — the verified-figures line beneath the balance', () => {
   });
 
   it('the default web ctx (no verifier) renders no verified-figures hint', () => {
-    // Rows 1 — verdict === undefined — is silence. The gold figure carries no
+    // Row 1 — verdict === undefined — is silence. The gold figure carries no
     // .clay, and no .hint sits beneath the credits-line.
     const f = creditsField(render(handlers(), spendableCtx()))!;
     const gold = f.querySelector<HTMLElement>('.mono.gold')!;
