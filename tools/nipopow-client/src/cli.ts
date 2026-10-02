@@ -1,8 +1,8 @@
-// The command line's composition — the run from a `Config` to a result the
-// caller writes as text or JSON. `src/index.ts` is the entry: it parses argv,
-// calls `runCli` and prints `textLines(result.tip, result.run)` or
-// `JSON.stringify(toJson(result))`. A unit test imports from here so the shape
-// of the JSON the command line writes is what the test asserts.
+// The run from a `Config` to a result the caller writes, and the JSON
+// shape the command line writes under `--json`. `runCli` drives the tip
+// resolution, the listing fetch and the figures proof, and sets the exit
+// code; `toJson` is the `--json` object. `src/index.ts` is the entry that
+// parses argv and prints.
 
 import { resolveTip } from './tip.js';
 import { fetchListing, proveFigures } from './boxes.js';

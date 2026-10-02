@@ -1,6 +1,5 @@
-// The command line's entry — argv in, text or JSON out, exit code set by
-// `runCli`. The composition is in `src/cli.ts` so a unit test imports what
-// the command line runs.
+// The command line's entry: argv in, `textLines` or `toJson` out, exit code
+// from `runCli`. The run and its JSON shape live in `src/cli.ts`.
 
 import { parseConfig, ConfigError } from './config.js';
 import { textLines } from './text.js';
