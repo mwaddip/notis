@@ -708,8 +708,9 @@ block header carries a `stateRoot` — the root hash of the AVL+ tree over the s
 to verify a box's or a record's existence or absence without storing the state.
 
 **Every read a consensus rule makes is a lookup under the state root** — one key, or a walk of one key range — so a
-leaf holding only a block's parent root can have each answer proven, and a leaf that proved a tip can prove what it
-holds against it, nothing left out. The tree holds the entities (boxes, identity, network, name and holder records,
+block replays from its parent's root and its proof alone (`CONSENSUS_INTERFACE → The tree session`), and a light
+client that proved a tip is shown what a key holds against it by range: its karma, its credits, its escrows, the
+vouches it cast and its like accruals, each whole (`CONSENSUS_INTERFACE → The holdings page`). The tree holds the entities (boxes, identity, network, name and holder records,
 post and like records) and index entries derived from each entity's own fields; the keys are
 `TYPES_INTERFACE → The tree keys`, what the tree holds and how a read walks it `CONSENSUS_INTERFACE → The tree layout`.
 
@@ -717,8 +718,8 @@ post and like records) and index entries derived from each entity's own fields; 
   against its parent's root (`CONSENSUS_INTERFACE → The block proof`); every node regenerates it from its own execution
   and refuses a block whose digest differs, keeps it a week and serves it by height (`NODE_INTERFACE → The block
   proof`). **A block's cost is bounded**: its signatures and its proof's operations, weighted, under `MAX_BLOCK_COST`
-  (`CONSENSUS_INTERFACE → The block's cost`) — what bounds a leaf's verification, where `MAX_BLOCK_BODY_BYTES` bounds
-  its download.
+  (`CONSENSUS_INTERFACE → The block's cost`) — what bounds the work of replaying it from its proof, where
+  `MAX_BLOCK_BODY_BYTES` bounds its bytes.
 
 - **Post-state, not parent-state (H-6).** `stateRoot` commits to the state the
   block *produces*, following Ergo. The block therefore commits to its own
@@ -2720,7 +2721,8 @@ backfill — and a withdrawn post keeps its row with `content` `NULL` and its ma
   pool). The Solana contract itself is outside this repository
 - **The backer unstake control in the web client**, and the profile window's copyable public key for the
   deposit flow (`WEB_INTERFACE`)
-- **A leaf that validates blocks without holding the state.** Every consensus read is a keyed record under the state
+- **A client that validates blocks without holding the state.** Every consensus read is a keyed record under the state
   root, and every block commits to the proof of its reads and writes (`CONSENSUS_INTERFACE → The tree layout`, `→ The
-  block proof`); what remains is **N4**, the leaf's verifier: the parent's root, the block and its proof, the rules over
-  `verifierSession`, the header's `stateRoot` reached
+  block proof`), so a block replays from its parent's root and its proof, and the suites replay each one
+  (`CONSENSUS_INTERFACE → The tree session`). No client does: the extension is a light node, which takes the tip on
+  proof of work and proves what it reads by lookups (`WEB_INTERFACE → The extension`)

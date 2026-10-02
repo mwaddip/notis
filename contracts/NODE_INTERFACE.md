@@ -3869,7 +3869,7 @@ below; `CONSENSUS_INTERFACE → The tree layout`).
 the tree through `treeWritesOf` (`CONSENSUS_INTERFACE → The tree writes`). **The session reads with the prover's
 unrecorded neighbour lookup** (`@ergots/avltree` 0.5.0's `unauthenticatedLookupWithNeighbors`) — every reader's
 session but block application's and the speculative run's, whose lookups are recorded into the block's proof
-(→ The block proof) — its `null` neighbour mapped to the sentinel (`CONSENSUS_INTERFACE → The tree session`); a write the prover refuses is
+(→ The block proof), and the range route's, whose page is the proof it answers — its `null` neighbour mapped to the sentinel (`CONSENSUS_INTERFACE → The tree session`); a write the prover refuses is
 `DivergedStateTreeError` and a read that contradicts itself `InconsistentStateTreeError`, both fail-stop (→ "What the
 funnel's totality catch is FOR"). **The SQLite tables are written from the same effects and answer the API only**; no
 consensus path reads them, so a table and the tree cannot disagree about what a rule saw. `storeStateView` — the
@@ -3889,6 +3889,17 @@ the tree view read by read.
   version; 400 for a key that is not 130 hex or a height that is not a non-negative integer. **`kind` and `value` are
   the node's reading and a light client trusts neither**: it verifies the proof against a `stateRoot` it verified under proof-of-work and decodes the value the
   proof carries (`WEB_INTERFACE → The extension → "The verified figures"`)
+- **avl-endpoint, the range route:** `GET /api/v1/range/:kind/:owner?atHeight=N&from=K&limit=L` — one page of what a
+  key holds of one kind, with its proof. `:kind` is one of `CONSENSUS_INTERFACE → The holdings page`'s five; `:owner`
+  is 64 hex; `from`, where given, is a tree key of 130 hex inside that kind's range for the owner; `limit` is an
+  integer from 1, served at `RANGE_PAGE_MAX` (256) where it is above it or absent. It answers `{ kind, owner, atHeight,
+  stateRoot, from, limit, proof }` — `from` the key the page began at or `null`, `limit` the limit served, `stateRoot`
+  and `proof` as the single-key route's — and **no decoded value: the proof is the answer.** The node performs
+  `holdingsPage` over a recording session on its prover and answers the proof of exactly those lookups; a light client
+  reads the page by running `holdingsPage` over `verifierSession` on it, and learns from the proof whether the range
+  ended. `atHeight` is the single-key route's, the tip where absent; 400 for a kind outside the five, an owner, a
+  `from` or a `limit` of another shape, and a `from` outside the range; 404 `{ error: 'height not available' }` for a
+  height the node keeps no root of (→ "A proof at an older height restores a kept root")
 - **Config:** `MAX_PROOF_HISTORY` (prune old proof versions). The check below
   is not configurable — no variable disables it
 - **Verification:** apply computes the post-mutation digest and rejects the
@@ -4212,6 +4223,22 @@ every later block until restart. The lookup-and-proof window therefore runs in
 a `try` whose `finally` restores the live version; the `catch`'s 500 is the
 response, never the state.
 
+**A proof at an older height restores a kept root.** The node keeps, by reference, the root and the tree height of
+each of the last `PROOF_WINDOW_BLOCKS` blocks it applied (`local`, default 64): the library never mutates a node, so a
+kept root shares every unchanged node with the live tree and costs the nodes its block replaced. Both proof routes
+answer `atHeight` by restoring that root, performing their lookups, generating the proof and restoring the live root,
+inside one synchronous call, as the speculative run restores its own (→ Post-block stateRoot). **A height the node
+keeps no root of is 404 `{ error: 'height not available' }`, and no proof path calls `rollback`** — which re-reads the
+whole tree from the store. A root is kept once its block's checkpoint stands and dropped on every path that takes the
+prover back below its height: a refused block, a revert, a reorg that aborts. **After a restart the node holds its
+tip's root alone** and gains one a block, so until `PROOF_WINDOW_BLOCKS` blocks have passed an older height is not
+available from it. `MAX_PROOF_HISTORY` is the versions the store keeps for a reorg's walk (→ Configuration) and bounds
+no route.
+
+> ⚠ **AHEAD OF CODE (2026-10-01, N4 PR A — `node`)** — the node keeps no roots and serves no range route.
+> `GET /api/v1/proof/:key?atHeight=` answers any height a stored version stands at through `rollback(version)`, twice a
+> request, under the `finally` of the paragraph above, which retires with it; `PROOF_WINDOW_BLOCKS` is no setting.
+
 **3. A block's writes never touch one key twice, and for boxes that rests on provenance, not on height.** That box ids
 commit to `createdAtBlock` does not establish it: two boxes built at one height with one content would still collide.
 The argument from `(candidate, txId, index)` is what holds:
@@ -4249,10 +4276,12 @@ mismatch is a consensus rejection that marks, the funnel's single rollback point
 A block over the budget (`CONSENSUS_INTERFACE → The block's cost`) is refused the same way, checked before its writes
 are performed.
 
-**Only block application and the speculative run record.** The creator's settlement build, admission
-(`MEMPOOL_INTERFACE → The cost gate`) and every API read use the unrecorded session, and `karmaOwnersOf` reads the
-block view's memo alone: a recorded lookup outside a block's cycle would enter the next block's proof, and this node's
-proof would differ from every peer's.
+**Only block application and the speculative run record into a block's proof.** The creator's settlement build,
+admission (`MEMPOOL_INTERFACE → The cost gate`) and every view use the unrecorded session, and `karmaOwnersOf` reads the
+block view's memo alone: a recorded lookup left in the prover's cycle would enter the next block's proof, and this
+node's proof would differ from every peer's. **A proof route records in a cycle of its own** — its lookups, then
+`generateProof()`, inside one synchronous call (→ AVL+ State Root) — so nothing of a route's is in the cycle when a
+block's begins.
 
 **The proof is stored with its block and served by height.** `block_proofs (height INTEGER PRIMARY KEY, proof BLOB NOT
 NULL)`, written in the apply transaction, deleted with its block on a revert. `GET /blocks/:height/proof` answers the
@@ -4578,12 +4607,12 @@ other corrupt-chain read.
 tip's vector (~log₂ of the chain height): at `m = k = 6` on a million-block chain ~250 reads and a
 ~200 KB response; at the caps (`m = k = 128`) ~8 500 reads and ~7 MB. No cache and no O(N) walk
 exist in the path. This is the node's second unauthenticated read that does real work per call
-(`GET /api/v1/proof/:boxId` is the first); the node has no rate limiting anywhere, and this route
+(`GET /api/v1/proof/:key` is the first); the node has no rate limiting anywhere, and this route
 adds none — a single call is bounded by `MAX_NIPOPOW_PARAM`, and a limiter is a decision across
 every route, not this one's.
 
 **What a served proof proves, and what the client trusts it for,** is `NIPOPOW_INTERFACE` → The
-trust model. The client checks the node's box proofs (`GET /api/v1/proof/:boxId?atHeight`) against
+trust model. The client checks the node's state proofs (`GET /api/v1/proof/:key?atHeight`) against
 the `stateRoot` of the proof's `suffixHead` — a header under the client's own verified PoW — so the
 two proof systems compose without the client trusting the node for either.
 
@@ -4756,6 +4785,7 @@ its actual reach.
 | `PENALTY_SAFE_INTERVAL_MS` | `local` | `120000` | Quiet interval after which accrued penalty decays — semantics `NET_INTERFACE → Peer Penalty System` |
 | `SYNC_REQUEST_TIMEOUT_MS` | `local` | `10000` | Abort timeout on one sync request — semantics `NET_INTERFACE → Config` |
 | `MAX_PROOF_HISTORY` | `local` | `1440` | AVL versions retained for proof serving |
+| `PROOF_WINDOW_BLOCKS` | `local` | `64` | the last blocks whose roots the node keeps in memory, the heights its proof routes answer `atHeight` at (→ AVL+ State Root) |
 | `PROOF_RETENTION_BLOCKS` | `local` | `10080` | blocks whose proofs are kept for `GET /blocks/:height/proof` — a week at 60 s (→ The block proof) |
 | `PROOF_RETENTION_BYTES` | `local` | `2147483648` | the most bytes of proofs kept for `GET /blocks/:height/proof`, the oldest pruned first and the tip's always kept — 2 GiB (→ The block proof) |
 | `PORT` | `operational` | `3000` | HTTP listen port |

@@ -4,9 +4,9 @@
 
 `@dagsocial/consensus` is where the state-transition rules run: what a transaction may do, what a block's settlement
 consumes and emits, how decay and the coinbase split are computed, and what a block's body does to state as a whole —
-`applyBlock`. **It is the one implementation of them** — the node runs it, and a browser leaf that validates blocks
-runs the same code (`ARCHITECTURE → Overview`; `ARCHITECTURE → Deferred to future protocol versions`, the validating
-leaf). The rules themselves are stated in `NODE_INTERFACE` and
+`applyBlock`. **It is the one implementation of them** — the node runs it, and so does every replay of a block from its
+proof: the suites' (→ Tests), and a client that validates blocks, were one built (`ARCHITECTURE → Deferred to future
+protocol versions`). The rules themselves are stated in `NODE_INTERFACE` and
 cited from the code as they are; this contract states where they run, what the package may depend on, and how state
 reaches them.
 
@@ -171,29 +171,33 @@ session over `@ergots/avltree` maps the library's `null` neighbour to the sentin
 all `0x00`, past the last to all `0xff` — and treats a recorded lookup's `{ success: false }` as fatal to the block;
 an unrecorded lookup has no such answer, and throws on a key the library refuses.
 
-**A session records its lookups or it does not, and only a block's own reads are recorded.** A recording session's
-lookups (`performLookupWithNeighbors`) become part of the proof its prover makes next (→ The block proof); an
-unrecorded one's (`unauthenticatedLookupWithNeighbors`) never do. Which a caller uses is the node's
-(`NODE_INTERFACE → The block proof`).
+**A session records its lookups or it does not.** A recording session's lookups (`performLookupWithNeighbors`) become
+part of the proof its prover makes next — a block's (→ The block proof), or the one a proof route makes and closes
+before it returns (`NODE_INTERFACE → AVL+ State Root`); an unrecorded one's (`unauthenticatedLookupWithNeighbors`)
+never do. Which a caller uses is the node's (`NODE_INTERFACE → The block proof`).
 
 **`verifierSession(verifier)` is the session over `@ergots/avltree`'s step-by-step verifier** — its
 `performLookupWithNeighbors`, `null` neighbours mapped to the sentinels, a `{ success: false }` thrown as fatal to the
-block. Over it the tree view answers a block's reads from the block's proof alone, anchored at the parent's root, so a
-leaf runs the rules with the code the node runs; after the rules, the block's writes are performed on the same verifier
-and its digest must equal the header's `stateRoot`.
+proof. It takes either of the library's two step-by-step classes, `BatchAVLVerifier` and `StrictBatchAVLVerifier`, by
+the two members it calls — neither class is assignable to the other. Over it the tree view answers reads from a proof
+alone, anchored at the root the verifier was built on: a block's reads from the block's proof, so the rules run over a
+proof with the code the node runs, and a page of a key's holdings from a proof route's (→ The holdings page). After a
+block's rules, its writes are performed on the same verifier and its digest must equal the header's `stateRoot`.
 
-**A leaf accepts a block only on all of these**, in this order: the body's `utxoTxRoot` is the header's; `hash32(proof)`
-is the header's `adProofsRoot`; the verifier anchors at the parent's root; the rules over `verifierSession` accept the
-block; its cost is within the budget (→ The block's cost); each of `treeWritesOf`'s writes succeeds on the verifier; the
-verifier's digest is the header's `stateRoot`; and **the verifier consumed the proof exactly** — no operation and no byte
-left over. The last is what binds a leaf to the network: a full node refuses any proof but the one it regenerates
-(`NODE_INTERFACE → The block proof`), so a proof carrying a trailing byte or an extra read — which a verifier still
-replays to the right digest — is a block the network refuses, and a leaf must refuse it too.
+**A block replays from its proof only on all of these**, in this order: the body's `utxoTxRoot` is the header's;
+`hash32(proof)` is the header's `adProofsRoot`; the verifier anchors at the parent's root; the rules over
+`verifierSession` accept the block; its cost is within the budget (→ The block's cost); each of `treeWritesOf`'s writes
+succeeds on the verifier; the verifier's digest is the header's `stateRoot`; and **the proof is byte for byte the one a
+prover writes for the operations the replay performed** — `StrictBatchAVLVerifier.isFullyConsumed()`, asked once,
+after the last write. The last is what binds a replay to the network: a full node refuses any proof but the one it
+regenerates (`NODE_INTERFACE → The block proof`), so a proof carrying a trailing byte, an operation the replay never
+asks, a set padding bit or an unvisited node written in full — each of which a verifier still replays to the right
+digest — is a block the network refuses. **No client replays a block**: the extension is a light node, which takes the
+tip on proof of work and proves what it reads by lookups (`WEB_INTERFACE → The extension`). The replay is the suites'
+(→ Tests), and it is what holds a block's proof sufficient for one.
 
-> ⚠ **AHEAD OF CODE (2026-09-30, N4 the leaf's verifier)** — `@ergots/avltree`'s step-by-step verifier reports no
-> consumption, so nothing can check the last condition; the leaf that needs it is N4's, and the library's answer is a
-> request to it. No node route serves a block's body bytes (`GET /blocks/:height` answers its ids), which a leaf
-> fetching blocks needs.
+> ⚠ **AHEAD OF CODE (2026-10-01, N4 PR A — `consensus`, `node`)** — `verifierSession` takes `BatchAVLVerifier` alone,
+> and the suites' replay builds one and does not ask whether the proof was consumed exactly.
 
 ### The tree view
 
@@ -242,6 +246,39 @@ queue is the lapsed members holding a live vouch**: only a member casts (`NODE_I
 `memberSinceBlock`, once set, is never reset, and the cast count is a voucher's live vouch boxes — so a voucher
 leaves the queue when its last vouch is withdrawn or its record re-qualifies, every entry the leg visits yields a
 vouch, and the leg reads no more of the tree than its limit takes.
+
+### The holdings page
+
+```ts
+HoldingKind  = 'karma' | 'credit' | 'escrow' | 'vouch' | 'accrual'
+HoldingsPage = { boxes: AnyBox[]; next: Uint8Array | null }
+holdingsPage(view: TreeStateView, kind: HoldingKind, owner: Uint8Array, from: Uint8Array | null, limit: number): HoldingsPage
+```
+
+**A page of what one key holds of one kind, read through a tree view — and the one definition of which keys such a
+page looks up, and in what order.** The kinds are the five ranges a key's boxes are indexed under (→ The index
+entries): `karma` — `karmaOf ‖ owner`; `credit` — `creditOf ‖ owner`; `escrow` — `escrowOf ‖ owner`; `vouch` —
+`vouchPair ‖ owner`, the owner the voucher; `accrual` — `accrualOf ‖ owner`, the owner the author. The page walks its
+range as a range read walks (→ The tree view) — from the range's start, or from `from` — for at most `limit` entries,
+and after each entry looks up the box the entry names: the box id its key carries, a vouch pair's the one its value
+carries. That box is live and of the kind's type, or the tree contradicts itself (`TreeInconsistencyError`). `boxes`
+are in key order.
+
+**`next` is the first key the walk did not take that is still in the range, or `null` where the range ends** — the
+last entry's `nextKey`, which its leaf authenticates (→ The tree session), so a reader of a proof knows from the proof
+alone whether a page ended its range. **`from` is walked as a range's start is**: a key that is a leaf is yielded, an
+absent one is stepped over to its next key, so a page is total over every key inside the range. A `from` outside the
+kind's range for `owner`, an `owner` that is not 32 bytes and a `limit` that is not a positive integer are each a
+`RangeError` — the caller's argument, never a verdict on the tree.
+
+**The node and a light client run this one function** — the node over a recording session on its prover, the client
+over `verifierSession` on the proof the node answered (`NODE_INTERFACE → AVL+ State Root`): a step-by-step verifier
+replays a proof's operations in the order the prover performed them, so a page's lookups are a rule and not an
+implementation's choice. A page looks up at most `1 + 2 · limit` keys. No rule reads a page: it is how a key's
+holdings are proven whole against a root.
+
+> ⚠ **AHEAD OF CODE (2026-10-01, N4 PR A — `consensus`)** — the package has no `holdingsPage`, and the tree view no
+> read over `creditOf` or over a voucher's whole `vouchPair` range.
 
 ### The tree writes
 
@@ -429,6 +466,16 @@ of proof. Against `W_SIG` = 100, time alone would weigh an operation about 6, an
 6 MB at the budget — about 11; `W_OP` stands between (`TYPES_INTERFACE → The block's cost`). At the budget a valid body holds at most about
 4 600 signatures packed, or 3 156 one-signer transactions.
 
+**Each proof in the table is over the bench's own state** — a tree holding the body's entities and nothing else. A
+proof's size grows with the tree's depth, a 33-byte label for each level an operation's path shares with no other
+operation of the block, so these sizes and times are the bodies' over a small tree, and `W_OP`'s argument from them is
+an argument over one.
+
+> ⚠ **AHEAD OF CODE (2026-10-01, N4 PR A — the measurement)** — no script in the tree measures a proof against the
+> tree it is made over. Measured by hand on 2026-10-01 with `@ergots/avltree` 0.5.0: a synthetic block of the first
+> row's operation counts — 9 468 lookups and 18 936 writes over random keys — proves in 1.3 MB over 10⁴ leaves, 5.4 MB
+> over 10⁵, 8.7 MB over 10⁶ and 10.1 MB over 3·10⁶. The replay's time over such a tree is not measured.
+
 No other term may grow faster than the reads the body makes: each overlay read is a map lookup or one composition over
 the view's answer to it.
 
@@ -455,6 +502,15 @@ in-memory database — stays in `packages/node/test/` and imports from the packa
   the Node side proves each block on a prover (its reads recorded, then its writes), and inside the context each block
   runs over `verifierSession` from its parent's digest and its proof alone — the digests it reaches equal the Node
   side's, byte for byte.
+
+**The suites' replay asks every condition of a block's replay** (→ The tree session): this package's helpers and the
+node's build a `StrictBatchAVLVerifier` and refuse a proof `isFullyConsumed()` answers `false` for. Five altered proofs
+a `BatchAVLVerifier` replays to the right digest are each refused: one byte appended; one recorded read the block never
+made, of a key it read and of a leaf the proof leaves under a label; a set padding bit in the last direction byte; and
+an unvisited node written in full.
+
+> ⚠ **AHEAD OF CODE (2026-10-01, N4 PR A — `consensus`, `node`)** — the replay helpers build a `BatchAVLVerifier`, and
+> no suite holds the five altered proofs.
 
 ## Does NOT own
 
