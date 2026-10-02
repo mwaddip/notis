@@ -4235,7 +4235,11 @@ response, never the state.
 each of the last `PROOF_WINDOW_BLOCKS` blocks it applied (`local`, default 64): the library never mutates a node, so a
 kept root shares every unchanged node with the live tree and costs the nodes its block replaced. Both proof routes
 answer `atHeight` by restoring that root, performing their lookups, generating the proof and restoring the live root,
-inside one synchronous call, as the speculative run restores its own (→ Post-block stateRoot). **A height the node
+inside one synchronous call, as the speculative run restores its own (→ Post-block stateRoot). **The live root is
+restored and the route's cycle closed on every path, a throw included**: a page that throws midway leaves none of its
+recorded lookups for a block's proof to open with (→ The block proof). A tree that contradicts itself under a route's
+read is local corruption — `InconsistentStateTreeError`, fail-stop, as under the cost gate (→ "What the funnel's
+totality catch is FOR") — never a 500 the node stays up behind. **A height the node
 keeps no root of is 404 `{ error: 'height not available' }`, and no proof path calls `rollback`** — which re-reads the
 whole tree from the store. A root is kept once its block's checkpoint stands and dropped on every path that takes the
 prover back below its height: a refused block, a revert, a reorg that aborts. **After a restart the node holds its
