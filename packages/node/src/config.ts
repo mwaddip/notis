@@ -116,7 +116,9 @@ export interface Config {
    * The last blocks whose roots this node keeps in memory, the heights its
    * proof routes answer `atHeight` at (NODE_INTERFACE → "A proof at an older
    * height restores a kept root"). Local — a node that keeps fewer serves
-   * `atHeight` on fewer heights; its peers do not notice.
+   * `atHeight` on fewer heights; below a light client's `k` (20) the node
+   * proves it no settled height (NODE_INTERFACE → Configuration, the
+   * `PROOF_WINDOW_BLOCKS` row).
    */
   proofWindowBlocks: number;
   /**
