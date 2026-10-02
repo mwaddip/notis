@@ -249,15 +249,10 @@ export function registerProofEndpoint(app: Express, handle: AvlProverHandle): vo
     try {
       res.json(proofAnswer(handle, keyHex, key, resolved));
     } catch (err) {
-      if (err instanceof TreeInconsistencyError) {
-        // A route's recorded read that contradicts itself is local corruption,
-        // never a verdict on the request (NODE_INTERFACE → "A proof at an
-        // older height restores a kept root"; → "What the funnel's totality
-        // catch is FOR").
-        failStopIfCorruptChain(
-          new InconsistentStateTreeError('GET /api/v1/proof', resolved.atHeight, err),
-        );
-      }
+      // The single-key route reads through the inner prover directly — it
+      // does not drive the tree view, so no `TreeInconsistencyError` reaches
+      // here. The range route's catch has that arm because `holdingsPage`
+      // reads through the tree view (NODE_INTERFACE → AVL+ State Root).
       console.error('Proof endpoint error:', err);
       res.status(500).json({ error: 'internal error' });
     }
@@ -327,9 +322,13 @@ export function registerRangeEndpoint(app: Express, handle: AvlProverHandle): vo
     if (!resolved.ok) return;
 
     try {
-      const { answer: page, proof } = withCycle(handle, resolved.kept, () => {
+      const { proof } = withCycle(handle, resolved.kept, () => {
         const session = recordingSession(handle.prover);
         const view = treeStateView(session);
+        // The page's `next` is read from the proof — a client replays
+        // `holdingsPage` over `verifierSession` on the answered proof — so
+        // the route answers no decoded value and no `next` field
+        // (NODE_INTERFACE → AVL+ State Root, the range bullet).
         return holdingsPage(view, kind, owner, from, limit);
       });
 
@@ -341,7 +340,6 @@ export function registerRangeEndpoint(app: Express, handle: AvlProverHandle): vo
         from: fromHex,
         limit,
         proof: Buffer.from(proof).toString('base64'),
-        next: page.next === null ? null : bytesToHex(page.next),
       });
     } catch (err) {
       if (err instanceof RangeError) {

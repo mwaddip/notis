@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { MockInstance } from 'vitest';
 import { openAvlDb, seedProvenance, uid } from '../helpers.js';
+import type { AvlNode } from '@ergots/avltree';
 import Database from 'better-sqlite3';
 import express from 'express';
 import request from 'supertest';
@@ -56,6 +58,8 @@ const putRecord = (r: IdentityRecord): TreeWrite =>
 describe('GET /api/v1/proof/:key', () => {
   let app: express.Express;
   let db: Database.Database;
+  let storageSpy: MockInstance<[version: Uint8Array], [AvlNode, number]>;
+  let proverSpy: MockInstance<[version: Uint8Array], void>;
 
   beforeEach(() => {
     db = openAvlDb();
@@ -69,12 +73,22 @@ describe('GET /api/v1/proof/:key', () => {
     ], 'test');
     checkpointProver(handle, 1);
 
+    // No proof path calls `rollback` (NODE_INTERFACE → "A proof at an older
+    // height restores a kept root"). Pinned across every case this file holds.
+    storageSpy = vi.spyOn(handle.storage, 'rollback');
+    proverSpy = vi.spyOn(handle.prover, 'rollback');
+
     app = express();
     app.use(express.json());
     registerProofEndpoint(app, handle);
   });
 
-  afterEach(() => { db.close(); });
+  afterEach(() => {
+    expect(storageSpy, 'storage.rollback must not be called by the proof route').not.toHaveBeenCalled();
+    expect(proverSpy, 'prover.rollback must not be called by the proof route').not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+    db.close();
+  });
 
   it('returns box data for an existing box at current tip, echoing the key', async () => {
     const res = await request(app)
