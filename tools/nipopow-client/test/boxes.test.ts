@@ -1209,6 +1209,48 @@ describe("proveFigures — a tip range answering another block's state is stale,
     expect(result.failed).toBe(false);
   });
 
+  // The shape check runs before the comparison: an answer at `tip` whose
+  // stateRoot is missing, null, or no root reads `unproven` for the whole
+  // range; the ledger `unproven`, every listed box of it `unproven`, and the
+  // run `failed` (WEB_INTERFACE → The extension → "The verified figures").
+  it.each([
+    ['empty body', {}],
+    ['body with only an error field', { error: 'internal' }],
+    ['stateRoot a number', (base: Record<string, unknown>) => ({ ...base, stateRoot: 7 })],
+    ['stateRoot null', (base: Record<string, unknown>) => ({ ...base, stateRoot: null })],
+  ])('a credit tip answer with %s is unproven, the run failed', async (_label, body) => {
+    const karma = karmaBoxFor(USER_BYTES, 100n, 1);
+    const credit = creditBoxFor(USER_BYTES, 50n, 2);
+    const fixture = buildHoldingsFixture({
+      boxes: [karma, credit],
+      records: [{ identityId: USER_BYTES, record: RECORD_STANDING }],
+    });
+    const anchor = makeAnchor(TIP_H, fixture.stateRoot, SUFFIX_H, fixture.stateRoot);
+    const fetch: HttpFetch = async (url: string): Promise<Response> => {
+      const u = new URL(url);
+      const m = u.pathname.match(/^\/api\/v1\/range\/([a-z]+)\/[0-9a-f]{64}$/);
+      if (m && m[1] === 'credit' && Number(u.searchParams.get('atHeight')) === TIP_H) {
+        const limit = Number(u.searchParams.get('limit') ?? '256');
+        const base = rangeAnswerFromProver(fixture.prover, fixture.stateRoot, TIP_H, 'credit', USER_BYTES, null, limit) as Record<string, unknown>;
+        const payload = typeof body === 'function' ? body(base) : body;
+        return jsonResponse(200, payload);
+      }
+      return twoHeightNode({ suffix: fixture, suffixHeight: SUFFIX_H, tip: fixture, tipHeight: TIP_H, heightAfter: TIP_H }).fetch(url);
+    };
+    const listing: Listing = {
+      karma: { boxes: [{ boxId: karma.id!, value: '100' }], height: TIP_H, effective: '100' },
+      credits: { boxes: [{ boxId: credit.id!, value: '50' }] },
+    };
+    const result = await proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), fetch);
+    expect(result.credits.holdings).toBe('unproven');
+    expect(result.boxes.map((b) => [b.boxClass, b.status])).toEqual([
+      ['karma', 'proven'],
+      ['credit', 'unproven'],
+    ]);
+    expect(result.karma.holdings).toBe('read');
+    expect(result.failed).toBe(true);
+  });
+
   it("a credit suffix range whose stateRoot is not the header's: credits unproven at suffixHead, karma reads, failed true", async () => {
     const karma = karmaBoxFor(USER_BYTES, 100n, 1);
     const credit = creditBoxFor(USER_BYTES, 50n, 2);
