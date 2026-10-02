@@ -196,26 +196,27 @@ describe('GET /api/v1/proof/:key', () => {
     expect(historical.body.value).toEqual(recordJson(7, 3));
   });
 
-  // --- S4: the historical window restores under `finally` --------------------
+  // --- S4: the route closes its cycle and restores the live root on every path -
 
-  it('restores the prover to the live digest after a throw in the historical window', async () => {
-    // NODE_INTERFACE → "The historical window restores under finally".
-    // A throw between rollback(version) and rollback(currentVersion) must not
-    // strand the shared prover at the historical digest.
+  it('restores the prover to the live digest after a throw in the kept-root cycle', async () => {
+    // NODE_INTERFACE → "A proof at an older height restores a kept root":
+    // the live root is restored and the route's cycle closed on every path,
+    // a throw included — the prover is the one block application uses, so
+    // an unrestored root makes the node reject every later block.
     const handle = createAvlProver(db);
     performTreeWrites(handle.prover, 2, [putRecord(record(9, 9))], 'test');
     checkpointProver(handle, 2);
 
     const liveDigest = bytesToHex(handle.prover.digest());
 
-    // Wrap performOneOperation to throw once on the historical path
+    // Wrap performOneOperation to throw once on the kept-root path
     const original = handle.prover.performOneOperation.bind(handle.prover);
     let threw = false;
     handle.prover.performOneOperation = (op: Parameters<typeof handle.prover.performOneOperation>[0]) => {
       const historicalDigest = bytesToHex(handle.prover.digest());
       if (historicalDigest !== liveDigest && !threw) {
         threw = true;
-        throw new Error('injected failure in historical window');
+        throw new Error('injected failure under the kept root');
       }
       return original(op);
     };

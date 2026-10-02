@@ -235,13 +235,17 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
   // totality catch — immediate, because the library never mutates a node. The
   // restore also rebases the proof cycle, so none of a refused block's recorded
   // reads, which leave the digest where it was, stays in the cycle to enter the
-  // next block's proof (NODE_INTERFACE → The block proof).
+  // next block's proof (NODE_INTERFACE → The block proof). The ring drops the
+  // block's height and anything above it on the same path (NODE_INTERFACE →
+  // "A proof at an older height restores a kept root"): a refused block's
+  // checkpoint rolls back with the transaction, so no kept root may remain.
   const avlHandle = tryGetAvlProver();
   const saved = avlHandle
     ? { root: avlHandle.prover.prover.root, height: avlHandle.prover.prover.height }
     : null;
   const restoreProver = (): void => {
     if (avlHandle && saved) avlHandle.prover.prover.restoreRoot(saved.root, saved.height);
+    avlHandle?.recentRoots.dropAbove(block.header.height - 1);
   };
   let karmaOwners: Set<string>;
   try {
@@ -543,6 +547,12 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
     return null;
   }
   putBlockProof(height, proof);
+
+  // The checkpoint stands and the block applies — record the kept root
+  // (NODE_INTERFACE → "A proof at an older height restores a kept root"). The
+  // ring eviction is `PROOF_WINDOW_BLOCKS` wide; the funnel's rollback above
+  // drops this entry on any later refusal path.
+  handle.recentRoots.record(height, handle.prover.prover.root, handle.prover.prover.height);
 
   // 14. Persist journal and purge old ones
   insertBlockJournal(journal);

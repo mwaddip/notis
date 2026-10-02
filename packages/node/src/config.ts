@@ -113,6 +113,13 @@ export interface Config {
   maxProofHistory: number;
   avlKeyLength: number;
   /**
+   * The last blocks whose roots this node keeps in memory, the heights its
+   * proof routes answer `atHeight` at (NODE_INTERFACE → "A proof at an older
+   * height restores a kept root"). Local — a node that keeps fewer serves
+   * `atHeight` on fewer heights; its peers do not notice.
+   */
+  proofWindowBlocks: number;
+  /**
    * Blocks whose proofs this node keeps for `GET /blocks/:height/proof`: apply
    * prunes below `tip − proofRetentionBlocks` (NODE_INTERFACE → The block proof).
    * Local — what a node serves, not what it accepts.
@@ -194,6 +201,7 @@ export function loadConfig(): Readonly<Config> {
     avlKeyLength: TREE_KEY_LENGTH,
     proofRetentionBlocks: parseProofRetention(process.env['PROOF_RETENTION_BLOCKS']),
     proofRetentionBytes: parseProofRetentionBytes(process.env['PROOF_RETENTION_BYTES']),
+    proofWindowBlocks: parseProofWindow(process.env['PROOF_WINDOW_BLOCKS']),
     // Net settings
     bootstrapPeers: parseBootstrapPeers(process.env['BOOTSTRAP_PEERS'], profile.bootstrapPeers),
     listenAddrs: process.env['LISTEN_ADDRS'] ?? '/ip4/0.0.0.0/tcp/0',
@@ -314,6 +322,26 @@ function parseProofRetentionBytes(raw: string | undefined): number {
     throw new Error(
       `Invalid PROOF_RETENTION_BYTES "${raw}" — must be a non-negative whole ` +
         'number of bytes',
+    );
+  }
+  return parsed;
+}
+
+/**
+ * `PROOF_WINDOW_BLOCKS`, defaulting to 64 (NODE_INTERFACE → "A proof at an
+ * older height restores a kept root"; NODE_INTERFACE → Configuration).
+ *
+ * Refused rather than defaulted when it names no non-negative integer: a
+ * window this node cannot read is a policy nobody chose, as
+ * `parseProofRetention` is. Zero holds the tip's root alone.
+ */
+function parseProofWindow(raw: string | undefined): number {
+  if (raw === undefined) return 64;
+  const parsed = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(
+      `Invalid PROOF_WINDOW_BLOCKS "${raw}" — must be a non-negative whole ` +
+        'number of blocks',
     );
   }
   return parsed;

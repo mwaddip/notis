@@ -37,6 +37,22 @@ import type { BlockJournal } from '../store/journal.js';
 import { putIdentityRecord, deleteIdentityRecord, putNetworkRecord } from '../store/identity-records.js';
 import { putUsername, deleteUsername } from '../store/usernames.js';
 import { tryGetAvlProver } from '../state/avl-prover.js';
+import type { KeptRoot } from '../state/recent-roots.js';
+import { label } from '@ergots/avltree';
+
+/**
+ * Whether the version digest describes the kept root — the 33 bytes
+ * `rootLabel || treeHeight`, matching by content so the restore is of the
+ * same tree a store resolve would build (NODE_INTERFACE → "A proof at an
+ * older height restores a kept root").
+ */
+function versionDescribesKept(version: Uint8Array, kept: KeptRoot): boolean {
+  if (version.length !== 33) return false;
+  if (version[32] !== kept.treeHeight) return false;
+  const rootLabel = label(kept.root);
+  for (let i = 0; i < 32; i++) if (version[i] !== rootLabel[i]) return false;
+  return true;
+}
 import { GENESIS_HEIGHT } from './genesis-state.js';
 import { applyOrderingBlockVerdict } from './block-apply.js';
 import { registerPlaceholder } from './backfill.js';
@@ -165,7 +181,12 @@ export function revertBlock(height: number): void {
   deleteOrderingBlock(height);
   deleteBlockJournal(height);
   deleteBlockProof(height);
-  tryGetAvlProver()?.storage.deleteVersionAtHeight(height);
+  const handle = tryGetAvlProver();
+  handle?.storage.deleteVersionAtHeight(height);
+  // The kept root for `height` is dropped with its block (NODE_INTERFACE →
+  // "A proof at an older height restores a kept root"): the ring tracks
+  // committed state, and the committed state no longer includes it.
+  handle?.recentRoots.drop(height);
 }
 
 /**
@@ -225,17 +246,24 @@ function reinsert(insert: () => void, label: string): void {
 export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
   // A failed reorg rolls the whole transaction back — DB and AVL storage rows
   // live in the same SQLite file — but SQLite rollback cannot reach the
-  // prover's in-memory state: the per-block funnel restore only covers the
-  // failing block, not the fork-point rollback plus the applied prefix. So the
-  // reorg snapshots the digest before anything is reverted and restores it on
-  // abort (mirrors the apply funnel's restoreProver).
+  // prover's in-memory state. The pre-reorg root and tree height are captured
+  // here, by reference, and put back on abort with `restoreRoot` — the apply
+  // funnel's pair, under the apply funnel's rule (NODE_INTERFACE → "A proof
+  // at an older height restores a kept root"; → "Rejection-safe"). The ring is
+  // snapshotted alongside and restored on abort, so the heights its proof
+  // routes answered before do not change under a failed switch. No
+  // `rollback(preDigest)`: SQLite has already put the rows back, and the
+  // pre-reorg root is the tree they describe — a store resolve would build a
+  // second object graph of the same tree.
   const avlHandle = tryGetAvlProver();
-  const preDigest = avlHandle ? avlHandle.prover.digest() : null;
+  const saved = avlHandle
+    ? { root: avlHandle.prover.prover.root, height: avlHandle.prover.prover.height }
+    : null;
+  const ringSnapshot = avlHandle ? avlHandle.recentRoots.snapshot() : null;
   const restoreProver = (): void => {
-    if (!avlHandle || !preDigest) return;
-    const current = avlHandle.prover.digest();
-    if (current && Buffer.from(current).equals(Buffer.from(preDigest))) return;
-    avlHandle.prover.rollback(preDigest);
+    if (!avlHandle || !saved) return;
+    avlHandle.prover.prover.restoreRoot(saved.root, saved.height);
+    if (ringSnapshot !== null) avlHandle.recentRoots.restore(ringSnapshot);
   };
   try {
     getDb().transaction(() => {
@@ -249,7 +277,7 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
     revertBlock(h);
   }
 
-  // Phase 1b: roll back AVL prover to fork point.
+  // Phase 1b: resolve the prover to the fork point.
   //
   // A missing version here is not a case to skip past. Phase 3 would apply the
   // peer's chain onto a prover still holding our reverted tip's tree, so the
@@ -265,12 +293,32 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
   // otherwise a row the store lost. `loadConfig` refuses
   // `MAX_PROOF_HISTORY < maxReorgDepth` at load (NODE_INTERFACE →
   // Configuration).
+  //
+  // **Where the ring holds a root at `forkHeight` whose digest is the store's
+  // version** — the invariant *"Every kept root is a root of the one tree the
+  // node holds in memory"* (NODE_INTERFACE → "A proof at an older height
+  // restores a kept root") — the restore is by reference on the inner prover,
+  // with no store re-read: `prover.rollback(version)` builds a second object
+  // graph of the same tree, and the ring's roots at and below the fork still
+  // reach the first, so the node holds the tree twice. The kept roots at and
+  // below the fork survive — they share state with the fork's tree.
+  //
+  // **Where it does not** — a fork below every kept root, or a node restarted
+  // since — `prover.rollback(version)` resolves from the store, **and the
+  // ring is emptied**: nothing kept before a store resolve shares a node with
+  // the tree it built.
   if (avlHandle) {
     const version = avlHandle.storage.versionAtOrBeforeHeight(forkHeight);
     if (!version) {
       throw new MissingStateVersionError('reorg', forkHeight);
     }
-    avlHandle.prover.rollback(version);
+    const kept = avlHandle.recentRoots.get(forkHeight);
+    if (kept !== null && versionDescribesKept(version, kept)) {
+      avlHandle.prover.prover.restoreRoot(kept.root, kept.treeHeight);
+    } else {
+      avlHandle.prover.rollback(version);
+      avlHandle.recentRoots.clear();
+    }
   }
 
   // Phase 2: re-insert reverted txs to mempool, lowest height first.
