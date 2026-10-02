@@ -4,7 +4,8 @@
 // first row of the replay table by its counts — 3 156 one-signer credit sends: 9 468 lookups and 18 936 writes — the
 // lookups recorded as the node records them (`performLookupWithNeighbors`), then the writes, then `generateProof()`.
 // Each tree holds box records under `boxKey` and owner-index entries under `creditOfKey`, built through this package's
-// own key and record builders (`@dagsocial/types`), so the keys and values are the real widths.
+// own key and record builders (`@dagsocial/types`), so the keys and values are the real widths. Each size names leaves:
+// `size / 2` boxes, each with its index entry, so the heading and the body agree. An odd size is refused.
 //
 // Per tree the script prints the proof's bytes, bytes per operation, the prover's time for the set, and the strict
 // replay's time — a `StrictBatchAVLVerifier` over the pre-state digest and the proof, the same lookups and writes
@@ -15,10 +16,11 @@
 // Node 22.18 or later. Runs on one CPU; a 10^6-leaf tree costs the order of a GB of RAM to hold and several minutes to
 // seed, and 3*10^6 the order of 15 minutes.
 //
-// usage: node packages/consensus/scripts/bench-proof-size.mjs [sizes]  (sizes defaults to `10000,100000,1000000,3000000`)
+// usage: node packages/consensus/scripts/bench-proof-size.mjs [sizes]  (sizes defaults to `20000,200000,2000000,6000000`)
 import { createHash, randomBytes } from 'node:crypto';
 import { BatchAVLProver, StrictBatchAVLVerifier } from '@ergots/avltree';
 import {
+  INDEX_MARKER,
   TREE_KEY_LENGTH,
   boxKey,
   boxRecordBytes,
@@ -26,7 +28,7 @@ import {
   creditOfKey,
 } from '@dagsocial/types';
 
-const DEFAULT_SIZES = [1e4, 1e5, 1e6, 3e6];
+const DEFAULT_SIZES = [2e4, 2e5, 2e6, 6e6];
 const sizes = (process.argv[2] ?? DEFAULT_SIZES.join(','))
   .split(',')
   .map((s) => Number(s.trim()))
@@ -66,15 +68,20 @@ const median = (values) => {
   return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 };
 
-/** One built tree: the prover, the box ids and the owners it holds — picked from for the transfer set. */
+/** One built tree holding `size` leaves — `size / 2` boxes, each with its index entry (`INDEX_MARKER`). An odd size is refused, as is one too small for the TX set to pick two live boxes per send. */
 function seedTree(size) {
+  if (size % 2 !== 0) throw new Error(`seedTree(${size}): size names leaves and must be even — a box and its index entry are two leaves`);
+  const boxes = size / 2;
+  if (boxes < TXS * 2) {
+    throw new Error(`seedTree(${size}): the TX set picks ${TXS * 2} live boxes; needs at least ${TXS * 2 * 2} leaves`);
+  }
   const prover = new BatchAVLProver(TREE_KEY_LENGTH, null);
-  const ownerCount = Math.max(1, Math.floor(size / 10));
+  const ownerCount = Math.max(1, Math.floor(boxes / 10));
   const owners = Array.from({ length: ownerCount }, (_, i) => ownerOf(i));
-  const ownerOfBox = new Uint32Array(size);
-  const boxIds = new Array(size);
+  const ownerOfBox = new Uint32Array(boxes);
+  const boxIds = new Array(boxes);
   const t0 = performance.now();
-  for (let i = 0; i < size; i++) {
+  for (let i = 0; i < boxes; i++) {
     const boxId = freshBoxId();
     const ownerIndex = i % ownerCount;
     ownerOfBox[i] = ownerIndex;
@@ -85,7 +92,7 @@ function seedTree(size) {
     if (!prover.performOneOperation({ tag: 'Insert', key: boxKey(boxId), value: record }).success) {
       throw new Error(`seedTree(${size}): the prover refused the box at index ${i}`);
     }
-    if (!prover.performOneOperation({ tag: 'Insert', key: creditOfKey(owner, boxId), value: new Uint8Array([0x86]) }).success) {
+    if (!prover.performOneOperation({ tag: 'Insert', key: creditOfKey(owner, boxId), value: Uint8Array.from(INDEX_MARKER) }).success) {
       throw new Error(`seedTree(${size}): the prover refused the credit index at index ${i}`);
     }
     // Flush the proof cycle every 200 000 operations so memory does not grow without bound while seeding.
@@ -93,7 +100,7 @@ function seedTree(size) {
   }
   prover.generateProof();
   const built = (performance.now() - t0) / 1000;
-  return { prover, owners, boxIds, ownerOfBox, ownerCount, built };
+  return { prover, owners, boxIds, ownerOfBox, ownerCount, boxes, built };
 }
 
 /**
@@ -104,16 +111,16 @@ function seedTree(size) {
  * writes (NODE_INTERFACE → The block proof).
  */
 function proveTransfers(tree, size) {
-  const { prover, owners, boxIds, ownerOfBox, ownerCount } = tree;
+  const { prover, owners, boxIds, ownerOfBox, boxes } = tree;
   const spentIdx = new Set();
   // The set and its complement: pick an unspent box deterministically from a wrapping cursor. The spent cursor and
   // the other cursor both advance by one each pick, so no other-lookup lands on a box an earlier send of this block
   // spent, and the recorded lookup is of a live key.
   let cursor = 0;
   const pickUnspent = () => {
-    while (spentIdx.has(cursor)) cursor = (cursor + 1) % size;
+    while (spentIdx.has(cursor)) cursor = (cursor + 1) % boxes;
     const chosen = cursor;
-    cursor = (cursor + 1) % size;
+    cursor = (cursor + 1) % boxes;
     return chosen;
   };
   const otherLookupPicks = new Uint32Array(TXS);
@@ -172,7 +179,7 @@ function proveTransfers(tree, size) {
       if (!prover.performOneOperation({ tag: 'Insert', key: boxKey(outId), value: outRecords[t * 2 + o] }).success) {
         throw new Error(`proveTransfers(${size}): insert refused at tx ${t} for an output box`);
       }
-      if (!prover.performOneOperation({ tag: 'Insert', key: creditOfKey(outOwner, outId), value: new Uint8Array([0x86]) }).success) {
+      if (!prover.performOneOperation({ tag: 'Insert', key: creditOfKey(outOwner, outId), value: Uint8Array.from(INDEX_MARKER) }).success) {
         throw new Error(`proveTransfers(${size}): insert refused at tx ${t} for an output index`);
       }
       writes += 2;
@@ -220,7 +227,7 @@ function replayTransfers({ proof, prePrint, postPrint, picks, boxIds, owners, ow
       const outOwner = o === 0 ? owner : otherOwner;
       const outRecord = picks.outRecords[t * 2 + o];
       const ir1 = verifier.performOneOperation({ tag: 'Insert', key: boxKey(outId), value: outRecord });
-      const ir2 = verifier.performOneOperation({ tag: 'Insert', key: creditOfKey(outOwner, outId), value: new Uint8Array([0x86]) });
+      const ir2 = verifier.performOneOperation({ tag: 'Insert', key: creditOfKey(outOwner, outId), value: Uint8Array.from(INDEX_MARKER) });
       if (!ir1.success || !ir2.success) {
         throw new Error(`replayTransfers: an insert refused at tx ${t}: ${verifier.getLastFailReason()}`);
       }
