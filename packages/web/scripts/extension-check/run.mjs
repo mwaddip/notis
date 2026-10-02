@@ -2633,13 +2633,14 @@ const KARMA_UNLISTED_RE = /^the chain holds (\d+) rep the node does not list$/;
 
 // An honest-looking row — the row reads what it reads without a lie: silence
 // (hintText is null) or the muted *P proven at block H* line, maybe with a
-// `young` / `not checked yet` tail. Under D1 the row of the ledger the relay
-// lies about reads **exactly `not checked yet`, muted** while the run cannot
-// decide: a reading of the lying row that is silent or honest-looking means
-// the run decided it was `unlisted` or `undecided` and chose a shape the arm
-// should not accept. The drop arms assert the clay line or the bare
-// `not checked yet`, and fail on silence or an `[N] proven at block H`
-// reading.
+// `young` / `not checked yet` tail. The row of the ledger the relay lies
+// about by dropping a box is clay where `heightAfter` is the anchor's tip
+// and muted `not checked yet` where it is not, never silent and never the
+// honest shape (WEB_INTERFACE → The extension → "The verified figures" —
+// "the chain holds N $NOTIS the node does not list"; "muted *not checked
+// yet* when a box is `undecided` or the ledger's read is `stale`"). A drop
+// arm takes a reading in those two shapes and fails any wait that ends
+// otherwise.
 const HONEST_BALANCE_LINE = (t) => t === null || /^[\d.]+ \$NOTIS proven at block \d+( · [\d.]+ \$NOTIS (landed since|not checked yet))*$/.test(t);
 const HONEST_REP_LINE = (t) => t === null || /^\d+ rep proven at block \d+( · \d+ rep (landed since|not checked yet))*$/.test(t);
 // The bare `not checked yet` row, muted — the figuresLine answer under a
@@ -2734,12 +2735,11 @@ function lieArms(relay) {
       // holds the box the node did not list, so the figures run reads it
       // `unlisted` where `heightAfter` equals the anchor's tip (clay) and
       // `undecided` where a block landed since (muted *not checked yet*).
-      // Under D1 those are the only honest shapes; a silent reading or an
-      // `[N] proven at block H` reading means the run read the lying row
-      // under a rule D1 retired — fail the arm. The arm presses again on
-      // the muted shape, up to five times, until the clay line stands.
-      // The gold figure, where one stands, is the node's own — the sum of
-      // what it listed — and clay; where the drop emptied the listing the
+      // Those are the two in-line shapes; a silent reading or an `[N] proven
+      // at block H` reading fails the arm. The arm presses on the muted
+      // shape, up to five times, until the clay line stands. The gold
+      // figure, where one stands, is the node's own — the sum of what it
+      // listed — and clay; where the drop emptied the listing the
       // empty-state stands with the clay line beneath it. The rep row is
       // not clay.
       step: '22c',
@@ -2764,9 +2764,9 @@ function lieArms(relay) {
       // through as served) where `heightAfter` equals tip, and muted *not
       // checked yet* where a block landed since. The arm reads the dropped
       // box from `relay.droppedKarmaBox` and asserts N equals its value.
-      // The balance row is not clay. As 22c, pressed again where the
-      // reading is `not checked yet`; a silent or honest-looking reading
-      // under D1 is a defect — the arm fails it.
+      // The balance row is not clay. As 22c, pressed on `not checked yet`
+      // until the clay stands; a silent or honest-looking reading fails
+      // the arm.
       step: '22d',
       mode: 'karma-drop',
       box: () => relay.droppedKarmaBox,
@@ -2789,12 +2789,13 @@ function lieArms(relay) {
       // held at tip and the listing lacks it, with `heightAfter` not
       // `tip.height` → the run reads it `undecided` and the balance row
       // reads muted *not checked yet*, with the gold figure as the node
-      // gave it, not clay. Every reading of the balance row — after the
-      // change, after each of two presses — is `not checked yet` muted;
-      // never silent, never clay. The rep row is not clay. (D1,
-      // WEB_INTERFACE → The extension → "The verified figures" — "muted
-      // *not checked yet* when a box is `undecided` or the ledger's read
-      // is `stale`".)
+      // gave it, not clay (WEB_INTERFACE → The extension → "The verified
+      // figures" — "muted *not checked yet* when a box is `undecided` or
+      // the ledger's read is `stale`"). Every reading of the balance row —
+      // after the change and after each of two presses — holds that
+      // shape; a node that answers another height must read undecided
+      // however often the reader asks. `pressesAtLeast: 2` keeps the loop
+      // from short-circuiting on an already-ok first reading.
       step: '22e',
       mode: 'credits-drop-tipplus1',
       box: () => relay.droppedCreditsBox,
@@ -2805,6 +2806,7 @@ function lieArms(relay) {
         && r.goldText !== null
         && !r.goldHasClay,
       presses: 2,
+      pressesAtLeast: 2,
       karmaSettled: (k) => k.present && k.monoText !== null,
       karmaOk: repNotClay,
     },
@@ -2885,38 +2887,52 @@ async function runLieArm(cx, relay, arm) {
     const verified = !change.reached.timedOut && change.stored === relay.origin;
 
     // (3) The rows, once the relay's run lands; the lying row awaited with a
-    // bound, and pressed again where the arm allows it. `pressWhen` names the
-    // row whose reading drives the retry — `credits` by default; `karma` for
-    // the karma-drop arm, where the lie is on /karma and the balance row is
-    // the "not clay" side. For the drop arms, the arm's `settled` predicate
-    // matches both the clay line and an honest-looking row: a honest reading
-    // means a block landed between the anchor and the run's /blocks/current,
-    // so the arm presses again up to `arm.presses` times. The `ok` match is
-    // the clay line, and `arm.presses === 0` means the arm leaves no room for
-    // retry (23's reading is decided on the first run).
+    // 15 s bound. `pressWhen` names the lying row — `credits` by default,
+    // `karma` on karma-drop. The loop continues while `presses < arm.presses`
+    // AND (`presses < arm.pressesAtLeast` OR `!arm.<side>Ok(last)`): a
+    // `pressesAtLeast` of 2 (22e) presses twice whatever the first reading
+    // was, so a shape already ok after the change does not short-circuit;
+    // the drop arms (22a–d, 22e) take `settled` as the "in the step's
+    // line" check — a wait that times out means the row ended on silence
+    // or an honest-looking line, and `creditsInLine` / `karmaInLine` go
+    // false. The arm's verdict is `ok` AND every reading of the lying row
+    // was in line. `presses === 0` (step 23) leaves no room for retry.
     await raiseWindow(cx, 'open wallet');
     const relayRun = verified ? await waitForFiguresRun(cx, changeIdx, 60000, 2000, relay.origin) : [];
     let credits = await waitForRow(readCreditsRow, cx, arm.creditsSettled, 15000);
     const creditsReadings = [`after the change: ${creditsSeen(credits.last)}`];
     const pressWhen = arm.pressWhen ?? 'credits';
+    const pressesAtLeast = arm.pressesAtLeast ?? 0;
     let presses = 0;
+    let creditsInLine = pressWhen === 'credits' ? !credits.timedOut : true;
     if (pressWhen === 'credits') {
-      while (verified && presses < arm.presses && !arm.creditsOk(credits.last)) {
+      while (
+        verified
+        && presses < arm.presses
+        && (presses < pressesAtLeast || !arm.creditsOk(credits.last))
+      ) {
         presses += 1;
         await pressCornerAndReadFigures(cx);
         credits = await waitForRow(readCreditsRow, cx, arm.creditsSettled, 15000);
         creditsReadings.push(`press ${presses}: ${creditsSeen(credits.last)}`);
+        if (credits.timedOut) creditsInLine = false;
       }
     }
     await raiseWindow(cx, 'open profile');
     let karma = await waitForRow(readKarmaField, cx, arm.karmaSettled, 15000);
     const karmaReadings = [`after the change: ${karmaSeen(karma.last)}`];
+    let karmaInLine = pressWhen === 'karma' ? !karma.timedOut : true;
     if (pressWhen === 'karma') {
-      while (verified && presses < arm.presses && !arm.karmaOk(karma.last)) {
+      while (
+        verified
+        && presses < arm.presses
+        && (presses < pressesAtLeast || !arm.karmaOk(karma.last))
+      ) {
         presses += 1;
         await pressCornerAndReadFigures(cx);
         karma = await waitForRow(readKarmaField, cx, arm.karmaSettled, 15000);
         karmaReadings.push(`press ${presses}: ${karmaSeen(karma.last)}`);
+        if (karma.timedOut) karmaInLine = false;
       }
     }
     // Re-read the quiet side after any retries, so both rows reflect the same
@@ -2951,12 +2967,12 @@ async function runLieArm(cx, relay, arm) {
     const lieBoxText = lieBox === null
       ? 'none (the sentence carries no amount)'
       : `${lieBox.boxId.slice(0, 12)}… (${lieBox.value})`;
-    record(arm.step, verified && creditsOk && karmaOk && cornerOk && back.ok,
+    record(arm.step, verified && creditsOk && karmaOk && creditsInLine && karmaInLine && cornerOk && back.ok,
       `relay ${arm.mode} edits=${edits}; lie box=${lieBoxText}; ` +
       `change: stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}, verified=${verified}; ` +
       `through the relay: /credits reads=${creditsReads}, /karma reads=${karmaReads}, figures proof requests=${relayRun.length}; ` +
-      `balance ${creditsReadings.join(' | ')} (A's /credits total=${nodeCredits?.total ?? 'null'} base units), ok=${creditsOk}; ` +
-      `rep ${karmaReadings.join(' | ')}, ok=${karmaOk}; ` +
+      `balance ${creditsReadings.join(' | ')} (A's /credits total=${nodeCredits?.total ?? 'null'} base units), ok=${creditsOk}, in line=${creditsInLine}; ` +
+      `rep ${karmaReadings.join(' | ')}, ok=${karmaOk}, in line=${karmaInLine}; ` +
       `corner led=${corner.ledClass}, title=${JSON.stringify(corner.title)}, ok=${cornerOk}; ` +
       `back to A: ${back.detail}, ok=${back.ok}`);
   } catch (e) {
