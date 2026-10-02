@@ -128,10 +128,11 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   }
 
   // 8. Record each post's author and height for the rules that follow in this
-  // block — the like arm reads the author (NODE_INTERFACE → Likes), the
-  // withdraw arm the height (NODE_INTERFACE → Withdrawal transactions) — and
-  // for the post record `treeWritesOf` writes next (CONSENSUS_INTERFACE → The
-  // tree writes). From the block's own post transactions, consensus data only.
+  // block — the like arm reads the author (NODE_INTERFACE → Karma transition
+  // rules), the withdraw arm the height (NODE_INTERFACE → Withdrawal
+  // transactions) — and for the post record `treeWritesOf` writes next
+  // (CONSENSUS_INTERFACE → The tree writes). From the block's own post
+  // transactions, consensus data only.
   for (const { postId, post } of blockPosts) {
     state.insertBlockTopology(postId, post.author, height);
   }
@@ -566,7 +567,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     if (postHeight === null || postHeight >= height) {
       return reject(
         `Block ${height}: postWithdraw ${postId} is not confirmed ` +
-        `in an earlier block (topology height ${postHeight})`,
+        `in an earlier block (recorded height ${postHeight})`,
       );
     }
 

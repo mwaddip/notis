@@ -163,15 +163,14 @@ export interface UtxoEngineDeps {
    */
   vouchCooldownBlocks: number;
   /**
-   * The consensus-recorded author of a confirmed post, raw 32 bytes, or null
-   * when no applied block has confirmed it.
+   * The post's recorded author (NODE_INTERFACE → Block Topology), raw 32
+   * bytes, or null when no applied block has confirmed it.
    *
    * ⛔ **Consensus input, and the source is the whole of its correctness.** It
-   * reads the view's answer — the post record under the state root
-   * (NODE_INTERFACE → Block Topology → "Block application reads the record,
-   * through the tree view") — never `dag_posts.author` (ARCHITECTURE → Likes):
-   * a placeholder row carries a zeroed author, so a marker built from the wrong
-   * source earmarks the liker's karma to the zero key.
+   * reads the post's recorded author — never `dag_posts.author`
+   * (ARCHITECTURE → Likes): a placeholder row carries a zeroed author, so a
+   * marker built from the wrong source earmarks the liker's karma to the
+   * zero key.
    *
    * ⚠ **A like on an UNCONFIRMED post is now unbuildable, and that is a
    * consequence rather than a decision.** The marker has to name the author, and
@@ -184,9 +183,8 @@ export interface UtxoEngineDeps {
    * NODE_INTERFACE → Post transactions → "A reply's parent may still be pending
    * at admission." The post arm's fallback after `getTopologyAuthor` returns
    * null: the pending `dag_posts` row's author. Admission deps wire the real
-   * query; apply deps set `() => null` — at apply only the view's recorded
-   * answer is read (NODE_INTERFACE → Block Topology → "Block application
-   * reads the record, through the tree view").
+   * query; apply deps set `() => null` — at apply only the post's recorded
+   * author is read (NODE_INTERFACE → Block Topology).
    */
   getPendingPostAuthor: (postId: string) => Uint8Array | null;
   /** Wrap fn in a better-sqlite3 transaction. */
@@ -502,12 +500,10 @@ function checkTransitions(
               `${marker.value}`,
           };
         }
-        // ⛔ **Resolved from the view's recorded answer — the post record
-        // under the state root** (NODE_INTERFACE → Block Topology → "Block
-        // application reads the record, through the tree view"), never
-        // `dag_posts.author` — a placeholder row carries a zeroed author, so
-        // a marker built from the wrong source earmarks the liker's karma to
-        // the zero key.
+        // ⛔ **Resolved from the post's recorded author** (NODE_INTERFACE →
+        // Block Topology), never `dag_posts.author` — a placeholder row
+        // carries a zeroed author, so a marker built from the wrong source
+        // earmarks the liker's karma to the zero key.
         const author = deps.getTopologyAuthor(likeTarget);
         if (author === null) {
           return {
