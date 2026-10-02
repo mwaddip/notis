@@ -4241,8 +4241,9 @@ recorded lookups for a block's proof to open with (→ The block proof). A tree 
 read is local corruption — `InconsistentStateTreeError`, fail-stop, as under the cost gate (→ "What the funnel's
 totality catch is FOR") — never a 500 the node stays up behind. **A height the node
 keeps no root of is 404 `{ error: 'height not available' }`, and no proof path calls `rollback`** — which re-reads the
-whole tree from the store. A root is kept once its block's checkpoint stands and dropped with its block — a refused
-block's, a reverted block's. **Every kept root is a root of the one tree the node holds in memory**: a tree resolved
+whole tree from the store. A root is kept once its block has applied and dropped when its block is reverted; **a
+refused block leaves the kept roots exactly as they were, whatever height it claims** — the height in a refused
+header is its producer's word. **Every kept root is a root of the one tree the node holds in memory**: a tree resolved
 from the store shares no node with the roots kept before it, and a node keeping both would hold the tree twice. So
 **a reorg restores the fork point's kept root by reference where the node keeps the root of the store's version at
 that height** — the same tree `rollback(version)` resolves, without the store's re-read — and resolves that version
