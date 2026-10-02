@@ -192,6 +192,55 @@ describe('proveRange — a body of another shape is unproven', () => {
     if (!r.ok) expect(r.status).toBe('unproven');
   });
 
+  // The page's `stateRoot` is checked for shape before it is compared to the
+  // header's: a `stale` ledger is a well-formed root that is not the header's;
+  // every other shape is `unproven` (WEB_INTERFACE → The extension → "The
+  // verified figures" — "A run is total").
+  it('a body with no stateRoot (empty object)', async () => {
+    const r = await askWith({});
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.status).toBe('unproven');
+      expect(r.verdict).toContain('stateRoot');
+    }
+  });
+
+  it('a body with an `error` field alone (no stateRoot)', async () => {
+    const r = await askWith({ error: 'internal' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.status).toBe('unproven');
+      expect(r.verdict).toContain('stateRoot');
+    }
+  });
+
+  it('a stateRoot that is a number', async () => {
+    const r = await askWith({ ...base, stateRoot: 7 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.status).toBe('unproven');
+      expect(r.verdict).toContain('stateRoot');
+    }
+  });
+
+  it('a stateRoot that is null', async () => {
+    const r = await askWith({ ...base, stateRoot: null });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.status).toBe('unproven');
+      expect(r.verdict).toContain('stateRoot');
+    }
+  });
+
+  it('a stateRoot that is a hex string of the wrong length', async () => {
+    const r = await askWith({ ...base, stateRoot: '00'.repeat(32) });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.status).toBe('unproven');
+      expect(r.verdict).toContain('stateRoot');
+    }
+  });
+
   it('a `proof` that is not a string', async () => {
     const r = await askWith({ ...base, proof: 123 });
     expect(r.ok).toBe(false);

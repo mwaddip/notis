@@ -22,6 +22,10 @@ const AVL_CFG = { keyLength: TREE_KEY_LENGTH, valueLengthOpt: null } as const;
 const OWNER_HEX_LEN = 64;
 const OWNER_HEX = /^[0-9a-f]{64}$/i;
 
+/** A well-formed stateRoot is the 33-byte AVL+ digest in hex — the shape
+ *  the header carries (TYPES_INTERFACE → Layout — Block header). */
+const STATE_ROOT_HEX = /^[0-9a-f]{66}$/i;
+
 /**
  * The outcome of one call to `proveRange`: the full range's boxes under one
  * header, or the first failure's status and verdict. A `no-proof`, `unproven`
@@ -110,11 +114,17 @@ export async function proveRange(
       return { ok: false, status: 'unproven', verdict: `page body is not an object: ${shown(body)}` };
     }
 
-    // The answer's `stateRoot` is the header's before the proof is read. A
-    // mismatch is `stale` — the node holds another block at that height
-    // (WEB_INTERFACE → The extension → "A `stateRoot` other than the header's
-    // at `tip` is no failed proof").
+    // The answer's `stateRoot` shape is checked before any comparison. A
+    // well-formed root that is not the header's is `stale` — the node holds
+    // another block at that height (WEB_INTERFACE → The extension → "A
+    // `stateRoot` other than the header's at `tip` is no failed proof"); an
+    // answer of another shape is `unproven`, as a run of any shape ends in
+    // a status (WEB_INTERFACE → The extension → "The verified figures" —
+    // "A run is total").
     const answerRoot = body['stateRoot'];
+    if (typeof answerRoot !== 'string' || !STATE_ROOT_HEX.test(answerRoot)) {
+      return { ok: false, status: 'unproven', verdict: `page stateRoot is not a root: ${shown(answerRoot)}` };
+    }
     if (answerRoot !== header.stateRoot) {
       return { ok: false, status: 'stale', verdict: `node answers another block at height ${atHeight}: stateRoot ${shown(answerRoot)}` };
     }
