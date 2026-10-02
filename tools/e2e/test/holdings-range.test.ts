@@ -20,7 +20,9 @@ import {
 } from '../src/http.js';
 import type { BoxRef } from '../src/tx/render.js';
 import type { NodeProcess } from '../src/node-process.js';
-import { proveHoldings } from '@dagsocial/nipopow-client';
+import type { AnyBox } from '@dagsocial/types';
+import { proveRange } from '@dagsocial/nipopow-client';
+import type { HoldingKind } from '@dagsocial/nipopow-client';
 
 const FILE_INDEX = 1;
 
@@ -33,7 +35,7 @@ const PROOF_WINDOW = 5;
 
 // CONSENSUS_INTERFACE → The holdings page — the five kinds a key's boxes are
 // indexed under.
-const KINDS = ['karma', 'credit', 'escrow', 'vouch', 'accrual'] as const;
+const KINDS: readonly HoldingKind[] = ['karma', 'credit', 'escrow', 'vouch', 'accrual'];
 
 function toBoxRefs(boxes: readonly { boxId: string; value: string }[]): BoxRef[] {
   return boxes.map((b) => ({ boxId: b.boxId, value: BigInt(b.value) }));
@@ -45,6 +47,37 @@ function sortedPairs(entries: readonly { id: string; value: bigint }[]): [string
   return entries
     .map((e): [string, string] => [e.id, e.value.toString()])
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+}
+
+/**
+ * NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the range route" — the
+ * key's holdings of several kinds at one header, in the order given, through
+ * `proveRange` of `@dagsocial/nipopow-client`. The first failure answers the
+ * run; no later kind is read. An `owner` that is not 64 hex is `unproven`
+ * with no request made.
+ */
+async function proveAllKinds(
+  nodeUrl: string,
+  owner: string,
+  kinds: readonly HoldingKind[],
+  header: { height: number; stateRoot: string },
+): Promise<
+  | { ok: true; boxes: Record<HoldingKind, AnyBox[] | undefined> }
+  | { ok: false; status: 'unproven' | 'no-proof' | 'stale'; verdict: string }
+> {
+  const boxes: Record<HoldingKind, AnyBox[] | undefined> = {
+    karma: undefined,
+    credit: undefined,
+    escrow: undefined,
+    vouch: undefined,
+    accrual: undefined,
+  };
+  for (const kind of kinds) {
+    const r = await proveRange(nodeUrl, kind, owner, header, fetch);
+    if (!r.ok) return r;
+    boxes[kind] = r.boxes;
+  }
+  return { ok: true, boxes };
 }
 
 describe('holdings-range', () => {
@@ -135,19 +168,18 @@ describe('holdings-range', () => {
     const t0 = (await getBlockCurrent(node1)).height;
     await waitHeight(mesh.nodes, t0);
 
-    // --- at the tip, on every node: proveHoldings over all five kinds answers
+    // --- at the tip, on every node: proveRange over all five kinds answers
     // the node's `/karma/` and `/credits/` listings whole and no box of the
     // other three kinds; the two nodes answer the same boxes kind for kind.
     const perNode: { url: string; byKind: Record<string, { id: string; value: bigint }[]> }[] = [];
     for (const node of mesh.nodes) {
       const header = await getBlockHeader(node, t0);
       expect(header).not.toBeNull();
-      const result = await proveHoldings(
+      const result = await proveAllKinds(
         node.url,
         member.publicKeyHex,
         KINDS,
         { height: t0, stateRoot: header!.stateRoot },
-        fetch,
       );
       expect(result.ok).toBe(true);
       if (!result.ok) continue;
@@ -188,12 +220,11 @@ describe('holdings-range', () => {
     const noone = fresh();
     for (const node of mesh.nodes) {
       const header = (await getBlockHeader(node, t0))!;
-      const r = await proveHoldings(
+      const r = await proveAllKinds(
         node.url,
         noone.publicKeyHex,
         KINDS,
         { height: t0, stateRoot: header.stateRoot },
-        fetch,
       );
       expect(r.ok).toBe(true);
       if (!r.ok) continue;
@@ -202,10 +233,10 @@ describe('holdings-range', () => {
 
     // --- an older height. Record `h` and the member's credit boxes there.
     // The member sends part of ONE credit box to a new recipient; the holdings
-    // at the new tip are the new set — the change box under the id
-    // `signAndRender` derived (property 5) and the spent box gone — and the
-    // holdings at `h`, asked now, are still the old set, under block `h`'s
-    // `stateRoot`.
+    // at the new tip are the new set — the change box under the id the
+    // transfer render derives (NODE_INTERFACE → "Change-box id is the derived
+    // candidate id") and the spent box gone — and the holdings at `h`, asked
+    // now, are still the old set, under block `h`'s `stateRoot`.
     const h = t0;
     const headerH = (await getBlockHeader(node1, h))!;
     const creditsBeforeTransfer = toBoxRefs(
@@ -246,12 +277,11 @@ describe('holdings-range', () => {
 
     for (const node of mesh.nodes) {
       const headerAfter = (await getBlockHeader(node, tAfter))!;
-      const r = await proveHoldings(
+      const r = await proveAllKinds(
         node.url,
         member.publicKeyHex,
         KINDS,
         { height: tAfter, stateRoot: headerAfter.stateRoot },
-        fetch,
       );
       expect(r.ok).toBe(true);
       if (!r.ok) continue;
@@ -261,12 +291,11 @@ describe('holdings-range', () => {
     }
 
     for (const node of mesh.nodes) {
-      const r = await proveHoldings(
+      const r = await proveAllKinds(
         node.url,
         member.publicKeyHex,
         KINDS,
         { height: h, stateRoot: headerH.stateRoot },
-        fetch,
       );
       expect(r.ok).toBe(true);
       if (!r.ok) continue;
@@ -276,19 +305,18 @@ describe('holdings-range', () => {
     }
 
     // --- a stateRoot that is not the height's: block `h`'s root offered for
-    // the tip's height is unproven on every node (NODE_INTERFACE → AVL+ State
-    // Root → "avl-endpoint, the range route"; the client's header stateRoot
-    // other than the answer's is unproven before the proof is read).
+    // the tip's height is stale on every node (NODE_INTERFACE → AVL+ State
+    // Root → "avl-endpoint, the range route"; a `stateRoot` other than the
+    // header's reads as stale before the proof is decoded).
     for (const node of mesh.nodes) {
-      const r = await proveHoldings(
+      const r = await proveAllKinds(
         node.url,
         member.publicKeyHex,
         KINDS,
         { height: tAfter, stateRoot: headerH.stateRoot },
-        fetch,
       );
       expect(r.ok).toBe(false);
-      if (!r.ok) expect(r.status).toBe('unproven');
+      if (!r.ok) expect(r.status).toBe('stale');
     }
 
     // --- a height the node keeps no root of: tip + 1 is 404
@@ -305,12 +333,11 @@ describe('holdings-range', () => {
       expect(body.error).toBe('height not available');
     }
     for (const node of mesh.nodes) {
-      const r = await proveHoldings(
+      const r = await proveAllKinds(
         node.url,
         member.publicKeyHex,
         KINDS,
         { height: tipPlusOne, stateRoot: headerH.stateRoot },
-        fetch,
       );
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.status).toBe('no-proof');
@@ -341,12 +368,11 @@ describe('holdings-range', () => {
     for (const node of mesh.nodes) {
       const inside = t - (PROOF_WINDOW - 1);
       const header = (await getBlockHeader(node, inside))!;
-      const r = await proveHoldings(
+      const r = await proveAllKinds(
         node.url,
         member.publicKeyHex,
         KINDS,
         { height: inside, stateRoot: header.stateRoot },
-        fetch,
       );
       expect(r.ok).toBe(true);
     }
