@@ -342,12 +342,12 @@ describe('verifierSession — a proof that does not verify', () => {
       const proof = flipped(position, 0x01);
       // The byte is the tree's, so the proof no longer anchors at the parent's digest.
       expect(new BatchAVLVerifier(parent.digest, proof, TREE_CONFIG).digest(), `byte ${position}`).toBeNull();
-      expect(() => replayBlock(parent.digest, proof, block, ctx), `byte ${position}`).toThrow("the block's proof");
+      expect(() => replayBlock(parent.digest, proof, block, ctx), `byte ${position}`).toThrow('proof refuses');
     }
     // The last byte is the directions': the proof anchors, and an operation it steers fails.
     const proof = flipped(proven.proof.length - 1, 0xff);
     expect(new BatchAVLVerifier(parent.digest, proof, TREE_CONFIG).digest()).not.toBeNull();
-    expect(() => replayBlock(parent.digest, proof, block, ctx)).toThrow("the block's proof");
+    expect(() => replayBlock(parent.digest, proof, block, ctx)).toThrow('proof refuses');
   });
 
   it("a proof missing the block's last read makes the run throw — a read of the writes' own, or of the rules'", () => {
@@ -361,7 +361,7 @@ describe('verifierSession — a proof that does not verify', () => {
       expect(skipped.keys, label).toEqual(proven.keys);
       expect(skipped.digest, label).toEqual(proven.digest);
       expect(skipped.proof, label).not.toEqual(proven.proof);
-      expect(() => replayBlock(parent.digest, skipped.proof, block, ctx), label).toThrow("the block's proof");
+      expect(() => replayBlock(parent.digest, skipped.proof, block, ctx), label).toThrow('the proof refuses the lookup');
     }
   });
 

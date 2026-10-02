@@ -27,7 +27,7 @@ export function verifierSession(
     lookup(key: Uint8Array): TreeLookup {
       const answer = verifier.performLookupWithNeighbors(key);
       if (!answer.success) {
-        throw new Error(`the block's proof refuses the lookup of ${bytesToHex(key)}: ${verifier.getLastFailReason()}`);
+        throw new Error(`the proof refuses the lookup of ${bytesToHex(key)}: ${verifier.getLastFailReason()}`);
       }
       const nextKey = answer.nextKey ?? new Uint8Array(TREE_KEY_LENGTH).fill(0xff);
       return answer.found

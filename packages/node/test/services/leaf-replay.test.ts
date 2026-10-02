@@ -615,7 +615,7 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
 
     expect(replayOverTip(altered, missing.proof)).toEqual({
       ok: false,
-      reason: `the block's proof refuses the lookup of ${skipped}: leaf-key-out-of-order`,
+      reason: `the proof refuses the lookup of ${skipped}: leaf-key-out-of-order`,
     });
     expectNodeRefuses(
       altered,
