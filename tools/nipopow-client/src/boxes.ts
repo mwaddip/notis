@@ -358,15 +358,15 @@ const KINDS: readonly ('karma' | 'credit')[] = ['karma', 'credit'];
 type LedgerKind = (typeof KINDS)[number];
 
 /**
- * The two reads a ledger's holdings cover: `suffix` is the range at
- * `suffixHead`, `tip` is the range at `tip`. `null` means *not read* — the
- * `tip` read is not made when the `suffix` read failed; the whole pair is
- * `null`, `null` when the ledger's listing was handed as `null`.
+ * One ledger's reads (WEB_INTERFACE → The extension → "The verified figures"):
+ * `null` where the listing was handed as `null` and nothing is read; the
+ * `suffixHead` read alone where it failed, the ledger then not asked at `tip`;
+ * both where it succeeded.
  */
-interface LedgerReads {
-  suffix: RangeResult | null;
-  tip: RangeResult | null;
-}
+type LedgerReads =
+  | null
+  | { suffix: Extract<RangeResult, { ok: false }> }
+  | { suffix: Extract<RangeResult, { ok: true }>; tip: RangeResult };
 
 /** The computed state of one ledger's reads: its `holdings` status, its
  *  verdict (if not `read`/`not-read`), and the proven box indexes. */
@@ -386,10 +386,10 @@ interface LedgerState {
 function stateOf(reads: LedgerReads): LedgerState {
   const atSuffix = new Map<string, AnyBox>();
   const atTip = new Map<string, AnyBox>();
-  if (reads.suffix === null) {
+  if (reads === null) {
     return { holdings: 'not-read', holdingsVerdict: null, atSuffix, atTip };
   }
-  if (!reads.suffix.ok) {
+  if (!('tip' in reads)) {
     return {
       holdings: reads.suffix.status,
       holdingsVerdict: `holdings read failed at suffixHead: ${reads.suffix.verdict}`,
@@ -398,13 +398,10 @@ function stateOf(reads: LedgerReads): LedgerState {
     };
   }
   for (const b of reads.suffix.boxes) atSuffix.set(b.id!.toLowerCase(), b);
-  if (reads.tip === null || !reads.tip.ok) {
-    const tip = reads.tip;
+  if (!reads.tip.ok) {
     return {
-      holdings: tip === null ? 'no-proof' : tip.status,
-      holdingsVerdict: tip === null
-        ? 'holdings read failed at tip: not read'
-        : `holdings read failed at tip: ${tip.verdict}`,
+      holdings: reads.tip.status,
+      holdingsVerdict: `holdings read failed at tip: ${reads.tip.verdict}`,
       atSuffix,
       atTip,
     };
@@ -464,19 +461,18 @@ export async function proveFigures(
   // Steps 2–5 — each ledger's two range reads, in the order:
   // karma@suffix, credit@suffix, karma@tip, credit@tip. A ledger that failed
   // at `suffixHead` is not asked at `tip`.
-  const karmaReads: LedgerReads = { suffix: null, tip: null };
-  const creditReads: LedgerReads = { suffix: null, tip: null };
-
-  karmaReads.suffix = await proveRange(nodeUrl, 'karma', userLowerHex, suffixHeader, httpFetch);
-  if (listing.credits !== null) {
-    creditReads.suffix = await proveRange(nodeUrl, 'credit', userLowerHex, suffixHeader, httpFetch);
-  }
-  if (karmaReads.suffix.ok) {
-    karmaReads.tip = await proveRange(nodeUrl, 'karma', userLowerHex, tipHeader, httpFetch);
-  }
-  if (creditReads.suffix !== null && creditReads.suffix.ok) {
-    creditReads.tip = await proveRange(nodeUrl, 'credit', userLowerHex, tipHeader, httpFetch);
-  }
+  const karmaSuffix = await proveRange(nodeUrl, 'karma', userLowerHex, suffixHeader, httpFetch);
+  const creditSuffix = listing.credits !== null
+    ? await proveRange(nodeUrl, 'credit', userLowerHex, suffixHeader, httpFetch)
+    : null;
+  const karmaReads: LedgerReads = karmaSuffix.ok
+    ? { suffix: karmaSuffix, tip: await proveRange(nodeUrl, 'karma', userLowerHex, tipHeader, httpFetch) }
+    : { suffix: karmaSuffix };
+  const creditReads: LedgerReads = creditSuffix === null
+    ? null
+    : creditSuffix.ok
+      ? { suffix: creditSuffix, tip: await proveRange(nodeUrl, 'credit', userLowerHex, tipHeader, httpFetch) }
+      : { suffix: creditSuffix };
 
   // Step 6 — one GET /blocks/current.
   const heightAfter = await readHeightAfter(nodeUrl, httpFetch);
