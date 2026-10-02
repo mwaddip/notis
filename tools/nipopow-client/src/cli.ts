@@ -19,8 +19,8 @@ const EMPTY_SUMS = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted:
 /**
  * The command line's result — a tip read, an optional figures run and the
  * exit code the entry writes. `exitCode` is 2 for an unusable tip (none
- * verified, under two verified without `--allow-single`, a split) or a
- * config-side refusal, 1 for a figures run that `failed`, 0 otherwise.
+ * verified, under two verified without `--allow-single`, a split), 1 for
+ * a figures run that `failed`, 0 otherwise.
  */
 export interface CliResult {
   tip: TipResult;

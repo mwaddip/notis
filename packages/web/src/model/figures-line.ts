@@ -15,9 +15,10 @@
 // An empty listing (`boxCount === 0`) takes the same lines any listing takes:
 // WEB_INTERFACE → The extension → "The verified figures" — "An empty listing
 // takes these lines as any listing does". Under one, only the ledger's own
-// facts speak — `holdings`, `unlisted`, and for rep the record and the
-// valuation. A listed box a held result still carries belongs to a listing
-// that has passed: rows 4 and 5 do not read it, and no sum of it is printed.
+// facts speak — `holdings`, `unlisted`, `undecided`, and for rep the record
+// and the valuation. A listed box a held result still carries belongs to a
+// listing that has passed: rows 4 and 5 do not read it, and no sum of it
+// is printed.
 //
 // The line's shape mirrors `tipVerdict` (`src/model/tip-verdict.ts`): one pure
 // function, total by itself, no exception thrown.

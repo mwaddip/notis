@@ -447,10 +447,10 @@ function stateOf(reads: LedgerReads): LedgerState {
 //   every listed box of a ledger whose `tip` read is `stale`;
 // - `unlisted` — held in `T`, named nowhere in its ledger's listing, and
 //   `heightAfter` equals `tip.height`; a `FigureBox` of the run's own, after
-//   the listed ones, summed apart from the five;
+//   the listed ones, summed apart from the four;
 // - `undecided` — held in `T`, named nowhere in its ledger's listing, and
 //   `heightAfter` not `tip.height`; a `FigureBox` of the run's own, summed
-//   apart from the five, that does not fail the run;
+//   apart from the four, that does not fail the run;
 // - `unproven` — a listed value or lock that differs from the held box's, a
 //   malformed entry, or an id named twice in the listing; a failed holdings
 //   read (`unproven`) also hands this status to every listed box of the
