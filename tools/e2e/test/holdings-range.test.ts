@@ -233,10 +233,10 @@ describe('holdings-range', () => {
 
     // --- an older height. Record `h` and the member's credit boxes there.
     // The member sends part of ONE credit box to a new recipient; the holdings
-    // at the new tip are the new set — the change box under the id the
-    // transfer render derives (NODE_INTERFACE → "Change-box id is the derived
-    // candidate id") and the spent box gone — and the holdings at `h`, asked
-    // now, are still the old set, under block `h`'s `stateRoot`.
+    // at the new tip are the new set — the change box under the id
+    // `computeCandidateBoxId` derives from the transaction
+    // (TYPES_INTERFACE → BoxId) and the spent box gone — and the holdings at
+    // `h`, asked now, are still the old set, under block `h`'s `stateRoot`.
     const h = t0;
     const headerH = (await getBlockHeader(node1, h))!;
     const creditsBeforeTransfer = toBoxRefs(
