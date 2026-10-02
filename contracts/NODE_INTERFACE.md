@@ -314,9 +314,9 @@ the karma inputs' owner — no separate liker field exists anywhere.
 
 **The marker is client-built.** The transaction is **client-signed** before it reaches this
 endpoint, so the client constructs the `LikeAccrualBox` output and signs over it — and it must
-learn the target's **author** to do so, from the same source consensus uses: **`block_topology`,
-never `dag_posts.author`**, which carries a zeroed author on placeholder rows. An author read
-from the wrong table earmarks karma to the zero key while every gateway check passes.
+learn the target's **author** to do so — **the author the post's confirmation recorded**, which `confirmedAuthor`
+serves (→ Posts; → Block Topology), **never `dag_posts.author`**, which carries a zeroed author on placeholder rows.
+An author read from the wrong column earmarks karma to the zero key while every gateway check passes.
 
 **Step 3's duplicate-like gate is load-bearing, not courtesy-only in effect.** Conservation
 cannot see a repeat: a second like on the same post is a perfectly balanced transaction, so
@@ -1614,9 +1614,9 @@ the treasury.
 | Consumed | Created | Condition |
 |----------|---------|-----------|
 | KarmaBox | KarmaBox | **Consolidation**: same owner, value conserved — the one karma-side row that pays nothing, so it counts no actor toward the inclusion bonus (MINING_INTERFACE → Coinbase Application) and moves no activity clock (→ Populating the record) |
-| KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's author from `block_topology`, and that author is not the liker — the karma inputs' owner — **and the converse**, a `LikeAccrualBox` output ⟺ exactly one of `likeTarget` present or `post` present with a parent (the Reply row). At most one karma output, same owner as all inputs — omitted when the change would be zero; target live; `(liker, target)` not recorded. **Value conserved** |
+| KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's recorded author (→ Block Topology), and that author is not the liker — the karma inputs' owner — **and the converse**, a `LikeAccrualBox` output ⟺ exactly one of `likeTarget` present or `post` present with a parent (the Reply row). At most one karma output, same owner as all inputs — omitted when the change would be zero; target live; `(liker, target)` not recorded. **Value conserved** |
 | KarmaBox | KarmaBox + KarmaPriceBox | **Thread**: `post` present with no `parentRefs` ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_THREAD` and no `LikeAccrualBox`. At most one karma output, same owner as all inputs — omitted when the change would be zero; the signing key is the post's author. **Value conserved** — a post carries **no** deficit and **no** surplus |
-| KarmaBox | KarmaBox + KarmaPriceBox + LikeAccrualBox | **Reply**: `post` present with one parent ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE` **and** exactly one `LikeAccrualBox` output of exactly `REPLY_AUTHOR_SHARE` whose `author` is the parent's author from `block_topology`. The karma output as above; the signing key is the post's author. **Value conserved** |
+| KarmaBox | KarmaBox + KarmaPriceBox + LikeAccrualBox | **Reply**: `post` present with one parent ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE` **and** exactly one `LikeAccrualBox` output of exactly `REPLY_AUTHOR_SHARE` whose `author` is the parent's recorded author (→ Block Topology). The karma output as above; the signing key is the post's author. **Value conserved** |
 | KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it**; `bond.inviterId` is a root, or a member with `⌊memberVouches / D(N)⌋ − invitesUsed ≥ 1` on its record at apply, `N` from pre-body state (→ Bond transition rules, → Membership pass) |
 | KarmaBox | KarmaBox + VouchBox | Vouch cast: karma outputs same owner; `vouch.value == VOUCH_KARMA_AMOUNT`; `vouch.voucherId` == the karma input's owner; the voucher is a member — `member(voucher)` on its record at apply (→ Membership pass); `vouch.targetId ≠ vouch.voucherId`; the target holds an `IdentityRecord`; no unspent `vouch` box carries the same `(voucherId, targetId)`; the voucher's **summed** karma balance ≥ `VOUCH_MIN_BALANCE`; no unspent escrow names the voucher; `vouch.createdAtBlock` within `[height − VOUCH_CAST_HEIGHT_WINDOW, height]` (the upper bound is step 6's; the window bounds backdating, which would shorten the cooldown the escrow derives from it) |
 | KarmaBox | KarmaBox + UsernameBox | **Claim**: exactly one `username` output — `owner` = the karma inputs' owner, `value == 0n`, its `name` valid (`TYPES_INTERFACE → UsernameBox`); no name record for the name's canonical form; **no holder record for the owner** (available, holding none); the karma output same owner, value conserved; the signing key is the owner's (→ Username transition rules) |
@@ -1659,16 +1659,16 @@ There is **no other legal bond or invite shape**. In particular:
 - **A post pays its price into a `KarmaPriceBox`**, and a reply pays `REPLY_AUTHOR_SHARE` of it
   to the parent's author through a `LikeAccrualBox` — the Thread and Reply rows under Legal box
   transitions state the shapes, `ARCHITECTURE → The post price` the rule. The parent's author is
-  resolved from `block_topology`, exactly as a like's target author is, and a reply to a
-  withdrawn post pays that row's author. ⛔ **The reply's marker moves no like counter**:
+  the one its confirmation recorded (→ Block Topology), exactly as a like's target author is, and a reply to a
+  withdrawn post pays that recorded author. ⛔ **The reply's marker moves no like counter**:
   `lifetimeLikesReceived` is bumped from like transactions and from nothing else.
 - **A reply's parent may still be pending at admission.** The marker names the parent's author, and
-  `validateTx` resolves it from `block_topology` — and, where the parent has no row yet because it
+  admission's `validateTx` resolves it from `block_topology` — and, where the parent has no row yet because it
   is in this node's pool, from the parent's own pending row, whose `author` is the commit its
   transaction carries and which that transaction's post arm binds to its signer. **At apply only
-  `block_topology` is read**: a parent confirmed in the applying block has its row before the loop
-  (§8 populates topology from the block's own posts), an earlier one has it already, and a parent
-  in neither refuses the reply (*"names no author"*). The fallback is the reply's alone — a like's
+  the post record is read** (`CONSENSUS_INTERFACE → StateView`): a parent confirmed in the applying block is
+  in the block's own posts, which the overlay holds before the loop (`CONSENSUS_INTERFACE → The overlay`), an
+  earlier one has its record under the root, and a parent in neither refuses the reply (*"names no author"*). The fallback is the reply's alone — a like's
   target and a withdrawal's post must be confirmed at admission exactly as before.
   This is what keeps a reply able to spend its own thread's change with no block between the two
   (`TYPES_INTERFACE → Monotonic creation height`, the chaining a block interval must allow).
@@ -1739,7 +1739,7 @@ There is **no other legal bond or invite shape**. In particular:
   payload (`postId`; TYPES_INTERFACE → Layout — PostWithdrawCommit). It rides
   `utxoTxIds` with every other transaction.
 - ⛔ **This is not deletion and is never described as one.** The `postId`, the
-  `parentRefs` and the `block_topology` row all survive, so every descendant
+  `parentRefs`, the post's record and its `block_topology` row all survive, so every descendant
   keeps its anchor. Any peer that archived the content before withdrawal can
   republish it; what the protocol guarantees is that honest nodes drop the bytes,
   that they stop propagating, and that the author's intent is attributable.
@@ -1747,12 +1747,12 @@ There is **no other legal bond or invite shape**. In particular:
 - ⛔ **`postWithdraw` is an IMPLICATION, never a biconditional**: a withdrawal
   emits no observable output, so its right side is an
   ordinary conserving self-transfer which must stay legal. `postWithdraw` present
-  ⟹ the shape above **and** `inputKarma.owner` is the post's `block_topology`
-  author **and** `verifyPostWithdrawCommitDomains(tx.postWithdraw)` passes.
+  ⟹ the shape above **and** `inputKarma.owner` is the post's recorded author
+  (→ Block Topology) **and** `verifyPostWithdrawCommitDomains(tx.postWithdraw)` passes.
 - **Authorship is the transaction's own** — the payload sits inside the
   `computeTxId` preimage, so no separate `authorId` or signature exists.
 - ⛔ **The maturity bind: a post confirmed in the applying block is NOT withdrawable.**
-  `block_topology.block_height` must be **strictly less** than the applying height.
+  The post's recorded confirmation height (→ Block Topology) must be **strictly less** than the applying height.
   Producer-independent and decidable from committed state alone, and it forbids nothing
   legitimate — an author who changes their mind waits one block. Reachable through the
   ordinary API, so the intent route enforces the same rule at submit.
@@ -1912,8 +1912,8 @@ inside the network's reported supply.
   lock's `owner` bind to the karma **input's** owner, and the signature is that
   owner's. A withdrawal keeps its single karma output — its inputs are
   at least `1n`, so it is.
-- ⛔ **A like is another's act.** The like arm refuses a `likeTarget` whose `block_topology`
-  author is the karma inputs' owner — one check beside the marker's author check, so
+- ⛔ **A like is another's act.** The like arm refuses a `likeTarget` whose recorded
+  author (→ Block Topology) is the karma inputs' owner — one check beside the marker's author check, so
   admission and block application refuse a self-like at the same site and no like of one's
   own post reaches `lifetimeLikesReceived` or `memberLikes` (ARCHITECTURE → Likes).
 
@@ -1932,7 +1932,7 @@ inside the network's reported supply.
 > **Both directions are required, and the second has no predecessor:**
 >
 > 1. `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose
->    `author` is the target post's author, resolved from `block_topology`; and `post` present with a
+>    `author` is the target post's recorded author (→ Block Topology); and `post` present with a
 >    parent ⟺ exactly one of exactly `REPLY_AUTHOR_SHARE` whose `author` is the parent's, resolved
 >    the same way (→ Post transactions);
 > 2. **a `LikeAccrualBox` output present ⟺ exactly one of `likeTarget` present or `post` present with
@@ -1947,8 +1947,8 @@ inside the network's reported supply.
 > consumes one, so `author` is attribution and never authorization — the standing `BondBox` and
 > `KarmaPriceBox` already have.
 >
-> ⚠ **The author is resolved from `block_topology`, never `dag_posts.author`** — the rule §Likes
-> already states, and the marker inherits it. A placeholder row carries a zeroed author, so a marker
+> ⚠ **The author is the one the post's confirmation recorded, never `dag_posts.author`** (→ Block Topology) — the
+> rule §Likes already states, and the marker inherits it. A placeholder row carries a zeroed author, so a marker
 > built from the wrong source would earmark karma to the zero key.
 
 ### Vouch transition rules
@@ -2996,7 +2996,7 @@ shape, validated by the engine):
 
 1. Re-checks at apply: target confirmed and **live** at this height (likes on withdrawn
    posts rejected by stated rule; a placeholder — body not held — **is** live, `isLivePost`
-   decides); author resolved from **`block_topology`**, never
+   decides); the author is **the post record's** (`CONSENSUS_INTERFACE → StateView`), never
    `dag_posts.author`, and not the liker — the karma inputs' owner (→ Karma transition
    rules); like-record `(liker, targetPostId)` absent — else the tx is
    invalid and the block is rejected
@@ -3141,8 +3141,9 @@ stored through `setPostBody`; `emitPostReceived(postId, peerId, via: 'pull')`.
 applied_at_block INTEGER NOT NULL, PRIMARY KEY (target_post_id, liker_id))`. Written
 **only** at block application (never by an HTTP route — the retired free-like tier's
 `dag_likes` rows were route-written, which is what made the old epoch mint a DAG-index
-read inside consensus). Content-layer consensus state, the `block_topology` tier:
-deterministic by replay, journalled with exact inverses, not in the `stateRoot`. The
+read inside consensus). The table answers the views and admission's duplicate gate; **the record a rule reads is the
+tree's** — `like ‖ postId ‖ liker`, a marker under the state root (`CONSENSUS_INTERFACE → StateView`;
+`TYPES_INTERFACE → Layout — tree records`), written from the same effects in the same block. The
 `dag_likes` table is **dropped**.
 
 **The topology row's `parent_refs` column is the record, and nothing indexes it**: no consensus path
@@ -3596,6 +3597,13 @@ from local DAG content). `author` is the creating transaction's signer
 (audit H-3); `getTopologyAuthor` returns `null` for posts no applied
 block has confirmed. Idempotent insert (first block to confirm a postId wins);
 `rollbackBlockTopology` removes a reverted height's rows wholesale.
+
+**A post's confirmation records its author and its height twice, from the same effects**: in the post record under the
+state root — `post ‖ postId`, holding the author, the height and the standing (`TYPES_INTERFACE → Layout — tree
+records`) — and in this table. **Block application reads the record, through the tree view**
+(`CONSENSUS_INTERFACE → StateView`); admission and the views read the table (→ AVL+ State Root, "The SQLite tables
+are written from the same effects and answer the API only"). A post's *recorded* author and height are that pair's:
+one write feeds both, so the two cannot disagree.
 
 ### Mempool
 
@@ -5154,7 +5162,7 @@ funnel:
 1. **Topology recording (confirm-time).** Topology rows are written from the
    block's verified post transactions: `insertBlockTopology(postId, parentRefs,
    author, height)` with `author` the creating transaction's signer and
-   `parentRefs` the signed transaction's own. `block_topology.author` is the
+   `parentRefs` the signed transaction's own. The recorded author (→ Block Topology) is the
    consensus authority for withdrawal authorization, never `dag_posts.author`.
 2. **Withdrawal authorship binding (transaction-time).** The withdrawal transition arm REJECTS the
    transaction unless `getTopologyAuthor(postWithdraw.postId)` returns a non-null author equal

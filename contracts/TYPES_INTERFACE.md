@@ -1845,7 +1845,7 @@ b32(postId)
 ```
 
 **One field, and one is the whole payload.** A withdrawal's effect is one post. Authorship is `inputKarma.owner`
-against that post's `block_topology` author, and the payload sits inside the `computeTxId`
+against that post's recorded author (`NODE_INTERFACE → Block Topology`), and the payload sits inside the `computeTxId`
 preimage, so there is no separate preimage to domain-tag and no `authorId` or signature of its
 own (NODE_INTERFACE → Withdrawal transactions).
 

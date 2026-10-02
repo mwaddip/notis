@@ -347,9 +347,9 @@ transactions). It is free — the post paid its price at posting (§The post pri
 by the author's own signature over the withdrawal transaction, and it is the whole of what an author
 may do to a post after posting it — a like, the other act over a post, is never the author's
 (§Likes). Who "the author" is, is itself consensus data: every confirmed
-post's `author` is the signer of its creating transaction, recorded at confirmation in
-`block_topology`, and a withdrawal is valid only if the karma input's owner equals that recorded
-author (audit H-3) — so a signature from anyone else, however valid for its own key, authorizes
+post's `author` is the signer of its creating transaction, recorded at confirmation in the post's
+record under the state root (`CONSENSUS_INTERFACE → StateView`), and a withdrawal is valid only if the karma input's
+owner equals that recorded author (audit H-3) — so a signature from anyone else, however valid for its own key, authorizes
 nothing, and any node reaches the verdict with or without the DAG content.
 
 **No act reaches another author's post.** A reply belongs to the one who wrote it; the author of the
@@ -905,12 +905,12 @@ sidecars and no standalone like pool.
   ⚠ **A like and a withdrawal of the same post in ONE block is legal**, and the phase order is
   why: the like applies first and counts, then the phase empties the post
   (NODE_INTERFACE → The withdrawal phase).
-- The target's author is resolved from **`block_topology`**, never `dag_posts.author`
-  (placeholder rows carry a zeroed author).
+- The target's author is **the post record's** — the one its confirmation recorded
+  (`NODE_INTERFACE → Block Topology`) — never `dag_posts.author` (placeholder rows carry a zeroed author).
 - `(liker, target)` must not already exist in the like-records — one like per account per
   post, structurally enforced: the key exists or it does not.
 - **A like is another's act.** The liker — the karma inputs' owner — is not the target's
-  author as `block_topology` records it. A self-like is invalid at admission and at apply
+  recorded author. A self-like is invalid at admission and at apply
   alike, refused by the like arm of `validateTx` beside the marker's author check
   (NODE_INTERFACE → Karma transition rules), so no like of one's own post reaches the
   counters that hold standing.
@@ -978,16 +978,16 @@ of arrival pattern — the floor runs over a running total, never over a per-win
 
 ### Like-records
 
-`(liker, targetPostId)` pairs, written only at block application. They are content-layer
-consensus state (the `block_topology` tier): deterministic by replay, journalled with exact
-inverses, **not** in the `stateRoot`.
+`(liker, targetPostId)` pairs, written only at block application. They are consensus state **under the
+state root** — one record a like, `like ‖ postId ‖ liker` (`TYPES_INTERFACE → The tree keys`) — which the
+one-like-per-post rule reads (`CONSENSUS_INTERFACE → StateView`).
 
 - **They survive withdraw, and nothing deletes them.** A withdrawal empties the post and keeps its
   row, its topology and its identity (NODE_INTERFACE → Withdrawal transactions); nothing in the
-  withdrawal phase touches `like_records` (NODE_INTERFACE → The withdrawal phase). A withdrawn post
+  withdrawal phase touches a like record (NODE_INTERFACE → The withdrawal phase). A withdrawn post
   cannot be liked, so from that block its records are a closed set: the withdrawn view serves no
   `likeCount` and no `likedByViewer`. Records follow the post.
-- The table holds one row per like ever applied, bounded by one like per `(liker, post)`; a
+- The tree holds one record per like ever applied, bounded by one like per `(liker, post)`; a
   withdrawn post accepts no new ones.
 
 ### The post price
@@ -1000,7 +1000,7 @@ marker a like uses:
 ```
 thread   karma(K) → karma(K − POST_PRICE_THREAD) + KarmaPriceBox(POST_PRICE_THREAD)
 reply    karma(K) → karma(K − POST_PRICE_REPLY)  + KarmaPriceBox(POST_PRICE_REPLY − REPLY_AUTHOR_SHARE)
-                                                 + LikeAccrualBox(REPLY_AUTHOR_SHARE, author = the parent's block_topology author)
+                                                 + LikeAccrualBox(REPLY_AUTHOR_SHARE, author = the parent's recorded author)
 settlement   KarmaPriceBox(p) → pool(+p)         consumed in the block that created it
 ```
 
@@ -2034,14 +2034,12 @@ no object check compares against it and no producer stamps it.
 - The UTXO ledger's correctness is independent of the DAG's index state
   > **Holds since P2-D** (was FALSE AS DESIGNED: the epoch tally's author reward read a
   > `dag_likes` row count — a DAG index read inside a consensus mutation). Settlement now
-  > reads the block's own `LikeAccrualBox` markers, the carry boxes and `like_records` —
-  > consensus state written only at block application (`block_topology` tier), never by a
-  > route.
+  > reads the block's own `LikeAccrualBox` markers, the carry boxes and the like records —
+  > consensus state written only at block application, never by a route.
 - A withdrawal moves no karma: the post paid its price at posting (§The post price)
 - A like is a burn transaction plus a `(liker, post)` like-record — no box, no held
-  value. Like-records are content-layer consensus state (`block_topology` tier):
-  deterministic by replay, journalled with exact inverses, deleted by nothing, not in the
-  `stateRoot`. (`LikeBox` and the free-like tier are retired — P2-D.)
+  value. Like-records are consensus state under the state root (§Like-records), written only at
+  block application and deleted by nothing. (`LikeBox` and the free-like tier are retired — P2-D.)
 
 ### Cryptographic
 
@@ -2674,10 +2672,10 @@ backfill — and a withdrawn post keeps its row with `content` `NULL` and its ma
   transactions
 - Verifiable withdrawal: a karma transaction carrying a `PostWithdrawCommit`, Ed25519-signed, its
   effect deterministic from committed topology (the row emptied; nothing refunded)
-- AVL+ state root: authenticated dictionary over UTXO set, stateRoot in block
-  headers, `GET /api/v1/proof/:boxId` for light-client proofs
+- AVL+ state root: authenticated dictionary over everything the rules read, stateRoot in block
+  headers, `GET /api/v1/proof/:key` for light-client proofs
 - block_topology table (post_id, parent_refs, author, block_height — all
-  consensus-sourced) for subtree topology and withdrawal-authorship lookups
+  consensus-sourced), the views' and admission's copy of what a post's record holds under the root
 - libp2p networking with two-stage validation (stateless + stateful)
 - Credit emission: Ergo-style linear decay, treasury split, miner reward delay
 - ASERT difficulty schedule for ordering block PoW — anchored at block 1, read from the chain's own
