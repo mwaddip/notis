@@ -723,7 +723,7 @@ export class App {
       confirmInRow: !this.idm.policy,
       // The extension's tip verifier's latest verdict — undefined without a
       // verifier, null while none has returned, else the corner's own value.
-      // The pure `figuresLine` reads it for rows 1 and 3 (WEB_INTERFACE →
+      // The pure `figuresLine` reads it for rows 1 and 2 (WEB_INTERFACE →
       // The extension → "The verified figures"). `figures` stands beside it
       // — the latest verified-figures run's result, held with the anchor it
       // was proven against; null until a run has returned for the identity,
@@ -3362,7 +3362,7 @@ export class App {
         // reader's listings first: /karma always, /credits while the wallet
         // window is open. Each write takes its stamp, moves its row in place
         // and triggers the run. Every other verdict drops the last result so
-        // no stale proof rides an unverified chain (figuresLine's row 3 reads
+        // no stale proof rides an unverified chain (figuresLine's row 2 reads
         // the verdict).
         if (run.anchor !== null) {
           this.anchorSeq += 1;

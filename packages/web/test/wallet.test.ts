@@ -961,7 +961,7 @@ describe('wallet — the verified-figures line beneath the balance', () => {
     expect(f.querySelector('.credits-line .hint')).toBeNull();
   });
 
-  it('a verified verdict + a proven+young result renders a muted hint, no .clay on the figure (row 7)', () => {
+  it('a verified verdict + a proven+young result renders a muted hint, no .clay on the figure (row 8)', () => {
     // 12.5 shown, 8.75 proven + 3.75 young.
     const fv = figuresView({
       boxes: [
@@ -1012,7 +1012,7 @@ describe('wallet — the verified-figures line beneath the balance', () => {
     expect(f.querySelector<HTMLElement>('.mono.gold')!.classList.contains('clay')).toBe(true);
   });
 
-  it('a thin verdict with no figures back → the unverified line (row 3), muted, no clay on the figure', () => {
+  it('a thin verdict with no figures back → the unverified line (row 2), muted, no clay on the figure', () => {
     const c = spendableCtx({ verdict: THIN, figures: null });
     const f = creditsField(render(handlers(), c))!;
     const hint = f.querySelector<HTMLElement>('.credits-line .hint');
@@ -1021,7 +1021,7 @@ describe('wallet — the verified-figures line beneath the balance', () => {
     expect(f.querySelector<HTMLElement>('.mono.gold')!.classList.contains('clay')).toBe(false);
   });
 
-  it('every proven and the number reproduces → no hint (row 6 silence)', () => {
+  it('every proven and the number reproduces → no hint (row 7 silence)', () => {
     const fv = figuresView({
       boxes: [figBox({ boxClass: 'credit', status: 'proven', value: 1_250_000_000n })],
       credits: { ...EMPTY_CREDITS, proven: 1_250_000_000n },
@@ -1243,7 +1243,7 @@ describe('wallet — the verified-figures line beneath an empty listing', () => 
   });
 
   it('empty listing, holdings "read", nothing unlisted → no line beneath the faucet step', () => {
-    // Row 6 silence — the run read the ranges and no box is unlisted.
+    // Row 7 silence — the run read the ranges and no box is unlisted.
     prefs.faucet = '/faucet';
     const fv = figuresView({ credits: { ...EMPTY_CREDITS } });
     const f = creditsField(render(handlers(), emptyListingCtx({ verdict: VERIFIED, figures: fv })))!;

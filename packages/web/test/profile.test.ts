@@ -923,7 +923,7 @@ describe('profile — the verified-figures line beneath the rep number', () => {
     expect(f.querySelector<HTMLElement>('.mono')!.classList.contains('clay')).toBe(false);
   });
 
-  it('a refused verdict, no figures back → the unverified line (row 3), muted', () => {
+  it('a refused verdict, no figures back → the unverified line (row 2), muted', () => {
     const f = rowField(render(handlers(), repCtx({ verdict: REFUSED_PF, figures: null })), 'rep')!;
     const hint = f.querySelector<HTMLElement>('.hint');
     expect(hint?.textContent).toBe('not checked — the chain is not verified');
@@ -931,7 +931,7 @@ describe('profile — the verified-figures line beneath the rep number', () => {
     expect(f.querySelector<HTMLElement>('.mono')!.classList.contains('clay')).toBe(false);
   });
 
-  it('every proven and effective reproduces the number → no hint (row 6 silence)', () => {
+  it('every proven and effective reproduces the number → no hint (row 7 silence)', () => {
     const fv = pfFigures({
       boxes: [pfBox({ boxClass: 'karma', status: 'proven', value: 100n })],
       karma: { ...EMPTY_KARMA, proven: 100n, effective: 100n },
@@ -943,7 +943,7 @@ describe('profile — the verified-figures line beneath the rep number', () => {
 
   it('the empty karma listing (boxCount 0) renders no hint under a verified verdict with no run back yet', () => {
     // `figures: null` means no result stands; under a verified verdict the
-    // line is silence (row 2'). Row 6 silence (no run read, nothing unlisted)
+    // line is silence (row 2). Row 7 silence (no run read, nothing unlisted)
     // is pinned by the next describe block.
     prefs.faucet = '';
     const f = rowField(
@@ -1085,7 +1085,7 @@ describe('profile — the verified-figures line beneath an empty rep listing', (
   });
 
   it('empty listing, holdings "read", nothing unlisted → no line beneath the faucet step', () => {
-    // Row 6 silence — the run read the ranges and no box is unlisted.
+    // Row 7 silence — the run read the ranges and no box is unlisted.
     prefs.faucet = '/faucet';
     const fv = pfFigures({ karma: { ...EMPTY_KARMA } });
     const f = rowField(render(handlers(), emptyRepCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;

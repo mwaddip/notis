@@ -172,7 +172,7 @@ export interface RenderCtx {
   // `!this.idm.policy`, the same predicate the policy row reads on.
   confirmInRow: boolean;
   // The extension's tip verifier's latest verdict, the pure `figuresLine` model's
-  // rows 1 and 3 read it (WEB_INTERFACE → The extension → "The verified
+  // rows 1 and 2 read it (WEB_INTERFACE → The extension → "The verified
   // figures"). undefined: the build has no verifier — nothing beneath the
   // figure. null: the verifier is present but no result stands — silence too,
   // unless the verdict is `thin` or `refused`, when the line names the

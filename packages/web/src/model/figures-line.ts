@@ -31,9 +31,9 @@ export type FiguresLine = { text: string; weight: 'muted' | 'clay' } | null;
 export interface FiguresLineInput {
   ledger: 'credits' | 'karma';
   /** undefined: the build has no verifier — nothing is rendered beneath the
-   *  figure (row 1). null: a run has not returned yet (row 2'). */
+   *  figure (row 1). null: a run has not returned yet (row 2). */
   verdict: TipVerdict | null | undefined;
-  /** null: no run has returned yet — row 2 or 2'. Otherwise the result the
+  /** null: no run has returned yet — row 2. Otherwise the result the
    *  App holds beside `anchor`. */
   result: FiguresResult | null;
   /** The figure the row renders — the balance row's spendable sum in base
@@ -45,7 +45,7 @@ export interface FiguresLineInput {
    *  never mention it. */
   suffixHeight: number | null;
   /** The row's own listing count — an empty listing reads the ledger's own
-   *  facts under rows 3, 4 and 5 and reads silence under row 6. For the
+   *  facts under rows 3, 4 and 5 and reads silence under row 7. For the
    *  wallet row this is `credits.boxCount`; for the rep row,
    *  `karma.boxCount`. */
   boxCount: number;

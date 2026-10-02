@@ -107,11 +107,11 @@ describe('figuresLine — an empty listing drops the listed-box sums of a held r
 });
 
 // ---------------------------------------------------------------------------
-// Row 3 — no result stands and the verdict is thin / refused →
-//   muted "not checked — the chain is not verified"
-// Row 3' — otherwise (no verdict yet, or verified with no run back) → null
+// Row 2 — no result stands. Under thin / refused the row says the chain is
+// not verified; otherwise (no verdict yet, or verified with no run back)
+// null.
 // ---------------------------------------------------------------------------
-describe('figuresLine — row 3: the chain is not verified', () => {
+describe('figuresLine — row 2: the chain is not verified', () => {
   it('credits: thin, no result → muted "not checked — the chain is not verified"', () => {
     const line = figuresLine(input({ ledger: 'credits', verdict: THIN, result: null }));
     expect(line).toEqual({ text: 'not checked — the chain is not verified', weight: 'muted' });
@@ -130,7 +130,7 @@ describe('figuresLine — row 3: the chain is not verified', () => {
   });
 });
 
-describe("figuresLine — row 3': no verdict or a verified verdict without a run back reads nothing", () => {
+describe('figuresLine — row 2: no verdict or a verified verdict without a run back reads nothing', () => {
   it('credits: verdict null (no run yet) → null', () => {
     expect(figuresLine(input({ ledger: 'credits', verdict: null, result: null }))).toBeNull();
   });
@@ -261,7 +261,7 @@ describe('figuresLine — row 4: the node lists / this node\'s proof did not ver
       credits: { ...emptyCredits, proven: 100n },
       record: { status: 'unproven', verdict: '' } as RecordResult,
     });
-    // shown === proven, no other statuses — silence for credits (row 6).
+    // shown === proven, no other statuses — silence for credits (row 7).
     expect(figuresLine(input({ ledger: 'credits', verdict: VERIFIED, result: r, shown: 100n }))).toBeNull();
   });
 });
@@ -477,20 +477,20 @@ describe('figuresLine — row 8: young / unchecked remainders and the rep-decaye
     expect(line).toEqual({ text: '87 rep proven at block 9005 · 5 rep landed since', weight: 'muted' });
   });
 
-  it('credits: a proven credit box locked past `height` is not spendable — leaves P out and fires row 7', () => {
+  it('credits: a proven credit box locked past `height` is not spendable — leaves P out and fires row 8', () => {
     // The proven box carries a lock the live height has not passed, so it is
-    // not in the balance's spendable sum. Row 7 fires, and P is 0 $NOTIS.
+    // not in the balance's spendable sum. Row 8 fires, and P is 0 $NOTIS.
     const r = result({
       boxes: [box({ boxClass: 'credit', status: 'proven', value: 500_000_000n, lockedUntilBlock: 20_000 })],
       credits: { proven: 500_000_000n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, holdings: 'read', holdingsVerdict: null },
     });
     // The row's shown balance is 0 (the locked box is not spendable at live
-    // height 10_000), and every box is proven, so row 6 would fire only when
-    // P == shown; P = 0 here and shown = 0 → silence.
+    // height 10_000), and every box is proven, so row 7 silence fires only
+    // when P == shown; P = 0 here and shown = 0 → silence.
     expect(figuresLine(input({ ledger: 'credits', verdict: VERIFIED, result: r, shown: 0n, height: 10_000 }))).toBeNull();
 
     // With a shown of 1 $NOTIS (the row believes it can spend something) and
-    // P = 0, row 7 fires: "0 $NOTIS proven at block H".
+    // P = 0, row 8 fires: "0 $NOTIS proven at block H".
     const line = figuresLine(input({ ledger: 'credits', verdict: VERIFIED, result: r, shown: 100_000_000n, height: 10_000 }));
     expect(line).toEqual({ text: '0 $NOTIS proven at block 9005', weight: 'muted' });
   });
@@ -653,14 +653,14 @@ describe('figuresLine — an empty listing reads the ledger\'s own facts', () =>
     expect(line).toEqual({ text: 'the node served no proof for your rep', weight: 'muted' });
   });
 
-  it('credits: boxCount 0, holdings "read", nothing unlisted → null — row 6 silence', () => {
+  it('credits: boxCount 0, holdings "read", nothing unlisted → null — row 7 silence', () => {
     const line = figuresLine(input({
       ledger: 'credits', verdict: VERIFIED, result: result({}), boxCount: 0, shown: 0n,
     }));
     expect(line).toBeNull();
   });
 
-  it('karma: boxCount 0, holdings "read", nothing unlisted → null — row 6 silence', () => {
+  it('karma: boxCount 0, holdings "read", nothing unlisted → null — row 7 silence', () => {
     const line = figuresLine(input({
       ledger: 'karma', verdict: VERIFIED, result: result({}), boxCount: 0, shown: 0n,
     }));
