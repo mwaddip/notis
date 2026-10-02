@@ -333,7 +333,8 @@ function parseProofRetentionBytes(raw: string | undefined): number {
  *
  * Refused rather than defaulted when it names no non-negative integer: a
  * window this node cannot read is a policy nobody chose, as
- * `parseProofRetention` is. Zero holds the tip's root alone.
+ * `parseProofRetention` is. Zero keeps no root; the tip is the live tree's,
+ * which both routes answer without one.
  */
 function parseProofWindow(raw: string | undefined): number {
   if (raw === undefined) return 64;

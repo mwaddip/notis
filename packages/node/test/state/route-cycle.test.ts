@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
-import { TREE_KEY_LENGTH, bytesToHex, hash32, networkKey } from '@dagsocial/types';
+import { bytesToHex, hash32, networkKey } from '@dagsocial/types';
 
 /**
  * Both routes called several times at several heights, including a call that
@@ -26,7 +26,7 @@ describe('a route\'s cycle does not leak into the next block\'s', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.resetModules(); });
 
   it('both routes called at several heights (plus a 400, a throw, and a 404), then the next block applies and its stored proof is the honest one', async () => {
-    const db = await freshStore();
+    await freshStore();
     const {
       activateProverOverStore,
       makeApplicableBlock,
@@ -119,7 +119,5 @@ describe('a route\'s cycle does not leak into the next block\'s', () => {
     expect(stored).not.toBeNull();
     expect(bytesToHex(hash32(stored!))).toBe(honest.header.adProofsRoot);
 
-    void db;
-    void TREE_KEY_LENGTH;
   });
 });

@@ -76,14 +76,14 @@ export function createAvlProver(db?: import('better-sqlite3').Database): AvlProv
   // and a module-level ring would leak between them.
   const newRecentRoots = new RecentRoots(config.proofWindowBlocks);
   // NODE_INTERFACE → "After a restart the node holds its tip's root alone".
-  // On a store with a chain, the constructor loaded the prover at the tip; on
-  // a fresh store it loaded the empty tree at height 0, which genesis seeding
-  // will replace through `bootstrapAvlProver` — the ring is seeded from the
-  // version the prover's constructor just resolved to.
+  // The ring is seeded with the version the constructor loaded, whatever its
+  // height — on a store with a chain, that is the tip; on a fresh store, it
+  // is the empty tree at height 0, which `bootstrapAvlProver` replaces
+  // during genesis seeding and `genesis-state`'s failure clears.
   const loadedVersion = newStorage.version();
   if (loadedVersion !== null) {
     const loadedHeight = newStorage.versionHeight(loadedVersion);
-    if (loadedHeight !== null && loadedHeight > 0) {
+    if (loadedHeight !== null) {
       newRecentRoots.record(loadedHeight, innerProver.root, innerProver.height);
     }
   }
