@@ -600,8 +600,14 @@ export function writeBlockEffects(effects: BlockEffects, height: number): BlockJ
     }
     confirmPost(postId, height, index);
   });
-  // block_topology from the block's post transactions: the consensus author
-  // and parent refs, never local DAG content (NODE_INTERFACE → Block Topology).
+  // block_topology from the block's post transactions, in body order: the
+  // consensus author and parent refs — never local DAG content — written
+  // only here (NODE_INTERFACE → Block Topology). **No rule reads this
+  // table**: the rules read the post record under the state root, through
+  // the tree view (CONSENSUS_INTERFACE → StateView); the API views and the
+  // verifier read `block_topology` for the author `confirmedAuthor` serves.
+  // One write feeds both the record and the row, so the two cannot
+  // disagree.
   for (const { postId, post } of effects.posts) {
     insertBlockTopology(postId, post.parentRefs, Buffer.from(post.author).toString('hex'), height);
   }
