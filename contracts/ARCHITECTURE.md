@@ -729,9 +729,12 @@ post and like records) and index entries derived from each entity's own fields; 
   obtained without a second implementation of the state transition.
 
 - **Module:** `packages/node/src/state/` (avl-storage, avl-prover, avl-endpoint)
-- **Proof endpoint:** `GET /api/v1/proof/:key?atHeight=N` — returns an
-  inclusion or exclusion proof for a tree key at a given block height
-- **Config flags:** `MAX_PROOF_HISTORY` (`local` — prune old proof versions). The
+- **Proof endpoints:** `GET /api/v1/proof/:key?atHeight=N` — an inclusion or exclusion proof for a tree key — and
+  `GET /api/v1/range/:kind/:owner?atHeight=N` — a page of what a key holds of one kind, with its proof — each at
+  the tip or at a height the node keeps a root of (`NODE_INTERFACE → AVL+ State Root`)
+- **Config flags:** `MAX_PROOF_HISTORY` (`local` — the store's versions, kept for a reorg's walk),
+  `PROOF_WINDOW_BLOCKS` (`local` — the roots kept in memory, the heights the proof routes answer) and
+  `PROOF_WINDOW_NODES` (`local` — the nodes those roots may hold beyond the tree). The
   stateRoot check at block apply is unconditional — no variable disables it.
   The key width is no configuration at all — it is **`TREE_KEY_LENGTH`**, a
   `@dagsocial/types` export (TYPES_INTERFACE → State format), imported by `config.ts` and
@@ -2673,7 +2676,7 @@ backfill — and a withdrawn post keeps its row with `content` `NULL` and its ma
 - Verifiable withdrawal: a karma transaction carrying a `PostWithdrawCommit`, Ed25519-signed, its
   effect deterministic from committed topology (the row emptied; nothing refunded)
 - AVL+ state root: authenticated dictionary over everything the rules read, stateRoot in block
-  headers, `GET /api/v1/proof/:key` for light-client proofs
+  headers, `GET /api/v1/proof/:key` and `GET /api/v1/range/:kind/:owner` for light-client proofs
 - block_topology table (post_id, parent_refs, author, block_height — all
   consensus-sourced), the views' and admission's copy of what a post's record holds under the root
 - libp2p networking with two-stage validation (stateless + stateful)

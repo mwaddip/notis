@@ -196,9 +196,6 @@ digest — is a block the network refuses. **No client replays a block**: the ex
 tip on proof of work and proves what it reads by lookups (`WEB_INTERFACE → The extension`). The replay is the suites'
 (→ Tests), and it is what holds a block's proof sufficient for one.
 
-> ⚠ **AHEAD OF CODE (2026-10-01, N4 PR A — `consensus`, `node`)** — `verifierSession` takes `BatchAVLVerifier` alone,
-> and the suites' replay builds one and does not ask whether the proof was consumed exactly.
-
 ### The tree view
 
 **`treeStateView(session)` is the `StateView`** (→ StateView, its table), and the one implementation of it the rules
@@ -284,9 +281,6 @@ over `verifierSession` on the proof the node answered (`NODE_INTERFACE → AVL+ 
 replays a proof's operations in the order the prover performed them, so a page's lookups are a rule and not an
 implementation's choice. A page looks up at most `1 + 2 · limit` keys. No rule reads a page: it is how a key's
 holdings are proven whole against a root.
-
-> ⚠ **AHEAD OF CODE (2026-10-01, N4 PR A — `consensus`)** — no test holds the order of a page's lookups, and
-> `pageRange` refuses no argument (→ The tree view).
 
 ### The tree writes
 
@@ -516,9 +510,6 @@ node's build a `StrictBatchAVLVerifier` and refuse a proof `isFullyConsumed()` a
 a `BatchAVLVerifier` replays to the right digest are each refused: one byte appended; one recorded read the block never
 made, of a key it read and of a leaf the proof leaves under a label; a set padding bit in the last direction byte; and
 an unvisited node written in full.
-
-> ⚠ **AHEAD OF CODE (2026-10-01, N4 PR A — `consensus`, `node`)** — the replay helpers build a `BatchAVLVerifier`, and
-> no suite holds the five altered proofs.
 
 ## Does NOT own
 

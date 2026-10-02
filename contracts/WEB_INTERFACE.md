@@ -462,11 +462,6 @@ and the figure in clay (→ The wallet window, → The profile window). **What i
 every proven box is real and the key's, and a node that withholds a box from its listing is shown to — the range
 holds it.
 
-> ⚠ **AHEAD OF CODE (2026-10-01, N4 PR A — `nipopow-client`, `web`)** — `proveFigures` proves each listed box under
-> `boxKey` at `suffixHead` and, where excluded there, once more at `tip`, a request a box. It reads no range, has no
-> `unlisted` and no status of a ledger's read, takes an unread listing as an empty one, and what it proves is a lower
-> bound: a box the node withholds goes unseen. The rows say nothing under an empty listing.
-
 **The verified names.** The extension proves every handle it shows, and every handle it sends to, against the state the
 verified chain committed — the figures' anchor, their proofs and their order. **A check** is `proveName` of
 `@dagsocial/nipopow-client` over a claim: a **label** — a key and the name a row carries beside it — or a **typed
@@ -632,9 +627,6 @@ carries none, both manifests' `optional_host_permissions` is the pattern the bui
 absent under an empty base — and `web-ext lint --self-hosted` is clean; without the flag the lint reads the
 manifest as a listed add-on's, where an `update_url` is an error. It checks the shell's `notis-network` at the build's
 value too, and refuses a name no network profile answers to.
-
-> ⚠ **AHEAD OF CODE (2026-10-01, N4 PR A — `web`)** — `build-release.sh` checks `nipopow/proof` and `api/v1/proof`,
-> and no `api/v1/range`.
 
 ## Reading the feed and threads
 

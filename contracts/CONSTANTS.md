@@ -337,8 +337,6 @@ drift test's converse does not reach them and the rows are marked.
 | `PAGE_LIMIT_MAX` (literal) | `100` | the most rows one page carries, whatever `limit` names | policy | none stated. `node/src/routes/page.ts` | CHOSEN | `NODE_INTERFACE → "Every list a view returns is a page"` |
 | `RANGE_PAGE_MAX` (literal) | `256` | the most entries one page of `GET /api/v1/range` carries, and the page served when no `limit` is named | policy | provisional: a page looks up at most `1 + 2 · 256` keys. `node/src/state/avl-endpoint.ts` | PROVISIONAL | `NODE_INTERFACE → AVL+ State Root` |
 
-> ⚠ **AHEAD OF CODE (2026-10-01, N4 PR A — `node`)** — `RANGE_PAGE_MAX` is in no module; the range route is not built.
-
 ## Client defaults
 
 `tools/nipopow-client` — what the light client asks for when no flag says otherwise. The library exports the pair as
