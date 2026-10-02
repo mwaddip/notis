@@ -208,8 +208,8 @@ const verified = (height: number): { verdict: TipVerdict; anchor: Anchor } => ({
 function emptyResult(): FiguresResult {
   return {
     boxes: [], record: { status: 'absent' },
-    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: 0n, holdings: 'read', holdingsVerdict: null },
-    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'read', holdingsVerdict: null },
+    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, effective: 0n, holdings: 'read', holdingsVerdict: null },
+    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, holdings: 'read', holdingsVerdict: null },
     heightAfter: 0, failed: false,
   };
 }
@@ -395,7 +395,7 @@ describe('a figures run proves a listing read after its anchor, and never one re
         { boxId: K2, boxClass: 'karma', value: 209n, lockedUntilBlock: null, status: 'proven', verdict: '' },
         { boxId: K3, boxClass: 'karma', value: 5n, lockedUntilBlock: null, status: 'young', verdict: '' },
       ],
-      karma: { proven: 209n, young: 5n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: 209n, holdings: 'read', holdingsVerdict: null },
+      karma: { proven: 209n, young: 5n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, effective: 209n, holdings: 'read', holdingsVerdict: null },
       heightAfter: 1104,
     });
     await flush();

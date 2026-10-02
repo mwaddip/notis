@@ -85,8 +85,8 @@ function emptyResult(heightAfter = 6001): FiguresResult {
   return {
     boxes: [],
     record: { status: 'absent' },
-    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: 0n, holdings: 'read', holdingsVerdict: null },
-    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'read', holdingsVerdict: null },
+    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, effective: 0n, holdings: 'read', holdingsVerdict: null },
+    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, holdings: 'read', holdingsVerdict: null },
     heightAfter,
     failed: false,
   };
@@ -460,8 +460,8 @@ describe('the App verified figures — the verdict and the row', () => {
     const result: FiguresResult = {
       boxes: [{ boxId: '22'.repeat(32), boxClass: 'credit', value: 100000000n, lockedUntilBlock: null, status: 'young', verdict: '' }],
       record: { status: 'absent' },
-      karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: 0n, holdings: 'read', holdingsVerdict: null },
-      credits: { proven: 0n, young: 100000000n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'read', holdingsVerdict: null },
+      karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, effective: 0n, holdings: 'read', holdingsVerdict: null },
+      credits: { proven: 0n, young: 100000000n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, holdings: 'read', holdingsVerdict: null },
       heightAfter: 6001,
       failed: false,
     };

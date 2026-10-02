@@ -776,7 +776,7 @@ describe('profile — the username row', () => {
 // `effective` in every state.
 // ---------------------------------------------------------------------------
 
-const EMPTY_SUMS: LedgerSums = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n };
+const EMPTY_SUMS: LedgerSums = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n };
 const EMPTY_KARMA = { ...EMPTY_SUMS, effective: 0n, holdings: 'read' as const, holdingsVerdict: null };
 const EMPTY_CREDITS = { ...EMPTY_SUMS, holdings: 'read' as const, holdingsVerdict: null };
 const RECORD: IdentityRecord = {
@@ -840,7 +840,7 @@ describe('profile — the verified-figures line beneath the rep number', () => {
         pfBox({ boxClass: 'karma', status: 'proven', value: 87n }),
         pfBox({ boxClass: 'karma', status: 'young',  value: 13n }),
       ],
-      karma: { proven: 87n, young: 13n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: 87n, holdings: 'read', holdingsVerdict: null },
+      karma: { proven: 87n, young: 13n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, effective: 87n, holdings: 'read', holdingsVerdict: null },
     });
     const f = rowField(render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
     const hint = f.querySelector<HTMLElement>('.hint');
@@ -954,14 +954,15 @@ describe('profile — the verified-figures line beneath the rep number', () => {
   });
 
   it('an unlisted karma box beside a listed one → the clay line names the unlisted sum, and the mono number is clay', () => {
-    // The row shows the listed `effective` 87 rep in mono, with the clay
-    // line beneath — the full rule, mirroring the balance row.
+    // The row shows the listed `effective` 100 rep in mono (`repCtx` sets
+    // `karmaResult`'s `effective: '100'`), with the clay line beneath —
+    // the full rule, mirroring the balance row.
     const fv = pfFigures({
       boxes: [
         pfBox({ boxClass: 'karma', status: 'proven', value: 87n }),
         pfBox({ boxClass: 'karma', status: 'unlisted', value: 5n }),
       ],
-      karma: { ...EMPTY_KARMA, proven: 87n, unlisted: 5n, effective: 87n },
+      karma: { ...EMPTY_KARMA, proven: 87n, unlisted: 5n, undecided: 0n, effective: 87n },
     });
     const f = rowField(
       render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })),
@@ -999,7 +1000,7 @@ describe('profile — the verified-figures line beneath an empty rep listing', (
     prefs.faucet = '/faucet';
     const fv = pfFigures({
       boxes: [pfBox({ boxClass: 'karma', status: 'unlisted', value: 5n })],
-      karma: { ...EMPTY_KARMA, unlisted: 5n },
+      karma: { ...EMPTY_KARMA, unlisted: 5n, undecided: 0n },
     });
     const f = rowField(render(handlers(), emptyRepCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
     const button = f.querySelector<HTMLElement>('button.word')!;
@@ -1017,7 +1018,7 @@ describe('profile — the verified-figures line beneath an empty rep listing', (
     prefs.faucet = '';
     const fv = pfFigures({
       boxes: [pfBox({ boxClass: 'karma', status: 'unlisted', value: 5n })],
-      karma: { ...EMPTY_KARMA, unlisted: 5n },
+      karma: { ...EMPTY_KARMA, unlisted: 5n, undecided: 0n },
     });
     const f = rowField(render(handlers(), emptyRepCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
     const words = f.querySelector<HTMLElement>('.inkmute')!;
@@ -1049,7 +1050,7 @@ describe('profile — the verified-figures line beneath an empty rep listing', (
     prefs.faucet = '/faucet';
     const fv = pfFigures({
       boxes: [pfBox({ boxClass: 'karma', status: 'unlisted', value: 3n })],
-      karma: { ...EMPTY_KARMA, unlisted: 3n },
+      karma: { ...EMPTY_KARMA, unlisted: 3n, undecided: 0n },
     });
     const f = rowField(render(handlers(), emptyRepCtx({
       verdict: VERIFIED_PF, figures: fv, grant: { state: 'pending' },
@@ -1068,7 +1069,7 @@ describe('profile — the verified-figures line beneath an empty rep listing', (
     prefs.faucet = '/faucet';
     const fv = pfFigures({
       boxes: [pfBox({ boxClass: 'karma', status: 'unlisted', value: 3n })],
-      karma: { ...EMPTY_KARMA, unlisted: 3n },
+      karma: { ...EMPTY_KARMA, unlisted: 3n, undecided: 0n },
     });
     const f = rowField(render(handlers(), emptyRepCtx({
       verdict: VERIFIED_PF, figures: fv, grant: { state: 'expired', atHeight: 999 },

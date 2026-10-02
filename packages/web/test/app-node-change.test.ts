@@ -261,8 +261,8 @@ const verified = (height: number): TipVerdict => ({ kind: 'verified', nodes: 2, 
 function emptyResult(): FiguresResult {
   return {
     boxes: [], record: { status: 'absent' },
-    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: 0n, holdings: 'read', holdingsVerdict: null },
-    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'read', holdingsVerdict: null },
+    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, effective: 0n, holdings: 'read', holdingsVerdict: null },
+    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, holdings: 'read', holdingsVerdict: null },
     heightAfter: 0, failed: false,
   };
 }
@@ -644,9 +644,8 @@ describe('the verified figures across a node or identity change', () => {
     expect(runs.length).toBeGreaterThan(0);
     // A credits listing not read after the new anchor is handed to the run
     // as not read, never as the old node's; runs after /credits lands at B
-    // carry NODE_B's credit box (WEB_INTERFACE → The extension → "The verified
-    // figures" — "A listing not read after the current anchor is handed to
-    // the run as not read — never as an empty one").
+    // carry NODE_B's credit box (WEB_INTERFACE → The extension → "A listing
+    // not read after the current anchor is handed to the run as not read").
     for (const r of runs) {
       expect(r.readingBase).toBe(B);
       expect(r.listing.karma.boxes.map((b) => b.boxId)).toEqual([NODE_B.karmaBox]);

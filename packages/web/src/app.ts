@@ -3502,9 +3502,8 @@ export class App {
     const capturedCredits = this.walletCredits;
     // A credits listing not read after the current anchor is passed as not
     // read — never as an empty one, under which every box the key holds
-    // would read `unlisted` (WEB_INTERFACE → The extension → "The verified
-    // figures" — "A listing not read after the current anchor is handed to
-    // the run as not read — never as an empty one").
+    // would read `unlisted` (WEB_INTERFACE → The extension → "A listing
+    // not read after the current anchor is handed to the run as not read").
     const listing: Listing = {
       karma: {
         boxes: capturedKarma.boxes,

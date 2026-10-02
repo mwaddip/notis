@@ -74,10 +74,10 @@ export function figuresLine(input: FiguresLineInput): FiguresLine {
   }
 
   // The listed boxes of the row's ledger — a box whose status is not
-  // `unlisted` (the unlisted ones are the run's own, not from the listing).
+  // `unlisted` or `undecided` (both are the run's own, not from the listing).
   const cls: 'credit' | 'karma' = ledger === 'credits' ? 'credit' : 'karma';
   const listedBoxes = result.boxes.filter(
-    (b) => b.boxClass === cls && b.status !== 'unlisted',
+    (b) => b.boxClass === cls && b.status !== 'unlisted' && b.status !== 'undecided',
   );
   const sums = ledger === 'credits' ? result.credits : result.karma;
   const record = result.record;
@@ -94,7 +94,7 @@ export function figuresLine(input: FiguresLineInput): FiguresLine {
   // Under an empty listing the listed boxes a held result still carries are
   // from a listing that has passed — rows 4 and 5 do not read them and print
   // no sum of them. Only the ledger's own facts speak: `holdings`,
-  // `unlisted`, and for rep the record and the valuation.
+  // `unlisted`, `undecided`, and for rep the record and the valuation.
   const hasListing = boxCount > 0;
   const listedUnproven = hasListing && listedBoxes.some((b) => b.status === 'unproven');
   const listedNoProofBoxes = hasListing
@@ -102,7 +102,9 @@ export function figuresLine(input: FiguresLineInput): FiguresLine {
     : [];
   const absentNamed = hasListing ? sums.absent > 0n : false;
   const unlistedNamed = sums.unlisted > 0n;
+  const undecidedNamed = sums.undecided > 0n;
   const holdingsUnproven = holdings === 'unproven';
+  const holdingsStale = holdings === 'stale';
   const holdingsNoProof = holdings === 'no-proof';
   const recordUnproven = ledger === 'karma' && record.status === 'unproven';
   const recordNoProof = ledger === 'karma' && record.status === 'no-proof';
@@ -159,9 +161,19 @@ export function figuresLine(input: FiguresLineInput): FiguresLine {
     return { text, weight: 'muted' };
   }
 
-  // Row 6 — the run read the ranges and no box is `unlisted`: an empty
-  // listing is silence here (the faucet step and the words standing read as
-  // they do without a verifier).
+  // Row 6 — muted *not checked yet* when a box is `undecided` or the
+  // ledger's read is `stale` (WEB_INTERFACE → The extension → "The verified
+  // figures" — "muted *not checked yet* when a box is `undecided` or the
+  // ledger's read is `stale`"). An empty listing fires this too where the
+  // run holds an `undecided` box of the ledger — the chain holds what the
+  // listing did not name, and the run cannot say whether a block spent it.
+  if (holdingsStale || undecidedNamed) {
+    return { text: 'not checked yet', weight: 'muted' };
+  }
+
+  // Row 7 — the run read the ranges and no box is `unlisted` or
+  // `undecided`: an empty listing is silence here (the faucet step and the
+  // words standing read as they do without a verifier).
   if (boxCount === 0) return null;
 
   // The proven figure P.

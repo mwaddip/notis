@@ -902,7 +902,7 @@ describe('wallet — the send row while a handle is checked', () => {
 // to clay only while the node's own proof of the balance fails.
 // ---------------------------------------------------------------------------
 
-const EMPTY_SUMS: LedgerSums = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n };
+const EMPTY_SUMS: LedgerSums = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n };
 const EMPTY_KARMA = { ...EMPTY_SUMS, effective: 0n, holdings: 'read' as const, holdingsVerdict: null };
 const EMPTY_CREDITS = { ...EMPTY_SUMS, holdings: 'read' as const, holdingsVerdict: null };
 const RECORD: IdentityRecord = {
@@ -968,7 +968,7 @@ describe('wallet — the verified-figures line beneath the balance', () => {
         figBox({ boxClass: 'credit', status: 'proven', value: 875_000_000n }),
         figBox({ boxClass: 'credit', status: 'young',  value: 375_000_000n }),
       ],
-      credits: { proven: 875_000_000n, young: 375_000_000n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'read', holdingsVerdict: null },
+      credits: { proven: 875_000_000n, young: 375_000_000n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, holdings: 'read', holdingsVerdict: null },
     });
     const c = spendableCtx({ verdict: VERIFIED, figures: fv });
     const f = creditsField(render(handlers(), c))!;
@@ -1087,7 +1087,7 @@ describe('wallet — the verified-figures line beneath the balance', () => {
           figBox({ boxClass: 'credit', status: 'proven', value: 875_000_000n }),
           figBox({ boxClass: 'credit', status: 'young',  value: 375_000_000n }),
         ],
-        credits: { proven: 875_000_000n, young: 375_000_000n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'read', holdingsVerdict: null },
+        credits: { proven: 875_000_000n, young: 375_000_000n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, holdings: 'read', holdingsVerdict: null },
       }),
     });
     const f = creditsField(render(handlers(), c))!;
