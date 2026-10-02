@@ -2113,6 +2113,7 @@ async function readCreditsRow(cx) {
       /not checked yet/.test(t) ||
       /chain is not verified/.test(t) ||
       /chain does not hold/.test(t) ||
+      /does not list/.test(t) ||
       /did not verify/.test(t) ||
       /no proof for/.test(t);
     const figHint = hints.find((h) => isFiguresHint(h.text)) ?? null;
@@ -2762,7 +2763,11 @@ function lieArms(relay) {
 // with its clay.
 function creditsSeen(r) {
   if (!r?.present) return 'row not in the page';
-  return `hint=${JSON.stringify(r.figHintText)} (clay=${r.figHintHasClay}), gold=${JSON.stringify(r.goldText)} (clay=${r.goldHasClay})`;
+  const base = `hint=${JSON.stringify(r.figHintText)} (clay=${r.figHintHasClay}), gold=${JSON.stringify(r.goldText)} (clay=${r.goldHasClay})`;
+  if (r.figHintText === null && Array.isArray(r.allHints) && r.allHints.length > 0) {
+    return `${base}, allHints=${JSON.stringify(r.allHints.map((h) => h.text))}`;
+  }
+  return base;
 }
 
 function karmaSeen(k) {
@@ -2853,8 +2858,17 @@ async function runLieArm(cx, relay, arm) {
     // Re-read the quiet side after any retries, so both rows reflect the same
     // run (a karma-drop retry's final figures run lands on both /karma and
     // /credits — the balance row is honest-looking, but the latest reading
-    // reflects that run's result).
-    if (pressWhen === 'karma') credits = await waitForRow(readCreditsRow, cx, arm.creditsSettled, 15000);
+    // reflects that run's result). The balance row lives in the wallet; a
+    // re-read while profile is the raised window would read `.credits-line`
+    // as absent and the verdict would come off a `present: false` reading, so
+    // the wallet is raised first. The reading the verdict is taken from is
+    // pushed into `creditsReadings` so the record line names it as the
+    // verdict's source.
+    if (pressWhen === 'karma') {
+      await raiseWindow(cx, 'open wallet');
+      credits = await waitForRow(readCreditsRow, cx, arm.creditsSettled, 15000);
+      creditsReadings.push(`verdict re-read: ${creditsSeen(credits.last)}`);
+    }
     const creditsOk = arm.creditsOk(credits.last);
     const karmaOk = arm.karmaOk(karma.last);
     const corner = await readCorner(cx);
