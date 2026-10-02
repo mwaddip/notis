@@ -328,7 +328,7 @@ describe('a figures run proves a listing read after its anchor, and never one re
     expect(h.figuresCalls).toHaveLength(0);
   });
 
-  it('the wallet closed, a verified tip reads /karma alone and passes the credits listing empty', async () => {
+  it('the wallet closed, a verified tip reads /karma alone and passes the credits listing not read', async () => {
     setNode(NODE);
     const h = harness({ layout: '@profile|@wallet', verifiers: true });
     await h.drive.loadMembershipState();
@@ -343,10 +343,10 @@ describe('a figures run proves a listing read after its anchor, and never one re
     expect(h.node.count('karma')).toBe(karmaBefore + 1);
     expect(h.node.count('credits')).toBe(creditsBefore);
     expect(h.figuresCalls).toHaveLength(1);
-    expect(creditIds(h.figuresCalls[0]!)).toEqual([]);
+    expect(h.figuresCalls[0]!.listing.credits).toBeNull();
   });
 
-  it('the wallet open, a verified tip reads /credits too: the karma write runs with credits empty, the credits write marks exactly one more run with both', async () => {
+  it('the wallet open, a verified tip reads /credits too: the karma write runs with credits not read, the credits write marks exactly one more run with both', async () => {
     setNode(NODE);
     const h = harness({ layout: '@profile|@wallet', verifiers: true });
     await h.drive.loadMembershipState();
@@ -357,7 +357,7 @@ describe('a figures run proves a listing read after its anchor, and never one re
     await flush();
     expect(h.node.count('credits')).toBe(creditsBefore + 1);
     expect(h.figuresCalls).toHaveLength(1);
-    expect(creditIds(h.figuresCalls[0]!)).toEqual([]);
+    expect(h.figuresCalls[0]!.listing.credits).toBeNull();
 
     h.figuresCalls[0]!.resolve(emptyResult());
     await flush();

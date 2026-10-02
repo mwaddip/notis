@@ -366,10 +366,10 @@ describe('the newest read of a listing wins', () => {
     h.chain.credits = [{ boxId: C2, value: '700000000' }];
     h.tipCalls[0]!.resolve(verified(1070));
     await flush();
-    // The karma write ran first with credits passed empty; the credits write
-    // marked one more run.
+    // The karma write ran first with credits passed not read; the credits
+    // write marked one more run.
     expect(h.figuresCalls).toHaveLength(1);
-    expect(creditIds(h.figuresCalls[0]!)).toEqual([]);
+    expect(h.figuresCalls[0]!.listing.credits).toBeNull();
 
     h.node.held[0]!.release();
     await early;
