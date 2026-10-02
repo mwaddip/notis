@@ -88,13 +88,16 @@ describe('a route\'s cycle does not leak into the next block\'s', () => {
     await assertLiveDigestUnchanged();
 
     // A range call that throws after its first recorded lookup — spy on the
-    // prover's `performLookupWithNeighbors` throwing on its third call (the
-    // range walk's first lookup is the range's start; its box lookup is the
-    // second; the next walk step is the third). The route answers 500 and
-    // the live digest is still what it was. **Both at the tip and at an
-    // older height**: the older-height path restores a kept root first, so
-    // its recorded lookups under the cycle are not the live tree's — the
-    // close has to drop them with `restoreRoot`.
+    // prover's `performLookupWithNeighbors` throwing on its third call. The
+    // page's lookups are the walk's keys, then the boxes' (CONSENSUS_INTERFACE
+    // → The holdings page): with one credit box in the range, the first
+    // lookup is the range's start, the second is the entry at the box's
+    // credit-index key, and the third — where the throw lands — is the
+    // box's own key. The route answers 500 and the live digest is still what
+    // it was. **Both at the tip and at an older height**: the older-height
+    // path restores a kept root first, so its recorded lookups under the
+    // cycle are not the live tree's — the close has to drop them with
+    // `restoreRoot`.
     const original = handle.prover.performLookupWithNeighbors.bind(handle.prover);
     function throwOnThird(): () => void {
       let calls = 0;
