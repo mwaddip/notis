@@ -5,7 +5,7 @@ import { bytesToHex, hash32, networkKey } from '@dagsocial/types';
 /**
  * Both routes called several times at several heights, including a call that
  * throws midway, do not leak into the next block's cycle (NODE_INTERFACE →
- * "A proof at an older height restores a kept root"; → The block proof,
+ * "A proof at an older height restores a kept root"; → The block proof →
  * "A proof route records in a cycle of its own"). The next block the node
  * applies after the routes carries the proof a node that served no route
  * writes — one node shows it because a block's header is its own twin: the
