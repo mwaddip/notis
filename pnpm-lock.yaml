@@ -316,6 +316,9 @@ importers:
 
   tools/nipopow-client:
     dependencies:
+      '@dagsocial/consensus':
+        specifier: workspace:*
+        version: link:../../packages/consensus
       '@dagsocial/nipopow':
         specifier: workspace:*
         version: link:../../packages/nipopow
@@ -326,8 +329,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/validation
       '@ergots/avltree':
-        specifier: ^0.4.0
-        version: 0.4.0
+        specifier: ^0.6.0
+        version: 0.6.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -400,10 +403,6 @@ packages:
   '@dnsquery/dns-packet@6.1.1':
     resolution: {integrity: sha512-WXTuFvL3G+74SchFAtz3FgIYVOe196ycvGsMgvSH/8Goptb1qpIQtIuM4SOK9G9lhMWYpHxnXyy544ZhluFOew==}
     engines: {node: '>=6'}
-
-  '@ergots/avltree@0.4.0':
-    resolution: {integrity: sha512-47u+8qZID8DzANyjJbfebJp2dTG+B4/GnUQcURVYK2RYd4uj2yvU+oLDaGPhPGA759Bkq+qEU864FOWZB3SpLw==}
-    engines: {node: '>=20'}
 
   '@ergots/avltree@0.6.0':
     resolution: {integrity: sha512-OXJdNgxUK+NQu2nxbNrNELf99oxqe6Z+WKqoEGtZh/5TXLQ639t+h4L7ZWxMVhaQzR62XQJvsOeMidJFUd6pmg==}
@@ -2317,10 +2316,6 @@ snapshots:
     dependencies:
       '@leichtgewicht/ip-codec': 2.0.5
       utf8-codec: 1.0.0
-
-  '@ergots/avltree@0.4.0':
-    dependencies:
-      '@noble/hashes': 2.2.0
 
   '@ergots/avltree@0.6.0':
     dependencies:
