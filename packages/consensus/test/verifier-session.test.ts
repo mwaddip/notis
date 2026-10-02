@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BatchAVLProver, BatchAVLVerifier } from '@ergots/avltree';
+import { BatchAVLProver, BatchAVLVerifier, StrictBatchAVLVerifier } from '@ergots/avltree';
 import type { AvlNode } from '@ergots/avltree';
 import {
   KARMA_DECAY_AMOUNT,
@@ -372,5 +372,23 @@ describe('verifierSession — a proof that does not verify', () => {
 
     const healthy = new BatchAVLVerifier(at('block 1').parent.digest, proven.proof, TREE_CONFIG);
     expect(() => verifierSession(healthy).lookup(new Uint8Array(TREE_KEY_LENGTH))).toThrow(': key-out-of-bounds');
+  });
+});
+
+describe('verifierSession — either step-by-step verifier', () => {
+  it("takes BatchAVLVerifier and StrictBatchAVLVerifier: each answers the first block's reads as the prover's session did", () => {
+    const { block, parent, proven } = at('block 1');
+    for (const verifier of [
+      new BatchAVLVerifier(parent.digest, proven.proof, TREE_CONFIG),
+      new StrictBatchAVLVerifier(parent.digest, proven.proof, TREE_CONFIG),
+    ]) {
+      const log = loggingSession(verifierSession(verifier));
+      // The rules alone — the writes would move the verifier out from under a later run.
+      const view = treeStateView(log);
+      const result = applyBlock(view, block, ctx);
+      expect(result.ok, verifier.constructor.name).toBe(true);
+      expect(log.keys, verifier.constructor.name).toEqual(proven.keys.slice(0, log.keys.length));
+      expect(log.answers, verifier.constructor.name).toEqual(proven.answers.slice(0, log.answers.length));
+    }
   });
 });
