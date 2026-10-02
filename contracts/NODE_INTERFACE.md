@@ -4232,8 +4232,14 @@ a `try` whose `finally` restores the live version; the `catch`'s 500 is the
 response, never the state.
 
 **A proof at an older height restores a kept root.** The node keeps, by reference, the root and the tree height of
-each of the last `PROOF_WINDOW_BLOCKS` blocks it applied (`local`, default 64): the library never mutates a node, so a
-kept root shares every unchanged node with the live tree and costs the nodes its block replaced. Both proof routes
+each of the last `PROOF_WINDOW_BLOCKS` blocks it applied (`local`, default 64), fewer while they hold more than
+`PROOF_WINDOW_NODES` nodes (`local`, default 250 000): the library never mutates a node, so a kept root shares every
+unchanged node with the live tree, and the kept roots hold beyond that tree what the blocks above the lowest of them
+replaced. **The count is the store's**: a block's is the number of nodes the prover reports removed at its checkpoint,
+the ones `update` orphans (→ "AVL storage shares nodes across versions; a row is a node's lifetime"), recorded with
+its root; the roots' is the sum over every kept height but the lowest. The node drops the lowest kept root while that
+sum is above `PROOF_WINDOW_NODES`, so what the roots hold is bounded by a setting, whatever a producer packs a block
+with; the tip's root holds nothing the tree does not, and the bound never drops it. Both proof routes
 answer `atHeight` by restoring that root, performing their lookups, generating the proof and restoring the live root,
 inside one synchronous call, as the speculative run restores its own (→ Post-block stateRoot). **The live root is
 restored and the route's cycle closed on every path, a throw included**: a page that throws midway leaves none of its
@@ -4258,6 +4264,9 @@ no route.
 > `GET /api/v1/proof/:key?atHeight=` answers any height a stored version stands at through `rollback(version)`, twice a
 > request, under the `finally` of the paragraph above, which retires with it; `PROOF_WINDOW_BLOCKS` is no setting.
 > `reorg` resolves its fork point from the store on every path, and its abort resolves the pre-reorg version again.
+
+> ⚠ **AHEAD OF CODE (2026-10-02, N4 PR A — `node`)** — `PROOF_WINDOW_BLOCKS` alone bounds the kept roots:
+> `PROOF_WINDOW_NODES` is no setting, no count is recorded with a root, and the store answers none.
 
 **3. A block's writes never touch one key twice, and for boxes that rests on provenance, not on height.** That box ids
 commit to `createdAtBlock` does not establish it: two boxes built at one height with one content would still collide.
@@ -4806,6 +4815,7 @@ its actual reach.
 | `SYNC_REQUEST_TIMEOUT_MS` | `local` | `10000` | Abort timeout on one sync request — semantics `NET_INTERFACE → Config` |
 | `MAX_PROOF_HISTORY` | `local` | `1440` | AVL versions retained for proof serving |
 | `PROOF_WINDOW_BLOCKS` | `local` | `64` | the last blocks whose roots the node keeps in memory, the heights its proof routes answer `atHeight` at (→ AVL+ State Root) |
+| `PROOF_WINDOW_NODES` | `local` | `250000` | the most nodes the kept roots hold beyond the tree at the tip, the lowest root dropped first and the tip's never (→ AVL+ State Root) |
 | `PROOF_RETENTION_BLOCKS` | `local` | `10080` | blocks whose proofs are kept for `GET /blocks/:height/proof` — a week at 60 s (→ The block proof) |
 | `PROOF_RETENTION_BYTES` | `local` | `2147483648` | the most bytes of proofs kept for `GET /blocks/:height/proof`, the oldest pruned first and the tip's always kept — 2 GiB (→ The block proof) |
 | `PORT` | `operational` | `3000` | HTTP listen port |
