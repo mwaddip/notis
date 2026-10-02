@@ -13,6 +13,7 @@ import type { AnyBox, CreditBox, IdentityRecord, NetworkRecord, VouchBox } from 
 import {
   TreeInconsistencyError,
   holdingsPage,
+  isSentinel,
   seedTreeWrites,
   treeStateView,
   verifierSession,
@@ -142,14 +143,39 @@ describe('holdingsPage — empty ranges', () => {
     }
   });
 
-  it('an owner whose range is the tree\'s last — the range\'s start past every leaf — answers { boxes: [], next: null }', () => {
-    const view = treeStateView(mapSessionFrom(seed()));
-    // omega = all 0xff: `karmaOfRange(omega).prefix` = `0x10 || 0xff^32`, past every other karma key in the fixture.
-    for (const kind of ['karma', 'credit', 'escrow', 'vouch', 'accrual'] as const) {
-      const page = holdingsPage(view, kind, omega, null, 10);
-      expect(page.boxes).toEqual([]);
-      expect(page.next).toBeNull();
-    }
+  // The holdings kinds in ascending tag order:
+  //   karma 0x10, credit 0x11, escrow 0x12, vouch 0x15, accrual 0x17.
+  // The tree the fixture seeds also carries `type` (0x18) and `castCount` (0x19)
+  // entries where the state has them, so a holdings range at the fixture's
+  // state is never the tree's last. These two cases carry a stripped-down state
+  // in which an `accrual` range IS last.
+  it('a non-empty range at the tree\'s last — the last entry\'s `nextKey` is the all-`0xff` sentinel — answers next: null and never looks a sentinel up', () => {
+    // The tree holds Alice's two accrual boxes, their `box` entries and the
+    // network record — nothing of a higher tag than 0x17, so Alice's accrual
+    // range is at the tree's last.
+    const author = alice;
+    const held = [accrualBox(author, 1n, 100), accrualBox(author, 2n, 101)];
+    const session = mapSessionFrom(seedTreeWrites(held, [], { memberCount: 1 }));
+    const view = treeStateView(session);
+    const page = holdingsPage(view, 'accrual', author, null, 10);
+    expect(page.boxes.length).toBe(2);
+    expect(page.next).toBeNull();
+    expect(session.lookups.some(isSentinel)).toBe(false);
+  });
+
+  it('an empty range at the tree\'s last — the range\'s start\'s `nextKey` is the sentinel — answers { boxes: [], next: null } and never looks a sentinel up', () => {
+    // Same stripped-down state, but query an owner whose accrual range is PAST
+    // every leaf: owner = all-0xff bytes. The accrual range's start is then
+    // `0x17 ‖ 0xff^32 ‖ 0^32`, past every leaf, and its `nextKey` is the
+    // past-last sentinel.
+    const otherAuthor = alice;
+    const held = [accrualBox(otherAuthor, 1n, 110), accrualBox(otherAuthor, 2n, 111)];
+    const session = mapSessionFrom(seedTreeWrites(held, [], { memberCount: 1 }));
+    const view = treeStateView(session);
+    const page = holdingsPage(view, 'accrual', omega, null, 10);
+    expect(page.boxes).toEqual([]);
+    expect(page.next).toBeNull();
+    expect(session.lookups.some(isSentinel)).toBe(false);
   });
 });
 
@@ -166,24 +192,28 @@ describe('holdingsPage — `from`', () => {
     expect(page.boxes.map((b) => b.id!)).toEqual([ids[1], ids[2]]);
   });
 
-  it('`from` an absent key inside the range resumes at the next leaf', () => {
+  it('`from` an absent key inside the range resumes at the next leaf — the page is the next two, `next` is the key of the one after', () => {
     const view = treeStateView(mapSessionFrom(seed()));
     const ids = aliceHoldings('credit');
-    // Between the second and the third leaf: the second's id with a bit flipped past its last.
+    expect(ids.length).toBe(5);
+    // Between the second and the third leaf: the second's id with its last byte
+    // bumped one position past itself — still strictly below the third id.
     const second = hexBytes(ids[1]!);
     const bumped = new Uint8Array(second);
     for (let i = bumped.length - 1; i >= 0; i--) {
       if (bumped[i]! < 0xff) { bumped[i]!++; break; }
       bumped[i] = 0;
     }
+    expect(bytesToHex(bumped) < ids[2]!).toBe(true);
     const key = new Uint8Array(TREE_KEY_LENGTH);
     key.set(creditOfRange(alice).prefix, 0);
     key.set(bumped, 33);
     const page = holdingsPage(view, 'credit', alice, key, 2);
-    // Between `second` and `third` lives nothing — the walk resumes at the next leaf,
-    // which the fixture's lexicographic order makes the next of the sorted five.
-    const nextId = page.boxes[0]?.id;
-    expect(nextId !== undefined && nextId >= ids[2]!).toBe(true);
+    expect(page.boxes.map((b) => b.id!)).toEqual([ids[2], ids[3]]);
+    const expectedNext = new Uint8Array(TREE_KEY_LENGTH);
+    expectedNext.set(creditOfRange(alice).prefix, 0);
+    expectedNext.set(hexBytes(ids[4]!), 33);
+    expect(page.next).toEqual(expectedNext);
   });
 });
 
