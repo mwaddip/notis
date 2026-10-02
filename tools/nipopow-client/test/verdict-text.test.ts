@@ -347,6 +347,60 @@ describe('proveName — a proven username box whose name carries ESC [2K and CR'
   });
 });
 
+describe("textLines — a ledger's holdings line names the status and the capped verdict when the read is not `read`", () => {
+  // WEB_INTERFACE → The extension → "The verified figures" — a failed read's
+  // reason is not lost under an empty listing: each ledger's `holdings`
+  // status and verdict ride on the result, and the command line prints one
+  // line for each ledger whose read is not `read`. `read` and `not-read`
+  // are silent.
+  it('a credit range answering 500 with a long body: credits.holdings line names it, capped', async () => {
+    const karma = karmaBoxFor(USER_BYTES, 10n, 1);
+    const fixture = buildHoldingsFixture({
+      boxes: [karma],
+      records: [{ identityId: USER_BYTES, record: RECORD }],
+    });
+    const anchor = makeAnchor(TIP_H, fixture.stateRoot, SUFFIX_H, fixture.stateRoot);
+    const base = twoHeightNode({ suffix: fixture, suffixHeight: SUFFIX_H, tip: fixture, tipHeight: TIP_H, heightAfter: TIP_H });
+    const fetch: HttpFetch = async (url: string) => {
+      const u = new URL(url);
+      if (u.pathname.startsWith('/api/v1/range/credit/')) return textResponse(500, LONG);
+      return base.fetch(url);
+    };
+    const listing: Listing = {
+      karma: { boxes: [{ boxId: karma.id!, value: '10' }], height: TIP_H, effective: '10' },
+      credits: { boxes: [] },
+    };
+    const figures = await proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), fetch);
+    const tipResult = { tip: null, suffixHead: null, nodes: [], splits: [], winner: null, winnerIndex: -1 };
+    const lines = textLines(tipResult, { figures, listing });
+    // The holdings verdict is "holdings read failed at suffixHead: HTTP 500:
+    // ZZZ…ZZZ". `capped()` names its first 120 characters as shown, then `…`.
+    const prefix = 'holdings read failed at suffixHead: HTTP 500: ';
+    const zs = 'Z'.repeat(120 - prefix.length);
+    const expected = `credit holdings: no-proof — ${prefix}${zs}…`;
+    expect(lines).toContain(expected);
+  });
+
+  it("a listing whose credits is null: no credits holdings line (`not-read` is silent)", async () => {
+    const karma = karmaBoxFor(USER_BYTES, 10n, 1);
+    const fixture = buildHoldingsFixture({
+      boxes: [karma],
+      records: [{ identityId: USER_BYTES, record: RECORD }],
+    });
+    const anchor = makeAnchor(TIP_H, fixture.stateRoot, SUFFIX_H, fixture.stateRoot);
+    const node = twoHeightNode({ suffix: fixture, suffixHeight: SUFFIX_H, tip: fixture, tipHeight: TIP_H, heightAfter: TIP_H });
+    const listing: Listing = {
+      karma: { boxes: [{ boxId: karma.id!, value: '10' }], height: TIP_H, effective: '10' },
+      credits: null,
+    };
+    const figures = await proveFigures('http://a', USER_HEX, listing, anchor, devnetProfile(), node.fetch);
+    const tipResult = { tip: null, suffixHead: null, nodes: [], splits: [], winner: null, winnerIndex: -1 };
+    const lines = textLines(tipResult, { figures, listing });
+    expect(lines.filter((l) => l.startsWith('credit holdings:'))).toEqual([]);
+    expect(lines.filter((l) => l.startsWith('karma holdings:'))).toEqual([]);
+  });
+});
+
 describe("textLines — the command line's text of a node that sends a newline, ESC and CR", () => {
   it('its refusal, its listed boxId and its record verdict are one line each, the escapes shown', async () => {
     const M = 6;

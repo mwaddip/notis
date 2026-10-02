@@ -66,11 +66,9 @@ function prove(karma: unknown[], credits: unknown[]) {
 }
 
 describe('an id the listing names more than once is unproven from its second place on', () => {
-  it('a box listed twice in one ledger is proven once, the second place unproven and listed as unlisted at the second occurrence', async () => {
-    // KARMA.id listed TWICE under karma. The first entry proves the box; the
-    // second is a duplicate — unproven, listed by its listingbox fingerprint,
-    // not the chain's. The box itself appears in the range once, so the first
-    // listing takes credit for it. The second entry adds an `unproven` box.
+  it('a karma box listed twice: first place proven, second unproven, karma.proven = the box\'s value', async () => {
+    // KARMA.id listed twice under karma: the first entry proves the box, the
+    // second is a duplicate — unproven, the id already in `named`.
     const { result } = prove([{ boxId: KARMA.id!, value: '100' }, { boxId: KARMA.id!, value: '100' }], []);
     const r = await result;
     expect(r.boxes.map((b) => b.status)).toEqual(['proven', 'unproven']);
@@ -79,7 +77,7 @@ describe('an id the listing names more than once is unproven from its second pla
     expect(r.failed).toBe(true);
   });
 
-  it('an id listed under karma and again under credits is unproven in the credits place, no range retry', async () => {
+  it('an id listed under karma and again under credits: the credits place is unproven, credits.proven zero', async () => {
     const { result } = prove([{ boxId: KARMA.id!, value: '100' }], [{ boxId: KARMA.id!, value: '100' }]);
     const r = await result;
     expect(r.boxes.map((b) => [b.boxClass, b.status])).toEqual([['karma', 'proven'], ['credit', 'unproven']]);

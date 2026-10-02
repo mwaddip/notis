@@ -62,8 +62,8 @@ async function main(): Promise<void> {
         figures: {
           boxes: [],
           record: { status: 'no-proof', verdict: `listing failed: ${listingResult.reason}` },
-          karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: null, holdings: 'not-read' },
-          credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'not-read' },
+          karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: null, holdings: 'not-read', holdingsVerdict: null },
+          credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'not-read', holdingsVerdict: null },
           heightAfter: null,
           failed: true,
         },
@@ -123,7 +123,11 @@ function outputJson(tip: TipResult, run: Run | null): void {
     obj.karmaTotal = figures.karma.proven.toString();
     obj.creditTotal = figures.credits.proven.toString();
     obj.karma = karmaJson(figures.karma, listing?.karma.height ?? null);
-    obj.credits = { ...ledgerSumsJson(figures.credits), holdings: figures.credits.holdings };
+    obj.credits = {
+      ...ledgerSumsJson(figures.credits),
+      holdings: figures.credits.holdings,
+      holdingsVerdict: figures.credits.holdingsVerdict,
+    };
     obj.record = recordJson(figures.record);
     obj.heightAfter = figures.heightAfter;
   }
@@ -137,6 +141,7 @@ function karmaJson(
   const out: Record<string, unknown> = ledgerSumsJson(sums);
   out['effective'] = sums.effective === null ? null : sums.effective.toString();
   out['holdings'] = sums.holdings;
+  out['holdingsVerdict'] = sums.holdingsVerdict;
   if (listingHeight !== null) out['height'] = listingHeight;
   return out;
 }

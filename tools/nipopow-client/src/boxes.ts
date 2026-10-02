@@ -21,10 +21,10 @@ import type {
   UserId,
 } from '@dagsocial/types';
 import type { PoPowHeader } from '@dagsocial/nipopow';
-import type { HoldingKind } from '@dagsocial/consensus';
 import type { HttpFetch } from './http.js';
-import { capped, fetchJson, isRecord, shown } from './http.js';
-import { proveHoldings } from './holdings.js';
+import { base64ToBytes, capped, fetchJson, isRecord, shown } from './http.js';
+import { proveRange } from './holdings.js';
+import type { RangeResult } from './holdings.js';
 
 export interface ListedBox {
   boxId: string;
@@ -96,14 +96,19 @@ export interface LedgerSums {
  *   carries it, and the run keeps its state;
  * - `not-read` — the listing was handed as `null`: no range request was
  *   made.
+ *
+ * **Each ledger carries its own status**: a credit range that failed does
+ * not mark karma failed, and karma's does not mark credits failed. This
+ * follows WEB_INTERFACE → The extension → "The verified figures" — *"Each
+ * ledger's read carries a status of its own beside its boxes'"*.
  */
 export type HoldingsRead = 'read' | 'unproven' | 'no-proof' | 'not-read';
 
 export interface FiguresResult {
   boxes: FigureBox[];
   record: RecordResult;
-  karma: LedgerSums & { effective: bigint | null; holdings: HoldingsRead };
-  credits: LedgerSums & { holdings: HoldingsRead };
+  karma: LedgerSums & { effective: bigint | null; holdings: HoldingsRead; holdingsVerdict: string | null };
+  credits: LedgerSums & { holdings: HoldingsRead; holdingsVerdict: string | null };
   heightAfter: number | null;
   failed: boolean;
 }
@@ -352,12 +357,71 @@ async function proveRecordAtHeight(
 const KINDS: readonly ('karma' | 'credit')[] = ['karma', 'credit'];
 type LedgerKind = (typeof KINDS)[number];
 
+/**
+ * The two reads a ledger's holdings cover: `suffix` is the range at
+ * `suffixHead`, `tip` is the range at `tip`. `null` means *not read* — the
+ * `tip` read is not made when the `suffix` read failed; the whole pair is
+ * `null`, `null` when the ledger's listing was handed as `null`.
+ */
+interface LedgerReads {
+  suffix: RangeResult | null;
+  tip: RangeResult | null;
+}
+
+/** The computed state of one ledger's reads: its `holdings` status, its
+ *  verdict (if not `read`/`not-read`), and the proven box indexes. */
+interface LedgerState {
+  holdings: HoldingsRead;
+  holdingsVerdict: string | null;
+  atSuffix: Map<string, AnyBox>;
+  atTip: Map<string, AnyBox>;
+}
+
+/**
+ * One ledger's `holdings` state from its two reads
+ * (WEB_INTERFACE → The extension → "The verified figures"). Each ledger
+ * stands on its own: a `no-proof` or `unproven` on one does not reach the
+ * other's status.
+ */
+function stateOf(reads: LedgerReads): LedgerState {
+  const atSuffix = new Map<string, AnyBox>();
+  const atTip = new Map<string, AnyBox>();
+  if (reads.suffix === null) {
+    return { holdings: 'not-read', holdingsVerdict: null, atSuffix, atTip };
+  }
+  if (!reads.suffix.ok) {
+    return {
+      holdings: reads.suffix.status,
+      holdingsVerdict: `holdings read failed at suffixHead: ${reads.suffix.verdict}`,
+      atSuffix,
+      atTip,
+    };
+  }
+  for (const b of reads.suffix.boxes) atSuffix.set(b.id!.toLowerCase(), b);
+  if (reads.tip === null || !reads.tip.ok) {
+    const tip = reads.tip;
+    return {
+      holdings: tip === null ? 'no-proof' : tip.status,
+      holdingsVerdict: tip === null
+        ? 'holdings read failed at tip: not read'
+        : `holdings read failed at tip: ${tip.verdict}`,
+      atSuffix,
+      atTip,
+    };
+  }
+  for (const b of reads.tip.boxes) atTip.set(b.id!.toLowerCase(), b);
+  return { holdings: 'read', holdingsVerdict: null, atSuffix, atTip };
+}
+
 // WEB_INTERFACE → The extension → "The verified figures" — the run reads the
 // key's holdings whole, by range, at `suffixHead` and at `tip`, then judges
 // the listing against them. Order of the run: the identity record at
-// `suffixHead`; `proveHoldings` at `suffixHead` for `karma` and, where
-// `listing.credits` is not `null`, `credit`; the same at `tip`; then
-// `readHeightAfter`. The classes:
+// `suffixHead`; `karma` at `suffixHead`; `credit` at `suffixHead` where
+// `listing.credits` is not `null`; `karma` at `tip` where its suffix read
+// succeeded; `credit` at `tip` where its suffix read succeeded; then
+// `readHeightAfter`. Each ledger is read on its own by `proveRange` — a
+// ledger whose `suffixHead` read failed is not asked at `tip`, and its tip's
+// outcome does not reach the other ledger's status. The classes:
 // - `proven` — the ledger's listing names a box held in both `S` and `T`, in
 //   the ledger it was listed under, with the listing's value and (for a
 //   credit box) its lock;
@@ -374,8 +438,9 @@ type LedgerKind = (typeof KINDS)[number];
 // - `no-proof` — a failed holdings read (`no-proof`) hands this status to
 //   every listed box of the ledger.
 // A ledger whose listing is `null` is not read: no range request, no box of
-// it, every sum zero. Each ledger's read status is `karma.holdings` and
-// `credits.holdings`.
+// it, every sum zero. Each ledger's read status rides as `karma.holdings` /
+// `credits.holdings`, with the failure's verdict in `karma.holdingsVerdict`
+// / `credits.holdingsVerdict` (`null` for `read` and `not-read`).
 export async function proveFigures(
   nodeUrl: string,
   user: string,
@@ -390,64 +455,37 @@ export async function proveFigures(
   const suffixStateRoot = anchor.suffixHead.header.stateRoot;
   const tipHeight = anchor.tip.height;
   const tipStateRoot = anchor.tip.stateRoot;
+  const suffixHeader = { height: suffixHeight, stateRoot: suffixStateRoot };
+  const tipHeader = { height: tipHeight, stateRoot: tipStateRoot };
 
   // Step 1 — the identity record at suffixHead.
   const recordOutcome = await proveRecordAtHeight(nodeUrl, userBytes, suffixHeight, suffixStateRoot, httpFetch);
 
-  // The kinds of range to read, in the run's order. A `null` credits listing
-  // means *not read*; the credit range is not asked.
-  const askedKinds: HoldingKind[] = ['karma'];
-  if (listing.credits !== null) askedKinds.push('credit');
+  // Steps 2–5 — each ledger's two range reads, in the order:
+  // karma@suffix, credit@suffix, karma@tip, credit@tip. A ledger that failed
+  // at `suffixHead` is not asked at `tip`.
+  const karmaReads: LedgerReads = { suffix: null, tip: null };
+  const creditReads: LedgerReads = { suffix: null, tip: null };
 
-  // Step 2 — holdings at suffixHead (S).
-  const S = await proveHoldings(nodeUrl, userLowerHex, askedKinds, { height: suffixHeight, stateRoot: suffixStateRoot }, httpFetch);
+  karmaReads.suffix = await proveRange(nodeUrl, 'karma', userLowerHex, suffixHeader, httpFetch);
+  if (listing.credits !== null) {
+    creditReads.suffix = await proveRange(nodeUrl, 'credit', userLowerHex, suffixHeader, httpFetch);
+  }
+  if (karmaReads.suffix.ok) {
+    karmaReads.tip = await proveRange(nodeUrl, 'karma', userLowerHex, tipHeader, httpFetch);
+  }
+  if (creditReads.suffix !== null && creditReads.suffix.ok) {
+    creditReads.tip = await proveRange(nodeUrl, 'credit', userLowerHex, tipHeader, httpFetch);
+  }
 
-  // Step 3 — holdings at tip (T), only when S succeeded. A ledger that
-  // failed at `suffixHead` ends there — its listed boxes carry S's failure.
-  const T = S.ok
-    ? await proveHoldings(nodeUrl, userLowerHex, askedKinds, { height: tipHeight, stateRoot: tipStateRoot }, httpFetch)
-    : null;
-
-  // Step 4 — one GET /blocks/current.
+  // Step 6 — one GET /blocks/current.
   const heightAfter = await readHeightAfter(nodeUrl, httpFetch);
 
-  // Each ledger's read status (`holdings`): `not-read` for a `null` listing,
-  // the first failure's status for a read that failed, `read` otherwise.
-  const holdingsStatus = (ledger: LedgerKind): HoldingsRead => {
-    if (ledger === 'credit' && listing.credits === null) return 'not-read';
-    if (!S.ok) return S.status;
-    if (T !== null && !T.ok) return T.status;
-    return 'read';
-  };
-
-  const holdingsVerdict = (ledger: LedgerKind): string | null => {
-    if (ledger === 'credit' && listing.credits === null) return null;
-    if (!S.ok) return `holdings read failed at suffixHead: ${S.verdict}`;
-    if (T !== null && !T.ok) return `holdings read failed at tip: ${T.verdict}`;
-    return null;
-  };
-
-  // Build an index of the held boxes at each height, per ledger. Each key
-  // appears once in a ledger's range (`CONSENSUS_INTERFACE → The holdings
-  // page`). A credit box's `lockedUntilBlock` is read from the proven box.
-  const atSuffix: Record<LedgerKind, Map<string, AnyBox>> = { karma: new Map(), credit: new Map() };
-  const atTip: Record<LedgerKind, Map<string, AnyBox>> = { karma: new Map(), credit: new Map() };
-  if (S.ok) {
-    for (const kind of askedKinds) {
-      if (kind !== 'karma' && kind !== 'credit') continue;
-      const boxes = S.boxes[kind];
-      if (boxes === undefined) continue;
-      for (const b of boxes) atSuffix[kind].set(b.id!.toLowerCase(), b);
-    }
-  }
-  if (T !== null && T.ok) {
-    for (const kind of askedKinds) {
-      if (kind !== 'karma' && kind !== 'credit') continue;
-      const boxes = T.boxes[kind];
-      if (boxes === undefined) continue;
-      for (const b of boxes) atTip[kind].set(b.id!.toLowerCase(), b);
-    }
-  }
+  // Each ledger's state, independently.
+  const karmaState = stateOf(karmaReads);
+  const creditState = stateOf(creditReads);
+  const stateOfLedger = (ledger: LedgerKind): LedgerState =>
+    ledger === 'karma' ? karmaState : creditState;
 
   // Walk the listing. `named` holds every 64-hex id the listing named earlier
   // (lowercased), across both ledgers (WEB_INTERFACE → The extension → "The
@@ -475,11 +513,13 @@ export async function proveFigures(
     }
     listedIds[boxClass].add(check.listed.boxId);
 
+    const ledgerState = stateOfLedger(boxClass);
     // If this ledger's holdings read failed, every listed box of it carries
-    // the failure.
-    const status = holdingsStatus(boxClass);
-    if (status === 'unproven' || status === 'no-proof') {
-      const verdict = holdingsVerdict(boxClass)!;
+    // the failure. The other ledger's reads are not reached — each ledger
+    // stands on its own (WEB_INTERFACE → The extension → "The verified
+    // figures" — "Each ledger's read carries a status of its own").
+    if (ledgerState.holdings === 'unproven' || ledgerState.holdings === 'no-proof') {
+      const verdict = ledgerState.holdingsVerdict!;
       const listingValue = BigInt(check.listed.value);
       const listingLocked = boxClass === 'credit' ? check.listed.lockedUntilBlock ?? null : null;
       boxes.push({
@@ -487,16 +527,16 @@ export async function proveFigures(
         boxClass,
         value: listingValue,
         lockedUntilBlock: listingLocked,
-        status,
+        status: ledgerState.holdings,
         verdict,
       });
-      if (status === 'unproven') failed = true;
+      if (ledgerState.holdings === 'unproven') failed = true;
       continue;
     }
 
     // The ledger's reads succeeded. Decide the class from `S` and `T`.
-    const heldT = atTip[boxClass].get(check.listed.boxId);
-    const heldS = atSuffix[boxClass].get(check.listed.boxId);
+    const heldT = ledgerState.atTip.get(check.listed.boxId);
+    const heldS = ledgerState.atSuffix.get(check.listed.boxId);
     const listingValue = BigInt(check.listed.value);
     const listingLocked = boxClass === 'credit' ? check.listed.lockedUntilBlock ?? null : null;
 
@@ -572,10 +612,11 @@ export async function proveFigures(
   // and no `FigureBox`).
   if (heightAfter === tipHeight) {
     for (const ledger of KINDS) {
-      if (holdingsStatus(ledger) !== 'read') continue;
+      const state = stateOfLedger(ledger);
+      if (state.holdings !== 'read') continue;
       // Deterministic order: by box id ascending.
       const unlisted: AnyBox[] = [];
-      for (const [id, box] of atTip[ledger]) {
+      for (const [id, box] of state.atTip) {
         if (!listedIds[ledger].has(id)) unlisted.push(box);
       }
       unlisted.sort((a, b) => (a.id! < b.id! ? -1 : a.id! > b.id! ? 1 : 0));
@@ -611,7 +652,7 @@ export async function proveFigures(
   // sets `failed` even where no box stands to carry it
   // (WEB_INTERFACE → The extension → "The verified figures").
   for (const ledger of KINDS) {
-    if (holdingsStatus(ledger) === 'unproven') failed = true;
+    if (stateOfLedger(ledger).holdings === 'unproven') failed = true;
   }
 
   // Per-ledger sums.
@@ -654,8 +695,17 @@ export async function proveFigures(
   return {
     boxes,
     record,
-    karma: { ...karmaSums, effective, holdings: holdingsStatus('karma') },
-    credits: { ...creditsSums, holdings: holdingsStatus('credit') },
+    karma: {
+      ...karmaSums,
+      effective,
+      holdings: karmaState.holdings,
+      holdingsVerdict: karmaState.holdingsVerdict,
+    },
+    credits: {
+      ...creditsSums,
+      holdings: creditState.holdings,
+      holdingsVerdict: creditState.holdingsVerdict,
+    },
     heightAfter,
     failed,
   };
@@ -676,8 +726,8 @@ export async function proveBoxes(
     return {
       boxes: [],
       record: { status: 'no-proof', verdict: `listing failed: ${listingResult.reason}` },
-      karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: null, holdings: 'not-read' },
-      credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'not-read' },
+      karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, effective: null, holdings: 'not-read', holdingsVerdict: null },
+      credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, holdings: 'not-read', holdingsVerdict: null },
       heightAfter: null,
       failed: true,
     };
@@ -728,9 +778,9 @@ type ListedBoxCheck = { ok: true; listed: ListedBox } | { ok: false; verdict: st
 // WEB_INTERFACE → The extension → "The verified figures");
 // for any other, the reason it is not, named. `named` holds every 64-hex id the
 // listing named before this entry, lowercased. A checked entry's own `boxId`
-// comes back lowercased too — the AVL key `hexToBytes` decodes, and the id the
-// proof endpoint is asked with, are the listing's id in the one case it holds
-// in the tree, never the node's own spelling of it.
+// comes back lowercased too — the id the duplicate check compares against, and
+// the key the range run compares a held box against, is the listing's id in
+// its one lowercase form, never the node's own spelling of it.
 function checkListedBox(listed: unknown, named: Set<string>): ListedBoxCheck {
   if (!isRecord(listed)) return { ok: false, verdict: `the listed box is not an object: ${shown(listed)}` };
   const rawBoxId = listed['boxId'];
@@ -799,21 +849,4 @@ function valueOrLockMismatch(
 function lockShown(v: unknown): string {
   if (v === null) return 'none';
   return typeof v === 'number' ? String(v) : shown(v);
-}
-
-// NODE_INTERFACE → AVL+ State Root — the proof blob is standard base64,
-// decoded here with `atob`, a global in both browsers and Node 22. It throws
-// on a character outside the alphabet or on a wrong length — caught here so a
-// malformed blob from a lying node is a refused proof, `null`, never an
-// exception out of the library.
-function base64ToBytes(b64: string): Uint8Array | null {
-  let binary: string;
-  try {
-    binary = atob(b64);
-  } catch {
-    return null;
-  }
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
 }

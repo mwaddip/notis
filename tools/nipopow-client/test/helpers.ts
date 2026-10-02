@@ -539,8 +539,9 @@ export function avlProofJson(
 // A real prover's state, for the range route and the single-key route.
 //
 // Each test building range proofs seeds a `BatchAVLProver` with
-// `seedTreeWrites` (CONSENSUS_INTERFACE → The tree writes → "seedTreeWrites
-// is genesis"), then draws proofs from it: the range route runs
+// `seedTreeWrites` (CONSENSUS_INTERFACE → The tree writes →
+// "`seedTreeWrites(boxes, records, network)` is genesis"), then draws proofs
+// from it: the range route runs
 // `holdingsPage` over a recording session and generates the proof; the
 // single-key route performs the lookup and generates the proof. Both close
 // one `generateProof()` cycle a request, so the prover stays at a cycle

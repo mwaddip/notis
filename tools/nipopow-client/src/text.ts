@@ -1,5 +1,5 @@
 import type { PoPowHeader } from '@dagsocial/nipopow';
-import type { FiguresResult, LedgerSums, Listing } from './boxes.js';
+import type { FiguresResult, HoldingsRead, LedgerSums, Listing } from './boxes.js';
 import { capped } from './http.js';
 import type { TipResult } from './tip.js';
 
@@ -71,6 +71,12 @@ export function textLines(tip: TipResult, run: Run | null): string[] {
       lines.push(`identity record: ${figures.record.status} — ${figures.record.verdict}`);
     }
 
+    // WEB_INTERFACE → The extension → "The verified figures" — each ledger
+    // whose read is not `read` has its status named here, so a failure under
+    // an empty listing — where no box stands to carry it — is said.
+    for (const line of holdingsLines('karma', figures.karma)) lines.push(line);
+    for (const line of holdingsLines('credit', figures.credits)) lines.push(line);
+
     if (figures.karma.effective !== null && listing !== null) {
       lines.push(`effective karma at height ${listing.karma.height}: ${figures.karma.effective}`);
     }
@@ -82,6 +88,19 @@ export function textLines(tip: TipResult, run: Run | null): string[] {
   }
 
   return lines;
+}
+
+// WEB_INTERFACE → The extension → "The verified figures" — a ledger whose
+// read is not `read` says so, with the failure's verdict capped. `read` and
+// `not-read` are silent — the latter is the state of a ledger the caller
+// handed as `null`, which no line names here.
+function holdingsLines(
+  label: 'karma' | 'credit',
+  side: { holdings: HoldingsRead; holdingsVerdict: string | null },
+): string[] {
+  if (side.holdings === 'read' || side.holdings === 'not-read') return [];
+  const verdict = side.holdingsVerdict === null ? '' : ` — ${capped(side.holdingsVerdict)}`;
+  return [`${label} holdings: ${side.holdings}${verdict}`];
 }
 
 // The tail sums are young / unchecked / absent / unlisted — proven is already
