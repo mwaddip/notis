@@ -1033,8 +1033,9 @@ describe('fetchListing — paged reads', () => {
   });
 
   // NODE_INTERFACE → UTXO queries — /karma/:userId and /credits/:userId
-  // answer every userId with a page at the node's current height, never a
-  // 404; so a 404 is a listing failure, like any other non-ok.
+  // answer a hex key the node has never seen with the empty page at its
+  // current height, never a 404; so a 404 on a hex key is a listing
+  // failure, like any other non-ok.
   it('a 404 on karma fails the listing, the karma route named', async () => {
     const fetch = makeFetch((path) => {
       if (path === `/karma/${USER_HEX}`) return jsonResponse(404, { error: 'not found' });

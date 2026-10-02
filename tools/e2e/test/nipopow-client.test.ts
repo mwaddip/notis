@@ -211,7 +211,8 @@ describe('nipopow-client', () => {
 
     // ---- negative: key with no boxes → exit 0, empty ----
     // The node answers /karma and /credits with 200 and the current height
-    // for every userId, so fetchListing returns an empty listing with
+    // for a hex key it has never seen, so fetchListing returns an empty
+    // listing with
     // `karma.height` equal to the live tip — inside the valuation range
     // (WEB_INTERFACE → The extension → "That height is the node's word, and
     // is taken only from `tip.height` to `heightAfter`") — and the run

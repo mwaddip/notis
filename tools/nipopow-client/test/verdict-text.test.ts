@@ -147,7 +147,8 @@ describe('fetchListing — a failed page names its cursor capped, and the reques
       const u = new URL(url);
       // The non-tested route answers an empty page so the listing reaches
       // the tested route's cursor-walking failure (NODE_INTERFACE → UTXO
-      // queries: every userId is answered with a page, never a 404).
+      // queries: a hex key the node has never seen is answered with the
+      // empty page, never a 404).
       if (u.pathname === `/karma/${USER_HEX}` && route === 'credits') {
         return jsonResponse(200, { boxes: [], next: null, height: 1, effective: '0' });
       }
