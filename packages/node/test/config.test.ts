@@ -40,6 +40,7 @@ const TEST_KEYS = [
   'MAX_PROOF_HISTORY',
   'PROOF_RETENTION_BLOCKS',
   'PROOF_RETENTION_BYTES',
+  'PROOF_WINDOW_BLOCKS',
   'PROOF_WINDOW_NODES',
 ];
 
@@ -781,6 +782,40 @@ describe('config', () => {
       await expect(importWithRetention('-1')).rejects.toThrow(/PROOF_RETENTION_BLOCKS/);
       vi.resetModules();
       await expect(importWithRetention('2.5')).rejects.toThrow(/PROOF_RETENTION_BLOCKS/);
+    });
+  });
+
+  // NODE_INTERFACE → "A proof at an older height restores a kept root" —
+  // `PROOF_WINDOW_BLOCKS`, `local`, the last blocks whose roots the node
+  // keeps in memory.
+  describe('15a. PROOF_WINDOW_BLOCKS', () => {
+    function importWithWindow(value: string) {
+      process.env['PROOF_WINDOW_BLOCKS'] = value;
+      return import('../src/config.js');
+    }
+
+    it('defaults to 64', async () => {
+      const { loadConfig } = await import('../src/config.js');
+      expect(loadConfig().proofWindowBlocks).toBe(64);
+    });
+
+    it('reads a set value, zero and a thousand included', async () => {
+      const { loadConfig } = await importWithWindow('1000');
+      expect(loadConfig().proofWindowBlocks).toBe(1_000);
+      vi.resetModules();
+      expect((await importWithWindow('0')).loadConfig().proofWindowBlocks).toBe(0);
+    });
+
+    // Refused rather than defaulted: a window nobody can read is a policy
+    // nobody chose.
+    it('refuses a value that is not a non-negative integer', async () => {
+      await expect(importWithWindow('abc')).rejects.toThrow(/PROOF_WINDOW_BLOCKS/);
+      vi.resetModules();
+      await expect(importWithWindow('-1')).rejects.toThrow(/PROOF_WINDOW_BLOCKS/);
+      vi.resetModules();
+      await expect(importWithWindow('1.5')).rejects.toThrow(/PROOF_WINDOW_BLOCKS/);
+      vi.resetModules();
+      await expect(importWithWindow('')).rejects.toThrow(/PROOF_WINDOW_BLOCKS/);
     });
   });
 
