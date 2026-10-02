@@ -219,6 +219,13 @@ each voucher's `vouchPair` walk.
 **The name and holder reads rebuild the row from the tree**: `claimedAtBlock` from the name record, `name` and
 `owner` from the box it names — never the box's `createdAtBlock`, which its creator declares.
 
+**`pageRange(range, from, limit)` is the walk as a page**: the range's leaves in key order from its start, or from
+`from`, at most `limit` of them, and `next` — the first key not taken that is still in the range, or `null` where the
+range ends. It refuses, with a `RangeError`, a `limit` that is not a positive integer and a `from` that is not a key
+of the range — `TREE_KEY_LENGTH` bytes carrying the range's prefix: a page that took nothing under a limit of zero
+would read as a range that ended, and a walk begun outside its range would yield another range's leaves. No rule
+reads it; the holdings page is its caller (→ The holdings page).
+
 ### The index entries
 
 **An index entry is a function of committed state** — an entity's own fields; for a bond, its invitee's
@@ -260,9 +267,10 @@ page looks up, and in what order.** The kinds are the five ranges a key's boxes 
 entries): `karma` — `karmaOf ‖ owner`; `credit` — `creditOf ‖ owner`; `escrow` — `escrowOf ‖ owner`; `vouch` —
 `vouchPair ‖ owner`, the owner the voucher; `accrual` — `accrualOf ‖ owner`, the owner the author. The page walks its
 range as a range read walks (→ The tree view) — from the range's start, or from `from` — for at most `limit` entries,
-and after each entry looks up the box the entry names: the box id its key carries, a vouch pair's the one its value
-carries. That box is live and of the kind's type, or the tree contradicts itself (`TreeInconsistencyError`). `boxes`
-are in key order.
+**and then looks up, in the entries' order, the box each one names**: the box id its key carries, a vouch pair's the
+one its value carries. That box is live and of the kind's type, or the tree contradicts itself
+(`TreeInconsistencyError`). `boxes` are in key order. **The order of the lookups is the rule itself** — the walk's
+keys, then the boxes' — because a node and a client of different builds meet over one proof.
 
 **`next` is the first key the walk did not take that is still in the range, or `null` where the range ends** — the
 last entry's `nextKey`, which its leaf authenticates (→ The tree session), so a reader of a proof knows from the proof
@@ -277,8 +285,8 @@ replays a proof's operations in the order the prover performed them, so a page's
 implementation's choice. A page looks up at most `1 + 2 · limit` keys. No rule reads a page: it is how a key's
 holdings are proven whole against a root.
 
-> ⚠ **AHEAD OF CODE (2026-10-01, N4 PR A — `consensus`)** — the package has no `holdingsPage`, and the tree view no
-> read over `creditOf` or over a voucher's whole `vouchPair` range.
+> ⚠ **AHEAD OF CODE (2026-10-01, N4 PR A — `consensus`)** — no test holds the order of a page's lookups, and
+> `pageRange` refuses no argument (→ The tree view).
 
 ### The tree writes
 
