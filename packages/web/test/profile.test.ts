@@ -776,7 +776,9 @@ describe('profile — the username row', () => {
 // `effective` in every state.
 // ---------------------------------------------------------------------------
 
-const EMPTY_SUMS: LedgerSums = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n };
+const EMPTY_SUMS: LedgerSums = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n };
+const EMPTY_KARMA = { ...EMPTY_SUMS, effective: 0n, holdings: 'read' as const, holdingsVerdict: null };
+const EMPTY_CREDITS = { ...EMPTY_SUMS, holdings: 'read' as const, holdingsVerdict: null };
 const RECORD: IdentityRecord = {
   lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0,
   lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
@@ -805,8 +807,8 @@ function pfFigures(result: Partial<FiguresResult> = {}, suffixHeight = 9005): Fi
     result: {
       boxes: [],
       record: { status: 'proven', record: RECORD } as RecordResult,
-      karma: { ...EMPTY_SUMS, effective: 0n },
-      credits: { ...EMPTY_SUMS },
+      karma: EMPTY_KARMA,
+      credits: EMPTY_CREDITS,
       heightAfter: 9020,
       failed: false,
       ...result,
@@ -838,7 +840,7 @@ describe('profile — the verified-figures line beneath the rep number', () => {
         pfBox({ boxClass: 'karma', status: 'proven', value: 87n }),
         pfBox({ boxClass: 'karma', status: 'young',  value: 13n }),
       ],
-      karma: { proven: 87n, young: 13n, unchecked: 0n, absent: 0n, effective: 87n },
+      karma: { proven: 87n, young: 13n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, effective: 87n, holdings: 'read', holdingsVerdict: null },
     });
     const f = rowField(render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
     const hint = f.querySelector<HTMLElement>('.hint');
@@ -852,7 +854,7 @@ describe('profile — the verified-figures line beneath the rep number', () => {
   it('an unproven karma box → the full rule: clay hint AND clay class on the mono number (row 4)', () => {
     const fv = pfFigures({
       boxes: [pfBox({ boxClass: 'karma', status: 'unproven', value: 100n })],
-      karma: { ...EMPTY_SUMS, effective: null },
+      karma: { ...EMPTY_KARMA, effective: null },
     });
     const f = rowField(render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
     const hint = f.querySelector<HTMLElement>('.hint');
@@ -866,7 +868,7 @@ describe('profile — the verified-figures line beneath the rep number', () => {
   it('the record unproven, boxes proven → the same clay line ("proof of your rep")', () => {
     const fv = pfFigures({
       boxes: [pfBox({ boxClass: 'karma', status: 'proven', value: 100n })],
-      karma: { ...EMPTY_SUMS, proven: 100n, effective: null },
+      karma: { ...EMPTY_KARMA, proven: 100n, effective: null },
       record: { status: 'unproven', verdict: '' } as RecordResult,
     });
     const f = rowField(render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
@@ -877,7 +879,7 @@ describe('profile — the verified-figures line beneath the rep number', () => {
   it('an absent karma sum → clay "the node lists N rep the chain does not hold"', () => {
     const fv = pfFigures({
       boxes: [pfBox({ boxClass: 'karma', status: 'absent', value: 5n })],
-      karma: { ...EMPTY_SUMS, absent: 5n, effective: null },
+      karma: { ...EMPTY_KARMA, absent: 5n, effective: null },
     });
     const f = rowField(render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
     expect(f.querySelector<HTMLElement>('.hint')?.textContent).toBe('the node lists 5 rep the chain does not hold');
@@ -895,7 +897,7 @@ describe('profile — the verified-figures line beneath the rep number', () => {
       const fv = pfFigures({
         boxes: [pfBox({ boxClass: 'karma', status: 'proven', value: 100n })],
         record,
-        karma: { ...EMPTY_SUMS, proven: 100n, effective: null },
+        karma: { ...EMPTY_KARMA, proven: 100n, effective: null },
         failed: true,
       });
       const f = rowField(render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
@@ -911,7 +913,7 @@ describe('profile — the verified-figures line beneath the rep number', () => {
   it('the record no-proof, no boxes no-proof → muted "the node served no proof for your rep"', () => {
     const fv = pfFigures({
       boxes: [pfBox({ boxClass: 'karma', status: 'proven', value: 100n })],
-      karma: { ...EMPTY_SUMS, proven: 100n, effective: null },
+      karma: { ...EMPTY_KARMA, proven: 100n, effective: null },
       record: { status: 'no-proof', verdict: '' } as RecordResult,
     });
     const f = rowField(render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
@@ -921,7 +923,7 @@ describe('profile — the verified-figures line beneath the rep number', () => {
     expect(f.querySelector<HTMLElement>('.mono')!.classList.contains('clay')).toBe(false);
   });
 
-  it('a refused verdict, no figures back → the unverified line (row 3), muted', () => {
+  it('a refused verdict, no figures back → the unverified line (row 2), muted', () => {
     const f = rowField(render(handlers(), repCtx({ verdict: REFUSED_PF, figures: null })), 'rep')!;
     const hint = f.querySelector<HTMLElement>('.hint');
     expect(hint?.textContent).toBe('not checked — the chain is not verified');
@@ -929,29 +931,168 @@ describe('profile — the verified-figures line beneath the rep number', () => {
     expect(f.querySelector<HTMLElement>('.mono')!.classList.contains('clay')).toBe(false);
   });
 
-  it('every proven and effective reproduces the number → no hint (row 6 silence)', () => {
+  it('every proven and effective reproduces the number → no hint (row 7 silence)', () => {
     const fv = pfFigures({
       boxes: [pfBox({ boxClass: 'karma', status: 'proven', value: 100n })],
-      karma: { ...EMPTY_SUMS, proven: 100n, effective: 100n },
+      karma: { ...EMPTY_KARMA, proven: 100n, effective: 100n },
     });
     const f = rowField(render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
     expect(f.querySelector('.hint')).toBeNull();
     expect(f.querySelector<HTMLElement>('.mono')!.classList.contains('clay')).toBe(false);
   });
 
-  it('the empty karma listing (boxCount 0) renders no hint even under a verified verdict (row 2)', () => {
-    // The faucet step / "no rep yet." branch stands as it does — the hint's
-    // absence is what row 2 pins.
+  it('the empty karma listing (boxCount 0) renders no hint under a verified verdict with no run back yet', () => {
+    // `figures: null` means no result stands; under a verified verdict the
+    // line is silence (row 2). Row 7's empty-listing arm — a run that read
+    // the ranges with nothing of the ledger `unlisted` or `undecided` — is
+    // pinned by the next describe block.
     prefs.faucet = '';
     const f = rowField(
       render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 0 }), verdict: VERIFIED_PF, figures: null })),
       'rep',
     )!;
-    // No mono number under an empty karma listing — the row renders the
-    // "no rep yet." branch or the faucet step, and the pure model reads row 2
-    // for the rep row. Neither branch owns a hint of the verified-figures
-    // shape.
     expect(f.querySelector('.hint')).toBeNull();
+  });
+
+  it('an unlisted karma box beside a listed one → the clay line names the unlisted sum, and the mono number is clay', () => {
+    // The row shows the listed `effective` 100 rep in mono (`repCtx` sets
+    // `karmaResult`'s `effective: '100'`), with the clay line beneath —
+    // the full rule, mirroring the balance row.
+    const fv = pfFigures({
+      boxes: [
+        pfBox({ boxClass: 'karma', status: 'proven', value: 87n }),
+        pfBox({ boxClass: 'karma', status: 'unlisted', value: 5n }),
+      ],
+      karma: { ...EMPTY_KARMA, proven: 87n, unlisted: 5n, undecided: 0n, effective: 87n },
+    });
+    const f = rowField(
+      render(handlers(), repCtx({ verdict: VERIFIED_PF, figures: fv })),
+      'rep',
+    )!;
+    const hint = f.querySelector<HTMLElement>('.hint');
+    expect(hint?.textContent).toBe('the chain holds 5 rep the node does not list');
+    expect(hint?.classList.contains('clay')).toBe(true);
+    const mono = f.querySelector<HTMLElement>('.mono')!;
+    expect(mono.classList.contains('clay')).toBe(true);
+    expect(mono.textContent).toBe('100');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The verified-figures line stands beneath every empty rep state too — the
+// faucet step, *no rep yet.*, a grant's *working…*, a lapsed grant's line
+// (WEB_INTERFACE → The profile window → "A listing with no box reads its line
+// too"; → The extension → "The verified figures" — "An empty listing takes
+// these lines as any listing does").
+// ---------------------------------------------------------------------------
+describe('profile — the verified-figures line beneath an empty rep listing', () => {
+  const emptyRepCtx = (over: Partial<ProfileCtx> = {}): ProfileCtx => ctx({
+    identity: unlocked, karma: karmaResult({ boxCount: 0, total: '0', effective: '0', height: 9020 }),
+    ...over,
+  });
+
+  // The hint follows what it stands beneath — the ask button, the words,
+  // *working…*, the lapsed-grant text. `renderKarmaField` appends the
+  // figures hint last, so a `.hint` after each describes it; the index check
+  // against `.children` asserts the order.
+  const childrenOf = (f: HTMLElement): Element[] => Array.from(f.children);
+
+  it('faucet step + unlisted karma box → the clay line follows the ask button, no mono number to turn clay', () => {
+    prefs.faucet = '/faucet';
+    const fv = pfFigures({
+      boxes: [pfBox({ boxClass: 'karma', status: 'unlisted', value: 5n })],
+      karma: { ...EMPTY_KARMA, unlisted: 5n, undecided: 0n },
+    });
+    const f = rowField(render(handlers(), emptyRepCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
+    const button = f.querySelector<HTMLElement>('button.word')!;
+    const hint = f.querySelector<HTMLElement>('.hint')!;
+    expect(button.textContent).toBe('ask the faucet for rep');
+    expect(hint.textContent).toBe('the chain holds 5 rep the node does not list');
+    expect(hint.classList.contains('clay')).toBe(true);
+    expect(f.querySelector('.mono')).toBeNull();
+    const children = childrenOf(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(button));
+    prefs.faucet = '';
+  });
+
+  it('*no rep yet.* + unlisted → the clay line follows the words', () => {
+    prefs.faucet = '';
+    const fv = pfFigures({
+      boxes: [pfBox({ boxClass: 'karma', status: 'unlisted', value: 5n })],
+      karma: { ...EMPTY_KARMA, unlisted: 5n, undecided: 0n },
+    });
+    const f = rowField(render(handlers(), emptyRepCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
+    const words = f.querySelector<HTMLElement>('.inkmute')!;
+    const hint = f.querySelector<HTMLElement>('.hint')!;
+    expect(words.textContent).toBe('no rep yet.');
+    expect(hint.textContent).toBe('the chain holds 5 rep the node does not list');
+    expect(hint.classList.contains('clay')).toBe(true);
+    const children = childrenOf(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(words));
+  });
+
+  it('faucet step + holdings "no-proof" → the muted *the node served no proof for your rep* follows the ask button', () => {
+    prefs.faucet = '/faucet';
+    const fv = pfFigures({
+      karma: { ...EMPTY_KARMA, holdings: 'no-proof', holdingsVerdict: 'HTTP 500' },
+    });
+    const f = rowField(render(handlers(), emptyRepCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
+    const button = f.querySelector<HTMLElement>('button.word')!;
+    const hint = f.querySelector<HTMLElement>('.hint')!;
+    expect(button.textContent).toBe('ask the faucet for rep');
+    expect(hint.textContent).toBe('the node served no proof for your rep');
+    expect(hint.classList.contains('clay')).toBe(false);
+    const children = childrenOf(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(button));
+    prefs.faucet = '';
+  });
+
+  it('a grant in flight (*working…*) + unlisted → the clay line follows *working…*', () => {
+    prefs.faucet = '/faucet';
+    const fv = pfFigures({
+      boxes: [pfBox({ boxClass: 'karma', status: 'unlisted', value: 3n })],
+      karma: { ...EMPTY_KARMA, unlisted: 3n, undecided: 0n },
+    });
+    const f = rowField(render(handlers(), emptyRepCtx({
+      verdict: VERIFIED_PF, figures: fv, grant: { state: 'pending' },
+    })), 'rep')!;
+    const working = f.querySelector<HTMLElement>('.inkmute')!;
+    const hint = f.querySelector<HTMLElement>('.hint')!;
+    expect(working.textContent).toBe('working…');
+    expect(hint.textContent).toBe('the chain holds 3 rep the node does not list');
+    expect(hint.classList.contains('clay')).toBe(true);
+    const children = childrenOf(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(working));
+    prefs.faucet = '';
+  });
+
+  it('a lapsed grant + unlisted → the clay line follows the lapsed-grant text', () => {
+    prefs.faucet = '/faucet';
+    const fv = pfFigures({
+      boxes: [pfBox({ boxClass: 'karma', status: 'unlisted', value: 3n })],
+      karma: { ...EMPTY_KARMA, unlisted: 3n, undecided: 0n },
+    });
+    const f = rowField(render(handlers(), emptyRepCtx({
+      verdict: VERIFIED_PF, figures: fv, grant: { state: 'expired', atHeight: 999 },
+    })), 'rep')!;
+    const lapsed = f.querySelector<HTMLElement>('.inkmute')!;
+    const hint = f.querySelector<HTMLElement>('.hint')!;
+    expect(lapsed.textContent).toContain("no block took the faucet");
+    expect(hint.textContent).toBe('the chain holds 3 rep the node does not list');
+    expect(hint.classList.contains('clay')).toBe(true);
+    const children = childrenOf(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(lapsed));
+    prefs.faucet = '';
+  });
+
+  it('empty listing, holdings "read", nothing unlisted → no line beneath the faucet step', () => {
+    // Row 7 silence — the run read the ranges and no box is unlisted.
+    prefs.faucet = '/faucet';
+    const fv = pfFigures({ karma: { ...EMPTY_KARMA } });
+    const f = rowField(render(handlers(), emptyRepCtx({ verdict: VERIFIED_PF, figures: fv })), 'rep')!;
+    expect(f.querySelector('button.word')?.textContent).toBe('ask the faucet for rep');
+    expect(f.querySelector('.hint')).toBeNull();
+    prefs.faucet = '';
   });
 });
 

@@ -42,9 +42,10 @@ Eight packages, in dependency order:
 - `@dagsocial/wire` — stream framing (VLQ, blake2b checksums, magic bytes).
 - `@dagsocial/validation` — pure stateless checks: PoW, signatures, block structure, Merkle roots.
 - `@dagsocial/consensus` — the state-transition rules: `applyBlock` (a block's body as one function, answering its
-  effects), the transaction engine, the settlement, decay, the coinbase split. **The one implementation** the node
-  runs and a browser leaf will run — no Node built-in or global, no I/O; state reaches it through a `StateView` its
-  caller answers.
+  effects), the transaction engine, the settlement, decay, the coinbase split, and the page of a key's holdings
+  (`holdingsPage`). **The one implementation**: the node runs the rules over its prover, and the node and the light
+  client both run the holdings page — one over the tree, the other over a proof. No client replays a block. No Node
+  built-in or global, no I/O; state reaches it through a `StateView` its caller answers.
 - `@dagsocial/nipopow` — NiPoPoW proofs over ordering-block headers: the proof codecs, `verifyProof`, `compareProofs`, `proveWithReader`. **Pure functions only.**
 - `@dagsocial/net` — libp2p + Gossipsub relay, whole-block sync, peer management.
 - `@dagsocial/node` — Express server, PoW, verifier, SQLite store, AVL+ state root, block creator; it runs `consensus`'s rules over its store.
@@ -56,7 +57,8 @@ Eight packages, in dependency order:
   with `@noble/curves`; with no identity loaded it is the read surface exactly. **It also builds as a browser
   extension** — the same client as the extension's own page, the key held by the extension's background,
   credits signed by hand and rep silently, the chain it reads checked by NiPoPoW proofs from the seed list's
-  nodes, and the reader's figures and every name it shows or sends to proven against that chain
+  nodes, the reader's figures judged against everything the key holds — each ledger's range, read whole under the
+  state root — and every name it shows or sends to proven against that chain
   (`WEB_INTERFACE → The extension`); each release carries its two zips beside the web zip.
 
 Three tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
@@ -65,8 +67,8 @@ Three tools live under `tools/` — in the workspace by the `tools/*` glob, so i
 - `@dagsocial/e2e` — the mesh suite: spawns a mesh of built nodes and asserts the protocol across them over
   HTTP; mines on demand, paces on block height. A client of the contracts, with none of its own.
 - `@dagsocial/nipopow-client` — the light client: verifies and compares NiPoPoW proofs from N≥2 nodes,
-  then proves a key's boxes against the verified `stateRoot`. A command line, and a library the web
-  client's extension build imports for its tip verifier.
+  then proves what a key holds — each ledger's range, read whole — against the verified `stateRoot`. A command
+  line, and a library the web client's extension build imports for its tip, figures and names verifiers.
 
 ## Design by Contract
 

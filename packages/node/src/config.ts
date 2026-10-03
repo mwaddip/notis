@@ -113,6 +113,23 @@ export interface Config {
   maxProofHistory: number;
   avlKeyLength: number;
   /**
+   * The last blocks whose roots this node keeps in memory, the heights its
+   * proof routes answer `atHeight` at (NODE_INTERFACE → "A proof at an older
+   * height restores a kept root"). Local — a node that keeps fewer serves
+   * `atHeight` on fewer heights; below a light client's `k` (20) the node
+   * proves it no settled height (NODE_INTERFACE → Configuration, the
+   * `PROOF_WINDOW_BLOCKS` row).
+   */
+  proofWindowBlocks: number;
+  /**
+   * The most tree nodes the kept roots hold beyond the live tree — the sum
+   * of the counts of the blocks the ring reaches above its lowest kept
+   * height (NODE_INTERFACE → "The count is the store's"). The lowest kept
+   * root is dropped first while that sum is above this; the tip's root is
+   * kept whatever it says. Local, like `proofWindowBlocks`.
+   */
+  proofWindowNodes: number;
+  /**
    * Blocks whose proofs this node keeps for `GET /blocks/:height/proof`: apply
    * prunes below `tip − proofRetentionBlocks` (NODE_INTERFACE → The block proof).
    * Local — what a node serves, not what it accepts.
@@ -194,6 +211,8 @@ export function loadConfig(): Readonly<Config> {
     avlKeyLength: TREE_KEY_LENGTH,
     proofRetentionBlocks: parseProofRetention(process.env['PROOF_RETENTION_BLOCKS']),
     proofRetentionBytes: parseProofRetentionBytes(process.env['PROOF_RETENTION_BYTES']),
+    proofWindowBlocks: parseProofWindow(process.env['PROOF_WINDOW_BLOCKS']),
+    proofWindowNodes: parseProofWindowNodes(process.env['PROOF_WINDOW_NODES']),
     // Net settings
     bootstrapPeers: parseBootstrapPeers(process.env['BOOTSTRAP_PEERS'], profile.bootstrapPeers),
     listenAddrs: process.env['LISTEN_ADDRS'] ?? '/ip4/0.0.0.0/tcp/0',
@@ -314,6 +333,47 @@ function parseProofRetentionBytes(raw: string | undefined): number {
     throw new Error(
       `Invalid PROOF_RETENTION_BYTES "${raw}" — must be a non-negative whole ` +
         'number of bytes',
+    );
+  }
+  return parsed;
+}
+
+/**
+ * `PROOF_WINDOW_BLOCKS`, defaulting to 64 (NODE_INTERFACE → "A proof at an
+ * older height restores a kept root"; NODE_INTERFACE → Configuration).
+ *
+ * Refused rather than defaulted when it names no non-negative integer: a
+ * window this node cannot read is a policy nobody chose, as
+ * `parseProofRetention` is. Zero keeps no root; the tip is the live tree's,
+ * which both routes answer without one.
+ */
+function parseProofWindow(raw: string | undefined): number {
+  if (raw === undefined) return 64;
+  const parsed = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(
+      `Invalid PROOF_WINDOW_BLOCKS "${raw}" — must be a non-negative whole ` +
+        'number of blocks',
+    );
+  }
+  return parsed;
+}
+
+/**
+ * `PROOF_WINDOW_NODES`, defaulting to 250 000 (NODE_INTERFACE → "A proof at
+ * an older height restores a kept root"; NODE_INTERFACE → Configuration).
+ *
+ * Refused rather than defaulted when it names no non-negative integer, as
+ * `parseProofWindow` is: a cap this node cannot read is a policy nobody
+ * chose. Zero caps the ring at one root — the tip's, which the sum excludes.
+ */
+function parseProofWindowNodes(raw: string | undefined): number {
+  if (raw === undefined) return 250_000;
+  const parsed = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(
+      `Invalid PROOF_WINDOW_NODES "${raw}" — must be a non-negative whole ` +
+        'number of nodes',
     );
   }
   return parsed;

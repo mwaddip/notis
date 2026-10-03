@@ -723,7 +723,7 @@ export class App {
       confirmInRow: !this.idm.policy,
       // The extension's tip verifier's latest verdict — undefined without a
       // verifier, null while none has returned, else the corner's own value.
-      // The pure `figuresLine` reads it for rows 1 and 3 (WEB_INTERFACE →
+      // The pure `figuresLine` reads it for rows 1 and 2 (WEB_INTERFACE →
       // The extension → "The verified figures"). `figures` stands beside it
       // — the latest verified-figures run's result, held with the anchor it
       // was proven against; null until a run has returned for the identity,
@@ -3362,7 +3362,7 @@ export class App {
         // reader's listings first: /karma always, /credits while the wallet
         // window is open. Each write takes its stamp, moves its row in place
         // and triggers the run. Every other verdict drops the last result so
-        // no stale proof rides an unverified chain (figuresLine's row 3 reads
+        // no stale proof rides an unverified chain (figuresLine's row 2 reads
         // the verdict).
         if (run.anchor !== null) {
           this.anchorSeq += 1;
@@ -3476,9 +3476,9 @@ export class App {
   // The App runs the figures verifier when it has an identity, an anchor and a
   // karma listing read after that anchor; a credits listing not read after it —
   // the wallet window closed, or its read older than the anchor — is passed
-  // empty. Single flight: a trigger during a run marks one more run; a listing
-  // that moved during a run drops the result and runs again; a result under an
-  // older generation is dropped.
+  // as not read. Single flight: a trigger during a run marks one more run; a
+  // listing that moved during a run drops the result and runs again; a result
+  // under an older generation is dropped.
 
   /** Start a figures verifier run, or drop the trigger. Runs only when the App
    *  holds every input the tool needs, and proves only a listing read after the
@@ -3500,15 +3500,19 @@ export class App {
       return;
     }
     const capturedCredits = this.walletCredits;
+    // A credits listing not read after the current anchor is passed as not
+    // read — never as an empty one, under which every box the key holds
+    // would read `unlisted` (WEB_INTERFACE → The extension → "A listing
+    // not read after the current anchor is handed to the run as not read").
     const listing: Listing = {
       karma: {
         boxes: capturedKarma.boxes,
         height: capturedKarma.height,
         effective: capturedKarma.effective,
       },
-      credits: {
-        boxes: capturedCredits !== null && this.readAfterAnchor(this.walletCreditsStamp) ? capturedCredits.boxes : [],
-      },
+      credits: capturedCredits !== null && this.readAfterAnchor(this.walletCreditsStamp)
+        ? { boxes: capturedCredits.boxes }
+        : null,
     };
     const gen = this.figuresGen;
     this.figuresInFlight = true;

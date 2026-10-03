@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@dagsocial/nipopow": "workspace:*",
+    "@dagsocial/nipopow-client": "workspace:*",
     "@dagsocial/types": "workspace:*",
     "@dagsocial/validation": "workspace:*"
   },

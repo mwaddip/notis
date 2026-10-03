@@ -902,7 +902,9 @@ describe('wallet — the send row while a handle is checked', () => {
 // to clay only while the node's own proof of the balance fails.
 // ---------------------------------------------------------------------------
 
-const EMPTY_SUMS: LedgerSums = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n };
+const EMPTY_SUMS: LedgerSums = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n };
+const EMPTY_KARMA = { ...EMPTY_SUMS, effective: 0n, holdings: 'read' as const, holdingsVerdict: null };
+const EMPTY_CREDITS = { ...EMPTY_SUMS, holdings: 'read' as const, holdingsVerdict: null };
 const RECORD: IdentityRecord = {
   lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0,
   lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
@@ -931,8 +933,8 @@ function figuresView(result: Partial<FiguresResult> = {}, suffixHeight = 9005): 
     result: {
       boxes: [],
       record: { status: 'proven', record: RECORD } as RecordResult,
-      karma: { ...EMPTY_SUMS, effective: 0n },
-      credits: { ...EMPTY_SUMS },
+      karma: EMPTY_KARMA,
+      credits: EMPTY_CREDITS,
       heightAfter: 9020,
       failed: false,
       ...result,
@@ -951,7 +953,7 @@ describe('wallet — the verified-figures line beneath the balance', () => {
   });
 
   it('the default web ctx (no verifier) renders no verified-figures hint', () => {
-    // Rows 1 — verdict === undefined — is silence. The gold figure carries no
+    // Row 1 — verdict === undefined — is silence. The gold figure carries no
     // .clay, and no .hint sits beneath the credits-line.
     const f = creditsField(render(handlers(), spendableCtx()))!;
     const gold = f.querySelector<HTMLElement>('.mono.gold')!;
@@ -959,14 +961,14 @@ describe('wallet — the verified-figures line beneath the balance', () => {
     expect(f.querySelector('.credits-line .hint')).toBeNull();
   });
 
-  it('a verified verdict + a proven+young result renders a muted hint, no .clay on the figure (row 7)', () => {
+  it('a verified verdict + a proven+young result renders a muted hint, no .clay on the figure (row 8)', () => {
     // 12.5 shown, 8.75 proven + 3.75 young.
     const fv = figuresView({
       boxes: [
         figBox({ boxClass: 'credit', status: 'proven', value: 875_000_000n }),
         figBox({ boxClass: 'credit', status: 'young',  value: 375_000_000n }),
       ],
-      credits: { proven: 875_000_000n, young: 375_000_000n, unchecked: 0n, absent: 0n },
+      credits: { proven: 875_000_000n, young: 375_000_000n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, holdings: 'read', holdingsVerdict: null },
     });
     const c = spendableCtx({ verdict: VERIFIED, figures: fv });
     const f = creditsField(render(handlers(), c))!;
@@ -983,7 +985,7 @@ describe('wallet — the verified-figures line beneath the balance', () => {
   it('an unproven credit box → the full rule: clay hint AND clay class on the gold figure (row 4)', () => {
     const fv = figuresView({
       boxes: [figBox({ boxClass: 'credit', status: 'unproven', value: 1_250_000_000n })],
-      credits: { ...EMPTY_SUMS },
+      credits: { ...EMPTY_CREDITS },
     });
     const c = spendableCtx({ verdict: VERIFIED, figures: fv });
     const f = creditsField(render(handlers(), c))!;
@@ -1000,7 +1002,7 @@ describe('wallet — the verified-figures line beneath the balance', () => {
   it('an absent credit sum → clay "the node lists N $NOTIS the chain does not hold"', () => {
     const fv = figuresView({
       boxes: [figBox({ boxClass: 'credit', status: 'absent', value: 1_250_000_000n })],
-      credits: { ...EMPTY_SUMS, absent: 1_250_000_000n },
+      credits: { ...EMPTY_CREDITS, absent: 1_250_000_000n },
     });
     const c = spendableCtx({ verdict: VERIFIED, figures: fv });
     const f = creditsField(render(handlers(), c))!;
@@ -1010,7 +1012,7 @@ describe('wallet — the verified-figures line beneath the balance', () => {
     expect(f.querySelector<HTMLElement>('.mono.gold')!.classList.contains('clay')).toBe(true);
   });
 
-  it('a thin verdict with no figures back → the unverified line (row 3), muted, no clay on the figure', () => {
+  it('a thin verdict with no figures back → the unverified line (row 2), muted, no clay on the figure', () => {
     const c = spendableCtx({ verdict: THIN, figures: null });
     const f = creditsField(render(handlers(), c))!;
     const hint = f.querySelector<HTMLElement>('.credits-line .hint');
@@ -1019,10 +1021,10 @@ describe('wallet — the verified-figures line beneath the balance', () => {
     expect(f.querySelector<HTMLElement>('.mono.gold')!.classList.contains('clay')).toBe(false);
   });
 
-  it('every proven and the number reproduces → no hint (row 6 silence)', () => {
+  it('every proven and the number reproduces → no hint (row 7 silence)', () => {
     const fv = figuresView({
       boxes: [figBox({ boxClass: 'credit', status: 'proven', value: 1_250_000_000n })],
-      credits: { ...EMPTY_SUMS, proven: 1_250_000_000n },
+      credits: { ...EMPTY_CREDITS, proven: 1_250_000_000n },
     });
     const c = spendableCtx({ verdict: VERIFIED, figures: fv });
     const f = creditsField(render(handlers(), c))!;
@@ -1053,7 +1055,7 @@ describe('wallet — the verified-figures line beneath the balance', () => {
           value: 900_000_000n,
           lockedUntilBlock: 20_000,
         })],
-        credits: { ...EMPTY_SUMS },
+        credits: { ...EMPTY_CREDITS },
       }),
     });
     const f = creditsField(render(handlers(), c))!;
@@ -1085,7 +1087,7 @@ describe('wallet — the verified-figures line beneath the balance', () => {
           figBox({ boxClass: 'credit', status: 'proven', value: 875_000_000n }),
           figBox({ boxClass: 'credit', status: 'young',  value: 375_000_000n }),
         ],
-        credits: { proven: 875_000_000n, young: 375_000_000n, unchecked: 0n, absent: 0n },
+        credits: { proven: 875_000_000n, young: 375_000_000n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, holdings: 'read', holdingsVerdict: null },
       }),
     });
     const f = creditsField(render(handlers(), c))!;
@@ -1095,6 +1097,159 @@ describe('wallet — the verified-figures line beneath the balance', () => {
     // WEB_INTERFACE → The wallet window → "The `balance` row".
     expect(hints[0]!.textContent).toContain('$NOTIS more unlock by block');
     expect(hints[1]!.textContent).toContain('proven at block 9005');
+  });
+
+  it('an unlisted credit box beside a listed one → the clay line names the chain-holds sum, and the gold figure is clay', () => {
+    // A listed proven box of 87.5 $NOTIS; the run turns up an unlisted box of
+    // 12.5 $NOTIS the node did not list. The balance row shows the listed
+    // 87.5 $NOTIS in gold, with the clay line beneath — the full rule
+    // (WEB_INTERFACE → The extension → "The verified figures" — "the chain
+    // holds 12.5 $NOTIS the node does not list"; HOUSE_STYLE → Gold and clay
+    // are not interchangeable — the full rule).
+    const fv = figuresView({
+      boxes: [
+        figBox({ boxClass: 'credit', status: 'proven', value: 8_750_000_000n }),
+        figBox({ boxClass: 'credit', status: 'unlisted', value: 1_250_000_000n }),
+      ],
+      credits: { ...EMPTY_CREDITS, proven: 8_750_000_000n, unlisted: 1_250_000_000n },
+    });
+    const c = creditsCtx({
+      credits: creditsResult({
+        boxes: [{ boxId: 'a'.repeat(64), value: '8750000000' }],
+        boxCount: 1,
+      }),
+      verdict: VERIFIED,
+      figures: fv,
+    });
+    const f = creditsField(render(handlers(), c))!;
+    const hint = f.querySelector<HTMLElement>('.credits-line .hint');
+    expect(hint?.textContent).toBe('the chain holds 12.5 $NOTIS the node does not list');
+    expect(hint?.classList.contains('clay')).toBe(true);
+    const gold = f.querySelector<HTMLElement>('.mono.gold')!;
+    expect(gold.classList.contains('clay')).toBe(true);
+    expect(gold.textContent).toBe('87.5');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The verified-figures line stands beneath every empty state too — the faucet
+// step, *no $NOTIS yet.*, a grant's *working…*, a lapsed grant's line
+// (WEB_INTERFACE → The wallet window → "A listing with no box reads its line
+// too"; → The extension → "The verified figures" — "An empty listing takes
+// these lines as any listing does").
+// ---------------------------------------------------------------------------
+describe('wallet — the verified-figures line beneath an empty listing', () => {
+  const emptyListingCtx = (over: Partial<WalletCtx> = {}): WalletCtx => creditsCtx({
+    credits: creditsResult({ boxes: [], boxCount: 0 }),
+    ...over,
+  });
+
+  // The hint follows what it stands beneath — the ask button, the words,
+  // *working…*, the lapsed-grant text. The figures line is appended last in
+  // `.credits-line`, so a `.hint` after each describes it; the index check
+  // asserts the order (`compareDocumentPosition` yields the same answer by a
+  // different route, but indexOf against `.children` is read directly).
+  const linesInOrder = (f: HTMLElement): Element[] => {
+    const line = f.querySelector<HTMLElement>('.credits-line')!;
+    return Array.from(line.children);
+  };
+
+  it('faucet step + unlisted credit box → the clay line follows the ask button, no gold to turn clay', () => {
+    prefs.faucet = '/faucet';
+    const fv = figuresView({
+      boxes: [figBox({ boxClass: 'credit', status: 'unlisted', value: 1_250_000_000n })],
+      credits: { ...EMPTY_CREDITS, unlisted: 1_250_000_000n },
+    });
+    const f = creditsField(render(handlers(), emptyListingCtx({ verdict: VERIFIED, figures: fv })))!;
+    const button = f.querySelector<HTMLElement>('button.word')!;
+    const hint = f.querySelector<HTMLElement>('.credits-line .hint')!;
+    expect(button.textContent).toBe('ask the faucet for $NOTIS');
+    expect(hint.textContent).toBe('the chain holds 12.5 $NOTIS the node does not list');
+    expect(hint.classList.contains('clay')).toBe(true);
+    expect(f.querySelector('.mono.gold')).toBeNull();
+    const children = linesInOrder(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(button));
+    prefs.faucet = '';
+  });
+
+  it('*no $NOTIS yet.* + unlisted → the clay line follows the words, no gold to turn clay', () => {
+    prefs.faucet = '';
+    const fv = figuresView({
+      boxes: [figBox({ boxClass: 'credit', status: 'unlisted', value: 1_250_000_000n })],
+      credits: { ...EMPTY_CREDITS, unlisted: 1_250_000_000n },
+    });
+    const f = creditsField(render(handlers(), emptyListingCtx({ verdict: VERIFIED, figures: fv })))!;
+    const words = f.querySelector<HTMLElement>('.credits-line .inkmute')!;
+    const hint = f.querySelector<HTMLElement>('.credits-line .hint')!;
+    expect(words.textContent).toBe('no $NOTIS yet.');
+    expect(hint.textContent).toBe('the chain holds 12.5 $NOTIS the node does not list');
+    expect(hint.classList.contains('clay')).toBe(true);
+    const children = linesInOrder(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(words));
+  });
+
+  it('faucet step + holdings "no-proof" → the muted *the node served no proof for the balance* follows the ask button', () => {
+    prefs.faucet = '/faucet';
+    const fv = figuresView({
+      credits: { ...EMPTY_CREDITS, holdings: 'no-proof', holdingsVerdict: 'HTTP 500' },
+    });
+    const f = creditsField(render(handlers(), emptyListingCtx({ verdict: VERIFIED, figures: fv })))!;
+    const button = f.querySelector<HTMLElement>('button.word')!;
+    const hint = f.querySelector<HTMLElement>('.credits-line .hint')!;
+    expect(button.textContent).toBe('ask the faucet for $NOTIS');
+    expect(hint.textContent).toBe('the node served no proof for the balance');
+    expect(hint.classList.contains('clay')).toBe(false);
+    const children = linesInOrder(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(button));
+    prefs.faucet = '';
+  });
+
+  it('a grant in flight (*working…*) + unlisted → the clay line follows *working…*', () => {
+    prefs.faucet = '/faucet';
+    const fv = figuresView({
+      boxes: [figBox({ boxClass: 'credit', status: 'unlisted', value: 500_000_000n })],
+      credits: { ...EMPTY_CREDITS, unlisted: 500_000_000n },
+    });
+    const f = creditsField(render(handlers(), emptyListingCtx({
+      verdict: VERIFIED, figures: fv, creditGrant: { state: 'pending' },
+    })))!;
+    const working = f.querySelector<HTMLElement>('.credits-line .inkmute')!;
+    const hint = f.querySelector<HTMLElement>('.credits-line .hint')!;
+    expect(working.textContent).toBe('working…');
+    expect(hint.textContent).toBe('the chain holds 5 $NOTIS the node does not list');
+    expect(hint.classList.contains('clay')).toBe(true);
+    const children = linesInOrder(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(working));
+    prefs.faucet = '';
+  });
+
+  it('a lapsed grant + unlisted → the clay line follows the lapsed-grant text', () => {
+    prefs.faucet = '/faucet';
+    const fv = figuresView({
+      boxes: [figBox({ boxClass: 'credit', status: 'unlisted', value: 500_000_000n })],
+      credits: { ...EMPTY_CREDITS, unlisted: 500_000_000n },
+    });
+    const f = creditsField(render(handlers(), emptyListingCtx({
+      verdict: VERIFIED, figures: fv, creditGrant: { state: 'expired', atHeight: 999 },
+    })))!;
+    const lapsed = f.querySelector<HTMLElement>('.credits-line .inkmute')!;
+    const hint = f.querySelector<HTMLElement>('.credits-line .hint')!;
+    expect(lapsed.textContent).toContain("no block took the faucet's transfer");
+    expect(hint.textContent).toBe('the chain holds 5 $NOTIS the node does not list');
+    expect(hint.classList.contains('clay')).toBe(true);
+    const children = linesInOrder(f);
+    expect(children.indexOf(hint)).toBeGreaterThan(children.indexOf(lapsed));
+    prefs.faucet = '';
+  });
+
+  it('empty listing, holdings "read", nothing unlisted → no line beneath the faucet step', () => {
+    // Row 7 silence — the run read the ranges and no box is unlisted.
+    prefs.faucet = '/faucet';
+    const fv = figuresView({ credits: { ...EMPTY_CREDITS } });
+    const f = creditsField(render(handlers(), emptyListingCtx({ verdict: VERIFIED, figures: fv })))!;
+    expect(f.querySelector('button.word')?.textContent).toBe('ask the faucet for $NOTIS');
+    expect(f.querySelector('.credits-line .hint')).toBeNull();
+    prefs.faucet = '';
   });
 });
 

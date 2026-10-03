@@ -27,7 +27,7 @@ import { validateTx } from '@dagsocial/consensus';
 import { admitTx } from './services/admit-tx.js';
 import { createAdminRouter, type AdminDeps } from './routes/admin.js';
 import { noteHttpRequest } from './metrics.js';
-import { registerProofEndpoint } from './state/avl-endpoint.js';
+import { registerProofEndpoint, registerRangeEndpoint } from './state/avl-endpoint.js';
 import { tryGetAvlProver } from './state/avl-prover.js';
 import type { Config } from './config.js';
 import type { Server } from 'http';
@@ -501,12 +501,15 @@ export function createApp(config: Config): express.Express {
     }),
   );
 
-  // Proof endpoint — GET /api/v1/proof/:key (light-client AVL proofs)
+  // AVL+ proof endpoints (NODE_INTERFACE → AVL+ State Root):
+  // GET /api/v1/proof/:key — one key's lookup proof.
+  // GET /api/v1/range/:kind/:owner — a page of a key's holdings with its proof.
   const proverHandle = tryGetAvlProver();
   if (proverHandle) {
     registerProofEndpoint(app, proverHandle);
+    registerRangeEndpoint(app, proverHandle);
   } else {
-    console.warn('AVL prover not initialized — /api/v1/proof endpoint unavailable');
+    console.warn('AVL prover not initialized — /api/v1/proof and /api/v1/range endpoints unavailable');
   }
 
   // ---- Error handler ----

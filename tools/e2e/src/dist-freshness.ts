@@ -20,12 +20,14 @@ export const NODE_LOADS: readonly string[] = [
   'packages/node',
 ];
 
-// `tools/nipopow-client/dist/index.js`, spawned by the light-client test.
+// `tools/nipopow-client/dist/index.js`, spawned by the light-client test, and
+// `tools/nipopow-client/dist/lib.js`, imported by the holdings-range chapter.
 export const NIPOPOW_CLIENT_LOADS: readonly string[] = [
   'packages/wire',
   'packages/types',
   'packages/validation',
   'packages/nipopow',
+  'packages/consensus',
   'tools/nipopow-client',
 ];
 

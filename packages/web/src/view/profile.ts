@@ -461,28 +461,63 @@ export function renderKarmaField(field: HTMLElement, handlers: ProfileHandlers, 
     balance(field, k, ctx);
     return;
   }
-  // No karma box — a grant in flight, an expired one, the faucet step, or nothing.
+  // No karma box — a grant in flight, an expired one, the faucet step, or
+  // nothing. The verified-figures line stands beneath each empty state so the
+  // ledger's own facts (`holdings`, `unlisted`, the record) reach the reader
+  // beneath the faucet step too (WEB_INTERFACE → The extension → "The verified
+  // figures" — "An empty listing takes these lines as any listing does";
+  // → The profile window → "A listing with no box reads its line too").
   if (ctx.grant?.state === 'pending') {
     field.appendChild(el('span', 'inkmute', 'working…'));
-    return;
-  }
-  if (ctx.grant?.state === 'expired') {
+  } else if (ctx.grant?.state === 'expired') {
     field.appendChild(el('span', 'inkmute', 'no block took the faucet’s invite by height '));
     field.appendChild(mono(String(ctx.grant.atHeight)));
     field.appendChild(document.createTextNode('. '));
     const again = el('button', 'word', 'ask again') as HTMLButtonElement;
     again.addEventListener('click', () => handlers.askFaucet());
     field.appendChild(again);
-    return;
+  } else {
+    const faucetBase = prefs.faucet;
+    if (faucetBase !== '') {
+      const ask = el('button', 'word', 'ask the faucet for rep') as HTMLButtonElement;
+      ask.addEventListener('click', () => handlers.askFaucet());
+      field.appendChild(ask);
+    } else {
+      field.appendChild(el('span', 'inkmute', 'no rep yet.'));
+    }
   }
-  const faucetBase = prefs.faucet;
-  if (faucetBase !== '') {
-    const ask = el('button', 'word', 'ask the faucet for rep') as HTMLButtonElement;
-    ask.addEventListener('click', () => handlers.askFaucet());
-    field.appendChild(ask);
-    return;
-  }
-  field.appendChild(el('span', 'inkmute', 'no rep yet.'));
+  // `k.height` is the listing's height — the figures line uses it only when a
+  // listed credit box carries a lock; here boxCount is 0, so the value is not
+  // read on this path. `shown` is 0n, with no mono number to turn clay.
+  appendKarmaFiguresLine(field, ctx, 0, k.height);
+}
+
+/** Append the verified-figures line beneath the karma field — a `div.hint`,
+ *  clay under the full rule. Mirrors the wallet's `appendFiguresLine`. The
+ *  karma field renders `balance()` for `k.boxCount > 0`, which calls the pure
+ *  `figuresLine` and marks the mono number clay under the full rule; this
+ *  helper serves the empty-listing branches, where no number stands to turn
+ *  clay. */
+function appendKarmaFiguresLine(
+  field: HTMLElement,
+  ctx: ProfileCtx,
+  boxCount: number,
+  height: number,
+): void {
+  const fLine = figuresLine({
+    ledger: 'karma',
+    verdict: ctx.verdict,
+    result: ctx.figures?.result ?? null,
+    shown: 0n,
+    suffixHeight: ctx.figures?.anchor.suffixHead.header.height ?? null,
+    boxCount,
+    height,
+  });
+  if (fLine === null) return;
+  const hint = el('div', 'hint');
+  hint.textContent = fLine.text;
+  if (fLine.weight === 'clay') hint.classList.add('clay');
+  field.appendChild(hint);
 }
 
 /** The row's label counts what the number counts, so the number stands alone —

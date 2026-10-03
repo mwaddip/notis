@@ -363,6 +363,10 @@ export function seedGenesisState(): void {
     // The rows are already back; put the tree back with them, so the store and
     // the prover fail together rather than the prover surviving the store.
     if (preDigest) handle.prover.rollback(preDigest);
+    // The ring tracks committed state, and the committed state no longer
+    // includes genesis (NODE_INTERFACE → "A proof at an older height restores
+    // a kept root"): a failed seed leaves no height kept.
+    handle.recentRoots.clear();
     throw err;
   }
 }

@@ -351,7 +351,11 @@ environment is not merely discouraged, it has no effect.
 | `TEMPORAL_BAN_DURATION_MS` | `3600000` | Temporal ban length |
 | `PENALTY_SAFE_INTERVAL_MS` | `120000` | Quiet interval after which accrued penalty decays |
 | `SYNC_REQUEST_TIMEOUT_MS` | `10000` | Abort timeout on one sync request |
-| `MAX_PROOF_HISTORY` | `1440` | AVL+ versions retained for proof serving; never below the profile's reorg horizon |
+| `MAX_PROOF_HISTORY` | `1440` | AVL+ versions the store keeps for a reorg's walk; never below the profile's reorg horizon |
+| `PROOF_WINDOW_BLOCKS` | `64` | The last blocks whose state roots are kept in memory — the heights the proof routes answer `atHeight` at |
+| `PROOF_WINDOW_NODES` | `250000` | The most tree nodes those roots hold beyond the live tree; the oldest root is dropped first, the tip's never |
+| `PROOF_RETENTION_BLOCKS` | `10080` | Blocks whose proofs are kept for `GET /blocks/:height/proof` — a week at 60 s |
+| `PROOF_RETENTION_BYTES` | `2147483648` | The most bytes of block proofs kept, the oldest pruned first and the tip's always kept — 2 GiB |
 
 > An environment variable the table above does not name is ignored — the table
 > is the whole read surface (`NODE_INTERFACE` → Configuration).
@@ -474,7 +478,8 @@ embodies is `contracts/NIPOPOW_INTERFACE.md`.
 
 Everything is JSON over HTTP, hex for byte-valued fields: posts and threads, withdrawal, likes,
 vouches, invites, usernames, the karma, credit and invite views of an identity, credit transfer,
-blocks and status, AVL+ box proofs (`GET /api/v1/proof/:boxId`), NiPoPoW proofs
+blocks and status, AVL+ state proofs — one key (`GET /api/v1/proof/:key`) and a page of what a key holds
+(`GET /api/v1/range/:kind/:owner`) — NiPoPoW proofs
 (`GET /nipopow/proof/:m/:k`), link previews (`GET /shell/:id`), the authenticated mining endpoints
 of a miner node, and `/health` and `/stats` on the admin port. Wherever a route takes an identity,
 `@handle` is accepted for the key.

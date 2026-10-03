@@ -49,9 +49,9 @@ lives under `tools/` because it is a tool, not a peer of `validation`, and it is
 
 **1. It spawns `dist`, never imports the node — and a stale `dist` is a refusal.** The node's config
 is a module-scope singleton, so two nodes cannot share a process; every node is a child process
-running the built artefact, which loads `types`, `wire`, `validation`, `net` and `nipopow` from
-*their* `dist`; the light-client test spawns `tools/nipopow-client/dist/index.js`, which loads `types`,
-`wire`, `validation` and `nipopow` the same way. Before either spawns, setup stats each
+running the built artefact, which loads `types`, `wire`, `validation`, `consensus`, `net` and `nipopow` from
+*their* `dist`; the light-client test spawns `tools/nipopow-client/dist/index.js`, and the holdings chapter imports
+its library (`dist/lib.js`), which load `types`, `wire`, `validation`, `consensus` and `nipopow` the same way. Before either spawns, setup stats each
 `dist/index.js` that process loads (`NODE_LOADS`, `NIPOPOW_CLIENT_LOADS` in `src/dist-freshness.ts`)
 against the newest file under that package's `src/` and fails the run naming each stale package with
 its path, and a command that builds every package it checked. `test/dist-freshness.test.ts` holds each
@@ -98,8 +98,8 @@ and removes the dir — on failure too.
 
 ## Cost, measured
 
-The full suite — nine chapter files, meshes of 1–4 spawned nodes each — runs in **19–28 s** on the
-machine it was written on (2026-08-23; every run of the unit's per-commit gate fell in that range).
+The full suite — twenty-four chapter files, meshes of 1–4 spawned nodes each — runs in **about 61 s** on the
+machine it was written on (2026-10-02).
 A chapter that pushes the suite well past that needs a reason stated in its commit: this number is
 what every `pnpm -r test` in the gate pays.
 
@@ -109,7 +109,7 @@ what every `pnpm -r test` in the gate pays.
 - **You own this package only.** Never edit `../../packages/*` or `../../contracts/`. Cross-cutting
   changes — the workspace glob, the lockfile beyond this package's entry — are main's to route.
 - **Forced verification before "done":** every `dist` a spawned process loads fresh
-  (`pnpm --filter @dagsocial/<p> build` for `wire`, `types`, `validation`, `net`, `nipopow`, `node`,
+  (`pnpm --filter @dagsocial/<p> build` for `wire`, `types`, `validation`, `consensus`, `nipopow`, `net`, `node`,
   `nipopow-client`, in that order — each after the packages it imports), then
   `pnpm --filter @dagsocial/e2e typecheck` **and** `pnpm --filter @dagsocial/e2e test`, both clean,
   with the suite's wall-clock stated. ⛔ **`typecheck` is two configs**, and the test one is the config
@@ -131,7 +131,7 @@ what every `pnpm -r test` in the gate pays.
 
 ## Quick commands
 ```bash
-for p in wire types validation net nipopow node nipopow-client; do pnpm --filter @dagsocial/$p build; done   # fresh dists, in order
+for p in wire types validation consensus nipopow net node nipopow-client; do pnpm --filter @dagsocial/$p build; done   # fresh dists, in order
 pnpm --filter @dagsocial/e2e typecheck
 npx tsc --noEmit -p tools/e2e/tsconfig.test.json    # the second config, run explicitly
 time pnpm --filter @dagsocial/e2e test              # the mesh; state the wall-clock

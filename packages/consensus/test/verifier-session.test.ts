@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BatchAVLProver, BatchAVLVerifier } from '@ergots/avltree';
+import { BatchAVLProver, BatchAVLVerifier, StrictBatchAVLVerifier } from '@ergots/avltree';
 import type { AvlNode } from '@ergots/avltree';
 import {
   KARMA_DECAY_AMOUNT,
@@ -10,6 +10,7 @@ import {
   TREE_TAG,
   boxKey,
   boxRecordBytes,
+  bytesToHex,
   castCountKey,
   decodeTx,
   encodeTx,
@@ -28,7 +29,7 @@ import type {
   UtxoTransaction,
   VouchBox,
 } from '@dagsocial/types';
-import { applyBlock, isSentinel, seedTreeWrites, treeStateView, verifierSession } from '@dagsocial/consensus';
+import { applyBlock, isSentinel, seedTreeWrites, treeStateView, treeWritesOf, verifierSession } from '@dagsocial/consensus';
 import type { ApplyContext } from '@dagsocial/consensus';
 import {
   MemoryStateView,
@@ -341,12 +342,12 @@ describe('verifierSession — a proof that does not verify', () => {
       const proof = flipped(position, 0x01);
       // The byte is the tree's, so the proof no longer anchors at the parent's digest.
       expect(new BatchAVLVerifier(parent.digest, proof, TREE_CONFIG).digest(), `byte ${position}`).toBeNull();
-      expect(() => replayBlock(parent.digest, proof, block, ctx), `byte ${position}`).toThrow("the block's proof");
+      expect(() => replayBlock(parent.digest, proof, block, ctx), `byte ${position}`).toThrow('proof refuses');
     }
     // The last byte is the directions': the proof anchors, and an operation it steers fails.
     const proof = flipped(proven.proof.length - 1, 0xff);
     expect(new BatchAVLVerifier(parent.digest, proof, TREE_CONFIG).digest()).not.toBeNull();
-    expect(() => replayBlock(parent.digest, proof, block, ctx)).toThrow("the block's proof");
+    expect(() => replayBlock(parent.digest, proof, block, ctx)).toThrow('proof refuses');
   });
 
   it("a proof missing the block's last read makes the run throw — a read of the writes' own, or of the rules'", () => {
@@ -360,7 +361,7 @@ describe('verifierSession — a proof that does not verify', () => {
       expect(skipped.keys, label).toEqual(proven.keys);
       expect(skipped.digest, label).toEqual(proven.digest);
       expect(skipped.proof, label).not.toEqual(proven.proof);
-      expect(() => replayBlock(parent.digest, skipped.proof, block, ctx), label).toThrow("the block's proof");
+      expect(() => replayBlock(parent.digest, skipped.proof, block, ctx), label).toThrow('the proof refuses the lookup');
     }
   });
 
@@ -372,5 +373,51 @@ describe('verifierSession — a proof that does not verify', () => {
 
     const healthy = new BatchAVLVerifier(at('block 1').parent.digest, proven.proof, TREE_CONFIG);
     expect(() => verifierSession(healthy).lookup(new Uint8Array(TREE_KEY_LENGTH))).toThrow(': key-out-of-bounds');
+  });
+});
+
+describe('replayBlock — the proof is consumed exactly', () => {
+  it('an honest proof replays; the same proof with one zero byte appended is refused — a plain BatchAVLVerifier replays it to the right digest', () => {
+    const { block, parent, proven } = at('block 2');
+    expect(() => replayBlock(parent.digest, proven.proof, block, ctx)).not.toThrow();
+
+    const padded = new Uint8Array(proven.proof.length + 1);
+    padded.set(proven.proof);
+    // The plain verifier accepts it: a step-by-step verifier reads only the
+    // bits an operation names, so a trailing byte is unseen there. The rules'
+    // reads and `treeWritesOf`'s own cast-count read are each a lookup through
+    // the view; the writes are then performed on the verifier.
+    const plain = new BatchAVLVerifier(parent.digest, padded, TREE_CONFIG);
+    const view = treeStateView(verifierSession(plain));
+    const result = applyBlock(view, block, ctx);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const writes = treeWritesOf(result.effects, block.header.height, view);
+    for (const write of writes) {
+      expect(plain.performOneOperation(write).success, bytesToHex(write.key)).toBe(true);
+    }
+    expect(plain.digest()).toEqual(proven.digest);
+
+    // The strict helper refuses — isFullyConsumed() is what adds this check.
+    expect(() => replayBlock(parent.digest, padded, block, ctx))
+      .toThrow('is not byte for byte the proof its operations write');
+  });
+});
+
+describe('verifierSession — either step-by-step verifier', () => {
+  it("takes BatchAVLVerifier and StrictBatchAVLVerifier: each answers the first block's reads as the prover's session did", () => {
+    const { block, parent, proven } = at('block 1');
+    for (const verifier of [
+      new BatchAVLVerifier(parent.digest, proven.proof, TREE_CONFIG),
+      new StrictBatchAVLVerifier(parent.digest, proven.proof, TREE_CONFIG),
+    ]) {
+      const log = loggingSession(verifierSession(verifier));
+      // The rules alone — the writes would move the verifier out from under a later run.
+      const view = treeStateView(log);
+      const result = applyBlock(view, block, ctx);
+      expect(result.ok, verifier.constructor.name).toBe(true);
+      expect(log.keys, verifier.constructor.name).toEqual(proven.keys.slice(0, log.keys.length));
+      expect(log.answers, verifier.constructor.name).toEqual(proven.answers.slice(0, log.answers.length));
+    }
   });
 });

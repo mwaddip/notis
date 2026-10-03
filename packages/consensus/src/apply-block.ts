@@ -75,7 +75,9 @@ export type ApplyResult = { ok: true; effects: BlockEffects } | { ok: false; rea
 
 /**
  * The block's state transition — the mutation phase, whole (CONSENSUS_INTERFACE
- * → Applying a block): the block's posts and their topology · the body decoded,
+ * → Applying a block): the block's posts and their recorded author and height
+ * (NODE_INTERFACE → Block Topology → "Block application reads the record,
+ * through the tree view") · the body decoded,
  * every declared id proven, the settlement found by position · every signature
  * the body carries, checked as one batch · the pre-body captures · the user
  * transactions in committed order · the withdrawals · the settlement · the
@@ -125,9 +127,12 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     state.confirmPost(postId);
   }
 
-  // 8. Populate block_topology from this block's post transactions.
-  // Consensus data only — this, not dag_posts.author, is the authority for
-  // withdrawal authorization, and it is derivable by any node holding the block body.
+  // 8. Record each post's author and height for the rules that follow in this
+  // block — the like arm reads the author (NODE_INTERFACE → Karma transition
+  // rules), the withdraw arm the height (NODE_INTERFACE → Withdrawal
+  // transactions) — and for the post record `treeWritesOf` writes next
+  // (CONSENSUS_INTERFACE → The tree writes). From the block's own post
+  // transactions, consensus data only.
   for (const { postId, post } of blockPosts) {
     state.insertBlockTopology(postId, post.author, height);
   }
@@ -382,10 +387,11 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     } | null = null;
     if (item.tx.likeTarget !== undefined) {
       const targetPostId = item.tx.likeTarget;
-      // Confirmed ⟺ a topology row exists, and its author — never
-      // dag_posts.author — is who the like credits: placeholder rows carry
-      // a zeroed author, and a like on a confirmed but content-less post
-      // must credit the consensus-recorded author.
+      // Confirmed ⟺ the view answers an author (NODE_INTERFACE → Block
+      // Topology → "Block application reads the record, through the tree
+      // view"), and that author — never dag_posts.author — is who the like
+      // credits: placeholder rows carry a zeroed author, and a like on a
+      // confirmed but content-less post must credit the recorded author.
       const author = state.getTopologyAuthor(targetPostId);
       if (author === null) {
         return reject(
@@ -395,8 +401,8 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
       }
       const authorHex = bytesToHex(author);
       // NODE_INTERFACE → Karma transition rules: a like targets a live post
-      // only — a placeholder is live (credits the topology author). A
-      // withdrawn post, or an unknown one, rejects.
+      // only — a placeholder is live (credits the view's recorded author).
+      // A withdrawn post, or an unknown one, rejects.
       if (state.getPostStanding(targetPostId) !== 'live') {
         return reject(
           `Rejected block height=${height}: like tx ${item.txId} targets ` +
@@ -561,7 +567,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     if (postHeight === null || postHeight >= height) {
       return reject(
         `Block ${height}: postWithdraw ${postId} is not confirmed ` +
-        `in an earlier block (topology height ${postHeight})`,
+        `in an earlier block (recorded height ${postHeight})`,
       );
     }
 
@@ -906,11 +912,16 @@ function utxoDepsOver(state: BlockOverlay, ctx: ApplyContext, verified: Readonly
     decayCfg: ctx.decayCfg,
     storageRentPeriodBlocks: ctx.storageRentPeriodBlocks,
     getBoxProvenance: (id) => state.getBoxProvenance(id),
-    // ⛔ The like marker's author, from `block_topology` and never
-    // `dag_posts.author` (ARCHITECTURE → Likes). The same read the like arm
-    // makes, so the marker's pin and the like-record's author cannot disagree.
+    // ⛔ The like marker's author, from the view's recorded answer —
+    // the post record under the state root (NODE_INTERFACE → Block Topology
+    // → "Block application reads the record, through the tree view") —
+    // never `dag_posts.author` (ARCHITECTURE → Likes). The same read the
+    // like arm makes, so the marker's pin and the like-record's author
+    // cannot disagree.
     getTopologyAuthor: (postId) => state.getTopologyAuthor(postId),
-    // NODE_INTERFACE → Post transactions: at apply only `block_topology` is read.
+    // NODE_INTERFACE → Post transactions: at apply only the view's recorded
+    // answer is read (NODE_INTERFACE → Block Topology → "Block application
+    // reads the record, through the tree view").
     getPendingPostAuthor: () => null,
     // The invite-create not-already-an-account bar (NODE_INTERFACE → Bond
     // transition rules) among its readers.

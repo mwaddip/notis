@@ -2,7 +2,7 @@
 // The extension proof — the twelve steps of WEB_INTERFACE → The extension
 // plus the four links-into-the-extension steps, the verified-tip block
 // (17a · 17 · 17b · 18 · 19a · 19b · 19c · 20), the verified-figures block
-// (21 · 24 · 22a · 22b · 23 · 25) and the verified-names block
+// (21 · 24 · 22a · 22b · 22c · 22d · 22e · 23 · 25) and the verified-names block
 // (26 · 29 · 27a–d · 28a–b · 30), each read verbatim, over raw CDP against a
 // live devnet stack. Drives the App's real UI on the extension's own page: the
 // composer, the like word, the profile and wallet windows' rows, and the prompt
@@ -10,10 +10,10 @@
 // against a second stack the harness owns — node B (server, bootstrapped from
 // A), node C (used for the real-fork test in 19b), node D (isolated, 17a's
 // too-short and 19c's share-no-block) and the lying relay (19a). The
-// verified-figures block brings up a B of its own and, for its three lie arms,
-// the figures relay (22a · 22b · 23). The verified-names block brings up a B of
-// its own too, and the figures relay again for its lie arms, in its name modes
-// (27a–d · 28a–b).
+// verified-figures block brings up a B of its own and, for its six lie arms,
+// the figures relay (22a · 22b · 22c · 22d · 22e · 23). The verified-names block
+// brings up a B of its own too, and the figures relay again for its lie arms,
+// in its name modes (27a–d · 28a–b).
 //
 // Preconditions:
 //  1. `node packages/node/dist/index.js` running as `NETWORK_TYPE=devnet`
@@ -37,7 +37,7 @@
 //     without them); then each block below runs on its flag, in this order,
 //     and reads NOT RUN by name without it.
 //   --verified-tip: 17a–20.
-//   --verified-figures: 21·24·22a·22b·23·25. The figures run hangs on
+//   --verified-figures: 21·24·22a·22b·22c·22d·22e·23·25. The figures run hangs on
 //     a verified tip (WEB_INTERFACE → The extension → "The verified figures"),
 //     which needs a second verified node, so the figures block runs B as the
 //     tip block does; hence --verified-figures requires --node-dist, --scratch
@@ -60,7 +60,7 @@
 //     [--public <origin+base> --web-dist <dir>]
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -106,9 +106,9 @@ let TIP_K = null;
 // by name, as 13–16 do without --public / --web-dist.
 const VERIFIED_TIP = args.get('verified-tip') === true;
 // The verified-figures block — WEB_INTERFACE → The extension → "The verified
-// figures", steps 21 · 24 · 22a · 22b · 23 · 25: the honest states read A, and
-// the three lie arms read the figures relay. Absent, every step reads NOT RUN
-// by name.
+// figures", steps 21 · 24 · 22a · 22b · 22c · 22d · 22e · 23 · 25: the honest
+// states read A, and the six lie arms read the figures relay. Absent, every
+// step reads NOT RUN by name.
 const VERIFIED_FIGURES = args.get('verified-figures') === true;
 // The verified-names block — WEB_INTERFACE → The extension → "The verified
 // names", steps 26 · 29 · 30: a claimed name in ink on every surface, a send
@@ -130,8 +130,9 @@ const B_P2P_PORT = 19772;
 const B_ORIGIN = `http://127.0.0.1:${B_HTTP_PORT}`;
 const RELAY_PORT = 19780;
 const RELAY_ORIGIN = `http://127.0.0.1:${RELAY_PORT}`;
-// The figures relay — the lie arms 22a · 22b · 23, and in its name modes the
-// lie arms 27a–d · 28a–b, on a port of its own beside 19a's relay.
+// The figures relay — the lie arms 22a · 22b · 22c · 22d · 22e · 23, and in its
+// name modes the lie arms 27a–d · 28a–b, on a port of its own beside 19a's
+// relay.
 const FIG_RELAY_PORT = 19785;
 const FIG_RELAY_ORIGIN = `http://127.0.0.1:${FIG_RELAY_PORT}`;
 const C_HTTP_PORT = 19790;
@@ -958,7 +959,7 @@ async function startLyingRelay(upstream) {
 }
 
 // The figures relay — WEB_INTERFACE → The extension → "The verified figures",
-// the lie arms 22a · 22b · 23. Every GET is proxied to `upstream` with
+// the lie arms 22a · 22b · 22c · 22d · 22e · 23. Every GET is proxied to `upstream` with
 // `access-control-allow-origin: *`, as 19a's relay does, and every
 // /nipopow/proof/ answer passes verbatim in every mode: the reading node's tip
 // proof is A's own, so the corner stays verified and the anchor stands. The
@@ -970,10 +971,27 @@ async function startLyingRelay(upstream) {
 //   credits-foreign — R's first /credits page lists the devnet faucet's
 //                     largest credit box, read from upstream at the request —
 //                     a real box of another key;
-//   avl-flip        — every /api/v1/proof/ answer carries its proof with one
-//                     byte flipped ten from the end, the JSON otherwise as
-//                     served: the flip is made in the decoded proof, never in
-//                     the JSON text, so what fails is the proof's verification.
+//   avl-flip        — every /api/v1/proof/ AND /api/v1/range/ answer carries
+//                     its proof with one byte flipped ten from the end, the
+//                     JSON otherwise as served: the flip is made in the decoded
+//                     proof, never in the JSON text, so what fails is the
+//                     proof's verification. For the range route this fires on
+//                     the first page's proof the ledger reads, which is enough
+//                     to make the whole range's status `unproven` — the walk
+//                     stops at the first failure.
+//   credits-drop    — R's first /credits page serves one fewer box, `boxCount`
+//                     and `total` consistent with the listing it serves. The
+//                     dropped box is held by the chain, so the figures run
+//                     reads it `unlisted` and the balance row reads
+//                     *the chain holds N $NOTIS the node does not list*.
+//   karma-drop      — the same on R's first /karma page.
+//   credits-drop-tipplus1 — the same `credits` drop as `credits-drop`, AND
+//                     `/blocks/current` answers one height above the node's
+//                     own: the figures run reads the dropped box `undecided`
+//                     (held at tip, named nowhere in the listing, and
+//                     `heightAfter` not `tip.height`), the balance row reads
+//                     muted *not checked yet* with the gold as the node
+//                     gave it — never clay, never silent.
 // With `names` — R's key and S's name — the name modes of WEB_INTERFACE → The
 // extension → "The verified names", the lie arms 27a–d · 28a–b, every
 // /api/v1/proof/ answer passing verbatim as well:
@@ -1003,14 +1021,33 @@ async function startFiguresRelay(upstream, port, names = null) {
     mode: 'honest',
     edits: {
       'credits-fake': 0, 'credits-foreign': 0, 'avl-flip': 0,
+      'credits-drop': 0, 'karma-drop': 0, 'credits-drop-tipplus1': 0,
       'label-rename': 0, 'owner-404': 0, 'owner-fakebox': 0, 'name-owner': 0, 'name-fakebox': 0,
     },
     renamed: 0,
     renameTo: null,
     fakeBoxId: null,
+    // The box the credits-side lie points at — the arm asserts the line names
+    // this box's value scaled to $NOTIS, so a lie that moved to another
+    // amount is caught.
+    //   `fakeBox`           — the latest fabricated box served in credits-fake
+    //                         (its value is a constant 12.5 $NOTIS, but kept
+    //                         for symmetry with the other arms).
+    //   `foreignBox`        — the faucet's largest credit box, read from
+    //                         upstream the first time credits-foreign serves
+    //                         R's first page.
+    //   `droppedCreditsBox` — the latest box dropped from R's first /credits
+    //                         page under credits-drop.
+    //   `droppedKarmaBox`   — the latest box dropped from R's first /karma
+    //                         page under karma-drop.
+    fakeBox: null,
+    foreignBox: null,
+    droppedCreditsBox: null,
+    droppedKarmaBox: null,
     log: [],
   };
   const ownCreditsPath = `/credits/${R_JSON.pubKeyHex.toLowerCase()}`;
+  const ownKarmaPath = `/karma/${R_JSON.pubKeyHex.toLowerCase()}`;
   const rKey = names?.rKey ?? null;
   const sName = names?.sName ?? null;
   relay.server = createServer(async (req, res) => {
@@ -1054,20 +1091,69 @@ async function startFiguresRelay(upstream, port, names = null) {
       let body = Buffer.from(await upstreamRes.arrayBuffer());
       const entry = { at, doneAt: null, path: url, status: upstreamRes.status, edit: null };
       if (method === 'GET' && upstreamRes.status === 200) {
-        const ownFirstPage = target.pathname.toLowerCase() === ownCreditsPath && !target.searchParams.has('after');
-        if ((mode === 'credits-fake' || mode === 'credits-foreign') && ownFirstPage) {
+        const ownCreditsFirstPage = target.pathname.toLowerCase() === ownCreditsPath && !target.searchParams.has('after');
+        const ownKarmaFirstPage = target.pathname.toLowerCase() === ownKarmaPath && !target.searchParams.has('after');
+        if ((mode === 'credits-fake' || mode === 'credits-foreign') && ownCreditsFirstPage) {
           const listing = JSON.parse(body.toString('utf8'));
           const box = mode === 'credits-fake'
             ? { boxId: randomBytes(32).toString('hex'), value: '1250000000' }
-            : await largestCreditBox(upstream, DEVNET_FAUCET_KEY);
+            : (relay.foreignBox ?? await largestCreditBox(upstream, DEVNET_FAUCET_KEY));
           if (box !== null) {
             listing.boxes.push(box);
             listing.boxCount += 1;
             body = Buffer.from(JSON.stringify(listing));
             relay.edits[mode] += 1;
+            if (mode === 'credits-fake') relay.fakeBox = { boxId: box.boxId, value: box.value };
+            else relay.foreignBox = { boxId: box.boxId, value: box.value };
             console.log(`[vf] figures relay ${mode} edit ${relay.edits[mode]}: ${box.boxId.slice(0, 12)}… (${box.value}) listed under R`);
           }
-        } else if (mode === 'avl-flip' && target.pathname.startsWith('/api/v1/proof/')) {
+        } else if ((mode === 'credits-drop' || mode === 'credits-drop-tipplus1') && ownCreditsFirstPage) {
+          // Drop one listed credit box from R's first /credits page, keeping
+          // boxes/boxCount/total consistent with the listing served. The run
+          // reads the dropped box `unlisted` — the chain holds what the node
+          // did not list (WEB_INTERFACE → The extension → "The verified
+          // figures" — "the chain holds N $NOTIS the node does not list").
+          // Under `credits-drop-tipplus1` the drop is paired with a lie on
+          // /blocks/current one above the node's own, so the run reads the
+          // dropped box `undecided`.
+          const listing = JSON.parse(body.toString('utf8'));
+          if (Array.isArray(listing.boxes) && listing.boxes.length > 0) {
+            const dropped = listing.boxes.shift();
+            if (typeof listing.boxCount === 'number') listing.boxCount = Math.max(0, listing.boxCount - 1);
+            if (typeof listing.total === 'string') {
+              try { listing.total = (BigInt(listing.total) - BigInt(dropped.value)).toString(); } catch {}
+            }
+            body = Buffer.from(JSON.stringify(listing));
+            relay.droppedCreditsBox = { boxId: dropped.boxId, value: dropped.value };
+            relay.edits[mode] += 1;
+            console.log(`[vf] figures relay ${mode} edit ${relay.edits[mode]}: ${dropped.boxId.slice(0, 12)}… (${dropped.value}) withheld from R's listing`);
+          }
+        } else if (mode === 'karma-drop' && ownKarmaFirstPage) {
+          // Drop one listed karma box from R's first /karma page, keeping
+          // boxes/boxCount/total consistent with the listing served and
+          // `effective` passed through as served. The run reads the dropped
+          // box `unlisted` — the chain holds what the node did not list. The
+          // id and value are recorded on `relay.droppedKarmaBox` so the arm
+          // asserts the line names this box's value as rep.
+          const listing = JSON.parse(body.toString('utf8'));
+          if (Array.isArray(listing.boxes) && listing.boxes.length > 0) {
+            const dropped = listing.boxes.shift();
+            if (typeof listing.boxCount === 'number') listing.boxCount = Math.max(0, listing.boxCount - 1);
+            if (typeof listing.total === 'string') {
+              try { listing.total = (BigInt(listing.total) - BigInt(dropped.value)).toString(); } catch {}
+            }
+            body = Buffer.from(JSON.stringify(listing));
+            relay.droppedKarmaBox = { boxId: dropped.boxId, value: dropped.value };
+            relay.edits['karma-drop'] += 1;
+            console.log(`[vf] figures relay karma-drop edit ${relay.edits['karma-drop']}: ${dropped.boxId.slice(0, 12)}… (${dropped.value}) withheld from R's listing`);
+          }
+        } else if (mode === 'avl-flip' && (target.pathname.startsWith('/api/v1/proof/') || target.pathname.startsWith('/api/v1/range/'))) {
+          // A one-byte flip ten from the end of the proof, decoded then
+          // re-encoded, the JSON otherwise as served. For a range proof the
+          // first page's `BatchAVLVerifier` refuses the digest, which fails
+          // the whole range `unproven` — the walk stops at the first failure
+          // (NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the range
+          // route").
           const answer = JSON.parse(body.toString('utf8'));
           const proof = Buffer.from(answer.proof, 'base64');
           if (proof.length >= 11) {
@@ -1096,6 +1182,23 @@ async function startFiguresRelay(upstream, port, names = null) {
           console.log(`[vn] relay ${mode} edit ${relay.edits[mode]}: ${url} → ${mode === 'name-owner' ? `owner ${DEVNET_FAUCET_KEY.slice(0, 12)}…` : `boxId ${relay.fakeBoxId.slice(0, 12)}…`}`);
         }
         if (target.pathname === '/blocks/current') {
+          // `credits-drop-tipplus1` reports `/blocks/current` one above the
+          // node's own, so the run's heightAfter sits above the anchor's
+          // tip and the dropped box reads `undecided` (WEB_INTERFACE → The
+          // extension → "The verified figures" — "`undecided` — held at
+          // `tip`, named nowhere in the listing of its ledger, and
+          // `heightAfter` not `tip.height`").
+          if (mode === 'credits-drop-tipplus1') {
+            try {
+              const now = JSON.parse(body.toString('utf8'));
+              if (typeof now.height === 'number') {
+                now.height = now.height + 1;
+                body = Buffer.from(JSON.stringify(now));
+                relay.edits['credits-drop-tipplus1'] += 1;
+                entry.edit = 'credits-drop-tipplus1 blocks/current+1';
+              }
+            } catch {}
+          }
           try { entry.height = JSON.parse(body.toString('utf8')).height ?? null; } catch { entry.height = null; }
         }
       }
@@ -1299,11 +1402,12 @@ async function titleTipNearReadingNode(readingOrigin, reading, tolerance = 5) {
 // ---------------------------------------------------------------------------
 
 const VERIFIED_TIP_STEPS = ['17a', 17, '17b', 18, '19a', '19b', '19c', 20];
-// The verified-figures block — steps 21 · 24 · 22a · 22b · 23 · 25, in the
-// order they run (WEB_INTERFACE → The extension → "The verified figures");
-// 22a · 22b · 23 are the lie arms, read through the figures relay.
-const VERIFIED_FIGURES_STEPS = [21, 24, '22a', '22b', 23, 25];
-const LIE_ARM_STEPS = ['22a', '22b', 23];
+// The verified-figures block — steps 21 · 24 · 22a · 22b · 22c · 22d · 22e ·
+// 23 · 25, in the order they run (WEB_INTERFACE → The extension → "The
+// verified figures"); 22a · 22b · 22c · 22d · 22e · 23 are the lie arms,
+// read through the figures relay.
+const VERIFIED_FIGURES_STEPS = [21, 24, '22a', '22b', '22c', '22d', '22e', 23, 25];
+const LIE_ARM_STEPS = ['22a', '22b', '22c', '22d', '22e', 23];
 
 function markVerifiedTipNotRun(reason) {
   for (const s of VERIFIED_TIP_STEPS) record(s, 'NOT RUN', reason);
@@ -1950,18 +2054,19 @@ function tallyLeds(readings) {
 }
 
 // ---------------------------------------------------------------------------
-// The verified-figures block — steps 21 · 24 · 22a · 22b · 23 · 25
+// The verified-figures block — steps 21 · 24 · 22a · 22b · 22c · 22d · 22e · 23 · 25
 // (WEB_INTERFACE → The extension → "The verified figures"). The figures run
 // hangs on a verified tip, which needs a second verified node, so the block
 // runs B as the tip block does — bringUpNodeB verbatim after the A pre-flight
-// and stopChild('b') at the end. 21 and 24 read A; the lie arms 22a · 22b · 23
-// read the figures relay, after 24 and while B is up; 25 reads the hosted web
-// build. Pacing is external: the paced miner runs outside the harness, started
-// before promote.mjs and kept to the end.
+// and stopChild('b') at the end. 21 and 24 read A; the lie arms
+// 22a · 22b · 22c · 22d · 22e · 23 read the figures relay, after 24 and while
+// B is up; 25 reads the hosted web build. Pacing is external: the paced miner
+// runs outside the harness, started before promote.mjs and kept to the end.
 // ---------------------------------------------------------------------------
 
 // The App's figures verifier fetches `/api/v1/proof/<key>?atHeight=<h>` for
-// each listed box and the identity record; the request pattern is the
+// the identity record and `/api/v1/range/<kind>/<owner>?atHeight=<h>` for each
+// ledger's holdings read whole; the request pattern on both routes is the
 // observable that a figures run happened — the parallel to
 // `proofRequestsSince` for the tip run's `/nipopow/proof/`. With `origin`,
 // only the requests to that node count: a run proves against the reading node.
@@ -1971,7 +2076,7 @@ function figuresProofRequestsSince(events, startIdx, origin = null) {
     const ev = events[i];
     if (ev.method !== 'Network.requestWillBeSent') continue;
     const url = ev.params?.request?.url ?? '';
-    if (!url.includes('/api/v1/proof/')) continue;
+    if (!url.includes('/api/v1/proof/') && !url.includes('/api/v1/range/')) continue;
     if (origin !== null && !url.startsWith(origin + '/')) continue;
     out.push({ url, at: ev.__at ?? null, index: i });
   }
@@ -1980,10 +2085,11 @@ function figuresProofRequestsSince(events, startIdx, origin = null) {
 
 // Wait for the figures run following the tip run's `verified` verdict — the
 // App triggers startFigures from the verified arm of startVerification. The
-// end of the run is a settled interval with no new /api/v1/proof/ request; a
-// run that fires no request at all (an anchor that never resolved to verified,
-// a listing the App has not read) returns an empty list at the bound. With
-// `origin`, only the runs against that node count.
+// end of the run is a settled interval with no new /api/v1/proof/ or
+// /api/v1/range/ request; a run that fires no request at all (an anchor that
+// never resolved to verified, a listing the App has not read) returns an
+// empty list at the bound. With `origin`, only the runs against that node
+// count.
 async function waitForFiguresRun(cx, sinceIdx, ms = 30000, quietMs = 2000, origin = null) {
   const t0 = Date.now();
   let last = 0;
@@ -2032,6 +2138,7 @@ async function readCreditsRow(cx) {
       /not checked yet/.test(t) ||
       /chain is not verified/.test(t) ||
       /chain does not hold/.test(t) ||
+      /does not list/.test(t) ||
       /did not verify/.test(t) ||
       /no proof for/.test(t);
     const figHint = hints.find((h) => isFiguresHint(h.text)) ?? null;
@@ -2192,8 +2299,9 @@ async function verifiedFiguresSteps(cx, targetId = 'unknown') {
     // ---- Step 24 — rep: silent → post → landed since → silent after K+1 blocks.
     await runFiguresStep24(cx);
 
-    // ---- Steps 22a · 22b · 23 — the lie arms, through the figures relay,
-    // while B is up: the relay's verdict is read across the relay, A and B.
+    // ---- Steps 22a · 22b · 22c · 22d · 22e · 23 — the lie arms, through the
+    // figures relay, while B is up: the relay's verdict is read across the
+    // relay, A and B.
     await runFiguresLieArms(cx);
 
     // ---- Step 25 — no verifier, no /api/v1/proof/ request on the hosted origin.
@@ -2499,68 +2607,237 @@ async function readNodeKarma() {
   }
 }
 
-// ---- The lie arms — 22a · 22b · 23 (WEB_INTERFACE → The extension → "The
-// verified figures"). Each arm sets the figures relay's mode with @wallet and
-// @profile open, then sets the settings row's `node` to the relay: a node
-// change drops everything loaded and re-reads it from the new node
-// (WEB_INTERFACE → The settings window), so an arm presses no ↻ — the change
-// is the re-read, and the arm is its proof. The rows are read once the relay's
-// run lands. Then the row is blanked back to A, and the balance row reads
-// silent again once A's own run lands — part of the arm's verdict, so the next
-// arm starts clean.
+// ---- The lie arms — 22a · 22b · 22c · 22d · 22e · 23 (WEB_INTERFACE → The
+// extension → "The verified figures"). Each arm sets the figures relay's
+// mode with @wallet and @profile open, then sets the settings row's `node`
+// to the relay: a node change drops everything loaded and re-reads it from
+// the new node (WEB_INTERFACE → The settings window), so an arm presses no
+// ↻ — the change is the re-read, and the arm is its proof. The rows are
+// read once the relay's run lands. Then the row is blanked back to A, and
+// the balance row reads silent again once A's own run lands — part of the
+// arm's verdict, so the next arm starts clean.
 
 const BALANCE_UNPROVEN = "this node's proof of the balance did not verify";
 const REP_UNPROVEN = "this node's proof of your rep did not verify";
-// The relay's fabricated 12.5 $NOTIS box read as `absent`, and as `unchecked`
-// — a block landed between the anchor and the run's /blocks/current, and the
-// next run decides.
-const FAKE_ABSENT_LINE = /^the node lists 12\.5\d* \$NOTIS the chain does not hold$/;
-const FAKE_UNCHECKED_TAIL = / · 12\.5\d* \$NOTIS not checked yet$/;
+
+// The three $NOTIS sentences the figures line can read with an amount — the
+// absent branch of row 4, its unchecked tail from row 8, and the unlisted
+// branch of row 4 (WEB_INTERFACE → The extension → "The verified figures").
+// Each regex's one capture group is the amount text — "12.5" or "87" — and
+// `creditsBaseUnits` scales it to base units: a credits amount is $NOTIS on
+// the face and base units on the wire, 10⁸ to one. For rep the integer as
+// written is the base-unit value (rep is counted in units).
+const CREDITS_ABSENT_RE = /^the node lists (\d+(?:\.\d{1,8})?) \$NOTIS the chain does not hold$/;
+const CREDITS_UNLISTED_RE = /^the chain holds (\d+(?:\.\d{1,8})?) \$NOTIS the node does not list$/;
+const CREDITS_UNCHECKED_TAIL_RE = / · (\d+(?:\.\d{1,8})?) \$NOTIS not checked yet$/;
+const KARMA_UNLISTED_RE = /^the chain holds (\d+) rep the node does not list$/;
+
+// An honest-looking row — the row reads what it reads without a lie: silence
+// (hintText is null) or the muted *P proven at block H* line, maybe with a
+// `young` / `not checked yet` tail. The row of the ledger the relay lies
+// about by dropping a box is clay where `heightAfter` is the anchor's tip
+// and muted `not checked yet` where it is not, never silent and never the
+// honest shape (WEB_INTERFACE → The extension → "The verified figures" —
+// "the chain holds N $NOTIS the node does not list"; "muted *not checked
+// yet* when a box is `undecided` or the ledger's read is `stale`"). A drop
+// arm takes a reading in those two shapes and fails any wait that ends
+// otherwise.
+const HONEST_BALANCE_LINE = (t) => t === null || /^[\d.]+ \$NOTIS proven at block \d+( · [\d.]+ \$NOTIS (landed since|not checked yet))*$/.test(t);
+const HONEST_REP_LINE = (t) => t === null || /^\d+ rep proven at block \d+( · \d+ rep (landed since|not checked yet))*$/.test(t);
+// The bare `not checked yet` row, muted — the figuresLine answer under a
+// `holdings === 'stale'` ledger or an `undecided > 0n` sum
+// (WEB_INTERFACE → The extension → "The verified figures" — "muted *not
+// checked yet* when a box is `undecided` or the ledger's read is `stale`").
+const NOT_CHECKED_YET_LINE = (t) => t === 'not checked yet';
 
 const repNotClay = (k) => k.present && k.monoText !== null && !k.hintHasClay && !k.monoHasClay;
+const creditsNotClay = (r) => r.present && !r.figHintHasClay && !r.goldHasClay;
 
-const LIE_ARMS = [
-  {
-    // A fabricated box: `absent` only where `heightAfter` equals the anchor's
-    // tip, so an `unchecked` reading is pressed again, up to five times. The
-    // lie is the credits listing's alone — the rep row is not clay.
-    step: '22a',
-    mode: 'credits-fake',
-    creditsSettled: (r) => r.present && (FAKE_ABSENT_LINE.test(r.figHintText ?? '') || FAKE_UNCHECKED_TAIL.test(r.figHintText ?? '')),
-    creditsOk: (r) => r.present && FAKE_ABSENT_LINE.test(r.figHintText ?? '') && r.figHintHasClay && r.goldHasClay,
-    presses: 5,
-    karmaSettled: (k) => k.present && k.monoText !== null,
-    karmaOk: repNotClay,
-  },
-  {
-    // Another key's real box: its owner fails the check at whichever height
-    // includes it. The rep row is not clay.
-    step: '22b',
-    mode: 'credits-foreign',
-    creditsSettled: (r) => r.present && r.figHintText === BALANCE_UNPROVEN,
-    creditsOk: (r) => r.present && r.figHintText === BALANCE_UNPROVEN && r.figHintHasClay && r.goldHasClay,
-    presses: 0,
-    karmaSettled: (k) => k.present && k.monoText !== null,
-    karmaOk: repNotClay,
-  },
-  {
-    // The listing is honest and every proof lies: both rows under the full
-    // rule.
-    step: 23,
-    mode: 'avl-flip',
-    creditsSettled: (r) => r.present && r.figHintText === BALANCE_UNPROVEN,
-    creditsOk: (r) => r.present && r.figHintText === BALANCE_UNPROVEN && r.figHintHasClay && r.goldHasClay,
-    presses: 0,
-    karmaSettled: (k) => k.present && k.hintText === REP_UNPROVEN,
-    karmaOk: (k) => k.present && k.hintText === REP_UNPROVEN && k.hintHasClay && k.monoHasClay,
-  },
-];
+// "12.5" → 1_250_000_000n (base units); "87" → 8_700_000_000n. Null for text
+// outside `/^\d+(\.\d{1,8})?$/`. The scale is credits.ts's `formatCredits`,
+// reversed.
+function creditsBaseUnits(text) {
+  if (typeof text !== 'string' || !/^\d+(\.\d{1,8})?$/.test(text)) return null;
+  const [whole, frac = ''] = text.split('.');
+  const padded = (frac + '00000000').slice(0, 8);
+  return BigInt(whole) * 100_000_000n + BigInt(padded);
+}
+
+// The $NOTIS amount a line's figures text names under `pattern`, in base
+// units, or null when the pattern or the text does not match.
+function creditsAmountIn(text, pattern) {
+  if (typeof text !== 'string') return null;
+  const m = text.match(pattern);
+  return m === null ? null : creditsBaseUnits(m[1]);
+}
+
+// The rep amount a line's figures text names under `pattern`, as a bigint —
+// rep is the integer as written — or null when it does not match.
+function karmaAmountIn(text, pattern) {
+  if (typeof text !== 'string') return null;
+  const m = text.match(pattern);
+  if (m === null || !/^\d+$/.test(m[1])) return null;
+  return BigInt(m[1]);
+}
+
+// `expected.value` is the box's decimal-string value (base units for a credit
+// box, rep for a karma box). The arm's row reads clay in the right pattern
+// AND names the amount the box carries — so a lie that moved to another
+// amount, or that landed somewhere else, is caught here.
+function matchesAmount(amount, expected) {
+  return expected !== null && amount !== null && amount === BigInt(expected.value);
+}
+
+function lieArms(relay) {
+  return [
+    {
+      // A fabricated 12.5 $NOTIS box: `absent` where `heightAfter` equals the
+      // anchor's tip, `unchecked` where a block landed since (pressed again,
+      // up to five times). The amount the line names is the box the relay
+      // listed, scaled: the arm asserts the match against `relay.fakeBox`.
+      // The rep row is not clay.
+      step: '22a',
+      mode: 'credits-fake',
+      box: () => relay.fakeBox,
+      creditsSettled: (r) => r.present && (
+        creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE) !== null
+        || creditsAmountIn(r.figHintText, CREDITS_UNCHECKED_TAIL_RE) !== null
+      ),
+      creditsOk: (r) => r.present
+        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE), relay.fakeBox)
+        && r.figHintHasClay && r.goldHasClay,
+      presses: 5,
+      karmaSettled: (k) => k.present && k.monoText !== null,
+      karmaOk: repNotClay,
+    },
+    {
+      // The faucet's largest credit box listed under R — a real box of
+      // another key, whose amount is whatever that box holds. The arm reads
+      // its id and value from the relay (`relay.foreignBox`): the row's line
+      // names the box's amount scaled to $NOTIS, and under `heightAfter`
+      // slipping past the anchor the line reads the box's amount as the
+      // `unchecked` tail. The rep row is not clay.
+      step: '22b',
+      mode: 'credits-foreign',
+      box: () => relay.foreignBox,
+      creditsSettled: (r) => r.present && (
+        creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE) !== null
+        || creditsAmountIn(r.figHintText, CREDITS_UNCHECKED_TAIL_RE) !== null
+      ),
+      creditsOk: (r) => r.present
+        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE), relay.foreignBox)
+        && r.figHintHasClay && r.goldHasClay,
+      presses: 5,
+      karmaSettled: (k) => k.present && k.monoText !== null,
+      karmaOk: repNotClay,
+    },
+    {
+      // The relay drops ONE box from R's first /credits page: the chain
+      // holds the box the node did not list, so the figures run reads it
+      // `unlisted` where `heightAfter` equals the anchor's tip (clay) and
+      // `undecided` where a block landed since (muted *not checked yet*).
+      // Those are the two in-line shapes; a silent reading or an `[N] proven
+      // at block H` reading fails the arm. The arm presses on the muted
+      // shape, up to five times, until the clay line stands. The gold
+      // figure, where one stands, is the node's own — the sum of what it
+      // listed — and clay; where the drop emptied the listing the
+      // empty-state stands with the clay line beneath it. The rep row is
+      // not clay.
+      step: '22c',
+      mode: 'credits-drop',
+      box: () => relay.droppedCreditsBox,
+      creditsSettled: (r) => r.present && (
+        creditsAmountIn(r.figHintText, CREDITS_UNLISTED_RE) !== null
+        || NOT_CHECKED_YET_LINE(r.figHintText)
+      ),
+      creditsOk: (r) => r.present
+        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_UNLISTED_RE), relay.droppedCreditsBox)
+        && r.figHintHasClay
+        && (r.goldText === null || r.goldHasClay),
+      presses: 5,
+      karmaSettled: (k) => k.present && k.monoText !== null,
+      karmaOk: repNotClay,
+    },
+    {
+      // The relay drops ONE box from R's first /karma page: the rep row
+      // reads *the chain holds N rep the node does not list*, clay, the
+      // number clay where one stands (the node's `effective` is passed
+      // through as served) where `heightAfter` equals tip, and muted *not
+      // checked yet* where a block landed since. The arm reads the dropped
+      // box from `relay.droppedKarmaBox` and asserts N equals its value.
+      // The balance row is not clay. As 22c, pressed on `not checked yet`
+      // until the clay stands; a silent or honest-looking reading fails
+      // the arm.
+      step: '22d',
+      mode: 'karma-drop',
+      box: () => relay.droppedKarmaBox,
+      karmaSettled: (k) => k.present && (
+        karmaAmountIn(k.hintText, KARMA_UNLISTED_RE) !== null
+        || NOT_CHECKED_YET_LINE(k.hintText)
+      ),
+      karmaOk: (k) => k.present
+        && matchesAmount(karmaAmountIn(k.hintText, KARMA_UNLISTED_RE), relay.droppedKarmaBox)
+        && k.hintHasClay
+        && (k.monoText === null || k.monoHasClay),
+      presses: 5,
+      creditsSettled: (r) => r.present && (r.figHintText === null || HONEST_BALANCE_LINE(r.figHintText)),
+      creditsOk: creditsNotClay,
+      pressWhen: 'karma',
+    },
+    {
+      // The relay drops ONE box from R's first /credits page AND answers
+      // `/blocks/current` one above the node's own. The dropped box is
+      // held at tip and the listing lacks it, with `heightAfter` not
+      // `tip.height` → the run reads it `undecided` and the balance row
+      // reads muted *not checked yet*
+      // (WEB_INTERFACE → The extension → "The verified figures"). The
+      // gold figure stands where the node gave one and is never clay —
+      // on an empty listing, where the drop left R with no box, no figure
+      // is drawn to turn clay, and the ledger's own facts speak alone
+      // (→ "An empty listing takes these lines as any listing does"), so
+      // `goldHasClay` reads false either way. Every reading of the
+      // balance row — after the change and after each of two presses —
+      // holds that shape; a node that answers another height must read
+      // undecided however often the reader asks. `pressesAtLeast: 2`
+      // keeps the loop from short-circuiting on an already-ok first
+      // reading.
+      step: '22e',
+      mode: 'credits-drop-tipplus1',
+      box: () => relay.droppedCreditsBox,
+      creditsSettled: (r) => r.present && NOT_CHECKED_YET_LINE(r.figHintText),
+      creditsOk: (r) => r.present
+        && NOT_CHECKED_YET_LINE(r.figHintText)
+        && !r.figHintHasClay
+        && !r.goldHasClay,
+      presses: 2,
+      pressesAtLeast: 2,
+      karmaSettled: (k) => k.present && k.monoText !== null,
+      karmaOk: repNotClay,
+    },
+    {
+      // The listing is honest and every proof lies: both rows under the full
+      // rule, no amount in either sentence.
+      step: 23,
+      mode: 'avl-flip',
+      box: () => null,
+      creditsSettled: (r) => r.present && r.figHintText === BALANCE_UNPROVEN,
+      creditsOk: (r) => r.present && r.figHintText === BALANCE_UNPROVEN && r.figHintHasClay && r.goldHasClay,
+      presses: 0,
+      karmaSettled: (k) => k.present && k.hintText === REP_UNPROVEN,
+      karmaOk: (k) => k.present && k.hintText === REP_UNPROVEN && k.hintHasClay && k.monoHasClay,
+    },
+  ];
+}
 
 // A row as the step lines read it — the figures hint and the figure, each
 // with its clay.
 function creditsSeen(r) {
   if (!r?.present) return 'row not in the page';
-  return `hint=${JSON.stringify(r.figHintText)} (clay=${r.figHintHasClay}), gold=${JSON.stringify(r.goldText)} (clay=${r.goldHasClay})`;
+  const base = `hint=${JSON.stringify(r.figHintText)} (clay=${r.figHintHasClay}), gold=${JSON.stringify(r.goldText)} (clay=${r.goldHasClay})`;
+  if (r.figHintText === null && Array.isArray(r.allHints) && r.allHints.length > 0) {
+    return `${base}, allHints=${JSON.stringify(r.allHints.map((h) => h.text))}`;
+  }
+  return base;
 }
 
 function karmaSeen(k) {
@@ -2588,7 +2865,7 @@ async function runFiguresLieArms(cx) {
   }
   console.log(`[vf] figures relay up: ${relay.origin} → ${NODE}`);
   try {
-    for (const arm of LIE_ARMS) await runLieArm(cx, relay, arm);
+    for (const arm of lieArms(relay)) await runLieArm(cx, relay, arm);
   } finally {
     closeRelay(relay);
     console.log(`[vf] figures relay closed; edits=${JSON.stringify(relay.edits)}`);
@@ -2613,22 +2890,70 @@ async function runLieArm(cx, relay, arm) {
       'led fresh + verified across N nodes (reading the figures relay)', 60000);
     const verified = !change.reached.timedOut && change.stored === relay.origin;
 
-    // (3) The rows, once the relay's run lands; the balance line awaited with
-    // a bound, and pressed again where the arm allows it.
+    // (3) The rows, once the relay's run lands; the lying row awaited with a
+    // 15 s bound. `pressWhen` names the lying row — `credits` by default,
+    // `karma` on karma-drop. The loop continues while `presses < arm.presses`
+    // AND (`presses < arm.pressesAtLeast` OR `!arm.<side>Ok(last)`): a
+    // `pressesAtLeast` of 2 (22e) presses twice whatever the first reading
+    // was, so a shape already ok after the change does not short-circuit;
+    // the drop arms (22a–d, 22e) take `settled` as the "in the step's
+    // line" check — a wait that times out means the row ended on silence
+    // or an honest-looking line, and `creditsInLine` / `karmaInLine` go
+    // false. The arm's verdict is `ok` AND every reading of the lying row
+    // was in line. `presses === 0` (step 23) leaves no room for retry.
     await raiseWindow(cx, 'open wallet');
     const relayRun = verified ? await waitForFiguresRun(cx, changeIdx, 60000, 2000, relay.origin) : [];
     let credits = await waitForRow(readCreditsRow, cx, arm.creditsSettled, 15000);
-    const readings = [`after the change: ${creditsSeen(credits.last)}`];
+    const creditsReadings = [`after the change: ${creditsSeen(credits.last)}`];
+    const pressWhen = arm.pressWhen ?? 'credits';
+    const pressesAtLeast = arm.pressesAtLeast ?? 0;
     let presses = 0;
-    while (verified && presses < arm.presses && !arm.creditsOk(credits.last)) {
-      presses += 1;
-      await pressCornerAndReadFigures(cx);
+    let creditsInLine = pressWhen === 'credits' ? !credits.timedOut : true;
+    if (pressWhen === 'credits') {
+      while (
+        verified
+        && presses < arm.presses
+        && (presses < pressesAtLeast || !arm.creditsOk(credits.last))
+      ) {
+        presses += 1;
+        await pressCornerAndReadFigures(cx);
+        credits = await waitForRow(readCreditsRow, cx, arm.creditsSettled, 15000);
+        creditsReadings.push(`press ${presses}: ${creditsSeen(credits.last)}`);
+        if (credits.timedOut) creditsInLine = false;
+      }
+    }
+    await raiseWindow(cx, 'open profile');
+    let karma = await waitForRow(readKarmaField, cx, arm.karmaSettled, 15000);
+    const karmaReadings = [`after the change: ${karmaSeen(karma.last)}`];
+    let karmaInLine = pressWhen === 'karma' ? !karma.timedOut : true;
+    if (pressWhen === 'karma') {
+      while (
+        verified
+        && presses < arm.presses
+        && (presses < pressesAtLeast || !arm.karmaOk(karma.last))
+      ) {
+        presses += 1;
+        await pressCornerAndReadFigures(cx);
+        karma = await waitForRow(readKarmaField, cx, arm.karmaSettled, 15000);
+        karmaReadings.push(`press ${presses}: ${karmaSeen(karma.last)}`);
+        if (karma.timedOut) karmaInLine = false;
+      }
+    }
+    // Re-read the quiet side after any retries, so both rows reflect the same
+    // run (a karma-drop retry's final figures run lands on both /karma and
+    // /credits — the balance row is honest-looking, but the latest reading
+    // reflects that run's result). The balance row lives in the wallet; a
+    // re-read while profile is the raised window would read `.credits-line`
+    // as absent and the verdict would come off a `present: false` reading, so
+    // the wallet is raised first. The reading the verdict is taken from is
+    // pushed into `creditsReadings` so the record line names it as the
+    // verdict's source.
+    if (pressWhen === 'karma') {
+      await raiseWindow(cx, 'open wallet');
       credits = await waitForRow(readCreditsRow, cx, arm.creditsSettled, 15000);
-      readings.push(`press ${presses}: ${creditsSeen(credits.last)}`);
+      creditsReadings.push(`verdict re-read: ${creditsSeen(credits.last)}`);
     }
     const creditsOk = arm.creditsOk(credits.last);
-    await raiseWindow(cx, 'open profile');
-    const karma = await waitForRow(readKarmaField, cx, arm.karmaSettled, 15000);
     const karmaOk = arm.karmaOk(karma.last);
     const corner = await readCorner(cx);
     const cornerOk = corner.ledClass === 'led fresh';
@@ -2640,12 +2965,18 @@ async function runLieArm(cx, relay, arm) {
     // (4) Back to A: the balance row silent again once A's own run lands.
     const back = await leaveFiguresRelay(cx);
     onRelay = false;
-    record(arm.step, verified && creditsOk && karmaOk && cornerOk && back.ok,
-      `relay ${arm.mode} edits=${edits}; ` +
+    // The box the lie points at — the one the arm asserts the line names.
+    // `null` for 23 (avl-flip), whose sentences carry no amount.
+    const lieBox = arm.box ? arm.box() : null;
+    const lieBoxText = lieBox === null
+      ? 'none (the sentence carries no amount)'
+      : `${lieBox.boxId.slice(0, 12)}… (${lieBox.value})`;
+    record(arm.step, verified && creditsOk && karmaOk && creditsInLine && karmaInLine && cornerOk && back.ok,
+      `relay ${arm.mode} edits=${edits}; lie box=${lieBoxText}; ` +
       `change: stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}, verified=${verified}; ` +
       `through the relay: /credits reads=${creditsReads}, /karma reads=${karmaReads}, figures proof requests=${relayRun.length}; ` +
-      `balance ${readings.join(' | ')} (A's /credits total=${nodeCredits?.total ?? 'null'} base units), ok=${creditsOk}; ` +
-      `rep ${karmaSeen(karma.last)}, ok=${karmaOk}; ` +
+      `balance ${creditsReadings.join(' | ')} (A's /credits total=${nodeCredits?.total ?? 'null'} base units), ok=${creditsOk}, in line=${creditsInLine}; ` +
+      `rep ${karmaReadings.join(' | ')}, ok=${karmaOk}, in line=${karmaInLine}; ` +
       `corner led=${corner.ledClass}, title=${JSON.stringify(corner.title)}, ok=${cornerOk}; ` +
       `back to A: ${back.detail}, ok=${back.ok}`);
   } catch (e) {
@@ -2676,10 +3007,11 @@ async function leaveFiguresRelay(cx) {
 }
 
 // Step 25 — the hosted build has no verifier, so no `.credits-line .hint` or
-// `.karma-field .hint` renders and no `/api/v1/proof/` request fires (as step
-// 20 asserts no `/nipopow/proof/`; same log, different literal). The hosted
-// origin is the harness's static server at `--public` (rung 1's server, step
-// 20's own). Without `--public`/`--web-dist` the step reads NOT RUN by name.
+// `.karma-field .hint` renders and no `/api/v1/proof/` or `/api/v1/range/`
+// request fires (as step 20 asserts no `/nipopow/proof/`; same log, different
+// literals). The hosted origin is the harness's static server at `--public`
+// (rung 1's server, step 20's own). Without `--public`/`--web-dist` the step
+// reads NOT RUN by name.
 async function runFiguresStep25() {
   if (PUBLIC === null || webDistAbs === null) {
     record(25, 'NOT RUN', 'no --public / --web-dist — the hosted origin is not served');
@@ -2723,16 +3055,19 @@ async function runFiguresStep25() {
 
     const requests = cxH.events.slice(startIdx).filter((e) => e.method === 'Network.requestWillBeSent');
     const apiProofRequests = requests.filter((e) => (e.params?.request?.url ?? '').includes('/api/v1/proof/'));
+    const apiRangeRequests = requests.filter((e) => (e.params?.request?.url ?? '').includes('/api/v1/range/'));
     const hints = await cxH.eval(`(() => ({
       creditsLineHint: document.querySelector('.credits-line .hint')?.textContent ?? null,
       karmaFieldHint: document.querySelector('.karma-field .hint')?.textContent ?? null,
     }))()`);
     const ok = apiProofRequests.length === 0
+      && apiRangeRequests.length === 0
       && hints.creditsLineHint === null
       && hints.karmaFieldHint === null;
     record(25, ok,
       `hosted origin=${hostedUrl}, wallet control present=${walletBtnPresent}, ` +
       `/api/v1/proof/ requests on hosted origin=${apiProofRequests.length} (${JSON.stringify(apiProofRequests.map((e) => e.params?.request?.url ?? ''))}), ` +
+      `/api/v1/range/ requests on hosted origin=${apiRangeRequests.length} (${JSON.stringify(apiRangeRequests.map((e) => e.params?.request?.url ?? ''))}), ` +
       `.credits-line .hint=${JSON.stringify(hints.creditsLineHint)}, .karma-field .hint=${JSON.stringify(hints.karmaFieldHint)}`);
   } catch (e) {
     record(25, false, `error: ${String(e)}`);
@@ -2801,6 +3136,18 @@ async function liveRootIds(key) {
     .map((p) => p.id);
 }
 
+// A box's proof-endpoint key as hex. The avl-endpoint route serves proofs
+// under the 130-hex tree key (NODE_INTERFACE → AVL+ State Root →
+// "avl-endpoint" — `:key` is a tree key, 130 hex), not under the box id. The
+// tree key is the tag byte `0x01` plus the 32-byte boxId zero-padded to
+// TREE_KEY_LENGTH=65 (TYPES_INTERFACE → The tree keys; `boxKey` is the sole
+// derivation). The names block uses this wherever it matches or constructs a
+// box's proof URL — the step-30 count by prefix and the figures relay's
+// `/api/v1/proof/` prefix match stay, since they match any box.
+function boxProofKeyHex(boxId) {
+  return '01' + boxId.toLowerCase() + '0'.repeat(64);
+}
+
 // The page's requests of a name check from `startIdx` up to `endIdx`
 // (WEB_INTERFACE → The extension → "The verified names"): the lookups by owner
 // of `ownerKey`, the lookups of the typed `handle`, and the proofs of `boxId`,
@@ -2808,6 +3155,7 @@ async function liveRootIds(key) {
 // `/blocks/current` and `/nipopow/proof/` request of the same window.
 function nameRequestsSince(events, startIdx, { ownerKey = null, handle = null, boxId = null, endIdx = events.length } = {}) {
   const out = { ownerLookups: 0, handleLookups: 0, boxProofs: [], blocksCurrent: 0, tipProofs: 0 };
+  const boxProofPath = boxId === null ? null : `/api/v1/proof/${boxProofKeyHex(boxId)}`;
   for (let i = startIdx; i < endIdx; i++) {
     const ev = events[i];
     if (ev.method !== 'Network.requestWillBeSent') continue;
@@ -2817,7 +3165,7 @@ function nameRequestsSince(events, startIdx, { ownerKey = null, handle = null, b
       out.ownerLookups += 1;
     } else if (handle !== null && p.endsWith(`/usernames/${encodeURIComponent(handle)}`)) {
       out.handleLookups += 1;
-    } else if (boxId !== null && p.endsWith(`/api/v1/proof/${boxId}`)) {
+    } else if (boxProofPath !== null && p.toLowerCase().endsWith(boxProofPath)) {
       out.boxProofs.push({ atHeight: Number(u.searchParams.get('atHeight')), requestId: ev.params.requestId });
     } else if (p.endsWith('/blocks/current')) {
       out.blocksCurrent += 1;
@@ -3234,7 +3582,7 @@ const NAME_LINE = "this node's answer for this name did not verify";
 // unless a block lands between the two. A check with no tip proof proved the
 // box at suffixHead, or refused it there.
 function nameChecksFromRelayLog(log, since, boxId) {
-  const proofPath = `/api/v1/proof/${boxId.toLowerCase()}`;
+  const proofPath = `/api/v1/proof/${boxProofKeyHex(boxId)}`;
   const checks = [];
   let open = null;
   for (const e of log.filter((x) => x.at >= since).sort((a, b) => a.at - b.at)) {
@@ -4838,6 +5186,7 @@ async function main() {
     const shot = await cxp.call('Page.captureScreenshot', { format: 'png' });
     if (shot && typeof shot.data === 'string') {
       const shotPath = join(dirname(new URL(import.meta.url).pathname), '..', '..', '..', '..', 'prompts', 'web-prompt-window-12b.png');
+      mkdirSync(dirname(shotPath), { recursive: true });
       writeFileSync(shotPath, Buffer.from(shot.data, 'base64'));
       shotSaved12b = true;
     }

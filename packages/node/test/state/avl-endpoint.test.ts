@@ -1,11 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { MockInstance } from 'vitest';
 import { openAvlDb, seedProvenance, uid } from '../helpers.js';
+import type { AvlNode } from '@ergots/avltree';
 import Database from 'better-sqlite3';
 import express from 'express';
 import request from 'supertest';
 import {
   INDEX_MARKER,
   LIKE_MARKER,
+  TREE_KEY_LENGTH,
   boxKey,
   boxRecordBytes,
   bytesToHex,
@@ -56,6 +59,8 @@ const putRecord = (r: IdentityRecord): TreeWrite =>
 describe('GET /api/v1/proof/:key', () => {
   let app: express.Express;
   let db: Database.Database;
+  let storageSpy: MockInstance<[version: Uint8Array], [AvlNode, number]>;
+  let proverSpy: MockInstance<[version: Uint8Array], void>;
 
   beforeEach(() => {
     db = openAvlDb();
@@ -69,12 +74,22 @@ describe('GET /api/v1/proof/:key', () => {
     ], 'test');
     checkpointProver(handle, 1);
 
+    // No proof path calls `rollback` (NODE_INTERFACE → "A proof at an older
+    // height restores a kept root"). Pinned across every case this file holds.
+    storageSpy = vi.spyOn(handle.storage, 'rollback');
+    proverSpy = vi.spyOn(handle.prover, 'rollback');
+
     app = express();
     app.use(express.json());
     registerProofEndpoint(app, handle);
   });
 
-  afterEach(() => { db.close(); });
+  afterEach(() => {
+    expect(storageSpy, 'storage.rollback must not be called by the proof route').not.toHaveBeenCalled();
+    expect(proverSpy, 'prover.rollback must not be called by the proof route').not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+    db.close();
+  });
 
   it('returns box data for an existing box at current tip, echoing the key', async () => {
     const res = await request(app)
@@ -143,6 +158,8 @@ describe('GET /api/v1/proof/:key', () => {
 
   it('decodes every kind the layout adds by its first byte', async () => {
     const handle = createAvlProver(db);
+    const localStorageSpy = vi.spyOn(handle.storage, 'rollback');
+    const localProverSpy = vi.spyOn(handle.prover, 'rollback');
     const [postId, liker, voucher, target] = ['post', 'liker', 'voucher', 'target']
       .map((label) => uid(`avl-endpoint/${label}`)) as [Uint8Array, Uint8Array, Uint8Array, Uint8Array];
     const nameBoxId = 'cd'.repeat(32);
@@ -173,12 +190,18 @@ describe('GET /api/v1/proof/:key', () => {
     expect(await served(at('marker'))).toMatchObject({ kind: 'index', value: {} });
     expect(await served(at('pair'))).toMatchObject({ kind: 'index', value: { boxId: nameBoxId } });
     expect(await served(at('count'))).toMatchObject({ kind: 'index', value: { count: 3 } });
+    // NODE_INTERFACE → "A proof at an older height restores a kept root": no
+    // proof path calls `rollback` — pinned on the handle this case uses.
+    expect(localStorageSpy, 'storage.rollback must not be called by the proof route').not.toHaveBeenCalled();
+    expect(localProverSpy, 'prover.rollback must not be called by the proof route').not.toHaveBeenCalled();
   });
 
   it('serves a record from a historical version too', async () => {
     // The historical answer is built by a separate branch from the at-tip one,
     // so covering the tip proves nothing here.
     const handle = createAvlProver(db);
+    const localStorageSpy = vi.spyOn(handle.storage, 'rollback');
+    const localProverSpy = vi.spyOn(handle.prover, 'rollback');
     performTreeWrites(handle.prover, 2, [putRecord(record(9, 9))], 'test');
     checkpointProver(handle, 2);
 
@@ -194,28 +217,33 @@ describe('GET /api/v1/proof/:key', () => {
       .expect(200);
     expect(historical.body.kind).toBe('record');
     expect(historical.body.value).toEqual(recordJson(7, 3));
+    expect(localStorageSpy, 'storage.rollback must not be called by the proof route').not.toHaveBeenCalled();
+    expect(localProverSpy, 'prover.rollback must not be called by the proof route').not.toHaveBeenCalled();
   });
 
-  // --- S4: the historical window restores under `finally` --------------------
+  // --- S4: the route closes its cycle and restores the live root on every path -
 
-  it('restores the prover to the live digest after a throw in the historical window', async () => {
-    // NODE_INTERFACE → "The historical window restores under finally".
-    // A throw between rollback(version) and rollback(currentVersion) must not
-    // strand the shared prover at the historical digest.
+  it('restores the prover to the live digest after a throw in the kept-root cycle', async () => {
+    // NODE_INTERFACE → "A proof at an older height restores a kept root":
+    // the live root is restored and the route's cycle closed on every path,
+    // a throw included — the prover is the one block application uses, so
+    // an unrestored root makes the node reject every later block.
     const handle = createAvlProver(db);
+    const localStorageSpy = vi.spyOn(handle.storage, 'rollback');
+    const localProverSpy = vi.spyOn(handle.prover, 'rollback');
     performTreeWrites(handle.prover, 2, [putRecord(record(9, 9))], 'test');
     checkpointProver(handle, 2);
 
     const liveDigest = bytesToHex(handle.prover.digest());
 
-    // Wrap performOneOperation to throw once on the historical path
+    // Wrap performOneOperation to throw once on the kept-root path
     const original = handle.prover.performOneOperation.bind(handle.prover);
     let threw = false;
     handle.prover.performOneOperation = (op: Parameters<typeof handle.prover.performOneOperation>[0]) => {
       const historicalDigest = bytesToHex(handle.prover.digest());
       if (historicalDigest !== liveDigest && !threw) {
         threw = true;
-        throw new Error('injected failure in historical window');
+        throw new Error('injected failure under the kept root');
       }
       return original(op);
     };
@@ -239,6 +267,8 @@ describe('GET /api/v1/proof/:key', () => {
       .get('/api/v1/proof/' + BOX_KEY)
       .expect(200);
     expect(tipRes.body.kind).toBe('box');
+    expect(localStorageSpy, 'storage.rollback must not be called by the proof route').not.toHaveBeenCalled();
+    expect(localProverSpy, 'prover.rollback must not be called by the proof route').not.toHaveBeenCalled();
   });
 
   it('returns 400 for a key that is not hex of the tree key width', async () => {
@@ -258,5 +288,29 @@ describe('GET /api/v1/proof/:key', () => {
     await request(app)
       .get('/api/v1/proof/' + BOX_KEY + '?atHeight=999')
       .expect(404);
+  });
+
+  it('an atHeight of digits past 2^53 is a 404 — no kept height carries that number', async () => {
+    // An atHeight of digits past the safe-integer range names no kept
+    // height and the ring misses — the route answers 404
+    // (NODE_INTERFACE → AVL+ State Root → "avl-endpoint").
+    const res = await request(app)
+      .get('/api/v1/proof/' + BOX_KEY + '?atHeight=99999999999999999999')
+      .expect(404);
+    expect(res.body).toEqual({ error: 'height not available' });
+  });
+
+  it('both sentinel keys are a 400, and nothing is logged', async () => {
+    // The two bounds — all `00`, all `ff` — are not keys of the tree
+    // (CONSENSUS_INTERFACE → The tree session, `isSentinel`), so the route
+    // refuses them with a 400 before the cycle opens and nothing is logged
+    // (NODE_INTERFACE → AVL+ State Root → "avl-endpoint").
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (const key of ['00'.repeat(TREE_KEY_LENGTH), 'ff'.repeat(TREE_KEY_LENGTH)]) {
+      const res = await request(app).get('/api/v1/proof/' + key).expect(400);
+      expect(res.body).toEqual({ error: 'key is a sentinel of the tree' });
+    }
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 });

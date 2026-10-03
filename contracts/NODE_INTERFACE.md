@@ -314,9 +314,9 @@ the karma inputs' owner — no separate liker field exists anywhere.
 
 **The marker is client-built.** The transaction is **client-signed** before it reaches this
 endpoint, so the client constructs the `LikeAccrualBox` output and signs over it — and it must
-learn the target's **author** to do so, from the same source consensus uses: **`block_topology`,
-never `dag_posts.author`**, which carries a zeroed author on placeholder rows. An author read
-from the wrong table earmarks karma to the zero key while every gateway check passes.
+learn the target's **author** to do so — **the author the post's confirmation recorded**, which `confirmedAuthor`
+serves (→ Posts; → Block Topology), **never `dag_posts.author`**, which carries a zeroed author on placeholder rows.
+An author read from the wrong column earmarks karma to the zero key while every gateway check passes.
 
 **Step 3's duplicate-like gate is load-bearing, not courtesy-only in effect.** Conservation
 cannot see a repeat: a second like on the same post is a perfectly balanced transaction, so
@@ -1614,9 +1614,9 @@ the treasury.
 | Consumed | Created | Condition |
 |----------|---------|-----------|
 | KarmaBox | KarmaBox | **Consolidation**: same owner, value conserved — the one karma-side row that pays nothing, so it counts no actor toward the inclusion bonus (MINING_INTERFACE → Coinbase Application) and moves no activity clock (→ Populating the record) |
-| KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's author from `block_topology`, and that author is not the liker — the karma inputs' owner — **and the converse**, a `LikeAccrualBox` output ⟺ exactly one of `likeTarget` present or `post` present with a parent (the Reply row). At most one karma output, same owner as all inputs — omitted when the change would be zero; target live; `(liker, target)` not recorded. **Value conserved** |
+| KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's recorded author (→ Block Topology), and that author is not the liker — the karma inputs' owner — **and the converse**, a `LikeAccrualBox` output ⟺ exactly one of `likeTarget` present or `post` present with a parent (the Reply row). At most one karma output, same owner as all inputs — omitted when the change would be zero; target live; `(liker, target)` not recorded. **Value conserved** |
 | KarmaBox | KarmaBox + KarmaPriceBox | **Thread**: `post` present with no `parentRefs` ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_THREAD` and no `LikeAccrualBox`. At most one karma output, same owner as all inputs — omitted when the change would be zero; the signing key is the post's author. **Value conserved** — a post carries **no** deficit and **no** surplus |
-| KarmaBox | KarmaBox + KarmaPriceBox + LikeAccrualBox | **Reply**: `post` present with one parent ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE` **and** exactly one `LikeAccrualBox` output of exactly `REPLY_AUTHOR_SHARE` whose `author` is the parent's author from `block_topology`. The karma output as above; the signing key is the post's author. **Value conserved** |
+| KarmaBox | KarmaBox + KarmaPriceBox + LikeAccrualBox | **Reply**: `post` present with one parent ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE` **and** exactly one `LikeAccrualBox` output of exactly `REPLY_AUTHOR_SHARE` whose `author` is the parent's recorded author (→ Block Topology). The karma output as above; the signing key is the post's author. **Value conserved** |
 | KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it**; `bond.inviterId` is a root, or a member with `⌊memberVouches / D(N)⌋ − invitesUsed ≥ 1` on its record at apply, `N` from pre-body state (→ Bond transition rules, → Membership pass) |
 | KarmaBox | KarmaBox + VouchBox | Vouch cast: karma outputs same owner; `vouch.value == VOUCH_KARMA_AMOUNT`; `vouch.voucherId` == the karma input's owner; the voucher is a member — `member(voucher)` on its record at apply (→ Membership pass); `vouch.targetId ≠ vouch.voucherId`; the target holds an `IdentityRecord`; no unspent `vouch` box carries the same `(voucherId, targetId)`; the voucher's **summed** karma balance ≥ `VOUCH_MIN_BALANCE`; no unspent escrow names the voucher; `vouch.createdAtBlock` within `[height − VOUCH_CAST_HEIGHT_WINDOW, height]` (the upper bound is step 6's; the window bounds backdating, which would shorten the cooldown the escrow derives from it) |
 | KarmaBox | KarmaBox + UsernameBox | **Claim**: exactly one `username` output — `owner` = the karma inputs' owner, `value == 0n`, its `name` valid (`TYPES_INTERFACE → UsernameBox`); no name record for the name's canonical form; **no holder record for the owner** (available, holding none); the karma output same owner, value conserved; the signing key is the owner's (→ Username transition rules) |
@@ -1659,16 +1659,16 @@ There is **no other legal bond or invite shape**. In particular:
 - **A post pays its price into a `KarmaPriceBox`**, and a reply pays `REPLY_AUTHOR_SHARE` of it
   to the parent's author through a `LikeAccrualBox` — the Thread and Reply rows under Legal box
   transitions state the shapes, `ARCHITECTURE → The post price` the rule. The parent's author is
-  resolved from `block_topology`, exactly as a like's target author is, and a reply to a
-  withdrawn post pays that row's author. ⛔ **The reply's marker moves no like counter**:
+  the one its confirmation recorded (→ Block Topology), exactly as a like's target author is, and a reply to a
+  withdrawn post pays that recorded author. ⛔ **The reply's marker moves no like counter**:
   `lifetimeLikesReceived` is bumped from like transactions and from nothing else.
 - **A reply's parent may still be pending at admission.** The marker names the parent's author, and
-  `validateTx` resolves it from `block_topology` — and, where the parent has no row yet because it
+  admission's `validateTx` resolves it from `block_topology` — and, where the parent has no row yet because it
   is in this node's pool, from the parent's own pending row, whose `author` is the commit its
   transaction carries and which that transaction's post arm binds to its signer. **At apply only
-  `block_topology` is read**: a parent confirmed in the applying block has its row before the loop
-  (§8 populates topology from the block's own posts), an earlier one has it already, and a parent
-  in neither refuses the reply (*"names no author"*). The fallback is the reply's alone — a like's
+  the post record is read** (`CONSENSUS_INTERFACE → StateView`): a parent confirmed in the applying block is
+  in the block's own posts, which the overlay holds before the loop (`CONSENSUS_INTERFACE → The overlay`), an
+  earlier one has its record under the root, and a parent in neither refuses the reply (*"names no author"*). The fallback is the reply's alone — a like's
   target and a withdrawal's post must be confirmed at admission exactly as before.
   This is what keeps a reply able to spend its own thread's change with no block between the two
   (`TYPES_INTERFACE → Monotonic creation height`, the chaining a block interval must allow).
@@ -1739,7 +1739,7 @@ There is **no other legal bond or invite shape**. In particular:
   payload (`postId`; TYPES_INTERFACE → Layout — PostWithdrawCommit). It rides
   `utxoTxIds` with every other transaction.
 - ⛔ **This is not deletion and is never described as one.** The `postId`, the
-  `parentRefs` and the `block_topology` row all survive, so every descendant
+  `parentRefs`, the post's record and its `block_topology` row all survive, so every descendant
   keeps its anchor. Any peer that archived the content before withdrawal can
   republish it; what the protocol guarantees is that honest nodes drop the bytes,
   that they stop propagating, and that the author's intent is attributable.
@@ -1747,12 +1747,12 @@ There is **no other legal bond or invite shape**. In particular:
 - ⛔ **`postWithdraw` is an IMPLICATION, never a biconditional**: a withdrawal
   emits no observable output, so its right side is an
   ordinary conserving self-transfer which must stay legal. `postWithdraw` present
-  ⟹ the shape above **and** `inputKarma.owner` is the post's `block_topology`
-  author **and** `verifyPostWithdrawCommitDomains(tx.postWithdraw)` passes.
+  ⟹ the shape above **and** `inputKarma.owner` is the post's recorded author
+  (→ Block Topology) **and** `verifyPostWithdrawCommitDomains(tx.postWithdraw)` passes.
 - **Authorship is the transaction's own** — the payload sits inside the
   `computeTxId` preimage, so no separate `authorId` or signature exists.
 - ⛔ **The maturity bind: a post confirmed in the applying block is NOT withdrawable.**
-  `block_topology.block_height` must be **strictly less** than the applying height.
+  The post's recorded confirmation height (→ Block Topology) must be **strictly less** than the applying height.
   Producer-independent and decidable from committed state alone, and it forbids nothing
   legitimate — an author who changes their mind waits one block. Reachable through the
   ordinary API, so the intent route enforces the same rule at submit.
@@ -1912,8 +1912,8 @@ inside the network's reported supply.
   lock's `owner` bind to the karma **input's** owner, and the signature is that
   owner's. A withdrawal keeps its single karma output — its inputs are
   at least `1n`, so it is.
-- ⛔ **A like is another's act.** The like arm refuses a `likeTarget` whose `block_topology`
-  author is the karma inputs' owner — one check beside the marker's author check, so
+- ⛔ **A like is another's act.** The like arm refuses a `likeTarget` whose recorded
+  author (→ Block Topology) is the karma inputs' owner — one check beside the marker's author check, so
   admission and block application refuse a self-like at the same site and no like of one's
   own post reaches `lifetimeLikesReceived` or `memberLikes` (ARCHITECTURE → Likes).
 
@@ -1932,7 +1932,7 @@ inside the network's reported supply.
 > **Both directions are required, and the second has no predecessor:**
 >
 > 1. `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose
->    `author` is the target post's author, resolved from `block_topology`; and `post` present with a
+>    `author` is the target post's recorded author (→ Block Topology); and `post` present with a
 >    parent ⟺ exactly one of exactly `REPLY_AUTHOR_SHARE` whose `author` is the parent's, resolved
 >    the same way (→ Post transactions);
 > 2. **a `LikeAccrualBox` output present ⟺ exactly one of `likeTarget` present or `post` present with
@@ -1947,8 +1947,8 @@ inside the network's reported supply.
 > consumes one, so `author` is attribution and never authorization — the standing `BondBox` and
 > `KarmaPriceBox` already have.
 >
-> ⚠ **The author is resolved from `block_topology`, never `dag_posts.author`** — the rule §Likes
-> already states, and the marker inherits it. A placeholder row carries a zeroed author, so a marker
+> ⚠ **The author is the one the post's confirmation recorded, never `dag_posts.author`** (→ Block Topology) — the
+> rule §Likes already states, and the marker inherits it. A placeholder row carries a zeroed author, so a marker
 > built from the wrong source would earmark karma to the zero key.
 
 ### Vouch transition rules
@@ -2996,7 +2996,7 @@ shape, validated by the engine):
 
 1. Re-checks at apply: target confirmed and **live** at this height (likes on withdrawn
    posts rejected by stated rule; a placeholder — body not held — **is** live, `isLivePost`
-   decides); author resolved from **`block_topology`**, never
+   decides); the author is **the post record's** (`CONSENSUS_INTERFACE → StateView`), never
    `dag_posts.author`, and not the liker — the karma inputs' owner (→ Karma transition
    rules); like-record `(liker, targetPostId)` absent — else the tx is
    invalid and the block is rejected
@@ -3141,8 +3141,9 @@ stored through `setPostBody`; `emitPostReceived(postId, peerId, via: 'pull')`.
 applied_at_block INTEGER NOT NULL, PRIMARY KEY (target_post_id, liker_id))`. Written
 **only** at block application (never by an HTTP route — the retired free-like tier's
 `dag_likes` rows were route-written, which is what made the old epoch mint a DAG-index
-read inside consensus). Content-layer consensus state, the `block_topology` tier:
-deterministic by replay, journalled with exact inverses, not in the `stateRoot`. The
+read inside consensus). The table answers the views and admission's duplicate gate; **the record a rule reads is the
+tree's** — `like ‖ postId ‖ liker`, a marker under the state root (`CONSENSUS_INTERFACE → StateView`;
+`TYPES_INTERFACE → Layout — tree records`), written from the same effects in the same block. The
 `dag_likes` table is **dropped**.
 
 **The topology row's `parent_refs` column is the record, and nothing indexes it**: no consensus path
@@ -3597,6 +3598,13 @@ from local DAG content). `author` is the creating transaction's signer
 block has confirmed. Idempotent insert (first block to confirm a postId wins);
 `rollbackBlockTopology` removes a reverted height's rows wholesale.
 
+**A post's confirmation records its author and its height twice, from the same effects**: in the post record under the
+state root — `post ‖ postId`, holding the author, the height and the standing (`TYPES_INTERFACE → Layout — tree
+records`) — and in this table. **Block application reads the record, through the tree view**
+(`CONSENSUS_INTERFACE → StateView`); admission and the views read the table (→ AVL+ State Root, "The SQLite tables
+are written from the same effects and answer the API only"). A post's *recorded* author and height are that pair's:
+one write feeds both, so the two cannot disagree.
+
 ### Mempool
 
 | Function | Signature | Description |
@@ -3867,9 +3875,9 @@ below; `CONSENSUS_INTERFACE → The tree layout`).
 **The rules read the tree, and nothing else.** Block application, the speculative run and the block creator hand
 `applyBlock` `treeStateView` over a session on this node's prover (`CONSENSUS_INTERFACE → The tree view`), and write
 the tree through `treeWritesOf` (`CONSENSUS_INTERFACE → The tree writes`). **The session reads with the prover's
-unrecorded neighbour lookup** (`@ergots/avltree` 0.5.0's `unauthenticatedLookupWithNeighbors`) — every reader's
+unrecorded neighbour lookup** (`@ergots/avltree`'s `unauthenticatedLookupWithNeighbors`) — every reader's
 session but block application's and the speculative run's, whose lookups are recorded into the block's proof
-(→ The block proof) — its `null` neighbour mapped to the sentinel (`CONSENSUS_INTERFACE → The tree session`); a write the prover refuses is
+(→ The block proof), and the range route's, whose page is the proof it answers — its `null` neighbour mapped to the sentinel (`CONSENSUS_INTERFACE → The tree session`); a write the prover refuses is
 `DivergedStateTreeError` and a read that contradicts itself `InconsistentStateTreeError`, both fail-stop (→ "What the
 funnel's totality catch is FOR"). **The SQLite tables are written from the same effects and answer the API only**; no
 consensus path reads them, so a table and the tree cannot disagree about what a rule saw. `storeStateView` — the
@@ -3884,12 +3892,28 @@ the tree view read by read.
   `stateRoot` the digest of the version the proof is made against, hex; `proof` the lookup proof's bytes, base64;
   `kind` the entity kind the key resolves to — `box`, `record`, `network`, `username`, `holder`, `post`, `like` or
   `index` (the index marker, a vouch pair and a cast count) (→ Entity kinds) — and `value` the node's decoding of it,
-  both `null` where the key is absent and the proof is one of exclusion. `atHeight` must name a height a checkpoint
-  stands at exactly, else 404 `{ error: 'height not available' }`; without it the proof is against the current
-  version; 400 for a key that is not 130 hex or a height that is not a non-negative integer. **`kind` and `value` are
+  both `null` where the key is absent and the proof is one of exclusion. `atHeight` must name a height the node
+  keeps a root of (→ "A proof at an older height restores a kept root"), else 404 `{ error: 'height not
+  available' }`; without it the proof is against the tip, which always answers; 400 for a key that is not 130 hex or
+  is one of the tree's two sentinels — all `00`, all `ff`, keys no entry has (`CONSENSUS_INTERFACE → The tree
+  session`) — and for an `atHeight` that is not decimal digits; an `atHeight` of any length that names no kept
+  height is the 404. **`kind` and `value` are
   the node's reading and a light client trusts neither**: it verifies the proof against a `stateRoot` it verified under proof-of-work and decodes the value the
   proof carries (`WEB_INTERFACE → The extension → "The verified figures"`)
-- **Config:** `MAX_PROOF_HISTORY` (prune old proof versions). The check below
+- **avl-endpoint, the range route:** `GET /api/v1/range/:kind/:owner?atHeight=N&from=K&limit=L` — one page of what a
+  key holds of one kind, with its proof. `:kind` is one of `CONSENSUS_INTERFACE → The holdings page`'s five; `:owner`
+  is 64 hex; `from`, where given, is a tree key of 130 hex inside that kind's range for the owner; `limit` is an
+  integer from 1, served at `RANGE_PAGE_MAX` (256) where it is above it or absent. It answers `{ kind, owner, atHeight,
+  stateRoot, from, limit, proof }` — `from` the key the page began at or `null`, `limit` the limit served, `stateRoot`
+  and `proof` as the single-key route's — and **no decoded value: the proof is the answer.** The node performs
+  `holdingsPage` over a recording session on its prover and answers the proof of exactly those lookups; a light client
+  reads the page by running `holdingsPage` over `verifierSession` on it, and learns from the proof whether the range
+  ended. `atHeight` is the single-key route's, the tip where absent; 400 for a kind outside the five, an owner, a
+  `from` or a `limit` of another shape, and a `from` outside the range; 404 `{ error: 'height not available' }` for a
+  height the node keeps no root of (→ "A proof at an older height restores a kept root")
+- **Config:** `MAX_PROOF_HISTORY` (the store's versions, kept for a reorg's walk), `PROOF_WINDOW_BLOCKS` (the
+  roots kept in memory, the heights the proof routes answer) and `PROOF_WINDOW_NODES` (the nodes those roots may
+  hold beyond the tree). The check below
   is not configurable — no variable disables it
 - **Verification:** apply computes the post-mutation digest and rejects the
   block unless it equals `header.stateRoot`, on every node — no node applies a block
@@ -3994,10 +4018,10 @@ the tree view read by read.
   restores before re-throwing; `computePostBlockStateRoot` calls the boundary
   inside its `catch`, and `process.exit(1)` does not unwind, so its `finally`
   restore never runs. Both are correct — nothing reads the tree after the exit
-- **Reorg-abort-safe:** `reorg()` snapshots the prover digest before reverting
-  anything; if applying the new chain fails mid-way, the reorg transaction
+- **Reorg-abort-safe:** `reorg()` holds the prover's root, its tree height and the kept roots, by reference,
+  before reverting anything; if applying the new chain fails mid-way, the reorg transaction
   rolls the DB (including AVL storage rows) back wholesale, and the reorg's
-  catch restores the in-memory prover to the pre-reorg digest — the per-block
+  catch puts the root and the kept roots back (→ "A proof at an older height restores a kept root") — the per-block
   funnel restore only covers the failing block, not the applied prefix
 - **A reorg applies exactly the verified chain it scored, or nothing.** `reorg()` reverts above
   `forkHeight` and applies exactly what it is handed, so the caller — the only site that knows what
@@ -4203,14 +4227,58 @@ malformed box. That is strictly worse than the throw it replaced, because it
 fails silently and *with* a valid proof. `null` distinguishes an absent key (a
 valid exclusion proof) from "present, and not a box".
 
-**The historical window restores under `finally`.** Serving `atHeight` rolls
-the **shared** prover to a checkpoint (`rollback(version)`), performs the
-lookup, generates the proof, and rolls back to the live digest — and the
-restore is the part that must survive a throw: the prover is the one block
-application uses, so an unrestored historical digest makes the node reject
-every later block until restart. The lookup-and-proof window therefore runs in
-a `try` whose `finally` restores the live version; the `catch`'s 500 is the
-response, never the state.
+**A proof at an older height restores a kept root.** The node keeps, by reference, the root and the tree height of
+each of the last `PROOF_WINDOW_BLOCKS` blocks it applied (`local`, default 64), fewer while they hold more than
+`PROOF_WINDOW_NODES` nodes (`local`, default 250 000): the library never mutates a node, so a kept root shares every
+unchanged node with the live tree, and the kept roots hold beyond that tree what the blocks above the lowest of them
+replaced. **The count is the store's**: a block's is the number of nodes the prover reports removed at its checkpoint,
+the ones `update` orphans (→ "AVL storage shares nodes across versions; a row is a node's lifetime"), recorded with
+its root; the roots' is the sum over every kept height but the lowest. The node drops the lowest kept root while that
+sum is above `PROOF_WINDOW_NODES`, so what the roots hold is bounded by a setting, whatever a producer packs a block
+with; the tip's root holds nothing the tree does not, and the bound never drops it. Both proof routes
+answer `atHeight` by restoring that root, performing their lookups, generating the proof and restoring the live root,
+inside one synchronous call, as the speculative run restores its own (→ Post-block stateRoot). **The live root is
+restored and the route's cycle closed on every path, a throw included**: a page that throws midway leaves none of its
+recorded lookups for a block's proof to open with (→ The block proof). **A tree that contradicts itself under a
+route's read is local corruption** — `InconsistentStateTreeError`, fail-stop, as under the cost gate (→ "What the
+funnel's totality catch is FOR") — never a 500 the node stays up behind; any other throw under a route answers 500
+and leaves the node as it was. **A height the node
+keeps no root of is 404 `{ error: 'height not available' }`, and no proof path calls `rollback`** — which re-reads the
+whole tree from the store. A root is kept once its block has applied and dropped when its block is reverted; **a
+refused block leaves the kept roots exactly as they were, whatever height it claims** — the height in a refused
+header is its producer's word. **Every kept root is a root of the one tree the node holds in memory**: a tree resolved
+from the store shares no node with the roots kept before it, and a node keeping both would hold the tree twice. So
+**a reorg restores the fork point's kept root by reference where the node keeps the root of the store's version at
+that height** — the same tree `rollback(version)` resolves, without the store's re-read — and resolves that version
+from the store only where it does not, a fork below every kept root or a node since restarted, dropping every kept
+root as it does; **a reorg that aborts puts back, by reference, the root and the kept roots it began with**, as the
+apply funnel puts back a refused block's. **After a restart the node holds its
+tip's root alone** and gains one a block: no height below the tip it restarted at is available from it again, so a
+light client's `suffixHead` — `k − 1` blocks behind its tip (`CONSTANTS → Client defaults`) — is not available until
+that many blocks have applied, nor for as long as `PROOF_WINDOW_NODES` holds the kept roots fewer than `k` deep. `MAX_PROOF_HISTORY` is the versions the store keeps for a reorg's walk (→ Configuration) and bounds
+no route.
+
+**The proof routes' cost, so the exposure is a number** — measured 2026-10-02 with `packages/node/bench/` (the
+store on a SQLite file, both routes on an Express app, Node 22, pinned to performance cores of the i9-14900HX) over
+a tree seeded at 10⁶ leaves and grown to 1.44·10⁶ by the blocks applied. A single-key proof is one path: about 920
+bytes, about 1 ms. A page looks up at most `1 + 2 · RANGE_PAGE_MAX` keys: a full page is about 110 KB of proof —
+146 KB as the JSON answer — and 17–20 ms, the same at the tip and at a root kept 60 blocks back, restored by
+reference. A key's 21 700 boxes are 85 pages and 9.4 MB, a second and a half of the node's time at that rate, and
+nothing of a route outlives its call: the heap and the array buffers read the same before and after. Both routes
+are unauthenticated reads that do real work per call, as `GET /nipopow/proof` is (→ Nipopow prover); a call is
+bounded by the page, and no route is rate limited.
+
+**What the kept roots hold, in bytes** — the same run. A node counted costs about 650 bytes — 570 of heap and 85 of array buffers, which V8's heap
+limit does not count — so the default `PROOF_WINDOW_NODES` bounds the kept roots near 155 MiB, whatever the blocks
+carry. A block of 3 156 credit sends over that tree replaces about 114 000 nodes, 71 MiB a kept root: 64 such roots
+hold 4.4 GiB, and the default keeps 3 of them; under blocks a hundredth that size — 2 300 nodes, 1.4 MiB a root — it
+keeps all 64, as it does while a block replaces under about 3 900 nodes. **The count is of labels, the memory of
+objects**: a node a block rebuilds to the label it had — two objects, one label — is held and not counted, one node
+in 90 000 under mixed writes and a path's length for a write that leaves a leaf's bytes as they were — the one such
+write found in the rules is a vouch cast and withdrawn for one target in one block. **Where a reorg's fork point is no
+longer kept, the resolve from the store re-reads the tree**: 51 s for 1.45·10⁶ leaves, and a second tree built while
+the first is still held — 1.2 GiB of heap and 0.3 GiB of array buffers, about 565 bytes a node, which is what the
+tree itself costs.
 
 **3. A block's writes never touch one key twice, and for boxes that rests on provenance, not on height.** That box ids
 commit to `createdAtBlock` does not establish it: two boxes built at one height with one content would still collide.
@@ -4249,22 +4317,25 @@ mismatch is a consensus rejection that marks, the funnel's single rollback point
 A block over the budget (`CONSENSUS_INTERFACE → The block's cost`) is refused the same way, checked before its writes
 are performed.
 
-**Only block application and the speculative run record.** The creator's settlement build, admission
-(`MEMPOOL_INTERFACE → The cost gate`) and every API read use the unrecorded session, and `karmaOwnersOf` reads the
-block view's memo alone: a recorded lookup outside a block's cycle would enter the next block's proof, and this node's
-proof would differ from every peer's.
+**Only block application and the speculative run record into a block's proof.** The creator's settlement build,
+admission (`MEMPOOL_INTERFACE → The cost gate`) and every view use the unrecorded session, and `karmaOwnersOf` reads the
+block view's memo alone: a recorded lookup left in the prover's cycle would enter the next block's proof, and this
+node's proof would differ from every peer's. **A proof route records in a cycle of its own** — its lookups, then
+`generateProof()`, inside one synchronous call (→ AVL+ State Root) — so nothing of a route's is in the cycle when a
+block's begins.
 
 **The proof is stored with its block and served by height.** `block_proofs (height INTEGER PRIMARY KEY, proof BLOB NOT
 NULL)`, written in the apply transaction, deleted with its block on a revert. `GET /blocks/:height/proof` answers the
-bytes as `application/octet-stream` — **the one route that is not JSON**: a proof of about 6 MB would be 12 MB as hex,
+bytes as `application/octet-stream` — **the one route that is not JSON**: a proof of 10 MB would be 20 MB as hex,
 and a browser takes the bytes as they come.
 
 **Two settings bound the proofs a node keeps, and the tighter wins.** After each applied block, apply prunes the proofs
 below `tip − PROOF_RETENTION_BLOCKS` (`local`, default 10 080 — a week at 60 s), then the oldest while the proofs kept
 exceed `PROOF_RETENTION_BYTES` (`local`, default 2 GiB); both are settings, not consensus. **The tip's proof is kept
 whatever either says.** A prune sizes a proof by its stored length and never loads its bytes to measure it. The byte
-cap's arithmetic: a week of blocks at the budget's largest measured proof, 6.27 MB (`CONSENSUS_INTERFACE → Cost`), is
-63 GB; 2 GiB holds a week of proofs averaging about 210 KB, or about 340 of the largest.
+cap's arithmetic: a week of blocks at the largest proof measured, 10.45 MB — a block of sends over a 6·10⁶-leaf tree
+(`CONSENSUS_INTERFACE → Cost`) — is 105 GB; 2 GiB holds a week of proofs averaging about 210 KB, or about 200 of the
+largest.
 
 ### No store schema version, and none is owed
 
@@ -4577,13 +4648,14 @@ other corrupt-chain read.
 **Cost, so the exposure is a number:** a proof is O(m · M + k) point reads, `M` the height of the
 tip's vector (~log₂ of the chain height): at `m = k = 6` on a million-block chain ~250 reads and a
 ~200 KB response; at the caps (`m = k = 128`) ~8 500 reads and ~7 MB. No cache and no O(N) walk
-exist in the path. This is the node's second unauthenticated read that does real work per call
-(`GET /api/v1/proof/:boxId` is the first); the node has no rate limiting anywhere, and this route
+exist in the path. This is one of the node's three unauthenticated reads that do real work per call
+(the two proof routes are the others, → AVL+ State Root); the node has no rate limiting anywhere, and this route
 adds none — a single call is bounded by `MAX_NIPOPOW_PARAM`, and a limiter is a decision across
 every route, not this one's.
 
 **What a served proof proves, and what the client trusts it for,** is `NIPOPOW_INTERFACE` → The
-trust model. The client checks the node's box proofs (`GET /api/v1/proof/:boxId?atHeight`) against
+trust model. The client checks the node's state proofs (`GET /api/v1/proof/:key?atHeight`, `GET
+/api/v1/range/:kind/:owner?atHeight`) against
 the `stateRoot` of the proof's `suffixHead` — a header under the client's own verified PoW — so the
 two proof systems compose without the client trusting the node for either.
 
@@ -4684,7 +4756,9 @@ FOR"), never a quiet abort that leaves the node on the lighter chain.
 four as the schedule's `RetargetParams` — `halflifeMs = RETARGET_HALFLIFE_BLOCKS · orderingBlockIdealMs`
 derived here — for the funnel, the creator and fork resolution (→ Difficulty schedule).
 
-All config via environment variables with defaults.
+All config via environment variables with defaults. **A proof setting that names no non-negative whole number is
+refused at load, never defaulted** — `PROOF_RETENTION_BLOCKS`, `PROOF_RETENTION_BYTES`, `PROOF_WINDOW_BLOCKS`,
+`PROOF_WINDOW_NODES`: a window the node cannot read is a policy nobody chose.
 
 **Every variable carries a `Class`. The class is normative, not descriptive.**
 
@@ -4755,7 +4829,9 @@ its actual reach.
 | `TEMPORAL_BAN_DURATION_MS` | `local` | `3600000` | Temporal ban length — semantics `NET_INTERFACE → Peer Penalty System` |
 | `PENALTY_SAFE_INTERVAL_MS` | `local` | `120000` | Quiet interval after which accrued penalty decays — semantics `NET_INTERFACE → Peer Penalty System` |
 | `SYNC_REQUEST_TIMEOUT_MS` | `local` | `10000` | Abort timeout on one sync request — semantics `NET_INTERFACE → Config` |
-| `MAX_PROOF_HISTORY` | `local` | `1440` | AVL versions retained for proof serving |
+| `MAX_PROOF_HISTORY` | `local` | `1440` | AVL versions the store keeps for a reorg's walk, never below the profile's `maxReorgDepth`; bounds no proof route (→ AVL+ State Root) |
+| `PROOF_WINDOW_BLOCKS` | `local` | `64` | the last blocks whose roots the node keeps in memory, the heights its proof routes answer `atHeight` at; below a light client's `k` (20) the node proves it no settled height (→ AVL+ State Root) |
+| `PROOF_WINDOW_NODES` | `local` | `250000` | the most nodes the kept roots hold beyond the tree at the tip, the lowest root dropped first and the tip's never (→ AVL+ State Root) |
 | `PROOF_RETENTION_BLOCKS` | `local` | `10080` | blocks whose proofs are kept for `GET /blocks/:height/proof` — a week at 60 s (→ The block proof) |
 | `PROOF_RETENTION_BYTES` | `local` | `2147483648` | the most bytes of proofs kept for `GET /blocks/:height/proof`, the oldest pruned first and the tip's always kept — 2 GiB (→ The block proof) |
 | `PORT` | `operational` | `3000` | HTTP listen port |
@@ -5124,7 +5200,7 @@ funnel:
 1. **Topology recording (confirm-time).** Topology rows are written from the
    block's verified post transactions: `insertBlockTopology(postId, parentRefs,
    author, height)` with `author` the creating transaction's signer and
-   `parentRefs` the signed transaction's own. `block_topology.author` is the
+   `parentRefs` the signed transaction's own. The recorded author (→ Block Topology) is the
    consensus authority for withdrawal authorization, never `dag_posts.author`.
 2. **Withdrawal authorship binding (transaction-time).** The withdrawal transition arm REJECTS the
    transaction unless `getTopologyAuthor(postWithdraw.postId)` returns a non-null author equal

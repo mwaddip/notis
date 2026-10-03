@@ -235,7 +235,11 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
   // totality catch — immediate, because the library never mutates a node. The
   // restore also rebases the proof cycle, so none of a refused block's recorded
   // reads, which leave the digest where it was, stays in the cycle to enter the
-  // next block's proof (NODE_INTERFACE → The block proof).
+  // next block's proof (NODE_INTERFACE → The block proof). The ring is not
+  // touched on the refusal path: the record below runs only once the
+  // transaction has returned, so a refused block has no kept root to drop
+  // whatever height it claims (NODE_INTERFACE → "a refused block leaves the
+  // kept roots exactly as they were, whatever height it claims").
   const avlHandle = tryGetAvlProver();
   const saved = avlHandle
     ? { root: avlHandle.prover.prover.root, height: avlHandle.prover.prover.height }
@@ -289,6 +293,25 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
     );
     restoreProver();
     return { applied: false, class: 'local', detail };
+  }
+
+  // The block applied — record the kept root (NODE_INTERFACE → "A proof at an
+  // older height restores a kept root") with the store's count of nodes the
+  // block's checkpoint orphaned (NODE_INTERFACE → "The count is the store's").
+  // After the transaction has returned, where `block.header.height` is the
+  // height that applied: a refused block never has a root to drop, and the
+  // refusal path does not touch the ring. Nested in a reorg the record
+  // happens per applied block; the reorg's snapshot restores the ring on
+  // abort. The count is this block's: nothing between `checkpointProver`
+  // (which calls `update` through `generateProofAndUpdateStorage`) and here
+  // calls `update` on the storage.
+  if (avlHandle) {
+    avlHandle.recentRoots.record(
+      block.header.height,
+      avlHandle.prover.prover.root,
+      avlHandle.prover.prover.height,
+      avlHandle.storage.lastRemovedCount(),
+    );
   }
 
   // The tip moved, so a miner node's template moved with it — one template per
@@ -590,8 +613,14 @@ export function writeBlockEffects(effects: BlockEffects, height: number): BlockJ
     }
     confirmPost(postId, height, index);
   });
-  // block_topology from the block's post transactions: the consensus author
-  // and parent refs, never local DAG content (NODE_INTERFACE → Block Topology).
+  // block_topology from the block's post transactions, in body order: the
+  // consensus author and parent refs — never local DAG content — written
+  // only here (NODE_INTERFACE → Block Topology). **No rule reads this
+  // table**: the rules read the post record under the state root, through
+  // the tree view (CONSENSUS_INTERFACE → StateView); the API views and the
+  // verifier read `block_topology` for the author `confirmedAuthor` serves.
+  // One write feeds both the record and the row, so the two cannot
+  // disagree.
   for (const { postId, post } of effects.posts) {
     insertBlockTopology(postId, post.parentRefs, Buffer.from(post.author).toString('hex'), height);
   }

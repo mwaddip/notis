@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createFiguresVerifier } from '../src/extension/figures-verifier';
-import type { Anchor, FiguresResult, Listing, proveFigures } from '@dagsocial/nipopow-client';
+import { proveFigures as realProveFigures } from '@dagsocial/nipopow-client';
+import type { Anchor, FiguresResult, HttpFetch, Listing, proveFigures } from '@dagsocial/nipopow-client';
 import type { BlockHeader, NetworkProfile, NetworkType } from '@dagsocial/types';
 import { profileFor } from '@dagsocial/types';
 
@@ -41,8 +42,8 @@ function emptyResult(): FiguresResult {
   return {
     boxes: [],
     record: { status: 'absent' },
-    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, effective: 0n },
-    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n },
+    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, effective: 0n, holdings: 'read', holdingsVerdict: null },
+    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, holdings: 'read', holdingsVerdict: null },
     heightAfter: 100,
     failed: false,
   };
@@ -114,7 +115,7 @@ describe('createFiguresVerifier — the seam the App knows', () => {
     const custom: FiguresResult = {
       ...emptyResult(),
       heightAfter: 4242,
-      karma: { proven: 5n, young: 0n, unchecked: 0n, absent: 0n, effective: 5n },
+      karma: { proven: 5n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, effective: 5n, holdings: 'read', holdingsVerdict: null },
     };
     const prove = (async (): Promise<FiguresResult> => custom) as typeof proveFigures;
     const v = createFiguresVerifier({
@@ -124,5 +125,189 @@ describe('createFiguresVerifier — the seam the App knows', () => {
     });
     const got = await v.run('https://a.example', USER, emptyListing(), anchorFor(200));
     expect(got).toBe(custom);
+  });
+});
+
+// A run is bounded at 60 seconds: a request a run would make later rejects
+// before the network sees it, the tool reads it as not served, the run ends
+// and the row has a line (WEB_INTERFACE → The extension → "The verified
+// figures"). The cases pin the bound, the deadline being a run's own and
+// the ledger reading muted *the node served no proof for …* through
+// `figuresLine`.
+describe('createFiguresVerifier — a run ends', () => {
+  const DEADLINE_MS = 60_000;
+  const KEY_HEX = 'aa'.repeat(32);
+
+  it('every real network call began at or before 60 s, the ledgers read no-proof', async () => {
+    const clock = { ms: 0 };
+    const now = () => clock.ms;
+    const callTimes: number[] = [];
+    // Each fetch advances the clock 40 s before returning a 404, so by the
+    // third fetch the deadline has passed and the next request rejects
+    // before the base fetch is reached.
+    const baseFetch: HttpFetch = (_url) => {
+      callTimes.push(clock.ms);
+      clock.ms += 40_000;
+      return Promise.resolve(new Response(JSON.stringify({ error: 'not found' }), { status: 404 }));
+    };
+    const listing: Listing = {
+      karma: { boxes: [{ boxId: 'bb'.repeat(32), value: '7' }], height: 500, effective: '7' },
+      credits: { boxes: [{ boxId: 'cc'.repeat(32), value: '100000000' }] },
+    };
+    const v = createFiguresVerifier({
+      network: 'testnet',
+      fetch: baseFetch,
+      prove: realProveFigures,
+      now,
+    });
+    const result = await v.run('https://a.example', KEY_HEX, listing, anchorFor(500));
+    expect(result.karma.holdings).toBe('no-proof');
+    expect(result.credits.holdings).toBe('no-proof');
+    // Every real network call began at or before the deadline; a call later
+    // than it is rejected before the base fetch is reached.
+    expect(callTimes.length).toBeGreaterThan(0);
+    for (const t of callTimes) expect(t).toBeLessThanOrEqual(DEADLINE_MS);
+    // The clock passed the deadline during the run.
+    expect(clock.ms).toBeGreaterThan(DEADLINE_MS);
+  });
+
+  it('a run inside the deadline reaches every request', async () => {
+    const clock = { ms: 0 };
+    const now = () => clock.ms;
+    const seen: string[] = [];
+    const fetch: HttpFetch = (url) => {
+      clock.ms += 10;
+      seen.push(new URL(url, 'http://a').pathname);
+      return Promise.resolve(new Response(JSON.stringify({ error: 'not found' }), { status: 404 }));
+    };
+    const listing: Listing = {
+      karma: { boxes: [{ boxId: 'bb'.repeat(32), value: '7' }], height: 500, effective: '7' },
+      credits: { boxes: [{ boxId: 'cc'.repeat(32), value: '100000000' }] },
+    };
+    const v = createFiguresVerifier({
+      network: 'testnet',
+      fetch,
+      prove: realProveFigures,
+      now,
+    });
+    await v.run('https://a.example', KEY_HEX, listing, anchorFor(500));
+    // The record at suffixHead, each ledger's range at suffixHead and
+    // `/blocks/current` — four requests all under the deadline.
+    expect(seen.some((p) => p.startsWith('/api/v1/proof/'))).toBe(true);
+    expect(seen.some((p) => p.startsWith('/api/v1/range/'))).toBe(true);
+    expect(seen).toContain('/blocks/current');
+    expect(seen.length).toBeGreaterThanOrEqual(4);
+    // The run finished well inside the deadline.
+    expect(clock.ms).toBeLessThan(DEADLINE_MS);
+  });
+
+  it('the deadline is a run\'s own — a second run begins a fresh 60 seconds', async () => {
+    const clock = { ms: 0 };
+    const now = () => clock.ms;
+    const callTimes: number[] = [];
+    const fetch: HttpFetch = (_url) => {
+      callTimes.push(clock.ms);
+      return Promise.resolve(new Response(JSON.stringify({ error: 'not found' }), { status: 404 }));
+    };
+    const prove = (async (
+      _nodeUrl: string,
+      _user: string,
+      _listing: Listing,
+      _anchor: Anchor,
+      _profile: NetworkProfile,
+      f: HttpFetch,
+    ): Promise<FiguresResult> => {
+      await f('http://a/api/v1/proof/' + KEY_HEX);
+      return emptyResult();
+    }) as typeof proveFigures;
+    const v = createFiguresVerifier({
+      network: 'testnet',
+      fetch,
+      prove,
+      now,
+    });
+    await v.run('https://a.example', KEY_HEX, emptyListing(), anchorFor(500));
+    expect(callTimes).toHaveLength(1);
+    // Push the clock far past the first run's deadline before the second
+    // begins.
+    clock.ms += 10 * DEADLINE_MS;
+    await v.run('https://a.example', KEY_HEX, emptyListing(), anchorFor(500));
+    // The second run's request reached the base fetch — the first run's
+    // deadline did not carry over.
+    expect(callTimes).toHaveLength(2);
+    expect(callTimes[1]).toBeGreaterThan(DEADLINE_MS);
+  });
+
+  it('a request at exactly 60 000 ms reaches the base fetch; at 60 001 ms it rejects', async () => {
+    // The contract says *later than* 60 seconds — exactly 60 000 ms is still
+    // inside the deadline (WEB_INTERFACE → The extension → "The verified
+    // figures"). A `>=` in place of the `>` on `RUN_DEADLINE_MS` fails this.
+    const clock = { ms: 0 };
+    const now = () => clock.ms;
+    const calledAt: number[] = [];
+    const baseFetch: HttpFetch = (_url) => {
+      calledAt.push(clock.ms);
+      return Promise.resolve(new Response(JSON.stringify({ error: 'not found' }), { status: 404 }));
+    };
+    const prove = (async (
+      _nodeUrl: string,
+      _user: string,
+      _listing: Listing,
+      _anchor: Anchor,
+      _profile: NetworkProfile,
+      f: HttpFetch,
+    ): Promise<FiguresResult> => {
+      clock.ms = DEADLINE_MS;
+      let rejectedAt60000 = false;
+      try { await f('http://a/api/v1/proof/' + KEY_HEX); }
+      catch { rejectedAt60000 = true; }
+      clock.ms = DEADLINE_MS + 1;
+      let rejectedAt60001 = false;
+      try { await f('http://a/api/v1/proof/' + KEY_HEX); }
+      catch { rejectedAt60001 = true; }
+      expect(rejectedAt60000).toBe(false);
+      expect(rejectedAt60001).toBe(true);
+      return emptyResult();
+    }) as typeof proveFigures;
+    const v = createFiguresVerifier({
+      network: 'testnet',
+      fetch: baseFetch,
+      prove,
+      now,
+    });
+    await v.run('https://a.example', KEY_HEX, emptyListing(), anchorFor(500));
+    // The base fetch saw exactly one call, at the 60 000 ms boundary.
+    expect(calledAt).toEqual([DEADLINE_MS]);
+  });
+
+  it('through figuresLine the ledger reads muted "the node served no proof for 1 $NOTIS"', async () => {
+    const { figuresLine } = await import('../src/model/figures-line');
+    const clock = { ms: 0 };
+    const now = () => clock.ms;
+    const baseFetch: HttpFetch = (_url) => {
+      clock.ms += 40_000;
+      return Promise.resolve(new Response(JSON.stringify({ error: 'not found' }), { status: 404 }));
+    };
+    const v = createFiguresVerifier({
+      network: 'testnet',
+      fetch: baseFetch,
+      prove: realProveFigures,
+      now,
+    });
+    const listing: Listing = {
+      karma: { boxes: [{ boxId: 'bb'.repeat(32), value: '7' }], height: 500, effective: '7' },
+      credits: { boxes: [{ boxId: 'cc'.repeat(32), value: '100000000' }] },
+    };
+    const result = await v.run('https://a.example', KEY_HEX, listing, anchorFor(500));
+    const line = figuresLine({
+      ledger: 'credits',
+      verdict: { kind: 'verified', nodes: 2, height: 500 },
+      result,
+      shown: 0n,
+      suffixHeight: 481,
+      boxCount: 1,
+      height: 500,
+    });
+    expect(line).toEqual({ text: 'the node served no proof for 1 $NOTIS', weight: 'muted' });
   });
 });

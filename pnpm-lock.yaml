@@ -17,8 +17,8 @@ importers:
         specifier: workspace:*
         version: link:../validation
       '@ergots/avltree':
-        specifier: ^0.5.0
-        version: 0.5.0
+        specifier: ^0.6.0
+        version: 0.6.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -128,8 +128,8 @@ importers:
         specifier: workspace:*
         version: link:../validation
       '@ergots/avltree':
-        specifier: ^0.5.0
-        version: 0.5.0
+        specifier: ^0.6.0
+        version: 0.6.0
       better-sqlite3:
         specifier: ^11.0.0
         version: 11.10.0
@@ -266,6 +266,9 @@ importers:
       '@dagsocial/nipopow':
         specifier: workspace:*
         version: link:../../packages/nipopow
+      '@dagsocial/nipopow-client':
+        specifier: workspace:*
+        version: link:../nipopow-client
       '@dagsocial/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -316,6 +319,9 @@ importers:
 
   tools/nipopow-client:
     dependencies:
+      '@dagsocial/consensus':
+        specifier: workspace:*
+        version: link:../../packages/consensus
       '@dagsocial/nipopow':
         specifier: workspace:*
         version: link:../../packages/nipopow
@@ -326,8 +332,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/validation
       '@ergots/avltree':
-        specifier: ^0.4.0
-        version: 0.4.0
+        specifier: ^0.6.0
+        version: 0.6.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -401,12 +407,8 @@ packages:
     resolution: {integrity: sha512-WXTuFvL3G+74SchFAtz3FgIYVOe196ycvGsMgvSH/8Goptb1qpIQtIuM4SOK9G9lhMWYpHxnXyy544ZhluFOew==}
     engines: {node: '>=6'}
 
-  '@ergots/avltree@0.4.0':
-    resolution: {integrity: sha512-47u+8qZID8DzANyjJbfebJp2dTG+B4/GnUQcURVYK2RYd4uj2yvU+oLDaGPhPGA759Bkq+qEU864FOWZB3SpLw==}
-    engines: {node: '>=20'}
-
-  '@ergots/avltree@0.5.0':
-    resolution: {integrity: sha512-nwpPkJQAZML0PceLLI/8KE3Ym7Q+l8/roDvXpJ6rDj9jQcN+/22HUClH0Qv8zNcR0pt4GTA4I3dr1KDtFHCWrg==}
+  '@ergots/avltree@0.6.0':
+    resolution: {integrity: sha512-OXJdNgxUK+NQu2nxbNrNELf99oxqe6Z+WKqoEGtZh/5TXLQ639t+h4L7ZWxMVhaQzR62XQJvsOeMidJFUd6pmg==}
     engines: {node: '>=20'}
 
   '@esbuild/aix-ppc64@0.21.5':
@@ -2318,11 +2320,7 @@ snapshots:
       '@leichtgewicht/ip-codec': 2.0.5
       utf8-codec: 1.0.0
 
-  '@ergots/avltree@0.4.0':
-    dependencies:
-      '@noble/hashes': 2.2.0
-
-  '@ergots/avltree@0.5.0':
+  '@ergots/avltree@0.6.0':
     dependencies:
       '@noble/hashes': 2.2.0
 

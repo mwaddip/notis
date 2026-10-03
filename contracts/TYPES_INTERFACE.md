@@ -1845,7 +1845,7 @@ b32(postId)
 ```
 
 **One field, and one is the whole payload.** A withdrawal's effect is one post. Authorship is `inputKarma.owner`
-against that post's `block_topology` author, and the payload sits inside the `computeTxId`
+against that post's recorded author (`NODE_INTERFACE → Block Topology`), and the payload sits inside the `computeTxId`
 preimage, so there is no separate preimage to domain-tag and no `authorId` or signature of its
 own (NODE_INTERFACE → Withdrawal transactions).
 
@@ -3159,9 +3159,9 @@ export const MAX_BLOCK_COST = 600_000;    // consensus — the budget: 6 000 sig
 ```
 
 **A block's cost is `signatures × W_SIG + (lookups + writes) × W_OP`, and a block over `MAX_BLOCK_COST` is refused**
-(`CONSENSUS_INTERFACE → The block's cost`, which counts and checks it). The budget bounds what a leaf verifies — the
-body's signatures and the block's proof — where `MAX_BLOCK_BODY_BYTES` bounds what it downloads. The three numbers are
-provisional until a leaf's verification of a full block is measured (`CONSTANTS → The block's cost`).
+(`CONSENSUS_INTERFACE → The block's cost`, which counts and checks it). The budget bounds what a replay from the block's proof verifies — the
+body's signatures and the proof — where `MAX_BLOCK_BODY_BYTES` bounds what a node downloads. The three numbers are
+provisional (`CONSTANTS → The block's cost`).
 
 ### State format
 
@@ -3212,7 +3212,7 @@ used: the AVL+ library bounds the keyspace with an all-`0x00` and an all-`0xff` 
 | `0x18` | type | `enum8(boxType) ‖ b32(boxId)` — emission, treasury, karma pool or backer pool | `typeKey` |
 | `0x19` | cast-count | `b32(voucherId)` | `castCountKey` |
 
-**Every derivation lives here and nowhere else**, so the node and a leaf derive identical keys.
+**Every derivation lives here and nowhere else**, so the node and a light client derive identical keys.
 **Each one throws** on a field of the wrong width, a height that is not a safe non-negative integer, a
 name that is not valid and canonical, a box type outside the four — the fixed-width discipline, never
 a sentinel (→ Primitives). What each kind holds and which read uses it is

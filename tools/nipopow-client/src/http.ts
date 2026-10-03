@@ -55,14 +55,14 @@ export async function fetchJson<T>(
  * Nipopow).
  */
 export function capped(text: string): string {
-  let shown = '';
+  let out = '';
   // A string iterates by code point, a surrogate pair as one step.
   for (const ch of text) {
     const unit = isControl(ch) ? `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}` : ch;
-    if (shown.length + unit.length > VERDICT_TEXT_MAX) return `${shown}…`;
-    shown += unit;
+    if (out.length + unit.length > VERDICT_TEXT_MAX) return `${out}…`;
+    out += unit;
   }
-  return shown;
+  return out;
 }
 
 // C0 (U+0000–U+001F), DEL (U+007F) and C1 (U+0080–U+009F).
@@ -75,4 +75,36 @@ function isControl(ch: string): boolean {
  *  node's claims, each checked where a status is decided on it. */
 export function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/**
+ * A node's value as a verdict names it: a string quoted and capped, anything
+ * else by its kind. Never converted — a parsed object can carry a `toString`
+ * that is not a function, and converting it throws.
+ */
+export function shown(v: unknown): string {
+  if (typeof v === 'string') return `'${capped(v)}'`;
+  if (v === undefined) return 'missing';
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return 'an array';
+  return typeof v === 'object' ? 'an object' : `a ${typeof v}`;
+}
+
+/**
+ * NODE_INTERFACE → AVL+ State Root — the proof blob is standard base64,
+ * decoded with `atob`, a global in both browsers and Node 22. It throws on a
+ * character outside the alphabet or on a wrong length — caught here so a
+ * malformed blob from a lying node is a refused proof, `null`, never an
+ * exception out of the library.
+ */
+export function base64ToBytes(b64: string): Uint8Array | null {
+  let binary: string;
+  try {
+    binary = atob(b64);
+  } catch {
+    return null;
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }

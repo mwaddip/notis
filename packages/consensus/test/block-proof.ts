@@ -1,4 +1,4 @@
-import { BatchAVLProver, BatchAVLVerifier } from '@ergots/avltree';
+import { BatchAVLProver, StrictBatchAVLVerifier } from '@ergots/avltree';
 import type { AvlTreeConfig, NeighborLookup } from '@ergots/avltree';
 import { TREE_KEY_LENGTH, bytesToHex } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
@@ -110,6 +110,11 @@ export function proveBlock(
  * (CONSENSUS_INTERFACE → The tree session): the rules over `verifierSession`,
  * the writes derived over the same view and performed on the verifier, and the
  * digest they reach. A write the verifier refuses throws, naming its reason.
+ * The verifier is `StrictBatchAVLVerifier`, so `isFullyConsumed()` is asked
+ * once, after the last write and the digest, and a replay whose proof is not
+ * byte for byte the proof its operations write throws
+ * (CONSENSUS_INTERFACE → The tree session → "A block replays from its proof
+ * only on all of these").
  */
 export function replayBlock(
   parentDigest: Uint8Array,
@@ -117,7 +122,7 @@ export function replayBlock(
   block: OrderingBlock,
   ctx: ApplyContext,
 ): BlockRun & { digest: Uint8Array | null } {
-  const verifier = new BatchAVLVerifier(parentDigest, proof, TREE_CONFIG);
+  const verifier = new StrictBatchAVLVerifier(parentDigest, proof, TREE_CONFIG);
   const log = loggingSession(verifierSession(verifier));
   const run = runBlock(log, block, ctx);
   for (const write of run.writes) {
@@ -125,5 +130,9 @@ export function replayBlock(
       throw new Error(`the block's proof refuses ${write.tag} of ${bytesToHex(write.key)}: ${verifier.getLastFailReason()}`);
     }
   }
-  return { ...run, keys: log.keys, answers: log.answers, digest: verifier.digest() };
+  const digest = verifier.digest();
+  if (digest !== null && !verifier.isFullyConsumed()) {
+    throw new Error("the block's proof is not byte for byte the proof its operations write");
+  }
+  return { ...run, keys: log.keys, answers: log.answers, digest };
 }

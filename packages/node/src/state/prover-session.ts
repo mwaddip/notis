@@ -26,15 +26,20 @@ export function proverSession(prover: PersistentBatchAVLProver): TreeSession {
 /**
  * The recording session over this node's prover (NODE_INTERFACE → The block
  * proof): each lookup is the prover's `performLookupWithNeighbors`, so it joins
- * the proof the prover makes at its next checkpoint or `generateProof()`. Only
- * block application and the speculative run read through it; every other reader
- * takes `proverSession`, because a recorded lookup outside a block's cycle would
- * enter a block's proof.
+ * the proof the prover makes at its next checkpoint or `generateProof()`. Three
+ * callers read through it: `applyOrderingBlock` (block application),
+ * `computePostBlockStateRoot` (the speculative run) and the range route — a
+ * holdings page records in a cycle of its own, which closes with
+ * `generateProof()` inside one synchronous call and never enters a block's
+ * proof (NODE_INTERFACE → "A proof at an older height restores a kept root";
+ * → The block proof → "A proof route records in a cycle of its own").
  *
  * Its answers are `proverSession`'s — the sentinels, fresh arrays, the library's
  * throw for a key at either bound. A `{ success: false }` is a tree that
- * contradicts itself: `TreeInconsistencyError`, which both callers make
- * `InconsistentStateTreeError` (CONSENSUS_INTERFACE → The tree session).
+ * contradicts itself: `TreeInconsistencyError`, which each caller maps to
+ * `InconsistentStateTreeError` (CONSENSUS_INTERFACE → The tree session;
+ * NODE_INTERFACE → "A tree that contradicts itself under a route's read is
+ * local corruption").
  */
 export function recordingSession(prover: PersistentBatchAVLProver): TreeSession {
   return {

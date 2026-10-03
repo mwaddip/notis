@@ -33,7 +33,12 @@ performing the block's tree writes and writing its effects to the store, the jou
 execution, checked against the header's `adProofsRoot`, stored a week — less when the proofs kept pass
 `PROOF_RETENTION_BYTES` — and served by height, and its cost held to the budget, the creator packing to it by
 admission's cost estimates (NODE_INTERFACE → The block proof; MINING_INTERFACE → Template and submit → "Packing to the
-budget"). The node serves no client
+budget"). **The roots of its last `PROOF_WINDOW_BLOCKS` blocks are kept in memory by reference** — fewer while they
+hold more than `PROOF_WINDOW_NODES` nodes beyond the tree — (`src/state/recent-roots.ts`):
+a proof at an older height — one key (`GET /api/v1/proof/:key`) or a page of a key's holdings (`GET
+/api/v1/range/:kind/:owner`, `consensus`' `holdingsPage` over a recording session) — restores a kept root and never the
+store's version, and a reorg restores its fork point the same way; a refused block leaves the kept roots as they were
+(NODE_INTERFACE → AVL+ State Root → "A proof at an older height restores a kept root"). The node serves no client
 (NODE_INTERFACE → The node serves no client).
 
 - **Owns:** `src/server.ts`, `src/routes/*`, `src/services/*`, `src/store/*`, `src/state/*` (AVL+).

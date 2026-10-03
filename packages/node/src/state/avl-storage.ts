@@ -23,6 +23,13 @@ import { DuplicateStateVersionError } from '../services/corrupt-state.js';
 export class SqliteAvlStorage implements VersionedAVLStorage {
   private db: Database.Database;
   private config: AvlTreeConfig;
+  /**
+   * The count of nodes the last `update` orphaned — the length of the
+   * `prover.removedNodes()` the call read (NODE_INTERFACE → "The count is
+   * the store's"). `0` before any `update` has run; a method answers it so
+   * the caller that records the kept root passes exactly that block's count.
+   */
+  private lastRemoved = 0;
 
   constructor(db: Database.Database, config: AvlTreeConfig) {
     this.db = db;
@@ -36,8 +43,11 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
 
     // Valid here because `generateProofAndUpdateStorage` runs update before
     // the proof that rebases the cycle: the previous cycle's nodes whose
-    // labels the current tree no longer holds.
+    // labels the current tree no longer holds. Called once per checkpoint;
+    // the length is recorded so a caller can read the block's count without
+    // walking the removed set a second time.
     const removed = prover.removedNodes();
+    this.lastRemoved = removed.length;
 
     const orphan = this.db.prepare(
       'UPDATE avl_tree_nodes SET orphaned_at_height = ? WHERE label = ? AND orphaned_at_height IS NULL',
@@ -200,6 +210,14 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
   flush(): void {
     // SQLite WAL is auto-flushed; explicit checkpoint for durability
     this.db.pragma('wal_checkpoint(TRUNCATE)');
+  }
+
+  /**
+   * The count of nodes the last `update` orphaned, `0` before any
+   * (NODE_INTERFACE → "The count is the store's").
+   */
+  lastRemovedCount(): number {
+    return this.lastRemoved;
   }
 }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { BatchAVLProver, PersistentBatchAVLProver, label } from '@ergots/avltree';
 import type { AvlNode } from '@ergots/avltree';
@@ -369,6 +369,54 @@ describe('SqliteAvlStorage', () => {
     insert(persisted, 3);
     expect(() => checkpoint(persisted, 2)).not.toThrow();
     expect(storage.version()).not.toBeNull();
+  });
+
+  // NODE_INTERFACE → "The count is the store's" — the count of nodes the last
+  // `update` orphaned, answered by `lastRemovedCount()`. `0` before any
+  // `update`; after a checkpoint, exactly `prover.removedNodes().length` as
+  // the call saw it. `removedNodes` is called once per checkpoint.
+  describe('lastRemovedCount — the store\'s count of a checkpoint\'s orphans', () => {
+    it('answers 0 before any update', () => {
+      const storage = new SqliteAvlStorage(db, AVL_CONFIG);
+      expect(storage.lastRemovedCount()).toBe(0);
+    });
+
+    it('after a checkpoint equals prover.removedNodes().length as update saw it, called exactly once', () => {
+      const storage = new SqliteAvlStorage(db, AVL_CONFIG);
+      const inner = new BatchAVLProver(32, null);
+      const persisted = new PersistentBatchAVLProver(
+        inner,
+        storage,
+        [[HEIGHT_SENTINEL, encodeHeight(0)]],
+      );
+
+      // Seed a tree with a few hundred keys at height 1 and spy on the
+      // prover's `removedNodes` so the test reads what `update` reads.
+      for (let i = 1; i <= 300; i++) insert(persisted, i);
+      const spy = vi.spyOn(inner, 'removedNodes');
+      checkpoint(persisted, 1);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const firstSeenLength = spy.mock.results[0]!.value.length;
+      expect(storage.lastRemovedCount()).toBe(firstSeenLength);
+
+      // A second checkpoint answers its own count, not a running total: the
+      // batch below removes six keys and inserts two more; the number is the
+      // length `update` reads at this call.
+      spy.mockClear();
+      for (let i = 10; i <= 15; i++) remove(persisted, i);
+      insert(persisted, 400);
+      insert(persisted, 401);
+      checkpoint(persisted, 2);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const secondSeenLength = spy.mock.results[0]!.value.length;
+      expect(storage.lastRemovedCount()).toBe(secondSeenLength);
+      // Not the first batch's count — the seed replaces nothing but the empty
+      // tree's sentinel; the second batch orphans the paths its removes and
+      // inserts walked.
+      expect(secondSeenLength).not.toBe(firstSeenLength);
+
+      spy.mockRestore();
+    });
   });
 });
 

@@ -1,4 +1,5 @@
 import {
+  TREE_KEY_LENGTH,
   accrualOfRange,
   bondDueRange,
   boxFromRecordBytes,
@@ -54,6 +55,18 @@ import { isSentinel } from './tree-session.js';
 import type { TreeLookup, TreeSession } from './tree-session.js';
 import type { UsernameRow } from './utxo-engine.js';
 
+/** One leaf of a range the view walked (CONSENSUS_INTERFACE → The holdings page). */
+export interface TreeRangeEntry {
+  key: Uint8Array;
+  value: Uint8Array;
+}
+
+/** A page of a range's leaves and the first key not taken that is still in the range (CONSENSUS_INTERFACE → The holdings page). */
+export interface TreeRangePage {
+  entries: TreeRangeEntry[];
+  next: Uint8Array | null;
+}
+
 /**
  * The `StateView` the rules see, the one read the tree writes add to it, and the
  * count of what it looked up (CONSENSUS_INTERFACE → The tree view;
@@ -64,6 +77,17 @@ export interface TreeStateView extends StateView {
   castCountOf(voucherId: Uint8Array): number;
   /** The distinct keys this view has asked its session — a memoised read adds none. */
   lookupCount(): number;
+  /**
+   * A page of `range`'s leaves, in key order (CONSENSUS_INTERFACE → The
+   * holdings page). The walk starts at `rangeStart(range)` when `from` is
+   * null and at `from` otherwise, as a range read walks (CONSENSUS_INTERFACE
+   * → The tree view → "A range read walks"): a key that is a leaf is yielded,
+   * an absent one is stepped over to its next key. At most `limit` entries
+   * are taken. `next` is the first key the walk did not take that is still
+   * in `range`, or `null` where the range ends. A next key the tree names
+   * and a lookup of it answers absent is a tree that contradicts itself.
+   */
+  pageRange(range: TreeRange, from: Uint8Array | null, limit: number): TreeRangePage;
 }
 
 /**
@@ -87,7 +111,7 @@ export function treeStateView(session: TreeSession): TreeStateView {
 
 // Where an index key carries the box id it names, and a `lapsed` key its
 // identity — the tag, then the fields in order (TYPES_INTERFACE → The tree keys).
-const OWNED_BOX_ID_AT = 33; // tag ‖ b32(owner) ‖ b32(boxId)
+export const OWNED_BOX_ID_AT = 33; // tag ‖ b32(owner) ‖ b32(boxId)
 const DUE_BOX_ID_AT = 9; // tag ‖ u64(height) ‖ b32(boxId)
 const TYPE_BOX_ID_AT = 2; // tag ‖ enum8(boxType) ‖ b32(boxId)
 const LAPSED_IDENTITY_AT = 1; // tag ‖ b32(identityId)
@@ -176,13 +200,14 @@ class TreeView implements TreeStateView {
     range: TreeRange,
     limit = Infinity,
     within: (key: Uint8Array) => boolean = () => true,
-  ): Generator<{ key: Uint8Array; value: Uint8Array }> {
+    from: Uint8Array | null = null,
+  ): Generator<{ key: Uint8Array; value: Uint8Array; nextKey: Uint8Array }> {
     if (limit <= 0) return;
-    const start = rangeStart(range);
+    const start = from ?? rangeStart(range);
     const first = this.look(start);
     let count = 0;
     if (first.found && within(start)) {
-      yield { key: start, value: first.value };
+      yield { key: start, value: first.value, nextKey: first.nextKey };
       count++;
     }
     let next = first.nextKey;
@@ -191,10 +216,45 @@ class TreeView implements TreeStateView {
       if (!step.found) {
         throw new TreeInconsistencyError(`the tree names ${bytesToHex(next)} as a next key and holds no leaf for it`);
       }
-      yield { key: next, value: step.value };
+      yield { key: next, value: step.value, nextKey: step.nextKey };
       count++;
       next = step.nextKey;
     }
+  }
+
+  /**
+   * The walk as a page (CONSENSUS_INTERFACE → The tree view → "`pageRange(range,
+   * from, limit)` is the walk as a page"): the range's leaves in key order from
+   * its start, or from `from`, at most `limit` of them, and `next` — the first
+   * key not taken that is still in the range, or `null` where the range ends.
+   * A page looks up at most `1 + 2 · limit` keys through the view.
+   *
+   * It refuses, with a `RangeError`, a `limit` that is not a positive integer
+   * and a `from` that is not a key of the range — `TREE_KEY_LENGTH` bytes
+   * carrying the range's prefix: a page that took nothing under a limit of
+   * zero would read as a range that ended, and a walk begun outside its range
+   * would yield another range's leaves.
+   */
+  pageRange(range: TreeRange, from: Uint8Array | null, limit: number): TreeRangePage {
+    if (!Number.isInteger(limit) || limit <= 0) {
+      throw new RangeError(`pageRange: limit must be a positive integer, got ${limit}`);
+    }
+    if (from !== null) {
+      if (from.length !== TREE_KEY_LENGTH) {
+        throw new RangeError(`pageRange: from must be ${TREE_KEY_LENGTH} bytes, got ${from.length}`);
+      }
+      if (!inRange(from, range)) {
+        throw new RangeError(`pageRange: from ${bytesToHex(from)} does not carry the range's prefix ${bytesToHex(range.prefix)}`);
+      }
+    }
+    const entries: TreeRangeEntry[] = [];
+    let last: Uint8Array | null = null;
+    for (const step of this.walk(range, limit, undefined, from)) {
+      entries.push({ key: step.key, value: step.value });
+      last = step.nextKey;
+    }
+    const next = last !== null && !isSentinel(last) && inRange(last, range) ? last : null;
+    return { entries, next };
   }
 
   /** The live box `id` names, of `boxType` — an entry naming no such box is a tree that contradicts itself. */

@@ -74,10 +74,11 @@ if grep -Fnq "chrome." dist/assets/*.js; then
 fi
 
 # The web bundle is handed no verifier — WEB_INTERFACE → "The build check
-# that keeps the web bundle honest". `nipopow/proof` is the tip verifier's one
-# request path and `api/v1/proof` is the figures verifier's (NODE_INTERFACE →
-# Nipopow, → AVL+ State Root), so a stray chunk that pulled either verifier
-# into the page script surfaces as a hit here.
+# that keeps the web bundle honest". `nipopow/proof` is the tip verifier's
+# request path, `api/v1/proof` is the figures' and the names' single-key path,
+# and `api/v1/range` is the figures' holdings-by-range path (NODE_INTERFACE →
+# Nipopow, → AVL+ State Root), so a stray chunk that pulled any verifier into
+# the page script surfaces as a hit here.
 if grep -Fnq "nipopow/proof" dist/assets/*.js; then
   echo "FAIL: nipopow/proof reference found in the web bundle (a verifier leaked into the zip)"
   grep -Fn "nipopow/proof" dist/assets/*.js | head -5
@@ -86,6 +87,11 @@ fi
 if grep -Fnq "api/v1/proof" dist/assets/*.js; then
   echo "FAIL: api/v1/proof reference found in the web bundle (the figures verifier leaked into the zip)"
   grep -Fn "api/v1/proof" dist/assets/*.js | head -5
+  exit 1
+fi
+if grep -Fnq "api/v1/range" dist/assets/*.js; then
+  echo "FAIL: api/v1/range reference found in the web bundle (the figures verifier's range path leaked into the zip)"
+  grep -Fn "api/v1/range" dist/assets/*.js | head -5
   exit 1
 fi
 

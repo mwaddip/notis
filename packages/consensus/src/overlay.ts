@@ -137,8 +137,9 @@ function readBackRow(row: UsernameRow | null): UsernameRow | null {
  * written.
  *
  * - **A keyed read** answers from the block's own entry first, the view's
- *   otherwise — but `block_topology` keeps a post's first confirmation, so
- *   there the view's row answers first.
+ *   otherwise — but the post record keeps a post's first confirmation
+ *   (NODE_INTERFACE → Block Topology → "Block application reads the record,
+ *   through the tree view"), so there the view's row answers first.
  * - **An unlimited query** composes the view's answer with the block's writes
  *   under the query's own order: the block's spent boxes out, its live inserts
  *   in.
@@ -218,9 +219,10 @@ export class BlockOverlay implements StateView {
   }
 
   /**
-   * `block_topology` keeps the first confirmation of a post id, so a row the
-   * view holds answers ahead of the block's own (NODE_INTERFACE → Block
-   * Topology).
+   * The post record keeps the first confirmation of a post id
+   * (NODE_INTERFACE → Block Topology → "Block application reads the record,
+   * through the tree view"), so a row the view holds answers ahead of the
+   * block's own.
    */
   getTopologyAuthor(postId: string): Uint8Array | null {
     const fromView = this.view.getTopologyAuthor(postId);

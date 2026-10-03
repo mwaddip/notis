@@ -1,9 +1,9 @@
 import { bytesToHex, canonicalUsernameBytes, firstDifference, isValidUsernameBytes } from '@dagsocial/types';
 import type { DecodedBoxCandidate } from '@dagsocial/types';
 import type { Anchor } from './boxes.js';
-import { HEX_64, excludedAtBoth, proveBoxAtHeight, readHeightAfter, shown } from './boxes.js';
+import { HEX_64, excludedAtBoth, proveBoxAtHeight, readHeightAfter } from './boxes.js';
 import type { HttpFetch } from './http.js';
-import { capped, fetchJson, isRecord } from './http.js';
+import { capped, fetchJson, isRecord, shown } from './http.js';
 
 /**
  * WEB_INTERFACE → The extension → "The verified names" — a label is a key and

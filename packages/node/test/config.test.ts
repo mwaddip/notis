@@ -40,6 +40,8 @@ const TEST_KEYS = [
   'MAX_PROOF_HISTORY',
   'PROOF_RETENTION_BLOCKS',
   'PROOF_RETENTION_BYTES',
+  'PROOF_WINDOW_BLOCKS',
+  'PROOF_WINDOW_NODES',
 ];
 
 function clearTestEnv() {
@@ -780,6 +782,73 @@ describe('config', () => {
       await expect(importWithRetention('-1')).rejects.toThrow(/PROOF_RETENTION_BLOCKS/);
       vi.resetModules();
       await expect(importWithRetention('2.5')).rejects.toThrow(/PROOF_RETENTION_BLOCKS/);
+    });
+  });
+
+  // NODE_INTERFACE → "A proof at an older height restores a kept root" —
+  // `PROOF_WINDOW_BLOCKS`, `local`, the last blocks whose roots the node
+  // keeps in memory.
+  describe('15a. PROOF_WINDOW_BLOCKS', () => {
+    function importWithWindow(value: string) {
+      process.env['PROOF_WINDOW_BLOCKS'] = value;
+      return import('../src/config.js');
+    }
+
+    it('defaults to 64', async () => {
+      const { loadConfig } = await import('../src/config.js');
+      expect(loadConfig().proofWindowBlocks).toBe(64);
+    });
+
+    it('reads a set value, zero and a thousand included', async () => {
+      const { loadConfig } = await importWithWindow('1000');
+      expect(loadConfig().proofWindowBlocks).toBe(1_000);
+      vi.resetModules();
+      expect((await importWithWindow('0')).loadConfig().proofWindowBlocks).toBe(0);
+    });
+
+    // Refused rather than defaulted: a window nobody can read is a policy
+    // nobody chose.
+    it('refuses a value that is not a non-negative integer', async () => {
+      await expect(importWithWindow('abc')).rejects.toThrow(/PROOF_WINDOW_BLOCKS/);
+      vi.resetModules();
+      await expect(importWithWindow('-1')).rejects.toThrow(/PROOF_WINDOW_BLOCKS/);
+      vi.resetModules();
+      await expect(importWithWindow('1.5')).rejects.toThrow(/PROOF_WINDOW_BLOCKS/);
+      vi.resetModules();
+      await expect(importWithWindow('')).rejects.toThrow(/PROOF_WINDOW_BLOCKS/);
+    });
+  });
+
+  // NODE_INTERFACE → "The count is the store's" — `PROOF_WINDOW_NODES`,
+  // `local`, the most nodes the kept roots hold beyond the live tree.
+  describe('15b. PROOF_WINDOW_NODES', () => {
+    function importWithNodes(value: string) {
+      process.env['PROOF_WINDOW_NODES'] = value;
+      return import('../src/config.js');
+    }
+
+    it('defaults to 250000', async () => {
+      const { loadConfig } = await import('../src/config.js');
+      expect(loadConfig().proofWindowNodes).toBe(250_000);
+    });
+
+    it('reads a set value, zero and a million included', async () => {
+      const { loadConfig } = await importWithNodes('1000000');
+      expect(loadConfig().proofWindowNodes).toBe(1_000_000);
+      vi.resetModules();
+      expect((await importWithNodes('0')).loadConfig().proofWindowNodes).toBe(0);
+    });
+
+    // Refused rather than defaulted, for the same reason PROOF_WINDOW_BLOCKS
+    // is: a cap nobody can read is a policy nobody chose.
+    it('refuses a value that is not a non-negative integer', async () => {
+      await expect(importWithNodes('abc')).rejects.toThrow(/PROOF_WINDOW_NODES/);
+      vi.resetModules();
+      await expect(importWithNodes('-1')).rejects.toThrow(/PROOF_WINDOW_NODES/);
+      vi.resetModules();
+      await expect(importWithNodes('1.5')).rejects.toThrow(/PROOF_WINDOW_NODES/);
+      vi.resetModules();
+      await expect(importWithNodes('')).rejects.toThrow(/PROOF_WINDOW_NODES/);
     });
   });
 

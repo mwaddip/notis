@@ -985,7 +985,7 @@ every export's signature, 2026-08-13, rather than by grepping for `outputs`. A
 bound stated here would be a dead export.
 
 Its live subject is the seeder that writes the box, plus the single readback path
-that decodes one (`node`'s `avl-endpoint.ts`, serving `GET /api/v1/proof/:boxId`).
+that decodes one (`node`'s `avl-endpoint.ts`, serving `GET /api/v1/proof/:key`).
 ⚠ **There is no peer-sync decode path**: `packages/net/src` decodes no boxes at
 all, measured 2026-08-13. An earlier form of this sentence named one, which is
 the failure this contract warns about two sections up — a rule justified by a

@@ -208,13 +208,13 @@ const verified = (height: number): { verdict: TipVerdict; anchor: Anchor } => ({
 function emptyResult(): FiguresResult {
   return {
     boxes: [], record: { status: 'absent' },
-    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, effective: 0n },
-    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n },
+    karma: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, effective: 0n, holdings: 'read', holdingsVerdict: null },
+    credits: { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, holdings: 'read', holdingsVerdict: null },
     heightAfter: 0, failed: false,
   };
 }
 const karmaIds = (c: FigureCall): string[] => c.listing.karma.boxes.map((b) => b.boxId);
-const creditIds = (c: FigureCall): string[] => c.listing.credits.boxes.map((b) => b.boxId);
+const creditIds = (c: FigureCall): string[] => c.listing.credits?.boxes.map((b) => b.boxId) ?? [];
 
 function confirmed(id: string, over: Partial<PostResult> = {}): PostResult {
   return {
@@ -328,7 +328,7 @@ describe('a figures run proves a listing read after its anchor, and never one re
     expect(h.figuresCalls).toHaveLength(0);
   });
 
-  it('the wallet closed, a verified tip reads /karma alone and passes the credits listing empty', async () => {
+  it('the wallet closed, a verified tip reads /karma alone and passes the credits listing not read', async () => {
     setNode(NODE);
     const h = harness({ layout: '@profile|@wallet', verifiers: true });
     await h.drive.loadMembershipState();
@@ -343,10 +343,10 @@ describe('a figures run proves a listing read after its anchor, and never one re
     expect(h.node.count('karma')).toBe(karmaBefore + 1);
     expect(h.node.count('credits')).toBe(creditsBefore);
     expect(h.figuresCalls).toHaveLength(1);
-    expect(creditIds(h.figuresCalls[0]!)).toEqual([]);
+    expect(h.figuresCalls[0]!.listing.credits).toBeNull();
   });
 
-  it('the wallet open, a verified tip reads /credits too: the karma write runs with credits empty, the credits write marks exactly one more run with both', async () => {
+  it('the wallet open, a verified tip reads /credits too: the karma write runs with credits not read, the credits write marks exactly one more run with both', async () => {
     setNode(NODE);
     const h = harness({ layout: '@profile|@wallet', verifiers: true });
     await h.drive.loadMembershipState();
@@ -357,7 +357,7 @@ describe('a figures run proves a listing read after its anchor, and never one re
     await flush();
     expect(h.node.count('credits')).toBe(creditsBefore + 1);
     expect(h.figuresCalls).toHaveLength(1);
-    expect(creditIds(h.figuresCalls[0]!)).toEqual([]);
+    expect(h.figuresCalls[0]!.listing.credits).toBeNull();
 
     h.figuresCalls[0]!.resolve(emptyResult());
     await flush();
@@ -395,7 +395,7 @@ describe('a figures run proves a listing read after its anchor, and never one re
         { boxId: K2, boxClass: 'karma', value: 209n, lockedUntilBlock: null, status: 'proven', verdict: '' },
         { boxId: K3, boxClass: 'karma', value: 5n, lockedUntilBlock: null, status: 'young', verdict: '' },
       ],
-      karma: { proven: 209n, young: 5n, unchecked: 0n, absent: 0n, effective: 209n },
+      karma: { proven: 209n, young: 5n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, effective: 209n, holdings: 'read', holdingsVerdict: null },
       heightAfter: 1104,
     });
     await flush();

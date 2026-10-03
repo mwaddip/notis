@@ -135,6 +135,22 @@ describe('nipopow-client', () => {
       boxes: { boxId: string; class: string; value: string; status: string; verdict: string }[];
       karmaTotal: string;
       creditTotal: string;
+      karma: {
+        holdings: string;
+        holdingsVerdict: string | null;
+        proven: string;
+        unlisted: string;
+        undecided: string;
+        absent: string;
+      };
+      credits: {
+        holdings: string;
+        holdingsVerdict: string | null;
+        proven: string;
+        unlisted: string;
+        undecided: string;
+        absent: string;
+      };
     };
 
     // Tip equals both nodes' /blocks/current
@@ -170,6 +186,21 @@ describe('nipopow-client', () => {
     // Karma total equals /karma/:user's total (face values)
     expect(json.karmaTotal).toBe(memberKarma.total);
 
+    // Each ledger carries its own `holdings` status beside its boxes'
+    // (WEB_INTERFACE → The extension → "Each ledger's read carries a status
+    // of its own beside its boxes'"). Under an honest two-node mesh both
+    // ledgers' ranges verify: karma reads the member's listing whole, and
+    // the credits range (empty for a non-granted key) reads too — no
+    // `unlisted` box, no `undecided` box.
+    expect(json.karma.holdings).toBe('read');
+    expect(json.karma.holdingsVerdict).toBeNull();
+    expect(json.karma.unlisted).toBe('0');
+    expect(json.karma.undecided).toBe('0');
+    expect(json.credits.holdings).toBe('read');
+    expect(json.credits.holdingsVerdict).toBeNull();
+    expect(json.credits.unlisted).toBe('0');
+    expect(json.credits.undecided).toBe('0');
+
     // ---- negative: single URL without --allow-single → exit 2 ----
     const singleResult = await runTool(
       ['--m', String(M), '--k', String(K), '--user', member.publicKeyHex, '--json'],
@@ -179,6 +210,12 @@ describe('nipopow-client', () => {
     expect(singleResult.stderr).toContain('at least 2 node URLs');
 
     // ---- negative: key with no boxes → exit 0, empty ----
+    // The node answers /karma and /credits with 200 and the current height
+    // for a hex key it has never seen, so fetchListing returns an empty
+    // listing with `karma.height` equal to the live tip — inside the
+    // valuation range (WEB_INTERFACE → The extension → "That height is the
+    // node's word, and is taken only from `tip.height` to `heightAfter`") —
+    // and the run succeeds with every total at zero.
     const unknown = fresh();
     const emptyResult = await runTool(
       ['--m', String(M), '--k', String(K), '--user', unknown.publicKeyHex, '--json'],
@@ -189,9 +226,17 @@ describe('nipopow-client', () => {
       boxes: unknown[];
       karmaTotal: string;
       creditTotal: string;
+      karma: { holdings: string; unlisted: string; undecided: string };
+      credits: { holdings: string; unlisted: string; undecided: string };
     };
     expect(emptyJson.boxes).toEqual([]);
     expect(emptyJson.karmaTotal).toBe('0');
     expect(emptyJson.creditTotal).toBe('0');
+    expect(emptyJson.karma.holdings).toBe('read');
+    expect(emptyJson.karma.unlisted).toBe('0');
+    expect(emptyJson.karma.undecided).toBe('0');
+    expect(emptyJson.credits.holdings).toBe('read');
+    expect(emptyJson.credits.unlisted).toBe('0');
+    expect(emptyJson.credits.undecided).toBe('0');
   });
 });

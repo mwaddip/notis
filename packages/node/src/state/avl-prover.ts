@@ -1,5 +1,6 @@
 import { BatchAVLProver, PersistentBatchAVLProver } from '@ergots/avltree';
 import { SqliteAvlStorage } from './avl-storage.js';
+import { RecentRoots } from './recent-roots.js';
 import { getDb, isCurrentDb } from '../store/db.js';
 import { config } from '../config.js';
 import { DivergedStateTreeError } from '../services/corrupt-state.js';
@@ -29,14 +30,22 @@ let singletonDb: import('better-sqlite3').Database | null = null;
 
 /** The singleton, while the database it was built over is the open one. */
 function singleton(): AvlProverHandle | null {
-  if (!persistentProver || !storage || !singletonDb || !isCurrentDb(singletonDb)) return null;
-  return { prover: persistentProver, storage };
+  if (!persistentProver || !storage || !singletonDb || !recentRoots || !isCurrentDb(singletonDb)) return null;
+  return { prover: persistentProver, storage, recentRoots };
 }
 
 export interface AvlProverHandle {
   prover: PersistentBatchAVLProver;
   storage: SqliteAvlStorage;
+  /**
+   * The last blocks' roots this node keeps in memory (NODE_INTERFACE → "A
+   * proof at an older height restores a kept root"). The ring and the
+   * handle live for the same lifetime — the open database's.
+   */
+  recentRoots: RecentRoots;
 }
+
+let recentRoots: RecentRoots | null = null;
 
 /**
  * Create or return the singleton AVL prover.
@@ -63,14 +72,33 @@ export function createAvlProver(db?: import('better-sqlite3').Database): AvlProv
     [HEIGHT_SENTINEL, encodeHeight(0)], // initial height, updated on first block
   ]);
 
+  // The ring is per-handle: tests spin up fresh provers over the same store,
+  // and a module-level ring would leak between them.
+  const newRecentRoots = new RecentRoots(config.proofWindowBlocks, config.proofWindowNodes);
+  // NODE_INTERFACE → "After a restart the node holds its tip's root alone".
+  // The ring is seeded with the version the constructor loaded, whatever its
+  // height — on a store with a chain, that is the tip; on a fresh store, it
+  // is the empty tree at height 0, which `bootstrapAvlProver` replaces
+  // during genesis seeding and `genesis-state`'s failure clears. The seed
+  // records `0` — nothing was replaced to make the loaded root, it is the
+  // store's own version.
+  const loadedVersion = newStorage.version();
+  if (loadedVersion !== null) {
+    const loadedHeight = newStorage.versionHeight(loadedVersion);
+    if (loadedHeight !== null) {
+      newRecentRoots.record(loadedHeight, innerProver.root, innerProver.height, 0);
+    }
+  }
+
   // Only cache when using the global database
   if (!db) {
     storage = newStorage;
     persistentProver = newProver;
     singletonDb = database;
+    recentRoots = newRecentRoots;
   }
 
-  return { prover: newProver, storage: newStorage };
+  return { prover: newProver, storage: newStorage, recentRoots: newRecentRoots };
 }
 
 /**
@@ -117,6 +145,15 @@ export function bootstrapAvlProver(
   handle.prover.generateProofAndUpdateStorage([
     [HEIGHT_SENTINEL, encodeHeight(height)],
   ]);
+  // The checkpoint stands — record the kept root (NODE_INTERFACE → "A proof
+  // at an older height restores a kept root") with the store's count of nodes
+  // the checkpoint orphaned (NODE_INTERFACE → "The count is the store's").
+  handle.recentRoots.record(
+    height,
+    handle.prover.prover.root,
+    handle.prover.prover.height,
+    handle.storage.lastRemovedCount(),
+  );
 }
 
 /**

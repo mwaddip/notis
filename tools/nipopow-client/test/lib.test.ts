@@ -4,7 +4,8 @@ import { describe, it, expect, vi } from 'vitest';
 import type {
   TipResult, NodeTipResult,
   ListedBox, Listing, ListingResult,
-  Anchor, FigureStatus, FigureBox, RecordResult, LedgerSums, FiguresResult,
+  Anchor, FigureStatus, FigureBox, RecordResult, LedgerSums, FiguresResult, HoldingsRead,
+  RangeResult, HoldingKind,
   NameClaim, NameStatus, NameResult,
   HttpFetch, VerifyProfile,
 } from '../src/lib.js';
@@ -27,9 +28,9 @@ describe('library entry', () => {
       'DEFAULT_K',
       'DEFAULT_M',
       'fetchListing',
-      'proveBoxes',
       'proveFigures',
       'proveName',
+      'proveRange',
       'resolveTip',
       'verifierProfile',
     ]);
@@ -61,6 +62,9 @@ describe('library entry', () => {
     const _rr: RecordResult | null = null;
     const _ls: LedgerSums | null = null;
     const _fr: FiguresResult | null = null;
+    const _hr: HoldingsRead | null = null;
+    const _rrs: RangeResult | null = null;
+    const _hk: HoldingKind | null = null;
     const _nc: NameClaim | null = null;
     const _ns: NameStatus | null = null;
     const _nr: NameResult | null = null;
@@ -68,6 +72,7 @@ describe('library entry', () => {
     const _p: VerifyProfile | null = null;
     void _t; void _n; void _lb; void _l; void _lr; void _a;
     void _fs; void _fb; void _rr; void _ls; void _fr;
+    void _hr; void _rrs; void _hk;
     void _nc; void _ns; void _nr;
     void _f; void _p;
     expect(true).toBe(true);

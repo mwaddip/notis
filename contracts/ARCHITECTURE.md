@@ -347,9 +347,9 @@ transactions). It is free — the post paid its price at posting (§The post pri
 by the author's own signature over the withdrawal transaction, and it is the whole of what an author
 may do to a post after posting it — a like, the other act over a post, is never the author's
 (§Likes). Who "the author" is, is itself consensus data: every confirmed
-post's `author` is the signer of its creating transaction, recorded at confirmation in
-`block_topology`, and a withdrawal is valid only if the karma input's owner equals that recorded
-author (audit H-3) — so a signature from anyone else, however valid for its own key, authorizes
+post's `author` is the signer of its creating transaction, recorded at confirmation in the post's
+record under the state root (`CONSENSUS_INTERFACE → StateView`), and a withdrawal is valid only if the karma input's
+owner equals that recorded author (audit H-3) — so a signature from anyone else, however valid for its own key, authorizes
 nothing, and any node reaches the verdict with or without the DAG content.
 
 **No act reaches another author's post.** A reply belongs to the one who wrote it; the author of the
@@ -708,8 +708,9 @@ block header carries a `stateRoot` — the root hash of the AVL+ tree over the s
 to verify a box's or a record's existence or absence without storing the state.
 
 **Every read a consensus rule makes is a lookup under the state root** — one key, or a walk of one key range — so a
-leaf holding only a block's parent root can have each answer proven, and a leaf that proved a tip can prove what it
-holds against it, nothing left out. The tree holds the entities (boxes, identity, network, name and holder records,
+block replays from its parent's root and its proof alone (`CONSENSUS_INTERFACE → The tree session`), and a light
+client that proved a tip is shown what a key holds against it by range: its karma, its credits, its escrows, the
+vouches it cast and its like accruals, each whole (`CONSENSUS_INTERFACE → The holdings page`). The tree holds the entities (boxes, identity, network, name and holder records,
 post and like records) and index entries derived from each entity's own fields; the keys are
 `TYPES_INTERFACE → The tree keys`, what the tree holds and how a read walks it `CONSENSUS_INTERFACE → The tree layout`.
 
@@ -717,8 +718,8 @@ post and like records) and index entries derived from each entity's own fields; 
   against its parent's root (`CONSENSUS_INTERFACE → The block proof`); every node regenerates it from its own execution
   and refuses a block whose digest differs, keeps it a week and serves it by height (`NODE_INTERFACE → The block
   proof`). **A block's cost is bounded**: its signatures and its proof's operations, weighted, under `MAX_BLOCK_COST`
-  (`CONSENSUS_INTERFACE → The block's cost`) — what bounds a leaf's verification, where `MAX_BLOCK_BODY_BYTES` bounds
-  its download.
+  (`CONSENSUS_INTERFACE → The block's cost`) — what bounds the work of replaying it from its proof, where
+  `MAX_BLOCK_BODY_BYTES` bounds its bytes.
 
 - **Post-state, not parent-state (H-6).** `stateRoot` commits to the state the
   block *produces*, following Ergo. The block therefore commits to its own
@@ -728,9 +729,12 @@ post and like records) and index entries derived from each entity's own fields; 
   obtained without a second implementation of the state transition.
 
 - **Module:** `packages/node/src/state/` (avl-storage, avl-prover, avl-endpoint)
-- **Proof endpoint:** `GET /api/v1/proof/:key?atHeight=N` — returns an
-  inclusion or exclusion proof for a tree key at a given block height
-- **Config flags:** `MAX_PROOF_HISTORY` (`local` — prune old proof versions). The
+- **Proof endpoints:** `GET /api/v1/proof/:key?atHeight=N` — an inclusion or exclusion proof for a tree key — and
+  `GET /api/v1/range/:kind/:owner?atHeight=N` — a page of what a key holds of one kind, with its proof — each at
+  the tip or at a height the node keeps a root of (`NODE_INTERFACE → AVL+ State Root`)
+- **Config flags:** `MAX_PROOF_HISTORY` (`local` — the store's versions, kept for a reorg's walk),
+  `PROOF_WINDOW_BLOCKS` (`local` — the roots kept in memory, the heights the proof routes answer) and
+  `PROOF_WINDOW_NODES` (`local` — the nodes those roots may hold beyond the tree). The
   stateRoot check at block apply is unconditional — no variable disables it.
   The key width is no configuration at all — it is **`TREE_KEY_LENGTH`**, a
   `@dagsocial/types` export (TYPES_INTERFACE → State format), imported by `config.ts` and
@@ -904,12 +908,12 @@ sidecars and no standalone like pool.
   ⚠ **A like and a withdrawal of the same post in ONE block is legal**, and the phase order is
   why: the like applies first and counts, then the phase empties the post
   (NODE_INTERFACE → The withdrawal phase).
-- The target's author is resolved from **`block_topology`**, never `dag_posts.author`
-  (placeholder rows carry a zeroed author).
+- The target's author is **the post record's** — the one its confirmation recorded
+  (`NODE_INTERFACE → Block Topology`) — never `dag_posts.author` (placeholder rows carry a zeroed author).
 - `(liker, target)` must not already exist in the like-records — one like per account per
   post, structurally enforced: the key exists or it does not.
 - **A like is another's act.** The liker — the karma inputs' owner — is not the target's
-  author as `block_topology` records it. A self-like is invalid at admission and at apply
+  recorded author. A self-like is invalid at admission and at apply
   alike, refused by the like arm of `validateTx` beside the marker's author check
   (NODE_INTERFACE → Karma transition rules), so no like of one's own post reaches the
   counters that hold standing.
@@ -977,16 +981,16 @@ of arrival pattern — the floor runs over a running total, never over a per-win
 
 ### Like-records
 
-`(liker, targetPostId)` pairs, written only at block application. They are content-layer
-consensus state (the `block_topology` tier): deterministic by replay, journalled with exact
-inverses, **not** in the `stateRoot`.
+`(liker, targetPostId)` pairs, written only at block application. They are consensus state **under the
+state root** — one record a like, `like ‖ postId ‖ liker` (`TYPES_INTERFACE → The tree keys`) — which the
+one-like-per-post rule reads (`CONSENSUS_INTERFACE → StateView`).
 
 - **They survive withdraw, and nothing deletes them.** A withdrawal empties the post and keeps its
   row, its topology and its identity (NODE_INTERFACE → Withdrawal transactions); nothing in the
-  withdrawal phase touches `like_records` (NODE_INTERFACE → The withdrawal phase). A withdrawn post
+  withdrawal phase touches a like record (NODE_INTERFACE → The withdrawal phase). A withdrawn post
   cannot be liked, so from that block its records are a closed set: the withdrawn view serves no
   `likeCount` and no `likedByViewer`. Records follow the post.
-- The table holds one row per like ever applied, bounded by one like per `(liker, post)`; a
+- The tree holds one record per like ever applied, bounded by one like per `(liker, post)`; a
   withdrawn post accepts no new ones.
 
 ### The post price
@@ -999,7 +1003,7 @@ marker a like uses:
 ```
 thread   karma(K) → karma(K − POST_PRICE_THREAD) + KarmaPriceBox(POST_PRICE_THREAD)
 reply    karma(K) → karma(K − POST_PRICE_REPLY)  + KarmaPriceBox(POST_PRICE_REPLY − REPLY_AUTHOR_SHARE)
-                                                 + LikeAccrualBox(REPLY_AUTHOR_SHARE, author = the parent's block_topology author)
+                                                 + LikeAccrualBox(REPLY_AUTHOR_SHARE, author = the parent's recorded author)
 settlement   KarmaPriceBox(p) → pool(+p)         consumed in the block that created it
 ```
 
@@ -2033,14 +2037,12 @@ no object check compares against it and no producer stamps it.
 - The UTXO ledger's correctness is independent of the DAG's index state
   > **Holds since P2-D** (was FALSE AS DESIGNED: the epoch tally's author reward read a
   > `dag_likes` row count — a DAG index read inside a consensus mutation). Settlement now
-  > reads the block's own `LikeAccrualBox` markers, the carry boxes and `like_records` —
-  > consensus state written only at block application (`block_topology` tier), never by a
-  > route.
+  > reads the block's own `LikeAccrualBox` markers, the carry boxes and the like records —
+  > consensus state written only at block application, never by a route.
 - A withdrawal moves no karma: the post paid its price at posting (§The post price)
 - A like is a burn transaction plus a `(liker, post)` like-record — no box, no held
-  value. Like-records are content-layer consensus state (`block_topology` tier):
-  deterministic by replay, journalled with exact inverses, deleted by nothing, not in the
-  `stateRoot`. (`LikeBox` and the free-like tier are retired — P2-D.)
+  value. Like-records are consensus state under the state root (§Like-records), written only at
+  block application and deleted by nothing. (`LikeBox` and the free-like tier are retired — P2-D.)
 
 ### Cryptographic
 
@@ -2673,10 +2675,10 @@ backfill — and a withdrawn post keeps its row with `content` `NULL` and its ma
   transactions
 - Verifiable withdrawal: a karma transaction carrying a `PostWithdrawCommit`, Ed25519-signed, its
   effect deterministic from committed topology (the row emptied; nothing refunded)
-- AVL+ state root: authenticated dictionary over UTXO set, stateRoot in block
-  headers, `GET /api/v1/proof/:boxId` for light-client proofs
+- AVL+ state root: authenticated dictionary over everything the rules read, stateRoot in block
+  headers, `GET /api/v1/proof/:key` and `GET /api/v1/range/:kind/:owner` for light-client proofs
 - block_topology table (post_id, parent_refs, author, block_height — all
-  consensus-sourced) for subtree topology and withdrawal-authorship lookups
+  consensus-sourced), the views' and admission's copy of what a post's record holds under the root
 - libp2p networking with two-stage validation (stateless + stateful)
 - Credit emission: Ergo-style linear decay, treasury split, miner reward delay
 - ASERT difficulty schedule for ordering block PoW — anchored at block 1, read from the chain's own
@@ -2720,7 +2722,8 @@ backfill — and a withdrawn post keeps its row with `content` `NULL` and its ma
   pool). The Solana contract itself is outside this repository
 - **The backer unstake control in the web client**, and the profile window's copyable public key for the
   deposit flow (`WEB_INTERFACE`)
-- **A leaf that validates blocks without holding the state.** Every consensus read is a keyed record under the state
+- **A client that validates blocks without holding the state.** Every consensus read is a keyed record under the state
   root, and every block commits to the proof of its reads and writes (`CONSENSUS_INTERFACE → The tree layout`, `→ The
-  block proof`); what remains is **N4**, the leaf's verifier: the parent's root, the block and its proof, the rules over
-  `verifierSession`, the header's `stateRoot` reached
+  block proof`), so a block replays from its parent's root and its proof, and the suites replay each one
+  (`CONSENSUS_INTERFACE → The tree session`). No client does: the extension is a light node, which takes the tip on
+  proof of work and proves what it reads by lookups (`WEB_INTERFACE → The extension`)

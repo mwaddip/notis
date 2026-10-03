@@ -48,7 +48,7 @@ import {
   makeKarmaBox,
   makeLikeTx,
   makeTestConfig,
-  makeTestIdentity,
+  makeTestIdentityFromSeed,
   mineNextBlock,
   revertChainTo,
   signTransaction,
@@ -464,24 +464,48 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
   }
 
   beforeAll(async () => {
+    // Pin the block creator's validator keypair so validatorId does not
+    // change run-to-run (block-creator's startBlockCreator calls
+    // generateKeyPairSync). vi.doMock replaces the module before
+    // importNode re-imports it.
+    const validator = makeTestIdentityFromSeed('leaf-replay/validator');
+    vi.doMock('crypto', async () => {
+      const actual = await vi.importActual<typeof import('crypto')>('crypto');
+      const { createPublicKey } = actual;
+      const pinned = { publicKey: createPublicKey(validator.privateKey), privateKey: validator.privateKey };
+      return {
+        ...actual,
+        default: actual,
+        generateKeyPairSync: ((algo: string) => {
+          if (algo === 'ed25519') return pinned;
+          return actual.generateKeyPairSync(algo as 'ed25519');
+        }) as typeof actual.generateKeyPairSync,
+      };
+    });
     vi.resetModules();
     budget = blockBudgetSeam();
     node = await importNode();
     ctx = node.blockApply.applyContextFrom(node.config);
+    // Pin the difficulty-schedule clock so every createdAt is fixed.
+    let fakeNow = 1_700_000_000_000;
+    const { setClock } = await import('../../src/services/difficulty.js');
+    setClock(() => (fakeNow += 1000));
     node.db.initDb(':memory:');
 
     // Five roots, two accounts, a credit holder — committed before the tree is
-    // built over them, as genesis is.
-    const author = makeTestIdentity();
-    const replier = makeTestIdentity();
-    const liker = makeTestIdentity();
-    const voucher = makeTestIdentity();
-    const inviter = makeTestIdentity();
-    const target = makeTestIdentity();
-    const namer = makeTestIdentity();
-    const invitee = makeTestIdentity();
-    const payer = makeTestIdentity();
-    const payee = makeTestIdentity();
+    // built over them, as genesis is. Identities are seeded so the chain
+    // the suite builds is byte-for-byte the same every run; the padding-bit
+    // case below reads one outcome.
+    const author = makeTestIdentityFromSeed('leaf-replay/author');
+    const replier = makeTestIdentityFromSeed('leaf-replay/replier');
+    const liker = makeTestIdentityFromSeed('leaf-replay/liker');
+    const voucher = makeTestIdentityFromSeed('leaf-replay/voucher');
+    const inviter = makeTestIdentityFromSeed('leaf-replay/inviter');
+    const target = makeTestIdentityFromSeed('leaf-replay/target');
+    const namer = makeTestIdentityFromSeed('leaf-replay/namer');
+    const invitee = makeTestIdentityFromSeed('leaf-replay/invitee');
+    const payer = makeTestIdentityFromSeed('leaf-replay/payer');
+    const payee = makeTestIdentityFromSeed('leaf-replay/payee');
     for (const root of [author, replier, liker, voucher, inviter]) node.records.putIdentityRecord(root.userId, ROOT);
     for (const account of [target, namer]) node.records.putIdentityRecord(account.userId, ACCOUNT);
     node.records.putNetworkRecord({ memberCount: 5 });
@@ -544,7 +568,7 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
 
     // The next block — a like, a vouch cast again, a credit send — by a miner
     // whose key the suite holds, so the cases below can mine and sign it again.
-    miner = makeTestIdentity();
+    miner = makeTestIdentityFromSeed('leaf-replay/miner');
     nextTraffic = [
       makeLikeTx(liker, changeBoxOf(like), granted.postId, invitee.userId),
       vouchTx(voucher, outputOf<KarmaBox>(vouch, 0), target, 3),
@@ -571,6 +595,9 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
     }
     node?.creator.stopBlockCreator();
     node?.db.closeDb();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    setClock(null);
+    vi.doUnmock('crypto');
     vi.doUnmock('@dagsocial/consensus');
     vi.doUnmock('../../src/services/cost-estimate.js');
     vi.resetModules();
@@ -615,7 +642,7 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
 
     expect(replayOverTip(altered, missing.proof)).toEqual({
       ok: false,
-      reason: `the block's proof refuses the lookup of ${skipped}: leaf-key-out-of-order`,
+      reason: `the proof refuses the lookup of ${skipped}: leaf-key-out-of-order`,
     });
     expectNodeRefuses(
       altered,
@@ -684,5 +711,154 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
     await revertChainTo(tip.header.height);
     expect(node.ordering.getCurrentHeight()).toBe(tip.header.height);
     expect(bytesToHex(node.avl.getAvlProver().prover.digest())).toBe(tip.header.stateRoot);
+  });
+
+  // =========================================================================
+  // The five altered proofs — proofs a `BatchAVLVerifier` replays to the right
+  // digest but `StrictBatchAVLVerifier.isFullyConsumed()` refuses
+  // (CONSENSUS_INTERFACE → The tree session, "A block replays from its proof
+  // only on all of these"). Each is committed by a header re-mined around its
+  // hash, accepted by a plain verifier, refused by `replayAsLeaf`, refused by
+  // the funnel's `adProofsRoot` mismatch.
+  // =========================================================================
+
+  const NOT_EXACT_REASON = 'the proof is not byte for byte the proof its operations write';
+
+  /** The block's cycle, then one more recorded lookup after the writes. */
+  function proveOverTipWithExtraRead(block: OrderingBlock, extraKey: Uint8Array): Uint8Array {
+    const handle = node.avl.getAvlProver();
+    const inner = handle.prover.prover;
+    const root = inner.root;
+    const height = inner.height;
+    const recording = node.sessions.recordingSession(handle.prover);
+    try {
+      const view = node.consensus.treeStateView(recording);
+      const result = node.consensus.applyBlock(view, block, ctx);
+      if (!result.ok) throw new Error(`the rules refuse the block: ${result.reason}`);
+      const writes = node.consensus.treeWritesOf(result.effects, block.header.height, view);
+      node.avl.performTreeWrites(handle.prover, block.header.height, writes, 'proveOverTipWithExtraRead');
+      recording.lookup(extraKey);
+      return inner.generateProof();
+    } finally {
+      inner.restoreRoot(root, height);
+    }
+  }
+
+  /** The offset just past the packed tree's END_OF_TREE token — where directions begin. */
+  function directionsStart(proof: Uint8Array): number {
+    let previousLeaf = false;
+    let at = 0;
+    for (;;) {
+      const token = proof[at++];
+      if (token === undefined) throw new Error('directionsStart: the proof ends inside its tree');
+      if (token === 4) return at;
+      if (token === 3) {
+        at += 32;
+        previousLeaf = false;
+        continue;
+      }
+      if (token !== 2) continue;
+      if (!previousLeaf) at += TREE_KEY_LENGTH;
+      at += TREE_KEY_LENGTH;
+      at += 4 + new DataView(proof.buffer, proof.byteOffset + at, 4).getUint32(0);
+      previousLeaf = true;
+    }
+  }
+
+  /** Every leaf key of the tree at the tip, walked by `nextKey`. */
+  function leafKeysAtTip(): string[] {
+    const plain = node.sessions.proverSession(node.avl.getAvlProver().prover);
+    const keys: string[] = [];
+    const first = new Uint8Array(TREE_KEY_LENGTH);
+    first[TREE_KEY_LENGTH - 1] = 1;
+    let next = plain.lookup(first).nextKey;
+    while (!next.every((byte) => byte === 0xff)) {
+      keys.push(bytesToHex(next));
+      next = plain.lookup(next).nextKey;
+    }
+    return keys;
+  }
+
+  /** A leaf the honest proof leaves under a label — a recorded lookup of it widens the proof's tree. */
+  function wideningKey(): Uint8Array {
+    const honestTree = bytesToHex(proven.proof.subarray(0, directionsStart(proven.proof)));
+    const inFull = new Set(packedLeaves(proven.proof).map((leaf) => leaf.key));
+    const all = leafKeysAtTip();
+    const unvisited = all.filter((key) => !inFull.has(key));
+    for (const key of unvisited) {
+      const wider = proveOverTipWithExtraRead(honest, hexToBytes(key));
+      if (bytesToHex(wider.subarray(0, directionsStart(wider))) !== honestTree) return hexToBytes(key);
+    }
+    throw new Error('no unvisited leaf widens the packed tree');
+  }
+
+  function replayPlainOverTip(block: OrderingBlock, proof: Uint8Array): LeafVerdict {
+    return node.leaf.replayAsLeafPlain({
+      parentRoot: hexToBytes(tip.header.stateRoot),
+      header: block.header,
+      body: block.utxoTxTree,
+      proof,
+      ctx,
+    });
+  }
+
+  async function expectAltered(label: string, tampered: Uint8Array): Promise<void> {
+    expect(tampered, `${label}: differs from the honest proof`).not.toEqual(proven.proof);
+    const altered = await committingTo(bytesToHex(hash32(tampered)));
+    // A plain BatchAVLVerifier reaches the header's `stateRoot` — the ambient
+    // `replayAsLeaf` built with the strict verifier is what refuses, with
+    // `isFullyConsumed`'s reason.
+    expect(replayPlainOverTip(altered, tampered), `${label}: plain verifier replays`).toEqual({ ok: true });
+    expect(replayOverTip(altered, tampered), `${label}: strict verifier`).toEqual({ ok: false, reason: NOT_EXACT_REASON });
+    expectNodeRefuses(
+      altered,
+      `adProofsRoot mismatch at height 4: computed=${honest.header.adProofsRoot.slice(0, 16)}... ` +
+      `header=${altered.header.adProofsRoot.slice(0, 16)}...`,
+    );
+  }
+
+  it('one zero byte appended is refused with the strict reason', async () => {
+    const padded = new Uint8Array(proven.proof.length + 1);
+    padded.set(proven.proof);
+    await expectAltered('zero byte appended', padded);
+  });
+
+  it('one recorded lookup after the writes, of a key the block already read, is refused', async () => {
+    const reread = proven.lookups.find((read) => !proven.written.has(read.key));
+    if (reread === undefined) throw new Error('the block reads no key it does not write');
+    await expectAltered('extra re-read', proveOverTipWithExtraRead(honest, hexToBytes(reread.key)));
+  });
+
+  it('one recorded lookup after the writes, of a leaf the proof leaves under a label, is refused', async () => {
+    await expectAltered('extra fresh read', proveOverTipWithExtraRead(honest, wideningKey()));
+  });
+
+  it('a set padding bit in the last direction byte is refused — the seeded chain lands on the padding outcome', async () => {
+    // Flip bit 7 of the honest proof's last byte. The suite's identities are
+    // seeded, so the number of directions the proof emits is the same every
+    // run and bit 7 of the last byte is padding — the flip leaves the digest
+    // unchanged. The honest bit is 0, since the plain verifier would never
+    // replay to the right stateRoot with a direction cleared; the full
+    // triple goes through expectAltered.
+    const last = proven.proof.length - 1;
+    const altered = Uint8Array.from(proven.proof);
+    altered[last] = altered[last]! ^ 0x80;
+    const alteredBlock = await committingTo(bytesToHex(hash32(altered)));
+    const plainReplay = replayPlainOverTip(alteredBlock, altered);
+    expect(plainReplay.ok, 'the padding flip leaves the digest unchanged').toBe(true);
+    expect(proven.proof[last]! & 0x80, 'padding bit: the honest bit was 0').toBe(0);
+    await expectAltered('padding bit set', altered);
+  });
+
+  it('an unvisited node written in full is refused', async () => {
+    // The tree part of a wider proof grafted onto the honest proof's directions —
+    // the same operations, a tree with a node a prover would never write.
+    const wider = proveOverTipWithExtraRead(honest, wideningKey());
+    const widerTree = wider.subarray(0, directionsStart(wider));
+    const honestDirections = proven.proof.subarray(directionsStart(proven.proof));
+    const tampered = new Uint8Array(widerTree.length + honestDirections.length);
+    tampered.set(widerTree);
+    tampered.set(honestDirections, widerTree.length);
+    await expectAltered('unvisited node in full', tampered);
   });
 });

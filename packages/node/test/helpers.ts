@@ -1,4 +1,4 @@
-import { createHash, generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
 import Database from 'better-sqlite3';
 import {
   computeTxId,
@@ -125,6 +125,26 @@ export function makeTestIdentity(): TestIdentity {
   const pubKey = rawPublicKey(publicKey);
   const userId = pubKey;
   return { userId, publicKey: pubKey, privateKey };
+}
+
+/**
+ * A deterministic Ed25519 identity from a fixed seed string. The seed hashes
+ * to 32 bytes that fill the PKCS#8 Ed25519 private-key DER, so a run reads
+ * the same `(publicKey, privateKey)` and a signature of the same message is
+ * byte-for-byte the same.
+ */
+export function makeTestIdentityFromSeed(seed: string): TestIdentity {
+  const seedBytes = createHash('sha256').update(seed).digest();
+  // PKCS#8 Ed25519 private key prefix: 16 bytes, then the 32-byte seed.
+  const prefix = Buffer.from([
+    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06,
+    0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
+  ]);
+  const pkcs8 = Buffer.concat([prefix, seedBytes]);
+  const privateKey = createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' });
+  const publicKey = createPublicKey(privateKey);
+  const pubKey = rawPublicKey(publicKey);
+  return { userId: pubKey, publicKey: pubKey, privateKey };
 }
 
 export function makePost(authorId: Uint8Array, content = 'test post'): Post {
@@ -991,22 +1011,57 @@ export async function liveProver(): Promise<AvlProverHandle> {
 }
 
 /**
- * Revert the chain to `height` the way `reorg` reverts it: every block above it
- * through `revertBlock`, then the live prover back to the version at `height`
- * (NODE_INTERFACE → Block Journal → "Rollback") — `revertBlock` restores the
- * store and deletes the height's version rows, and the tree is restored once,
- * at the end, so the rules again read what the store holds.
+ * The ring's heights, ascending, read through `snapshot()` — the one surface the
+ * node's own callers use (NODE_INTERFACE → "A proof at an older height restores
+ * a kept root"). The test tree reads the ring here; `src` reads it through
+ * `snapshot`, `get`, `record`, `drop`, `clear` and `restore`.
+ */
+export function ringHeights(ring: { snapshot(): Map<number, unknown> }): number[] {
+  return [...ring.snapshot().keys()].sort((a, b) => a - b);
+}
+
+/** The number of roots the ring holds. */
+export function ringSize(ring: { snapshot(): Map<number, unknown> }): number {
+  return ring.snapshot().size;
+}
+
+/** Whether the ring answers at `height`. */
+export function ringHas(ring: { get(height: number): unknown | null }, height: number): boolean {
+  return ring.get(height) !== null;
+}
+
+/**
+ * Revert the chain to `height` the way `reorg` reverts it (NODE_INTERFACE →
+ * "A proof at an older height restores a kept root"): every block above it
+ * through `revertBlock`, then the live prover resolved as reorg's phase 1b
+ * resolves it. Where the ring keeps a root at `height` whose digest is the
+ * store's version at that height, the restore is by reference on the inner
+ * prover — the ring at and below `height` survives, every kept root is a
+ * root of the tree the node holds. Where it does not, `prover.rollback`
+ * resolves from the store and the ring is cleared.
  */
 export async function revertChainTo(height: number): Promise<void> {
   const { revertBlock } = await import('../src/services/fork-resolution.js');
   const { getCurrentHeight } = await import('../src/store/ordering.js');
   const { tryGetAvlProver } = await import('../src/state/avl-prover.js');
+  const { label } = await import('@ergots/avltree');
   for (let h = getCurrentHeight(); h > height; h--) revertBlock(h);
   const handle = tryGetAvlProver();
   if (handle === null) return;
   const version = handle.storage.versionAtOrBeforeHeight(height);
   if (version === null) throw new Error(`revertChainTo: no tree version at or below height ${height}`);
+  const kept = handle.recentRoots.get(height);
+  if (kept !== null && version.length === 33 && version[32] === kept.treeHeight) {
+    const rootLabel = label(kept.root);
+    let same = true;
+    for (let i = 0; i < 32; i++) if (version[i] !== rootLabel[i]) { same = false; break; }
+    if (same) {
+      handle.prover.prover.restoreRoot(kept.root, kept.treeHeight);
+      return;
+    }
+  }
   handle.prover.rollback(version);
+  handle.recentRoots.clear();
 }
 
 /**

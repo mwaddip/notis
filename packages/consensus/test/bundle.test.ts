@@ -21,9 +21,9 @@ import type {
   UtxoTransaction,
   VouchBox,
 } from '@dagsocial/types';
-import { applyBlock, seedTreeWrites } from '@dagsocial/consensus';
+import { applyBlock, holdingsPage, seedTreeWrites, treeStateView } from '@dagsocial/consensus';
 import type { ApplyContext, ApplyResult } from '@dagsocial/consensus';
-import { proveBlock, proverFrom } from './block-proof.js';
+import { proveBlock, proverFrom, recordingSession } from './block-proof.js';
 import { PACKAGES_DIR, PACKAGE_DIR, buildIife, entrySource, type Bundle } from './browser-bundle.js';
 import { run } from './bundle-entry.js';
 import { canonical, encodeScenario, viewOf, type Answer, type ScenarioBlock, type Seed } from './bundle-scenario.js';
@@ -502,4 +502,64 @@ describe('applyBlock built for a browser runs with browser globals alone', () =>
     expect(calls.decode).toBeGreaterThan(0);
     expect(globalNames(context)).toEqual([...before, 'ConsensusBundle'].sort());
   });
+});
+
+describe('holdingsPage built for a browser runs over a strict verifier', () => {
+  // The entry: a bundle that holds `holdingsPage` and a `StrictBatchAVLVerifier`
+  // over a proof, answering a page as JSON — the bytes crossing the context
+  // boundary as hex, the limit as a number. The context's codecs stay out of the
+  // path: the bundle calls neither `TextEncoder` nor `TextDecoder`.
+  const HOLDINGS_ENTRY = `${PACKAGE_DIR}holdings-entry.js`;
+  const HOLDINGS_CODE = `
+    import { StrictBatchAVLVerifier } from '@ergots/avltree';
+    import { holdingsPage, treeStateView, verifierSession } from '@dagsocial/consensus';
+    import { TREE_KEY_LENGTH, bytesToHex, hexToBytes } from '@dagsocial/types';
+    const CONFIG = { keyLength: TREE_KEY_LENGTH, valueLengthOpt: null };
+    export function page(input) {
+      const { parentDigestHex, proofHex, kind, ownerHex, fromHex, limit } = JSON.parse(input);
+      const verifier = new StrictBatchAVLVerifier(hexToBytes(parentDigestHex), hexToBytes(proofHex), CONFIG);
+      const view = treeStateView(verifierSession(verifier));
+      const owner = hexToBytes(ownerHex);
+      const from = fromHex === null ? null : hexToBytes(fromHex);
+      const answer = holdingsPage(view, kind, owner, from, limit);
+      return JSON.stringify({
+        ids: answer.boxes.map((b) => b.id),
+        next: answer.next === null ? null : bytesToHex(answer.next),
+        consumed: verifier.isFullyConsumed(),
+      });
+    }
+  `;
+
+  it('answers the same ids, the same next and `isFullyConsumed() === true` the Node side answers', async () => {
+    // Build the state and the proof under Node — the fixture is three karma
+    // boxes an owner holds, paged in two.
+    const owner = seededIdentity('bundle/holdings-owner').userId;
+    const held = [karmaBox(owner, 1n, 1, 0), karmaBox(owner, 2n, 2, 0), karmaBox(owner, 3n, 3, 0)];
+    const prover = proverFrom(seedTreeWrites(held, [], { memberCount: 0 }));
+    const parentDigest = prover.digest();
+    const view = treeStateView(recordingSession(prover));
+    const nodePage = holdingsPage(view, 'karma', owner, null, 2);
+    const proof = prover.generateProof();
+
+    const nodeAnswer = {
+      ids: nodePage.boxes.map((b) => b.id!),
+      next: nodePage.next === null ? null : hex(nodePage.next),
+    };
+
+    const built = await buildIife(HOLDINGS_ENTRY, [entrySource(HOLDINGS_ENTRY, HOLDINGS_CODE)]);
+    const { context } = browserContext();
+    const before = globalNames(context);
+    runInContext(built.code, context);
+    const input = JSON.stringify({
+      parentDigestHex: hex(parentDigest),
+      proofHex: hex(proof),
+      kind: 'karma',
+      ownerHex: hex(owner),
+      fromHex: null,
+      limit: 2,
+    });
+    const fromBundle = runInContext(`ConsensusBundle.page(${JSON.stringify(input)})`, context) as string;
+    expect(JSON.parse(fromBundle)).toEqual({ ...nodeAnswer, consumed: true });
+    expect(globalNames(context)).toEqual([...before, 'ConsensusBundle'].sort());
+  }, BUILD_TIMEOUT);
 });
