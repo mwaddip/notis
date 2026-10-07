@@ -13,7 +13,7 @@ import {
   StrictBatchAVLVerifier,
   label,
 } from '@dagsocial/avltree';
-import type { VersionedAVLStorage } from '@dagsocial/avltree';
+import type { AvlNode, VersionedAVLStorage } from '@dagsocial/avltree';
 import {
   INDEX_MARKER,
   TREE_KEY_LENGTH,
@@ -28,6 +28,7 @@ import type { CandidateOf, CreditBox } from '@dagsocial/types';
 import { holdingsPage, treeStateView, verifierSession } from '@dagsocial/consensus';
 import type { TreeWrite } from '@dagsocial/consensus';
 import { SqliteAvlStorage } from '../src/state/avl-storage.js';
+import { recordingSession } from '../src/state/prover-session.js';
 import {
   HEIGHT_SENTINEL,
   checkpointProver,
@@ -93,6 +94,11 @@ const RANGE_PAGE_COUNT = Math.ceil(LARGE_OWNER_BOXES / RANGE_PAGE_MAX);
 
 function nowMs(): number {
   return Number(process.hrtime.bigint() / 1_000_000n);
+}
+
+/** Microsecond-resolution wall clock — the single-key store-served call runs under 1 ms. */
+function nowUs(): number {
+  return Number(process.hrtime.bigint() / 1_000n);
 }
 
 function mb(bytes: number): string {
@@ -236,16 +242,65 @@ function buildSeedWrites(pool: BoxPool): { writes: Array<{ tag: 'Insert'; key: U
  * block's root. A second `RecentRoots(capacity, maxNodes)` the caller keeps separately tracks the same roots under
  * the default count bound (NODE_INTERFACE → Configuration).
  */
-function makeHandle(dbPath: string, capacity: number): { handle: AvlProverHandle } {
+/**
+ * A counter over the alive-at-height row read — the one SQL
+ * `SqliteAvlStorage.resolveAliveRow` compiles. Installed by wrapping
+ * `db.prepare` before `SqliteAvlStorage` prepares its statement, so every call
+ * through the production `storeServedRootAtHeight` / `nodeLoaderAtHeight`
+ * passes through this counter without a production counter being added. Each
+ * `all()` call is one label resolved under the alive predicate.
+ */
+interface RowCounter { count(): number; reset(): void; }
+
+function installAliveRowCounter(db: Database.Database): RowCounter {
+  let calls = 0;
+  const origPrepare = db.prepare.bind(db);
+  const wrapped = ((sql: string) => {
+    const stmt = origPrepare(sql);
+    if (/FROM avl_tree_nodes WHERE label = \?/.test(sql) && /first_seen_height/.test(sql)) {
+      const origAll = stmt.all.bind(stmt);
+      (stmt as { all: (...args: unknown[]) => unknown }).all = (...args: unknown[]) => {
+        calls++;
+        return origAll(...args);
+      };
+    }
+    return stmt;
+  }) as typeof db.prepare;
+  (db as { prepare: typeof db.prepare }).prepare = wrapped;
+  return { count: () => calls, reset: () => { calls = 0; } };
+}
+
+function makeHandle(dbPath: string, capacity: number): { handle: AvlProverHandle; rowCounter: RowCounter } {
   const db = new Database(dbPath);
   db.exec(AVL_SCHEMA);
+  const rowCounter = installAliveRowCounter(db);
   const storage = new SqliteAvlStorage(db, TREE_CFG);
   const inner = new BatchAVLProver(TREE_KEY_LENGTH, null);
   const prover = new PersistentBatchAVLProver(inner, storage as VersionedAVLStorage, [
     [HEIGHT_SENTINEL, encodeHeight(0)],
   ]) as AvlProver;
   const recentRoots = new RecentRoots(capacity, Number.MAX_SAFE_INTEGER);
-  return { handle: { prover, storage, recentRoots } };
+  return { handle: { prover, storage, recentRoots }, rowCounter };
+}
+
+/**
+ * Open a proof cycle on the prover at `root`/`treeHeight`, run `body`, close
+ * the cycle with `generateProof()`, and restore the live root on every path —
+ * what `src/state/avl-endpoint.ts`'s `withCycle` does, driven here so a bench
+ * section can time the cycle without an Express round trip.
+ */
+function withCycleAt<T>(handle: AvlProverHandle, root: AvlNode, treeHeight: number, body: () => T): { answer: T; proof: Uint8Array } {
+  const inner = handle.prover.prover;
+  const savedRoot = inner.root;
+  const savedHeight = inner.height;
+  try {
+    inner.restoreRoot(root, treeHeight);
+    const answer = body();
+    const proof = inner.generateProof();
+    return { answer, proof };
+  } finally {
+    inner.restoreRoot(savedRoot, savedHeight);
+  }
 }
 
 /** The Express app registering both routes over `handle` — `src/state/avl-endpoint.ts`. */
@@ -514,7 +569,7 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
       console.log(`\n==== seed: a tree of ${SEED_LEAVES} leaves — the large owner holds ${LARGE_OWNER_BOXES} credit boxes ====`);
       const beforeSeed = memNow();
       console.log(`memory before seed: heapUsed=${mb(beforeSeed.heapUsed)} MB, arrayBuffers=${mb(beforeSeed.arrayBuffers)} MB, rss=${mb(beforeSeed.rss)} MB`);
-      const { handle } = makeHandle(dbPath, 64);
+      const { handle, rowCounter } = makeHandle(dbPath, 64);
       // The measuring ring is bounded by count alone (`capacity = 64`, `maxNodes = MAX_SAFE_INTEGER`). The default
       // bound is also tracked, as a second ring with `maxNodes = 250_000` — references only, no second tree. The two
       // record the same roots and counts; the default bound evicts earlier when the sum of counts rises.
@@ -641,6 +696,252 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
         };
         latencyRows.push(row2);
         console.log(`  ${row2.heightLabel.padStart(6)} | ${row2.kind.padEnd(10)} | ${row2.medianMs.toFixed(1).padStart(9)} | ${row2.worstMs.toFixed(1).padStart(8)} | ${String(row2.medianProof).padStart(14)} | ${String(row2.medianAnswer).padStart(15)}`);
+      }
+
+      // -----------------------------------------------------------------
+      // Store-served proof routes — a height of the window with no kept
+      // root is served from the store through `storeServedRootAtHeight`,
+      // and the lazy root over its version is dropped when the call
+      // returns (NODE_INTERFACE → AVL+ State Root → "A height of the proof
+      // window with no kept root is served from the store"). Measured
+      // through the production entry — the same `restoreRoot` /
+      // `performOneOperation` or recording-session walk / `generateProof`
+      // the routes run.
+      // -----------------------------------------------------------------
+      const probeKeys: Uint8Array[] = [];
+      for (let i = 0; i < 30; i++) {
+        probeKeys.push(boxKey(seeded.largeBoxIds[(i * 1013) % seeded.largeBoxIds.length]!));
+      }
+
+      // Correctness at tip-19: the store-served answer is byte-equal to the
+      // kept-root answer, both routes (NODE_INTERFACE → AVL+ State Root →
+      // "A height of the proof window with no kept root is served from the
+      // store"). The ring entry is restored after each probe.
+      const correctnessHeight = ringHeights.includes(tipHeight - 19) ? tipHeight - 19 : back20;
+      console.log(`\n==== store-served correctness vs kept root at ${correctnessHeight} ====`);
+      {
+        const kept = handle.recentRoots.get(correctnessHeight)!;
+        const key = probeKeys[0]!;
+        const keptLookup = withCycleAt(handle, kept.root, kept.treeHeight, () =>
+          handle.prover.performOneOperation({ tag: 'Lookup', key }),
+        );
+        const served = handle.storage.storeServedRootAtHeight(correctnessHeight, 'bench')!;
+        const servedLookup = withCycleAt(handle, served.root, served.treeHeight, () =>
+          handle.prover.performOneOperation({ tag: 'Lookup', key }),
+        );
+        const sameProof = equalBytes(keptLookup.proof, servedLookup.proof);
+        const sameVersion = equalBytes(label(kept.root), served.version.subarray(0, 32));
+        expect(sameProof, 'single-key: store-served proof byte-equal to kept').toBe(true);
+        expect(sameVersion, 'store-served version matches the kept root label').toBe(true);
+        console.log(`  single-key proof bytes: kept=${keptLookup.proof.length} B, store-served=${servedLookup.proof.length} B, equal=${sameProof}`);
+
+        const keptPage = withCycleAt(handle, kept.root, kept.treeHeight, () => {
+          const session = recordingSession(handle.prover);
+          const view = treeStateView(session);
+          return holdingsPage(view, 'credit', seeded.largeOwner, null, RANGE_PAGE_MAX);
+        });
+        const served2 = handle.storage.storeServedRootAtHeight(correctnessHeight, 'bench')!;
+        const servedPage = withCycleAt(handle, served2.root, served2.treeHeight, () => {
+          const session = recordingSession(handle.prover);
+          const view = treeStateView(session);
+          return holdingsPage(view, 'credit', seeded.largeOwner, null, RANGE_PAGE_MAX);
+        });
+        const samePageProof = equalBytes(keptPage.proof, servedPage.proof);
+        expect(samePageProof, '256-page: store-served proof byte-equal to kept').toBe(true);
+        console.log(`  256-page    proof bytes: kept=${keptPage.proof.length} B, store-served=${servedPage.proof.length} B, equal=${samePageProof}`);
+      }
+
+      // Cost per call at tip − 19 and at a deeper window height. 30 reps
+      // each, each a fresh lazy root through `storeServedRootAtHeight` —
+      // nothing of a store-served tree outlives the call. Rows read are
+      // the production loader's calls, counted at the alive-row statement.
+      interface ServedCell {
+        heightLabel: string;
+        kind: string;
+        firstMs: number;
+        medianMs: number;
+        maxMs: number;
+        firstRows: number;
+        medianRows: number;
+        maxRows: number;
+        medianProofB: number;
+      }
+      const servedRows: ServedCell[] = [];
+      const probeHeights: Array<{ h: number; label: string }> = [
+        { h: ringHeights.includes(tipHeight - 19) ? tipHeight - 19 : back20, label: 'tip-19' },
+        { h: ringHeights.includes(tipHeight - 60) ? tipHeight - 60 : (ringHeights[1] ?? back60), label: 'tip-60' },
+      ];
+      console.log(`\n==== store-served cost per call (via production entry — storeServedRootAtHeight) ====`);
+      console.log(`  height | kind       | first ms  | median ms | max ms    | first rows | median rows | max rows | proof B median`);
+      for (const { h, label: hLabel } of probeHeights) {
+        // Single-key
+        {
+          const times: number[] = [];
+          const rows: number[] = [];
+          const bytes: number[] = [];
+          let firstT = 0, firstR = 0;
+          for (let i = 0; i < 30; i++) {
+            rowCounter.reset();
+            const t0 = nowUs();
+            const served = handle.storage.storeServedRootAtHeight(h, 'bench')!;
+            const { proof } = withCycleAt(handle, served.root, served.treeHeight, () =>
+              handle.prover.performOneOperation({ tag: 'Lookup', key: probeKeys[i]! }),
+            );
+            const dt = (nowUs() - t0) / 1000;
+            const rc = rowCounter.count();
+            times.push(dt);
+            rows.push(rc);
+            bytes.push(proof.length);
+            if (i === 0) { firstT = dt; firstR = rc; }
+          }
+          const cell: ServedCell = {
+            heightLabel: hLabel,
+            kind: 'single-key',
+            firstMs: firstT,
+            medianMs: median(times),
+            maxMs: Math.max(...times),
+            firstRows: firstR,
+            medianRows: median(rows),
+            maxRows: Math.max(...rows),
+            medianProofB: median(bytes),
+          };
+          servedRows.push(cell);
+          console.log(`  ${cell.heightLabel.padStart(6)} | ${cell.kind.padEnd(10)} | ${cell.firstMs.toFixed(2).padStart(9)} | ${cell.medianMs.toFixed(2).padStart(9)} | ${cell.maxMs.toFixed(2).padStart(9)} | ${String(cell.firstRows).padStart(10)} | ${String(cell.medianRows).padStart(11)} | ${String(cell.maxRows).padStart(8)} | ${String(cell.medianProofB).padStart(14)}`);
+        }
+        // 256-page
+        {
+          const times: number[] = [];
+          const rows: number[] = [];
+          const bytes: number[] = [];
+          let firstT = 0, firstR = 0;
+          for (let i = 0; i < 30; i++) {
+            rowCounter.reset();
+            const t0 = nowUs();
+            const served = handle.storage.storeServedRootAtHeight(h, 'bench')!;
+            const { proof } = withCycleAt(handle, served.root, served.treeHeight, () => {
+              const session = recordingSession(handle.prover);
+              const view = treeStateView(session);
+              return holdingsPage(view, 'credit', seeded.largeOwner, null, RANGE_PAGE_MAX);
+            });
+            const dt = (nowUs() - t0) / 1000;
+            const rc = rowCounter.count();
+            times.push(dt);
+            rows.push(rc);
+            bytes.push(proof.length);
+            if (i === 0) { firstT = dt; firstR = rc; }
+          }
+          const cell: ServedCell = {
+            heightLabel: hLabel,
+            kind: '256-page',
+            firstMs: firstT,
+            medianMs: median(times),
+            maxMs: Math.max(...times),
+            firstRows: firstR,
+            medianRows: median(rows),
+            maxRows: Math.max(...rows),
+            medianProofB: median(bytes),
+          };
+          servedRows.push(cell);
+          console.log(`  ${cell.heightLabel.padStart(6)} | ${cell.kind.padEnd(10)} | ${cell.firstMs.toFixed(2).padStart(9)} | ${cell.medianMs.toFixed(2).padStart(9)} | ${cell.maxMs.toFixed(2).padStart(9)} | ${String(cell.firstRows).padStart(10)} | ${String(cell.medianRows).padStart(11)} | ${String(cell.maxRows).padStart(8)} | ${String(cell.medianProofB).padStart(14)}`);
+        }
+      }
+
+      // Same two calls through the Express route — the ring is dropped at
+      // the probe height, so `resolveHeight` falls through to
+      // `storeServedRootAtHeight`; the number includes what an HTTP client
+      // waits for. The ring entry is restored after each probe height.
+      console.log(`\n==== store-served cost per call (via Express — ring miss) ====`);
+      console.log(`  height | kind       | first ms  | median ms | max ms    | median rows | proof B median`);
+      for (const { h, label: hLabel } of probeHeights) {
+        const backup = handle.recentRoots.get(h);
+        if (backup === null) throw new Error(`probe height ${h} not in ring`);
+        handle.recentRoots.drop(h);
+        try {
+          // single-key
+          {
+            const times: number[] = [];
+            const rows: number[] = [];
+            const bytes: number[] = [];
+            let firstT = 0;
+            for (let i = 0; i < 30; i++) {
+              rowCounter.reset();
+              const key = probeKeys[i]!;
+              const r = await callProofOnce(app, key, h);
+              times.push(r.ms);
+              rows.push(rowCounter.count());
+              bytes.push(r.proofBytes);
+              if (i === 0) firstT = r.ms;
+            }
+            console.log(`  ${hLabel.padStart(6)} | ${'single-key'.padEnd(10)} | ${firstT.toFixed(2).padStart(9)} | ${median(times).toFixed(2).padStart(9)} | ${Math.max(...times).toFixed(2).padStart(9)} | ${String(median(rows)).padStart(11)} | ${String(median(bytes)).padStart(14)}`);
+          }
+          // 256-page
+          {
+            const times: number[] = [];
+            const rows: number[] = [];
+            const bytes: number[] = [];
+            let firstT = 0;
+            for (let i = 0; i < 30; i++) {
+              rowCounter.reset();
+              const r = await callRangeOnce(app, seeded.largeOwner, null, h);
+              times.push(r.ms);
+              rows.push(rowCounter.count());
+              bytes.push(r.proofBytes);
+              if (i === 0) firstT = r.ms;
+            }
+            console.log(`  ${hLabel.padStart(6)} | ${'256-page'.padEnd(10)} | ${firstT.toFixed(2).padStart(9)} | ${median(times).toFixed(2).padStart(9)} | ${Math.max(...times).toFixed(2).padStart(9)} | ${String(median(rows)).padStart(11)} | ${String(median(bytes)).padStart(14)}`);
+          }
+        } finally {
+          handle.recentRoots.record(h, backup.root, backup.treeHeight, backup.replaced);
+        }
+      }
+
+      // The large owner's whole 85-page walk through store-served calls —
+      // a fresh lazy root per page.
+      const walkHeight = ringHeights.includes(tipHeight - 19) ? tipHeight - 19 : back20;
+      console.log(`\n==== store-served whole-range walk at ${walkHeight} — fresh lazy per page ====`);
+      {
+        let from: Uint8Array | null = null;
+        let pages = 0;
+        let totalRows = 0;
+        let totalProof = 0;
+        rowCounter.reset();
+        const walkT0 = nowMs();
+        while (true) {
+          const served = handle.storage.storeServedRootAtHeight(walkHeight, 'bench')!;
+          const { answer, proof } = withCycleAt(handle, served.root, served.treeHeight, () => {
+            const session = recordingSession(handle.prover);
+            const view = treeStateView(session);
+            return holdingsPage(view, 'credit', seeded.largeOwner, from, RANGE_PAGE_MAX);
+          });
+          pages++;
+          totalProof += proof.length;
+          if (answer.next === null) break;
+          from = answer.next;
+          if (pages > 200) throw new Error('store-served walk did not terminate');
+        }
+        totalRows = rowCounter.count();
+        const walkMs = nowMs() - walkT0;
+        console.log(`  pages=${pages}, totalRows=${totalRows}, avgRows/page=${(totalRows / pages).toFixed(1)}, totalProofBytes=${totalProof} (${mb(totalProof)} MB), wall=${(walkMs / 1000).toFixed(2)} s`);
+      }
+
+      // Heap and array buffers before and after a burst of 100 store-served
+      // range-page calls, each a fresh lazy root — the memory check that
+      // nothing of a store-served tree outlives a call.
+      console.log(`\n==== heap/arrbuf: burst of 100 store-served 256-page calls at ${walkHeight} ====`);
+      {
+        const before = memNow();
+        for (let i = 0; i < 100; i++) {
+          const served = handle.storage.storeServedRootAtHeight(walkHeight, 'bench')!;
+          withCycleAt(handle, served.root, served.treeHeight, () => {
+            const session = recordingSession(handle.prover);
+            const view = treeStateView(session);
+            return holdingsPage(view, 'credit', seeded.largeOwner, null, RANGE_PAGE_MAX);
+          });
+        }
+        const after = memNow();
+        console.log(`  before: heapUsed=${mb(before.heapUsed)} MB, arrayBuffers=${mb(before.arrayBuffers)} MB, rss=${mb(before.rss)} MB`);
+        console.log(`  after:  heapUsed=${mb(after.heapUsed)} MB, arrayBuffers=${mb(after.arrayBuffers)} MB, rss=${mb(after.rss)} MB`);
+        console.log(`  delta:  heapUsed=${mb(after.heapUsed - before.heapUsed)} MB, arrayBuffers=${mb(after.arrayBuffers - before.arrayBuffers)} MB, rss=${mb(after.rss - before.rss)} MB`);
       }
 
       // -----------------------------------------------------------------
