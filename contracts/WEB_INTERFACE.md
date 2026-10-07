@@ -382,8 +382,8 @@ wallet's balance and the profile's rep — against the state the verified chain 
 whole, by range**, and says beneath each what does not hold. **The anchor**: a tip run answers `{ verdict, anchor }`, `anchor` being the **reading
 node's own** verified `tip` and `suffixHead` headers from its proof, non-null when and only when the verdict is
 `verified` — under it they are PoW-verified, on the best chain (`behind` carried them), and heights of the reading
-node's own chain, where the winner's tip may be a block it has not seen — heights it proves at while it keeps their
-roots (`NODE_INTERFACE → "A proof at an older height restores a kept root"`). The anchor is held beside the verdict, written by the
+node's own chain, where the winner's tip may be a block it has not seen — heights it proves at while they are in its
+proof window (`NODE_INTERFACE → "A height of the proof window with no kept root is served from the store"`). The anchor is held beside the verdict, written by the
 run that writes it, cleared with it, dropped with it on a node change; nothing is stored. **The run** is `proveFigures`
 of `@dagsocial/nipopow-client` — the code the command-line light client runs — which reads **what the key holds, by
 range**, and judges **the listing the rows rendered** against it, in this order: at `suffixHead.height`, against its
@@ -414,8 +414,8 @@ decides; `unproven` — a listed value or lock that is not the held box's — a 
 by its id — and **an id the listing names more than once**, in either ledger, from its second place on: the chain
 holds a box once, so a listing that counts it twice lists what no proof backs; and every box of a ledger, or the
 record, whose read fails — a `stateRoot` other than the header's at `suffixHead`, a refused lookup, a page or a value
-that does not decode; `no-proof` — nothing served, a height the node keeps no root of among it (`NODE_INTERFACE → "A
-proof at an older height restores a kept root"`). **A `stateRoot` other than the header's at `tip` is no failed
+that does not decode; `no-proof` — nothing served, a height outside the node's proof window among it (`NODE_INTERFACE → "A
+height of the proof window with no kept root is served from the store"`). **A `stateRoot` other than the header's at `tip` is no failed
 proof**: the node holds another block at that height — its tip was replaced since the anchor — and proves nothing
 under the anchor's root, so the ledger's read is `stale` and every listed box of it `unchecked`, until the next
 verified tip. **Each ledger's read carries a status of its own beside its boxes'** — read, `unproven`, `no-proof`,
