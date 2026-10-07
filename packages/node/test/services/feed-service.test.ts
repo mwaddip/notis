@@ -15,6 +15,8 @@ import {
   confirmPost,
   withdrawPost,
   getBlockCreatedAt,
+  getPendingUtxoTxBytesByTxId,
+  getOrderingBlock,
   getUsernameByOwner,
   putUsername,
 } from '../../src/store/index.js';
@@ -69,6 +71,8 @@ describe('feed-service', () => {
       getAncestorsNearest,
       getSubtreePage,
       getBlockCreatedAt,
+      getPendingUtxoTxBytesByTxId,
+      getOrderingBlock,
       getUsernameByOwner,
     });
   });
@@ -225,6 +229,8 @@ describe('feed-service', () => {
       getAncestorsNearest,
       getSubtreePage,
       getBlockCreatedAt,
+      getPendingUtxoTxBytesByTxId,
+      getOrderingBlock,
       getUsernameByOwner: (owner) => {
         nameCalls++;
         return getUsernameByOwner(owner);
@@ -254,6 +260,8 @@ describe('feed-service', () => {
       getAncestorsNearest,
       getSubtreePage,
       getBlockCreatedAt,
+      getPendingUtxoTxBytesByTxId,
+      getOrderingBlock,
       getUsernameByOwner: (owner) => {
         nameCalls++;
         return getUsernameByOwner(owner);
@@ -337,6 +345,8 @@ describe('feed-service', () => {
       getAncestorsNearest,
       getSubtreePage: countingGetSubtreePage,
       getBlockCreatedAt,
+      getPendingUtxoTxBytesByTxId,
+      getOrderingBlock,
       getUsernameByOwner,
     });
 
@@ -386,5 +396,267 @@ describe('feed-service', () => {
 
     const head = feedService.getPost(postId) as PostJson;
     expect(head.authorName).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// tx — NODE_INTERFACE → Posts → "The creating transaction rides a post row"
+// ---------------------------------------------------------------------------
+
+import type { StoredPost, PostStatus } from '../../src/store/posts.js';
+import type { OrderingBlock, PostCommit, TxId } from '@dagsocial/types';
+import { computePostId, computeTxId, encodeTx, decodeTx } from '@dagsocial/types';
+import { makePostTx, makeTestIdentity } from '../helpers.js';
+import { ConfirmedPostTxNotInBlockBodyError } from '../../src/services/corrupt-state.js';
+
+/** Build a StoredPost from pieces, with a real-shaped `txId`. */
+function storedPost(args: {
+  id: string;
+  txId: string;
+  commit: PostCommit;
+  content: string | null;
+  status: PostStatus;
+  blockHeight: number | null;
+  blockIndex: number | null;
+  withdrawnAtHeight?: number | null;
+}): StoredPost {
+  return {
+    id: args.id,
+    txId: args.txId,
+    content: args.content,
+    contentHash: Buffer.from(args.commit.contentHash).toString('hex'),
+    author: args.commit.author,
+    parentRefs: args.commit.parentRefs,
+    protocolVersion: args.commit.protocolVersion,
+    type: args.commit.type,
+    status: args.status,
+    blockHeight: args.blockHeight,
+    blockIndex: args.blockIndex,
+    withdrawnAtHeight: args.withdrawnAtHeight ?? null,
+  };
+}
+
+interface TxMockState {
+  byId: Map<string, StoredPost>;
+  page: StoredPost[];
+  pending: StoredPost[];
+  bodiesByHeight: Map<number, { utxoTxIds: string[]; utxoTxs: Uint8Array[] }>;
+  pendingByTxId: Map<string, Uint8Array>;
+  bodyReads: number[];      // heights read, in order — one entry per real body read
+  descendants: StoredPost[];
+  ancestors: StoredPost[];
+}
+
+function makeTxMockFeed(state: TxMockState): FeedService {
+  return new FeedService({
+    getPost: (id) => state.byId.get(id) ?? null,
+    queryPostsPage: () => ({ rows: state.page, next: null, pending: state.pending, pendingCount: state.pending.length }),
+    getLikeRecordCount: () => 0,
+    getDescendantCount: () => state.descendants.length,
+    hasLikeRecord: () => false,
+    getAncestorsNearest: () => ({ rows: state.ancestors, count: state.ancestors.length }),
+    getSubtreePage: () => ({ rows: state.descendants, next: null, count: state.descendants.length, pending: state.pending, pendingCount: state.pending.length }),
+    getBlockCreatedAt: () => null,
+    getUsernameByOwner: () => null,
+    getPendingUtxoTxBytesByTxId: (txId: TxId) => state.pendingByTxId.get(txId) ?? null,
+    getOrderingBlock: (height: number) => {
+      state.bodyReads.push(height);
+      const body = state.bodiesByHeight.get(height);
+      if (!body) return null;
+      return { header: null, utxoTxTree: body, validatorSignature: null } as unknown as OrderingBlock;
+    },
+  });
+}
+
+/** Build a real post + its transaction, and return the pieces for a scenario. */
+function makeScenarioPost(content = 'hello'): {
+  commit: PostCommit; postId: string; txId: string; txBytes: Uint8Array;
+} {
+  const id = makeTestIdentity();
+  const { commit, tx, postId } = makePostTx(id, content);
+  const txBytes = encodeTx(tx);
+  return { commit, postId, txId: computeTxId(tx), txBytes };
+}
+
+describe('feed-service — tx bytes ride the row (NODE_INTERFACE → Posts → "The creating transaction rides a post row")', () => {
+  function emptyState(): TxMockState {
+    return {
+      byId: new Map(),
+      page: [],
+      pending: [],
+      bodiesByHeight: new Map(),
+      pendingByTxId: new Map(),
+      bodyReads: [],
+      descendants: [],
+      ancestors: [],
+    };
+  }
+
+  it('a pending row\'s `tx` decodes to a transaction whose computePostId(computeTxId(tx), 0) is the row\'s id, and whose computeTxId is the row\'s txId', () => {
+    const s = emptyState();
+    const { commit, postId, txId, txBytes } = makeScenarioPost();
+    const row = storedPost({ id: postId, txId, commit, content: 'hello', status: 'pending', blockHeight: null, blockIndex: null });
+    s.byId.set(postId, row);
+    s.pendingByTxId.set(txId, txBytes);
+    const feed = makeTxMockFeed(s);
+
+    const r = feed.getPost(postId, null, true) as PostJson;
+    expect(r.txId).toBe(txId);
+    expect(typeof r.tx).toBe('string');
+    const decoded = decodeTx(new Uint8Array(Buffer.from(r.tx as string, 'hex')));
+    expect(computeTxId(decoded)).toBe(txId);
+    expect(computePostId(computeTxId(decoded), 0)).toBe(postId);
+  });
+
+  it('a confirmed row\'s `tx` reads the stored body at blockHeight — same identities round-trip', () => {
+    const s = emptyState();
+    const { commit, postId, txId, txBytes } = makeScenarioPost('a confirmed body');
+    const row = storedPost({ id: postId, txId, commit, content: 'a confirmed body', status: 'confirmed', blockHeight: 10, blockIndex: 0 });
+    s.byId.set(postId, row);
+    s.bodiesByHeight.set(10, { utxoTxIds: [txId], utxoTxs: [txBytes] });
+    const feed = makeTxMockFeed(s);
+
+    const r = feed.getPost(postId, null, true) as PostJson;
+    const decoded = decodeTx(new Uint8Array(Buffer.from(r.tx as string, 'hex')));
+    expect(computeTxId(decoded)).toBe(txId);
+    expect(computePostId(computeTxId(decoded), 0)).toBe(postId);
+  });
+
+  it('a row applied from a block with no packet is a placeholder — `content: null` and the pool entry is gone, so `tx: null`', () => {
+    const s = emptyState();
+    const { commit, postId, txId } = makeScenarioPost();
+    const row = storedPost({ id: postId, txId, commit, content: null, status: 'pending', blockHeight: null, blockIndex: null });
+    s.byId.set(postId, row);
+    // No pool entry — placeholder path. The brief says a pending row with no pool entry answers tx: null.
+    const feed = makeTxMockFeed(s);
+
+    const r = feed.getPost(postId, null, true) as PostJson;
+    expect(r.content).toBeNull();
+    expect(r.tx).toBeNull();
+    expect(r.txId).toBe(txId);
+  });
+
+  it('a withdrawn row carries `txId` and no `tx` key, both with and without ?tx=1', () => {
+    const s = emptyState();
+    const { commit, postId, txId } = makeScenarioPost();
+    const row = storedPost({ id: postId, txId, commit, content: null, status: 'confirmed', blockHeight: 10, blockIndex: 0, withdrawnAtHeight: 11 });
+    s.byId.set(postId, row);
+    const feed = makeTxMockFeed(s);
+
+    const withTx = feed.getPost(postId, null, true) as unknown as WithdrawnJson;
+    expect(withTx.kind).toBe('withdrawn');
+    expect(withTx.txId).toBe(txId);
+    expect('tx' in withTx).toBe(false);
+
+    const withoutTx = feed.getPost(postId, null, false) as unknown as WithdrawnJson;
+    expect(withoutTx.txId).toBe(txId);
+    expect('tx' in withoutTx).toBe(false);
+  });
+
+  it('without tx=1 no row of any list carries a `tx` key — getPost, queryPosts and getThread alike', () => {
+    const s = emptyState();
+    const { commit, postId, txId, txBytes } = makeScenarioPost();
+    const row = storedPost({ id: postId, txId, commit, content: 'x', status: 'pending', blockHeight: null, blockIndex: null });
+    s.byId.set(postId, row);
+    s.page.push(row);
+    s.pending.push(row);
+    s.pendingByTxId.set(txId, txBytes);
+    const feed = makeTxMockFeed(s);
+
+    const one = feed.getPost(postId) as PostJson;
+    expect('tx' in one).toBe(false);
+    const feedResult = feed.queryPosts({ limit: 10 });
+    for (const p of feedResult.posts) expect('tx' in p).toBe(false);
+    for (const p of feedResult.pending) expect('tx' in p).toBe(false);
+    const thread = feed.getThread(postId, { limit: 10 });
+    expect('tx' in (thread!.post as PostJson)).toBe(false);
+  });
+
+  it('a thread\'s post, ancestors, descendants and pending all carry `tx` under tx=1, and GET /posts\'s posts and pending too', () => {
+    const s = emptyState();
+    const subject = makeScenarioPost('the subject');
+    const ancestor = makeScenarioPost('an ancestor');
+    const descendant = makeScenarioPost('a descendant');
+    const pending = makeScenarioPost('a pending in subtree');
+
+    const subjectRow = storedPost({ id: subject.postId, txId: subject.txId, commit: subject.commit, content: 'the subject', status: 'confirmed', blockHeight: 5, blockIndex: 0 });
+    const ancestorRow = storedPost({ id: ancestor.postId, txId: ancestor.txId, commit: ancestor.commit, content: 'an ancestor', status: 'confirmed', blockHeight: 4, blockIndex: 0 });
+    const descendantRow = storedPost({ id: descendant.postId, txId: descendant.txId, commit: descendant.commit, content: 'a descendant', status: 'confirmed', blockHeight: 6, blockIndex: 0 });
+    const pendingRow = storedPost({ id: pending.postId, txId: pending.txId, commit: pending.commit, content: 'a pending in subtree', status: 'pending', blockHeight: null, blockIndex: null });
+
+    s.byId.set(subject.postId, subjectRow);
+    s.ancestors.push(ancestorRow);
+    s.descendants.push(descendantRow);
+    s.pending.push(pendingRow);
+    s.page.push(subjectRow, ancestorRow, descendantRow);
+    s.bodiesByHeight.set(4, { utxoTxIds: [ancestor.txId], utxoTxs: [ancestor.txBytes] });
+    s.bodiesByHeight.set(5, { utxoTxIds: [subject.txId], utxoTxs: [subject.txBytes] });
+    s.bodiesByHeight.set(6, { utxoTxIds: [descendant.txId], utxoTxs: [descendant.txBytes] });
+    s.pendingByTxId.set(pending.txId, pending.txBytes);
+    const feed = makeTxMockFeed(s);
+
+    const t = feed.getThread(subject.postId, { limit: 10 }, null, true)!;
+    expect(typeof (t.post as PostJson).tx).toBe('string');
+    for (const a of t.ancestors) expect(typeof (a as PostJson).tx).toBe('string');
+    for (const d of t.descendants) expect(typeof (d as PostJson).tx).toBe('string');
+    for (const p of t.pending) expect(typeof (p as PostJson).tx).toBe('string');
+
+    const q = feed.queryPosts({ limit: 10, tx: true });
+    for (const p of q.posts) expect(typeof (p as PostJson).tx).toBe('string');
+    for (const p of q.pending) expect(typeof (p as PostJson).tx).toBe('string');
+  });
+
+  it('a reorg that un-confirms a post answers its `tx` as `null` — the pool entry was removed at the confirming block\'s apply and nothing restores it on unconfirm', () => {
+    // The mempool entry was removed by writeBlockEffects at confirm time
+    // (block-apply.ts calls removeUtxoTxEntry); fork-resolution\'s revert
+    // runs unconfirmPost but does not re-admit the transaction, so the
+    // row is pending with no pool entry and the resolver answers null.
+    const s = emptyState();
+    const { commit, postId, txId } = makeScenarioPost();
+    const row = storedPost({ id: postId, txId, commit, content: 'x', status: 'pending', blockHeight: null, blockIndex: null });
+    s.byId.set(postId, row);
+    const feed = makeTxMockFeed(s);
+
+    const r = feed.getPost(postId, null, true) as PostJson;
+    expect(r.status).toBe('pending');
+    expect(r.tx).toBeNull();
+  });
+
+  it('a page whose rows sit in N distinct blocks reads N bodies, not one per row', () => {
+    const s = emptyState();
+    const rows: StoredPost[] = [];
+    // Three rows in height 5, two in height 6, one in height 7.
+    for (let h = 5; h <= 7; h++) {
+      const utxoTxIds: string[] = [];
+      const utxoTxs: Uint8Array[] = [];
+      const want = h === 5 ? 3 : h === 6 ? 2 : 1;
+      for (let i = 0; i < want; i++) {
+        const p = makeScenarioPost(`h${h}-${i}`);
+        rows.push(storedPost({ id: p.postId, txId: p.txId, commit: p.commit, content: `h${h}-${i}`, status: 'confirmed', blockHeight: h, blockIndex: i }));
+        utxoTxIds.push(p.txId);
+        utxoTxs.push(p.txBytes);
+      }
+      s.bodiesByHeight.set(h, { utxoTxIds, utxoTxs });
+    }
+    s.page = rows;
+    for (const r of rows) s.byId.set(r.id, r);
+    const feed = makeTxMockFeed(s);
+
+    const q = feed.queryPosts({ limit: 50, tx: true });
+    expect(q.posts.length).toBe(6);
+    // Three distinct heights; three body reads total — not one per row.
+    expect(s.bodyReads).toEqual([5, 6, 7]);
+  });
+
+  it('a confirmed row whose block lists no such id throws ConfirmedPostTxNotInBlockBodyError (CorruptChainStateError)', () => {
+    const s = emptyState();
+    const { commit, postId, txId } = makeScenarioPost();
+    const row = storedPost({ id: postId, txId, commit, content: 'x', status: 'confirmed', blockHeight: 10, blockIndex: 0 });
+    s.byId.set(postId, row);
+    // The body at height 10 holds no tx matching txId.
+    s.bodiesByHeight.set(10, { utxoTxIds: ['ff'.repeat(32)], utxoTxs: [new Uint8Array([0])] });
+    const feed = makeTxMockFeed(s);
+
+    expect(() => feed.getPost(postId, null, true)).toThrow(ConfirmedPostTxNotInBlockBodyError);
   });
 });

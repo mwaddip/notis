@@ -624,6 +624,23 @@ export function getBoxWithPending(boxId: string): AnyBox | null {
   return getBox(boxId) ?? findPendingOutput(boxId);
 }
 
+/**
+ * The stored `utxo_tx_bytes` of the pool entry whose `tx_id` equals the
+ * argument, or `null` when no such entry stands — the bytes a pending
+ * `PostJson`'s `tx` field is read from (NODE_INTERFACE → Posts → "The creating
+ * transaction rides a post row").
+ */
+export function getPendingUtxoTxBytesByTxId(txId: string): Uint8Array | null {
+  const row = getDb()
+    .prepare(
+      `SELECT utxo_tx_bytes FROM mempool
+        WHERE entry_type = 'utxo_tx' AND tx_id = ?`,
+    )
+    .get(txId) as { utxo_tx_bytes: Buffer | null } | undefined;
+  if (!row || !row.utxo_tx_bytes) return null;
+  return new Uint8Array(row.utxo_tx_bytes);
+}
+
 /** The columns a `PoolEntry` is read from — every reader of the pool selects these. */
 const ENTRY_COLUMNS = `rowid, entry_type, utxo_tx_bytes,
                        expires_at_height, created_at, cost_estimate`;

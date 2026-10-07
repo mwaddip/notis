@@ -11,7 +11,7 @@ import { generateKeyPairSync, createPrivateKey } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import { insertPost, getPost, queryPostsPage, getAncestorsNearest, getSubtreePage, getDescendantCount, confirmPost, withdrawPost, getPendingPostAuthor } from '../../src/store/posts.js';
 import { getUsernameByOwner } from '../../src/store/usernames.js';
-import { getCurrentHeight, getBlockCreatedAt } from '../../src/store/ordering.js';
+import { getCurrentHeight, getBlockCreatedAt, getOrderingBlock } from '../../src/store/ordering.js';
 import {
   getKarmaBoxes,
   insertBox,
@@ -20,7 +20,7 @@ import {
 import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/identity-records.js';
 import { hasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getLikeRecordCount, hasLikeRecord, insertLikeRecord } from '../../src/store/likes.js';
-import { insertUtxoTx, getPendingEntries } from '../../src/store/mempool.js';
+import { insertUtxoTx, getPendingEntries, getPendingUtxoTxBytesByTxId } from '../../src/store/mempool.js';
 import { verifyPost } from '../../src/services/verifier.js';
 import { validateTx } from '@dagsocial/consensus';
 import {
@@ -92,6 +92,8 @@ async function request(
       getAncestorsNearest,
       getSubtreePage,
       getBlockCreatedAt,
+      getPendingUtxoTxBytesByTxId,
+      getOrderingBlock,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
@@ -268,6 +270,8 @@ describe('posts routes', () => {
       getAncestorsNearest,
       getSubtreePage,
       getBlockCreatedAt,
+      getPendingUtxoTxBytesByTxId,
+      getOrderingBlock,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
@@ -569,6 +573,31 @@ describe('posts routes', () => {
     expect((res.data as { error: string }).error).toBe('roots must be 1');
   });
 
+  // NODE_INTERFACE → Posts → "The creating transaction rides a post row"
+  it('GET /posts?tx=2 answers 400 tx must be 1', async () => {
+    const res = await request('/?tx=2', 'GET');
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('tx must be 1');
+  });
+
+  it('GET /posts?tx= answers 400 tx must be 1', async () => {
+    const res = await request('/?tx=', 'GET');
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('tx must be 1');
+  });
+
+  it('GET /posts/:id?tx=2 answers 400 tx must be 1', async () => {
+    const res = await request(`/${'ab'.repeat(32)}?tx=2`, 'GET');
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('tx must be 1');
+  });
+
+  it('GET /posts/:id/thread?tx=2 answers 400 tx must be 1', async () => {
+    const res = await request(`/${'ab'.repeat(32)}/thread?tx=2`, 'GET');
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('tx must be 1');
+  });
+
   it('a GET /posts listing row carries descendantCount and authorName', async () => {
     const kp = generateKeyPair();
     const rootCommit = makePostCommit(kp.publicKey, 'a root carrying both fields');
@@ -801,7 +830,9 @@ describe('posts routes', () => {
     let author: Uint8Array;
     let liveRootId: string;
     let withdrawnReplyId: string;
+    let withdrawnReplyTxId: string;
     let withdrawnSoloRootId: string;
+    let withdrawnSoloRootTxId: string;
 
     beforeAll(() => {
       const keys = generateKeyPairSync('ed25519');
@@ -814,13 +845,15 @@ describe('posts routes', () => {
 
       const replyCommit = makePostCommit(author, 'a reply, later withdrawn', { parentRefs: [liveRootId] });
       withdrawnReplyId = fixturePostId(replyCommit);
-      insertPost(withdrawnReplyId, fixtureTxId(replyCommit), replyCommit, 'a reply, later withdrawn');
+      withdrawnReplyTxId = fixtureTxId(replyCommit);
+      insertPost(withdrawnReplyId, withdrawnReplyTxId, replyCommit, 'a reply, later withdrawn');
       confirmPost(withdrawnReplyId, 51, 0);
       withdrawPost(withdrawnReplyId, 52);
 
       const soloRootCommit = makePostCommit(author, 'a root, later withdrawn', { parentRefs: [] });
       withdrawnSoloRootId = fixturePostId(soloRootCommit);
-      insertPost(withdrawnSoloRootId, fixtureTxId(soloRootCommit), soloRootCommit, 'a root, later withdrawn');
+      withdrawnSoloRootTxId = fixtureTxId(soloRootCommit);
+      insertPost(withdrawnSoloRootId, withdrawnSoloRootTxId, soloRootCommit, 'a root, later withdrawn');
       confirmPost(withdrawnSoloRootId, 53, 0);
       withdrawPost(withdrawnSoloRootId, 54);
     });
@@ -831,6 +864,7 @@ describe('posts routes', () => {
       expect(res.data).toEqual({
         kind: 'withdrawn',
         id: withdrawnReplyId,
+        txId: withdrawnReplyTxId,
         author: Buffer.from(author).toString('hex'),
         parentRefs: [liveRootId],
         withdrawnAtHeight: 52,
@@ -846,6 +880,7 @@ describe('posts routes', () => {
       expect(res.data).toEqual({
         kind: 'withdrawn',
         id: withdrawnSoloRootId,
+        txId: withdrawnSoloRootTxId,
         author: Buffer.from(author).toString('hex'),
         parentRefs: [],
         withdrawnAtHeight: 54,
@@ -864,6 +899,7 @@ describe('posts routes', () => {
       expect(found).toEqual({
         kind: 'withdrawn',
         id: withdrawnReplyId,
+        txId: withdrawnReplyTxId,
         author: Buffer.from(author).toString('hex'),
         parentRefs: [liveRootId],
         withdrawnAtHeight: 52,
@@ -881,6 +917,7 @@ describe('posts routes', () => {
       expect(found).toEqual({
         kind: 'withdrawn',
         id: withdrawnReplyId,
+        txId: withdrawnReplyTxId,
         author: Buffer.from(author).toString('hex'),
         parentRefs: [liveRootId],
         withdrawnAtHeight: 52,
@@ -923,6 +960,8 @@ describe('posts routes — alias resolution', () => {
         getAncestorsNearest: () => ({ rows: [], count: 0 }),
         getSubtreePage: () => ({ rows: [], next: null, count: 0, pending: [], pendingCount: 0 }),
         getBlockCreatedAt: () => null,
+        getPendingUtxoTxBytesByTxId,
+        getOrderingBlock,
         inviteBondMin: config.inviteBondMin,
         inviteBondMax: config.inviteBondMax,
         getTopologyAuthor: () => null,

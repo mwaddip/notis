@@ -302,6 +302,24 @@ export class InconsistentAvlNodeRowsError extends CorruptChainStateError {
 }
 
 /**
+ * A confirmed post's row names a `tx_id` the block at its `block_height` does
+ * not list — a stored chain that contradicts itself
+ * (NODE_INTERFACE → Posts → "The creating transaction rides a post row"). The
+ * block body and the post row are both written by the same `writeBlockEffects`
+ * from `postsOf(block)`, so a disagreement is corruption, never input.
+ */
+export class ConfirmedPostTxNotInBlockBodyError extends CorruptChainStateError {
+  constructor(site: string, height: number, readonly postId: string, readonly txId: string) {
+    super(
+      site,
+      height,
+      `post ${postId} names tx ${txId}, but the stored body at height ${height} ` +
+      `lists no such id — the block body and the post row disagree`,
+    );
+  }
+}
+
+/**
  * A version row already stands at the height being checkpointed — the store's
  * version history has run ahead of its chain (NODE_INTERFACE → AVL+ State Root).
  */

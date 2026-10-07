@@ -12,6 +12,7 @@ import {
   parseLimit, isLimitError,
   parseAfter, isAfterError,
   parseRoots, isRootsError,
+  parseTx, isTxError,
   parseViewer, isViewerError,
   resolveIdentityParam, isResolveError,
   formatKey,
@@ -90,6 +91,8 @@ export function createRouter(deps: PostsDeps): Router {
     if (isLimitError(limit)) { res.status(400).json({ error: limit.error }); return; }
     const after = parseAfter(req.query as Record<string, unknown>, 'post');
     if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
+    const tx = parseTx(req.query as Record<string, unknown>);
+    if (isTxError(tx)) { res.status(400).json({ error: tx.error }); return; }
     const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);
     if (isViewerError(viewer)) {
       res.status(viewer.status ?? 400).json({ error: viewer.error });
@@ -99,6 +102,7 @@ export function createRouter(deps: PostsDeps): Router {
       req.params['id']!,
       { limit, after: after as PostKey | undefined },
       viewer,
+      tx,
     );
     if (!thread) {
       res.status(404).json({ error: 404, reason: 'Post not found' });
@@ -113,12 +117,14 @@ export function createRouter(deps: PostsDeps): Router {
   // GET /posts/:id
   router.get('/:id', (req, res) => {
     const id = req.params['id']!;
+    const tx = parseTx(req.query as Record<string, unknown>);
+    if (isTxError(tx)) { res.status(400).json({ error: tx.error }); return; }
     const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);
     if (isViewerError(viewer)) {
       res.status(viewer.status ?? 400).json({ error: viewer.error });
       return;
     }
-    const result = feedService.getPost(id, viewer);
+    const result = feedService.getPost(id, viewer, tx);
     if (!result) {
       res.status(404).json({ error: 404, reason: 'Post not found' });
       return;
@@ -134,6 +140,8 @@ export function createRouter(deps: PostsDeps): Router {
     if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
     const roots = parseRoots(req.query as Record<string, unknown>);
     if (isRootsError(roots)) { res.status(400).json({ error: roots.error }); return; }
+    const tx = parseTx(req.query as Record<string, unknown>);
+    if (isTxError(tx)) { res.status(400).json({ error: tx.error }); return; }
     const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);
     if (isViewerError(viewer)) {
       res.status(viewer.status ?? 400).json({ error: viewer.error });
@@ -153,6 +161,7 @@ export function createRouter(deps: PostsDeps): Router {
       limit,
       after: after as PostKey | undefined,
       viewer,
+      tx,
     });
     res.json({
       ...result,

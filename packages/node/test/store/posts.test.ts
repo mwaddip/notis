@@ -562,6 +562,8 @@ describe('posts store', () => {
       getAncestorsNearest: () => ({ rows: [], count: 0 }),
       getSubtreePage: () => ({ rows: [], next: null, count: 0, pending: [], pendingCount: 0 }),
       getBlockCreatedAt: () => null,
+      getPendingUtxoTxBytesByTxId: () => null,
+      getOrderingBlock: () => null,
     });
 
     const result = feedService.getPost(postId);
@@ -613,6 +615,8 @@ describe('posts store', () => {
       getAncestorsNearest,
       getSubtreePage,
       getBlockCreatedAt: () => null,
+      getPendingUtxoTxBytesByTxId: () => null,
+      getOrderingBlock: () => null,
     });
 
     const thread = feedService.getThread(childId, { limit: 50 })!;
@@ -656,6 +660,8 @@ describe('posts store', () => {
       getAncestorsNearest: () => ({ rows: [], count: 0 }),
       getSubtreePage: () => ({ rows: [], next: null, count: 0, pending: [], pendingCount: 0 }),
       getBlockCreatedAt: () => null,
+      getPendingUtxoTxBytesByTxId: () => null,
+      getOrderingBlock: () => null,
     });
 
     const result = feedService.queryPosts({ limit: 50 });

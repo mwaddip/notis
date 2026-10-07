@@ -123,6 +123,7 @@ export {
   hasPendingSpend,
   findPendingOutput,
   getBoxWithPending,
+  getPendingUtxoTxBytesByTxId,
   MempoolFullError,
   PendingSpendConflictError,
   TxTooLargeError,

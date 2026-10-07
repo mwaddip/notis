@@ -123,11 +123,7 @@ async function importMempool() {
 }
 
 async function importOrdering() {
-  return (await import('../../src/store/ordering.js')) as {
-    getCurrentHeight: () => number;
-    getOrderingBlock: (height: number) => unknown;
-    getBlockCreatedAt: (height: number) => number | null;
-  };
+  return (await import('../../src/store/ordering.js')) as typeof import('../../src/store/ordering.js');
 }
 
 type LikesService = {
@@ -408,6 +404,8 @@ describe('full-pipeline', () => {
       getSubtreePage: f.getSubtreePage,
       getBlockCreatedAt: ordering.getBlockCreatedAt,
       getUsernameByOwner: () => null,
+      getPendingUtxoTxBytesByTxId: () => null,
+      getOrderingBlock: ordering.getOrderingBlock,
     });
     const postJson = feed.getPost(postId, liker.userId) as { likeCount: number; likedByViewer: boolean | null };
     expect(postJson.likeCount).toBe(1);
