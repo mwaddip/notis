@@ -3,6 +3,7 @@ import {
   PROTOCOL_VERSION,
   LIKES_PER_KARMA_PAYOUT,
   REPLY_AUTHOR_SHARE,
+  computeTxId,
 } from '@dagsocial/types';
 import type {
   KarmaBox,
@@ -20,7 +21,7 @@ import {
   signTransaction,
   type TestIdentity,
   activateProverOverStore,
-  seedBoxes, fixtureTxId } from '../helpers.js';
+  seedBoxes } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // P2-D N2b: per-block like settlement (NODE_INTERFACE → Per-block like
@@ -254,7 +255,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'arithmetic target');
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
@@ -309,7 +310,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
       const author = makeTestIdentity();
       const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'grouping target');
-      posts.insertPost(postId, fixtureTxId(commit), commit, content);
+      posts.insertPost(postId, computeTxId(postTx), commit, content);
       expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
       let nonce = 0;
@@ -360,8 +361,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const b = await seedPostTx(authorB, 'author B target');
     const postAId = a.postId;
     const postBId = b.postId;
-    posts.insertPost(a.postId, fixtureTxId(a.commit), a.commit, a.content);
-    posts.insertPost(b.postId, fixtureTxId(b.commit), b.commit, b.content);
+    posts.insertPost(a.postId, computeTxId(a.tx), a.commit, a.content);
+    posts.insertPost(b.postId, computeTxId(b.tx), b.commit, b.content);
 
     expect(
       blockApply.applyOrderingBlock(
@@ -406,8 +407,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const p2 = await seedPostTx(author, 'consolidation target 2');
     const post1Id = p1.postId;
     const post2Id = p2.postId;
-    posts.insertPost(p1.postId, fixtureTxId(p1.commit), p1.commit, p1.content);
-    posts.insertPost(p2.postId, fixtureTxId(p2.commit), p2.commit, p2.content);
+    posts.insertPost(p1.postId, computeTxId(p1.tx), p1.commit, p1.content);
+    posts.insertPost(p2.postId, computeTxId(p2.tx), p2.commit, p2.content);
 
     expect(
       blockApply.applyOrderingBlock(
@@ -463,7 +464,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'same-block dedup target');
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
     const liker = makeTestIdentity();
@@ -499,7 +500,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'cross-block dedup target');
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
     const liker = makeTestIdentity();
@@ -542,7 +543,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'spare signature target');
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
     const liker = makeTestIdentity();
@@ -600,7 +601,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'round-trip carry target');
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
     // Everything seeded before bootstrap so tree and DB agree from height 0.
     const likers = await seedLikers(4);
 
@@ -643,7 +644,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'round-trip payout target');
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
     const authorKarma = makeKarmaBox(100n, author.userId, 0, 999);
     utxo.insertBox(authorKarma);
     const likers = await seedLikers(5);
@@ -694,7 +695,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'withdrawn-like-target');
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     // Block 1: confirms the post.
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
@@ -745,7 +746,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'parent post');
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const replier = makeTestIdentity();
     const { tx: replyTx } = await seedPostTx(replier, 'reply post', { parentRefs: [postId] }, author.userId);

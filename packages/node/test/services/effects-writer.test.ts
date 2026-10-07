@@ -101,7 +101,7 @@ describe('the effects writer', () => {
     // Block 1 confirms the author's thread.
     const opening = threadTx(author, largest(author), 'the thread block 2 likes', 1);
     const openingId = computePostId(computeTxId(opening), 0);
-    posts.insertPost(openingId, fixtureTxId(opening.post!), opening.post!, 'the thread block 2 likes');
+    posts.insertPost(openingId, computeTxId(opening), opening.post!, 'the thread block 2 likes');
     expect(blockApply.applyOrderingBlock(await makeApplicableBlock({ height: 1, utxoTxs: [opening] }))).toBe(true);
 
     // Block 2: each second transaction spends the change its first created, so

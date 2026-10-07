@@ -16,7 +16,7 @@
       "usernames": "e15a8caac23994e7f1469a67b9debe54359c36c53c27b56014225f5b67573f03",
       "like_records": "e15a8caac23994e7f1469a67b9debe54359c36c53c27b56014225f5b67573f03",
       "block_topology": "e15a8caac23994e7f1469a67b9debe54359c36c53c27b56014225f5b67573f03",
-      "dag_posts": "434d68b01ce344d6e5df44e747a1612cdabf46f4c28174a9bd1d9906b859b871",
+      "dag_posts": "47467b23ae660d39b79a02e2835f2cca2e0b049ee8ce6d98f3ca7a3026e0f9c1",
       "dag_parent_refs": "e15a8caac23994e7f1469a67b9debe54359c36c53c27b56014225f5b67573f03",
       "ordering_blocks": "e15a8caac23994e7f1469a67b9debe54359c36c53c27b56014225f5b67573f03",
       "block_journal": "e15a8caac23994e7f1469a67b9debe54359c36c53c27b56014225f5b67573f03",
@@ -60,7 +60,7 @@
       "dagPosts": [
         {
           "id": "493a40f8f36d4e38bdcd833f05f80f1005fc05cf436ab4f0d15a9072d35b8a00",
-          "tx_id": "d11dc4354e28f1366aa400e65fe2f2470cbca9f14025291c84c51f2a7312eaa3",
+          "tx_id": "8b766fab948d2c5017fc041ffbec07a488e5f0074643fc9858244664ff853b37",
           "content_hash": "e8d499a86f933a7b06078c8fdd798dde5c1a3c13f9cfbae75be6df2f803e0322",
           "content": "a thread whose body this node holds",
           "author": "b43ab44ccd904042743e9da319a17fb832b655219e288b6fb5ba54d59f207488",
@@ -193,7 +193,7 @@
       "dagPosts": [
         {
           "id": "493a40f8f36d4e38bdcd833f05f80f1005fc05cf436ab4f0d15a9072d35b8a00",
-          "tx_id": "d11dc4354e28f1366aa400e65fe2f2470cbca9f14025291c84c51f2a7312eaa3",
+          "tx_id": "8b766fab948d2c5017fc041ffbec07a488e5f0074643fc9858244664ff853b37",
           "content_hash": "e8d499a86f933a7b06078c8fdd798dde5c1a3c13f9cfbae75be6df2f803e0322",
           "content": null,
           "author": "b43ab44ccd904042743e9da319a17fb832b655219e288b6fb5ba54d59f207488",
@@ -457,7 +457,7 @@
       "usernames": "e15a8caac23994e7f1469a67b9debe54359c36c53c27b56014225f5b67573f03",
       "like_records": "e15a8caac23994e7f1469a67b9debe54359c36c53c27b56014225f5b67573f03",
       "block_topology": "e15a8caac23994e7f1469a67b9debe54359c36c53c27b56014225f5b67573f03",
-      "dag_posts": "ee6daf8c2129fb06694eee8d9e3e0abb15a3c9623d20afafe687d819be1e10e1",
+      "dag_posts": "f9e4aa752d46a1c91f07bf2b05289cc0177053b23bc4359813c54699dae933af",
       "dag_parent_refs": "5d4e730121d3940b563476fa376f004161c6c8e54c0970726f2c77f9f1c87d45",
       "ordering_blocks": "e15a8caac23994e7f1469a67b9debe54359c36c53c27b56014225f5b67573f03",
       "block_journal": "e15a8caac23994e7f1469a67b9debe54359c36c53c27b56014225f5b67573f03",

@@ -39,7 +39,6 @@ import type Database from 'better-sqlite3';
 import { config } from '../../src/config.js';
 import type { Config } from '../../src/config.js';
 import type { TestIdentity } from '../helpers.js';
-import { fixtureTxId } from '../helpers.js';
 import {
   ZERO_HASH,
   changeBoxOf,
@@ -280,7 +279,7 @@ describe('block-apply journal recording', () => {
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'journal test post');
 
     const posts = await importPosts();
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
@@ -317,7 +316,7 @@ describe('block-apply journal recording', () => {
 
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'utxo journal test');
     const { computeTxId } = await import('@dagsocial/types');
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     // Insert post transaction
     mempool.insertUtxoTx(postTx, 1000);
@@ -1282,8 +1281,8 @@ describe('block-apply embedded tx re-validation', () => {
     const author = makeTestIdentity();
     const { commit: commitA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(author, 'valid-txs target a');
     const { commit: commitB, tx: postBTx, postId: postBId, content: contentB } = await seedPostTx(author, 'valid-txs target b');
-    posts.insertPost(postAId, fixtureTxId(commitA), commitA, contentA);
-    posts.insertPost(postBId, fixtureTxId(commitB), commitB, contentB);
+    posts.insertPost(postAId, computeTxId(postATx), commitA, contentA);
+    posts.insertPost(postBId, computeTxId(postBTx), commitB, contentB);
     mempool.insertUtxoTx(postATx, 1000);
     mempool.insertUtxoTx(postBTx, 1000);
 
@@ -1339,8 +1338,8 @@ describe('block-apply embedded tx re-validation', () => {
     const author = makeTestIdentity();
     const { commit: commitA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(author, 'forward-ref target a');
     const { commit: commitB, tx: postBTx, postId: postBId, content: contentB } = await seedPostTx(author, 'forward-ref target b');
-    posts.insertPost(postAId, fixtureTxId(commitA), commitA, contentA);
-    posts.insertPost(postBId, fixtureTxId(commitB), commitB, contentB);
+    posts.insertPost(postAId, computeTxId(postATx), commitA, contentA);
+    posts.insertPost(postBId, computeTxId(postBTx), commitB, contentB);
 
     const txA = makeLikeTx(liker, startBox, postAId, author.userId);
     const txB = makeLikeTx(liker, changeBoxOf(txA), postBId, author.userId);
@@ -1375,8 +1374,8 @@ describe('block-apply embedded tx re-validation', () => {
     const author = makeTestIdentity();
     const { commit: commitA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(author, 'chain target a');
     const { commit: commitB, tx: postBTx, postId: postBId, content: contentB } = await seedPostTx(author, 'chain target b');
-    posts.insertPost(postAId, fixtureTxId(commitA), commitA, contentA);
-    posts.insertPost(postBId, fixtureTxId(commitB), commitB, contentB);
+    posts.insertPost(postAId, computeTxId(postATx), commitA, contentA);
+    posts.insertPost(postBId, computeTxId(postBTx), commitB, contentB);
 
     const txA = makeLikeTx(liker, startBox, postAId, author.userId);
     const txB = makeLikeTx(liker, changeBoxOf(txA), postBId, author.userId);
@@ -2405,7 +2404,7 @@ describe('block-apply H-3 post authorship', () => {
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'child post', { parentRefs: [parentA] }, parentAuthor.userId);
 
     const posts = await importPosts();
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const blockApply = await importBlockApply();
     const block = await makeApplicableBlock({ utxoTxs: [postTx] });
@@ -2648,7 +2647,7 @@ describe('block-apply funnel totality', () => {
 
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'same-block withdraw');
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const withdrawKarma = makeKarmaBox(100n, author.userId, 0, 99);
     utxo.insertBox(withdrawKarma);
@@ -2675,7 +2674,7 @@ describe('block-apply funnel totality', () => {
 
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'earlier-block withdraw');
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
     expect(blockApply.applyOrderingBlock(block1)).toBe(true);
@@ -2722,7 +2721,7 @@ describe('block-apply funnel totality', () => {
 
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'withdrawn twice');
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
     expect(blockApply.applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [postTx] }))).toBe(true);
 
     expect(blockApply.applyOrderingBlock(
@@ -2748,7 +2747,7 @@ describe('block-apply funnel totality', () => {
     const author = makeTestIdentity();
     const stranger = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'foreign-withdraw');
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     expect(blockApply.applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [postTx] }))).toBe(true);
 
@@ -2927,7 +2926,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'T4 clock post');
     const posts = await importPosts();
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
@@ -2954,7 +2953,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     // Seed a post for the liker to like.
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'T4 like target');
     const posts = await importPosts();
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
 
@@ -2988,7 +2987,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     // Seed a post for the liker to like — the author receives a settlement payout.
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'T4 settlement target');
     const posts = await importPosts();
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
 
@@ -3026,7 +3025,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
 
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'T4 reply target');
     const posts = await importPosts();
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
 
@@ -3051,7 +3050,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     };
     signTransaction(replyTx, replier.privateKey, hex(replier.userId));
     const replyPostId = computePostId(computeTxId(replyTx), 0);
-    posts.insertPost(replyPostId, fixtureTxId(replyCommit), replyCommit, 'T4 reply');
+    posts.insertPost(replyPostId, computeTxId(replyTx), replyCommit, 'T4 reply');
     mempool.insertUtxoTx(replyTx, 1000);
 
     const block2 = await mineNextBlock(bc);
@@ -3086,7 +3085,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     signTransaction(postTx, author.privateKey, hex(author.userId));
     const postId = computePostId(computeTxId(postTx), 0);
     const posts = await importPosts();
-    posts.insertPost(postId, fixtureTxId(commit), commit, 'T4 exact post');
+    posts.insertPost(postId, computeTxId(postTx), commit, 'T4 exact post');
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
 
@@ -3225,7 +3224,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'T4 withdraw target');
     const posts = await importPosts();
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
 
@@ -3336,8 +3335,8 @@ describe('T4: activity clock in the user-transaction loop', () => {
     utxo.insertBox(replyResult.karmaBox);
 
     const posts = await importPosts();
-    posts.insertPost(threadResult.postId, fixtureTxId(threadResult.commit), threadResult.commit, threadResult.content);
-    posts.insertPost(replyResult.postId, fixtureTxId(replyResult.commit), replyResult.commit, replyResult.content);
+    posts.insertPost(threadResult.postId, computeTxId(threadResult.tx), threadResult.commit, threadResult.content);
+    posts.insertPost(replyResult.postId, computeTxId(replyResult.tx), replyResult.commit, replyResult.content);
 
     const block = await makeApplicableBlock({
       utxoTxs: [threadResult.tx, replyResult.tx],
@@ -3363,8 +3362,8 @@ describe('T4: activity clock in the user-transaction loop', () => {
     utxo.insertBox(replyResult.karmaBox);
 
     const posts = await importPosts();
-    posts.insertPost(threadResult.postId, fixtureTxId(threadResult.commit), threadResult.commit, threadResult.content);
-    posts.insertPost(replyResult.postId, fixtureTxId(replyResult.commit), replyResult.commit, replyResult.content);
+    posts.insertPost(threadResult.postId, computeTxId(threadResult.tx), threadResult.commit, threadResult.content);
+    posts.insertPost(replyResult.postId, computeTxId(replyResult.tx), replyResult.commit, replyResult.content);
 
     const block = await makeApplicableBlock({
       utxoTxs: [replyResult.tx, threadResult.tx],
@@ -3392,7 +3391,7 @@ describe('a self-like is refused at block application', () => {
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content, karmaBox: postKarma } = makePostTx(author, 'self-like target');
     utxo.insertBox(postKarma);
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
     expect(blockApply.applyOrderingBlock(block1)).toBe(true);
@@ -3417,7 +3416,7 @@ describe('a self-like is refused at block application', () => {
     const liker = makeTestIdentity();
     const { commit, tx: postTx, postId, content, karmaBox: postKarma } = makePostTx(author, 'other-like target');
     utxo.insertBox(postKarma);
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
     expect(blockApply.applyOrderingBlock(block1)).toBe(true);

@@ -5,7 +5,7 @@ import {
   signTransaction,
   solveHeaderPow,
   makePostTx, seedPostTx, fillerTx, coinbaseOf,
-  seedEmissionBox, makeApplicableBlock, liveProver, seedBoxes, fixtureTxId} from '../helpers.js';
+  seedEmissionBox, makeApplicableBlock, liveProver, seedBoxes} from '../helpers.js';
 import type { AvlProverHandle } from '../../src/state/avl-prover.js';
 import type { StateRootSpeculation } from '../../src/services/block-apply.js';
 import {
@@ -455,7 +455,7 @@ describe('block-creator', () => {
 
 
     const posts = await importPosts();
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
@@ -489,7 +489,7 @@ describe('block-creator', () => {
 
 
     const posts = await importPosts();
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
@@ -525,7 +525,7 @@ describe('block-creator', () => {
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'template shape');
 
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
     mempool.insertUtxoTx(postTx, 1000);
 
     const liker = makeTestIdentity();
@@ -591,7 +591,7 @@ describe('block-creator', () => {
 
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'height test');
     const posts = await importPosts();
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
@@ -608,7 +608,7 @@ describe('block-creator', () => {
 
     // Second block
     const { commit: commit2, tx: post2Tx, postId: postId2, content: content2 } = await seedPostTx(author, 'height test 2');
-    posts.insertPost(postId2, fixtureTxId(commit2), commit2, content2);
+    posts.insertPost(postId2, computeTxId(post2Tx), commit2, content2);
     mempool.insertUtxoTx(post2Tx, 1000);
 
     await mineNextBlock(bc);
@@ -636,7 +636,7 @@ describe('block-creator', () => {
     // Create and insert a post
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'utxoTxIds test');
     const { computeTxId } = await import('@dagsocial/types');
-    posts.insertPost(postId, fixtureTxId(commit), commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     // Insert post transaction into mempool
     mempool.insertUtxoTx(postTx, 1000);
