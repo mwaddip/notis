@@ -522,12 +522,16 @@ describe('feed-service — tx bytes ride the row (NODE_INTERFACE → Posts → "
     expect(computePostId(computeTxId(decoded), 0)).toBe(postId);
   });
 
-  it('a row applied from a block with no packet is a placeholder — `content: null` and the pool entry is gone, so `tx: null`', () => {
+  it('a pending row whose pool entry is gone answers tx: null', () => {
+    // A pending row (status: 'pending', blockHeight: null) with no entry
+    // under its tx_id in the pool. A placeholder is a CONFIRMED row with
+    // null content, written by writeBlockEffects when a block confirms a
+    // post whose packet this node never received — the real-store cases
+    // below cover that path.
     const s = emptyState();
     const { commit, postId, txId } = makeScenarioPost();
     const row = storedPost({ id: postId, txId, commit, content: null, status: 'pending', blockHeight: null, blockIndex: null });
     s.byId.set(postId, row);
-    // No pool entry — placeholder path. The brief says a pending row with no pool entry answers tx: null.
     const feed = makeTxMockFeed(s);
 
     const r = feed.getPost(postId, null, true) as PostJson;
@@ -658,5 +662,187 @@ describe('feed-service — tx bytes ride the row (NODE_INTERFACE → Posts → "
     const feed = makeTxMockFeed(s);
 
     expect(() => feed.getPost(postId, null, true)).toThrow(ConfirmedPostTxNotInBlockBodyError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Over the real store — a real transaction, the real mempool, a real
+// ordering_blocks row, and the real `getPendingUtxoTxBytesByTxId` and
+// `getOrderingBlock`. The branches above pin FeedService's shape; these
+// pin that the real store answers each branch's inputs.
+// NODE_INTERFACE → Posts → "The creating transaction rides a post row".
+// ---------------------------------------------------------------------------
+
+import { getDb, closeDb as closeDb2, initDb as initDb2 } from '../../src/store/db.js';
+import {
+  encodeHeader,
+  encodeUtxoTxTree,
+  encodeInterlinks,
+  PROTOCOL_VERSION as PROTO_VER,
+} from '@dagsocial/types';
+import type { BlockHeader } from '@dagsocial/types';
+import { blockHash as computeBlockHash } from '@dagsocial/validation';
+import { insertUtxoTx as realInsertUtxoTx } from '../../src/store/mempool.js';
+import {
+  insertPost as realInsertPost,
+  confirmPost as realConfirmPost,
+  unconfirmPost as realUnconfirmPost,
+} from '../../src/store/posts.js';
+
+/**
+ * Seed an ordering_blocks row carrying the single transaction `tx` with id
+ * `txId` and bytes `txBytes`. The header is minimal but encodable, so
+ * `rowToOrderingBlock` decodes it and `getOrderingBlock` answers the real
+ * body under `block_height`.
+ */
+function seedOrderingBlockRow(height: number, txId: string, txBytes: Uint8Array): void {
+  const header: BlockHeader = {
+    protocolVersion: PROTO_VER,
+    height,
+    prevBlockHash: '00'.repeat(32),
+    utxoTxRoot: '00'.repeat(32),
+    stateRoot: '00'.repeat(33),
+    validatorId: new Uint8Array(32),
+    powNonce: 0,
+    powTargetBits: 1,
+    createdAt: height * 60_000,
+    interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
+  };
+  const hash = computeBlockHash(header);
+  if (hash === null) throw new Error('synthetic header must hash');
+  getDb().prepare(
+    `INSERT INTO ordering_blocks
+       (height, header_bytes, utxotx_tree_bytes, validator_signature,
+        created_at, block_hash, interlinks)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    height,
+    Buffer.from(encodeHeader(header)),
+    Buffer.from(encodeUtxoTxTree({ utxoTxIds: [txId], utxoTxs: [txBytes] })),
+    Buffer.from(new Uint8Array(64)),
+    header.createdAt,
+    hash,
+    Buffer.from(encodeInterlinks([])),
+  );
+}
+
+function realStoreFeedService(): FeedService {
+  return new FeedService({
+    getPost: storeGetPost,
+    queryPostsPage,
+    getLikeRecordCount,
+    getDescendantCount,
+    hasLikeRecord,
+    getAncestorsNearest,
+    getSubtreePage,
+    getBlockCreatedAt,
+    getUsernameByOwner,
+    getPendingUtxoTxBytesByTxId,
+    getOrderingBlock,
+  });
+}
+
+describe('feed-service — tx bytes ride the row, over the real store', () => {
+  beforeEach(() => { initDb2(':memory:'); });
+  afterEach(() => { closeDb2(); });
+
+  it('case 1 — a submitted post, pending: tx reads from the pool', () => {
+    const id = makeTestIdentity();
+    const { commit, tx, postId, content } = makePostTx(id, 'the first real-store case');
+    const txId = computeTxId(tx);
+    const txBytes = encodeTx(tx);
+
+    realInsertUtxoTx(tx, 1000);
+    realInsertPost(postId, txId, commit, content);
+
+    const r = realStoreFeedService().getPost(postId, null, true) as PostJson;
+    expect(r.txId).toBe(txId);
+    expect(typeof r.tx).toBe('string');
+    const decoded = decodeTx(new Uint8Array(Buffer.from(r.tx as string, 'hex')));
+    expect(computeTxId(decoded)).toBe(txId);
+    expect(computePostId(computeTxId(decoded), 0)).toBe(postId);
+    // Byte-equal to the real tx bytes.
+    expect(r.tx).toBe(Buffer.from(txBytes).toString('hex'));
+  });
+
+  it('case 2 — the same post after the block that confirms it: tx reads from the stored body, byte-equal to case 1', () => {
+    const id = makeTestIdentity();
+    const { commit, tx, postId, content } = makePostTx(id, 'the second real-store case');
+    const txId = computeTxId(tx);
+    const txBytes = encodeTx(tx);
+
+    // Pending first — the hex that case 1 would answer.
+    realInsertUtxoTx(tx, 1000);
+    realInsertPost(postId, txId, commit, content);
+    const pendingHex = (realStoreFeedService().getPost(postId, null, true) as PostJson).tx;
+
+    // The block confirms it — `writeBlockEffects` removes the pool entry and
+    // the body carries the tx. Seed the row directly, confirm the post.
+    seedOrderingBlockRow(10, txId, txBytes);
+    realConfirmPost(postId, 10, 0);
+    // writeBlockEffects would call removeUtxoTxEntry; mirror that so the
+    // pool no longer answers under the row's tx_id.
+    getDb().prepare('DELETE FROM mempool WHERE tx_id = ?').run(txId);
+
+    const r = realStoreFeedService().getPost(postId, null, true) as PostJson;
+    expect(r.txId).toBe(txId);
+    expect(typeof r.tx).toBe('string');
+    expect(r.tx).toBe(pendingHex);
+    expect(r.tx).toBe(Buffer.from(txBytes).toString('hex'));
+  });
+
+  it('case 3 — a post this node first sees in an applied block (placeholder): confirmed, content: null, tx from the stored body', () => {
+    const id = makeTestIdentity();
+    const { commit, tx, postId } = makePostTx(id, 'the placeholder real-store case');
+    const txId = computeTxId(tx);
+    const txBytes = encodeTx(tx);
+
+    // No pool entry ever. `writeBlockEffects` inserts the row with
+    // `content: null` and confirms it in one step.
+    realInsertPost(postId, txId, commit, null);
+    seedOrderingBlockRow(11, txId, txBytes);
+    realConfirmPost(postId, 11, 0);
+
+    const r = realStoreFeedService().getPost(postId, null, true) as PostJson;
+    expect(r.content).toBeNull();
+    expect(r.status).toBe('confirmed');
+    expect(r.txId).toBe(txId);
+    expect(r.tx).toBe(Buffer.from(txBytes).toString('hex'));
+  });
+
+  it('case 4 — a reorg that reverts the confirming block: the row is pending again and the pool entry is re-admitted, so tx reads from the pool', () => {
+    // The fact this case establishes (reported in prompts/n4b-node-fix-REPORT.md):
+    // `reorg()` reverts the confirming block in two phases that between them
+    // restore the pool entry under the row's tx_id. Phase 1's `revertBlock`
+    // calls `unconfirmPost(postId)` — the row is pending with
+    // `block_height: null`. Phase 2 re-admits every reverted transaction into
+    // the pool via `insertUtxoTx(tx, mempoolExpiry)`, so the real
+    // `getPendingUtxoTxBytesByTxId(row.txId)` answers once again, and the row
+    // does NOT answer `tx: null` after a reorg. (Standalone `revertBlock`,
+    // without `reorg`'s Phase 2, would leave the pool empty; the reorg path
+    // is the one that reverts a confirming block.)
+    const id = makeTestIdentity();
+    const { commit, tx, postId, content } = makePostTx(id, 'the reorg real-store case');
+    const txId = computeTxId(tx);
+    const txBytes = encodeTx(tx);
+
+    // Confirm it: pending → confirmed, pool entry removed.
+    realInsertUtxoTx(tx, 1000);
+    realInsertPost(postId, txId, commit, content);
+    seedOrderingBlockRow(12, txId, txBytes);
+    realConfirmPost(postId, 12, 0);
+    getDb().prepare('DELETE FROM mempool WHERE tx_id = ?').run(txId);
+
+    // Simulate reorg Phase 1 (revertBlock → unconfirmPost) and Phase 2
+    // (re-admit the reverted transaction).
+    realUnconfirmPost(postId);
+    realInsertUtxoTx(tx, 2000);
+
+    const r = realStoreFeedService().getPost(postId, null, true) as PostJson;
+    expect(r.status).toBe('pending');
+    expect(r.txId).toBe(txId);
+    expect(typeof r.tx).toBe('string');
+    expect(r.tx).toBe(Buffer.from(txBytes).toString('hex'));
   });
 });
