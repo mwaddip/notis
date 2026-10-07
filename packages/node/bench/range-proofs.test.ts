@@ -12,8 +12,8 @@ import {
   PersistentBatchAVLProver,
   StrictBatchAVLVerifier,
   label,
-} from '@ergots/avltree';
-import type { VersionedAVLStorage } from '@ergots/avltree';
+} from '@dagsocial/avltree';
+import type { VersionedAVLStorage } from '@dagsocial/avltree';
 import {
   INDEX_MARKER,
   TREE_KEY_LENGTH,
@@ -34,7 +34,7 @@ import {
   encodeHeight,
   performTreeWrites,
 } from '../src/state/avl-prover.js';
-import type { AvlProverHandle } from '../src/state/avl-prover.js';
+import type { AvlProver, AvlProverHandle } from '../src/state/avl-prover.js';
 import { RecentRoots } from '../src/state/recent-roots.js';
 import {
   RANGE_PAGE_MAX,
@@ -243,7 +243,7 @@ function makeHandle(dbPath: string, capacity: number): { handle: AvlProverHandle
   const inner = new BatchAVLProver(TREE_KEY_LENGTH, null);
   const prover = new PersistentBatchAVLProver(inner, storage as VersionedAVLStorage, [
     [HEIGHT_SENTINEL, encodeHeight(0)],
-  ]);
+  ]) as AvlProver;
   const recentRoots = new RecentRoots(capacity, Number.MAX_SAFE_INTEGER);
   return { handle: { prover, storage, recentRoots } };
 }

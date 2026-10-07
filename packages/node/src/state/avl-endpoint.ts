@@ -18,7 +18,7 @@ import {
 } from '@dagsocial/types';
 import { TreeInconsistencyError, holdingsPage, isSentinel, treeStateView } from '@dagsocial/consensus';
 import type { HoldingKind } from '@dagsocial/consensus';
-import { label } from '@ergots/avltree';
+import { label } from '@dagsocial/avltree';
 import type { AvlProverHandle } from './avl-prover.js';
 import type { KeptRoot } from './recent-roots.js';
 import { recordingSession } from './prover-session.js';

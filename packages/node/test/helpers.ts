@@ -1044,7 +1044,7 @@ export async function revertChainTo(height: number): Promise<void> {
   const { revertBlock } = await import('../src/services/fork-resolution.js');
   const { getCurrentHeight } = await import('../src/store/ordering.js');
   const { tryGetAvlProver } = await import('../src/state/avl-prover.js');
-  const { label } = await import('@ergots/avltree');
+  const { label } = await import('@dagsocial/avltree');
   for (let h = getCurrentHeight(); h > height; h--) revertBlock(h);
   const handle = tryGetAvlProver();
   if (handle === null) return;

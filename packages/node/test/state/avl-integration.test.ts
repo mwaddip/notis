@@ -5,7 +5,7 @@ import {
   performTreeWrites,
   checkpointProver,
 } from '../../src/state/avl-prover.js';
-import type { PersistentBatchAVLProver } from '@ergots/avltree';
+import type { AvlProver } from '../../src/state/avl-prover.js';
 import { boxFromRecordBytes, boxKey, boxRecordBytes, hexToBytes } from '@dagsocial/types';
 import type { AnyBox } from '@dagsocial/types';
 import { fixtureProvenance, openAvlDb } from '../helpers.js';
@@ -65,7 +65,7 @@ const keyOf = (id: string): Uint8Array => boxKey(hexToBytes(id));
 
 /** One block's box writes, performed: its spends, then its creations. */
 function applyBoxes(
-  prover: PersistentBatchAVLProver,
+  prover: AvlProver,
   height: number,
   consumed: string[],
   created: StoredBox[],

@@ -1,6 +1,6 @@
-import type { VersionedAVLStorage, BatchAVLProver, AvlTreeConfig } from '@ergots/avltree';
-import { serializeNode, deserializeNode, label, newInternal } from '@ergots/avltree';
-import type { AvlNode } from '@ergots/avltree';
+import type { VersionedAVLStorage, BatchAVLProver, AvlTreeConfig } from '@dagsocial/avltree';
+import { serializeNode, deserializeNode, label, newInternal } from '@dagsocial/avltree';
+import type { AvlNode } from '@dagsocial/avltree';
 import type Database from 'better-sqlite3';
 import { DuplicateStateVersionError } from '../services/corrupt-state.js';
 

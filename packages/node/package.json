@@ -16,7 +16,7 @@
     "@dagsocial/nipopow": "workspace:*",
     "@dagsocial/types": "workspace:*",
     "@dagsocial/validation": "workspace:*",
-    "@ergots/avltree": "^0.6.0",
+    "@dagsocial/avltree": "workspace:*",
     "better-sqlite3": "^11.0.0",
     "cbor-x": "^1.6.0",
     "express": "^4.21.0"

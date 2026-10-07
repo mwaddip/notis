@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
-import { BatchAVLVerifier } from '@ergots/avltree';
-import type { PersistentBatchAVLProver } from '@ergots/avltree';
+import { BatchAVLVerifier } from '@dagsocial/avltree';
+import type { AvlProver } from '../../src/state/avl-prover.js';
 import {
   TREE_KEY_LENGTH,
   accrualOfRange,
@@ -261,7 +261,7 @@ describe('recordingSession', () => {
   });
 
   it('a lookup the prover refuses is a tree that contradicts itself', () => {
-    const refusing = { performLookupWithNeighbors: () => ({ success: false }) } as unknown as PersistentBatchAVLProver;
+    const refusing = { prover: { performLookupWithNeighbors: () => ({ success: false }) } } as unknown as AvlProver;
     expect(() => recordingSession(refusing).lookup(successor(BELOW_FIRST))).toThrow(TreeInconsistencyError);
   });
 

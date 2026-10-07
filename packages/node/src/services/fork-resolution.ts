@@ -38,7 +38,7 @@ import { putIdentityRecord, deleteIdentityRecord, putNetworkRecord } from '../st
 import { putUsername, deleteUsername } from '../store/usernames.js';
 import { tryGetAvlProver } from '../state/avl-prover.js';
 import type { KeptRoot } from '../state/recent-roots.js';
-import { label } from '@ergots/avltree';
+import { label } from '@dagsocial/avltree';
 import { GENESIS_HEIGHT } from './genesis-state.js';
 import { applyOrderingBlockVerdict } from './block-apply.js';
 import { registerPlaceholder } from './backfill.js';

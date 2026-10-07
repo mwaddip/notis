@@ -259,7 +259,7 @@ function withdrawTx(author: TestIdentity, box: KarmaBox, postId: string, height:
 // ---------------------------------------------------------------------------
 
 /**
- * Each leaf a proof carries, read from its packed tree — `@ergots/avltree`'s
+ * Each leaf a proof carries, read from its packed tree — `@dagsocial/avltree`'s
  * post-order token stream: `2` a leaf, `3` a label and its 32 bytes, `4` the
  * tree's end, any other byte an internal node's balance. A leaf is its key,
  * its next key, a 4-byte big-endian value length and the value; its key is
