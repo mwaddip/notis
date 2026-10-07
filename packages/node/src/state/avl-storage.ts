@@ -116,18 +116,8 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
     // stubs are resolved into real subtrees by constructing fresh internal
     // nodes. The internal `key` is not part of the label but the prover
     // descends by it, so it is carried through.
-    //
-    // `onCorrupt` keeps rollback's existing throw: a plain Error whose message
-    // names the label and the height, as callers that discriminate by message
-    // regex read. The route-side loader built by `nodeLoaderAtHeight` throws
-    // `InconsistentAvlNodeRowsError` under the same row check — one statement,
-    // one check, one row-count predicate.
     const resolve = (nodeLabel: Uint8Array): AvlNode => {
-      const bytes = this.resolveAliveRow(nodeLabel, atHeight, (hex, count) => new Error(
-        count === 0
-          ? `Missing node for label ${hex} alive at height ${atHeight}`
-          : `Overlapping lifetimes for label ${hex} at height ${atHeight} (${count} rows)`,
-      ));
+      const bytes = this.resolveAliveRow(nodeLabel, atHeight, 'rollback');
       const node = deserializeNode(bytes, this.config);
       if (node.kind !== 'internal') return node;
       const left = resolve(label(node.left));
@@ -146,18 +136,25 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
    * orphaned_at_height > h)` resolves exactly one row per label at every height
    * the store lists a version for (NODE_INTERFACE → AVL+ State Root →
    * "AVL storage shares nodes across versions; a row is a node's lifetime").
-   * Zero rows or two is a corruption the caller names through `onCorrupt`;
-   * `rollback` keeps its plain-Error message, the route-side loader throws
-   * `InconsistentAvlNodeRowsError`.
+   * Zero rows or two throws `InconsistentAvlNodeRowsError` — fail-stop
+   * whichever reader meets it (NODE_INTERFACE → AVL+ State Root →
+   * "A label with no row alive at a height the store lists a version of, or
+   * with two, is local corruption"). `site` names the reader for the fatal
+   * diagnostic.
    */
   private resolveAliveRow(
     nodeLabel: Uint8Array,
     atHeight: number,
-    onCorrupt: (hex: string, rowCount: number) => Error,
+    site: string,
   ): Uint8Array {
     const rows = this.aliveRowStmt.all(nodeLabel, atHeight, atHeight) as Array<{ node_data: Buffer }>;
     if (rows.length !== 1) {
-      throw onCorrupt(Buffer.from(nodeLabel).toString('hex'), rows.length);
+      throw new InconsistentAvlNodeRowsError(
+        site,
+        atHeight,
+        Buffer.from(nodeLabel).toString('hex'),
+        rows.length,
+      );
     }
     return new Uint8Array(rows[0]!.node_data);
   }
@@ -196,11 +193,7 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
    */
   nodeLoaderAtHeight(atHeight: number, site: string): LoadNode {
     return (nodeLabel: Uint8Array): Uint8Array =>
-      this.resolveAliveRow(
-        nodeLabel,
-        atHeight,
-        (hex, count) => new InconsistentAvlNodeRowsError(site, atHeight, hex, count),
-      );
+      this.resolveAliveRow(nodeLabel, atHeight, site);
   }
 
   version(): Uint8Array | null {

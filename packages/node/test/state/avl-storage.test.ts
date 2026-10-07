@@ -341,6 +341,40 @@ describe('SqliteAvlStorage', () => {
     expect(() => storage.rollback(v1)).toThrow(/Missing node/);
   });
 
+  // NODE_INTERFACE → AVL+ State Root → "A label with no row alive at a height
+  // the store lists a version of, or with two, is local corruption" —
+  // `rollback` is a reader of the one row check and throws the same fail-stop
+  // class the route-side loader does.
+  it('rollback() throws InconsistentAvlNodeRowsError on a missing row', () => {
+    const storage = new SqliteAvlStorage(db, AVL_CONFIG);
+    const persisted = new PersistentBatchAVLProver(
+      new BatchAVLProver(32, null), storage, [[HEIGHT_SENTINEL, encodeHeight(0)]],
+    );
+    for (let i = 1; i <= 10; i++) insert(persisted, i);
+    const v1 = checkpoint(persisted, 1);
+
+    db.prepare('DELETE FROM avl_tree_nodes WHERE label = ?').run(rootLabelOf(v1));
+    expect(() => storage.rollback(v1)).toThrow(InconsistentAvlNodeRowsError);
+  });
+
+  it('rollback() throws InconsistentAvlNodeRowsError on a doubled row', () => {
+    const storage = new SqliteAvlStorage(db, AVL_CONFIG);
+    const persisted = new PersistentBatchAVLProver(
+      new BatchAVLProver(32, null), storage, [[HEIGHT_SENTINEL, encodeHeight(0)]],
+    );
+    for (let i = 1; i <= 10; i++) insert(persisted, i);
+    const v1 = checkpoint(persisted, 1);
+
+    const row = db.prepare(
+      'SELECT node_data FROM avl_tree_nodes WHERE label = ? AND orphaned_at_height IS NULL',
+    ).get(rootLabelOf(v1)) as { node_data: Buffer };
+    db.prepare(
+      'INSERT INTO avl_tree_nodes (label, node_data, first_seen_height, orphaned_at_height) VALUES (?, ?, 0, NULL)',
+    ).run(rootLabelOf(v1), row.node_data);
+
+    expect(() => storage.rollback(v1)).toThrow(InconsistentAvlNodeRowsError);
+  });
+
   it('a second update at the same height throws DuplicateStateVersionError and leaves the table unchanged', () => {
     const storage = new SqliteAvlStorage(db, AVL_CONFIG);
     const prover = new BatchAVLProver(32, null);
