@@ -77,8 +77,10 @@ export class RecentRoots {
    * The proof window — the tip and the `windowBlocks − 1` heights below it
    * (NODE_INTERFACE → AVL+ State Root → "A height of the proof window with
    * no kept root is served from the store"). The ring's capacity names it:
-   * the ring may hold at most that many heights, and `PROOF_WINDOW_NODES`
-   * only drops roots below it. Read by the proof routes' height resolution.
+   * the window the proof routes answer within. `PROOF_WINDOW_NODES` decides
+   * how many of the window's heights the ring answers by reference — the
+   * rest the store serves — never which heights fall inside the window.
+   * Read by the proof routes' height resolution.
    */
   get windowBlocks(): number { return this.capacity; }
   /** Keyed by block height, insertion-ordered. */

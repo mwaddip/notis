@@ -201,9 +201,8 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
    * rows under the shared predicate throws `InconsistentAvlNodeRowsError` —
    * fail-stop (NODE_INTERFACE → AVL+ State Root →
    * "A label with no row alive at a height the store lists a version of, or
-   * with two, is local corruption"). `storeServedRootAtHeight` is the one
-   * production entry; the direct loader is kept for unit tests that pin the
-   * row check without building a tree.
+   * with two, is local corruption"). The loader `storeServedRootAtHeight`
+   * hands to `lazyRoot`.
    */
   nodeLoaderAtHeight(atHeight: number, site: string): LoadNode {
     return (nodeLabel: Uint8Array): Uint8Array =>
@@ -212,22 +211,19 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
 
   /**
    * The lazy root for a store-served height: the version at exactly `height`
-   * (NODE_INTERFACE → AVL+ State Root →
-   * "A height of the proof window with no kept root is served from the store")
-   * and the `lazyRoot` built over it with `site` as the fatal diagnostic
-   * carrier (AVLTREE_INTERFACE → Nodes loaded on first access). `null` where
-   * the store lists no version of this height. The storage owns the tree
-   * config, so no caller rebuilds it; the loader is folded in — zero or two
-   * rows under the shared predicate throws `InconsistentAvlNodeRowsError`
-   * (→ "A label with no row alive at a height the store lists a version of,
-   * or with two, is local corruption").
+   * and a `lazyRoot` over it that reads each label the engine reaches as the
+   * row alive at `height` (NODE_INTERFACE → AVL+ State Root →
+   * "A height of the proof window with no kept root is served from the store";
+   * AVLTREE_INTERFACE → Nodes loaded on first access). `null` where the store
+   * lists no version of this height. `site` names the reader for the fatal
+   * diagnostic a zero- or two-row read throws as
+   * `InconsistentAvlNodeRowsError` (→ "A label with no row alive at a height
+   * the store lists a version of, or with two, is local corruption").
    */
   storeServedRootAtHeight(height: number, site: string): StoreServedRoot | null {
     const version = this.versionAtHeight(height);
     if (version === null) return null;
-    const load: LoadNode = (nodeLabel: Uint8Array): Uint8Array =>
-      this.resolveAliveRow(nodeLabel, height, site);
-    const root = lazyRoot(version.slice(0, 32), load, this.config);
+    const root = lazyRoot(version.slice(0, 32), this.nodeLoaderAtHeight(height, site), this.config);
     return { version, root, treeHeight: version[32]! };
   }
 
