@@ -38,7 +38,7 @@ Where an addition needs something of the engine that the surface lacks, the surf
 - **Contracts lead, code follows.** Implement to `AVLTREE_INTERFACE.md`; flag contract gaps to main.
 - **You own this package only.** Never edit `../types`, `../validation`, `../consensus`, `../node`,
   `../net`, `../nipopow`, `../web`, `../wire`, `../../tools`, or `contracts/`.
-- **No engine code is copied.** If something you need is not exported by the tarball, stop and report
+- **No engine code is copied.** If something you need is not exported by `@ergots/avltree`, stop and report
   it — the fix is an export in `@ergots/avltree`, never a copy here.
 - **Forced verification before "done":** `pnpm --filter @dagsocial/avltree build`, then
   `pnpm --filter @dagsocial/avltree typecheck` (zero errors, src AND test tree) **and**
