@@ -29,15 +29,15 @@ importers:
 
   packages/consensus:
     dependencies:
+      '@dagsocial/avltree':
+        specifier: workspace:*
+        version: link:../avltree
       '@dagsocial/types':
         specifier: workspace:*
         version: link:../types
       '@dagsocial/validation':
         specifier: workspace:*
         version: link:../validation
-      '@ergots/avltree':
-        specifier: ^0.6.0
-        version: 0.6.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

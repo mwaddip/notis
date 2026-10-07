@@ -4,7 +4,7 @@
 import { applyBlock, treeStateView, treeWritesOf, verifierSession } from '@dagsocial/consensus';
 import { bytesToHex, decodeOrderingBlock, decodeTx, hexToBytes } from '@dagsocial/types';
 import { verifyEd25519Batch } from '@dagsocial/validation';
-import { StrictBatchAVLVerifier } from '@ergots/avltree';
+import { StrictBatchAVLVerifier } from '@dagsocial/avltree';
 import { TREE_CONFIG } from '../test/block-proof.ts';
 
 /**

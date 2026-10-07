@@ -19,7 +19,7 @@
 //
 // usage: node packages/consensus/scripts/bench-proof-size.mjs [sizes]  (sizes defaults to `20000,200000,1000000,2000000,6000000`)
 import { createHash, randomBytes } from 'node:crypto';
-import { BatchAVLProver, StrictBatchAVLVerifier } from '@ergots/avltree';
+import { BatchAVLProver, StrictBatchAVLVerifier } from '@dagsocial/avltree';
 import {
   INDEX_MARKER,
   TREE_KEY_LENGTH,

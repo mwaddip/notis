@@ -1,9 +1,9 @@
-import type { BatchAVLVerifier } from '@ergots/avltree';
+import type { BatchAVLVerifier } from '@dagsocial/avltree';
 import { TREE_KEY_LENGTH, bytesToHex } from '@dagsocial/types';
 import type { TreeLookup, TreeSession } from './tree-session.js';
 
 /**
- * The session over `@ergots/avltree`'s step-by-step verifier
+ * The session over `@dagsocial/avltree`'s step-by-step verifier
  * (CONSENSUS_INTERFACE → The tree session): each lookup is the verifier's
  * `performLookupWithNeighbors`, so the tree view answers a block's reads from
  * the block's proof alone, anchored at the digest the verifier was built on.

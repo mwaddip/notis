@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { BatchAVLProver, BatchAVLVerifier, StrictBatchAVLVerifier } from '@ergots/avltree';
-import type { AvlNode } from '@ergots/avltree';
+import { BatchAVLProver, BatchAVLVerifier, StrictBatchAVLVerifier } from '@dagsocial/avltree';
+import type { AvlNode } from '@dagsocial/avltree';
 import {
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,

@@ -511,7 +511,7 @@ describe('holdingsPage built for a browser runs over a strict verifier', () => {
   // path: the bundle calls neither `TextEncoder` nor `TextDecoder`.
   const HOLDINGS_ENTRY = `${PACKAGE_DIR}holdings-entry.js`;
   const HOLDINGS_CODE = `
-    import { StrictBatchAVLVerifier } from '@ergots/avltree';
+    import { StrictBatchAVLVerifier } from '@dagsocial/avltree';
     import { holdingsPage, treeStateView, verifierSession } from '@dagsocial/consensus';
     import { TREE_KEY_LENGTH, bytesToHex, hexToBytes } from '@dagsocial/types';
     const CONFIG = { keyLength: TREE_KEY_LENGTH, valueLengthOpt: null };
