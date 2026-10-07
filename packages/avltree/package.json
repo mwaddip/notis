@@ -18,7 +18,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@ergots/avltree": "file:/home/mwaddip/projects/dagsocial/prompts/ergots-avltree-5909db0.tgz"
+    "@ergots/avltree": "~0.7.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

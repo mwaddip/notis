@@ -11,8 +11,8 @@ importers:
   packages/avltree:
     dependencies:
       '@ergots/avltree':
-        specifier: file:/home/mwaddip/projects/dagsocial/prompts/ergots-avltree-5909db0.tgz
-        version: file:prompts/ergots-avltree-5909db0.tgz
+        specifier: ~0.7.0
+        version: 0.7.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -426,9 +426,8 @@ packages:
     resolution: {integrity: sha512-WXTuFvL3G+74SchFAtz3FgIYVOe196ycvGsMgvSH/8Goptb1qpIQtIuM4SOK9G9lhMWYpHxnXyy544ZhluFOew==}
     engines: {node: '>=6'}
 
-  '@ergots/avltree@file:prompts/ergots-avltree-5909db0.tgz':
-    resolution: {integrity: sha512-j/0octgY6FLH9dq61obc8q2ppNg+bJHNV/nkzGin//ir7biD4GnLP1Tuh1qBe5re58csmi3rXTiItO1NvcaZUQ==, tarball: file:prompts/ergots-avltree-5909db0.tgz}
-    version: 0.6.0
+  '@ergots/avltree@0.7.0':
+    resolution: {integrity: sha512-KnAzWrQ2jcnCIB+fCLmtANgBhLTlRNiaL/rfHKxnz5DPa4xFnAEmbUHXJg6n+n/PghK4i1SlvaA88nj4YeH3zA==}
     engines: {node: '>=20'}
 
   '@esbuild/aix-ppc64@0.21.5':
@@ -2340,7 +2339,7 @@ snapshots:
       '@leichtgewicht/ip-codec': 2.0.5
       utf8-codec: 1.0.0
 
-  '@ergots/avltree@file:prompts/ergots-avltree-5909db0.tgz':
+  '@ergots/avltree@0.7.0':
     dependencies:
       '@noble/hashes': 2.2.0
 
