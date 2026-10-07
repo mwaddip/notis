@@ -72,6 +72,15 @@ export interface KeptRoot {
 export class RecentRoots {
   private readonly capacity: number;
   private readonly maxNodes: number;
+
+  /**
+   * The proof window — the tip and the `windowBlocks − 1` heights below it
+   * (NODE_INTERFACE → AVL+ State Root → "A height of the proof window with
+   * no kept root is served from the store"). The ring's capacity names it:
+   * the ring may hold at most that many heights, and `PROOF_WINDOW_NODES`
+   * only drops roots below it. Read by the proof routes' height resolution.
+   */
+  get windowBlocks(): number { return this.capacity; }
   /** Keyed by block height, insertion-ordered. */
   private roots = new Map<number, KeptRoot>();
 

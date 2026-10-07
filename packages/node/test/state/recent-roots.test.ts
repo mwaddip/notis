@@ -664,12 +664,15 @@ describe('the ring tracks the chain the node holds', () => {
 
   /**
    * NODE_INTERFACE → "The count is the store's" — a bound below what two
-   * consecutive blocks replace leaves only the tip's root, routes serve the
-   * tip and 404 for older heights, and a one-block reorg takes the store
-   * resolve path (`fork-resolution.ts` where the ring holds no root at the
-   * fork height) — the node lands on the new branch's `stateRoot`.
+   * consecutive blocks replace leaves only the tip's root in the ring. Every
+   * older height of the proof window is served from the store
+   * (NODE_INTERFACE → AVL+ State Root → "A height of the proof window with
+   * no kept root is served from the store"), and a one-block reorg takes
+   * the store-resolve path on the AVL+ side (`fork-resolution.ts` where the
+   * ring holds no root at the fork height) — the node lands on the new
+   * branch's `stateRoot`.
    */
-  it('`PROOF_WINDOW_NODES` below two blocks\' replaced leaves tip-only; routes 404 for older; a one-block reorg resolves from the store and lands on the new branch', async () => {
+  it('`PROOF_WINDOW_NODES` below two blocks\' replaced leaves tip-only in the ring; window heights serve from the store; a one-block reorg resolves from the store and lands on the new branch', async () => {
     await withProofWindow('5', async () => {
       await withProofWindowNodes('1', async () => {
         const dbMod = await import('../../src/store/db.js');
@@ -692,7 +695,8 @@ describe('the ring tracks the chain the node holds', () => {
         expect(ringHeights(handle.recentRoots)).toEqual([2]);
         expect(handle.recentRoots.nodesHeldBeyondTree()).toBe(0);
 
-        // The route answers the tip and 404s on every older height.
+        // The route answers the tip and every window height the store lists
+        // a version of — heights 1 and 0 among them, served from the store.
         const { createApp } = await import('../../src/server.js');
         const supertest = await import('supertest');
         const app = createApp(makeTestConfig({ nodeRole: 'server' }));
@@ -700,10 +704,12 @@ describe('the ring tracks the chain the node holds', () => {
         const key = bh(networkKey());
         await supertest.default(app).get(`/api/v1/proof/${key}`).expect(200);
         await supertest.default(app).get(`/api/v1/proof/${key}?atHeight=2`).expect(200);
-        const r1 = await supertest.default(app).get(`/api/v1/proof/${key}?atHeight=1`).expect(404);
-        expect(r1.body).toEqual({ error: 'height not available' });
-        const r0 = await supertest.default(app).get(`/api/v1/proof/${key}?atHeight=0`).expect(404);
-        expect(r0.body).toEqual({ error: 'height not available' });
+        const r1 = await supertest.default(app).get(`/api/v1/proof/${key}?atHeight=1`).expect(200);
+        expect(typeof r1.body.stateRoot).toBe('string');
+        expect(r1.body.atHeight).toBe(1);
+        const r0 = await supertest.default(app).get(`/api/v1/proof/${key}?atHeight=0`).expect(200);
+        expect(typeof r0.body.stateRoot).toBe('string');
+        expect(r0.body.atHeight).toBe(0);
 
         // Reorg: forkHeight = 1. The ring holds no root at 1, so
         // fork-resolution calls `storage.rollback` and `recentRoots.clear`.

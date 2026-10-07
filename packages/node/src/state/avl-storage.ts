@@ -1,11 +1,24 @@
 import type { VersionedAVLStorage, BatchAVLProver, AvlTreeConfig, LoadNode } from '@dagsocial/avltree';
-import { serializeNode, deserializeNode, label, newInternal } from '@dagsocial/avltree';
+import { lazyRoot, serializeNode, deserializeNode, label, newInternal } from '@dagsocial/avltree';
 import type { AvlNode } from '@dagsocial/avltree';
 import type Database from 'better-sqlite3';
 import {
   DuplicateStateVersionError,
   InconsistentAvlNodeRowsError,
 } from '../services/corrupt-state.js';
+
+/**
+ * The store-served answer at a window height: the version digest the store
+ * holds at exactly that height, and the lazy root built over that version
+ * (NODE_INTERFACE → AVL+ State Root → "A height of the proof window with no
+ * kept root is served from the store"). Nothing of it outlives the call —
+ * the route restores the live root in `withCycle`'s `finally`.
+ */
+export interface StoreServedRoot {
+  version: Uint8Array;
+  root: AvlNode;
+  treeHeight: number;
+}
 
 /**
  * SQLite-backed VersionedAVLStorage.
@@ -188,12 +201,34 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
    * rows under the shared predicate throws `InconsistentAvlNodeRowsError` —
    * fail-stop (NODE_INTERFACE → AVL+ State Root →
    * "A label with no row alive at a height the store lists a version of, or
-   * with two, is local corruption"). Caller passes a `site` name identifying
-   * the route for the fatal diagnostic.
+   * with two, is local corruption"). `storeServedRootAtHeight` is the one
+   * production entry; the direct loader is kept for unit tests that pin the
+   * row check without building a tree.
    */
   nodeLoaderAtHeight(atHeight: number, site: string): LoadNode {
     return (nodeLabel: Uint8Array): Uint8Array =>
       this.resolveAliveRow(nodeLabel, atHeight, site);
+  }
+
+  /**
+   * The lazy root for a store-served height: the version at exactly `height`
+   * (NODE_INTERFACE → AVL+ State Root →
+   * "A height of the proof window with no kept root is served from the store")
+   * and the `lazyRoot` built over it with `site` as the fatal diagnostic
+   * carrier (AVLTREE_INTERFACE → Nodes loaded on first access). `null` where
+   * the store lists no version of this height. The storage owns the tree
+   * config, so no caller rebuilds it; the loader is folded in — zero or two
+   * rows under the shared predicate throws `InconsistentAvlNodeRowsError`
+   * (→ "A label with no row alive at a height the store lists a version of,
+   * or with two, is local corruption").
+   */
+  storeServedRootAtHeight(height: number, site: string): StoreServedRoot | null {
+    const version = this.versionAtHeight(height);
+    if (version === null) return null;
+    const load: LoadNode = (nodeLabel: Uint8Array): Uint8Array =>
+      this.resolveAliveRow(nodeLabel, height, site);
+    const root = lazyRoot(version.slice(0, 32), load, this.config);
+    return { version, root, treeHeight: version[32]! };
   }
 
   version(): Uint8Array | null {
