@@ -16,7 +16,7 @@ export type { NeighborLookup, NeighborLookupResult } from './neighbors.js'
 export { StrictBatchAVLVerifier } from './strict-verifier.js'
 
 // Nodes loaded on first access.
-export { lazyRoot, type LoadNode, type NodeRow } from './lazy-nodes.js'
+export { lazyRoot, type LoadNode } from './lazy-nodes.js'
 
 // Passed through from @ergots/avltree: types, constructors, codec, the batch
 // functions, versioned-storage, the error class.

@@ -4,8 +4,14 @@
  * them: a node's label is known from its parent's row, and its children
  * resolve when the engine descends into it or labels it.
  *
- * This rests on the engine's lazy-node access invariant: an unvisited
- * sibling's `kind` / `left` / `right` / `label` is not read.
+ * This rests on the engine's lazy-node access invariant: the prover and the
+ * verifier engine read a node's children (`left`, `right`) through plain
+ * property access, and only when descending into or labeling that node — an
+ * unvisited sibling's `left` / `right` is not read. Other fields (`kind`,
+ * `key`, `balance`, `labelCache`) the engine does read of any node it
+ * touches, an unvisited sibling that gets labeled among them, which is why a
+ * node's own row is loaded with `labelCache` preset and only `left` / `right`
+ * wait behind getters.
  *
  * See AVLTREE_INTERFACE → Nodes loaded on first access.
  */
@@ -20,12 +26,6 @@ import {
 
 /** The stored bytes of the node with the given label. */
 export type LoadNode = (label: Uint8Array) => Uint8Array
-
-/** A row the loader may hand back when callers prefer to key by label. */
-export interface NodeRow {
-  readonly label: Uint8Array
-  readonly bytes: Uint8Array
-}
 
 /**
  * The tree rooted at `rootLabel`, where each node is deserialized from
