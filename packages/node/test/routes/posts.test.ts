@@ -4,7 +4,7 @@ import {
   signTransaction,
   txToJson,
   fixturePostId, makePostCommit, fixtureTxId} from '../helpers.js';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import http from 'http';
 import { generateKeyPairSync, createPrivateKey } from 'crypto';
@@ -925,6 +925,110 @@ describe('posts routes', () => {
         authorName: null,
       });
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fail-stop under a route — NODE_INTERFACE → Posts → "The creating
+// transaction rides a post row". A confirmed row whose block lists no such
+// id is a stored chain that contradicts itself (ConfirmedPostTxNotInBlockBodyError,
+// a CorruptChainStateError), and the route fail-stops the way the proof
+// routes do under InconsistentAvlNodeRowsError (NODE_INTERFACE → AVL+ State
+// Root → "A height of the proof window with no kept root is served from the
+// store"). The observer is `process.exit`, as in
+// `state/range-endpoint-fail-stop.test.ts`.
+// ---------------------------------------------------------------------------
+
+describe('posts routes — fail-stop under a confirmed row whose block lists no such id', () => {
+  it('GET /posts/:id?tx=1 fires process.exit(1) when the stored body lacks the row\'s tx_id', async () => {
+    const author = new Uint8Array(32).fill(0xaa);
+    const authorHex = Buffer.from(author).toString('hex');
+    const postId = 'ab'.repeat(32);
+    const rowTxId = 'cd'.repeat(32);
+
+    const storedRow = {
+      id: postId,
+      txId: rowTxId,
+      content: 'x',
+      contentHash: 'ee'.repeat(32),
+      author,
+      parentRefs: [],
+      protocolVersion: 1,
+      type: 'regular' as const,
+      status: 'confirmed' as const,
+      blockHeight: 10,
+      blockIndex: 0,
+      withdrawnAtHeight: null,
+    };
+    const emptyBody = { header: null, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: null };
+
+    const deps = {
+      insertPost: () => {},
+      getPost: () => storedRow,
+      queryPostsPage: () => ({ rows: [], next: null, pending: [], pendingCount: 0 }),
+      verifyPost,
+      getKarmaBoxes: () => [],
+      getIdentityRecord: () => null,
+      decayCfg: {
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      },
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
+      getLikeRecordCount: () => 0,
+      getDescendantCount: () => 0,
+      hasLikeRecord: () => false,
+      getUsernameByOwner: () => null,
+      getAncestorsNearest: () => ({ rows: [], count: 0 }),
+      getSubtreePage: () => ({ rows: [], next: null, count: 0, pending: [], pendingCount: 0 }),
+      getBlockCreatedAt: () => null,
+      getPendingUtxoTxBytesByTxId: () => null,
+      getOrderingBlock: () => emptyBody as any,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
+      getTopologyAuthor: () => authorHex,
+      getPendingPostAuthor: () => null,
+      getCurrentHeight: () => 10,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }] as const,
+      getUsername: () => null,
+      admitTx: () => 0,
+      runInTransaction: (fn: () => void) => fn(),
+      validateTx: () => ({ valid: true } as const),
+      getBox: () => null,
+    };
+
+    const app = express();
+    app.use(express.json());
+    // Catch the throw past the handler so the mocked process.exit's throw
+    // does not blow up the test harness.
+    app.use('/posts', createRouter(deps as any));
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    app.use((_err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      res.status(500).end();
+    });
+
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit');
+    }) as never);
+    const errLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      await new Promise<void>((resolve) => {
+        const server = app.listen(0, () => {
+          const addr = server.address() as { port: number };
+          http.get({ hostname: 'localhost', port: addr.port, path: `/posts/${postId}?tx=1` }, (res) => {
+            res.on('data', () => {});
+            res.on('end', () => { server.close(); resolve(); });
+          }).on('error', () => { server.close(); resolve(); });
+        });
+      });
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      exit.mockRestore();
+      errLog.mockRestore();
+    }
   });
 });
 
