@@ -538,7 +538,9 @@ text; and the signature the transaction carries under the author's key verifies 
 (`VALIDATION_INTERFACE → Acceptance criterion`) — a read's rows as one batch, read again one by one only when the
 batch fails, so one bad row costs its page nothing else. **A placeholder is checked as any row, less its text**; **a
 withdrawn row is `nothing-to-bind`** — it carries no `tx` and no words to put in anyone's mouth — and renders as it
-does without a check. Every other row is `unbound`, under one reason of a closed set: `no-tx`, `undecodable`,
+does without a check. **A row whose `tx` is `null` is `unserved`**: the node says it holds no bytes for that post
+(`NODE_INTERFACE → Posts → "The creating transaction rides a post row"`), which is no claim about its text — the row
+is not shown and not cached, and no line counts it. Every other row is `unbound`, under one reason of a closed set: `no-tx`, `undecodable`,
 `no-post`, `tx-id`, `post-id`, `commit`, `content`, `unsigned`, `signature`, `malformed`. **An `unbound` row is not
 shown and not cached, and leaves no gap**: the list it belonged to says so once, at its head, in clay — *1 post
 withheld — it does not match its signature*, *3 posts withheld — they do not match their signatures* — the full
