@@ -2,7 +2,7 @@
 // from `runCli`. The run and its JSON shape live in `src/cli.ts`.
 
 import { parseConfig, ConfigError } from './config.js';
-import { textLines } from './text.js';
+import { postCommandLines, textLines } from './text.js';
 import { runCli, toJson } from './cli.js';
 import type { CliResult } from './cli.js';
 import type { Config } from './config.js';
@@ -27,6 +27,8 @@ async function main(): Promise<void> {
 function output(config: Config, result: CliResult): void {
   if (config.json) {
     process.stdout.write(JSON.stringify(toJson(result), null, 2) + '\n');
+  } else if (result.post !== null) {
+    process.stdout.write(postCommandLines(result.post).join('\n') + '\n');
   } else {
     process.stdout.write(textLines(result.tip, result.run).join('\n') + '\n');
   }

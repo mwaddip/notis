@@ -20,6 +20,10 @@ export interface Config {
   m: number;
   k: number;
   user: string | null;
+  // WEB_INTERFACE → The extension → "The post check" — a `post <id>` positional
+  // puts the command line in post-check mode: a GET /posts/<id>?tx=1 against
+  // the first configured node, run through checkPosts.
+  post: string | null;
   allowSingle: boolean;
   json: boolean;
 }
@@ -63,8 +67,20 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
   let user: string | null = null;
   let allowSingle = false;
   let json = false;
+  let post: string | null = null;
 
-  for (let i = 0; i < argv.length; i++) {
+  // The `post <id>` positional, when present, is the first argv. Every other
+  // argv stays a flag.
+  let flagsStart = 0;
+  if (argv[0] === 'post') {
+    const id = argv[1];
+    if (id === undefined) throw new ConfigError('post requires an id');
+    if (!/^[0-9a-f]{64}$/.test(id)) throw new ConfigError('post id must be 64 lowercase hex chars');
+    post = id;
+    flagsStart = 2;
+  }
+
+  for (let i = flagsStart; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === '--m') {
       const v = argv[++i];
@@ -90,11 +106,15 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
     }
   }
 
-  if (nodeUrls.length < 2 && !allowSingle) {
+  // The post check is a function of the row the node serves; it reads no
+  // chain state and asks the node nothing beyond /posts/<id>?tx=1
+  // (WEB_INTERFACE → The extension → "The post check"), so the two-node
+  // discipline that guards the tip is not its gate.
+  if (post === null && nodeUrls.length < 2 && !allowSingle) {
     throw new ConfigError('at least 2 node URLs required (use --allow-single to override — a single node can eclipse the client)');
   }
 
-  return { nodeUrls, profile, m, k, user, allowSingle, json };
+  return { nodeUrls, profile, m, k, user, post, allowSingle, json };
 }
 
 function parsePositiveInt(s: string, flag: string): number {
