@@ -17,7 +17,7 @@ export const PACKAGE_DIR = fileURLToPath(new URL('../', import.meta.url));
 // so the bundle and the Node run execute one tree and no `dist` can make the
 // comparison stale.
 const WORKSPACE_ALIAS = Object.fromEntries(
-  ['types', 'wire', 'validation', 'nipopow', 'consensus', 'net', 'node'].map((pkg) => [
+  ['types', 'wire', 'validation', 'avltree', 'nipopow', 'consensus', 'net', 'node'].map((pkg) => [
     `@dagsocial/${pkg}`,
     `${PACKAGES_DIR}${pkg}/src/index.ts`,
   ]),

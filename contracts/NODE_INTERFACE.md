@@ -3875,7 +3875,7 @@ below; `CONSENSUS_INTERFACE → The tree layout`).
 **The rules read the tree, and nothing else.** Block application, the speculative run and the block creator hand
 `applyBlock` `treeStateView` over a session on this node's prover (`CONSENSUS_INTERFACE → The tree view`), and write
 the tree through `treeWritesOf` (`CONSENSUS_INTERFACE → The tree writes`). **The session reads with the prover's
-unrecorded neighbour lookup** (`@ergots/avltree`'s `unauthenticatedLookupWithNeighbors`) — every reader's
+unrecorded neighbour lookup** (`@dagsocial/avltree`'s `unauthenticatedLookupWithNeighbors`) — every reader's
 session but block application's and the speculative run's, whose lookups are recorded into the block's proof
 (→ The block proof), and the range route's, whose page is the proof it answers — its `null` neighbour mapped to the sentinel (`CONSENSUS_INTERFACE → The tree session`); a write the prover refuses is
 `DivergedStateTreeError` and a read that contradicts itself `InconsistentStateTreeError`, both fail-stop (→ "What the

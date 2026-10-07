@@ -20,8 +20,8 @@ import {
 } from '@dagsocial/types';
 import { blockHash, cumulativeWork, level as headerLevel } from '@dagsocial/validation';
 import { MAX_CHAIN_RESPONSE_ITEMS } from '@dagsocial/net';
-import { label as avlLabel } from '@ergots/avltree';
-import type { AvlNode } from '@ergots/avltree';
+import { label as avlLabel } from '@dagsocial/avltree';
+import type { AvlNode } from '@dagsocial/avltree';
 import type {
   KarmaBox,
   OrderingBlock,
@@ -1873,7 +1873,7 @@ describe('reorg — the ring and the by-reference restore', () => {
   it('a kept root that is not the store\'s version: reorg resolves from store, ring emptied, the result equals the twin\'s', async () => {
     const { theirBlocks } = await setupFork();
     const { tryGetAvlProver } = await import('../../src/state/avl-prover.js');
-    const { newLeaf } = await import('@ergots/avltree');
+    const { newLeaf } = await import('@dagsocial/avltree');
     const avl = tryGetAvlProver()!;
 
     // Replace the ring's root at height 1 with a bogus leaf — a root whose

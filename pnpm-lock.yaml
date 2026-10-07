@@ -8,17 +8,36 @@ importers:
 
   .: {}
 
+  packages/avltree:
+    dependencies:
+      '@ergots/avltree':
+        specifier: ~0.7.0
+        version: 0.7.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.20)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.6.0
+        version: 1.6.1(@types/node@22.20.1)(happy-dom@20.13.2)
+
   packages/consensus:
     dependencies:
+      '@dagsocial/avltree':
+        specifier: workspace:*
+        version: link:../avltree
       '@dagsocial/types':
         specifier: workspace:*
         version: link:../types
       '@dagsocial/validation':
         specifier: workspace:*
         version: link:../validation
-      '@ergots/avltree':
-        specifier: ^0.6.0
-        version: 0.6.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -112,6 +131,9 @@ importers:
 
   packages/node:
     dependencies:
+      '@dagsocial/avltree':
+        specifier: workspace:*
+        version: link:../avltree
       '@dagsocial/consensus':
         specifier: workspace:*
         version: link:../consensus
@@ -127,9 +149,6 @@ importers:
       '@dagsocial/validation':
         specifier: workspace:*
         version: link:../validation
-      '@ergots/avltree':
-        specifier: ^0.6.0
-        version: 0.6.0
       better-sqlite3:
         specifier: ^11.0.0
         version: 11.10.0
@@ -319,6 +338,9 @@ importers:
 
   tools/nipopow-client:
     dependencies:
+      '@dagsocial/avltree':
+        specifier: workspace:*
+        version: link:../../packages/avltree
       '@dagsocial/consensus':
         specifier: workspace:*
         version: link:../../packages/consensus
@@ -331,9 +353,6 @@ importers:
       '@dagsocial/validation':
         specifier: workspace:*
         version: link:../../packages/validation
-      '@ergots/avltree':
-        specifier: ^0.6.0
-        version: 0.6.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -407,8 +426,8 @@ packages:
     resolution: {integrity: sha512-WXTuFvL3G+74SchFAtz3FgIYVOe196ycvGsMgvSH/8Goptb1qpIQtIuM4SOK9G9lhMWYpHxnXyy544ZhluFOew==}
     engines: {node: '>=6'}
 
-  '@ergots/avltree@0.6.0':
-    resolution: {integrity: sha512-OXJdNgxUK+NQu2nxbNrNELf99oxqe6Z+WKqoEGtZh/5TXLQ639t+h4L7ZWxMVhaQzR62XQJvsOeMidJFUd6pmg==}
+  '@ergots/avltree@0.7.0':
+    resolution: {integrity: sha512-KnAzWrQ2jcnCIB+fCLmtANgBhLTlRNiaL/rfHKxnz5DPa4xFnAEmbUHXJg6n+n/PghK4i1SlvaA88nj4YeH3zA==}
     engines: {node: '>=20'}
 
   '@esbuild/aix-ppc64@0.21.5':
@@ -2320,7 +2339,7 @@ snapshots:
       '@leichtgewicht/ip-codec': 2.0.5
       utf8-codec: 1.0.0
 
-  '@ergots/avltree@0.6.0':
+  '@ergots/avltree@0.7.0':
     dependencies:
       '@noble/hashes': 2.2.0
 

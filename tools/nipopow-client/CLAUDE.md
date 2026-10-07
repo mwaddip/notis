@@ -145,7 +145,7 @@ that `stateRoot`. A node's listing of box ids is a claim judged against the rang
 `profileFor` come from `@dagsocial/types`; `verifyProof`, `compareProofs`, `decodeNipopowProof`
 from `@dagsocial/nipopow`; `blockHash` from `@dagsocial/validation`; `holdingsPage`, `treeStateView` and
 `verifierSession` from `@dagsocial/consensus`; `verifyAvlLookup` and `BatchAVLVerifier` from
-`@ergots/avltree`. This tool hashes nothing and
+`@dagsocial/avltree`. This tool hashes nothing and
 decodes nothing of its own — a third implementation of any of these would be the first one a user
 trusts with a balance.
 

@@ -19,7 +19,7 @@ Repo directory is `dagsocial`; the project is Notis.
 ```bash
 pnpm build                          # Build every workspace member
 pnpm test                           # Run all tests — includes tools/e2e, which spawns BUILT nodes: build first
-pnpm typecheck                      # src AND test trees — and a browser pass in the six the browser runs
+pnpm typecheck                      # src AND test trees — and a browser pass in the seven the browser runs
 node packages/node/dist/index.js    # Start a node on :3000
 ```
 
@@ -36,9 +36,12 @@ refuses to run against a missing or stale `dist`. See ARCHITECTURE → "Build an
 
 ## Architecture
 
-Eight packages, in dependency order:
+Nine packages, in dependency order:
 
 - `@dagsocial/types` — data structures, base58, positional codecs, hashing, protocol constants. **Pure functions only.**
+- `@dagsocial/avltree` — the authenticated AVL+ tree as Notis uses it: `@ergots/avltree`'s engine, plus the
+  neighbor-reporting lookups, the strict verifier and nodes loaded on first access. The one member that imports
+  `@ergots/avltree`; it copies none of its engine.
 - `@dagsocial/wire` — stream framing (VLQ, blake2b checksums, magic bytes).
 - `@dagsocial/validation` — pure stateless checks: PoW, signatures, block structure, Merkle roots.
 - `@dagsocial/consensus` — the state-transition rules: `applyBlock` (a block's body as one function, answering its
@@ -82,6 +85,7 @@ contract first, then implement against it, never the reverse.
 - `contracts/NODE_INTERFACE.md` — API, verifier, store interface
 - `contracts/NET_INTERFACE.md` — libp2p, gossip, sync
 - `contracts/NIPOPOW_INTERFACE.md` — the proof package: objects, codecs, verifier, comparator, prover
+- `contracts/AVLTREE_INTERFACE.md` — the tree package: neighbor lookups, the strict verifier, lazy nodes
 - `contracts/MEMPOOL_INTERFACE.md` · `contracts/MINING_INTERFACE.md` · `contracts/JOURNAL_EVENTS.md`
 - `contracts/WEB_INTERFACE.md` — web client
 - `contracts/HOUSE_STYLE.md` — colour, type, the mark, motion, interaction, spacing, voice

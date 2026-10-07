@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { BatchAVLProver } from '@ergots/avltree';
+import type { BatchAVLProver } from '@dagsocial/avltree';
 import { hexToBytes } from '@dagsocial/types';
 import type { AnyBox, UserId } from '@dagsocial/types';
 import type { HoldingKind } from '@dagsocial/consensus';

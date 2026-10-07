@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { BatchAVLVerifier } from '@ergots/avltree';
+import { BatchAVLVerifier } from '@dagsocial/avltree';
 import { MAX_BLOCK_BODY_BYTES, TREE_KEY_LENGTH, boxKey, bytesToHex, hash32, hexToBytes } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 import { applyBlock, treeStateView, treeWritesOf, verifierSession } from '@dagsocial/consensus';

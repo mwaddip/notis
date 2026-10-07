@@ -1,0 +1,22 @@
+{
+  "name": "config-variance-keylength-8-insert",
+  "startingDigestHex": "b45d7e50f02ccb0f25254f2975c88260b9ed03bd43dadf327597828e22cbbac702",
+  "proofHex": "03a001afe1289da629e7a56d0678cea88b293201f9f66e4fe43b5e33c9bbc204d80316a047d3ecba69113e2e398d4f64aa101b09b7522f69d5c332b54c00016ce275020303030303030303ffffffffffffffff00000008030303030303030300000400",
+  "config": {
+    "keyLength": 8,
+    "valueLengthOpt": null,
+    "maxNumOperations": 1,
+    "maxDeletes": 0
+  },
+  "operations": [
+    {
+      "tag": "Insert",
+      "keyHex": "1010101010101010",
+      "valueHex": "1010101010101010"
+    }
+  ],
+  "expectedNewDigestHex": "ab8906a86380045fde73a41ec01ef01724fe2ea050120f0812a4ae33fe486c6903",
+  "expectedResultsHex": [
+    null
+  ]
+}

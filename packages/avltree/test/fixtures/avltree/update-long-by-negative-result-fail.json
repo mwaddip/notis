@@ -1,0 +1,22 @@
+{
+  "name": "update-long-by-negative-result-fail",
+  "startingDigestHex": "4a0567f7b988226f5a7aed39e038577f4a039c19f2b9959878908d0bd85f1aa201",
+  "proofHex": "03ab4abecbeaed2ac82898c746116937f33e7c65af8b4f0df1e3782d663f67f248020101010101010101010101010101010101010101010101010101010101010101ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000000000005000400",
+  "config": {
+    "keyLength": 32,
+    "valueLengthOpt": 8,
+    "maxNumOperations": 1,
+    "maxDeletes": 0
+  },
+  "operations": [
+    {
+      "tag": "UpdateLongBy",
+      "keyHex": "0101010101010101010101010101010101010101010101010101010101010101",
+      "delta": -10
+    }
+  ],
+  "expectedNewDigestHex": null,
+  "expectedResultsHex": [
+    null
+  ]
+}

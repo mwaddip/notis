@@ -1,4 +1,4 @@
-import { BatchAVLProver, PersistentBatchAVLProver } from '@ergots/avltree';
+import { BatchAVLProver, PersistentBatchAVLProver } from '@dagsocial/avltree';
 import { SqliteAvlStorage } from './avl-storage.js';
 import { RecentRoots } from './recent-roots.js';
 import { getDb, isCurrentDb } from '../store/db.js';
@@ -19,7 +19,19 @@ export function encodeHeight(h: number): Uint8Array {
   return buf;
 }
 
-let persistentProver: PersistentBatchAVLProver | null = null;
+/**
+ * The persistent prover with the neighbor lookups: `@dagsocial/avltree`'s
+ * `PersistentBatchAVLProver` wrapping its `BatchAVLProver`, so `.prover`
+ * carries `performLookupWithNeighbors` and `unauthenticatedLookupWithNeighbors`
+ * (AVLTREE_INTERFACE → Scope). One place states the type the node holds for
+ * its prover — every call of the two neighbor methods on this handle goes
+ * through `.prover`.
+ */
+export interface AvlProver extends PersistentBatchAVLProver {
+  readonly prover: BatchAVLProver;
+}
+
+let persistentProver: AvlProver | null = null;
 let storage: SqliteAvlStorage | null = null;
 /**
  * The global database the singleton was built over. The singleton is that
@@ -35,7 +47,7 @@ function singleton(): AvlProverHandle | null {
 }
 
 export interface AvlProverHandle {
-  prover: PersistentBatchAVLProver;
+  prover: AvlProver;
   storage: SqliteAvlStorage;
   /**
    * The last blocks' roots this node keeps in memory (NODE_INTERFACE → "A
@@ -70,7 +82,7 @@ export function createAvlProver(db?: import('better-sqlite3').Database): AvlProv
 
   const newProver = new PersistentBatchAVLProver(innerProver, newStorage, [
     [HEIGHT_SENTINEL, encodeHeight(0)], // initial height, updated on first block
-  ]);
+  ]) as AvlProver;
 
   // The ring is per-handle: tests spin up fresh provers over the same store,
   // and a module-level ring would leak between them.
@@ -173,7 +185,7 @@ export function bootstrapAvlProver(
  * @returns 33-byte digest (root label || height)
  */
 export function performTreeWrites(
-  prover: PersistentBatchAVLProver,
+  prover: AvlProver,
   height: number,
   writes: readonly TreeWrite[],
   site: string,

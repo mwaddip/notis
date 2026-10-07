@@ -1,0 +1,21 @@
+{
+  "name": "empty-tree-lookup",
+  "startingDigestHex": "4ec61f485b98eb87153f7c57db4f5ecd75556fddbc403b41acf8441fde8e160900",
+  "proofHex": "020000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000004",
+  "config": {
+    "keyLength": 32,
+    "valueLengthOpt": null,
+    "maxNumOperations": 1,
+    "maxDeletes": 0
+  },
+  "operations": [
+    {
+      "tag": "Lookup",
+      "keyHex": "4242424242424242424242424242424242424242424242424242424242424242"
+    }
+  ],
+  "expectedNewDigestHex": "4ec61f485b98eb87153f7c57db4f5ecd75556fddbc403b41acf8441fde8e160900",
+  "expectedResultsHex": [
+    null
+  ]
+}

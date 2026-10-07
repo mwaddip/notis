@@ -1,0 +1,21 @@
+{
+  "name": "single-leaf-tree-remove-if-exists",
+  "startingDigestHex": "5efa8ee70b7e1bc9b8eac1947bf98b5bd504781b348602aaf1c93e3268f0499e01",
+  "proofHex": "02000000000000000000000000000000000000000000000000000000000000000001010101010101010101010101010101010101010101010101010101010101010000000002ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000080101010101010101000400",
+  "config": {
+    "keyLength": 32,
+    "valueLengthOpt": null,
+    "maxNumOperations": 1,
+    "maxDeletes": 1
+  },
+  "operations": [
+    {
+      "tag": "RemoveIfExists",
+      "keyHex": "0101010101010101010101010101010101010101010101010101010101010101"
+    }
+  ],
+  "expectedNewDigestHex": "4ec61f485b98eb87153f7c57db4f5ecd75556fddbc403b41acf8441fde8e160900",
+  "expectedResultsHex": [
+    "0101010101010101"
+  ]
+}

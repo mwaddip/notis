@@ -1,4 +1,4 @@
-import { verifyAvlLookup } from '@ergots/avltree';
+import { verifyAvlLookup } from '@dagsocial/avltree';
 import {
   TREE_KEY_LENGTH,
   boxKey,

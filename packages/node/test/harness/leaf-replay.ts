@@ -1,5 +1,5 @@
-import { BatchAVLVerifier, StrictBatchAVLVerifier } from '@ergots/avltree';
-import type { AvlTreeConfig } from '@ergots/avltree';
+import { BatchAVLVerifier, StrictBatchAVLVerifier } from '@dagsocial/avltree';
+import type { AvlTreeConfig } from '@dagsocial/avltree';
 import { TREE_KEY_LENGTH, bytesToHex, hash32 } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, UtxoTxTree } from '@dagsocial/types';
 import { applyBlock, checkBlockCost, treeStateView, treeWritesOf, verifierSession } from '@dagsocial/consensus';

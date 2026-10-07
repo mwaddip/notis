@@ -46,7 +46,7 @@ import {
   encodeNipopowProof,
 } from '@dagsocial/nipopow';
 import type { PoPowHeader, PopowHeaderReader } from '@dagsocial/nipopow';
-import { BatchAVLProver } from '@ergots/avltree';
+import { BatchAVLProver } from '@dagsocial/avltree';
 import {
   holdingsPage,
   seedTreeWrites,

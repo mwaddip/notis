@@ -1,0 +1,22 @@
+{
+  "name": "update-long-by-i64-max-boundary",
+  "startingDigestHex": "119bf9b3494ec8b9861d90dc1b0b2d4483cde78457b3d114215dad37250abeb101",
+  "proofHex": "03ab4abecbeaed2ac82898c746116937f33e7c65af8b4f0df1e3782d663f67f248020101010101010101010101010101010101010101010101010101010101010101ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7ffffffffffffffe000400",
+  "config": {
+    "keyLength": 32,
+    "valueLengthOpt": 8,
+    "maxNumOperations": 1,
+    "maxDeletes": 0
+  },
+  "operations": [
+    {
+      "tag": "UpdateLongBy",
+      "keyHex": "0101010101010101010101010101010101010101010101010101010101010101",
+      "delta": 1
+    }
+  ],
+  "expectedNewDigestHex": "15d77c4010b961f4f174f40dddad632f0cb88adda54c0f6219bb2edab397b2c601",
+  "expectedResultsHex": [
+    "7ffffffffffffffe"
+  ]
+}

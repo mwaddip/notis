@@ -1,0 +1,16 @@
+{
+  "name": "insert-genproof-updatelongby-genproof",
+  "config": {
+    "keyLength": 32,
+    "valueLengthOpt": 8
+  },
+  "operations": [
+    { "tag": "Insert", "keyHex": "4242424242424242424242424242424242424242424242424242424242424242", "valueHex": "6400000000000000" },
+    { "tag": "UpdateLongBy", "keyHex": "4242424242424242424242424242424242424242424242424242424242424242", "delta": 50 }
+  ],
+  "genProofAfter": [0, 1],
+  "expectedProofs": ["020000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000000000000004",
+    "03cb739332d7f0b9846fdd2dfb1acd06aa12e61921961f1aef82473e514f87af14024242424242424242424242424242424242424242424242424242424242424242ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff6400000000000000000400"],
+  "expectedDigests": ["76f29ed08e3096146f125536c1eed27fbc3a9027fe364293dc037e598af1d75201",
+    "d059d98deeec3c1ddf8f05a5799544f6ce457a9530f45992368c0a9a0ee9d3df01"]
+}

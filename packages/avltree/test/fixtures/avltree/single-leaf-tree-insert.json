@@ -1,0 +1,22 @@
+{
+  "name": "single-leaf-tree-insert",
+  "startingDigestHex": "5efa8ee70b7e1bc9b8eac1947bf98b5bd504781b348602aaf1c93e3268f0499e01",
+  "proofHex": "03e97b407dbcbf58aefc91cec7293c87b2afc236f1fbe52f88a0ec95cf3719ab21020101010101010101010101010101010101010101010101010101010101010101ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000080101010101010101000400",
+  "config": {
+    "keyLength": 32,
+    "valueLengthOpt": null,
+    "maxNumOperations": 1,
+    "maxDeletes": 0
+  },
+  "operations": [
+    {
+      "tag": "Insert",
+      "keyHex": "0202020202020202020202020202020202020202020202020202020202020202",
+      "valueHex": "0202020202020202"
+    }
+  ],
+  "expectedNewDigestHex": "c0594225b0658007a1e1cd3d04552c04c9f6e352bd91f8d5255e62184e13309802",
+  "expectedResultsHex": [
+    null
+  ]
+}

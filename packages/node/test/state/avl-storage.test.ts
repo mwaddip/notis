@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
-import { BatchAVLProver, PersistentBatchAVLProver, label } from '@ergots/avltree';
-import type { AvlNode } from '@ergots/avltree';
+import { BatchAVLProver, PersistentBatchAVLProver, label } from '@dagsocial/avltree';
+import type { AvlNode } from '@dagsocial/avltree';
 import { SqliteAvlStorage } from '../../src/state/avl-storage.js';
 import { DuplicateStateVersionError } from '../../src/services/corrupt-state.js';
 import { openAvlDb } from '../helpers.js';

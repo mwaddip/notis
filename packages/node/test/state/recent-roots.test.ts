@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { AvlNode } from '@ergots/avltree';
-import { label, newLeaf } from '@ergots/avltree';
+import type { AvlNode } from '@dagsocial/avltree';
+import { label, newLeaf } from '@dagsocial/avltree';
 import { bytesToHex } from '@dagsocial/types';
 import { RecentRoots } from '../../src/state/recent-roots.js';
 import type { KeptRoot } from '../../src/state/recent-roots.js';

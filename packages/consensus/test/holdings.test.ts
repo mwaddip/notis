@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BatchAVLVerifier, StrictBatchAVLVerifier } from '@ergots/avltree';
+import { BatchAVLVerifier, StrictBatchAVLVerifier } from '@dagsocial/avltree';
 import {
   TREE_KEY_LENGTH,
   boxKey,

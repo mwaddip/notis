@@ -98,10 +98,10 @@ describe('a route\'s cycle does not leak into the next block\'s', () => {
     // path restores a kept root first, so its recorded lookups under the
     // cycle are not the live tree's — the close has to drop them with
     // `restoreRoot`.
-    const original = handle.prover.performLookupWithNeighbors.bind(handle.prover);
+    const original = handle.prover.prover.performLookupWithNeighbors.bind(handle.prover.prover);
     function throwOnThird(): () => void {
       let calls = 0;
-      const spy = vi.spyOn(handle.prover, 'performLookupWithNeighbors').mockImplementation((key: Uint8Array) => {
+      const spy = vi.spyOn(handle.prover.prover, 'performLookupWithNeighbors').mockImplementation((key: Uint8Array) => {
         calls++;
         if (calls === 3) throw new Error('injected throw inside the cycle');
         return original(key);

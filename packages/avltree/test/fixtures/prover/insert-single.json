@@ -1,0 +1,13 @@
+{
+  "name": "insert-single",
+  "config": {
+    "keyLength": 32,
+    "valueLengthOpt": null
+  },
+  "operations": [
+    { "tag": "Insert", "keyHex": "4242424242424242424242424242424242424242424242424242424242424242", "valueHex": "01020304" }
+  ],
+  "genProofAfter": [0],
+  "expectedProofs": ["020000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000004"],
+  "expectedDigests": ["12a83992f8707b2d9d135fcc6b62d6707f77ea6193a8f0e0adb1751474f3df8101"]
+}

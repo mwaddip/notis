@@ -1,4 +1,4 @@
-import type { AvlNode } from '@ergots/avltree';
+import type { AvlNode } from '@dagsocial/avltree';
 
 /**
  * One kept root (NODE_INTERFACE → "A proof at an older height restores a kept

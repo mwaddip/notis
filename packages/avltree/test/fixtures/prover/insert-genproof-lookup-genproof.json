@@ -1,0 +1,16 @@
+{
+  "name": "insert-genproof-lookup-genproof",
+  "config": {
+    "keyLength": 32,
+    "valueLengthOpt": null
+  },
+  "operations": [
+    { "tag": "Insert", "keyHex": "0707070707070707070707070707070707070707070707070707070707070707", "valueHex": "0909" },
+    { "tag": "Lookup", "keyHex": "0707070707070707070707070707070707070707070707070707070707070707" }
+  ],
+  "genProofAfter": [0, 1],
+  "expectedProofs": ["020000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000004",
+    "0352665e83dc9366d2aed9115104d6103ef076f72b42ba35b4243dba36eec47f8f020707070707070707070707070707070707070707070707070707070707070707ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000020909000400"],
+  "expectedDigests": ["cd964e1af6dfa7d20d9bf121c44dcf1605b7deb5aa047874b0246d0f4285947301",
+    "cd964e1af6dfa7d20d9bf121c44dcf1605b7deb5aa047874b0246d0f4285947301"]
+}

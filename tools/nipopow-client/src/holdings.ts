@@ -1,4 +1,4 @@
-import { BatchAVLVerifier } from '@ergots/avltree';
+import { BatchAVLVerifier } from '@dagsocial/avltree';
 import { TREE_KEY_LENGTH, bytesToHex, hexToBytes } from '@dagsocial/types';
 import type { AnyBox } from '@dagsocial/types';
 import { holdingsPage, treeStateView, verifierSession } from '@dagsocial/consensus';

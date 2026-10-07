@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import Database from 'better-sqlite3';
-import { BatchAVLProver, label } from '@ergots/avltree';
-import type { AvlNode } from '@ergots/avltree';
+import { BatchAVLProver, label } from '@dagsocial/avltree';
+import type { AvlNode } from '@dagsocial/avltree';
 import { SqliteAvlStorage } from '../../src/state/avl-storage.js';
 import { config } from '../../src/config.js';
 

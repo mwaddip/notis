@@ -1,7 +1,8 @@
-import type { NeighborLookup, PersistentBatchAVLProver } from '@ergots/avltree';
+import type { NeighborLookup } from '@dagsocial/avltree';
 import { TREE_KEY_LENGTH, bytesToHex } from '@dagsocial/types';
 import { TreeInconsistencyError } from '@dagsocial/consensus';
 import type { TreeLookup, TreeSession } from '@dagsocial/consensus';
+import type { AvlProver } from './avl-prover.js';
 
 /**
  * The unrecorded tree session over this node's prover (NODE_INTERFACE → AVL+
@@ -15,10 +16,10 @@ import type { TreeLookup, TreeSession } from '@dagsocial/consensus';
  * "A session's answers are the view's to keep"): the library answers fresh
  * copies, and each sentinel is a fresh array.
  */
-export function proverSession(prover: PersistentBatchAVLProver): TreeSession {
+export function proverSession(prover: AvlProver): TreeSession {
   return {
     lookup(key: Uint8Array): TreeLookup {
-      return lookupOf(prover.unauthenticatedLookupWithNeighbors(key));
+      return lookupOf(prover.prover.unauthenticatedLookupWithNeighbors(key));
     },
   };
 }
@@ -41,10 +42,10 @@ export function proverSession(prover: PersistentBatchAVLProver): TreeSession {
  * NODE_INTERFACE → "A tree that contradicts itself under a route's read is
  * local corruption").
  */
-export function recordingSession(prover: PersistentBatchAVLProver): TreeSession {
+export function recordingSession(prover: AvlProver): TreeSession {
   return {
     lookup(key: Uint8Array): TreeLookup {
-      const answer = prover.performLookupWithNeighbors(key);
+      const answer = prover.prover.performLookupWithNeighbors(key);
       if (!answer.success) {
         throw new TreeInconsistencyError(`the prover refuses the recorded lookup of ${bytesToHex(key)}`);
       }

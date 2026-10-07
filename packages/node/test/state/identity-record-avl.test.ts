@@ -5,7 +5,7 @@ import {
   createAvlProver,
   performTreeWrites,
 } from '../../src/state/avl-prover.js';
-import type { PersistentBatchAVLProver } from '@ergots/avltree';
+import type { AvlProver } from '../../src/state/avl-prover.js';
 import { boxKey, boxRecordBytes, hexToBytes, identityKey, identityRecordBytes } from '@dagsocial/types';
 import type { IdentityRecord, KarmaBox, AnyBox } from '@dagsocial/types';
 import type { TreeWrite } from '@dagsocial/consensus';
@@ -34,7 +34,7 @@ const put = (label: string, record: IdentityRecord): TreeWrite =>
 const insertOf = (box: AnyBox): TreeWrite =>
   ({ tag: 'Insert', key: boxKey(hexToBytes(box.id!)), value: boxRecordBytes(box, box.txId, box.index) });
 const hexOf = (d: Uint8Array): string => Buffer.from(d).toString('hex');
-const perform = (prover: PersistentBatchAVLProver, writes: TreeWrite[]): string =>
+const perform = (prover: AvlProver, writes: TreeWrite[]): string =>
   hexOf(performTreeWrites(prover, 1, writes, 'test'));
 
 describe('identity records in the AVL tree (Spec G phase B3)', () => {

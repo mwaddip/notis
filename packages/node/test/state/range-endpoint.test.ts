@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { MockInstance } from 'vitest';
-import type { AvlNode } from '@ergots/avltree';
+import type { AvlNode } from '@dagsocial/avltree';
 import request from 'supertest';
-import { BatchAVLVerifier } from '@ergots/avltree';
+import { BatchAVLVerifier } from '@dagsocial/avltree';
 import {
   TREE_KEY_LENGTH,
   bytesToHex,

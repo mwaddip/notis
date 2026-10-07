@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { MockInstance } from 'vitest';
 import { openAvlDb, seedProvenance, uid } from '../helpers.js';
-import type { AvlNode } from '@ergots/avltree';
+import type { AvlNode } from '@dagsocial/avltree';
 import Database from 'better-sqlite3';
 import express from 'express';
 import request from 'supertest';

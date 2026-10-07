@@ -3,8 +3,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import Database from 'better-sqlite3';
-import { BatchAVLProver, label, serializeNode } from '@ergots/avltree';
-import type { AvlNode } from '@ergots/avltree';
+import { BatchAVLProver, label, serializeNode } from '@dagsocial/avltree';
+import type { AvlNode } from '@dagsocial/avltree';
 import { SqliteAvlStorage } from '../../src/state/avl-storage.js';
 
 // The in-place conversion of a per-version AVL store (NODE_INTERFACE → AVL+
@@ -243,7 +243,7 @@ describe('migrateAvlTree — the per-version layout converts in place', () => {
     initDb(dbPath);
     const db = getDb();
     const storage = new SqliteAvlStorage(db, AVL_CONFIG);
-    const { PersistentBatchAVLProver } = await import('@ergots/avltree');
+    const { PersistentBatchAVLProver } = await import('@dagsocial/avltree');
     const persisted = new PersistentBatchAVLProver(
       new BatchAVLProver(32, null), storage, [[HEIGHT_SENTINEL, encodeHeight(0)]],
     );

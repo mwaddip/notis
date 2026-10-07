@@ -1,0 +1,14 @@
+{
+  "name": "batch-0ops",
+  "startingDigestHex": "215197cff0244d874639dab08e97913fa0b1979192b264a64f4f24f9ac132e7a02",
+  "proofHex": "03215197cff0244d874639dab08e97913fa0b1979192b264a64f4f24f9ac132e7a04",
+  "config": {
+    "keyLength": 32,
+    "valueLengthOpt": null,
+    "maxNumOperations": 0,
+    "maxDeletes": 0
+  },
+  "operations": [],
+  "expectedNewDigestHex": "215197cff0244d874639dab08e97913fa0b1979192b264a64f4f24f9ac132e7a02",
+  "expectedResultsHex": []
+}

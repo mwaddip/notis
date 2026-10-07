@@ -1,5 +1,5 @@
-import { BatchAVLProver, StrictBatchAVLVerifier } from '@ergots/avltree';
-import type { AvlTreeConfig, NeighborLookup } from '@ergots/avltree';
+import { BatchAVLProver, StrictBatchAVLVerifier } from '@dagsocial/avltree';
+import type { AvlTreeConfig, NeighborLookup } from '@dagsocial/avltree';
 import { TREE_KEY_LENGTH, bytesToHex } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 import { applyBlock, treeStateView, treeWritesOf, verifierSession } from '@dagsocial/consensus';

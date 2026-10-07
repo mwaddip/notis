@@ -168,7 +168,7 @@ that walks by `nextKey` sees every key between two it was shown. At the ends of 
 all `0x00` below the first key, all `0xff` past the last (`isSentinel`). **No lookup is ever made of a sentinel**: the
 library refuses a key at either bound, and a refusal poisons a verifier. **A session's answers are the view's to
 keep**: the view memoises them for the block, so a session never reuses or mutates an array it has returned. **A
-session over `@ergots/avltree` maps the library's `null` neighbour to the sentinel** — `null` below the first key to
+session over `@dagsocial/avltree` maps the library's `null` neighbour to the sentinel** — `null` below the first key to
 all `0x00`, past the last to all `0xff` — and treats a recorded lookup's `{ success: false }` as fatal to the block;
 an unrecorded lookup has no such answer, and throws on a key the library refuses.
 
@@ -177,7 +177,7 @@ part of the proof its prover makes next — a block's (→ The block proof), or 
 before it returns (`NODE_INTERFACE → AVL+ State Root`); an unrecorded one's (`unauthenticatedLookupWithNeighbors`)
 never do. Which a caller uses is the node's (`NODE_INTERFACE → The block proof`).
 
-**`verifierSession(verifier)` is the session over `@ergots/avltree`'s step-by-step verifier** — its
+**`verifierSession(verifier)` is the session over `@dagsocial/avltree`'s step-by-step verifier** — its
 `performLookupWithNeighbors`, `null` neighbours mapped to the sentinels, a `{ success: false }` thrown as fatal to the
 proof. It takes either of the library's two step-by-step classes, `BatchAVLVerifier` and `StrictBatchAVLVerifier`, by
 the two members it calls — neither class is assignable to the other. Over it the tree view answers reads from a proof
