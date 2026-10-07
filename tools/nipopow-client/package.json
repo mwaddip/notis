@@ -25,7 +25,7 @@
     "@dagsocial/types": "workspace:*",
     "@dagsocial/nipopow": "workspace:*",
     "@dagsocial/validation": "workspace:*",
-    "@ergots/avltree": "^0.6.0"
+    "@dagsocial/avltree": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

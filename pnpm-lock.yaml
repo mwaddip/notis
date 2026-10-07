@@ -338,6 +338,9 @@ importers:
 
   tools/nipopow-client:
     dependencies:
+      '@dagsocial/avltree':
+        specifier: workspace:*
+        version: link:../../packages/avltree
       '@dagsocial/consensus':
         specifier: workspace:*
         version: link:../../packages/consensus
@@ -350,9 +353,6 @@ importers:
       '@dagsocial/validation':
         specifier: workspace:*
         version: link:../../packages/validation
-      '@ergots/avltree':
-        specifier: ^0.6.0
-        version: 0.6.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
