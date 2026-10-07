@@ -33,7 +33,7 @@ caller supplies. The browser runs it as it is written (`ARCHITECTURE → Package
 | `prover` | `BatchAVLProver` — a subclass of `@ergots/avltree`'s | `performLookupWithNeighbors`, `unauthenticatedLookupWithNeighbors` |
 | `verifier` | `BatchAVLVerifier` — the step-by-step verifier with the neighbor lookup | `performLookupWithNeighbors` |
 | `strict-verifier` | `StrictBatchAVLVerifier` | → The strict verifier |
-| `lazy-nodes` | `lazyRoot` (`NodeRow`, `LoadNode`) | → Nodes loaded on first access |
+| `lazy-nodes` | `lazyRoot` (`LoadNode`) | → Nodes loaded on first access |
 | the barrel | `PersistentBatchAVLProver`, `VersionedAVLStorage`, `AvlNode` and the node types, `AvlTreeConfig`, `Operation`, `label`, `newLeaf`, `newInternal`, `serializeNode`, `deserializeNode`, `verifyAvlLookup`, `AvlVerifyError` and its codes | nothing — `@ergots/avltree`'s own, passed through |
 
 **The export list is what the workspace's source and suites call, not a promise** — a name nothing calls leaves the
