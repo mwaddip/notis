@@ -1,10 +1,5 @@
 # AVLTREE Interface Contract
 
-> ⚠ **AHEAD OF CODE (2026-10-07, the `@dagsocial/avltree` unit)** — the package does not exist yet. `consensus`, `node`
-> and `nipopow-client` import `@ergots/avltree` 0.6.0 directly, which holds the neighbor lookups and the strict
-> verifier itself. This contract states the package as it is to be built, against `@ergots/avltree` 0.7.0's extension
-> surface.
-
 ## Scope
 
 `@dagsocial/avltree` is the authenticated tree as Notis uses it: `@ergots/avltree` — a port of Ergo's AVL+ tree — and
@@ -99,10 +94,9 @@ meets a stub fails the operation quietly and writes a proof of the root alone.
 
 ## Tests
 
-- **Every suite `@ergots/avltree` 0.6.0 held for the neighbor lookups and the strict verifier**, moved as written,
-  against the package's own classes.
-- **The proof bytes do not move**: over the same tree and operations, this package's prover and verifiers answer the
-  proofs, digests and reports `@ergots/avltree` 0.6.0's answered.
+- **The neighbor lookups and the strict verifier**: the reports on present and absent keys and at both sentinels,
+  the fail-stop on an inconsistent engine, and the strict answer in both directions — a prover's own proof is fully
+  consumed, and each altered proof that replays to the right digest is refused.
 - **Lazy against loaded**: a single lookup, an absent key, a neighbor lookup, a page of lookups in key order and an
   insert with a remove — proof and digest equal to the fully loaded prover's, the loads counted and bounded.
 - **The bundle**: the package builds for a browser with no Node built-in (`ARCHITECTURE → Package boundaries`).

@@ -2495,8 +2495,9 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   as the mempool cap does (`MEMPOOL_INTERFACE → Size cap — reject, never evict`),
   the way `index.ts` wires the node's other seams (`setNet`,
   `setMempoolCap`).
-- **The browser runs six packages as they are written** — `@dagsocial/wire`, `@dagsocial/types`,
-  `@dagsocial/validation`, `@dagsocial/consensus`, `@dagsocial/nipopow` and `@dagsocial/nipopow-client`'s library
+- **The browser runs seven packages as they are written** — `@dagsocial/wire`, `@dagsocial/types`,
+  `@dagsocial/avltree`, `@dagsocial/validation`, `@dagsocial/consensus`, `@dagsocial/nipopow` and
+  `@dagsocial/nipopow-client`'s library
   (`src/lib.ts` and what it imports): **no Node built-in import and no Node global** (`Buffer`, `process`, `require`,
   `__dirname`), so a browser build takes them with nothing substituted. Each one's `typecheck` compiles its source a
   second time against the DOM library with no Node types (`tsconfig.browser.json`), where a Node built-in or global is
@@ -2548,8 +2549,8 @@ the repo root and merged into every package's vitest config.
 
 Six rules govern it:
 
-1. **Uniform across all seven packages** — `types`, `wire`, `validation`, `nipopow`, `consensus`, `net`
-   and `node`. Aliasing some and not others puts two copies of the same
+1. **Uniform across all eight packages** — `types`, `avltree`, `wire`, `validation`, `nipopow`, `consensus`,
+   `net` and `node`. Aliasing some and not others puts two copies of the same
    module in one process — one transpiled from `src`, one bundled inside `dist`. `instanceof` fails
    across that boundary and every module-level singleton exists twice.
 2. **The alias target is `src/index.ts`, not `src/`.** The barrel stays the surface under test, so a
