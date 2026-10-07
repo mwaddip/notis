@@ -417,8 +417,8 @@ describe('applyBlock built for a browser runs with browser globals alone', () =>
     const workspace = bundle.modules.filter((id) => id.startsWith(PACKAGES_DIR) && !id.includes('/node_modules/'));
     expect(workspace).toContain(`${PACKAGES_DIR}consensus/src/apply-block.ts`);
     expect(workspace).toContain(`${PACKAGES_DIR}consensus/src/verifier-session.ts`);
+    expect(workspace.some((id) => id.startsWith(`${PACKAGES_DIR}avltree/src/`))).toBe(true);
     expect(workspace.filter((id) => !/^[^/]+\/(src|test)\//.test(id.slice(PACKAGES_DIR.length)))).toEqual([]);
-    expect(bundle.modules.filter((id) => id.includes('/@ergots/avltree/'))).not.toEqual([]);
   });
 
   it('runs in a context holding the ECMAScript built-ins, TextEncoder and TextDecoder, and nothing else — its clock and randomness throwing', () => {

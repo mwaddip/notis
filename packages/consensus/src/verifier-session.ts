@@ -11,8 +11,7 @@ import type { TreeLookup, TreeSession } from './tree-session.js';
  * The parameter names the two members the session calls, so it takes either of
  * the library's two step-by-step classes — `BatchAVLVerifier` and
  * `StrictBatchAVLVerifier` — neither of which is assignable to the other
- * (CONSENSUS_INTERFACE → The tree session → "`verifierSession(verifier)` is
- * the session over `@ergots/avltree`'s step-by-step verifier").
+ * (CONSENSUS_INTERFACE → The tree session).
  *
  * A `null` neighbour is the sentinel — all `0x00` below the first key, all
  * `0xff` past the last — a fresh array each, so every answer is the view's to
