@@ -44,8 +44,7 @@ import {
   uid,
   type TestIdentity, seedPostTx, makePostCommit, activateProverOverStore,
   seedKarmaPoolBox, makeApplicableBlock,
-  FIXTURE_BOND_KARMA,
-} from '../helpers.js';
+  FIXTURE_BOND_KARMA, fixtureTxId } from '../helpers.js';
 
 /** Short enough that the deadline is reachable by mining a few real blocks. */
 const PROBATION = 3;
@@ -497,7 +496,7 @@ describe('the invite at block application', () => {
 
     const postId = types.computePostId(types.computeTxId(postTx), 0);
     const posts = await import('../../src/store/posts.js');
-    posts.insertPost(postId, postCommit, 'first post');
+    posts.insertPost(postId, fixtureTxId(postCommit), postCommit, 'first post');
     mempool.insertUtxoTx(postTx, 1000);
     const postBlock = await mineOne();
     expect(postBlock).not.toBeNull();
@@ -916,7 +915,7 @@ describe('the invite at block application', () => {
     await import('@dagsocial/types');
 
     for (const { commit, content, postTx, postId, liker, karma } of batch) {
-      posts.insertPost(postId, commit, content);
+      posts.insertPost(postId, fixtureTxId(commit), commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       mempool.insertUtxoTx(makeLikeTx(liker, karma, postId, inviteeKey), 1000);
     }

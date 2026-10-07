@@ -107,6 +107,7 @@ describe('verifier', () => {
     const withdrawnId = 'cd'.repeat(32);
     store.posts.set(withdrawnId, {
       id: withdrawnId,
+      txId: '00'.repeat(32),
       content: null,
       contentHash: Buffer.from(computeContentHash('withdrawn')).toString('hex'),
       author: userId,

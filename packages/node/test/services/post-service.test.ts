@@ -26,7 +26,7 @@ function mockDeps(overrides?: Partial<PostServiceDeps>): PostServiceDeps {
       karmaMinimum: KARMA_MINIMUM,
     },
     getPost: (id: string) => ({
-      id, content: 'hello', contentHash: Buffer.from(computeContentHash('hello')).toString('hex'),
+      id, txId: '00'.repeat(32), content: 'hello', contentHash: Buffer.from(computeContentHash('hello')).toString('hex'),
       author: new Uint8Array(32), parentRefs: [], protocolVersion: PROTOCOL_VERSION,
       type: 'regular' as const, status: 'confirmed' as const, blockHeight: null, blockIndex: null,
       withdrawnAtHeight: null,

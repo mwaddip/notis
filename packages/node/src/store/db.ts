@@ -7,6 +7,7 @@ const MIGRATIONS = [
   // Posts DAG
   `CREATE TABLE IF NOT EXISTS dag_posts (
     id TEXT PRIMARY KEY,
+    tx_id TEXT NOT NULL,              -- hex of the creating transaction's id (NODE_INTERFACE → Posts → "The creating transaction rides a post row")
     content_hash TEXT NOT NULL,       -- hex of the 32-byte content commitment
     content TEXT,                     -- NULL = placeholder (structure known, body not held)
     author BLOB NOT NULL,             -- 32-byte Ed25519 public key

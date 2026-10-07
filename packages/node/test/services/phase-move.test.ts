@@ -16,8 +16,7 @@ import {
   makeTestIdentity,
   seedBoxes,
   seedPostTx,
-  signTransaction,
-} from '../helpers.js';
+  signTransaction, fixtureTxId } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Dynamic import helpers
@@ -88,7 +87,7 @@ describe('phase-move: like(P) + postWithdraw(P) in one block', () => {
 
     // Block 1: confirm the post
     const { tx: postTx, postId, content, commit } = await seedPostTx(author, 'like-and-withdraw');
-    posts.insertPost(postId, commit, content);
+    posts.insertPost(postId, fixtureTxId(commit), commit, content);
     const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
     expect(blockApply.applyOrderingBlock(block1)).toBe(true);
 
@@ -119,7 +118,7 @@ describe('phase-move: a withdrawal does not erase a same-block like', () => {
 
     // Block 1: confirm the post
     const { tx: postTx, postId, content, commit } = await seedPostTx(author, 'like-record-count');
-    posts.insertPost(postId, commit, content);
+    posts.insertPost(postId, fixtureTxId(commit), commit, content);
     const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
     expect(blockApply.applyOrderingBlock(block1)).toBe(true);
 
@@ -154,7 +153,7 @@ describe('phase-move: creator/applier settlement agreement', () => {
 
     // Block 1: confirm the post
     const { tx: postTx, postId, content, commit } = await seedPostTx(author, 'agreement-test');
-    posts.insertPost(postId, commit, content);
+    posts.insertPost(postId, fixtureTxId(commit), commit, content);
     const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
     expect(blockApply.applyOrderingBlock(block1)).toBe(true);
 

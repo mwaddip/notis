@@ -1,4 +1,4 @@
-import { fixturePostId, makePostCommit } from '../helpers.js';
+import { fixturePostId, makePostCommit, fixtureTxId} from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync, type KeyObject } from 'crypto';
 import {
@@ -38,7 +38,7 @@ function rawPublicKey(keyObj: KeyObject): Uint8Array {
 function insertTestPost(content: string, author: Uint8Array, parentRefs: string[]): string {
   const commit = makePostCommit(author, content, { parentRefs });
   const postId = fixturePostId(commit);
-  insertPost(postId, commit, content);
+  insertPost(postId, fixtureTxId(commit), commit, content);
   return postId;
 }
 

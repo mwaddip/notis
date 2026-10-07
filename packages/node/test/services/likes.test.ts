@@ -48,7 +48,7 @@ import {
   rawPublicKey,
   seedProvenance,
   signTransaction,
-  type Stored, fixturePostId, fillerTx } from '../helpers.js';
+  type Stored, fixturePostId, fillerTx, fixtureTxId} from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -83,7 +83,7 @@ function createTestPost(authorId: Uint8Array): string {
     type: 'regular' as const,
   };
   const postId = fixturePostId(commit);
-  insertPost(postId, commit, 'Test post');
+  insertPost(postId, fixtureTxId(commit), commit, 'Test post');
   return postId;
 }
 

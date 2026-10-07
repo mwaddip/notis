@@ -3,7 +3,7 @@ import {
   seedProvenance,
   signTransaction,
   txToJson,
-  fixturePostId, makePostCommit } from '../helpers.js';
+  fixturePostId, makePostCommit, fixtureTxId} from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
 import http from 'http';
@@ -420,7 +420,7 @@ describe('posts routes', () => {
       type: 'regular',
     };
     const threadId = fixturePostId(threadCommit);
-    insertPost(threadId, threadCommit, threadContent);
+    insertPost(threadId, fixtureTxId(threadCommit), threadCommit, threadContent);
 
     const replyContent = 'reply to pending';
     const replyCommit: PostCommit = {
@@ -536,12 +536,12 @@ describe('posts routes', () => {
     const kp = generateKeyPair();
     const rootCommit = makePostCommit(kp.publicKey, 'a root for the roots filter');
     const rootId = fixturePostId(rootCommit);
-    insertPost(rootId, rootCommit, 'a root for the roots filter');
+    insertPost(rootId, fixtureTxId(rootCommit), rootCommit, 'a root for the roots filter');
     confirmPost(rootId, 900, 0);
 
     const replyCommit = makePostCommit(kp.publicKey, 'a reply excluded by roots=1', { parentRefs: [rootId] });
     const replyId = fixturePostId(replyCommit);
-    insertPost(replyId, replyCommit, 'a reply excluded by roots=1');
+    insertPost(replyId, fixtureTxId(replyCommit), replyCommit, 'a reply excluded by roots=1');
     confirmPost(replyId, 901, 0);
 
     const res = await request('/?roots=1', 'GET');
@@ -573,12 +573,12 @@ describe('posts routes', () => {
     const kp = generateKeyPair();
     const rootCommit = makePostCommit(kp.publicKey, 'a root carrying both fields');
     const rootId = fixturePostId(rootCommit);
-    insertPost(rootId, rootCommit, 'a root carrying both fields');
+    insertPost(rootId, fixtureTxId(rootCommit), rootCommit, 'a root carrying both fields');
     confirmPost(rootId, 902, 0);
 
     const replyCommit = makePostCommit(kp.publicKey, 'its reply', { parentRefs: [rootId] });
     const replyId = fixturePostId(replyCommit);
-    insertPost(replyId, replyCommit, 'its reply');
+    insertPost(replyId, fixtureTxId(replyCommit), replyCommit, 'its reply');
     confirmPost(replyId, 903, 0);
 
     const res = await request('/', 'GET');
@@ -610,13 +610,13 @@ describe('posts routes', () => {
 
       const commit1 = makePostCommit(author, 'liked post', { parentRefs: [] });
       likedPostId = fixturePostId(commit1);
-      insertPost(likedPostId, commit1, 'liked post');
+      insertPost(likedPostId, fixtureTxId(commit1), commit1, 'liked post');
       confirmPost(likedPostId, 10, 0);
       insertLikeRecord(likedPostId, viewerBytes, 10);
 
       const commit2 = makePostCommit(author, 'unliked post', { parentRefs: [] });
       unlikedPostId = fixturePostId(commit2);
-      insertPost(unlikedPostId, commit2, 'unliked post');
+      insertPost(unlikedPostId, fixtureTxId(commit2), commit2, 'unliked post');
       confirmPost(unlikedPostId, 10, 1);
     });
 
@@ -684,34 +684,34 @@ describe('posts routes', () => {
 
       const c0 = makePostCommit(author, 'thread root', { parentRefs: [] });
       rootId = fixturePostId(c0);
-      insertPost(rootId, c0, 'thread root');
+      insertPost(rootId, fixtureTxId(c0), c0, 'thread root');
       confirmPost(rootId, 20, 0);
 
       const c1 = makePostCommit(author, 'thread child', { parentRefs: [rootId] });
       childId = fixturePostId(c1);
-      insertPost(childId, c1, 'thread child');
+      insertPost(childId, fixtureTxId(c1), c1, 'thread child');
       confirmPost(childId, 21, 0);
 
       const c2 = makePostCommit(author, 'thread grandchild', { parentRefs: [childId] });
       grandchildId = fixturePostId(c2);
-      insertPost(grandchildId, c2, 'thread grandchild');
+      insertPost(grandchildId, fixtureTxId(c2), c2, 'thread grandchild');
       confirmPost(grandchildId, 22, 0);
 
       // A live parent, a withdrawn reply beneath it, and a live reply beneath that.
       const cp = makePostCommit(author, 'a root whose reply is withdrawn', { parentRefs: [] });
       withdrawnSubjectParentId = fixturePostId(cp);
-      insertPost(withdrawnSubjectParentId, cp, 'a root whose reply is withdrawn');
+      insertPost(withdrawnSubjectParentId, fixtureTxId(cp), cp, 'a root whose reply is withdrawn');
       confirmPost(withdrawnSubjectParentId, 23, 0);
 
       const cr = makePostCommit(author, 'the withdrawn reply', { parentRefs: [withdrawnSubjectParentId] });
       withdrawnSubjectId = fixturePostId(cr);
-      insertPost(withdrawnSubjectId, cr, 'the withdrawn reply');
+      insertPost(withdrawnSubjectId, fixtureTxId(cr), cr, 'the withdrawn reply');
       confirmPost(withdrawnSubjectId, 23, 1);
       withdrawPost(withdrawnSubjectId, 24);
 
       const cg = makePostCommit(author, 'a live reply under the withdrawn one', { parentRefs: [withdrawnSubjectId] });
       withdrawnSubjectChildId = fixturePostId(cg);
-      insertPost(withdrawnSubjectChildId, cg, 'a live reply under the withdrawn one');
+      insertPost(withdrawnSubjectChildId, fixtureTxId(cg), cg, 'a live reply under the withdrawn one');
       confirmPost(withdrawnSubjectChildId, 25, 0);
     });
 
@@ -809,18 +809,18 @@ describe('posts routes', () => {
 
       const rootCommit = makePostCommit(author, 'a live root, later given a withdrawn reply', { parentRefs: [] });
       liveRootId = fixturePostId(rootCommit);
-      insertPost(liveRootId, rootCommit, 'a live root, later given a withdrawn reply');
+      insertPost(liveRootId, fixtureTxId(rootCommit), rootCommit, 'a live root, later given a withdrawn reply');
       confirmPost(liveRootId, 50, 0);
 
       const replyCommit = makePostCommit(author, 'a reply, later withdrawn', { parentRefs: [liveRootId] });
       withdrawnReplyId = fixturePostId(replyCommit);
-      insertPost(withdrawnReplyId, replyCommit, 'a reply, later withdrawn');
+      insertPost(withdrawnReplyId, fixtureTxId(replyCommit), replyCommit, 'a reply, later withdrawn');
       confirmPost(withdrawnReplyId, 51, 0);
       withdrawPost(withdrawnReplyId, 52);
 
       const soloRootCommit = makePostCommit(author, 'a root, later withdrawn', { parentRefs: [] });
       withdrawnSoloRootId = fixturePostId(soloRootCommit);
-      insertPost(withdrawnSoloRootId, soloRootCommit, 'a root, later withdrawn');
+      insertPost(withdrawnSoloRootId, fixtureTxId(soloRootCommit), soloRootCommit, 'a root, later withdrawn');
       confirmPost(withdrawnSoloRootId, 53, 0);
       withdrawPost(withdrawnSoloRootId, 54);
     });

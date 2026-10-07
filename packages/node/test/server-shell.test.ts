@@ -8,7 +8,7 @@ import { initDb, getDb, closeDb } from '../src/store/db.js';
 import { createApp } from '../src/server.js';
 import { insertPost, confirmPost, withdrawPost } from '../src/store/posts.js';
 import { putUsername } from '../src/store/usernames.js';
-import { makeTestConfig, makePostCommit, fixturePostId, uid, toHex } from './helpers.js';
+import { makeTestConfig, makePostCommit, fixturePostId, uid, toHex, fixtureTxId} from './helpers.js';
 
 // NODE_INTERFACE → Link previews: GET /shell/:id answers the web client's
 // shell with a post's preview tags injected, gated by WEB_SHELL_PATH
@@ -138,7 +138,7 @@ describe('GET /shell/:id', () => {
       ' padding well beyond two hundred characters so the cut always triggers xxxxxxxxxxxxxxxxxxxx';
     const commit = makePostCommit(author, content);
     const id = fixturePostId(commit);
-    insertPost(id, commit, content);
+    insertPost(id, fixtureTxId(commit), commit, content);
     confirmPost(id, 10, 0);
 
     const { port, close } = startApp(shellPath);
@@ -178,7 +178,7 @@ describe('GET /shell/:id', () => {
     const content = 'a post by an author with a username';
     const commit = makePostCommit(author, content);
     const id = fixturePostId(commit);
-    insertPost(id, commit, content);
+    insertPost(id, fixtureTxId(commit), commit, content);
     confirmPost(id, 16, 0);
 
     const authorHex = toHex(author);
@@ -211,7 +211,7 @@ describe('GET /shell/:id', () => {
     const content = 'a <script>alert("x")</script> & <b>bold</b>';
     const commit = makePostCommit(author, content);
     const id = fixturePostId(commit);
-    insertPost(id, commit, content);
+    insertPost(id, fixtureTxId(commit), commit, content);
     confirmPost(id, 11, 0);
 
     const { port, close } = startApp(shellPath);
@@ -243,7 +243,7 @@ describe('GET /shell/:id', () => {
     const content = 'a post with a canonical url';
     const commit = makePostCommit(author, content);
     const id = fixturePostId(commit);
-    insertPost(id, commit, content);
+    insertPost(id, fixtureTxId(commit), commit, content);
     confirmPost(id, 12, 0);
 
     const { port, close } = startApp(shellPath);
@@ -271,7 +271,7 @@ describe('GET /shell/:id', () => {
     const content = 'a post that will be withdrawn';
     const commit = makePostCommit(author, content);
     const id = fixturePostId(commit);
-    insertPost(id, commit, content);
+    insertPost(id, fixtureTxId(commit), commit, content);
     confirmPost(id, 13, 0);
     withdrawPost(id, 14);
 
@@ -321,7 +321,7 @@ describe('GET /shell/:id', () => {
     const author = uid('shell-placeholder-author');
     const commit = makePostCommit(author, 'placeholder body, not stored on this node');
     const id = fixturePostId(commit);
-    insertPost(id, commit, null);
+    insertPost(id, fixtureTxId(commit), commit, null);
     confirmPost(id, 15, 0);
 
     const { port, close } = startApp(shellPath);

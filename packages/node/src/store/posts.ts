@@ -1,5 +1,5 @@
 import { getDb } from './db.js';
-import type { PostCommit, PostId, PostType } from '@dagsocial/types';
+import type { PostCommit, PostId, PostType, TxId } from '@dagsocial/types';
 import type { Page, PostKey } from './index.js';
 
 // ---------------------------------------------------------------------------
@@ -8,6 +8,7 @@ import type { Page, PostKey } from './index.js';
 
 interface PostRow {
   id: string;
+  tx_id: string;                  // hex — the creating transaction's id
   content_hash: string;           // hex of 32-byte commitment
   content: string | null;         // NULL = placeholder
   author: Buffer;                 // 32-byte Ed25519 public key
@@ -28,6 +29,7 @@ export type PostStatus = 'pending' | 'confirmed';
 
 export interface StoredPost {
   id: PostId;
+  txId: TxId;                     // NODE_INTERFACE → Posts → "The creating transaction rides a post row"
   content: string | null;
   contentHash: string;            // hex
   author: Uint8Array;
@@ -51,6 +53,7 @@ export function isLivePost(x: StoredPost | null): x is StoredPost {
 function rowToPost(row: PostRow): StoredPost {
   return {
     id: row.id,
+    txId: row.tx_id,
     content: row.content,
     contentHash: row.content_hash,
     author: new Uint8Array(row.author),
@@ -68,18 +71,19 @@ function rowToPost(row: PostRow): StoredPost {
 // Public API
 // ---------------------------------------------------------------------------
 
-export function insertPost(postId: PostId, commit: PostCommit, content: string | null): void {
+export function insertPost(postId: PostId, txId: TxId, commit: PostCommit, content: string | null): void {
   const db = getDb();
   const contentHash = Buffer.from(commit.contentHash).toString('hex');
 
   db.transaction(() => {
     db.prepare(
       `INSERT INTO dag_posts
-         (id, content_hash, content, author, parent_refs,
+         (id, tx_id, content_hash, content, author, parent_refs,
           protocol_version, type, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
     ).run(
       postId,
+      txId,
       contentHash,
       content,
       Buffer.from(commit.author),

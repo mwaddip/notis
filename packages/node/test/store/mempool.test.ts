@@ -162,9 +162,9 @@ function seedExpiringPostRow(
   const postId = computePostId(txId, 0);
   db.prepare(
     `INSERT INTO dag_posts
-       (id, content_hash, content, author, parent_refs, protocol_version, type, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
-  ).run(postId, '00'.repeat(32), 'x', bytes('ab'.repeat(32)), '[]', 1, 'regular');
+       (id, tx_id, content_hash, content, author, parent_refs, protocol_version, type, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+  ).run(postId, txId, '00'.repeat(32), 'x', bytes('ab'.repeat(32)), '[]', 1, 'regular');
   return { rowid, postId };
 }
 

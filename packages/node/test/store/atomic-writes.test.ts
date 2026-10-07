@@ -1,4 +1,4 @@
-import { uid, fixturePostId } from '../helpers.js';
+import { uid, fixturePostId, fixtureTxId} from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { computeContentHash } from '@dagsocial/types';
@@ -52,7 +52,7 @@ describe('atomic writes', () => {
     const { commit, content } = makeCommit({ content: 'post with refs', parentRefs: refs });
     const postId = fixturePostId(commit);
 
-    insertPost(postId, commit, content);
+    insertPost(postId, fixtureTxId(commit), commit, content);
 
     const db = getDb();
     const postRow = db.prepare('SELECT id FROM dag_posts WHERE id = ?').get(postId) as
@@ -77,11 +77,12 @@ describe('atomic writes', () => {
     try {
       db.prepare(
         `INSERT INTO dag_posts
-           (id, content_hash, content, author, parent_refs,
+           (id, tx_id, content_hash, content, author, parent_refs,
             protocol_version, type, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
       ).run(
         postId,
+        fixtureTxId(commit),
         hex(commit.contentHash),
         content,
         Buffer.from(commit.author),
@@ -121,11 +122,12 @@ describe('atomic writes', () => {
       db.transaction(() => {
         db.prepare(
           `INSERT INTO dag_posts
-             (id, content_hash, content, author, parent_refs,
+             (id, tx_id, content_hash, content, author, parent_refs,
               protocol_version, type, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
         ).run(
           postId,
+          fixtureTxId(commit),
           hex(commit.contentHash),
           content,
           Buffer.from(commit.author),
@@ -160,7 +162,7 @@ describe('atomic writes', () => {
 
     const { commit, content } = makeCommit({ content: 'confirm me' });
     const postId = fixturePostId(commit);
-    insertPost(postId, commit, content);
+    insertPost(postId, fixtureTxId(commit), commit, content);
 
     confirmPost(postId, 42, 5);
 
@@ -182,7 +184,7 @@ describe('atomic writes', () => {
 
     const { commit, content } = makeCommit({ content: 'unconfirm me' });
     const postId = fixturePostId(commit);
-    insertPost(postId, commit, content);
+    insertPost(postId, fixtureTxId(commit), commit, content);
 
     confirmPost(postId, 7, 2);
     unconfirmPost(postId);
@@ -205,7 +207,7 @@ describe('atomic writes', () => {
     const refs = ['a1'.repeat(32)];
     const { commit, content } = makeCommit({ content: 'will vanish', parentRefs: refs });
     const postId = fixturePostId(commit);
-    insertPost(postId, commit, content);
+    insertPost(postId, fixtureTxId(commit), commit, content);
 
     deletePendingPost(postId);
 

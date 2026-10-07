@@ -106,7 +106,7 @@ export function handleRelayedTx(
       admitTx(tx, expiresAtHeight);
       if (tx.post && result.txId) {
         const postId = computePostId(result.txId, 0);
-        insertPost(postId, tx.post, content ?? null);
+        insertPost(postId, result.txId, tx.post, content ?? null);
         emitPostReceived(postId, fromPeerId, 'packet');
         emitPostValidated(postId, performance.now() - validationStart);
       }
