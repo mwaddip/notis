@@ -509,9 +509,14 @@ describe('config', () => {
     // devnet maxReorgDepth (vitest.config.ts pins NETWORK_TYPE=devnet)
     const devnetReorgDepth = NETWORK_PROFILES.devnet.maxReorgDepth;
 
+    // The helper names the reorg-depth floor, so `PROOF_WINDOW_BLOCKS` is set
+    // to `0` — the proof-window bound (`PROOF_WINDOW_BLOCKS <=
+    // MAX_PROOF_HISTORY`) clears whatever history value this test tries,
+    // leaving the reorg-depth check as the one gate the assertion names.
     function importWithProofHistory(value: string) {
       process.env['MAX_PROOF_HISTORY'] = value;
       process.env['NETWORK_TYPE'] = 'devnet';
+      process.env['PROOF_WINDOW_BLOCKS'] = '0';
       return import('../src/config.js');
     }
 
@@ -816,6 +821,48 @@ describe('config', () => {
       await expect(importWithWindow('1.5')).rejects.toThrow(/PROOF_WINDOW_BLOCKS/);
       vi.resetModules();
       await expect(importWithWindow('')).rejects.toThrow(/PROOF_WINDOW_BLOCKS/);
+    });
+
+    // NODE_INTERFACE → AVL+ State Root → "A height of the proof window with
+    // no kept root is served from the store" — the store prunes versions
+    // below `tip − MAX_PROOF_HISTORY`, and a window reaching past that names
+    // heights the node cannot answer. Refused at load, never clamped. The
+    // network is pinned to devnet (`maxReorgDepth = 40`) so that
+    // `MAX_PROOF_HISTORY` can clear the reorg-depth check at values near the
+    // window.
+    it('refuses PROOF_WINDOW_BLOCKS above MAX_PROOF_HISTORY', async () => {
+      const prevHist = process.env['MAX_PROOF_HISTORY'];
+      const prevNet = process.env['NETWORK_TYPE'];
+      process.env['MAX_PROOF_HISTORY'] = '50';
+      process.env['NETWORK_TYPE'] = 'devnet';
+      try {
+        vi.resetModules();
+        await expect(importWithWindow('51')).rejects.toThrow(
+          /PROOF_WINDOW_BLOCKS 51 is above MAX_PROOF_HISTORY 50/,
+        );
+      } finally {
+        if (prevHist === undefined) delete process.env['MAX_PROOF_HISTORY'];
+        else process.env['MAX_PROOF_HISTORY'] = prevHist;
+        if (prevNet === undefined) delete process.env['NETWORK_TYPE'];
+        else process.env['NETWORK_TYPE'] = prevNet;
+      }
+    });
+
+    it('admits PROOF_WINDOW_BLOCKS equal to MAX_PROOF_HISTORY', async () => {
+      const prevHist = process.env['MAX_PROOF_HISTORY'];
+      const prevNet = process.env['NETWORK_TYPE'];
+      process.env['MAX_PROOF_HISTORY'] = '50';
+      process.env['NETWORK_TYPE'] = 'devnet';
+      try {
+        vi.resetModules();
+        const { loadConfig } = await importWithWindow('50');
+        expect(loadConfig().proofWindowBlocks).toBe(50);
+      } finally {
+        if (prevHist === undefined) delete process.env['MAX_PROOF_HISTORY'];
+        else process.env['MAX_PROOF_HISTORY'] = prevHist;
+        if (prevNet === undefined) delete process.env['NETWORK_TYPE'];
+        else process.env['NETWORK_TYPE'] = prevNet;
+      }
     });
   });
 

@@ -19,10 +19,11 @@ import {
 import { TreeInconsistencyError, holdingsPage, isSentinel, treeStateView } from '@dagsocial/consensus';
 import type { HoldingKind } from '@dagsocial/consensus';
 import { label } from '@dagsocial/avltree';
+import type { AvlNode } from '@dagsocial/avltree';
 import type { AvlProverHandle } from './avl-prover.js';
-import type { KeptRoot } from './recent-roots.js';
 import { recordingSession } from './prover-session.js';
 import {
+  CorruptChainStateError,
   InconsistentStateTreeError,
   failStopIfCorruptChain,
 } from '../services/corrupt-state.js';
@@ -99,22 +100,40 @@ function decodeValue(key: Uint8Array, bytes: Uint8Array): DecodedValue {
 }
 
 /**
- * The answer to a resolved `atHeight`: either the ring's kept root for that
- * height or a 404 verdict. A route resolves `atHeight` before it opens any
- * cycle on the prover, so no restore has to run on a resolution failure.
- * `kept` is `null` for the live tip, where the cycle runs on the prover as
- * it stands and no restore of a different root has to happen.
+ * The root the route restores for a non-tip call — the two fields `withCycle`
+ * reads. A `KeptRoot` is one by its `root` and `treeHeight` and the ring's
+ * `replaced` is nothing to `withCycle`; a store-served lazy root
+ * (`storeServedRootAtHeight`) is another, and `withCycle` restores both the
+ * same way.
+ */
+export interface RestoreSource {
+  root: AvlNode;
+  treeHeight: number;
+}
+
+/**
+ * The answer to a resolved `atHeight`: a kept root for that height, a lazily
+ * loaded root built from the store's version at exactly that height, or a 404
+ * verdict. A route resolves `atHeight` before it opens any cycle on the
+ * prover, so no restore has to run on a resolution failure. `restore` is
+ * `null` for the live tip, where the cycle runs on the prover as it stands
+ * and no restore of a different root has to happen.
  */
 type HeightResolution =
-  | { ok: true; atHeight: number; stateRoot: Uint8Array; kept: KeptRoot | null }
+  | { ok: true; atHeight: number; stateRoot: Uint8Array; restore: RestoreSource | null }
   | { ok: false };
 
 /**
- * Resolve the height a route serves at. Without `atHeight` the route serves
- * the live tip's root through `kept: null` — no restore needed. With one, the
- * ring is asked; a miss is 404 `{ error: 'height not available' }`
- * (NODE_INTERFACE → "A proof at an older height restores a kept root"). The
- * route never calls `rollback`.
+ * Resolve the height a route serves at (NODE_INTERFACE → AVL+ State Root →
+ * "A height of the proof window with no kept root is served from the store").
+ * Without `atHeight` the route serves the live tip's root through
+ * `restore: null`. With one that is the tip, the live root is used.
+ * Otherwise the proof window is the tip and the `windowBlocks − 1` heights
+ * below it that the handle's ring names (`handle.recentRoots.windowBlocks`);
+ * a height outside it is 404. Inside it, the ring's root is used when kept,
+ * and `storage.storeServedRootAtHeight` answers one otherwise — the store
+ * holding no version of that height is 404. The route never calls
+ * `rollback`.
  */
 function resolveHeight(
   handle: AvlProverHandle,
@@ -122,7 +141,7 @@ function resolveHeight(
   res: Response,
 ): HeightResolution {
   // The live tip's block height is the version row's — the only read of
-  // storage this file makes, and no `rollback`.
+  // storage this file makes for the tip, and no `rollback`.
   const liveVersion = handle.storage.version();
   if (liveVersion === null) {
     res.status(404).json({ error: 'no state available' });
@@ -135,67 +154,91 @@ function resolveHeight(
   }
 
   if (atHeightRaw === undefined) {
-    return { ok: true, atHeight: liveHeight, stateRoot: liveVersion, kept: null };
+    return { ok: true, atHeight: liveHeight, stateRoot: liveVersion, restore: null };
   }
   if (typeof atHeightRaw !== 'string' || !/^\d+$/.test(atHeightRaw)) {
     res.status(400).json({ error: 'atHeight must be a non-negative integer' });
     return { ok: false };
   }
   // Decimal digits of any length are well-formed. One past the safe-integer
-  // range names no kept height — the heights the ring records come from the
-  // store's version row, a safe integer — so it falls through to the ring's
-  // miss and the 404 (NODE_INTERFACE → "A proof at an older height restores
-  // a kept root"; → AVL+ State Root → "avl-endpoint"; → AVL+ State Root →
-  // "avl-endpoint, the range route").
+  // range names no listed height — version rows read safe integers — so it
+  // falls through to the 404 for a height outside the window.
   const atHeight = Number(atHeightRaw);
   if (Number.isSafeInteger(atHeight) && atHeight === liveHeight) {
-    return { ok: true, atHeight, stateRoot: liveVersion, kept: null };
+    return { ok: true, atHeight, stateRoot: liveVersion, restore: null };
   }
-  const kept = Number.isSafeInteger(atHeight) ? handle.recentRoots.get(atHeight) : null;
-  if (kept === null) {
+
+  // The proof window: the tip and the `windowBlocks − 1` heights below it,
+  // read from the handle's ring — the one source. `windowBlocks = 0` names
+  // the tip alone, which the branch above served.
+  const windowBlocks = handle.recentRoots.windowBlocks;
+  const inWindow =
+    Number.isSafeInteger(atHeight) && atHeight < liveHeight && atHeight > liveHeight - windowBlocks;
+  if (!inWindow) {
     res.status(404).json({ error: 'height not available' });
     return { ok: false };
   }
-  // The kept root's digest is 33 bytes: the root's label and the tree height.
-  // The route serves it so a client can check its proof's anchor without
-  // reading storage. The library's `digest()` after `restoreRoot(root,
-  // treeHeight)` would answer the same bytes; we assemble them here to avoid
-  // moving the prover before we have the lookups to perform under it.
-  const rootLabel = label(kept.root);
-  const stateRoot = new Uint8Array(33);
-  stateRoot.set(rootLabel, 0);
-  stateRoot[32] = kept.treeHeight;
-  return { ok: true, atHeight, stateRoot, kept };
+
+  // Kept root wins the fast path; the digest is 33 bytes, the root's label
+  // and the tree height.
+  const kept = handle.recentRoots.get(atHeight);
+  if (kept !== null) {
+    const rootLabel = label(kept.root);
+    const stateRoot = new Uint8Array(33);
+    stateRoot.set(rootLabel, 0);
+    stateRoot[32] = kept.treeHeight;
+    return { ok: true, atHeight, stateRoot, restore: kept };
+  }
+
+  // No kept root: the store serves this height. The storage answers the
+  // version at exactly `atHeight` and the lazy root over it, or `null` where
+  // it lists no version of this window height — a 404. Nothing of a
+  // store-served tree is kept: it joins no ring and no node it loads
+  // outlives the call. The route answers the store's version row as its
+  // `stateRoot` (NODE_INTERFACE → AVL+ State Root → "A height of the proof
+  // window with no kept root is served from the store").
+  const served = handle.storage.storeServedRootAtHeight(atHeight, 'avl-endpoint');
+  if (served === null) {
+    res.status(404).json({ error: 'height not available' });
+    return { ok: false };
+  }
+  return {
+    ok: true,
+    atHeight,
+    stateRoot: served.version,
+    restore: { root: served.root, treeHeight: served.treeHeight },
+  };
 }
 
 
 /**
- * Open a proof cycle on the prover at the kept root, run `body`, close the
+ * Open a proof cycle on the prover at the resolved root, run `body`, close the
  * cycle with `generateProof()`, and restore the live root — on every path, a
  * throw included (NODE_INTERFACE → "A proof at an older height restores a
- * kept root"). `body` may call `handle.prover.performOneOperation` (the
+ * kept root"; → "A height of the proof window with no kept root is served
+ * from the store"). `body` may call `handle.prover.performOneOperation` (the
  * single-key route) or run the holdings-page walk through a recording
  * session (the range route): each is the cycle's recorded reads. For the live
- * tip (`kept === null`) the cycle runs on the prover as it stands, and only
- * the proof-cycle rebase at the end runs.
+ * tip (`restore === null`) the cycle runs on the prover as it stands, and
+ * only the proof-cycle rebase at the end runs. A store-served `restore` is a
+ * lazy root over `versionAtHeight`; it is dropped when the call returns.
  */
 function withCycle<T>(
   handle: AvlProverHandle,
-  kept: KeptRoot | null,
+  restore: RestoreSource | null,
   body: () => T,
 ): { answer: T; proof: Uint8Array } {
   const inner = handle.prover.prover;
   const savedRoot = inner.root;
   const savedHeight = inner.height;
   try {
-    if (kept !== null) inner.restoreRoot(kept.root, kept.treeHeight);
+    if (restore !== null) inner.restoreRoot(restore.root, restore.treeHeight);
     const answer = body();
     const proof = inner.generateProof();
     return { answer, proof };
   } finally {
     // The live root is restored and the route's cycle closed on every path,
-    // a throw included (NODE_INTERFACE → "A proof at an older height
-    // restores a kept root"). `restoreRoot` rebases the proof cycle, so no
+    // a throw included. `restoreRoot` rebases the proof cycle, so no
     // recorded read of the route stays in the cycle to enter a block's
     // proof (NODE_INTERFACE → The block proof).
     inner.restoreRoot(savedRoot, savedHeight);
@@ -209,7 +252,7 @@ function proofAnswer(
   key: Uint8Array,
   resolved: Extract<HeightResolution, { ok: true }>,
 ): Record<string, unknown> {
-  const { answer: lookupResult, proof } = withCycle(handle, resolved.kept, () =>
+  const { answer: lookupResult, proof } = withCycle(handle, resolved.restore, () =>
     handle.prover.performOneOperation({ tag: 'Lookup', key }),
   );
   const decoded: DecodedValue =
@@ -249,12 +292,19 @@ export function registerProofEndpoint(app: Express, handle: AvlProverHandle): vo
       return;
     }
 
-    const resolved = resolveHeight(handle, req.query['atHeight'], res);
-    if (!resolved.ok) return;
-
     try {
+      const resolved = resolveHeight(handle, req.query['atHeight'], res);
+      if (!resolved.ok) return;
       res.json(proofAnswer(handle, keyHex, key, resolved));
     } catch (err) {
+      // A loader throw from a store-served call is `InconsistentAvlNodeRowsError`,
+      // a `CorruptChainStateError` — fail-stop whichever reader meets it
+      // (NODE_INTERFACE → AVL+ State Root → "A label with no row alive at a
+      // height the store lists a version of, or with two, is local corruption").
+      // The throw may fire inside `resolveHeight`'s `lazyRoot(…)` (the root
+      // row), inside `withCycle`'s body (a descent) or inside the proof-cycle
+      // rebase — the one catch covers each.
+      if (err instanceof CorruptChainStateError) failStopIfCorruptChain(err);
       console.error('Proof endpoint error:', err);
       res.status(500).json({ error: 'internal error' });
     }
@@ -323,11 +373,22 @@ export function registerRangeEndpoint(app: Express, handle: AvlProverHandle): vo
       limit = Number.isSafeInteger(asked) && asked <= RANGE_PAGE_MAX ? asked : RANGE_PAGE_MAX;
     }
 
-    const resolved = resolveHeight(handle, req.query['atHeight'], res);
-    if (!resolved.ok) return;
+    let resolved: Extract<HeightResolution, { ok: true }>;
+    try {
+      const r = resolveHeight(handle, req.query['atHeight'], res);
+      if (!r.ok) return;
+      resolved = r;
+    } catch (err) {
+      // A loader throw from `resolveHeight`'s `lazyRoot(…)` is
+      // `InconsistentAvlNodeRowsError`, fail-stop as in the proof route.
+      if (err instanceof CorruptChainStateError) failStopIfCorruptChain(err);
+      console.error('Range endpoint error:', err);
+      res.status(500).json({ error: 'internal error' });
+      return;
+    }
 
     try {
-      const { proof } = withCycle(handle, resolved.kept, () => {
+      const { proof } = withCycle(handle, resolved.restore, () => {
         const session = recordingSession(handle.prover);
         const view = treeStateView(session);
         // The page's `next` is read from the proof — a client replays
@@ -357,12 +418,17 @@ export function registerRangeEndpoint(app: Express, handle: AvlProverHandle): vo
       if (err instanceof TreeInconsistencyError) {
         // The tree contradicts itself under the route's read — local
         // corruption, as `services/cost-estimate.ts` reads it; never a verdict
-        // on the request (NODE_INTERFACE → "A proof at an older height
-        // restores a kept root"; → "What the funnel's totality catch is FOR").
+        // on the request (NODE_INTERFACE → "A tree that contradicts itself
+        // under a route's read is local corruption").
         failStopIfCorruptChain(
           new InconsistentStateTreeError('GET /api/v1/range', resolved.atHeight, err),
         );
       }
+      // A loader throw from a store-served call is `InconsistentAvlNodeRowsError`,
+      // a `CorruptChainStateError` — fail-stop whichever reader meets it
+      // (NODE_INTERFACE → AVL+ State Root → "A label with no row alive at a
+      // height the store lists a version of, or with two, is local corruption").
+      if (err instanceof CorruptChainStateError) failStopIfCorruptChain(err);
       console.error('Range endpoint error:', err);
       res.status(500).json({ error: 'internal error' });
     }

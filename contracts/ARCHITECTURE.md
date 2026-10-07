@@ -731,9 +731,10 @@ post and like records) and index entries derived from each entity's own fields; 
 - **Module:** `packages/node/src/state/` (avl-storage, avl-prover, avl-endpoint)
 - **Proof endpoints:** `GET /api/v1/proof/:key?atHeight=N` — an inclusion or exclusion proof for a tree key — and
   `GET /api/v1/range/:kind/:owner?atHeight=N` — a page of what a key holds of one kind, with its proof — each at
-  the tip or at a height the node keeps a root of (`NODE_INTERFACE → AVL+ State Root`)
+  the tip or at a height of the node's proof window, by a kept root or from the store (`NODE_INTERFACE → AVL+ State
+  Root`)
 - **Config flags:** `MAX_PROOF_HISTORY` (`local` — the store's versions, kept for a reorg's walk),
-  `PROOF_WINDOW_BLOCKS` (`local` — the roots kept in memory, the heights the proof routes answer) and
+  `PROOF_WINDOW_BLOCKS` (`local` — the heights the proof routes answer, and the most roots kept in memory) and
   `PROOF_WINDOW_NODES` (`local` — the nodes those roots may hold beyond the tree). The
   stateRoot check at block apply is unconditional — no variable disables it.
   The key width is no configuration at all — it is **`TREE_KEY_LENGTH`**, a

@@ -3892,12 +3892,12 @@ the tree view read by read.
   `stateRoot` the digest of the version the proof is made against, hex; `proof` the lookup proof's bytes, base64;
   `kind` the entity kind the key resolves to — `box`, `record`, `network`, `username`, `holder`, `post`, `like` or
   `index` (the index marker, a vouch pair and a cast count) (→ Entity kinds) — and `value` the node's decoding of it,
-  both `null` where the key is absent and the proof is one of exclusion. `atHeight` must name a height the node
-  keeps a root of (→ "A proof at an older height restores a kept root"), else 404 `{ error: 'height not
+  both `null` where the key is absent and the proof is one of exclusion. `atHeight` must name a height of the proof window the store holds a version of (→ "A height of the proof window
+  with no kept root is served from the store"), else 404 `{ error: 'height not
   available' }`; without it the proof is against the tip, which always answers; 400 for a key that is not 130 hex or
   is one of the tree's two sentinels — all `00`, all `ff`, keys no entry has (`CONSENSUS_INTERFACE → The tree
-  session`) — and for an `atHeight` that is not decimal digits; an `atHeight` of any length that names no kept
-  height is the 404. **`kind` and `value` are
+  session`) — and for an `atHeight` that is not decimal digits; an `atHeight` of any length that names no height
+  of the proof window is the 404. **`kind` and `value` are
   the node's reading and a light client trusts neither**: it verifies the proof against a `stateRoot` it verified under proof-of-work and decodes the value the
   proof carries (`WEB_INTERFACE → The extension → "The verified figures"`)
 - **avl-endpoint, the range route:** `GET /api/v1/range/:kind/:owner?atHeight=N&from=K&limit=L` — one page of what a
@@ -3910,10 +3910,11 @@ the tree view read by read.
   reads the page by running `holdingsPage` over `verifierSession` on it, and learns from the proof whether the range
   ended. `atHeight` is the single-key route's, the tip where absent; 400 for a kind outside the five, an owner, a
   `from` or a `limit` of another shape, and a `from` outside the range; 404 `{ error: 'height not available' }` for a
-  height the node keeps no root of (→ "A proof at an older height restores a kept root")
+  height outside the proof window or one the store holds no version of (→ "A height of the proof window with no kept
+  root is served from the store")
 - **Config:** `MAX_PROOF_HISTORY` (the store's versions, kept for a reorg's walk), `PROOF_WINDOW_BLOCKS` (the
-  roots kept in memory, the heights the proof routes answer) and `PROOF_WINDOW_NODES` (the nodes those roots may
-  hold beyond the tree). The check below
+  heights the proof routes answer, and the most roots kept in memory) and `PROOF_WINDOW_NODES` (the nodes those
+  roots may hold beyond the tree). The check below
   is not configurable — no variable disables it
 - **Verification:** apply computes the post-mutation digest and rejects the
   block unless it equals `header.stateRoot`, on every node — no node applies a block
@@ -4242,9 +4243,8 @@ restored and the route's cycle closed on every path, a throw included**: a page 
 recorded lookups for a block's proof to open with (→ The block proof). **A tree that contradicts itself under a
 route's read is local corruption** — `InconsistentStateTreeError`, fail-stop, as under the cost gate (→ "What the
 funnel's totality catch is FOR") — never a 500 the node stays up behind; any other throw under a route answers 500
-and leaves the node as it was. **A height the node
-keeps no root of is 404 `{ error: 'height not available' }`, and no proof path calls `rollback`** — which re-reads the
-whole tree from the store. A root is kept once its block has applied and dropped when its block is reverted; **a
+and leaves the node as it was. **No proof path calls `rollback`** — which re-reads the
+whole tree from the store; a height with no kept root is answered as the next rule has it. A root is kept once its block has applied and dropped when its block is reverted; **a
 refused block leaves the kept roots exactly as they were, whatever height it claims** — the height in a refused
 header is its producer's word. **Every kept root is a root of the one tree the node holds in memory**: a tree resolved
 from the store shares no node with the roots kept before it, and a node keeping both would hold the tree twice. So
@@ -4253,10 +4253,30 @@ that height** — the same tree `rollback(version)` resolves, without the store'
 from the store only where it does not, a fork below every kept root or a node since restarted, dropping every kept
 root as it does; **a reorg that aborts puts back, by reference, the root and the kept roots it began with**, as the
 apply funnel puts back a refused block's. **After a restart the node holds its
-tip's root alone** and gains one a block: no height below the tip it restarted at is available from it again, so a
-light client's `suffixHead` — `k − 1` blocks behind its tip (`CONSTANTS → Client defaults`) — is not available until
-that many blocks have applied, nor for as long as `PROOF_WINDOW_NODES` holds the kept roots fewer than `k` deep. `MAX_PROOF_HISTORY` is the versions the store keeps for a reorg's walk (→ Configuration) and bounds
-no route.
+tip's root alone** and gains one a block: no height below the tip it restarted at is kept by it again, so a
+light client's `suffixHead` — `k − 1` blocks behind its tip (`CONSTANTS → Client defaults`) — is answered from the
+store until that many blocks have applied, and for as long as `PROOF_WINDOW_NODES` holds the kept roots fewer than `k`
+deep.
+
+**A height of the proof window with no kept root is served from the store.** The proof window is the tip and the
+`PROOF_WINDOW_BLOCKS − 1` heights below it; both proof routes answer `atHeight` at every height of it the store holds
+a version of, whatever the node's uptime and whatever its blocks replaced. Where the root of that height is kept, the
+route restores it by reference. Where it is not, the route reads the version the store lists at exactly that height —
+never the one at or before it — and runs its lookups over that version's tree with its nodes loaded on first access
+(`AVLTREE_INTERFACE → Nodes loaded on first access`): each node is the row of its label alive at that height, a row
+first seen at or below it and orphaned above it or never (→ "AVL storage shares nodes across versions; a row is a
+node's lifetime"), the rows `rollback` resolves a version from and by the one statement. The route restores that
+root, performs its lookups, generates the proof and restores the live root exactly as over a kept root, and the proof
+and the `stateRoot` it answers are, byte for byte, the ones a kept root of that height answers. **Nothing of a
+store-served tree is kept**: it is no kept root, it joins none, and no node it loaded outlives the call. **A label
+with no row alive at a height the store lists a version of, or with two, is local corruption** —
+`InconsistentAvlNodeRowsError`, fail-stop, as a tree that contradicts itself under a route's read is, never a 404 and
+never a 500 the node stays up behind — **whichever reader meets it**: a route's load, or `rollback` resolving a
+version for a reorg whose fork point is not kept, where it is never an abort that leaves the node on the chain it
+had. **404
+`{ error: 'height not available' }` is a height outside the proof window, or one of it the store holds no version
+of** — a chain shorter than the window. `MAX_PROOF_HISTORY` is the versions the store keeps for a reorg's walk and
+bounds the proof window from above (→ Configuration).
 
 **The proof routes' cost, so the exposure is a number** — measured 2026-10-02 with `packages/node/bench/` (the
 store on a SQLite file, both routes on an Express app, Node 22, pinned to performance cores of the i9-14900HX) over
@@ -4267,6 +4287,25 @@ reference. A key's 21 700 boxes are 85 pages and 9.4 MB, a second and a half of 
 nothing of a route outlives its call: the heap and the array buffers read the same before and after. Both routes
 are unauthenticated reads that do real work per call, as `GET /nipopow/proof` is (→ Nipopow prover); a call is
 bounded by the page, and no route is rate limited.
+
+**What a store-served height costs** — measured 2026-10-07 with the same bench, unpinned, over 10⁶ leaves seeded and
+70 blocks of 3 156 sends, each height answered both ways in one run. A single key reads 43 rows and takes about
+0.5–0.7 ms from the store, under 2 ms as the route's answer. A full page reads 3 100–3 250 rows — the lookups' paths
+and their siblings, a row a node — and takes 61–68 ms from the store against 13 ms over the kept root of the same
+height; as the route's answer, 95–99 ms against 46 ms in the series beside
+it and 17–22 ms in the run's first. The proofs are the same bytes, and a height 60 blocks back
+costs what one 19 back costs. A key's 21 700 boxes are 85 pages and 272 000 rows, five to nine seconds of the node's
+time. Nothing outlives a call: after 100 store-served pages the heap reads 4 MiB higher and the array buffers the
+same. **A route is one synchronous call, so a store-served page holds the node's one thread for its whole time**:
+about 15 such pages a second occupy it, against about 75 over kept roots.
+
+**A page call in that process now and then took 1.4–2.1 s**, two or three adjacent calls at a time — five times across
+the run's timed page series, some 900 calls. It is not the store: the rows read were the usual count and their reads 25–170 ms of the call.
+It struck wherever the call allocated — through the route over kept roots and store-served ones alike, and
+store-served in process — and never the kept root in process, in 200 calls. The process held 6.4 GiB of heap, 2.3
+of it the 63 full-block roots the bench keeps with no node bound, where the default bound keeps about 155 MiB; a
+minor collection of about 1.75 s was observed inside two of the calls, and no collection inside the others. What
+stalls the rest is not established, nor whether a node under the default bound sees it.
 
 **What the kept roots hold, in bytes** — the same run. A node counted costs about 650 bytes — 570 of heap and 85 of array buffers, which V8's heap
 limit does not count — so the default `PROOF_WINDOW_NODES` bounds the kept roots near 155 MiB, whatever the blocks
@@ -4749,6 +4788,11 @@ the floor held at load, `reorg` finding no version at or before a fork height th
 is `MissingStateVersionError` — a row the store lost, fail-stop ("What the funnel's totality catch is
 FOR"), never a quiet abort that leaves the node on the lighter chain.
 
+**`PROOF_WINDOW_BLOCKS` may not sit above `MAX_PROOF_HISTORY`, and `loadConfig` refuses at load rather than
+clamping.** The proof routes answer every height of the proof window from the store where no root is kept (→ AVL+
+State Root → "A height of the proof window with no kept root is served from the store"), and the store prunes
+versions below `height - maxProofHistory`: a window reaching past that names heights the node cannot answer.
+
 **The difficulty band is refused at load too, never clamped.** `loadConfig` refuses a profile whose
 `orderingBlockPowTargetFloorBits` sits below `ORDERING_BLOCK_POW_TARGET_FLOOR`, whose anchor
 `orderingBlockPowTargetBits` lies outside `[floor, ceiling]`, whose ceiling exceeds 65536, or whose
@@ -4829,9 +4873,9 @@ its actual reach.
 | `TEMPORAL_BAN_DURATION_MS` | `local` | `3600000` | Temporal ban length — semantics `NET_INTERFACE → Peer Penalty System` |
 | `PENALTY_SAFE_INTERVAL_MS` | `local` | `120000` | Quiet interval after which accrued penalty decays — semantics `NET_INTERFACE → Peer Penalty System` |
 | `SYNC_REQUEST_TIMEOUT_MS` | `local` | `10000` | Abort timeout on one sync request — semantics `NET_INTERFACE → Config` |
-| `MAX_PROOF_HISTORY` | `local` | `1440` | AVL versions the store keeps for a reorg's walk, never below the profile's `maxReorgDepth`; bounds no proof route (→ AVL+ State Root) |
-| `PROOF_WINDOW_BLOCKS` | `local` | `64` | the last blocks whose roots the node keeps in memory, the heights its proof routes answer `atHeight` at; below a light client's `k` (20) the node proves it no settled height (→ AVL+ State Root) |
-| `PROOF_WINDOW_NODES` | `local` | `250000` | the most nodes the kept roots hold beyond the tree at the tip, the lowest root dropped first and the tip's never (→ AVL+ State Root) |
+| `MAX_PROOF_HISTORY` | `local` | `1440` | AVL versions the store keeps for a reorg's walk, never below the profile's `maxReorgDepth` nor below `PROOF_WINDOW_BLOCKS` (→ AVL+ State Root) |
+| `PROOF_WINDOW_BLOCKS` | `local` | `64` | the last blocks its proof routes answer `atHeight` at, by a kept root or from the store, and the most roots the node keeps in memory; never above `MAX_PROOF_HISTORY`; below a light client's `k` (20) the node proves it no settled height (→ AVL+ State Root) |
+| `PROOF_WINDOW_NODES` | `local` | `250000` | the most nodes the kept roots hold beyond the tree at the tip, the lowest root dropped first and the tip's never; it decides how many heights of the proof window answer by reference, never which answer (→ AVL+ State Root) |
 | `PROOF_RETENTION_BLOCKS` | `local` | `10080` | blocks whose proofs are kept for `GET /blocks/:height/proof` — a week at 60 s (→ The block proof) |
 | `PROOF_RETENTION_BYTES` | `local` | `2147483648` | the most bytes of proofs kept for `GET /blocks/:height/proof`, the oldest pruned first and the tip's always kept — 2 GiB (→ The block proof) |
 | `PORT` | `operational` | `3000` | HTTP listen port |

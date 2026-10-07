@@ -267,6 +267,41 @@ export class MissingStateVersionError extends CorruptChainStateError {
 }
 
 /**
+ * A label the store resolves at a listed version has no row alive at that
+ * version's height, or has two (NODE_INTERFACE → AVL+ State Root →
+ * "A height of the proof window with no kept root is served from the store").
+ *
+ * The row predicate — `first_seen_height <= h AND (orphaned_at_height IS NULL
+ * OR orphaned_at_height > h)` — resolves exactly one row per label at every
+ * height a version is listed for (NODE_INTERFACE → AVL+ State Root →
+ * "AVL storage shares nodes across versions; a row is a node's lifetime"), so
+ * zero or two under that predicate means the lifetimes have been corrupted or
+ * the store's writer and its reader disagree. Reachable only from a label
+ * resolved against a listed version, so no input a peer sent arrives here —
+ * local corruption, fail-stop, as a tree that contradicts itself under a
+ * route's read is (→ InconsistentStateTreeError).
+ */
+export class InconsistentAvlNodeRowsError extends CorruptChainStateError {
+  constructor(
+    site: string,
+    height: number,
+    readonly labelHex: string,
+    readonly rowCount: number,
+  ) {
+    super(
+      site,
+      height,
+      rowCount === 0
+        ? `Missing node for label ${labelHex} alive at height ${height} — ` +
+          `the store lists a version at this height, so a label it resolves ` +
+          `must have exactly one row alive here`
+        : `Overlapping lifetimes for label ${labelHex} at height ${height} ` +
+          `(${rowCount} rows) — a label's lifetimes never overlap under one height`,
+    );
+  }
+}
+
+/**
  * A version row already stands at the height being checkpointed — the store's
  * version history has run ahead of its chain (NODE_INTERFACE → AVL+ State Root).
  */

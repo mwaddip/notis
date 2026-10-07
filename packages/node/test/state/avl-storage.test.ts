@@ -1,9 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
-import { BatchAVLProver, PersistentBatchAVLProver, label } from '@dagsocial/avltree';
+import { BatchAVLProver, PersistentBatchAVLProver, label, lazyRoot } from '@dagsocial/avltree';
 import type { AvlNode } from '@dagsocial/avltree';
 import { SqliteAvlStorage } from '../../src/state/avl-storage.js';
-import { DuplicateStateVersionError } from '../../src/services/corrupt-state.js';
+import {
+  DuplicateStateVersionError,
+  InconsistentAvlNodeRowsError,
+} from '../../src/services/corrupt-state.js';
 import { openAvlDb } from '../helpers.js';
 
 const HEIGHT_SENTINEL = new Uint8Array(32); // all zeros
@@ -338,6 +341,40 @@ describe('SqliteAvlStorage', () => {
     expect(() => storage.rollback(v1)).toThrow(/Missing node/);
   });
 
+  // NODE_INTERFACE → AVL+ State Root → "A label with no row alive at a height
+  // the store lists a version of, or with two, is local corruption" —
+  // `rollback` is a reader of the one row check and throws the same fail-stop
+  // class the route-side loader does.
+  it('rollback() throws InconsistentAvlNodeRowsError on a missing row', () => {
+    const storage = new SqliteAvlStorage(db, AVL_CONFIG);
+    const persisted = new PersistentBatchAVLProver(
+      new BatchAVLProver(32, null), storage, [[HEIGHT_SENTINEL, encodeHeight(0)]],
+    );
+    for (let i = 1; i <= 10; i++) insert(persisted, i);
+    const v1 = checkpoint(persisted, 1);
+
+    db.prepare('DELETE FROM avl_tree_nodes WHERE label = ?').run(rootLabelOf(v1));
+    expect(() => storage.rollback(v1)).toThrow(InconsistentAvlNodeRowsError);
+  });
+
+  it('rollback() throws InconsistentAvlNodeRowsError on a doubled row', () => {
+    const storage = new SqliteAvlStorage(db, AVL_CONFIG);
+    const persisted = new PersistentBatchAVLProver(
+      new BatchAVLProver(32, null), storage, [[HEIGHT_SENTINEL, encodeHeight(0)]],
+    );
+    for (let i = 1; i <= 10; i++) insert(persisted, i);
+    const v1 = checkpoint(persisted, 1);
+
+    const row = db.prepare(
+      'SELECT node_data FROM avl_tree_nodes WHERE label = ? AND orphaned_at_height IS NULL',
+    ).get(rootLabelOf(v1)) as { node_data: Buffer };
+    db.prepare(
+      'INSERT INTO avl_tree_nodes (label, node_data, first_seen_height, orphaned_at_height) VALUES (?, ?, 0, NULL)',
+    ).run(rootLabelOf(v1), row.node_data);
+
+    expect(() => storage.rollback(v1)).toThrow(InconsistentAvlNodeRowsError);
+  });
+
   it('a second update at the same height throws DuplicateStateVersionError and leaves the table unchanged', () => {
     const storage = new SqliteAvlStorage(db, AVL_CONFIG);
     const prover = new BatchAVLProver(32, null);
@@ -416,6 +453,130 @@ describe('SqliteAvlStorage', () => {
       expect(secondSeenLength).not.toBe(firstSeenLength);
 
       spy.mockRestore();
+    });
+  });
+
+  // NODE_INTERFACE → AVL+ State Root →
+  // "A height of the proof window with no kept root is served from the store"
+  // — `versionAtHeight(height)` answers the version at exactly that height
+  // (never one at or before it); `nodeLoaderAtHeight(height, site)` answers
+  // the row of its label alive at that height, under the predicate rollback
+  // reads. Zero or two rows is `InconsistentAvlNodeRowsError`, the fail-stop
+  // class (→ "A label with no row alive at a height the store lists a version
+  // of, or with two, is local corruption").
+  describe('versionAtHeight — the version at exactly this height', () => {
+    it('answers the version at a listed height', () => {
+      const storage = new SqliteAvlStorage(db, AVL_CONFIG);
+      const persisted = new PersistentBatchAVLProver(
+        new BatchAVLProver(32, null), storage, [[HEIGHT_SENTINEL, encodeHeight(0)]],
+      );
+      insert(persisted, 1);
+      const v1 = checkpoint(persisted, 1);
+      insert(persisted, 2);
+      const v2 = checkpoint(persisted, 2);
+      expect(storage.versionAtHeight(1)).toEqual(v1);
+      expect(storage.versionAtHeight(2)).toEqual(v2);
+    });
+
+    it('answers null for a missing height — the empty store, a hole above the tip, and a height between two versions', () => {
+      const storage = new SqliteAvlStorage(db, AVL_CONFIG);
+      // Empty store: no row at any height.
+      expect(storage.versionAtHeight(0)).toBeNull();
+      expect(storage.versionAtHeight(1)).toBeNull();
+
+      const persisted = new PersistentBatchAVLProver(
+        new BatchAVLProver(32, null), storage, [[HEIGHT_SENTINEL, encodeHeight(0)]],
+      );
+      // Checkpoint at 1 and 3 — nothing at 2. versionAtHeight is exact: 2 is null.
+      insert(persisted, 1);
+      checkpoint(persisted, 1);
+      insert(persisted, 2);
+      checkpoint(persisted, 3);
+      expect(storage.versionAtHeight(2)).toBeNull();
+      // And a height above the tip is null, where `versionAtOrBeforeHeight`
+      // would answer the tip — the two readers differ exactly here.
+      expect(storage.versionAtHeight(4)).toBeNull();
+      expect(storage.versionAtOrBeforeHeight(4)).not.toBeNull();
+    });
+  });
+
+  describe('nodeLoaderAtHeight — the row alive at this height, per label', () => {
+    it('loads a version\'s rows: a lazyRoot prover over an old version answers the same digest and a byte-equal lookup proof as rollback\'s tree', () => {
+      const storage = new SqliteAvlStorage(db, AVL_CONFIG);
+      const persisted = new PersistentBatchAVLProver(
+        new BatchAVLProver(32, null), storage, [[HEIGHT_SENTINEL, encodeHeight(0)]],
+      );
+
+      // Several versions, each adding a key, so an old version's rows are
+      // partly orphaned above its height — the predicate's work.
+      for (let i = 1; i <= 40; i++) insert(persisted, i);
+      checkpoint(persisted, 1);
+      insert(persisted, 101);
+      const v2 = checkpoint(persisted, 2);
+      insert(persisted, 102);
+      checkpoint(persisted, 3);
+      insert(persisted, 103);
+      checkpoint(persisted, 4);
+
+      // The tree `rollback` resolves at height 2 — the reference tree.
+      const [refRoot, refTreeHeight] = storage.rollback(v2);
+      const refProver = new BatchAVLProver(32, null);
+      refProver.restoreRoot(refRoot, refTreeHeight);
+      const refDigest = refProver.digest();
+
+      // The tree `lazyRoot` builds over the loader at height 2 — the test's
+      // own prover. Its digest and its proof must equal the reference's.
+      const loader = storage.nodeLoaderAtHeight(2, 'test');
+      const rootLabel = v2.slice(0, 32);
+      const lazyNode = lazyRoot(rootLabel, loader, AVL_CONFIG);
+      const lazyProver = new BatchAVLProver(32, null);
+      lazyProver.restoreRoot(lazyNode, refTreeHeight);
+      expect(lazyProver.digest()).toEqual(refDigest);
+
+      // One lookup against each prover, then compare proofs byte for byte.
+      const probe = keyOf(7);
+      refProver.performOneOperation({ tag: 'Lookup', key: probe });
+      lazyProver.performOneOperation({ tag: 'Lookup', key: probe });
+      expect(Buffer.from(lazyProver.generateProof())).toEqual(
+        Buffer.from(refProver.generateProof()),
+      );
+    });
+
+    it('a missing row at a listed height throws InconsistentAvlNodeRowsError', () => {
+      const storage = new SqliteAvlStorage(db, AVL_CONFIG);
+      const persisted = new PersistentBatchAVLProver(
+        new BatchAVLProver(32, null), storage, [[HEIGHT_SENTINEL, encodeHeight(0)]],
+      );
+      for (let i = 1; i <= 10; i++) insert(persisted, i);
+      const v1 = checkpoint(persisted, 1);
+
+      // Corrupt by deleting the root's row — the first label the loader is
+      // asked for, so the throw is deterministic.
+      db.prepare('DELETE FROM avl_tree_nodes WHERE label = ?').run(rootLabelOf(v1));
+
+      const loader = storage.nodeLoaderAtHeight(1, 'test');
+      expect(() => loader(v1.slice(0, 32))).toThrow(InconsistentAvlNodeRowsError);
+    });
+
+    it('a doubled row at a listed height throws InconsistentAvlNodeRowsError', () => {
+      const storage = new SqliteAvlStorage(db, AVL_CONFIG);
+      const persisted = new PersistentBatchAVLProver(
+        new BatchAVLProver(32, null), storage, [[HEIGHT_SENTINEL, encodeHeight(0)]],
+      );
+      for (let i = 1; i <= 10; i++) insert(persisted, i);
+      const v1 = checkpoint(persisted, 1);
+
+      // Corrupt by writing a second row for the root's label alive at height
+      // 1 — the predicate reads two rows under the one label.
+      const row = db.prepare(
+        'SELECT node_data FROM avl_tree_nodes WHERE label = ? AND orphaned_at_height IS NULL',
+      ).get(rootLabelOf(v1)) as { node_data: Buffer };
+      db.prepare(
+        'INSERT INTO avl_tree_nodes (label, node_data, first_seen_height, orphaned_at_height) VALUES (?, ?, 0, NULL)',
+      ).run(rootLabelOf(v1), row.node_data);
+
+      const loader = storage.nodeLoaderAtHeight(1, 'test');
+      expect(() => loader(v1.slice(0, 32))).toThrow(InconsistentAvlNodeRowsError);
     });
   });
 });

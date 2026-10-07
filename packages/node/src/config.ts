@@ -226,6 +226,7 @@ export function loadConfig(): Readonly<Config> {
   assertOrderingTargetAboveFloor(cfg);
   assertReorgDepthValid(cfg);
   assertProofHistoryCoversReorgDepth(cfg);
+  assertProofWindowWithinProofHistory(cfg);
 
   return Object.freeze(cfg);
 }
@@ -418,6 +419,27 @@ function assertProofHistoryCoversReorgDepth(cfg: Config): void {
         `${cfg.maxReorgDepth} — AVL versions inside the reorg window would be ` +
         'pruned, and a reorg reaching one of them would abort with the node ' +
         'still on its own chain',
+    );
+  }
+}
+
+/**
+ * `PROOF_WINDOW_BLOCKS` names heights the proof routes answer; the store
+ * prunes versions below `tip − MAX_PROOF_HISTORY`, so a window reaching past
+ * that names heights the node cannot answer (NODE_INTERFACE → Configuration,
+ * → AVL+ State Root → "A height of the proof window with no kept root is
+ * served from the store"). Refused at load rather than clamped.
+ *
+ * Written as a negated `<=` so the check is total on the parse: `NaN` for
+ * either side refuses.
+ */
+function assertProofWindowWithinProofHistory(cfg: Config): void {
+  if (!(cfg.proofWindowBlocks <= cfg.maxProofHistory)) {
+    throw new Error(
+      `PROOF_WINDOW_BLOCKS ${cfg.proofWindowBlocks} is above MAX_PROOF_HISTORY ` +
+        `${cfg.maxProofHistory} — the store prunes versions below ` +
+        'tip − MAX_PROOF_HISTORY, and a window reaching past that names ' +
+        'heights the node cannot answer',
     );
   }
 }
