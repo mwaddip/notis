@@ -4,6 +4,7 @@ import {
   buildMinedChain,
   createFakeNode,
   devnetProfile,
+  devnetProfileWithGenesisId,
   proofHexForChain,
   clockAfterChain,
 } from './helpers.js';
@@ -399,5 +400,51 @@ describe('NodeTipResult.behind', () => {
     expect(result.nodes[0]!.behind).toBe(d1);
     expect(result.nodes[1]!.behind).toBe(d2);
     expect(result.nodes[2]!.behind).toBe(0);
+  });
+});
+
+// WEB_INTERFACE → The extension → "The chain's name"
+describe('NodeTipResult.genesisHash', () => {
+  const profile = devnetProfile();
+
+  it('a verified node carries the hash of block 1', async () => {
+    const chain = buildMinedChain({ count: CHAIN_LEN });
+    const now = clockAfterChain(chain);
+    const nodeA = createFakeNode({ url: 'http://a:3000', chain, m: M, k: K });
+    const nodeB = createFakeNode({ url: 'http://b:3001', chain, m: M, k: K });
+    const combinedFetch = async (url: string) =>
+      url.startsWith('http://a:3000') ? nodeA.fetch(url) : nodeB.fetch(url);
+    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, now, combinedFetch);
+
+    const expected = blockHash(chain.headers[0]!);
+    expect(result.nodes[0]!.genesisHash).toBe(expected);
+    expect(result.nodes[1]!.genesisHash).toBe(expected);
+  });
+
+  it('the hash equals the profile\'s genesisId where the profile pins one', async () => {
+    const chain = buildMinedChain({ count: CHAIN_LEN });
+    const pinned = devnetProfileWithGenesisId(chain);
+    const now = clockAfterChain(chain);
+    const nodeA = createFakeNode({ url: 'http://a:3000', chain, m: M, k: K });
+    const nodeB = createFakeNode({ url: 'http://b:3001', chain, m: M, k: K });
+    const combinedFetch = async (url: string) =>
+      url.startsWith('http://a:3000') ? nodeA.fetch(url) : nodeB.fetch(url);
+    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, pinned, now, combinedFetch);
+    expect(result.nodes[0]!.verified).toBe(true);
+    expect(result.nodes[0]!.genesisHash).toBe(pinned.genesisId);
+  });
+
+  it('an unverified node carries null', async () => {
+    const chain = buildMinedChain({ count: CHAIN_LEN });
+    const now = clockAfterChain(chain);
+    const nodeA = createFakeNode({ url: 'http://a:3000', chain, m: M, k: K });
+    const combinedFetch = async (url: string) => {
+      if (url.startsWith('http://a:3000')) return nodeA.fetch(url);
+      throw new TypeError('fetch failed');
+    };
+    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, now, combinedFetch);
+    expect(result.nodes[0]!.genesisHash).toBe(blockHash(chain.headers[0]!));
+    expect(result.nodes[1]!.verified).toBe(false);
+    expect(result.nodes[1]!.genesisHash).toBeNull();
   });
 });

@@ -19,6 +19,12 @@ export interface NodeTipResult {
   // to the winner's on the winner's own chain; null on another chain, further back than
   // the suffix reaches, or without a verified verdict.
   behind: number | null;
+  // WEB_INTERFACE → The extension → "The chain's name" — the hash of the first
+  // header of this node's verified proof (block 1, held to `profile.genesisId`
+  // where one is pinned, NIPOPOW_INTERFACE → verifyProof): non-null whenever
+  // the node's proof verified, under `verified` and under `thin` alike; null
+  // for a refused node.
+  genesisHash: string | null;
 }
 
 export interface TipResult {
@@ -57,6 +63,7 @@ export async function resolveTip(
           : `HTTP ${res.status}: ${capped(res.body)}`,
         refuseCode: classifyNonOk(res.status, res.body),
         behind: null,
+        genesisHash: null,
       });
       continue;
     }
@@ -70,6 +77,7 @@ export async function resolveTip(
         refuseReason: 'response missing proof field',
         refuseCode: 'invalid',
         behind: null,
+        genesisHash: null,
       });
       continue;
     }
@@ -86,6 +94,7 @@ export async function resolveTip(
         refuseReason: 'proof decode failed',
         refuseCode: 'invalid',
         behind: null,
+        genesisHash: null,
       });
       continue;
     }
@@ -100,10 +109,15 @@ export async function resolveTip(
         refuseReason: `verify failed: ${vr.reason}${vr.index !== undefined ? ` at index ${vr.index}` : ''}`,
         refuseCode: 'invalid',
         behind: null,
+        genesisHash: null,
       });
       continue;
     }
 
+    // WEB_INTERFACE → The extension → "The chain's name" — block 1 is the
+    // first entry of `verifyResult.headers` (nipopow's verifyProof concatenates
+    // `prefix.map(.header) ++ [suffixHead.header] ++ suffixTail`, and rule 2
+    // refuses any proof whose prefix[0].header.height is not 1).
     nodes.push({
       url,
       verified: true,
@@ -112,6 +126,7 @@ export async function resolveTip(
       refuseReason: null,
       refuseCode: null,
       behind: null,
+      genesisHash: blockHash(vr.headers[0]!),
     });
   }
 
