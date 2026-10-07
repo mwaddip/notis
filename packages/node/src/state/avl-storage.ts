@@ -1,8 +1,11 @@
-import type { VersionedAVLStorage, BatchAVLProver, AvlTreeConfig } from '@dagsocial/avltree';
+import type { VersionedAVLStorage, BatchAVLProver, AvlTreeConfig, LoadNode } from '@dagsocial/avltree';
 import { serializeNode, deserializeNode, label, newInternal } from '@dagsocial/avltree';
 import type { AvlNode } from '@dagsocial/avltree';
 import type Database from 'better-sqlite3';
-import { DuplicateStateVersionError } from '../services/corrupt-state.js';
+import {
+  DuplicateStateVersionError,
+  InconsistentAvlNodeRowsError,
+} from '../services/corrupt-state.js';
 
 /**
  * SQLite-backed VersionedAVLStorage.
@@ -107,30 +110,25 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
       throw new Error(`Version not found: ${Buffer.from(version).toString('hex')}`);
     }
 
-    const alive = this.db.prepare(
-      'SELECT node_data FROM avl_tree_nodes WHERE label = ? ' +
-      'AND first_seen_height <= ? AND (orphaned_at_height IS NULL OR orphaned_at_height > ?)',
-    );
-
     // Resolve from the root label (version = rootLabel || tree height), reading
-    // per label the row alive at the version's height. Lifetimes of one label
-    // never overlap, so exactly one row answers; none is local corruption, and
-    // the resolution fails closed rather than hand the prover a tree it cannot
-    // traverse. deserializeNode returns an internal node's children as
-    // LabelNode stubs; nodes are immutable, so stubs are resolved into real
-    // subtrees by constructing fresh internal nodes. The internal `key` is not
-    // part of the label but the prover descends by it, so it is carried through.
+    // per label the row alive at the version's height. deserializeNode returns
+    // an internal node's children as LabelNode stubs; nodes are immutable, so
+    // stubs are resolved into real subtrees by constructing fresh internal
+    // nodes. The internal `key` is not part of the label but the prover
+    // descends by it, so it is carried through.
+    //
+    // `onCorrupt` keeps rollback's existing throw: a plain Error whose message
+    // names the label and the height, as callers that discriminate by message
+    // regex read. The route-side loader built by `nodeLoaderAtHeight` throws
+    // `InconsistentAvlNodeRowsError` under the same row check — one statement,
+    // one check, one row-count predicate.
     const resolve = (nodeLabel: Uint8Array): AvlNode => {
-      const rows = alive.all(nodeLabel, atHeight, atHeight) as Array<{ node_data: Buffer }>;
-      if (rows.length !== 1) {
-        const hex = Buffer.from(nodeLabel).toString('hex');
-        throw new Error(
-          rows.length === 0
-            ? `Missing node for label ${hex} alive at height ${atHeight}`
-            : `Overlapping lifetimes for label ${hex} at height ${atHeight} (${rows.length} rows)`,
-        );
-      }
-      const node = deserializeNode(new Uint8Array(rows[0]!.node_data), this.config);
+      const bytes = this.resolveAliveRow(nodeLabel, atHeight, (hex, count) => new Error(
+        count === 0
+          ? `Missing node for label ${hex} alive at height ${atHeight}`
+          : `Overlapping lifetimes for label ${hex} at height ${atHeight} (${count} rows)`,
+      ));
+      const node = deserializeNode(bytes, this.config);
       if (node.kind !== 'internal') return node;
       const left = resolve(label(node.left));
       const right = resolve(label(node.right));
@@ -140,6 +138,69 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
     const root = resolve(version.slice(0, 32));
     const treeHeight = version[32]!;
     return [root, treeHeight];
+  }
+
+  /**
+   * The one row alive at `atHeight` for `nodeLabel`, as the shared row check:
+   * the predicate `first_seen_height <= h AND (orphaned_at_height IS NULL OR
+   * orphaned_at_height > h)` resolves exactly one row per label at every height
+   * the store lists a version for (NODE_INTERFACE → AVL+ State Root →
+   * "AVL storage shares nodes across versions; a row is a node's lifetime").
+   * Zero rows or two is a corruption the caller names through `onCorrupt`;
+   * `rollback` keeps its plain-Error message, the route-side loader throws
+   * `InconsistentAvlNodeRowsError`.
+   */
+  private resolveAliveRow(
+    nodeLabel: Uint8Array,
+    atHeight: number,
+    onCorrupt: (hex: string, rowCount: number) => Error,
+  ): Uint8Array {
+    const rows = this.aliveRowStmt.all(nodeLabel, atHeight, atHeight) as Array<{ node_data: Buffer }>;
+    if (rows.length !== 1) {
+      throw onCorrupt(Buffer.from(nodeLabel).toString('hex'), rows.length);
+    }
+    return new Uint8Array(rows[0]!.node_data);
+  }
+
+  /** Compiled once per storage; the one statement rollback and the loader read. */
+  private get aliveRowStmt(): Database.Statement {
+    return (this._aliveRowStmt ??= this.db.prepare(
+      'SELECT node_data FROM avl_tree_nodes WHERE label = ? ' +
+      'AND first_seen_height <= ? AND (orphaned_at_height IS NULL OR orphaned_at_height > ?)',
+    ));
+  }
+  private _aliveRowStmt: Database.Statement | null = null;
+
+  /**
+   * The version digest at exactly `height`, or `null` where the store lists
+   * none (NODE_INTERFACE → AVL+ State Root →
+   * "A height of the proof window with no kept root is served from the store").
+   * Never the version at or before it — a route serves the height the store
+   * holds a version of, and nothing else of the window.
+   */
+  versionAtHeight(height: number): Uint8Array | null {
+    const row = this.db
+      .prepare('SELECT version FROM avl_tree_versions WHERE height = ?')
+      .get(height) as { version: Buffer } | undefined;
+    return row ? new Uint8Array(row.version) : null;
+  }
+
+  /**
+   * A `LoadNode` reading the row alive at `atHeight` for each label the engine
+   * reaches (AVLTREE_INTERFACE → Nodes loaded on first access). Zero or two
+   * rows under the shared predicate throws `InconsistentAvlNodeRowsError` —
+   * fail-stop (NODE_INTERFACE → AVL+ State Root →
+   * "A label with no row alive at a height the store lists a version of, or
+   * with two, is local corruption"). Caller passes a `site` name identifying
+   * the route for the fatal diagnostic.
+   */
+  nodeLoaderAtHeight(atHeight: number, site: string): LoadNode {
+    return (nodeLabel: Uint8Array): Uint8Array =>
+      this.resolveAliveRow(
+        nodeLabel,
+        atHeight,
+        (hex, count) => new InconsistentAvlNodeRowsError(site, atHeight, hex, count),
+      );
   }
 
   version(): Uint8Array | null {
