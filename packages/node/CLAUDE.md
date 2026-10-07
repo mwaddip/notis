@@ -36,9 +36,14 @@ admission's cost estimates (NODE_INTERFACE → The block proof; MINING_INTERFACE
 budget"). **The roots of its last `PROOF_WINDOW_BLOCKS` blocks are kept in memory by reference** — fewer while they
 hold more than `PROOF_WINDOW_NODES` nodes beyond the tree — (`src/state/recent-roots.ts`):
 a proof at an older height — one key (`GET /api/v1/proof/:key`) or a page of a key's holdings (`GET
-/api/v1/range/:kind/:owner`, `consensus`' `holdingsPage` over a recording session) — restores a kept root and never the
-store's version, and a reorg restores its fork point the same way; a refused block leaves the kept roots as they were
-(NODE_INTERFACE → AVL+ State Root → "A proof at an older height restores a kept root"). The node serves no client
+/api/v1/range/:kind/:owner`, `consensus`' `holdingsPage` over a recording session) — restores a kept root, and a reorg
+restores its fork point the same way; a refused block leaves the kept roots as they were (NODE_INTERFACE → AVL+ State
+Root → "A proof at an older height restores a kept root"). **Both routes answer every height of the proof window** —
+the tip and the `PROOF_WINDOW_BLOCKS − 1` below it: one with no kept root is answered over the store's version at
+exactly that height, its nodes loaded on first access (`SqliteAvlStorage.storeServedRootAtHeight`) and nothing of it
+kept; no proof path calls `rollback`; a label with no row alive at a listed height, or with two, is
+`InconsistentAvlNodeRowsError`, fail-stop under a route and under `rollback` alike (NODE_INTERFACE → AVL+ State Root →
+"A height of the proof window with no kept root is served from the store"). The node serves no client
 (NODE_INTERFACE → The node serves no client).
 
 - **Owns:** `src/server.ts`, `src/routes/*`, `src/services/*`, `src/store/*`, `src/state/*` (AVL+).

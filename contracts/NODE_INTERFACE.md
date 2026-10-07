@@ -4278,10 +4278,6 @@ had. **404
 of** — a chain shorter than the window. `MAX_PROOF_HISTORY` is the versions the store keeps for a reorg's walk and
 bounds the proof window from above (→ Configuration).
 
-> ⚠ **AHEAD OF CODE (2026-10-07, store-served heights — `node`)** — the routes answer 404 `height not available`
-> for every height the node keeps no root of, a height of the proof window among them; `loadConfig` admits a
-> `PROOF_WINDOW_BLOCKS` above `MAX_PROOF_HISTORY`; the cost paragraph below carries no store-served figure.
-
 **The proof routes' cost, so the exposure is a number** — measured 2026-10-02 with `packages/node/bench/` (the
 store on a SQLite file, both routes on an Express app, Node 22, pinned to performance cores of the i9-14900HX) over
 a tree seeded at 10⁶ leaves and grown to 1.44·10⁶ by the blocks applied. A single-key proof is one path: about 920
@@ -4291,6 +4287,25 @@ reference. A key's 21 700 boxes are 85 pages and 9.4 MB, a second and a half of 
 nothing of a route outlives its call: the heap and the array buffers read the same before and after. Both routes
 are unauthenticated reads that do real work per call, as `GET /nipopow/proof` is (→ Nipopow prover); a call is
 bounded by the page, and no route is rate limited.
+
+**What a store-served height costs** — measured 2026-10-07 with the same bench, unpinned, over 10⁶ leaves seeded and
+70 blocks of 3 156 sends, each height answered both ways in one run. A single key reads 43 rows and takes about
+0.5–0.7 ms from the store, under 2 ms as the route's answer. A full page reads 3 100–3 250 rows — the lookups' paths
+and their siblings, a row a node — and takes 61–68 ms from the store against 13 ms over the kept root of the same
+height; as the route's answer, 95–99 ms against 46 ms in the series beside
+it and 17–22 ms in the run's first. The proofs are the same bytes, and a height 60 blocks back
+costs what one 19 back costs. A key's 21 700 boxes are 85 pages and 272 000 rows, five to nine seconds of the node's
+time. Nothing outlives a call: after 100 store-served pages the heap reads 4 MiB higher and the array buffers the
+same. **A route is one synchronous call, so a store-served page holds the node's one thread for its whole time**:
+about 15 such pages a second occupy it, against about 75 over kept roots.
+
+**A page call in that process now and then took 1.4–2.1 s**, two or three adjacent calls at a time — five times across
+the run's timed page series, some 900 calls. It is not the store: the rows read were the usual count and their reads 25–170 ms of the call.
+It struck wherever the call allocated — through the route over kept roots and store-served ones alike, and
+store-served in process — and never the kept root in process, in 200 calls. The process held 6.4 GiB of heap, 2.3
+of it the 63 full-block roots the bench keeps with no node bound, where the default bound keeps about 155 MiB; a
+minor collection of about 1.75 s was observed inside two of the calls, and no collection inside the others. What
+stalls the rest is not established, nor whether a node under the default bound sees it.
 
 **What the kept roots hold, in bytes** — the same run. A node counted costs about 650 bytes — 570 of heap and 85 of array buffers, which V8's heap
 limit does not count — so the default `PROOF_WINDOW_NODES` bounds the kept roots near 155 MiB, whatever the blocks
