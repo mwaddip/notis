@@ -8,6 +8,25 @@ importers:
 
   .: {}
 
+  packages/avltree:
+    dependencies:
+      '@ergots/avltree':
+        specifier: file:/home/mwaddip/projects/dagsocial/prompts/ergots-avltree-5909db0.tgz
+        version: file:prompts/ergots-avltree-5909db0.tgz
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.20)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.6.0
+        version: 1.6.1(@types/node@22.20.1)(happy-dom@20.13.2)
+
   packages/consensus:
     dependencies:
       '@dagsocial/types':
@@ -409,6 +428,11 @@ packages:
 
   '@ergots/avltree@0.6.0':
     resolution: {integrity: sha512-OXJdNgxUK+NQu2nxbNrNELf99oxqe6Z+WKqoEGtZh/5TXLQ639t+h4L7ZWxMVhaQzR62XQJvsOeMidJFUd6pmg==}
+    engines: {node: '>=20'}
+
+  '@ergots/avltree@file:prompts/ergots-avltree-5909db0.tgz':
+    resolution: {integrity: sha512-j/0octgY6FLH9dq61obc8q2ppNg+bJHNV/nkzGin//ir7biD4GnLP1Tuh1qBe5re58csmi3rXTiItO1NvcaZUQ==, tarball: file:prompts/ergots-avltree-5909db0.tgz}
+    version: 0.6.0
     engines: {node: '>=20'}
 
   '@esbuild/aix-ppc64@0.21.5':
@@ -2321,6 +2345,10 @@ snapshots:
       utf8-codec: 1.0.0
 
   '@ergots/avltree@0.6.0':
+    dependencies:
+      '@noble/hashes': 2.2.0
+
+  '@ergots/avltree@file:prompts/ergots-avltree-5909db0.tgz':
     dependencies:
       '@noble/hashes': 2.2.0
 
