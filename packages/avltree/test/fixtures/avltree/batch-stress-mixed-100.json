@@ -1,0 +1,566 @@
+{
+  "name": "batch-stress-mixed-100",
+  "startingDigestHex": "36670614d965341fd83debbbbeb9542f75ba659ce82211217e9c31acf329b5a506",
+  "proofHex": "03e97b407dbcbf58aefc91cec7293c87b2afc236f1fbe52f88a0ec95cf3719ab21020101010101010101010101010101010101010101010101010101010101010101020202020202020202020202020202020202020202020202020202020202020200000008010101010101010100020303030303030303030303030303030303030303030303030303030303030303000000080202020202020202020404040404040404040404040404040404040404040404040404040404040404000000080303030303030303000002050505050505050505050505050505050505050505050505050505050505050500000008040404040404040402060606060606060606060606060606060606060606060606060606060606060600000008050505050505050500020707070707070707070707070707070707070707070707070707070707070707000000080606060606060606020808080808080808080808080808080808080808080808080808080808080808000000080707070707070707000000020909090909090909090909090909090909090909090909090909090909090909000000080808080808080808020a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a00000008090909090909090900020b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b000000080a0a0a0a0a0a0a0a020c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c000000080b0b0b0b0b0b0b0b0000020d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d000000080c0c0c0c0c0c0c0c020e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e000000080d0d0d0d0d0d0d0d00020f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f000000080e0e0e0e0e0e0e0e021010101010101010101010101010101010101010101010101010101010101010000000080f0f0f0f0f0f0f0f0000000002111111111111111111111111111111111111111111111111111111111111111100000008101010101010101002121212121212121212121212121212121212121212121212121212121212121200000008111111111111111100021313131313131313131313131313131313131313131313131313131313131313000000081212121212121212021414141414141414141414141414141414141414141414141414141414141414000000081313131313131313000002151515151515151515151515151515151515151515151515151515151515151500000008141414141414141402161616161616161616161616161616161616161616161616161616161616161600000008151515151515151500021717171717171717171717171717171717171717171717171717171717171717000000081616161616161616021818181818181818181818181818181818181818181818181818181818181818000000081717171717171717000000021919191919191919191919191919191919191919191919191919191919191919000000081818181818181818021a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a00000008191919191919191900021b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b000000081a1a1a1a1a1a1a1a021c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c000000081b1b1b1b1b1b1b1b0000021d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d000000081c1c1c1c1c1c1c1c021e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e000000081d1d1d1d1d1d1d1d00021f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f000000081e1e1e1e1e1e1e1e022020202020202020202020202020202020202020202020202020202020202020000000081f1f1f1f1f1f1f1f000000000002212121212121212121212121212121212121212121212121212121212121212100000008202020202020202002222222222222222222222222222222222222222222222222222222222222222200000008212121212121212100022323232323232323232323232323232323232323232323232323232323232323000000082222222222222222022424242424242424242424242424242424242424242424242424242424242424000000082323232323232323000002252525252525252525252525252525252525252525252525252525252525252500000008242424242424242402262626262626262626262626262626262626262626262626262626262626262600000008252525252525252500022727272727272727272727272727272727272727272727272727272727272727000000082626262626262626022828282828282828282828282828282828282828282828282828282828282828000000082727272727272727000000022929292929292929292929292929292929292929292929292929292929292929000000082828282828282828022a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a00000008292929292929292900022b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b000000082a2a2a2a2a2a2a2a022c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c000000082b2b2b2b2b2b2b2b0000022d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d000000082c2c2c2c2c2c2c2c022e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e000000082d2d2d2d2d2d2d2d00022f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f000000082e2e2e2e2e2e2e2e023030303030303030303030303030303030303030303030303030303030303030000000082f2f2f2f2f2f2f2f000002313131313131313131313131313131313131313131313131313131313131313100000008303030303030303002323232323232323232323232323232323232323232323232323232323232323200000008313131313131313102ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000008323232323232323200010001010004000000000000000000000000000000c0f73ef7751efbb62ef3340e7dd7367555963c4b539a62f89eeb5c679d0b00000000000000009eebd89669e89aeafbbeeffbbeeffbef9ebde6e8bb16",
+  "config": {
+    "keyLength": 32,
+    "valueLengthOpt": null,
+    "maxNumOperations": 100,
+    "maxDeletes": 20
+  },
+  "operations": [
+    {
+      "tag": "Insert",
+      "keyHex": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+      "valueHex": "c0c0c0c0c0c0c0c0"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+      "valueHex": "c1c1c1c1c1c1c1c1"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+      "valueHex": "c2c2c2c2c2c2c2c2"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+      "valueHex": "c3c3c3c3c3c3c3c3"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4",
+      "valueHex": "c4c4c4c4c4c4c4c4"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5",
+      "valueHex": "c5c5c5c5c5c5c5c5"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6",
+      "valueHex": "c6c6c6c6c6c6c6c6"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7",
+      "valueHex": "c7c7c7c7c7c7c7c7"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8",
+      "valueHex": "c8c8c8c8c8c8c8c8"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9",
+      "valueHex": "c9c9c9c9c9c9c9c9"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca",
+      "valueHex": "cacacacacacacaca"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb",
+      "valueHex": "cbcbcbcbcbcbcbcb"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "valueHex": "cccccccccccccccc"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "valueHex": "cdcdcdcdcdcdcdcd"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "cececececececececececececececececececececececececececececececece",
+      "valueHex": "cececececececece"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "cfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcf",
+      "valueHex": "cfcfcfcfcfcfcfcf"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0",
+      "valueHex": "d0d0d0d0d0d0d0d0"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+      "valueHex": "d1d1d1d1d1d1d1d1"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2",
+      "valueHex": "d2d2d2d2d2d2d2d2"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3",
+      "valueHex": "d3d3d3d3d3d3d3d3"
+    },
+    {
+      "tag": "Update",
+      "keyHex": "0101010101010101010101010101010101010101010101010101010101010101",
+      "valueHex": "f0f0f0f0f0f0f0f0"
+    },
+    {
+      "tag": "Update",
+      "keyHex": "0202020202020202020202020202020202020202020202020202020202020202",
+      "valueHex": "f0f0f0f0f0f0f0f0"
+    },
+    {
+      "tag": "Update",
+      "keyHex": "0303030303030303030303030303030303030303030303030303030303030303",
+      "valueHex": "f0f0f0f0f0f0f0f0"
+    },
+    {
+      "tag": "Update",
+      "keyHex": "0404040404040404040404040404040404040404040404040404040404040404",
+      "valueHex": "f0f0f0f0f0f0f0f0"
+    },
+    {
+      "tag": "Update",
+      "keyHex": "0505050505050505050505050505050505050505050505050505050505050505",
+      "valueHex": "f0f0f0f0f0f0f0f0"
+    },
+    {
+      "tag": "Update",
+      "keyHex": "0606060606060606060606060606060606060606060606060606060606060606",
+      "valueHex": "f0f0f0f0f0f0f0f0"
+    },
+    {
+      "tag": "Update",
+      "keyHex": "0707070707070707070707070707070707070707070707070707070707070707",
+      "valueHex": "f0f0f0f0f0f0f0f0"
+    },
+    {
+      "tag": "Update",
+      "keyHex": "0808080808080808080808080808080808080808080808080808080808080808",
+      "valueHex": "f0f0f0f0f0f0f0f0"
+    },
+    {
+      "tag": "Update",
+      "keyHex": "0909090909090909090909090909090909090909090909090909090909090909",
+      "valueHex": "f0f0f0f0f0f0f0f0"
+    },
+    {
+      "tag": "Update",
+      "keyHex": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+      "valueHex": "f0f0f0f0f0f0f0f0"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "1010101010101010101010101010101010101010101010101010101010101010"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "1212121212121212121212121212121212121212121212121212121212121212"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "1313131313131313131313131313131313131313131313131313131313131313"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "1414141414141414141414141414141414141414141414141414141414141414"
+    },
+    {
+      "tag": "Remove",
+      "keyHex": "1515151515151515151515151515151515151515151515151515151515151515"
+    },
+    {
+      "tag": "Remove",
+      "keyHex": "1616161616161616161616161616161616161616161616161616161616161616"
+    },
+    {
+      "tag": "Remove",
+      "keyHex": "1717171717171717171717171717171717171717171717171717171717171717"
+    },
+    {
+      "tag": "Remove",
+      "keyHex": "1818181818181818181818181818181818181818181818181818181818181818"
+    },
+    {
+      "tag": "Remove",
+      "keyHex": "1919191919191919191919191919191919191919191919191919191919191919"
+    },
+    {
+      "tag": "Remove",
+      "keyHex": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"
+    },
+    {
+      "tag": "Remove",
+      "keyHex": "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b"
+    },
+    {
+      "tag": "Remove",
+      "keyHex": "1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c"
+    },
+    {
+      "tag": "Remove",
+      "keyHex": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d"
+    },
+    {
+      "tag": "Remove",
+      "keyHex": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e"
+    },
+    {
+      "tag": "RemoveIfExists",
+      "keyHex": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f"
+    },
+    {
+      "tag": "RemoveIfExists",
+      "keyHex": "2020202020202020202020202020202020202020202020202020202020202020"
+    },
+    {
+      "tag": "RemoveIfExists",
+      "keyHex": "2121212121212121212121212121212121212121212121212121212121212121"
+    },
+    {
+      "tag": "RemoveIfExists",
+      "keyHex": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    {
+      "tag": "RemoveIfExists",
+      "keyHex": "2323232323232323232323232323232323232323232323232323232323232323"
+    },
+    {
+      "tag": "RemoveIfExists",
+      "keyHex": "2424242424242424242424242424242424242424242424242424242424242424"
+    },
+    {
+      "tag": "RemoveIfExists",
+      "keyHex": "2525252525252525252525252525252525252525252525252525252525252525"
+    },
+    {
+      "tag": "RemoveIfExists",
+      "keyHex": "2626262626262626262626262626262626262626262626262626262626262626"
+    },
+    {
+      "tag": "RemoveIfExists",
+      "keyHex": "2727272727272727272727272727272727272727272727272727272727272727"
+    },
+    {
+      "tag": "RemoveIfExists",
+      "keyHex": "2828282828282828282828282828282828282828282828282828282828282828"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+      "valueHex": "d4d4d4d4d4d4d4d4"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5",
+      "valueHex": "d5d5d5d5d5d5d5d5"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6",
+      "valueHex": "d6d6d6d6d6d6d6d6"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+      "valueHex": "d7d7d7d7d7d7d7d7"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8",
+      "valueHex": "d8d8d8d8d8d8d8d8"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9",
+      "valueHex": "d9d9d9d9d9d9d9d9"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada",
+      "valueHex": "dadadadadadadada"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "dbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdb",
+      "valueHex": "dbdbdbdbdbdbdbdb"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "dcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdc",
+      "valueHex": "dcdcdcdcdcdcdcdc"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "valueHex": "dddddddddddddddd"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "2929292929292929292929292929292929292929292929292929292929292929",
+      "valueHex": "bbbbbbbbbbbbbbbb"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+      "valueHex": "bbbbbbbbbbbbbbbb"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+      "valueHex": "bbbbbbbbbbbbbbbb"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c",
+      "valueHex": "bbbbbbbbbbbbbbbb"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d",
+      "valueHex": "bbbbbbbbbbbbbbbb"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e",
+      "valueHex": "bbbbbbbbbbbbbbbb"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f",
+      "valueHex": "bbbbbbbbbbbbbbbb"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "3030303030303030303030303030303030303030303030303030303030303030",
+      "valueHex": "bbbbbbbbbbbbbbbb"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "3131313131313131313131313131313131313131313131313131313131313131",
+      "valueHex": "bbbbbbbbbbbbbbbb"
+    },
+    {
+      "tag": "InsertOrUpdate",
+      "keyHex": "3232323232323232323232323232323232323232323232323232323232323232",
+      "valueHex": "bbbbbbbbbbbbbbbb"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "1515151515151515151515151515151515151515151515151515151515151515"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "1616161616161616161616161616161616161616161616161616161616161616"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "1717171717171717171717171717171717171717171717171717171717171717"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "1818181818181818181818181818181818181818181818181818181818181818"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "1919191919191919191919191919191919191919191919191919191919191919"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d"
+    },
+    {
+      "tag": "Lookup",
+      "keyHex": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e"
+    },
+    {
+      "tag": "UnknownModification",
+      "keyHex": "0101010101010101010101010101010101010101010101010101010101010101"
+    },
+    {
+      "tag": "UnknownModification",
+      "keyHex": "0202020202020202020202020202020202020202020202020202020202020202"
+    },
+    {
+      "tag": "UnknownModification",
+      "keyHex": "0303030303030303030303030303030303030303030303030303030303030303"
+    },
+    {
+      "tag": "UnknownModification",
+      "keyHex": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    {
+      "tag": "UnknownModification",
+      "keyHex": "0505050505050505050505050505050505050505050505050505050505050505"
+    },
+    {
+      "tag": "UnknownModification",
+      "keyHex": "0606060606060606060606060606060606060606060606060606060606060606"
+    },
+    {
+      "tag": "UnknownModification",
+      "keyHex": "0707070707070707070707070707070707070707070707070707070707070707"
+    },
+    {
+      "tag": "UnknownModification",
+      "keyHex": "0808080808080808080808080808080808080808080808080808080808080808"
+    },
+    {
+      "tag": "UnknownModification",
+      "keyHex": "0909090909090909090909090909090909090909090909090909090909090909"
+    },
+    {
+      "tag": "UnknownModification",
+      "keyHex": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+    }
+  ],
+  "expectedNewDigestHex": "3e7d240dc45af8546b8dbaf44a048cfa0409d3f93ac9d79e255d6868d393fe1307",
+  "expectedResultsHex": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    "0101010101010101",
+    "0202020202020202",
+    "0303030303030303",
+    "0404040404040404",
+    "0505050505050505",
+    "0606060606060606",
+    "0707070707070707",
+    "0808080808080808",
+    "0909090909090909",
+    "0a0a0a0a0a0a0a0a",
+    "0b0b0b0b0b0b0b0b",
+    "0c0c0c0c0c0c0c0c",
+    "0d0d0d0d0d0d0d0d",
+    "0e0e0e0e0e0e0e0e",
+    "0f0f0f0f0f0f0f0f",
+    "1010101010101010",
+    "1111111111111111",
+    "1212121212121212",
+    "1313131313131313",
+    "1414141414141414",
+    "1515151515151515",
+    "1616161616161616",
+    "1717171717171717",
+    "1818181818181818",
+    "1919191919191919",
+    "1a1a1a1a1a1a1a1a",
+    "1b1b1b1b1b1b1b1b",
+    "1c1c1c1c1c1c1c1c",
+    "1d1d1d1d1d1d1d1d",
+    "1e1e1e1e1e1e1e1e",
+    "1f1f1f1f1f1f1f1f",
+    "2020202020202020",
+    "2121212121212121",
+    "2222222222222222",
+    "2323232323232323",
+    "2424242424242424",
+    "2525252525252525",
+    "2626262626262626",
+    "2727272727272727",
+    "2828282828282828",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    "2929292929292929",
+    "2a2a2a2a2a2a2a2a",
+    "2b2b2b2b2b2b2b2b",
+    "2c2c2c2c2c2c2c2c",
+    "2d2d2d2d2d2d2d2d",
+    "2e2e2e2e2e2e2e2e",
+    "2f2f2f2f2f2f2f2f",
+    "3030303030303030",
+    "3131313131313131",
+    "3232323232323232",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    "f0f0f0f0f0f0f0f0",
+    "f0f0f0f0f0f0f0f0",
+    "f0f0f0f0f0f0f0f0",
+    "f0f0f0f0f0f0f0f0",
+    "f0f0f0f0f0f0f0f0",
+    "f0f0f0f0f0f0f0f0",
+    "f0f0f0f0f0f0f0f0",
+    "f0f0f0f0f0f0f0f0",
+    "f0f0f0f0f0f0f0f0",
+    "f0f0f0f0f0f0f0f0"
+  ]
+}

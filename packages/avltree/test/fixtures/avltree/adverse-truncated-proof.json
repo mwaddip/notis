@@ -1,0 +1,21 @@
+{
+  "name": "adverse-truncated-proof",
+  "startingDigestHex": "215197cff0244d874639dab08e97913fa0b1979192b264a64f4f24f9ac132e7a02",
+  "proofHex": "04",
+  "config": {
+    "keyLength": 32,
+    "valueLengthOpt": null,
+    "maxNumOperations": 1,
+    "maxDeletes": 0
+  },
+  "operations": [
+    {
+      "tag": "Lookup",
+      "keyHex": "0202020202020202020202020202020202020202020202020202020202020202"
+    }
+  ],
+  "expectedNewDigestHex": null,
+  "expectedResultsHex": [
+    null
+  ]
+}

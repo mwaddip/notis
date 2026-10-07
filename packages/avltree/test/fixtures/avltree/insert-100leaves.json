@@ -1,0 +1,22 @@
+{
+  "name": "insert-100leaves",
+  "startingDigestHex": "2e6d028075fa2b8156f29c6b85400885298946da5e20203ff5a993a259062dc407",
+  "proofHex": "0384050e224de5947b71e5c76f422482a62fb28732a571affef0d65ac6f06eab0103effe59bf445324067f3e3a8755cce178b2df587d25f97e40e775bea5c1772289037af912fcbf457b12984e762c3a319334fe50066e685052bb61b0f4041e8b9de7036abf05d1e844ef852cbb4fafa8afb16b3a027b8d2445d74684edc21493c5e1c703e70611eccfd808863a53c18c28c5f9e56ec9b2bddfaeb82cddfb596b03f927420341bba054af2241a3bbed9d650ff4571af323caf2d3eea1377a4afd509ddbd21703a5b20ff0b0f2aba412c3f9864a9fa8d3a71aff6c80da2ec823b3da5f3bb4f8b6026464646464646464646464646464646464646464646464646464646464646464ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000086464646464646464000101000101000400",
+  "config": {
+    "keyLength": 32,
+    "valueLengthOpt": null,
+    "maxNumOperations": 1,
+    "maxDeletes": 0
+  },
+  "operations": [
+    {
+      "tag": "Insert",
+      "keyHex": "fefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe",
+      "valueHex": "fefefefefefefefe"
+    }
+  ],
+  "expectedNewDigestHex": "919797b71c6d5d5945cdc9f59a06e8de440c8c4fa3523ff35f17a891d935109507",
+  "expectedResultsHex": [
+    null
+  ]
+}

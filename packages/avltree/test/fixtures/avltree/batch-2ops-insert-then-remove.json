@@ -1,0 +1,27 @@
+{
+  "name": "batch-2ops-insert-then-remove",
+  "startingDigestHex": "215197cff0244d874639dab08e97913fa0b1979192b264a64f4f24f9ac132e7a02",
+  "proofHex": "03fbf12f7c13a9bd41c97bcb4073995069741012a975a254df1d2fc3519d9b750303b8284ff8bb41fe4c3898c055185b53011fea87185a7b027494c418912c139ec3020303030303030303030303030303030303030303030303030303030303030303ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000008030303030303030300000400",
+  "config": {
+    "keyLength": 32,
+    "valueLengthOpt": null,
+    "maxNumOperations": 2,
+    "maxDeletes": 1
+  },
+  "operations": [
+    {
+      "tag": "Insert",
+      "keyHex": "3030303030303030303030303030303030303030303030303030303030303030",
+      "valueHex": "3333333333333333"
+    },
+    {
+      "tag": "Remove",
+      "keyHex": "3030303030303030303030303030303030303030303030303030303030303030"
+    }
+  ],
+  "expectedNewDigestHex": "215197cff0244d874639dab08e97913fa0b1979192b264a64f4f24f9ac132e7a02",
+  "expectedResultsHex": [
+    null,
+    "3333333333333333"
+  ]
+}

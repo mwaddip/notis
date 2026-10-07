@@ -1,0 +1,15 @@
+{
+  "name": "batch-3-inserts",
+  "config": {
+    "keyLength": 32,
+    "valueLengthOpt": null
+  },
+  "operations": [
+    { "tag": "Insert", "keyHex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valueHex": "0102" },
+    { "tag": "Insert", "keyHex": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "valueHex": "0304" },
+    { "tag": "Insert", "keyHex": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "valueHex": "0506" }
+  ],
+  "genProofAfter": [2],
+  "expectedProofs": ["020000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000000400"],
+  "expectedDigests": ["b78df87662a5715179965dfd1169453c6738203c0027c416817348ac1b4dd50202"]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "single-leaf-tree-lookup",
+  "startingDigestHex": "5efa8ee70b7e1bc9b8eac1947bf98b5bd504781b348602aaf1c93e3268f0499e01",
+  "proofHex": "03e97b407dbcbf58aefc91cec7293c87b2afc236f1fbe52f88a0ec95cf3719ab21020101010101010101010101010101010101010101010101010101010101010101ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000080101010101010101000400",
+  "config": {
+    "keyLength": 32,
+    "valueLengthOpt": null,
+    "maxNumOperations": 1,
+    "maxDeletes": 0
+  },
+  "operations": [
+    {
+      "tag": "Lookup",
+      "keyHex": "0101010101010101010101010101010101010101010101010101010101010101"
+    }
+  ],
+  "expectedNewDigestHex": "5efa8ee70b7e1bc9b8eac1947bf98b5bd504781b348602aaf1c93e3268f0499e01",
+  "expectedResultsHex": [
+    "0101010101010101"
+  ]
+}

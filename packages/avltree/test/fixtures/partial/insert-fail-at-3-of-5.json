@@ -1,0 +1,40 @@
+{
+  "description": "insert 5 entries, op 3 fails (key-already-exists)",
+  "starting_digest_hex": "04c85d16d4d765778ed07bc929cac184a30c16020285bfd64ea3bbcfaae9eaec01",
+  "proof_hex": "020000000000000000000000000000000000000000000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0000000002ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000008aaaaaaaaaaaaaaaa000403",
+  "config": {
+    "keyLength": 32,
+    "valueLengthOpt": null,
+    "maxNumOperations": 5,
+    "maxDeletes": 0
+  },
+  "operations": [
+    {
+      "tag": "Insert",
+      "keyHex": "1010101010101010101010101010101010101010101010101010101010101010",
+      "valueHex": "1111111111111111"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "2020202020202020202020202020202020202020202020202020202020202020",
+      "valueHex": "2222222222222222"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "valueHex": "aaaaaaaaaaaaaaaa"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "3030303030303030303030303030303030303030303030303030303030303030",
+      "valueHex": "3333333333333333"
+    },
+    {
+      "tag": "Insert",
+      "keyHex": "4040404040404040404040404040404040404040404040404040404040404040",
+      "valueHex": "4444444444444444"
+    }
+  ],
+  "expected_ops_completed": 2,
+  "expected_digest_after_2_ops_hex": "c97c9adf8d23703cbe34548375c57c4ab5cc71318c6464f3fe1b9428a916a29902"
+}

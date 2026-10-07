@@ -1,0 +1,28 @@
+{
+  "name": "batch-2ops-insert-then-update",
+  "startingDigestHex": "215197cff0244d874639dab08e97913fa0b1979192b264a64f4f24f9ac132e7a02",
+  "proofHex": "03fbf12f7c13a9bd41c97bcb4073995069741012a975a254df1d2fc3519d9b750303b8284ff8bb41fe4c3898c055185b53011fea87185a7b027494c418912c139ec3020303030303030303030303030303030303030303030303030303030303030303ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000008030303030303030300000400",
+  "config": {
+    "keyLength": 32,
+    "valueLengthOpt": null,
+    "maxNumOperations": 2,
+    "maxDeletes": 0
+  },
+  "operations": [
+    {
+      "tag": "Insert",
+      "keyHex": "2020202020202020202020202020202020202020202020202020202020202020",
+      "valueHex": "1111111111111111"
+    },
+    {
+      "tag": "Update",
+      "keyHex": "2020202020202020202020202020202020202020202020202020202020202020",
+      "valueHex": "2222222222222222"
+    }
+  ],
+  "expectedNewDigestHex": "11add4ff60b261ef530837326fba4a785f88bffa6a46520b336e43869446b42503",
+  "expectedResultsHex": [
+    null,
+    "1111111111111111"
+  ]
+}
