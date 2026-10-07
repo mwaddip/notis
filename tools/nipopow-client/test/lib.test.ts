@@ -7,6 +7,7 @@ import type {
   Anchor, FigureStatus, FigureBox, RecordResult, LedgerSums, FiguresResult, HoldingsRead,
   RangeResult, HoldingKind,
   NameClaim, NameStatus, NameResult,
+  PostCheck, PostUnboundReason,
   HttpFetch, VerifyProfile,
 } from '../src/lib.js';
 
@@ -27,6 +28,7 @@ describe('library entry', () => {
     expect(Object.keys(lib).sort()).toEqual([
       'DEFAULT_K',
       'DEFAULT_M',
+      'checkPosts',
       'fetchListing',
       'proveFigures',
       'proveName',
@@ -68,12 +70,15 @@ describe('library entry', () => {
     const _nc: NameClaim | null = null;
     const _ns: NameStatus | null = null;
     const _nr: NameResult | null = null;
+    const _pc: PostCheck | null = null;
+    const _pur: PostUnboundReason | null = null;
     const _f: HttpFetch | null = null;
     const _p: VerifyProfile | null = null;
     void _t; void _n; void _lb; void _l; void _lr; void _a;
     void _fs; void _fb; void _rr; void _ls; void _fr;
     void _hr; void _rrs; void _hk;
     void _nc; void _ns; void _nr;
+    void _pc; void _pur;
     void _f; void _p;
     expect(true).toBe(true);
   });
