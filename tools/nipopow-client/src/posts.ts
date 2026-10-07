@@ -19,7 +19,7 @@ import {
   decodeTx,
   hexToBytes,
 } from '@dagsocial/types';
-import type { PostCommit, PostType, UtxoTransaction } from '@dagsocial/types';
+import type { PostType, UtxoTransaction } from '@dagsocial/types';
 import { verifyEd25519, verifyEd25519Batch } from '@dagsocial/validation';
 import type { Ed25519BatchEntry } from '@dagsocial/validation';
 import { isRecord, shown } from './http.js';
@@ -57,7 +57,7 @@ export interface CheckDeps {
   verifyOne: (signature: Uint8Array, message: Uint8Array, publicKey: Uint8Array) => boolean;
 }
 
-const HEX_64 = /^[0-9a-f]{64}$/i;
+const HEX_64 = /^[0-9a-f]{64}$/;
 const POST_TYPES: readonly PostType[] = ['regular', 'profile'];
 
 /**
@@ -211,17 +211,16 @@ function checkRow(row: unknown): RowOutcome {
     return unbound('malformed', `malformed: row content is ${shown(rowContent)}`);
   }
 
-  // computeTxId / computePostId — both throw on an out-of-domain transaction
-  // (TYPES_INTERFACE → computeTxId), so each sits inside a try that maps a
-  // throw onto the step's own unbound reason.
+  // computeTxId throws on a transaction outside its encodable domain, so a
+  // throw is this step's own `unbound` reason.
   let txId: string;
   try {
     txId = computeTxId(decoded);
   } catch (e) {
     return unbound('tx-id', `unbound: the transaction will not hash to an id: ${describeError(e)}`);
   }
-  if (txId !== rowTxId.toLowerCase()) {
-    return unbound('tx-id', `unbound: computeTxId '${txId}' does not match row txId '${rowTxId.toLowerCase()}'`);
+  if (txId !== rowTxId) {
+    return unbound('tx-id', `unbound: computeTxId '${txId}' does not match row txId '${rowTxId}'`);
   }
 
   let postId: string;
@@ -230,20 +229,20 @@ function checkRow(row: unknown): RowOutcome {
   } catch (e) {
     return unbound('post-id', `unbound: computePostId refused: ${describeError(e)}`);
   }
-  if (postId !== rowId.toLowerCase()) {
-    return unbound('post-id', `unbound: computePostId '${postId}' does not match row id '${rowId.toLowerCase()}'`);
+  if (postId !== rowId) {
+    return unbound('post-id', `unbound: computePostId '${postId}' does not match row id '${rowId}'`);
   }
 
   const commitAuthor = bytesToHex(commit.author);
-  if (commitAuthor !== rowAuthor.toLowerCase()) {
-    return unbound('commit', `unbound: commit author '${commitAuthor}' does not match row author '${rowAuthor.toLowerCase()}'`);
+  if (commitAuthor !== rowAuthor) {
+    return unbound('commit', `unbound: commit author '${commitAuthor}' does not match row author '${rowAuthor}'`);
   }
   if (!parentRefsEqual(commit.parentRefs, rowParentRefs)) {
     return unbound('commit', `unbound: commit parentRefs do not match the row's`);
   }
   const commitContentHash = bytesToHex(commit.contentHash);
-  if (commitContentHash !== rowContentHash.toLowerCase()) {
-    return unbound('commit', `unbound: commit contentHash '${commitContentHash}' does not match row contentHash '${rowContentHash.toLowerCase()}'`);
+  if (commitContentHash !== rowContentHash) {
+    return unbound('commit', `unbound: commit contentHash '${commitContentHash}' does not match row contentHash '${rowContentHash}'`);
   }
   if (commit.type !== rowType) {
     return unbound('commit', `unbound: commit type '${commit.type}' does not match row type '${String(rowType)}'`);
@@ -272,14 +271,7 @@ function checkRow(row: unknown): RowOutcome {
 
   // The message every tx signature is over — the 32-byte txId
   // (CONSENSUS_INTERFACE → the overlay).
-  let message: Uint8Array;
-  try {
-    message = hexToBytes(txId);
-  } catch (e) {
-    // computeTxId answers lowercase 64-hex by construction, so this is
-    // unreachable — kept as a totality guard rather than a path.
-    return unbound('malformed', `malformed: txId will not decode: ${describeError(e)}`);
-  }
+  const message = hexToBytes(txId);
 
   const parent = commit.parentRefs.length === 0 ? null : commit.parentRefs[0]!;
 
@@ -301,7 +293,7 @@ function parentRefsEqual(commitRefs: readonly string[], rowRefs: readonly unknow
   if (commitRefs.length !== rowRefs.length) return false;
   for (let i = 0; i < commitRefs.length; i++) {
     const r = rowRefs[i];
-    if (typeof r !== 'string' || r.toLowerCase() !== commitRefs[i]!.toLowerCase()) return false;
+    if (typeof r !== 'string' || r !== commitRefs[i]) return false;
   }
   return true;
 }
@@ -318,7 +310,3 @@ function describeError(e: unknown): string {
   if (e instanceof Error) return e.message;
   return String(e);
 }
-
-// Keep the unused import out of the browser surface — PostCommit is referenced
-// only through the decoded transaction's type.
-export type { PostCommit };

@@ -403,6 +403,28 @@ describe('checkPosts — WEB_INTERFACE → The extension → "The post check"', 
     else throw new Error('expected unbound');
   });
 
+  it.each(['id', 'txId', 'author', 'contentHash'])(
+    'a row whose %s is upper case is unbound malformed',
+    (field) => {
+      const built = buildPostTransaction({ signer: makeKey(52) });
+      const value = built.row[field] as string;
+      const row = { ...built.row, [field]: value.toUpperCase() };
+      expect(row[field]).not.toBe(value);
+      const [res] = checkPosts([row]);
+      if (res?.status === 'unbound') expect(res.reason).toBe('malformed');
+      else throw new Error('expected unbound');
+    },
+  );
+
+  it('a row whose parent ref is upper case is unbound malformed', () => {
+    const parent = 'cd'.repeat(32);
+    const built = buildPostTransaction({ signer: makeKey(53), parentRefs: [parent] });
+    const row = { ...built.row, parentRefs: ['CD'.repeat(32)] };
+    const [res] = checkPosts([row]);
+    if (res?.status === 'unbound') expect(res.reason).toBe('malformed');
+    else throw new Error('expected unbound');
+  });
+
   it('a verdict is one line of text — no newlines in any status', () => {
     const results = checkPosts([
       null,
