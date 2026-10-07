@@ -686,7 +686,6 @@ import { insertUtxoTx as realInsertUtxoTx } from '../../src/store/mempool.js';
 import {
   insertPost as realInsertPost,
   confirmPost as realConfirmPost,
-  unconfirmPost as realUnconfirmPost,
 } from '../../src/store/posts.js';
 
 /**
@@ -811,38 +810,4 @@ describe('feed-service — tx bytes ride the row, over the real store', () => {
     expect(r.tx).toBe(Buffer.from(txBytes).toString('hex'));
   });
 
-  it('case 4 — a reorg that reverts the confirming block: the row is pending again and the pool entry is re-admitted, so tx reads from the pool', () => {
-    // The fact this case establishes (reported in prompts/n4b-node-fix-REPORT.md):
-    // `reorg()` reverts the confirming block in two phases that between them
-    // restore the pool entry under the row's tx_id. Phase 1's `revertBlock`
-    // calls `unconfirmPost(postId)` — the row is pending with
-    // `block_height: null`. Phase 2 re-admits every reverted transaction into
-    // the pool via `insertUtxoTx(tx, mempoolExpiry)`, so the real
-    // `getPendingUtxoTxBytesByTxId(row.txId)` answers once again, and the row
-    // does NOT answer `tx: null` after a reorg. (Standalone `revertBlock`,
-    // without `reorg`'s Phase 2, would leave the pool empty; the reorg path
-    // is the one that reverts a confirming block.)
-    const id = makeTestIdentity();
-    const { commit, tx, postId, content } = makePostTx(id, 'the reorg real-store case');
-    const txId = computeTxId(tx);
-    const txBytes = encodeTx(tx);
-
-    // Confirm it: pending → confirmed, pool entry removed.
-    realInsertUtxoTx(tx, 1000);
-    realInsertPost(postId, txId, commit, content);
-    seedOrderingBlockRow(12, txId, txBytes);
-    realConfirmPost(postId, 12, 0);
-    getDb().prepare('DELETE FROM mempool WHERE tx_id = ?').run(txId);
-
-    // Simulate reorg Phase 1 (revertBlock → unconfirmPost) and Phase 2
-    // (re-admit the reverted transaction).
-    realUnconfirmPost(postId);
-    realInsertUtxoTx(tx, 2000);
-
-    const r = realStoreFeedService().getPost(postId, null, true) as PostJson;
-    expect(r.status).toBe('pending');
-    expect(r.txId).toBe(txId);
-    expect(typeof r.tx).toBe('string');
-    expect(r.tx).toBe(Buffer.from(txBytes).toString('hex'));
-  });
 });

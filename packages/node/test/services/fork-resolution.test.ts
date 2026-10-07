@@ -1165,6 +1165,129 @@ describe('reorg', () => {
     expect(pendingAfter.length).toBeGreaterThan(0);
   });
 
+  // NODE_INTERFACE → Posts → "The creating transaction rides a post row": the
+  // reorg path reverts the confirming block (Phase 1's `unconfirmPost` nulls
+  // the row's `block_height`) and re-admits the reverted transactions
+  // (Phase 2's `insertUtxoTx`). The two cases below read the post afterwards
+  // through FeedService with `tx: true`, so a `tx` field answered from the
+  // pool and a `tx: null` from a dropped re-insert sit side by side.
+  it('a reverted post whose re-insert returns to the pool answers tx as the pool entry\'s bytes', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const author = makeTestIdentity();
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'reorg feed-service re-insert');
+    const txId = computeTxId(postTx);
+    const txBytes = encodeTx(postTx);
+
+    const posts = await importPosts();
+    const mempool = await importMempoolFresh();
+    const bc = await importBlockCreator();
+
+    posts.insertPost(postId, txId, commit, content);
+    mempool.insertUtxoTx(postTx, 1000);
+    bc.startBlockCreator(testConfig);
+    await mineNextBlock(bc);
+    expect(mempool.getPendingEntries(100)).toHaveLength(0);
+
+    const forkResolution = await importForkResolution();
+    forkResolution.reorg(0, []);
+
+    const storeIdx = await import('../../src/store/index.js');
+    const feedModule = await import('../../src/services/feed-service.js');
+    const feed = new feedModule.FeedService({
+      getPost: storeIdx.getPost,
+      queryPostsPage: storeIdx.queryPostsPage,
+      getLikeRecordCount: storeIdx.getLikeRecordCount,
+      getDescendantCount: storeIdx.getDescendantCount,
+      hasLikeRecord: storeIdx.hasLikeRecord,
+      getAncestorsNearest: storeIdx.getAncestorsNearest,
+      getSubtreePage: storeIdx.getSubtreePage,
+      getBlockCreatedAt: storeIdx.getBlockCreatedAt,
+      getUsernameByOwner: storeIdx.getUsernameByOwner,
+      getPendingUtxoTxBytesByTxId: storeIdx.getPendingUtxoTxBytesByTxId,
+      getOrderingBlock: storeIdx.getOrderingBlock,
+    });
+
+    const { decodeTx: decodeTx2, computePostId } = await import('@dagsocial/types');
+    const r = feed.getPost(postId, null, true) as import('../../src/services/feed-service.js').PostJson;
+    expect(r.status).toBe('pending');
+    expect(r.txId).toBe(txId);
+    expect(typeof r.tx).toBe('string');
+    expect(r.tx).toBe(Buffer.from(txBytes).toString('hex'));
+    const decoded = decodeTx2(new Uint8Array(Buffer.from(r.tx as string, 'hex')));
+    expect(computeTxId(decoded)).toBe(txId);
+    expect(computePostId(computeTxId(decoded), 0)).toBe(postId);
+  });
+
+  it('a reverted post whose re-insert is dropped stays pending with no pool entry, and answers tx: null', async () => {
+    // The pool-full path: `reinsert` catches `MempoolFullError` and completes.
+    // The dag_posts row stays — Phase 1's `unconfirmPost` only nulls
+    // `block_height` — and the pool has no entry under its `tx_id`, so
+    // `getPendingUtxoTxBytesByTxId` answers null and FeedService answers
+    // `tx: null`.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+      const author = makeTestIdentity();
+      const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'reorg feed-service dropped');
+      const txId = computeTxId(postTx);
+
+      const posts = await importPosts();
+      const mempool = await importMempoolFresh();
+      mempool.setMempoolCap(1);
+      const bc = await importBlockCreator();
+
+      const occupier = await seededSelfSpend();
+
+      posts.insertPost(postId, txId, commit, content);
+      mempool.insertUtxoTx(postTx, 1000);
+      bc.startBlockCreator(testConfig);
+      await mineNextBlock(bc);
+      expect(mempool.getPendingEntries(100)).toHaveLength(0);
+
+      // Fill the pool so the reorg's re-insertion is dropped.
+      mempool.insertUtxoTx(occupier, 1000);
+      expect(mempool.getPendingEntries(100)).toHaveLength(1);
+
+      const forkResolution = await importForkResolution();
+      forkResolution.reorg(0, []);
+
+      // The dag_posts row survives, pool has only the occupier (no entry under
+      // the post's txId).
+      const ordering = await importOrdering();
+      expect(ordering.getCurrentHeight()).toBe(0);
+      const storeIdx = await import('../../src/store/index.js');
+      expect(storeIdx.getPendingUtxoTxBytesByTxId(txId)).toBeNull();
+
+      const feedModule = await import('../../src/services/feed-service.js');
+      const feed = new feedModule.FeedService({
+        getPost: storeIdx.getPost,
+        queryPostsPage: storeIdx.queryPostsPage,
+        getLikeRecordCount: storeIdx.getLikeRecordCount,
+        getDescendantCount: storeIdx.getDescendantCount,
+        hasLikeRecord: storeIdx.hasLikeRecord,
+        getAncestorsNearest: storeIdx.getAncestorsNearest,
+        getSubtreePage: storeIdx.getSubtreePage,
+        getBlockCreatedAt: storeIdx.getBlockCreatedAt,
+        getUsernameByOwner: storeIdx.getUsernameByOwner,
+        getPendingUtxoTxBytesByTxId: storeIdx.getPendingUtxoTxBytesByTxId,
+        getOrderingBlock: storeIdx.getOrderingBlock,
+      });
+
+      const r = feed.getPost(postId, null, true) as import('../../src/services/feed-service.js').PostJson;
+      expect(r.status).toBe('pending');
+      expect(r.txId).toBe(txId);
+      expect(r.tx).toBeNull();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('reorg re-inserts lowest height first — getPendingEntries holds the parent before the child', async () => {
     // NODE_INTERFACE → Block Journal. A parent tx at h=1 and its child at h=2,
     // reorg both away, getPendingEntries returns the parent first (lower rowid).
