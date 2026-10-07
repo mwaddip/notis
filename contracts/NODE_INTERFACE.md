@@ -4269,8 +4269,11 @@ node's lifetime"), the rows `rollback` resolves a version from and by the one st
 root, performs its lookups, generates the proof and restores the live root exactly as over a kept root, and the proof
 and the `stateRoot` it answers are, byte for byte, the ones a kept root of that height answers. **Nothing of a
 store-served tree is kept**: it is no kept root, it joins none, and no node it loaded outlives the call. **A label
-with no row alive at a height the store lists a version of, or with two, is local corruption** — fail-stop, as a
-tree that contradicts itself under a route's read is, never a 404 and never a 500 the node stays up behind. **404
+with no row alive at a height the store lists a version of, or with two, is local corruption** —
+`InconsistentAvlNodeRowsError`, fail-stop, as a tree that contradicts itself under a route's read is, never a 404 and
+never a 500 the node stays up behind — **whichever reader meets it**: a route's load, or `rollback` resolving a
+version for a reorg whose fork point is not kept, where it is never an abort that leaves the node on the chain it
+had. **404
 `{ error: 'height not available' }` is a height outside the proof window, or one of it the store holds no version
 of** — a chain shorter than the window. `MAX_PROOF_HISTORY` is the versions the store keeps for a reorg's walk and
 bounds the proof window from above (→ Configuration).
