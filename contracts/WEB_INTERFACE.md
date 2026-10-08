@@ -545,7 +545,12 @@ is not shown and not cached, and no line counts it. Every other row is `unbound`
 shown and not cached, and leaves no gap**: the list it belonged to says so once, at its head, in clay — *1 post
 withheld — it does not match its signature*, *3 posts withheld — they do not match their signatures* — the full
 rule's weight (`HOUSE_STYLE → Gold and clay are not interchangeable`), since such a row is the node showing what no
-author signed; the line counts what the list's standing reads withheld, and goes when they withheld none. **The check
+author signed; the line counts what the list's standing reads withheld, and goes when they withheld none. **A thread
+whose subject is `unbound`** shows that line and nothing of the node's row; one whose subject is `unserved` shows one
+muted line — *this node cannot serve this post yet.* — and no row. **A withheld answer to the single post read
+decides nothing**: the pending entry it was read for (→ The wallet) stays pending until the tip passes its
+`expiresAtHeight`, as with no answer at all — never expired as on the node's 404, since a node that serves a post
+without its bytes has not said the post is gone. **The check
 is total**, as a run is (→ "The verified figures"): a row of any shape ends in a status. **It runs** in the extension
 build alone — the web build is handed no check and sends no `tx`, by the rule that hands it no verifier (→ "The
 verified tip") — on every read of posts, with or without an identity, an anchor or a verdict: it reads no state and
