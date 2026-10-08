@@ -39,7 +39,7 @@ function post(id: string, author: string, authorName: string, parents: string[] 
   return {
     id, content: 'hi', contentHash: contentHashHex('hi'), author, parentRefs: parents,
     protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 90, blockIndex: 0,
-    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName, likedByViewer: null,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName, likedByViewer: null, txId: 'ff'.repeat(32),
   };
 }
 

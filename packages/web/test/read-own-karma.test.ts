@@ -66,7 +66,7 @@ function threePageApi(): { api: Api; calls: { key: string; after: string | null 
   const api: Api = {
     feed: async () => ({ posts: [], next: null, pending: [], pendingCount: 0 }),
     thread: async () => null,
-    post: async () => ({ id: '00'.repeat(32), content: '', contentHash: '00'.repeat(32), author: KEY, parentRefs: [], protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 0, blockIndex: 0, blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, confirmedAuthor: KEY }),
+    post: async () => ({ id: '00'.repeat(32), content: '', contentHash: '00'.repeat(32), author: KEY, parentRefs: [], protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 0, blockIndex: 0, blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, txId: 'ff'.repeat(32), confirmedAuthor: KEY }),
     status: async () => ({ networkType: 'testnet', blockHeight: 5000, protocolVersion: 1, postCount: 0, pendingPosts: 0, totalKarma: '0', liquidKarma: '0', totalCredits: '0', inviteProbationBlocks: 0, vouchCooldownBlocks: 0, inviteBondMin: '0', inviteBondMax: '0', membership: { memberCount: 1, memberBar: 1, memberLikesBar: 2 } }),
     currentBlock: async () => ({ height: 5000, hash: null }),
     karma: async (key, page_opts) => {
@@ -144,7 +144,7 @@ describe('readOwnKarma — the whole listing, per WEB_INTERFACE', () => {
     const api = (): Api => ({
       feed: async () => ({ posts: [], next: null, pending: [], pendingCount: 0 }),
       thread: async () => null,
-      post: async () => ({ id: '00'.repeat(32), content: '', contentHash: '00'.repeat(32), author: KEY, parentRefs: [], protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 0, blockIndex: 0, blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, confirmedAuthor: KEY }),
+      post: async () => ({ id: '00'.repeat(32), content: '', contentHash: '00'.repeat(32), author: KEY, parentRefs: [], protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 0, blockIndex: 0, blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, txId: 'ff'.repeat(32), confirmedAuthor: KEY }),
       status: async () => ({ networkType: 'testnet', blockHeight: 5000, protocolVersion: 1, postCount: 0, pendingPosts: 0, totalKarma: '0', liquidKarma: '0', totalCredits: '0', inviteProbationBlocks: 0, vouchCooldownBlocks: 0, inviteBondMin: '0', inviteBondMax: '0', membership: { memberCount: 1, memberBar: 1, memberLikesBar: 2 } }),
       currentBlock: async () => ({ height: 5000, hash: null }),
       karma: async (key, page_opts) => {

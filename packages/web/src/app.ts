@@ -44,7 +44,7 @@ import {
 import {
   FEED_COMPOSER_KEY, type AppState, type ThreadState, type RenderCtx, type Handlers, type Submission,
   type FlightStage, type AppIdentity, type AuthorWindowData, type FeedState, type FiguresView,
-  type TipVerifier, type TipRun, type FiguresVerifier, type NamesVerifier,
+  type TipVerifier, type TipRun, type FiguresVerifier, type NamesVerifier, type PostsVerifier,
 } from './model/state';
 import { decideMove, type ScreenEntry } from './history';
 
@@ -363,6 +363,18 @@ export class App {
   // once a check that ended `unchecked` has asked for its one tip run, until a
   // run no check asked for begins.
   private namesVerifier: NamesVerifier | null;
+  // The posts verifier (WEB_INTERFACE → The extension → "The post check") —
+  // non-null only in the extension build. The three post reads carry `tx=1`
+  // while it is held, and every row passes through check() before entering
+  // state; the web build is handed none, sends no `tx` and shows every row
+  // the node serves.
+  private postsVerifier: PostsVerifier | null;
+  // The chain the verified tip run named — the hash of block 1 of the
+  // reading node's verified proof (WEB_INTERFACE → The extension → "The
+  // chain's name"). Written beside the verdict and the anchor, dropped on a
+  // node change beside them; the cache will key its database on it, nothing
+  // else reads it yet.
+  private tipChain: string | null = null;
   private namesGen = 0;
   private namesInFlight = false;
   private namesMarked: 'new' | 'every' | null = null;
@@ -407,6 +419,7 @@ export class App {
     verifier?: TipVerifier | null,
     figuresVerifier?: FiguresVerifier | null,
     namesVerifier?: NamesVerifier | null,
+    postsVerifier?: PostsVerifier | null,
   ) {
     this.client = client ?? new NodeClient(() => prefs.node);
     this.writeClient = writeClient ?? new WriteClient(() => prefs.node);
@@ -416,6 +429,7 @@ export class App {
     this.verifier = verifier ?? null;
     this.figuresVerifier = figuresVerifier ?? null;
     this.namesVerifier = namesVerifier ?? null;
+    this.postsVerifier = postsVerifier ?? null;
     // With no verifier the verdict stays `undefined` — the corner reads the
     // first paragraph of the status corner, word for word (WEB_INTERFACE →
     // The status corner, → The extension → "The verified tip").
@@ -520,6 +534,23 @@ export class App {
    *  before (WEB_INTERFACE → "Every read carries the viewer's key once an identity is loaded, and none does before"). */
   private viewer(): string | undefined {
     return this.idm.current()?.pubKeyHex ?? undefined;
+  }
+
+  /** True when the App holds a posts verifier (WEB_INTERFACE → The extension →
+   *  "The post check") — the extension build's three post reads carry `tx=1`,
+   *  the web build's never do, by the same static substitution that keeps the
+   *  verifier out of its bundle. */
+  private postsTx(): boolean {
+    return this.postsVerifier !== null;
+  }
+
+  /** The chain the verified tip run named — the hash of block 1 of the
+   *  reading node's verified proof (WEB_INTERFACE → The extension → "The
+   *  chain's name"). Non-null under a verified reading node, null otherwise;
+   *  dropped with the verdict and the anchor on a node change. The post
+   *  cache's name reads it; nothing else does. */
+  chainName(): string | null {
+    return this.tipChain;
   }
 
   // -------------------------------------------------------------------------
@@ -1307,7 +1338,7 @@ export class App {
     feed.error = null;
     this.renderFeed();
     try {
-      const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true);
+      const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true, this.postsTx());
       if (gen !== this.readerGen) return;
       this.takeFeedPage(res, since);
     } catch (e) {
@@ -1373,7 +1404,7 @@ export class App {
       const probe = new NodeClient(() => base);
       let res: FeedResult;
       try {
-        res = await probe.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true);
+        res = await probe.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true, this.postsTx());
       } catch {
         if (gen !== this.readerGen) return null;
         continue; // try the next entry
@@ -1412,7 +1443,7 @@ export class App {
       const r = await reconcileNewer(
         feed.posts,
         async (after) => {
-          const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer(), undefined, true);
+          const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer(), undefined, true, this.postsTx());
           rows.push(...res.posts, ...res.pending);
           if (after === null) pending = res.pending;
           return { posts: this.liveRows(res.posts), next: res.next };
@@ -1446,7 +1477,7 @@ export class App {
     feed.loading = true;
     this.renderFeed();
     try {
-      const res = await this.client.feed({ limit: FEED_LIMIT, after: cursor }, this.viewer(), undefined, true);
+      const res = await this.client.feed({ limit: FEED_LIMIT, after: cursor }, this.viewer(), undefined, true, this.postsTx());
       if (gen !== this.readerGen) return;
       if (feed.next === cursor) {
         const older = this.liveRows(res.posts);
@@ -1721,7 +1752,7 @@ export class App {
     t.error = null;
     this.renderThreadLoad(id);
     try {
-      const res = await this.client.thread(id, { limit: THREAD_LIMIT }, this.viewer());
+      const res = await this.client.thread(id, { limit: THREAD_LIMIT }, this.viewer(), this.postsTx());
       if (gen !== this.readerGen) return;
       if (res === null) {
         t.root = null; // 404 — the post is gone; the body says so, it is not an error
@@ -1753,7 +1784,7 @@ export class App {
     await this.refreshTip(); // a ↻ re-reads the tip
     if (gen !== this.readerGen) return;
     try {
-      let res = await this.client.thread(id, { limit: THREAD_LIMIT }, this.viewer());
+      let res = await this.client.thread(id, { limit: THREAD_LIMIT }, this.viewer(), this.postsTx());
       if (gen !== this.readerGen) return;
       if (res === null) {
         t.root = null;
@@ -1763,7 +1794,7 @@ export class App {
         let next = res.next;
         let pages = 1;
         while (next !== null && pages < REFRESH_PAGE_CAP) {
-          const more = await this.client.thread(id, { limit: THREAD_LIMIT, after: next }, this.viewer());
+          const more = await this.client.thread(id, { limit: THREAD_LIMIT, after: next }, this.viewer(), this.postsTx());
           if (gen !== this.readerGen) return;
           if (more === null) break;
           all.push(...more.descendants);
@@ -1798,7 +1829,7 @@ export class App {
     const cursor = t.next;
     const gen = this.readerGen;
     try {
-      const res = await this.client.thread(id, { limit: THREAD_LIMIT, after: cursor }, this.viewer());
+      const res = await this.client.thread(id, { limit: THREAD_LIMIT, after: cursor }, this.viewer(), this.postsTx());
       if (gen !== this.readerGen || t.next !== cursor) return;
       if (res !== null) {
         const have = new Set(t.descendants.map((d) => d.id));
@@ -2752,7 +2783,7 @@ export class App {
     f.loading = true;
     this.renderRegionsFor(postsWindowId(key));
     try {
-      const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer(), key);
+      const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer(), key, false, this.postsTx());
       if (gen !== this.readerGen) return;
       f.posts = this.liveRows(res.posts).map(this.keeper(f.posts, since));
       f.next = res.next;
@@ -2783,7 +2814,7 @@ export class App {
       const r = await reconcileNewer(
         f.posts,
         async (after) => {
-          const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer(), key);
+          const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer(), key, false, this.postsTx());
           rows.push(...res.posts);
           return { posts: this.liveRows(res.posts), next: res.next };
         },
@@ -2812,7 +2843,7 @@ export class App {
     const cursor = f.next;
     const gen = this.readerGen;
     try {
-      const res = await this.client.feed({ limit: FEED_LIMIT, after: cursor }, this.viewer(), key);
+      const res = await this.client.feed({ limit: FEED_LIMIT, after: cursor }, this.viewer(), key, false, this.postsTx());
       if (gen !== this.readerGen || f.next !== cursor) return;
       const older = this.liveRows(res.posts);
       const have = new Set(f.posts.map((p) => p.id));
@@ -3356,6 +3387,7 @@ export class App {
         this.verifyInFlight = false;
         this.tipVerdict = run.verdict;
         this.tipAnchor = run.anchor;
+        this.tipChain = run.chain;
         this.renderCornerNow();
         // WEB_INTERFACE → The extension → "The verified figures" — a run proves
         // a listing read after its anchor, so a `verified` run reads the
@@ -3390,6 +3422,7 @@ export class App {
         this.verifyInFlight = false;
         this.tipVerdict = null;
         this.tipAnchor = null;
+        this.tipChain = null;
         this.renderCornerNow();
         this.figures = null;
         this.renderCreditsRowInPlace();
@@ -3451,6 +3484,7 @@ export class App {
       this.verifyInFlight = false;
       this.tipVerdict = null;
       this.tipAnchor = null;
+      this.tipChain = null;
       this.settleTipRunWaiters(null);
     }
     this.nameChecks.clear();
@@ -3904,7 +3938,7 @@ export class App {
         usernameChanged = true;
         continue;
       }
-      const fetched = await this.client.post(entry.postId, this.viewer());
+      const fetched = await this.client.post(entry.postId, this.viewer(), this.postsTx());
       if (gen !== this.readerGen) return;
       if (entry.kind === 'post') {
         const outcome = reconcilePost(entry, fetched, tip);

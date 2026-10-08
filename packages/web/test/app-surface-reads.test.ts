@@ -36,7 +36,7 @@ function row(label: string, over: Partial<PostJson> = {}): PostJson {
   return {
     id: hid(label), content: label, contentHash: contentHashHex(label), author: X, parentRefs: [], protocolVersion: 1,
     type: 'regular', status: 'confirmed', blockHeight: 1000, blockIndex: 0, blockCreatedAt: 0,
-    likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, ...over,
+    likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, txId: 'ff'.repeat(32), ...over,
   };
 }
 
@@ -69,7 +69,7 @@ function pageOf<T>(rows: readonly T[], idOf: (r: T) => string, after: string | n
 function seenBy(n: NodeData, r: PostJson, viewer: string | undefined): FeedRow {
   if (n.withdrawn.has(r.id)) {
     const marker: WithdrawnJson = {
-      kind: 'withdrawn', id: r.id, author: r.author, withdrawnAtHeight: 1000, parentRefs: r.parentRefs, descendantCount: 0, authorName: null,
+      kind: 'withdrawn', id: r.id, author: r.author, withdrawnAtHeight: 1000, parentRefs: r.parentRefs, descendantCount: 0, authorName: null, txId: r.txId,
     };
     return marker;
   }

@@ -106,6 +106,7 @@ interface FigureCall {
 interface TipRunLike {
   verdict: TipVerdict;
   anchor: Anchor | null;
+  chain: string | null;
 }
 
 interface Harness {
@@ -240,7 +241,7 @@ describe('the App verified figures — the triggers', () => {
     // Resolve the tip run — `verified` with an anchor. The App writes
     // tipAnchor beside the verdict and calls startFigures.
     const anchor = anchorFor(6001);
-    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor });
+    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor, chain: null });
     await flush();
     expect(h.figuresCalls.length).toBe(1);
     const call = h.figuresCalls[0]!;
@@ -262,7 +263,7 @@ describe('the App verified figures — the triggers', () => {
     const inner = h.app as unknown as { openProfile(): void };
     inner.openProfile();
     await flush();
-    h.tipRuns[0]!.resolve({ verdict: { kind: 'thin', reason: 'one-node', height: 6001 }, anchor: null });
+    h.tipRuns[0]!.resolve({ verdict: { kind: 'thin', reason: 'one-node', height: 6001 }, anchor: null, chain: null });
     await flush();
     // No figures run: the tip resolver drops `figures` and never calls the
     // verifier under a non-verified verdict.
@@ -279,7 +280,7 @@ describe('the App verified figures — the triggers', () => {
     inner.openProfile();
     await flush();
     const anchor = anchorFor(6001);
-    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor });
+    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor, chain: null });
     await flush();
     // The first trigger — the tip run's resolver — is in flight; resolve it so
     // the wallet's write triggers a fresh run cleanly.
@@ -303,7 +304,7 @@ describe('the App verified figures — the triggers', () => {
     inner.openProfile();
     await flush();
     const anchor = anchorFor(6001);
-    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor });
+    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor, chain: null });
     await flush();
     h.figuresCalls[0]!.resolve(emptyResult());
     await flush();
@@ -319,7 +320,7 @@ describe('the App verified figures — the triggers', () => {
     const h = harness({ withIdentity: false });
     await flush();
     // Even a `verified` tip run does not trigger a figures run: no identity.
-    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor: anchorFor(6001) });
+    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor: anchorFor(6001), chain: null });
     await flush();
     expect(h.figuresCalls.length).toBe(0);
   });
@@ -338,7 +339,7 @@ describe('the App verified figures — single flight and the drops', () => {
     inner.openProfile();
     await flush();
     const anchor = anchorFor(6001);
-    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor });
+    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor, chain: null });
     await flush();
     // Run 0 is in flight — refresh /karma while it stands (this triggers
     // startFigures twice: the /karma write also fires it). Only one more
@@ -367,7 +368,7 @@ describe('the App verified figures — single flight and the drops', () => {
     inner.openProfile();
     await flush();
     const anchor = anchorFor(6001);
-    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor });
+    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor, chain: null });
     await flush();
     expect(h.figuresCalls.length).toBe(1);
     // Refresh the karma listing WHILE the run is in flight. The write
@@ -394,7 +395,7 @@ describe('the App verified figures — single flight and the drops', () => {
     inner.openProfile();
     await flush();
     const anchor = anchorFor(6001);
-    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor });
+    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor, chain: null });
     await flush();
     expect(h.figuresCalls.length).toBe(1);
     // A previous run's result had landed.
@@ -424,7 +425,7 @@ describe('the App verified figures — single flight and the drops', () => {
     inner.openProfile();
     await flush();
     const anchor = anchorFor(6001);
-    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor });
+    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor, chain: null });
     await flush();
     h.figuresCalls[0]!.resolve(emptyResult());
     await flush();
@@ -452,7 +453,7 @@ describe('the App verified figures — the verdict and the row', () => {
     inner.openWallet();
     await flush();
     const anchor = anchorFor(6001);
-    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor });
+    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor, chain: null });
     await flush();
     // Resolve with a young-remainder result — 25 $NOTIS landed since. The
     // balance row's hint reads that; the credit boxes list has one box for
@@ -496,7 +497,7 @@ describe('the App verified figures — the verdict and the row', () => {
     inner.openProfile();
     await flush();
     const anchor = anchorFor(6001);
-    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor });
+    h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor, chain: null });
     await flush();
     h.figuresCalls[0]!.resolve(emptyResult());
     await flush();
@@ -505,7 +506,7 @@ describe('the App verified figures — the verdict and the row', () => {
     // figures and re-renders the rows.
     (h.app as unknown as { cornerEl: HTMLButtonElement }).cornerEl.dispatchEvent(new Event('click'));
     await flush();
-    h.tipRuns[1]!.resolve({ verdict: { kind: 'thin', reason: 'one-node', height: 6001 }, anchor: null });
+    h.tipRuns[1]!.resolve({ verdict: { kind: 'thin', reason: 'one-node', height: 6001 }, anchor: null, chain: null });
     await flush();
     expect(h.drive.figures).toBeNull();
   });
@@ -522,7 +523,7 @@ describe('the App verified figures — the verdict and the row', () => {
       inner.openProfile();
       await flush();
       const anchor = anchorFor(6001);
-      h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor });
+      h.tipRuns[0]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor, chain: null });
       await flush();
       // Resolve the first figures run so a landing stands.
       h.figuresCalls[0]!.resolve(emptyResult());
@@ -534,7 +535,7 @@ describe('the App verified figures — the verdict and the row', () => {
       // landing.
       (h.app as unknown as { cornerEl: HTMLButtonElement }).cornerEl.dispatchEvent(new Event('click'));
       await flush();
-      h.tipRuns[1]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor });
+      h.tipRuns[1]!.resolve({ verdict: verifiedVerdict(2, 6001), anchor, chain: null });
       await flush();
       h.figuresCalls[1]!.reject(new Error('boom'));
       await flush();

@@ -20,7 +20,7 @@ function post(id: string, content: string, parents: string[] = [], name: string 
   return {
     id, content, contentHash: contentHashHex(content), author: HEX('7'), parentRefs: parents,
     protocolVersion: 1, type: 'regular', status: 'confirmed',
-    blockHeight: 1, blockIndex: 0, blockCreatedAt: 0, likeCount: 0, descendantCount: 1, authorName: name, likedByViewer: null,
+    blockHeight: 1, blockIndex: 0, blockCreatedAt: 0, likeCount: 0, descendantCount: 1, authorName: name, likedByViewer: null, txId: 'ff'.repeat(32),
   };
 }
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));

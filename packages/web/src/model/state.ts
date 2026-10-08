@@ -6,7 +6,7 @@ import type { YourVouch } from '../view/author';
 import type { SendAnswer, SendRecipient } from '../view/wallet';
 import type { SignResult } from '../wallet/submit';
 import type { TipVerdict } from './tip-verdict';
-import type { Anchor, FiguresResult, Listing, NameClaim, NameResult } from '@dagsocial/nipopow-client';
+import type { Anchor, FiguresResult, Listing, NameClaim, NameResult, PostCheck } from '@dagsocial/nipopow-client';
 export type { Anchor };
 
 /** What the App holds when a figures verifier run has returned — the tool's
@@ -319,6 +319,13 @@ export interface AppIdentity {
 export interface TipRun {
   verdict: TipVerdict;
   anchor: Anchor | null;
+  /** The hash of the first header of the reading node's verified proof — block
+   *  1, held to the profile's `genesisId` where one is pinned
+   *  (WEB_INTERFACE → The extension → "The chain's name"). Non-null whenever
+   *  the reading node's proof verified, under `verified` and under `thin`
+   *  alike; null for a reading node whose own proof did not verify. The post
+   *  cache's name reads it (→ "The post cache"); nothing else does. */
+  chain: string | null;
 }
 export interface TipVerifier {
   run(readingBase: string): Promise<TipRun>;
@@ -343,4 +350,13 @@ export interface FiguresVerifier {
  *  verified headers standing when the check begins. */
 export interface NamesVerifier {
   run(readingBase: string, claim: NameClaim, anchor: Anchor): Promise<NameResult>;
+}
+
+/** The extension checks every post row the three post reads bring, before it
+ *  enters the client's state (WEB_INTERFACE → The extension → "The post
+ *  check"). A read's rows go as one batch; the result is positional over them.
+ *  The App holds an implementation only in the extension build; the web build
+ *  is handed none, and sends no `tx` on its reads. */
+export interface PostsVerifier {
+  check(rows: unknown[]): PostCheck[];
 }

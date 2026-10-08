@@ -60,7 +60,13 @@ export function createTipVerifier(opts: TipVerifierOptions): TipVerifier {
       // it `null` too — the verdict is trusted first (→ "The verdict is total
       // by itself").
       const anchor: Anchor | null = verdict.kind === 'verified' ? anchorFromReading(result.nodes[0]) : null;
-      return { verdict, anchor };
+      // WEB_INTERFACE → The extension → "The chain's name" — the reading
+      // node's own `genesisHash`, non-null whenever its proof verified,
+      // under `verified` and under `thin` alike. The tool answers it only
+      // for a verified node (`tip.ts`), so a reading node whose proof did
+      // not verify leaves it null.
+      const chain: string | null = result.nodes[0]?.genesisHash ?? null;
+      return { verdict, anchor, chain };
     },
   };
 }

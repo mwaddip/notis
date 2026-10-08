@@ -120,7 +120,7 @@ function identity(): AppIdentity {
 }
 
 interface FigureCall { listing: Listing; anchor: Anchor; resolve(r: FiguresResult): void }
-interface TipCall { resolve(v: { verdict: TipVerdict; anchor: Anchor | null }): void }
+interface TipCall { resolve(v: { verdict: TipVerdict; anchor: Anchor | null; chain: string | null }): void }
 
 interface Drive {
   loadMembershipState(): Promise<void>;
@@ -201,9 +201,10 @@ const anchorAt = (height: number): Anchor => ({
   tip: fakeHeader(height),
   suffixHead: { header: fakeHeader(height - 19), interlinks: [] },
 });
-const verified = (height: number): { verdict: TipVerdict; anchor: Anchor } => ({
+const verified = (height: number): { verdict: TipVerdict; anchor: Anchor; chain: string | null } => ({
   verdict: { kind: 'verified', nodes: 2, height },
   anchor: anchorAt(height),
+  chain: null,
 });
 function emptyResult(): FiguresResult {
   return {
@@ -220,14 +221,14 @@ function confirmed(id: string, over: Partial<PostResult> = {}): PostResult {
   return {
     id, content: 'x', contentHash: '00'.repeat(32), author: ME, parentRefs: [], protocolVersion: 1,
     type: 'regular', status: 'confirmed', blockHeight: 1081, blockIndex: 0, blockCreatedAt: 0,
-    likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, confirmedAuthor: ME,
+    likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, txId: 'ff'.repeat(32), confirmedAuthor: ME,
     ...over,
   } as PostResult;
 }
 function withdrawn(id: string): PostResult {
   return {
     kind: 'withdrawn', id, author: ME, withdrawnAtHeight: 1081, parentRefs: [], descendantCount: 0,
-    authorName: null, confirmedAuthor: ME,
+    authorName: null, confirmedAuthor: ME, txId: 'ff'.repeat(32),
   };
 }
 

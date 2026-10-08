@@ -30,6 +30,7 @@ function verifiedNode(url: string, behind: NodeTipResult['behind'] = 0): NodeTip
     refuseReason: null,
     refuseCode: null,
     behind,
+    genesisHash: null,
   };
 }
 
@@ -287,7 +288,7 @@ function okVerify(tip: BlockHeader, suffix: PoPowHeader): VerifyResult {
 /** A NodeTipResult with a verified `{ ok: true }` verifyResult carrying the
  *  given tip and suffixHead — the shape the verdict's totality gate says
  *  `verified` guarantees, so the anchor helper narrows and reads them. */
-function verifiedWithHeaders(url: string, tip: BlockHeader, suffix: PoPowHeader, behind: NodeTipResult['behind'] = 0): NodeTipResult {
+function verifiedWithHeaders(url: string, tip: BlockHeader, suffix: PoPowHeader, behind: NodeTipResult['behind'] = 0, genesisHash: string | null = null): NodeTipResult {
   return {
     url,
     verified: true,
@@ -296,6 +297,7 @@ function verifiedWithHeaders(url: string, tip: BlockHeader, suffix: PoPowHeader,
     refuseReason: null,
     refuseCode: null,
     behind,
+    genesisHash,
   };
 }
 
@@ -417,6 +419,7 @@ describe('createTipVerifier — the anchor beside the verdict', () => {
         refuseReason: 'chain too short',
         refuseCode: 'too-short' as const,
         behind: null,
+        genesisHash: null,
       }));
       return { winner: null, winnerIndex: -1, nodes, tip: null, suffixHead: null, splits: [] };
     }) as typeof import('@dagsocial/nipopow-client').resolveTip;
@@ -445,6 +448,7 @@ describe('createTipVerifier — the anchor beside the verdict', () => {
         refuseReason: 'unreachable',
         refuseCode: 'unreachable' as const,
         behind: null,
+        genesisHash: null,
       }));
       return { winner: null, winnerIndex: -1, nodes, tip: null, suffixHead: null, splits: [] };
     }) as typeof import('@dagsocial/nipopow-client').resolveTip;
@@ -473,6 +477,7 @@ describe('createTipVerifier — the anchor beside the verdict', () => {
         refuseReason: 'verify failed',
         refuseCode: 'invalid' as const,
         behind: null,
+        genesisHash: null,
       }));
       return { winner: null, winnerIndex: -1, nodes, tip: null, suffixHead: null, splits: [] };
     }) as typeof import('@dagsocial/nipopow-client').resolveTip;
@@ -537,7 +542,7 @@ describe('createTipVerifier — the anchor beside the verdict', () => {
         // Reading node marked `verified: true` (so tipVerdict passes the gate)
         // but its `verifyResult` is null — the shape that would normally be
         // impossible for a verified result, guarded here anyway.
-        { url: urls[0]!, verified: true, proof: null, verifyResult: null, refuseReason: null, refuseCode: null, behind: 0 },
+        { url: urls[0]!, verified: true, proof: null, verifyResult: null, refuseReason: null, refuseCode: null, behind: 0, genesisHash: null },
         verifiedWithHeaders(urls[1]!, winnerTip, winnerSuffix),
       ];
       return {
