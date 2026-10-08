@@ -5,6 +5,7 @@ import { card, stageLine, listCardOpts } from './card';
 import { markHandle, nameLine } from './name-handle';
 import type { Flight } from './card';
 import type { VouchesTargetResult, UsernameResult, PostJson } from '../api/dto';
+import { isFull } from '../api/dto';
 import type { FeedState } from '../model/state';
 import type { Origin } from '../model/workspace';
 
@@ -286,7 +287,10 @@ export function authorPostsBody(handlers: PostsHandlers, ctx: PostsCtx): HTMLEle
     b.appendChild(el('div', 'empty', 'no posts yet'));
     return b;
   }
+  // The slot's card is drawn in the extension's slice (Phase 2); here a slot
+  // is skipped (WEB_INTERFACE → The extension → "The light read").
   for (const post of feed.posts) {
+    if (!isFull(post)) continue;
     b.appendChild(postCard(post, handlers, ctx));
   }
   if (feed.next !== null) {

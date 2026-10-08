@@ -1,6 +1,7 @@
 import { el, reportNode } from '../dom';
 import { card, submissionToPost, flightFor, listCardOpts, type CardOpts } from './card';
 import type { PostJson } from '../api/dto';
+import { isFull } from '../api/dto';
 import { FEED_COMPOSER_KEY, type FeedState, type RenderCtx, type Handlers } from '../model/state';
 import { withheldLine } from './withheld-line';
 
@@ -107,11 +108,16 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
   }
 
   // Pending (mempool) posts are the newest — they sit above the confirmed ones,
-  // hollow, before any composer exists to create one.
+  // hollow, before any composer exists to create one. A slot's card is drawn in
+  // the extension build's slice (Phase 2); here the feed skips a slot — no row
+  // of this run reaches a reader through a non-light request
+  // (WEB_INTERFACE → The extension → "The light read").
   for (const p of feed.pending) {
+    if (!isFull(p)) continue;
     container.appendChild(card(p, { replyCount: p.descendantCount, onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(p.author, ctx), ...identityOpts(ctx, handlers) }));
   }
   for (const p of feed.posts) {
+    if (!isFull(p)) continue;
     container.appendChild(card(p, feedCardOpts(p, ctx, handlers)));
   }
 

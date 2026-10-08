@@ -1,8 +1,9 @@
 import type {
   FeedResult, ThreadResult, PostResult, StatusResult, BlockCurrent, KarmaResult,
   VouchesTargetResult, VouchesVoucherResult, VouchCooldownsResult, BondsResult,
-  UsernameResult, CreditsResult,
+  UsernameResult, CreditsResult, FeedRow,
 } from './dto';
+import { readLightRows } from './light-page';
 
 // This module issues GET requests and nothing else — no POST, no body. A `viewer`
 // parameter is a query on a GET, not a write, so it is carried here now that an
@@ -60,11 +61,17 @@ export interface Page {
 export interface Api {
   /** `withTx` adds `tx=1` to the three post reads, so each row carries its
    *  creating transaction's bytes (NODE_INTERFACE → Posts → "The creating
-   *  transaction rides a post row"). The extension build sets it true; the
-   *  web build never does (WEB_INTERFACE → The extension → "The post
-   *  check"). */
-  feed(page?: Page, viewer?: string, author?: string, roots?: boolean, withTx?: boolean): Promise<FeedResult>;
-  thread(id: string, page?: Page, viewer?: string, withTx?: boolean): Promise<ThreadResult | null>;
+   *  transaction rides a post row"); `light` adds `light=1` beside the list
+   *  reads, so every row of every list of the answer is a `LightJson` or a
+   *  `WithdrawnJson` (NODE_INTERFACE → Posts → "A light row is a post's id
+   *  and the node's word", WEB_INTERFACE → The extension → "The light
+   *  read"). `light` and `tx` do not combine — `light` wins, and `withTx` is
+   *  ignored under it. The extension build sets `withTx` true on the three
+   *  post reads today, and will set `light` on the two list reads under this
+   *  branch; the web build never sets either (WEB_INTERFACE → The extension
+   *  → "The post check"). */
+  feed(page?: Page, viewer?: string, author?: string, roots?: boolean, withTx?: boolean, light?: boolean): Promise<FeedResult>;
+  thread(id: string, page?: Page, viewer?: string, withTx?: boolean, light?: boolean): Promise<ThreadResult | null>;
   post(id: string, viewer?: string, withTx?: boolean): Promise<PostResult | null>;
   status(): Promise<StatusResult>;
   currentBlock(): Promise<BlockCurrent>;
@@ -122,21 +129,41 @@ export class NodeClient implements Api {
     return data as T;
   }
 
-  feed(page: Page = {}, viewer?: string, author?: string, roots?: boolean, withTx?: boolean): Promise<FeedResult> {
+  async feed(page: Page = {}, viewer?: string, author?: string, roots?: boolean, withTx?: boolean, light?: boolean): Promise<FeedResult> {
     // `author` filters to one identity's committed posts — the author-posts window
     // (WEB_INTERFACE → The author window); `roots=1` restricts to posts with no
     // parent, the feed's own read (WEB_INTERFACE → What the feed reads). The node
     // rejects `roots=0`, so it is 1 or absent (NODE_INTERFACE → Posts). `tx=1` adds
     // every row's creating transaction (WEB_INTERFACE → The extension → "The post
-    // check"); the web build never sends it.
-    return this.get<FeedResult>(this.url('/posts', { limit: page.limit, after: page.after ?? undefined, author, viewer, roots: roots ? 1 : undefined, tx: withTx ? 1 : undefined }), 'posts');
+    // check"); the web build never sends it. `light=1` wins over `tx` and takes
+    // the two list rows field by field (WEB_INTERFACE → The extension → "The
+    // light read").
+    const q: Record<string, string | number | undefined> = { limit: page.limit, after: page.after ?? undefined, author, viewer, roots: roots ? 1 : undefined };
+    if (light) q['light'] = 1;
+    else if (withTx) q['tx'] = 1;
+    const res = await this.get<FeedResult>(this.url('/posts', q), 'posts');
+    if (!light) return res;
+    return { ...res, posts: readLightRows(res.posts), pending: readLightRows(res.pending) };
   }
 
-  thread(id: string, page: Page = {}, viewer?: string, withTx?: boolean): Promise<ThreadResult | null> {
-    return this.getOrNull<ThreadResult>(
-      this.url(`/posts/${encodeURIComponent(id)}/thread`, { limit: page.limit, after: page.after ?? undefined, viewer, tx: withTx ? 1 : undefined }),
-      'descendants',
-    );
+  async thread(id: string, page: Page = {}, viewer?: string, withTx?: boolean, light?: boolean): Promise<ThreadResult | null> {
+    const q: Record<string, string | number | undefined> = { limit: page.limit, after: page.after ?? undefined, viewer };
+    if (light) q['light'] = 1;
+    else if (withTx) q['tx'] = 1;
+    const res = await this.getOrNull<ThreadResult>(this.url(`/posts/${encodeURIComponent(id)}/thread`, q), 'descendants');
+    if (res === null || !light) return res;
+    // The subject is one row (or `null` as it stands) — read as one row of a
+    // one-element list and taken field by field under the same rule
+    // (WEB_INTERFACE → The extension → "The light read" → "Each row is taken
+    // field by field").
+    const subject: FeedRow | null = res.post === null ? null : readLightRows([res.post])[0]!;
+    return {
+      ...res,
+      post: subject,
+      ancestors: readLightRows(res.ancestors),
+      descendants: readLightRows(res.descendants),
+      pending: readLightRows(res.pending),
+    };
   }
 
   post(id: string, viewer?: string, withTx?: boolean): Promise<PostResult | null> {

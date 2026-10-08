@@ -57,8 +57,31 @@ export interface WithdrawnJson {
   txId: string;
 }
 
-/** A feed or descendant row: a live post or a withdrawn marker. */
-export type FeedRow = PostJson | WithdrawnJson;
+/** A light row: the post's id and the node's word (NODE_INTERFACE → Posts →
+ *  "A light row is a post's id and the node's word", WEB_INTERFACE → The
+ *  extension → "The light read"). Every field is `PostJson`'s under the same
+ *  definition; a light row carries no `txId`, `tx`, `content`, `contentHash`,
+ *  `author`, `protocolVersion` or `type` — what the post's creating transaction
+ *  fixes under its id, which a reader that holds the post has and one that
+ *  lacks it reads by id ("The resolve"). */
+export interface LightJson {
+  kind: 'light';
+  id: string;
+  parentRefs: string[];           // 0–1 — where a reader that lacks the post places its row
+  status: PostStatus;
+  blockHeight: number | null;
+  blockIndex: number | null;
+  blockCreatedAt: number | null;
+  likeCount: number;
+  descendantCount: number;
+  authorName: string | null;
+  likedByViewer: boolean | null;
+}
+
+/** A feed or descendant row: a live post, a withdrawn marker, or a light row —
+ *  the row a reader that lacks the post holds against its id (WEB_INTERFACE →
+ *  The extension → "The light read"). */
+export type FeedRow = PostJson | WithdrawnJson | LightJson;
 
 export interface FeedResult {
   posts: FeedRow[];
@@ -67,11 +90,16 @@ export interface FeedResult {
   pendingCount: number;
 }
 
-/** `GET /posts/:id` — a post or the withdrawn marker, plus the topology-confirmed author. */
+/** `GET /posts/:id` — a post or the withdrawn marker, plus the topology-confirmed
+ *  author. `GET /posts/:id` takes no `light`, so this read never answers a light
+ *  row (NODE_INTERFACE → Posts → "A light row is a post's id and the node's
+ *  word"). */
 export type PostResult = (PostJson | WithdrawnJson) & { confirmedAuthor: string | null };
 
 export interface ThreadResult {
-  post: PostJson | WithdrawnJson | null;
+  /** Under `light=1` the subject is a `LightJson` where a reader lacks the
+   *  post (WEB_INTERFACE → The extension → "The light read"). */
+  post: FeedRow | null;
   ancestors: FeedRow[];
   ancestorCount: number;
   descendants: FeedRow[];
@@ -203,9 +231,19 @@ export interface CreditsResult {
 }
 
 // ---------------------------------------------------------------------------
-// Discriminator — PostJson carries no `kind`; the withdrawn marker does.
+// Discriminators — a FeedRow is one of three arms: a full post (no `kind`), a
+// withdrawn marker (`'withdrawn'`) or a light row (`'light'`). Every site that
+// reads a row answers each of the three.
 // ---------------------------------------------------------------------------
 
-export function isWithdrawn(row: PostJson | WithdrawnJson): row is WithdrawnJson {
-  return 'kind' in row;
+export function isWithdrawn(row: FeedRow): row is WithdrawnJson {
+  return 'kind' in row && row.kind === 'withdrawn';
+}
+
+export function isLight(row: FeedRow): row is LightJson {
+  return 'kind' in row && row.kind === 'light';
+}
+
+export function isFull(row: FeedRow): row is PostJson {
+  return !('kind' in row);
 }

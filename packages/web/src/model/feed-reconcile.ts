@@ -1,8 +1,12 @@
-import type { PostJson, FeedRow } from '../api/dto';
+import type { PostJson, LightJson, FeedRow } from '../api/dto';
 import { isWithdrawn } from '../api/dto';
 
-// A feed row is a live post or a withdrawn marker; the feed renders posts only.
-export const isLivePost = (r: FeedRow): r is PostJson => !isWithdrawn(r);
+// A feed row is a live post, a withdrawn marker or a slot (WEB_INTERFACE → The
+// extension → "The light read"). The feed carries live rows — a full post the
+// node served, or a slot a reader that lacks the post holds against its id —
+// never a withdrawn marker, which is filtered out of a list (WEB_INTERFACE →
+// The withdrawn state).
+export const isLivePost = (r: FeedRow): r is PostJson | LightJson => !isWithdrawn(r);
 
 export interface RawPage {
   posts: FeedRow[];
@@ -21,14 +25,18 @@ export interface RawPage {
  * span up to the cap is new and never reconnects, the held rows are older than
  * this window: the feed is replaced and `next` is reset to where paging stopped,
  * so `load older` continues correctly.
+ *
+ * A row carried through is live — a full post or a slot: the feed holds either
+ * (WEB_INTERFACE → The extension → "The light read"), and a slot keeps its
+ * place by its id, as a full row does.
  */
 export async function reconcileNewer(
-  held: PostJson[],
+  held: Array<PostJson | LightJson>,
   fetchPage: (after: string | null) => Promise<RawPage>,
   cap: number,
-): Promise<{ posts: PostJson[]; next: string | null | undefined; newCount: number }> {
+): Promise<{ posts: Array<PostJson | LightJson>; next: string | null | undefined; newCount: number }> {
   const haveIds = new Set(held.map((p) => p.id));
-  const collected: PostJson[] = [];
+  const collected: Array<PostJson | LightJson> = [];
   let after: string | null = null;
   let lastNext: string | null = null;
   let reconnected = false;

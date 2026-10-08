@@ -1,5 +1,6 @@
 import { NodeClient, type Api } from './api/client';
-import type { PostJson, WithdrawnJson, FeedRow, FeedResult, PostResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
+import type { PostJson, WithdrawnJson, LightJson, FeedRow, FeedResult, PostResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
+import { isFull, isWithdrawn, isLight } from './api/dto';
 import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { Mode } from './mode';
@@ -184,8 +185,10 @@ function subjectWithheldStatus(c: PostCheck): 'unbound' | 'unserved' | null {
 /** The rows a ↻ lands on. One that reconnected puts its new rows on top of the
  *  rows standing as it lands, deduped, so a landing or a `more` that wrote
  *  during its pages keeps what it wrote; one that never reconnected answers its
- *  own window, and its cursor with it (reconcileNewer). */
-function landRefresh(standing: PostJson[], r: { posts: PostJson[]; next: string | null | undefined; newCount: number }): PostJson[] {
+ *  own window, and its cursor with it (reconcileNewer). A slot rides through
+ *  as a live row, by its id (WEB_INTERFACE → The extension → "The light
+ *  read"). */
+function landRefresh(standing: Array<PostJson | LightJson>, r: { posts: Array<PostJson | LightJson>; next: string | null | undefined; newCount: number }): Array<PostJson | LightJson> {
   if (r.next !== undefined) return r.posts;
   const fresh = r.posts.slice(0, r.newCount);
   const have = new Set(fresh.map((p) => p.id));
@@ -604,7 +607,7 @@ export class App {
         // the entry — the node's word, and a lie costs a re-fetch
         // (WEB_INTERFACE → The extension → "The post cache"). An id the
         // cache does not hold is nothing.
-        if ('kind' in r && r.kind === 'withdrawn' && this.postCache !== null) {
+        if (isWithdrawn(r) && this.postCache !== null) {
           void this.postCache.withdraw(r.id, r);
         }
       } else if (c.status === 'unbound') {
@@ -630,8 +633,10 @@ export class App {
     const own = this.idm.current()?.pubKeyHex ?? null;
     for (const { row, check } of bound) {
       if (check.status !== 'bound') continue;
-      // A withdrawn row never passes `bound`; the branch is a type guard.
-      if ('kind' in row) continue;
+      // A withdrawn row or a slot never passes `bound`; the branch is a type
+      // guard — only a full row's bytes reach the cache (WEB_INTERFACE → The
+      // extension → "The post cache" → "Only `bound` rows enter").
+      if (!isFull(row)) continue;
       void this.postCache.put({
         id: check.id,
         txBytes: check.txBytes,
@@ -1062,13 +1067,16 @@ export class App {
   }
 
   // WEB_INTERFACE → The standalone thread — document.title is the author's handle
-  // when the root row carries a name, else the prefix, and Notis.
+  // when the root row carries a name, else the prefix, and Notis. A slot root
+  // carries no author key, so where it names no handle the title stands as
+  // Notis alone (WEB_INTERFACE → The extension → "The light read").
   private updateStandaloneTitle(id: string): void {
     const t = this.state.threads.get(id);
     const root = t?.root;
     if (!root) return;
-    const display = root.authorName !== null ? '@' + root.authorName : shortHex(root.author, 16);
-    document.title = display + ' · Notis';
+    if (root.authorName !== null) document.title = '@' + root.authorName + ' · Notis';
+    else if (!isLight(root)) document.title = shortHex(root.author, 16) + ' · Notis';
+    else document.title = 'Notis';
   }
 
   /** The active scroller: the workspace at one column (the feed and every column
@@ -1227,11 +1235,13 @@ export class App {
   }
 
   /** Replace one card in the feed by post id — the like's optimistic press and its
-   *  rejection re-render only the acted-on card so nothing else moves. */
+   *  rejection re-render only the acted-on card so nothing else moves. A slot
+   *  carries nothing a like press acts on (WEB_INTERFACE → The extension →
+   *  "The light read" → "showing what the row carries and no more"). */
   private renderFeedPost(postId: string): void {
     if (this.standalone) return;
     const post = this.state.feed.posts.find((p) => p.id === postId);
-    if (!post) return;
+    if (!post || !isFull(post)) return;
     replaceFeedCard(this.feedEl, post, this.ctx(), this.handlers);
     this.checkNames('new');
   }
@@ -1368,28 +1378,33 @@ export class App {
   // like that landed after the read began.
   // -------------------------------------------------------------------------
 
-  private indexRows(rows: Array<PostJson | WithdrawnJson | null>): void {
+  private indexRows(rows: Array<FeedRow | null>): void {
     for (const row of rows) {
       if (!row) continue;
-      if (!('kind' in row) && !this.withdrawnSeen.has(row.id)) this.state.posts.set(row.id, row);
+      // AppState.posts holds full rows alone — a slot and a withdrawn marker
+      // stay out of the post index (WEB_INTERFACE → The extension → "The
+      // light read").
+      if (isFull(row) && !this.withdrawnSeen.has(row.id)) this.state.posts.set(row.id, row);
     }
   }
 
   /** Replace a post's row wherever the client holds it — the feed, every thread
    *  that contains it, the posts index, and any open @posts window — so the
-   *  surface that re-renders next draws the node's row, not the stale one. */
+   *  surface that re-renders next draws the node's row, not the stale one. A
+   *  slot standing under the id is replaced by the fetched full row as a full
+   *  row is (WEB_INTERFACE → The extension → "The light read"). */
   private applyFetchedRow(fetched: PostResult | null): void {
-    if (!fetched || 'kind' in fetched) return;
+    if (!fetched || isWithdrawn(fetched)) return;
     this.stampLanding(fetched);
     const id = fetched.id;
     this.state.posts.set(id, fetched);
     const fi = this.state.feed.posts.findIndex((p) => p.id === id);
     if (fi !== -1) this.state.feed.posts[fi] = fetched;
     for (const t of this.state.threads.values()) {
-      if (t.root && !('kind' in t.root) && t.root.id === id) t.root = fetched;
+      if (t.root && !isWithdrawn(t.root) && t.root.id === id) t.root = fetched;
       for (let i = 0; i < t.descendants.length; i++) {
         const d = t.descendants[i]!;
-        if (!('kind' in d) && d.id === id) t.descendants[i] = fetched;
+        if (!isWithdrawn(d) && d.id === id) t.descendants[i] = fetched;
       }
     }
     for (const [, f] of this.authorPostsData) {
@@ -1407,8 +1422,9 @@ export class App {
 
   /** A list page's rows the list may hold: live, and none whose withdrawal the
    *  client saw land — a list holds live rows only (WEB_INTERFACE → The
-   *  withdrawn state). */
-  private liveRows(rows: FeedRow[]): PostJson[] {
+   *  withdrawn state). A slot rides through as a live row, by its id
+   *  (WEB_INTERFACE → The extension → "The light read"). */
+  private liveRows(rows: FeedRow[]): Array<PostJson | LightJson> {
     return rows.filter(isLivePost).filter((r) => !this.withdrawnSeen.has(r.id));
   }
 
@@ -1885,8 +1901,10 @@ export class App {
 
   /** Write a thread read's rows, read from when `landings` stood at `since`, as
    *  the client knows them: a like that landed since keeps its row (keeper), and
-   *  a post whose withdrawal the client saw land is its withdrawn card (known). */
-  private putThreadRows(t: ThreadState, since: number, root: PostJson | WithdrawnJson | null, descendants: FeedRow[]): void {
+   *  a post whose withdrawal the client saw land is its withdrawn card (known).
+   *  A slot subject carries through as a live row by its id (WEB_INTERFACE →
+   *  The extension → "The light read"). */
+  private putThreadRows(t: ThreadState, since: number, root: FeedRow | null, descendants: FeedRow[]): void {
     const keep = this.keeper<FeedRow>(t.root ? [t.root, ...t.descendants] : t.descendants, since);
     t.root = root === null ? null : this.known(keep(root));
     t.descendants = descendants.map((r) => this.known(keep(r)));
@@ -2642,7 +2660,7 @@ export class App {
    *  whose regions the caller must re-render explicitly. The withdrawal joins
    *  the ones the client has seen land, which every later write of rows keeps. */
   private applyWithdrawLanding(postId: string, fetched: PostResult | null): { feedChanged: boolean; postsKeys: string[]; touchParents: string[] } {
-    const withdrawn = fetched !== null && 'kind' in fetched ? fetched : null;
+    const withdrawn = fetched !== null && isWithdrawn(fetched) ? fetched : null;
     if (withdrawn) this.withdrawnSeen.set(postId, withdrawn);
     for (const t of this.state.threads.values()) {
       if (t.root && t.root.id === postId && withdrawn) t.root = withdrawn;
@@ -2947,13 +2965,17 @@ export class App {
   }
 
   private feedHasAuthor(key: string): boolean {
-    return this.state.feed.posts.some((p) => p.author === key) || this.state.feed.pending.some((p) => p.author === key);
+    // A slot carries no author key — only a full row names one
+    // (WEB_INTERFACE → The extension → "The light read").
+    return this.state.feed.posts.some((p) => isFull(p) && p.author === key) || this.state.feed.pending.some((p) => isFull(p) && p.author === key);
   }
 
   private threadHasAuthor(threadId: string, key: string): boolean {
     const t = this.state.threads.get(threadId);
     if (!t || !t.root) return false;
-    return flattenThread(t.root, t.descendants).some((n) => !('kind' in n.row) && (n.row as PostJson).author === key);
+    // A slot carries no author key; only a full row names one (WEB_INTERFACE →
+    // The extension → "The light read").
+    return flattenThread(t.root, t.descendants).some((n) => isFull(n.row) && n.row.author === key);
   }
 
   // ---- the author window and the author-posts window ----
@@ -4013,7 +4035,10 @@ export class App {
       if (!pairs.has(pair)) pairs.set(pair, { key, name });
     };
     const addRow = (row: FeedRow | null | undefined): void => {
-      if (row) add(row.author, row.authorName);
+      // A slot carries a name but no key — the pair the handle renders needs
+      // both, so a slot adds nothing (WEB_INTERFACE → The extension → "The
+      // light read" → "The name on a slot is the node's word, unchecked").
+      if (row && !isLight(row)) add(row.author, row.authorName);
     };
     const cur = this.idm.current();
     if (cur !== null && this.ownName !== null) add(cur.pubKeyHex, this.ownName.name);
@@ -4254,7 +4279,7 @@ export class App {
         const sub = this.state.submissions.find((s) => s.txId === entry.txId);
         if (sub) {
           sub.stage = outcome;
-          if (outcome === 'landed' && fetched !== null && !('kind' in fetched)) sub.blockHeight = fetched.blockHeight;
+          if (outcome === 'landed' && fetched !== null && isFull(fetched)) sub.blockHeight = fetched.blockHeight;
           if (sub.parentId === null) feedTouched = true;
           else touchedPosts.add(sub.parentId);
         }
@@ -4476,7 +4501,7 @@ export class App {
     return s;
   }
 
-  private dedupeOwn(rows: PostJson[]): PostJson[] {
+  private dedupeOwn<T extends { id: string }>(rows: T[]): T[] {
     const own = this.ownPostIds();
     return rows.filter((r) => !own.has(r.id));
   }

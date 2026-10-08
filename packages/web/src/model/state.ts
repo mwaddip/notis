@@ -1,4 +1,4 @@
-import type { PostJson, WithdrawnJson, FeedRow, StatusResult, KarmaResult, VouchesTargetResult, BondsResult, CreditsResult, UsernameResult } from '../api/dto';
+import type { PostJson, WithdrawnJson, LightJson, FeedRow, StatusResult, KarmaResult, VouchesTargetResult, BondsResult, CreditsResult, UsernameResult } from '../api/dto';
 import type { Workspace, Origin } from './workspace';
 import type { Theme, IdTint } from '../prefs';
 import type { Flight } from '../view/card';
@@ -31,8 +31,14 @@ export interface FiguresView {
 export const FEED_COMPOSER_KEY = '@feed';
 
 export interface FeedState {
-  posts: PostJson[];        // confirmed live posts (withdrawn rows filtered out)
-  pending: PostJson[];      // mempool posts, newest and not yet in a block
+  /** The feed's live rows: confirmed posts, with withdrawn rows filtered out
+   *  (WEB_INTERFACE → The withdrawn state), and the slot a reader that lacks
+   *  the post holds against its id (WEB_INTERFACE → The extension → "The
+   *  light read"). */
+  posts: Array<PostJson | LightJson>;
+  /** Mempool rows — a pending post or a pending slot (WEB_INTERFACE → The
+   *  extension → "The light read"). */
+  pending: Array<PostJson | LightJson>;
   next: string | null;      // keyset cursor for older posts
   report: string | null;    // what the last ↻ did
   olderReport: string | null; // what the last "load older" did
@@ -47,7 +53,10 @@ export interface FeedState {
 
 export interface ThreadState {
   id: string;
-  root: PostJson | WithdrawnJson | null;
+  /** The subject the pane draws — a full post, a withdrawn marker, a slot for
+   *  one not held, or `null` where no answer has stood yet (WEB_INTERFACE →
+   *  The extension → "The light read"). */
+  root: PostJson | WithdrawnJson | LightJson | null;
   ancestorIds: Set<string>;   // for the "↳ nested" check
   descendants: FeedRow[];
   descendantCount: number;

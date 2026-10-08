@@ -8,7 +8,7 @@ import { markHandle } from './name-handle';
 import { flattenThread } from '../model/thread';
 import { withheldLine, unservedSubjectLine } from './withheld-line';
 import { identityHue } from '../model/identity';
-import { isWithdrawn } from '../api/dto';
+import { isFull, isLight, isWithdrawn } from '../api/dto';
 import { windowSubject } from '../model/arrangement';
 import type { PostJson, WithdrawnJson } from '../api/dto';
 import type { Column, Workspace } from '../model/workspace';
@@ -58,6 +58,12 @@ function threadLabel(k: string, ctx: RenderCtx): BarLabel {
   if (isWithdrawn(root)) {
     return { authorKey: root.author, authorName: root.authorName, excerpt: 'withdrawn', replyCount: 0, nested };
   }
+  if (isLight(root)) {
+    // A slot subject labels its bar as a loading thread does — no author key,
+    // the handle alone when the row names one, and `loading…`
+    // (WEB_INTERFACE → The extension → "The light read").
+    return { authorKey: undefined, authorName: root.authorName, excerpt: 'loading…', replyCount: t.descendantCount, nested };
+  }
   return { authorKey: root.author, authorName: root.authorName, excerpt: root.content ?? 'content not on this node yet', replyCount: t.descendantCount, nested };
 }
 
@@ -70,7 +76,10 @@ function subjectName(sub: { kind: 'author' | 'posts'; key: string }, ctx: Render
   const read = ctx.author.get(sub.key)?.username;
   if (read) return read.name;
   if (sub.kind === 'author') return null;
-  return ctx.authorPosts.get(sub.key)?.posts.find((row) => row.author === sub.key)?.authorName ?? null;
+  // An author-posts bar reads its subject's name from full rows alone — a
+  // slot carries a name but no key the bar can match (WEB_INTERFACE → The
+  // extension → "The light read").
+  return ctx.authorPosts.get(sub.key)?.posts.find((row) => isFull(row) && row.author === sub.key)?.authorName ?? null;
 }
 
 function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: Handlers, ctx: RenderCtx): HTMLElement {
@@ -302,6 +311,9 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
   const rootId = t.root.id;
   for (const node of flattenThread(t.root, t.descendants)) {
     const row = node.row;
+    // A slot's card is drawn in the extension's slice (Phase 2); here a slot
+    // is skipped (WEB_INTERFACE → The extension → "The light read").
+    if (isLight(row)) continue;
     // A pane's own root does not advertise that it is open — you are looking at
     // it. A reply open in another pane still does.
     body.appendChild(
