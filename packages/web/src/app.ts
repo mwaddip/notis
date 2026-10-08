@@ -34,7 +34,7 @@ import type { TipVerdict } from './model/tip-verdict';
 import { namePair, nameIsClay, recipientVerdict } from './model/name-verdict';
 import { markHandle, landNameClay } from './view/name-handle';
 import type { Anchor } from './model/state';
-import type { Listing, NameResult } from '@dagsocial/nipopow-client';
+import type { Listing, NameResult, PostCheck } from '@dagsocial/nipopow-client';
 import type { Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
@@ -167,7 +167,7 @@ function usernameRejectionCopy(r: Rejection): string {
 
 /** A fresh empty feed state — the author-posts window's body shape, the feed's own. */
 function emptyFeedState(): FeedState {
-  return { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null };
+  return { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null, unboundCount: 0 };
 }
 
 /** The rows a ↻ lands on. One that reconnected puts its new rows on top of the
@@ -440,7 +440,7 @@ export class App {
     this.ledger = ledger ?? new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
     this.tabs = tabs ?? null;
     this.state = {
-      feed: { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null },
+      feed: { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null, unboundCount: 0 },
       threads: new Map(),
       workspace: newWorkspace(),
       status: null,
@@ -551,6 +551,65 @@ export class App {
    *  cache's name reads it; nothing else does. */
   chainName(): string | null {
     return this.tipChain;
+  }
+
+  /** The App's one row-ingestion gate (WEB_INTERFACE → The extension → "The
+   *  post check"). Every row a read brings — the feed's page and its
+   *  pending, the author window's page, a thread's `post`, `ancestors`,
+   *  `descendants` and `pending` — is passed through here before it enters
+   *  state. With no verifier, every row stays and the count is zero. With
+   *  one: `bound` and `nothing-to-bind` enter; `unbound` is counted;
+   *  `unserved` is dropped and uncounted (the node says it holds no bytes
+   *  for that post — no claim about its text). A read's rows go as one
+   *  batch, so one `check` call per read. Bound rows and their checks reach
+   *  the cache's hook, a no-op until the next task lands. */
+  private ingestRows(rows: ReadonlyArray<FeedRow>): { rows: FeedRow[]; unboundCount: number } {
+    if (this.postsVerifier === null) {
+      return { rows: rows.slice(), unboundCount: 0 };
+    }
+    const checks = this.postsVerifier.check(rows as unknown[]);
+    const kept: FeedRow[] = [];
+    const bound: Array<{ row: FeedRow; check: PostCheck }> = [];
+    let unboundCount = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const c = checks[i]!;
+      const r = rows[i]!;
+      if (c.status === 'bound') {
+        kept.push(r);
+        bound.push({ row: r, check: c });
+      } else if (c.status === 'nothing-to-bind') {
+        kept.push(r);
+      } else if (c.status === 'unbound') {
+        unboundCount += 1;
+      }
+      // unserved: not kept, not counted (WEB_INTERFACE → The extension →
+      // "A row whose `tx` is `null` is `unserved`").
+    }
+    this.offerBoundToCache(bound);
+    return { rows: kept, unboundCount };
+  }
+
+  /** The seam the next task will fill — the client caches each `bound` row
+   *  it checked behind one module (WEB_INTERFACE → The extension → "The
+   *  post cache"). A no-op today; it reads the transaction's bytes, the
+   *  author and the parent (held on the `bound` check) and the row's
+   *  display fields. */
+  private offerBoundToCache(_bound: ReadonlyArray<{ row: FeedRow; check: PostCheck }>): void {
+    // no-op (WEB_INTERFACE → The extension → "The post cache")
+  }
+
+  /** The one row's gate — the single post read's answer (WEB_INTERFACE →
+   *  The extension → "The post check"). An `unbound` or `unserved` row is
+   *  used for nothing. */
+  private ingestOne(row: PostJson | WithdrawnJson): PostJson | WithdrawnJson | null {
+    if (this.postsVerifier === null) return row;
+    const [c] = this.postsVerifier.check([row]);
+    if (c === undefined) return null;
+    if (c.status === 'bound' || c.status === 'nothing-to-bind') {
+      if (c.status === 'bound') this.offerBoundToCache([{ row, check: c }]);
+      return row;
+    }
+    return null;
   }
 
   // -------------------------------------------------------------------------
@@ -1371,12 +1430,21 @@ export class App {
    *  its row (keeper). */
   private takeFeedPage(res: FeedResult, since: number): void {
     const feed = this.state.feed;
-    feed.posts = this.liveRows(res.posts).map(this.keeper(feed.posts, since));
-    feed.pending = this.dedupeOwn(res.pending.filter(isLivePost));
+    // Every row the read brought passes through the post check as one page,
+    // before it enters the feed's state (WEB_INTERFACE → The extension →
+    // "The post check"). A first page resets the withheld count — "a
+    // refresh re-reads the list, and starts it again".
+    const ing = this.ingestRows([...res.posts, ...res.pending]);
+    const keptSet = new Set(ing.rows);
+    const keptPosts = res.posts.filter((r) => keptSet.has(r));
+    const keptPending = res.pending.filter((r) => keptSet.has(r));
+    feed.posts = this.liveRows(keptPosts).map(this.keeper(feed.posts, since));
+    feed.pending = this.dedupeOwn(keptPending.filter(isLivePost));
     feed.next = res.next;
     feed.loaded = true;
     feed.loading = false;
-    this.indexRows([...res.posts, ...res.pending]);
+    feed.unboundCount = ing.unboundCount;
+    this.indexRows([...keptPosts, ...keptPending]);
   }
 
   /** Empty the feed's rows — the posts, the mempool rows, the cursor and the
@@ -1437,16 +1505,24 @@ export class App {
       // The reconnection paging lives in reconcileNewer; this fetches each page
       // and takes the mempool from page 0 (the only call with a null cursor).
       // The rows land together once the last page has answered; a page offers
-      // its live rows alone (liveRows).
+      // its live rows alone (liveRows). Each read's rows go through the post
+      // check as one page (WEB_INTERFACE → The extension → "The post check");
+      // a refresh resets the withheld count and the pages add to it.
       const rows: FeedRow[] = [];
       let pending: FeedRow[] = [];
+      let unboundCount = 0;
       const r = await reconcileNewer(
         feed.posts,
         async (after) => {
           const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer(), undefined, true, this.postsTx());
-          rows.push(...res.posts, ...res.pending);
-          if (after === null) pending = res.pending;
-          return { posts: this.liveRows(res.posts), next: res.next };
+          const ing = this.ingestRows([...res.posts, ...res.pending]);
+          const keptSet = new Set(ing.rows);
+          const keptPosts = res.posts.filter((p) => keptSet.has(p));
+          const keptPending = res.pending.filter((p) => keptSet.has(p));
+          unboundCount += ing.unboundCount;
+          rows.push(...keptPosts, ...keptPending);
+          if (after === null) pending = keptPending;
+          return { posts: this.liveRows(keptPosts), next: res.next };
         },
         REFRESH_PAGE_CAP,
       );
@@ -1455,6 +1531,7 @@ export class App {
       feed.pending = this.dedupeOwn(pending.filter(isLivePost));
       feed.posts = landRefresh(feed.posts, r);
       if (r.next !== undefined) feed.next = r.next; // reset only on the replace branch
+      feed.unboundCount = unboundCount;
       feed.report = r.newCount ? `${r.newCount} new ${r.newCount === 1 ? 'post' : 'posts'}` : 'no new posts';
       feed.error = null;
     } catch (e) {
@@ -1480,13 +1557,20 @@ export class App {
       const res = await this.client.feed({ limit: FEED_LIMIT, after: cursor }, this.viewer(), undefined, true, this.postsTx());
       if (gen !== this.readerGen) return;
       if (feed.next === cursor) {
-        const older = this.liveRows(res.posts);
+        // The page's rows go through the post check — a continuation adds to
+        // the feed's withheld count (WEB_INTERFACE → The extension → "The
+        // post check").
+        const ing = this.ingestRows(res.posts);
+        const keptSet = new Set(ing.rows);
+        const keptPosts = res.posts.filter((p) => keptSet.has(p));
+        const older = this.liveRows(keptPosts);
         const have = new Set(feed.posts.map((p) => p.id));
         const added = older.filter((p) => !have.has(p.id));
         feed.posts = [...feed.posts, ...added];
         feed.next = res.next;
+        feed.unboundCount += ing.unboundCount;
         feed.olderReport = added.length ? `${added.length} older ${added.length === 1 ? 'post' : 'posts'}` : 'no older posts';
-        this.indexRows(res.posts);
+        this.indexRows(keptPosts);
       }
     } catch (e) {
       if (gen !== this.readerGen) return;
@@ -1717,19 +1801,40 @@ export class App {
   private ensureThreadState(id: string): ThreadState {
     let t = this.state.threads.get(id);
     if (!t) {
-      t = { id, root: null, ancestorIds: new Set(), descendants: [], descendantCount: 0, next: null, report: null, loading: false, error: null };
+      t = { id, root: null, ancestorIds: new Set(), descendants: [], descendantCount: 0, next: null, report: null, loading: false, error: null, unboundCount: 0, subjectUnbound: false };
       this.state.threads.set(id, t);
     }
     return t;
   }
 
   private applyThread(t: ThreadState, res: ThreadResult, since: number): void {
-    this.putThreadRows(t, since, res.post, res.descendants);
-    t.ancestorIds = new Set(res.ancestors.map((a) => a.id));
+    // Every row the thread read brought — post, ancestors, descendants and
+    // pending — goes through the post check as one page, before any of them
+    // enters state (WEB_INTERFACE → The extension → "The post check"). A
+    // first page resets the thread's withheld count; `subjectUnbound` is
+    // true when the subject itself is `unbound`, and the pane then shows
+    // the clay line and nothing of the node's row.
+    const batch: FeedRow[] = [];
+    const subject = res.post;
+    const subjectIdx = subject === null ? -1 : 0;
+    if (subject !== null) batch.push(subject);
+    batch.push(...res.ancestors, ...res.descendants, ...res.pending);
+    const ing = this.ingestRows(batch);
+    const keptSet = new Set(ing.rows);
+    const subjectKept = subjectIdx === -1 ? true : keptSet.has(batch[subjectIdx]!);
+    const subjectWithheld = subject !== null && !subjectKept;
+    const applyPost = subjectWithheld ? null : subject;
+    const keptAncestors = res.ancestors.filter((r) => keptSet.has(r));
+    const keptDescendants = res.descendants.filter((r) => keptSet.has(r));
+    const keptPending = res.pending.filter((r) => keptSet.has(r));
+    this.putThreadRows(t, since, applyPost, keptDescendants);
+    t.ancestorIds = new Set(keptAncestors.map((a) => a.id));
     t.descendantCount = res.descendantCount;
     t.next = res.next;
     t.error = null;
-    this.indexRows([t.root, ...res.ancestors, ...t.descendants, ...res.pending]);
+    t.unboundCount = ing.unboundCount;
+    t.subjectUnbound = subjectWithheld;
+    this.indexRows([t.root, ...keptAncestors, ...t.descendants, ...keptPending]);
   }
 
   /** Write a thread read's rows, read from when `landings` stood at `since`, as
@@ -1790,23 +1895,43 @@ export class App {
         t.root = null;
         if (region) region.report = null;
       } else {
-        const all: FeedRow[] = [...res.descendants];
+        // Each thread page's rows go through the post check as one batch
+        // (WEB_INTERFACE → The extension → "The post check"); a refresh
+        // resets the thread's withheld count and the pages add to it. The
+        // subject rides page 1 and decides `subjectUnbound`.
+        const firstBatch: FeedRow[] = [];
+        if (res.post !== null) firstBatch.push(res.post);
+        firstBatch.push(...res.ancestors, ...res.descendants);
+        const firstIng = this.ingestRows(firstBatch);
+        const firstKeptSet = new Set(firstIng.rows);
+        const subject = res.post;
+        const subjectWithheld = subject !== null && !firstKeptSet.has(subject);
+        const applyPost = subjectWithheld ? null : subject;
+        const keptAncestors = res.ancestors.filter((r) => firstKeptSet.has(r));
+        const keptFirstDescendants = res.descendants.filter((r) => firstKeptSet.has(r));
+        const all: FeedRow[] = [...keptFirstDescendants];
+        let totalUnbound = firstIng.unboundCount;
         let next = res.next;
         let pages = 1;
         while (next !== null && pages < REFRESH_PAGE_CAP) {
           const more = await this.client.thread(id, { limit: THREAD_LIMIT, after: next }, this.viewer(), this.postsTx());
           if (gen !== this.readerGen) return;
           if (more === null) break;
-          all.push(...more.descendants);
+          const ing = this.ingestRows(more.descendants);
+          const keptSet = new Set(ing.rows);
+          all.push(...more.descendants.filter((r) => keptSet.has(r)));
+          totalUnbound += ing.unboundCount;
           next = more.next;
           res = more;
           pages++;
         }
-        this.putThreadRows(t, since, res.post, all);
-        t.ancestorIds = new Set(res.ancestors.map((a) => a.id));
+        this.putThreadRows(t, since, applyPost, all);
+        t.ancestorIds = new Set(keptAncestors.map((a) => a.id));
         t.descendantCount = res.descendantCount;
         t.next = next; // null once fully read; set only if the page cap was hit
         t.error = null;
+        t.unboundCount = totalUnbound;
+        t.subjectUnbound = subjectWithheld;
         this.indexRows([t.root, ...t.descendants]);
         const delta = t.descendantCount - before;
         if (region) region.report = delta > 0 ? `${delta} new ${delta === 1 ? 'reply' : 'replies'}` : 'no new replies';
@@ -1832,11 +1957,18 @@ export class App {
       const res = await this.client.thread(id, { limit: THREAD_LIMIT, after: cursor }, this.viewer(), this.postsTx());
       if (gen !== this.readerGen || t.next !== cursor) return;
       if (res !== null) {
+        // The page's descendants go through the post check — a `more`
+        // adds to the thread's withheld count (WEB_INTERFACE → The
+        // extension → "The post check").
+        const ing = this.ingestRows(res.descendants);
+        const keptSet = new Set(ing.rows);
+        const kept = res.descendants.filter((d) => keptSet.has(d));
         const have = new Set(t.descendants.map((d) => d.id));
-        const added = res.descendants.filter((d) => !have.has(d.id)).map((d) => this.known(d));
+        const added = kept.filter((d) => !have.has(d.id)).map((d) => this.known(d));
         t.descendants = [...t.descendants, ...added];
         t.next = res.next;
         t.descendantCount = res.descendantCount;
+        t.unboundCount += ing.unboundCount;
         this.indexRows(added);
       }
     } catch (e) {
@@ -2785,11 +2917,18 @@ export class App {
     try {
       const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer(), key, false, this.postsTx());
       if (gen !== this.readerGen) return;
-      f.posts = this.liveRows(res.posts).map(this.keeper(f.posts, since));
+      // The page's rows go through the post check (WEB_INTERFACE → The
+      // extension → "The post check"); a first page resets the window's
+      // withheld count.
+      const ing = this.ingestRows(res.posts);
+      const keptSet = new Set(ing.rows);
+      const keptPosts = res.posts.filter((p) => keptSet.has(p));
+      f.posts = this.liveRows(keptPosts).map(this.keeper(f.posts, since));
       f.next = res.next;
       f.loaded = true;
       f.error = null;
-      this.indexRows(res.posts);
+      f.unboundCount = ing.unboundCount;
+      this.indexRows(keptPosts);
     } catch (e) {
       if (gen !== this.readerGen) return;
       f.error = msg(e);
@@ -2811,12 +2950,17 @@ export class App {
     const region = this.regionFocusedOn(postsWindowId(key));
     try {
       const rows: FeedRow[] = [];
+      let unboundCount = 0;
       const r = await reconcileNewer(
         f.posts,
         async (after) => {
           const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer(), key, false, this.postsTx());
-          rows.push(...res.posts);
-          return { posts: this.liveRows(res.posts), next: res.next };
+          const ing = this.ingestRows(res.posts);
+          const keptSet = new Set(ing.rows);
+          const keptPosts = res.posts.filter((p) => keptSet.has(p));
+          unboundCount += ing.unboundCount;
+          rows.push(...keptPosts);
+          return { posts: this.liveRows(keptPosts), next: res.next };
         },
         REFRESH_PAGE_CAP,
       );
@@ -2825,6 +2969,7 @@ export class App {
       f.posts = landRefresh(f.posts, r);
       if (r.next !== undefined) f.next = r.next;
       f.error = null;
+      f.unboundCount = unboundCount;
       if (region) region.report = r.newCount ? `${r.newCount} new ${r.newCount === 1 ? 'post' : 'posts'}` : 'no new posts';
     } catch (e) {
       if (gen !== this.readerGen) return;
@@ -2845,11 +2990,18 @@ export class App {
     try {
       const res = await this.client.feed({ limit: FEED_LIMIT, after: cursor }, this.viewer(), key, false, this.postsTx());
       if (gen !== this.readerGen || f.next !== cursor) return;
-      const older = this.liveRows(res.posts);
+      // The page's rows go through the post check — a `more` adds to the
+      // window's withheld count (WEB_INTERFACE → The extension → "The
+      // post check").
+      const ing = this.ingestRows(res.posts);
+      const keptSet = new Set(ing.rows);
+      const keptPosts = res.posts.filter((p) => keptSet.has(p));
+      const older = this.liveRows(keptPosts);
       const have = new Set(f.posts.map((p) => p.id));
       f.posts = [...f.posts, ...older.filter((p) => !have.has(p.id))];
       f.next = res.next;
-      this.indexRows(res.posts);
+      f.unboundCount += ing.unboundCount;
+      this.indexRows(keptPosts);
     } catch (e) {
       if (gen !== this.readerGen || f.next !== cursor) return;
       f.error = msg(e);
@@ -3938,8 +4090,19 @@ export class App {
         usernameChanged = true;
         continue;
       }
-      const fetched = await this.client.post(entry.postId, this.viewer(), this.postsTx());
+      const rawFetched = await this.client.post(entry.postId, this.viewer(), this.postsTx());
       if (gen !== this.readerGen) return;
+      // The single post read passes its answer through the one-row gate
+      // (WEB_INTERFACE → The extension → "The post check"): an `unbound`
+      // or `unserved` answer is used for nothing, so the reconcile reads
+      // it as the node had no row (as a 404 would).
+      const fetched: PostResult | null = rawFetched === null
+        ? null
+        : (() => {
+          const kept = this.ingestOne(rawFetched);
+          if (kept === null) return null;
+          return rawFetched;
+        })();
       if (entry.kind === 'post') {
         const outcome = reconcilePost(entry, fetched, tip);
         if (outcome === 'pending') continue;

@@ -2,6 +2,7 @@ import { el, reportNode } from '../dom';
 import { card, submissionToPost, flightFor, listCardOpts, type CardOpts } from './card';
 import type { PostJson } from '../api/dto';
 import { FEED_COMPOSER_KEY, type FeedState, type RenderCtx, type Handlers } from '../model/state';
+import { withheldLine } from './withheld-line';
 
 // The feed: roots alone, newest first — it reads GET /posts?roots=1, so no reply
 // renders here; a reply is reached through its thread or its author's window
@@ -82,6 +83,11 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
     return;
   }
   if (feed.report) container.appendChild(reportNode(feed.report));
+  // The withheld line (WEB_INTERFACE → The extension → "The post check"):
+  // at the list's head, in clay, counting what the feed's standing reads
+  // withheld; nothing when the count is zero.
+  const wl = withheldLine(feed.unboundCount);
+  if (wl) container.appendChild(wl);
 
   if (!feed.loaded && feed.loading) {
     container.appendChild(el('div', 'loading', 'loading…'));

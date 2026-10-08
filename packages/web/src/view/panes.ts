@@ -6,6 +6,7 @@ import { walletBody } from './wallet';
 import { authorBody, authorPostsBody, type AuthorCtx, type PostsCtx } from './author';
 import { markHandle } from './name-handle';
 import { flattenThread } from '../model/thread';
+import { withheldLine } from './withheld-line';
 import { identityHue } from '../model/identity';
 import { isWithdrawn } from '../api/dto';
 import { windowSubject } from '../model/arrangement';
@@ -225,7 +226,7 @@ function postsCtxFrom(key: string, ci: number, ctx: RenderCtx): PostsCtx {
   return {
     authorKey: key,
     origin: { from: 'pane', ci },
-    feed: f ?? { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: true, error: null },
+    feed: f ?? { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: true, error: null, unboundCount: 0 },
     writeEnabled: ctx.writeEnabled,
     ownKey: ctx.ownKey,
     locked: ctx.identity?.locked ?? false,
@@ -272,10 +273,23 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
     body.appendChild(el('div', 'error', `can't load this thread — ${t.error}`));
     return;
   }
+  // A thread whose subject is `unbound` shows the clay withheld line and
+  // nothing of the node's row (WEB_INTERFACE → The extension → "The post
+  // check" → "A thread whose subject is withheld").
+  if (t.subjectUnbound) {
+    const wl = withheldLine(t.unboundCount);
+    if (wl) body.appendChild(wl);
+    return;
+  }
   if (!t.root) {
     body.appendChild(el('div', 'loading', 'this post is gone.'));
     return;
   }
+  // The thread's withheld line, at its head: the count of `unbound` rows
+  // this thread's standing reads withheld (WEB_INTERFACE → The extension →
+  // "The post check").
+  const twl = withheldLine(t.unboundCount);
+  if (twl) body.appendChild(twl);
 
   const rootId = t.root.id;
   for (const node of flattenThread(t.root, t.descendants)) {

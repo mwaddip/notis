@@ -39,6 +39,10 @@ export interface FeedState {
   loaded: boolean;
   loading: boolean;
   error: string | null;
+  /** The count of `unbound` rows the list's standing reads withheld — a
+   *  continuation adds, a refresh resets, zero when none (WEB_INTERFACE →
+   *  The extension → "The post check"). */
+  unboundCount: number;
 }
 
 export interface ThreadState {
@@ -51,6 +55,13 @@ export interface ThreadState {
   report: string | null;
   loading: boolean;
   error: string | null;
+  /** The count of `unbound` rows this thread's standing reads withheld
+   *  (WEB_INTERFACE → The extension → "The post check"). */
+  unboundCount: number;
+  /** True when the thread's own subject is `unbound` — the pane shows the
+   *  clay line and nothing of the node's row (WEB_INTERFACE → The
+   *  extension → "The post check" → "A thread whose subject is withheld"). */
+  subjectUnbound: boolean;
 }
 
 export interface AppState {

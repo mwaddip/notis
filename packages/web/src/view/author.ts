@@ -1,4 +1,5 @@
 import { el, shortHex } from '../dom';
+import { withheldLine } from './withheld-line';
 import { unlockForm } from './passphrase';
 import { card, stageLine, listCardOpts } from './card';
 import { markHandle, nameLine } from './name-handle';
@@ -277,6 +278,10 @@ export function authorPostsBody(handlers: PostsHandlers, ctx: PostsCtx): HTMLEle
     b.appendChild(el('div', 'error', `can't load these posts — ${feed.error}`));
     return b;
   }
+  // The withheld line at the window's head (WEB_INTERFACE → The extension
+  // → "The post check").
+  const wl = withheldLine(feed.unboundCount);
+  if (wl) b.appendChild(wl);
   if (feed.posts.length === 0) {
     b.appendChild(el('div', 'empty', 'no posts yet'));
     return b;
