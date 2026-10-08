@@ -184,7 +184,7 @@ export function parseBatchIds(body: unknown): string[] | { error: string } {
   const ids = (body as { ids?: unknown }).ids;
   if (!Array.isArray(ids)) return { error: 'ids required (array)' };
   if (ids.length < 1 || ids.length > BATCH_READ_MAX) {
-    return { error: 'ids must hold 1 to 100 post ids' };
+    return { error: `ids must hold 1 to ${BATCH_READ_MAX} post ids` };
   }
   const out: string[] = [];
   const seen = new Set<string>();

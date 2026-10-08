@@ -314,6 +314,18 @@ describe('parseBatchIds', () => {
     expect(BATCH_READ_MAX).toBe(100);
   });
 
+  // NODE_INTERFACE → Posts → "The batch read answers posts by id": the
+  // overflow message reads BATCH_READ_MAX, so this pins the current
+  // contract's string byte for byte against the current constant.
+  it('the overflow message pins BATCH_READ_MAX=100 to "ids must hold 1 to 100 post ids"', () => {
+    expect(BATCH_READ_MAX).toBe(100);
+    const ids101 = Array.from({ length: 101 }, (_, i) => (i + 1).toString(16).padStart(64, '0'));
+    const bad = parseBatchIds({ ids: ids101 });
+    expect(isBatchIdsError(bad)).toBe(true);
+    if (!isBatchIdsError(bad)) return;
+    expect(bad.error).toBe('ids must hold 1 to 100 post ids');
+  });
+
   it('answers lower-cased ids in the order given', () => {
     const upper = 'AB'.repeat(32);
     const lower = 'cd'.repeat(32);

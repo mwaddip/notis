@@ -287,6 +287,34 @@ export class FeedService {
     return this.deps.hasLikeRecord(postId, viewer);
   }
 
+  // NODE_INTERFACE → Posts: the full form answers `PostJson | WithdrawnJson`,
+  // the light form `LightJson | WithdrawnJson` — the overload picks the arm
+  // from `light`'s own type, so a caller that passes `false` holds the full
+  // union without a cast.
+  private storedPostToJson(
+    post: StoredPost,
+    viewer: Uint8Array | null,
+    nameCache: Map<string, string | null>,
+    txResolver: TxBytesResolver | null,
+    light: false,
+    precomputedDescendantCount?: number,
+  ): PostJson | WithdrawnJson;
+  private storedPostToJson(
+    post: StoredPost,
+    viewer: Uint8Array | null,
+    nameCache: Map<string, string | null>,
+    txResolver: TxBytesResolver | null,
+    light: true,
+    precomputedDescendantCount?: number,
+  ): LightJson | WithdrawnJson;
+  private storedPostToJson(
+    post: StoredPost,
+    viewer: Uint8Array | null,
+    nameCache: Map<string, string | null>,
+    txResolver: TxBytesResolver | null,
+    light: boolean,
+    precomputedDescendantCount?: number,
+  ): PostRow;
   private storedPostToJson(
     post: StoredPost,
     viewer: Uint8Array | null,
@@ -348,8 +376,7 @@ export class FeedService {
     const result = this.deps.getPost(id);
     if (result === null) return null;
     // NODE_INTERFACE → Posts: `GET /posts/:id` takes no `light`.
-    return this.storedPostToJson(result, viewer, new Map(), this.makeTxResolver(tx), false) as
-      PostJson | WithdrawnJson;
+    return this.storedPostToJson(result, viewer, new Map(), this.makeTxResolver(tx), false);
   }
 
   queryPosts(opts: {
@@ -438,9 +465,7 @@ export class FeedService {
       // NODE_INTERFACE → Posts → "The batch read answers posts by id": an id
       // the node has never heard of is left out, in the order asked.
       if (row === null) continue;
-      out.push(
-        this.storedPostToJson(row, viewer, nameCache, txResolver, false) as PostJson | WithdrawnJson,
-      );
+      out.push(this.storedPostToJson(row, viewer, nameCache, txResolver, false));
     }
     return out;
   }
