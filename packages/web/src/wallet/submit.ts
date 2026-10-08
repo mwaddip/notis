@@ -57,6 +57,11 @@ export interface SubmitDeps {
    *  The wallet, "the fourth ending is the composer still open"). Only
    *  submitPostFlow calls it; every other flow leaves it unset. */
   onSigned?: () => void;
+  /** Called with the transaction's bytes after a successful post, so the
+   *  extension's post cache can hold the reader's own post from its submit
+   *  (WEB_INTERFACE → The extension → "The post cache"). Only submitPostFlow
+   *  calls it; every other flow leaves it unset. */
+  onCachePost?: (info: { txBytes: Uint8Array; txId: string; postId: string }) => void;
 }
 
 export type SubmitResult<B> =
@@ -146,6 +151,11 @@ export async function submitPostFlow(
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
   });
+  // The reader's own post enters the extension's post cache at its submit —
+  // the transaction the client built, the id and txId it derived
+  // (WEB_INTERFACE → The extension → "The post cache"). The web build hands
+  // the App no cache, which leaves this callback unset.
+  deps.onCachePost?.({ txBytes: encodeTx(built.tx), txId: built.txId, postId: body.postId });
   return { ok: true, entry, body };
 }
 

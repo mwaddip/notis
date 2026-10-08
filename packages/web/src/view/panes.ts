@@ -271,7 +271,11 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
   }
   if (t.error) {
     body.appendChild(el('div', 'error', `can't load this thread — ${t.error}`));
-    return;
+    // The post cache answers a failed read: when the subject is held, the
+    // held rows render beneath the error line, each as any card renders
+    // (WEB_INTERFACE → The extension → "The post cache"). With no root,
+    // today's failed read stands alone.
+    if (!t.root) return;
   }
   // A thread whose subject the check withheld renders no row (WEB_INTERFACE
   // → The extension → "The post check"): `'unbound'` shows the clay

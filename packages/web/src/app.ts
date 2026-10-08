@@ -45,6 +45,7 @@ import {
   FEED_COMPOSER_KEY, type AppState, type ThreadState, type RenderCtx, type Handlers, type Submission,
   type FlightStage, type AppIdentity, type AuthorWindowData, type FeedState, type FiguresView,
   type TipVerifier, type TipRun, type FiguresVerifier, type NamesVerifier, type PostsVerifier,
+  type PostCache, type CachedThread,
 } from './model/state';
 import { decideMove, type ScreenEntry } from './history';
 
@@ -378,6 +379,11 @@ export class App {
   // state; the web build is handed none, sends no `tx` and shows every row
   // the node serves.
   private postsVerifier: PostsVerifier | null;
+  // The post cache (WEB_INTERFACE → The extension → "The post cache") — non-
+  // null only in the extension build. `offerBoundToCache` and `ingestRows`
+  // write to it; a thread's read that throws reads it; a put is started and
+  // never awaited by a render path.
+  private postCache: PostCache | null;
   // The chain the verified tip run named — the hash of block 1 of the
   // reading node's verified proof (WEB_INTERFACE → The extension → "The
   // chain's name"). Written beside the verdict and the anchor, dropped on a
@@ -429,6 +435,7 @@ export class App {
     figuresVerifier?: FiguresVerifier | null,
     namesVerifier?: NamesVerifier | null,
     postsVerifier?: PostsVerifier | null,
+    postCache?: PostCache | null,
   ) {
     this.client = client ?? new NodeClient(() => prefs.node);
     this.writeClient = writeClient ?? new WriteClient(() => prefs.node);
@@ -439,6 +446,7 @@ export class App {
     this.figuresVerifier = figuresVerifier ?? null;
     this.namesVerifier = namesVerifier ?? null;
     this.postsVerifier = postsVerifier ?? null;
+    this.postCache = postCache ?? null;
     // With no verifier the verdict stays `undefined` — the corner reads the
     // first paragraph of the status corner, word for word (WEB_INTERFACE →
     // The status corner, → The extension → "The verified tip").
@@ -591,6 +599,13 @@ export class App {
         bound.push({ row: r, check: c });
       } else if (c.status === 'nothing-to-bind') {
         kept.push(r);
+        // A withdrawn row for a held id empties the entry's text and keeps
+        // the entry — the node's word, and a lie costs a re-fetch
+        // (WEB_INTERFACE → The extension → "The post cache"). An id the
+        // cache does not hold is nothing.
+        if ('kind' in r && r.kind === 'withdrawn' && this.postCache !== null) {
+          void this.postCache.withdraw(r.id, r);
+        }
       } else if (c.status === 'unbound') {
         unboundCount += 1;
       }
@@ -601,12 +616,30 @@ export class App {
     return { rows: kept, unboundCount, checks };
   }
 
-  /** The hook the post cache registers against (WEB_INTERFACE → The
-   *  extension → "The post cache"): bound rows and their check pass
-   *  through here, carrying the transaction's bytes, the author and the
-   *  parent (held on the `bound` check). The App keeps nothing. */
-  private offerBoundToCache(_bound: ReadonlyArray<{ row: FeedRow; check: PostCheck }>): void {
-    // the App keeps nothing (WEB_INTERFACE → The extension → "The post cache")
+  /** Bound rows reach the post cache from here (WEB_INTERFACE → The
+   *  extension → "The post cache"): each put carries the transaction's
+   *  bytes, the author and the parent as the check gave them, and the row
+   *  the node served. A withdrawn row for a held id reaches the cache
+   *  through `ingestRows`' `nothing-to-bind` branch. A put is started and
+   *  never awaited by a render path — the two failures the module absorbs
+   *  are a put that does not fit and a browser without IndexedDB. The App
+   *  keeps nothing. */
+  private offerBoundToCache(bound: ReadonlyArray<{ row: FeedRow; check: PostCheck }>): void {
+    if (this.postCache === null || bound.length === 0) return;
+    const own = this.idm.current()?.pubKeyHex ?? null;
+    for (const { row, check } of bound) {
+      if (check.status !== 'bound') continue;
+      // A withdrawn row never passes `bound`; the branch is a type guard.
+      if ('kind' in row) continue;
+      void this.postCache.put({
+        id: check.id,
+        txBytes: check.txBytes,
+        row,
+        author: check.author,
+        parent: check.parent,
+        own: own !== null && check.author === own,
+      });
+    }
   }
 
   /** The one row's gate — the single post read's answer (WEB_INTERFACE →
@@ -1879,9 +1912,38 @@ export class App {
     } catch (e) {
       if (gen !== this.readerGen) return;
       t.error = msg(e);
+      // A thread whose read fails reads the cache (WEB_INTERFACE → The
+      // extension → "The post cache"). The held rows render beneath the
+      // failed read; the next read that answers lands on them as a refresh
+      // does. A read begun before a node or identity change writes nothing
+      // (→ "No answer overwrites a newer one"): `readerGen` was captured
+      // before this await.
+      await this.applyCachedThread(t, id, gen);
     }
     t.loading = false;
     this.renderThreadLoad(id);
+  }
+
+  /** Read the post cache for a thread whose node read failed; write its rows
+   *  into the ThreadState under the same generation guard the fetch used
+   *  (WEB_INTERFACE → The extension → "The post cache"). A read with no
+   *  cache, or one the cache does not hold, is nothing — today's failed
+   *  read stands. */
+  private async applyCachedThread(t: ThreadState, id: string, gen: number): Promise<void> {
+    if (this.postCache === null) return;
+    let held: CachedThread | null;
+    try {
+      held = await this.postCache.thread(id);
+    } catch {
+      return;
+    }
+    if (gen !== this.readerGen) return;
+    if (held === null) return;
+    t.root = held.post;
+    t.ancestorIds = new Set(held.ancestors.map((a) => a.id));
+    t.descendants = held.descendants;
+    t.descendantCount = held.descendants.length;
+    this.indexRows([t.root, ...held.ancestors, ...held.descendants]);
   }
 
   /** Refresh re-reads the whole thread — descendants load oldest-first, so new
@@ -1953,6 +2015,9 @@ export class App {
     } catch (e) {
       if (gen !== this.readerGen) return;
       t.error = msg(e);
+      // The cache answers a thread whose refresh fails, as it does a first
+      // read (WEB_INTERFACE → The extension → "The post cache").
+      await this.applyCachedThread(t, id, gen);
     }
     this.renderRegionsFor(id);
   }
@@ -2244,6 +2309,45 @@ export class App {
     return { reads: this.client, write: this.writeClient, ledger: this.ledger, identity: this.idm };
   }
 
+  /** The post flow's cache hook (WEB_INTERFACE → The extension → "The post
+   *  cache"): the reader's own post enters at its submit, from the
+   *  transaction the client built, under the id and txId it derived. A
+   *  later read that brings the node's row refreshes it and keeps `own`
+   *  (post-cache.ts: `put` ORs the new entry's own with the prior's). */
+  private cachePostFromSubmit(content: string, parentId: string | null): (info: { txBytes: Uint8Array; txId: string; postId: string }) => void {
+    return (info): void => {
+      if (this.postCache === null) return;
+      const cur = this.idm.current();
+      if (cur === null) return;
+      const row: PostJson = {
+        id: info.postId,
+        content,
+        contentHash: contentHashHex(content),
+        author: cur.pubKeyHex,
+        parentRefs: parentId === null ? [] : [parentId],
+        protocolVersion: this.state.status?.protocolVersion ?? 1,
+        type: 'regular',
+        status: 'pending',
+        blockHeight: null,
+        blockIndex: null,
+        blockCreatedAt: null,
+        likeCount: 0,
+        descendantCount: 0,
+        authorName: this.ownName?.name ?? null,
+        likedByViewer: null,
+        txId: info.txId,
+      };
+      void this.postCache.put({
+        id: info.postId,
+        txBytes: info.txBytes,
+        row,
+        author: cur.pubKeyHex,
+        parent: parentId,
+        own: true,
+      });
+    };
+  }
+
   private openComposer(parentId: string | null): void {
     if (this.idm.current() === null) return;
     const key = composerKey(parentId);
@@ -2336,7 +2440,7 @@ export class App {
     };
     let result;
     try {
-      result = await submitPostFlow({ ...this.submitDeps(), onSigned }, text, parentId);
+      result = await submitPostFlow({ ...this.submitDeps(), onSigned, onCachePost: this.cachePostFromSubmit(text, parentId) }, text, parentId);
     } catch {
       // A transport failure. Before the sign — a pre-sign read threw and
       // onSigned never fired — the composer is still open with its text; after
@@ -2393,7 +2497,7 @@ export class App {
     sub.expiresAtHeight = null;
     sub.blockHeight = null;
     this.renderForParent(sub.parentId);
-    await this.flight(sub, () => submitPostFlow(this.submitDeps(), sub.content, sub.parentId));
+    await this.flight(sub, () => submitPostFlow({ ...this.submitDeps(), onCachePost: this.cachePostFromSubmit(sub.content, sub.parentId) }, sub.content, sub.parentId));
   }
 
   /** Drive a submission's flight from a `try again`. notSigned there has no
@@ -3553,7 +3657,16 @@ export class App {
         this.verifyInFlight = false;
         this.tipVerdict = run.verdict;
         this.tipAnchor = run.anchor;
+        const chainBefore = this.tipChain;
         this.tipChain = run.chain;
+        // The post cache opens under the chain the run named — the hash of
+        // the first header of the reading node's verified proof
+        // (WEB_INTERFACE → The extension → "The post cache", → "The chain's
+        // name"). A node change does not close it; a later run under
+        // another chain reopens it there.
+        if (run.chain !== null && run.chain !== chainBefore && this.postCache !== null) {
+          void this.postCache.open(run.chain);
+        }
         this.renderCornerNow();
         // WEB_INTERFACE → The extension → "The verified figures" — a run proves
         // a listing read after its anchor, so a `verified` run reads the
