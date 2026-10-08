@@ -1,4 +1,14 @@
 import { describe, it, expect } from 'vitest';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import {
+  PROTOCOL_VERSION,
+  bytesToHex,
+  computeContentHash,
+  computePostId,
+  computeTxId,
+  encodeTx,
+} from '@dagsocial/types';
+import type { PostCommit, UtxoTransaction } from '@dagsocial/types';
 import { runCli, toJson } from '../src/cli.js';
 import type { Config } from '../src/config.js';
 import type { HttpFetch } from '../src/http.js';
@@ -101,6 +111,7 @@ describe("the command line's composition — runCli + toJson", () => {
       k: K,
       profile,
       user: FAKE_USER,
+      post: null,
       allowSingle: false,
       json: true,
     };
@@ -168,6 +179,7 @@ describe("the command line's composition — runCli + toJson", () => {
       k: K,
       profile,
       user: FAKE_USER,
+      post: null,
       allowSingle: false,
       json: true,
     };
@@ -183,5 +195,141 @@ describe("the command line's composition — runCli + toJson", () => {
     const json = toJson(result);
     expect((json['karma'] as Record<string, unknown>)['holdings']).toBe('not-read');
     expect((json['credits'] as Record<string, unknown>)['holdings']).toBe('not-read');
+  });
+});
+
+// WEB_INTERFACE → The extension → "The post check" — the command line's
+// `post <id>` branch of runCli.
+describe('the command line\'s post <id> subcommand', () => {
+  const postNodeUrl = 'http://a:3000';
+  const profile = devnetProfile();
+
+  function buildPostRow(): { id: string; row: Record<string, unknown>; authorHex: string } {
+    const seed = new Uint8Array(32).fill(5);
+    const pub = ed25519.getPublicKey(seed);
+    const content = 'the post the command checks';
+    const commit: PostCommit = {
+      contentHash: computeContentHash(content),
+      author: pub,
+      parentRefs: [],
+      protocolVersion: PROTOCOL_VERSION,
+      type: 'regular',
+    };
+    const tx: UtxoTransaction = {
+      inputs: ['ab'.repeat(32)],
+      outputs: [],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      post: commit,
+    };
+    const txId = computeTxId(tx);
+    tx.signatures[bytesToHex(pub)] = ed25519.sign(hexToBytes(txId), seed);
+    const id = computePostId(txId, 0);
+    return {
+      id,
+      authorHex: bytesToHex(pub),
+      row: {
+        id,
+        txId,
+        tx: bytesToHex(encodeTx(tx)),
+        content,
+        contentHash: bytesToHex(commit.contentHash),
+        author: bytesToHex(pub),
+        parentRefs: [],
+        protocolVersion: PROTOCOL_VERSION,
+        type: 'regular',
+        status: 'confirmed',
+        blockHeight: 10,
+        blockIndex: 0,
+        blockCreatedAt: 1_000_000,
+        likeCount: 0,
+        descendantCount: 0,
+        authorName: null,
+        likedByViewer: null,
+      },
+    };
+  }
+
+  function postConfig(post: string): Config {
+    return {
+      nodeUrls: [postNodeUrl],
+      m: M,
+      k: K,
+      profile,
+      user: null,
+      post,
+      allowSingle: false,
+      json: false,
+    };
+  }
+
+  it('reads GET /posts/<id>?tx=1 against the first node and binds a real row (exit 0)', async () => {
+    const built = buildPostRow();
+    let seenUrl = '';
+    const httpFetch: HttpFetch = async (url: string) => {
+      seenUrl = url;
+      return jsonResponse(200, built.row);
+    };
+    const result = await runCli(postConfig(built.id), httpFetch, () => 0);
+    expect(seenUrl).toBe(`${postNodeUrl}/posts/${built.id}?tx=1`);
+    expect(result.exitCode).toBe(0);
+    expect(result.post!.check!.status).toBe('bound');
+    if (result.post!.check!.status === 'bound') {
+      expect(result.post!.check!.author).toBe(built.authorHex);
+      expect(result.post!.check!.parent).toBeNull();
+    }
+    expect(result.tip.winner).toBeNull(); // tip resolution skipped
+  });
+
+  it('a withdrawn row answers nothing-to-bind, exit 0', async () => {
+    const id = 'ab'.repeat(32);
+    const httpFetch: HttpFetch = async () =>
+      jsonResponse(200, { kind: 'withdrawn', id, txId: 'cd'.repeat(32), author: 'ef'.repeat(32), parentRefs: [] });
+    const result = await runCli(postConfig(id), httpFetch, () => 0);
+    expect(result.exitCode).toBe(0);
+    expect(result.post!.check!.status).toBe('nothing-to-bind');
+  });
+
+  it('a tx: null row is unserved, exit 0 (the node has no bytes, no claim about text)', async () => {
+    const id = 'ab'.repeat(32);
+    const httpFetch: HttpFetch = async () =>
+      jsonResponse(200, { id, tx: null });
+    const result = await runCli(postConfig(id), httpFetch, () => 0);
+    expect(result.exitCode).toBe(0);
+    expect(result.post!.check!.status).toBe('unserved');
+  });
+
+  it('an unbound row exits 1 and the reason is on the result', async () => {
+    const built = buildPostRow();
+    const spoiled = { ...built.row, author: 'ff'.repeat(32) };
+    const httpFetch: HttpFetch = async () => jsonResponse(200, spoiled);
+    const result = await runCli(postConfig(built.id), httpFetch, () => 0);
+    expect(result.exitCode).toBe(1);
+    expect(result.post!.check!.status).toBe('unbound');
+    if (result.post!.check!.status === 'unbound') {
+      expect(result.post!.check!.reason).toBe('commit');
+    }
+  });
+
+  it('an HTTP failure exits 1 and reports fetchFailure', async () => {
+    const id = 'ab'.repeat(32);
+    const httpFetch: HttpFetch = async () => new Response('nope', { status: 500 });
+    const result = await runCli(postConfig(id), httpFetch, () => 0);
+    expect(result.exitCode).toBe(1);
+    expect(result.post!.fetchFailure).toContain('500');
+  });
+
+  it('--json carries the post branch alone, no tip object', async () => {
+    const built = buildPostRow();
+    const httpFetch: HttpFetch = async () => jsonResponse(200, built.row);
+    const result = await runCli({ ...postConfig(built.id), json: true }, httpFetch, () => 0);
+    const json = toJson(result);
+    expect(json['post']).toBeDefined();
+    expect(json['tip']).toBeUndefined();
+    const postJson = json['post'] as Record<string, unknown>;
+    expect(postJson['id']).toBe(built.id);
+    const checkJson = postJson['check'] as Record<string, unknown>;
+    expect(checkJson['status']).toBe('bound');
+    expect(checkJson['author']).toBe(built.authorHex);
   });
 });

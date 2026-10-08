@@ -373,13 +373,19 @@ Which of these a node's failure is comes from the result's `refuseCode` — `unr
 parsed out of the sentence beside it. **It warns and nothing more**: no read is blocked, no write but a send to a handle (→ "The verified names"), and the reading node is never switched — the reader's remedy is the
 settings window's `node` row, and the status corner is where the verdict shows (→ The status corner). What a verdict
 says is the trust model's and no more: headers and work, never a body; nothing about a balance, a name or a post the
-page shows — the loaded key's own two figures and the names the page shows are the exceptions, below; nothing with
+page shows — the loaded key's own two figures, the names the page shows and each post's binding to its author are the exceptions, below; nothing with
 fewer than two nodes answering; and two nodes under one operator and one DNS zone answer for one box lying, not for the
 operator.
 
+**The chain's name.** A tip run answers `chain` beside its verdict and its anchor: the hash of the first header of the
+reading node's proof — block 1, the header `verifyProof` holds to the profile's `genesisId` where one is pinned
+(`NIPOPOW_INTERFACE → verifyProof`) — which the tool answers as that node's `genesisHash`. It is non-null whenever the
+reading node's proof verified, under `verified` and under `thin` alike: naming a chain takes a proof that verifies,
+not a second witness. It names the post cache (→ "The post cache") and nothing else reads it.
+
 **The verified figures.** The extension proves the two figures the reading node serves for the loaded key — the
 wallet's balance and the profile's rep — against the state the verified chain committed, **the key's holdings read
-whole, by range**, and says beneath each what does not hold. **The anchor**: a tip run answers `{ verdict, anchor }`, `anchor` being the **reading
+whole, by range**, and says beneath each what does not hold. **The anchor**: a tip run answers `{ verdict, anchor, chain }`, `anchor` being the **reading
 node's own** verified `tip` and `suffixHead` headers from its proof, non-null when and only when the verdict is
 `verified` — under it they are PoW-verified, on the best chain (`behind` carried them), and heights of the reading
 node's own chain, where the winner's tip may be a block it has not seen — heights it proves at while they are in its
@@ -517,6 +523,64 @@ under that name, at `suffixHead` or, younger, at the tip. A node that shows a ke
 name.* for a held one, is not caught — omission is what reading both nodes as a union is for — and a name burned in
 the last `k` blocks still proves for its old holder, as a box spent since `suffixHead` still proves there.
 
+**The post check.** The extension shows a post only when the transaction that created it binds it. It asks the three
+post reads with `tx=1` (`NODE_INTERFACE → Posts → "The creating transaction rides a post row"`) and passes every row a
+read brings — the feed's page and its pending, a thread's subject, ancestors, descendants and pending, the single
+post — through `checkPosts` of `@dagsocial/nipopow-client`, the code the command line's `post` runs, before any of
+them enters the client's state. **A row is `bound`** when all of this holds, read in this order: its `tx` is hex that
+`decodeTx` reads, and the transaction carries a post commit; `computeTxId` of it is the row's `txId`, and
+`computePostId(txId, 0)` the row's `id`; the commit's `author`, `parentRefs`, `contentHash`, `type` and
+`protocolVersion` are the row's; `computeContentHash(content)` is the commit's `contentHash`, for a row that carries
+text; and the signature the transaction carries under the author's key verifies over the transaction id
+(`VALIDATION_INTERFACE → Acceptance criterion`) — a read's rows as one batch, read again one by one only when the
+batch fails, so one bad row costs its page nothing else. **A placeholder is checked as any row, less its text**; **a
+withdrawn row is `nothing-to-bind`** — it carries no `tx` and no words to put in anyone's mouth — and renders as it
+does without a check. **A row whose `tx` is `null` is `unserved`**: the node says it holds no bytes for that post
+(`NODE_INTERFACE → Posts → "The creating transaction rides a post row"`), which is no claim about its text — the row
+is not shown and not cached, and no line counts it. Every other row is `unbound`, under one reason of a closed set: `no-tx`, `undecodable`,
+`no-post`, `tx-id`, `post-id`, `commit`, `content`, `unsigned`, `signature`, `malformed`. **An `unbound` row is not
+shown and not cached, and leaves no gap**: the list it belonged to says so once, at its head, in clay — *1 post
+withheld — it does not match its signature*, *3 posts withheld — they do not match their signatures* — the full
+rule's weight (`HOUSE_STYLE → Gold and clay are not interchangeable`), since such a row is the node showing what no
+author signed; the line counts what the list's standing reads withheld, and goes when they withheld none. **A row an
+earlier read bound stays where it stands** when a later read of the list withholds a row under its id — a refresh
+lands on the rows standing (→ Reading the feed and threads → "No answer overwrites a newer one"), and the standing
+card was bound when it was read — so the reader keeps the post the author signed beside the line saying the node now
+serves one that does not match; a list read afresh, after a change of node or identity, shows no such card. **A thread
+whose subject is `unbound`** shows that line and nothing of the node's row; one whose subject is `unserved` shows one
+muted line — *this node cannot serve this post yet.* — and no row. **A withheld answer to the single post read
+decides nothing**: the pending entry it was read for (→ The wallet) stays pending until the tip passes its
+`expiresAtHeight`, as with no answer at all — never expired as on the node's 404, since a node that serves a post
+without its bytes has not said the post is gone. **The check
+is total**, as a run is (→ "The verified figures"): a row of any shape ends in a status. **It runs** in the extension
+build alone — the web build is handed no check and sends no `tx`, by the rule that hands it no verifier (→ "The
+verified tip") — on every read of posts, with or without an identity, an anchor or a verdict: it reads no state and
+asks the node nothing. **What it means**: the author's key signed this text, under this id, in reply to this parent.
+**What it does not**: that the post is confirmed, that it is still live, or that the list is whole — those are the
+node's word; a like or a reply to a post that is neither is refused by the network, and no lookup precedes either.
+
+**The post cache.** The extension keeps the posts it has checked — its local post DAG — in IndexedDB at the page's own
+origin, behind one module. **The database is named for the chain**: `notis.posts.<chain>` (→ "The chain's name"), so a
+chain reset opens an empty one on every network, pinned or not; the last name is kept in `localStorage` under
+`notis.posts.chain`, and opens the cache before the first tip run returns and where none does. **An entry** is keyed
+by post id and holds the transaction's bytes; the row as the node last gave it — text, name, counts, block time; the
+author and the parent as the transaction states them; when it was last seen; its size in bytes; and whether it is the
+reader's own — indexed by parent, by author and by last seen. **Only `bound` rows enter**, at the read that checked
+them, and the reader's own post at its submit — the signed transaction the client built, through the same check; **every read checks its rows,
+held or not**, and a row checked again refreshes its entry's row and its last-seen. **A withdrawn row for a held id
+empties the entry's text and keeps the entry** — the node's word, and a lie costs a re-fetch. **A thread or a post
+the cache holds is read from it when the read from the node fails** — the post, its held ancestors and its held
+descendants, each as any card renders, the author's name and the counts as the node last gave them: an entry was
+checked, and came from a node, before it was held — and the pane reports the failed read as it does over any rows it
+holds; the next read that answers lands on those rows as a refresh does (→ Reading the feed and threads → "No answer
+overwrites a newer one"). **A read the node answers is rendered from the node's answer.**
+**The feed renders from the node's answer alone.**
+**Size**: `POST_CACHE_BYTES` (`CONSTANTS → Client defaults`) over the entries' sizes, the total kept in a record of
+its own written with every put, withdrawal and eviction — a put past it evicts the least
+recently seen first and the reader's own never, and a put that still does not fit, or that the browser refuses, is
+dropped. Where the browser gives the page no IndexedDB the client runs without a cache and says nothing. It takes no
+permission, and it is the extension build's alone.
+
 **The policy.** The ledger a transaction moves is read from its outputs: **any output with `boxType`
 `credit` or `fee` is a credits transaction; otherwise karma.** Inputs are ids only
 (`TYPES_INTERFACE → Layout — UtxoTransaction`), so the read is output-side by necessity, and it is
@@ -633,8 +697,8 @@ one is acted on, and nothing flows back but the event's cancellation** — no ke
 preference.
 
 **The build check that keeps the web bundle honest:** the web build's assets contain no `chrome.`
-reference and none of the verifiers' request paths — `nipopow/proof`, the tip's; `api/v1/proof`, the figures' and
-the names'; `api/v1/range`, the figures' — in a build that is handed no verifier.
+reference, none of the verifiers' request paths — `nipopow/proof`, the tip's; `api/v1/proof`, the figures' and
+the names'; `api/v1/range`, the figures' — and no `notis.posts.`, the post cache's name, in a build that is handed no verifier.
 `build-release.sh` checks each, and that the shell's `notis-network` is empty; `build-extension.sh` checks the
 extension's shell has no inline
 script, its background and its bridge have no `import`, its manifests parse, their one content-script match is
@@ -652,6 +716,7 @@ value too, and refuses a name no network profile answers to.
 | Feed | `GET /posts` | `roots=1`, `limit`, `after`, `viewer`; the author window reads it with `author` and no `roots` (→ The author window) |
 | One post | `GET /posts/:id` | `viewer` |
 | A thread | `GET /posts/:id/thread` | `limit`, `after`, `viewer` |
+| — the extension build | each of the three post reads above | `tx=1` beside the rest (→ The extension → "The post check") |
 | Node status | `GET /status` | — |
 | The tip | `GET /blocks/current` | — |
 

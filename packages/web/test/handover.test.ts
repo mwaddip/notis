@@ -333,7 +333,7 @@ function post(id: string, content: string, parents: string[] = []): PostJson {
     id, content, contentHash: contentHashHex(content), author: '7'.repeat(64), parentRefs: parents,
     protocolVersion: 1, type: 'regular', status: 'confirmed',
     blockHeight: 1, blockIndex: 0, blockCreatedAt: 0, likeCount: 0, descendantCount: 0,
-    authorName: null, likedByViewer: null,
+    authorName: null, likedByViewer: null, txId: 'ff'.repeat(32),
   };
 }
 

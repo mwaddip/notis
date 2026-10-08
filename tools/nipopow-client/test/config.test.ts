@@ -94,6 +94,38 @@ describe('parseConfig', () => {
     expect(() => parseConfig(['--bad'], env()))
       .toThrow(ConfigError);
   });
+
+  it('parses `post <id>` and defaults post to null otherwise', () => {
+    const c = parseConfig([], env());
+    expect(c.post).toBeNull();
+
+    const id = 'ab'.repeat(32);
+    const p = parseConfig(['post', id], env());
+    expect(p.post).toBe(id);
+  });
+
+  it('refuses `post` without an id', () => {
+    expect(() => parseConfig(['post'], env())).toThrow(ConfigError);
+  });
+
+  it('refuses a post id that is not 64 lowercase hex', () => {
+    expect(() => parseConfig(['post', 'xyz'], env())).toThrow(ConfigError);
+    expect(() => parseConfig(['post', 'AB'.repeat(32)], env())).toThrow(ConfigError);
+  });
+
+  it('`post <id>` accepts a single node URL without --allow-single', () => {
+    const id = 'ab'.repeat(32);
+    const c = parseConfig(['post', id], env({ NODE_URLS: 'http://solo:3000' }));
+    expect(c.post).toBe(id);
+    expect(c.nodeUrls).toEqual(['http://solo:3000']);
+  });
+
+  it('`post <id>` accepts trailing flags', () => {
+    const id = 'ab'.repeat(32);
+    const c = parseConfig(['post', id, '--json'], env());
+    expect(c.post).toBe(id);
+    expect(c.json).toBe(true);
+  });
 });
 
 describe('verifierProfile', () => {

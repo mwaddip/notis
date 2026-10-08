@@ -17,7 +17,7 @@ function pending(content: string): PostJson {
   return {
     id: 'local1', content, contentHash: contentHashHex(content), author: PUB, parentRefs: [],
     protocolVersion: 0, type: 'regular', status: 'pending', blockHeight: null, blockIndex: null,
-    blockCreatedAt: null, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null,
+    blockCreatedAt: null, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, txId: 'ff'.repeat(32),
   };
 }
 const stageText = (flight: Flight): string => card(pending('x'), { flight }).querySelector('.stage')?.textContent ?? '';
@@ -26,7 +26,7 @@ function confirmed(author: string): PostJson {
   return {
     id: 'p1', content: 'hello', contentHash: contentHashHex('hello'), author, parentRefs: [],
     protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 6001, blockIndex: 0,
-    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, txId: 'ff'.repeat(32),
   };
 }
 
@@ -199,7 +199,7 @@ describe('card — the reply count is the row\'s', () => {
   });
 
   it('a withdrawn card shows its row\'s count, never ?', () => {
-    const tomb = { kind: 'withdrawn' as const, id: 'p1', author: PUB, withdrawnAtHeight: 10, parentRefs: [], descendantCount: 4, authorName: null };
+    const tomb = { kind: 'withdrawn' as const, id: 'p1', author: PUB, withdrawnAtHeight: 10, parentRefs: [], descendantCount: 4, authorName: null, txId: 'aa'.repeat(32) };
     expect(card(tomb, { replyCount: tomb.descendantCount }).querySelector('.replies')?.textContent).toBe('4 replies');
   });
 });
@@ -428,7 +428,7 @@ describe('card — the withdraw control', () => {
   it('no withdraw control on another\'s card, a pending card, or a withdrawn card', () => {
     expect(card(confirmed(OTHER), { onLike: () => {} }).querySelector('.withdraw-ctl')).toBeNull();
     expect(card(pending('x'), { you: true, onWithdraw: () => {}, canWithdraw: true }).querySelector('.withdraw-ctl')).toBeNull();
-    const tomb = { kind: 'withdrawn' as const, id: 'p1', author: PUB, withdrawnAtHeight: 10, parentRefs: [], descendantCount: 0, authorName: null };
+    const tomb = { kind: 'withdrawn' as const, id: 'p1', author: PUB, withdrawnAtHeight: 10, parentRefs: [], descendantCount: 0, authorName: null, txId: 'aa'.repeat(32) };
     expect(card(tomb, { you: true, onWithdraw: () => {}, canWithdraw: true }).querySelector('.withdraw-ctl')).toBeNull();
   });
 
@@ -467,7 +467,7 @@ describe('card — link', () => {
 
   it('present on a withdrawn card', () => {
     const c = card(
-      { kind: 'withdrawn', id: 'w1', author: 'cc'.repeat(32), withdrawnAtHeight: 5, parentRefs: [], descendantCount: 0, authorName: null },
+      { kind: 'withdrawn', id: 'w1', author: 'cc'.repeat(32), withdrawnAtHeight: 5, parentRefs: [], descendantCount: 0, authorName: null, txId: 'aa'.repeat(32) },
       { onReply: () => {},  linkUrl: URL },
     );
     expect(c.querySelector('.linkbtn')).toBeTruthy();
@@ -581,7 +581,7 @@ describe('card — a handle the chain does not back is clay', () => {
   });
 
   it('the withdrawn card\'s who row reads the same predicate', () => {
-    const tomb = { kind: 'withdrawn' as const, id: 'p1', author: AUTHOR, withdrawnAtHeight: 10, parentRefs: [], descendantCount: 0, authorName: 'Alice' };
+    const tomb = { kind: 'withdrawn' as const, id: 'p1', author: AUTHOR, withdrawnAtHeight: 10, parentRefs: [], descendantCount: 0, authorName: 'Alice', txId: 'aa'.repeat(32) };
     const clay = card(tomb, { onAuthor: () => {}, nameClay: clayFor(AUTHOR, 'Alice') });
     expect(clay.querySelector('.who .handle.clay')?.textContent).toBe('@Alice');
     const ink = card(tomb, { onAuthor: () => {}, nameClay: () => false });

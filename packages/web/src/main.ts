@@ -8,7 +8,9 @@ import { wrapTabs } from './extension/handover';
 import { createTipVerifier } from './extension/tip-verifier';
 import { createFiguresVerifier } from './extension/figures-verifier';
 import { createNamesVerifier } from './extension/names-verifier';
-import type { AppIdentity, TipVerifier, FiguresVerifier, NamesVerifier } from './model/state';
+import { createPostsVerifier } from './extension/posts-verifier';
+import { createPostCache, rememberedChain } from './extension/post-cache';
+import type { AppIdentity, TipVerifier, FiguresVerifier, NamesVerifier, PostsVerifier, PostCache } from './model/state';
 
 // Theme is already on <html> from the head's theme.js; this re-applies it and
 // sets the identity tint before the first render, while transitions are still
@@ -69,7 +71,29 @@ const figuresVerifier: FiguresVerifier | undefined = isExtension && BUILD_NETWOR
 const namesVerifier: NamesVerifier | undefined = isExtension && BUILD_NETWORK !== null
   ? createNamesVerifier({ fetch: fetch.bind(globalThis) })
   : undefined;
-new App(undefined, undefined, idm, undefined, tabs, requestFaucetOrigin, verifier, figuresVerifier, namesVerifier).start(appbar, feed, panes, mode);
+// WEB_INTERFACE → The extension → "The post check" — the posts verifier is
+// handed under the same static condition as the three others, so Rollup
+// dead-code-eliminates createPostsVerifier and `checkPosts` from the web
+// bundle (build-release.sh's `notis.posts.` check refuses the post cache's
+// IndexedDB prefix in the bundle; this verifier itself leaves no literal to
+// key on).
+const postsVerifier: PostsVerifier | undefined = isExtension && BUILD_NETWORK !== null
+  ? createPostsVerifier()
+  : undefined;
+// WEB_INTERFACE → The extension → "The post cache" — the cache is built
+// under the same static condition as the four verifiers, so Rollup dead-
+// code-eliminates `createPostCache` and the IndexedDB name's `notis.posts.`
+// prefix from the web bundle (build-release.sh refuses it there). The last
+// chain's name opens the cache before the first tip run returns and where
+// none does.
+const postCache: PostCache | undefined = isExtension && BUILD_NETWORK !== null
+  ? createPostCache()
+  : undefined;
+if (postCache) {
+  const chain = rememberedChain();
+  if (chain !== null) void postCache.open(chain);
+}
+new App(undefined, undefined, idm, undefined, tabs, requestFaucetOrigin, verifier, figuresVerifier, namesVerifier, postsVerifier, postCache).start(appbar, feed, panes, mode);
 
 // Restoring a stored preference is painted, not transitioned: drop the
 // transition-suppressing class only after the first paint (HOUSE_STYLE → Motion).

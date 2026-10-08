@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { decayCfgFor } from '@dagsocial/types';
 import type { LikeAccrualBox, VouchBox } from '@dagsocial/types';
-import { makePostCommit, seedProvenance, uid } from '../helpers.js';
+import { makePostCommit, seedProvenance, uid, fixtureTxId} from '../helpers.js';
 
 /**
  * The store's `StateView` (CONSENSUS_INTERFACE → StateView): each read the
@@ -81,7 +81,7 @@ describe('the store\'s StateView', () => {
     const view = s.blockApply.storeStateView;
     const [pending, confirmed, withdrawn] = ['aa', 'bb', 'cc'].map((c) => c.repeat(32)) as [string, string, string];
     for (const [id, text] of [[pending, 'pending'], [confirmed, 'confirmed'], [withdrawn, 'withdrawn']] as const) {
-      s.posts.insertPost(id, makePostCommit(author, text), text);
+      s.posts.insertPost(id, fixtureTxId(makePostCommit(author, text)), makePostCommit(author, text), text);
     }
     s.posts.confirmPost(confirmed, 1, 0);
     s.posts.confirmPost(withdrawn, 1, 1);

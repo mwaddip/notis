@@ -16,11 +16,11 @@ function post(id: string, parent: string | null, descendantCount = 0): PostJson 
     id, content: 'x', contentHash: '00'.repeat(32), author: 'aa'.repeat(32),
     parentRefs: parent ? [parent] : [], protocolVersion: 1, type: 'regular',
     status: 'confirmed', blockHeight: 10, blockIndex: 0, blockCreatedAt: 0,
-    likeCount: 0, descendantCount, authorName: null, likedByViewer: null,
+    likeCount: 0, descendantCount, authorName: null, likedByViewer: null, txId: 'ff'.repeat(32),
   };
 }
 function withdrawn(id: string, parent: string, descendantCount = 0): WithdrawnJson {
-  return { kind: 'withdrawn', id, author: 'aa'.repeat(32), withdrawnAtHeight: 12, parentRefs: [parent], descendantCount, authorName: null };
+  return { kind: 'withdrawn', id, author: 'aa'.repeat(32), withdrawnAtHeight: 12, parentRefs: [parent], descendantCount, authorName: null, txId: 'aa'.repeat(32) };
 }
 
 describe('flattenThread — a withdrawn row keeps its depth', () => {

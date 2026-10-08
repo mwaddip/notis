@@ -321,6 +321,7 @@ export {
   decodeHeader,
   encodeUtxoTxTree,
   decodeUtxoTxTree,
+  utxoTxBytesIn,
   utxoTxTreeByteLength,
   encodeOrderingBlock,
   decodeOrderingBlock,

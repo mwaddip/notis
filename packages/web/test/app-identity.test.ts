@@ -126,7 +126,7 @@ function harness(opts: PendingLedger | HarnessOpts = {}): Harness {
     post: async (id): Promise<PostResult> => ({
       id, content: 'x', contentHash: '00'.repeat(32), author: KEY, parentRefs: [], protocolVersion: 1,
       type: 'regular', status: 'confirmed', blockHeight: 6001, blockIndex: 0, blockCreatedAt: 0,
-      likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, confirmedAuthor: KEY,
+      likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, txId: 'ff'.repeat(32), confirmedAuthor: KEY,
     }),
     status: async () => statusResult(),
     currentBlock: async (): Promise<BlockCurrent> => ({ height, hash: null }),

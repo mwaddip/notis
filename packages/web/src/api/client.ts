@@ -58,9 +58,14 @@ export interface Page {
  *  carried once one exists so `likedByViewer` is the node's answer
  *  (WEB_INTERFACE → "Every read carries the viewer's key once an identity is loaded, and none does before"). */
 export interface Api {
-  feed(page?: Page, viewer?: string, author?: string, roots?: boolean): Promise<FeedResult>;
-  thread(id: string, page?: Page, viewer?: string): Promise<ThreadResult | null>;
-  post(id: string, viewer?: string): Promise<PostResult | null>;
+  /** `withTx` adds `tx=1` to the three post reads, so each row carries its
+   *  creating transaction's bytes (NODE_INTERFACE → Posts → "The creating
+   *  transaction rides a post row"). The extension build sets it true; the
+   *  web build never does (WEB_INTERFACE → The extension → "The post
+   *  check"). */
+  feed(page?: Page, viewer?: string, author?: string, roots?: boolean, withTx?: boolean): Promise<FeedResult>;
+  thread(id: string, page?: Page, viewer?: string, withTx?: boolean): Promise<ThreadResult | null>;
+  post(id: string, viewer?: string, withTx?: boolean): Promise<PostResult | null>;
   status(): Promise<StatusResult>;
   currentBlock(): Promise<BlockCurrent>;
   karma(key: string, page?: Page): Promise<KarmaResult>;
@@ -117,23 +122,25 @@ export class NodeClient implements Api {
     return data as T;
   }
 
-  feed(page: Page = {}, viewer?: string, author?: string, roots?: boolean): Promise<FeedResult> {
+  feed(page: Page = {}, viewer?: string, author?: string, roots?: boolean, withTx?: boolean): Promise<FeedResult> {
     // `author` filters to one identity's committed posts — the author-posts window
     // (WEB_INTERFACE → The author window); `roots=1` restricts to posts with no
     // parent, the feed's own read (WEB_INTERFACE → What the feed reads). The node
-    // rejects `roots=0`, so it is 1 or absent (NODE_INTERFACE → Posts).
-    return this.get<FeedResult>(this.url('/posts', { limit: page.limit, after: page.after ?? undefined, author, viewer, roots: roots ? 1 : undefined }), 'posts');
+    // rejects `roots=0`, so it is 1 or absent (NODE_INTERFACE → Posts). `tx=1` adds
+    // every row's creating transaction (WEB_INTERFACE → The extension → "The post
+    // check"); the web build never sends it.
+    return this.get<FeedResult>(this.url('/posts', { limit: page.limit, after: page.after ?? undefined, author, viewer, roots: roots ? 1 : undefined, tx: withTx ? 1 : undefined }), 'posts');
   }
 
-  thread(id: string, page: Page = {}, viewer?: string): Promise<ThreadResult | null> {
+  thread(id: string, page: Page = {}, viewer?: string, withTx?: boolean): Promise<ThreadResult | null> {
     return this.getOrNull<ThreadResult>(
-      this.url(`/posts/${encodeURIComponent(id)}/thread`, { limit: page.limit, after: page.after ?? undefined, viewer }),
+      this.url(`/posts/${encodeURIComponent(id)}/thread`, { limit: page.limit, after: page.after ?? undefined, viewer, tx: withTx ? 1 : undefined }),
       'descendants',
     );
   }
 
-  post(id: string, viewer?: string): Promise<PostResult | null> {
-    return this.getOrNull<PostResult>(this.url(`/posts/${encodeURIComponent(id)}`, { viewer }));
+  post(id: string, viewer?: string, withTx?: boolean): Promise<PostResult | null> {
+    return this.getOrNull<PostResult>(this.url(`/posts/${encodeURIComponent(id)}`, { viewer, tx: withTx ? 1 : undefined }));
   }
 
   status(): Promise<StatusResult> {

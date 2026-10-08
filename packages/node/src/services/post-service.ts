@@ -7,6 +7,7 @@ import type {
   IdentityRecord,
   PostCommit,
   KarmaBox,
+  TxId,
   UtxoTransaction,
   AnyBox,
   ProtocolEra,
@@ -39,7 +40,7 @@ export interface PostServiceDeps {
   decayCfg: DecayCfg;
   getPost: (id: string) => StoredPost | null;
 
-  insertPost: (postId: string, commit: PostCommit, content: string | null) => void;
+  insertPost: (postId: string, txId: TxId, commit: PostCommit, content: string | null) => void;
 
   getCurrentHeight: () => number;
   /** The profile's era schedule — supplied to the verifier's version check. */
@@ -145,7 +146,7 @@ export function createPost(
   const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
   deps.runInTransaction(() => {
     deps.admitTx(tx, expiresAtHeight);
-    deps.insertPost(postId, commit, content);
+    deps.insertPost(postId, txId, commit, content);
   });
   emitPostIndexed(postId, commit.parentRefs.length);
 

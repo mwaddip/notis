@@ -1,7 +1,7 @@
 import {
   seedProvenance,
   signTransaction,
-  txToJson, fixturePostId } from '../helpers.js';
+  txToJson, fixturePostId, fixtureTxId} from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import http from 'http';
@@ -198,7 +198,7 @@ describe('likes routes', () => {
       type: 'regular',
     };
     postId = fixturePostId(commit);
-    insertPost(fixturePostId(commit), commit, 'test post for likes');
+    insertPost(fixturePostId(commit), fixtureTxId(commit), commit, 'test post for likes');
 
     // Create a liker with sufficient karma
     likerKp = generateKeyPair();

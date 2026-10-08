@@ -3,15 +3,15 @@ import {
   seedProvenance,
   signTransaction,
   txToJson,
-  fixturePostId, makePostCommit } from '../helpers.js';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+  fixturePostId, makePostCommit, fixtureTxId} from '../helpers.js';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import http from 'http';
 import { generateKeyPairSync, createPrivateKey } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import { insertPost, getPost, queryPostsPage, getAncestorsNearest, getSubtreePage, getDescendantCount, confirmPost, withdrawPost, getPendingPostAuthor } from '../../src/store/posts.js';
 import { getUsernameByOwner } from '../../src/store/usernames.js';
-import { getCurrentHeight, getBlockCreatedAt } from '../../src/store/ordering.js';
+import { getCurrentHeight, getBlockCreatedAt, getUtxoTxTreeBytes } from '../../src/store/ordering.js';
 import {
   getKarmaBoxes,
   insertBox,
@@ -20,7 +20,7 @@ import {
 import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/identity-records.js';
 import { hasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getLikeRecordCount, hasLikeRecord, insertLikeRecord } from '../../src/store/likes.js';
-import { insertUtxoTx, getPendingEntries } from '../../src/store/mempool.js';
+import { insertUtxoTx, getPendingEntries, getPendingUtxoTxBytesByTxId } from '../../src/store/mempool.js';
 import { verifyPost } from '../../src/services/verifier.js';
 import { validateTx } from '@dagsocial/consensus';
 import {
@@ -35,6 +35,7 @@ import {
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
+  encodeUtxoTxTree,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -92,6 +93,8 @@ async function request(
       getAncestorsNearest,
       getSubtreePage,
       getBlockCreatedAt,
+      getPendingUtxoTxBytesByTxId,
+      getUtxoTxTreeBytes,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
@@ -268,6 +271,8 @@ describe('posts routes', () => {
       getAncestorsNearest,
       getSubtreePage,
       getBlockCreatedAt,
+      getPendingUtxoTxBytesByTxId,
+      getUtxoTxTreeBytes,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
@@ -420,7 +425,7 @@ describe('posts routes', () => {
       type: 'regular',
     };
     const threadId = fixturePostId(threadCommit);
-    insertPost(threadId, threadCommit, threadContent);
+    insertPost(threadId, fixtureTxId(threadCommit), threadCommit, threadContent);
 
     const replyContent = 'reply to pending';
     const replyCommit: PostCommit = {
@@ -536,12 +541,12 @@ describe('posts routes', () => {
     const kp = generateKeyPair();
     const rootCommit = makePostCommit(kp.publicKey, 'a root for the roots filter');
     const rootId = fixturePostId(rootCommit);
-    insertPost(rootId, rootCommit, 'a root for the roots filter');
+    insertPost(rootId, fixtureTxId(rootCommit), rootCommit, 'a root for the roots filter');
     confirmPost(rootId, 900, 0);
 
     const replyCommit = makePostCommit(kp.publicKey, 'a reply excluded by roots=1', { parentRefs: [rootId] });
     const replyId = fixturePostId(replyCommit);
-    insertPost(replyId, replyCommit, 'a reply excluded by roots=1');
+    insertPost(replyId, fixtureTxId(replyCommit), replyCommit, 'a reply excluded by roots=1');
     confirmPost(replyId, 901, 0);
 
     const res = await request('/?roots=1', 'GET');
@@ -569,16 +574,41 @@ describe('posts routes', () => {
     expect((res.data as { error: string }).error).toBe('roots must be 1');
   });
 
+  // NODE_INTERFACE → Posts → "The creating transaction rides a post row"
+  it('GET /posts?tx=2 answers 400 tx must be 1', async () => {
+    const res = await request('/?tx=2', 'GET');
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('tx must be 1');
+  });
+
+  it('GET /posts?tx= answers 400 tx must be 1', async () => {
+    const res = await request('/?tx=', 'GET');
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('tx must be 1');
+  });
+
+  it('GET /posts/:id?tx=2 answers 400 tx must be 1', async () => {
+    const res = await request(`/${'ab'.repeat(32)}?tx=2`, 'GET');
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('tx must be 1');
+  });
+
+  it('GET /posts/:id/thread?tx=2 answers 400 tx must be 1', async () => {
+    const res = await request(`/${'ab'.repeat(32)}/thread?tx=2`, 'GET');
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('tx must be 1');
+  });
+
   it('a GET /posts listing row carries descendantCount and authorName', async () => {
     const kp = generateKeyPair();
     const rootCommit = makePostCommit(kp.publicKey, 'a root carrying both fields');
     const rootId = fixturePostId(rootCommit);
-    insertPost(rootId, rootCommit, 'a root carrying both fields');
+    insertPost(rootId, fixtureTxId(rootCommit), rootCommit, 'a root carrying both fields');
     confirmPost(rootId, 902, 0);
 
     const replyCommit = makePostCommit(kp.publicKey, 'its reply', { parentRefs: [rootId] });
     const replyId = fixturePostId(replyCommit);
-    insertPost(replyId, replyCommit, 'its reply');
+    insertPost(replyId, fixtureTxId(replyCommit), replyCommit, 'its reply');
     confirmPost(replyId, 903, 0);
 
     const res = await request('/', 'GET');
@@ -610,13 +640,13 @@ describe('posts routes', () => {
 
       const commit1 = makePostCommit(author, 'liked post', { parentRefs: [] });
       likedPostId = fixturePostId(commit1);
-      insertPost(likedPostId, commit1, 'liked post');
+      insertPost(likedPostId, fixtureTxId(commit1), commit1, 'liked post');
       confirmPost(likedPostId, 10, 0);
       insertLikeRecord(likedPostId, viewerBytes, 10);
 
       const commit2 = makePostCommit(author, 'unliked post', { parentRefs: [] });
       unlikedPostId = fixturePostId(commit2);
-      insertPost(unlikedPostId, commit2, 'unliked post');
+      insertPost(unlikedPostId, fixtureTxId(commit2), commit2, 'unliked post');
       confirmPost(unlikedPostId, 10, 1);
     });
 
@@ -684,34 +714,34 @@ describe('posts routes', () => {
 
       const c0 = makePostCommit(author, 'thread root', { parentRefs: [] });
       rootId = fixturePostId(c0);
-      insertPost(rootId, c0, 'thread root');
+      insertPost(rootId, fixtureTxId(c0), c0, 'thread root');
       confirmPost(rootId, 20, 0);
 
       const c1 = makePostCommit(author, 'thread child', { parentRefs: [rootId] });
       childId = fixturePostId(c1);
-      insertPost(childId, c1, 'thread child');
+      insertPost(childId, fixtureTxId(c1), c1, 'thread child');
       confirmPost(childId, 21, 0);
 
       const c2 = makePostCommit(author, 'thread grandchild', { parentRefs: [childId] });
       grandchildId = fixturePostId(c2);
-      insertPost(grandchildId, c2, 'thread grandchild');
+      insertPost(grandchildId, fixtureTxId(c2), c2, 'thread grandchild');
       confirmPost(grandchildId, 22, 0);
 
       // A live parent, a withdrawn reply beneath it, and a live reply beneath that.
       const cp = makePostCommit(author, 'a root whose reply is withdrawn', { parentRefs: [] });
       withdrawnSubjectParentId = fixturePostId(cp);
-      insertPost(withdrawnSubjectParentId, cp, 'a root whose reply is withdrawn');
+      insertPost(withdrawnSubjectParentId, fixtureTxId(cp), cp, 'a root whose reply is withdrawn');
       confirmPost(withdrawnSubjectParentId, 23, 0);
 
       const cr = makePostCommit(author, 'the withdrawn reply', { parentRefs: [withdrawnSubjectParentId] });
       withdrawnSubjectId = fixturePostId(cr);
-      insertPost(withdrawnSubjectId, cr, 'the withdrawn reply');
+      insertPost(withdrawnSubjectId, fixtureTxId(cr), cr, 'the withdrawn reply');
       confirmPost(withdrawnSubjectId, 23, 1);
       withdrawPost(withdrawnSubjectId, 24);
 
       const cg = makePostCommit(author, 'a live reply under the withdrawn one', { parentRefs: [withdrawnSubjectId] });
       withdrawnSubjectChildId = fixturePostId(cg);
-      insertPost(withdrawnSubjectChildId, cg, 'a live reply under the withdrawn one');
+      insertPost(withdrawnSubjectChildId, fixtureTxId(cg), cg, 'a live reply under the withdrawn one');
       confirmPost(withdrawnSubjectChildId, 25, 0);
     });
 
@@ -801,7 +831,9 @@ describe('posts routes', () => {
     let author: Uint8Array;
     let liveRootId: string;
     let withdrawnReplyId: string;
+    let withdrawnReplyTxId: string;
     let withdrawnSoloRootId: string;
+    let withdrawnSoloRootTxId: string;
 
     beforeAll(() => {
       const keys = generateKeyPairSync('ed25519');
@@ -809,18 +841,20 @@ describe('posts routes', () => {
 
       const rootCommit = makePostCommit(author, 'a live root, later given a withdrawn reply', { parentRefs: [] });
       liveRootId = fixturePostId(rootCommit);
-      insertPost(liveRootId, rootCommit, 'a live root, later given a withdrawn reply');
+      insertPost(liveRootId, fixtureTxId(rootCommit), rootCommit, 'a live root, later given a withdrawn reply');
       confirmPost(liveRootId, 50, 0);
 
       const replyCommit = makePostCommit(author, 'a reply, later withdrawn', { parentRefs: [liveRootId] });
       withdrawnReplyId = fixturePostId(replyCommit);
-      insertPost(withdrawnReplyId, replyCommit, 'a reply, later withdrawn');
+      withdrawnReplyTxId = fixtureTxId(replyCommit);
+      insertPost(withdrawnReplyId, withdrawnReplyTxId, replyCommit, 'a reply, later withdrawn');
       confirmPost(withdrawnReplyId, 51, 0);
       withdrawPost(withdrawnReplyId, 52);
 
       const soloRootCommit = makePostCommit(author, 'a root, later withdrawn', { parentRefs: [] });
       withdrawnSoloRootId = fixturePostId(soloRootCommit);
-      insertPost(withdrawnSoloRootId, soloRootCommit, 'a root, later withdrawn');
+      withdrawnSoloRootTxId = fixtureTxId(soloRootCommit);
+      insertPost(withdrawnSoloRootId, withdrawnSoloRootTxId, soloRootCommit, 'a root, later withdrawn');
       confirmPost(withdrawnSoloRootId, 53, 0);
       withdrawPost(withdrawnSoloRootId, 54);
     });
@@ -831,6 +865,7 @@ describe('posts routes', () => {
       expect(res.data).toEqual({
         kind: 'withdrawn',
         id: withdrawnReplyId,
+        txId: withdrawnReplyTxId,
         author: Buffer.from(author).toString('hex'),
         parentRefs: [liveRootId],
         withdrawnAtHeight: 52,
@@ -846,6 +881,7 @@ describe('posts routes', () => {
       expect(res.data).toEqual({
         kind: 'withdrawn',
         id: withdrawnSoloRootId,
+        txId: withdrawnSoloRootTxId,
         author: Buffer.from(author).toString('hex'),
         parentRefs: [],
         withdrawnAtHeight: 54,
@@ -864,6 +900,7 @@ describe('posts routes', () => {
       expect(found).toEqual({
         kind: 'withdrawn',
         id: withdrawnReplyId,
+        txId: withdrawnReplyTxId,
         author: Buffer.from(author).toString('hex'),
         parentRefs: [liveRootId],
         withdrawnAtHeight: 52,
@@ -881,6 +918,7 @@ describe('posts routes', () => {
       expect(found).toEqual({
         kind: 'withdrawn',
         id: withdrawnReplyId,
+        txId: withdrawnReplyTxId,
         author: Buffer.from(author).toString('hex'),
         parentRefs: [liveRootId],
         withdrawnAtHeight: 52,
@@ -888,6 +926,113 @@ describe('posts routes', () => {
         authorName: null,
       });
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fail-stop under a route — NODE_INTERFACE → Posts → "The creating
+// transaction rides a post row". A confirmed row whose block lists no such
+// id is a stored chain that contradicts itself (ConfirmedPostTxNotInBlockBodyError,
+// a CorruptChainStateError), and the route fail-stops the way the proof
+// routes do under InconsistentAvlNodeRowsError (NODE_INTERFACE → AVL+ State
+// Root → "A height of the proof window with no kept root is served from the
+// store"). The observer is `process.exit`, as in
+// `state/range-endpoint-fail-stop.test.ts`.
+// ---------------------------------------------------------------------------
+
+describe('posts routes — fail-stop under a confirmed row whose block lists no such id', () => {
+  it('GET /posts/:id?tx=1 fires process.exit(1) when the stored body lacks the row\'s tx_id', async () => {
+    const author = new Uint8Array(32).fill(0xaa);
+    const authorHex = Buffer.from(author).toString('hex');
+    const postId = 'ab'.repeat(32);
+    const rowTxId = 'cd'.repeat(32);
+
+    const storedRow = {
+      id: postId,
+      txId: rowTxId,
+      content: 'x',
+      contentHash: 'ee'.repeat(32),
+      author,
+      parentRefs: [],
+      protocolVersion: 1,
+      type: 'regular' as const,
+      status: 'confirmed' as const,
+      blockHeight: 10,
+      blockIndex: 0,
+      withdrawnAtHeight: null,
+    };
+    // A well-formed body whose id array lists no `rowTxId` — `utxoTxBytesIn`
+    // returns `null` for it, which the resolver promotes to
+    // `ConfirmedPostTxNotInBlockBodyError` (a `CorruptChainStateError`).
+    const emptyBodyBytes = encodeUtxoTxTree({ utxoTxIds: [], utxoTxs: [] });
+
+    const deps = {
+      insertPost: () => {},
+      getPost: () => storedRow,
+      queryPostsPage: () => ({ rows: [], next: null, pending: [], pendingCount: 0 }),
+      verifyPost,
+      getKarmaBoxes: () => [],
+      getIdentityRecord: () => null,
+      decayCfg: {
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      },
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
+      getLikeRecordCount: () => 0,
+      getDescendantCount: () => 0,
+      hasLikeRecord: () => false,
+      getUsernameByOwner: () => null,
+      getAncestorsNearest: () => ({ rows: [], count: 0 }),
+      getSubtreePage: () => ({ rows: [], next: null, count: 0, pending: [], pendingCount: 0 }),
+      getBlockCreatedAt: () => null,
+      getPendingUtxoTxBytesByTxId: () => null,
+      getUtxoTxTreeBytes: () => emptyBodyBytes,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
+      getTopologyAuthor: () => authorHex,
+      getPendingPostAuthor: () => null,
+      getCurrentHeight: () => 10,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }] as const,
+      getUsername: () => null,
+      admitTx: () => 0,
+      runInTransaction: (fn: () => void) => fn(),
+      validateTx: () => ({ valid: true } as const),
+      getBox: () => null,
+    };
+
+    const app = express();
+    app.use(express.json());
+    // Catch the throw past the handler so the mocked process.exit's throw
+    // does not blow up the test harness.
+    app.use('/posts', createRouter(deps as any));
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    app.use((_err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      res.status(500).end();
+    });
+
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit');
+    }) as never);
+    const errLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      await new Promise<void>((resolve) => {
+        const server = app.listen(0, () => {
+          const addr = server.address() as { port: number };
+          http.get({ hostname: 'localhost', port: addr.port, path: `/posts/${postId}?tx=1` }, (res) => {
+            res.on('data', () => {});
+            res.on('end', () => { server.close(); resolve(); });
+          }).on('error', () => { server.close(); resolve(); });
+        });
+      });
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      exit.mockRestore();
+      errLog.mockRestore();
+    }
   });
 });
 
@@ -923,6 +1068,8 @@ describe('posts routes — alias resolution', () => {
         getAncestorsNearest: () => ({ rows: [], count: 0 }),
         getSubtreePage: () => ({ rows: [], next: null, count: 0, pending: [], pendingCount: 0 }),
         getBlockCreatedAt: () => null,
+        getPendingUtxoTxBytesByTxId,
+        getUtxoTxTreeBytes,
         inviteBondMin: config.inviteBondMin,
         inviteBondMax: config.inviteBondMax,
         getTopologyAuthor: () => null,

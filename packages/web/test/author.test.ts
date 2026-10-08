@@ -222,11 +222,11 @@ function post(id: string, author: string): PostJson {
   return {
     id, content: 'hi', contentHash: contentHashHex('hi'), author, parentRefs: [],
     protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 5, blockIndex: 0,
-    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, txId: 'ff'.repeat(32),
   };
 }
 function feedState(over: Partial<FeedState> = {}): FeedState {
-  return { posts: [post(P1, AUTHOR), post(P2, ME)], pending: [], next: null, report: null, olderReport: null, loaded: true, loading: false, error: null, ...over };
+  return { posts: [post(P1, AUTHOR), post(P2, ME)], pending: [], next: null, report: null, olderReport: null, loaded: true, loading: false, error: null, unboundCount: 0, ...over };
 }
 const postsHandlers = (): PostsHandlers & { calls: Record<string, unknown[]> } => {
   const calls: Record<string, unknown[]> = { openThread: [], openAuthor: [], more: [], like: [] };

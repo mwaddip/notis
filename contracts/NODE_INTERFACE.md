@@ -141,9 +141,9 @@ its choosing.
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
 | `POST` | `/posts` | `{ tx: UtxoTransaction, content: string }` — client-built, client-signed post tx with `tx.post` (the `PostCommit`) set, and the body beside it ("Post transactions" below) | `{ postId, status: "pending", expiresAtHeight, txId }` (200) | 400 if `tx`, `tx.post` or `content` is missing or malformed, `content` fails `verifyPostBody` against `tx.post.contentHash` (reason named), the commit fails verification, the transaction fails `validateTx`, or the first input is not a karma box owned by `post.author` |
-| `GET` | `/posts/:id` | `?viewer=hex` — optional ("`viewer` names the identity a read is for" below) | `PostJson` or `WithdrawnJson` (both below), **plus `confirmedAuthor`** | 404 only for an id the node has never heard of ("Resolution order for a post id"); 400 if a present `viewer` is neither 64 hex chars nor an `@handle`, 404 `unknown handle` (→ Identity parameters) |
-| `GET` | `/posts/:id/thread` | `?viewer=hex&limit=50&after=<blockHeight>:<blockIndex>` — `viewer` optional; `limit` and `after` page the descendants ("Every list a view returns is a page" below) | `{ post, ancestors, ancestorCount, descendants, descendantCount, next, pending, pendingCount }` — `post` is `PostJson` or `WithdrawnJson`; `ancestors` the nearest `limit` ancestors, oldest first (`after` does not apply — the context above the topmost one is that post's own thread); `descendants` one page of the subtree's **committed** rows in committed order, `(blockHeight, blockIndex)` ascending, strictly after `after`, with `next` the key to continue from; `pending` the subtree's pending posts, newest arrival first, cut to `limit`, with `pendingCount` over all of them; `ancestorCount` and `descendantCount` are over the whole chain and the whole subtree, pending included — a `PostJson` `post` carries the same number as its own `descendantCount`. **A withdrawn subject answers its `ancestors`, `descendants`, `pending` and counts as a live subject does** — the row, its topology and every descendant's anchor survive the withdrawal (→ Withdrawal transactions), so its replies hang off it | 404 as above; 400 as `/posts` |
-| `GET` | `/posts` | `?author=hex&roots=1&viewer=hex&limit=50&after=<blockHeight>:<blockIndex>` — `author`, `roots` and `viewer` optional; `roots=1` restricts every list in the answer to posts with no parent (`parentRefs: []`), absent the listing is unfiltered, and the two filters compose (`author` with `roots` is the author's roots); `limit` and `after` page the committed rows ("Every list a view returns is a page" below) | `{ posts: (PostJson \| WithdrawnJson)[], next, pending: PostJson[], pendingCount }` — `posts` one page of the committed rows, live and withdrawn, newest first in committed order (placeholders included; ordering below), `next` the key to continue from; `pending` the live pending rows — the author's when `author` is present — newest arrival first, cut to `limit`, `pendingCount` over all of them; with `roots=1`, `posts`, `pending` and `pendingCount` are over the roots alone, the keyset walking the filtered set | 400 if a present `limit` or `after` does not parse ("Every list a view returns is a page"), a present `roots` is not the string `1` (`roots must be 1`), or a present `viewer` is neither 64 hex chars nor an `@handle`; 404 `unknown handle` (→ Identity parameters) |
+| `GET` | `/posts/:id` | `?viewer=hex&tx=1` — both optional ("`viewer` names the identity a read is for" and "The creating transaction rides a post row" below) | `PostJson` or `WithdrawnJson` (both below), **plus `confirmedAuthor`** | 404 only for an id the node has never heard of ("Resolution order for a post id"); 400 if a present `viewer` is neither 64 hex chars nor an `@handle` or a present `tx` is not the string `1` (`tx must be 1`), 404 `unknown handle` (→ Identity parameters) |
+| `GET` | `/posts/:id/thread` | `?viewer=hex&tx=1&limit=50&after=<blockHeight>:<blockIndex>` — `viewer` and `tx` optional; `limit` and `after` page the descendants ("Every list a view returns is a page" below) | `{ post, ancestors, ancestorCount, descendants, descendantCount, next, pending, pendingCount }` — `post` is `PostJson` or `WithdrawnJson`; `ancestors` the nearest `limit` ancestors, oldest first (`after` does not apply — the context above the topmost one is that post's own thread); `descendants` one page of the subtree's **committed** rows in committed order, `(blockHeight, blockIndex)` ascending, strictly after `after`, with `next` the key to continue from; `pending` the subtree's pending posts, newest arrival first, cut to `limit`, with `pendingCount` over all of them; `ancestorCount` and `descendantCount` are over the whole chain and the whole subtree, pending included — a `PostJson` `post` carries the same number as its own `descendantCount`. **A withdrawn subject answers its `ancestors`, `descendants`, `pending` and counts as a live subject does** — the row, its topology and every descendant's anchor survive the withdrawal (→ Withdrawal transactions), so its replies hang off it | 404 as above; 400 as `/posts` |
+| `GET` | `/posts` | `?author=hex&roots=1&viewer=hex&tx=1&limit=50&after=<blockHeight>:<blockIndex>` — `author`, `roots`, `viewer` and `tx` optional; `roots=1` restricts every list in the answer to posts with no parent (`parentRefs: []`), absent the listing is unfiltered, and the two filters compose (`author` with `roots` is the author's roots); `limit` and `after` page the committed rows ("Every list a view returns is a page" below) | `{ posts: (PostJson \| WithdrawnJson)[], next, pending: PostJson[], pendingCount }` — `posts` one page of the committed rows, live and withdrawn, newest first in committed order (placeholders included; ordering below), `next` the key to continue from; `pending` the live pending rows — the author's when `author` is present — newest arrival first, cut to `limit`, `pendingCount` over all of them; with `roots=1`, `posts`, `pending` and `pendingCount` are over the roots alone, the keyset walking the filtered set | 400 if a present `limit` or `after` does not parse ("Every list a view returns is a page"), a present `roots` is not the string `1` (`roots must be 1`), a present `tx` is not the string `1` (`tx must be 1`), or a present `viewer` is neither 64 hex chars nor an `@handle`; 404 `unknown handle` (→ Identity parameters) |
 
 **Every list a view returns is a page.** `limit` defaults to `PAGE_LIMIT_DEFAULT` (50) and clamps
 to `PAGE_LIMIT_MAX` (100); a present `limit` that does not parse as a positive safe integer is a
@@ -186,6 +186,8 @@ about it:
 ```
 PostJson = {
   id: postId,                  // 64-hex
+  txId: txId,                  // 64-hex — the transaction that created the post ("The creating transaction rides a post row" below)
+  tx?: hex | null,             // with ?tx=1 alone: that transaction as `encodeTx` writes it
   content: string | null,      // null = placeholder: structure known from the transaction, body not yet held
   contentHash: hex,            // the commit's 32-byte content commitment — an indexer verifies a body it holds elsewhere against it
   author: hex(authorId),       // 32-byte Ed25519 key as hex
@@ -202,6 +204,29 @@ PostJson = {
   likedByViewer: boolean | null // with ?viewer=: does that identity hold a like-record on this post; without: null
 }
 ```
+
+**The creating transaction rides a post row.** Every `PostJson` and every `WithdrawnJson` carries `txId`, the id
+of the transaction that created the post — the row's own `tx_id` (Store Interface → Posts DAG), written with the row
+by each of its three writers — so a post names its transaction as the transaction names its post:
+`computePostId(txId, 0)` is the row's `id`. **`tx=1`** — the string `1`, or absent — adds `tx` to every `PostJson` of
+the answer, live or pending, a placeholder among them, on all three read routes and in every list of each: that
+transaction's bytes as `encodeTx` writes them, hex. A pending post's are its pool entry's, read by `tx_id`; a
+confirmed post's are read out of the stored body at `blockHeight` by that id (`TYPES_INTERFACE → One transaction of a
+body`) — the body neither decoded nor kept: whatever a page holds, one body's bytes are in memory at a time. **A `WithdrawnJson` carries no `tx`**:
+it holds no text for a transaction to bind. A pending row whose pool entry is gone answers `tx: null`; a confirmed
+row whose block lists no such id, or whose height holds no stored body or one that will not read, is a stored chain
+that contradicts itself — a `CorruptChainStateError`, fail-stop under each of the three routes, never an answer. **The node checks nothing at the read**: the bytes are what a client derives the post's id, author,
+parent and content hash from, and verifies the author's signature over, with no word of the node's in the binding
+(`WEB_INTERFACE → The extension → "The post check"`).
+
+**What `tx=1` costs, so the exposure is a number** — measured 2026-10-08 with `packages/node/bench/post-tx.test.ts`
+(the store on a SQLite file, the routes on an Express app, Node 22, an i9-14900HX on mains, `powersave` governor,
+unpinned; rows seeded directly, 20 calls a case, medians). A page of 100 rows without `tx` answers in 43 ms. With
+`tx=1` and its rows in **100 distinct full blocks** — bodies of 1 998 946 bytes built from 9 519 transactions of a
+credit send's size, the fullest a body gets — it answers in **142 ms** (175 ms at worst), of which reading the 100
+body blobs from SQLite is about 74 ms and the walk to the transactions about 1 ms; with the 100 rows in one such block,
+33 ms; one post, 2 ms. A request holds one body's bytes: a burst of 20 such pages raised the process's array buffers
+by 48 MB at its peak and its heap by 8 MB, both returned after.
 
 **`GET /posts/:id` adds `confirmedAuthor`** to whichever shape it returns: the consensus-recorded
 author from `block_topology`, hex, or `null` until an applied block confirms the post. It is a
@@ -253,7 +278,7 @@ the whole of the guard: a placeholder is *waiting for* its body and a withdrawn 
 receive one. Every read that distinguishes them reads the **marker**, never the null.
 
 **The JSON projection has two arms where the store has one shape.** `feedService` answers
-`WithdrawnJson { kind: 'withdrawn', id, author, parentRefs, withdrawnAtHeight, descendantCount,
+`WithdrawnJson { kind: 'withdrawn', id, txId, author, parentRefs, withdrawnAtHeight, descendantCount,
 authorName }` — carrying **no content field**, the row's `parentRefs`, which the withdrawal keeps
 (→ Withdrawal transactions), and the two counts `PostJson` carries under the same definitions (the
 author counted once per distinct author per response, withdrawn rows and live rows in one dedup) — for
@@ -2802,7 +2827,7 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
 2. Broadcast ordering block to peers
 3. Confirm the block's posts (`confirmPost` with height and committed position, ids from
    its post transactions); a post with no row — its packet never reached this node — is
-   first inserted from its commit as a placeholder (`insertPost(postId, commit, null)`), and
+   first inserted from its commit as a placeholder (`insertPost(postId, txId, commit, null)`), and
    its body is backfilled by id (Store Interface → Posts DAG, "Backfill after sync")
 4. Apply UTXO transactions — the settlement, as the last entry in `utxoTxIds`,
    applies here like every other, and its outputs are where the coinbase's
@@ -3068,7 +3093,7 @@ admission and the shadow run; where it is the store's answer to a rule's read, i
 
 | Function | Signature |
 |----------|-----------|
-| `insertPost(postId, commit, content)` | `(PostId, PostCommit, string \| null) => void` — status = pending when admitted with its packet, the body present; `null` when block application inserts a placeholder from the commit; the id comes from the creating transaction |
+| `insertPost(postId, txId, commit, content)` | `(PostId, TxId, PostCommit, string \| null) => void` — `txId` the creating transaction's, written to `tx_id` by all three writers (the submit route, a relayed packet, block application); status = pending when admitted with its packet, the body present; `null` when block application inserts a placeholder from the commit; the id comes from the creating transaction |
 | `setPostBody(postId, content)` | `(string, string) => boolean` — fills a placeholder's body after the caller verified it against the row's `content_hash` (`verifyPostBody`); `false` if no row or the body is already held (no-op) |
 | `getPost(id)` | `(string) => StoredPost \| null` — "Resolution order for a post id" |
 | `getMissingBodies(limit)` | `(number) => { id, contentHash }[]` — rows with `content IS NULL`, newest first (`block_height` desc, `block_index` desc); the backfill list |
@@ -3120,7 +3145,7 @@ admission and the shadow run; where it is the store's answer to a rule's read, i
 > in the repo measures cost (`ARCHITECTURE → Design Principles`), so one test per read pins its
 > plan to its index and its range.
 
-**`dag_posts` columns:** `id`, `content_hash` (hex, NOT NULL), `content` (**nullable** — `NULL` is
+**`dag_posts` columns:** `id`, `tx_id` (hex, NOT NULL — the creating transaction's id), `content_hash` (hex, NOT NULL), `content` (**nullable** — `NULL` is
 the placeholder), `author`, `parent_refs`, `protocol_version`, `type`, `status`, `block_height`,
 `block_index`. There is no `raw_cbor`: a body is stored only after `verifyPostBody` accepted it
 against `content_hash`, so the column is the authority and nothing re-verifies it. There is no

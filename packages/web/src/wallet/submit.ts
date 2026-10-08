@@ -1,4 +1,5 @@
-import { encodeTx } from '@dagsocial/types';
+import { encodeTx, hexToBytes } from '@dagsocial/types';
+import type { UtxoTransaction } from '@dagsocial/types';
 import { readBuildContext, readCreditContext } from './reads';
 import { buildPost, buildLike, buildVouch, buildUnvouch, buildInvite, buildWithdraw, buildClaim, buildBurn, buildSend, txToJson, InsufficientKarma, InsufficientCredits, BelowFloor, InvalidKey } from './builders';
 import { formatCredits } from '../model/credits';
@@ -57,6 +58,12 @@ export interface SubmitDeps {
    *  The wallet, "the fourth ending is the composer still open"). Only
    *  submitPostFlow calls it; every other flow leaves it unset. */
   onSigned?: () => void;
+  /** Called with the signed transaction and its id after a successful post,
+   *  so the extension's post cache can hold the reader's own post from its
+   *  submit, under the id and from the transaction the client built
+   *  (WEB_INTERFACE → The extension → "The post cache"). Only
+   *  submitPostFlow calls it; every other flow leaves it unset. */
+  onCachePost?: (info: { signedTx: UtxoTransaction; txId: string }) => void;
 }
 
 export type SubmitResult<B> =
@@ -86,8 +93,12 @@ async function signBody(
   if ('locked' in r) return { ok: false, notSigned: 'locked', reason: 'your key is locked' };
   if ('declined' in r) return { ok: false, notSigned: 'declined', reason: 'not sent' };
   if ('refused' in r) return { ok: false, notSigned: 'refused', reason: r.refused };
+  // Attach the signature to the transaction itself, so a caller holding
+  // `tx` sees the signed form (the post cache reads the signed bytes;
+  // WEB_INTERFACE → The extension → "The post cache"). `txToJson` reads
+  // `tx.signatures` under the one rule.
+  tx.signatures = { [pubKeyHex]: hexToBytes(r.signature) };
   const body = txToJson(tx);
-  body.signatures = { [pubKeyHex]: r.signature };
   return { ok: true, body };
 }
 
@@ -146,6 +157,11 @@ export async function submitPostFlow(
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
   });
+  // The reader's own post enters the extension's post cache at its submit —
+  // the signed transaction the client built, under the id it derived
+  // (WEB_INTERFACE → The extension → "The post cache"). The web build hands
+  // the App no cache, which leaves this callback unset.
+  deps.onCachePost?.({ signedTx: built.tx, txId: built.txId });
   return { ok: true, entry, body };
 }
 

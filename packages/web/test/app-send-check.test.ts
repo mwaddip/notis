@@ -39,7 +39,7 @@ function post(): PostJson {
   return {
     id: '1'.repeat(64), content: 'hi', contentHash: contentHashHex('hi'), author: 'f1'.repeat(32), parentRefs: [],
     protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 90, blockIndex: 0,
-    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, txId: 'ff'.repeat(32),
   };
 }
 
@@ -166,7 +166,7 @@ function anchorFor(h: number): Anchor {
 }
 
 interface TipRunHandle {
-  resolve: (run: { verdict: TipVerdict; anchor: Anchor | null }) => void;
+  resolve: (run: { verdict: TipVerdict; anchor: Anchor | null; chain: string | null }) => void;
   reject: (e: unknown) => void;
 }
 
@@ -236,7 +236,7 @@ async function ready(h: Harness): Promise<void> {
 
 /** Answer tip run `i` with a verdict — verified with its anchor, or none. */
 async function endRun(h: Harness, i: number, verdict: TipVerdict, anchor: Anchor | null = null): Promise<void> {
-  h.tipRuns[i]!.resolve({ verdict, anchor });
+  h.tipRuns[i]!.resolve({ verdict, anchor, chain: null });
   await flush();
 }
 const verified = (anchor: Anchor): TipVerdict => ({ kind: 'verified', nodes: 2, height: anchor.tip.height });

@@ -87,7 +87,7 @@ function post(id: string, author: string, authorName: string | null, content: st
   return {
     id, content, contentHash: contentHashHex(content), author, parentRefs: parents,
     protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 90, blockIndex: 0,
-    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName, likedByViewer: null,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName, likedByViewer: null, txId: 'ff'.repeat(32),
   };
 }
 
@@ -167,7 +167,7 @@ function fakeApi(w: World): Api {
     [ROOT2, thread(post(ROOT2, B, 'Bob', 'second root'), [post(REPLY2, C, 'Cat', 'cat replies', [ROOT2])])],
     [ROOT4, thread(post(ROOT4, T, 'Tom', 'tom writes'), [])],
     [ROOT6, {
-      post: { kind: 'withdrawn', id: ROOT6, author: Z, withdrawnAtHeight: 95, parentRefs: [], descendantCount: 0, authorName: 'Zed' },
+      post: { kind: 'withdrawn', id: ROOT6, author: Z, withdrawnAtHeight: 95, parentRefs: [], descendantCount: 0, authorName: 'Zed', txId: 'aa'.repeat(32) },
       ancestors: [], ancestorCount: 0, descendants: [], descendantCount: 0, next: null, pending: [], pendingCount: 0,
     }],
   ]);
@@ -229,7 +229,7 @@ function anchorFor(h: number): Anchor {
 }
 
 interface TipRunHandle {
-  resolve: (run: { verdict: TipVerdict; anchor: Anchor | null }) => void;
+  resolve: (run: { verdict: TipVerdict; anchor: Anchor | null; chain: string | null }) => void;
   reject: (e: unknown) => void;
 }
 
@@ -352,7 +352,7 @@ async function everySurface(h: Harness): Promise<void> {
 
 /** Answer tip run `i` verified, with its anchor. */
 async function verify(h: Harness, i: number, anchor: Anchor): Promise<void> {
-  h.tipRuns[i]!.resolve({ verdict: { kind: 'verified', nodes: 2, height: anchor.tip.height }, anchor });
+  h.tipRuns[i]!.resolve({ verdict: { kind: 'verified', nodes: 2, height: anchor.tip.height }, anchor, chain: null });
   await flush();
 }
 
@@ -961,7 +961,7 @@ describe('the name checks — one batch in flight', () => {
     await verify(h, 0, anchorFor(100));
     await answerOne(h, 'proven');
     await pressCorner(h);
-    h.tipRuns[1]!.resolve({ verdict: { kind: 'thin', reason: 'one-node', height: 101 }, anchor: null });
+    h.tipRuns[1]!.resolve({ verdict: { kind: 'thin', reason: 'one-node', height: 101 }, anchor: null, chain: null });
     await flush();
     await answerOne(h, 'proven');
     expect(h.nameCalls.filter((c) => !c.settled)).toHaveLength(0);
@@ -1059,7 +1059,7 @@ describe('the name checks — the node, the identity, the anchor', () => {
     h.drive.renderPanes();
     await flush();
     expect(h.nameCalls).toHaveLength(0);
-    h.tipRuns[0]!.resolve({ verdict: { kind: 'thin', reason: 'one-node', height: 100 }, anchor: null });
+    h.tipRuns[0]!.resolve({ verdict: { kind: 'thin', reason: 'one-node', height: 100 }, anchor: null, chain: null });
     await flush();
     h.drive.openAuthor(B, { from: 'pane', ci: 5 });
     await flush();
@@ -1154,7 +1154,7 @@ describe('the name checks — every handle carries the pair it reads', () => {
     expect(button.dataset.namePair).toBe(ALICE);
     const span = card(row, { nameClay: () => false }).querySelector<HTMLElement>('span.handle')!;
     expect(span.dataset.namePair).toBe(ALICE);
-    const nameless = card({ ...row, authorName: null }, { onAuthor: () => {}, nameClay: () => false });
+    const nameless = card({ ...row, authorName: null, txId: 'aa'.repeat(32) }, { onAuthor: () => {}, nameClay: () => false });
     expect(nameless.querySelector('[data-name-pair]')).toBeNull();
   });
 });

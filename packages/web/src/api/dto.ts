@@ -31,6 +31,14 @@ export interface PostJson {
   authorName: string | null;
   /** Always null on the read surface: it sends no viewer parameter. */
   likedByViewer: boolean | null;
+  /** The row's creating transaction id, 64-hex (NODE_INTERFACE → Posts →
+   *  "The creating transaction rides a post row"). */
+  txId: string;
+  /** The transaction's bytes, lowercase hex, present on a `tx=1` read; null
+   *  where the node holds the row but no bytes for it; undefined where the
+   *  read did not ask for the transaction (WEB_INTERFACE → The extension →
+   *  "The post check"). */
+  tx?: string | null;
 }
 
 export interface WithdrawnJson {
@@ -44,6 +52,9 @@ export interface WithdrawnJson {
   descendantCount: number;
   /** The author's username as typed, or null (NODE_INTERFACE → Posts). */
   authorName: string | null;
+  /** The row's creating transaction id, 64-hex (NODE_INTERFACE → Posts →
+   *  "The creating transaction rides a post row"). */
+  txId: string;
 }
 
 /** A feed or descendant row: a live post or a withdrawn marker. */

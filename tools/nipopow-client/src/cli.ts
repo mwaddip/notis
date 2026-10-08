@@ -6,6 +6,8 @@
 
 import { resolveTip } from './tip.js';
 import { fetchListing, proveFigures } from './boxes.js';
+import { checkPosts } from './posts.js';
+import type { PostCheck } from './posts.js';
 import type { Config } from './config.js';
 import type { TipResult } from './tip.js';
 import type { Anchor, FiguresResult, LedgerSums } from './boxes.js';
@@ -13,6 +15,7 @@ import type { Run } from './text.js';
 import type { BlockHeader } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import type { HttpFetch } from './http.js';
+import { capped, fetchJson } from './http.js';
 
 const EMPTY_SUMS = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n } as const;
 
@@ -25,7 +28,23 @@ const EMPTY_SUMS = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted:
 export interface CliResult {
   tip: TipResult;
   run: Run | null;
+  post: PostCommandResult | null;
   exitCode: 0 | 1 | 2;
+}
+
+/**
+ * The result of the `post <id>` subcommand (WEB_INTERFACE → The extension →
+ * "The post check"): the row the node served, the check's verdict, and —
+ * when the node's answer was not an object the check could run on — the
+ * fetch's own failure. The command line exits 0 for a bound row, a withdrawn
+ * row and an unserved row (the node holds no bytes, which is no claim about
+ * the post's text), and 1 for an unbound row or an unanswered read.
+ */
+export interface PostCommandResult {
+  id: string;
+  nodeUrl: string;
+  check: PostCheck | null;
+  fetchFailure: string | null;
 }
 
 /**
@@ -38,6 +57,16 @@ export async function runCli(
   httpFetch: HttpFetch,
   now: () => number,
 ): Promise<CliResult> {
+  if (config.post !== null) {
+    const postResult = await runPost(config.post, config.nodeUrls[0]!, httpFetch);
+    return {
+      tip: { winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] },
+      run: null,
+      post: postResult,
+      exitCode: postExitCode(postResult),
+    };
+  }
+
   const tipResult = await resolveTip(
     config.nodeUrls,
     config.m,
@@ -49,12 +78,12 @@ export async function runCli(
 
   const verifiedCount = tipResult.nodes.filter((n) => n.verified).length;
 
-  if (verifiedCount === 0) return { tip: tipResult, run: null, exitCode: 2 };
-  if (verifiedCount < 2 && !config.allowSingle) return { tip: tipResult, run: null, exitCode: 2 };
-  if (tipResult.splits.length > 0) return { tip: tipResult, run: null, exitCode: 2 };
+  if (verifiedCount === 0) return { tip: tipResult, run: null, post: null, exitCode: 2 };
+  if (verifiedCount < 2 && !config.allowSingle) return { tip: tipResult, run: null, post: null, exitCode: 2 };
+  if (tipResult.splits.length > 0) return { tip: tipResult, run: null, post: null, exitCode: 2 };
 
   if (!config.user || !tipResult.winner || !tipResult.suffixHead || !tipResult.tip) {
-    return { tip: tipResult, run: null, exitCode: 0 };
+    return { tip: tipResult, run: null, post: null, exitCode: 0 };
   }
 
   const anchor: Anchor = { tip: tipResult.tip, suffixHead: tipResult.suffixHead };
@@ -73,6 +102,7 @@ export async function runCli(
         },
         listing: null,
       },
+      post: null,
       exitCode: 1,
     };
   }
@@ -87,8 +117,39 @@ export async function runCli(
   return {
     tip: tipResult,
     run: { figures, listing: listingResult.listing },
+    post: null,
     exitCode: figures.failed ? 1 : 0,
   };
+}
+
+/**
+ * The post subcommand (`post <id>`): one GET /posts/<id>?tx=1 against the
+ * first configured node, run through checkPosts. The check reads no state
+ * (WEB_INTERFACE → The extension → "The post check"), so no tip resolution
+ * precedes it.
+ */
+async function runPost(id: string, nodeUrl: string, httpFetch: HttpFetch): Promise<PostCommandResult> {
+  const res = await fetchJson<unknown>(httpFetch, `${nodeUrl}/posts/${id}?tx=1`);
+  if (!res.ok) {
+    return {
+      id,
+      nodeUrl,
+      check: null,
+      fetchFailure: res.status === 0
+        ? `transport failure: ${capped(res.body)}`
+        : `HTTP ${res.status}: ${capped(res.body)}`,
+    };
+  }
+  const [check] = checkPosts([res.data]);
+  return { id, nodeUrl, check: check ?? null, fetchFailure: null };
+}
+
+function postExitCode(result: PostCommandResult): 0 | 1 {
+  if (result.fetchFailure !== null) return 1;
+  const check = result.check;
+  if (check === null) return 1;
+  if (check.status === 'bound' || check.status === 'nothing-to-bind' || check.status === 'unserved') return 0;
+  return 1;
 }
 
 /**
@@ -97,7 +158,26 @@ export async function runCli(
  * sums.
  */
 export function toJson(result: CliResult): Record<string, unknown> {
-  const { tip, run } = result;
+  const { tip, run, post } = result;
+  if (post !== null) {
+    const check = post.check;
+    const checkJson: Record<string, unknown> =
+      check === null
+        ? { status: 'unanswered' }
+        : check.status === 'bound'
+        ? { status: 'bound', id: check.id, author: check.author, parent: check.parent }
+        : check.status === 'unbound'
+        ? { status: 'unbound', reason: check.reason, verdict: check.verdict }
+        : { status: check.status };
+    return {
+      post: {
+        id: post.id,
+        nodeUrl: post.nodeUrl,
+        check: checkJson,
+        fetchFailure: post.fetchFailure,
+      },
+    };
+  }
   const obj: Record<string, unknown> = {
     tip: tip.tip ? headerSummary(tip.tip) : null,
     suffixHead: tip.suffixHead

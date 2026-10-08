@@ -29,7 +29,7 @@ function confirmedPost(id: string): PostResult {
   return {
     id, content: 'x', contentHash: '00'.repeat(32), author: AUTHOR, parentRefs: [], protocolVersion: 1,
     type: 'regular', status: 'confirmed', blockHeight: 6001, blockIndex: 0, blockCreatedAt: 0,
-    likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, confirmedAuthor: AUTHOR,
+    likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, txId: 'ff'.repeat(32), confirmedAuthor: AUTHOR,
   };
 }
 
@@ -465,6 +465,7 @@ type PoPowHeader = Anchor['suffixHead'];
 interface TipRunLike {
   verdict: TipVerdict;
   anchor: Anchor | null;
+  chain: string | null;
 }
 
 interface VerifierRun {
@@ -572,8 +573,9 @@ const anchorFor = (height: number, tag: string): Anchor => ({
 const verifiedRun = (nodes: number, height: number, tag = 'aa'): TipRunLike => ({
   verdict: verified(nodes, height),
   anchor: anchorFor(height, tag),
+  chain: null,
 });
-const rejectedRun = (verdict: TipVerdict): TipRunLike => ({ verdict, anchor: null });
+const rejectedRun = (verdict: TipVerdict): TipRunLike => ({ verdict, anchor: null, chain: null });
 
 describe('the App verified tip — construction and the reading-base run', () => {
   beforeEach(() => {
@@ -817,7 +819,7 @@ describe('the App verified tip — construction and the reading-base run', () =>
     expect(h.drive.tipVerdict).toBeNull();
 
     const anchor = anchorFor(7766, 'aa');
-    h.runs[0]!.resolve({ verdict: verified(2, 7766), anchor });
+    h.runs[0]!.resolve({ verdict: verified(2, 7766), anchor, chain: null });
     await Promise.resolve(); await Promise.resolve();
     // The verdict lands as before; the corner's title and dot are unchanged.
     expect(h.drive.tipVerdict).toEqual({ kind: 'verified', nodes: 2, height: 7766 });
@@ -840,7 +842,7 @@ describe('the App verified tip — construction and the reading-base run', () =>
       await Promise.resolve(); await Promise.resolve();
       // Run 1 lands with an anchor — the App now holds one.
       const anchor = anchorFor(7766, 'aa');
-      h.runs[0]!.resolve({ verdict: verified(2, 7766), anchor });
+      h.runs[0]!.resolve({ verdict: verified(2, 7766), anchor, chain: null });
       await Promise.resolve(); await Promise.resolve();
       expect(h.drive.tipAnchor).toBe(anchor);
 
@@ -883,14 +885,14 @@ describe('the App verified tip — construction and the reading-base run', () =>
 
     // The old run resolves late — under an older generation, neither the
     // verdict nor the anchor lands.
-    h.runs[0]!.resolve({ verdict: verified(9, 111), anchor: anchorFor(111, 'aa') });
+    h.runs[0]!.resolve({ verdict: verified(9, 111), anchor: anchorFor(111, 'aa'), chain: null });
     await Promise.resolve(); await Promise.resolve();
     expect(h.drive.tipVerdict).toBeNull();
     expect(h.drive.tipAnchor).toBeNull();
 
     // The new run resolves — its verdict and its anchor land.
     const newAnchor = anchorFor(222, 'bb');
-    h.runs[1]!.resolve({ verdict: verified(2, 222), anchor: newAnchor });
+    h.runs[1]!.resolve({ verdict: verified(2, 222), anchor: newAnchor, chain: null });
     await Promise.resolve(); await Promise.resolve();
     expect(h.drive.tipVerdict).toEqual({ kind: 'verified', nodes: 2, height: 222 });
     expect(h.drive.tipAnchor).toBe(newAnchor);

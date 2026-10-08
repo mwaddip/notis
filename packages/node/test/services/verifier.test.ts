@@ -138,7 +138,7 @@ describe('verifyPost', () => {
     ]);
     const parentId = 'ab'.repeat(32);
     store.posts.set(parentId, {
-      id: parentId, content: 'parent', contentHash: Buffer.from(computeContentHash('parent')).toString('hex'),
+      id: parentId, txId: '00'.repeat(32), content: 'parent', contentHash: Buffer.from(computeContentHash('parent')).toString('hex'),
       author: userId, parentRefs: [], protocolVersion: PROTOCOL_VERSION,
       type: 'regular', status: 'confirmed', blockHeight: 1, blockIndex: 0,
       withdrawnAtHeight: null,
@@ -157,7 +157,7 @@ describe('verifyPost', () => {
     ]);
     const withdrawnId = 'cd'.repeat(32);
     store.posts.set(withdrawnId, {
-      id: withdrawnId, content: null, contentHash: Buffer.from(computeContentHash('withdrawn')).toString('hex'),
+      id: withdrawnId, txId: '00'.repeat(32), content: null, contentHash: Buffer.from(computeContentHash('withdrawn')).toString('hex'),
       author: userId, parentRefs: [], protocolVersion: PROTOCOL_VERSION,
       type: 'regular', status: 'confirmed', blockHeight: 1, blockIndex: 0,
       withdrawnAtHeight: 5,

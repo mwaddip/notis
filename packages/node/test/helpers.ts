@@ -313,13 +313,22 @@ export function fillerTx(label: string): UtxoTransaction {
  * (`makePostTx`), not call this.
  */
 export function fixturePostId(commit: PostCommit): string {
-  const synthetic = createHash('blake2b512')
+  return computePostId(fixtureTxId(commit), 0);
+}
+
+/**
+ * The synthetic creating-transaction id a post fixture gets — the stand-in
+ * `tx_id` of its stored row (NODE_INTERFACE → Posts → "The creating transaction
+ * rides a post row"). Deterministic on the commit's bytes, so the same fixture
+ * builds the same id twice.
+ */
+export function fixtureTxId(commit: PostCommit): string {
+  return createHash('blake2b512')
     .update(new TextEncoder().encode('dagsocial/test-fixture-post-tx/1'))
     .update(postFieldBytes(commit))
     .digest()
     .subarray(0, 32)
     .toString('hex');
-  return computePostId(synthetic, 0);
 }
 
 /**

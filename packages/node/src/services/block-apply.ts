@@ -606,9 +606,9 @@ export function writeBlockEffects(effects: BlockEffects, height: number): BlockJ
   // holds as it is, a placeholder from the commit for one it lacks
   // (NODE_INTERFACE → Post transactions → "A post applied without its packet
   // is a placeholder").
-  effects.posts.forEach(({ postId, post }, index) => {
+  effects.posts.forEach(({ postId, txId, post }, index) => {
     if (getPost(postId) === null) {
-      insertPost(postId, post, null);
+      insertPost(postId, txId, post, null);
       emitPostIndexed(postId, post.parentRefs.length);
     }
     confirmPost(postId, height, index);

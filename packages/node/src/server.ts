@@ -282,6 +282,8 @@ export function createApp(config: Config): express.Express {
       getUsernameByOwner: store.getUsernameByOwner,
       getUsername: store.getUsername,
       getTopologyAuthor: store.getTopologyAuthor,
+      getPendingUtxoTxBytesByTxId: store.getPendingUtxoTxBytesByTxId,
+      getUtxoTxTreeBytes: guardStoreRead(store.getUtxoTxTreeBytes),
       admitTx,
       validateTx: (tx, currentBlockHeight) =>
         validateTx(utxoEngineDeps, tx, currentBlockHeight),

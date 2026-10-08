@@ -7,11 +7,13 @@ import type { FeedServiceDeps } from '../services/feed-service.js';
 import { getNet } from '../services/net-instance.js';
 import { jsonToTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
+import { CorruptChainStateError, failStopIfCorruptChain } from '../services/corrupt-state.js';
 import type { PostKey } from '../store/index.js';
 import {
   parseLimit, isLimitError,
   parseAfter, isAfterError,
   parseRoots, isRootsError,
+  parseTx, isTxError,
   parseViewer, isViewerError,
   resolveIdentityParam, isResolveError,
   formatKey,
@@ -90,16 +92,31 @@ export function createRouter(deps: PostsDeps): Router {
     if (isLimitError(limit)) { res.status(400).json({ error: limit.error }); return; }
     const after = parseAfter(req.query as Record<string, unknown>, 'post');
     if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
+    const tx = parseTx(req.query as Record<string, unknown>);
+    if (isTxError(tx)) { res.status(400).json({ error: tx.error }); return; }
     const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);
     if (isViewerError(viewer)) {
       res.status(viewer.status ?? 400).json({ error: viewer.error });
       return;
     }
-    const thread = feedService.getThread(
-      req.params['id']!,
-      { limit, after: after as PostKey | undefined },
-      viewer,
-    );
+    let thread;
+    try {
+      thread = feedService.getThread(
+        req.params['id']!,
+        { limit, after: after as PostKey | undefined },
+        viewer,
+        tx,
+      );
+    } catch (err) {
+      // NODE_INTERFACE → Posts → "The creating transaction rides a post row":
+      // a confirmed row whose block lists no such id is a stored chain
+      // that contradicts itself — fail-stop as the proof routes do under
+      // `InconsistentAvlNodeRowsError` (NODE_INTERFACE → AVL+ State Root →
+      // "A height of the proof window with no kept root is served from the
+      // store").
+      if (err instanceof CorruptChainStateError) failStopIfCorruptChain(err);
+      throw err;
+    }
     if (!thread) {
       res.status(404).json({ error: 404, reason: 'Post not found' });
       return;
@@ -113,12 +130,20 @@ export function createRouter(deps: PostsDeps): Router {
   // GET /posts/:id
   router.get('/:id', (req, res) => {
     const id = req.params['id']!;
+    const tx = parseTx(req.query as Record<string, unknown>);
+    if (isTxError(tx)) { res.status(400).json({ error: tx.error }); return; }
     const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);
     if (isViewerError(viewer)) {
       res.status(viewer.status ?? 400).json({ error: viewer.error });
       return;
     }
-    const result = feedService.getPost(id, viewer);
+    let result;
+    try {
+      result = feedService.getPost(id, viewer, tx);
+    } catch (err) {
+      if (err instanceof CorruptChainStateError) failStopIfCorruptChain(err);
+      throw err;
+    }
     if (!result) {
       res.status(404).json({ error: 404, reason: 'Post not found' });
       return;
@@ -134,6 +159,8 @@ export function createRouter(deps: PostsDeps): Router {
     if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
     const roots = parseRoots(req.query as Record<string, unknown>);
     if (isRootsError(roots)) { res.status(400).json({ error: roots.error }); return; }
+    const tx = parseTx(req.query as Record<string, unknown>);
+    if (isTxError(tx)) { res.status(400).json({ error: tx.error }); return; }
     const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);
     if (isViewerError(viewer)) {
       res.status(viewer.status ?? 400).json({ error: viewer.error });
@@ -147,13 +174,20 @@ export function createRouter(deps: PostsDeps): Router {
       author = new Uint8Array(Buffer.from(resolved.hex, 'hex'));
     }
 
-    const result = feedService.queryPosts({
-      author,
-      roots,
-      limit,
-      after: after as PostKey | undefined,
-      viewer,
-    });
+    let result;
+    try {
+      result = feedService.queryPosts({
+        author,
+        roots,
+        limit,
+        after: after as PostKey | undefined,
+        viewer,
+        tx,
+      });
+    } catch (err) {
+      if (err instanceof CorruptChainStateError) failStopIfCorruptChain(err);
+      throw err;
+    }
     res.json({
       ...result,
       next: result.next ? formatKey('post', result.next) : null,

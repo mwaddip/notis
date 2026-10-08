@@ -31,8 +31,7 @@ import {
   seedProvenance,
   signTransaction,
   uid,
-  type TestIdentity,
-} from '../helpers.js';
+  type TestIdentity, fixtureTxId } from '../helpers.js';
 
 /** A record mutation's journal key — its tree key, hex (NODE_INTERFACE → Block Journal). */
 const treeKeyHex = (identityId: Uint8Array): string => bytesToHex(identityKey(identityId));
@@ -102,7 +101,7 @@ describe('the effects writer', () => {
     // Block 1 confirms the author's thread.
     const opening = threadTx(author, largest(author), 'the thread block 2 likes', 1);
     const openingId = computePostId(computeTxId(opening), 0);
-    posts.insertPost(openingId, opening.post!, 'the thread block 2 likes');
+    posts.insertPost(openingId, computeTxId(opening), opening.post!, 'the thread block 2 likes');
     expect(blockApply.applyOrderingBlock(await makeApplicableBlock({ height: 1, utxoTxs: [opening] }))).toBe(true);
 
     // Block 2: each second transaction spends the change its first created, so
@@ -379,8 +378,8 @@ describe('the effects writer — the entry each effect journals', () => {
     const s = await freshWriter();
     const author = uid('writer/withdrawer');
     const [full, placeholder] = ['e1'.repeat(32), 'e2'.repeat(32)];
-    s.posts.insertPost(full, makePostCommit(author, 'a body this node holds'), 'a body this node holds');
-    s.posts.insertPost(placeholder, makePostCommit(author, 'a body this node lacks'), null);
+    s.posts.insertPost(full, fixtureTxId(makePostCommit(author, 'a body this node holds')), makePostCommit(author, 'a body this node holds'), 'a body this node holds');
+    s.posts.insertPost(placeholder, fixtureTxId(makePostCommit(author, 'a body this node lacks')), makePostCommit(author, 'a body this node lacks'), null);
 
     const journal = s.writeBlockEffects(effectsOf({ withdrawals: [full, placeholder] }), 5);
 
@@ -398,7 +397,7 @@ describe('the effects writer — the entry each effect journals', () => {
     const [held, lacked] = ['f1'.repeat(32), 'f2'.repeat(32)];
     const heldCommit = makePostCommit(author, 'a post this node holds');
     const lackedCommit = makePostCommit(author, 'a post this node lacks');
-    s.posts.insertPost(held, heldCommit, 'a post this node holds');
+    s.posts.insertPost(held, fixtureTxId(heldCommit), heldCommit, 'a post this node holds');
     const applied = [{ txId: 'a0'.repeat(32), txBytes: Uint8Array.of(1, 2, 3) }];
 
     const journal = s.writeBlockEffects(effectsOf({

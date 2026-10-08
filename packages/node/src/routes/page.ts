@@ -147,3 +147,15 @@ export function parseRoots(query: Record<string, unknown>): boolean | { error: s
 export function isRootsError(v: boolean | { error: string }): v is { error: string } {
   return typeof v === 'object' && 'error' in v;
 }
+
+// NODE_INTERFACE → Posts → "The creating transaction rides a post row"
+export function parseTx(query: Record<string, unknown>): boolean | { error: string } {
+  const raw = query['tx'] as string | undefined;
+  if (raw === undefined) return false;
+  if (raw === '1') return true;
+  return { error: 'tx must be 1' };
+}
+
+export function isTxError(v: boolean | { error: string }): v is { error: string } {
+  return typeof v === 'object' && 'error' in v;
+}

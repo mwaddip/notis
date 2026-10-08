@@ -376,6 +376,31 @@ non-2xx's `ApiError` is), so no read loops on a malformed cursor. **A run ends**
 the clock is an option beside `prove`), which the tool reads as not served — the row reads *the node served no proof
 for …*, never no line.
 
+**The post check** (`WEB_INTERFACE → The extension → "The post check"`): the extension shows a post only when the
+transaction that created it binds it. With a posts verifier held — `src/extension/posts-verifier.ts`, over `checkPosts`
+of `@dagsocial/nipopow-client`, handed by `main.ts` in the extension build alone — the three post reads carry `tx=1`
+and **every row a read brings passes `ingestRows` before it enters state**, one `check` call a read: `bound` and
+`nothing-to-bind` rows enter, an `unbound` row is counted and an `unserved` one (`tx: null`) dropped uncounted. Each
+list — the feed, an author window, a thread — says what its standing reads withheld once at its head, in clay
+(`view/withheld-line.ts`); a thread whose subject is `unbound` shows that line and no row, one whose subject is
+`unserved` the muted *this node cannot serve this post yet.* **A withheld answer to the pending ledger's single post
+read decides nothing** — `reconcilePost`, `reconcileLike` and `reconcileWithdraw` take a `withheld` flag and keep the
+entry pending until its expiry height, never expired as on a 404. The web build is handed no verifier, sends no `tx`
+and shows every row the node serves.
+
+**The post cache** (`WEB_INTERFACE → The extension → "The post cache"`): `src/extension/post-cache.ts`, IndexedDB at the
+extension page's origin, the database `notis.posts.<chain>` — `chain` the tip run's (`TipRun.chain`, the reading
+node's `genesisHash`), the last name remembered in `localStorage` under `notis.posts.chain`. An entry holds the
+transaction's bytes, the row as the node last gave it, the author and the parent as the transaction states them, its
+last-seen time, its size and `own`; the running total is a record in a second store, written in the same transaction as
+every put, withdrawal and eviction. `POST_CACHE_BYTES` caps it: least recently seen evicted first, the reader's own
+never, the entry being put never. **Only `bound` rows enter** — from `offerBoundToCache` at each read, and the
+reader's own post at its submit, composed from the signed transaction and passed through the same check. **Every read
+still checks every row; the cache is read only when a thread's read from the node throws**, its rows written through
+`putThreadRows` beneath the pane's error line. A put is started and never awaited by a render; the module absorbs two
+failures — a write the browser aborts, and no IndexedDB — and rejects on anything else. `build-release.sh` refuses
+`notis.posts.` in the web bundle. Tests run the real adapter over `fake-indexeddb`.
+
 **The verified names** (`WEB_INTERFACE → The extension → "The verified names"`, `→ The identity display`, `→ The author
 window`, `→ The wallet window`): the extension proves every handle it shows, and every handle it sends to, through
 `proveName` of `@dagsocial/nipopow-client` — the lookup (`/usernames?owner=` for a label, `/usernames/:name` for a typed
@@ -517,6 +542,25 @@ relay's log; **27d** the author window's name row turning clay in place with no 
 drawing the line; **28a** Eve's key over S's box and **28b** a made-up box refused at the press with no prompt — 28b
 pressed once A has mined past the anchor, so its first check reads `unchecked`, asks one tip run and the retry reads
 `absent`; **30** the hosted web build — no clay and no `/api/v1/proof/`. Each lie arm switched back to A and ink again.
+**With `--verified-posts` (it needs `--r-key`, `--node-dist`, `--miner`, `--scratch`, `--node-p2p`; `--public` and
+`--web-dist` for its last step) the verified-posts block**, P1–P12, runs alone after steps 1–16 on node A, a second
+verified node B, and a **posts relay** of the harness's own on `:19810` that passes every `/nipopow/proof/` through and
+lies over the three post reads in one mode at a time — `text`, `author`, `id-swap`, `tx-null`, `tx-drop`, `thread-down`
+— with a switchable upstream: **P1** bound rows, no line, every `/posts…` request carrying `tx=1`; **P2–P6** one lie
+arm each, three surfaces measured apart — the **standing feed** after `↻` keeps the card an earlier read bound beside
+the clay *1 post withheld — it does not match its signature* (no line under `tx-null`), a **fresh feed** after a node
+change shows no such card, and the **thread** shows the line and no row (under `tx-null` the muted *this node cannot
+serve this post yet.*); **P7** every arm back on A; **P8** the database `notis.posts.<A's block 1 hash>` with the root
+and the reply, still there after a reload; **P9** `thread-down` on a held thread — the error line and the held rows
+beneath it, then `↻` with the relay honest; **P10** a thread never held — the error line alone; **P11** the relay in
+front of an isolated node **D** on another chain — a second database beside the first, a failed read showing no row
+held under A's chain, a 404 reading *this post is gone.*, and A's entries intact afterwards; **P12** the hosted web
+build — no `tx`, no database, no line. ⚠ **A thread is opened the product's two ways and no other**: from a feed
+card's strip, or by id through the pending record `notis.open.<id>` written from the background's context — the page
+has no post-id hash route. ⚠ **Opening a thread that is already open reads nothing**: a step that needs a read presses
+the pane's `↻`. ⚠ **`GET /blocks/:height` carries no hash** — the harness recomputes block 1's through `blockHash`.
+⚠ **A second `promote.mjs` on one stack is refused once** (`No karma box input found in transaction`) and passes on
+the next try; each run of the block needs a member that has not run steps 11–12.
 **The ten-minute timer and the visibility rule are the unit tests'**, not the proof's. ⚠ **17b guards a
 race that is wide only for a follower under a fast miner**: reading B at about three blocks a second, a build
 whose verdict read every lost comparison as *outworked* showed the alarm on 24 of 30 presses; under the paced

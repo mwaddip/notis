@@ -36,7 +36,7 @@ function row(label: string, over: Partial<PostJson> = {}): PostJson {
   return {
     id: hid(label), content: label, contentHash: contentHashHex(label), author: X, parentRefs: [], protocolVersion: 1,
     type: 'regular', status: 'confirmed', blockHeight: 1000, blockIndex: 0, blockCreatedAt: 0,
-    likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, ...over,
+    likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, txId: 'ff'.repeat(32), ...over,
   };
 }
 
@@ -69,7 +69,7 @@ function pageOf<T>(rows: readonly T[], idOf: (r: T) => string, after: string | n
 function seenBy(n: NodeData, r: PostJson, viewer: string | undefined): FeedRow {
   if (n.withdrawn.has(r.id)) {
     const marker: WithdrawnJson = {
-      kind: 'withdrawn', id: r.id, author: r.author, withdrawnAtHeight: 1000, parentRefs: r.parentRefs, descendantCount: 0, authorName: null,
+      kind: 'withdrawn', id: r.id, author: r.author, withdrawnAtHeight: 1000, parentRefs: r.parentRefs, descendantCount: 0, authorName: null, txId: r.txId,
     };
     return marker;
   }
@@ -1108,5 +1108,28 @@ describe('a like\'s landed row stands over an answer read before it', () => {
     await flush();
     expect(h.drive.authorPostsData.get(X)!.posts[0]?.likedByViewer).toBe(true);
     expect(offersLike(h.panesEl, hid('L'))).toBe(false);
+  });
+});
+
+describe('a thread refresh that answers', () => {
+  it('a refresh that answers 404 after a failed refresh shows the post gone, not the earlier error', async () => {
+    setNode(A);
+    const T = row('T');
+    const n = node({ feed: [T], replies: new Map([[T.id, [row('R1', { parentRefs: [T.id] })]]]) });
+    const h = harness({ [A]: n });
+    h.drive.openThread(T.id, { from: 'feed' });
+    await flush();
+
+    h.nodes.setFail((c) => c.method === 'thread');
+    await h.drive.refreshThread(T.id);
+    await flush();
+    expect(h.panesEl.querySelector('.error')?.textContent).toContain("can't load this thread — ");
+
+    h.nodes.setFail(() => false);
+    n.replies.delete(T.id);
+    await h.drive.refreshThread(T.id);
+    await flush();
+    expect(h.panesEl.textContent).toContain('this post is gone.');
+    expect(h.panesEl.querySelector('.error')).toBeNull();
   });
 });

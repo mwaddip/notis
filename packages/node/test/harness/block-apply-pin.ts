@@ -41,8 +41,7 @@ import {
   seedEmissionBox,
   seedKarmaPoolBox,
   signTransaction,
-  type TestIdentity,
-} from '../helpers.js';
+  type TestIdentity } from '../helpers.js';
 
 /**
  * The block-application pin's scenario: a fixed pre-set state and eight blocks,
@@ -678,7 +677,9 @@ async function runScenario(m: Modules, carrier: PinCarrier): Promise<ApplyPinCap
   // (NODE_INTERFACE → Post transactions).
   const fullContent = 'a thread whose body this node holds';
   const pFull = thread(w1, largest(w1), fullContent, 1);
-  m.posts.insertPost(pFull.postId, pFull.commit, fullContent);
+  // NODE_INTERFACE → Posts → "The creating transaction rides a post row":
+  // the row names the id of the transaction block 1 confirms it under.
+  m.posts.insertPost(pFull.postId, pFull.txId, pFull.commit, fullContent);
 
   bootstrapOverStore(m);
   const preSet = captureState(m);

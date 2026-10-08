@@ -351,6 +351,12 @@ drift test's converse does not reach them and the rows are marked.
 | `m` (default) | `24` | the security parameter | policy | ruled 2026-09-30, to be tuned on testnet's behaviour, on `packages/nipopow/scripts/bench-proof-m.mjs`: at 24 a chain of three quarters of the honest work wins about 4% of comparisons (6: about 18%), and a 100 000-block chain's proof is 199 KB, 397 KB as the route's hex, which Waterfox 140 decodes, verifies and compares in 0.12 s | RULED | `NIPOPOW_INTERFACE → Constants` |
 | `k` (default) | `20` | the suffix — the client's own settlement depth; a block count, read in work under a moving target | policy | provisional; not a full node's reorg horizon, which is per network and larger (`maxReorgDepth`) | PROVISIONAL | `NIPOPOW_INTERFACE → Constants` |
 
+`@dagsocial/web`, the extension build — pinned by the package's own suite, outside the drift test.
+
+| Name | Value | Reads as | Kind | Argument | Status | Rule |
+|---|---|---|---|---|---|---|
+| `POST_CACHE_BYTES` (web) | `50_000_000` | the post cache's size, over its entries' sizes | policy | provisional and unmeasured — a round figure, argued by nothing yet | PROVISIONAL | `WEB_INTERFACE → The extension → "The post cache"` |
+
 ## Excluded
 
 Numeric exports and profile fields that are not register rows, listed so the drift test's converse

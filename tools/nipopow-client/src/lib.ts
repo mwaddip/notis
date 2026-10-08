@@ -24,6 +24,9 @@ export type { RangeResult, HoldingKind } from './holdings.js';
 export { proveName } from './names.js';
 export type { NameClaim, NameStatus, NameResult } from './names.js';
 
+export { checkPosts } from './posts.js';
+export type { PostCheck, PostUnboundReason } from './posts.js';
+
 export { verifierProfile, DEFAULT_M, DEFAULT_K } from './config.js';
 export type { VerifyProfile } from './config.js';
 

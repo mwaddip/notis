@@ -33,6 +33,7 @@ function nodeOk(url: string, behind: NodeTipResult['behind'] = 0): NodeTipResult
     refuseReason: null,
     refuseCode: null,
     behind,
+    genesisHash: null,
   };
 }
 
@@ -45,6 +46,7 @@ function nodeFail(url: string, code: NonNullable<NodeTipResult['refuseCode']>): 
     refuseReason: 'fixture',
     refuseCode: code,
     behind: null,
+    genesisHash: null,
   };
 }
 
@@ -268,6 +270,7 @@ function nodeUnverifiedNoCode(url: string): NodeTipResult {
     refuseReason: null,
     refuseCode: null,
     behind: null,
+    genesisHash: null,
   };
 }
 

@@ -71,6 +71,7 @@ export {
 export {
   createOrderingBlock,
   getOrderingBlock,
+  getUtxoTxTreeBytes,
   getBlockCreatedAt,
   getCurrentHeight,
   nextBlockHeight,
@@ -123,6 +124,7 @@ export {
   hasPendingSpend,
   findPendingOutput,
   getBoxWithPending,
+  getPendingUtxoTxBytesByTxId,
   MempoolFullError,
   PendingSpendConflictError,
   TxTooLargeError,

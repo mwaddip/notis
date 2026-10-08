@@ -36,7 +36,7 @@ function post(id: string, author: string): PostJson {
   return {
     id, content: 'hi', contentHash: contentHashHex('hi'), author, parentRefs: [],
     protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 10, blockIndex: 0,
-    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, txId: 'ff'.repeat(32),
   };
 }
 function statusResult(): StatusResult {

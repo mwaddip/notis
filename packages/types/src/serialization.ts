@@ -24,14 +24,16 @@
  * Ordering block).
  */
 
-import { ByteReader, ByteWriter } from '@dagsocial/wire';
+import { ByteReader, ByteWriter, MAX_ARRAY_LENGTH, ReaderError } from '@dagsocial/wire';
 import {
   type StructCodec,
   CodecError,
   arrByteLength,
   decodeStruct,
   encodeStruct,
+  equalBytes,
   firstDifference,
+  hexToBytes,
   lpByteLength,
   readArr,
   readBytesN,
@@ -49,7 +51,7 @@ import {
   writeVlqU,
 } from './codec.js';
 import { postFieldBytes, readPostCommitFields, type PostCommit } from './post.js';
-import { readTxIdFields, writeTxIdFields, type UtxoTransaction } from './utxo.js';
+import { readTxIdFields, writeTxIdFields, type TxId, type UtxoTransaction } from './utxo.js';
 import type {
   BlockHeader,
   UtxoTxTree,
@@ -324,6 +326,82 @@ export function utxoTxTreeByteLength(t: UtxoTxTree): number {
     arrByteLength(t.utxoTxIds, () => 32) +
     arrByteLength(t.utxoTxs, lpByteLength)
   );
+}
+
+/**
+ * One transaction's bytes out of an encoded `UtxoTxTree`, by its id, with
+ * nothing decoded (TYPES_INTERFACE → One transaction of a body).
+ *
+ * `txId` is decoded to its 32 raw bytes **once**, after the 64-lowercase-hex
+ * gate. The walk then reads the id array's count — the same `vlqU` and the
+ * same `MAX_ARRAY_LENGTH` refusal `readArr` enforces — and walks every id as
+ * a 32-byte VIEW returned by `ByteReader.readBytes`, which hands back a
+ * `subarray` of the input bytes rather than a copy. Each view is compared to
+ * the wanted bytes; the first match fixes the answer's position, and the walk
+ * still reads through the whole id array so the reader stands at the element
+ * array whichever position matched. No hex string is built for any id.
+ *
+ * The element array is then: its `vlqU` count (same `MAX_ARRAY_LENGTH`
+ * refusal); the preceding `lp` elements skipped by their length prefix without
+ * allocating; the wanted element returned as a fresh `Uint8Array` through
+ * `readLp`, as the codec's decoders do.
+ *
+ * ⛔ **A section added to `UTXO_TX_TREE` owes the matching step here**, as
+ * `utxoTxTreeByteLength` carries the same warning for its measurement.
+ *
+ * It does not run the decoder's re-encode compare — it is for bytes its caller
+ * already holds to be canonical, a node's own stored body, never a peer's —
+ * and does not read past the element it returns. Bytes the walk cannot read
+ * throw `ReaderError`: a section cut short, a count or a length past the
+ * bytes, an id array longer than the element array at the wanted position. A
+ * `txId` that is not 64 lowercase hex returns `null`.
+ */
+export function utxoTxBytesIn(treeBytes: Uint8Array, txId: TxId): Uint8Array | null {
+  if (typeof txId !== 'string' || !/^[0-9a-f]{64}$/.test(txId)) return null;
+  // One decode of the wanted id to its 32 raw bytes, up front; the walk
+  // allocates nothing per id after this.
+  const wantedBytes = hexToBytes(txId);
+  const r = new ByteReader(treeBytes);
+  const idCount = readVlqU(r);
+  if (idCount > MAX_ARRAY_LENGTH) {
+    throw new ReaderError(
+      `utxoTxBytesIn: utxoTxIds length ${idCount} exceeds max ${MAX_ARRAY_LENGTH}`,
+      'array-too-large',
+    );
+  }
+  // Walk the whole id array as 32-byte views, byte-compared against the wanted
+  // bytes. Reading through to the end leaves the reader at the element array
+  // whatever position matched; the first match is the answer.
+  let wantedIndex = -1;
+  for (let i = 0; i < idCount; i++) {
+    const idView = r.readBytes(32);
+    if (wantedIndex === -1 && equalBytes(idView, wantedBytes)) {
+      wantedIndex = i;
+    }
+  }
+  if (wantedIndex === -1) return null;
+  // The element array — same `vlqU` count as `readArr`, read inline so only
+  // the one element wanted is materialised and the walk stops at it.
+  const elemCount = readVlqU(r);
+  if (elemCount > MAX_ARRAY_LENGTH) {
+    throw new ReaderError(
+      `utxoTxBytesIn: utxoTxs length ${elemCount} exceeds max ${MAX_ARRAY_LENGTH}`,
+      'array-too-large',
+    );
+  }
+  if (elemCount <= wantedIndex) {
+    throw new ReaderError(
+      `utxoTxBytesIn: utxoTxs has ${elemCount} entries, wanted index ${wantedIndex}`,
+      'truncated',
+    );
+  }
+  // Skip the preceding `lp` elements: the same `vlqU` length and
+  // position-advancing `readBytes` that `readLp` is built from, with no copy.
+  for (let i = 0; i < wantedIndex; i++) {
+    const len = readVlqU(r);
+    r.readBytes(len);
+  }
+  return readLp(r);
 }
 
 // ---------------------------------------------------------------------------

@@ -12,8 +12,7 @@ import {
   rawPublicKey,
   seedProvenance,
   signTransaction, seedPostTx, seedKarmaPoolBox,
-  FIXTURE_BOND_KARMA,
-} from '../helpers.js';
+  FIXTURE_BOND_KARMA } from '../helpers.js';
 import {
   describe,
   it,
@@ -30,6 +29,7 @@ import {
   PROTOCOL_VERSION,
   LIKE_KARMA_COST,
   MAX_BLOCK_BODY_BYTES,
+  computeTxId,
 } from '@dagsocial/types';
 import type {
   KarmaBox,
@@ -124,11 +124,7 @@ async function importMempool() {
 }
 
 async function importOrdering() {
-  return (await import('../../src/store/ordering.js')) as {
-    getCurrentHeight: () => number;
-    getOrderingBlock: (height: number) => unknown;
-    getBlockCreatedAt: (height: number) => number | null;
-  };
+  return (await import('../../src/store/ordering.js')) as typeof import('../../src/store/ordering.js');
 }
 
 type LikesService = {
@@ -316,7 +312,7 @@ describe('full-pipeline', () => {
 
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'full-pipeline like test');
     const posts = await importPosts();
-    posts.insertPost(postId, commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
     // ⛔ **The target must be CONFIRMED before a like can be built, and that is
     // new.** The like's marker names the post's author, and the author is
     // knowable only from `block_topology` — which an applied block writes
@@ -409,6 +405,8 @@ describe('full-pipeline', () => {
       getSubtreePage: f.getSubtreePage,
       getBlockCreatedAt: ordering.getBlockCreatedAt,
       getUsernameByOwner: () => null,
+      getPendingUtxoTxBytesByTxId: () => null,
+      getUtxoTxTreeBytes: ordering.getUtxoTxTreeBytes,
     });
     const postJson = feed.getPost(postId, liker.userId) as { likeCount: number; likedByViewer: boolean | null };
     expect(postJson.likeCount).toBe(1);
@@ -436,7 +434,7 @@ describe('full-pipeline', () => {
 
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'multi-op test');
     const posts = await importPosts();
-    posts.insertPost(postId, commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
     // ⛔ The target must be confirmed before a like can be built — the marker
     // names its author, and `block_topology` is the only source for that
     // (NODE_INTERFACE → Karma transition rules).

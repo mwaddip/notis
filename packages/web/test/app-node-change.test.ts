@@ -159,7 +159,7 @@ interface FigureCall {
 }
 interface TipCall {
   readingBase: string;
-  resolve(v: { verdict: TipVerdict; anchor: Anchor | null }): void;
+  resolve(v: { verdict: TipVerdict; anchor: Anchor | null; chain: string | null }): void;
 }
 
 interface Drive {
@@ -622,7 +622,7 @@ describe('the verified figures across a node or identity change', () => {
     await h.drive.loadMembershipState();
     await h.drive.refreshWalletCredits();
     await flush();
-    h.tipCalls[0]!.resolve({ verdict: verified(510), anchor: anchorAt(510, 'aa') });
+    h.tipCalls[0]!.resolve({ verdict: verified(510), anchor: anchorAt(510, 'aa'), chain: null });
     await flush();
     for (const c of [...h.figuresCalls]) c.resolve(emptyResult());
     await flush();
@@ -635,7 +635,7 @@ describe('the verified figures across a node or identity change', () => {
     await flush();
     const tipB = h.tipCalls[h.tipCalls.length - 1]!;
     expect(tipB.readingBase).toBe(B);
-    tipB.resolve({ verdict: verified(495), anchor: anchorAt(495, 'bb') });
+    tipB.resolve({ verdict: verified(495), anchor: anchorAt(495, 'bb'), chain: null });
     await flush();
     for (const c of h.figuresCalls.slice(before)) c.resolve(emptyResult());
     await flush();
@@ -661,7 +661,7 @@ describe('the verified figures across a node or identity change', () => {
     const h = harness({ layout: '@profile', verifiers: true });
     await h.drive.loadMembershipState();
     await flush();
-    h.tipCalls[0]!.resolve({ verdict: verified(510), anchor: anchorAt(510, 'aa') });
+    h.tipCalls[0]!.resolve({ verdict: verified(510), anchor: anchorAt(510, 'aa'), chain: null });
     await flush();
     expect(h.figuresCalls).toHaveLength(1);
     expect(h.drive.figuresInFlight).toBe(true);
@@ -669,7 +669,7 @@ describe('the verified figures across a node or identity change', () => {
     await h.drive.changeNode(B);
     await flush();
     expect(h.drive.figuresInFlight).toBe(false);
-    h.tipCalls[h.tipCalls.length - 1]!.resolve({ verdict: verified(495), anchor: anchorAt(495, 'bb') });
+    h.tipCalls[h.tipCalls.length - 1]!.resolve({ verdict: verified(495), anchor: anchorAt(495, 'bb'), chain: null });
     await flush();
     expect(h.figuresCalls).toHaveLength(2);
     expect(h.figuresCalls[1]!.readingBase).toBe(B);
@@ -685,7 +685,7 @@ describe('the verified figures across a node or identity change', () => {
     const h = harness({ layout: '@profile', verifiers: true });
     await h.drive.loadMembershipState();
     await flush();
-    h.tipCalls[0]!.resolve({ verdict: verified(510), anchor: anchorAt(510, 'aa') });
+    h.tipCalls[0]!.resolve({ verdict: verified(510), anchor: anchorAt(510, 'aa'), chain: null });
     await flush();
     expect(h.figuresCalls).toHaveLength(1);
 

@@ -382,6 +382,12 @@ export function submissionToPost(sub: Submission, ownName: string | null = null)
     // so these are placeholders the render never reads (WEB_INTERFACE → What the feed reads).
     descendantCount: 0,
     authorName: ownName,
+    // The row's creating transaction id (NODE_INTERFACE → Posts → "The
+    // creating transaction rides a post row"). A submission that has yet to
+    // land holds the client's own txId; before one exists the localKey holds
+    // the row's identity and is used here too (the field is never read for a
+    // submission card — WEB_INTERFACE → The wallet).
+    txId: sub.txId ?? sub.localKey,
     likedByViewer: null,
   };
 }

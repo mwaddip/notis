@@ -14,6 +14,7 @@ import {
   MAX_FUTURE_DRIFT_MS,
   GENESIS_PREV_BLOCK_HASH,
   bytesToHex,
+  computeTxId,
   encodeTx,
   hash32,
   updateInterlinks,
@@ -43,7 +44,7 @@ import {
   signHeader,
   signTransaction,
   solveHeaderPow, seedPostTx, activateProverOverStore, insertPoisonedBlock,
-  buildMinedHeaderChain, changeBoxOf, revertChainTo, ringHeights, seedBoxes } from '../helpers.js';
+  buildMinedHeaderChain, changeBoxOf, revertChainTo, ringHeights, seedBoxes} from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -338,7 +339,7 @@ describe('extendsOurTip', () => {
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'genesis');
 
     const posts = await importPosts();
-    posts.insertPost(postId, commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
@@ -350,7 +351,7 @@ describe('extendsOurTip', () => {
 
     // Create a second block that chains from block 1
     const { commit: commit2, tx: post2Tx, postId: postId2, content: content2 } = await seedPostTx(author, 'block 2');
-    posts.insertPost(postId2, commit2, content2);
+    posts.insertPost(postId2, computeTxId(post2Tx), commit2, content2);
     mempool.insertUtxoTx(post2Tx, 1000);
 
     const block2 = await mineNextBlock(bc);
@@ -387,7 +388,7 @@ describe('extendsOurTip', () => {
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'genesis');
 
     const posts = await importPosts();
-    posts.insertPost(postId, commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
@@ -875,7 +876,7 @@ describe('revertBlock', () => {
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'unconfirm me');
 
     const posts = await importPosts();
-    posts.insertPost(postId, commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
@@ -929,7 +930,7 @@ describe('revertBlock', () => {
 
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'utxo revert test');
 
-    posts.insertPost(postId, commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     // Insert post transaction
     mempool.insertUtxoTx(postTx, 1000);
@@ -1132,7 +1133,7 @@ describe('reorg', () => {
     const seededPosts = [];
     for (let i = 0; i < 3; i++) seededPosts.push(await seedPostTx(author, `reorg test ${i}`));
     for (const { commit, tx: postTx, postId, content } of seededPosts) {
-      posts.insertPost(postId, commit, content);
+      posts.insertPost(postId, computeTxId(postTx), commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
@@ -1164,6 +1165,129 @@ describe('reorg', () => {
     expect(pendingAfter.length).toBeGreaterThan(0);
   });
 
+  // NODE_INTERFACE → Posts → "The creating transaction rides a post row": the
+  // reorg path reverts the confirming block (Phase 1's `unconfirmPost` nulls
+  // the row's `block_height`) and re-admits the reverted transactions
+  // (Phase 2's `insertUtxoTx`). The two cases below read the post afterwards
+  // through FeedService with `tx: true`, so a `tx` field answered from the
+  // pool and a `tx: null` from a dropped re-insert sit side by side.
+  it('a reverted post whose re-insert returns to the pool answers tx as the pool entry\'s bytes', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const author = makeTestIdentity();
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'reorg feed-service re-insert');
+    const txId = computeTxId(postTx);
+    const txBytes = encodeTx(postTx);
+
+    const posts = await importPosts();
+    const mempool = await importMempoolFresh();
+    const bc = await importBlockCreator();
+
+    posts.insertPost(postId, txId, commit, content);
+    mempool.insertUtxoTx(postTx, 1000);
+    bc.startBlockCreator(testConfig);
+    await mineNextBlock(bc);
+    expect(mempool.getPendingEntries(100)).toHaveLength(0);
+
+    const forkResolution = await importForkResolution();
+    forkResolution.reorg(0, []);
+
+    const storeIdx = await import('../../src/store/index.js');
+    const feedModule = await import('../../src/services/feed-service.js');
+    const feed = new feedModule.FeedService({
+      getPost: storeIdx.getPost,
+      queryPostsPage: storeIdx.queryPostsPage,
+      getLikeRecordCount: storeIdx.getLikeRecordCount,
+      getDescendantCount: storeIdx.getDescendantCount,
+      hasLikeRecord: storeIdx.hasLikeRecord,
+      getAncestorsNearest: storeIdx.getAncestorsNearest,
+      getSubtreePage: storeIdx.getSubtreePage,
+      getBlockCreatedAt: storeIdx.getBlockCreatedAt,
+      getUsernameByOwner: storeIdx.getUsernameByOwner,
+      getPendingUtxoTxBytesByTxId: storeIdx.getPendingUtxoTxBytesByTxId,
+      getUtxoTxTreeBytes: storeIdx.getUtxoTxTreeBytes,
+    });
+
+    const { decodeTx: decodeTx2, computePostId } = await import('@dagsocial/types');
+    const r = feed.getPost(postId, null, true) as import('../../src/services/feed-service.js').PostJson;
+    expect(r.status).toBe('pending');
+    expect(r.txId).toBe(txId);
+    expect(typeof r.tx).toBe('string');
+    expect(r.tx).toBe(Buffer.from(txBytes).toString('hex'));
+    const decoded = decodeTx2(new Uint8Array(Buffer.from(r.tx as string, 'hex')));
+    expect(computeTxId(decoded)).toBe(txId);
+    expect(computePostId(computeTxId(decoded), 0)).toBe(postId);
+  });
+
+  it('a reverted post whose re-insert is dropped stays pending with no pool entry, and answers tx: null', async () => {
+    // The pool-full path: `reinsert` catches `MempoolFullError` and completes.
+    // The dag_posts row stays — Phase 1's `unconfirmPost` only nulls
+    // `block_height` — and the pool has no entry under its `tx_id`, so
+    // `getPendingUtxoTxBytesByTxId` answers null and FeedService answers
+    // `tx: null`.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+      const author = makeTestIdentity();
+      const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'reorg feed-service dropped');
+      const txId = computeTxId(postTx);
+
+      const posts = await importPosts();
+      const mempool = await importMempoolFresh();
+      mempool.setMempoolCap(1);
+      const bc = await importBlockCreator();
+
+      const occupier = await seededSelfSpend();
+
+      posts.insertPost(postId, txId, commit, content);
+      mempool.insertUtxoTx(postTx, 1000);
+      bc.startBlockCreator(testConfig);
+      await mineNextBlock(bc);
+      expect(mempool.getPendingEntries(100)).toHaveLength(0);
+
+      // Fill the pool so the reorg's re-insertion is dropped.
+      mempool.insertUtxoTx(occupier, 1000);
+      expect(mempool.getPendingEntries(100)).toHaveLength(1);
+
+      const forkResolution = await importForkResolution();
+      forkResolution.reorg(0, []);
+
+      // The dag_posts row survives, pool has only the occupier (no entry under
+      // the post's txId).
+      const ordering = await importOrdering();
+      expect(ordering.getCurrentHeight()).toBe(0);
+      const storeIdx = await import('../../src/store/index.js');
+      expect(storeIdx.getPendingUtxoTxBytesByTxId(txId)).toBeNull();
+
+      const feedModule = await import('../../src/services/feed-service.js');
+      const feed = new feedModule.FeedService({
+        getPost: storeIdx.getPost,
+        queryPostsPage: storeIdx.queryPostsPage,
+        getLikeRecordCount: storeIdx.getLikeRecordCount,
+        getDescendantCount: storeIdx.getDescendantCount,
+        hasLikeRecord: storeIdx.hasLikeRecord,
+        getAncestorsNearest: storeIdx.getAncestorsNearest,
+        getSubtreePage: storeIdx.getSubtreePage,
+        getBlockCreatedAt: storeIdx.getBlockCreatedAt,
+        getUsernameByOwner: storeIdx.getUsernameByOwner,
+        getPendingUtxoTxBytesByTxId: storeIdx.getPendingUtxoTxBytesByTxId,
+        getUtxoTxTreeBytes: storeIdx.getUtxoTxTreeBytes,
+      });
+
+      const r = feed.getPost(postId, null, true) as import('../../src/services/feed-service.js').PostJson;
+      expect(r.status).toBe('pending');
+      expect(r.txId).toBe(txId);
+      expect(r.tx).toBeNull();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('reorg re-inserts lowest height first — getPendingEntries holds the parent before the child', async () => {
     // NODE_INTERFACE → Block Journal. A parent tx at h=1 and its child at h=2,
     // reorg both away, getPendingEntries returns the parent first (lower rowid).
@@ -1175,7 +1299,7 @@ describe('reorg', () => {
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
-    const { computeTxId, decodeTx } = await import('@dagsocial/types');
+    const { decodeTx } = await import("@dagsocial/types");
 
     const liker = makeTestIdentity();
     const author = makeTestIdentity();
@@ -1185,8 +1309,8 @@ describe('reorg', () => {
     // Two posts, seeded so the block confirms them at §8b.
     const { commit: cA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(author, 'reorg order a');
     const { commit: cB, tx: postBTx, postId: postBId, content: contentB } = await seedPostTx(author, 'reorg order b');
-    posts.insertPost(postAId, cA, contentA);
-    posts.insertPost(postBId, cB, contentB);
+    posts.insertPost(postAId, computeTxId(postATx), cA, contentA);
+    posts.insertPost(postBId, computeTxId(postBTx), cB, contentB);
 
     // Block 1: txA (like from startBox).
     const txA = makeLikeTx(liker, startBox, postAId, author.userId);
@@ -1243,7 +1367,7 @@ describe('reorg', () => {
     const author = makeTestIdentity();
 
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'reorg re-insert conflict');
-    posts.insertPost(postId, commit, content);
+    posts.insertPost(postId, computeTxId(postTx), commit, content);
     mempool.insertUtxoTx(postTx, 1000);
 
     const liker = makeTestIdentity();
@@ -1276,7 +1400,7 @@ describe('reorg', () => {
     // Identified by transaction id, because the block carried TWO transactions
     // and only one of them conflicts: the post's re-insert is the control that
     // makes the like's absence a drop rather than an empty re-insert path.
-    const { computeTxId, decodeTx } = await import('@dagsocial/types');
+    const { decodeTx } = await import("@dagsocial/types");
     const pooled = mempool.getPendingEntries(100)
       .filter((e: { entryType: string; utxoTxBytes: Uint8Array | null }) =>
         e.entryType === 'utxo_tx' && e.utxoTxBytes !== null)
@@ -1308,7 +1432,7 @@ describe('reorg', () => {
     const seededPosts = [];
     for (let i = 0; i < 2; i++) seededPosts.push(await seedPostTx(author, `chain a ${i}`));
     for (const { commit, tx: postTx, postId, content } of seededPosts) {
-      posts.insertPost(postId, commit, content);
+      posts.insertPost(postId, computeTxId(postTx), commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
@@ -1359,7 +1483,7 @@ describe('reorg', () => {
     const seededPosts = [];
     for (let i = 0; i < 3; i++) seededPosts.push(await seedPostTx(author, `original ${i}`));
     for (const { commit, tx: postTx, postId, content } of seededPosts) {
-      posts.insertPost(postId, commit, content);
+      posts.insertPost(postId, computeTxId(postTx), commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
@@ -1430,7 +1554,7 @@ describe('reorg', () => {
       const seededPosts = [];
       for (let i = 0; i < 2; i++) seededPosts.push(await seedPostTx(author, `full pool ${i}`));
       for (const { commit, tx: postTx, postId, content } of seededPosts) {
-        posts.insertPost(postId, commit, content);
+        posts.insertPost(postId, computeTxId(postTx), commit, content);
         mempool.insertUtxoTx(postTx, 1000);
         await mineNextBlock(bc);
       }
@@ -1479,7 +1603,7 @@ describe('reorg', () => {
     const seededPosts = [];
     for (let i = 0; i < 2; i++) seededPosts.push(await seedPostTx(author, `room in pool ${i}`));
     for (const { commit, tx: postTx, postId, content } of seededPosts) {
-      posts.insertPost(postId, commit, content);
+      posts.insertPost(postId, computeTxId(postTx), commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
@@ -3219,7 +3343,7 @@ describe('reorg — ceiling screen', () => {
       const seededPosts = [];
       for (let i = 0; i < 7; i++) seededPosts.push(await seedPostTx(author, `ceiling ${i}`));
       for (const { commit, tx: postTx, postId, content } of seededPosts) {
-        posts.insertPost(postId, commit, content);
+        posts.insertPost(postId, computeTxId(postTx), commit, content);
         mempool.insertUtxoTx(postTx, 1000);
         await mineNextBlock(bc);
       }
@@ -3263,7 +3387,7 @@ describe('reorg — ceiling screen', () => {
       const seededPosts = [];
       for (let i = 0; i < 6; i++) seededPosts.push(await seedPostTx(author, `no-screen ${i}`));
       for (const { commit, tx: postTx, postId, content } of seededPosts) {
-        posts.insertPost(postId, commit, content);
+        posts.insertPost(postId, computeTxId(postTx), commit, content);
         mempool.insertUtxoTx(postTx, 1000);
         await mineNextBlock(bc);
       }
@@ -3306,7 +3430,7 @@ describe('reorg — ceiling screen', () => {
       const seededPosts = [];
       for (let i = 0; i < 7; i++) seededPosts.push(await seedPostTx(author, `null-ceiling ${i}`));
       for (const { commit, tx: postTx, postId, content } of seededPosts) {
-        posts.insertPost(postId, commit, content);
+        posts.insertPost(postId, computeTxId(postTx), commit, content);
         mempool.insertUtxoTx(postTx, 1000);
         await mineNextBlock(bc);
       }
@@ -3376,7 +3500,7 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
       // Build 6 blocks.
       for (let i = 0; i < 6; i++) {
         const { commit, tx: postTx, postId, content } = postFixtures[i]!;
-        posts.insertPost(postId, commit, content);
+        posts.insertPost(postId, computeTxId(postTx), commit, content);
         mempool.insertUtxoTx(postTx, 1000);
         await mineNextBlock(bc);
       }

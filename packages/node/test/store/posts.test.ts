@@ -1,4 +1,4 @@
-import { uid, fixturePostId } from '../helpers.js';
+import { uid, fixturePostId, fixtureTxId} from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { computeContentHash } from '@dagsocial/types';
@@ -59,7 +59,7 @@ describe('posts store', () => {
     const { commit, content } = makeCommit({ content: 'round-trip test' });
     const postId = fixturePostId(commit);
 
-    insertPost(postId, commit, content);
+    insertPost(postId, fixtureTxId(commit), commit, content);
 
     const result = getPost(postId);
     if (!isLivePost(result)) throw new Error('expected StoredPost');
@@ -71,7 +71,7 @@ describe('posts store', () => {
     expect(result.type).toBe('regular');
     expect(result.status).toBe('pending');
     expect(Object.keys(result).sort()).toEqual(
-      ['author', 'blockHeight', 'blockIndex', 'content', 'contentHash', 'id', 'parentRefs', 'protocolVersion', 'status', 'type', 'withdrawnAtHeight'],
+      ['author', 'blockHeight', 'blockIndex', 'content', 'contentHash', 'id', 'parentRefs', 'protocolVersion', 'status', 'txId', 'type', 'withdrawnAtHeight'],
     );
   });
 
@@ -84,7 +84,7 @@ describe('posts store', () => {
     const { commit } = makeCommit({ content: 'placeholder test' });
     const postId = fixturePostId(commit);
 
-    insertPost(postId, commit, null);
+    insertPost(postId, fixtureTxId(commit), commit, null);
 
     const result = getPost(postId);
     expect(result).not.toBeNull();
@@ -105,7 +105,7 @@ describe('posts store', () => {
     const { commit, content } = makeCommit({ content: 'backfill me' });
     const postId = fixturePostId(commit);
 
-    insertPost(postId, commit, null);
+    insertPost(postId, fixtureTxId(commit), commit, null);
     expect((getPost(postId) as any).content).toBeNull();
 
     const filled = setPostBody(postId, content);
@@ -148,9 +148,9 @@ describe('posts store', () => {
     const { commit: c3 } = makeCommit({ content: 'third with body' });
     const id3 = fixturePostId(c3);
 
-    insertPost(id1, c1, null);
-    insertPost(id2, c2, null);
-    insertPost(id3, c3, 'third with body');
+    insertPost(id1, fixtureTxId(c1), c1, null);
+    insertPost(id2, fixtureTxId(c2), c2, null);
+    insertPost(id3, fixtureTxId(c3), c3, 'third with body');
 
     confirmPost(id1, 1, 0);
     confirmPost(id2, 2, 0);
@@ -173,9 +173,9 @@ describe('posts store', () => {
     const { commit: aliceCommit, content: aliceContent } = makeCommit({ content: 'alice post', author: uid('alice') });
     const { commit: bobCommit, content: bobContent } = makeCommit({ content: 'bob post', author: uid('bob') });
 
-    insertPost(fixturePostId(aliceCommit), aliceCommit, aliceContent);
+    insertPost(fixturePostId(aliceCommit), fixtureTxId(aliceCommit), aliceCommit, aliceContent);
     confirmPost(fixturePostId(aliceCommit), 1, 0);
-    insertPost(fixturePostId(bobCommit), bobCommit, bobContent);
+    insertPost(fixturePostId(bobCommit), fixtureTxId(bobCommit), bobCommit, bobContent);
     confirmPost(fixturePostId(bobCommit), 1, 1);
 
     const aliceResult = queryPostsPage({ author: uid('alice'), limit: 50 });
@@ -194,7 +194,7 @@ describe('posts store', () => {
 
     for (let i = 0; i < 5; i++) {
       const { commit, content } = makeCommit({ content: `post-${i}` });
-      insertPost(fixturePostId(commit), commit, content);
+      insertPost(fixturePostId(commit), fixtureTxId(commit), commit, content);
       confirmPost(fixturePostId(commit), 10, i);
     }
 
@@ -224,13 +224,13 @@ describe('posts store', () => {
 
     const { commit: early, content: earlyContent } = makeCommit({ content: 'early' });
     const { commit: late, content: lateContent } = makeCommit({ content: 'late' });
-    insertPost(fixturePostId(early), early, earlyContent);
-    insertPost(fixturePostId(late), late, lateContent);
+    insertPost(fixturePostId(early), fixtureTxId(early), early, earlyContent);
+    insertPost(fixturePostId(late), fixtureTxId(late), late, lateContent);
     confirmPost(fixturePostId(early), 10, 0);
     confirmPost(fixturePostId(late), 10, 1);
 
     const { commit: pend, content: pendContent } = makeCommit({ content: 'pending' });
-    insertPost(fixturePostId(pend), pend, pendContent);
+    insertPost(fixturePostId(pend), fixtureTxId(pend), pend, pendContent);
 
     const result = queryPostsPage({ limit: 50 });
     expect(result.rows).toHaveLength(2);
@@ -251,14 +251,14 @@ describe('posts store', () => {
     function makeRootPost(content: string, height: number, index: number): string {
       const { commit, content: body } = makeCommit({ content });
       const id = fixturePostId(commit);
-      insertPost(id, commit, body);
+      insertPost(id, fixtureTxId(commit), commit, body);
       confirmPost(id, height, index);
       return id;
     }
     function makeReplyPost(content: string, parent: string, height: number, index: number): void {
       const { commit, content: body } = makeCommit({ content, parentRefs: [parent] });
       const id = fixturePostId(commit);
-      insertPost(id, commit, body);
+      insertPost(id, fixtureTxId(commit), commit, body);
       confirmPost(id, height, index);
     }
 
@@ -300,17 +300,17 @@ describe('posts store', () => {
 
     const { commit: aliceRoot, content: aliceRootContent } = makeCommit({ content: 'alice-root', author: alice });
     const aliceRootId = fixturePostId(aliceRoot);
-    insertPost(aliceRootId, aliceRoot, aliceRootContent);
+    insertPost(aliceRootId, fixtureTxId(aliceRoot), aliceRoot, aliceRootContent);
     confirmPost(aliceRootId, 1, 0);
 
     const { commit: aliceReply, content: aliceReplyContent } =
       makeCommit({ content: 'alice-reply', author: alice, parentRefs: [aliceRootId] });
-    insertPost(fixturePostId(aliceReply), aliceReply, aliceReplyContent);
+    insertPost(fixturePostId(aliceReply), fixtureTxId(aliceReply), aliceReply, aliceReplyContent);
     confirmPost(fixturePostId(aliceReply), 2, 0);
 
     const { commit: bobRoot, content: bobRootContent } = makeCommit({ content: 'bob-root', author: bob });
     const bobRootId = fixturePostId(bobRoot);
-    insertPost(bobRootId, bobRoot, bobRootContent);
+    insertPost(bobRootId, fixtureTxId(bobRoot), bobRoot, bobRootContent);
     confirmPost(bobRootId, 3, 0);
 
     const result = queryPostsPage({ roots: true, author: alice, limit: 50 });
@@ -326,11 +326,11 @@ describe('posts store', () => {
 
     const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'pending-root' });
     const rootId = fixturePostId(rootCommit);
-    insertPost(rootId, rootCommit, rootContent);
+    insertPost(rootId, fixtureTxId(rootCommit), rootCommit, rootContent);
 
     const { commit: replyCommit, content: replyContent } =
       makeCommit({ content: 'pending-reply', parentRefs: [rootId] });
-    insertPost(fixturePostId(replyCommit), replyCommit, replyContent);
+    insertPost(fixturePostId(replyCommit), fixtureTxId(replyCommit), replyCommit, replyContent);
 
     const result = queryPostsPage({ roots: true, limit: 50 });
     expect(result.pending).toHaveLength(1);
@@ -346,7 +346,7 @@ describe('posts store', () => {
 
     const { commit, content } = makeCommit({ content: 'confirm me' });
     const postId = fixturePostId(commit);
-    insertPost(postId, commit, content);
+    insertPost(postId, fixtureTxId(commit), commit, content);
 
     const before = getPost(postId);
     expect(before && 'status' in before && before.status).toBe('pending');
@@ -367,7 +367,7 @@ describe('posts store', () => {
 
     const refs3 = ['a1'.repeat(32), 'b2'.repeat(32), 'c3'.repeat(32)];
     const { commit, content } = makeCommit({ parentRefs: refs3 });
-    insertPost(fixturePostId(commit), commit, content);
+    insertPost(fixturePostId(commit), fixtureTxId(commit), commit, content);
 
     const refs = getParentRefs(fixturePostId(commit));
     expect(refs).toEqual(refs3);
@@ -381,16 +381,16 @@ describe('posts store', () => {
 
     const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'root', parentRefs: [] });
     const rootId = fixturePostId(rootCommit);
-    insertPost(rootId, rootCommit, rootContent);
+    insertPost(rootId, fixtureTxId(rootCommit), rootCommit, rootContent);
     confirmPost(rootId, 1, 0);
 
     const { commit: childCommit, content: childContent } = makeCommit({ content: 'child', parentRefs: [rootId] });
     const childId = fixturePostId(childCommit);
-    insertPost(childId, childCommit, childContent);
+    insertPost(childId, fixtureTxId(childCommit), childCommit, childContent);
     confirmPost(childId, 2, 0);
 
     const { commit: gcCommit, content: gcContent } = makeCommit({ content: 'grandchild', parentRefs: [childId] });
-    insertPost(fixturePostId(gcCommit), gcCommit, gcContent);
+    insertPost(fixturePostId(gcCommit), fixtureTxId(gcCommit), gcCommit, gcContent);
     confirmPost(fixturePostId(gcCommit), 3, 0);
 
     const result = getSubtreePage(rootId, { limit: 50 });
@@ -410,7 +410,7 @@ describe('posts store', () => {
     const { commit, content } = makeCommit({ content: 'will be deleted' });
     const postId = fixturePostId(commit);
 
-    insertPost(postId, commit, content);
+    insertPost(postId, fixtureTxId(commit), commit, content);
     expect(getPost(postId)).not.toBeNull();
 
     deletePendingPost(postId);
@@ -426,7 +426,7 @@ describe('posts store', () => {
     const { commit, content } = makeCommit({ content: 'confirmed' });
     const postId = fixturePostId(commit);
 
-    insertPost(postId, commit, content);
+    insertPost(postId, fixtureTxId(commit), commit, content);
     confirmPost(postId, 1, 0);
 
     deletePendingPost(postId);
@@ -441,7 +441,7 @@ describe('posts store', () => {
 
     const { commit, content } = makeCommit({ content: 'fresh post', author: new Uint8Array(32).fill(9) });
     const postId = fixturePostId(commit);
-    insertPost(postId, commit, content);
+    insertPost(postId, fixtureTxId(commit), commit, content);
 
     const row = getDb()
       .prepare('SELECT content FROM dag_posts WHERE id = ?')
@@ -454,7 +454,7 @@ describe('posts store', () => {
 
     expect(isLivePost(null)).toBe(false);
     expect(isLivePost({
-      id: 'x', content: null, contentHash: '00', author: new Uint8Array(32),
+      id: 'x', txId: '00'.repeat(32), content: null, contentHash: '00', author: new Uint8Array(32),
       parentRefs: [], protocolVersion: 1, type: 'regular' as const,
       status: 'pending' as const, blockHeight: null, blockIndex: null,
       withdrawnAtHeight: null,
@@ -465,7 +465,7 @@ describe('posts store', () => {
     const { isLivePost } = await importPostsFresh();
 
     expect(isLivePost({
-      id: 'x', content: null, contentHash: '00', author: new Uint8Array(32),
+      id: 'x', txId: '00'.repeat(32), content: null, contentHash: '00', author: new Uint8Array(32),
       parentRefs: [], protocolVersion: 1, type: 'regular' as const,
       status: 'confirmed' as const, blockHeight: 5, blockIndex: 0,
       withdrawnAtHeight: 10,
@@ -480,7 +480,7 @@ describe('posts store', () => {
 
     const { commit } = makeCommit({ content: 'will withdraw' });
     const postId = fixturePostId(commit);
-    insertPost(postId, commit, null);
+    insertPost(postId, fixtureTxId(commit), commit, null);
     confirmPost(postId, 5, 0);
 
     // Mark as withdrawn directly
@@ -499,7 +499,7 @@ describe('posts store', () => {
 
     const { commit, content } = makeCommit({ content: 'withdraw me' });
     const postId = fixturePostId(commit);
-    insertPost(postId, commit, content);
+    insertPost(postId, fixtureTxId(commit), commit, content);
     confirmPost(postId, 5, 0);
 
     withdrawPost(postId, 10);
@@ -526,7 +526,7 @@ describe('posts store', () => {
 
     const { commit, content } = makeCommit({ content: 'to be withdrawn' });
     const postId = fixturePostId(commit);
-    insertPost(postId, commit, content);
+    insertPost(postId, fixtureTxId(commit), commit, content);
     confirmPost(postId, 5, 0);
 
     getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 10, content = NULL WHERE id = ?').run(postId);
@@ -546,7 +546,7 @@ describe('posts store', () => {
 
     const { commit, content } = makeCommit({ content: 'feed withdrawn' });
     const postId = fixturePostId(commit);
-    insertPost(postId, commit, content);
+    insertPost(postId, fixtureTxId(commit), commit, content);
     confirmPost(postId, 5, 0);
 
     getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 10, content = NULL WHERE id = ?').run(postId);
@@ -562,6 +562,8 @@ describe('posts store', () => {
       getAncestorsNearest: () => ({ rows: [], count: 0 }),
       getSubtreePage: () => ({ rows: [], next: null, count: 0, pending: [], pendingCount: 0 }),
       getBlockCreatedAt: () => null,
+      getPendingUtxoTxBytesByTxId: () => null,
+      getUtxoTxTreeBytes: () => null,
     });
 
     const result = feedService.getPost(postId);
@@ -579,7 +581,7 @@ describe('posts store', () => {
 
     const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'root' });
     const rootId = fixturePostId(rootCommit);
-    insertPost(rootId, rootCommit, rootContent);
+    insertPost(rootId, fixtureTxId(rootCommit), rootCommit, rootContent);
     confirmPost(rootId, 1, 0);
 
     const { commit: childCommit, content: childContent } = makeCommit({
@@ -587,7 +589,7 @@ describe('posts store', () => {
       parentRefs: [rootId],
     });
     const childId = fixturePostId(childCommit);
-    insertPost(childId, childCommit, childContent);
+    insertPost(childId, fixtureTxId(childCommit), childCommit, childContent);
     confirmPost(childId, 2, 0);
 
     const { commit: grandCommit, content: grandContent } = makeCommit({
@@ -595,7 +597,7 @@ describe('posts store', () => {
       parentRefs: [childId],
     });
     const grandId = fixturePostId(grandCommit);
-    insertPost(grandId, grandCommit, grandContent);
+    insertPost(grandId, fixtureTxId(grandCommit), grandCommit, grandContent);
     confirmPost(grandId, 3, 0);
 
     // Withdraw root (ancestor) and grandchild (descendant)
@@ -613,6 +615,8 @@ describe('posts store', () => {
       getAncestorsNearest,
       getSubtreePage,
       getBlockCreatedAt: () => null,
+      getPendingUtxoTxBytesByTxId: () => null,
+      getUtxoTxTreeBytes: () => null,
     });
 
     const thread = feedService.getThread(childId, { limit: 50 })!;
@@ -640,7 +644,7 @@ describe('posts store', () => {
 
     const { commit, content } = makeCommit({ content: 'feed withdrawn' });
     const postId = fixturePostId(commit);
-    insertPost(postId, commit, content);
+    insertPost(postId, fixtureTxId(commit), commit, content);
     confirmPost(postId, 5, 0);
 
     getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 10, content = NULL WHERE id = ?').run(postId);
@@ -656,6 +660,8 @@ describe('posts store', () => {
       getAncestorsNearest: () => ({ rows: [], count: 0 }),
       getSubtreePage: () => ({ rows: [], next: null, count: 0, pending: [], pendingCount: 0 }),
       getBlockCreatedAt: () => null,
+      getPendingUtxoTxBytesByTxId: () => null,
+      getUtxoTxTreeBytes: () => null,
     });
 
     const result = feedService.queryPosts({ limit: 50 });
@@ -677,19 +683,19 @@ describe('posts store', () => {
 
     const { commit: c0, content: ct0 } = makeCommit({ content: 'root', parentRefs: [] });
     const id0 = fixturePostId(c0);
-    insertPost(id0, c0, ct0);
+    insertPost(id0, fixtureTxId(c0), c0, ct0);
 
     const { commit: c1, content: ct1 } = makeCommit({ content: 'child', parentRefs: [id0] });
     const id1 = fixturePostId(c1);
-    insertPost(id1, c1, ct1);
+    insertPost(id1, fixtureTxId(c1), c1, ct1);
 
     const { commit: c2, content: ct2 } = makeCommit({ content: 'grandchild', parentRefs: [id1] });
     const id2 = fixturePostId(c2);
-    insertPost(id2, c2, ct2);
+    insertPost(id2, fixtureTxId(c2), c2, ct2);
 
     const { commit: c3, content: ct3 } = makeCommit({ content: 'great-grandchild', parentRefs: [id2] });
     const id3 = fixturePostId(c3);
-    insertPost(id3, c3, ct3);
+    insertPost(id3, fixtureTxId(c3), c3, ct3);
 
     // Limit 2: the nearest two ancestors of great-grandchild are grandchild and child
     const result = getAncestorsNearest(id3, 2);
@@ -706,11 +712,11 @@ describe('posts store', () => {
 
     const { commit: c0, content: ct0 } = makeCommit({ content: 'root', parentRefs: [] });
     const id0 = fixturePostId(c0);
-    insertPost(id0, c0, ct0);
+    insertPost(id0, fixtureTxId(c0), c0, ct0);
 
     const { commit: c1, content: ct1 } = makeCommit({ content: 'child', parentRefs: [id0] });
     const id1 = fixturePostId(c1);
-    insertPost(id1, c1, ct1);
+    insertPost(id1, fixtureTxId(c1), c1, ct1);
 
     const result = getAncestorsNearest(id1, 50);
     expect(result.count).toBe(1);
@@ -762,22 +768,22 @@ describe('posts store', () => {
 
     const { commit: cRoot, content: ctRoot } = makeCommit({ content: 'root', parentRefs: [] });
     const rootId = fixturePostId(cRoot);
-    insertPost(rootId, cRoot, ctRoot);
+    insertPost(rootId, fixtureTxId(cRoot), cRoot, ctRoot);
     confirmPost(rootId, 1, 0);
 
     const { commit: c1, content: ct1 } = makeCommit({ content: 'child-b', parentRefs: [rootId] });
     const id1 = fixturePostId(c1);
-    insertPost(id1, c1, ct1);
+    insertPost(id1, fixtureTxId(c1), c1, ct1);
     confirmPost(id1, 3, 0);
 
     const { commit: c2, content: ct2 } = makeCommit({ content: 'child-a', parentRefs: [rootId] });
     const id2 = fixturePostId(c2);
-    insertPost(id2, c2, ct2);
+    insertPost(id2, fixtureTxId(c2), c2, ct2);
     confirmPost(id2, 2, 0);
 
     const { commit: c3, content: ct3 } = makeCommit({ content: 'grandchild', parentRefs: [id1] });
     const id3 = fixturePostId(c3);
-    insertPost(id3, c3, ct3);
+    insertPost(id3, fixtureTxId(c3), c3, ct3);
     confirmPost(id3, 2, 1);
 
     const result = getSubtreePage(rootId, { limit: 50 });
@@ -793,23 +799,23 @@ describe('posts store', () => {
 
     const { commit: cRoot, content: ctRoot } = makeCommit({ content: 'root', parentRefs: [] });
     const rootId = fixturePostId(cRoot);
-    insertPost(rootId, cRoot, ctRoot);
+    insertPost(rootId, fixtureTxId(cRoot), cRoot, ctRoot);
     confirmPost(rootId, 1, 0);
 
     const { commit: c1, content: ct1 } = makeCommit({ content: 'confirmed-1', parentRefs: [rootId] });
     const id1 = fixturePostId(c1);
-    insertPost(id1, c1, ct1);
+    insertPost(id1, fixtureTxId(c1), c1, ct1);
     confirmPost(id1, 2, 0);
 
     const { commit: c2, content: ct2 } = makeCommit({ content: 'confirmed-2', parentRefs: [rootId] });
     const id2 = fixturePostId(c2);
-    insertPost(id2, c2, ct2);
+    insertPost(id2, fixtureTxId(c2), c2, ct2);
     confirmPost(id2, 2, 1);
 
     // A pending descendant — no confirmPost call
     const { commit: c3, content: ct3 } = makeCommit({ content: 'pending-desc', parentRefs: [rootId] });
     const id3 = fixturePostId(c3);
-    insertPost(id3, c3, ct3);
+    insertPost(id3, fixtureTxId(c3), c3, ct3);
 
     const full = getSubtreePage(rootId, { limit: 50 });
     expect(full.count).toBe(3);
@@ -837,16 +843,16 @@ describe('posts store', () => {
 
     const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'root', parentRefs: [] });
     const rootId = fixturePostId(rootCommit);
-    insertPost(rootId, rootCommit, rootContent);
+    insertPost(rootId, fixtureTxId(rootCommit), rootCommit, rootContent);
     confirmPost(rootId, 1, 0);
 
     const { commit: childCommit, content: childContent } = makeCommit({ content: 'child', parentRefs: [rootId] });
     const childId = fixturePostId(childCommit);
-    insertPost(childId, childCommit, childContent);
+    insertPost(childId, fixtureTxId(childCommit), childCommit, childContent);
     confirmPost(childId, 2, 0);
 
     const { commit: gcCommit, content: gcContent } = makeCommit({ content: 'grandchild', parentRefs: [childId] });
-    insertPost(fixturePostId(gcCommit), gcCommit, gcContent);
+    insertPost(fixturePostId(gcCommit), fixtureTxId(gcCommit), gcCommit, gcContent);
     confirmPost(fixturePostId(gcCommit), 3, 0);
 
     const page = getSubtreePage(rootId, { limit: 50 });
@@ -862,12 +868,12 @@ describe('posts store', () => {
 
     const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'root', parentRefs: [] });
     const rootId = fixturePostId(rootCommit);
-    insertPost(rootId, rootCommit, rootContent);
+    insertPost(rootId, fixtureTxId(rootCommit), rootCommit, rootContent);
     confirmPost(rootId, 1, 0);
 
     const { commit: replyCommit, content: replyContent } = makeCommit({ content: 'reply', parentRefs: [rootId] });
     const replyId = fixturePostId(replyCommit);
-    insertPost(replyId, replyCommit, replyContent);
+    insertPost(replyId, fixtureTxId(replyCommit), replyCommit, replyContent);
     confirmPost(replyId, 2, 0);
 
     // A withdrawn reply keeps its row (NODE_INTERFACE → Withdrawal transactions).
@@ -884,7 +890,7 @@ describe('posts store', () => {
 
     const { commit, content } = makeCommit({ content: 'leaf', parentRefs: [] });
     const id = fixturePostId(commit);
-    insertPost(id, commit, content);
+    insertPost(id, fixtureTxId(commit), commit, content);
     confirmPost(id, 1, 0);
 
     expect(getDescendantCount(id)).toBe(0);
@@ -899,7 +905,7 @@ describe('posts store', () => {
     initDb(':memory:');
     for (let i = 0; i < 4; i++) {
       const { commit, content } = makeCommit({ content: `p${i}` });
-      insertPost(fixturePostId(commit), commit, content);
+      insertPost(fixturePostId(commit), fixtureTxId(commit), commit, content);
       confirmPost(fixturePostId(commit), 10, i);
     }
 
@@ -909,10 +915,10 @@ describe('posts store', () => {
     const page1Ids = new Set(page1.rows.map(p => p.id));
 
     const { commit: newA, content: newAC } = makeCommit({ content: 'new-a' });
-    insertPost(fixturePostId(newA), newA, newAC);
+    insertPost(fixturePostId(newA), fixtureTxId(newA), newA, newAC);
     confirmPost(fixturePostId(newA), 20, 0);
     const { commit: newB, content: newBC } = makeCommit({ content: 'new-b' });
-    insertPost(fixturePostId(newB), newB, newBC);
+    insertPost(fixturePostId(newB), fixtureTxId(newB), newB, newBC);
     confirmPost(fixturePostId(newB), 20, 1);
 
     const page2 = queryPostsPage({ limit: 2, after: page1.next! });
@@ -927,14 +933,14 @@ describe('posts store', () => {
     initDb(':memory:');
     for (let i = 0; i < 2; i++) {
       const { commit, content } = makeCommit({ content: `e${i}` });
-      insertPost(fixturePostId(commit), commit, content);
+      insertPost(fixturePostId(commit), fixtureTxId(commit), commit, content);
       confirmPost(fixturePostId(commit), 10, i);
     }
     const exact = queryPostsPage({ limit: 2 });
     expect(exact.next).toBeNull();
 
     const { commit: extra, content: extraC } = makeCommit({ content: 'extra' });
-    insertPost(fixturePostId(extra), extra, extraC);
+    insertPost(fixturePostId(extra), fixtureTxId(extra), extra, extraC);
     confirmPost(fixturePostId(extra), 10, 2);
     const withExtra = queryPostsPage({ limit: 2 });
     expect(withExtra.next).not.toBeNull();
@@ -947,19 +953,19 @@ describe('posts store', () => {
     initDb(':memory:');
     const { commit: rootC, content: rootCt } = makeCommit({ content: 'root', parentRefs: [] });
     const rootId = fixturePostId(rootC);
-    insertPost(rootId, rootC, rootCt);
+    insertPost(rootId, fixtureTxId(rootC), rootC, rootCt);
     confirmPost(rootId, 1, 0);
 
     for (let i = 0; i < 2; i++) {
       const { commit, content } = makeCommit({ content: `s${i}`, parentRefs: [rootId] });
-      insertPost(fixturePostId(commit), commit, content);
+      insertPost(fixturePostId(commit), fixtureTxId(commit), commit, content);
       confirmPost(fixturePostId(commit), 2, i);
     }
     const exact = getSubtreePage(rootId, { limit: 2 });
     expect(exact.next).toBeNull();
 
     const { commit: extra, content: extraC } = makeCommit({ content: 'extra', parentRefs: [rootId] });
-    insertPost(fixturePostId(extra), extra, extraC);
+    insertPost(fixturePostId(extra), fixtureTxId(extra), extra, extraC);
     confirmPost(fixturePostId(extra), 2, 2);
     const withExtra = getSubtreePage(rootId, { limit: 2 });
     expect(withExtra.next).not.toBeNull();
@@ -972,7 +978,7 @@ describe('posts store', () => {
     initDb(':memory:');
     for (let i = 0; i < 3; i++) {
       const { commit, content } = makeCommit({ content: `pend-${i}` });
-      insertPost(fixturePostId(commit), commit, content);
+      insertPost(fixturePostId(commit), fixtureTxId(commit), commit, content);
     }
     const result = queryPostsPage({ limit: 2 });
     expect(result.pending).toHaveLength(2);
@@ -987,12 +993,12 @@ describe('posts store', () => {
     initDb(':memory:');
     const { commit: rootC, content: rootCt } = makeCommit({ content: 'root', parentRefs: [] });
     const rootId = fixturePostId(rootC);
-    insertPost(rootId, rootC, rootCt);
+    insertPost(rootId, fixtureTxId(rootC), rootC, rootCt);
     confirmPost(rootId, 1, 0);
 
     for (let i = 0; i < 3; i++) {
       const { commit, content } = makeCommit({ content: `sub-pend-${i}`, parentRefs: [rootId] });
-      insertPost(fixturePostId(commit), commit, content);
+      insertPost(fixturePostId(commit), fixtureTxId(commit), commit, content);
     }
     const result = getSubtreePage(rootId, { limit: 2 });
     expect(result.pending).toHaveLength(2);

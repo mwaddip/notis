@@ -1,4 +1,4 @@
-import { uid, fixturePostId } from '../helpers.js';
+import { uid, fixturePostId, fixtureTxId} from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { initDb, closeDb } from '../../src/store/db.js';
 import {
@@ -52,7 +52,7 @@ describe('posts store (integration)', () => {
   it('inserts and retrieves a post via getPost', () => {
     const { commit, content } = makeCommit({ content: 'integration round-trip' });
     const id = fixturePostId(commit);
-    insertPost(id, commit, content);
+    insertPost(id, fixtureTxId(commit), commit, content);
     const retrieved = getPost(id);
     if (!isLivePost(retrieved)) throw new Error('expected StoredPost');
     expect(retrieved.content).toBe('integration round-trip');
@@ -64,7 +64,7 @@ describe('posts store (integration)', () => {
   it('inserts a placeholder and backfills its body', () => {
     const { commit, content } = makeCommit({ content: 'backfill target' });
     const id = fixturePostId(commit);
-    insertPost(id, commit, null);
+    insertPost(id, fixtureTxId(commit), commit, null);
     confirmPost(id, 1, 0);
 
     expect((getPost(id) as any).content).toBeNull();
@@ -83,9 +83,9 @@ describe('posts store (integration)', () => {
   it('queryPostsPage returns committed posts ordered newest first', () => {
     const { commit: c1, content: content1 } = makeCommit({ content: 'older' });
     const { commit: c2, content: content2 } = makeCommit({ content: 'newer' });
-    insertPost(fixturePostId(c1), c1, content1);
+    insertPost(fixturePostId(c1), fixtureTxId(c1), c1, content1);
     confirmPost(fixturePostId(c1), 10, 0);
-    insertPost(fixturePostId(c2), c2, content2);
+    insertPost(fixturePostId(c2), fixtureTxId(c2), c2, content2);
     confirmPost(fixturePostId(c2), 11, 0);
 
     const result = queryPostsPage({ limit: 50 });
@@ -102,9 +102,9 @@ describe('posts store (integration)', () => {
 
     const { commit: ac, content: acContent } = makeCommit({ author: alice, content: 'alice post' });
     const { commit: bc, content: bcContent } = makeCommit({ author: bob, content: 'bob post' });
-    insertPost(fixturePostId(ac), ac, acContent);
+    insertPost(fixturePostId(ac), fixtureTxId(ac), ac, acContent);
     confirmPost(fixturePostId(ac), 12, 0);
-    insertPost(fixturePostId(bc), bc, bcContent);
+    insertPost(fixturePostId(bc), fixtureTxId(bc), bc, bcContent);
     confirmPost(fixturePostId(bc), 12, 1);
 
     const aliceResult = queryPostsPage({ author: alice, limit: 50 });
@@ -114,7 +114,7 @@ describe('posts store (integration)', () => {
   it('post lifecycle: pending -> confirm -> confirmed', () => {
     const { commit, content } = makeCommit({ content: 'lifecycle-' + Date.now() });
     const postId = fixturePostId(commit);
-    insertPost(postId, commit, content);
+    insertPost(postId, fixtureTxId(commit), commit, content);
 
     const before = getPost(postId);
     expect(before && 'status' in before && before.status).toBe('pending');
@@ -131,7 +131,7 @@ describe('posts store (integration)', () => {
 
     const { commit, content } = makeCommit({ parentRefs: refs });
     const postId = fixturePostId(commit);
-    insertPost(postId, commit, content);
+    insertPost(postId, fixtureTxId(commit), commit, content);
 
     expect(getParentRefs(postId)).toEqual(refs);
   });
@@ -139,16 +139,16 @@ describe('posts store (integration)', () => {
   it('getSubtreePage returns committed descendants across levels', () => {
     const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'tree-root', parentRefs: [] });
     const rootId = fixturePostId(rootCommit);
-    insertPost(rootId, rootCommit, rootContent);
+    insertPost(rootId, fixtureTxId(rootCommit), rootCommit, rootContent);
     confirmPost(rootId, 20, 0);
 
     const { commit: childCommit, content: childContent } = makeCommit({ content: 'tree-child', parentRefs: [rootId] });
     const childId = fixturePostId(childCommit);
-    insertPost(childId, childCommit, childContent);
+    insertPost(childId, fixtureTxId(childCommit), childCommit, childContent);
     confirmPost(childId, 21, 0);
 
     const { commit: gcCommit, content: gcContent } = makeCommit({ content: 'tree-grandchild', parentRefs: [childId] });
-    insertPost(fixturePostId(gcCommit), gcCommit, gcContent);
+    insertPost(fixturePostId(gcCommit), fixtureTxId(gcCommit), gcCommit, gcContent);
     confirmPost(fixturePostId(gcCommit), 22, 0);
 
     const result = getSubtreePage(rootId, { limit: 50 });

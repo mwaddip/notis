@@ -1,11 +1,40 @@
 import type { PoPowHeader } from '@dagsocial/nipopow';
 import type { FiguresResult, HoldingsRead, LedgerSums, Listing } from './boxes.js';
+import type { PostCommandResult } from './cli.js';
 import { capped } from './http.js';
 import type { TipResult } from './tip.js';
 
 export interface Run {
   figures: FiguresResult;
   listing: Listing | null;
+}
+
+/**
+ * The post subcommand's text output, one entry per line
+ * (WEB_INTERFACE → The extension → "The post check"). Node text reaches a
+ * line only inside a verdict or an id, each named through `capped`.
+ */
+export function postCommandLines(post: PostCommandResult): string[] {
+  const lines: string[] = [`post ${capped(post.id)}: ${post.nodeUrl}`];
+  if (post.fetchFailure !== null) {
+    lines.push(`  unanswered — ${capped(post.fetchFailure)}`);
+    return lines;
+  }
+  const check = post.check;
+  if (check === null) {
+    lines.push('  unanswered — no row returned');
+    return lines;
+  }
+  if (check.status === 'bound') {
+    lines.push(`  bound — author ${check.author}, parent ${check.parent ?? 'none'}`);
+  } else if (check.status === 'unbound') {
+    lines.push(`  unbound (${check.reason}) — ${capped(check.verdict)}`);
+  } else if (check.status === 'nothing-to-bind') {
+    lines.push('  nothing-to-bind — the row is withdrawn');
+  } else {
+    lines.push('  unserved — the node holds no bytes for this post');
+  }
+  return lines;
 }
 
 /**

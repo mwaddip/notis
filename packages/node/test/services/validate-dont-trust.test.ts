@@ -30,6 +30,7 @@ function makeStore(): MockStore {
 function makeStoredParent(id: string): StoredPost {
   return {
     id,
+    txId: '00'.repeat(32),
     content: `stored-parent:${id}`,
     contentHash: Buffer.from(computeContentHash(`stored-parent:${id}`)).toString('hex'),
     author: new Uint8Array(32),
