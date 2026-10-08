@@ -1930,7 +1930,7 @@ export class App {
    *  generation guard the fetch used (WEB_INTERFACE → The extension → "The
    *  post cache", → Reading the feed and threads → "No answer overwrites a
    *  newer one"). A read with no cache, or one the cache does not hold, is
-   *  nothing — today's failed read stands. */
+   *  nothing — the failed read stands. */
   private async applyCachedThread(t: ThreadState, id: string, gen: number, since: number): Promise<void> {
     if (this.postCache === null) return;
     let held: CachedThread | null;

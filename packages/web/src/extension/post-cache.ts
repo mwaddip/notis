@@ -164,7 +164,7 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
   }
 
   /** Read the running total from the meta store at open; where no record
-   *  stands (a database with entries from a build before this one) sum the
+   *  stands (a database that holds entries and no total record) sum the
    *  entries once and write the record (WEB_INTERFACE → The extension →
    *  "The post cache"). */
   function readOrInitTotal(): Promise<void> {
