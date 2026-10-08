@@ -383,9 +383,6 @@ reading node's proof — block 1, the header `verifyProof` holds to the profile'
 reading node's proof verified, under `verified` and under `thin` alike: naming a chain takes a proof that verifies,
 not a second witness. It names the post cache (→ "The post cache") and nothing else reads it.
 
-> ⚠ **AHEAD OF CODE (2026-10-07, N4 PR B — `nipopow-client`, `web`)** — the tool's node result carries no
-> `genesisHash` and a tip run answers `{ verdict, anchor }`.
-
 **The verified figures.** The extension proves the two figures the reading node serves for the loaded key — the
 wallet's balance and the profile's rep — against the state the verified chain committed, **the key's holdings read
 whole, by range**, and says beneath each what does not hold. **The anchor**: a tip run answers `{ verdict, anchor, chain }`, `anchor` being the **reading
@@ -558,9 +555,6 @@ asks the node nothing. **What it means**: the author's key signed this text, und
 **What it does not**: that the post is confirmed, that it is still live, or that the list is whole — those are the
 node's word; a like or a reply to a post that is neither is refused by the network, and no lookup precedes either.
 
-> ⚠ **AHEAD OF CODE (2026-10-07, N4 PR B — `nipopow-client`, `web`)** — no `checkPosts`, no `post` command; the
-> extension build asks the post reads without `tx` and shows every row the node serves.
-
 **The post cache.** The extension keeps the posts it has checked — its local post DAG — in IndexedDB at the page's own
 origin, behind one module. **The database is named for the chain**: `notis.posts.<chain>` (→ "The chain's name"), so a
 chain reset opens an empty one on every network, pinned or not; the last name is kept in `localStorage` under
@@ -568,7 +562,7 @@ chain reset opens an empty one on every network, pinned or not; the last name is
 by post id and holds the transaction's bytes; the row as the node last gave it — text, name, counts, block time; the
 author and the parent as the transaction states them; when it was last seen; its size in bytes; and whether it is the
 reader's own — indexed by parent, by author and by last seen. **Only `bound` rows enter**, at the read that checked
-them, and the reader's own post at its submit, from the transaction the client built; **every read checks its rows,
+them, and the reader's own post at its submit — the signed transaction the client built, through the same check; **every read checks its rows,
 held or not**, and a row checked again refreshes its entry's row and its last-seen. **A withdrawn row for a held id
 empties the entry's text and keeps the entry** — the node's word, and a lie costs a re-fetch. **A thread or a post
 the cache holds is read from it when the read from the node fails** — the post, its held ancestors and its held
@@ -577,13 +571,11 @@ checked, and came from a node, before it was held — and the pane reports the f
 holds; the next read that answers lands on those rows as a refresh does (→ Reading the feed and threads → "No answer
 overwrites a newer one"). **A read the node answers is rendered from the node's answer.**
 **The feed renders from the node's answer alone.**
-**Size**: `POST_CACHE_BYTES` (`CONSTANTS → Client defaults`) over the entries' sizes — a put past it evicts the least
+**Size**: `POST_CACHE_BYTES` (`CONSTANTS → Client defaults`) over the entries' sizes, the total kept in a record of
+its own written with every put, withdrawal and eviction — a put past it evicts the least
 recently seen first and the reader's own never, and a put that still does not fit, or that the browser refuses, is
 dropped. Where the browser gives the page no IndexedDB the client runs without a cache and says nothing. It takes no
 permission, and it is the extension build's alone.
-
-> ⚠ **AHEAD OF CODE (2026-10-07, N4 PR B — `web`)** — the extension keeps no post; a thread or a post whose read
-> fails shows no row.
 
 **The policy.** The ledger a transaction moves is read from its outputs: **any output with `boxType`
 `credit` or `fee` is a credits transaction; otherwise karma.** Inputs are ids only

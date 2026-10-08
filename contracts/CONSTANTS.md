@@ -357,8 +357,6 @@ drift test's converse does not reach them and the rows are marked.
 |---|---|---|---|---|---|---|
 | `POST_CACHE_BYTES` (web) | `50_000_000` | the post cache's size, over its entries' sizes | policy | provisional and unmeasured — a round figure, argued by nothing yet | PROVISIONAL | `WEB_INTERFACE → The extension → "The post cache"` |
 
-> ⚠ **AHEAD OF CODE (2026-10-07, N4 PR B — `web`)** — no `POST_CACHE_BYTES` in the code.
-
 ## Excluded
 
 Numeric exports and profile fields that are not register rows, listed so the drift test's converse

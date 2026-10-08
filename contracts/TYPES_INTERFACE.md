@@ -2521,8 +2521,8 @@ itself a consensus change. The consensus change is node's: the leaf preimage sto
 
 `utxoTxBytesIn(treeBytes, txId)` returns the bytes of the transaction an encoded `UtxoTxTree` lists under `txId` — the
 element of `utxoTxs` at the position where `utxoTxIds` holds that id, the first such position — or `null` when the
-tree lists no such id. It walks the encoding, `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)`: it reads the ids, then
-skips each length-prefixed element before the one it wants. **It decodes no transaction, copies no other element and
+tree lists no such id. It walks the encoding, `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)`: it compares each id's 32 bytes to the
+wanted id's, building no id array, then skips each length-prefixed element before the one it wants. **It decodes no transaction, copies no other element and
 re-encodes nothing** — it is the read for a caller that wants one transaction of a stored body and would otherwise
 pay for the whole of it.
 
@@ -2532,8 +2532,6 @@ equals `utxoTxs[utxoTxIds.indexOf(txId)]` of `decodeUtxoTxTree(treeBytes)`, and 
 holds to be canonical — a node's own stored body — and never for a peer's. Bytes the walk cannot read — a section cut
 short, a count or a length past the bytes, an id array longer than the element array at the wanted position — throw
 `ReaderError`, as the decoder does; a `txId` that is not 64 lowercase hex answers `null`.
-
-> ⚠ **AHEAD OF CODE (2026-10-08, N4 PR B — `types`)** — `@dagsocial/types` exports no `utxoTxBytesIn`.
 
 ### Sizing without encoding
 

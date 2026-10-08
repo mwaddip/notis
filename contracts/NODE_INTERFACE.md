@@ -214,13 +214,19 @@ transaction's bytes as `encodeTx` writes them, hex. A pending post's are its poo
 confirmed post's are read out of the stored body at `blockHeight` by that id (`TYPES_INTERFACE → One transaction of a
 body`) — the body neither decoded nor kept: whatever a page holds, one body's bytes are in memory at a time. **A `WithdrawnJson` carries no `tx`**:
 it holds no text for a transaction to bind. A pending row whose pool entry is gone answers `tx: null`; a confirmed
-row whose block lists no such id is a stored chain that contradicts itself — a `CorruptChainStateError`, fail-stop,
-never an answer. **The node checks nothing at the read**: the bytes are what a client derives the post's id, author,
+row whose block lists no such id, or whose height holds no stored body or one that will not read, is a stored chain
+that contradicts itself — a `CorruptChainStateError`, fail-stop under each of the three routes, never an answer. **The node checks nothing at the read**: the bytes are what a client derives the post's id, author,
 parent and content hash from, and verifies the author's signature over, with no word of the node's in the binding
 (`WEB_INTERFACE → The extension → "The post check"`).
 
-> ⚠ **AHEAD OF CODE (2026-10-08, N4 PR B — `node`)** — a confirmed post's bytes are read by decoding the whole stored
-> body, once for each distinct height of a response, every decoded body kept until the response ends.
+**What `tx=1` costs, so the exposure is a number** — measured 2026-10-08 with `packages/node/bench/post-tx.test.ts`
+(the store on a SQLite file, the routes on an Express app, Node 22, an i9-14900HX on mains, `powersave` governor,
+unpinned; rows seeded directly, 20 calls a case, medians). A page of 100 rows without `tx` answers in 43 ms. With
+`tx=1` and its rows in **100 distinct full blocks** — bodies of 1 998 946 bytes built from 9 519 transactions of a
+credit send's size, the fullest a body gets — it answers in **142 ms** (175 ms at worst), of which reading the 100
+body blobs from SQLite is about 74 ms and the walk to the transactions about 1 ms; with the 100 rows in one such block,
+33 ms; one post, 2 ms. A request holds one body's bytes: a burst of 20 such pages raised the process's array buffers
+by 48 MB at its peak and its heap by 8 MB, both returned after.
 
 **`GET /posts/:id` adds `confirmedAuthor`** to whichever shape it returns: the consensus-recorded
 author from `block_topology`, hex, or `null` until an applied block confirms the post. It is a

@@ -2728,4 +2728,5 @@ backfill — and a withdrawn post keeps its row with `content` `NULL` and its ma
   root, and every block commits to the proof of its reads and writes (`CONSENSUS_INTERFACE → The tree layout`, `→ The
   block proof`), so a block replays from its parent's root and its proof, and the suites replay each one
   (`CONSENSUS_INTERFACE → The tree session`). No client does: the extension is a light node, which takes the tip on
-  proof of work and proves what it reads by lookups (`WEB_INTERFACE → The extension`)
+  proof of work, proves what it reads of the state by lookups and binds each post it shows to the transaction that
+  created it (`WEB_INTERFACE → The extension`)
