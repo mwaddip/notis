@@ -24,7 +24,7 @@
  * Ordering block).
  */
 
-import { ByteReader, ByteWriter } from '@dagsocial/wire';
+import { ByteReader, ByteWriter, MAX_ARRAY_LENGTH, ReaderError } from '@dagsocial/wire';
 import {
   type StructCodec,
   CodecError,
@@ -49,7 +49,7 @@ import {
   writeVlqU,
 } from './codec.js';
 import { postFieldBytes, readPostCommitFields, type PostCommit } from './post.js';
-import { readTxIdFields, writeTxIdFields, type UtxoTransaction } from './utxo.js';
+import { readTxIdFields, writeTxIdFields, type TxId, type UtxoTransaction } from './utxo.js';
 import type {
   BlockHeader,
   UtxoTxTree,
@@ -324,6 +324,58 @@ export function utxoTxTreeByteLength(t: UtxoTxTree): number {
     arrByteLength(t.utxoTxIds, () => 32) +
     arrByteLength(t.utxoTxs, lpByteLength)
   );
+}
+
+/**
+ * One transaction's bytes out of an encoded `UtxoTxTree`, by its id, with
+ * nothing decoded (TYPES_INTERFACE → One transaction of a body).
+ *
+ * The walk uses the codec's own readers — `readArr`, `readHexN` and `readVlqU`
+ * are the same primitives `UTXO_TX_TREE.read` reads with. It reads the id
+ * array (the one allocation the primitives force), finds the first position
+ * holding `txId`, then reads the element array's count and skips each `lp`
+ * element before that position by its length prefix without allocating. The
+ * wanted element is returned as a fresh `Uint8Array`, as the codec's decoders
+ * do.
+ *
+ * ⛔ **A section added to `UTXO_TX_TREE` owes the matching step here**, as
+ * `utxoTxTreeByteLength` carries the same warning for its measurement.
+ *
+ * It does not run the decoder's re-encode compare — it is for bytes its caller
+ * already holds to be canonical, a node's own stored body, never a peer's —
+ * and does not read past the element it returns. Bytes the walk cannot read
+ * throw `ReaderError`: a section cut short, a count or a length past the
+ * bytes, an id array longer than the element array at the wanted position. A
+ * `txId` that is not 64 lowercase hex returns `null`.
+ */
+export function utxoTxBytesIn(treeBytes: Uint8Array, txId: TxId): Uint8Array | null {
+  if (typeof txId !== 'string' || !/^[0-9a-f]{64}$/.test(txId)) return null;
+  const r = new ByteReader(treeBytes);
+  const utxoTxIds = readArr(r, (rr) => readHexN(rr, 32));
+  const wantedIndex = utxoTxIds.indexOf(txId);
+  if (wantedIndex === -1) return null;
+  // The element array — same `vlqU` count as `readArr`, read inline so only
+  // the one element wanted is materialised and the walk stops at it.
+  const elemCount = readVlqU(r);
+  if (elemCount > MAX_ARRAY_LENGTH) {
+    throw new ReaderError(
+      `utxoTxBytesIn: utxoTxs length ${elemCount} exceeds max ${MAX_ARRAY_LENGTH}`,
+      'array-too-large',
+    );
+  }
+  if (elemCount <= wantedIndex) {
+    throw new ReaderError(
+      `utxoTxBytesIn: utxoTxs has ${elemCount} entries, wanted index ${wantedIndex}`,
+      'truncated',
+    );
+  }
+  // Skip the preceding `lp` elements: the same `vlqU` length and
+  // position-advancing `readBytes` that `readLp` is built from, with no copy.
+  for (let i = 0; i < wantedIndex; i++) {
+    const len = readVlqU(r);
+    r.readBytes(len);
+  }
+  return readLp(r);
 }
 
 // ---------------------------------------------------------------------------
