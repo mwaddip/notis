@@ -1943,7 +1943,8 @@ export class App {
     if (held === null) return;
     // `putThreadRows` keeps a withdrawal the client has seen land final and
     // keeps a like that landed since the read began (WEB_INTERFACE →
-    // "A withdrawal the client has seen land is final").
+    // Reading the feed and threads → "A withdrawal the client has seen land
+    // is final on every write of rows").
     this.putThreadRows(t, since, held.post, held.descendants);
     t.ancestorIds = new Set(held.ancestors.map((a) => a.id));
     t.descendantCount = held.descendants.length;
