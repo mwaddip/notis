@@ -1,4 +1,5 @@
 import { describe, it, afterAll, expect } from 'vitest';
+import { checkPosts } from '@dagsocial/nipopow-client';
 import { createMesh, type Mesh } from '../src/mesh.js';
 import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
@@ -105,6 +106,51 @@ describe('post-withdraw', () => {
         expect(p.kind).toBe('withdrawn');
         expect(p.withdrawnAtHeight).toBeGreaterThan(0);
       }
+    }
+
+    // ---- the withdrawn row on the batch and in a light listing ----
+    // NODE_INTERFACE → Posts → "The batch read answers posts by id" — the
+    // batch answers the withdrawn id as WithdrawnJson, whole, with no `tx`
+    // under `tx=1` (NODE_INTERFACE → Posts → "The creating transaction rides
+    // a post row" — "A WithdrawnJson carries no `tx`"). The same row rides a
+    // light listing that holds the id (NODE_INTERFACE → Posts → "A light row
+    // is a post's id and the node's word" — "A withdrawn row is its
+    // WithdrawnJson, whole").
+    for (const node of mesh.nodes) {
+      const batchRes = await fetch(`${node.url}/posts/batch?tx=1`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [propPostRes.postId] }),
+      });
+      expect(batchRes.status).toBe(200);
+      const batchBody = await batchRes.json() as { posts: Record<string, unknown>[] };
+      expect(batchBody.posts.length).toBe(1);
+      const row = batchBody.posts[0]!;
+      expect(row['kind']).toBe('withdrawn');
+      expect(row['id']).toBe(propPostRes.postId);
+      expect(typeof row['txId']).toBe('string');
+      expect(typeof row['author']).toBe('string');
+      expect(Array.isArray(row['parentRefs'])).toBe(true);
+      expect(typeof row['withdrawnAtHeight']).toBe('number');
+      expect('tx' in row).toBe(false);
+      expect('content' in row).toBe(false);
+      // checkPosts answers `nothing-to-bind` for a withdrawn row.
+      const [check] = checkPosts([row]);
+      expect(check!.status).toBe('nothing-to-bind');
+    }
+
+    // The light listing holds the withdrawn id as the whole WithdrawnJson:
+    // `txId`, `author` and `parentRefs` present, `kind: 'withdrawn'`.
+    for (const node of mesh.nodes) {
+      const lightRes = await fetch(`${node.url}/posts?light=1`);
+      expect(lightRes.status).toBe(200);
+      const lightBody = await lightRes.json() as { posts: Record<string, unknown>[] };
+      const row = lightBody.posts.find((r) => r['id'] === propPostRes.postId);
+      expect(row).toBeTruthy();
+      expect(row!['kind']).toBe('withdrawn');
+      expect(typeof row!['txId']).toBe('string');
+      expect(typeof row!['author']).toBe('string');
+      expect(Array.isArray(row!['parentRefs'])).toBe(true);
     }
 
     // ---- A withdrawn root's view carries descendantCount ----
