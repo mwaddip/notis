@@ -528,9 +528,10 @@ the last `k` blocks still proves for its old holder, as a box spent since `suffi
 list and a thread — its first page, its `↻` and its `more` — ask `light=1` (`NODE_INTERFACE → Posts → "A light row is a
 post's id and the node's word"`). **A light page is held to its shape**: every row of every list of the answer is a
 `LightJson` or a `WithdrawnJson` with each field of its type — an id of 64 hex, at most one parent, counts that are
-non-negative integers — or the answer is not a page, and the read fails as one the node did not answer: the list's
-error line, and for a thread the cache (→ "The post cache"). A node that does not speak the form shows that line and no
-post. **A row the cache holds is a card at once**: the post's text, author, parent, type and transaction id from the
+non-negative integers, a name that is a well-formed one (`TYPES_INTERFACE → Content limits`) or none — or the answer is
+not a page, and the read fails as one the node did not answer: the list's error line, and for a thread the cache
+(→ "The post cache"). A node that does not speak the form shows that line and no post. **Each row is taken field by
+field**: what a row carries beyond its type's fields is not kept. **A row the cache holds is a card at once**: the post's text, author, parent, type and transaction id from the
 entry, bound when it entered, under the row's `status`, block position and time, `likeCount`, `descendantCount`,
 `authorName` and `likedByViewer`; nothing of it is checked again and nothing is asked for it. **A withdrawn row** renders
 as the withdrawn card does (→ The withdrawn state). **Any other row stands as a slot** where its card will stand — in a
