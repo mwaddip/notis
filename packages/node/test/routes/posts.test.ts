@@ -1282,13 +1282,32 @@ describe('posts routes — the light projection', () => {
   });
 
   it("GET /posts/:id/thread?light=1 — post, ancestors, descendants, pending are light; counts and next match the full form", async () => {
+    // Seed one confirmed descendant and one pending descendant of the
+    // subject, so each list carries a row the `kind === 'light'` check
+    // runs over.
+    const cConfirmed = makePostCommit(author, 'light-confirmed-child', { parentRefs: [replyId] });
+    const confirmedChildId = fixturePostId(cConfirmed);
+    insertPost(confirmedChildId, fixtureTxId(cConfirmed), cConfirmed, 'light-confirmed-child');
+    confirmPost(confirmedChildId, 210, 0);
+    const cPending = makePostCommit(author, 'light-pending-child', { parentRefs: [replyId] });
+    const pendingChildId = fixturePostId(cPending);
+    insertPost(pendingChildId, fixtureTxId(cPending), cPending, 'light-pending-child');
+
     const full = await request(`/${replyId}/thread?limit=100`, 'GET');
     const light = await request(`/${replyId}/thread?light=1&limit=100`, 'GET');
     const lightBody = light.data as Record<string, unknown>;
     expect((lightBody['post'] as Record<string, unknown>)['kind']).toBe('light');
-    for (const a of lightBody['ancestors'] as Array<Record<string, unknown>>) expect(a['kind']).toBe('light');
-    for (const d of lightBody['descendants'] as Array<Record<string, unknown>>) expect(d['kind']).toBe('light');
-    for (const p of lightBody['pending'] as Array<Record<string, unknown>>) expect(p['kind']).toBe('light');
+    const ancestors = lightBody['ancestors'] as Array<Record<string, unknown>>;
+    expect(ancestors.length).toBe(1);
+    for (const a of ancestors) expect(a['kind']).toBe('light');
+    const descendants = lightBody['descendants'] as Array<Record<string, unknown>>;
+    expect(descendants.length).toBe(1);
+    for (const d of descendants) expect(d['kind']).toBe('light');
+    expect(descendants.map((d) => d['id'])).toContain(confirmedChildId);
+    const pending = lightBody['pending'] as Array<Record<string, unknown>>;
+    expect(pending.length).toBe(1);
+    for (const p of pending) expect(p['kind']).toBe('light');
+    expect(pending.map((p) => p['id'])).toContain(pendingChildId);
     const fullBody = full.data as Record<string, unknown>;
     expect(lightBody['ancestorCount']).toBe(fullBody['ancestorCount']);
     expect(lightBody['descendantCount']).toBe(fullBody['descendantCount']);
@@ -1483,6 +1502,47 @@ describe('POST /posts/batch', () => {
   let pendingId: string;
   let pendingTxId: string;
 
+  // Seed one `ordering_blocks` row at `height` carrying the given
+  // transactions as its body. The header's `createdAt` tracks the height so
+  // each block hashes distinctly.
+  function seedOrderingBlock(
+    height: number,
+    txs: Array<{ txId: string; txBytes: Uint8Array }>,
+  ): void {
+    const header: BlockHeader = {
+      protocolVersion: 1,
+      height,
+      prevBlockHash: '00'.repeat(32),
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: '00'.repeat(33),
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: 1,
+      createdAt: height * 60_000,
+      interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
+    };
+    const headerBytes = encodeHeader(header);
+    const blockHashHex = Buffer.from(hash32(headerBytes)).toString('hex');
+    getDb().prepare(
+      `INSERT INTO ordering_blocks
+        (height, header_bytes, utxotx_tree_bytes, validator_signature,
+         created_at, block_hash, interlinks)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      height,
+      Buffer.from(headerBytes),
+      Buffer.from(encodeUtxoTxTree({
+        utxoTxIds: txs.map((t) => t.txId),
+        utxoTxs: txs.map((t) => t.txBytes),
+      })),
+      Buffer.from(new Uint8Array(64)),
+      header.createdAt,
+      blockHashHex,
+      Buffer.from(encodeInterlinks([])),
+    );
+  }
+
   beforeAll(() => {
     testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-batch-'));
     initDb(join(testDir, 'store.sqlite'));
@@ -1498,36 +1558,7 @@ describe('POST /posts/batch', () => {
       aTxId = computeTxId(tx);
       aTxBytes = encodeTx(tx);
       insertPost(aId, aTxId, commit, 'batch-a');
-      // Seed one ordering_blocks row at height 300 holding only aTx.
-      const header: BlockHeader = {
-        protocolVersion: 1,
-        height: 300,
-        prevBlockHash: '00'.repeat(32),
-        utxoTxRoot: '00'.repeat(32),
-        stateRoot: '00'.repeat(33),
-        validatorId: new Uint8Array(32),
-        powNonce: 0,
-        powTargetBits: 1,
-        createdAt: 300 * 60_000,
-        interlinkRoot: '00'.repeat(32),
-        adProofsRoot: '00'.repeat(32),
-      };
-      const headerBytes = encodeHeader(header);
-      const blockHashHex = Buffer.from(hash32(headerBytes)).toString('hex');
-      getDb().prepare(
-        `INSERT INTO ordering_blocks
-          (height, header_bytes, utxotx_tree_bytes, validator_signature,
-           created_at, block_hash, interlinks)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        300,
-        Buffer.from(headerBytes),
-        Buffer.from(encodeUtxoTxTree({ utxoTxIds: [aTxId], utxoTxs: [aTxBytes] })),
-        Buffer.from(new Uint8Array(64)),
-        header.createdAt,
-        blockHashHex,
-        Buffer.from(encodeInterlinks([])),
-      );
+      seedOrderingBlock(300, [{ txId: aTxId, txBytes: aTxBytes }]);
       confirmPost(aId, 300, 0);
     }
 
@@ -1539,35 +1570,7 @@ describe('POST /posts/batch', () => {
       bTxId = computeTxId(tx);
       bTxBytes = encodeTx(tx);
       insertPost(bId, bTxId, commit, 'batch-b');
-      const header: BlockHeader = {
-        protocolVersion: 1,
-        height: 301,
-        prevBlockHash: '00'.repeat(32),
-        utxoTxRoot: '00'.repeat(32),
-        stateRoot: '00'.repeat(33),
-        validatorId: new Uint8Array(32),
-        powNonce: 0,
-        powTargetBits: 1,
-        createdAt: 301 * 60_000,
-        interlinkRoot: '00'.repeat(32),
-        adProofsRoot: '00'.repeat(32),
-      };
-      const headerBytes = encodeHeader(header);
-      const blockHashHex = Buffer.from(hash32(headerBytes)).toString('hex');
-      getDb().prepare(
-        `INSERT INTO ordering_blocks
-          (height, header_bytes, utxotx_tree_bytes, validator_signature,
-           created_at, block_hash, interlinks)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        301,
-        Buffer.from(headerBytes),
-        Buffer.from(encodeUtxoTxTree({ utxoTxIds: [bTxId], utxoTxs: [bTxBytes] })),
-        Buffer.from(new Uint8Array(64)),
-        header.createdAt,
-        blockHashHex,
-        Buffer.from(encodeInterlinks([])),
-      );
+      seedOrderingBlock(301, [{ txId: bTxId, txBytes: bTxBytes }]);
       confirmPost(bId, 301, 0);
     }
 
@@ -1588,35 +1591,7 @@ describe('POST /posts/batch', () => {
       placeholderTxId = computeTxId(tx);
       placeholderTxBytes = encodeTx(tx);
       insertPost(placeholderId, placeholderTxId, commit, null);
-      const header: BlockHeader = {
-        protocolVersion: 1,
-        height: 304,
-        prevBlockHash: '00'.repeat(32),
-        utxoTxRoot: '00'.repeat(32),
-        stateRoot: '00'.repeat(33),
-        validatorId: new Uint8Array(32),
-        powNonce: 0,
-        powTargetBits: 1,
-        createdAt: 304 * 60_000,
-        interlinkRoot: '00'.repeat(32),
-        adProofsRoot: '00'.repeat(32),
-      };
-      const headerBytes = encodeHeader(header);
-      const blockHashHex = Buffer.from(hash32(headerBytes)).toString('hex');
-      getDb().prepare(
-        `INSERT INTO ordering_blocks
-          (height, header_bytes, utxotx_tree_bytes, validator_signature,
-           created_at, block_hash, interlinks)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        304,
-        Buffer.from(headerBytes),
-        Buffer.from(encodeUtxoTxTree({ utxoTxIds: [placeholderTxId], utxoTxs: [placeholderTxBytes] })),
-        Buffer.from(new Uint8Array(64)),
-        header.createdAt,
-        blockHashHex,
-        Buffer.from(encodeInterlinks([])),
-      );
+      seedOrderingBlock(304, [{ txId: placeholderTxId, txBytes: placeholderTxBytes }]);
       confirmPost(placeholderId, 304, 0);
     }
 

@@ -986,12 +986,19 @@ describe('feed-service — the light projection', () => {
   it('a light thread\'s post, ancestors, descendants and pending are all light; counts and next match the full form', () => {
     confirmPost(liveRootId, 110, 0);
     confirmPost(liveReplyId, 111, 0);
-    const grandchildId = insertTestPost('A grandchild', authorId, [liveReplyId]);
+    // One confirmed descendant and one pending descendant of the subject,
+    // so each list carries a row the `kind === 'light'` check runs over.
+    const confirmedChildId = insertTestPost('A confirmed descendant', authorId, [liveReplyId]);
+    confirmPost(confirmedChildId, 112, 0);
+    const pendingChildId = insertTestPost('A pending descendant', authorId, [liveReplyId]);
     const fullThread = feedService.getThread(liveReplyId, { limit: 50 })!;
     const lightThread = feedService.getThread(liveReplyId, { limit: 50 }, null, false, true)!;
     expect((lightThread.post as LightJson).kind).toBe('light');
+    expect(lightThread.ancestors.length).toBe(1);
     for (const a of lightThread.ancestors) expect((a as LightJson).kind).toBe('light');
+    expect(lightThread.descendants.length).toBe(1);
     for (const d of lightThread.descendants) expect((d as LightJson).kind).toBe('light');
+    expect(lightThread.pending.length).toBe(1);
     for (const p of lightThread.pending) expect((p as LightJson).kind).toBe('light');
     expect(lightThread.ancestorCount).toBe(fullThread.ancestorCount);
     expect(lightThread.descendantCount).toBe(fullThread.descendantCount);
@@ -999,7 +1006,8 @@ describe('feed-service — the light projection', () => {
     expect(lightThread.pendingCount).toBe(fullThread.pendingCount);
     // Pending ids match the full thread's pending ids.
     expect(lightThread.pending.map((p) => p.id)).toEqual(fullThread.pending.map((p) => p.id));
-    expect(lightThread.pending.map((p) => p.id)).toContain(grandchildId);
+    expect(lightThread.pending.map((p) => p.id)).toContain(pendingChildId);
+    expect(lightThread.descendants.map((p) => p.id)).toContain(confirmedChildId);
   });
 
   it('a withdrawn row among a light answer is its WithdrawnJson, whole', () => {
