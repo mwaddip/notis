@@ -29,6 +29,7 @@ import { createAdminRouter, type AdminDeps } from './routes/admin.js';
 import { noteHttpRequest } from './metrics.js';
 import { registerProofEndpoint, registerRangeEndpoint } from './state/avl-endpoint.js';
 import { tryGetAvlProver } from './state/avl-prover.js';
+import { bodyRefusal } from './routes/body-refusal.js';
 import type { Config } from './config.js';
 import type { Server } from 'http';
 
@@ -523,6 +524,17 @@ export function createApp(config: Config): express.Express {
       res: express.Response,
       _next: express.NextFunction,
     ) => {
+      // NODE_INTERFACE → HTTP API → "A body the parser refuses is the client's
+      // error": the parser's refusal answers 4xx with its own body and is not
+      // logged. Any other error is the node's fault — 500 with its stack.
+      const refusal = bodyRefusal(err);
+      if (refusal !== null) {
+        res.status(refusal.status).json({
+          error: refusal.status,
+          reason: refusal.reason,
+        });
+        return;
+      }
       console.error('500 error:', err instanceof Error ? err.stack : err);
       res.status(500).json({ error: 'internal' });
     },
