@@ -542,7 +542,11 @@ is not shown and not cached, and no line counts it. Every other row is `unbound`
 shown and not cached, and leaves no gap**: the list it belonged to says so once, at its head, in clay — *1 post
 withheld — it does not match its signature*, *3 posts withheld — they do not match their signatures* — the full
 rule's weight (`HOUSE_STYLE → Gold and clay are not interchangeable`), since such a row is the node showing what no
-author signed; the line counts what the list's standing reads withheld, and goes when they withheld none. **A thread
+author signed; the line counts what the list's standing reads withheld, and goes when they withheld none. **A row an
+earlier read bound stays where it stands** when a later read of the list withholds a row under its id — a refresh
+lands on the rows standing (→ Reading the feed and threads → "No answer overwrites a newer one"), and the standing
+card was bound when it was read — so the reader keeps the post the author signed beside the line saying the node now
+serves one that does not match; a list read afresh, after a change of node or identity, shows no such card. **A thread
 whose subject is `unbound`** shows that line and nothing of the node's row; one whose subject is `unserved` shows one
 muted line — *this node cannot serve this post yet.* — and no row. **A withheld answer to the single post read
 decides nothing**: the pending entry it was read for (→ The wallet) stays pending until the tip passes its
