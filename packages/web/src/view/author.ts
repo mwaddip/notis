@@ -287,11 +287,11 @@ export function authorPostsBody(handlers: PostsHandlers, ctx: PostsCtx): HTMLEle
     b.appendChild(el('div', 'empty', 'no posts yet'));
     return b;
   }
-  // The slot's card is drawn in the extension's slice (Phase 2); here a slot
-  // is skipped (WEB_INTERFACE → The extension → "The light read").
+  // A slot stands at the row the node named with no handler of its own
+  // (WEB_INTERFACE → The extension → "The light read").
   for (const post of feed.posts) {
-    if (!isFull(post)) continue;
-    b.appendChild(postCard(post, handlers, ctx));
+    if (isFull(post)) b.appendChild(postCard(post, handlers, ctx));
+    else b.appendChild(card(post));
   }
   if (feed.next !== null) {
     const foot = el('div', 'feed-foot');

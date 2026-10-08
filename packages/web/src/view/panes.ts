@@ -311,9 +311,12 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
   const rootId = t.root.id;
   for (const node of flattenThread(t.root, t.descendants)) {
     const row = node.row;
-    // A slot's card is drawn in the extension's slice (Phase 2); here a slot
-    // is skipped (WEB_INTERFACE → The extension → "The light read").
-    if (isLight(row)) continue;
+    if (isLight(row)) {
+      // A slot stands at the row's own depth with no handler of its own
+      // (WEB_INTERFACE → The extension → "The light read").
+      body.appendChild(card(row, { depth: node.depth }));
+      continue;
+    }
     // A pane's own root does not advertise that it is open — you are looking at
     // it. A reply open in another pane still does.
     body.appendChild(

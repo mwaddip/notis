@@ -108,17 +108,16 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
   }
 
   // Pending (mempool) posts are the newest — they sit above the confirmed ones,
-  // hollow, before any composer exists to create one. A slot's card is drawn in
-  // the extension build's slice (Phase 2); here the feed skips a slot — no row
-  // of this run reaches a reader through a non-light request
-  // (WEB_INTERFACE → The extension → "The light read").
+  // hollow, before any composer exists to create one. A slot stands at the row
+  // the node named with no handler of its own (WEB_INTERFACE → The extension →
+  // "The light read", HOUSE_STYLE → Motion → "A slot holds a post's place").
   for (const p of feed.pending) {
-    if (!isFull(p)) continue;
-    container.appendChild(card(p, { replyCount: p.descendantCount, onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(p.author, ctx), ...identityOpts(ctx, handlers) }));
+    if (isFull(p)) container.appendChild(card(p, { replyCount: p.descendantCount, onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(p.author, ctx), ...identityOpts(ctx, handlers) }));
+    else container.appendChild(card(p));
   }
   for (const p of feed.posts) {
-    if (!isFull(p)) continue;
-    container.appendChild(card(p, feedCardOpts(p, ctx, handlers)));
+    if (isFull(p)) container.appendChild(card(p, feedCardOpts(p, ctx, handlers)));
+    else container.appendChild(card(p));
   }
 
   if (feed.loaded && feed.posts.length === 0 && feed.pending.length === 0) {
