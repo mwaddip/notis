@@ -1,6 +1,7 @@
 import { NodeClient, type Api } from './api/client';
 import type { PostJson, WithdrawnJson, FeedRow, FeedResult, PostResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
-import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE } from '@dagsocial/types';
+import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
+import type { UtxoTransaction } from '@dagsocial/types';
 import type { Mode } from './mode';
 import type { Tabs } from './tabs';
 import { el, shortHex, preservingScroll } from './dom';
@@ -1918,18 +1919,19 @@ export class App {
       // does. A read begun before a node or identity change writes nothing
       // (→ "No answer overwrites a newer one"): `readerGen` was captured
       // before this await.
-      await this.applyCachedThread(t, id, gen);
+      await this.applyCachedThread(t, id, gen, since);
     }
     t.loading = false;
     this.renderThreadLoad(id);
   }
 
   /** Read the post cache for a thread whose node read failed; write its rows
-   *  into the ThreadState under the same generation guard the fetch used
-   *  (WEB_INTERFACE → The extension → "The post cache"). A read with no
-   *  cache, or one the cache does not hold, is nothing — today's failed
-   *  read stands. */
-  private async applyCachedThread(t: ThreadState, id: string, gen: number): Promise<void> {
+   *  through the same function a node's rows go through, under the same
+   *  generation guard the fetch used (WEB_INTERFACE → The extension → "The
+   *  post cache", → Reading the feed and threads → "No answer overwrites a
+   *  newer one"). A read with no cache, or one the cache does not hold, is
+   *  nothing — today's failed read stands. */
+  private async applyCachedThread(t: ThreadState, id: string, gen: number, since: number): Promise<void> {
     if (this.postCache === null) return;
     let held: CachedThread | null;
     try {
@@ -1939,11 +1941,13 @@ export class App {
     }
     if (gen !== this.readerGen) return;
     if (held === null) return;
-    t.root = held.post;
+    // `putThreadRows` keeps a withdrawal the client has seen land final and
+    // keeps a like that landed since the read began (WEB_INTERFACE →
+    // "A withdrawal the client has seen land is final").
+    this.putThreadRows(t, since, held.post, held.descendants);
     t.ancestorIds = new Set(held.ancestors.map((a) => a.id));
-    t.descendants = held.descendants;
     t.descendantCount = held.descendants.length;
-    this.indexRows([t.root, ...held.ancestors, ...held.descendants]);
+    this.indexRows([t.root, ...held.ancestors, ...t.descendants]);
   }
 
   /** Refresh re-reads the whole thread — descendants load oldest-first, so new
@@ -2017,7 +2021,7 @@ export class App {
       t.error = msg(e);
       // The cache answers a thread whose refresh fails, as it does a first
       // read (WEB_INTERFACE → The extension → "The post cache").
-      await this.applyCachedThread(t, id, gen);
+      await this.applyCachedThread(t, id, gen, since);
     }
     this.renderRegionsFor(id);
   }
@@ -2310,23 +2314,34 @@ export class App {
   }
 
   /** The post flow's cache hook (WEB_INTERFACE → The extension → "The post
-   *  cache"): the reader's own post enters at its submit, from the
-   *  transaction the client built, under the id and txId it derived. A
-   *  later read that brings the node's row refreshes it and keeps `own`
-   *  (post-cache.ts: `put` ORs the new entry's own with the prior's). */
-  private cachePostFromSubmit(content: string, parentId: string | null): (info: { txBytes: Uint8Array; txId: string; postId: string }) => void {
+   *  cache"): the reader's own post enters at its submit, from the signed
+   *  transaction the client built. The row is composed from the
+   *  transaction's own post commit — never from a literal — and keyed by
+   *  `computePostId(txId, 0)`, the client's own derivation. The row then
+   *  passes through the same post check a node's row passes (→ "Only
+   *  `bound` rows enter"): no verifier, no put; a check that answers
+   *  anything but `bound` for the reader's own transaction is a programming
+   *  error, since the row's `tx` is the signed transaction and the fields
+   *  come from its commit. A later read bringing the node's row refreshes
+   *  this entry and keeps `own` (post-cache.ts: `put` ORs the new entry's
+   *  own with the prior's). */
+  private cachePostFromSubmit(content: string): (info: { signedTx: UtxoTransaction; txId: string }) => void {
     return (info): void => {
       if (this.postCache === null) return;
+      if (this.postsVerifier === null) return;
       const cur = this.idm.current();
       if (cur === null) return;
+      const commit = info.signedTx.post;
+      if (commit === undefined) return;
+      const postId = computePostId(info.txId, 0);
       const row: PostJson = {
-        id: info.postId,
+        id: postId,
         content,
-        contentHash: contentHashHex(content),
-        author: cur.pubKeyHex,
-        parentRefs: parentId === null ? [] : [parentId],
-        protocolVersion: this.state.status?.protocolVersion ?? 1,
-        type: 'regular',
+        contentHash: bytesToHex(commit.contentHash),
+        author: bytesToHex(commit.author),
+        parentRefs: commit.parentRefs,
+        protocolVersion: commit.protocolVersion,
+        type: commit.type,
         status: 'pending',
         blockHeight: null,
         blockIndex: null,
@@ -2336,13 +2351,16 @@ export class App {
         authorName: this.ownName?.name ?? null,
         likedByViewer: null,
         txId: info.txId,
+        tx: bytesToHex(encodeTx(info.signedTx)),
       };
+      const [c] = this.postsVerifier.check([row]);
+      if (c === undefined || c.status !== 'bound') return;
       void this.postCache.put({
-        id: info.postId,
-        txBytes: info.txBytes,
+        id: c.id,
+        txBytes: c.txBytes,
         row,
-        author: cur.pubKeyHex,
-        parent: parentId,
+        author: c.author,
+        parent: c.parent,
         own: true,
       });
     };
@@ -2440,7 +2458,7 @@ export class App {
     };
     let result;
     try {
-      result = await submitPostFlow({ ...this.submitDeps(), onSigned, onCachePost: this.cachePostFromSubmit(text, parentId) }, text, parentId);
+      result = await submitPostFlow({ ...this.submitDeps(), onSigned, onCachePost: this.cachePostFromSubmit(text) }, text, parentId);
     } catch {
       // A transport failure. Before the sign — a pre-sign read threw and
       // onSigned never fired — the composer is still open with its text; after
@@ -2497,7 +2515,7 @@ export class App {
     sub.expiresAtHeight = null;
     sub.blockHeight = null;
     this.renderForParent(sub.parentId);
-    await this.flight(sub, () => submitPostFlow({ ...this.submitDeps(), onCachePost: this.cachePostFromSubmit(sub.content, sub.parentId) }, sub.content, sub.parentId));
+    await this.flight(sub, () => submitPostFlow({ ...this.submitDeps(), onCachePost: this.cachePostFromSubmit(sub.content) }, sub.content, sub.parentId));
   }
 
   /** Drive a submission's flight from a `try again`. notSigned there has no

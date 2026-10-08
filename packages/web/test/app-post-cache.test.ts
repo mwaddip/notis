@@ -8,11 +8,16 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { bytesToHex, computePostId, encodeTx, hexToBytes, POST_PRICE_THREAD } from '@dagsocial/types';
+import type { UtxoTransaction } from '@dagsocial/types';
+import { checkPosts } from '@dagsocial/nipopow-client';
 import { App } from '../src/app';
 import { PendingLedger } from '../src/wallet/ledger';
 import { createPostCache } from '../src/extension/post-cache';
+import { buildPost } from '../src/wallet/builders';
 import type { Api } from '../src/api/client';
-import type { AppState, PostCache, PostsVerifier } from '../src/model/state';
+import type { AppState, PostCache, PostsVerifier, TipRun, TipVerifier } from '../src/model/state';
 import type { WriteClient } from '../src/api/write';
 import type { PostCheck } from '@dagsocial/nipopow-client';
 import type {
@@ -342,5 +347,271 @@ describe('app-post-cache — with no cache handed in, nothing of this happens', 
     const t = h.drive.state.threads.get(subject.id)!;
     expect(t.error).not.toBeNull();
     expect(t.root).toBeNull();
+  });
+});
+
+// -------- F1: the reader's own post enters the cache from the signed
+// transaction, under the client-derived id, and only when it passes the
+// post check as `bound` (WEB_INTERFACE → The extension → "The post cache":
+// "Only `bound` rows enter", "the reader's own post at its submit, from
+// the transaction the client built").
+
+/** Sign a built transaction with a fresh Ed25519 keypair. Returns the signed
+ *  transaction, its id, and the author's hex. */
+function signTx(content: string): { signedTx: UtxoTransaction; txId: string; authorHex: string } {
+  const sk = ed25519.utils.randomSecretKey();
+  const pub = ed25519.getPublicKey(sk);
+  const authorHex = bytesToHex(pub);
+  const built = buildPost(
+    { spendable: [{ boxId: 'bb'.repeat(32), value: POST_PRICE_THREAD }], height: 10, era: 1, author: authorHex },
+    content,
+  );
+  // The sign step attaches the signature to the tx itself (submit.ts' signBody).
+  const sig = ed25519.sign(hexToBytes(built.txId), sk);
+  built.tx.signatures = { [authorHex]: sig };
+  return { signedTx: built.tx, txId: built.txId, authorHex };
+}
+
+describe('app-post-cache — the reader\'s own post enters only when the post check binds it', () => {
+  it('a signed submit held own, keyed by computePostId(txId, 0), and the stored tx bytes bind under the real checkPosts', async () => {
+    const { signedTx, txId, authorHex } = signTx('hello');
+    const expectedId = computePostId(txId, 0);
+    const { cache } = makeCache();
+    await cache.open('C');
+    // The App's identity reports the author key, so `own` is set on the put.
+    const identity = {
+      current: () => ({ pubKeyHex: authorHex, locked: false }),
+      sign: async () => ({ signature: '00' }),
+      draft: async () => ({ pubKeyHex: '' }), create: async () => ({ pubKeyHex: '' }),
+      discardDraft: () => {}, inspectFile: async () => ({ kind: 'clear' as const, pubKeyHex: '' }),
+      importFile: async () => ({ pubKeyHex: '' }), exportFile: async () => '',
+      unlock: async () => {}, lock: async () => {}, forget: async () => {}, backedUp: () => false, onChange: () => {},
+    };
+    // A verifier that calls through to the real checkPosts, so the gate is
+    // the one the node's rows pass.
+    const verifier: PostsVerifier = { check: (rows) => checkPosts(rows) };
+    const api = makeApi({ feedCalls: [], feedRes: { posts: [], next: null, pending: [], pendingCount: 0 }, threadCalls: [], threadRes: null, threadThrows: false, postRes: null });
+    const writeClient = {} as unknown as WriteClient;
+    const ledger = new PendingLedger(authorHex);
+    const app = new App(api, writeClient, identity, ledger, undefined, undefined, null, null, null, verifier, cache);
+    const appbar = document.createElement('div');
+    const feedEl = document.createElement('section'); feedEl.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    document.body.append(appbar, feedEl, panes);
+    app.mount(appbar, feedEl, panes);
+    const hook = (app as unknown as { cachePostFromSubmit(c: string): (info: { signedTx: UtxoTransaction; txId: string }) => void }).cachePostFromSubmit('hello');
+    hook({ signedTx, txId });
+    await settle();
+    const held = await cache.thread(expectedId);
+    expect(held).not.toBeNull();
+    expect(held!.post.id).toBe(expectedId);
+    // The row is the submission's content, not any node fiction.
+    expect((held!.post as PostJson).content).toBe('hello');
+    // Round-trip: the stored tx bytes decode and bind under the real checkPosts.
+    const re = await cache.thread(expectedId);
+    // The cache strips `tx` from the stored row; reconstruct from `txBytes`
+    // the way a feed/thread read would present it to the check.
+    const reconstructed: PostJson = {
+      ...(re!.post as PostJson),
+      tx: bytesToHex(encodeTx(signedTx)),
+    };
+    const [checked] = checkPosts([reconstructed]);
+    expect(checked?.status).toBe('bound');
+  });
+
+  it('a verifier answering `unbound` for the submit puts nothing', async () => {
+    const { signedTx, txId, authorHex } = signTx('nope');
+    const { cache } = makeCache();
+    await cache.open('C');
+    const identity = {
+      current: () => ({ pubKeyHex: authorHex, locked: false }), sign: async () => ({ signature: '00' }),
+      draft: async () => ({ pubKeyHex: '' }), create: async () => ({ pubKeyHex: '' }),
+      discardDraft: () => {}, inspectFile: async () => ({ kind: 'clear' as const, pubKeyHex: '' }),
+      importFile: async () => ({ pubKeyHex: '' }), exportFile: async () => '',
+      unlock: async () => {}, lock: async () => {}, forget: async () => {}, backedUp: () => false, onChange: () => {},
+    };
+    const verifier: PostsVerifier = { check: (rows) => rows.map(() => UNBOUND) };
+    const api = makeApi({ feedCalls: [], feedRes: { posts: [], next: null, pending: [], pendingCount: 0 }, threadCalls: [], threadRes: null, threadThrows: false, postRes: null });
+    const app = new App(api, {} as unknown as WriteClient, identity, new PendingLedger(authorHex), undefined, undefined, null, null, null, verifier, cache);
+    const appbar = document.createElement('div');
+    const feedEl = document.createElement('section'); feedEl.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    document.body.append(appbar, feedEl, panes);
+    app.mount(appbar, feedEl, panes);
+    (app as unknown as { cachePostFromSubmit(c: string): (info: { signedTx: UtxoTransaction; txId: string }) => void })
+      .cachePostFromSubmit('nope')({ signedTx, txId });
+    await settle();
+    expect(await cache.thread(computePostId(txId, 0))).toBeNull();
+  });
+
+  it('with no posts verifier the submit puts nothing — the check is the one gate', async () => {
+    const { signedTx, txId, authorHex } = signTx('silent');
+    const { cache } = makeCache();
+    await cache.open('C');
+    const identity = {
+      current: () => ({ pubKeyHex: authorHex, locked: false }), sign: async () => ({ signature: '00' }),
+      draft: async () => ({ pubKeyHex: '' }), create: async () => ({ pubKeyHex: '' }),
+      discardDraft: () => {}, inspectFile: async () => ({ kind: 'clear' as const, pubKeyHex: '' }),
+      importFile: async () => ({ pubKeyHex: '' }), exportFile: async () => '',
+      unlock: async () => {}, lock: async () => {}, forget: async () => {}, backedUp: () => false, onChange: () => {},
+    };
+    const api = makeApi({ feedCalls: [], feedRes: { posts: [], next: null, pending: [], pendingCount: 0 }, threadCalls: [], threadRes: null, threadThrows: false, postRes: null });
+    const app = new App(api, {} as unknown as WriteClient, identity, new PendingLedger(authorHex), undefined, undefined, null, null, null, null, cache);
+    const appbar = document.createElement('div');
+    const feedEl = document.createElement('section'); feedEl.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    document.body.append(appbar, feedEl, panes);
+    app.mount(appbar, feedEl, panes);
+    (app as unknown as { cachePostFromSubmit(c: string): (info: { signedTx: UtxoTransaction; txId: string }) => void })
+      .cachePostFromSubmit('silent')({ signedTx, txId });
+    await settle();
+    expect(await cache.thread(computePostId(txId, 0))).toBeNull();
+  });
+
+  it('the submit\'s own entry survives an eviction that takes others', async () => {
+    const { signedTx, txId, authorHex } = signTx('own');
+    const { cache } = makeCache();
+    await cache.open('C');
+    const identity = {
+      current: () => ({ pubKeyHex: authorHex, locked: false }), sign: async () => ({ signature: '00' }),
+      draft: async () => ({ pubKeyHex: '' }), create: async () => ({ pubKeyHex: '' }),
+      discardDraft: () => {}, inspectFile: async () => ({ kind: 'clear' as const, pubKeyHex: '' }),
+      importFile: async () => ({ pubKeyHex: '' }), exportFile: async () => '',
+      unlock: async () => {}, lock: async () => {}, forget: async () => {}, backedUp: () => false, onChange: () => {},
+    };
+    const verifier: PostsVerifier = { check: (rows) => checkPosts(rows) };
+    const app = new App(makeApi({ feedCalls: [], feedRes: { posts: [], next: null, pending: [], pendingCount: 0 }, threadCalls: [], threadRes: null, threadThrows: false, postRes: null }), {} as unknown as WriteClient, identity, new PendingLedger(authorHex), undefined, undefined, null, null, null, verifier, cache);
+    const appbar = document.createElement('div');
+    const feedEl = document.createElement('section'); feedEl.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    document.body.append(appbar, feedEl, panes);
+    app.mount(appbar, feedEl, panes);
+    (app as unknown as { cachePostFromSubmit(c: string): (info: { signedTx: UtxoTransaction; txId: string }) => void })
+      .cachePostFromSubmit('own')({ signedTx, txId });
+    await settle();
+    const ownId = computePostId(txId, 0);
+    expect(await cache.thread(ownId)).not.toBeNull();
+    // Fill the cache with other, non-own entries that push over the cap.
+    const { POST_CACHE_BYTES } = await import('../src/model/state');
+    const half = Math.floor(POST_CACHE_BYTES * 0.6);
+    for (let i = 0; i < 3; i++) {
+      await cache.put({ id: hid('f' + i), txBytes: new Uint8Array(half), row: row('f' + i), author: 'cc'.repeat(32), parent: null, own: false });
+    }
+    expect(await cache.thread(ownId)).not.toBeNull();
+  });
+});
+
+// -------- F2: the cached thread is written through putThreadRows, so a
+// withdrawal the client has seen land stays final, and no answer overwrites
+// a newer one (WEB_INTERFACE → Reading the feed and threads → "No answer
+// overwrites a newer one").
+
+describe('app-post-cache — a cached thread goes through putThreadRows', () => {
+  it('a post the client saw withdrawn renders withdrawn when the cache still holds its text', async () => {
+    const subject = row('w');
+    const sv = scriptedVerifier((r) => BOUND(r as PostJson));
+    const { cache } = makeCache();
+    await cache.open('C');
+    const BS = BOUND(subject);
+    if (BS.status !== 'bound') throw new Error('invariant');
+    await cache.put({ id: subject.id, txBytes: BS.txBytes, row: subject, author: subject.author, parent: null, own: false });
+
+    const h = harness({ verifier: sv.verifier, cache, threadThrows: true });
+    // Record the withdrawal: as the App would after `nothing-to-bind` saw a
+    // withdrawn row land. `withdrawnSeen` is the private map keyed by id.
+    const w = tomb('w');
+    (h.app as unknown as { withdrawnSeen: Map<string, WithdrawnJson> }).withdrawnSeen.set(subject.id, w);
+    await h.drive.fetchThread(subject.id);
+    await settle();
+    const t = h.drive.state.threads.get(subject.id)!;
+    expect(t.root).not.toBeNull();
+    expect((t.root as WithdrawnJson).kind).toBe('withdrawn');
+  });
+
+  it('a cache answer arriving after a node change writes nothing', async () => {
+    const subject = row('r');
+    const sv = scriptedVerifier((r) => BOUND(r as PostJson));
+    const { cache: inner } = makeCache();
+    await inner.open('C');
+    const BS = BOUND(subject);
+    if (BS.status !== 'bound') throw new Error('invariant');
+    await inner.put({ id: subject.id, txBytes: BS.txBytes, row: subject, author: subject.author, parent: null, own: false });
+    // Wrap the cache so a thread() read waits on a gate the test controls.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const wrapped: PostCache = {
+      open: (c) => inner.open(c),
+      put: (e) => inner.put(e),
+      withdraw: (i, r) => inner.withdraw(i, r),
+      thread: async (i) => { await gate; return inner.thread(i); },
+    };
+    const h = harness({ verifier: sv.verifier, cache: wrapped, threadThrows: true });
+    void h.drive.fetchThread(subject.id);
+    // Bump the readerGen as a node change would, before the cache answers.
+    (h.app as unknown as { readerGen: number }).readerGen += 1;
+    release();
+    await settle();
+    const t = h.drive.state.threads.get(subject.id)!;
+    // The cache's rows were dropped by the generation guard.
+    expect(t.root).toBeNull();
+  });
+});
+
+// -------- The tip run opens the cache under the chain it names, and a run
+// naming another chain reopens it there (WEB_INTERFACE → The extension →
+// "The post cache": "The database is named for the chain").
+
+describe('app-post-cache — the cache opens under the chain the tip run names', () => {
+  function anchor(): import('@dagsocial/nipopow-client').Anchor {
+    return { tip: null, suffixHead: null, suffixEnd: null, headers: [] } as unknown as import('@dagsocial/nipopow-client').Anchor;
+  }
+
+  it('a run naming chain X opens under X; a second X does not reopen; a run naming Y reopens', async () => {
+    const { cache } = makeCache();
+    const opens: string[] = [];
+    const wrapped: PostCache = {
+      open: (c) => { opens.push(c); return cache.open(c); },
+      put: (e) => cache.put(e),
+      withdraw: (i, r) => cache.withdraw(i, r),
+      thread: (i) => cache.thread(i),
+    };
+    const chains = ['X', 'X', 'Y'];
+    let i = 0;
+    const verifier: TipVerifier = {
+      run: async (): Promise<TipRun> => {
+        const chain = chains[i++]!;
+        return { verdict: { kind: 'verified', nodes: 2, height: 10 }, anchor: anchor(), chain };
+      },
+    };
+    const sv: PostsVerifier = { check: (rows) => rows.map(() => NOTHING_TO_BIND) };
+    const api = makeApi({ feedCalls: [], feedRes: { posts: [], next: null, pending: [], pendingCount: 0 }, threadCalls: [], threadRes: null, threadThrows: false, postRes: null });
+    const identity = {
+      current: () => null, sign: async () => ({ signature: '00' }),
+      draft: async () => ({ pubKeyHex: '' }), create: async () => ({ pubKeyHex: '' }),
+      discardDraft: () => {}, inspectFile: async () => ({ kind: 'clear' as const, pubKeyHex: '' }),
+      importFile: async () => ({ pubKeyHex: '' }), exportFile: async () => '',
+      unlock: async () => {}, lock: async () => {}, forget: async () => {}, backedUp: () => false, onChange: () => {},
+    };
+    const { prefs } = await import('../src/prefs');
+    prefs.node = 'http://x';
+    const app = new App(api, {} as unknown as WriteClient, identity, new PendingLedger(null), undefined, undefined, verifier, null, null, sv, wrapped);
+    const appbar = document.createElement('div');
+    const feedEl = document.createElement('section'); feedEl.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    document.body.append(appbar, feedEl, panes);
+    app.mount(appbar, feedEl, panes);
+    const drive = app as unknown as { startVerification(): void };
+    // First run — chain X — opens under X.
+    drive.startVerification();
+    await settle();
+    expect(opens).toEqual(['X']);
+    // Second run — same chain — the open guard holds, no reopen.
+    drive.startVerification();
+    await settle();
+    expect(opens).toEqual(['X']);
+    // Third run — chain Y — opens under Y.
+    drive.startVerification();
+    await settle();
+    expect(opens).toEqual(['X', 'Y']);
   });
 });
