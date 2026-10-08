@@ -211,16 +211,16 @@ by each of its three writers — so a post names its transaction as the transact
 `computePostId(txId, 0)` is the row's `id`. **`tx=1`** — the string `1`, or absent — adds `tx` to every `PostJson` of
 the answer, live or pending, a placeholder among them, on all three read routes and in every list of each: that
 transaction's bytes as `encodeTx` writes them, hex. A pending post's are its pool entry's, read by `tx_id`; a
-confirmed post's are the element of the stored body at `blockHeight` that `utxoTxIds` lists under that id — the body
-read once for each distinct height of a response, and no transaction decoded. **A `WithdrawnJson` carries no `tx`**:
+confirmed post's are read out of the stored body at `blockHeight` by that id (`TYPES_INTERFACE → One transaction of a
+body`) — the body neither decoded nor kept: whatever a page holds, one body's bytes are in memory at a time. **A `WithdrawnJson` carries no `tx`**:
 it holds no text for a transaction to bind. A pending row whose pool entry is gone answers `tx: null`; a confirmed
 row whose block lists no such id is a stored chain that contradicts itself — a `CorruptChainStateError`, fail-stop,
 never an answer. **The node checks nothing at the read**: the bytes are what a client derives the post's id, author,
 parent and content hash from, and verifies the author's signature over, with no word of the node's in the binding
 (`WEB_INTERFACE → The extension → "The post check"`).
 
-> ⚠ **AHEAD OF CODE (2026-10-07, N4 PR B — `node`)** — the three routes ignore `tx`; no row carries `txId` or `tx`;
-> `dag_posts` has no `tx_id` column and `insertPost` takes `(postId, commit, content)`.
+> ⚠ **AHEAD OF CODE (2026-10-08, N4 PR B — `node`)** — a confirmed post's bytes are read by decoding the whole stored
+> body, once for each distinct height of a response, every decoded body kept until the response ends.
 
 **`GET /posts/:id` adds `confirmedAuthor`** to whichever shape it returns: the consensus-recorded
 author from `block_topology`, hex, or `null` until an applied block confirms the post. It is a

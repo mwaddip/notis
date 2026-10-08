@@ -2517,6 +2517,24 @@ Naming follows the positional format's `...Bytes` family (`txIdBytes`, `boxConte
 **The delegation is byte-identical by construction** — same writers, same order — so it is not
 itself a consensus change. The consensus change is node's: the leaf preimage stops being JSON.
 
+### One transaction of a body
+
+`utxoTxBytesIn(treeBytes, txId)` returns the bytes of the transaction an encoded `UtxoTxTree` lists under `txId` — the
+element of `utxoTxs` at the position where `utxoTxIds` holds that id, the first such position — or `null` when the
+tree lists no such id. It walks the encoding, `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)`: it reads the ids, then
+skips each length-prefixed element before the one it wants. **It decodes no transaction, copies no other element and
+re-encodes nothing** — it is the read for a caller that wants one transaction of a stored body and would otherwise
+pay for the whole of it.
+
+**Its answer is the decoder's.** A test pins, over every tree the codec's vectors hold and every id in each, that it
+equals `utxoTxs[utxoTxIds.indexOf(txId)]` of `decodeUtxoTxTree(treeBytes)`, and `null` for an id the tree lacks.
+**One difference, stated:** it does not run the decoder's re-encode compare, so it is for bytes its caller already
+holds to be canonical — a node's own stored body — and never for a peer's. Bytes the walk cannot read — a section cut
+short, a count or a length past the bytes, an id array longer than the element array at the wanted position — throw
+`ReaderError`, as the decoder does; a `txId` that is not 64 lowercase hex answers `null`.
+
+> ⚠ **AHEAD OF CODE (2026-10-08, N4 PR B — `types`)** — `@dagsocial/types` exports no `utxoTxBytesIn`.
+
 ### Sizing without encoding
 
 `utxoTxTreeByteLength(t)` returns the byte length `encodeUtxoTxTree(t)` produces, computed from the
@@ -2577,6 +2595,7 @@ bytes with provenance appended — for its tree value (→ Canonical encoding); 
 | `updateInterlinks(prev, prevHash, prevLevel)` | `(string[], string, number) => string[]` | The vector the block after `prev`'s block commits to. See Interlink vector |
 | `encodeUtxoTxTree(t)` | `(UtxoTxTree) => Uint8Array` | Positional (body section) — see Layout — Block |
 | `decodeUtxoTxTree(bytes)` | `(Uint8Array) => UtxoTxTree` | Inverse of `encodeUtxoTxTree` |
+| `utxoTxBytesIn(treeBytes, txId)` | `(Uint8Array, TxId) => Uint8Array \| null` | One transaction's bytes out of an encoded body, by its id, with nothing decoded — see One transaction of a body |
 | `utxoTxTreeByteLength(t)` | `(UtxoTxTree) => number` | The body's encoded length, computed from the structure without encoding it. Equal to `encodeUtxoTxTree(t).length` by pinned test — see Sizing without encoding |
 | `encodeOrderingBlock(b)` | `(OrderingBlock) => Uint8Array` | Positional wire framing: `lp(header)` ‖ `lp(utxoTxTree)` ‖ `b64(validatorSignature)` — see Layout — Block |
 | `decodeOrderingBlock(bytes)` | `(Uint8Array) => OrderingBlock` | Inverse of `encodeOrderingBlock` |

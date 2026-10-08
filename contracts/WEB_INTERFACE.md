@@ -568,8 +568,8 @@ chain reset opens an empty one on every network, pinned or not; the last name is
 by post id and holds the transaction's bytes; the row as the node last gave it — text, name, counts, block time; the
 author and the parent as the transaction states them; when it was last seen; its size in bytes; and whether it is the
 reader's own — indexed by parent, by author and by last seen. **Only `bound` rows enter**, at the read that checked
-them, and the reader's own post at its submit, from the transaction the client built; a row whose `tx` is a held
-entry's is not checked again, and refreshes that entry's row and its last-seen. **A withdrawn row for a held id
+them, and the reader's own post at its submit, from the transaction the client built; **every read checks its rows,
+held or not**, and a row checked again refreshes its entry's row and its last-seen. **A withdrawn row for a held id
 empties the entry's text and keeps the entry** — the node's word, and a lie costs a re-fetch. **A thread or a post
 the cache holds is read from it when the read from the node fails** — the post, its held ancestors and its held
 descendants, each as any card renders, the author's name and the counts as the node last gave them: an entry was
