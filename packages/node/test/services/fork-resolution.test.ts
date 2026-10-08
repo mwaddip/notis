@@ -1207,7 +1207,7 @@ describe('reorg', () => {
       getBlockCreatedAt: storeIdx.getBlockCreatedAt,
       getUsernameByOwner: storeIdx.getUsernameByOwner,
       getPendingUtxoTxBytesByTxId: storeIdx.getPendingUtxoTxBytesByTxId,
-      getOrderingBlock: storeIdx.getOrderingBlock,
+      getUtxoTxTreeBytes: storeIdx.getUtxoTxTreeBytes,
     });
 
     const { decodeTx: decodeTx2, computePostId } = await import('@dagsocial/types');
@@ -1276,7 +1276,7 @@ describe('reorg', () => {
         getBlockCreatedAt: storeIdx.getBlockCreatedAt,
         getUsernameByOwner: storeIdx.getUsernameByOwner,
         getPendingUtxoTxBytesByTxId: storeIdx.getPendingUtxoTxBytesByTxId,
-        getOrderingBlock: storeIdx.getOrderingBlock,
+        getUtxoTxTreeBytes: storeIdx.getUtxoTxTreeBytes,
       });
 
       const r = feed.getPost(postId, null, true) as import('../../src/services/feed-service.js').PostJson;

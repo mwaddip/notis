@@ -11,7 +11,7 @@ import { generateKeyPairSync, createPrivateKey } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import { insertPost, getPost, queryPostsPage, getAncestorsNearest, getSubtreePage, getDescendantCount, confirmPost, withdrawPost, getPendingPostAuthor } from '../../src/store/posts.js';
 import { getUsernameByOwner } from '../../src/store/usernames.js';
-import { getCurrentHeight, getBlockCreatedAt, getOrderingBlock } from '../../src/store/ordering.js';
+import { getCurrentHeight, getBlockCreatedAt, getUtxoTxTreeBytes } from '../../src/store/ordering.js';
 import {
   getKarmaBoxes,
   insertBox,
@@ -35,6 +35,7 @@ import {
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
+  encodeUtxoTxTree,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -93,7 +94,7 @@ async function request(
       getSubtreePage,
       getBlockCreatedAt,
       getPendingUtxoTxBytesByTxId,
-      getOrderingBlock,
+      getUtxoTxTreeBytes,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
@@ -271,7 +272,7 @@ describe('posts routes', () => {
       getSubtreePage,
       getBlockCreatedAt,
       getPendingUtxoTxBytesByTxId,
-      getOrderingBlock,
+      getUtxoTxTreeBytes,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
@@ -960,7 +961,10 @@ describe('posts routes — fail-stop under a confirmed row whose block lists no 
       blockIndex: 0,
       withdrawnAtHeight: null,
     };
-    const emptyBody = { header: null, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: null };
+    // A well-formed body whose id array lists no `rowTxId` — `utxoTxBytesIn`
+    // returns `null` for it, which the resolver promotes to
+    // `ConfirmedPostTxNotInBlockBodyError` (a `CorruptChainStateError`).
+    const emptyBodyBytes = encodeUtxoTxTree({ utxoTxIds: [], utxoTxs: [] });
 
     const deps = {
       insertPost: () => {},
@@ -985,7 +989,7 @@ describe('posts routes — fail-stop under a confirmed row whose block lists no 
       getSubtreePage: () => ({ rows: [], next: null, count: 0, pending: [], pendingCount: 0 }),
       getBlockCreatedAt: () => null,
       getPendingUtxoTxBytesByTxId: () => null,
-      getOrderingBlock: () => emptyBody as any,
+      getUtxoTxTreeBytes: () => emptyBodyBytes,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => authorHex,
@@ -1065,7 +1069,7 @@ describe('posts routes — alias resolution', () => {
         getSubtreePage: () => ({ rows: [], next: null, count: 0, pending: [], pendingCount: 0 }),
         getBlockCreatedAt: () => null,
         getPendingUtxoTxBytesByTxId,
-        getOrderingBlock,
+        getUtxoTxTreeBytes,
         inviteBondMin: config.inviteBondMin,
         inviteBondMax: config.inviteBondMax,
         getTopologyAuthor: () => null,

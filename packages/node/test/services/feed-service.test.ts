@@ -16,7 +16,7 @@ import {
   withdrawPost,
   getBlockCreatedAt,
   getPendingUtxoTxBytesByTxId,
-  getOrderingBlock,
+  getUtxoTxTreeBytes,
   getUsernameByOwner,
   putUsername,
 } from '../../src/store/index.js';
@@ -72,7 +72,7 @@ describe('feed-service', () => {
       getSubtreePage,
       getBlockCreatedAt,
       getPendingUtxoTxBytesByTxId,
-      getOrderingBlock,
+      getUtxoTxTreeBytes,
       getUsernameByOwner,
     });
   });
@@ -230,7 +230,7 @@ describe('feed-service', () => {
       getSubtreePage,
       getBlockCreatedAt,
       getPendingUtxoTxBytesByTxId,
-      getOrderingBlock,
+      getUtxoTxTreeBytes,
       getUsernameByOwner: (owner) => {
         nameCalls++;
         return getUsernameByOwner(owner);
@@ -261,7 +261,7 @@ describe('feed-service', () => {
       getSubtreePage,
       getBlockCreatedAt,
       getPendingUtxoTxBytesByTxId,
-      getOrderingBlock,
+      getUtxoTxTreeBytes,
       getUsernameByOwner: (owner) => {
         nameCalls++;
         return getUsernameByOwner(owner);
@@ -346,7 +346,7 @@ describe('feed-service', () => {
       getSubtreePage: countingGetSubtreePage,
       getBlockCreatedAt,
       getPendingUtxoTxBytesByTxId,
-      getOrderingBlock,
+      getUtxoTxTreeBytes,
       getUsernameByOwner,
     });
 
@@ -404,10 +404,13 @@ describe('feed-service', () => {
 // ---------------------------------------------------------------------------
 
 import type { StoredPost, PostStatus } from '../../src/store/posts.js';
-import type { OrderingBlock, PostCommit, TxId } from '@dagsocial/types';
-import { computePostId, computeTxId, encodeTx, decodeTx } from '@dagsocial/types';
+import type { PostCommit, TxId } from '@dagsocial/types';
+import { computePostId, computeTxId, encodeTx, decodeTx, encodeUtxoTxTree } from '@dagsocial/types';
 import { makePostTx, makeTestIdentity } from '../helpers.js';
-import { ConfirmedPostTxNotInBlockBodyError } from '../../src/services/corrupt-state.js';
+import {
+  ConfirmedPostTxNotInBlockBodyError,
+  UnreadableStoredBlockError,
+} from '../../src/services/corrupt-state.js';
 
 /** Build a StoredPost from pieces, with a real-shaped `txId`. */
 function storedPost(args: {
@@ -440,11 +443,21 @@ interface TxMockState {
   byId: Map<string, StoredPost>;
   page: StoredPost[];
   pending: StoredPost[];
-  bodiesByHeight: Map<number, { utxoTxIds: string[]; utxoTxs: Uint8Array[] }>;
+  // The raw `utxotx_tree_bytes` of each seeded block, keyed by height — the
+  // one column `TxBytesResolver.confirmed` reads through `getUtxoTxTreeBytes`
+  // (NODE_INTERFACE → Posts → "The creating transaction rides a post row").
+  bodyBytesByHeight: Map<number, Uint8Array>;
+  // The last bytes `getUtxoTxTreeBytes` handed back — mirrors what the
+  // resolver holds (one body in memory at a time).
+  lastReadBytes: Uint8Array | null;
   pendingByTxId: Map<string, Uint8Array>;
   bodyReads: number[];      // heights read, in order — one entry per real body read
   descendants: StoredPost[];
   ancestors: StoredPost[];
+}
+
+function seedBody(state: TxMockState, height: number, utxoTxIds: string[], utxoTxs: Uint8Array[]): void {
+  state.bodyBytesByHeight.set(height, encodeUtxoTxTree({ utxoTxIds, utxoTxs }));
 }
 
 function makeTxMockFeed(state: TxMockState): FeedService {
@@ -459,11 +472,11 @@ function makeTxMockFeed(state: TxMockState): FeedService {
     getBlockCreatedAt: () => null,
     getUsernameByOwner: () => null,
     getPendingUtxoTxBytesByTxId: (txId: TxId) => state.pendingByTxId.get(txId) ?? null,
-    getOrderingBlock: (height: number) => {
+    getUtxoTxTreeBytes: (height: number) => {
       state.bodyReads.push(height);
-      const body = state.bodiesByHeight.get(height);
-      if (!body) return null;
-      return { header: null, utxoTxTree: body, validatorSignature: null } as unknown as OrderingBlock;
+      const bytes = state.bodyBytesByHeight.get(height) ?? null;
+      state.lastReadBytes = bytes;
+      return bytes;
     },
   });
 }
@@ -484,7 +497,8 @@ describe('feed-service — tx bytes ride the row (NODE_INTERFACE → Posts → "
       byId: new Map(),
       page: [],
       pending: [],
-      bodiesByHeight: new Map(),
+      bodyBytesByHeight: new Map(),
+      lastReadBytes: null,
       pendingByTxId: new Map(),
       bodyReads: [],
       descendants: [],
@@ -513,7 +527,7 @@ describe('feed-service — tx bytes ride the row (NODE_INTERFACE → Posts → "
     const { commit, postId, txId, txBytes } = makeScenarioPost('a confirmed body');
     const row = storedPost({ id: postId, txId, commit, content: 'a confirmed body', status: 'confirmed', blockHeight: 10, blockIndex: 0 });
     s.byId.set(postId, row);
-    s.bodiesByHeight.set(10, { utxoTxIds: [txId], utxoTxs: [txBytes] });
+    seedBody(s, 10, [txId], [txBytes]);
     const feed = makeTxMockFeed(s);
 
     const r = feed.getPost(postId, null, true) as PostJson;
@@ -593,9 +607,9 @@ describe('feed-service — tx bytes ride the row (NODE_INTERFACE → Posts → "
     s.descendants.push(descendantRow);
     s.pending.push(pendingRow);
     s.page.push(subjectRow, ancestorRow, descendantRow);
-    s.bodiesByHeight.set(4, { utxoTxIds: [ancestor.txId], utxoTxs: [ancestor.txBytes] });
-    s.bodiesByHeight.set(5, { utxoTxIds: [subject.txId], utxoTxs: [subject.txBytes] });
-    s.bodiesByHeight.set(6, { utxoTxIds: [descendant.txId], utxoTxs: [descendant.txBytes] });
+    seedBody(s, 4, [ancestor.txId], [ancestor.txBytes]);
+    seedBody(s, 5, [subject.txId], [subject.txBytes]);
+    seedBody(s, 6, [descendant.txId], [descendant.txBytes]);
     s.pendingByTxId.set(pending.txId, pending.txBytes);
     const feed = makeTxMockFeed(s);
 
@@ -640,7 +654,7 @@ describe('feed-service — tx bytes ride the row (NODE_INTERFACE → Posts → "
         utxoTxIds.push(p.txId);
         utxoTxs.push(p.txBytes);
       }
-      s.bodiesByHeight.set(h, { utxoTxIds, utxoTxs });
+      seedBody(s, h, utxoTxIds, utxoTxs);
     }
     s.page = rows;
     for (const r of rows) s.byId.set(r.id, r);
@@ -658,10 +672,86 @@ describe('feed-service — tx bytes ride the row (NODE_INTERFACE → Posts → "
     const row = storedPost({ id: postId, txId, commit, content: 'x', status: 'confirmed', blockHeight: 10, blockIndex: 0 });
     s.byId.set(postId, row);
     // The body at height 10 holds no tx matching txId.
-    s.bodiesByHeight.set(10, { utxoTxIds: ['ff'.repeat(32)], utxoTxs: [new Uint8Array([0])] });
+    seedBody(s, 10, ['ff'.repeat(32)], [new Uint8Array([0])]);
     const feed = makeTxMockFeed(s);
 
     expect(() => feed.getPost(postId, null, true)).toThrow(ConfirmedPostTxNotInBlockBodyError);
+  });
+
+  it('a page whose rows sit in N distinct blocks performs N body reads and holds the last height\'s bytes', () => {
+    // TYPES_INTERFACE → One transaction of a body: "whatever a page holds,
+    // one body's bytes are in memory at a time". A page's rows arrive in
+    // `ORDER BY block_height, block_index` (store/posts.ts), so rows of one
+    // block reuse the last bytes read.
+    const s = emptyState();
+    const rows: StoredPost[] = [];
+    const heights = [5, 6, 7, 8];
+    for (const h of heights) {
+      const p = makeScenarioPost(`row-${h}`);
+      rows.push(storedPost({ id: p.postId, txId: p.txId, commit: p.commit, content: `row-${h}`, status: 'confirmed', blockHeight: h, blockIndex: 0 }));
+      seedBody(s, h, [p.txId], [p.txBytes]);
+    }
+    s.page = rows;
+    for (const r of rows) s.byId.set(r.id, r);
+    const feed = makeTxMockFeed(s);
+
+    const q = feed.queryPosts({ limit: 50, tx: true });
+    expect(q.posts.length).toBe(heights.length);
+    // One read per distinct height.
+    expect(s.bodyReads).toEqual(heights);
+    // The last-returned bytes mirror what the resolver holds — one body's
+    // bytes at a time, that of the last height read.
+    expect(s.lastReadBytes).not.toBeNull();
+    expect(s.lastReadBytes).toEqual(s.bodyBytesByHeight.get(heights[heights.length - 1]!));
+  });
+
+  it('rows that share a block height read the body once, not once per row', () => {
+    const s = emptyState();
+    const rows: StoredPost[] = [];
+    const utxoTxIds: string[] = [];
+    const utxoTxs: Uint8Array[] = [];
+    for (let i = 0; i < 5; i++) {
+      const p = makeScenarioPost(`same-block-${i}`);
+      rows.push(storedPost({ id: p.postId, txId: p.txId, commit: p.commit, content: `same-block-${i}`, status: 'confirmed', blockHeight: 12, blockIndex: i }));
+      utxoTxIds.push(p.txId);
+      utxoTxs.push(p.txBytes);
+    }
+    seedBody(s, 12, utxoTxIds, utxoTxs);
+    for (const r of rows) s.byId.set(r.id, r);
+    s.page = rows;
+    const feed = makeTxMockFeed(s);
+
+    const q = feed.queryPosts({ limit: 50, tx: true });
+    expect(q.posts.length).toBe(5);
+    expect(s.bodyReads).toEqual([12]);
+  });
+
+  it('a confirmed row at a height with no stored block throws UnreadableStoredBlockError', () => {
+    const s = emptyState();
+    const { commit, postId, txId } = makeScenarioPost();
+    const row = storedPost({ id: postId, txId, commit, content: 'x', status: 'confirmed', blockHeight: 42, blockIndex: 0 });
+    s.byId.set(postId, row);
+    // No body seeded at height 42.
+    const feed = makeTxMockFeed(s);
+
+    expect(() => feed.getPost(postId, null, true)).toThrow(UnreadableStoredBlockError);
+  });
+
+  it('a height whose stored body is cut short throws UnreadableStoredBlockError', () => {
+    const s = emptyState();
+    const { commit, postId, txId, txBytes } = makeScenarioPost();
+    const row = storedPost({ id: postId, txId, commit, content: 'x', status: 'confirmed', blockHeight: 43, blockIndex: 0 });
+    s.byId.set(postId, row);
+    // Seed a well-formed body, then truncate the stored bytes so the walk
+    // raises `ReaderError` out of `utxoTxBytesIn` — the resolver promotes it
+    // to the same corruption class `rowToOrderingBlock` raises for an
+    // unreadable stored body (store/ordering.ts → `createOrderingBlock`'s
+    // provenance claim).
+    const full = encodeUtxoTxTree({ utxoTxIds: [txId], utxoTxs: [txBytes] });
+    s.bodyBytesByHeight.set(43, full.slice(0, full.length - 4));
+    const feed = makeTxMockFeed(s);
+
+    expect(() => feed.getPost(postId, null, true)).toThrow(UnreadableStoredBlockError);
   });
 });
 
@@ -676,7 +766,6 @@ describe('feed-service — tx bytes ride the row (NODE_INTERFACE → Posts → "
 import { getDb, closeDb as closeDb2, initDb as initDb2 } from '../../src/store/db.js';
 import {
   encodeHeader,
-  encodeUtxoTxTree,
   encodeInterlinks,
   PROTOCOL_VERSION as PROTO_VER,
 } from '@dagsocial/types';
@@ -738,7 +827,7 @@ function realStoreFeedService(): FeedService {
     getBlockCreatedAt,
     getUsernameByOwner,
     getPendingUtxoTxBytesByTxId,
-    getOrderingBlock,
+    getUtxoTxTreeBytes,
   });
 }
 

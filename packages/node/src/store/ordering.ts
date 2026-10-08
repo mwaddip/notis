@@ -144,6 +144,24 @@ export function getOrderingBlock(height: number): OrderingBlock | null {
 }
 
 /**
+ * The raw `utxotx_tree_bytes` at a height — the one column, no decode
+ * (NODE_INTERFACE → Posts → "The creating transaction rides a post row";
+ * TYPES_INTERFACE → One transaction of a body). `null` for a height with no
+ * row. The caller reads the wanted transaction out of these bytes by its id
+ * through `@dagsocial/types`' `utxoTxBytesIn` and holds no decoded body.
+ *
+ * The provenance stated on `createOrderingBlock` applies unchanged: the
+ * column holds this node's own re-encoding of an applied block, so bytes
+ * that will not read are local corruption, never input a peer chose.
+ */
+export function getUtxoTxTreeBytes(height: number): Uint8Array | null {
+  const row = getDb()
+    .prepare('SELECT utxotx_tree_bytes FROM ordering_blocks WHERE height = ?')
+    .get(height) as { utxotx_tree_bytes: Buffer } | undefined;
+  return row ? new Uint8Array(row.utxotx_tree_bytes) : null;
+}
+
+/**
  * Delete an ordering block at the given height (for rollback).
  */
 export function deleteOrderingBlock(height: number): void {

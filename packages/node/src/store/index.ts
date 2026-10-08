@@ -71,6 +71,7 @@ export {
 export {
   createOrderingBlock,
   getOrderingBlock,
+  getUtxoTxTreeBytes,
   getBlockCreatedAt,
   getCurrentHeight,
   nextBlockHeight,

@@ -406,7 +406,7 @@ describe('full-pipeline', () => {
       getBlockCreatedAt: ordering.getBlockCreatedAt,
       getUsernameByOwner: () => null,
       getPendingUtxoTxBytesByTxId: () => null,
-      getOrderingBlock: ordering.getOrderingBlock,
+      getUtxoTxTreeBytes: ordering.getUtxoTxTreeBytes,
     });
     const postJson = feed.getPost(postId, liker.userId) as { likeCount: number; likedByViewer: boolean | null };
     expect(postJson.likeCount).toBe(1);

@@ -1,8 +1,12 @@
-import type { OrderingBlock, PostType, TxId } from '@dagsocial/types';
+import type { PostType, TxId } from '@dagsocial/types';
+import { utxoTxBytesIn, ReaderError } from '@dagsocial/types';
 import type { PostStatus, StoredPost } from '../store/posts.js';
 import type { Page, PostKey } from '../store/index.js';
 import { nameFor } from './name-cache.js';
-import { ConfirmedPostTxNotInBlockBodyError } from './corrupt-state.js';
+import {
+  ConfirmedPostTxNotInBlockBodyError,
+  UnreadableStoredBlockError,
+} from './corrupt-state.js';
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -32,10 +36,11 @@ export interface FeedServiceDeps {
   // NODE_INTERFACE → Posts → "The creating transaction rides a post row": the
   // pool entry a pending post's bytes are read from, by `tx_id`.
   getPendingUtxoTxBytesByTxId: (txId: TxId) => Uint8Array | null;
-  // Same section: a confirmed post's bytes are the body element at its
-  // `blockHeight` that `utxoTxIds` lists under its `tx_id` — one body read per
-  // distinct height of a response, no transaction decoded.
-  getOrderingBlock: (height: number) => OrderingBlock | null;
+  // Same section: a confirmed post's bytes are read out of the stored body at
+  // its `blockHeight` by its `tx_id` through `utxoTxBytesIn`, the body neither
+  // decoded nor kept. The raw `utxotx_tree_bytes` of the row, `null` for a
+  // height with no row (TYPES_INTERFACE → One transaction of a body).
+  getUtxoTxTreeBytes: (height: number) => Uint8Array | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -145,16 +150,27 @@ function withdrawnToJson(
 }
 
 /**
- * The per-response index of block bodies, keyed by block height — the body is
- * read once per distinct height of a response and nothing of it decoded
- * (NODE_INTERFACE → Posts → "The creating transaction rides a post row").
+ * Reads a confirmed row's creating transaction out of its stored body by id,
+ * the body neither decoded nor kept — one body's bytes in memory at a time
+ * (NODE_INTERFACE → Posts → "The creating transaction rides a post row";
+ * TYPES_INTERFACE → One transaction of a body).
+ *
+ * A page's rows arrive in block order (`ORDER BY block_height, block_index` in
+ * `store/posts.ts`), so rows that share a height reuse the last bytes read; a
+ * thread's ancestors, descendants and pending each arrive sorted inside their
+ * own list, so each list reads one body per distinct height. **Pending bytes
+ * come from the pool, confirmed from the stored body**: a pending row's bytes
+ * are the pool entry under `txId`, `null` when the entry is gone (reorg,
+ * expiry); a confirmed row's are what `utxoTxBytesIn` returns for the stored
+ * body at `blockHeight`.
  */
 class TxBytesResolver {
-  private bodies = new Map<number, Map<string, Uint8Array>>();
+  private lastHeight: number | null = null;
+  private lastBytes: Uint8Array | null = null;
 
   constructor(
     private getPendingByTxId: (txId: TxId) => Uint8Array | null,
-    private getOrderingBlock: (height: number) => OrderingBlock | null,
+    private getUtxoTxTreeBytes: (height: number) => Uint8Array | null,
   ) {}
 
   /** The bytes of a pending row's creating transaction, or `null` if its pool entry is gone. */
@@ -164,30 +180,48 @@ class TxBytesResolver {
   }
 
   /**
-   * The bytes of a confirmed row's creating transaction — the element of the
-   * stored body at `blockHeight` that `utxoTxIds` lists under `txId`. Throws
-   * `ConfirmedPostTxNotInBlockBodyError` if the block lists no such id.
+   * The bytes of a confirmed row's creating transaction, read out of the
+   * stored body at `blockHeight` by `txId`.
+   *
+   * `utxoTxBytesIn` answering `null` is `ConfirmedPostTxNotInBlockBodyError`
+   * (NODE_INTERFACE → Posts). A height with no stored row, or bytes
+   * `utxoTxBytesIn` cannot read (`ReaderError`), is a stored chain that will
+   * not read — raised as `UnreadableStoredBlockError`, the same class
+   * `rowToOrderingBlock` promotes for a stored body whose bytes do not decode
+   * (store/ordering.ts → `createOrderingBlock`'s provenance claim).
    */
   confirmed(postId: string, blockHeight: number, txId: string): string {
-    let byTxId = this.bodies.get(blockHeight);
-    if (!byTxId) {
-      byTxId = new Map<string, Uint8Array>();
-      const block = this.getOrderingBlock(blockHeight);
-      if (block) {
-        const { utxoTxIds, utxoTxs } = block.utxoTxTree;
-        for (let i = 0; i < utxoTxIds.length; i++) {
-          const raw = utxoTxs[i];
-          if (raw) byTxId.set(utxoTxIds[i]!, raw);
-        }
+    if (this.lastHeight !== blockHeight) {
+      const bytes = this.getUtxoTxTreeBytes(blockHeight);
+      if (bytes === null) {
+        throw new UnreadableStoredBlockError(
+          'feed-service.getUtxoTxTreeBytes',
+          blockHeight,
+          new Error(`no ordering_blocks row at height ${blockHeight} for confirmed post`),
+        );
       }
-      this.bodies.set(blockHeight, byTxId);
+      this.lastHeight = blockHeight;
+      this.lastBytes = bytes;
     }
-    const bytes = byTxId.get(txId);
-    if (!bytes) {
+    let out: Uint8Array | null;
+    try {
+      out = utxoTxBytesIn(this.lastBytes!, txId);
+    } catch (err) {
+      if (err instanceof ReaderError) {
+        throw new UnreadableStoredBlockError(
+          'feed-service.utxoTxBytesIn',
+          blockHeight,
+          err,
+        );
+      }
+      throw err;
+    }
+    if (out === null) {
       throw new ConfirmedPostTxNotInBlockBodyError('feed-service', blockHeight, postId, txId);
     }
-    return Buffer.from(bytes).toString('hex');
+    return Buffer.from(out).toString('hex');
   }
+
 }
 
 
@@ -246,7 +280,7 @@ export class FeedService {
 
   private makeTxResolver(tx: boolean): TxBytesResolver | null {
     return tx
-      ? new TxBytesResolver(this.deps.getPendingUtxoTxBytesByTxId, this.deps.getOrderingBlock)
+      ? new TxBytesResolver(this.deps.getPendingUtxoTxBytesByTxId, this.deps.getUtxoTxTreeBytes)
       : null;
   }
 
