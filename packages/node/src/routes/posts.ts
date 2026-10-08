@@ -15,6 +15,7 @@ import {
   parseRoots, isRootsError,
   parseTx, isTxError,
   parseLight, isLightError,
+  parseBatchIds, isBatchIdsError,
   parseViewer, isViewerError,
   resolveIdentityParam, isResolveError,
   formatKey,
@@ -203,6 +204,27 @@ export function createRouter(deps: PostsDeps): Router {
       ...result,
       next: result.next ? formatKey('post', result.next) : null,
     });
+  });
+
+  // POST /posts/batch — NODE_INTERFACE → Posts → "The batch read answers posts by id"
+  router.post('/batch', (req, res) => {
+    const ids = parseBatchIds(req.body);
+    if (isBatchIdsError(ids)) { res.status(400).json({ error: ids.error }); return; }
+    const tx = parseTx(req.query as Record<string, unknown>);
+    if (isTxError(tx)) { res.status(400).json({ error: tx.error }); return; }
+    const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);
+    if (isViewerError(viewer)) {
+      res.status(viewer.status ?? 400).json({ error: viewer.error });
+      return;
+    }
+    let posts;
+    try {
+      posts = feedService.getPosts(ids, viewer, tx);
+    } catch (err) {
+      if (err instanceof CorruptChainStateError) failStopIfCorruptChain(err);
+      throw err;
+    }
+    res.json({ posts });
   });
 
   return router;

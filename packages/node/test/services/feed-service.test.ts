@@ -1081,3 +1081,42 @@ describe('feed-service — a light read of a confirmed row with no body in its b
     expect(state.bodyReads.length).toBe(beforeReads);
   });
 });
+// ---------------------------------------------------------------------------
+// NODE_INTERFACE → Posts → "The batch read answers posts by id"
+// ---------------------------------------------------------------------------
+
+describe('feed-service — getPosts answers in the order asked, missing ids left out', () => {
+  let authorId: Uint8Array;
+  let feedService: FeedService;
+
+  beforeEach(() => {
+    initDb(':memory:');
+    const keys = generateKeyPairSync('ed25519');
+    authorId = rawPublicKey(keys.publicKey);
+    feedService = new FeedService({
+      getPost: storeGetPost,
+      queryPostsPage,
+      getLikeRecordCount,
+      getDescendantCount,
+      hasLikeRecord,
+      getAncestorsNearest,
+      getSubtreePage,
+      getBlockCreatedAt,
+      getPendingUtxoTxBytesByTxId,
+      getUtxoTxTreeBytes,
+      getUsernameByOwner,
+    });
+  });
+
+  afterEach(() => { closeDb(); });
+
+  it('answers rows in the order given, dropping unknown ids', () => {
+    const aId = insertTestPost('a', authorId, []);
+    const bId = insertTestPost('b', authorId, []);
+    const unknownId = 'ff'.repeat(32);
+    const order1 = feedService.getPosts([aId, unknownId, bId]);
+    expect(order1.map((p) => p.id)).toEqual([aId, bId]);
+    const order2 = feedService.getPosts([bId, aId, unknownId]);
+    expect(order2.map((p) => p.id)).toEqual([bId, aId]);
+  });
+});

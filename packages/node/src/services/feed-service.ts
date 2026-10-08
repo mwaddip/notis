@@ -424,4 +424,24 @@ export class FeedService {
     };
   }
 
+  // NODE_INTERFACE → Posts → "The batch read answers posts by id"
+  getPosts(
+    ids: readonly string[],
+    viewer: Uint8Array | null = null,
+    tx = false,
+  ): Array<PostJson | WithdrawnJson> {
+    const nameCache = new Map<string, string | null>();
+    const txResolver = this.makeTxResolver(tx);
+    const out: Array<PostJson | WithdrawnJson> = [];
+    for (const id of ids) {
+      const row = this.deps.getPost(id);
+      // NODE_INTERFACE → Posts → "The batch read answers posts by id": an id
+      // the node has never heard of is left out, in the order asked.
+      if (row === null) continue;
+      out.push(
+        this.storedPostToJson(row, viewer, nameCache, txResolver, false) as PostJson | WithdrawnJson,
+      );
+    }
+    return out;
+  }
 }

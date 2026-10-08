@@ -35,8 +35,16 @@ import {
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
+  computeTxId,
+  decodeTx,
+  encodeTx,
+  encodeHeader,
+  encodeInterlinks,
   encodeUtxoTxTree,
+  hash32,
 } from '@dagsocial/types';
+import type { BlockHeader } from '@dagsocial/types';
+import { makePostTx, makeTestIdentity } from '../helpers.js';
 import type {
   AnyBox,
   CandidateOf,
@@ -1456,3 +1464,495 @@ describe('posts routes — light does not read the body', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// NODE_INTERFACE → Posts → "The batch read answers posts by id"
+// ---------------------------------------------------------------------------
+
+describe('POST /posts/batch', () => {
+  let author: Uint8Array;
+  let aId: string;
+  let aTxId: string;
+  let aTxBytes: Uint8Array;
+  let bId: string;
+  let bTxId: string;
+  let bTxBytes: Uint8Array;
+  let withdrawnId: string;
+  let placeholderId: string;
+  let placeholderTxId: string;
+  let placeholderTxBytes: Uint8Array;
+  let pendingId: string;
+  let pendingTxId: string;
+
+  beforeAll(() => {
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-batch-'));
+    initDb(join(testDir, 'store.sqlite'));
+
+    const keys = generateKeyPairSync('ed25519');
+    author = rawPublicKey(keys.publicKey);
+
+    // Row A — a confirmed post whose body sits in one stored block.
+    {
+      const idObj = makeTestIdentity();
+      const { commit, tx, postId } = makePostTx(idObj, 'batch-a');
+      aId = postId;
+      aTxId = computeTxId(tx);
+      aTxBytes = encodeTx(tx);
+      insertPost(aId, aTxId, commit, 'batch-a');
+      // Seed one ordering_blocks row at height 300 holding only aTx.
+      const header: BlockHeader = {
+        protocolVersion: 1,
+        height: 300,
+        prevBlockHash: '00'.repeat(32),
+        utxoTxRoot: '00'.repeat(32),
+        stateRoot: '00'.repeat(33),
+        validatorId: new Uint8Array(32),
+        powNonce: 0,
+        powTargetBits: 1,
+        createdAt: 300 * 60_000,
+        interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
+      };
+      const headerBytes = encodeHeader(header);
+      const blockHashHex = Buffer.from(hash32(headerBytes)).toString('hex');
+      getDb().prepare(
+        `INSERT INTO ordering_blocks
+          (height, header_bytes, utxotx_tree_bytes, validator_signature,
+           created_at, block_hash, interlinks)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        300,
+        Buffer.from(headerBytes),
+        Buffer.from(encodeUtxoTxTree({ utxoTxIds: [aTxId], utxoTxs: [aTxBytes] })),
+        Buffer.from(new Uint8Array(64)),
+        header.createdAt,
+        blockHashHex,
+        Buffer.from(encodeInterlinks([])),
+      );
+      confirmPost(aId, 300, 0);
+    }
+
+    // Row B — a second confirmed post, separate block.
+    {
+      const idObj = makeTestIdentity();
+      const { commit, tx, postId } = makePostTx(idObj, 'batch-b');
+      bId = postId;
+      bTxId = computeTxId(tx);
+      bTxBytes = encodeTx(tx);
+      insertPost(bId, bTxId, commit, 'batch-b');
+      const header: BlockHeader = {
+        protocolVersion: 1,
+        height: 301,
+        prevBlockHash: '00'.repeat(32),
+        utxoTxRoot: '00'.repeat(32),
+        stateRoot: '00'.repeat(33),
+        validatorId: new Uint8Array(32),
+        powNonce: 0,
+        powTargetBits: 1,
+        createdAt: 301 * 60_000,
+        interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
+      };
+      const headerBytes = encodeHeader(header);
+      const blockHashHex = Buffer.from(hash32(headerBytes)).toString('hex');
+      getDb().prepare(
+        `INSERT INTO ordering_blocks
+          (height, header_bytes, utxotx_tree_bytes, validator_signature,
+           created_at, block_hash, interlinks)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        301,
+        Buffer.from(headerBytes),
+        Buffer.from(encodeUtxoTxTree({ utxoTxIds: [bTxId], utxoTxs: [bTxBytes] })),
+        Buffer.from(new Uint8Array(64)),
+        header.createdAt,
+        blockHashHex,
+        Buffer.from(encodeInterlinks([])),
+      );
+      confirmPost(bId, 301, 0);
+    }
+
+    // Withdrawn row.
+    {
+      const wc = makePostCommit(author, 'batch-withdrawn', { parentRefs: [] });
+      withdrawnId = fixturePostId(wc);
+      insertPost(withdrawnId, fixtureTxId(wc), wc, 'batch-withdrawn');
+      confirmPost(withdrawnId, 302, 0);
+      withdrawPost(withdrawnId, 303);
+    }
+
+    // Placeholder — a confirmed row with null content, bytes in its stored body.
+    {
+      const idObj = makeTestIdentity();
+      const { commit, tx, postId } = makePostTx(idObj, 'batch-placeholder');
+      placeholderId = postId;
+      placeholderTxId = computeTxId(tx);
+      placeholderTxBytes = encodeTx(tx);
+      insertPost(placeholderId, placeholderTxId, commit, null);
+      const header: BlockHeader = {
+        protocolVersion: 1,
+        height: 304,
+        prevBlockHash: '00'.repeat(32),
+        utxoTxRoot: '00'.repeat(32),
+        stateRoot: '00'.repeat(33),
+        validatorId: new Uint8Array(32),
+        powNonce: 0,
+        powTargetBits: 1,
+        createdAt: 304 * 60_000,
+        interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
+      };
+      const headerBytes = encodeHeader(header);
+      const blockHashHex = Buffer.from(hash32(headerBytes)).toString('hex');
+      getDb().prepare(
+        `INSERT INTO ordering_blocks
+          (height, header_bytes, utxotx_tree_bytes, validator_signature,
+           created_at, block_hash, interlinks)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        304,
+        Buffer.from(headerBytes),
+        Buffer.from(encodeUtxoTxTree({ utxoTxIds: [placeholderTxId], utxoTxs: [placeholderTxBytes] })),
+        Buffer.from(new Uint8Array(64)),
+        header.createdAt,
+        blockHashHex,
+        Buffer.from(encodeInterlinks([])),
+      );
+      confirmPost(placeholderId, 304, 0);
+    }
+
+    // Pending — a row in the pool, not confirmed.
+    {
+      const idObj = makeTestIdentity();
+      const { commit, tx, postId } = makePostTx(idObj, 'batch-pending');
+      pendingId = postId;
+      pendingTxId = computeTxId(tx);
+      insertUtxoTx(tx, 1000);
+      insertPost(pendingId, pendingTxId, commit, 'batch-pending');
+    }
+  });
+
+  afterAll(() => {
+    closeDb();
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  async function batchPost(path: string, body: unknown): Promise<{ status: number; data: unknown }> {
+    return new Promise((resolve) => {
+      const db = getDb();
+      const deps = {
+        insertPost,
+        getPost,
+        queryPostsPage,
+        verifyPost,
+        getKarmaBoxes,
+        getIdentityRecord: storeGetIdentityRecord,
+        decayCfg: {
+          staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+          decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+          decayAmount: KARMA_DECAY_AMOUNT,
+          karmaMinimum: KARMA_MINIMUM,
+        },
+        storageRentPeriodBlocks: 40,
+        getBoxProvenance: () => null,
+        getLikeRecordCount,
+        getDescendantCount,
+        hasLikeRecord,
+        getUsernameByOwner,
+        getAncestorsNearest,
+        getSubtreePage,
+        getBlockCreatedAt,
+        getPendingUtxoTxBytesByTxId,
+        getUtxoTxTreeBytes,
+        inviteBondMin: config.inviteBondMin,
+        inviteBondMax: config.inviteBondMax,
+        getTopologyAuthor: () => null,
+        getPendingPostAuthor,
+        getCurrentHeight,
+        protocolVersionSchedule: [{ version: 1, fromHeight: 0 }] as const,
+        getUsername: () => null,
+        admitTx: insertUtxoTx,
+        runInTransaction: (fn: () => void) => db.transaction(fn)(),
+        validateTx: () => ({ valid: true } as const),
+        getBox: () => null,
+      };
+      const app = express();
+      app.use(express.json());
+      app.use('/posts', createRouter(deps as any));
+      const server = app.listen(0, () => {
+        const addr = server.address() as { port: number };
+        const bodyStr = body === undefined ? undefined : JSON.stringify(body);
+        const r = http.request(
+          {
+            hostname: 'localhost', port: addr.port, path: '/posts' + path, method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+          },
+          (res) => {
+            let d = '';
+            res.on('data', (c) => (d += c));
+            res.on('end', () => {
+              server.close();
+              try { resolve({ status: res.statusCode ?? 0, data: JSON.parse(d) }); }
+              catch { resolve({ status: res.statusCode ?? 0, data: d }); }
+            });
+          },
+        );
+        if (bodyStr !== undefined) r.write(bodyStr);
+        r.end();
+      });
+    });
+  }
+
+  it('100 ids answer 200; 101 answer 400', async () => {
+    const ids100 = Array.from({ length: 100 }, (_, i) => (i + 1).toString(16).padStart(64, '0'));
+    const ok = await batchPost('/batch', { ids: ids100 });
+    expect(ok.status).toBe(200);
+    const ids101 = Array.from({ length: 101 }, (_, i) => (i + 1).toString(16).padStart(64, '0'));
+    const bad = await batchPost('/batch', { ids: ids101 });
+    expect(bad.status).toBe(400);
+    expect((bad.data as { error: string }).error).toBe('ids must hold 1 to 100 post ids');
+  });
+
+  it('answers a known id, drops an unheard id, carries a withdrawn id — in the order asked; the same three in another order answer in that order', async () => {
+    const unheard = '00'.repeat(32);
+    const res1 = await batchPost('/batch', { ids: [aId, unheard, withdrawnId] });
+    expect(res1.status).toBe(200);
+    const posts1 = (res1.data as { posts: Array<{ id: string }> }).posts;
+    expect(posts1.map((p) => p.id)).toEqual([aId, withdrawnId]);
+
+    const res2 = await batchPost('/batch', { ids: [withdrawnId, unheard, aId] });
+    expect(res2.status).toBe(200);
+    const posts2 = (res2.data as { posts: Array<{ id: string }> }).posts;
+    expect(posts2.map((p) => p.id)).toEqual([withdrawnId, aId]);
+  });
+
+  it('with tx=1 every PostJson carries tx; computePostId(computeTxId(decodeTx(tx)), 0) is its id — one pending from the pool, one confirmed from its block', async () => {
+    const res = await batchPost('/batch?tx=1', { ids: [aId, pendingId] });
+    expect(res.status).toBe(200);
+    const posts = (res.data as { posts: Array<Record<string, unknown>> }).posts;
+    expect(posts.length).toBe(2);
+    for (const row of posts) {
+      expect(typeof row['tx']).toBe('string');
+      const decoded = decodeTx(new Uint8Array(Buffer.from(row['tx'] as string, 'hex')));
+      expect(computePostId(computeTxId(decoded), 0)).toBe(row['id']);
+    }
+  });
+
+  it('without tx no row carries the key; a WithdrawnJson never carries tx', async () => {
+    const res = await batchPost('/batch', { ids: [aId, bId, withdrawnId] });
+    expect(res.status).toBe(200);
+    const posts = (res.data as { posts: Array<Record<string, unknown>> }).posts;
+    for (const row of posts) expect('tx' in row).toBe(false);
+    // With tx=1 the withdrawn row still carries no `tx` key.
+    const res2 = await batchPost('/batch?tx=1', { ids: [withdrawnId] });
+    const posts2 = (res2.data as { posts: Array<Record<string, unknown>> }).posts;
+    expect(posts2.length).toBe(1);
+    expect(posts2[0]!['kind']).toBe('withdrawn');
+    expect('tx' in posts2[0]!).toBe(false);
+  });
+
+  it('a placeholder (content: null) answers with its tx', async () => {
+    const res = await batchPost('/batch?tx=1', { ids: [placeholderId] });
+    expect(res.status).toBe(200);
+    const posts = (res.data as { posts: Array<Record<string, unknown>> }).posts;
+    expect(posts.length).toBe(1);
+    const row = posts[0]!;
+    expect(row['content']).toBeNull();
+    expect(row['status']).toBe('confirmed');
+    expect(row['tx']).toBe(Buffer.from(placeholderTxBytes).toString('hex'));
+  });
+
+  it('an upper-case id answers its row', async () => {
+    const res = await batchPost('/batch', { ids: [aId.toUpperCase()] });
+    expect(res.status).toBe(200);
+    const posts = (res.data as { posts: Array<{ id: string }> }).posts;
+    expect(posts.length).toBe(1);
+    expect(posts[0]!.id).toBe(aId);
+  });
+
+  it('an empty body is 400 ids required (array)', async () => {
+    const res = await batchPost('/batch', {});
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('ids required (array)');
+  });
+
+  it('ids: "x" is 400 ids required (array)', async () => {
+    const res = await batchPost('/batch', { ids: 'x' });
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('ids required (array)');
+  });
+
+  it('ids: [] is 400 ids must hold 1 to 100 post ids', async () => {
+    const res = await batchPost('/batch', { ids: [] });
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('ids must hold 1 to 100 post ids');
+  });
+
+  it('a repeated id is 400 ids must not repeat', async () => {
+    const res = await batchPost('/batch', { ids: [aId, aId] });
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('ids must not repeat');
+  });
+
+  it('an id repeated in the other case is 400 ids must not repeat', async () => {
+    const res = await batchPost('/batch', { ids: [aId, aId.toUpperCase()] });
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('ids must not repeat');
+  });
+
+  it('a 63-char id is 400 ids must be 64-character hex strings', async () => {
+    const short = '0'.repeat(63);
+    const res = await batchPost('/batch', { ids: [short] });
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('ids must be 64-character hex strings');
+  });
+
+  it('a non-hex 64-char id is 400 ids must be 64-character hex strings', async () => {
+    const bad = 'z'.repeat(64);
+    const res = await batchPost('/batch', { ids: [bad] });
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('ids must be 64-character hex strings');
+  });
+
+  it('viewer fills likedByViewer', async () => {
+    const keysV = generateKeyPairSync('ed25519');
+    const viewer = rawPublicKey(keysV.publicKey);
+    const viewerHex = Buffer.from(viewer).toString('hex');
+    insertLikeRecord(aId, viewer, 310);
+
+    const res = await batchPost(`/batch?viewer=${viewerHex}`, { ids: [aId] });
+    expect(res.status).toBe(200);
+    const posts = (res.data as { posts: Array<Record<string, unknown>> }).posts;
+    expect(posts[0]!['likedByViewer']).toBe(true);
+  });
+
+  it('a bad viewer answers as on GET /posts (400)', async () => {
+    const res = await batchPost('/batch?viewer=tooshort', { ids: [aId] });
+    expect(res.status).toBe(400);
+  });
+
+  it('tx=2 answers as on GET /posts (400 tx must be 1)', async () => {
+    const res = await batchPost('/batch?tx=2', { ids: [aId] });
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('tx must be 1');
+  });
+
+  it('no row carries confirmedAuthor', async () => {
+    const res = await batchPost('/batch?tx=1', { ids: [aId, bId, withdrawnId, placeholderId] });
+    expect(res.status).toBe(200);
+    const posts = (res.data as { posts: Array<Record<string, unknown>> }).posts;
+    for (const row of posts) expect('confirmedAuthor' in row).toBe(false);
+  });
+
+  it('the row counts of dag_posts and of the pool are the same before and after a batch', async () => {
+    const countPosts = () => (getDb().prepare('SELECT COUNT(*) AS c FROM dag_posts').get() as { c: number }).c;
+    const countPool = () => (getDb().prepare('SELECT COUNT(*) AS c FROM mempool').get() as { c: number }).c;
+    const postsBefore = countPosts();
+    const poolBefore = countPool();
+    await batchPost('/batch?tx=1', { ids: [aId, pendingId, withdrawnId, placeholderId] });
+    expect(countPosts()).toBe(postsBefore);
+    expect(countPool()).toBe(poolBefore);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NODE_INTERFACE → Posts → "The batch read answers posts by id":
+// a confirmed row whose block does not list its tx id fail-stops under this
+// route as under GET /posts/:id?tx=1.
+// ---------------------------------------------------------------------------
+
+describe('POST /posts/batch — fail-stop under a confirmed row whose block lists no such id', () => {
+  it('fires process.exit(1) when the stored body lacks the row\'s tx_id', async () => {
+    const author = new Uint8Array(32).fill(0xaa);
+    const authorHex = Buffer.from(author).toString('hex');
+    const postId = 'ab'.repeat(32);
+    const rowTxId = 'cd'.repeat(32);
+
+    const storedRow = {
+      id: postId,
+      txId: rowTxId,
+      content: 'x',
+      contentHash: 'ee'.repeat(32),
+      author,
+      parentRefs: [],
+      protocolVersion: 1,
+      type: 'regular' as const,
+      status: 'confirmed' as const,
+      blockHeight: 10,
+      blockIndex: 0,
+      withdrawnAtHeight: null,
+    };
+    const emptyBodyBytes = encodeUtxoTxTree({ utxoTxIds: [], utxoTxs: [] });
+
+    const deps = {
+      insertPost: () => {},
+      getPost: () => storedRow,
+      queryPostsPage: () => ({ rows: [], next: null, pending: [], pendingCount: 0 }),
+      verifyPost,
+      getKarmaBoxes: () => [],
+      getIdentityRecord: () => null,
+      decayCfg: {
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      },
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
+      getLikeRecordCount: () => 0,
+      getDescendantCount: () => 0,
+      hasLikeRecord: () => false,
+      getUsernameByOwner: () => null,
+      getAncestorsNearest: () => ({ rows: [], count: 0 }),
+      getSubtreePage: () => ({ rows: [], next: null, count: 0, pending: [], pendingCount: 0 }),
+      getBlockCreatedAt: () => null,
+      getPendingUtxoTxBytesByTxId: () => null,
+      getUtxoTxTreeBytes: () => emptyBodyBytes,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
+      getTopologyAuthor: () => authorHex,
+      getPendingPostAuthor: () => null,
+      getCurrentHeight: () => 10,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }] as const,
+      getUsername: () => null,
+      admitTx: () => 0,
+      runInTransaction: (fn: () => void) => fn(),
+      validateTx: () => ({ valid: true } as const),
+      getBox: () => null,
+    };
+
+    const app = express();
+    app.use(express.json());
+    app.use('/posts', createRouter(deps as any));
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    app.use((_err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      res.status(500).end();
+    });
+
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit');
+    }) as never);
+    const errLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      await new Promise<void>((resolve) => {
+        const server = app.listen(0, () => {
+          const addr = server.address() as { port: number };
+          const r = http.request(
+            { hostname: 'localhost', port: addr.port, path: '/posts/batch?tx=1', method: 'POST',
+              headers: { 'Content-Type': 'application/json' } },
+            (res) => {
+              res.on('data', () => {});
+              res.on('end', () => { server.close(); resolve(); });
+            },
+          ).on('error', () => { server.close(); resolve(); });
+          r.write(JSON.stringify({ ids: [postId] }));
+          r.end();
+        });
+      });
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      exit.mockRestore();
+      errLog.mockRestore();
+    }
+  });
+});

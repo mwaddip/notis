@@ -5,8 +5,10 @@ import {
   parseAfter, isAfterError,
   parseRoots, isRootsError,
   parseLight, isLightError,
+  parseBatchIds, isBatchIdsError,
   formatKey,
   PAGE_LIMIT_DEFAULT, PAGE_LIMIT_MAX,
+  BATCH_READ_MAX,
 } from '../../src/routes/page.js';
 
 // ---------------------------------------------------------------------------
@@ -301,3 +303,120 @@ describe('formatKey', () => {
     expect(formatKey('id', parsed as string)).toBe(key);
   });
 });
+// ---------------------------------------------------------------------------
+// parseBatchIds — NODE_INTERFACE → Posts → "The batch read answers posts by id"
+// ---------------------------------------------------------------------------
+
+describe('parseBatchIds', () => {
+  const makeId = (prefix: number) => prefix.toString(16).padStart(2, '0').repeat(32);
+
+  it('BATCH_READ_MAX is 100', () => {
+    expect(BATCH_READ_MAX).toBe(100);
+  });
+
+  it('answers lower-cased ids in the order given', () => {
+    const upper = 'AB'.repeat(32);
+    const lower = 'cd'.repeat(32);
+    const r = parseBatchIds({ ids: [upper, lower] });
+    expect(isBatchIdsError(r)).toBe(false);
+    expect(r).toEqual([upper.toLowerCase(), lower]);
+  });
+
+  it('a body of undefined is 400 ids required (array)', () => {
+    const r = parseBatchIds(undefined);
+    expect(isBatchIdsError(r)).toBe(true);
+    if (!isBatchIdsError(r)) return;
+    expect(r.error).toBe('ids required (array)');
+  });
+
+  it('a body of null is 400 ids required (array)', () => {
+    const r = parseBatchIds(null);
+    expect(isBatchIdsError(r)).toBe(true);
+    if (!isBatchIdsError(r)) return;
+    expect(r.error).toBe('ids required (array)');
+  });
+
+  it('a body that is an array is 400 ids required (array)', () => {
+    const r = parseBatchIds([makeId(1)]);
+    expect(isBatchIdsError(r)).toBe(true);
+    if (!isBatchIdsError(r)) return;
+    expect(r.error).toBe('ids required (array)');
+  });
+
+  it('a body that is a string is 400 ids required (array)', () => {
+    const r = parseBatchIds('x');
+    expect(isBatchIdsError(r)).toBe(true);
+    if (!isBatchIdsError(r)) return;
+    expect(r.error).toBe('ids required (array)');
+  });
+
+  it('a body that is a number is 400 ids required (array)', () => {
+    const r = parseBatchIds(42);
+    expect(isBatchIdsError(r)).toBe(true);
+    if (!isBatchIdsError(r)) return;
+    expect(r.error).toBe('ids required (array)');
+  });
+
+  it('ids: "x" is 400 ids required (array)', () => {
+    const r = parseBatchIds({ ids: 'x' });
+    expect(isBatchIdsError(r)).toBe(true);
+    if (!isBatchIdsError(r)) return;
+    expect(r.error).toBe('ids required (array)');
+  });
+
+  it('ids: [] is 400 ids must hold 1 to 100 post ids', () => {
+    const r = parseBatchIds({ ids: [] });
+    expect(isBatchIdsError(r)).toBe(true);
+    if (!isBatchIdsError(r)) return;
+    expect(r.error).toBe('ids must hold 1 to 100 post ids');
+  });
+
+  it('100 ids pass; 101 ids are 400 ids must hold 1 to 100', () => {
+    const ids100 = Array.from({ length: 100 }, (_, i) => makeId((i % 254) + 1));
+    const ok = parseBatchIds({ ids: ids100 });
+    expect(isBatchIdsError(ok)).toBe(false);
+    const ids101 = Array.from({ length: 101 }, (_, i) => (i + 1).toString(16).padStart(64, '0'));
+    const bad = parseBatchIds({ ids: ids101 });
+    expect(isBatchIdsError(bad)).toBe(true);
+    if (!isBatchIdsError(bad)) return;
+    expect(bad.error).toBe('ids must hold 1 to 100 post ids');
+  });
+
+  it('a non-string entry is 400 ids must be 64-character hex strings', () => {
+    const r = parseBatchIds({ ids: [42] });
+    expect(isBatchIdsError(r)).toBe(true);
+    if (!isBatchIdsError(r)) return;
+    expect(r.error).toBe('ids must be 64-character hex strings');
+  });
+
+  it('a 63-char entry is 400 ids must be 64-character hex strings', () => {
+    const r = parseBatchIds({ ids: ['0'.repeat(63)] });
+    expect(isBatchIdsError(r)).toBe(true);
+    if (!isBatchIdsError(r)) return;
+    expect(r.error).toBe('ids must be 64-character hex strings');
+  });
+
+  it('a 64-char non-hex entry is 400 ids must be 64-character hex strings', () => {
+    const r = parseBatchIds({ ids: ['z'.repeat(64)] });
+    expect(isBatchIdsError(r)).toBe(true);
+    if (!isBatchIdsError(r)) return;
+    expect(r.error).toBe('ids must be 64-character hex strings');
+  });
+
+  it('a repeated id is 400 ids must not repeat', () => {
+    const id = makeId(1);
+    const r = parseBatchIds({ ids: [id, id] });
+    expect(isBatchIdsError(r)).toBe(true);
+    if (!isBatchIdsError(r)) return;
+    expect(r.error).toBe('ids must not repeat');
+  });
+
+  it('an id repeated in another case is 400 ids must not repeat', () => {
+    const lower = 'ab'.repeat(32);
+    const r = parseBatchIds({ ids: [lower, lower.toUpperCase()] });
+    expect(isBatchIdsError(r)).toBe(true);
+    if (!isBatchIdsError(r)) return;
+    expect(r.error).toBe('ids must not repeat');
+  });
+});
+
