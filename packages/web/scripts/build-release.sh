@@ -103,6 +103,16 @@ if grep -Fnq "notis.posts." dist/assets/*.js; then
   grep -Fn "notis.posts." dist/assets/*.js | head -5
   exit 1
 fi
+# The web bundle holds no resolver — WEB_INTERFACE → The extension → "The
+# resolve". `posts/batch` is the request path the resolver sends to each of
+# the seed list's nodes, so a stray chunk that pulled the resolver into the
+# page script surfaces as a hit here (NODE_INTERFACE → Posts → "The batch
+# read answers posts by id").
+if grep -Fnq "posts/batch" dist/assets/*.js; then
+  echo "FAIL: posts/batch reference found in the web bundle (the resolver leaked into the zip)"
+  grep -Fn "posts/batch" dist/assets/*.js | head -5
+  exit 1
+fi
 
 echo "==> Build checks passed"
 

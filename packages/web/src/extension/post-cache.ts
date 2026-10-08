@@ -9,7 +9,8 @@
 // `has`.
 
 import type { PostJson, WithdrawnJson } from '../api/dto';
-import type { CachedThread, PostCache } from '../model/state';
+import { isWithdrawn } from '../api/dto';
+import type { CachedThread, HeldPost, PostCache } from '../model/state';
 import { POST_CACHE_BYTES } from '../model/state';
 
 /** `localStorage` key that remembers the last chain's name
@@ -410,6 +411,101 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
     total = nextTotal;
   }
 
+  /** The entries the ids list name, by id. An id not held is absent from
+   *  the map (WEB_INTERFACE → The extension → "An entry"). An empty list
+   *  and no database each answer an empty map; a transaction the browser
+   *  refuses answers an empty map too (the module absorbs it). */
+  async function getManyInternal(ids: readonly string[]): Promise<Map<string, HeldPost>> {
+    const out = new Map<string, HeldPost>();
+    if (db === null || ids.length === 0) return out;
+    return new Promise<Map<string, HeldPost>>((resolve) => {
+      let tx: IDBTransaction;
+      try {
+        tx = db!.transaction(STORE, 'readonly');
+      } catch { resolve(out); return; }
+      const store = tx.objectStore(STORE);
+      for (const id of ids) {
+        const req = store.get(id);
+        req.onsuccess = (): void => {
+          const e = req.result as Entry | undefined;
+          if (e !== undefined) {
+            out.set(e.id, { row: e.row, author: e.author, parent: e.parent });
+          }
+        };
+      }
+      tx.oncomplete = (): void => resolve(out);
+      tx.onerror = (): void => resolve(out);
+      tx.onabort = (): void => resolve(out);
+    });
+  }
+
+  /** For each row whose id is held, replace the entry's row (stored without
+   *  `tx`) and `lastSeen`, keeping `txBytes`, `author`, `parent` and `own`;
+   *  move the running total by the sum of the size differences, in the same
+   *  transaction (WEB_INTERFACE → The extension → "An entry"). An entry
+   *  whose row is a `WithdrawnJson` is left as it is — the withdrawn row
+   *  carries no text, and refresh never restores text or rewrites the
+   *  withdrawal; an id not held is nothing; an empty list and no database
+   *  are nothing. */
+  async function refreshInternal(rows: readonly PostJson[]): Promise<void> {
+    if (db === null || rows.length === 0) return;
+    // Read current entries in one transaction, decide the new entries, then
+    // write them in one `run`.
+    const prior = await getRaw(rows.map((r) => r.id));
+    const updates: Array<{ id: string; entry: Entry; delta: number }> = [];
+    for (const row of rows) {
+      const held = prior.get(row.id);
+      if (held === undefined) continue;
+      if (isWithdrawn(held.row)) continue;
+      const stripped = stripTx(row);
+      const newSize = entrySize(held.txBytes, stripped);
+      const delta = newSize - held.size;
+      updates.push({
+        id: held.id,
+        entry: {
+          ...held,
+          row: stripped,
+          lastSeen: now(),
+          size: newSize,
+        },
+        delta,
+      });
+    }
+    if (updates.length === 0) return;
+    const totalDelta = updates.reduce((s, u) => s + u.delta, 0);
+    const nextTotal = total + totalDelta;
+    const applied = await run((entries, meta) => {
+      for (const u of updates) entries.put(u.entry);
+      meta.put({ key: META_KEY, bytes: nextTotal });
+    });
+    if (applied === null) return;
+    total = nextTotal;
+  }
+
+  /** Read entries for a list of ids as raw `Entry` records. Used by
+   *  `refreshInternal` to compute size deltas; an id not held is absent. */
+  function getRaw(ids: readonly string[]): Promise<Map<string, Entry>> {
+    const out = new Map<string, Entry>();
+    if (db === null || ids.length === 0) return Promise.resolve(out);
+    return new Promise<Map<string, Entry>>((resolve) => {
+      let tx: IDBTransaction;
+      try {
+        tx = db!.transaction(STORE, 'readonly');
+      } catch { resolve(out); return; }
+      const store = tx.objectStore(STORE);
+      for (const id of ids) {
+        const req = store.get(id);
+        req.onsuccess = (): void => {
+          const e = req.result as Entry | undefined;
+          if (e !== undefined) out.set(e.id, e);
+        };
+      }
+      tx.oncomplete = (): void => resolve(out);
+      tx.onerror = (): void => resolve(out);
+      tx.onabort = (): void => resolve(out);
+    });
+  }
+
   async function threadInternal(id: string): Promise<CachedThread | null> {
     if (db === null) return null;
     const subject = await readEntry(id);
@@ -472,6 +568,12 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
     },
     thread(id): Promise<CachedThread | null> {
       return serial(() => threadInternal(id));
+    },
+    getMany(ids): Promise<Map<string, HeldPost>> {
+      return serial(() => getManyInternal(ids));
+    },
+    refresh(rows): Promise<void> {
+      return serial(() => refreshInternal(rows));
     },
   };
 }

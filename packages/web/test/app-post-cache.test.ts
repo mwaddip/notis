@@ -326,6 +326,8 @@ describe('app-post-cache — a thread read that answers does not call thread()',
       put: (e) => cache.put(e),
       withdraw: (i, r) => cache.withdraw(i, r),
       thread: (i) => { threadCalls++; return cache.thread(i); },
+      getMany: (ids) => cache.getMany(ids),
+      refresh: (rs) => cache.refresh(rs),
     };
     const h = harness({
       verifier: sv.verifier, cache: counted,
@@ -544,6 +546,8 @@ describe('app-post-cache — a cached thread goes through putThreadRows', () => 
       put: (e) => inner.put(e),
       withdraw: (i, r) => inner.withdraw(i, r),
       thread: async (i) => { await gate; return inner.thread(i); },
+      getMany: (ids) => inner.getMany(ids),
+      refresh: (rs) => inner.refresh(rs),
     };
     const h = harness({ verifier: sv.verifier, cache: wrapped, threadThrows: true });
     void h.drive.fetchThread(subject.id);
@@ -574,6 +578,8 @@ describe('app-post-cache — the cache opens under the chain the tip run names',
       put: (e) => cache.put(e),
       withdraw: (i, r) => cache.withdraw(i, r),
       thread: (i) => cache.thread(i),
+      getMany: (ids) => cache.getMany(ids),
+      refresh: (rs) => cache.refresh(rs),
     };
     const chains = ['X', 'X', 'Y'];
     let i = 0;
