@@ -4,6 +4,7 @@ import {
   parseLimit, isLimitError,
   parseAfter, isAfterError,
   parseRoots, isRootsError,
+  parseLight, isLightError,
   formatKey,
   PAGE_LIMIT_DEFAULT, PAGE_LIMIT_MAX,
 } from '../../src/routes/page.js';
@@ -244,6 +245,38 @@ describe('parseAfter (id)', () => {
 // ---------------------------------------------------------------------------
 // formatKey round-trips
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// parseLight — NODE_INTERFACE → Posts → "A light row is a post's id and the
+// node's word"
+// ---------------------------------------------------------------------------
+
+describe('parseLight', () => {
+  it('returns false when absent', () => {
+    expect(parseLight({})).toBe(false);
+  });
+
+  it('returns true for light=1', () => {
+    expect(parseLight({ light: '1' })).toBe(true);
+  });
+
+  it('rejects light=0', () => {
+    const r = parseLight({ light: '0' });
+    expect(isLightError(r)).toBe(true);
+    if (!isLightError(r)) return;
+    expect(r.error).toBe('light must be 1');
+  });
+
+  it('rejects empty', () => {
+    const r = parseLight({ light: '' });
+    expect(isLightError(r)).toBe(true);
+  });
+
+  it('rejects light=2', () => {
+    const r = parseLight({ light: '2' });
+    expect(isLightError(r)).toBe(true);
+  });
+});
 
 describe('formatKey', () => {
   it('post: formatKey ∘ parseAfter is identity', () => {

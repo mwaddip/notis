@@ -1186,3 +1186,273 @@ describe('posts routes — alias resolution', () => {
     expect(key.status).toBe(200);
   });
 });
+
+// ---------------------------------------------------------------------------
+// NODE_INTERFACE → Posts → "A light row is a post's id and the node's word"
+// ---------------------------------------------------------------------------
+
+const LIGHT_KEYS = [
+  'kind', 'id', 'parentRefs', 'status', 'blockHeight', 'blockIndex',
+  'blockCreatedAt', 'likeCount', 'descendantCount', 'authorName',
+  'likedByViewer',
+] as const;
+
+describe('posts routes — the light projection', () => {
+  let author: Uint8Array;
+  let authorHex: string;
+  let root1Id: string;
+  let root2Id: string;
+  let replyId: string;
+
+  beforeAll(() => {
+    testDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-routes-posts-light-'));
+    initDb(join(testDir, 'store.sqlite'));
+
+    const keys = generateKeyPairSync('ed25519');
+    author = rawPublicKey(keys.publicKey);
+    authorHex = Buffer.from(author).toString('hex');
+
+    const c1 = makePostCommit(author, 'light-root-1', { parentRefs: [] });
+    root1Id = fixturePostId(c1);
+    insertPost(root1Id, fixtureTxId(c1), c1, 'light-root-1');
+    confirmPost(root1Id, 200, 0);
+
+    const c2 = makePostCommit(author, 'light-root-2', { parentRefs: [] });
+    root2Id = fixturePostId(c2);
+    insertPost(root2Id, fixtureTxId(c2), c2, 'light-root-2');
+    confirmPost(root2Id, 201, 0);
+
+    const c3 = makePostCommit(author, 'light-reply', { parentRefs: [root1Id] });
+    replyId = fixturePostId(c3);
+    insertPost(replyId, fixtureTxId(c3), c3, 'light-reply');
+    confirmPost(replyId, 202, 0);
+  });
+
+  afterAll(() => {
+    closeDb();
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('GET /posts?light=1 — every live row carries exactly the eleven LightJson keys', async () => {
+    const res = await request('/?light=1&limit=100', 'GET');
+    expect(res.status).toBe(200);
+    const posts = (res.data as { posts: Array<Record<string, unknown>> }).posts;
+    expect(posts.length).toBeGreaterThan(0);
+    for (const row of posts) {
+      expect(row['kind']).toBe('light');
+      expect(Object.keys(row).sort()).toEqual([...LIGHT_KEYS].sort());
+    }
+  });
+
+  it('GET /posts?light=1 — ids and order match the full page; next and pendingCount match', async () => {
+    const full = await request('/?limit=100', 'GET');
+    const light = await request('/?light=1&limit=100', 'GET');
+    const fullIds = (full.data as { posts: Array<{ id: string }> }).posts.map((p) => p.id);
+    const lightIds = (light.data as { posts: Array<{ id: string }> }).posts.map((p) => p.id);
+    expect(lightIds).toEqual(fullIds);
+    expect((light.data as { next: unknown }).next).toEqual((full.data as { next: unknown }).next);
+    expect((light.data as { pendingCount: number }).pendingCount)
+      .toBe((full.data as { pendingCount: number }).pendingCount);
+  });
+
+  it('GET /posts?light=1&roots=1 filters as the full page does', async () => {
+    const full = await request('/?roots=1&limit=100', 'GET');
+    const light = await request('/?light=1&roots=1&limit=100', 'GET');
+    const fullIds = (full.data as { posts: Array<{ id: string }> }).posts.map((p) => p.id);
+    const lightIds = (light.data as { posts: Array<{ id: string }> }).posts.map((p) => p.id);
+    expect(lightIds).toEqual(fullIds);
+    expect(lightIds).toContain(root1Id);
+    expect(lightIds).not.toContain(replyId);
+  });
+
+  it('GET /posts?light=1&author= filters as the full page does', async () => {
+    const full = await request(`/?author=${authorHex}&limit=100`, 'GET');
+    const light = await request(`/?light=1&author=${authorHex}&limit=100`, 'GET');
+    const fullIds = (full.data as { posts: Array<{ id: string }> }).posts.map((p) => p.id);
+    const lightIds = (light.data as { posts: Array<{ id: string }> }).posts.map((p) => p.id);
+    expect(lightIds).toEqual(fullIds);
+  });
+
+  it("GET /posts/:id/thread?light=1 — post, ancestors, descendants, pending are light; counts and next match the full form", async () => {
+    const full = await request(`/${replyId}/thread?limit=100`, 'GET');
+    const light = await request(`/${replyId}/thread?light=1&limit=100`, 'GET');
+    const lightBody = light.data as Record<string, unknown>;
+    expect((lightBody['post'] as Record<string, unknown>)['kind']).toBe('light');
+    for (const a of lightBody['ancestors'] as Array<Record<string, unknown>>) expect(a['kind']).toBe('light');
+    for (const d of lightBody['descendants'] as Array<Record<string, unknown>>) expect(d['kind']).toBe('light');
+    for (const p of lightBody['pending'] as Array<Record<string, unknown>>) expect(p['kind']).toBe('light');
+    const fullBody = full.data as Record<string, unknown>;
+    expect(lightBody['ancestorCount']).toBe(fullBody['ancestorCount']);
+    expect(lightBody['descendantCount']).toBe(fullBody['descendantCount']);
+    expect(lightBody['next']).toEqual(fullBody['next']);
+  });
+
+  it('GET /posts?light=1 — a withdrawn row among them is its WithdrawnJson, whole (txId, author, parentRefs)', async () => {
+    const wc = makePostCommit(author, 'light-withdrawn-reply', { parentRefs: [root1Id] });
+    const wId = fixturePostId(wc);
+    const wTxId = fixtureTxId(wc);
+    insertPost(wId, wTxId, wc, 'light-withdrawn-reply');
+    confirmPost(wId, 203, 0);
+    withdrawPost(wId, 204);
+
+    const res = await request('/?light=1&limit=100', 'GET');
+    const row = (res.data as { posts: Array<Record<string, unknown>> }).posts.find((p) => p['id'] === wId)!;
+    expect(row['kind']).toBe('withdrawn');
+    expect(row['txId']).toBe(wTxId);
+    expect(row['author']).toBe(authorHex);
+    expect(row['parentRefs']).toEqual([root1Id]);
+    expect(row['withdrawnAtHeight']).toBe(204);
+  });
+
+  it('GET /posts?light=1&viewer= fills likedByViewer; without viewer the field is null', async () => {
+    const keysV = generateKeyPairSync('ed25519');
+    const viewer = rawPublicKey(keysV.publicKey);
+    const viewerHex = Buffer.from(viewer).toString('hex');
+    insertLikeRecord(root2Id, viewer, 205);
+
+    const withViewer = await request(`/?light=1&viewer=${viewerHex}&limit=100`, 'GET');
+    const row = (withViewer.data as { posts: Array<Record<string, unknown>> }).posts.find((p) => p['id'] === root2Id)!;
+    expect(row['likedByViewer']).toBe(true);
+
+    const withoutViewer = await request('/?light=1&limit=100', 'GET');
+    const row2 = (withoutViewer.data as { posts: Array<Record<string, unknown>> }).posts.find((p) => p['id'] === root2Id)!;
+    expect(row2['likedByViewer']).toBeNull();
+  });
+
+  it('GET /posts?light=2 answers 400 light must be 1', async () => {
+    const res = await request('/?light=2', 'GET');
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('light must be 1');
+  });
+
+  it('GET /posts?light= answers 400 light must be 1', async () => {
+    const res = await request('/?light=', 'GET');
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('light must be 1');
+  });
+
+  it('GET /posts/:id/thread?light=2 answers 400 light must be 1', async () => {
+    const res = await request(`/${root1Id}/thread?light=2`, 'GET');
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('light must be 1');
+  });
+
+  it('GET /posts/:id/thread?light= answers 400 light must be 1', async () => {
+    const res = await request(`/${root1Id}/thread?light=`, 'GET');
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('light must be 1');
+  });
+
+  it('GET /posts?light=1&tx=1 answers 400 tx and light cannot both be 1', async () => {
+    const res = await request('/?light=1&tx=1', 'GET');
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('tx and light cannot both be 1');
+  });
+
+  it('GET /posts/:id/thread?light=1&tx=1 answers 400 tx and light cannot both be 1', async () => {
+    const res = await request(`/${root1Id}/thread?light=1&tx=1`, 'GET');
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('tx and light cannot both be 1');
+  });
+
+  it('GET /posts/:id?light=1 answers the full PostJson — light is an unknown parameter there', async () => {
+    const res = await request(`/${root1Id}?light=1`, 'GET');
+    expect(res.status).toBe(200);
+    const body = res.data as Record<string, unknown>;
+    // The full form carries content, txId, author, protocolVersion, type.
+    expect(body['content']).toBe('light-root-1');
+    expect(body['txId']).toBeDefined();
+    expect(body['author']).toBe(authorHex);
+    expect(body['protocolVersion']).toBeDefined();
+    expect(body['type']).toBe('regular');
+    expect('kind' in body).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NODE_INTERFACE → Posts → "A light row is a post's id and the node's word":
+// a light read of a confirmed row whose block lists no such id answers 200 —
+// no body is read (the full form's `tx=1` fail-stops the way the existing
+// case shows).
+// ---------------------------------------------------------------------------
+
+describe('posts routes — light does not read the body', () => {
+  it('GET /posts/:id/thread?light=1 answers 200 for a row the full form\'s tx=1 would fail-stop on', async () => {
+    const author = new Uint8Array(32).fill(0xbb);
+    const authorHex = Buffer.from(author).toString('hex');
+    const postId = 'cd'.repeat(32);
+    const rowTxId = 'ef'.repeat(32);
+
+    const storedRow = {
+      id: postId,
+      txId: rowTxId,
+      content: 'x',
+      contentHash: 'ee'.repeat(32),
+      author,
+      parentRefs: [],
+      protocolVersion: 1,
+      type: 'regular' as const,
+      status: 'confirmed' as const,
+      blockHeight: 10,
+      blockIndex: 0,
+      withdrawnAtHeight: null,
+    };
+    const emptyBodyBytes = encodeUtxoTxTree({ utxoTxIds: [], utxoTxs: [] });
+
+    let bodyReads = 0;
+    const deps = {
+      insertPost: () => {},
+      getPost: () => storedRow,
+      queryPostsPage: () => ({ rows: [], next: null, pending: [], pendingCount: 0 }),
+      verifyPost,
+      getKarmaBoxes: () => [],
+      getIdentityRecord: () => null,
+      decayCfg: {
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      },
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
+      getLikeRecordCount: () => 0,
+      getDescendantCount: () => 0,
+      hasLikeRecord: () => false,
+      getUsernameByOwner: () => null,
+      getAncestorsNearest: () => ({ rows: [], count: 0 }),
+      getSubtreePage: () => ({ rows: [], next: null, count: 0, pending: [], pendingCount: 0 }),
+      getBlockCreatedAt: () => null,
+      getPendingUtxoTxBytesByTxId: () => null,
+      getUtxoTxTreeBytes: () => { bodyReads += 1; return emptyBodyBytes; },
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
+      getTopologyAuthor: () => authorHex,
+      getPendingPostAuthor: () => null,
+      getCurrentHeight: () => 10,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }] as const,
+      getUsername: () => null,
+      admitTx: () => 0,
+      runInTransaction: (fn: () => void) => fn(),
+      validateTx: () => ({ valid: true } as const),
+      getBox: () => null,
+    };
+
+    const app = express();
+    app.use(express.json());
+    app.use('/posts', createRouter(deps as any));
+
+    const res = await new Promise<{ status: number; data: unknown }>((resolve) => {
+      const server = app.listen(0, () => {
+        const addr = server.address() as { port: number };
+        http.get({ hostname: 'localhost', port: addr.port, path: `/posts/${postId}/thread?light=1` }, (httpRes) => {
+          let d = '';
+          httpRes.on('data', (c) => (d += c));
+          httpRes.on('end', () => { server.close(); resolve({ status: httpRes.statusCode!, data: d ? JSON.parse(d) : null }); });
+        });
+      });
+    });
+    expect(res.status).toBe(200);
+    expect(bodyReads).toBe(0);
+  });
+});
+

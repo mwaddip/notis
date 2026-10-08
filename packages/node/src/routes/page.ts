@@ -159,3 +159,15 @@ export function parseTx(query: Record<string, unknown>): boolean | { error: stri
 export function isTxError(v: boolean | { error: string }): v is { error: string } {
   return typeof v === 'object' && 'error' in v;
 }
+
+// NODE_INTERFACE → Posts → "A light row is a post's id and the node's word"
+export function parseLight(query: Record<string, unknown>): boolean | { error: string } {
+  const raw = query['light'] as string | undefined;
+  if (raw === undefined) return false;
+  if (raw === '1') return true;
+  return { error: 'light must be 1' };
+}
+
+export function isLightError(v: boolean | { error: string }): v is { error: string } {
+  return typeof v === 'object' && 'error' in v;
+}
