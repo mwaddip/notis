@@ -99,6 +99,19 @@ are hex-encoded.
 `userId` on the wire is hex-encoded (64 hex chars). Internally `UserId` is
 `Uint8Array` (32 raw bytes).
 
+**A body the parser refuses is the client's error.** Every route that reads a body reads JSON of at most 1 MB, parsed
+ahead of every route. A request whose `Content-Type` is JSON and whose body is not — a syntax error, or a top-level
+value that is neither an object nor an array — answers **400 `{ error: 400, reason: 'malformed JSON body' }`**; a body
+over the limit answers **413 `{ error: 413, reason: 'body too large' }`**; any other refusal of the parser's — an
+encoding it does not read, a request cut short — answers the 4xx status the parser gives it with `{ error: <status>,
+reason: 'bad request body' }`. None reaches a route, and **none is logged**: a line a stranger can write at will is a
+log a stranger can fill. A request with no JSON `Content-Type` has no body as far as a route sees — an empty object —
+and the route's own check answers it. **500 `{ error: 'internal' }` is a fault of the node's**, and it alone logs its
+stack.
+
+> ⚠ **AHEAD OF CODE (2026-10-08, AF1 — `node`)** — the public app's last handler answers every error 500
+> `{ error: 'internal' }` and logs its stack, a body the parser refuses among them.
+
 ### The node serves no client
 
 **The node is an HTTP API and nothing else.** It serves no page at `/`, no static file and no bundle;
