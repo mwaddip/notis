@@ -6,7 +6,7 @@ import { walletBody } from './wallet';
 import { authorBody, authorPostsBody, type AuthorCtx, type PostsCtx } from './author';
 import { markHandle } from './name-handle';
 import { flattenThread } from '../model/thread';
-import { withheldLine } from './withheld-line';
+import { withheldLine, unservedSubjectLine } from './withheld-line';
 import { identityHue } from '../model/identity';
 import { isWithdrawn } from '../api/dto';
 import { windowSubject } from '../model/arrangement';
@@ -273,12 +273,16 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
     body.appendChild(el('div', 'error', `can't load this thread — ${t.error}`));
     return;
   }
-  // A thread whose subject is `unbound` shows the clay withheld line and
-  // nothing of the node's row (WEB_INTERFACE → The extension → "The post
-  // check" → "A thread whose subject is withheld").
-  if (t.subjectUnbound) {
+  // A thread whose subject the check withheld renders no row (WEB_INTERFACE
+  // → The extension → "The post check"): `'unbound'` shows the clay
+  // withheld line, `'unserved'` shows one muted line and nothing else.
+  if (t.subjectWithheld === 'unbound') {
     const wl = withheldLine(t.unboundCount);
     if (wl) body.appendChild(wl);
+    return;
+  }
+  if (t.subjectWithheld === 'unserved') {
+    body.appendChild(unservedSubjectLine());
     return;
   }
   if (!t.root) {

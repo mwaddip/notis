@@ -73,8 +73,9 @@ const namesVerifier: NamesVerifier | undefined = isExtension && BUILD_NETWORK !=
 // WEB_INTERFACE → The extension → "The post check" — the posts verifier is
 // handed under the same static condition as the three others, so Rollup
 // dead-code-eliminates createPostsVerifier and `checkPosts` from the web
-// bundle (build-release.sh's `notis.posts.` check guards the next task's
-// cache; this verifier itself leaves no literal to key on).
+// bundle (build-release.sh's `notis.posts.` check refuses the post cache's
+// IndexedDB prefix in the bundle; this verifier itself leaves no literal to
+// key on).
 const postsVerifier: PostsVerifier | undefined = isExtension && BUILD_NETWORK !== null
   ? createPostsVerifier()
   : undefined;

@@ -58,10 +58,11 @@ export interface ThreadState {
   /** The count of `unbound` rows this thread's standing reads withheld
    *  (WEB_INTERFACE → The extension → "The post check"). */
   unboundCount: number;
-  /** True when the thread's own subject is `unbound` — the pane shows the
-   *  clay line and nothing of the node's row (WEB_INTERFACE → The
-   *  extension → "The post check" → "A thread whose subject is withheld"). */
-  subjectUnbound: boolean;
+  /** The withheld state of the thread's own subject (WEB_INTERFACE → The
+   *  extension → "The post check"): `'unbound'` shows the clay line and
+   *  nothing of the node's row; `'unserved'` shows one muted line and no
+   *  row; `null` renders the thread as normal. */
+  subjectWithheld: 'unbound' | 'unserved' | null;
 }
 
 export interface AppState {

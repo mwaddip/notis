@@ -96,8 +96,8 @@ if grep -Fnq "api/v1/range" dist/assets/*.js; then
 fi
 # The web bundle holds no post cache — WEB_INTERFACE → The extension → "The
 # post cache". `notis.posts.` is the IndexedDB database-name prefix the
-# extension's cache uses, so a stray chunk that pulled the cache module into
-# the page script surfaces as a hit here.
+# extension's cache keys on, so a stray chunk that pulled the cache module
+# into the page script surfaces as a hit here.
 if grep -Fnq "notis.posts." dist/assets/*.js; then
   echo "FAIL: notis.posts. reference found in the web bundle (the post cache leaked into the zip)"
   grep -Fn "notis.posts." dist/assets/*.js | head -5

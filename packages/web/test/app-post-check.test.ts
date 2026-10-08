@@ -283,9 +283,39 @@ describe('post-check — a thread whose subject is unbound', () => {
     h.drive.openThread(subject.id, { from: 'feed' });
     await flush();
     const t = h.drive.state.threads.get(subject.id)!;
-    expect(t.subjectUnbound).toBe(true);
+    expect(t.subjectWithheld).toBe('unbound');
     expect(t.root).toBeNull();
     expect(t.unboundCount).toBe(1);
+    // The pane renders the clay withheld line and no row.
+    const pane = h.panes.querySelector('.hint.clay.withheld');
+    expect(pane).not.toBeNull();
+    expect(h.panes.querySelector('.hint.unserved')).toBeNull();
+  });
+});
+
+describe('post-check — a thread whose subject is unserved', () => {
+  it('shows one muted line and nothing of the node\'s row', async () => {
+    const subject = row('r', { tx: null });
+    const d = row('d');
+    const sv = scriptedVerifier((r) => (r === subject ? UNSERVED : BOUND(r as PostJson)));
+    const thread: ThreadResult = {
+      post: subject, ancestors: [], ancestorCount: 0,
+      descendants: [d], descendantCount: 1, next: null, pending: [], pendingCount: 0,
+    };
+    const h = harness({ verifier: sv.verifier, threadRes: thread });
+    h.drive.openThread(subject.id, { from: 'feed' });
+    await flush();
+    const t = h.drive.state.threads.get(subject.id)!;
+    expect(t.subjectWithheld).toBe('unserved');
+    expect(t.root).toBeNull();
+    // Unserved subject is not counted in the withheld count.
+    expect(t.unboundCount).toBe(0);
+    const line = h.panes.querySelector('.hint.unserved');
+    expect(line).not.toBeNull();
+    expect(line!.textContent).toBe('this node cannot serve this post yet.');
+    expect(line!.classList.contains('clay')).toBe(false);
+    // No clay withheld line, no descendants rendered.
+    expect(h.panes.querySelector('.hint.clay.withheld')).toBeNull();
   });
 });
 

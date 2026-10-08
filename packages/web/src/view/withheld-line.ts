@@ -17,3 +17,12 @@ export function withheldLine(unboundCount: number): HTMLElement | null {
   line.textContent = text;
   return line;
 }
+
+/** The muted line a thread whose subject the check read `unserved` shows in
+ *  place of the subject's row (WEB_INTERFACE → The extension → "The post
+ *  check"): the node holds no bytes for the post, no claim about its text. */
+export function unservedSubjectLine(): HTMLElement {
+  const line = el('div', 'hint unserved');
+  line.textContent = 'this node cannot serve this post yet.';
+  return line;
+}

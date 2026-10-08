@@ -170,6 +170,15 @@ function emptyFeedState(): FeedState {
   return { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null, unboundCount: 0 };
 }
 
+/** The subject's withheld status, read from its PostCheck (WEB_INTERFACE →
+ *  The extension → "The post check"): `'unbound'` or `'unserved'` for a
+ *  withheld subject, `null` for one the check kept. */
+function subjectWithheldStatus(c: PostCheck): 'unbound' | 'unserved' | null {
+  if (c.status === 'unbound') return 'unbound';
+  if (c.status === 'unserved') return 'unserved';
+  return null;
+}
+
 /** The rows a ↻ lands on. One that reconnected puts its new rows on top of the
  *  rows standing as it lands, deduped, so a landing or a `more` that wrote
  *  during its pages keeps what it wrote; one that never reconnected answers its
@@ -372,8 +381,8 @@ export class App {
   // The chain the verified tip run named — the hash of block 1 of the
   // reading node's verified proof (WEB_INTERFACE → The extension → "The
   // chain's name"). Written beside the verdict and the anchor, dropped on a
-  // node change beside them; the cache will key its database on it, nothing
-  // else reads it yet.
+  // node change beside them; `chainName()` is the one reader, through which
+  // the post cache keys its database.
   private tipChain: string | null = null;
   private namesGen = 0;
   private namesInFlight = false;
@@ -557,15 +566,18 @@ export class App {
    *  post check"). Every row a read brings — the feed's page and its
    *  pending, the author window's page, a thread's `post`, `ancestors`,
    *  `descendants` and `pending` — is passed through here before it enters
-   *  state. With no verifier, every row stays and the count is zero. With
-   *  one: `bound` and `nothing-to-bind` enter; `unbound` is counted;
-   *  `unserved` is dropped and uncounted (the node says it holds no bytes
-   *  for that post — no claim about its text). A read's rows go as one
-   *  batch, so one `check` call per read. Bound rows and their checks reach
-   *  the cache's hook, a no-op until the next task lands. */
-  private ingestRows(rows: ReadonlyArray<FeedRow>): { rows: FeedRow[]; unboundCount: number } {
+   *  state. With no verifier, every row stays, every per-row status is
+   *  `nothing-to-bind` and the count is zero. With one: `bound` and
+   *  `nothing-to-bind` enter; `unbound` is counted; `unserved` is dropped
+   *  and uncounted (the node says it holds no bytes for that post — no
+   *  claim about its text). A read's rows go as one batch, so one `check`
+   *  call per read; `checks` is parallel to the input rows for the caller's
+   *  own branching (a thread's subject). Bound rows and their checks reach
+   *  the cache's hook, which keeps nothing. */
+  private ingestRows(rows: ReadonlyArray<FeedRow>): { rows: FeedRow[]; unboundCount: number; checks: PostCheck[] } {
     if (this.postsVerifier === null) {
-      return { rows: rows.slice(), unboundCount: 0 };
+      const checks: PostCheck[] = rows.map(() => ({ status: 'nothing-to-bind' }));
+      return { rows: rows.slice(), unboundCount: 0, checks };
     }
     const checks = this.postsVerifier.check(rows as unknown[]);
     const kept: FeedRow[] = [];
@@ -583,19 +595,18 @@ export class App {
         unboundCount += 1;
       }
       // unserved: not kept, not counted (WEB_INTERFACE → The extension →
-      // "A row whose `tx` is `null` is `unserved`").
+      // "The post check").
     }
     this.offerBoundToCache(bound);
-    return { rows: kept, unboundCount };
+    return { rows: kept, unboundCount, checks };
   }
 
-  /** The seam the next task will fill — the client caches each `bound` row
-   *  it checked behind one module (WEB_INTERFACE → The extension → "The
-   *  post cache"). A no-op today; it reads the transaction's bytes, the
-   *  author and the parent (held on the `bound` check) and the row's
-   *  display fields. */
+  /** The hook the post cache registers against (WEB_INTERFACE → The
+   *  extension → "The post cache"): bound rows and their check pass
+   *  through here, carrying the transaction's bytes, the author and the
+   *  parent (held on the `bound` check). The App keeps nothing. */
   private offerBoundToCache(_bound: ReadonlyArray<{ row: FeedRow; check: PostCheck }>): void {
-    // no-op (WEB_INTERFACE → The extension → "The post cache")
+    // the App keeps nothing (WEB_INTERFACE → The extension → "The post cache")
   }
 
   /** The one row's gate — the single post read's answer (WEB_INTERFACE →
@@ -1801,7 +1812,7 @@ export class App {
   private ensureThreadState(id: string): ThreadState {
     let t = this.state.threads.get(id);
     if (!t) {
-      t = { id, root: null, ancestorIds: new Set(), descendants: [], descendantCount: 0, next: null, report: null, loading: false, error: null, unboundCount: 0, subjectUnbound: false };
+      t = { id, root: null, ancestorIds: new Set(), descendants: [], descendantCount: 0, next: null, report: null, loading: false, error: null, unboundCount: 0, subjectWithheld: null };
       this.state.threads.set(id, t);
     }
     return t;
@@ -1811,9 +1822,9 @@ export class App {
     // Every row the thread read brought — post, ancestors, descendants and
     // pending — goes through the post check as one page, before any of them
     // enters state (WEB_INTERFACE → The extension → "The post check"). A
-    // first page resets the thread's withheld count; `subjectUnbound` is
-    // true when the subject itself is `unbound`, and the pane then shows
-    // the clay line and nothing of the node's row.
+    // first page resets the thread's withheld count; `subjectWithheld`
+    // names the subject's own status, `'unbound'` or `'unserved'`, and the
+    // pane renders each.
     const batch: FeedRow[] = [];
     const subject = res.post;
     const subjectIdx = subject === null ? -1 : 0;
@@ -1821,9 +1832,10 @@ export class App {
     batch.push(...res.ancestors, ...res.descendants, ...res.pending);
     const ing = this.ingestRows(batch);
     const keptSet = new Set(ing.rows);
-    const subjectKept = subjectIdx === -1 ? true : keptSet.has(batch[subjectIdx]!);
-    const subjectWithheld = subject !== null && !subjectKept;
-    const applyPost = subjectWithheld ? null : subject;
+    const subjectStatus: 'unbound' | 'unserved' | null = subjectIdx === -1
+      ? null
+      : subjectWithheldStatus(ing.checks[subjectIdx]!);
+    const applyPost = subjectStatus === null ? subject : null;
     const keptAncestors = res.ancestors.filter((r) => keptSet.has(r));
     const keptDescendants = res.descendants.filter((r) => keptSet.has(r));
     const keptPending = res.pending.filter((r) => keptSet.has(r));
@@ -1833,7 +1845,7 @@ export class App {
     t.next = res.next;
     t.error = null;
     t.unboundCount = ing.unboundCount;
-    t.subjectUnbound = subjectWithheld;
+    t.subjectWithheld = subjectStatus;
     this.indexRows([t.root, ...keptAncestors, ...t.descendants, ...keptPending]);
   }
 
@@ -1898,15 +1910,17 @@ export class App {
         // Each thread page's rows go through the post check as one batch
         // (WEB_INTERFACE → The extension → "The post check"); a refresh
         // resets the thread's withheld count and the pages add to it. The
-        // subject rides page 1 and decides `subjectUnbound`.
+        // subject rides page 1 and decides `subjectWithheld`.
         const firstBatch: FeedRow[] = [];
         if (res.post !== null) firstBatch.push(res.post);
         firstBatch.push(...res.ancestors, ...res.descendants);
         const firstIng = this.ingestRows(firstBatch);
         const firstKeptSet = new Set(firstIng.rows);
         const subject = res.post;
-        const subjectWithheld = subject !== null && !firstKeptSet.has(subject);
-        const applyPost = subjectWithheld ? null : subject;
+        const subjectStatus: 'unbound' | 'unserved' | null = subject === null
+          ? null
+          : subjectWithheldStatus(firstIng.checks[0]!);
+        const applyPost = subjectStatus === null ? subject : null;
         const keptAncestors = res.ancestors.filter((r) => firstKeptSet.has(r));
         const keptFirstDescendants = res.descendants.filter((r) => firstKeptSet.has(r));
         const all: FeedRow[] = [...keptFirstDescendants];
@@ -1931,7 +1945,7 @@ export class App {
         t.next = next; // null once fully read; set only if the page cap was hit
         t.error = null;
         t.unboundCount = totalUnbound;
-        t.subjectUnbound = subjectWithheld;
+        t.subjectWithheld = subjectStatus;
         this.indexRows([t.root, ...t.descendants]);
         const delta = t.descendantCount - before;
         if (region) region.report = delta > 0 ? `${delta} new ${delta === 1 ? 'reply' : 'replies'}` : 'no new replies';
