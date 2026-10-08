@@ -1972,6 +1972,7 @@ export class App {
       if (gen !== this.readerGen) return;
       if (res === null) {
         t.root = null;
+        t.error = null;
         if (region) region.report = null;
       } else {
         // Each thread page's rows go through the post check as one batch

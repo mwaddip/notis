@@ -1110,3 +1110,26 @@ describe('a like\'s landed row stands over an answer read before it', () => {
     expect(offersLike(h.panesEl, hid('L'))).toBe(false);
   });
 });
+
+describe('a thread refresh that answers', () => {
+  it('a refresh that answers 404 after a failed refresh shows the post gone, not the earlier error', async () => {
+    setNode(A);
+    const T = row('T');
+    const n = node({ feed: [T], replies: new Map([[T.id, [row('R1', { parentRefs: [T.id] })]]]) });
+    const h = harness({ [A]: n });
+    h.drive.openThread(T.id, { from: 'feed' });
+    await flush();
+
+    h.nodes.setFail((c) => c.method === 'thread');
+    await h.drive.refreshThread(T.id);
+    await flush();
+    expect(h.panesEl.querySelector('.error')?.textContent).toContain("can't load this thread — ");
+
+    h.nodes.setFail(() => false);
+    n.replies.delete(T.id);
+    await h.drive.refreshThread(T.id);
+    await flush();
+    expect(h.panesEl.textContent).toContain('this post is gone.');
+    expect(h.panesEl.querySelector('.error')).toBeNull();
+  });
+});
