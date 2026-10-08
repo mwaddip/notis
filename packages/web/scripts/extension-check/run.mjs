@@ -5726,8 +5726,27 @@ async function verifiedPostsSteps(cx, targetId = 'unknown') {
           // row of A — no held rows.
           relay.mode = 'thread-down';
           await openThreadByPending(cx, rootId);
+          // The pane may already stand from earlier steps, in which case the
+          // pending-record open focuses it and reads nothing. Record its
+          // state, then press its own ↻ so a read under thread-down happens.
+          const paneBefore = await readThreadPaneShape(cx, rootId);
+          const refreshAt = Date.now();
+          const pressed = await cx.eval(`(() => {
+            const regions = [...document.querySelectorAll('#panes .region')];
+            const region = regions.find((r) => r.querySelector('.region-body .card[data-post-id="${rootId}"]'))
+              ?? regions.find((r) => !!r.querySelector('.region-body .hint.clay.withheld, .region-body .hint.unserved, .region-body .error'))
+              ?? regions.find((r) => [...r.querySelectorAll('.region-body div.loading')].some((n) => (n.textContent ?? '').trim() === 'this post is gone.'));
+            const btn = region?.querySelector('[aria-label="refresh replies to this thread"]');
+            if (!btn) return false;
+            btn.click();
+            return true;
+          })()`, true);
+          await cx.waitFor(`(() => [...document.querySelectorAll('#panes .region-body .error')]
+            .some((n) => (n.textContent ?? '').startsWith("can't load this thread \u2014 ")))()`,
+            'P11 thread pane error line under thread-down', 60000).catch(() => {});
           const paneDown = await readThreadPaneShape(cx, rootId);
-          const downHasError = typeof paneDown.errorLineText === 'string' && paneDown.errorLineText.length > 0;
+          const threadReads = (relay.log ?? []).filter((e) => e.at >= refreshAt && /\/posts\/[^/?]+\/thread/.test(String(e.path))).length;
+          const downHasError = typeof paneDown.errorLineText === 'string' && paneDown.errorLineText.startsWith("can't load this thread \u2014 ");
           const downNoRows = Array.isArray(paneDown.cards) && paneDown.cards.length === 0;
           // --- (2) honest: open rootId's thread again. D's
           // /posts/<rootId>/thread 404s and the pane renders *this post
@@ -5763,6 +5782,7 @@ async function verifiedPostsSteps(cx, targetId = 'unknown') {
           const stillHasReply = Array.isArray(idsOnA) && idsOnA.includes(replyId);
           record('P11', hasBothDbs && downHasError && downNoRows && honestIsGone && honestNoRows && stillHasRoot && stillHasReply,
             `D block 1 hash=${dBlock1.slice(0, 12)}…, databases on relay-upstream-D=${JSON.stringify(namesOnD)}, both DBs present=${hasBothDbs} (A's=${aDbName.slice(0, 24)}…, D's=${dDbName.slice(0, 24)}…); ` +
+            `pane before ↻ under thread-down: error=${JSON.stringify(paneBefore.errorLineText)}, gone=${JSON.stringify(paneBefore.goneLineText)}, cards=${JSON.stringify(paneBefore.cards)}, ↻ pressed=${pressed}, thread reads at relay=${threadReads}; ` +
             `pane (thread-down) for A's root ${rootId.slice(0, 8)}…: error=${JSON.stringify(paneDown.errorLineText)}, cards=${JSON.stringify(paneDown.cards)}, no rows=${downNoRows}; ` +
             `pane (honest, 404) for same root: gone line=${JSON.stringify(paneHonest.goneLineText)}, cards=${JSON.stringify(paneHonest.cards)}, no rows=${honestNoRows}; ` +
             `back on A: A's database entries root held=${stillHasRoot}, reply held=${stillHasReply}, ids=${JSON.stringify(idsOnA)}`);
