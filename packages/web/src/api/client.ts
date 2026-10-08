@@ -1,9 +1,10 @@
 import type {
   FeedResult, ThreadResult, PostResult, StatusResult, BlockCurrent, KarmaResult,
   VouchesTargetResult, VouchesVoucherResult, VouchCooldownsResult, BondsResult,
-  UsernameResult, CreditsResult, FeedRow,
+  UsernameResult, CreditsResult,
 } from './dto';
-import { readLightRows } from './light-page';
+import { readLightRow, readLightRows } from './light-page';
+import { ApiError, PageError } from './errors';
 
 // This module issues GET requests and nothing else — no POST, no body. A `viewer`
 // parameter is a query on a GET, not a write, so it is carried here now that an
@@ -11,21 +12,7 @@ import { readLightRows } from './light-page';
 // The writes live next door in write.ts.
 // WEB_INTERFACE → "The write client is its own module beside the read client".
 
-export class ApiError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-    this.name = 'ApiError';
-  }
-}
-
-/** A 2xx whose body is not the page its route answers — thrown where a non-2xx
- *  throws `ApiError`, so every caller's failure path takes it. */
-export class PageError extends Error {
-  constructor() {
-    super("the node's answer is not a page");
-    this.name = 'PageError';
-  }
-}
+export { ApiError, PageError };
 
 /** The list each paged route answers its rows in: `posts`, the thread's
  *  `descendants`, the `boxes` of /karma and /credits, the `vouches` of both
@@ -66,10 +53,7 @@ export interface Api {
    *  `WithdrawnJson` (NODE_INTERFACE → Posts → "A light row is a post's id
    *  and the node's word", WEB_INTERFACE → The extension → "The light
    *  read"). `light` and `tx` do not combine — `light` wins, and `withTx` is
-   *  ignored under it. The extension build sets `withTx` true on the three
-   *  post reads today, and will set `light` on the two list reads under this
-   *  branch; the web build never sets either (WEB_INTERFACE → The extension
-   *  → "The post check"). */
+   *  ignored under it. */
   feed(page?: Page, viewer?: string, author?: string, roots?: boolean, withTx?: boolean, light?: boolean): Promise<FeedResult>;
   thread(id: string, page?: Page, viewer?: string, withTx?: boolean, light?: boolean): Promise<ThreadResult | null>;
   post(id: string, viewer?: string, withTx?: boolean): Promise<PostResult | null>;
@@ -143,7 +127,12 @@ export class NodeClient implements Api {
     else if (withTx) q['tx'] = 1;
     const res = await this.get<FeedResult>(this.url('/posts', q), 'posts');
     if (!light) return res;
-    return { ...res, posts: readLightRows(res.posts), pending: readLightRows(res.pending) };
+    // Each list is read as one unknown value — `readLightRows` answers
+    // `PageError` for a list that is not an array, as it does for a malformed
+    // row (WEB_INTERFACE → The extension → "The light read" → "A light page is
+    // held to its shape").
+    const raw = res as unknown as Record<string, unknown>;
+    return { ...res, posts: readLightRows(raw['posts']), pending: readLightRows(raw['pending']) };
   }
 
   async thread(id: string, page: Page = {}, viewer?: string, withTx?: boolean, light?: boolean): Promise<ThreadResult | null> {
@@ -152,17 +141,18 @@ export class NodeClient implements Api {
     else if (withTx) q['tx'] = 1;
     const res = await this.getOrNull<ThreadResult>(this.url(`/posts/${encodeURIComponent(id)}/thread`, q), 'descendants');
     if (res === null || !light) return res;
-    // The subject is one row (or `null` as it stands) — read as one row of a
-    // one-element list and taken field by field under the same rule
-    // (WEB_INTERFACE → The extension → "The light read" → "Each row is taken
-    // field by field").
-    const subject: FeedRow | null = res.post === null ? null : readLightRows([res.post])[0]!;
+    // Each list is read as one unknown value — `readLightRows` answers
+    // `PageError` for a list that is not an array, as it does for a malformed
+    // row (WEB_INTERFACE → The extension → "The light read" → "A light page is
+    // held to its shape"). The subject is `null` or one row, so a `null`
+    // short-circuits — `readLightRow` reads a non-null subject.
+    const raw = res as unknown as Record<string, unknown>;
     return {
       ...res,
-      post: subject,
-      ancestors: readLightRows(res.ancestors),
-      descendants: readLightRows(res.descendants),
-      pending: readLightRows(res.pending),
+      post: res.post === null ? null : readLightRow(raw['post']),
+      ancestors: readLightRows(raw['ancestors']),
+      descendants: readLightRows(raw['descendants']),
+      pending: readLightRows(raw['pending']),
     };
   }
 

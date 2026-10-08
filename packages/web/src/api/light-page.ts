@@ -1,13 +1,13 @@
 import type { LightJson, WithdrawnJson, PostStatus } from './dto';
-import { PageError } from './client';
+import { PageError } from './errors';
 import { isValidUsernameBytes } from '@dagsocial/types';
 
 // Read a light page's rows (WEB_INTERFACE → The extension → "The light read"):
 // every row of every list of the answer is a `LightJson` or a `WithdrawnJson`
 // with each field of its type, or the read fails as one the node did not
 // answer. Each row answered is a fresh object of its type's fields alone — a
-// key the type does not name is not carried (contract → "Each row is taken
-// field by field").
+// key the type does not name is not carried
+// (WEB_INTERFACE → The extension → "Each row is taken field by field").
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const utf8 = new TextEncoder();
@@ -30,7 +30,7 @@ function isStatus(v: unknown): v is PostStatus {
 
 /** A row's `parentRefs` is an array of none or one 64-lowercase-hex string
  *  (NODE_INTERFACE → Posts → "A light row is a post's id and the node's
- *  word", TYPES_INTERFACE → Content limits — MAX_PARENT_REFS). */
+ *  word", TYPES_INTERFACE → Content limits). */
 function isParentRefs(v: unknown): v is string[] {
   if (!Array.isArray(v) || v.length > 1) return false;
   for (const p of v) if (!isHex64Lower(p)) return false;
@@ -99,27 +99,35 @@ function readWithdrawn(raw: Record<string, unknown>): WithdrawnJson | null {
   };
 }
 
-/** The rows of one list of a light answer, each rebuilt from its own fields;
- *  throws `PageError` on any row that is neither a well-formed `LightJson` nor
- *  a well-formed `WithdrawnJson` (WEB_INTERFACE → The extension → "The light
- *  read"). Total: no throw but `PageError`. */
-export function readLightRows(rows: readonly unknown[]): Array<LightJson | WithdrawnJson> {
-  const out: Array<LightJson | WithdrawnJson> = [];
-  for (const row of rows) {
-    if (typeof row !== 'object' || row === null || Array.isArray(row)) throw new PageError();
-    const raw = row as Record<string, unknown>;
-    const kind = raw['kind'];
-    if (kind === 'light') {
-      const r = readLight(raw);
-      if (r === null) throw new PageError();
-      out.push(r);
-    } else if (kind === 'withdrawn') {
-      const r = readWithdrawn(raw);
-      if (r === null) throw new PageError();
-      out.push(r);
-    } else {
-      throw new PageError();
-    }
+/** One row of a light answer, rebuilt from its own fields; throws `PageError`
+ *  on anything that is neither a well-formed `LightJson` nor a well-formed
+ *  `WithdrawnJson` (WEB_INTERFACE → The extension → "The light read"). Total:
+ *  no throw but `PageError`. */
+export function readLightRow(row: unknown): LightJson | WithdrawnJson {
+  if (typeof row !== 'object' || row === null || Array.isArray(row)) throw new PageError();
+  const raw = row as Record<string, unknown>;
+  const kind = raw['kind'];
+  if (kind === 'light') {
+    const r = readLight(raw);
+    if (r === null) throw new PageError();
+    return r;
   }
+  if (kind === 'withdrawn') {
+    const r = readWithdrawn(raw);
+    if (r === null) throw new PageError();
+    return r;
+  }
+  throw new PageError();
+}
+
+/** The rows of one list of a light answer, each rebuilt from its own fields;
+ *  throws `PageError` on a value that is not an array, as on any row that is
+ *  neither a well-formed `LightJson` nor a well-formed `WithdrawnJson`
+ *  (WEB_INTERFACE → The extension → "A light page is held to its shape").
+ *  Total: no throw but `PageError`. */
+export function readLightRows(rows: unknown): Array<LightJson | WithdrawnJson> {
+  if (!Array.isArray(rows)) throw new PageError();
+  const out: Array<LightJson | WithdrawnJson> = [];
+  for (const row of rows) out.push(readLightRow(row));
   return out;
 }

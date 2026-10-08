@@ -1237,7 +1237,7 @@ export class App {
   /** Replace one card in the feed by post id — the like's optimistic press and its
    *  rejection re-render only the acted-on card so nothing else moves. A slot
    *  carries nothing a like press acts on (WEB_INTERFACE → The extension →
-   *  "The light read" → "showing what the row carries and no more"). */
+   *  "Any other row stands as a slot"). */
   private renderFeedPost(postId: string): void {
     if (this.standalone) return;
     const post = this.state.feed.posts.find((p) => p.id === postId);

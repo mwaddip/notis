@@ -5,10 +5,9 @@ import type { PostJson, LightJson } from '../api/dto';
 // holds is a card at once". The full row's post identity (id, txId, content,
 // contentHash, author, parentRefs, protocolVersion, type) is the resolve's
 // answer; the light row carries the node's word on it — status, block position
-// and time, counts, name and `likedByViewer`. `tx` is not carried: it was
-// decoded into the row's identity by the check, and the row never names it
-// again (WEB_INTERFACE → The extension → "The post cache" → "The row is stored
-// without its `tx` hex").
+// and time, counts, name and `likedByViewer`. `tx` is not carried: a cache
+// entry's transaction bytes are held once in `txBytes`, and the row beside
+// them restates no hex (WEB_INTERFACE → The extension → "An entry").
 
 /** `full`'s id, txId, content, contentHash, author, parentRefs, protocolVersion
  *  and type under `light`'s status, blockHeight, blockIndex, blockCreatedAt,

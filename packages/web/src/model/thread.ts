@@ -3,8 +3,7 @@ import type { FeedRow } from '../api/dto';
 // Build the render order of a thread from the flat descendants the API returns.
 // Subtrees are laminar (one parent per post), so this is a plain tree walk.
 // A slot stands at the depth its `parentRefs` gives, as a full row does
-// (WEB_INTERFACE → The extension → "The light read" → "A slot's id goes to the
-// resolve").
+// (WEB_INTERFACE → The extension → "Any other row stands as a slot").
 
 export interface ThreadNode {
   row: FeedRow;

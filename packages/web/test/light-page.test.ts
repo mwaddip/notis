@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
-import { readLightRows } from '../src/api/light-page';
+import { readLightRow, readLightRows } from '../src/api/light-page';
 import { PageError } from '../src/api/client';
 import type { LightJson, WithdrawnJson } from '../src/api/dto';
 
@@ -98,4 +98,36 @@ describe('readLightRows — a malformed field of either arm throws PageError', (
       expect(() => readLightRows([row])).toThrow(PageError);
     });
   }
+});
+
+describe('readLightRows — a value that is not an array throws PageError', () => {
+  it('undefined throws PageError', () => {
+    expect(() => readLightRows(undefined)).toThrow(PageError);
+  });
+  it('null throws PageError', () => {
+    expect(() => readLightRows(null)).toThrow(PageError);
+  });
+  it('a string throws PageError', () => {
+    expect(() => readLightRows('oops')).toThrow(PageError);
+  });
+  it('an object throws PageError', () => {
+    expect(() => readLightRows({ 0: light(), length: 1 })).toThrow(PageError);
+  });
+});
+
+describe("readLightRow — one row is read field by field and non-objects throw", () => {
+  it('a well-formed light row answers a fresh object of its fields', () => {
+    const r = readLightRow(light());
+    expect(r.kind).toBe('light');
+  });
+  it('a well-formed withdrawn row answers a fresh object of its fields', () => {
+    const r = readLightRow(withdrawn());
+    expect(r.kind).toBe('withdrawn');
+  });
+  it('null throws PageError', () => {
+    expect(() => readLightRow(null)).toThrow(PageError);
+  });
+  it('an array throws PageError', () => {
+    expect(() => readLightRow([light()])).toThrow(PageError);
+  });
 });

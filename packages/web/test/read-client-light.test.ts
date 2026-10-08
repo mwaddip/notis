@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NodeClient, PageError } from '../src/api/client';
+import { PageError as PageErrorFromErrors } from '../src/api/errors';
 import type { LightJson, WithdrawnJson } from '../src/api/dto';
 
 // `light=1` beside the list reads: every list of the answer is read field by
@@ -176,5 +177,41 @@ describe('read client — a malformed row in any list of a light answer is a Pag
     });
     const c = client();
     await expect(c.thread(SUBJECT, { limit: 50 }, VIEWER, false, true)).rejects.toBeInstanceOf(PageError);
+  });
+});
+
+describe('read client — a light answer whose list is missing or is not an array is a PageError', () => {
+  it('a light feed answer whose `pending` is missing throws PageError', async () => {
+    answers.push({ posts: [lightRow(ID_1)], pendingCount: 0, next: null });
+    const c = client();
+    await expect(c.feed({ limit: 30 }, VIEWER, undefined, false, false, true)).rejects.toBeInstanceOf(PageError);
+  });
+
+  it('a light feed answer whose `pending` is null throws PageError', async () => {
+    answers.push({ posts: [], pending: null, pendingCount: 0, next: null });
+    const c = client();
+    await expect(c.feed({ limit: 30 }, VIEWER, undefined, false, false, true)).rejects.toBeInstanceOf(PageError);
+  });
+
+  it('a light feed answer whose `pending` is a string throws PageError', async () => {
+    answers.push({ posts: [], pending: 'oops', pendingCount: 0, next: null });
+    const c = client();
+    await expect(c.feed({ limit: 30 }, VIEWER, undefined, false, false, true)).rejects.toBeInstanceOf(PageError);
+  });
+
+  it('a light thread answer whose `ancestors` is missing throws PageError', async () => {
+    answers.push({
+      post: lightRow(SUBJECT), ancestorCount: 0,
+      descendants: [], descendantCount: 0, next: null,
+      pending: [], pendingCount: 0,
+    });
+    const c = client();
+    await expect(c.thread(SUBJECT, { limit: 50 }, VIEWER, false, true)).rejects.toBeInstanceOf(PageError);
+  });
+});
+
+describe('read client — PageError the module exports is the one api/errors defines', () => {
+  it("client.PageError is errors.PageError, so no caller's catch misses a throw", () => {
+    expect(PageError).toBe(PageErrorFromErrors);
   });
 });

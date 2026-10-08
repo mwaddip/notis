@@ -93,7 +93,7 @@ describe("the feed renders a slot between two cards — order kept, the slot car
     expect(cards[0]!.classList.contains('slot')).toBe(false);
     expect(cards[2]!.classList.contains('slot')).toBe(false);
     // The slot carries no control button (WEB_INTERFACE → The extension →
-    // "The light read" → "showing what the row carries and no more").
+    // "Any other row stands as a slot").
     expect(cards[1]!.querySelector('button')).toBeNull();
   });
 });
