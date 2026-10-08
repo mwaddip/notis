@@ -296,8 +296,9 @@ takes none and a pattern without one matches every port in both browsers — sho
 revocable by the reader, and revoked it leaves the website behaving as it does for anyone; **what the reader
 sends, declared to Firefox** — `personalCommunications` for what the reader publishes, a post or a reply and the
 signed acts around them (a like, a vouch, an invite, a withdrawal, a name), and `financialAndPaymentInfo` for a
-credits send, both required; the public key rides each of them, each read as `viewer` and the faucet's request,
-and beyond that nothing leaves the browser: no telemetry, no error report, and the secret key never. An
+credits send, both required; the public key rides each of them, each read as `viewer` and the faucet's request; the ids
+of the posts a list names and the reader lacks go to the seed list's nodes in turn, with no key beside them (→ "The
+resolve"); and beyond that nothing leaves the browser: no telemetry, no error report, and the secret key never. An
 `update_url` in Firefox's manifest alone (→ "The Firefox build ships signed as well").
 
 **The manifest** is one template and two emitted files. Common: Manifest V3, the repository's version,
@@ -523,39 +524,86 @@ under that name, at `suffixHead` or, younger, at the tip. A node that shows a ke
 name.* for a held one, is not caught — omission is what reading both nodes as a union is for — and a name burned in
 the last `k` blocks still proves for its old holder, as a box spent since `suffixHead` still proves there.
 
-**The post check.** The extension shows a post only when the transaction that created it binds it. It asks the three
-post reads with `tx=1` (`NODE_INTERFACE → Posts → "The creating transaction rides a post row"`) and passes every row a
-read brings — the feed's page and its pending, a thread's subject, ancestors, descendants and pending, the single
-post — through `checkPosts` of `@dagsocial/nipopow-client`, the code the command line's `post` runs, before any of
-them enters the client's state. **A row is `bound`** when all of this holds, read in this order: its `tx` is hex that
+**The light read.** The extension reads every list of posts as ids with the node's word: the feed, the author window's
+list and a thread — its first page, its `↻` and its `more` — ask `light=1` (`NODE_INTERFACE → Posts → "A light row is a
+post's id and the node's word"`). **A light page is held to its shape**: every row of every list of the answer is a
+`LightJson` or a `WithdrawnJson` with each field of its type — an id of 64 hex, at most one parent, counts that are
+non-negative integers — or the answer is not a page, and the read fails as one the node did not answer: the list's
+error line, and for a thread the cache (→ "The post cache"). A node that does not speak the form shows that line and no
+post. **A row the cache holds is a card at once**: the post's text, author, parent, type and transaction id from the
+entry, bound when it entered, under the row's `status`, block position and time, `likeCount`, `descendantCount`,
+`authorName` and `likedByViewer`; nothing of it is checked again and nothing is asked for it. **A withdrawn row** renders
+as the withdrawn card does (→ The withdrawn state). **Any other row stands as a slot** where its card will stand — in a
+thread at the depth its `parentRefs` gives — showing what the row carries and no more: the handle when it names one, the
+time and the counts, in `inkMute`, with no text, no key and no control (`HOUSE_STYLE → Motion → "A slot holds a post's
+place"`). **The name on a slot is the node's word, unchecked**: a name is proven beside a key (→ "The verified names"),
+and the key arrives with the post. A slot's id goes to the resolve (→ "The resolve"), and the slot becomes the card or
+leaves. **Of a thread's answer the subject and `descendants` are resolved**; a pane draws neither `ancestors` nor
+`pending`, which give ids and nothing more. **Every list read is the reader's act** — the start, a `↻`, `load older`,
+`more`, a window opened, a change of node or identity — so a slot fills or leaves only inside a read the reader began
+(`HOUSE_STYLE → Motion → "A read the reader asked for may move what it is landing"`). The web build asks no `light` and
+draws no slot.
+
+**The resolve.** The posts a list lacks are read by id, from the seed list's nodes in turn. **The nodes** are the node
+being read and then every other base of the seed list, duplicates dropped. **A request** is `POST /posts/batch` with
+`tx=1` and at most `BATCH_READ_MAX` ids (`NODE_INTERFACE → Posts → "The batch read answers posts by id"`; `CONSTANTS →
+HTTP view bounds`), **and carries no `viewer`**: a node other than the one being read learns the ids a reader lacks and
+never whose reading it is. **A pointer walks the nodes**: a resolve's first requests go to the node at the pointer and
+the ones after it, one each, and the pointer moves on by as many — round robin across the requests of a resolve and
+across resolves. **An answer is read by id**: of the rows a node sends, the first under each id the request asked, and
+no other row, go through the post check as one batch (→ "The post check"). **A node serves an id** when its row is
+`bound` and carries the post's text: the post enters the cache, and every slot standing under that id — in the feed, an
+author window, a thread — becomes its card, the figures the slot's own. **A node does not serve an id** it leaves out,
+answers `unserved`, `unbound` or withdrawn, or whose request fails. **The ids a round leaves unserved go as new requests,
+each to its next node**, until every id is served, every node has been asked for it, or `BATCH_RESOLVE_MS` (`CONSTANTS →
+Client defaults`) has passed since the resolve began — one limit over all its requests. **A `bound` placeholder is kept
+while the rest are asked for the text**, and where none has it the card reads *content not on this node yet*, as a
+placeholder's does. **At the end** a slot no node served leaves, with no line — no node said anything of its text — and
+one some node answered `unbound` and no node bound leaves and is counted at its list's head (→ "The post check").
+**One resolve serves every list**: an id asked for is not asked again while its answer is awaited, and an answer lands
+wherever a slot stands under its id; one that returns after a change of node or identity lands nowhere and enters no
+cache (→ Reading the feed and threads → "No answer overwrites a newer one") — the read that change starts asks again.
+It is the extension build's alone: the web build names no `posts/batch`.
+
+> ⚠ **AHEAD OF CODE (2026-10-08, AF1 — `web`)** — the extension asks the three post reads with `tx=1`, passes every row
+> of every read through the post check, draws a list from the node's answer alone and reads the cache only when a
+> thread's read fails; a thread whose subject is `unserved` reads *this node cannot serve this post yet.* It holds no
+> resolver, draws no slot and asks no node but the one it reads for a post, and `build-release.sh` does not refuse
+> `posts/batch`.
+
+**The post check.** The extension shows a post only when the transaction that created it binds it. Every row
+that carries a post's bytes — each row of a batch answer (→ "The resolve"), the single post read's, asked with `tx=1`
+(`NODE_INTERFACE → Posts → "The creating transaction rides a post row"`), and the reader's own post at its submit —
+passes through `checkPosts` of `@dagsocial/nipopow-client`, the code the command line's `post` runs, before it enters
+the client's state or its cache. **A list read brings no bytes and is not checked** (→ "The light read"): a card it
+draws is a post an earlier check bound (→ "The post cache"). **A row is `bound`** when all of this holds, read in
+this order: its `tx` is hex that
 `decodeTx` reads, and the transaction carries a post commit; `computeTxId` of it is the row's `txId`, and
 `computePostId(txId, 0)` the row's `id`; the commit's `author`, `parentRefs`, `contentHash`, `type` and
 `protocolVersion` are the row's; `computeContentHash(content)` is the commit's `contentHash`, for a row that carries
 text; and the signature the transaction carries under the author's key verifies over the transaction id
-(`VALIDATION_INTERFACE → Acceptance criterion`) — a read's rows as one batch, read again one by one only when the
-batch fails, so one bad row costs its page nothing else. **A placeholder is checked as any row, less its text**; **a
+(`VALIDATION_INTERFACE → Acceptance criterion`) — an answer's rows as one batch, read again one by one only when the
+batch fails, so one bad row costs its answer nothing else. **A placeholder is checked as any row, less its text**; **a
 withdrawn row is `nothing-to-bind`** — it carries no `tx` and no words to put in anyone's mouth — and renders as it
 does without a check. **A row whose `tx` is `null` is `unserved`**: the node says it holds no bytes for that post
 (`NODE_INTERFACE → Posts → "The creating transaction rides a post row"`), which is no claim about its text — the row
 is not shown and not cached, and no line counts it. Every other row is `unbound`, under one reason of a closed set: `no-tx`, `undecodable`,
 `no-post`, `tx-id`, `post-id`, `commit`, `content`, `unsigned`, `signature`, `malformed`. **An `unbound` row is not
-shown and not cached, and leaves no gap**: the list it belonged to says so once, at its head, in clay — *1 post
+shown and not cached.** In a batch answer it sends its id on to the next node (→ "The resolve"), and **an id some node
+answered `unbound` and no node bound is said once, at the head of each list that named it, in clay** — *1 post
 withheld — it does not match its signature*, *3 posts withheld — they do not match their signatures* — the full
-rule's weight (`HOUSE_STYLE → Gold and clay are not interchangeable`), since such a row is the node showing what no
-author signed; the line counts what the list's standing reads withheld, and goes when they withheld none. **A row an
-earlier read bound stays where it stands** when a later read of the list withholds a row under its id — a refresh
-lands on the rows standing (→ Reading the feed and threads → "No answer overwrites a newer one"), and the standing
-card was bound when it was read — so the reader keeps the post the author signed beside the line saying the node now
-serves one that does not match; a list read afresh, after a change of node or identity, shows no such card. **A thread
-whose subject is `unbound`** shows that line and nothing of the node's row; one whose subject is `unserved` shows one
-muted line — *this node cannot serve this post yet.* — and no row. **A withheld answer to the single post read
+rule's weight (`HOUSE_STYLE → Gold and clay are not interchangeable`), since such a row is a node showing what no
+author signed; the line counts what the list's standing reads ended so — a refresh starts it again — and goes when
+they ended none. **A post the cache holds is not asked for again**, so no later answer unseats a card. **A thread
+whose subject ends so** shows that line and nothing of the node's row; one whose subject no node served shows one
+muted line — *no node can serve this post yet.* — and no row. **A withheld answer to the single post read
 decides nothing**: the pending entry it was read for (→ The wallet) stays pending until the tip passes its
 `expiresAtHeight`, as with no answer at all — never expired as on the node's 404, since a node that serves a post
 without its bytes has not said the post is gone. **The check
 is total**, as a run is (→ "The verified figures"): a row of any shape ends in a status. **It runs** in the extension
-build alone — the web build is handed no check and sends no `tx`, by the rule that hands it no verifier (→ "The
-verified tip") — on every read of posts, with or without an identity, an anchor or a verdict: it reads no state and
-asks the node nothing. **What it means**: the author's key signed this text, under this id, in reply to this parent.
+build alone — the web build is handed no check and sends neither `tx` nor `light`, by the rule that hands it no
+verifier (→ "The verified tip") — with or without an identity, an anchor or a verdict: it reads no state and asks the
+node nothing. **What it means**: the author's key signed this text, under this id, in reply to this parent.
 **What it does not**: that the post is confirmed, that it is still live, or that the list is whole — those are the
 node's word; a like or a reply to a post that is neither is refused by the network, and no lookup precedes either.
 
@@ -565,16 +613,19 @@ chain reset opens an empty one on every network, pinned or not; the last name is
 `notis.posts.chain`, and opens the cache before the first tip run returns and where none does. **An entry** is keyed
 by post id and holds the transaction's bytes; the row as the node last gave it — text, name, counts, block time; the
 author and the parent as the transaction states them; when it was last seen; its size in bytes; and whether it is the
-reader's own — indexed by parent, by author and by last seen. **Only `bound` rows enter**, at the read that checked
-them, and the reader's own post at its submit — the signed transaction the client built, through the same check; **every read checks its rows,
-held or not**, and a row checked again refreshes its entry's row and its last-seen. **A withdrawn row for a held id
+reader's own — indexed by parent, by author and by last seen. **Only `bound` rows enter**, at the answer that checked
+them, and the reader's own post at its submit — the signed transaction the client built, through the same check.
+**A list is read against it first** (→ "The light read"): a row whose entry holds the post's text is drawn from the
+entry and not asked for, and each listing refreshes its held entries' rows — the node's figures as the listing gave
+them — and their last-seen. **An entry without text is not held**: a placeholder's, or one a withdrawal emptied under
+a row a listing gives as live, is asked for as a post the cache lacks. **A withdrawn row for a held id
 empties the entry's text and keeps the entry** — the node's word, and a lie costs a re-fetch. **A thread or a post
 the cache holds is read from it when the read from the node fails** — the post, its held ancestors and its held
 descendants, each as any card renders, the author's name and the counts as the node last gave them: an entry was
 checked, and came from a node, before it was held — and the pane reports the failed read as it does over any rows it
 holds; the next read that answers lands on those rows as a refresh does (→ Reading the feed and threads → "No answer
-overwrites a newer one"). **A read the node answers is rendered from the node's answer.**
-**The feed renders from the node's answer alone.**
+overwrites a newer one"). **The feed and the author window's list have no such fallback**: a listing that fails
+shows its error line and no row.
 **Size**: `POST_CACHE_BYTES` (`CONSTANTS → Client defaults`) over the entries' sizes, the total kept in a record of
 its own written with every put, withdrawal and eviction — a put past it evicts the least
 recently seen first and the reader's own never, and a put that still does not fit, or that the browser refuses, is
@@ -698,7 +749,8 @@ preference.
 
 **The build check that keeps the web bundle honest:** the web build's assets contain no `chrome.`
 reference, none of the verifiers' request paths — `nipopow/proof`, the tip's; `api/v1/proof`, the figures' and
-the names'; `api/v1/range`, the figures' — and no `notis.posts.`, the post cache's name, in a build that is handed no verifier.
+the names'; `api/v1/range`, the figures' — no `posts/batch`, the resolve's, and no `notis.posts.`, the post cache's
+name, in a build that is handed no verifier.
 `build-release.sh` checks each, and that the shell's `notis-network` is empty; `build-extension.sh` checks the
 extension's shell has no inline
 script, its background and its bridge have no `import`, its manifests parse, their one content-script match is
@@ -716,7 +768,9 @@ value too, and refuses a name no network profile answers to.
 | Feed | `GET /posts` | `roots=1`, `limit`, `after`, `viewer`; the author window reads it with `author` and no `roots` (→ The author window) |
 | One post | `GET /posts/:id` | `viewer` |
 | A thread | `GET /posts/:id/thread` | `limit`, `after`, `viewer` |
-| — the extension build | each of the three post reads above | `tx=1` beside the rest (→ The extension → "The post check") |
+| — the extension build | the feed, the author window's list and a thread | `light=1` beside the rest (→ The extension → "The light read") |
+| — the extension build | `GET /posts/:id` | `tx=1` beside `viewer` (→ The extension → "The post check") |
+| — the extension build | `POST /posts/batch` — `{ ids }`, of the seed list's nodes in turn | `tx=1`, and no `viewer` (→ The extension → "The resolve") |
 | Node status | `GET /status` | — |
 | The tip | `GET /blocks/current` | — |
 

@@ -142,8 +142,9 @@ its choosing.
 |--------|------|---------|----------|--------|
 | `POST` | `/posts` | `{ tx: UtxoTransaction, content: string }` — client-built, client-signed post tx with `tx.post` (the `PostCommit`) set, and the body beside it ("Post transactions" below) | `{ postId, status: "pending", expiresAtHeight, txId }` (200) | 400 if `tx`, `tx.post` or `content` is missing or malformed, `content` fails `verifyPostBody` against `tx.post.contentHash` (reason named), the commit fails verification, the transaction fails `validateTx`, or the first input is not a karma box owned by `post.author` |
 | `GET` | `/posts/:id` | `?viewer=hex&tx=1` — both optional ("`viewer` names the identity a read is for" and "The creating transaction rides a post row" below) | `PostJson` or `WithdrawnJson` (both below), **plus `confirmedAuthor`** | 404 only for an id the node has never heard of ("Resolution order for a post id"); 400 if a present `viewer` is neither 64 hex chars nor an `@handle` or a present `tx` is not the string `1` (`tx must be 1`), 404 `unknown handle` (→ Identity parameters) |
-| `GET` | `/posts/:id/thread` | `?viewer=hex&tx=1&limit=50&after=<blockHeight>:<blockIndex>` — `viewer` and `tx` optional; `limit` and `after` page the descendants ("Every list a view returns is a page" below) | `{ post, ancestors, ancestorCount, descendants, descendantCount, next, pending, pendingCount }` — `post` is `PostJson` or `WithdrawnJson`; `ancestors` the nearest `limit` ancestors, oldest first (`after` does not apply — the context above the topmost one is that post's own thread); `descendants` one page of the subtree's **committed** rows in committed order, `(blockHeight, blockIndex)` ascending, strictly after `after`, with `next` the key to continue from; `pending` the subtree's pending posts, newest arrival first, cut to `limit`, with `pendingCount` over all of them; `ancestorCount` and `descendantCount` are over the whole chain and the whole subtree, pending included — a `PostJson` `post` carries the same number as its own `descendantCount`. **A withdrawn subject answers its `ancestors`, `descendants`, `pending` and counts as a live subject does** — the row, its topology and every descendant's anchor survive the withdrawal (→ Withdrawal transactions), so its replies hang off it | 404 as above; 400 as `/posts` |
-| `GET` | `/posts` | `?author=hex&roots=1&viewer=hex&tx=1&limit=50&after=<blockHeight>:<blockIndex>` — `author`, `roots`, `viewer` and `tx` optional; `roots=1` restricts every list in the answer to posts with no parent (`parentRefs: []`), absent the listing is unfiltered, and the two filters compose (`author` with `roots` is the author's roots); `limit` and `after` page the committed rows ("Every list a view returns is a page" below) | `{ posts: (PostJson \| WithdrawnJson)[], next, pending: PostJson[], pendingCount }` — `posts` one page of the committed rows, live and withdrawn, newest first in committed order (placeholders included; ordering below), `next` the key to continue from; `pending` the live pending rows — the author's when `author` is present — newest arrival first, cut to `limit`, `pendingCount` over all of them; with `roots=1`, `posts`, `pending` and `pendingCount` are over the roots alone, the keyset walking the filtered set | 400 if a present `limit` or `after` does not parse ("Every list a view returns is a page"), a present `roots` is not the string `1` (`roots must be 1`), a present `tx` is not the string `1` (`tx must be 1`), or a present `viewer` is neither 64 hex chars nor an `@handle`; 404 `unknown handle` (→ Identity parameters) |
+| `GET` | `/posts/:id/thread` | `?viewer=hex&tx=1&light=1&limit=50&after=<blockHeight>:<blockIndex>` — `viewer`, `tx` and `light` optional; `limit` and `after` page the descendants ("Every list a view returns is a page" below) | `{ post, ancestors, ancestorCount, descendants, descendantCount, next, pending, pendingCount }` — `post` is `PostJson` or `WithdrawnJson`, and under `light=1` every live row of the answer, `post` among them, is a `LightJson` ("A light row is a post's id and the node's word" below); `ancestors` the nearest `limit` ancestors, oldest first (`after` does not apply — the context above the topmost one is that post's own thread); `descendants` one page of the subtree's **committed** rows in committed order, `(blockHeight, blockIndex)` ascending, strictly after `after`, with `next` the key to continue from; `pending` the subtree's pending posts, newest arrival first, cut to `limit`, with `pendingCount` over all of them; `ancestorCount` and `descendantCount` are over the whole chain and the whole subtree, pending included — a `PostJson` `post` carries the same number as its own `descendantCount`. **A withdrawn subject answers its `ancestors`, `descendants`, `pending` and counts as a live subject does** — the row, its topology and every descendant's anchor survive the withdrawal (→ Withdrawal transactions), so its replies hang off it | 404 as above; 400 as `/posts` |
+| `GET` | `/posts` | `?author=hex&roots=1&viewer=hex&tx=1&light=1&limit=50&after=<blockHeight>:<blockIndex>` — `author`, `roots`, `viewer`, `tx` and `light` optional; `roots=1` restricts every list in the answer to posts with no parent (`parentRefs: []`), absent the listing is unfiltered, and the two filters compose (`author` with `roots` is the author's roots); `limit` and `after` page the committed rows ("Every list a view returns is a page" below) | `{ posts: (PostJson \| WithdrawnJson)[], next, pending: PostJson[], pendingCount }`, every live row a `LightJson` under `light=1` — `posts` one page of the committed rows, live and withdrawn, newest first in committed order (placeholders included; ordering below), `next` the key to continue from; `pending` the live pending rows — the author's when `author` is present — newest arrival first, cut to `limit`, `pendingCount` over all of them; with `roots=1`, `posts`, `pending` and `pendingCount` are over the roots alone, the keyset walking the filtered set | 400 if a present `limit` or `after` does not parse ("Every list a view returns is a page"), a present `roots` is not the string `1` (`roots must be 1`), a present `tx` is not the string `1` (`tx must be 1`), a present `light` is not the string `1` (`light must be 1`), `tx` and `light` are both present (`tx and light cannot both be 1`), or a present `viewer` is neither 64 hex chars nor an `@handle`; 404 `unknown handle` (→ Identity parameters) |
+| `POST` | `/posts/batch` | `{ ids: postId[] }`, `?viewer=hex&tx=1` — both optional ("The batch read answers posts by id" below) | `{ posts: (PostJson \| WithdrawnJson)[] }` — a row for each id the node holds, in the order asked | 400 if `ids` is missing or not an array (`ids required (array)`), holds no id or more than `BATCH_READ_MAX` (`ids must hold 1 to 100 post ids`), holds an entry that is not 64 hex chars (`ids must be 64-character hex strings`) or one id twice (`ids must not repeat`); `viewer` and `tx` as `/posts` |
 
 **Every list a view returns is a page.** `limit` defaults to `PAGE_LIMIT_DEFAULT` (50) and clamps
 to `PAGE_LIMIT_MAX` (100); a present `limit` that does not parse as a positive safe integer is a
@@ -170,7 +171,7 @@ them. The paged lists: `GET /posts`, the thread's `descendants`, `/vouches?targe
 `/vouches?voucher=` and its cooldown arm, and the `boxes` and `bonds` of `/karma/:userId`,
 `/credits/:userId` and `/invites/:userId` (→ UTXO queries). The thread's `ancestors` is not paged
 — the nearest `limit`, oldest first. Every other list a view returns is bounded by rule: a block's
-body by its caps.
+body by its caps, a batch read's rows by the ids it was asked ("The batch read answers posts by id").
 
 **`viewer` names the identity a read is for.** Optional on `GET /posts`, `GET /posts/:id` and
 `GET /posts/:id/thread`, 64 hex chars or an `@handle` (→ Identity parameters; 400 otherwise). When it is present, every `PostJson` in the
@@ -228,6 +229,51 @@ body blobs from SQLite is about 74 ms and the walk to the transactions about 1 m
 33 ms; one post, 2 ms. A request holds one body's bytes: a burst of 20 such pages raised the process's array buffers
 by 48 MB at its peak and its heap by 8 MB, both returned after.
 
+**A light row is a post's id and the node's word.** `light=1` — the string `1`, or absent — on `GET /posts` and
+`GET /posts/:id/thread` answers every live row of the answer, in every list of it and the thread's `post` among them,
+as a `LightJson`:
+
+```
+LightJson = {
+  kind: 'light',
+  id: postId,                  // 64-hex
+  parentRefs: postId[],        // 0–1 — where a reader that lacks the post places its row
+  status: PostStatus,
+  blockHeight: number | null,
+  blockIndex: number | null,
+  blockCreatedAt: number | null,
+  likeCount: number,
+  descendantCount: number,
+  authorName: string | null,
+  likedByViewer: boolean | null
+}
+```
+
+Each field is `PostJson`'s under the same definition. **It carries no `txId`, `tx`, `content`, `contentHash`, `author`,
+`protocolVersion` or `type`** — what a post's creating transaction fixes under its id, which a reader that holds the
+post has and one that lacks it reads by id ("The batch read answers posts by id" below) — and **it does not say whether
+the node holds the body**. `parentRefs` is the transaction's too; the row carries it because a thread is laid out by
+it, and a reader holds the row to it only until it holds the post. **A withdrawn row is its `WithdrawnJson`, whole**:
+it carries no text and no transaction as it stands, and nothing reads a withdrawn post's bytes. **The page is the full
+form's page** — the same rows in the same order under the same `limit`, `after`, `author`, `roots` and `viewer`, with
+the same `next`, `pendingCount` and counts beside it. **`light` and `tx` do not combine**: both present is a 400, since
+one asks for a row without its transaction and the other for the transaction. `GET /posts/:id` takes no `light`.
+
+**The batch read answers posts by id.** `POST /posts/batch` takes `{ ids }` — 1 to `BATCH_READ_MAX` (100,
+`CONSTANTS → HTTP view bounds`) post ids of 64 hex chars, hex accepted in either case and compared in lower case, none
+twice — and answers `{ posts }`: for each id the node holds, the row `GET /posts/:id` answers less `confirmedAuthor` —
+a `PostJson`, a placeholder among them, or a `WithdrawnJson` — **in the order asked, an id the node has never heard of
+left out** ("Resolution order for a post id" below). `viewer` and `tx=1` read as on the three post reads: with `tx=1`
+every `PostJson` carries its creating transaction's bytes by the rules above, and a confirmed row its block does not
+list, or a stored body that will not read, is fail-stop under this route as under those. **It is a `POST` for its body
+alone** — a hundred ids outgrow a query string — **and it writes nothing**: no store row, no pool entry, no gossip.
+**Its cost is a page's**: each id is resolved by the path a page's row takes, so the most a request reads is
+`BATCH_READ_MAX` rows in as many distinct blocks — the shape "What `tx=1` costs, so the exposure is a number" measures.
+
+> ⚠ **AHEAD OF CODE (2026-10-08, AF1 — `node`)** — the two list routes take `light` as they take any unknown parameter,
+> ignoring it; there is no `POST /posts/batch`, and `BATCH_READ_MAX` is in no module. The batch route's cost is argued
+> from the page's and not measured.
+
 **`GET /posts/:id` adds `confirmedAuthor`** to whichever shape it returns: the consensus-recorded
 author from `block_topology`, hex, or `null` until an applied block confirms the post. It is a
 distinct field from `author` on purpose — `author` is the DAG's, content a node may hold, may have
@@ -246,8 +292,9 @@ state, not a time. Feed order: `posts` is confirmed posts by `(blockHeight, bloc
 committed order, newest first — and `pending` is the pending posts beside them, newest arrival
 first ("Every list a view returns is a page").
 
-`PostJson` carries no `kind` field; clients discriminate the two shapes on `kind`: absent → `PostJson`,
-`'withdrawn'` → `WithdrawnJson` ("Resolution order for a post id" below).
+`PostJson` carries no `kind` field; clients discriminate the shapes on `kind`: absent → `PostJson`,
+`'withdrawn'` → `WithdrawnJson` ("Resolution order for a post id" below), `'light'` → `LightJson` ("A light row is a
+post's id and the node's word" above).
 
 #### Resolution order for a post id
 
