@@ -18,6 +18,12 @@ const CHAIN_KEY = 'notis.posts.chain';
 /** The IndexedDB name prefix (→ "The post cache"). */
 const DB_PREFIX = 'notis.posts.';
 const STORE = 'entries';
+const META = 'meta';
+/** The one record of the meta store — the running sum of the entries' sizes,
+ *  held with the entries so a put, a withdraw and an eviction move it in the
+ *  same transaction (WEB_INTERFACE → The extension → "The post cache",
+ *  "Size"). The store's shape is `{ key: 'total', bytes: number }`. */
+const META_KEY = 'total';
 const IDX_PARENT = 'parent';
 const IDX_AUTHOR = 'author';
 const IDX_LAST_SEEN = 'lastSeen';
@@ -42,8 +48,9 @@ interface Entry {
   parent: string | null;
   lastSeen: number;
   /** The entry's size, in bytes — the transaction's bytes plus the row's
-   *  JSON length. An estimate: the running total is the sum of this across
-   *  every entry. */
+   *  JSON length. An estimate held per entry; the meta store's `total` is
+   *  the running sum of this across every entry
+   *  (WEB_INTERFACE → The extension → "The post cache"). */
   size: number;
   own: boolean;
 }
@@ -61,15 +68,14 @@ export interface PostCacheDeps {
 /** Compute an entry's size — the transaction's bytes plus the row's JSON
  *  length. An estimate, enough for the running total the cap holds. */
 function entrySize(txBytes: Uint8Array, row: PostJson | WithdrawnJson): number {
-  // The row holds no `tx` hex (held once in `txBytes`), so a size's row JSON
+  // The row holds no `tx` hex (held once in `txBytes`), so a row's JSON
   // length is small — tens of hundreds of bytes.
   return txBytes.byteLength + JSON.stringify(row).length;
 }
 
-/** Strip the row of its `tx` hex before persisting: the transaction's bytes
- *  are held once in `txBytes`, so repeating them in the row doubles the entry
- *  (WEB_INTERFACE → The extension → "The post cache" — "the transaction's
- *  bytes; the row as the node last gave it, without its `tx` hex"). */
+/** The row is stored without its `tx` hex — the transaction's bytes are held
+ *  once in `txBytes`, so repeating them in the row would double the entry
+ *  (WEB_INTERFACE → The extension → "The post cache"). */
 function stripTx(row: PostJson): PostJson {
   if (row.tx === undefined) return row;
   const out = { ...row };
@@ -142,63 +148,70 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
           store.createIndex(IDX_AUTHOR, 'author', { unique: false });
           store.createIndex(IDX_LAST_SEEN, 'lastSeen', { unique: false });
         }
+        if (!database.objectStoreNames.contains(META)) {
+          database.createObjectStore(META, { keyPath: 'key' });
+        }
       };
       req.onsuccess = (): void => {
         db = req.result;
         openedChain = chain;
         remember(chain);
-        // Compute the running total from the entries on disk.
-        total = 0;
-        try {
-          const tx = db.transaction(STORE, 'readonly');
-          const store = tx.objectStore(STORE);
-          const cur = store.openCursor();
-          cur.onsuccess = (): void => {
-            const c = cur.result;
-            if (c) {
-              const e = c.value as Entry;
-              total += e.size;
-              c.continue();
-            }
-          };
-          tx.oncomplete = (): void => resolve();
-          tx.onerror = (): void => resolve();
-          tx.onabort = (): void => resolve();
-        } catch {
-          resolve();
-        }
+        void readOrInitTotal().then(resolve, () => resolve());
       };
       req.onerror = (): void => resolve();
       req.onblocked = (): void => resolve();
     });
   }
 
-  /** Run a store operation under one `readwrite` transaction, awaiting its
-   *  completion. Resolves even on an abort — a put that quota refused is
-   *  dropped, not thrown (WEB_INTERFACE → The extension → "The post cache"). */
-  function run<T>(fn: (store: IDBObjectStore) => T): Promise<T | null> {
-    if (db === null) return Promise.resolve(null);
-    return new Promise<T | null>((resolve) => {
-      let result: T | null = null;
+  /** Read the running total from the meta store at open; where no record
+   *  stands (a database with entries from a build before this one) sum the
+   *  entries once and write the record (WEB_INTERFACE → The extension →
+   *  "The post cache"). */
+  function readOrInitTotal(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      if (db === null) { resolve(); return; }
       let tx: IDBTransaction;
       try {
-        tx = db!.transaction(STORE, 'readwrite');
-      } catch {
-        resolve(null);
-        return;
-      }
-      const store = tx.objectStore(STORE);
+        tx = db.transaction(META, 'readonly');
+      } catch (e) { reject(e); return; }
+      const req = tx.objectStore(META).get(META_KEY);
+      req.onsuccess = (): void => {
+        const row = req.result as { key: string; bytes: number } | undefined;
+        if (row !== undefined && typeof row.bytes === 'number') {
+          total = row.bytes;
+          resolve();
+          return;
+        }
+        void sumEntriesAndPersist().then(resolve, () => resolve());
+      };
+      req.onerror = (): void => resolve();
+    });
+  }
+
+  function sumEntriesAndPersist(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      if (db === null) { resolve(); return; }
+      let tx: IDBTransaction;
       try {
-        result = fn(store);
-      } catch {
-        // A programming error in the callback — the transaction will abort.
-      }
-      tx.oncomplete = (): void => resolve(result);
-      // A `QuotaExceededError` (or any put the browser refused) aborts the
-      // transaction; the put is dropped and the running total was not moved.
-      // This is the one failure path the module absorbs (→ "The post cache").
-      tx.onerror = (): void => resolve(null);
-      tx.onabort = (): void => resolve(null);
+        tx = db.transaction([STORE, META], 'readwrite');
+      } catch { resolve(); return; }
+      const store = tx.objectStore(STORE);
+      const meta = tx.objectStore(META);
+      let sum = 0;
+      const cur = store.openCursor();
+      cur.onsuccess = (): void => {
+        const c = cur.result;
+        if (c) {
+          const e = c.value as Entry;
+          sum += e.size;
+          c.continue();
+          return;
+        }
+        meta.put({ key: META_KEY, bytes: sum });
+      };
+      tx.oncomplete = (): void => { total = sum; resolve(); };
+      tx.onerror = (): void => resolve();
+      tx.onabort = (): void => resolve();
     });
   }
 
@@ -219,7 +232,10 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
     });
   }
 
-  /** Read every child of `parent`, through the parent index. */
+  /** Read every entry whose `parent` field equals the given id, through the
+   *  parent index. `openCursor` takes the id as its key directly — an
+   *  `IDBKeyRange.only` is not needed and the fake IndexedDB happy-dom tests
+   *  run against has no global `IDBKeyRange`. */
   function readChildren(parent: string): Promise<Entry[]> {
     if (db === null) return Promise.resolve([]);
     return new Promise<Entry[]>((resolve) => {
@@ -232,9 +248,6 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
         return;
       }
       const idx = tx.objectStore(STORE).index(IDX_PARENT);
-      // `openCursor` takes a key directly (no IDBKeyRange needed): happy-dom
-      // does not define `IDBKeyRange` globally, so we pass the parent id as
-      // the key query.
       const cur = idx.openCursor(parent);
       cur.onsuccess = (): void => {
         const c = cur.result;
@@ -248,21 +261,18 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
     });
   }
 
-  /** Evict least-recently-seen entries until `needed` bytes are free, never
-   *  taking an `own` entry. Returns the bytes freed. */
-  async function evictFor(needed: number): Promise<number> {
-    if (db === null) return 0;
-    if (needed <= 0) return 0;
-    // Collect the non-own entries ordered by lastSeen asc through the index.
-    const victims = await new Promise<Array<{ id: string; size: number }>>((resolve) => {
+  /** Collect non-own entries ordered by lastSeen asc, skipping the given id,
+   *  until the sum of their sizes covers `needed`. Runs in its own readonly
+   *  transaction before the writing one that applies the eviction and put;
+   *  the entry being put is never a victim (`skipId`). */
+  function collectVictims(needed: number, skipId: string): Promise<Array<{ id: string; size: number }>> {
+    if (db === null) return Promise.resolve([]);
+    return new Promise((resolve) => {
       const out: Array<{ id: string; size: number }> = [];
       let tx: IDBTransaction;
       try {
         tx = db!.transaction(STORE, 'readonly');
-      } catch {
-        resolve([]);
-        return;
-      }
+      } catch { resolve([]); return; }
       const idx = tx.objectStore(STORE).index(IDX_LAST_SEEN);
       const cur = idx.openCursor();
       let freed = 0;
@@ -270,13 +280,10 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
         const c = cur.result;
         if (c) {
           const e = c.value as Entry;
-          if (!e.own) {
+          if (!e.own && e.id !== skipId) {
             out.push({ id: e.id, size: e.size });
             freed += e.size;
-            if (freed >= needed) {
-              resolve(out);
-              return;
-            }
+            if (freed >= needed) { resolve(out); return; }
           }
           c.continue();
         }
@@ -284,17 +291,46 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
       tx.oncomplete = (): void => resolve(out);
       tx.onerror = (): void => resolve(out);
     });
-    if (victims.length === 0) return 0;
-    let freed = 0;
-    const applied = await run((store) => {
-      for (const v of victims) {
-        store.delete(v.id);
-        freed += v.size;
+  }
+
+  /** Run a store operation over `entries` and `meta` under one `readwrite`
+   *  transaction, awaiting its completion. The callback receives both
+   *  stores, so the running total moves in the same transaction as the put,
+   *  withdraw or eviction. Resolves `null` on a transaction the browser
+   *  aborted or on a `DOMException` the IDB raised synchronously — the two
+   *  failures the contract absorbs (WEB_INTERFACE → The extension →
+   *  "The post cache": "a put that does not fit, or that the browser
+   *  refuses, is dropped"). A throw that is not a `DOMException` — a
+   *  programming error in the callback — rejects. */
+  function run<T>(fn: (entries: IDBObjectStore, meta: IDBObjectStore) => T): Promise<T | null> {
+    if (db === null) return Promise.resolve(null);
+    return new Promise<T | null>((resolve, reject) => {
+      let result: T | null = null;
+      let tx: IDBTransaction;
+      try {
+        tx = db!.transaction([STORE, META], 'readwrite');
+      } catch (e) {
+        if (e instanceof DOMException) { resolve(null); return; }
+        reject(e); return;
       }
+      const entries = tx.objectStore(STORE);
+      const meta = tx.objectStore(META);
+      try {
+        result = fn(entries, meta);
+      } catch (e) {
+        if (e instanceof DOMException) {
+          // A `QuotaExceededError` on a `put`, or another storage failure
+          // the browser raised synchronously, aborts the transaction and
+          // the running total was not moved; the module absorbs it.
+        } else {
+          reject(e);
+          return;
+        }
+      }
+      tx.oncomplete = (): void => resolve(result);
+      tx.onerror = (): void => resolve(null);
+      tx.onabort = (): void => resolve(null);
     });
-    if (applied === null) return 0;
-    total -= freed;
-    return freed;
   }
 
   async function putInternal(entry: {
@@ -315,12 +351,15 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
     // the cache without ever fitting it (WEB_INTERFACE → The extension →
     // "The post cache").
     if (size > POST_CACHE_BYTES && priorSize === 0) return;
+    let victims: Array<{ id: string; size: number }> = [];
     if (total + delta > POST_CACHE_BYTES) {
-      await evictFor(total + delta - POST_CACHE_BYTES);
-      if (total + delta > POST_CACHE_BYTES) {
-        // Still does not fit — the store is full of `own` entries. Drop the
-        // put, including the refresh of a smaller held row (its stored row
-        // stays as it was).
+      const needed = total + delta - POST_CACHE_BYTES;
+      victims = await collectVictims(needed, entry.id);
+      const freed = victims.reduce((s, v) => s + v.size, 0);
+      if (total + delta - freed > POST_CACHE_BYTES) {
+        // Still does not fit — the store is full of `own` entries. Drop
+        // the put, including the refresh of a smaller held row (its
+        // stored row stays as it was).
         return;
       }
     }
@@ -336,14 +375,15 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
       // reader's own post refreshes it and leaves the mark alone.
       own: entry.own || (prior ? prior.own : false),
     };
-    const applied = await run((store) => {
-      store.put(e);
+    const freed = victims.reduce((s, v) => s + v.size, 0);
+    const nextTotal = total + delta - freed;
+    const applied = await run((entries, meta) => {
+      for (const v of victims) entries.delete(v.id);
+      entries.put(e);
+      meta.put({ key: META_KEY, bytes: nextTotal });
     });
-    if (applied === null) {
-      // Quota refused — the entry was not stored; the total is unchanged.
-      return;
-    }
-    total += delta;
+    if (applied === null) return;
+    total = nextTotal;
   }
 
   async function withdrawInternal(id: string, row: WithdrawnJson): Promise<void> {
@@ -352,8 +392,7 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
     if (prior === null) return;
     const newSize = entrySize(new Uint8Array(0), row);
     const delta = newSize - prior.size;
-    // A withdraw never evicts: it only shrinks or holds steady, since the row
-    // keeps the entry's id and the bytes go.
+    const nextTotal = total + delta;
     const e: Entry = {
       ...prior,
       txBytes: new Uint8Array(0),
@@ -363,11 +402,12 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
       // The parent/author on the entry remain the transaction's — the
       // withdrawn row does not restate them.
     };
-    const applied = await run((store) => {
-      store.put(e);
+    const applied = await run((entries, meta) => {
+      entries.put(e);
+      meta.put({ key: META_KEY, bytes: nextTotal });
     });
     if (applied === null) return;
-    total += delta;
+    total = nextTotal;
   }
 
   async function threadInternal(id: string): Promise<CachedThread | null> {
@@ -414,8 +454,8 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
   function serial<T>(op: () => Promise<T>): Promise<T> {
     const next = pending.then(op);
     // Keep the chain alive even if the op throws (nothing in this module
-    // throws — the two absorbed failures resolve), so pending is always a
-    // resolved tail.
+    // throws under its absorbed failures — a programming error does, and
+    // the operation surfaces it), so pending is always a resolved tail.
     pending = next.then(() => undefined, () => undefined);
     return next;
   }

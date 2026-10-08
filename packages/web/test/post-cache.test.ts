@@ -5,7 +5,7 @@
 // `fake-indexeddb`, so a browser's own IndexedDB does not have to be present.
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { IDBFactory } from 'fake-indexeddb';
+import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 import { createPostCache, rememberedChain } from '../src/extension/post-cache';
 import { POST_CACHE_BYTES } from '../src/model/state';
 import type { PostJson, WithdrawnJson } from '../src/api/dto';
@@ -171,33 +171,232 @@ describe('post-cache — eviction', () => {
 });
 
 describe('post-cache — a put the store refuses', () => {
-  it('a put the browser refuses is dropped and the next put works', async () => {
+  it("a quota-refused put resolves, the entry is absent, the total is unchanged, and the next put lands", async () => {
     const idb = new IDBFactory();
     const ls = fakeLs();
     const c = clock();
     const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
     await cache.open('A');
-    const a = row('a');
-    // Monkey-patch the IDBObjectStore prototype's `put` to throw once (as a
-    // closed database or a quota would). The next call then runs normally.
-    const proto = (idb as unknown as { constructor: unknown }).constructor;
-    // Rather than patch the fake's prototype we close the db under the
-    // cache's feet: fake-indexeddb aborts the next write transaction.
-    void proto;
-    // Simulate quota by closing the db — the next write transaction fails.
-    // We open two instances to the same name: closing the one the cache
-    // holds would be reaching into its private state, so we drive the
-    // failure through an entry that is larger than the cap, which the
-    // module drops, then confirm a normal put works after.
-    // (The `entry larger than the cap` case above exercises the drop; this
-    // case confirms the module keeps working after a drop.)
-    await cache.put({ id: a.id, txBytes: new Uint8Array(POST_CACHE_BYTES + 10), row: a, author: a.author, parent: null, own: false });
-    expect(await cache.thread(a.id)).toBeNull();
-    const b = row('b');
-    await cache.put({ id: b.id, txBytes: new Uint8Array(100), row: b, author: b.author, parent: null, own: false });
-    expect(await cache.thread(b.id)).not.toBeNull();
+    // Prime the cache with one entry, so the running total has a known
+    // value a quota-refused put must leave in place.
+    const seed = row('seed');
+    await cache.put({ id: seed.id, txBytes: new Uint8Array(100), row: seed, author: seed.author, parent: null, own: false });
+    const totalBefore = await readMetaTotal(idb, 'A');
+    expect(totalBefore).toBeGreaterThan(0);
+
+    // Patch IDBObjectStore.prototype.put to throw a DOMException the next
+    // time it is called in a readwrite transaction over `entries`. A
+    // single-shot patch — the next put after this one runs normally.
+    const protoPut = IDBObjectStore.prototype.put;
+    let armed = true;
+    IDBObjectStore.prototype.put = function (this: IDBObjectStore, value: unknown, key?: IDBValidKey): IDBRequest {
+      if (armed && this.name === 'entries') {
+        armed = false;
+        throw new DOMException('simulated quota', 'QuotaExceededError');
+      }
+      return protoPut.call(this, value, key as IDBValidKey);
+    } as typeof IDBObjectStore.prototype.put;
+
+    try {
+      const a = row('a');
+      await cache.put({ id: a.id, txBytes: new Uint8Array(100), row: a, author: a.author, parent: null, own: false });
+      expect(await cache.thread(a.id)).toBeNull();
+      const totalAfterRefusal = await readMetaTotal(idb, 'A');
+      expect(totalAfterRefusal).toBe(totalBefore);
+
+      // The next put lands and moves the total.
+      const b = row('b');
+      await cache.put({ id: b.id, txBytes: new Uint8Array(100), row: b, author: b.author, parent: null, own: false });
+      expect(await cache.thread(b.id)).not.toBeNull();
+      const totalAfterLand = await readMetaTotal(idb, 'A');
+      expect(totalAfterLand).toBeGreaterThan(totalBefore);
+    } finally {
+      IDBObjectStore.prototype.put = protoPut;
+    }
+  });
+
+  it("a transaction the browser aborts leaves the entry absent and the total unchanged", async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    await cache.open('A');
+    const seed = row('seed');
+    await cache.put({ id: seed.id, txBytes: new Uint8Array(100), row: seed, author: seed.author, parent: null, own: false });
+    const totalBefore = await readMetaTotal(idb, 'A');
+
+    // Patch put to schedule an abort on its transaction once.
+    const protoPut = IDBObjectStore.prototype.put;
+    let armed = true;
+    IDBObjectStore.prototype.put = function (this: IDBObjectStore, value: unknown, key?: IDBValidKey): IDBRequest {
+      const req = protoPut.call(this, value, key as IDBValidKey);
+      if (armed && this.name === 'entries') {
+        armed = false;
+        try { this.transaction.abort(); } catch { /* already settled */ }
+      }
+      return req;
+    } as typeof IDBObjectStore.prototype.put;
+
+    try {
+      const a = row('a');
+      await cache.put({ id: a.id, txBytes: new Uint8Array(100), row: a, author: a.author, parent: null, own: false });
+      expect(await cache.thread(a.id)).toBeNull();
+      expect(await readMetaTotal(idb, 'A')).toBe(totalBefore);
+    } finally {
+      IDBObjectStore.prototype.put = protoPut;
+    }
+  });
+
+  it("a non-DOMException throw inside a run() callback rejects the operation", async () => {
+    // Not reachable through the public API — the module's own `fn`
+    // callbacks throw only DOMExceptions synchronously. The property is
+    // the one the contract rests on: a programming error reaches the
+    // caller, never the two absorbed failures. Exercised directly on the
+    // module's `run` seam.
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    await cache.open('A');
+    // Patch put to throw a TypeError once — a programming error from the
+    // caller's own code, not an IDB failure.
+    const protoPut = IDBObjectStore.prototype.put;
+    let armed = true;
+    IDBObjectStore.prototype.put = function (this: IDBObjectStore, value: unknown, key?: IDBValidKey): IDBRequest {
+      if (armed && this.name === 'entries') {
+        armed = false;
+        throw new TypeError('programming error');
+      }
+      return protoPut.call(this, value, key as IDBValidKey);
+    } as typeof IDBObjectStore.prototype.put;
+
+    try {
+      const a = row('a');
+      await expect(
+        cache.put({ id: a.id, txBytes: new Uint8Array(100), row: a, author: a.author, parent: null, own: false }),
+      ).rejects.toThrow('programming error');
+    } finally {
+      IDBObjectStore.prototype.put = protoPut;
+    }
   });
 });
+
+describe('post-cache — the running total is kept in a meta record', () => {
+  it('a scripted run of puts, refreshes, withdrawals and evictions keeps the meta total equal to the sum of stored entries, never over the cap', async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    await cache.open('A');
+    // Seeded LCG — the test is a scripted sequence, not random.
+    let seed = 0x1234;
+    const rand = (): number => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+
+    const held = new Set<string>();
+    const kinds = ['put', 'put', 'refresh', 'withdraw', 'put', 'put', 'put', 'refresh', 'withdraw', 'put'];
+    let n = 0;
+    for (let i = 0; i < 200; i++) {
+      const kind = kinds[Math.floor(rand() * kinds.length)]!;
+      if (kind === 'put' || (held.size === 0 && kind !== 'put')) {
+        const id = hid('x' + (n++));
+        held.add(id);
+        const bytes = 100 + Math.floor(rand() * 500);
+        const r = row('r' + i, { id });
+        await cache.put({ id, txBytes: new Uint8Array(bytes), row: r, author: r.author, parent: null, own: false });
+      } else if (kind === 'refresh') {
+        const picks = [...held];
+        const id = picks[Math.floor(rand() * picks.length)]!;
+        const bytes = 50 + Math.floor(rand() * 500);
+        const r = row('r' + i, { id });
+        await cache.put({ id, txBytes: new Uint8Array(bytes), row: r, author: r.author, parent: null, own: false });
+      } else if (kind === 'withdraw') {
+        const picks = [...held];
+        const id = picks[Math.floor(rand() * picks.length)]!;
+        await cache.withdraw(id, tomb('t' + i));
+      }
+    }
+
+    // Walk the stored entries and sum sizes; read the meta total; both equal.
+    const [sum, metaTotal] = await Promise.all([sumStoredSizes(idb, 'A'), readMetaTotal(idb, 'A')]);
+    expect(metaTotal).toBe(sum);
+    expect(metaTotal).toBeLessThanOrEqual(POST_CACHE_BYTES);
+  });
+
+  it('the entry being put is never a victim: a refresh under cap pressure keeps the refreshed id', async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    await cache.open('A');
+    // Three ~third-cap entries, oldest first. The oldest is the one about
+    // to be refreshed.
+    const third = Math.floor(POST_CACHE_BYTES / 3);
+    const big = new Uint8Array(third);
+    const r1 = row('r1');
+    const r2 = row('r2');
+    const r3 = row('r3');
+    await cache.put({ id: r1.id, txBytes: big, row: r1, author: r1.author, parent: null, own: false });
+    await cache.put({ id: r2.id, txBytes: big, row: r2, author: r2.author, parent: null, own: false });
+    await cache.put({ id: r3.id, txBytes: big, row: r3, author: r3.author, parent: null, own: false });
+    // Refresh r1 (the least recently seen) with a larger payload. If the
+    // victim collection took r1, the put would then re-insert it; a bug
+    // over-counted its size. Here the victim is r2, the next oldest.
+    const bigger = new Uint8Array(third + 1_000_000);
+    await cache.put({ id: r1.id, txBytes: bigger, row: r1, author: r1.author, parent: null, own: false });
+    expect(await cache.thread(r1.id)).not.toBeNull();
+    expect(await cache.thread(r2.id)).toBeNull();
+    expect(await cache.thread(r3.id)).not.toBeNull();
+    const [sum, metaTotal] = await Promise.all([sumStoredSizes(idb, 'A'), readMetaTotal(idb, 'A')]);
+    expect(metaTotal).toBe(sum);
+  });
+});
+
+/** Walk the entries store and sum each row's declared `size`. */
+async function sumStoredSizes(idb: IDBFactory, chain: string): Promise<number> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const req = idb.open('notis.posts.' + chain);
+    req.onsuccess = (): void => resolve(req.result);
+    req.onerror = (): void => reject(req.error);
+  });
+  try {
+    return await new Promise<number>((resolve) => {
+      const tx = db.transaction('entries', 'readonly');
+      let sum = 0;
+      const cur = tx.objectStore('entries').openCursor();
+      cur.onsuccess = (): void => {
+        const c = cur.result;
+        if (c) { sum += (c.value as { size: number }).size; c.continue(); }
+      };
+      tx.oncomplete = (): void => resolve(sum);
+      tx.onerror = (): void => resolve(sum);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/** Read the meta record's running total from a database the cache has
+ *  opened and let go of. */
+async function readMetaTotal(idb: IDBFactory, chain: string): Promise<number> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const req = idb.open('notis.posts.' + chain);
+    req.onsuccess = (): void => resolve(req.result);
+    req.onerror = (): void => reject(req.error);
+  });
+  try {
+    return await new Promise<number>((resolve) => {
+      const tx = db.transaction('meta', 'readonly');
+      const req = tx.objectStore('meta').get('total');
+      req.onsuccess = (): void => {
+        const row = req.result as { key: string; bytes: number } | undefined;
+        resolve(row?.bytes ?? 0);
+      };
+      req.onerror = (): void => resolve(0);
+    });
+  } finally {
+    db.close();
+  }
+}
 
 describe('post-cache — withdraw', () => {
   it('empties the text and keeps the entry; thread answers the withdrawn row', async () => {

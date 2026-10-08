@@ -61,8 +61,7 @@ export interface SubmitDeps {
   /** Called with the signed transaction and its id after a successful post,
    *  so the extension's post cache can hold the reader's own post from its
    *  submit, under the id and from the transaction the client built
-   *  (WEB_INTERFACE → The extension → "The post cache": "the reader's own post
-   *  at its submit, from the transaction the client built"). Only
+   *  (WEB_INTERFACE → The extension → "The post cache"). Only
    *  submitPostFlow calls it; every other flow leaves it unset. */
   onCachePost?: (info: { signedTx: UtxoTransaction; txId: string }) => void;
 }
