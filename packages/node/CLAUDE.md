@@ -43,8 +43,12 @@ the tip and the `PROOF_WINDOW_BLOCKS − 1` below it: one with no kept root is a
 exactly that height, its nodes loaded on first access (`SqliteAvlStorage.storeServedRootAtHeight`) and nothing of it
 kept; no proof path calls `rollback`; a label with no row alive at a listed height, or with two, is
 `InconsistentAvlNodeRowsError`, fail-stop under a route and under `rollback` alike (NODE_INTERFACE → AVL+ State Root →
-"A height of the proof window with no kept root is served from the store"). The node serves no client
-(NODE_INTERFACE → The node serves no client).
+"A height of the proof window with no kept root is served from the store"). **Every post row names the transaction
+that created it** (`dag_posts.tx_id`, written by the row's three writers), and the three post reads add that
+transaction's bytes under `tx=1` — a pending post's from the pool, a confirmed post's read out of its stored body by id
+through `types`' `utxoTxBytesIn`, one body in memory at a time; a confirmed row its block does not list, or a stored
+body that will not read, is fail-stop under the route (NODE_INTERFACE → Posts → "The creating transaction rides a post
+row"). The node serves no client (NODE_INTERFACE → The node serves no client).
 
 - **Owns:** `src/server.ts`, `src/routes/*`, `src/services/*`, `src/store/*`, `src/state/*` (AVL+).
 - **Does NOT own:** the state-transition rules (`@dagsocial/consensus` — the node hands them a tree view over its

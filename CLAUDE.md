@@ -61,7 +61,8 @@ Nine packages, in dependency order:
   extension** — the same client as the extension's own page, the key held by the extension's background,
   credits signed by hand and rep silently, the chain it reads checked by NiPoPoW proofs from the seed list's
   nodes, the reader's figures judged against everything the key holds — each ledger's range, read whole under the
-  state root — and every name it shows or sends to proven against that chain
+  state root — every name it shows or sends to proven against that chain, each post it shows bound to the transaction
+  that created it, and the posts it has checked kept in a local cache named for the chain
   (`WEB_INTERFACE → The extension`); each release carries its two zips beside the web zip.
 
 Three tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
@@ -70,8 +71,9 @@ Three tools live under `tools/` — in the workspace by the `tools/*` glob, so i
 - `@dagsocial/e2e` — the mesh suite: spawns a mesh of built nodes and asserts the protocol across them over
   HTTP; mines on demand, paces on block height. A client of the contracts, with none of its own.
 - `@dagsocial/nipopow-client` — the light client: verifies and compares NiPoPoW proofs from N≥2 nodes,
-  then proves what a key holds — each ledger's range, read whole — against the verified `stateRoot`. A command
-  line, and a library the web client's extension build imports for its tip, figures and names verifiers.
+  then proves what a key holds — each ledger's range, read whole — against the verified `stateRoot`, and checks a post
+  row against the transaction that created it. A command line, and a library the web client's extension build imports
+  for its tip, figures, names and posts verifiers.
 
 ## Design by Contract
 

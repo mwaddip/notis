@@ -45,7 +45,7 @@ chain the proof committed. Bytes in, verdict out, exit.
 
 **It answers twice: as a command line (`dist/index.js`, the package's `bin`) and as a library
 (`src/lib.ts` → `dist/lib.js`, the package's `exports`)** — `resolveTip`, `fetchListing`, `proveFigures`,
-`proveRange`, `proveName`, `verifierProfile` and their types, re-exports with no side effect at import. **The web
+`proveRange`, `proveName`, `checkPosts`, `verifierProfile` and their types, re-exports with no side effect at import. **The web
 client's extension build is the library's caller**: its tip verifier runs `resolveTip` in the page with
 the browser's `fetch` (`WEB_INTERFACE → The extension → "The verified tip"`), and its figures verifier
 runs `proveFigures` after every verified tip against the listing the rows rendered
@@ -127,6 +127,20 @@ the command line's text (`textLines`, `src/text.ts`, which runs nothing at impor
 `capped()` — each C0 control, DEL and C1 control as its `\u` escape, never raw, the text so shown cut at
 120 characters with `…`, never inside a surrogate pair or an escape — and nothing a status is decided on
 does; `--json` carries the node's data raw.
+
+**The posts.** `checkPosts(rows)` (`src/posts.ts`) is pure and synchronous and asks the node nothing: it binds each
+row a post read brought to the transaction the row carries under `tx=1`, in the order the check's meaning rests on —
+the transaction decodes and carries a post commit; `computeTxId` of it is the row's `txId` and `computePostId(txId, 0)`
+its `id`; the commit's `author`, `parentRefs`, `contentHash`, `type` and `protocolVersion` are the row's;
+`computeContentHash(content)` is the commit's, for a row with text; and the signature under the author's key verifies
+over the transaction id — a page's signatures as one `verifyEd25519Batch`, each row once through `verifyEd25519` only
+when the batch fails. **`bound`** carries the post id, the transaction's bytes, the author and the parent;
+**`unbound`** carries one reason of a closed set; a withdrawn row is **`nothing-to-bind`**; a row whose `tx` is `null`
+is **`unserved`**. Hex is lowercase and compared as the row carries it; a row of any shape ends in a status
+(`WEB_INTERFACE → The extension → "The post check"`). The command line's `post <id>` reads `GET /posts/:id?tx=1` and
+prints the verdict. Each `NodeTipResult` also carries **`genesisHash`** — `blockHash` of the first header of a verified
+node's proof, `null` otherwise — the name the extension's post cache is opened under
+(`WEB_INTERFACE → The extension → "The chain's name"`).
 
 - **Owns:** `src/*`, `test/*`, this package's `package.json` and configs.
 - **Does NOT own:** anything in `packages/`, `contracts/`, or `tools/e2e` (the acceptance case that

@@ -376,6 +376,31 @@ non-2xx's `ApiError` is), so no read loops on a malformed cursor. **A run ends**
 the clock is an option beside `prove`), which the tool reads as not served — the row reads *the node served no proof
 for …*, never no line.
 
+**The post check** (`WEB_INTERFACE → The extension → "The post check"`): the extension shows a post only when the
+transaction that created it binds it. With a posts verifier held — `src/extension/posts-verifier.ts`, over `checkPosts`
+of `@dagsocial/nipopow-client`, handed by `main.ts` in the extension build alone — the three post reads carry `tx=1`
+and **every row a read brings passes `ingestRows` before it enters state**, one `check` call a read: `bound` and
+`nothing-to-bind` rows enter, an `unbound` row is counted and an `unserved` one (`tx: null`) dropped uncounted. Each
+list — the feed, an author window, a thread — says what its standing reads withheld once at its head, in clay
+(`view/withheld-line.ts`); a thread whose subject is `unbound` shows that line and no row, one whose subject is
+`unserved` the muted *this node cannot serve this post yet.* **A withheld answer to the pending ledger's single post
+read decides nothing** — `reconcilePost`, `reconcileLike` and `reconcileWithdraw` take a `withheld` flag and keep the
+entry pending until its expiry height, never expired as on a 404. The web build is handed no verifier, sends no `tx`
+and shows every row the node serves.
+
+**The post cache** (`WEB_INTERFACE → The extension → "The post cache"`): `src/extension/post-cache.ts`, IndexedDB at the
+extension page's origin, the database `notis.posts.<chain>` — `chain` the tip run's (`TipRun.chain`, the reading
+node's `genesisHash`), the last name remembered in `localStorage` under `notis.posts.chain`. An entry holds the
+transaction's bytes, the row as the node last gave it, the author and the parent as the transaction states them, its
+last-seen time, its size and `own`; the running total is a record in a second store, written in the same transaction as
+every put, withdrawal and eviction. `POST_CACHE_BYTES` caps it: least recently seen evicted first, the reader's own
+never, the entry being put never. **Only `bound` rows enter** — from `offerBoundToCache` at each read, and the
+reader's own post at its submit, composed from the signed transaction and passed through the same check. **Every read
+still checks every row; the cache is read only when a thread's read from the node throws**, its rows written through
+`putThreadRows` beneath the pane's error line. A put is started and never awaited by a render; the module absorbs two
+failures — a write the browser aborts, and no IndexedDB — and rejects on anything else. `build-release.sh` refuses
+`notis.posts.` in the web bundle. Tests run the real adapter over `fake-indexeddb`.
+
 **The verified names** (`WEB_INTERFACE → The extension → "The verified names"`, `→ The identity display`, `→ The author
 window`, `→ The wallet window`): the extension proves every handle it shows, and every handle it sends to, through
 `proveName` of `@dagsocial/nipopow-client` — the lookup (`/usernames?owner=` for a label, `/usernames/:name` for a typed
