@@ -47,8 +47,14 @@
 //     verified tip's anchor (WEB_INTERFACE → The extension → "The verified
 //     names"), so the block runs a B of its own and requires what
 //     --verified-figures requires, and --s-key: 28 and 29 send to S's handle.
-//   20, 25 and 30 read the hosted web build, and read NOT RUN without --public
-//     and --web-dist.
+//   --verified-posts: P1·P2·P3·P4·P5·P6·P7·P8·P9·P10·P11·P12. The post check
+//     and the post cache (WEB_INTERFACE → The extension → "The post check",
+//     "The post cache", "The chain's name"). Requires --r-key, --node-dist,
+//     --miner, --scratch and --node-p2p (the block owns the posts relay and
+//     its own isolated D for P11). P12 reads the hosted web build and reads
+//     NOT RUN without --public / --web-dist.
+//   20, 25, 30 and P12 read the hosted web build, and read NOT RUN without
+//     --public and --web-dist.
 //   No --r-key and no --verified-tip: every step reads NOT RUN by name.
 //
 // Usage:
@@ -57,6 +63,7 @@
 //     [--verified-tip --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--verified-figures --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--verified-names --s-key <path> --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
+//     [--verified-posts --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--public <origin+base> --web-dist <dir>]
 
 import { spawn } from 'node:child_process';
@@ -71,7 +78,7 @@ import { matchPatternFor } from '../../extension/match-pattern.mjs';
 // Boolean flags — never consume the next argument. Without this the parser
 // below reads the following flag as the flag's value, and every arg after
 // `--verified-tip` shifts by one silently.
-const BOOLEAN_FLAGS = new Set(['verified-tip', 'verified-figures', 'verified-names']);
+const BOOLEAN_FLAGS = new Set(['verified-tip', 'verified-figures', 'verified-names', 'verified-posts']);
 const args = new Map();
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
@@ -115,6 +122,14 @@ const VERIFIED_FIGURES = args.get('verified-figures') === true;
 // to S's handle, the hosted web build. Absent, every step reads NOT RUN by
 // name.
 const VERIFIED_NAMES = args.get('verified-names') === true;
+// The verified-posts block — WEB_INTERFACE → The extension → "The post check",
+// "The post cache", "The chain's name". Steps P1 · P2 · P3 · P4 · P5 · P6 · P7
+// · P8 · P9 · P10 · P11 · P12: the honest reading on A, the five row-lie modes
+// and the thread-down mode read through the posts relay, each switched back to
+// A; the extension's own IndexedDB cache opened under A's chain's name, a
+// second one under D's; the hosted web build with no post check and no cache.
+// Absent, every step reads NOT RUN by name.
+const VERIFIED_POSTS = args.get('verified-posts') === true;
 // S's clear file — its public key is the recipient step 29 expects.
 const S_KEY = args.get('s-key') ?? null;
 const NODE_DIST = args.get('node-dist') ?? null;
@@ -149,6 +164,18 @@ const D_HTTP_PORT = 19795;
 const D_ADMIN_PORT = 19796;
 const D_P2P_PORT = 19797;
 const D_ORIGIN = `http://127.0.0.1:${D_HTTP_PORT}`;
+// The posts relay — the row-lie modes and the thread-down mode of P2–P6, P9,
+// P10 and P12, on its own port. Clear of the lying relay (19780), the figures
+// relay (19785), D (19795/96/97) and C's isolated p2p (19793).
+const POSTS_RELAY_PORT = 19810;
+const POSTS_RELAY_ORIGIN = `http://127.0.0.1:${POSTS_RELAY_PORT}`;
+// The posts block's own D — a fresh isolated chain of its own (D_* ports above
+// serve the tip block, cleaned up by the end of that block's run). Clear of
+// every port the other blocks own.
+const DP_HTTP_PORT = 19820;
+const DP_ADMIN_PORT = 19821;
+const DP_P2P_PORT = 19822;
+const DP_ORIGIN = `http://127.0.0.1:${DP_HTTP_PORT}`;
 // The devnet faucet's public key — devnet-only and public by design: the key
 // steps 12 and 21 send to, the owner of the real box the figures relay lists
 // under R's key in step 22b, and the owner the relay names for S's handle in
@@ -201,7 +228,7 @@ if (VERIFIED_TIP) {
 // and not this one's, so it is reached through the tool's own link to it,
 // under --verified-tip alone.
 let forkTools = null;
-if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES) {
+if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || VERIFIED_POSTS) {
   try {
     const clientUrl = import.meta.resolve('@dagsocial/nipopow-client');
     const { DEFAULT_M, DEFAULT_K, resolveTip, verifierProfile } = await import(clientUrl);
@@ -288,6 +315,37 @@ if (VERIFIED_NAMES) {
   }
 }
 
+// --verified-posts requires --r-key AND the lifecycle args — the block owns
+// its own node D for P11 (`another chain`) and the posts relay for P2–P6, P9,
+// P10 and P12, and reads node A, R's post ids and the extension page the
+// previous blocks loaded identity into. The pattern mirrors --verified-names.
+if (VERIFIED_POSTS) {
+  if (!R_KEY) {
+    console.error('--verified-posts requires --r-key <path> — R\'s identity is what P1 reads a root and reply under');
+    process.exit(2);
+  }
+  if (!NODE_DIST || !existsSync(NODE_DIST)) {
+    console.error('--verified-posts requires --node-dist <packages/node/dist/index.js> — spawns the isolated node D for P11');
+    process.exit(2);
+  }
+  if (!MINER_SCRIPT || !existsSync(MINER_SCRIPT)) {
+    console.error('--verified-posts requires --miner <packages/node/scripts/miner.mjs> — mines D past m + k + 4 so its proof verifies');
+    process.exit(2);
+  }
+  if (!SCRATCH) {
+    console.error('--verified-posts requires --scratch <dir> — the posts block writes d-posts.db there');
+    process.exit(2);
+  }
+  if (!existsSync(SCRATCH)) {
+    console.error(`--scratch not found: ${SCRATCH}`);
+    process.exit(2);
+  }
+  if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
+    console.error('--verified-posts requires --node-p2p <multiaddr> — A\'s p2p multiaddr (passed for symmetry; D itself bootstraps empty)');
+    process.exit(2);
+  }
+}
+
 // --public and --web-dist come together — pass both or neither. Without them
 // the twelve run as today and steps 13–16 are reported NOT RUN by name
 // (WEB_INTERFACE → The extension → "Links into the extension").
@@ -353,7 +411,7 @@ if (R_KEY) {
 // node, and a green step would be a lie about the check.
 // The bundle's `notis-nodes` must be exactly [A, B] — the harness owns B, and
 // index 0 (the reading node's default) is A the operator's.
-if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES) {
+if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || VERIFIED_POSTS) {
   const networkMetaMatch = shellHtml.match(/<meta[^>]+name="notis-network"[^>]+content="([^"]*)"[^>]*>/);
   const shellNetwork = networkMetaMatch ? networkMetaMatch[1] : null;
   if (shellNetwork !== 'devnet') {
@@ -4590,6 +4648,969 @@ async function runNamesStep30(rName) {
 }
 
 // ---------------------------------------------------------------------------
+// The verified-posts block — steps P1 · P2 · P3 · P4 · P5 · P6 · P7 · P8 · P9
+// · P10 · P11 · P12 (WEB_INTERFACE → The extension → "The post check",
+// "The post cache", "The chain's name"). Six lie modes over the three post
+// reads (`GET /posts`, `/posts/:id`, `/posts/:id/thread`) through the posts
+// relay — every `/nipopow/proof/` answer passed verbatim so the corner stays
+// green — plus two cache steps (P8 opens notis.posts.<A's block 1>, P11 opens
+// a second database under D's block 1) and the hosted web build (P12).
+// ---------------------------------------------------------------------------
+
+const VERIFIED_POSTS_STEPS = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12'];
+// The row-lie modes P2–P6 touch — those that edit a specific row of a specific
+// post (text, author, id-swap, tx-null, tx-drop) are keyed on `relay.targetId`.
+const POSTS_ROW_LIE_MODES = ['text', 'author', 'id-swap', 'tx-null', 'tx-drop'];
+
+function markVerifiedPostsNotRun(reason) {
+  for (const s of VERIFIED_POSTS_STEPS) record(s, 'NOT RUN', reason);
+}
+
+// The posts relay — WEB_INTERFACE → The extension → "The post check". Every
+// GET is proxied to `upstream` with `access-control-allow-origin: *`, as the
+// figures relay is; every `/nipopow/proof/` answer passes verbatim in every
+// mode so the extension's corner stays `verified across N nodes` while the
+// row reads lie. The six modes:
+//   honest        — none;
+//   text          — the row of `targetId` returns with its `content` replaced
+//                   by `other-content-<id>`; the row's `contentHash` is left
+//                   as served, so the post check reads `unbound` ('content');
+//   author        — the row of `targetId` returns with its `author` replaced
+//                   by a 64-hex key not R's; the commit's author no longer
+//                   matches the row's, so the post check reads `unbound`
+//                   ('commit') — or 'unsigned' once the batch verify fails;
+//   id-swap       — a `GET /posts/:id` of `swapWithId` is answered with the
+//                   row of `targetId` served under id `swapWithId`: the post
+//                   check reads `unbound` ('post-id'). Also, every /posts and
+//                   /posts/:id/thread answer carrying a row of `targetId`
+//                   returns it with its `id` renamed to `swapWithId`;
+//   tx-null       — the row of `targetId` returns with `tx: null`: the post
+//                   check reads `unserved` (dropped, no row, no line);
+//   tx-drop       — the row of `targetId` returns with the `tx` key deleted:
+//                   the post check reads `unbound` ('no-tx');
+//   thread-down   — every `GET /posts/:id/thread` answers 503 and every other
+//                   read passes verbatim.
+// `relay.edits` counts each mode's edited answers; `relay.log` holds every
+// request the relay served, its path, status, mode and arrival time.
+async function startPostsRelay(upstream, port) {
+  const relay = {
+    server: null,
+    origin: `http://127.0.0.1:${port}`,
+    mode: 'honest',
+    targetId: null,
+    swapWithId: null,
+    // The author key the `author` mode substitutes — a 64-hex key not R's,
+    // and not any key the chain holds (so the check cannot resolve a signed
+    // transaction under it): a per-run random key.
+    fakeAuthor: randomBytes(32).toString('hex'),
+    // The content the `text` mode writes in place of the row's content —
+    // short enough to survive the content length rule as a valid shape, but
+    // not the one `contentHash` was computed over.
+    fakeText: 'relay-forged-content-' + randomBytes(4).toString('hex'),
+    edits: {
+      'text': 0, 'author': 0, 'id-swap': 0, 'tx-null': 0, 'tx-drop': 0, 'thread-down': 0,
+    },
+    log: [],
+  };
+
+  const editRow = (row) => {
+    if (row === null || typeof row !== 'object') return { changed: false, row };
+    if (typeof row.id !== 'string' || row.id.toLowerCase() !== (relay.targetId ?? '').toLowerCase()) {
+      return { changed: false, row };
+    }
+    const out = { ...row };
+    switch (relay.mode) {
+      case 'text':
+        out.content = relay.fakeText;
+        break;
+      case 'author':
+        out.author = relay.fakeAuthor;
+        break;
+      case 'id-swap':
+        if (relay.swapWithId !== null) out.id = relay.swapWithId;
+        else return { changed: false, row };
+        break;
+      case 'tx-null':
+        out.tx = null;
+        break;
+      case 'tx-drop':
+        delete out.tx;
+        break;
+      default:
+        return { changed: false, row };
+    }
+    return { changed: true, row: out };
+  };
+
+  // Edit every row of `targetId` reachable in a JSON answer in place — the
+  // feed's `posts`/`pending`, a thread's `post`/`ancestors`/`descendants`
+  // /`pending`. Returns the count of rows edited.
+  const editAnswer = (value) => {
+    let count = 0;
+    const walk = (v, assign) => {
+      if (Array.isArray(v)) {
+        for (let i = 0; i < v.length; i++) {
+          const { changed, row } = editRow(v[i]);
+          if (changed) { v[i] = row; count += 1; } else walk(v[i], null);
+        }
+        return;
+      }
+      if (v === null || typeof v !== 'object') return;
+      // The one-shot `GET /posts/:id` answer is the row itself at the top
+      // level — walk the keys as nested objects, and edit top level via
+      // `assign` passed in.
+      for (const k of Object.keys(v)) walk(v[k], null);
+    };
+    // Top-level: a row itself (GET /posts/:id), or a container of rows.
+    const top = editRow(value);
+    if (top.changed) {
+      Object.assign(value, top.row);
+      // Remove keys the edit dropped (e.g. tx-drop deletes `tx`).
+      for (const k of Object.keys(value)) if (!(k in top.row)) delete value[k];
+      count += 1;
+      return count;
+    }
+    walk(value, null);
+    return count;
+  };
+
+  relay.server = createServer(async (req, res) => {
+    const at = Date.now();
+    const method = req.method ?? 'GET';
+    const url = req.url ?? '/';
+    try {
+      if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+        res.writeHead(405, { 'access-control-allow-origin': '*' });
+        res.end('posts relay serves reads only');
+        return;
+      }
+      if (method === 'OPTIONS') {
+        res.writeHead(204, {
+          'access-control-allow-origin': '*',
+          'access-control-allow-methods': 'GET, HEAD, OPTIONS',
+          'access-control-allow-headers': '*',
+        });
+        res.end();
+        return;
+      }
+      const mode = relay.mode;
+      const target = new URL(url, upstream);
+      const path = target.pathname;
+      const isThread = /^\/posts\/[0-9a-f]{64}\/thread$/i.test(path);
+      const isOneRead = /^\/posts\/[0-9a-f]{64}$/i.test(path);
+      const isListRead = path === '/posts';
+
+      // thread-down short-circuits every /posts/:id/thread with 503, every
+      // other read passes verbatim through the proxy below.
+      if (mode === 'thread-down' && isThread) {
+        relay.edits['thread-down'] += 1;
+        relay.log.push({ at, doneAt: Date.now(), method, path: url, status: 503, mode, edits: 0 });
+        res.writeHead(503, {
+          'access-control-allow-origin': '*',
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'no-store',
+        });
+        res.end(JSON.stringify({ error: 'thread read refused by the posts relay' }));
+        return;
+      }
+
+      // id-swap, in its /posts/:id arm: a GET of swapWithId answers with
+      // targetId's row, served under id swapWithId. The targetId's own GET
+      // passes verbatim (if targeted it would feed-swap doubly). Done here
+      // because the upstream path we fetch is targetId's, not swapWithId's.
+      if (mode === 'id-swap' && isOneRead
+        && relay.targetId !== null && relay.swapWithId !== null
+        && path.toLowerCase().endsWith(`/${relay.swapWithId.toLowerCase()}`)) {
+        const upstreamRes = await fetch(`${upstream}/posts/${relay.targetId}?${target.searchParams.toString()}`, { method });
+        const buf = Buffer.from(await upstreamRes.arrayBuffer());
+        let body = buf;
+        if (upstreamRes.status === 200) {
+          try {
+            const row = JSON.parse(buf.toString('utf8'));
+            if (row && typeof row === 'object' && typeof row.id === 'string') {
+              row.id = relay.swapWithId;
+              body = Buffer.from(JSON.stringify(row));
+              relay.edits['id-swap'] += 1;
+            }
+          } catch { /* leave body as-is */ }
+        }
+        relay.log.push({ at, doneAt: Date.now(), method, path: url, status: upstreamRes.status, mode, edits: 1 });
+        res.writeHead(upstreamRes.status, {
+          'access-control-allow-origin': '*',
+          'content-type': upstreamRes.headers.get('content-type') ?? 'application/json',
+          'cache-control': 'no-store',
+        });
+        res.end(body);
+        return;
+      }
+
+      const upstreamRes = await fetch(upstream + url, { method });
+      const buf = Buffer.from(await upstreamRes.arrayBuffer());
+      let body = buf;
+      let edits = 0;
+      if (upstreamRes.status === 200
+        && (isListRead || isOneRead || isThread)
+        && POSTS_ROW_LIE_MODES.includes(mode)
+        && relay.targetId !== null) {
+        try {
+          const value = JSON.parse(buf.toString('utf8'));
+          edits = editAnswer(value);
+          if (edits > 0) {
+            body = Buffer.from(JSON.stringify(value));
+            relay.edits[mode] += edits;
+          }
+        } catch { /* leave body as-is */ }
+      }
+      relay.log.push({ at, doneAt: Date.now(), method, path: url, status: upstreamRes.status, mode, edits });
+      res.writeHead(upstreamRes.status, {
+        'access-control-allow-origin': '*',
+        'content-type': upstreamRes.headers.get('content-type') ?? 'application/octet-stream',
+        'cache-control': 'no-store',
+      });
+      res.end(body);
+    } catch (e) {
+      res.writeHead(502, { 'access-control-allow-origin': '*' });
+      res.end(String(e));
+    }
+  });
+  await new Promise((res, rej) => {
+    relay.server.on('error', rej);
+    relay.server.listen(port, '127.0.0.1', res);
+  });
+  return relay;
+}
+
+// R's first ROOT post id on A (the author's own card the P1 feed shows), and
+// the first direct REPLY to it. P1 asserts the feed shows the root; the thread
+// shows the root and this reply. If R has no reply, the harness itself posts
+// one through the composer so the fixture holds — the recorded post lands
+// under `silent` policy, no prompt (steps 9/24's shape; the arm records what
+// it did).
+async function ensureRootAndReply(cx) {
+  const roots = await fetch(`${NODE}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=1`)
+    .then((r) => r.json()).catch(() => null);
+  const root = Array.isArray(roots?.posts) && roots.posts.length > 0 ? roots.posts[0] : null;
+  if (root === null || typeof root.id !== 'string') {
+    return { rootId: null, replyId: null, postedReply: false, detail: 'A lists no root post of R' };
+  }
+  const rootId = root.id;
+  const thread = await fetch(`${NODE}/posts/${rootId}/thread?limit=50`).then((r) => r.json()).catch(() => null);
+  const existingReply = Array.isArray(thread?.descendants)
+    ? thread.descendants.find((d) => typeof d.id === 'string' && d.kind !== 'withdrawn')
+    : null;
+  if (existingReply !== null && existingReply !== undefined) {
+    return { rootId, replyId: existingReply.id, postedReply: false, detail: `A lists reply ${existingReply.id.slice(0, 8)}… under root ${rootId.slice(0, 8)}…` };
+  }
+  // Post a reply through the composer, as step 24 posts a root. Policy was
+  // set silent in step 9; no prompt opens.
+  console.log(`[vp] no reply under root ${rootId.slice(0, 8)}…; posting one through the composer`);
+  const CONTENT = 'proof-vp-reply-' + Date.now();
+  // Open the thread, then its composer under the root.
+  await cx.eval(`document.querySelector('#feed .card[data-post-id="${rootId}"] button.strip').click()`, true);
+  await cx.waitFor(`!!document.querySelector('#panes .region-body .card[data-post-id="${rootId}"] button[data-composer-open="${rootId}"]')`,
+    'the reply button on R\'s root', 30000);
+  await cx.eval(`document.querySelector('#panes .region-body .card[data-post-id="${rootId}"] button[data-composer-open="${rootId}"]').click()`, true);
+  await cx.waitFor(`!!document.querySelector('.composer textarea')`, 'the composer for the reply', 15000);
+  await cx.eval(`(() => {
+    const ta = document.querySelector('.composer textarea');
+    ta.value = ${JSON.stringify(CONTENT)};
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`, true);
+  await cx.waitFor(`!document.querySelector('.composer .btn-primary').disabled`, 'composer enabled for reply', 15000);
+  await cx.eval(`document.querySelector('.composer .btn-primary').click()`, true);
+  // Policy silent — no prompt expected.
+  await sleep(2000);
+  // Wait for the reply to land on A — up to 5 min at the paced miner.
+  const t0 = Date.now();
+  let replyId = null;
+  while (Date.now() - t0 < 5 * 60 * 1000) {
+    const tr = await fetch(`${NODE}/posts/${rootId}/thread?limit=50`).then((r) => r.json()).catch(() => null);
+    const rep = Array.isArray(tr?.descendants)
+      ? tr.descendants.find((d) => typeof d.id === 'string' && d.kind !== 'withdrawn')
+      : null;
+    if (rep) { replyId = rep.id; break; }
+    await sleep(2000);
+  }
+  return { rootId, replyId, postedReply: replyId !== null,
+    detail: replyId !== null
+      ? `posted a reply ${replyId.slice(0, 8)}… under ${rootId.slice(0, 8)}…`
+      : `the posted reply never landed within 5 min` };
+}
+
+// A /blocks/current-equivalent read of block 1 on `origin` — the hash the
+// post cache opens under (WEB_INTERFACE → The extension → "The chain's
+// name": the first header of the verified proof). The verifier reads block 1
+// from the proof itself; this harness reads it from the node, since the
+// relay serves the proof verbatim and A/D's own answer is the chain the
+// cache opens under.
+async function block1HashOn(origin) {
+  const r = await fetch(`${origin}/blocks/1`);
+  if (!r.ok) return null;
+  const j = await r.json();
+  // NODE_INTERFACE → Blocks: /blocks/:height answers an ordering block,
+  // whose header carries a blockHash field (the computed id).
+  return j?.header?.blockHash ?? j?.blockHash ?? null;
+}
+
+// The extension page's IndexedDB listing — database names visible at the
+// page's origin. `indexedDB.databases()` is widely available and the simplest
+// shape to read; a browser without it (none this harness supports) would
+// return `null` and the step would record it. Returns an array of
+// `{ name, version }`.
+async function listIndexedDBDatabases(cx) {
+  return cx.eval(`(async () => {
+    if (typeof indexedDB === 'undefined' || typeof indexedDB.databases !== 'function') return null;
+    const dbs = await indexedDB.databases();
+    return dbs.map((d) => ({ name: d.name ?? null, version: d.version ?? null }));
+  })()`);
+}
+
+// The ids held in `notis.posts.<chain>`'s entries store — one `cursor()` over
+// the store, each key kept. The App never calls this; it is a read of the
+// cache's byte-level state.
+async function readCacheIds(cx, dbName) {
+  return cx.eval(`(async () => {
+    if (typeof indexedDB === 'undefined') return null;
+    return new Promise((resolve) => {
+      let req;
+      try { req = indexedDB.open(${JSON.stringify(dbName)}); } catch { resolve(null); return; }
+      req.onerror = () => resolve(null);
+      req.onsuccess = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('entries')) { db.close(); resolve([]); return; }
+        const out = [];
+        let tx;
+        try { tx = db.transaction('entries', 'readonly'); } catch { db.close(); resolve(null); return; }
+        const cur = tx.objectStore('entries').openCursor();
+        cur.onsuccess = () => {
+          const c = cur.result;
+          if (c) { out.push(String(c.key)); c.continue(); return; }
+        };
+        tx.oncomplete = () => { db.close(); resolve(out); };
+        tx.onerror = () => { db.close(); resolve(null); };
+      };
+    });
+  })()`);
+}
+
+// Count the page's `GET /posts…` requests since startIdx, and the subset that
+// carries `tx=1`. The brief's P1 assertion is that every post read carries
+// `tx=1` — the row-check binding needs the transaction bytes, so the client
+// asks for them (WEB_INTERFACE → The extension → "The post check").
+function postRequestsSince(events, startIdx) {
+  const all = [];
+  for (let i = startIdx; i < events.length; i++) {
+    const ev = events[i];
+    if (ev.method !== 'Network.requestWillBeSent') continue;
+    const url = ev.params?.request?.url ?? '';
+    let u;
+    try { u = new URL(url); } catch { continue; }
+    if (!/^\/posts(\/|$)/.test(u.pathname) && u.pathname !== '/posts') continue;
+    all.push({ url, path: u.pathname, tx: u.searchParams.get('tx'), index: i });
+  }
+  return all;
+}
+
+// Read the feed's rendered shape — the ids of cards drawn, and the withheld
+// line's presence/text/class.
+async function readFeedShape(cx) {
+  return cx.eval(`(() => {
+    const feed = document.querySelector('#feed');
+    if (!feed) return { present: false };
+    const cards = [...feed.querySelectorAll('.card[data-post-id]')].map((c) => c.dataset.postId);
+    const wl = feed.querySelector('.hint.clay.withheld');
+    const wlText = wl ? (wl.textContent ?? '').trim() : null;
+    return { present: true, cards, withheldLineText: wlText, withheldLineClay: wl !== null };
+  })()`);
+}
+
+// Read the thread pane's rendered shape — the region whose body carries the
+// card of `rootId`, its cards' ids, its withheld line, its unserved line, and
+// its error line (the `.error` div panes.ts draws for `t.error`).
+async function readThreadPaneShape(cx, rootId) {
+  return cx.eval(`(() => {
+    const regions = [...document.querySelectorAll('#panes .region')];
+    const region = regions.find((r) => r.querySelector('.region-body .card[data-post-id="${rootId}"]'))
+      ?? regions.find((r) => (r.querySelector('.bar.focused .bar-label .excerpt')?.textContent ?? '').length > 0)
+      ?? null;
+    if (region === null) return { present: false };
+    const body = region.querySelector('.region-body');
+    const cards = [...body.querySelectorAll('.card[data-post-id]')].map((c) => ({
+      id: c.dataset.postId,
+      content: (c.querySelector('.card-body')?.textContent ?? '').trim(),
+    }));
+    const wl = body.querySelector('.hint.clay.withheld');
+    const us = body.querySelector('.hint.unserved');
+    const er = body.querySelector('.error');
+    return {
+      present: true,
+      cards,
+      withheldLineText: wl ? (wl.textContent ?? '').trim() : null,
+      withheldLineClay: wl !== null,
+      unservedLineText: us ? (us.textContent ?? '').trim() : null,
+      errorLineText: er ? (er.textContent ?? '').trim() : null,
+    };
+  })()`);
+}
+
+// Open a thread by its root id — click the strip on the feed's card and wait
+// for the pane. Where the feed holds no such card (a mode that withheld the
+// root), use the standalone navigation path by setting location.hash — the
+// workspace restores a thread by id. But the brief's thread arms are opened
+// after the feed read, so the strip is the primary path. When the strip is
+// absent, we fall back to synthesizing a thread-opening message.
+async function openThread(cx, rootId) {
+  // Prefer the strip of the feed card; else navigate via the hash the
+  // standalone thread uses, since the App parses the arrangement from the hash.
+  const clicked = await cx.eval(`(() => {
+    const strip = document.querySelector('#feed .card[data-post-id="${rootId}"] button.strip');
+    if (!strip) return false;
+    strip.click();
+    return true;
+  })()`, true);
+  if (!clicked) {
+    // Set the hash to the thread id — the App's hash parser places it in a column.
+    await cx.eval(`location.hash = '#${rootId}'`, true);
+  }
+  // Wait for the thread's region to appear, or its error line, or its
+  // withheld/unserved line.
+  await cx.waitFor(`(() => {
+    const regions = [...document.querySelectorAll('#panes .region')];
+    return regions.some((r) => {
+      const b = r.querySelector('.region-body');
+      if (!b) return false;
+      return !!b.querySelector('.card[data-post-id="${rootId}"]')
+        || !!b.querySelector('.hint.clay.withheld')
+        || !!b.querySelector('.hint.unserved')
+        || !!b.querySelector('.error');
+    });
+  })()`, 'the thread pane for ' + rootId.slice(0, 8), 30000);
+}
+
+// Press the pane's ↻ for a thread whose root card is drawn — the bar's
+// `aria-label="refresh replies to this thread"` ctl button
+// (packages/web/src/view/panes.ts:146). The press re-reads /posts/:id/thread
+// and re-renders the body.
+async function refreshThreadPane(cx, rootId) {
+  await cx.eval(`(() => {
+    const regions = [...document.querySelectorAll('#panes .region')];
+    const region = regions.find((r) => r.querySelector('.region-body .card[data-post-id="${rootId}"]'))
+      ?? regions.find((r) => !!r.querySelector('.region-body .hint.clay.withheld, .region-body .hint.unserved, .region-body .error'));
+    if (!region) return false;
+    const btn = region.querySelector('[aria-label="refresh replies to this thread"]');
+    if (!btn) return false;
+    btn.click();
+    return true;
+  })()`, true);
+}
+
+// Set the node row to `origin`, then wait for either the feed to re-render
+// or for a settle — a node change re-reads every open surface from scratch
+// (WEB_INTERFACE → The settings window), so the feed's cards are replaced.
+async function switchNodeAndWaitForFeed(cx, origin, description, ms = 60000) {
+  const changeIdx = cx.events.length;
+  const applied = await setNodeViaUi(cx, origin);
+  const stored = await readPrefsNode(cx);
+  // Wait for the feed to settle — a card drawn, or the withheld line, or an
+  // empty state.
+  await cx.waitFor(`(() => {
+    const feed = document.querySelector('#feed');
+    return !!feed && (!!feed.querySelector('.card[data-post-id]') || !!feed.querySelector('.hint.clay.withheld') || !!feed.querySelector('.loading'));
+  })()`, description + ' (feed settled)', ms).catch(() => {});
+  return { applied, stored, changeIdx };
+}
+
+// Bring up the posts-block's own D — isolated, miner role, past m + k + 4 so
+// its tip proof verifies. Returns its block-1 hash once mined and settled.
+async function bringUpPostsD() {
+  const dDbPath = join(SCRATCH, 'd-posts.db');
+  for (const suffix of ['', '-shm', '-wal']) {
+    try { rmSync(dDbPath + suffix, { force: true }); } catch {}
+  }
+  const dSecret = randomBytes(32).toString('hex');
+  console.log(`[vp] spawning posts-block D at ${DP_ORIGIN} (p2p=${DP_P2P_PORT}, isolated)`);
+  spawnDaemon('d-posts', NODE_DIST, {
+    NETWORK_TYPE: 'devnet',
+    NODE_ROLE: 'miner',
+    PORT: String(DP_HTTP_PORT),
+    ADMIN_PORT: String(DP_ADMIN_PORT),
+    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${DP_P2P_PORT}`,
+    BOOTSTRAP_PEERS: '',
+    DB_PATH: dDbPath,
+    MINING_SECRET: dSecret,
+  });
+  const up = await waitForHttpUp(DP_ORIGIN, 30000);
+  if (!up) return { ok: false, reason: 'posts-block D did not come up' };
+  const dPast = TIP_M + TIP_K + 4;
+  spawnDaemon('d-posts-miner', MINER_SCRIPT, {
+    NODE_URL: DP_ORIGIN,
+    MINING_SECRET: dSecret,
+    MINER_PCT: '100',
+  });
+  const reached = await waitForHeight(DP_ORIGIN, dPast + 1, 10 * 60 * 1000);
+  await stopChild('d-posts-miner');
+  await sleep(1500);
+  if (reached === null) return { ok: false, reason: `D never reached ${dPast + 1} within 10 min` };
+  const h1 = await block1HashOn(DP_ORIGIN);
+  return { ok: true, height: await currentHeight(DP_ORIGIN), block1Hash: h1 };
+}
+
+async function verifiedPostsSteps(cx, targetId = 'unknown') {
+  const alive = await (async () => {
+    const t = new Promise((_, rej) => setTimeout(() => rej(new Error('liveness timeout')), 3000));
+    try { return (await Promise.race([cx.eval(`1+1`), t])) === 2; } catch { return false; }
+  })();
+  if (!alive) {
+    const reason = `the verified-posts block's session is not live: ${targetId}`;
+    for (const s of VERIFIED_POSTS_STEPS) record(s, false, reason);
+    return;
+  }
+
+  const aUp = await waitForHttpUp(NODE, 15000);
+  if (!aUp) {
+    markVerifiedPostsNotRun(`node A did not answer /blocks/current at ${NODE}`);
+    return;
+  }
+
+  // A's block 1 hash — the chain's name the extension's post cache opens
+  // under (WEB_INTERFACE → The extension → "The chain's name"). Needed for
+  // P8's database name assertion.
+  const aBlock1 = await block1HashOn(NODE);
+  if (typeof aBlock1 !== 'string' || !/^[0-9a-f]{64}$/i.test(aBlock1)) {
+    markVerifiedPostsNotRun(`could not read a 64-hex blockHash for A's block 1 (/blocks/1: ${JSON.stringify(aBlock1)})`);
+    return;
+  }
+  const aDbName = 'notis.posts.' + aBlock1.toLowerCase();
+  console.log(`[vp] A block 1 hash=${aBlock1.slice(0, 12)}…, cache db=${aDbName}`);
+
+  // Make sure the feed renders at least one of R's cards. The run starts
+  // after the names block, which may have left the pane open on an author
+  // window or scrolled off the feed; a reload returns the first column to
+  // the feed. The App also runs its tip verifier on load, so the corner is
+  // reset here too.
+  await cx.call('Page.reload');
+  await cx.waitFor(`!!document.querySelector('#feed .card[data-post-id]')`, 'the feed on reload', 60000);
+  const verifiedPre = await pressAndReadVerdict(cx, { atLeast: 2, ms: 60000, quietMs: 2000 }).catch(() => null);
+  const verifiedOk = verifiedPre !== null && verifiedPre.reading.ledClass === 'led fresh'
+    && /^verified across \d+ nodes · tip \d+$/.test(verifiedPre.reading.title ?? '');
+  if (!verifiedOk) {
+    // Without a verified tip there is no anchor and the post check never runs
+    // — the posts verifier is handed in the extension build, but it checks
+    // nothing without a chain to bind under. Skip and name it.
+    const title = verifiedPre?.reading?.title ?? null;
+    markVerifiedPostsNotRun(`A was not verified (title=${JSON.stringify(title)}) — the post check needs a verified chain to run under`);
+    return;
+  }
+
+  // R's root and the first reply under it — the two the P1 thread assertion
+  // reads. Posts one where the chain has none.
+  const fixture = await ensureRootAndReply(cx);
+  if (fixture.rootId === null || fixture.replyId === null) {
+    markVerifiedPostsNotRun(`fixture missing: ${fixture.detail}`);
+    return;
+  }
+  const rootId = fixture.rootId;
+  const replyId = fixture.replyId;
+  console.log(`[vp] fixture: root=${rootId.slice(0, 8)}…, reply=${replyId.slice(0, 8)}… (${fixture.detail})`);
+
+  // Pick a second root of R for id-swap's `swapWithId` — P3's assertion is
+  // that opening the thread of the ALTERED post reads the withheld line, so
+  // a swap of root X under root Y lets the harness open Y's thread (which,
+  // for the honest row of Y, is a thread the chain holds; the altered row
+  // of X is served under Y's id — a lie the post check reads `unbound`
+  // ('post-id')). A simpler choice: swap with the reply's id — opening the
+  // thread of the ROOT asserts the feed row carries the altered id and the
+  // withheld line reads at the feed's head. The swap target is a row the
+  // chain holds; the swap writes targetId's row under swapWithId.
+  const swapWithId = replyId;
+
+  // Posts relay up, A still the reading node.
+  let relay;
+  try {
+    relay = await startPostsRelay(NODE.replace(/\/+$/, ''), POSTS_RELAY_PORT);
+  } catch (e) {
+    markVerifiedPostsNotRun(`the posts relay did not start on ${POSTS_RELAY_ORIGIN}: ${String(e)}`);
+    return;
+  }
+  relay.targetId = rootId;
+  relay.swapWithId = swapWithId;
+  console.log(`[vp] posts relay up: ${relay.origin} → ${NODE}, target=${rootId.slice(0, 8)}…, swapWith=${swapWithId.slice(0, 8)}…`);
+
+  try {
+    // ---- P1 — bound, reading A. The feed holds R's root; the thread shows
+    // the root and the reply; no withheld line anywhere; every GET /posts…
+    // request the page made carries tx=1.
+    try {
+      // Blank the node row — the reader is on A (or the relay, from a prior
+      // interrupted run); blanking returns to A and triggers a verified
+      // reading. Record from before the blank so every post read in the
+      // span is counted.
+      const p1Idx = cx.events.length;
+      await blankNodeAndAwaitVerified(cx);
+      await cx.waitFor(`!!document.querySelector('#feed .card[data-post-id="${rootId}"]')`,
+        'P1 feed shows R\'s root', 60000);
+      await openThread(cx, rootId);
+      const feedP1 = await readFeedShape(cx);
+      const paneP1 = await readThreadPaneShape(cx, rootId);
+      const postReqs = postRequestsSince(cx.events, p1Idx);
+      const tx1 = postReqs.filter((r) => r.tx === '1');
+      const other = postReqs.filter((r) => r.tx !== '1');
+      const feedHasRoot = feedP1.cards?.includes(rootId) === true;
+      const paneHasBoth = paneP1.cards?.some((c) => c.id === rootId) && paneP1.cards?.some((c) => c.id === replyId);
+      const noWithheld = feedP1.withheldLineText === null && paneP1.withheldLineText === null;
+      const ok = feedHasRoot && paneHasBoth && noWithheld && other.length === 0 && postReqs.length > 0;
+      record('P1', ok,
+        `feed: ${JSON.stringify(feedP1)}; thread pane: ${JSON.stringify(paneP1)}; ` +
+        `/posts requests=${postReqs.length} (tx=1 ×${tx1.length}, other ×${other.length}: ${JSON.stringify(other.map((r) => `${r.path}?tx=${r.tx}`))})`);
+    } catch (e) {
+      record('P1', false, `error: ${String(e)}`);
+    }
+
+    // Row-lie arms: each sets the relay's mode, switches the reading node
+    // to the relay, reads the feed and opens the altered post's thread, and
+    // asserts the brief's shape; then back to A — P7 is the fold of every
+    // arm's back-to-A reading.
+    const rowArms = [
+      {
+        step: 'P2', mode: 'text',
+        expectRootInFeed: false,
+        expectFeedLine: `1 post withheld — it does not match its signature`,
+        expectFeedClay: true,
+        // The thread "of the altered post" is the root's thread — the
+        // altered row is served under its own id in text/author/tx-null/
+        // tx-drop modes.
+        openId: rootId,
+        expectPaneCards: [],
+        expectPaneLine: `1 post withheld — it does not match its signature`,
+        expectPaneClay: true,
+      },
+      {
+        step: 'P3', mode: 'author',
+        expectRootInFeed: false,
+        expectFeedLine: `1 post withheld — it does not match its signature`,
+        expectFeedClay: true,
+        openId: rootId,
+        expectPaneCards: [],
+        expectPaneLine: `1 post withheld — it does not match its signature`,
+        expectPaneClay: true,
+      },
+      {
+        step: 'P4', mode: 'id-swap',
+        expectRootInFeed: false,
+        expectFeedLine: `1 post withheld — it does not match its signature`,
+        expectFeedClay: true,
+        // The altered post is the reply's id (where the relay served
+        // targetId's row under swapWithId). The feed shows roots only, so
+        // the reply itself does not appear there — the swapped row sits
+        // where the root used to sit, now reading swapWithId. Opening the
+        // thread of the altered post reads /posts/<swapWithId>/thread,
+        // which the relay passes verbatim: no alteration there, but the
+        // altered-post `/posts/<swapWithId>` is the lie. We open the swap's
+        // id to assert the withheld line.
+        openId: swapWithId,
+        expectPaneCards: [],
+        expectPaneLine: `1 post withheld — it does not match its signature`,
+        expectPaneClay: true,
+      },
+      {
+        step: 'P5', mode: 'tx-null',
+        expectRootInFeed: false,
+        expectFeedLine: null,
+        expectFeedClay: false,
+        openId: rootId,
+        expectPaneCards: [],
+        expectPaneLine: null,
+        expectPaneUnserved: `this node cannot serve this post yet.`,
+      },
+      {
+        step: 'P6', mode: 'tx-drop',
+        expectRootInFeed: false,
+        expectFeedLine: `1 post withheld — it does not match its signature`,
+        expectFeedClay: true,
+        openId: rootId,
+        expectPaneCards: [],
+        expectPaneLine: `1 post withheld — it does not match its signature`,
+        expectPaneClay: true,
+      },
+    ];
+
+    const backToAReadings = [];
+    for (const arm of rowArms) {
+      try {
+        const editsBefore = relay.edits[arm.mode];
+        relay.mode = arm.mode;
+        const switched = await switchNodeAndWaitForFeed(cx, relay.origin, `${arm.step} switch to relay ${arm.mode}`);
+        const relayVerified = switched.stored === relay.origin;
+        // The feed reflects the mode's edits.
+        const feed = await readFeedShape(cx);
+        const feedRootAbsent = !feed.cards?.includes(rootId);
+        const feedLineText = feed.withheldLineText;
+        const feedLineOk = feedLineText === arm.expectFeedLine
+          && (arm.expectFeedClay ? feed.withheldLineClay === true : true);
+        // Open the thread of the altered post and read its shape.
+        await openThread(cx, arm.openId);
+        const pane = await readThreadPaneShape(cx, arm.openId);
+        let paneLineOk = true;
+        if (arm.expectPaneLine !== null) {
+          paneLineOk = pane.withheldLineText === arm.expectPaneLine
+            && (arm.expectPaneClay ? pane.withheldLineClay === true : true);
+        } else if ('expectPaneUnserved' in arm) {
+          paneLineOk = pane.unservedLineText === arm.expectPaneUnserved;
+        } else {
+          paneLineOk = pane.withheldLineText === null && pane.unservedLineText === null;
+        }
+        // Pane holds no row of the altered post.
+        const paneCardsOk = Array.isArray(pane.cards)
+          && !pane.cards.some((c) => c.id === arm.openId);
+        // Back to A — switch the row back and assert the row is back and no
+        // line stands.
+        relay.mode = 'honest';
+        await blankNodeAndAwaitVerified(cx);
+        await cx.waitFor(`!!document.querySelector('#feed .card[data-post-id="${rootId}"]')`,
+          `${arm.step} back-to-A feed has R's root`, 60000);
+        const backFeed = await readFeedShape(cx);
+        const backOk = backFeed.cards?.includes(rootId) === true && backFeed.withheldLineText === null;
+        backToAReadings.push({ step: arm.step, backOk, backFeed });
+        const edits = relay.edits[arm.mode === 'honest' ? arm.mode : arm.mode] - editsBefore;
+        record(arm.step, relayVerified && feedRootAbsent && feedLineOk && paneLineOk && paneCardsOk,
+          `mode=${arm.mode}, relay verified=${relayVerified}, edits=${relay.edits[arm.mode] - editsBefore}; ` +
+          `feed: root absent=${feedRootAbsent}, line=${JSON.stringify(feedLineText)} (clay=${feed.withheldLineClay}, expected=${JSON.stringify(arm.expectFeedLine)}), cards=${JSON.stringify(feed.cards)}; ` +
+          `pane of ${arm.openId.slice(0, 8)}…: line=${JSON.stringify(pane.withheldLineText)} (clay=${pane.withheldLineClay}), unserved=${JSON.stringify(pane.unservedLineText)}, cards=${JSON.stringify(pane.cards?.map((c) => c.id))} (expected empty); ` +
+          `back on A: root in feed=${backFeed.cards?.includes(rootId)}, line=${JSON.stringify(backFeed.withheldLineText)}`);
+      } catch (e) {
+        record(arm.step, false, `error: ${String(e)}`);
+        // Make sure the reader is back on A for the next arm.
+        relay.mode = 'honest';
+        await blankNodeAndAwaitVerified(cx).catch(() => {});
+      }
+    }
+
+    // ---- P7 — the fold: every arm's back-to-A reading showed the root
+    // again with no withheld line. Recorded as its own step so the summary
+    // names the aggregate.
+    const allBack = backToAReadings.every((r) => r.backOk);
+    record('P7', allBack && backToAReadings.length === rowArms.length,
+      `arms back on A: ${JSON.stringify(backToAReadings.map((r) => `${r.step}: ok=${r.backOk}, cards.has(root)=${r.backFeed.cards?.includes(rootId)}, line=${JSON.stringify(r.backFeed.withheldLineText)}`))}`);
+
+    // ---- P8 — the cache holds. After P1's reads, the extension page's
+    // IndexedDB holds `notis.posts.<A's block 1>` with R's root and reply.
+    // Reload the page: the database stays.
+    try {
+      const dbs = await listIndexedDBDatabases(cx);
+      const names = Array.isArray(dbs) ? dbs.map((d) => d.name) : null;
+      const hasADb = Array.isArray(names) && names.includes(aDbName);
+      const ids = hasADb ? await readCacheIds(cx, aDbName) : null;
+      const hasRoot = Array.isArray(ids) && ids.includes(rootId);
+      const hasReply = Array.isArray(ids) && ids.includes(replyId);
+      // Reload and re-check — the database persists across loads of the
+      // same origin.
+      await cx.call('Page.reload');
+      await cx.waitFor(`!!document.querySelector('#feed')`, 'P8 feed after reload', 60000);
+      const dbsAfter = await listIndexedDBDatabases(cx);
+      const namesAfter = Array.isArray(dbsAfter) ? dbsAfter.map((d) => d.name) : null;
+      const stillThere = Array.isArray(namesAfter) && namesAfter.includes(aDbName);
+      const idsAfter = stillThere ? await readCacheIds(cx, aDbName) : null;
+      const stillHasRoot = Array.isArray(idsAfter) && idsAfter.includes(rootId);
+      const stillHasReply = Array.isArray(idsAfter) && idsAfter.includes(replyId);
+      record('P8', hasADb && hasRoot && hasReply && stillThere && stillHasRoot && stillHasReply,
+        `before reload: databases=${JSON.stringify(names)}, ${aDbName} present=${hasADb}, ` +
+        `entries ×${Array.isArray(ids) ? ids.length : 'null'}: root ${rootId.slice(0, 8)}… held=${hasRoot}, reply ${replyId.slice(0, 8)}… held=${hasReply}; ` +
+        `after reload: databases=${JSON.stringify(namesAfter)}, ${aDbName} present=${stillThere}, root held=${stillHasRoot}, reply held=${stillHasReply}; ` +
+        `computed db name from A /blocks/1 blockHash=${aBlock1.slice(0, 12)}…`);
+    } catch (e) {
+      record('P8', false, `error: ${String(e)}`);
+    }
+
+    // ---- P9 — a held thread with the node not answering. Mode thread-down,
+    // open R's root's thread (held since P1 by the cache). Pane shows the
+    // error line AND the root and reply beneath it, with their text, author
+    // name and counts.
+    try {
+      relay.mode = 'thread-down';
+      await switchNodeAndWaitForFeed(cx, relay.origin, 'P9 switch to relay thread-down');
+      await openThread(cx, rootId);
+      const pane = await readThreadPaneShape(cx, rootId);
+      const hasError = typeof pane.errorLineText === 'string' && pane.errorLineText.length > 0;
+      const hasRoot = Array.isArray(pane.cards) && pane.cards.some((c) => c.id === rootId);
+      const hasReply = Array.isArray(pane.cards) && pane.cards.some((c) => c.id === replyId);
+      // Mode off, press ↻: error line goes, rows are the node's.
+      relay.mode = 'honest';
+      await refreshThreadPane(cx, rootId);
+      await cx.waitFor(`!document.querySelector('#panes .region-body .error')`,
+        'P9 error line removed after ↻', 60000).catch(() => {});
+      const afterRefresh = await readThreadPaneShape(cx, rootId);
+      const refreshedOk = afterRefresh.errorLineText === null
+        && Array.isArray(afterRefresh.cards)
+        && afterRefresh.cards.some((c) => c.id === rootId)
+        && afterRefresh.cards.some((c) => c.id === replyId);
+      // Back to A.
+      await blankNodeAndAwaitVerified(cx);
+      record('P9', hasError && hasRoot && hasReply && refreshedOk,
+        `with thread-down: error line=${JSON.stringify(pane.errorLineText)}, root held=${hasRoot}, reply held=${hasReply}, cards=${JSON.stringify(pane.cards?.map((c) => c.id))}; ` +
+        `after ↻ with mode off: error line=${JSON.stringify(afterRefresh.errorLineText)}, cards=${JSON.stringify(afterRefresh.cards?.map((c) => c.id))}, ok=${refreshedOk}`);
+    } catch (e) {
+      record('P9', false, `error: ${String(e)}`);
+      relay.mode = 'honest';
+      await blankNodeAndAwaitVerified(cx).catch(() => {});
+    }
+
+    // ---- P10 — a thread not held. thread-down, open a thread never opened
+    // before (a scratch id built from random bytes — the chain holds no post
+    // of this id, the node would answer 404 if the mode allowed, but the
+    // mode's own 503 is what the browser sees): the pane reads the error
+    // line alone.
+    try {
+      relay.mode = 'thread-down';
+      await switchNodeAndWaitForFeed(cx, relay.origin, 'P10 switch to relay thread-down (fresh id)');
+      const freshId = randomBytes(32).toString('hex');
+      // Open the fresh thread by setting the hash — no feed card for it.
+      await cx.eval(`location.hash = '#${freshId}'`, true);
+      await cx.waitFor(`(() => {
+        const regions = [...document.querySelectorAll('#panes .region')];
+        return regions.some((r) => !!r.querySelector('.region-body .error') || !!r.querySelector('.region-body .card[data-post-id="${freshId}"]'));
+      })()`, 'P10 fresh thread pane (error or card)', 60000).catch(() => {});
+      const pane = await readThreadPaneShape(cx, freshId);
+      const hasError = typeof pane.errorLineText === 'string' && pane.errorLineText.length > 0;
+      const noRows = Array.isArray(pane.cards) && pane.cards.length === 0;
+      relay.mode = 'honest';
+      await blankNodeAndAwaitVerified(cx);
+      record('P10', hasError && noRows,
+        `fresh id=${freshId.slice(0, 12)}…: error line=${JSON.stringify(pane.errorLineText)}, cards=${JSON.stringify(pane.cards)}, no rows=${noRows}`);
+    } catch (e) {
+      record('P10', false, `error: ${String(e)}`);
+      relay.mode = 'honest';
+      await blankNodeAndAwaitVerified(cx).catch(() => {});
+    }
+
+    // ---- P11 — another chain. Point the node row at D, mined past
+    // m + k + 4 so its proof verifies. A second database `notis.posts.<D's
+    // block 1>` appears. thread-down over D of a thread held under A's
+    // chain shows no held rows (the cache is keyed by chain). Back on A,
+    // the first database's entries are intact.
+    try {
+      const dUp = await bringUpPostsD();
+      if (!dUp.ok) {
+        record('P11', false, `D could not be brought up: ${dUp.reason}`);
+      } else {
+        const dBlock1 = dUp.block1Hash;
+        if (typeof dBlock1 !== 'string' || !/^[0-9a-f]{64}$/i.test(dBlock1)) {
+          record('P11', false, `D's /blocks/1 blockHash was not 64 hex: ${JSON.stringify(dBlock1)}`);
+        } else {
+          const dDbName = 'notis.posts.' + dBlock1.toLowerCase();
+          console.log(`[vp] D block 1 hash=${dBlock1.slice(0, 12)}…, db=${dDbName}`);
+          // Switch to D — its own feed is empty of R's posts; the extension
+          // opens a new cache under D's chain's name.
+          await switchNodeAndWaitForFeed(cx, DP_ORIGIN, 'P11 switch to D');
+          // Verified corner on D (D is isolated, so only one verified node:
+          // the row reads *only one node could be checked*). The press is
+          // the signal — a verified reading, however many nodes — not the
+          // literal count.
+          await pressAndReadVerdict(cx, { atLeast: 1, ms: 60000, quietMs: 2000 }).catch(() => {});
+          const dbsOnD = await listIndexedDBDatabases(cx);
+          const namesOnD = Array.isArray(dbsOnD) ? dbsOnD.map((d) => d.name) : null;
+          const hasDDb = Array.isArray(namesOnD) && namesOnD.includes(dDbName);
+          // thread-down of A's root — the cache is keyed by chain, so D's
+          // cache holds no row of A's rootId.
+          // (We now switch to the posts relay only after setting up D's
+          // database — but P11 reads D's database directly. The thread-down
+          // arm here needs the relay pointed at *A*; the brief's phrasing
+          // "`thread-down`-style failure of a thread held under A's chain
+          // shows no held rows" is operationalised by opening rootId's
+          // thread while the reader is on D: the thread read fails because
+          // D does not hold that post, and the cache under D holds nothing
+          // of A either, so no rows render.
+          await openThread(cx, rootId);
+          const paneOnD = await readThreadPaneShape(cx, rootId);
+          const paneHasNoRows = Array.isArray(paneOnD.cards) && paneOnD.cards.length === 0;
+          // Back to A — the first database's entries intact.
+          await blankNodeAndAwaitVerified(cx);
+          await cx.waitFor(`!!document.querySelector('#feed .card[data-post-id="${rootId}"]')`,
+            'P11 feed back on A', 60000);
+          const idsOnA = await readCacheIds(cx, aDbName);
+          const stillHasRoot = Array.isArray(idsOnA) && idsOnA.includes(rootId);
+          const stillHasReply = Array.isArray(idsOnA) && idsOnA.includes(replyId);
+          record('P11', hasDDb && paneHasNoRows && stillHasRoot && stillHasReply,
+            `D block 1 hash=${dBlock1.slice(0, 12)}…, databases on D=${JSON.stringify(namesOnD)}, ${dDbName} present=${hasDDb}; ` +
+            `pane on D for A's root ${rootId.slice(0, 8)}…: cards=${JSON.stringify(paneOnD.cards)}, no rows=${paneHasNoRows}; ` +
+            `back on A: A's database entries root held=${stillHasRoot}, reply held=${stillHasReply}, ids=${JSON.stringify(idsOnA)}`);
+        }
+      }
+    } catch (e) {
+      record('P11', false, `error: ${String(e)}`);
+      await blankNodeAndAwaitVerified(cx).catch(() => {});
+    } finally {
+      await stopChild('d-posts').catch(() => {});
+      await stopChild('d-posts-miner').catch(() => {});
+    }
+
+    // ---- P12 — the hosted web build. No tx request from the web build,
+    // no database named `notis.posts.*` at its origin, no withheld line even
+    // with the relay in mode `text` (the web build is handed no verifier —
+    // it shows the node's row).
+    if (PUBLIC === null || webDistAbs === null) {
+      record('P12', 'NOT RUN', 'no --public / --web-dist — the hosted origin is not served');
+    } else {
+      let bcx = null;
+      let cxH = null;
+      let createdTargetId = null;
+      try {
+        // Point the hosted web build at the relay — the web build reads
+        // from the API origin named in its shell, so steering its reads
+        // through the relay in `text` mode exercises the "the web build is
+        // handed no check" assertion. The web build in this harness is
+        // built with VITE_API_BASE=<devnet node origin> (packages/web/
+        // CLAUDE.md → "The extension" → the proof's web build command),
+        // so its reads already go to A. The relay's `text` mode here edits
+        // A's answer in flight — but since the hosted build points at A
+        // directly, not at the relay, this arm instead measures that even
+        // when the relay's `text` is firing against the extension page,
+        // nothing of it reaches the hosted build and no withheld line
+        // appears there. We assert: no tx request, no notis.posts.* db at
+        // the hosted origin, and no withheld line in its DOM.
+        relay.mode = 'text';
+        bcx = await openBrowserSession();
+        const hostedUrl = publicOrigin + publicBase;
+        const created = await bcx.call('Target.createTarget', { url: hostedUrl });
+        createdTargetId = created.targetId;
+        const info = await findTargetById(createdTargetId, 15000);
+        if (!info) {
+          record('P12', false, `hosted target ${createdTargetId.slice(0, 8)}… never appeared in /json/list`);
+        } else {
+          cxH = await openSession(info.webSocketDebuggerUrl);
+          const startIdx = cxH.events.length;
+          await cxH.waitFor(`!!document.querySelector('#feed .card[data-post-id]')`,
+            'hosted feed on P12', 60000).catch(() => {});
+          await sleep(5000);
+          // No `GET /posts…?tx=1` and no withheld line.
+          const postReqs = postRequestsSince(cxH.events, startIdx);
+          const tx1 = postReqs.filter((r) => r.tx === '1');
+          const dbs = await listIndexedDBDatabases(cxH);
+          const names = Array.isArray(dbs) ? dbs.map((d) => d.name) : null;
+          const anyPostsDb = Array.isArray(names) && names.some((n) => typeof n === 'string' && n.startsWith('notis.posts.'));
+          const feedShape = await readFeedShape(cxH);
+          const anyWithheldText = feedShape.withheldLineText !== null;
+          const ok = tx1.length === 0 && !anyPostsDb && !anyWithheldText;
+          record('P12', ok,
+            `hosted origin=${hostedUrl}; /posts requests=${postReqs.length}, tx=1 ×${tx1.length}; ` +
+            `databases=${JSON.stringify(names)}, any notis.posts.* present=${anyPostsDb}; ` +
+            `feed withheld line=${JSON.stringify(feedShape.withheldLineText)}, cards=${JSON.stringify(feedShape.cards)}`);
+        }
+      } catch (e) {
+        record('P12', false, `error: ${String(e)}`);
+      } finally {
+        try { if (cxH) cxH.s.close(); } catch {}
+        if (bcx && createdTargetId) await bcx.call('Target.closeTarget', { targetId: createdTargetId }).catch(() => {});
+        try { if (bcx) bcx.s.close(); } catch {}
+        relay.mode = 'honest';
+      }
+    }
+  } finally {
+    closeRelay(relay);
+    console.log(`[vp] posts relay closed; edits=${JSON.stringify(relay.edits)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The run.
 // ---------------------------------------------------------------------------
 
@@ -4667,6 +5688,26 @@ async function runVerifiedBlocks(bcx) {
   } else {
     markVerifiedNamesNotRun('no --verified-names');
   }
+
+  // The verified-posts block after the names block — the names block's
+  // cleanup stops its B by handle. The posts block owns the posts relay and
+  // its own D (bringUpPostsD; the tip block's D on 19795 is already down
+  // either way). It runs on the extension page live at this moment, or a
+  // fresh one where none is open; storage restores R's identity.
+  if (VERIFIED_POSTS) {
+    let vpPage = await findExt('index.html');
+    if (!vpPage) {
+      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
+      await sleep(2000);
+      vpPage = await findExt('index.html');
+    }
+    if (!vpPage) throw new Error('verified-posts block: no extension page');
+    const vpCx = await openSession(vpPage.webSocketDebuggerUrl);
+    await verifiedPostsSteps(vpCx, vpPage.id);
+    try { vpCx.s.close(); } catch {}
+  } else {
+    markVerifiedPostsNotRun('no --verified-posts');
+  }
 }
 
 // The blocks on a run whose links steps end early — no --public, or no root of
@@ -4725,6 +5766,7 @@ async function main() {
     // read NOT RUN by name — and the names block's three, which require it too.
     markVerifiedFiguresNotRun('no --r-key — the verified-figures block does not run');
     markVerifiedNamesNotRun('no --r-key — the verified-names block does not run');
+    markVerifiedPostsNotRun('no --r-key — the verified-posts block does not run');
     return;
   }
 
