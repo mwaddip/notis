@@ -280,10 +280,10 @@ describe('server', () => {
     });
 
     // A fault of the node's — the generic 500 answer and its one logged line
-    // stand (NODE_INTERFACE → HTTP API → "500 … is a fault of the node's, and
-    // it alone logs its stack"). A sync throw that reaches the public app's
-    // last handler without a parser mark answers `{ error: 'internal' }`
-    // with one `500 error:` log line.
+    // stand (NODE_INTERFACE → HTTP API → "A body the parser refuses is the
+    // client's error"). A sync throw that reaches the public app's last
+    // handler without a parser mark answers `{ error: 'internal' }` with one
+    // `500 error:` log line.
     it('an error thrown inside a route still answers 500 and logs once', async () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       let throwingServer: http.Server | undefined;

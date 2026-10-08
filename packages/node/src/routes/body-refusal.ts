@@ -1,41 +1,40 @@
 /**
  * What the public app answers an error the body parser raised for a request
- * it refuses (NODE_INTERFACE → HTTP API → "A body the parser refuses is the
- * client's error"); null for any other error.
- *
- * An error is the parser's when it carries one of the `type` strings that
- * body-parser 1.x and raw-body 2.x stamp on their refusals: the four 4xx
- * marks the parser raises on a request it will not read, plus the two 400
- * stream marks raw-body raises when it cannot finish reading. A thrown
- * object that merely has `status: 400` is not a refusal — the mark pins
- * the error to the parser. A parser error whose status is 5xx (its
- * `stream.encoding.set`, `stream.not.readable`) is the node's fault and
- * falls to the generic 500 handler.
+ * it refuses, or null for any other error
+ * (NODE_INTERFACE → HTTP API → "A body the parser refuses is the client's
+ * error"). An error is the parser's when its `type` is in `PARSER_TYPES` and
+ * its status is 4xx; a parser error whose 5xx mark falls through to the
+ * generic 500 handler, and a thrown object that merely carries a 4xx status
+ * without a `type` is not a refusal either.
  */
 export function bodyRefusal(
   err: unknown,
 ): { status: number; reason: string } | null {
   if (err === null || typeof err !== 'object') return null;
 
-  const type = (err as { type?: unknown }).type;
-  if (typeof type !== 'string' || !PARSER_TYPES.has(type)) return null;
+  if (!('type' in err) || typeof err.type !== 'string') return null;
+  if (!PARSER_TYPES.has(err.type)) return null;
 
-  const raw = (err as { status?: unknown; statusCode?: unknown }).status
-    ?? (err as { statusCode?: unknown }).statusCode;
-  if (typeof raw !== 'number' || raw < 400 || raw >= 500) return null;
+  let status: number | undefined;
+  if ('status' in err && typeof err.status === 'number') {
+    status = err.status;
+  } else if ('statusCode' in err && typeof err.statusCode === 'number') {
+    status = err.statusCode;
+  }
+  if (status === undefined || status < 400 || status >= 500) return null;
 
-  if (type === 'entity.parse.failed') {
+  if (err.type === 'entity.parse.failed') {
     return { status: 400, reason: 'malformed JSON body' };
   }
-  if (type === 'entity.too.large') {
+  if (err.type === 'entity.too.large') {
     return { status: 413, reason: 'body too large' };
   }
-  return { status: raw, reason: 'bad request body' };
+  return { status, reason: 'bad request body' };
 }
 
 /**
- * The `type` strings body-parser 1.x and raw-body 2.x stamp on an error
- * they raise for a request the parser refuses. From the installed source:
+ * The `type` marks body-parser 1.x and raw-body 2.x stamp on a refusal, with
+ * the status each one carries. From the installed source:
  *
  *   body-parser/lib/read.js:
  *     - 400 `entity.parse.failed` — JSON.parse threw
@@ -49,10 +48,6 @@ export function bodyRefusal(
  *     - 400 `request.size.invalid` — received bytes did not match
  *       content-length
  *     - 415 `encoding.unsupported` — iconv has no decoder for the charset
- *
- * The 500 marks raw-body raises (`stream.encoding.set`, `stream.not.readable`)
- * are developer-error, not a refusal: `bodyRefusal` reads the status alongside
- * the type and lets anything 5xx fall through.
  */
 const PARSER_TYPES: ReadonlySet<string> = new Set([
   'entity.parse.failed',
