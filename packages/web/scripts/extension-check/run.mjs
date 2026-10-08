@@ -4937,19 +4937,29 @@ async function ensureRootAndReply(cx) {
       : `the posted reply never landed within 5 min` };
 }
 
-// A /blocks/current-equivalent read of block 1 on `origin` — the hash the
-// post cache opens under (WEB_INTERFACE → The extension → "The chain's
-// name": the first header of the verified proof). The verifier reads block 1
-// from the proof itself; this harness reads it from the node, since the
-// relay serves the proof verbatim and A/D's own answer is the chain the
-// cache opens under.
+// Block 1's hash on `origin` — the chain's name the post cache opens under
+// (WEB_INTERFACE → The extension → "The chain's name": the first header of
+// the verified proof). `GET /blocks/:height` answers a block whose `header`
+// is a BlockHeader (NODE_INTERFACE → Blocks); the computed `blockHash` is
+// recomputed here through `blockHash` of `@dagsocial/validation` — the one
+// implementation (VALIDATION_INTERFACE → "The hash of a header"). The route
+// serves `validatorId` as 64-hex (its wire form); the validator package's
+// in-memory `BlockHeader` carries it as `Uint8Array` of 32 bytes, so the hex
+// is decoded here (TYPES_INTERFACE → Layout — Block: `validatorId` is `b32`).
 async function block1HashOn(origin) {
   const r = await fetch(`${origin}/blocks/1`);
   if (!r.ok) return null;
   const j = await r.json();
-  // NODE_INTERFACE → Blocks: /blocks/:height answers an ordering block,
-  // whose header carries a blockHash field (the computed id).
-  return j?.header?.blockHash ?? j?.blockHash ?? null;
+  const header = j?.header;
+  if (!header || typeof header !== 'object') return null;
+  const validatorIdHex = header.validatorId;
+  if (typeof validatorIdHex !== 'string' || !/^[0-9a-f]{64}$/.test(validatorIdHex)) return null;
+  const h = { ...header, validatorId: Buffer.from(validatorIdHex, 'hex') };
+  // @dagsocial/validation is reached through nipopow-client's node_modules,
+  // the same pattern this harness uses for @dagsocial/nipopow at the top.
+  const clientUrl = import.meta.resolve('@dagsocial/nipopow-client');
+  const { blockHash } = await import(new URL('../node_modules/@dagsocial/validation/dist/index.js', clientUrl).href);
+  return blockHash(h);
 }
 
 // The extension page's IndexedDB listing — database names visible at the
