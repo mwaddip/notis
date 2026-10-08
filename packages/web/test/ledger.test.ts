@@ -255,6 +255,16 @@ describe('reconcile', () => {
     expect(reconcilePost(postEntry, postResult({ status: 'pending', blockHeight: null }), 5721)).toBe('expired');
   });
 
+  it('a post whose read is withheld stays pending below its expiry height and expires above it', () => {
+    // A withheld answer — the extension's post check read it `unbound` or
+    // `unserved` — decides nothing: the entry stays pending until the tip
+    // passes its `expiresAtHeight`, never expired as on the node's 404
+    // (WEB_INTERFACE → The extension → "The post check").
+    expect(reconcilePost(postEntry, null, 5100, true)).toBe('pending');
+    expect(reconcilePost(postEntry, null, 5721, true)).toBe('expired');
+    expect(reconcilePost(postEntry, postResult({ status: 'confirmed' }), 5100, true)).toBe('pending');
+  });
+
   it('a post that landed then became a tombstone still counts as landed', () => {
     const tomb: WithdrawnJson & { confirmedAuthor: string | null } = {
       kind: 'withdrawn', id: 'p1', author: 'aa'.repeat(32), withdrawnAtHeight: 5050, parentRefs: [],
@@ -269,6 +279,15 @@ describe('reconcile', () => {
     expect(reconcileLike(likeEntry, postResult({ likedByViewer: false }), 5721)).toBe('expired');
     expect(reconcileLike(likeEntry, null, 5100)).toBe('pending');
     expect(reconcileLike(likeEntry, null, 5721)).toBe('expired');
+  });
+
+  it('a like whose read is withheld stays pending below its expiry height and expires above it', () => {
+    // A withheld answer for a pending like matches what the no-usable-row
+    // path already answers; the explicit flag states it (WEB_INTERFACE →
+    // The extension → "The post check").
+    expect(reconcileLike(likeEntry, null, 5100, true)).toBe('pending');
+    expect(reconcileLike(likeEntry, null, 5721, true)).toBe('expired');
+    expect(reconcileLike(likeEntry, postResult({ likedByViewer: true }), 5100, true)).toBe('pending');
   });
 });
 
@@ -356,6 +375,14 @@ describe('the withdraw reconcile', () => {
     // An id the node has never heard of (NODE_INTERFACE → Resolution order for a
     // post id) — still a done withdrawal, read as expired.
     expect(reconcileWithdraw(withdrawEntry, null, 5100)).toBe('expired');
+  });
+
+  it('a withheld read is not expired at once — the withdrawal stays pending until its expiry height', () => {
+    // A node that serves the row without bytes is not the 404 (WEB_INTERFACE
+    // → The extension → "The post check"): a withdrawal whose read is
+    // withheld stays pending until the tip passes its `expiresAtHeight`.
+    expect(reconcileWithdraw(withdrawEntry, null, 5100, true)).toBe('pending');
+    expect(reconcileWithdraw(withdrawEntry, null, 5721, true)).toBe('expired');
   });
 
   it('pendingWithdrawTargets names only the withdraw entries', () => {

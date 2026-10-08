@@ -294,8 +294,18 @@ describe('post-check — the single post read', () => {
     const subject = row('p');
     const sv = scriptedVerifier(() => UNBOUND);
     const h = harness({ verifier: sv.verifier });
-    // Call the private ingestOne through the state's single-row gate: the
-    // reconciliation path uses it, so an unbound answer reads as a 404.
+    // The one-row gate drops an `unbound` row — a withheld answer. The
+    // reconcile reads a withheld answer as nothing landing, never as the
+    // node's 404 (WEB_INTERFACE → The extension → "The post check").
+    const app = h.app as unknown as { ingestOne(r: PostJson | WithdrawnJson): PostJson | WithdrawnJson | null };
+    expect(app.ingestOne(subject)).toBeNull();
+    expect(sv.calls.length).toBe(1);
+  });
+
+  it('an unserved answer is used for nothing', async () => {
+    const subject = row('p');
+    const sv = scriptedVerifier(() => UNSERVED);
+    const h = harness({ verifier: sv.verifier });
     const app = h.app as unknown as { ingestOne(r: PostJson | WithdrawnJson): PostJson | WithdrawnJson | null };
     expect(app.ingestOne(subject)).toBeNull();
     expect(sv.calls.length).toBe(1);

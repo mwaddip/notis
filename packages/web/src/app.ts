@@ -4092,19 +4092,17 @@ export class App {
       }
       const rawFetched = await this.client.post(entry.postId, this.viewer(), this.postsTx());
       if (gen !== this.readerGen) return;
-      // The single post read passes its answer through the one-row gate
-      // (WEB_INTERFACE → The extension → "The post check"): an `unbound`
-      // or `unserved` answer is used for nothing, so the reconcile reads
-      // it as the node had no row (as a 404 would).
-      const fetched: PostResult | null = rawFetched === null
-        ? null
-        : (() => {
-          const kept = this.ingestOne(rawFetched);
-          if (kept === null) return null;
-          return rawFetched;
-        })();
+      // The single post read's answer passes through the one-row gate
+      // (WEB_INTERFACE → The extension → "The post check"): a kept row is
+      // the node's row for reconcile, a null is the node's 404, and a
+      // withheld answer (`unbound` or `unserved`) decides nothing — each
+      // kind's reconcile keeps the entry pending until the tip passes its
+      // `expiresAtHeight`.
+      const keptOne = rawFetched === null ? null : this.ingestOne(rawFetched);
+      const withheld: boolean = rawFetched !== null && keptOne === null;
+      const fetched: PostResult | null = keptOne === null ? null : rawFetched;
       if (entry.kind === 'post') {
-        const outcome = reconcilePost(entry, fetched, tip);
+        const outcome = reconcilePost(entry, fetched, tip, withheld);
         if (outcome === 'pending') continue;
         const sub = this.state.submissions.find((s) => s.txId === entry.txId);
         if (sub) {
@@ -4116,7 +4114,7 @@ export class App {
         this.ledger.remove(entry.txId);
         if (outcome === 'landed') karmaLanded = true;
       } else if (entry.kind === 'like') {
-        const outcome = reconcileLike(entry, fetched, tip);
+        const outcome = reconcileLike(entry, fetched, tip, withheld);
         if (outcome === 'pending') continue;
         this.optimisticLikes.delete(entry.postId);
         this.ledger.remove(entry.txId);
@@ -4130,7 +4128,7 @@ export class App {
       } else {
         // withdraw — landed on any tombstone, the row replaced in place; expired
         // renders the sentence and `try again` (WEB_INTERFACE → The withdraw control).
-        const outcome = reconcileWithdraw(entry, fetched, tip);
+        const outcome = reconcileWithdraw(entry, fetched, tip, withheld);
         if (outcome === 'pending') continue;
         this.ledger.remove(entry.txId);
         if (outcome === 'landed') {
