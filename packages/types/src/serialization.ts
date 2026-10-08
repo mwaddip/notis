@@ -31,7 +31,9 @@ import {
   arrByteLength,
   decodeStruct,
   encodeStruct,
+  equalBytes,
   firstDifference,
+  hexToBytes,
   lpByteLength,
   readArr,
   readBytesN,
@@ -330,13 +332,19 @@ export function utxoTxTreeByteLength(t: UtxoTxTree): number {
  * One transaction's bytes out of an encoded `UtxoTxTree`, by its id, with
  * nothing decoded (TYPES_INTERFACE → One transaction of a body).
  *
- * The walk uses the codec's own readers — `readArr`, `readHexN` and `readVlqU`
- * are the same primitives `UTXO_TX_TREE.read` reads with. It reads the id
- * array (the one allocation the primitives force), finds the first position
- * holding `txId`, then reads the element array's count and skips each `lp`
- * element before that position by its length prefix without allocating. The
- * wanted element is returned as a fresh `Uint8Array`, as the codec's decoders
- * do.
+ * `txId` is decoded to its 32 raw bytes **once**, after the 64-lowercase-hex
+ * gate. The walk then reads the id array's count — the same `vlqU` and the
+ * same `MAX_ARRAY_LENGTH` refusal `readArr` enforces — and walks every id as
+ * a 32-byte VIEW returned by `ByteReader.readBytes`, which hands back a
+ * `subarray` of the input bytes rather than a copy. Each view is compared to
+ * the wanted bytes; the first match fixes the answer's position, and the walk
+ * still reads through the whole id array so the reader stands at the element
+ * array whichever position matched. No hex string is built for any id.
+ *
+ * The element array is then: its `vlqU` count (same `MAX_ARRAY_LENGTH`
+ * refusal); the preceding `lp` elements skipped by their length prefix without
+ * allocating; the wanted element returned as a fresh `Uint8Array` through
+ * `readLp`, as the codec's decoders do.
  *
  * ⛔ **A section added to `UTXO_TX_TREE` owes the matching step here**, as
  * `utxoTxTreeByteLength` carries the same warning for its measurement.
@@ -350,9 +358,27 @@ export function utxoTxTreeByteLength(t: UtxoTxTree): number {
  */
 export function utxoTxBytesIn(treeBytes: Uint8Array, txId: TxId): Uint8Array | null {
   if (typeof txId !== 'string' || !/^[0-9a-f]{64}$/.test(txId)) return null;
+  // One decode of the wanted id to its 32 raw bytes, up front; the walk
+  // allocates nothing per id after this.
+  const wantedBytes = hexToBytes(txId);
   const r = new ByteReader(treeBytes);
-  const utxoTxIds = readArr(r, (rr) => readHexN(rr, 32));
-  const wantedIndex = utxoTxIds.indexOf(txId);
+  const idCount = readVlqU(r);
+  if (idCount > MAX_ARRAY_LENGTH) {
+    throw new ReaderError(
+      `utxoTxBytesIn: utxoTxIds length ${idCount} exceeds max ${MAX_ARRAY_LENGTH}`,
+      'array-too-large',
+    );
+  }
+  // Walk the whole id array as 32-byte views, byte-compared against the wanted
+  // bytes. Reading through to the end leaves the reader at the element array
+  // whatever position matched; the first match is the answer.
+  let wantedIndex = -1;
+  for (let i = 0; i < idCount; i++) {
+    const idView = r.readBytes(32);
+    if (wantedIndex === -1 && equalBytes(idView, wantedBytes)) {
+      wantedIndex = i;
+    }
+  }
   if (wantedIndex === -1) return null;
   // The element array — same `vlqU` count as `readArr`, read inline so only
   // the one element wanted is materialised and the walk stops at it.

@@ -249,3 +249,26 @@ describe('utxoTxBytesIn — does not read past the wanted element', () => {
     expect(utxoTxBytesIn(junked, hexId(2))).toEqual(tx(2, 5));
   });
 });
+
+// ---------------------------------------------------------------------------
+// A body of 10 000 distinct ids and 10 000 small elements — first, middle,
+// last each answer the decoder's element.
+// ---------------------------------------------------------------------------
+
+describe('utxoTxBytesIn — ten thousand distinct ids', () => {
+  const N = 10_000;
+  const utxoTxIds = Array.from({ length: N }, (_, i) => hexId(i + 1));
+  const utxoTxs = utxoTxIds.map((_, i) => tx(i & 0xff, 3));
+  const tree: UtxoTxTree = { utxoTxIds, utxoTxs };
+  const bytes = encodeUtxoTxTree(tree);
+  const decoded = decodeUtxoTxTree(bytes);
+
+  it.each([
+    ['first', 0],
+    ['middle', N >> 1],
+    ['last', N - 1],
+  ])('answers the decoder at the %s position', (_name, i) => {
+    const id = utxoTxIds[i]!;
+    expect(utxoTxBytesIn(bytes, id)).toEqual(decoded.utxoTxs[decoded.utxoTxIds.indexOf(id)]);
+  });
+});
