@@ -542,6 +542,25 @@ relay's log; **27d** the author window's name row turning clay in place with no 
 drawing the line; **28a** Eve's key over S's box and **28b** a made-up box refused at the press with no prompt — 28b
 pressed once A has mined past the anchor, so its first check reads `unchecked`, asks one tip run and the retry reads
 `absent`; **30** the hosted web build — no clay and no `/api/v1/proof/`. Each lie arm switched back to A and ink again.
+**With `--verified-posts` (it needs `--r-key`, `--node-dist`, `--miner`, `--scratch`, `--node-p2p`; `--public` and
+`--web-dist` for its last step) the verified-posts block**, P1–P12, runs alone after steps 1–16 on node A, a second
+verified node B, and a **posts relay** of the harness's own on `:19810` that passes every `/nipopow/proof/` through and
+lies over the three post reads in one mode at a time — `text`, `author`, `id-swap`, `tx-null`, `tx-drop`, `thread-down`
+— with a switchable upstream: **P1** bound rows, no line, every `/posts…` request carrying `tx=1`; **P2–P6** one lie
+arm each, three surfaces measured apart — the **standing feed** after `↻` keeps the card an earlier read bound beside
+the clay *1 post withheld — it does not match its signature* (no line under `tx-null`), a **fresh feed** after a node
+change shows no such card, and the **thread** shows the line and no row (under `tx-null` the muted *this node cannot
+serve this post yet.*); **P7** every arm back on A; **P8** the database `notis.posts.<A's block 1 hash>` with the root
+and the reply, still there after a reload; **P9** `thread-down` on a held thread — the error line and the held rows
+beneath it, then `↻` with the relay honest; **P10** a thread never held — the error line alone; **P11** the relay in
+front of an isolated node **D** on another chain — a second database beside the first, a failed read showing no row
+held under A's chain, a 404 reading *this post is gone.*, and A's entries intact afterwards; **P12** the hosted web
+build — no `tx`, no database, no line. ⚠ **A thread is opened the product's two ways and no other**: from a feed
+card's strip, or by id through the pending record `notis.open.<id>` written from the background's context — the page
+has no post-id hash route. ⚠ **Opening a thread that is already open reads nothing**: a step that needs a read presses
+the pane's `↻`. ⚠ **`GET /blocks/:height` carries no hash** — the harness recomputes block 1's through `blockHash`.
+⚠ **A second `promote.mjs` on one stack is refused once** (`No karma box input found in transaction`) and passes on
+the next try; each run of the block needs a member that has not run steps 11–12.
 **The ten-minute timer and the visibility rule are the unit tests'**, not the proof's. ⚠ **17b guards a
 race that is wide only for a follower under a fast miner**: reading B at about three blocks a second, a build
 whose verdict read every lost comparison as *outworked* showed the alarm on 24 of 30 presses; under the paced
