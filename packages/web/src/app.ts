@@ -51,6 +51,7 @@ import {
   type TipVerifier, type TipRun, type FiguresVerifier, type NamesVerifier, type PostsVerifier,
   type PostCache, type CachedThread, type HeldPost, type PostResolver,
 } from './model/state';
+import type { BoundPost, ResolveEnd } from './model/post-resolve';
 import { decideMove, type ScreenEntry } from './history';
 
 const FEED_LIMIT = 30;
@@ -1550,11 +1551,179 @@ export class App {
 
   /** Every slot standing in the feed and the author windows is being resolved
    *  (WEB_INTERFACE → The extension → "The resolve"). Called by each of the
-   *  six list reads after it has written state. The body — the claim, the
-   *  cache re-read, the resolver call, `fillSlots` and `endSlots` — lands
-   *  next. */
-  private resolveSlots(): void {
-    return;
+   *  six list reads after it has written state. With no resolver this does
+   *  nothing; the web build never reaches it. The ids claimed are added
+   *  synchronously, so an id asked for is not asked again while its answer
+   *  is awaited; a generation that moved after step 1 lands nothing — the
+   *  re-read that `dropReaderState` starts asks again. */
+  private async resolveSlots(): Promise<void> {
+    const resolver = this.postResolver;
+    if (resolver === null) return;
+    const claimed: string[] = [];
+    const claimId = (id: string): void => {
+      if (this.resolving.has(id)) return;
+      this.resolving.add(id);
+      claimed.push(id);
+    };
+    for (const row of this.state.feed.posts) if (isLight(row)) claimId(row.id);
+    for (const row of this.state.feed.pending) if (isLight(row)) claimId(row.id);
+    for (const [, f] of this.authorPostsData) {
+      for (const row of f.posts) if (isLight(row)) claimId(row.id);
+    }
+    if (claimed.length === 0) return;
+    const gen = this.readerGen;
+    // Read the cache again for the claimed ids: an answer that lands between
+    // a read's `intake` and its write fills the list that stood here
+    // (WEB_INTERFACE → The extension → "The resolve"). A rejection or no
+    // cache answers empty.
+    let held: Map<string, HeldPost> = new Map();
+    if (this.postCache !== null) {
+      try { held = await this.postCache.getMany(claimed); } catch { held = new Map(); }
+    }
+    if (gen !== this.readerGen) return;
+    const toAsk: string[] = [];
+    for (const id of claimed) {
+      const entry = held.get(id);
+      if (entry !== undefined && isFull(entry.row) && typeof entry.row.content === 'string') {
+        this.resolving.delete(id);
+        this.fillSlots(entry.row);
+      } else {
+        toAsk.push(id);
+      }
+    }
+    if (toAsk.length === 0) return;
+    const own = this.idm.current()?.pubKeyHex ?? null;
+    const onBound = (posts: BoundPost[]): void => {
+      if (gen !== this.readerGen) return;
+      for (const bp of posts) {
+        if (this.postCache !== null) {
+          void this.postCache.put({
+            id: bp.check.id,
+            txBytes: bp.check.txBytes,
+            row: bp.row,
+            author: bp.check.author,
+            parent: bp.check.parent,
+            own: own !== null && bp.check.author === own,
+          });
+        }
+        this.resolving.delete(bp.check.id);
+        this.fillSlots(bp.row);
+      }
+    };
+    let ends: Map<string, ResolveEnd>;
+    try {
+      ends = await resolver.resolve(toAsk, onBound);
+    } catch {
+      // A `resolve` that rejects — its interface says it never does — ends
+      // every id it was asked for `'unserved'` (WEB_INTERFACE → The
+      // extension → "The resolve").
+      ends = new Map<string, ResolveEnd>();
+      for (const id of toAsk) ends.set(id, 'unserved');
+    }
+    if (gen !== this.readerGen) return;
+    this.endSlots(ends);
+    for (const id of toAsk) this.resolving.delete(id);
+  }
+
+  /** A bound post fills every list holding a slot under its id — the feed's
+   *  live rows and its pending, each author window's posts — the composed
+   *  row carries the slot's figures (WEB_INTERFACE → The extension → "The
+   *  resolve", → "The light read" → "A row the cache holds is a card at
+   *  once"). An id a withdrawal the client saw land is skipped — a
+   *  withdrawal is final. The composed row enters the post index; the
+   *  surfaces that held one redraw. A list holding no slot under the id is
+   *  not written. */
+  private fillSlots(post: PostJson): void {
+    if (this.withdrawnSeen.has(post.id)) return;
+    let feedTouched = false;
+    const authorsTouched = new Set<string>();
+    for (let i = 0; i < this.state.feed.posts.length; i++) {
+      const r = this.state.feed.posts[i]!;
+      if (isLight(r) && r.id === post.id) {
+        this.state.feed.posts[i] = withNodeWord(post, r);
+        feedTouched = true;
+      }
+    }
+    for (let i = 0; i < this.state.feed.pending.length; i++) {
+      const r = this.state.feed.pending[i]!;
+      if (isLight(r) && r.id === post.id) {
+        this.state.feed.pending[i] = withNodeWord(post, r);
+        feedTouched = true;
+      }
+    }
+    for (const [key, f] of this.authorPostsData) {
+      let touched = false;
+      for (let i = 0; i < f.posts.length; i++) {
+        const r = f.posts[i]!;
+        if (isLight(r) && r.id === post.id) {
+          f.posts[i] = withNodeWord(post, r);
+          touched = true;
+        }
+      }
+      if (touched) authorsTouched.add(key);
+    }
+    if (feedTouched || authorsTouched.size > 0) this.state.posts.set(post.id, post);
+    if (feedTouched) this.renderFeed();
+    for (const key of authorsTouched) this.renderPostsLoad(key);
+  }
+
+  /** Each ended id's slot leaves every list that holds one; an `'unbound'`
+   *  end adds one to each list's `unboundCount` — once a list, whichever of
+   *  its arrays held it — and an `'unserved'` end adds no line
+   *  (WEB_INTERFACE → The extension → "The resolve"). A list that no longer
+   *  holds the slot counts nothing. The touched surfaces redraw. */
+  private endSlots(ends: ReadonlyMap<string, ResolveEnd>): void {
+    if (ends.size === 0) return;
+    const feedUnboundIds = new Set<string>();
+    const authorsUnbound = new Map<string, Set<string>>();
+    const touchedAuthors = new Set<string>();
+    let feedTouched = false;
+    for (const [id, end] of ends) {
+      let inFeed = false;
+      for (let i = this.state.feed.posts.length - 1; i >= 0; i--) {
+        const r = this.state.feed.posts[i]!;
+        if (isLight(r) && r.id === id) {
+          this.state.feed.posts.splice(i, 1);
+          inFeed = true;
+        }
+      }
+      for (let i = this.state.feed.pending.length - 1; i >= 0; i--) {
+        const r = this.state.feed.pending[i]!;
+        if (isLight(r) && r.id === id) {
+          this.state.feed.pending.splice(i, 1);
+          inFeed = true;
+        }
+      }
+      if (inFeed) {
+        feedTouched = true;
+        if (end === 'unbound') feedUnboundIds.add(id);
+      }
+      for (const [key, f] of this.authorPostsData) {
+        let touched = false;
+        for (let i = f.posts.length - 1; i >= 0; i--) {
+          const r = f.posts[i]!;
+          if (isLight(r) && r.id === id) {
+            f.posts.splice(i, 1);
+            touched = true;
+          }
+        }
+        if (touched) {
+          touchedAuthors.add(key);
+          if (end === 'unbound') {
+            let s = authorsUnbound.get(key);
+            if (s === undefined) { s = new Set(); authorsUnbound.set(key, s); }
+            s.add(id);
+          }
+        }
+      }
+    }
+    this.state.feed.unboundCount += feedUnboundIds.size;
+    for (const [key, s] of authorsUnbound) {
+      const f = this.authorPostsData.get(key);
+      if (f) f.unboundCount += s.size;
+    }
+    if (feedTouched) this.renderFeed();
+    for (const key of touchedAuthors) this.renderPostsLoad(key);
   }
 
   /** A thread row as the client knows it: a post whose withdrawal it saw land
