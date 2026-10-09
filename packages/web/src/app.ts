@@ -176,15 +176,6 @@ function emptyFeedState(): FeedState {
   return { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null, unboundCount: 0 };
 }
 
-/** The subject's withheld status, read from its PostCheck (WEB_INTERFACE →
- *  The extension → "The post check"): `'unbound'` or `'unserved'` for a
- *  withheld subject, `null` for one the check kept. */
-function subjectWithheldStatus(c: PostCheck): 'unbound' | 'unserved' | null {
-  if (c.status === 'unbound') return 'unbound';
-  if (c.status === 'unserved') return 'unserved';
-  return null;
-}
-
 /** The rows a ↻ lands on. One that reconnected puts its new rows on top of the
  *  rows standing as it lands, deduped, so a landing or a `more` that wrote
  *  during its pages keeps what it wrote; one that never reconnected answers its
@@ -381,15 +372,17 @@ export class App {
   // run no check asked for begins.
   private namesVerifier: NamesVerifier | null;
   // The posts verifier (WEB_INTERFACE → The extension → "The post check") —
-  // non-null only in the extension build. The three post reads carry `tx=1`
-  // while it is held, and every row passes through check() before entering
-  // state; the web build is handed none, sends no `tx` and shows every row
-  // the node serves.
+  // non-null only in the extension build. The single post read carries `tx=1`
+  // while it is held, and its row and the reader's own post at its submit
+  // pass through check() before entering state; the web build is handed none,
+  // sends no `tx` and shows every row the node serves. A list read brings no
+  // bytes and is not checked (→ "A list read brings no bytes and is not
+  // checked"); the resolver drives the batch read's own check.
   private postsVerifier: PostsVerifier | null;
   // The post cache (WEB_INTERFACE → The extension → "The post cache") — non-
-  // null only in the extension build. `offerBoundToCache` and `ingestRows`
-  // write to it; a thread's read that throws reads it; a put is started and
-  // never awaited by a render path.
+  // null only in the extension build. `offerBoundToCache` writes to it; a
+  // thread's read that throws reads it; a put is started and never awaited by
+  // a render path.
   private postCache: PostCache | null;
   // The post resolver (WEB_INTERFACE → The extension → "The resolve") — non-
   // null only in the extension build. The feed and the author window's list
@@ -583,9 +576,11 @@ export class App {
   }
 
   /** True when the App holds a posts verifier (WEB_INTERFACE → The extension →
-   *  "The post check") — the extension build's three post reads carry `tx=1`,
-   *  the web build's never do, by the same static substitution that keeps the
-   *  verifier out of its bundle. */
+   *  "The post check") — the extension build's single post read carries
+   *  `tx=1`, the web build's never does, by the same static substitution
+   *  that keeps the verifier out of its bundle. The list reads bring no
+   *  bytes and are not checked (→ "A list read brings no bytes and is not
+   *  checked"), so this is read by the single post read's call alone. */
   private postsTx(): boolean {
     return this.postsVerifier !== null;
   }
@@ -608,60 +603,14 @@ export class App {
     return this.tipChain;
   }
 
-  /** The App's one row-ingestion gate (WEB_INTERFACE → The extension → "The
-   *  post check"). Every row a read brings — the feed's page and its
-   *  pending, the author window's page, a thread's `post`, `ancestors`,
-   *  `descendants` and `pending` — is passed through here before it enters
-   *  state. With no verifier, every row stays, every per-row status is
-   *  `nothing-to-bind` and the count is zero. With one: `bound` and
-   *  `nothing-to-bind` enter; `unbound` is counted; `unserved` is dropped
-   *  and uncounted (the node says it holds no bytes for that post — no
-   *  claim about its text). A read's rows go as one batch, so one `check`
-   *  call per read; `checks` is parallel to the input rows for the caller's
-   *  own branching (a thread's subject). Bound rows and their checks reach
-   *  the cache's hook, which keeps nothing. */
-  private ingestRows(rows: ReadonlyArray<FeedRow>): { rows: FeedRow[]; unboundCount: number; checks: PostCheck[] } {
-    if (this.postsVerifier === null) {
-      const checks: PostCheck[] = rows.map(() => ({ status: 'nothing-to-bind' }));
-      return { rows: rows.slice(), unboundCount: 0, checks };
-    }
-    const checks = this.postsVerifier.check(rows as unknown[]);
-    const kept: FeedRow[] = [];
-    const bound: Array<{ row: FeedRow; check: PostCheck }> = [];
-    let unboundCount = 0;
-    for (let i = 0; i < rows.length; i++) {
-      const c = checks[i]!;
-      const r = rows[i]!;
-      if (c.status === 'bound') {
-        kept.push(r);
-        bound.push({ row: r, check: c });
-      } else if (c.status === 'nothing-to-bind') {
-        kept.push(r);
-        // A withdrawn row for a held id empties the entry's text and keeps
-        // the entry — the node's word, and a lie costs a re-fetch
-        // (WEB_INTERFACE → The extension → "The post cache"). An id the
-        // cache does not hold is nothing.
-        if (isWithdrawn(r) && this.postCache !== null) {
-          void this.postCache.withdraw(r.id, r);
-        }
-      } else if (c.status === 'unbound') {
-        unboundCount += 1;
-      }
-      // unserved: not kept, not counted (WEB_INTERFACE → The extension →
-      // "The post check").
-    }
-    this.offerBoundToCache(bound);
-    return { rows: kept, unboundCount, checks };
-  }
-
   /** Bound rows reach the post cache from here (WEB_INTERFACE → The
    *  extension → "The post cache"): each put carries the transaction's
    *  bytes, the author and the parent as the check gave them, and the row
    *  the node served. A withdrawn row for a held id reaches the cache
-   *  through `ingestRows`' `nothing-to-bind` branch. A put is started and
-   *  never awaited by a render path — the two failures the module absorbs
-   *  are a put that does not fit and a browser without IndexedDB. The App
-   *  keeps nothing. */
+   *  through `intake`'s withdrawn branch. A put is started and never
+   *  awaited by a render path — the two failures the module absorbs are a
+   *  put that does not fit and a browser without IndexedDB. The App keeps
+   *  nothing. */
   private offerBoundToCache(bound: ReadonlyArray<{ row: FeedRow; check: PostCheck }>): void {
     if (this.postCache === null || bound.length === 0) return;
     const own = this.idm.current()?.pubKeyHex ?? null;
@@ -683,40 +632,22 @@ export class App {
   }
 
   /** The six list reads' one gate (WEB_INTERFACE → The extension → "The
-   *  light read"): answer the input array positionally — `null` where the
-   *  check withheld a row — and the count of `unbound` rows withheld. The
-   *  three configurations are:
+   *  light read"): answer the input array positionally — a row for each
+   *  one given, in order. The two configurations are:
    *
-   *  - no resolver, no verifier (the web build): the rows pass `ingestRows`,
-   *    which keeps every row where no verifier is held. `unbound` is 0, no
-   *    cache call.
-   *  - a verifier, no resolver: `ingestRows` over the rows and its outcome
-   *    mapped positionally — `null` where it kept no row, `unbound` its
-   *    count. The bound rows reach `offerBoundToCache` through
-   *    `ingestRows`.
-   *  - a resolver (the extension build): a list read brings no bytes and is
-   *    not checked. Withdrawn rows reach `postCache.withdraw` unawaited; a
+   *  - no resolver (the web build): the rows as given, no cache call.
+   *  - a resolver (the extension build): a list read brings no bytes and
+   *    is not checked (→ "A list read brings no bytes and is not
+   *    checked"). Withdrawn rows reach `postCache.withdraw` unawaited; a
    *    light row whose cached entry holds the post's text becomes the
    *    composed `PostJson` (`withNodeWord`), the composed rows reach
    *    `postCache.refresh` unawaited, every other light row stands as the
-   *    slot it is; `unbound` is 0. A generation that moved reads nothing
-   *    from the cache and writes nothing to it. */
-  private async intake(
-    rows: ReadonlyArray<FeedRow>,
-    gen: number,
-  ): Promise<{ rows: Array<FeedRow | null>; unbound: number }> {
-    if (this.postResolver === null) {
-      const ing = this.ingestRows(rows);
-      const kept = new Set(ing.rows);
-      return {
-        rows: rows.map((r) => (kept.has(r) ? r : null)),
-        unbound: ing.unboundCount,
-      };
-    }
-    // A generation that moved reads nothing from the cache and writes nothing
-    // to it (WEB_INTERFACE → Reading the feed and threads → "No answer
-    // overwrites a newer one").
-    if (gen !== this.readerGen) return { rows: rows.slice(), unbound: 0 };
+   *    slot it is. A generation that moved reads nothing from the cache
+   *    and writes nothing to it (→ Reading the feed and threads → "No
+   *    answer overwrites a newer one"). */
+  private async intake(rows: ReadonlyArray<FeedRow>, gen: number): Promise<FeedRow[]> {
+    if (this.postResolver === null) return rows.slice();
+    if (gen !== this.readerGen) return rows.slice();
     const lightIds: string[] = [];
     for (const row of rows) {
       if (isLight(row)) lightIds.push(row.id);
@@ -733,8 +664,8 @@ export class App {
       // `applyCachedThread` reads one; so is no cache at all.
       try { held = await this.postCache.getMany(lightIds); } catch { held = new Map(); }
     }
-    if (gen !== this.readerGen) return { rows: rows.slice(), unbound: 0 };
-    const outRows: Array<FeedRow | null> = [];
+    if (gen !== this.readerGen) return rows.slice();
+    const outRows: FeedRow[] = [];
     const composed: PostJson[] = [];
     for (const row of rows) {
       if (isLight(row)) {
@@ -753,7 +684,7 @@ export class App {
     if (composed.length > 0 && this.postCache !== null) {
       void this.postCache.refresh(composed);
     }
-    return { rows: outRows, unbound: 0 };
+    return outRows;
   }
 
   /** The one row's gate — the single post read's answer (WEB_INTERFACE →
@@ -780,7 +711,8 @@ export class App {
       if (rebuilt === null) return null;
       // A withdrawn row for a held id empties the entry's text and keeps
       // the entry — the node's word (WEB_INTERFACE → The extension →
-      // "The post cache"). Started and not awaited, as `ingestRows` does.
+      // "The post cache"). Started and not awaited, as a bound row's put
+      // through `offerBoundToCache` is.
       if (this.postCache !== null) void this.postCache.withdraw(rebuilt.id, rebuilt);
       return rebuilt;
     }
@@ -1842,7 +1774,7 @@ export class App {
     feed.error = null;
     this.renderFeed();
     try {
-      const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true, this.postsTx(), this.listLight());
+      const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true, this.listLight());
       if (gen !== this.readerGen) return;
       await this.takeFeedPage(res, since, gen);
     } catch (e) {
@@ -1879,20 +1811,19 @@ export class App {
   private async takeFeedPage(res: FeedResult, since: number, gen: number): Promise<void> {
     const feed = this.state.feed;
     // Every row the read brought passes through intake as one page, before
-    // it enters the feed's state (WEB_INTERFACE → The extension →
-    // "The light read", → "The post check"). A first page resets the
-    // withheld count — "a refresh re-reads the list, and starts it again".
-    const intakeRes = await this.intake([...res.posts, ...res.pending], gen);
+    // it enters the feed's state (WEB_INTERFACE → The extension → "The
+    // light read"). A first page resets the withheld count — `endSlots`
+    // fills it as a resolve ends an id (→ "The resolve").
+    const kept = await this.intake([...res.posts, ...res.pending], gen);
     if (gen !== this.readerGen) return;
-    const kept = intakeRes.rows;
-    const keptPosts = res.posts.map((_, i) => kept[i]).filter((r): r is FeedRow => r !== null);
-    const keptPending = res.pending.map((_, i) => kept[i + res.posts.length]).filter((r): r is FeedRow => r !== null);
+    const keptPosts = kept.slice(0, res.posts.length);
+    const keptPending = kept.slice(res.posts.length);
     feed.posts = this.liveRows(keptPosts).map(this.keeper(feed.posts, since));
     feed.pending = this.dedupeOwn(keptPending.filter(isLivePost));
     feed.next = res.next;
     feed.loaded = true;
     feed.loading = false;
-    feed.unboundCount = intakeRes.unbound;
+    feed.unboundCount = 0;
     this.indexRows([...keptPosts, ...keptPending]);
   }
 
@@ -1921,7 +1852,7 @@ export class App {
       const probe = new NodeClient(() => base);
       let res: FeedResult;
       try {
-        res = await probe.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true, this.postsTx(), this.listLight());
+        res = await probe.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true, this.listLight());
       } catch {
         if (gen !== this.readerGen) return null;
         continue; // try the next entry
@@ -1955,21 +1886,18 @@ export class App {
       // and takes the mempool from page 0 (the only call with a null cursor).
       // The rows land together once the last page has answered; a page offers
       // its live rows alone (liveRows). Each page's rows go through intake as
-      // one call (WEB_INTERFACE → The extension → "The light read", → "The
-      // post check"); a refresh resets the withheld count and the pages add
-      // to it.
+      // one call (WEB_INTERFACE → The extension → "The light read"); a
+      // refresh resets the withheld count and `endSlots` fills it as a
+      // resolve ends an id.
       const rows: FeedRow[] = [];
       let pending: FeedRow[] = [];
-      let unboundCount = 0;
       const r = await reconcileNewer(
         feed.posts,
         async (after) => {
-          const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer(), undefined, true, this.postsTx(), this.listLight());
-          const intakeRes = await this.intake([...res.posts, ...res.pending], gen);
-          const kept = intakeRes.rows;
-          const keptPosts = res.posts.map((_, i) => kept[i]).filter((p): p is FeedRow => p !== null);
-          const keptPending = res.pending.map((_, i) => kept[i + res.posts.length]).filter((p): p is FeedRow => p !== null);
-          unboundCount += intakeRes.unbound;
+          const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer(), undefined, true, this.listLight());
+          const kept = await this.intake([...res.posts, ...res.pending], gen);
+          const keptPosts = kept.slice(0, res.posts.length);
+          const keptPending = kept.slice(res.posts.length);
           rows.push(...keptPosts, ...keptPending);
           if (after === null) pending = keptPending;
           return { posts: this.liveRows(keptPosts), next: res.next };
@@ -1981,7 +1909,7 @@ export class App {
       feed.pending = this.dedupeOwn(pending.filter(isLivePost));
       feed.posts = landRefresh(feed.posts, r);
       if (r.next !== undefined) feed.next = r.next; // reset only on the replace branch
-      feed.unboundCount = unboundCount;
+      feed.unboundCount = 0;
       feed.report = r.newCount ? `${r.newCount} new ${r.newCount === 1 ? 'post' : 'posts'}` : 'no new posts';
       feed.error = null;
     } catch (e) {
@@ -2005,27 +1933,23 @@ export class App {
     feed.loading = true;
     this.renderFeed();
     try {
-      const res = await this.client.feed({ limit: FEED_LIMIT, after: cursor }, this.viewer(), undefined, true, this.postsTx(), this.listLight());
+      const res = await this.client.feed({ limit: FEED_LIMIT, after: cursor }, this.viewer(), undefined, true, this.listLight());
       if (gen !== this.readerGen) return;
-      // The page's rows go through intake — a continuation adds to the
-      // feed's withheld count (WEB_INTERFACE → The extension → "The light
-      // read", → "The post check"). The cursor is read again after intake,
-      // so a `↻` or a first page that moved it meanwhile writes nothing
+      // The page's rows go through intake (WEB_INTERFACE → The extension →
+      // "The light read"). The cursor is read again after intake, so a `↻`
+      // or a first page that moved it meanwhile writes nothing
       // (WEB_INTERFACE → Reading the feed and threads → "No answer
       // overwrites a newer one").
-      const intakeRes = await this.intake(res.posts, gen);
+      const kept = await this.intake(res.posts, gen);
       if (gen !== this.readerGen) return;
       if (feed.next === cursor) {
-        const kept = intakeRes.rows;
-        const keptPosts = res.posts.map((_, i) => kept[i]).filter((p): p is FeedRow => p !== null);
-        const older = this.liveRows(keptPosts);
+        const older = this.liveRows(kept);
         const have = new Set(feed.posts.map((p) => p.id));
         const added = older.filter((p) => !have.has(p.id));
         feed.posts = [...feed.posts, ...added];
         feed.next = res.next;
-        feed.unboundCount += intakeRes.unbound;
         feed.olderReport = added.length ? `${added.length} older ${added.length === 1 ? 'post' : 'posts'}` : 'no older posts';
-        this.indexRows(keptPosts);
+        this.indexRows(kept);
       }
     } catch (e) {
       if (gen !== this.readerGen) return;
@@ -2263,69 +2187,43 @@ export class App {
     return t;
   }
 
-  /** A thread's first-page answer, read when `landings` stood at `since` and
-   *  the generation was `gen`. Two paths:
-   *
-   *  - Under a resolver (the extension build), the subject, ancestors,
-   *    descendants and pending go through `intake` as one page: a withdrawn
-   *    row refreshes the cache's entry, a light row the cache holds becomes
-   *    the composed card, every other light row rides through as the slot it
-   *    is. Of what `intake` answers, the subject and the descendants enter
-   *    state through `putThreadRows`; the ancestors give `ancestorIds`, ids
-   *    alone, and the pending gives nothing — neither is drawn and neither
-   *    is resolved. `unboundCount` is 0 and `subjectWithheld` is `null`;
-   *    `endSlots` sets each as a resolve ends an id (WEB_INTERFACE → The
-   *    extension → "The light read", → "The resolve"). A generation that
-   *    moved during the intake writes nothing.
-   *
-   *  - Under no resolver, every row goes through `ingestRows` as the tip
-   *    does; `subjectWithheld` is the subject's own check status
-   *    (WEB_INTERFACE → The extension → "The post check"). */
+  /** A thread's first-page answer, read when `landings` stood at `since`
+   *  and the generation was `gen`. The subject, ancestors, descendants and
+   *  pending go through `intake` as one page: under a resolver, a
+   *  withdrawn row refreshes the cache's entry, a light row the cache
+   *  holds becomes the composed card, every other light row rides through
+   *  as the slot it is; under none, every row rides through as given. Of
+   *  what `intake` answers, the subject and the descendants enter state
+   *  through `putThreadRows`; the ancestors give `ancestorIds`, ids alone,
+   *  and the pending gives nothing — neither is drawn and neither is
+   *  resolved. `unboundCount` is 0 and `subjectWithheld` is `null`;
+   *  `endSlots` sets each as a resolve ends an id (WEB_INTERFACE → The
+   *  extension → "The light read", → "The resolve", → "The post check" →
+   *  "A list read brings no bytes and is not checked"). A generation that
+   *  moved during the intake writes nothing. */
   private async applyThread(t: ThreadState, res: ThreadResult, since: number, gen: number): Promise<void> {
     const subject = res.post;
     const subjectIdx = subject === null ? -1 : 0;
     const batch: FeedRow[] = [];
     if (subject !== null) batch.push(subject);
     batch.push(...res.ancestors, ...res.descendants, ...res.pending);
-    if (this.listLight()) {
-      const int = await this.intake(batch, gen);
-      if (gen !== this.readerGen) return;
-      const rows = int.rows;
-      const ancestorsStart = subjectIdx === -1 ? 0 : 1;
-      const descendantsStart = ancestorsStart + res.ancestors.length;
-      const applyPost: FeedRow | null = subjectIdx === -1 ? null : (rows[subjectIdx] ?? null);
-      const descendants: FeedRow[] = [];
-      for (let i = 0; i < res.descendants.length; i++) {
-        const r = rows[descendantsStart + i];
-        if (r) descendants.push(r);
-      }
-      this.putThreadRows(t, since, applyPost, descendants);
-      t.ancestorIds = new Set(res.ancestors.map((a) => a.id));
-      t.descendantCount = res.descendantCount;
-      t.next = res.next;
-      t.error = null;
-      t.unboundCount = 0;
-      t.subjectWithheld = null;
-      this.indexRows([t.root, ...t.descendants]);
-      return;
-    }
-    const ing = this.ingestRows(batch);
-    const keptSet = new Set(ing.rows);
-    const subjectStatus: 'unbound' | 'unserved' | null = subjectIdx === -1
-      ? null
-      : subjectWithheldStatus(ing.checks[subjectIdx]!);
-    const applyPost = subjectStatus === null ? subject : null;
-    const keptAncestors = res.ancestors.filter((r) => keptSet.has(r));
-    const keptDescendants = res.descendants.filter((r) => keptSet.has(r));
-    const keptPending = res.pending.filter((r) => keptSet.has(r));
-    this.putThreadRows(t, since, applyPost, keptDescendants);
-    t.ancestorIds = new Set(keptAncestors.map((a) => a.id));
+    const rows = await this.intake(batch, gen);
+    if (gen !== this.readerGen) return;
+    const ancestorsStart = subjectIdx === -1 ? 0 : 1;
+    const descendantsStart = ancestorsStart + res.ancestors.length;
+    const pendingStart = descendantsStart + res.descendants.length;
+    const applyPost: FeedRow | null = subjectIdx === -1 ? null : (rows[subjectIdx] ?? null);
+    const ancestors = rows.slice(ancestorsStart, descendantsStart);
+    const descendants = rows.slice(descendantsStart, pendingStart);
+    const pending = rows.slice(pendingStart);
+    this.putThreadRows(t, since, applyPost, descendants);
+    t.ancestorIds = new Set(ancestors.map((a) => a.id));
     t.descendantCount = res.descendantCount;
     t.next = res.next;
     t.error = null;
-    t.unboundCount = ing.unboundCount;
-    t.subjectWithheld = subjectStatus;
-    this.indexRows([t.root, ...keptAncestors, ...t.descendants, ...keptPending]);
+    t.unboundCount = 0;
+    t.subjectWithheld = null;
+    this.indexRows([t.root, ...ancestors, ...t.descendants, ...pending]);
   }
 
   /** Write a thread read's rows, read from when `landings` stood at `since`, as
@@ -2342,9 +2240,11 @@ export class App {
   /** Read a thread's first page. A read for the node or the viewer before
    *  writes nothing: the change that moved the generation reads every open
    *  thread again itself. Under a resolver the read carries `light` and
-   *  never `tx`, and the standing slots are resolved from the seed list's
-   *  nodes after the write; the web build asks `tx` under a verifier and
-   *  neither otherwise (WEB_INTERFACE → The extension → "The light read"). */
+   *  the standing slots are resolved from the seed list's nodes after the
+   *  write; neither carries `tx` — a list read brings no bytes and is not
+   *  checked (WEB_INTERFACE → The extension → "The light read",
+   *  → "The post check" → "A list read brings no bytes and is not
+   *  checked"). */
   private async fetchThread(id: string): Promise<void> {
     const t = this.ensureThreadState(id);
     const gen = this.readerGen;
@@ -2353,7 +2253,7 @@ export class App {
     t.error = null;
     this.renderThreadLoad(id);
     try {
-      const res = await this.client.thread(id, { limit: THREAD_LIMIT }, this.viewer(), this.postsTx(), this.listLight());
+      const res = await this.client.thread(id, { limit: THREAD_LIMIT }, this.viewer(), this.listLight());
       if (gen !== this.readerGen) return;
       if (res === null) {
         t.root = null; // 404 — the post is gone; the body says so, it is not an error
@@ -2412,12 +2312,13 @@ export class App {
    *  It reports the change in reply count. A ↻ read for the node or the viewer
    *  before writes nothing, the report included, and the rows it writes keep
    *  every withdrawal the client saw land and every like that landed after it
-   *  began (putThreadRows). Under a resolver the pages carry `light` and
-   *  never `tx`; the first page's subject, ancestors and descendants and
-   *  each later page's descendants go through `intake` as one call, the
-   *  resolve runs after the write, and `subjectWithheld` and `unboundCount`
-   *  are 0 and `null` as `endSlots` fills them (WEB_INTERFACE → The
-   *  extension → "The light read"). */
+   *  began (putThreadRows). Under a resolver the pages carry `light`; the
+   *  first page's subject, ancestors and descendants and each later page's
+   *  descendants go through `intake` as one call, the resolve runs after
+   *  the write, and `subjectWithheld` and `unboundCount` are `null` and 0 —
+   *  `endSlots` fills them (WEB_INTERFACE → The extension → "The light
+   *  read", → "The post check" → "A list read brings no bytes and is not
+   *  checked"). */
   private async refreshThread(id: string): Promise<void> {
     const t = this.state.threads.get(id);
     if (!t) return;
@@ -2428,76 +2329,39 @@ export class App {
     this.clearSettledThread(id);
     await this.refreshTip(); // a ↻ re-reads the tip
     if (gen !== this.readerGen) return;
-    const lightOn = this.listLight();
     try {
-      let res = await this.client.thread(id, { limit: THREAD_LIMIT }, this.viewer(), this.postsTx(), lightOn);
+      let res = await this.client.thread(id, { limit: THREAD_LIMIT }, this.viewer(), this.listLight());
       if (gen !== this.readerGen) return;
       if (res === null) {
         t.root = null;
         t.error = null;
         if (region) region.report = null;
       } else {
-        // Each thread page's rows go through the post check as one batch
-        // (WEB_INTERFACE → The extension → "The post check"); a refresh
-        // resets the thread's withheld count and the pages add to it. The
-        // subject rides page 1 and decides `subjectWithheld`. Under a
-        // resolver the pages go through `intake` instead: the first page
-        // its subject, ancestors and descendants, each further page its
-        // descendants; `subjectWithheld` is `null` and `unboundCount` is 0
-        // — a resolve end sets each (→ "The light read", → "The resolve").
+        // Each thread page's rows go through `intake` as one call: the
+        // first page its subject, ancestors and descendants, each further
+        // page its descendants (WEB_INTERFACE → The extension → "The light
+        // read"). `subjectWithheld` and `unboundCount` are `null` and 0;
+        // `endSlots` fills them as a resolve ends an id (→ "The resolve").
         const firstBatch: FeedRow[] = [];
         if (res.post !== null) firstBatch.push(res.post);
         firstBatch.push(...res.ancestors, ...res.descendants);
-        let applyPost: FeedRow | null;
-        let subjectStatus: 'unbound' | 'unserved' | null;
-        let keptAncestors: FeedRow[];
-        let all: FeedRow[];
-        let totalUnbound = 0;
-        if (lightOn) {
-          const int = await this.intake(firstBatch, gen);
-          if (gen !== this.readerGen) return;
-          const rows = int.rows;
-          const subjectIdx = res.post === null ? -1 : 0;
-          const ancestorsStart = subjectIdx === -1 ? 0 : 1;
-          const descendantsStart = ancestorsStart + res.ancestors.length;
-          applyPost = subjectIdx === -1 ? null : (rows[subjectIdx] ?? null);
-          subjectStatus = null;
-          keptAncestors = res.ancestors;
-          const firstDescendants: FeedRow[] = [];
-          for (let i = 0; i < res.descendants.length; i++) {
-            const r = rows[descendantsStart + i];
-            if (r) firstDescendants.push(r);
-          }
-          all = firstDescendants;
-        } else {
-          const firstIng = this.ingestRows(firstBatch);
-          const firstKeptSet = new Set(firstIng.rows);
-          const subject = res.post;
-          subjectStatus = subject === null ? null : subjectWithheldStatus(firstIng.checks[0]!);
-          applyPost = subjectStatus === null ? subject : null;
-          keptAncestors = res.ancestors.filter((r) => firstKeptSet.has(r));
-          all = res.descendants.filter((r) => firstKeptSet.has(r));
-          totalUnbound = firstIng.unboundCount;
-        }
+        const firstRows = await this.intake(firstBatch, gen);
+        if (gen !== this.readerGen) return;
+        const subjectIdx = res.post === null ? -1 : 0;
+        const ancestorsStart = subjectIdx === -1 ? 0 : 1;
+        const descendantsStart = ancestorsStart + res.ancestors.length;
+        const applyPost: FeedRow | null = subjectIdx === -1 ? null : (firstRows[subjectIdx] ?? null);
+        const keptAncestors = firstRows.slice(ancestorsStart, descendantsStart);
+        const all: FeedRow[] = firstRows.slice(descendantsStart, descendantsStart + res.descendants.length);
         let next = res.next;
         let pages = 1;
         while (next !== null && pages < REFRESH_PAGE_CAP) {
-          const more = await this.client.thread(id, { limit: THREAD_LIMIT, after: next }, this.viewer(), this.postsTx(), lightOn);
+          const more = await this.client.thread(id, { limit: THREAD_LIMIT, after: next }, this.viewer(), this.listLight());
           if (gen !== this.readerGen) return;
           if (more === null) break;
-          if (lightOn) {
-            const int = await this.intake(more.descendants, gen);
-            if (gen !== this.readerGen) return;
-            for (let i = 0; i < more.descendants.length; i++) {
-              const r = int.rows[i];
-              if (r) all.push(r);
-            }
-          } else {
-            const ing = this.ingestRows(more.descendants);
-            const keptSet = new Set(ing.rows);
-            all.push(...more.descendants.filter((r) => keptSet.has(r)));
-            totalUnbound += ing.unboundCount;
-          }
+          const moreRows = await this.intake(more.descendants, gen);
+          if (gen !== this.readerGen) return;
+          all.push(...moreRows);
           next = more.next;
           res = more;
           pages++;
@@ -2507,8 +2371,8 @@ export class App {
         t.descendantCount = res.descendantCount;
         t.next = next; // null once fully read; set only if the page cap was hit
         t.error = null;
-        t.unboundCount = totalUnbound;
-        t.subjectWithheld = subjectStatus;
+        t.unboundCount = 0;
+        t.subjectWithheld = null;
         this.indexRows([t.root, ...t.descendants]);
         const delta = t.descendantCount - before;
         if (region) region.report = delta > 0 ? `${delta} new ${delta === 1 ? 'reply' : 'replies'}` : 'no new replies';
@@ -2528,43 +2392,27 @@ export class App {
    *  node or the viewer before writes nothing, and neither does one whose
    *  cursor a ↻ or a first page moved meanwhile — the next `more` continues the
    *  thread that stands. The cursor is the key: a landing replaces the rows'
-   *  array. Under a resolver the page carries `light` and never `tx`, and
-   *  the page's descendants go through `intake` as one call; the resolve
-   *  runs after the write (WEB_INTERFACE → The extension → "The light
-   *  read", → "The resolve"). The cursor is re-read after intake, so a ↻
-   *  that moved it writes nothing. */
+   *  array. Under a resolver the page carries `light`; the page's
+   *  descendants go through `intake` as one call and the resolve runs after
+   *  the write (WEB_INTERFACE → The extension → "The light read",
+   *  → "The resolve"). The cursor is re-read after intake, so a ↻ that
+   *  moved it writes nothing. */
   private async threadMore(id: string): Promise<void> {
     const t = this.state.threads.get(id);
     if (!t || t.next === null) return;
     const cursor = t.next;
     const gen = this.readerGen;
-    const lightOn = this.listLight();
     try {
-      const res = await this.client.thread(id, { limit: THREAD_LIMIT, after: cursor }, this.viewer(), this.postsTx(), lightOn);
+      const res = await this.client.thread(id, { limit: THREAD_LIMIT, after: cursor }, this.viewer(), this.listLight());
       if (gen !== this.readerGen || t.next !== cursor) return;
       if (res !== null) {
-        let kept: FeedRow[];
-        let unbound = 0;
-        if (lightOn) {
-          const int = await this.intake(res.descendants, gen);
-          if (gen !== this.readerGen || t.next !== cursor) return;
-          kept = [];
-          for (let i = 0; i < res.descendants.length; i++) {
-            const r = int.rows[i];
-            if (r) kept.push(r);
-          }
-        } else {
-          const ing = this.ingestRows(res.descendants);
-          const keptSet = new Set(ing.rows);
-          kept = res.descendants.filter((d) => keptSet.has(d));
-          unbound = ing.unboundCount;
-        }
+        const kept = await this.intake(res.descendants, gen);
+        if (gen !== this.readerGen || t.next !== cursor) return;
         const have = new Set(t.descendants.map((d) => d.id));
         const added = kept.filter((d) => !have.has(d.id)).map((d) => this.known(d));
         t.descendants = [...t.descendants, ...added];
         t.next = res.next;
         t.descendantCount = res.descendantCount;
-        t.unboundCount += unbound;
         this.indexRows(added);
       }
     } catch (e) {
@@ -3575,21 +3423,19 @@ export class App {
     f.loading = true;
     this.renderRegionsFor(postsWindowId(key));
     try {
-      const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer(), key, false, this.postsTx(), this.listLight());
+      const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer(), key, false, this.listLight());
       if (gen !== this.readerGen) return;
       // The page's rows go through intake (WEB_INTERFACE → The extension →
-      // "The light read", → "The post check"); a first page resets the
-      // window's withheld count.
-      const intakeRes = await this.intake(res.posts, gen);
+      // "The light read"); a first page resets the window's withheld
+      // count, and `endSlots` fills it as a resolve ends an id.
+      const kept = await this.intake(res.posts, gen);
       if (gen !== this.readerGen) return;
-      const kept = intakeRes.rows;
-      const keptPosts = res.posts.map((_, i) => kept[i]).filter((p): p is FeedRow => p !== null);
-      f.posts = this.liveRows(keptPosts).map(this.keeper(f.posts, since));
+      f.posts = this.liveRows(kept).map(this.keeper(f.posts, since));
       f.next = res.next;
       f.loaded = true;
       f.error = null;
-      f.unboundCount = intakeRes.unbound;
-      this.indexRows(keptPosts);
+      f.unboundCount = 0;
+      this.indexRows(kept);
     } catch (e) {
       if (gen !== this.readerGen) return;
       f.error = msg(e);
@@ -3612,17 +3458,13 @@ export class App {
     const region = this.regionFocusedOn(postsWindowId(key));
     try {
       const rows: FeedRow[] = [];
-      let unboundCount = 0;
       const r = await reconcileNewer(
         f.posts,
         async (after) => {
-          const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer(), key, false, this.postsTx(), this.listLight());
-          const intakeRes = await this.intake(res.posts, gen);
-          const kept = intakeRes.rows;
-          const keptPosts = res.posts.map((_, i) => kept[i]).filter((p): p is FeedRow => p !== null);
-          unboundCount += intakeRes.unbound;
-          rows.push(...keptPosts);
-          return { posts: this.liveRows(keptPosts), next: res.next };
+          const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer(), key, false, this.listLight());
+          const kept = await this.intake(res.posts, gen);
+          rows.push(...kept);
+          return { posts: this.liveRows(kept), next: res.next };
         },
         REFRESH_PAGE_CAP,
       );
@@ -3631,7 +3473,7 @@ export class App {
       f.posts = landRefresh(f.posts, r);
       if (r.next !== undefined) f.next = r.next;
       f.error = null;
-      f.unboundCount = unboundCount;
+      f.unboundCount = 0;
       if (region) region.report = r.newCount ? `${r.newCount} new ${r.newCount === 1 ? 'post' : 'posts'}` : 'no new posts';
     } catch (e) {
       if (gen !== this.readerGen) return;
@@ -3651,22 +3493,18 @@ export class App {
     const cursor = f.next;
     const gen = this.readerGen;
     try {
-      const res = await this.client.feed({ limit: FEED_LIMIT, after: cursor }, this.viewer(), key, false, this.postsTx(), this.listLight());
+      const res = await this.client.feed({ limit: FEED_LIMIT, after: cursor }, this.viewer(), key, false, this.listLight());
       if (gen !== this.readerGen || f.next !== cursor) return;
-      // The page's rows go through intake — a `more` adds to the window's
-      // withheld count (WEB_INTERFACE → The extension → "The light read",
-      // → "The post check"). The cursor is re-read after intake, so a `↻`
+      // The page's rows go through intake (WEB_INTERFACE → The extension →
+      // "The light read"). The cursor is re-read after intake, so a `↻`
       // or a first page that moved it meanwhile writes nothing.
-      const intakeRes = await this.intake(res.posts, gen);
+      const kept = await this.intake(res.posts, gen);
       if (gen !== this.readerGen || f.next !== cursor) return;
-      const kept = intakeRes.rows;
-      const keptPosts = res.posts.map((_, i) => kept[i]).filter((p): p is FeedRow => p !== null);
-      const older = this.liveRows(keptPosts);
+      const older = this.liveRows(kept);
       const have = new Set(f.posts.map((p) => p.id));
       f.posts = [...f.posts, ...older.filter((p) => !have.has(p.id))];
       f.next = res.next;
-      f.unboundCount += intakeRes.unbound;
-      this.indexRows(keptPosts);
+      this.indexRows(kept);
     } catch (e) {
       if (gen !== this.readerGen || f.next !== cursor) return;
       f.error = msg(e);

@@ -46,16 +46,17 @@ export interface Page {
  *  carried once one exists so `likedByViewer` is the node's answer
  *  (WEB_INTERFACE → "Every read carries the viewer's key once an identity is loaded, and none does before"). */
 export interface Api {
-  /** `withTx` adds `tx=1` to the three post reads, so each row carries its
-   *  creating transaction's bytes (NODE_INTERFACE → Posts → "The creating
-   *  transaction rides a post row"); `light` adds `light=1` beside the list
-   *  reads, so every row of every list of the answer is a `LightJson` or a
-   *  `WithdrawnJson` (NODE_INTERFACE → Posts → "A light row is a post's id
-   *  and the node's word", WEB_INTERFACE → The extension → "The light
-   *  read"). `light` and `tx` do not combine — `light` wins, and `withTx` is
-   *  ignored under it. */
-  feed(page?: Page, viewer?: string, author?: string, roots?: boolean, withTx?: boolean, light?: boolean): Promise<FeedResult>;
-  thread(id: string, page?: Page, viewer?: string, withTx?: boolean, light?: boolean): Promise<ThreadResult | null>;
+  /** `light` adds `light=1` beside the list reads, so every row of every
+   *  list of the answer is a `LightJson` or a `WithdrawnJson` (NODE_INTERFACE
+   *  → Posts → "A light row is a post's id and the node's word",
+   *  WEB_INTERFACE → The extension → "The light read"). A list read brings
+   *  no bytes and is not checked (→ "The post check" → "A list read brings
+   *  no bytes and is not checked"), so these reads take no `tx`. `withTx`
+   *  rides the single post read's call alone — the only post read whose
+   *  row the check runs over, read with `tx=1` where a verifier is held
+   *  (→ "The post check" → "the single post read's, asked with `tx=1`"). */
+  feed(page?: Page, viewer?: string, author?: string, roots?: boolean, light?: boolean): Promise<FeedResult>;
+  thread(id: string, page?: Page, viewer?: string, light?: boolean): Promise<ThreadResult | null>;
   post(id: string, viewer?: string, withTx?: boolean): Promise<PostResult | null>;
   status(): Promise<StatusResult>;
   currentBlock(): Promise<BlockCurrent>;
@@ -113,18 +114,17 @@ export class NodeClient implements Api {
     return data as T;
   }
 
-  async feed(page: Page = {}, viewer?: string, author?: string, roots?: boolean, withTx?: boolean, light?: boolean): Promise<FeedResult> {
-    // `author` filters to one identity's committed posts — the author-posts window
-    // (WEB_INTERFACE → The author window); `roots=1` restricts to posts with no
-    // parent, the feed's own read (WEB_INTERFACE → What the feed reads). The node
-    // rejects `roots=0`, so it is 1 or absent (NODE_INTERFACE → Posts). `tx=1` adds
-    // every row's creating transaction (WEB_INTERFACE → The extension → "The post
-    // check"); the web build never sends it. `light=1` wins over `tx` and takes
-    // the two list rows field by field (WEB_INTERFACE → The extension → "The
-    // light read").
+  async feed(page: Page = {}, viewer?: string, author?: string, roots?: boolean, light?: boolean): Promise<FeedResult> {
+    // `author` filters to one identity's committed posts — the author-posts
+    // window (WEB_INTERFACE → The author window); `roots=1` restricts to
+    // posts with no parent, the feed's own read (WEB_INTERFACE → What the
+    // feed reads). The node rejects `roots=0`, so it is 1 or absent
+    // (NODE_INTERFACE → Posts). `light=1` takes the two list rows field by
+    // field (WEB_INTERFACE → The extension → "The light read"); a list
+    // read brings no bytes and is not checked (→ "The post check" → "A
+    // list read brings no bytes and is not checked").
     const q: Record<string, string | number | undefined> = { limit: page.limit, after: page.after ?? undefined, author, viewer, roots: roots ? 1 : undefined };
     if (light) q['light'] = 1;
-    else if (withTx) q['tx'] = 1;
     const res = await this.get<FeedResult>(this.url('/posts', q), 'posts');
     if (!light) return res;
     // Each list is read as one unknown value — `readLightRows` answers
@@ -134,10 +134,9 @@ export class NodeClient implements Api {
     return { ...res, posts: readLightRows(res.posts), pending: readLightRows(res.pending) };
   }
 
-  async thread(id: string, page: Page = {}, viewer?: string, withTx?: boolean, light?: boolean): Promise<ThreadResult | null> {
+  async thread(id: string, page: Page = {}, viewer?: string, light?: boolean): Promise<ThreadResult | null> {
     const q: Record<string, string | number | undefined> = { limit: page.limit, after: page.after ?? undefined, viewer };
     if (light) q['light'] = 1;
-    else if (withTx) q['tx'] = 1;
     const res = await this.getOrNull<ThreadResult>(this.url(`/posts/${encodeURIComponent(id)}/thread`, q), 'descendants');
     if (res === null || !light) return res;
     // Each list is read as one unknown value — `readLightRows` answers

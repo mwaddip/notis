@@ -55,7 +55,7 @@ describe('read client — the list reads under light=1 carry light=1 and no tx',
   it('feed under light sends light=1 and no tx', async () => {
     answers.push({ posts: [], pending: [], pendingCount: 0, next: null });
     const c = client();
-    await c.feed({ limit: 30 }, VIEWER, undefined, true, false, true);
+    await c.feed({ limit: 30 }, VIEWER, undefined, true, true);
     expect(calls[0]).toBe(`/posts?limit=30&viewer=${VIEWER}&roots=1&light=1`);
     expect(calls[0]).not.toContain('tx=1');
   });
@@ -63,12 +63,12 @@ describe('read client — the list reads under light=1 carry light=1 and no tx',
   it('thread under light sends light=1 and no tx', async () => {
     answers.push({ post: null, ancestors: [], ancestorCount: 0, descendants: [], descendantCount: 0, next: null, pending: [], pendingCount: 0 });
     const c = client();
-    await c.thread(SUBJECT, { limit: 50 }, VIEWER, false, true);
+    await c.thread(SUBJECT, { limit: 50 }, VIEWER, true);
     expect(calls[0]).toBe(`/posts/${SUBJECT}/thread?limit=50&viewer=${VIEWER}&light=1`);
     expect(calls[0]).not.toContain('tx=1');
   });
 
-  it('feed with neither keeps no tx and no light', async () => {
+  it('feed with no light keeps no tx and no light', async () => {
     answers.push({ posts: [], pending: [], pendingCount: 0, next: null });
     const c = client();
     await c.feed({ limit: 30 }, VIEWER);
@@ -96,7 +96,7 @@ describe('read client — under light=1 every list is replaced by readLightRows'
   it("feed answers posts and pending as LightJson/WithdrawnJson rows", async () => {
     answers.push({ posts: [lightRow(ID_1), withdrawnRow(ID_2)], pending: [lightRow(ID_1)], pendingCount: 1, next: null });
     const c = client();
-    const res = await c.feed({ limit: 30 }, VIEWER, undefined, false, false, true);
+    const res = await c.feed({ limit: 30 }, VIEWER, undefined, false, true);
     expect(res.posts).toHaveLength(2);
     expect(res.pending).toHaveLength(1);
     expect((res.posts[0] as LightJson).kind).toBe('light');
@@ -111,7 +111,7 @@ describe('read client — under light=1 every list is replaced by readLightRows'
       pending: [lightRow(ID_1)], pendingCount: 1,
     });
     const c = client();
-    const res = await c.thread(SUBJECT, { limit: 50 }, VIEWER, false, true);
+    const res = await c.thread(SUBJECT, { limit: 50 }, VIEWER, true);
     expect(res).not.toBeNull();
     expect((res!.post as LightJson).kind).toBe('light');
     expect((res!.ancestors[0] as LightJson).kind).toBe('light');
@@ -122,7 +122,7 @@ describe('read client — under light=1 every list is replaced by readLightRows'
   it('a thread whose post is null passes under light=1', async () => {
     answers.push({ post: null, ancestors: [], ancestorCount: 0, descendants: [], descendantCount: 0, next: null, pending: [], pendingCount: 0 });
     const c = client();
-    const res = await c.thread(SUBJECT, { limit: 50 }, VIEWER, false, true);
+    const res = await c.thread(SUBJECT, { limit: 50 }, VIEWER, true);
     expect(res).not.toBeNull();
     expect(res!.post).toBeNull();
   });
@@ -132,13 +132,13 @@ describe('read client — a malformed row in any list of a light answer is a Pag
   it('a malformed row in feed.posts throws PageError', async () => {
     answers.push({ posts: [{ ...lightRow(ID_1), id: 'oops' }], pending: [], pendingCount: 0, next: null });
     const c = client();
-    await expect(c.feed({ limit: 30 }, VIEWER, undefined, false, false, true)).rejects.toBeInstanceOf(PageError);
+    await expect(c.feed({ limit: 30 }, VIEWER, undefined, false, true)).rejects.toBeInstanceOf(PageError);
   });
 
   it('a malformed row in feed.pending throws PageError', async () => {
     answers.push({ posts: [], pending: [{ ...lightRow(ID_1), likeCount: -1 }], pendingCount: 0, next: null });
     const c = client();
-    await expect(c.feed({ limit: 30 }, VIEWER, undefined, false, false, true)).rejects.toBeInstanceOf(PageError);
+    await expect(c.feed({ limit: 30 }, VIEWER, undefined, false, true)).rejects.toBeInstanceOf(PageError);
   });
 
   it('a malformed row in thread.ancestors throws PageError', async () => {
@@ -147,7 +147,7 @@ describe('read client — a malformed row in any list of a light answer is a Pag
       ancestorCount: 1, descendants: [], descendantCount: 0, next: null, pending: [], pendingCount: 0,
     });
     const c = client();
-    await expect(c.thread(SUBJECT, { limit: 50 }, VIEWER, false, true)).rejects.toBeInstanceOf(PageError);
+    await expect(c.thread(SUBJECT, { limit: 50 }, VIEWER, true)).rejects.toBeInstanceOf(PageError);
   });
 
   it('a malformed row in thread.descendants throws PageError', async () => {
@@ -157,7 +157,7 @@ describe('read client — a malformed row in any list of a light answer is a Pag
       next: null, pending: [], pendingCount: 0,
     });
     const c = client();
-    await expect(c.thread(SUBJECT, { limit: 50 }, VIEWER, false, true)).rejects.toBeInstanceOf(PageError);
+    await expect(c.thread(SUBJECT, { limit: 50 }, VIEWER, true)).rejects.toBeInstanceOf(PageError);
   });
 
   it('a malformed row in thread.pending throws PageError', async () => {
@@ -167,7 +167,7 @@ describe('read client — a malformed row in any list of a light answer is a Pag
       pending: [{ ...lightRow(ID_1), authorName: 'al ice' }], pendingCount: 1,
     });
     const c = client();
-    await expect(c.thread(SUBJECT, { limit: 50 }, VIEWER, false, true)).rejects.toBeInstanceOf(PageError);
+    await expect(c.thread(SUBJECT, { limit: 50 }, VIEWER, true)).rejects.toBeInstanceOf(PageError);
   });
 
   it('a malformed subject (thread.post) throws PageError', async () => {
@@ -177,7 +177,7 @@ describe('read client — a malformed row in any list of a light answer is a Pag
       next: null, pending: [], pendingCount: 0,
     });
     const c = client();
-    await expect(c.thread(SUBJECT, { limit: 50 }, VIEWER, false, true)).rejects.toBeInstanceOf(PageError);
+    await expect(c.thread(SUBJECT, { limit: 50 }, VIEWER, true)).rejects.toBeInstanceOf(PageError);
   });
 });
 
@@ -185,19 +185,19 @@ describe('read client — a light answer whose list is missing or is not an arra
   it('a light feed answer whose `pending` is missing throws PageError', async () => {
     answers.push({ posts: [lightRow(ID_1)], pendingCount: 0, next: null });
     const c = client();
-    await expect(c.feed({ limit: 30 }, VIEWER, undefined, false, false, true)).rejects.toBeInstanceOf(PageError);
+    await expect(c.feed({ limit: 30 }, VIEWER, undefined, false, true)).rejects.toBeInstanceOf(PageError);
   });
 
   it('a light feed answer whose `pending` is null throws PageError', async () => {
     answers.push({ posts: [], pending: null, pendingCount: 0, next: null });
     const c = client();
-    await expect(c.feed({ limit: 30 }, VIEWER, undefined, false, false, true)).rejects.toBeInstanceOf(PageError);
+    await expect(c.feed({ limit: 30 }, VIEWER, undefined, false, true)).rejects.toBeInstanceOf(PageError);
   });
 
   it('a light feed answer whose `pending` is a string throws PageError', async () => {
     answers.push({ posts: [], pending: 'oops', pendingCount: 0, next: null });
     const c = client();
-    await expect(c.feed({ limit: 30 }, VIEWER, undefined, false, false, true)).rejects.toBeInstanceOf(PageError);
+    await expect(c.feed({ limit: 30 }, VIEWER, undefined, false, true)).rejects.toBeInstanceOf(PageError);
   });
 
   it('a light thread answer whose `ancestors` is missing throws PageError', async () => {
@@ -207,7 +207,7 @@ describe('read client — a light answer whose list is missing or is not an arra
       pending: [], pendingCount: 0,
     });
     const c = client();
-    await expect(c.thread(SUBJECT, { limit: 50 }, VIEWER, false, true)).rejects.toBeInstanceOf(PageError);
+    await expect(c.thread(SUBJECT, { limit: 50 }, VIEWER, true)).rejects.toBeInstanceOf(PageError);
   });
 });
 

@@ -85,9 +85,9 @@ function scriptedVerifier(decide: (row: unknown, idx: number) => PostCheck): { v
 }
 
 interface Fake {
-  feedCalls: Array<{ withTx: boolean | undefined }>;
+  feedCalls: Array<{ light: boolean | undefined }>;
   feedRes: FeedResult;
-  threadCalls: Array<{ withTx: boolean | undefined; id: string }>;
+  threadCalls: Array<{ light: boolean | undefined; id: string }>;
   threadRes: ThreadResult | null;
   threadThrows: boolean;
   postRes: PostResult | null;
@@ -95,12 +95,12 @@ interface Fake {
 
 function makeApi(f: Fake): Api {
   return {
-    feed: async (_page, _viewer, _author, _roots, withTx): Promise<FeedResult> => {
-      f.feedCalls.push({ withTx });
+    feed: async (_page, _viewer, _author, _roots, light): Promise<FeedResult> => {
+      f.feedCalls.push({ light });
       return f.feedRes;
     },
-    thread: async (id, _page, _viewer, withTx): Promise<ThreadResult | null> => {
-      f.threadCalls.push({ withTx, id });
+    thread: async (id, _page, _viewer, light): Promise<ThreadResult | null> => {
+      f.threadCalls.push({ light, id });
       if (f.threadThrows) throw new Error('offline');
       return f.threadRes;
     },

@@ -4,9 +4,8 @@
 // extension build alone; the web build is handed none, and `build-release.sh`
 // refuses `notis.posts.` in its assets. A put never blocks or fails a render —
 // the two failures the contract absorbs are a put that does not fit (quota and
-// the module's cap) and a browser that gives the page no IndexedDB. Every
-// read still checks every row: this module answers no check and carries no
-// `has`.
+// the module's cap) and a browser that gives the page no IndexedDB. This
+// module answers no check and carries no `has`.
 
 import type { PostJson, WithdrawnJson } from '../api/dto';
 import { isWithdrawn } from '../api/dto';

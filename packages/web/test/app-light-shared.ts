@@ -69,8 +69,8 @@ export function boundCheck(r: PostJson): Extract<PostCheck, { status: 'bound' }>
   return { status: 'bound', id: r.id, txBytes: new Uint8Array([1, 2, 3]), author: r.author, parent: r.parentRefs[0] ?? null };
 }
 
-export interface FeedCall { url: string; light: boolean | undefined; withTx: boolean | undefined; author: string | undefined }
-export interface ThreadCall { id: string; url: string; light: boolean | undefined; withTx: boolean | undefined; after: string | undefined }
+export interface FeedCall { url: string; light: boolean | undefined; author: string | undefined }
+export interface ThreadCall { id: string; url: string; light: boolean | undefined; after: string | undefined }
 
 export interface Fake {
   feedCalls: FeedCall[];
@@ -87,34 +87,32 @@ export interface Fake {
 
 export function makeApi(f: Fake): Api {
   return {
-    feed: async (page, viewer, author, roots, withTx, lightFlag): Promise<FeedResult> => {
+    feed: async (page, viewer, author, roots, lightFlag): Promise<FeedResult> => {
       const q: Record<string, string | number | undefined> = {
         limit: page?.limit, after: page?.after ?? undefined, author, viewer, roots: roots ? 1 : undefined,
       };
       if (lightFlag) q['light'] = 1;
-      else if (withTx) q['tx'] = 1;
       const qs = Object.entries(q)
         .filter(([, v]) => v !== undefined && v !== null && v !== '')
         .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
         .join('&');
       const url = '/posts' + (qs ? '?' + qs : '');
-      f.feedCalls.push({ url, light: lightFlag, withTx, author });
+      f.feedCalls.push({ url, light: lightFlag, author });
       const res = f.feedQueue.shift();
       if (res === undefined) return { posts: [], next: null, pending: [], pendingCount: 0 };
       return res;
     },
-    thread: async (id, page, viewer, withTx, lightFlag): Promise<ThreadResult | null> => {
+    thread: async (id, page, viewer, lightFlag): Promise<ThreadResult | null> => {
       const q: Record<string, string | number | undefined> = {
         limit: page?.limit, after: page?.after ?? undefined, viewer,
       };
       if (lightFlag) q['light'] = 1;
-      else if (withTx) q['tx'] = 1;
       const qs = Object.entries(q)
         .filter(([, v]) => v !== undefined && v !== null && v !== '')
         .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
         .join('&');
       const url = '/posts/' + encodeURIComponent(id) + '/thread' + (qs ? '?' + qs : '');
-      f.threadCalls.push({ id, url, light: lightFlag, withTx, after: page?.after ?? undefined });
+      f.threadCalls.push({ id, url, light: lightFlag, after: page?.after ?? undefined });
       const next = f.threadQueue.shift();
       if (next === undefined || next === null) return null;
       if (next instanceof Error) throw next;

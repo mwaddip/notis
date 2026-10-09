@@ -374,11 +374,14 @@ export interface NamesVerifier {
   run(readingBase: string, claim: NameClaim, anchor: Anchor): Promise<NameResult>;
 }
 
-/** The extension checks every post row the three post reads bring, before it
- *  enters the client's state (WEB_INTERFACE → The extension → "The post
- *  check"). A read's rows go as one batch; the result is positional over them.
- *  The App holds an implementation only in the extension build; the web build
- *  is handed none, and sends no `tx` on its reads. */
+/** The extension checks every row that carries a post's bytes — the single
+ *  post read's row, the resolver's batch answer, and the reader's own post
+ *  at its submit — before it enters the client's state (WEB_INTERFACE →
+ *  The extension → "The post check"). A call's rows go as one batch; the
+ *  result is positional over them. A list read brings no bytes and is not
+ *  checked (→ "A list read brings no bytes and is not checked"). The App
+ *  holds an implementation only in the extension build; the web build is
+ *  handed none, and sends no `tx` on any read. */
 export interface PostsVerifier {
   check(rows: unknown[]): PostCheck[];
 }
