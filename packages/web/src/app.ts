@@ -680,9 +680,9 @@ export class App {
    *  check withheld a row — and the count of `unbound` rows withheld. The
    *  three configurations are:
    *
-   *  - no resolver, no verifier (the web build): every row stays, `unbound`
-   *    is 0, no cache call. `ingestRows` runs for the `nothing-to-bind`
-   *    branch's side effects (none under no verifier).
+   *  - no resolver, no verifier (the web build): the rows pass `ingestRows`,
+   *    which keeps every row where no verifier is held. `unbound` is 0, no
+   *    cache call.
    *  - a verifier, no resolver: `ingestRows` over the rows and its outcome
    *    mapped positionally — `null` where it kept no row, `unbound` its
    *    count. The bound rows reach `offerBoundToCache` through
@@ -707,8 +707,8 @@ export class App {
       };
     }
     // A generation that moved reads nothing from the cache and writes nothing
-    // to it (WEB_INTERFACE → The extension → "The light read" → "The feed and
-    // the author window's list have no such fallback").
+    // to it (WEB_INTERFACE → Reading the feed and threads → "No answer
+    // overwrites a newer one").
     if (gen !== this.readerGen) return { rows: rows.slice(), unbound: 0 };
     const lightIds: string[] = [];
     for (const row of rows) {
@@ -1554,7 +1554,7 @@ export class App {
    *  six list reads after it has written state. With no resolver this does
    *  nothing; the web build never reaches it. The ids claimed are added
    *  synchronously, so an id asked for is not asked again while its answer
-   *  is awaited; a generation that moved after step 1 lands nothing — the
+   *  is awaited; a generation that moved after the claim lands nothing — the
    *  re-read that `dropReaderState` starts asks again. */
   private async resolveSlots(): Promise<void> {
     const resolver = this.postResolver;
@@ -1582,33 +1582,23 @@ export class App {
     }
     if (gen !== this.readerGen) return;
     const toAsk: string[] = [];
+    const cacheHit: PostJson[] = [];
     for (const id of claimed) {
       const entry = held.get(id);
       if (entry !== undefined && isFull(entry.row) && typeof entry.row.content === 'string') {
         this.resolving.delete(id);
-        this.fillSlots(entry.row);
+        cacheHit.push(entry.row);
       } else {
         toAsk.push(id);
       }
     }
+    this.fillSlots(cacheHit);
     if (toAsk.length === 0) return;
-    const own = this.idm.current()?.pubKeyHex ?? null;
     const onBound = (posts: BoundPost[]): void => {
       if (gen !== this.readerGen) return;
-      for (const bp of posts) {
-        if (this.postCache !== null) {
-          void this.postCache.put({
-            id: bp.check.id,
-            txBytes: bp.check.txBytes,
-            row: bp.row,
-            author: bp.check.author,
-            parent: bp.check.parent,
-            own: own !== null && bp.check.author === own,
-          });
-        }
-        this.resolving.delete(bp.check.id);
-        this.fillSlots(bp.row);
-      }
+      this.offerBoundToCache(posts);
+      for (const bp of posts) this.resolving.delete(bp.check.id);
+      this.fillSlots(posts.map((bp) => bp.row));
     };
     let ends: Map<string, ResolveEnd>;
     try {
@@ -1625,45 +1615,69 @@ export class App {
     for (const id of toAsk) this.resolving.delete(id);
   }
 
-  /** A bound post fills every list holding a slot under its id — the feed's
-   *  live rows and its pending, each author window's posts — the composed
-   *  row carries the slot's figures (WEB_INTERFACE → The extension → "The
-   *  resolve", → "The light read" → "A row the cache holds is a card at
-   *  once"). An id a withdrawal the client saw land is skipped — a
-   *  withdrawal is final. The composed row enters the post index; the
-   *  surfaces that held one redraw. A list holding no slot under the id is
-   *  not written. */
-  private fillSlots(post: PostJson): void {
-    if (this.withdrawnSeen.has(post.id)) return;
-    let feedTouched = false;
+  /** A landing or a cache hit fills the slots standing under its posts — the
+   *  feed's live rows and its pending, each author window's posts — the
+   *  composed row carrying the slot's figures (WEB_INTERFACE → The extension
+   *  → "The resolve", → "The light read" → "A row the cache holds is a card
+   *  at once"). An id a withdrawal the client saw land is skipped — a
+   *  withdrawal is final. The composed row the feed draws is the one that
+   *  enters the post index, else the one in feed.pending, else the first
+   *  author window's — the row other sites read for its name
+   *  (`namePairsOnScreen`, `ctx.post`). The feed redraws once a call: a
+   *  filled slot in feed.pending redraws the feed whole (`renderFeed`);
+   *  otherwise each slot in feed.posts becomes its card in place
+   *  (`replaceFeedCard`), nothing else of the feed is rebuilt, and one
+   *  `checkNames('new')` runs for the call. Each author window that held a
+   *  filled slot redraws once (`renderPostsLoad`). */
+  private fillSlots(posts: PostJson[]): void {
+    if (posts.length === 0) return;
+    const feedPostsFills: PostJson[] = [];
+    let feedPendingFilled = false;
     const authorsTouched = new Set<string>();
-    for (let i = 0; i < this.state.feed.posts.length; i++) {
-      const r = this.state.feed.posts[i]!;
-      if (isLight(r) && r.id === post.id) {
-        this.state.feed.posts[i] = withNodeWord(post, r);
-        feedTouched = true;
-      }
-    }
-    for (let i = 0; i < this.state.feed.pending.length; i++) {
-      const r = this.state.feed.pending[i]!;
-      if (isLight(r) && r.id === post.id) {
-        this.state.feed.pending[i] = withNodeWord(post, r);
-        feedTouched = true;
-      }
-    }
-    for (const [key, f] of this.authorPostsData) {
-      let touched = false;
-      for (let i = 0; i < f.posts.length; i++) {
-        const r = f.posts[i]!;
+    for (const post of posts) {
+      if (this.withdrawnSeen.has(post.id)) continue;
+      let indexed: PostJson | null = null;
+      for (let i = 0; i < this.state.feed.posts.length; i++) {
+        const r = this.state.feed.posts[i]!;
         if (isLight(r) && r.id === post.id) {
-          f.posts[i] = withNodeWord(post, r);
-          touched = true;
+          const composed = withNodeWord(post, r);
+          this.state.feed.posts[i] = composed;
+          if (indexed === null) indexed = composed;
+          feedPostsFills.push(composed);
         }
       }
-      if (touched) authorsTouched.add(key);
+      for (let i = 0; i < this.state.feed.pending.length; i++) {
+        const r = this.state.feed.pending[i]!;
+        if (isLight(r) && r.id === post.id) {
+          const composed = withNodeWord(post, r);
+          this.state.feed.pending[i] = composed;
+          if (indexed === null) indexed = composed;
+          feedPendingFilled = true;
+        }
+      }
+      for (const [key, f] of this.authorPostsData) {
+        let touched = false;
+        for (let i = 0; i < f.posts.length; i++) {
+          const r = f.posts[i]!;
+          if (isLight(r) && r.id === post.id) {
+            const composed = withNodeWord(post, r);
+            f.posts[i] = composed;
+            if (indexed === null) indexed = composed;
+            touched = true;
+          }
+        }
+        if (touched) authorsTouched.add(key);
+      }
+      if (indexed !== null) this.state.posts.set(post.id, indexed);
     }
-    if (feedTouched || authorsTouched.size > 0) this.state.posts.set(post.id, post);
-    if (feedTouched) this.renderFeed();
+    if (feedPendingFilled) {
+      this.renderFeed();
+    } else if (feedPostsFills.length > 0) {
+      for (const composed of feedPostsFills) {
+        replaceFeedCard(this.feedEl, composed, this.ctx(), this.handlers);
+      }
+      this.checkNames('new');
+    }
     for (const key of authorsTouched) this.renderPostsLoad(key);
   }
 
@@ -1923,20 +1937,24 @@ export class App {
       if (gen !== this.readerGen) return;
       // The page's rows go through intake — a continuation adds to the
       // feed's withheld count (WEB_INTERFACE → The extension → "The light
-      // read", → "The post check"). The cursor is re-read after intake, so
-      // a `↻` or a first page that moved it meanwhile writes nothing.
+      // read", → "The post check"). The cursor is read again after intake,
+      // so a `↻` or a first page that moved it meanwhile writes nothing
+      // (WEB_INTERFACE → Reading the feed and threads → "No answer
+      // overwrites a newer one").
       const intakeRes = await this.intake(res.posts, gen);
-      if (gen !== this.readerGen || feed.next !== cursor) return;
-      const kept = intakeRes.rows;
-      const keptPosts = res.posts.map((_, i) => kept[i]).filter((p): p is FeedRow => p !== null);
-      const older = this.liveRows(keptPosts);
-      const have = new Set(feed.posts.map((p) => p.id));
-      const added = older.filter((p) => !have.has(p.id));
-      feed.posts = [...feed.posts, ...added];
-      feed.next = res.next;
-      feed.unboundCount += intakeRes.unbound;
-      feed.olderReport = added.length ? `${added.length} older ${added.length === 1 ? 'post' : 'posts'}` : 'no older posts';
-      this.indexRows(keptPosts);
+      if (gen !== this.readerGen) return;
+      if (feed.next === cursor) {
+        const kept = intakeRes.rows;
+        const keptPosts = res.posts.map((_, i) => kept[i]).filter((p): p is FeedRow => p !== null);
+        const older = this.liveRows(keptPosts);
+        const have = new Set(feed.posts.map((p) => p.id));
+        const added = older.filter((p) => !have.has(p.id));
+        feed.posts = [...feed.posts, ...added];
+        feed.next = res.next;
+        feed.unboundCount += intakeRes.unbound;
+        feed.olderReport = added.length ? `${added.length} older ${added.length === 1 ? 'post' : 'posts'}` : 'no older posts';
+        this.indexRows(keptPosts);
+      }
     } catch (e) {
       if (gen !== this.readerGen) return;
       if (feed.next === cursor) feed.error = msg(e);

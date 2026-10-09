@@ -292,8 +292,6 @@ describe('with no resolver the six reads carry no light flag', () => {
     for (const call of h.fake.feedCalls) {
       expect(call.light).toBeFalsy();
       expect(call.withTx).toBeFalsy();
-      expect(call.url).not.toContain('light=1');
-      expect(call.url).not.toContain('tx=1');
     }
     expect(h.fake.feedCalls.length).toBeGreaterThanOrEqual(6);
   });
@@ -326,7 +324,7 @@ describe('with no resolver the six reads carry no light flag', () => {
     await h.drive.authorPostsMore(K); await flush();
     for (const call of h.fake.feedCalls) {
       expect(call.light).toBeFalsy();
-      expect(call.url).toContain('tx=1');
+      expect(call.withTx).toBe(true);
     }
   });
 });
@@ -410,6 +408,116 @@ describe('a cold page draws slots, then fills them from the resolver', () => {
 });
 
 // ---------------------------------------------------------------------------
+// A landing of one post among several slots replaces that slot's node and no
+// other — nothing else of the feed is rebuilt.
+// ---------------------------------------------------------------------------
+describe('a landing replaces the slot\'s node and no other', () => {
+  it('two slots and a cached card: the filled one changes node, the rest stay the same node', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    const cached = fullRow('x');
+    await seedCache(cache, [cached]);
+    const lx = light('x'), la = light('a'), lb = light('b');
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [{ posts: [lx, la, lb], next: null, pending: [], pendingCount: 0 }],
+    });
+    await h.drive.loadFeed();
+    await settle();
+    // The cached row is composed into a card already; the two others are slots.
+    const nodeX = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${lx.id}"]`)!;
+    const nodeA = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${la.id}"]`)!;
+    const nodeB = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${lb.id}"]`)!;
+    expect(nodeX.classList.contains('slot')).toBe(false);
+    expect(nodeA.classList.contains('slot')).toBe(true);
+    expect(nodeB.classList.contains('slot')).toBe(true);
+    // Resolve `a` alone — `b` stays a slot.
+    const fa = fullRow('a');
+    r.calls[0]!.bound([fa]);
+    await settle();
+    // The filled slot's node is a card now; the other two nodes are the same
+    // nodes they were before the landing.
+    const nodeXAfter = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${lx.id}"]`);
+    const nodeAAfter = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${la.id}"]`);
+    const nodeBAfter = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${lb.id}"]`);
+    expect(nodeXAfter).toBe(nodeX);
+    expect(nodeBAfter).toBe(nodeB);
+    expect(nodeAAfter).not.toBe(nodeA);
+    expect(nodeAAfter!.classList.contains('slot')).toBe(false);
+    r.calls[0]!.end({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A landing of thirty redraws the feed's cards once each — no full feed
+// rebuild, which would replace every node including non-slot ones (the head,
+// the foot, a cached card).
+// ---------------------------------------------------------------------------
+describe('a landing of thirty redraws the cards once each', () => {
+  it('thirty slots filled in one onBound: non-slot nodes stay the same reference', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    const lights: LightJson[] = [];
+    const rows: PostJson[] = [];
+    for (let i = 0; i < 30; i++) {
+      const label = String.fromCharCode(97 + (i % 26)) + i;
+      lights.push(light(label));
+      rows.push(fullRow(label));
+    }
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [{ posts: lights, next: null, pending: [], pendingCount: 0 }],
+    });
+    await h.drive.loadFeed();
+    await settle();
+    // Save the feed head reference — a non-slot node that a renderFeed call
+    // would rebuild.
+    const headBefore = h.feedEl.querySelector('.feed-head');
+    expect(headBefore).not.toBeNull();
+    r.calls[0]!.bound(rows);
+    r.calls[0]!.end({});
+    await settle();
+    const headAfter = h.feedEl.querySelector('.feed-head');
+    // The feed was never redrawn whole — the head is the same node.
+    expect(headAfter).toBe(headBefore);
+    // Every slot became a card.
+    expect(h.feedEl.querySelectorAll('.card.slot').length).toBe(0);
+    expect(h.feedEl.querySelectorAll<HTMLElement>('[data-post-id]').length).toBe(30);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The post index holds the composed row — the one drawn — not the resolver's
+// batch row, which carries the batch's figures and `likedByViewer: null`.
+// ---------------------------------------------------------------------------
+describe('the post index holds the composed row', () => {
+  it('after a landing, state.posts.get carries the listing\'s likeCount and likedByViewer', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    // The listing's row carries 7 likes and the viewer likes it.
+    const la = light('a', { likeCount: 7, likedByViewer: true });
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [{ posts: [la], next: null, pending: [], pendingCount: 0 }],
+    });
+    await h.drive.loadFeed();
+    await settle();
+    // The batch's row — the resolver's answer — carries different figures.
+    const fa = fullRow('a', { likeCount: 0, likedByViewer: null });
+    r.calls[0]!.bound([fa]);
+    r.calls[0]!.end({});
+    await settle();
+    const indexed = h.drive.state.posts.get(la.id);
+    expect(indexed).toBeDefined();
+    expect((indexed as PostJson).likeCount).toBe(7);
+    expect((indexed as PostJson).likedByViewer).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A page half held: the resolver is asked for the half the cache lacked.
 // ---------------------------------------------------------------------------
 describe('a page half held asks for only the other half', () => {
@@ -489,37 +597,73 @@ describe('a second ↻ while a resolve is in flight asks for no id twice', () =>
 // window's page's cache read is held open; onBound fires between the intake
 // and the write; the window's X is a card, resolve was called once in all.
 // ---------------------------------------------------------------------------
-describe('an answer that lands between a read\'s intake and its write', () => {
-  it('fills the list that stood here; the next read finds the post in the cache', async () => {
+describe('an answer that lands between a read\'s cache read and its write', () => {
+  it('fills the list that stood here; the author window\'s X is a card and never a slot; one resolve call in all', async () => {
     const r = testResolver();
-    const { cache } = makeCache();
-    await cache.open('C');
+    const { cache: realCache } = makeCache();
+    await realCache.open('C');
     const K = hid('author3');
     const lx = light('x');
+    // Hold the first getMany after arming — the author window's intake
+    // suspends there, and X lands into the feed and the cache in the
+    // meantime (WEB_INTERFACE → Reading the feed and threads → "No answer
+    // overwrites a newer one").
+    let holdNext = false;
+    let heldRelease: (() => void) | null = null;
+    const cache: PostCache = {
+      open: realCache.open.bind(realCache),
+      put: realCache.put.bind(realCache),
+      withdraw: realCache.withdraw.bind(realCache),
+      thread: realCache.thread.bind(realCache),
+      refresh: realCache.refresh.bind(realCache),
+      getMany: async (ids) => {
+        const answer = await realCache.getMany(ids);
+        if (!holdNext) return answer;
+        holdNext = false;
+        await new Promise<void>((resolve) => { heldRelease = resolve; });
+        heldRelease = null;
+        return answer;
+      },
+    };
     const h = harness({
       resolver: r.resolver, cache,
       feedResults: [
+        // The feed's first page — lists X as a slot.
         { posts: [lx], next: null, pending: [], pendingCount: 0 },
+        // The author window's first page — lists X as a slot.
         { posts: [lx], next: null, pending: [], pendingCount: 0 },
       ],
     });
     await h.drive.loadFeed();
     await settle();
     expect(r.calls.length).toBe(1);
-    // Bound answer lands — the feed's slot is filled, the cache holds X.
+    // Arm the hold — the next getMany suspends. The author window opens;
+    // its loadAuthorPosts' intake calls getMany and is held.
+    holdNext = true;
+    h.drive.openAuthorPosts(K, { from: 'feed' });
+    while (heldRelease === null) await flush();
+    const release = heldRelease as () => void;
+    // Land X — the feed's slot becomes a card and the cache holds X.
     const fx = fullRow('x');
     r.calls[0]!.bound([fx]);
     r.calls[0]!.end({});
     await settle();
-    // Author window opens on X's author; its first page lists X — intake
-    // finds X in the cache and composes it, so the window shows a card.
-    h.drive.openAuthorPosts(K, { from: 'feed' });
+    // The feed's X is a card now.
+    const feedX = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${lx.id}"]`);
+    expect(feedX?.classList.contains('slot')).toBe(false);
+    // Release the held getMany — the author window's intake continues with
+    // its stale (empty) answer, writes state, then resolveSlots re-reads the
+    // cache and finds X.
+    release();
     await settle();
-    const win = h.drive.state as unknown as { authorPostsData?: Map<string, { posts: FeedRow[] }> };
-    // The author posts window's state is private; drive through the handle
-    // via a type cast to the App's own structure.
-    void win;
-    // One `resolve` call in all — the second read found X in the cache.
+    // The author window's X is a card (never a slot).
+    const apd = (h.app as unknown as {
+      authorPostsData: Map<string, { posts: FeedRow[] }>;
+    }).authorPostsData;
+    const posts = apd.get(K)?.posts ?? [];
+    expect(posts.length).toBe(1);
+    expect('kind' in posts[0]! && posts[0].kind === 'light').toBe(false);
+    // One resolve call in all — the second cache read found X.
     expect(r.calls.length).toBe(1);
   });
 });
@@ -543,10 +687,10 @@ describe('ends drop slots and count unbound ones', () => {
     r.calls[0]!.end({ [la.id]: 'unserved' });
     await settle();
     expect(h.drive.state.feed.posts.length).toBe(0);
-    expect(h.drive.state.feed.unboundCount).toBe(0);
+    expect(h.feedEl.querySelector('.withheld')).toBeNull();
   });
 
-  it('one unbound: slot leaves; count rises to 1', async () => {
+  it('one unbound: slot leaves; the feed\'s head reads the clay line', async () => {
     const r = testResolver();
     const { cache } = makeCache();
     await cache.open('C');
@@ -560,10 +704,11 @@ describe('ends drop slots and count unbound ones', () => {
     r.calls[0]!.end({ [la.id]: 'unbound' });
     await settle();
     expect(h.drive.state.feed.posts.length).toBe(0);
-    expect(h.drive.state.feed.unboundCount).toBe(1);
+    const line = h.feedEl.querySelector('.withheld');
+    expect(line?.textContent).toBe('1 post withheld — it does not match its signature');
   });
 
-  it('two unbound reads: count rises to 2', async () => {
+  it('two unbound reads: the clay line counts them', async () => {
     const r = testResolver();
     const { cache } = makeCache();
     await cache.open('C');
@@ -577,7 +722,8 @@ describe('ends drop slots and count unbound ones', () => {
     r.calls[0]!.end({ [la.id]: 'unbound', [lb.id]: 'unbound' });
     await settle();
     expect(h.drive.state.feed.posts.length).toBe(0);
-    expect(h.drive.state.feed.unboundCount).toBe(2);
+    const line = h.feedEl.querySelector('.withheld');
+    expect(line?.textContent).toBe('2 posts withheld — they do not match their signatures');
   });
 
   it('a ↻ starts the count again and a later end adds to it; a first page listing it again asks again', async () => {
@@ -618,7 +764,7 @@ describe('ends drop slots and count unbound ones', () => {
 // window — leaves both, and an unbound one is counted at the head of each.
 // ---------------------------------------------------------------------------
 describe('an id ending while two lists hold its slot leaves both', () => {
-  it('feed and author window: both drop the slot, each counts an unbound', async () => {
+  it('feed and author window: both drop the slot and both heads read the clay line', async () => {
     const r = testResolver();
     const { cache } = makeCache();
     await cache.open('C');
@@ -639,16 +785,13 @@ describe('an id ending while two lists hold its slot leaves both', () => {
     // Both reads claim la — the first adds it to resolving, the second finds
     // it already there and does not claim. So one resolve call.
     expect(r.calls.length).toBe(1);
-    // The feed and the author window both hold the slot.
-    expect(h.drive.state.feed.posts.length).toBe(1);
-    const apd = (h.app as unknown as { authorPostsData: Map<string, { posts: FeedRow[]; unboundCount: number }> }).authorPostsData;
-    expect(apd.get(K)?.posts.length).toBe(1);
     r.calls[0]!.end({ [la.id]: 'unbound' });
     await settle();
     expect(h.drive.state.feed.posts.length).toBe(0);
-    expect(h.drive.state.feed.unboundCount).toBe(1);
-    expect(apd.get(K)?.posts.length).toBe(0);
-    expect(apd.get(K)?.unboundCount).toBe(1);
+    expect(h.feedEl.querySelector('.withheld')?.textContent)
+      .toBe('1 post withheld — it does not match its signature');
+    expect(h.panes.querySelector('.withheld')?.textContent)
+      .toBe('1 post withheld — it does not match its signature');
   });
 });
 
@@ -657,21 +800,21 @@ describe('an id ending while two lists hold its slot leaves both', () => {
 // a bound post with null content; the client leaves it where it stood and
 // the next first page asks for it again (it is still a `LightJson`).
 // ---------------------------------------------------------------------------
-describe('a placeholder passes through onBound and stays a slot', () => {
-  it('a bound post with content: null does not fill a slot', async () => {
-    // `fillSlots` composes `withNodeWord(post, slot)` into a `PostJson` and
-    // writes it. A bound post with `content: null` is still a PostJson; its
-    // composition carries content: null (a placeholder). The slot is
-    // replaced by the composed row — the card reads "content not on this
-    // node yet" through the view. The next first page listing the same id
-    // sees a full row (not a light row), so resolveSlots does not claim it.
+describe('a placeholder bound at the end is a card reading content not on this node yet', () => {
+  it('the entry carries no text; the next first page asks for the id again', async () => {
     const r = testResolver();
     const { cache } = makeCache();
     await cache.open('C');
     const la = light('a');
     const h = harness({
       resolver: r.resolver, cache,
-      feedResults: [{ posts: [la], next: null, pending: [], pendingCount: 0 }],
+      feedResults: [
+        { posts: [la], next: null, pending: [], pendingCount: 0 },
+        // A later first page — through loadFeed, not reconcileNewer — lists
+        // la again; intake re-reads the cache, finds the entry's text is
+        // null, and leaves la a slot.
+        { posts: [la], next: null, pending: [], pendingCount: 0 },
+      ],
     });
     await h.drive.loadFeed();
     await settle();
@@ -679,9 +822,19 @@ describe('a placeholder passes through onBound and stays a slot', () => {
     r.calls[0]!.bound([fa]);
     r.calls[0]!.end({});
     await settle();
-    expect(h.drive.state.feed.posts.length).toBe(1);
-    const row = h.drive.state.feed.posts[0] as PostJson;
-    expect(row.content).toBeNull();
+    // The slot became a card and the card reads *content not on this node yet*.
+    const card = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${la.id}"]`);
+    expect(card).not.toBeNull();
+    expect(card!.classList.contains('slot')).toBe(false);
+    expect(card!.querySelector('.card-absent')?.textContent).toBe('content not on this node yet');
+    // The cache entry holds no text — the row the cache gave is still a
+    // placeholder, so a loadFeed that lists the id again asks the resolver
+    // for the text (WEB_INTERFACE → The extension → "An entry without text
+    // is not held").
+    await h.drive.loadFeed();
+    await settle();
+    expect(r.calls.length).toBe(2);
+    expect(r.calls[1]!.ids).toEqual([la.id]);
   });
 });
 
@@ -709,6 +862,150 @@ describe('load older appends slots and resolves them', () => {
     await settle();
     expect(h.drive.state.feed.posts.map((p) => p.id)).toEqual([la.id, lb.id]);
     // The resolver was asked twice — once for la, once for lb.
+    expect(r.calls.length).toBe(2);
+    expect(r.calls[1]!.ids).toEqual([lb.id]);
+  });
+
+  it('a loadOlder whose cursor moved while its cache read was held writes nothing and clears feed.loading', async () => {
+    const r = testResolver();
+    const { cache: realCache } = makeCache();
+    await realCache.open('C');
+    const la = light('a'), lb = light('b'), lc = light('c');
+    // Hold the first getMany after arming — the loadOlder's intake suspends
+    // there (WEB_INTERFACE → Reading the feed and threads → "No answer
+    // overwrites a newer one").
+    let holdNext = false;
+    let heldRelease: (() => void) | null = null;
+    const cache: PostCache = {
+      open: realCache.open.bind(realCache),
+      put: realCache.put.bind(realCache),
+      withdraw: realCache.withdraw.bind(realCache),
+      thread: realCache.thread.bind(realCache),
+      refresh: realCache.refresh.bind(realCache),
+      getMany: async (ids) => {
+        const answer = await realCache.getMany(ids);
+        if (!holdNext) return answer;
+        holdNext = false;
+        await new Promise<void>((resolve) => { heldRelease = resolve; });
+        heldRelease = null;
+        return answer;
+      },
+    };
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [
+        { posts: [la], next: 'cur1', pending: [], pendingCount: 0 },
+        // The loadOlder's page — intake is held mid-flight.
+        { posts: [lb], next: null, pending: [], pendingCount: 0 },
+        // A fresh loadFeed replaces the list and resets the cursor to 'cur2'.
+        { posts: [lc], next: 'cur2', pending: [], pendingCount: 0 },
+      ],
+    });
+    await h.drive.loadFeed();
+    await settle();
+    holdNext = true;
+    const olderDone = h.drive.loadOlder();
+    // Settle until the hold is reached.
+    while (heldRelease === null) await flush();
+    const release = heldRelease as () => void;
+    // A loadFeed meanwhile — resets feed.next to 'cur2'.
+    await h.drive.loadFeed();
+    await settle();
+    expect(h.drive.state.feed.next).toBe('cur2');
+    // Release the held getMany — loadOlder continues, finds the cursor
+    // moved, writes nothing but clears feed.loading.
+    release();
+    await olderDone;
+    await settle();
+    // The row from loadOlder's page is not appended; the feed holds the
+    // loadFeed's.
+    expect(h.drive.state.feed.posts.map((p) => p.id)).toEqual([lc.id]);
+    expect(h.drive.state.feed.next).toBe('cur2');
+    expect(h.drive.state.feed.loading).toBe(false);
+    expect(h.drive.state.feed.olderReport).toBeNull();
+  });
+
+  it('a loadOlder under a moved generation writes nothing', async () => {
+    const r = testResolver();
+    const { cache: realCache } = makeCache();
+    await realCache.open('C');
+    const la = light('a'), lb = light('b');
+    // Hold the first getMany after arming — the loadOlder's intake suspends
+    // there while onIdentityChange moves the generation.
+    let holdNext = false;
+    let heldRelease: (() => void) | null = null;
+    const cache: PostCache = {
+      open: realCache.open.bind(realCache),
+      put: realCache.put.bind(realCache),
+      withdraw: realCache.withdraw.bind(realCache),
+      thread: realCache.thread.bind(realCache),
+      refresh: realCache.refresh.bind(realCache),
+      getMany: async (ids) => {
+        const answer = await realCache.getMany(ids);
+        if (!holdNext) return answer;
+        holdNext = false;
+        await new Promise<void>((resolve) => { heldRelease = resolve; });
+        heldRelease = null;
+        return answer;
+      },
+    };
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [
+        { posts: [la], next: 'cur1', pending: [], pendingCount: 0 },
+        // loadOlder's page — the gen moves before it writes.
+        { posts: [lb], next: null, pending: [], pendingCount: 0 },
+        // The identity change's re-read of the feed.
+        { posts: [], next: null, pending: [], pendingCount: 0 },
+      ],
+    });
+    await h.drive.loadFeed();
+    await settle();
+    holdNext = true;
+    const olderDone = h.drive.loadOlder();
+    while (heldRelease === null) await flush();
+    // The identity change moves the gen while loadOlder is in flight.
+    const release = heldRelease as () => void;
+    h.drive.onIdentityChange();
+    release();
+    await olderDone;
+    await settle();
+    // loadOlder's write never landed; the feed holds the identity change's
+    // re-read, which is empty.
+    expect(h.drive.state.feed.posts.length).toBe(0);
+    expect(h.drive.state.feed.olderReport).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// authorPostsMore appends slots and fills them.
+// ---------------------------------------------------------------------------
+describe('authorPostsMore appends slots and resolves them', () => {
+  it('a `more` adds slots and asks the resolver for the new ids', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    const K = hid('author5');
+    const la = light('a'), lb = light('b');
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [
+        // The author window's first page.
+        { posts: [la], next: 'cur-a', pending: [], pendingCount: 0 },
+        // The `more` page.
+        { posts: [lb], next: null, pending: [], pendingCount: 0 },
+      ],
+    });
+    h.drive.openAuthorPosts(K, { from: 'feed' });
+    await settle();
+    expect(r.calls.length).toBe(1);
+    expect(r.calls[0]!.ids).toEqual([la.id]);
+    await h.drive.authorPostsMore(K);
+    await settle();
+    const apd = (h.app as unknown as {
+      authorPostsData: Map<string, { posts: FeedRow[] }>;
+    }).authorPostsData;
+    expect(apd.get(K)?.posts.map((p) => p.id)).toEqual([la.id, lb.id]);
     expect(r.calls.length).toBe(2);
     expect(r.calls[1]!.ids).toEqual([lb.id]);
   });
@@ -746,7 +1043,7 @@ describe('a withdrawn row in a light page empties the held entry', () => {
 // put, nothing written, and the id is asked again on the next read.
 // ---------------------------------------------------------------------------
 describe('a landing after a node change writes nothing', () => {
-  it('onBound under the older gen puts nothing and leaves resolving alone', async () => {
+  it('a changeNode landing between resolve and onBound writes nothing to the cache or the feed; the next read asks the id again', async () => {
     const r = testResolver();
     const { cache } = makeCache();
     await cache.open('C');
@@ -755,16 +1052,19 @@ describe('a landing after a node change writes nothing', () => {
       resolver: r.resolver, cache,
       feedResults: [
         { posts: [la], next: null, pending: [], pendingCount: 0 },
+        // The change's re-read's first page — empty, so no new slot.
+        { posts: [], next: null, pending: [], pendingCount: 0 },
+        // The next loadFeed's page lists the id again.
         { posts: [la], next: null, pending: [], pendingCount: 0 },
       ],
     });
     await h.drive.loadFeed();
     await settle();
-    // Drive a node change — the gen moves, the feed empties, resolving clears.
-    const dropFn = (h.app as unknown as { dropReaderState(): void }).dropReaderState;
-    const dropFeedRowsFn = (h.app as unknown as { dropFeedRows(): void }).dropFeedRows;
-    dropFn.call(h.app);
-    dropFeedRowsFn.call(h.app);
+    expect(r.calls.length).toBe(1);
+    // A node change moves the gen; its re-read empties the feed and the next
+    // read asks the resolver again.
+    await h.drive.changeNode('http://second');
+    await settle();
     expect(h.drive.resolving.size).toBe(0);
     // The old resolve answers now — its onBound fires under the older gen.
     const fa = fullRow('a');
@@ -776,6 +1076,40 @@ describe('a landing after a node change writes nothing', () => {
     expect(held.size).toBe(0);
     expect(h.drive.state.feed.posts.length).toBe(0);
     // The next read asks the resolver again — resolving was cleared.
+    await h.drive.loadFeed();
+    await settle();
+    expect(r.calls.length).toBe(2);
+    expect(r.calls[1]!.ids).toEqual([la.id]);
+  });
+
+  it('an onIdentityChange landing between resolve and onBound writes nothing to the cache or the feed; the next read asks the id again', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    const la = light('a');
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [
+        { posts: [la], next: null, pending: [], pendingCount: 0 },
+        // onIdentityChange calls loadFeed from inside — its empty page.
+        { posts: [], next: null, pending: [], pendingCount: 0 },
+        // The next loadFeed's page lists the id again.
+        { posts: [la], next: null, pending: [], pendingCount: 0 },
+      ],
+    });
+    await h.drive.loadFeed();
+    await settle();
+    expect(r.calls.length).toBe(1);
+    h.drive.onIdentityChange();
+    await settle();
+    expect(h.drive.resolving.size).toBe(0);
+    const fa = fullRow('a');
+    r.calls[0]!.bound([fa]);
+    r.calls[0]!.end({});
+    await settle();
+    const held = await cache.getMany([la.id]);
+    expect(held.size).toBe(0);
+    expect(h.drive.state.feed.posts.length).toBe(0);
     await h.drive.loadFeed();
     await settle();
     expect(r.calls.length).toBe(2);
@@ -852,6 +1186,75 @@ describe('no cache: rows are slots and fill from the resolver alone', () => {
     expect(r.calls.length).toBe(1);
     expect(r.calls[0]!.ids).toEqual([la.id]);
   });
+
+  it('a cache with no IndexedDB: every row is a slot, fills from the resolver, nothing throws', async () => {
+    const r = testResolver();
+    // The real adapter handed no indexedDB — every op is a no-op; the
+    // module's two absorbed failures are a put that does not fit and this.
+    const cache = createPostCache({ indexedDB: null, localStorage: null });
+    await cache.open('C');
+    const la = light('a'), lb = light('b');
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [{ posts: [la, lb], next: null, pending: [], pendingCount: 0 }],
+    });
+    await h.drive.loadFeed();
+    await settle();
+    expect(r.calls.length).toBe(1);
+    expect(r.calls[0]!.ids).toEqual([la.id, lb.id]);
+    const fa = fullRow('a'), fb = fullRow('b');
+    r.calls[0]!.bound([fa, fb]);
+    r.calls[0]!.end({});
+    await settle();
+    expect(h.drive.state.feed.posts.length).toBe(2);
+    expect(h.feedEl.querySelectorAll('.card.slot').length).toBe(0);
+    // No IndexedDB, so the cache holds nothing — a later read asks again.
+    const held = await cache.getMany([la.id, lb.id]);
+    expect(held.size).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The reader's own pending post rides a light row from the feed's pending.
+// The cache holds it as the reader's own; intake composes it; dedupeOwn drops
+// it beside its submission card.
+// ---------------------------------------------------------------------------
+describe('the reader\'s own pending post is a card and never a slot', () => {
+  it('intake composes it from the cache; dedupeOwn drops it from feed.pending', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    // The reader's own confirmed post is in the cache (as the submit path
+    // puts it, `own: true`).
+    const own = fullRow('o', { author: ME, status: 'pending' });
+    await cache.put({
+      id: own.id, txBytes: new Uint8Array([1, 2, 3]), row: own,
+      author: own.author, parent: null, own: true,
+    });
+    const lo = light('o', { authorName: null });
+    const h = harness({
+      resolver: r.resolver, cache, identityKey: ME,
+      feedResults: [{ posts: [], next: null, pending: [lo], pendingCount: 1 }],
+    });
+    // A pending post entry in the ledger: dedupeOwn drops the row from
+    // feed.pending beside the submission card.
+    const ledger = (h.app as unknown as { ledger: PendingLedger }).ledger;
+    ledger.add({
+      txId: own.txId!,
+      kind: 'post',
+      postId: own.id,
+      inputs: [],
+      submittedAtHeight: 0,
+      expiresAtHeight: 999,
+    });
+    await h.drive.loadFeed();
+    await settle();
+    // No slot was ever drawn and no resolve was asked — the cache held it.
+    expect(h.feedEl.querySelectorAll('.card.slot').length).toBe(0);
+    expect(r.calls.length).toBe(0);
+    // dedupeOwn dropped the pending row — feed.pending is empty.
+    expect(h.drive.state.feed.pending.length).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -920,5 +1323,78 @@ describe('a light page of the wrong shape is the list\'s error line', () => {
     expect(drive.state.feed.error).not.toBeNull();
     expect(drive.state.feed.posts.length).toBe(0);
     expect(r.calls.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The seed walk: with no stored node and a first node that fails, the probe
+// asks `light=1` and its page's slots are resolved under the adoption
+// generation (WEB_INTERFACE → "The client is served from the node's own
+// origin", → The extension → "The light read"). The walk uses a real
+// NodeClient over `fetch`, so the test stubs `fetch` globally and loads
+// prefs with a `notis-nodes` meta of its own.
+// ---------------------------------------------------------------------------
+describe('the seed walk under a resolver', () => {
+  it('a failed first seed is skipped; the probe asks light=1; the adopted page\'s slots resolve', async () => {
+    vi.resetModules();
+    const SEED1 = 'http://seed1.example';
+    const SEED2 = 'http://seed2.example';
+    const meta = document.createElement('meta');
+    meta.setAttribute('name', 'notis-nodes');
+    meta.setAttribute('content', JSON.stringify([SEED1, SEED2]));
+    document.head.appendChild(meta);
+    const fresh = await import('../src/prefs');
+    const { App: FreshApp } = await import('../src/app');
+    // The build's seed list reads the meta: SEED1 is the initial node.
+    expect(fresh.BUILD_NODES).toEqual([SEED1, SEED2]);
+    expect(fresh.prefs.node).toBe(SEED1);
+
+    const la = light('a');
+    const probed: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      probed.push(url);
+      if (url.startsWith(SEED2)) {
+        return {
+          ok: true, status: 200, statusText: 'OK',
+          json: async () => ({ posts: [la], next: null, pending: [], pendingCount: 0 }),
+        };
+      }
+      return { ok: false, status: 503, statusText: 'Service Unavailable', json: async () => ({}) };
+    }));
+    try {
+      const r = testResolver();
+      const { cache } = makeCache();
+      await cache.open('C');
+      const fake: Fake = { feedCalls: [], feedQueue: [], threadRes: null };
+      const api = makeApi(fake);
+      // SEED1 is the initial node and its feed throws — the walk begins.
+      api.feed = async () => { throw new Error('first seed fails'); };
+      const identity = makeIdentity(null);
+      const ledger = new PendingLedger(null);
+      const app = new FreshApp(
+        api, {} as unknown as WriteClient, identity, ledger, undefined, undefined,
+        null, null, null, null, cache, r.resolver,
+      );
+      const appbar = document.createElement('header');
+      const feedEl = document.createElement('section'); feedEl.id = 'feed';
+      const panes = document.createElement('section'); panes.id = 'panes';
+      const workspace = document.createElement('div'); workspace.className = 'workspace';
+      workspace.append(feedEl, panes);
+      document.body.append(appbar, workspace);
+      app.mount(appbar, feedEl, panes);
+      const drive = app as unknown as { loadFeed(): Promise<void>; state: AppState };
+      await drive.loadFeed();
+      await settle();
+      // The probe asked SEED2 with light=1.
+      expect(probed.some((u) => u.startsWith(SEED2) && u.includes('light=1'))).toBe(true);
+      // The adopted node is SEED2.
+      expect(fresh.prefs.node).toBe(SEED2);
+      // The resolver was asked once for the adopted page's slot id.
+      expect(r.calls.length).toBe(1);
+      expect(r.calls[0]!.ids).toEqual([la.id]);
+    } finally {
+      vi.unstubAllGlobals();
+      meta.remove();
+    }
   });
 });
