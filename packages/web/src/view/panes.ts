@@ -12,7 +12,7 @@ import { isFull, isLight, isWithdrawn } from '../api/dto';
 import { windowSubject } from '../model/arrangement';
 import type { PostJson, WithdrawnJson } from '../api/dto';
 import type { Column, Workspace } from '../model/workspace';
-import type { Handlers, RenderCtx } from '../model/state';
+import type { Handlers, RenderCtx, Submission } from '../model/state';
 
 // The tiling workspace on screen: one .col per column, framing one .region
 // stack — the .col is the strip member (its width and snap), the .region the
@@ -246,6 +246,44 @@ function postsCtxFrom(key: string, ci: number, ctx: RenderCtx): PostsCtx {
   };
 }
 
+/** A submission card and, when it has landed, the composer open beneath it and
+ *  its own submissions in turn — each a level deeper than the card above it,
+ *  to the cap a thread's rows hold (WEB_INTERFACE → "A landed submission is
+ *  replied to where it stands"). A pending or expired card takes no reply, so
+ *  neither hangs under it. */
+function appendSubmissionBlock(
+  body: HTMLElement,
+  parentDepth: number,
+  sub: Submission,
+  ci: number,
+  handlers: Handlers,
+  ctx: RenderCtx,
+): void {
+  const depth = Math.min(parentDepth + 1, 3);
+  const landed = sub.stage === 'landed' && sub.postId !== null;
+  body.appendChild(
+    card(submissionToPost(sub, ctx.ownName?.name ?? null), {
+      depth,
+      replyCount: null,
+      flight: flightFor(sub, handlers.tryAgain),
+      you: ctx.ownKey !== null && sub.author === ctx.ownKey,
+      nameClay: ctx.nameClay,
+      expanded: ctx.expandedImages,
+      onExpand: handlers.expandImage,
+      onCollapse: handlers.collapseImage,
+      ...(landed
+        ? { onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }), onReply: (id) => handlers.openComposer(id), composerKey: sub.postId ?? undefined, linkUrl: ctx.linkUrl(sub.postId ?? sub.localKey) }
+        : {}),
+    }),
+  );
+  if (!landed || sub.postId === null) return;
+  const composerEl = ctx.composerFor(sub.postId);
+  if (composerEl) body.appendChild(composerEl);
+  for (const child of ctx.submissionsFor(sub.postId)) {
+    appendSubmissionBlock(body, depth, child, ci, handlers, ctx);
+  }
+}
+
 function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handlers: Handlers, ctx: RenderCtx): void {
   const sub = windowSubject(focusedK);
   if (sub?.kind === 'author') {
@@ -334,22 +372,7 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
     const composerEl = ctx.composerFor(row.id);
     if (composerEl) body.appendChild(composerEl);
     for (const sub of ctx.submissionsFor(row.id)) {
-      const landed = sub.stage === 'landed' && sub.postId !== null;
-      body.appendChild(
-        card(submissionToPost(sub, ctx.ownName?.name ?? null), {
-          depth: Math.min(node.depth + 1, 3),
-          replyCount: null,
-          flight: flightFor(sub, handlers.tryAgain),
-          you: ctx.ownKey !== null && sub.author === ctx.ownKey,
-          nameClay: ctx.nameClay,
-          expanded: ctx.expandedImages,
-          onExpand: handlers.expandImage,
-          onCollapse: handlers.collapseImage,
-          ...(landed
-            ? { onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }), onReply: (id) => handlers.openComposer(id), composerKey: sub.postId ?? undefined, linkUrl: ctx.linkUrl(sub.postId ?? sub.localKey) }
-            : {}),
-        }),
-      );
+      appendSubmissionBlock(body, node.depth, sub, ci, handlers, ctx);
     }
   }
 

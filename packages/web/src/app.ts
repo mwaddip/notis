@@ -4798,10 +4798,13 @@ export class App {
   }
 
   /** Re-render only the regions whose focused thread contains one of the posts —
-   *  every other region survives by reference. */
+   *  every other region survives by reference. A landed submission's postId is
+   *  not in any thread's rows until a ↻ reads it back, so each post id walks
+   *  back through the submission chain to the thread row an action hangs under
+   *  (WEB_INTERFACE → "A landed submission is replied to where it stands"). */
   private renderRegionsForPosts(postIds: Set<string>): void {
     if (postIds.size === 0) return;
-    const wanted = [...postIds];
+    const wanted = [...postIds].map((p) => this.threadAnchorFor(p));
     for (const column of this.state.workspace.columns) {
       const fk = column.wins[column.focus];
       if (fk !== undefined && !isWin(fk) && wanted.some((p) => this.threadContains(fk, p))) {
@@ -4828,10 +4831,29 @@ export class App {
   }
 
   private replyDepth(parentId: string): number {
+    // Walk back through the submission chain to the first thread row — a
+    // landed submission is drawn one level deeper than its own parent card,
+    // and the composer under it one level deeper again, to the cap a
+    // thread's rows hold (WEB_INTERFACE → "A landed submission is replied
+    // to where it stands").
+    const byPostId = new Map<string, Submission>();
+    for (const s of this.state.submissions) if (s.postId !== null) byPostId.set(s.postId, s);
+    const seen = new Set<string>();
+    let cur: string = parentId;
+    let subSteps = 0;
+    let sub = byPostId.get(cur);
+    while (sub !== undefined && !seen.has(cur)) {
+      seen.add(cur);
+      const parent: string | null = sub.parentId;
+      if (parent === null) return Math.min(subSteps + 1, 3);
+      cur = parent;
+      subSteps++;
+      sub = byPostId.get(cur);
+    }
     for (const t of this.state.threads.values()) {
       if (!t.root) continue;
       for (const node of flattenThread(t.root, t.descendants)) {
-        if (node.row.id === parentId) return Math.min(node.depth + 1, 3);
+        if (node.row.id === cur) return Math.min(node.depth + subSteps + 1, 3);
       }
     }
     return 1;
@@ -4855,8 +4877,30 @@ export class App {
 
   private clearSettledThread(threadId: string): void {
     this.state.submissions = this.state.submissions.filter(
-      (s) => !(s.parentId !== null && isSettled(s.stage) && this.threadContains(threadId, s.parentId)),
+      (s) => !(s.parentId !== null && isSettled(s.stage) && this.threadContains(threadId, this.threadAnchorFor(s.parentId))),
     );
+  }
+
+  /** The thread-row ancestor id for a post id — the id itself when a thread
+   *  holds it, else the first ancestor a thread does by walking back through
+   *  landed submissions whose `postId` chains to it. A chain that bottoms out
+   *  at a feed-root submission or a stranger returns the id the walk stopped
+   *  at; the caller then matches it against open threads
+   *  (WEB_INTERFACE → "A landed submission is replied to where it stands"). */
+  private threadAnchorFor(postId: string): string {
+    const byPostId = new Map<string, Submission>();
+    for (const s of this.state.submissions) if (s.postId !== null) byPostId.set(s.postId, s);
+    const seen = new Set<string>();
+    let cur: string = postId;
+    let sub = byPostId.get(cur);
+    while (sub !== undefined && !seen.has(cur)) {
+      seen.add(cur);
+      const parent: string | null = sub.parentId;
+      if (parent === null) return cur;
+      cur = parent;
+      sub = byPostId.get(cur);
+    }
+    return cur;
   }
 
   private setReportForPost(postId: string, text: string): void {

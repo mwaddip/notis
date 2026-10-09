@@ -456,3 +456,280 @@ describe('the App write surface — the notSigned arm', () => {
       .toBe('post not sent: a transaction id to sign must be 64 hex characters.');
   });
 });
+
+// A landed submission takes its own ↩ reply, and the composer that opens stands
+// beneath that card — a conversation the reader carries on alone needs no ↻
+// between replies. The write client's second submit names the landed card as
+// its parent; a ↻ later replaces the submission card with the node row and the
+// composer stays open beneath that row with its text intact
+// (WEB_INTERFACE → "A landed submission is replied to where it stands").
+describe('a landed submission is replied to where it stands', () => {
+  const ROOT = 'd'.repeat(64);
+
+  interface ReplyPaneH {
+    app: App;
+    ledger: PendingLedger;
+    panes: HTMLElement;
+    drive: {
+      submitComposer(parentId: string | null, text: string): Promise<void>;
+      openComposer(parentId: string | null): void;
+      closeComposer(parentId: string | null): void;
+      pollTick(): Promise<void>;
+      loadFeed(): Promise<void>;
+      openThread(id: string, origin: { from: 'feed' } | { from: 'pane'; ci: number }): void;
+      refreshThread(id: string): Promise<void>;
+      state: AppState;
+      composers: Map<string, { el: HTMLElement; text(): string; focus(): void }>;
+    };
+    submits: Array<{ parentId: string | null; text: string }>;
+    advanceHeight(): void;
+    setThreadDescendants(ids: string[]): void;
+  }
+
+  function replyPaneHarness(): ReplyPaneH {
+    const signCalls: string[] = [];
+    const identity: AppIdentity = {
+      current: () => ({ pubKeyHex: PUB, locked: false }),
+      sign: async (_bytes, t) => { signCalls.push(t); return { signature: 'ab'.repeat(64) }; },
+      draft: async () => ({ pubKeyHex: PUB }),
+      create: async () => ({ pubKeyHex: PUB }),
+      discardDraft: () => {},
+      inspectFile: async () => ({ kind: 'clear', pubKeyHex: PUB }),
+      importFile: async () => ({ pubKeyHex: PUB }),
+      exportFile: async () => '{}',
+      unlock: async () => {},
+      lock: async () => {},
+      forget: async () => {},
+      backedUp: () => false,
+      onChange: () => {},
+    };
+    const last = (): string => signCalls[signCalls.length - 1]!;
+    let blockHeight = 6001;
+    const submits: Array<{ parentId: string | null; text: string }> = [];
+    let threadDescendantIds: string[] = [];
+
+    const karma: KarmaResult = karmaResult({ userId: PUB, total: '227', effective: '227', boxes: [{ boxId: BOX, value: '227' }], boxCount: 1, height: 6000 });
+
+    const fakeApi: Api = {
+      feed: async (): Promise<FeedResult> => ({ posts: [], next: null, pending: [], pendingCount: 0 }),
+      thread: async (id) => {
+        if (id !== ROOT) return null;
+        return {
+          post: confirmedPost(ROOT),
+          ancestors: [],
+          ancestorCount: 0,
+          descendants: threadDescendantIds.map((d) => confirmedPost(d)),
+          descendantCount: threadDescendantIds.length,
+          next: null,
+          pending: [],
+          pendingCount: 0,
+        };
+      },
+      post: async (id) => confirmedPost(id),
+      status: async () => statusResult(),
+      currentBlock: async (): Promise<BlockCurrent> => ({ height: blockHeight, hash: null }),
+      karma: async () => karma,
+      vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
+      vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
+      vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
+      bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
+      usernameByOwner: async () => null,
+      credits: async () => ({ userId: "", total: "0", boxes: [], boxCount: 0, next: null }),
+      usernameByName: async () => null,
+    };
+
+    let postSeq = 0;
+    const writeClient = {
+      submitPost: async (tx: Record<string, unknown>, content: string) => {
+        const commit = tx['post'] as { parentRefs?: string[] } | undefined;
+        const parentId = commit?.parentRefs?.[0] ?? null;
+        submits.push({ parentId, text: content });
+        postSeq++;
+        const hex = (0xc0 + postSeq).toString(16);
+        const postId = hex.repeat(32);
+        return { postId, status: 'pending', expiresAtHeight: 6720, txId: last() };
+      },
+    } as unknown as WriteClient;
+
+    const ledger = new PendingLedger(PUB);
+    const app = new App(fakeApi, writeClient, identity, ledger);
+    const appbar = document.createElement('div');
+    const feed = document.createElement('section'); feed.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    document.body.append(appbar, feed, panes);
+    app.mount(appbar, feed, panes);
+
+    return {
+      app, ledger, panes,
+      drive: app as unknown as ReplyPaneH['drive'],
+      submits,
+      advanceHeight: () => { blockHeight += 1; },
+      setThreadDescendants: (ids) => { threadDescendantIds = ids; },
+    };
+  }
+
+  async function openThreadLoaded(h: ReplyPaneH): Promise<void> {
+    await h.drive.loadFeed();
+    h.drive.openThread(ROOT, { from: 'feed' });
+    await flush();
+  }
+
+  async function postAndLand(h: ReplyPaneH, parentId: string | null, text: string): Promise<string> {
+    h.drive.openComposer(parentId);
+    await h.drive.submitComposer(parentId, text);
+    h.advanceHeight();
+    await h.drive.pollTick();
+    const subs = h.drive.state.submissions;
+    const sub = subs[subs.length - 1]!;
+    return sub.postId!;
+  }
+
+  it('↩ reply on a landed own reply opens its composer beneath that card', async () => {
+    const h = replyPaneHarness();
+    await openThreadLoaded(h);
+    const subAPostId = await postAndLand(h, ROOT, 'reply A');
+    expect(h.drive.state.submissions[0]!.stage).toBe('landed');
+
+    const subCard = h.panes.querySelector<HTMLElement>(`.card[data-post-id="${subAPostId}"]`);
+    expect(subCard).not.toBeNull();
+    const replyBtn = subCard!.querySelector<HTMLButtonElement>('button.reply-ctl');
+    expect(replyBtn).not.toBeNull();
+    replyBtn!.click();
+
+    // The region re-renders on openComposer; re-query the submission card.
+    const subCardAfter = h.panes.querySelector<HTMLElement>(`.card[data-post-id="${subAPostId}"]`);
+    expect(subCardAfter).not.toBeNull();
+    const composer = h.panes.querySelector<HTMLElement>('.composer');
+    expect(composer).not.toBeNull();
+    expect(composer!.querySelector('.composer-text')).not.toBeNull();
+    expect(composer!.classList.contains('depth-2')).toBe(true);
+    expect(composer!.previousElementSibling).toBe(subCardAfter);
+  });
+
+  it('the reply to a landed submission stands beneath it, with the landed id as its parent', async () => {
+    const h = replyPaneHarness();
+    await openThreadLoaded(h);
+    const subAPostId = await postAndLand(h, ROOT, 'reply A');
+
+    h.panes.querySelector<HTMLElement>(`.card[data-post-id="${subAPostId}"]`)!
+      .querySelector<HTMLButtonElement>('button.reply-ctl')!.click();
+    await h.drive.submitComposer(subAPostId, 'reply B');
+
+    const subs = h.drive.state.submissions;
+    expect(subs.length).toBe(2);
+    const subB = subs[1]!;
+    expect(subB.parentId).toBe(subAPostId);
+    expect(subB.stage).toBe('submitted');
+
+    // The hollow B card: depth 2, pending, standing somewhere after A in document order.
+    const subBCard = h.panes.querySelector<HTMLElement>(`.card[data-post-id="${subB.postId}"]`);
+    expect(subBCard).not.toBeNull();
+    expect(subBCard!.classList.contains('depth-2')).toBe(true);
+    expect(subBCard!.classList.contains('pending')).toBe(true);
+    const subACard = h.panes.querySelector<HTMLElement>(`.card[data-post-id="${subAPostId}"]`);
+    expect(subACard).not.toBeNull();
+    const pos = subACard!.compareDocumentPosition(subBCard!);
+    expect(pos & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+
+    h.advanceHeight();
+    await h.drive.pollTick();
+    expect(subB.stage).toBe('landed');
+
+    expect(h.submits.length).toBe(2);
+    expect(h.submits[1]!.parentId).toBe(subAPostId);
+    expect(h.submits[1]!.text).toBe('reply B');
+  });
+
+  it('a landed reply to a landed submission takes its own ↩ reply, at the depth cap', async () => {
+    const h = replyPaneHarness();
+    await openThreadLoaded(h);
+    const subAPostId = await postAndLand(h, ROOT, 'reply A');
+    const subBPostId = await postAndLand(h, subAPostId, 'reply B');
+
+    const subCardB = h.panes.querySelector<HTMLElement>(`.card[data-post-id="${subBPostId}"]`)!;
+    // B's card itself stands at depth 2.
+    expect(subCardB.classList.contains('depth-2')).toBe(true);
+    const replyBtnB = subCardB.querySelector<HTMLButtonElement>('button.reply-ctl');
+    expect(replyBtnB).not.toBeNull();
+    replyBtnB!.click();
+
+    // The region re-renders; re-query B's card.
+    const subCardBAfter = h.panes.querySelector<HTMLElement>(`.card[data-post-id="${subBPostId}"]`);
+    expect(subCardBAfter).not.toBeNull();
+    const composers = h.panes.querySelectorAll<HTMLElement>('.composer');
+    expect(composers.length).toBe(1);
+    const composer = composers[0]!;
+    expect(composer.classList.contains('depth-3')).toBe(true);
+    expect(composer.previousElementSibling).toBe(subCardBAfter);
+  });
+
+  it('a pending own reply takes no ↩ reply', async () => {
+    const h = replyPaneHarness();
+    await openThreadLoaded(h);
+    h.drive.openComposer(ROOT);
+    await h.drive.submitComposer(ROOT, 'reply A');
+    const subA = h.drive.state.submissions[0]!;
+    expect(subA.stage).toBe('submitted');
+    const subCard = h.panes.querySelector<HTMLElement>(`.card[data-post-id="${subA.postId}"]`);
+    expect(subCard).not.toBeNull();
+    expect(subCard!.querySelector('button.reply-ctl')).toBeNull();
+  });
+
+  it("a root's submission card in the feed takes no ↩ reply", async () => {
+    const h = replyPaneHarness();
+    h.drive.openComposer(null);
+    await h.drive.submitComposer(null, 'a new thread');
+    h.advanceHeight();
+    await h.drive.pollTick();
+    const root = h.drive.state.submissions[0]!;
+    expect(root.stage).toBe('landed');
+    const feedCard = document.getElementById('feed')!.querySelector<HTMLElement>(`.card[data-post-id="${root.postId}"]`);
+    expect(feedCard).not.toBeNull();
+    expect(feedCard!.querySelector('button.reply-ctl')).toBeNull();
+  });
+
+  it('↻ replaces the submission card with the node row and the composer stands beneath that row with its text', async () => {
+    const h = replyPaneHarness();
+    await openThreadLoaded(h);
+    const subAPostId = await postAndLand(h, ROOT, 'reply A');
+
+    const subCard = h.panes.querySelector<HTMLElement>(`.card[data-post-id="${subAPostId}"]`)!;
+    subCard.querySelector<HTMLButtonElement>('button.reply-ctl')!.click();
+    const composerBefore = h.panes.querySelector<HTMLElement>('.composer')!;
+    const taBefore = composerBefore.querySelector<HTMLTextAreaElement>('.composer-text')!;
+    taBefore.value = 'draft under A';
+
+    // ↻: the node answers the thread with the reply as a node row.
+    h.setThreadDescendants([subAPostId]);
+    await h.drive.refreshThread(ROOT);
+
+    expect(h.drive.state.submissions.length).toBe(0);
+    const nodeRowCard = h.panes.querySelector<HTMLElement>(`.card[data-post-id="${subAPostId}"]`);
+    expect(nodeRowCard).not.toBeNull();
+    // Not a submission any more — a node-row card has no `pending` class.
+    expect(nodeRowCard!.classList.contains('pending')).toBe(false);
+    const composerAfter = h.panes.querySelector<HTMLElement>('.composer')!;
+    expect(composerAfter).toBe(composerBefore);
+    expect(composerAfter.previousElementSibling).toBe(nodeRowCard);
+    const taAfter = composerAfter.querySelector<HTMLTextAreaElement>('.composer-text')!;
+    expect(taAfter.value).toBe('draft under A');
+  });
+
+  it("closing the composer returns focus to the submission card's ↩ reply", async () => {
+    const h = replyPaneHarness();
+    await openThreadLoaded(h);
+    const subAPostId = await postAndLand(h, ROOT, 'reply A');
+
+    const subCard = h.panes.querySelector<HTMLElement>(`.card[data-post-id="${subAPostId}"]`)!;
+    const replyBtn = subCard.querySelector<HTMLButtonElement>('button.reply-ctl')!;
+    replyBtn.click();
+    expect(h.panes.querySelector('.composer')).not.toBeNull();
+
+    h.drive.closeComposer(subAPostId);
+    expect(h.panes.querySelector('.composer')).toBeNull();
+
+    const stillSubCard = h.panes.querySelector<HTMLElement>(`.card[data-post-id="${subAPostId}"]`)!;
+    const stillReplyBtn = stillSubCard.querySelector<HTMLButtonElement>('button.reply-ctl')!;
+    expect(document.activeElement).toBe(stillReplyBtn);
+  });
+});
