@@ -1386,6 +1386,12 @@ refreshes no feed, no thread and no count; a landed card changes colour and noth
 (`HOUSE_STYLE → Motion`) — with one exception: a landed withdrawal turns the reader's own card into the
 withdrawn card, the shape they asked for (→ The withdraw control).
 
+**A landed submission is replied to where it stands.** Until a `↻` reads it back as the node's row, the
+reader's own landed reply stands in its pane as its submission card, and that card takes `↩ reply`, the
+strip and `link` as a confirmed card does. The composer its `↩ reply` opens stands beneath that card, and
+the reader's own reply to it beneath that in turn — each a level deeper, to the cap a thread's rows hold —
+so a conversation the reader carries on alone needs no `↻` between its replies.
+
 ### The profile window *(identity interface)*
 
 **The face says `rep`, and the API says `karma`.** Wherever the client shows a person the unit of reputation — a
