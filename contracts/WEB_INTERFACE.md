@@ -546,18 +546,22 @@ leaves. **Of a thread's answer the subject and `descendants` are resolved**; a p
 draws no slot.
 
 **The resolve.** The posts a list lacks are read by id, from the seed list's nodes in turn. **The nodes** are the node
-being read and then every other base of the seed list, duplicates dropped. **A request** is `POST /posts/batch` with
+being read and then every other base of the seed list, duplicates dropped — two bases that differ by a closing `/` are
+one. **A request** is `POST /posts/batch` with
 `tx=1` and at most `BATCH_READ_MAX` ids (`NODE_INTERFACE → Posts → "The batch read answers posts by id"`; `CONSTANTS →
 HTTP view bounds`), **and carries no `viewer`**: a node other than the one being read learns the ids a reader lacks and
 never whose reading it is. **A pointer walks the nodes**: a resolve's first requests go to the node at the pointer and
-the ones after it, one each, and the pointer moves on by as many — round robin across the requests of a resolve and
-across resolves. **An answer is read by id**: of the rows a node sends, the first under each id the request asked, and
-no other row, go through the post check as one batch (→ "The post check"). **A node serves an id** when its row is
-`bound` and carries the post's text: the post enters the cache, and every slot standing under that id — in the feed, an
-author window, a thread — becomes its card, the figures the slot's own. **A node does not serve an id** it leaves out,
-answers `unserved`, `unbound` or withdrawn, or whose request fails. **The ids a round leaves unserved go as new requests,
-each to its next node**, until every id is served, every node has been asked for it, or `BATCH_RESOLVE_MS` (`CONSTANTS →
-Client defaults`) has passed since the resolve began — one limit over all its requests. **A `bound` placeholder is kept
+the ones after it, one each, and the pointer moves on by as many as they leave — round robin across the requests of a
+resolve and across resolves, one begun while another is in flight among them. **An answer is read by id**: of the rows
+a node sends, the first under each id the request asked, and no other row, go through the post check as one batch
+(→ "The post check"). **A node serves an id** when its row is `bound`, well-formed (→ "The post check") and carries the
+post's text: the post enters the cache, and every slot standing under that id — in the feed, an author window, a
+thread — becomes its card, the figures the slot's own. **A node does not serve an id** it leaves out, answers
+`unserved`, `unbound`, withdrawn or with a row that is not well-formed, or whose request fails. **The ids a round
+leaves unserved go as new requests, each to its next node**, until every id is served, every node has been asked for
+it, or `BATCH_RESOLVE_MS` (`CONSTANTS → Client defaults`) has passed since the resolve began — one limit over all its
+requests. **A request the limit beats is aborted**: a resolve leaves none open behind it, and a node that never answers
+holds no connection of the reader's past the limit. **A `bound` placeholder is kept
 while the rest are asked for the text**, and where none has it the card reads *content not on this node yet*, as a
 placeholder's does. **At the end** a slot no node served leaves, with no line — no node said anything of its text — and
 one some node answered `unbound` and no node bound leaves and is counted at its list's head (→ "The post check").
@@ -568,9 +572,9 @@ It is the extension build's alone: the web build names no `posts/batch`.
 
 > ⚠ **AHEAD OF CODE (2026-10-08, AF1 — `web`)** — the extension asks the three post reads with `tx=1`, passes every row
 > of every read through the post check, draws a list from the node's answer alone and reads the cache only when a
-> thread's read fails; a thread whose subject is `unserved` reads *this node cannot serve this post yet.* It holds no
-> resolver, draws no slot and asks no node but the one it reads for a post, and `build-release.sh` does not refuse
-> `posts/batch`.
+> thread's read fails; a thread whose subject is `unserved` reads *this node cannot serve this post yet.* The App is
+> handed no resolver, draws no slot and asks no node but the one it reads for a post. A `bound` row enters its state and
+> its cache as the node sent it; the resolver's module aborts no request and moves its pointer when a resolve ends.
 
 **The post check.** The extension shows a post only when the transaction that created it binds it. Every row
 that carries a post's bytes — each row of a batch answer (→ "The resolve"), the single post read's, asked with `tx=1`
@@ -595,7 +599,16 @@ answered `unbound` and no node bound is said once, at the head of each list that
 withheld — it does not match its signature*, *3 posts withheld — they do not match their signatures* — the full
 rule's weight (`HOUSE_STYLE → Gold and clay are not interchangeable`), since such a row is a node showing what no
 author signed; the line counts what the list's standing reads ended so — a refresh starts it again — and goes when
-they ended none. **A post the cache holds is not asked for again**, so no later answer unseats a card. **A thread
+they ended none. **A checked row is taken field by field**, as a light row is (→ "The light read"): a `bound` row is
+kept as a `PostJson` of its own fields alone — its ids, author and content hash 64 hex, at most one parent, text of 1
+to `MAX_CONTENT_BYTES` bytes of UTF-8 (`TYPES_INTERFACE → Content limits`) or `null`, a `type` and a `status` of their
+sets, a protocol version and counts that are non-negative integers, a block position and time that are such integers
+or `null`, a name that is a well-formed one or none, `likedByViewer` a boolean or `null` — and a withdrawn row as a
+`WithdrawnJson` of its own; neither keeps `tx` or a key its type does not name. **A row that is not well-formed is not
+shown and not cached**, `bound` or withdrawn: the check holds to a signature what the transaction states and none of
+the row's other fields, and a signature binds text of any length. In a batch answer a `bound` one sends its id on as
+one the node did not serve, on no line — its signature matched; to the single post read either is a withheld answer.
+**A post the cache holds is not asked for again**, so no later answer unseats a card. **A thread
 whose subject ends so** shows that line and nothing of the node's row; one whose subject no node served shows one
 muted line — *no node can serve this post yet.* — and no row. **A withheld answer to the single post read
 decides nothing**: the pending entry it was read for (→ The wallet) stays pending until the tip passes its
