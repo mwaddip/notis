@@ -4711,9 +4711,13 @@ function markLightFail(reason) {
 // request it does not lie about passes to `upstream` verbatim, every method
 // (GET, POST, OPTIONS), with `access-control-allow-origin: *` added on the
 // answer so the extension page can read it (as the figures relay does).
-// `relay.log` holds each request's method, path, status, mode, arrival
-// time and whether the client closed the connection before the relay
-// answered. `relay.upstream` is reassignable: L13 reaches another chain by
+// `relay.log` holds each request's method, path, mode, arrival time,
+// status, finish time and whether the client closed the connection before
+// the relay answered; an entry enters the log the moment the request
+// arrives, with `status` and `doneAt` unset until `finish` mutates them
+// in place, so a reader can see a request in flight — a count of what the
+// relay was *asked* includes it, a reading of how one *ended* waits for
+// it. `relay.upstream` is reassignable: L13 reaches another chain by
 // pointing both relays' upstreams at D.
 //
 // The modes, one at a time (WEB_INTERFACE → The extension → "The resolve"):
@@ -4768,6 +4772,10 @@ async function startRelay(name, upstream, port) {
     const isListGet = method === 'GET' && (path === '/posts' || /^\/posts\/[0-9a-f]{64}\/thread$/i.test(path));
     const isLightList = method === 'GET' && path === '/posts' && /[?&]light=1(?:&|$)/.test(url);
     const entry = { at, doneAt: null, method, path: url, mode: relay.mode, status: null, batchIds: null, closed: false };
+    // The entry enters the log the moment the request arrives, with
+    // `status` and `doneAt` unset; `finish` mutates them in place when
+    // the relay has answered or the client has closed the connection.
+    relay.log.push(entry);
 
     // The response's 'close' event, with `!res.writableEnded`, says the
     // socket closed before this handler answered — the only reading that
@@ -4787,10 +4795,10 @@ async function startRelay(name, upstream, port) {
       entry.status = status;
       entry.doneAt = Date.now();
       if (extra) Object.assign(entry, extra);
-      relay.log.push(entry);
     };
 
-    // Read the batch body up front so it goes in the log in every mode.
+    // Read the batch body up front so `entry.batchIds` names the ids
+    // asked, in every mode, before the batch sleeps on a hold or hang.
     if (isBatch) {
       const chunks = [];
       try {
@@ -5659,9 +5667,20 @@ async function lightSteps(cx, targetId = 'unknown') {
       && heldBatch.status === 200
       && typeof heldBatch.doneAt === 'number'
       && heldBatch.doneAt >= releaseAt;
+    // RB's resolve claim: the resolve did not reach RB — no POST
+    // /posts/batch and no light list read. RB may still have served
+    // other routes the client reads (the tip verifier's proof reads),
+    // which the paths summary names.
+    const rbBatches = batchesIn(rbSinceHeld);
+    const rbLightLists = lightListsIn(rbSinceHeld);
+    const rbPathCounts = {};
+    for (const e of rbSinceHeld) {
+      const key = `${e.method} ${e.path.split('?')[0]}`;
+      rbPathCounts[key] = (rbPathCounts[key] ?? 0) + 1;
+    }
     const ok = held.slots > 0 && slotsMatchBatch && slotShapesOk && slotColoursOk
       && listsRa.length === 1 && batchesRa.length === 1 && batchAnsweredAfterRelease
-      && rbSinceHeld.length === 0 && sameOrder && noLine && releasedCount >= 1;
+      && rbBatches.length === 0 && rbLightLists.length === 0 && sameOrder && noLine && releasedCount >= 1;
     record('L1', ok,
       `held@${held.atMs}ms slots=${held.slots}, feed slots=${JSON.stringify(feedHeld.slots?.slice(0, 4))}, ` +
       `slot shapes ok=${slotShapesOk} (slotShapes=${JSON.stringify(feedHeld.slotShapes?.slice(0, 3))}), ` +
@@ -5669,7 +5688,7 @@ async function lightSteps(cx, targetId = 'unknown') {
       `RA list reads=${listsRa.length} (tx=${JSON.stringify(listsRa[0]?.path?.includes('tx=') ?? false)}), ` +
       `RA batch reads=${batchesRa.length} (batchIds×${batchIdsRa.length} match=${slotsMatchBatch}), ` +
       `held batch answered after release=${batchAnsweredAfterRelease} (status=${heldBatch?.status}, doneAt-releaseAt=${heldBatch?.doneAt !== undefined && heldBatch.doneAt !== null ? heldBatch.doneAt - releaseAt : 'n/a'}ms), ` +
-      `RB reads=${rbSinceHeld.length}, release=${releasedCount}, ` +
+      `RB batches=${rbBatches.length}, RB light lists=${rbLightLists.length}, RB paths=${JSON.stringify(rbPathCounts)}, release=${releasedCount}, ` +
       `after release cards=${feedReleased.liveCards?.length} same order=${sameOrder}, line=${JSON.stringify(feedReleased.withheldLineText)}`);
   } catch (e) {
     record('L1', false, `error: ${e?.stack ?? String(e)}`);
