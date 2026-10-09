@@ -471,7 +471,7 @@ describe("post-tx bench — the post routes' tx=1 over full blocks (narrow read)
       // Case 7 (B)
       const burstB = await case7Burst(app);
 
-      // ----- AF1 Phase 3: the new routes (NODE_INTERFACE → Posts)
+      // ----- The batch read and the light page over B (NODE_INTERFACE → Posts)
       // Seeding B is the fullest shape — 100 ids in 100 distinct full blocks
       // of credit-send-sized elements. The POST /posts/batch bench covers
       // its cost ("Its cost is a page's").
@@ -485,7 +485,7 @@ describe("post-tx bench — the post routes' tx=1 over full blocks (narrow read)
       const txBytesB = (await callOnce(app, '/posts?limit=100&tx=1')).bytes;
       const lightBytesB = (await callOnce(app, '/posts?limit=100&light=1')).bytes;
 
-      // ----- Phase 3 case 3: 100 ids over 50 blocks, interleaved so no two
+      // ----- The batch read over 50 blocks: 100 ids, interleaved so no two
       //       neighbours share a block. Fresh seeding on the Seeding-B body
       //       shape; each pair (2*k, 2*k+1) shares block k.
       db.exec('DELETE FROM dag_posts');
@@ -654,15 +654,15 @@ describe("post-tx bench — the post routes' tx=1 over full blocks (narrow read)
       burstLine('seed A', burstA);
       burstLine('seed B', burstB);
 
-      // ----- AF1 Phase 3 report -----
-      console.log(`\n==== AF1 Phase 3 — new routes over seed B (${SMALL_PER_BLOCK + 1} elements a body), ${REPS} reps ====`);
+      // ----- The batch read and the light page report -----
+      console.log(`\n==== the batch read and the light page over seed B (${SMALL_PER_BLOCK + 1} elements a body), ${REPS} reps ====`);
       console.log(`  case                                               |    median |     p95 |     max | resp bytes`);
-      console.log(line('AF1-1. POST /posts/batch?tx=1 (100 ids, 100 full blocks)', bTxB));
-      console.log(line('AF1-2. POST /posts/batch     (100 ids, 100 full blocks)', bNoTxB));
-      console.log(line('AF1-3. POST /posts/batch?tx=1 (100 ids, 50 blocks, interleaved)', bInterleavedTxB));
-      console.log(line('AF1-4. GET /posts?limit=100&light=1', lightB));
+      console.log(line('POST /posts/batch?tx=1 (100 ids, 100 full blocks, B)', bTxB));
+      console.log(line('POST /posts/batch     (100 ids, 100 full blocks, B)', bNoTxB));
+      console.log(line('POST /posts/batch?tx=1 (100 ids, 50 blocks, interleaved, B)', bInterleavedTxB));
+      console.log(line('GET /posts?limit=100&light=1 (B)', lightB));
 
-      console.log(`\n==== AF1 Phase 3 — case 5: response body size of three pages of the same 100 rows ====`);
+      console.log(`\n==== response body size of three pages of the same 100 rows, seed B ====`);
       console.log(`  full      : ${fullBytesB} bytes`);
       console.log(`  tx=1      : ${txBytesB} bytes`);
       console.log(`  light=1   : ${lightBytesB} bytes`);
