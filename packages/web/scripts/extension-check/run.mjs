@@ -4700,6 +4700,13 @@ function markLightNotRun(reason) {
   for (const s of LIGHT_STEPS) record(s, 'NOT RUN', reason);
 }
 
+// A pre-L1 failure — the preamble could not stand up the block. Every step
+// reads FAIL with the one reason, so the summary carries fourteen L lines
+// even when the fixture or a prerequisite threw.
+function markLightFail(reason) {
+  for (const s of LIGHT_STEPS) record(s, false, reason);
+}
+
 // A relay the harness owns — RA in front of A, RB in front of B. Every
 // request it does not lie about passes to `upstream` verbatim, every method
 // (GET, POST, OPTIONS), with `access-control-allow-origin: *` added on the
@@ -4762,8 +4769,18 @@ async function startRelay(name, upstream, port) {
     const isLightList = method === 'GET' && path === '/posts' && /[?&]light=1(?:&|$)/.test(url);
     const entry = { at, doneAt: null, method, path: url, mode: relay.mode, status: null, batchIds: null, closed: false };
 
+    // The response's 'close' event, with `!res.writableEnded`, says the
+    // socket closed before this handler answered — the only reading that
+    // means "the client went away". A request's own 'close' event fires as
+    // soon as its body has been read whole (Node ≥ 22), so it is already
+    // settled by the time any mode looks at it and reads true of every
+    // batch.
     const closedByClient = new Promise((resolve) => {
-      req.on('close', () => { entry.closed = true; resolve('close'); });
+      res.on('close', () => {
+        if (res.writableEnded) return;
+        entry.closed = true;
+        resolve('close');
+      });
     });
 
     const finish = (status, extra) => {
@@ -4982,15 +4999,35 @@ async function ensureLightFixture(cx) {
     await cx.eval(`document.querySelector('.composer .btn-primary').click()`, true);
     await sleep(2000);
     const t0 = Date.now();
+    let landed = null;
     while (Date.now() - t0 < 5 * 60 * 1000) {
       const tr = await fetch(`${NODE}/posts/${rootId}/thread?limit=200`).then((r) => r.json()).catch(() => null);
-      const landed = Array.isArray(tr?.descendants)
+      landed = Array.isArray(tr?.descendants)
         ? tr.descendants.find((d) => liveDirect(d, parentId) && typeof d.content === 'string' && d.content === CONTENT) ?? null
         : null;
-      if (landed) return landed;
+      if (landed) break;
       await sleep(2000);
     }
-    return null;
+    if (landed === null) return null;
+    // Refresh the pane so the thread's own read brings the row and the
+    // client drops the landed submission from its state. Without this a
+    // following postReplyAt under this id would find the submission card's
+    // reply button but no composer place beneath it — a pane draws a
+    // composer under a thread row alone (WEB_INTERFACE → The write surface).
+    await refreshThreadPane(cx, rootId);
+    // A submission card renders its reply count as `? replies`; a thread
+    // row renders a number (or no count at zero). Wait until no card
+    // drawn for the landed id carries `?` in its `.meta .replies .n`
+    // slot — the submission has gone and the thread row stands.
+    await cx.waitFor(`(() => {
+      const cards = [...document.querySelectorAll('#panes .region-body .card[data-post-id="${landed.id}"]')];
+      if (cards.length === 0) return false;
+      return cards.every((c) => {
+        const n = c.querySelector('.meta .replies .n');
+        return n === null || (n.textContent ?? '').trim() !== '?';
+      });
+    })()`, `the reply row for ${landed.id.slice(0, 8)}… stands as a thread row`, 60000);
+    return landed;
   };
 
   if (reply1 === null) {
@@ -5442,67 +5479,78 @@ async function lightSteps(cx, targetId = 'unknown') {
     return;
   }
 
-  const aUp = await waitForHttpUp(NODE, 15000);
-  if (!aUp) {
-    markLightNotRun(`node A did not answer /blocks/current at ${NODE}`);
-    return;
-  }
-  const bUp = await waitForHttpUp(B_ORIGIN, 15000);
-  if (!bUp) {
-    markLightNotRun(`node B did not answer /blocks/current at ${B_ORIGIN}`);
-    return;
-  }
+  // The preamble is one atomic try — any throw records every step as FAIL
+  // with the throw's message, and the run goes on to its teardown and its
+  // summary. A caught early return (A down, the chain not verified, the
+  // fixture short of a reply, the relays absent) marks the same way with
+  // the one reason.
+  let aDbName, rootId, reply1Id, reply2Id, reply3Id, RA, RB;
+  try {
+    const aUp = await waitForHttpUp(NODE, 15000);
+    if (!aUp) {
+      markLightFail(`node A did not answer /blocks/current at ${NODE}`);
+      return;
+    }
+    const bUp = await waitForHttpUp(B_ORIGIN, 15000);
+    if (!bUp) {
+      markLightFail(`node B did not answer /blocks/current at ${B_ORIGIN}`);
+      return;
+    }
 
-  // Chain's name — A's block 1 hash, the extension's post cache opens under
-  // `notis.posts.<chain>` (WEB_INTERFACE → The extension → "The chain's
-  // name"). Needed for L2/L8/L11/L13 database-name assertions.
-  const aBlock1 = await block1HashOn(NODE);
-  if (typeof aBlock1 !== 'string' || !/^[0-9a-f]{64}$/i.test(aBlock1)) {
-    markLightNotRun(`could not read a 64-hex blockHash for A's block 1 (/blocks/1: ${JSON.stringify(aBlock1)})`);
-    return;
-  }
-  const aDbName = 'notis.posts.' + aBlock1.toLowerCase();
-  console.log(`[vl] A block 1 hash=${aBlock1.slice(0, 12)}…, cache db=${aDbName}`);
+    // Chain's name — A's block 1 hash, the extension's post cache opens
+    // under `notis.posts.<chain>` (WEB_INTERFACE → The extension → "The
+    // chain's name"). Needed for L2/L8/L11/L13 database-name assertions.
+    const aBlock1 = await block1HashOn(NODE);
+    if (typeof aBlock1 !== 'string' || !/^[0-9a-f]{64}$/i.test(aBlock1)) {
+      markLightFail(`could not read a 64-hex blockHash for A's block 1 (/blocks/1: ${JSON.stringify(aBlock1)})`);
+      return;
+    }
+    aDbName = 'notis.posts.' + aBlock1.toLowerCase();
+    console.log(`[vl] A block 1 hash=${aBlock1.slice(0, 12)}…, cache db=${aDbName}`);
 
-  // Reload — the names block may have left the pane off the feed; a reload
-  // returns the first column to the feed. The App's tip verifier re-runs
-  // on load, so the corner is reset here too.
-  await cx.call('Page.reload');
-  await cx.waitFor(`!!document.querySelector('#feed')`, 'the feed on reload', 60000);
-  const verifiedPre = await pressAndReadVerdict(cx, { atLeast: 2, ms: 60000, quietMs: 2000 }).catch(() => null);
-  const verifiedOk = verifiedPre !== null && verifiedPre.reading.ledClass === 'led fresh'
-    && /^verified across \d+ nodes · tip \d+$/.test(verifiedPre.reading.title ?? '');
-  if (!verifiedOk) {
-    const title = verifiedPre?.reading?.title ?? null;
-    markLightNotRun(`the chain was not verified (title=${JSON.stringify(title)}) — the post cache opens on a verified tip`);
-    return;
-  }
+    // Reload — the names block may have left the pane off the feed; a
+    // reload returns the first column to the feed. The App's tip verifier
+    // re-runs on load, so the corner is reset here too.
+    await cx.call('Page.reload');
+    await cx.waitFor(`!!document.querySelector('#feed')`, 'the feed on reload', 60000);
+    const verifiedPre = await pressAndReadVerdict(cx, { atLeast: 2, ms: 60000, quietMs: 2000 }).catch(() => null);
+    const verifiedOk = verifiedPre !== null && verifiedPre.reading.ledClass === 'led fresh'
+      && /^verified across \d+ nodes · tip \d+$/.test(verifiedPre.reading.title ?? '');
+    if (!verifiedOk) {
+      const title = verifiedPre?.reading?.title ?? null;
+      markLightFail(`the chain was not verified (title=${JSON.stringify(title)}) — the post cache opens on a verified tip`);
+      return;
+    }
 
-  // Fixture: R's root and three replies (two of them nested as root → reply1
-  // → reply2, one sibling of reply1). Posted through the composer where
-  // the chain lacks any.
-  const fixture = await ensureLightFixture(cx);
-  if (fixture.rootId === null || fixture.reply1Id === null || fixture.reply2Id === null || fixture.reply3Id === null) {
-    markLightNotRun(`fixture missing: ${fixture.detail}`);
-    return;
-  }
-  const rootId = fixture.rootId;
-  const reply1Id = fixture.reply1Id;
-  const reply2Id = fixture.reply2Id;
-  const reply3Id = fixture.reply3Id;
-  console.log(`[vl] fixture: ${fixture.detail}`);
+    // Fixture: R's root and three replies (two of them nested as root →
+    // reply1 → reply2, one sibling of reply1). Posted through the
+    // composer where the chain lacks any.
+    const fixture = await ensureLightFixture(cx);
+    if (fixture.rootId === null || fixture.reply1Id === null || fixture.reply2Id === null || fixture.reply3Id === null) {
+      markLightFail(`fixture missing: ${fixture.detail}`);
+      return;
+    }
+    rootId = fixture.rootId;
+    reply1Id = fixture.reply1Id;
+    reply2Id = fixture.reply2Id;
+    reply3Id = fixture.reply3Id;
+    console.log(`[vl] fixture: ${fixture.detail}`);
 
-  // Relays stay up — they were started before the browser. Note the pair.
-  const RA = lightRelays.a;
-  const RB = lightRelays.b;
-  if (!RA || !RB) {
-    markLightNotRun(`the two relays were not started before the block ran (RA=${!!RA}, RB=${!!RB})`);
+    // Relays stay up — they were started before the browser. Note the pair.
+    RA = lightRelays.a;
+    RB = lightRelays.b;
+    if (!RA || !RB) {
+      markLightFail(`the two relays were not started before the block ran (RA=${!!RA}, RB=${!!RB})`);
+      return;
+    }
+    RA.mode = 'honest';
+    RB.mode = 'honest';
+    RA.targetId = null;
+    RB.targetId = null;
+  } catch (e) {
+    markLightFail(`the block could not start: ${String(e)}`);
     return;
   }
-  RA.mode = 'honest';
-  RB.mode = 'honest';
-  RA.targetId = null;
-  RB.targetId = null;
 
   // ---- L1 — a cold feed, held. Cache emptied, RA on hold, reload. The
   // feed is slots; each shows the row's counts and time, the handle where
@@ -5527,19 +5575,19 @@ async function lightSteps(cx, targetId = 'unknown') {
       return { atMs: Date.now() - t0, slots: 0 };
     })()`);
     const feedHeld = await readFeedShape(cx);
-    const raSinceHeld = RA.log.slice(idxBefore.ra);
+    // Mid-hold slice — the list GET is pushed by its own `finish`; the
+    // batch's entry is held in flight and pushed only by its `finish`
+    // after release.
+    const raMidHold = RA.log.slice(idxBefore.ra);
     const rbSinceHeld = RB.log.slice(idxBefore.rb);
-    const listsRa = lightListsIn(raSinceHeld);
-    const batchesRa = batchesIn(raSinceHeld);
-    const openBatchesRa = batchesRa.filter((e) => e.status === 'client-closed' || e.status === null);
-    const batchIdsRa = batchesRa.length === 0 ? [] : batchIdsOf(batchesRa[batchesRa.length - 1]);
+    const listsRa = lightListsIn(raMidHold);
     const feedSlotsLower = (feedHeld.slots ?? []).map((s) => s.toLowerCase());
-    const slotsMatchBatch = batchIdsRa.length === feedSlotsLower.length && batchIdsRa.every((id, i) => id === feedSlotsLower[i]);
     const slotShapesOk = Array.isArray(feedHeld.slotShapes) && feedHeld.slotShapes.length > 0
       && feedHeld.slotShapes.every((s) => s.slotTextEmpty && !s.bodyHasButton && !s.bodyHasLink);
     const slotColoursOk = Array.isArray(feedHeld.probedColours) && feedHeld.probedColours.length > 0
       && feedHeld.probedColours.every((c) => c !== null && c === feedHeld.inkMuteRgb);
     // Release — every slot becomes a card in the same order, no clay line.
+    const releaseAt = Date.now();
     const releasedCount = RA.release();
     await cx.waitFor(`(() => {
       const feed = document.querySelector('#feed');
@@ -5552,8 +5600,21 @@ async function lightSteps(cx, targetId = 'unknown') {
       && feedHeld.slots.length === feedReleased.liveCards.length
       && feedHeld.slots.every((id, i) => id.toLowerCase() === feedReleased.liveCards[i].toLowerCase());
     const noLine = feedReleased.withheldLineText === null;
+    // The batch's entry is pushed by `finish` on the honest fall-through
+    // after release, so the slice after the wait names it. It is the one
+    // RA answered: its status 200, its doneAt at or after the release
+    // moment. RB was not asked.
+    const raAfterRelease = RA.log.slice(idxBefore.ra);
+    const batchesRa = batchesIn(raAfterRelease);
+    const batchIdsRa = batchesRa.length === 0 ? [] : batchIdsOf(batchesRa[batchesRa.length - 1]);
+    const slotsMatchBatch = batchIdsRa.length === feedSlotsLower.length && batchIdsRa.every((id, i) => id === feedSlotsLower[i]);
+    const heldBatch = batchesRa[batchesRa.length - 1] ?? null;
+    const batchAnsweredAfterRelease = heldBatch !== null
+      && heldBatch.status === 200
+      && typeof heldBatch.doneAt === 'number'
+      && heldBatch.doneAt >= releaseAt;
     const ok = held.slots > 0 && slotsMatchBatch && slotShapesOk && slotColoursOk
-      && listsRa.length === 1 && batchesRa.length === 1 && openBatchesRa.length >= 0
+      && listsRa.length === 1 && batchesRa.length === 1 && batchAnsweredAfterRelease
       && rbSinceHeld.length === 0 && sameOrder && noLine && releasedCount >= 1;
     record('L1', ok,
       `held@${held.atMs}ms slots=${held.slots}, feed slots=${JSON.stringify(feedHeld.slots?.slice(0, 4))}, ` +
@@ -5561,6 +5622,7 @@ async function lightSteps(cx, targetId = 'unknown') {
       `inkMute=${JSON.stringify(feedHeld.inkMuteRgb)} probedColours=${JSON.stringify(feedHeld.probedColours)}, ` +
       `RA list reads=${listsRa.length} (tx=${JSON.stringify(listsRa[0]?.path?.includes('tx=') ?? false)}), ` +
       `RA batch reads=${batchesRa.length} (batchIds×${batchIdsRa.length} match=${slotsMatchBatch}), ` +
+      `held batch answered after release=${batchAnsweredAfterRelease} (status=${heldBatch?.status}, doneAt-releaseAt=${heldBatch?.doneAt !== undefined && heldBatch.doneAt !== null ? heldBatch.doneAt - releaseAt : 'n/a'}ms), ` +
       `RB reads=${rbSinceHeld.length}, release=${releasedCount}, ` +
       `after release cards=${feedReleased.liveCards?.length} same order=${sameOrder}, line=${JSON.stringify(feedReleased.withheldLineText)}`);
   } catch (e) {
@@ -5845,7 +5907,17 @@ async function lightSteps(cx, targetId = 'unknown') {
       await sleep(1000); // small margin for the slot-leaving write
       const feedAt12 = await readFeedShape(cx);
       const batchesAfter = batchesIn(RA.log.slice(idxBefore.ra));
-      const clientClosed = batchesAfter.some((e) => e.status === 'client-closed');
+      // The resolve's deadline is ten seconds in the client (CONSTANTS →
+      // Client defaults). The close is the client's own abort when the
+      // deadline passed, so the entry's `doneAt - at` is at or over it —
+      // less a small margin for the overhead between the client's clock
+      // starting and the relay's `at` timestamp on the arrived request.
+      const LIGHT_BATCH_RESOLVE_MS = 10_000;
+      const CLOSE_DEADLINE_MARGIN_MS = 500;
+      const closed = batchesAfter.find((e) => e.status === 'client-closed') ?? null;
+      const closedAfterDeadline = closed !== null
+        && typeof closed.doneAt === 'number'
+        && closed.doneAt - closed.at >= LIGHT_BATCH_RESOLVE_MS - CLOSE_DEADLINE_MARGIN_MS;
       // Then: both relays honest and reload — every card.
       RA.mode = 'honest';
       RB.mode = 'honest';
@@ -5858,8 +5930,8 @@ async function lightSteps(cx, targetId = 'unknown') {
       const noSlotsAt12 = (feedAt12.slots?.length ?? 0) === 0;
       const noLineAt12 = feedAt12.withheldLineText === null;
       const cardsAfter = (feedAfter.liveCards?.length ?? 0) > 0 && (feedAfter.slots?.length ?? 0) === 0;
-      record('L9', slotsAt9Stand && noSlotsAt12 && noLineAt12 && clientClosed && cardsAfter,
-        `slots at ~9s=${feedAt9.slots?.length}, slots at ~12s=${feedAt12.slots?.length}, line at 12s=${JSON.stringify(feedAt12.withheldLineText)}, client closed=${clientClosed}, after honest reload: cards=${feedAfter.liveCards?.length} slots=${feedAfter.slots?.length}`);
+      record('L9', slotsAt9Stand && noSlotsAt12 && noLineAt12 && closedAfterDeadline && cardsAfter,
+        `slots at ~9s=${feedAt9.slots?.length}, slots at ~12s=${feedAt12.slots?.length}, line at 12s=${JSON.stringify(feedAt12.withheldLineText)}, close after deadline=${closedAfterDeadline} (doneAt-at=${closed?.doneAt !== undefined && closed?.doneAt !== null ? closed.doneAt - closed.at : 'n/a'}ms, deadline=${LIGHT_BATCH_RESOLVE_MS}ms, margin=${CLOSE_DEADLINE_MARGIN_MS}ms), after honest reload: cards=${feedAfter.liveCards?.length} slots=${feedAfter.slots?.length}`);
     }
     RA.mode = 'honest';
     RB.mode = 'honest';
@@ -5898,7 +5970,7 @@ async function lightSteps(cx, targetId = 'unknown') {
       'L10 feed root bound after release', 30000);
     // Re-set hold for the thread's batch.
     RA.mode = 'hold';
-    const idxBeforeThread = { ra: RA.log.length };
+    const idxBeforeThread = { ra: RA.log.length, rb: RB.log.length };
     await openThread(cx, rootId);
     // Wait for the thread pane to show slots.
     await cx.waitFor(`(() => {
@@ -5908,13 +5980,17 @@ async function lightSteps(cx, targetId = 'unknown') {
         || regions.some((r) => r.querySelector('.region-body .card.slot[data-post-id="${reply2Id}"]'));
     })()`, 'L10 thread slots stand', 15000).catch(() => {});
     const paneHeld = await readThreadPaneShape(cx, rootId);
-    const raSinceThread = RA.log.slice(idxBeforeThread.ra);
-    const threadLists = raSinceThread.filter((e) =>
+    // Mid-hold slice — the thread list GET is pushed by its own `finish`;
+    // the batch's entry is held in flight, pushed only by its `finish`
+    // after release.
+    const raMidHold = RA.log.slice(idxBeforeThread.ra);
+    const threadLists = raMidHold.filter((e) =>
       e.method === 'GET' && /^\/posts\/[0-9a-f]{64}\/thread/.test(e.path.split('?')[0]));
     const threadListsLight = threadLists.filter((e) => /[?&]light=1(?:&|$)/.test(e.path));
     const threadListsHaveTx = threadLists.some((e) => /[?&]tx=/.test(e.path));
     // Release — slot cards become cards; the reply depth-1 and the nested
     // one depth-2.
+    const releaseAt = Date.now();
     const released = RA.release();
     await cx.waitFor(`(() => {
       const regions = [...document.querySelectorAll('#panes .region')];
@@ -5932,10 +6008,26 @@ async function lightSteps(cx, targetId = 'unknown') {
       && r1Held?.depth === 'depth-1' && r2Held?.depth === 'depth-2';
     const slotsBecameCards = r1Held?.isSlot === true && r2Held?.isSlot === true
       && r1Released?.isSlot === false && r2Released?.isSlot === false;
-    record('L10', threadListsLight.length >= 1 && !threadListsHaveTx && depthClassOk && slotsBecameCards && released >= 1,
+    // The batch's entry is pushed by `finish` on the honest fall-through
+    // after release, so the slice after the wait names it. It is the one
+    // RA answered: status 200, doneAt at or after the release moment. RB
+    // was not asked.
+    const raAfterRelease = RA.log.slice(idxBeforeThread.ra);
+    const threadBatches = batchesIn(raAfterRelease);
+    const heldBatch = threadBatches[threadBatches.length - 1] ?? null;
+    const batchAnsweredAfterRelease = heldBatch !== null
+      && heldBatch.status === 200
+      && typeof heldBatch.doneAt === 'number'
+      && heldBatch.doneAt >= releaseAt;
+    const rbSinceThread = RB.log.slice(idxBeforeThread.rb);
+    const rbUntouched = rbSinceThread.length === 0;
+    record('L10', threadListsLight.length >= 1 && !threadListsHaveTx && depthClassOk
+        && slotsBecameCards && released >= 1 && batchAnsweredAfterRelease && rbUntouched,
       `thread list reads=${threadLists.length} (light=${threadListsLight.length}, any tx=${threadListsHaveTx}); ` +
       `held pane: reply1 depth=${r1Held?.depth} isSlot=${r1Held?.isSlot}, reply2 depth=${r2Held?.depth} isSlot=${r2Held?.isSlot}; ` +
       `released pane: reply1 depth=${r1Released?.depth} isSlot=${r1Released?.isSlot}, reply2 depth=${r2Released?.depth} isSlot=${r2Released?.isSlot}; ` +
+      `held batch answered after release=${batchAnsweredAfterRelease} (status=${heldBatch?.status}, doneAt-releaseAt=${heldBatch?.doneAt !== undefined && heldBatch.doneAt !== null ? heldBatch.doneAt - releaseAt : 'n/a'}ms); ` +
+      `RB reads=${rbSinceThread.length}; ` +
       `release count=${released}`);
     RA.mode = 'honest';
   } catch (e) {
