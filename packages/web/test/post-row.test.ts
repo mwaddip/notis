@@ -220,8 +220,8 @@ describe('readWithdrawnRow — a non-object value answers null', () => {
   it('a string answers null', () => { expect(readWithdrawnRow('nope')).toBeNull(); });
 });
 
-describe('readLightRows still answers the row of a well-formed page', () => {
-  it('a light row and a withdrawn row read as before', () => {
+describe('readLightRows passes a well-formed page of a light row and a withdrawn row', () => {
+  it('answers both rows, each under its kind', () => {
     const rows = readLightRows([
       {
         kind: 'light', id: ID_1, parentRefs: [], status: 'confirmed',

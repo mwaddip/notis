@@ -8,7 +8,7 @@ import type { LightJson, WithdrawnJson } from '../src/api/dto';
 // field through `readLightRows` (WEB_INTERFACE → The extension → "The light
 // read"). A list read brings no bytes and is not checked (→ "The post
 // check"); the single post read keeps `tx=1` where a verifier is held
-// (→ "The post check" → "the single post read's, asked with `tx=1`").
+// (→ "The post check").
 
 const VIEWER = 'aa'.repeat(32);
 const SUBJECT = 'bb'.repeat(32);

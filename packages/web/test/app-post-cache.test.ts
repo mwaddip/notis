@@ -229,7 +229,7 @@ describe('app-post-cache — a thread read that throws reads the cache', () => {
     // cache"), covered by `view/panes.ts` directly in `panes.test.ts`.
   });
 
-  it('with the subject not held: today\'s failed read, unchanged', async () => {
+  it('with the subject not held: t.error is set, t.root is null', async () => {
     const subject = row('r');
     const sv = scriptedVerifier((r) => BOUND(r as PostJson));
     const { cache } = makeCache();

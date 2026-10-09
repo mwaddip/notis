@@ -17,11 +17,12 @@ export interface PostResolverDeps {
   nodes: () => string[];
   fetch: typeof fetch;
   check: (rows: unknown[]) => PostCheck[];
-  /** The clock — defaults to `Date.now`. Injectable so a test drives the
-   *  deadline over a fake. */
+  /** The clock, read for the deadline. Defaults to `Date.now`; a caller
+   *  that drives the clock itself passes one of its own. */
   now?: () => number;
   /** A timer that resolves when the clock reads `at`. Defaults to
-   *  `setTimeout` over the real clock; injectable for the same reason. */
+   *  `setTimeout` over the real clock; a caller driving the clock passes
+   *  one that fires under the same clock. */
   until?: (at: number) => Promise<void>;
 }
 

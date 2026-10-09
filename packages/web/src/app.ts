@@ -465,7 +465,7 @@ export class App {
     // The posts verifier and the post resolver are handed together or not at
     // all — the extension build is the one build that holds either, and it
     // holds both (WEB_INTERFACE → The extension → "The post check",
-    // → "The resolve"). A cache alone, or none, is handed as before.
+    // → "The resolve"). The cache is handed on its own, under either pair.
     if ((this.postsVerifier === null) !== (this.postResolver === null)) {
       throw new Error('a posts verifier and a post resolver are handed together');
     }
@@ -631,9 +631,10 @@ export class App {
     }
   }
 
-  /** The six list reads' one gate (WEB_INTERFACE → The extension → "The
-   *  light read"): answer the input array positionally — a row for each
-   *  one given, in order. The two configurations are:
+  /** Every list read's rows pass through here before they enter state
+   *  (WEB_INTERFACE → The extension → "The light read"): answer the input
+   *  array positionally — a row for each one given, in order. The two
+   *  configurations are:
    *
    *  - no resolver (the web build): the rows as given, no cache call.
    *  - a resolver (the extension build): a list read brings no bytes and

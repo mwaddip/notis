@@ -54,7 +54,7 @@ export interface Api {
    *  no bytes and is not checked"), so these reads take no `tx`. `withTx`
    *  rides the single post read's call alone — the only post read whose
    *  row the check runs over, read with `tx=1` where a verifier is held
-   *  (→ "The post check" → "the single post read's, asked with `tx=1`"). */
+   *  (→ "The post check"). */
   feed(page?: Page, viewer?: string, author?: string, roots?: boolean, light?: boolean): Promise<FeedResult>;
   thread(id: string, page?: Page, viewer?: string, light?: boolean): Promise<ThreadResult | null>;
   post(id: string, viewer?: string, withTx?: boolean): Promise<PostResult | null>;

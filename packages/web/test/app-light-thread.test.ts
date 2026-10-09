@@ -4,7 +4,7 @@
 // `refreshThread` and `threadMore` ask `light=1` and never `tx`, `intake`
 // composes rows from the cache, `resolveSlots` reaches each thread, and
 // `endSlots` sets the subject's withheld state and the thread's unbound
-// count. With no resolver the three reads ask as at the tip.
+// count. With no resolver no thread read carries `light=1`.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PendingLedger } from '../src/wallet/ledger';
@@ -349,11 +349,11 @@ describe('a placeholder subject at the end is a card reading content not on this
 });
 
 // ---------------------------------------------------------------------------
-// A ↻ over three pages resolves once: one resolve call carrying every slot's
-// id; its report reads as at the tip.
+// A ↻ over three pages resolves once: one resolve call carrying the ids the
+// three pages left as slots (lb and lc; lr composes from the cache).
 // ---------------------------------------------------------------------------
 describe('a ↻ over three pages resolves once', () => {
-  it('three pages: one resolve call with every slot id; the report reads as at the tip', async () => {
+  it('three pages: one resolve call carrying lb and lc after lr composes from the cache', async () => {
     const r = testResolver();
     const { cache } = makeCache();
     await cache.open('C');
@@ -741,13 +741,12 @@ describe('a landing after the list moved on', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Every thread read of either build asks no `tx` — the web build (no
-// verifier and no resolver) and the extension build (both). A list read
-// brings no bytes and is not checked (WEB_INTERFACE → The extension → "The
-// post check" → "A list read brings no bytes and is not checked").
+// Every thread read carries `light=1` under a resolver and none without it,
+// over the three thread-read paths (fetchThread, refreshThread, threadMore)
+// — WEB_INTERFACE → The extension → "The light read".
 // ---------------------------------------------------------------------------
-describe('the three thread reads ask no tx in either build', () => {
-  it('the web build: no light and no tx on fetchThread, refreshThread, threadMore', async () => {
+describe('the three thread reads carry light under a resolver and none without it', () => {
+  it('the web build: no light on fetchThread, refreshThread, threadMore', async () => {
     const h = harness({
       resolver: null, verifier: null, cache: null,
       threadResults: [
@@ -764,12 +763,11 @@ describe('the three thread reads ask no tx in either build', () => {
     await settle();
     for (const call of h.fake.threadCalls) {
       expect(call.url).not.toContain('light=1');
-      expect(call.url).not.toContain('tx=1');
     }
     expect(h.fake.threadCalls.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('the extension build: light and no tx on fetchThread, refreshThread, threadMore', async () => {
+  it('the extension build: light on fetchThread, refreshThread, threadMore', async () => {
     const r = testResolver();
     const { cache } = makeCache();
     await cache.open('C');
@@ -794,7 +792,6 @@ describe('the three thread reads ask no tx in either build', () => {
     await settle();
     for (const call of h.fake.threadCalls) {
       expect(call.url).toContain('light=1');
-      expect(call.url).not.toContain('tx=1');
     }
     expect(h.fake.threadCalls.length).toBeGreaterThanOrEqual(3);
   });

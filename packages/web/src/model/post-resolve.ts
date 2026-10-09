@@ -6,9 +6,8 @@ import type { PostCheck } from '@dagsocial/nipopow-client';
 // a list lacks are read by id from the seed list's nodes in turn, through
 // `POST /posts/batch` (NODE_INTERFACE → Posts → "The batch read answers posts
 // by id"). This module takes nothing from `fetch`, from the clock or from
-// IndexedDB; every seam is in `ResolveDeps`, so a test drives it over fakes
-// and so the extension's resolver (`src/extension/post-resolver.ts`) is the
-// one place `fetch` lives.
+// IndexedDB; every seam is in `ResolveDeps`, and the extension's resolver
+// (`src/extension/post-resolver.ts`) is the one place `fetch` lives.
 
 /** The most ids one request takes (CONSTANTS → HTTP view bounds). */
 export const BATCH_READ_MAX = 100;
@@ -59,9 +58,8 @@ export interface ResolveDeps {
    *  the resolve would send. */
   now: () => number;
   /** Resolves when the clock reads `at`, called once a resolve for the race
-   *  against the deadline across every request. The resolver answers one
-   *  over `setTimeout`; a test answers one driven by `vi.useFakeTimers()`
-   *  or by hand. */
+   *  against the deadline across every request. The seam fires under the
+   *  same clock `now` reads. */
   until: (at: number) => Promise<void>;
   /** Bound rows for the ids one chunk served. Called once per chunk; the
    *  caller draws the cards and puts the rows into the cache. */
@@ -362,8 +360,8 @@ function applyBody(
 
 /** Build the next round from the ids still wanted whose `askedCount` is
  *  below `n`, grouped by `nextNode`, in chunks of at most `BATCH_READ_MAX`.
- *  The ids are iterated in the original order the caller passed in, so
- *  chunks are stable and tests can refer to them. */
+ *  The ids are iterated in the original order the caller passed in, so a
+ *  chunk's ids keep the input order. */
 function nextRound(
   originalIds: readonly string[],
   state: Map<string, IdState>,
@@ -381,9 +379,9 @@ function nextRound(
     else buckets.set(s.nextNode, [id]);
   }
   const chunks: Chunk[] = [];
-  // Round-robin by `nextNode` ascending — a deterministic walk a test can
-  // assert on. The order among chunks does not affect correctness; the
-  // chunks of a round all leave at once.
+  // Round-robin by `nextNode` ascending — the chunk order is deterministic.
+  // The order among chunks does not affect correctness; the chunks of a
+  // round all leave at once.
   const nodeIndices = [...buckets.keys()].sort((a, b) => a - b);
   for (const nodeIndex of nodeIndices) {
     const ids = buckets.get(nodeIndex)!;

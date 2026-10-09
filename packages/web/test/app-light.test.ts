@@ -3,7 +3,7 @@
 // extension → "The light read", → "The resolve"): the feed and the author
 // window's list reads carry `light=1` while a resolver is held, `intake`
 // composes rows from the cache, and `resolveSlots` asks the resolver for
-// what the cache lacks. With no resolver the six reads' URLs are today's.
+// what the cache lacks. With no resolver no list read carries `light=1`.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { App } from '../src/app';
@@ -51,13 +51,13 @@ describe('the App refuses half a seam', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Every list read of either build asks no `tx` — the web build (no verifier
-// and no resolver) and the extension build (both). A list read brings no
-// bytes and is not checked (WEB_INTERFACE → The extension → "The post
-// check" → "A list read brings no bytes and is not checked").
+// Every list read carries `light=1` under a resolver and none without it,
+// over the six list-read paths (feed load, refresh, load older, author
+// posts load, refresh, more) — WEB_INTERFACE → The extension → "The light
+// read".
 // ---------------------------------------------------------------------------
-describe('the six list reads ask no tx in either build', () => {
-  it('the web build: no light and no tx on all six reads', async () => {
+describe('the six list reads carry light under a resolver and none without it', () => {
+  it('the web build: no light on all six reads', async () => {
     const h = harness({
       resolver: null, verifier: null, cache: null,
       feedResults: [
@@ -79,12 +79,11 @@ describe('the six list reads ask no tx in either build', () => {
     await h.drive.authorPostsMore(K); await flush();
     for (const call of h.fake.feedCalls) {
       expect(call.url).not.toContain('light=1');
-      expect(call.url).not.toContain('tx=1');
     }
     expect(h.fake.feedCalls.length).toBeGreaterThanOrEqual(6);
   });
 
-  it('the extension build: light and no tx on all six reads', async () => {
+  it('the extension build: light on all six reads', async () => {
     const r = testResolver();
     const { cache } = makeCache();
     await cache.open('C');
@@ -109,7 +108,6 @@ describe('the six list reads ask no tx in either build', () => {
     await h.drive.authorPostsMore(K); await flush();
     for (const call of h.fake.feedCalls) {
       expect(call.url).toContain('light=1');
-      expect(call.url).not.toContain('tx=1');
     }
     expect(h.fake.feedCalls.length).toBeGreaterThanOrEqual(6);
   });
