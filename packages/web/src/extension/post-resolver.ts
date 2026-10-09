@@ -55,7 +55,8 @@ const DEFAULT_UNTIL = (at: number): Promise<void> =>
 export function createPostResolver(deps: PostResolverDeps): PostResolver {
   const now = deps.now ?? Date.now;
   const until = deps.until ?? DEFAULT_UNTIL;
-  // The pointer across calls. After each call it moves on by that call's
+  // The pointer across calls (WEB_INTERFACE → The extension →
+  // "A pointer walks the nodes"). It moves at the call, by that call's
   // round-one chunk count; the `% n` is taken in the pure resolve, so the
   // raw sum is kept here and read `% n` at each call.
   let pointer = 0;

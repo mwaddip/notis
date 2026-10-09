@@ -1409,11 +1409,11 @@ export class App {
 
   /** Replace a post's row wherever the client holds it — the feed, every thread
    *  that contains it, the posts index, and any open @posts window — so the
-   *  surface that re-renders next draws the node's row, not the stale one. A
+   *  surface that re-renders next draws the fetched row, not the stale one. A
    *  slot standing under the id is replaced by the fetched full row as a full
    *  row is (WEB_INTERFACE → The extension → "The light read"). The row is
-   *  the rebuilt one `ingestOne` answered — the node's row reaches none of
-   *  these places (→ "A checked row is taken field by field"). */
+   *  `ingestOne`'s answer — the rebuilt one under a posts verifier, the
+   *  node's own under none (→ "A checked row is taken field by field"). */
   private applyFetchedRow(fetched: PostJson | WithdrawnJson | null): void {
     if (!fetched || isWithdrawn(fetched)) return;
     this.stampLanding(fetched);

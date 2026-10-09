@@ -434,7 +434,7 @@ describe('resolvePosts — nobody-asked-for rows are not read', () => {
 });
 
 describe("resolvePosts — a node that never answers: the clock reaches the deadline, the promise resolves", () => {
-  it("ids end 'unserved' and no request leaves at or after the deadline", async () => {
+  it("the id ends 'unserved'", async () => {
     const r0 = fullRow('r0');
     const r = recorder(); const c = clock();
     // A node whose answer is a Promise that never resolves and never rejects.

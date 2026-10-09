@@ -98,10 +98,10 @@ interface IdState {
 /** Round-robin resolve. Pure of `fetch` and clocks; every seam reaches it
  *  through `deps`. The call is synchronous up to round one's chunk cut —
  *  `chunks` is known when it returns — then the async part walks the rounds
- *  under one deadline. Never rejects — a thrown `ask`, `check` or `onBound`
- *  is absorbed and logged through `console.error`: a thrown `ask` or `check`
- *  reads as a request that failed, and a thrown `onBound` leaves its ids
- *  bound. */
+ *  under one deadline. Never rejects — a thrown `ask` reads as a request
+ *  that failed and is not logged; a thrown `check` reads as a request that
+ *  failed and is logged once through `console.error`; a thrown `onBound`
+ *  leaves its ids bound and is logged once through `console.error`. */
 export function resolvePosts(ids: readonly string[], deps: ResolveDeps): ResolveResult {
   // Dedup in order; the early end for no nodes or no ids.
   const uniq: string[] = [];
@@ -149,9 +149,6 @@ async function runResolve(
     controller.abort();
     return BEAT;
   });
-  // Swallow a rejection the test's `until` might surface — the beat is
-  // consumed only through `Promise.race` and must never reject the resolve.
-  beat.catch(() => {});
 
   // One entry per id, keyed from the chunk the id landed in: `nextNode` is
   // the chunk's node, and `done` holds ids a node bound so a later round

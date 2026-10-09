@@ -224,8 +224,6 @@ describe('post-resolver — a base with a trailing slash', () => {
   });
 });
 
-// New cases (AF1 · Task 4b)
-
 describe('post-resolver — trim, then drop duplicates', () => {
   it("['https://a.test/', 'https://a.test', 'https://b.test'] is two nodes", async () => {
     const r0 = row('r0');

@@ -439,9 +439,10 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
     });
   }
 
-  /** The entries the ids list name, each as a `HeldPost` the resolve and
-   *  the list reads see (WEB_INTERFACE → The extension → "The post
-   *  cache"). An id not held is absent from the map. */
+  /** The entries the ids list name, each as a `HeldPost`: the row the
+   *  entry holds, and the author and parent the transaction states
+   *  (WEB_INTERFACE → The extension → "The post cache"). An id not held is
+   *  absent from the map. */
   async function getManyInternal(ids: readonly string[]): Promise<Map<string, HeldPost>> {
     const entries = await readEntries(ids);
     const out = new Map<string, HeldPost>();

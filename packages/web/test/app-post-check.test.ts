@@ -132,6 +132,7 @@ function harness(opts: {
   threadRes?: ThreadResult | null;
   postRes?: PostResult | null;
   postCache?: PostCache | null;
+  identityKey?: string | null;
 } = {}) {
   const fake: Fake = {
     feedCalls: [], feedRes: opts.feedRes ?? { posts: [], next: null, pending: [], pendingCount: 0 },
@@ -140,9 +141,10 @@ function harness(opts: {
   };
   const api = makeApi(fake);
   const writeClient = {} as unknown as WriteClient;
-  const ledger = new PendingLedger(null);
+  const key = opts.identityKey ?? null;
+  const ledger = new PendingLedger(key);
   const identity = {
-    current: () => null,
+    current: () => (key === null ? null : { pubKeyHex: key, locked: false }),
     sign: async () => ({ signature: '00' }),
     draft: async () => ({ pubKeyHex: '' }),
     create: async () => ({ pubKeyHex: '' }),
@@ -168,9 +170,11 @@ function harness(opts: {
     loadOlder(): Promise<void>;
     openThread(id: string, o: { from: 'feed' } | { from: 'pane'; ci: number }): void;
     openAuthorPosts(key: string, o: { from: 'feed' } | { from: 'pane'; ci: number }): void;
+    pollTick(): Promise<void>;
+    ingestOne(r: PostJson | WithdrawnJson): PostJson | WithdrawnJson | null;
     state: AppState;
   };
-  return { app, drive, fake, feedEl, panes };
+  return { app, drive, fake, feedEl, panes, ledger };
 }
 
 beforeEach(() => { localStorage.clear(); document.body.innerHTML = ''; vi.useRealTimers(); });
@@ -400,8 +404,8 @@ describe('post-check — one check call per read', () => {
   });
 });
 
-// New cases (AF1 · Task 4b) — the single row's gate rebuilds through the
-// readers and hands the rebuilt row on.
+// The single row's gate rebuilds through the readers and hands the rebuilt
+// row on.
 
 describe('post-check — ingestOne rebuilds the row and strips every extra', () => {
   it('a bound row carrying an extra key and `tx` enters state and the cache without either', async () => {
@@ -456,14 +460,14 @@ describe('post-check — ingestOne rebuilds the row and strips every extra', () 
 
 describe('post-check — ingestOne and the withdrawn arm', () => {
   it('a well-formed withdrawn answer calls the cache\'s withdraw once with the rebuilt row', async () => {
-    const w = tomb('p');
+    const w = { ...tomb('p'), surprise: 'ignored' };
     const sv = scriptedVerifier(() => NOTHING_TO_BIND);
     const rec = recordingCache();
     const h = harness({ verifier: sv.verifier, postCache: rec.cache });
     const app = h.app as unknown as {
       ingestOne(r: unknown): PostJson | WithdrawnJson | null;
     };
-    const kept = app.ingestOne(w);
+    const kept = app.ingestOne(w as unknown as WithdrawnJson);
     expect(kept).not.toBeNull();
     expect((kept as WithdrawnJson).kind).toBe('withdrawn');
     await flush();
@@ -498,5 +502,140 @@ describe('post-check — with no verifier the node\'s row goes through as it is'
     const kept = app.ingestOne(r as unknown as PostJson);
     expect(kept).toBe(r);
     expect((kept as unknown as Record<string, unknown>)['surprise']).toBe('kept');
+  });
+});
+
+// The pending ledger's single post read is driven end to end: an entry in
+// the ledger, the node's answer in `postRes`, then the poll. The ledger's
+// read is the one site reconcile hands to each kind, so an answer that
+// bypassed `ingestOne` would land here.
+
+describe('post-check — the ledger\'s read hands reconcile the rebuilt row', () => {
+  it('a like\'s landing writes the rebuilt row to state.posts and the cache, each without `tx`, `confirmedAuthor` or an extra key', async () => {
+    const base = row('p', { likedByViewer: true });
+    const answer = {
+      ...base, likedByViewer: true, tx: 'de'.repeat(16),
+      confirmedAuthor: ME, surprise: 'ignored',
+    };
+    const sv = scriptedVerifier(() => BOUND(answer as unknown as PostJson));
+    const rec = recordingCache();
+    const h = harness({
+      verifier: sv.verifier, postCache: rec.cache,
+      postRes: answer as unknown as PostResult, identityKey: ME,
+    });
+    h.ledger.add({
+      txId: 'like' + base.id.slice(0, 10), kind: 'like', postId: base.id,
+      inputs: [], expiresAtHeight: 721, submittedAtHeight: 1,
+    });
+    await h.drive.pollTick();
+    await flush();
+    expect(h.ledger.size).toBe(0);
+    const stored = h.drive.state.posts.get(base.id) as unknown as Record<string, unknown> | undefined;
+    expect(stored).toBeDefined();
+    expect(stored!['surprise']).toBeUndefined();
+    expect(stored!['confirmedAuthor']).toBeUndefined();
+    expect(stored!['tx']).toBeUndefined();
+    expect(rec.puts).toHaveLength(1);
+    const put = rec.puts[0]!.row as unknown as Record<string, unknown>;
+    expect(put['surprise']).toBeUndefined();
+    expect(put['confirmedAuthor']).toBeUndefined();
+    expect(put['tx']).toBeUndefined();
+  });
+
+  it('a `bound` answer whose `likeCount` is a string is withheld: the entry stays, state.posts is empty, nothing is put', async () => {
+    const base = row('p', { likedByViewer: true });
+    const bad = { ...base, likeCount: '3' as unknown as number, likedByViewer: true };
+    const sv = scriptedVerifier(() => BOUND(bad as PostJson));
+    const rec = recordingCache();
+    const h = harness({
+      verifier: sv.verifier, postCache: rec.cache,
+      postRes: bad as unknown as PostResult, identityKey: ME,
+    });
+    h.ledger.add({
+      txId: 'like' + base.id.slice(0, 10), kind: 'like', postId: base.id,
+      inputs: [], expiresAtHeight: 721, submittedAtHeight: 1,
+    });
+    await h.drive.pollTick();
+    await flush();
+    expect(h.ledger.size).toBe(1);
+    expect(h.drive.state.posts.get(base.id)).toBeUndefined();
+    expect(rec.puts).toHaveLength(0);
+  });
+
+  it('a `bound` answer whose content is one byte over MAX_CONTENT_BYTES is withheld: the entry stays, state.posts is empty, nothing is put', async () => {
+    const base = row('p', { likedByViewer: true });
+    const bad = { ...base, content: 'a'.repeat(MAX_CONTENT_BYTES + 1), likedByViewer: true };
+    const sv = scriptedVerifier(() => BOUND(bad as PostJson));
+    const rec = recordingCache();
+    const h = harness({
+      verifier: sv.verifier, postCache: rec.cache,
+      postRes: bad as unknown as PostResult, identityKey: ME,
+    });
+    h.ledger.add({
+      txId: 'like' + base.id.slice(0, 10), kind: 'like', postId: base.id,
+      inputs: [], expiresAtHeight: 721, submittedAtHeight: 1,
+    });
+    await h.drive.pollTick();
+    await flush();
+    expect(h.ledger.size).toBe(1);
+    expect(h.drive.state.posts.get(base.id)).toBeUndefined();
+    expect(rec.puts).toHaveLength(0);
+  });
+
+  it('a well-formed withdrawn answer lands the withdrawal: the entry leaves, the cache\'s withdraw is called once with a rebuilt row', async () => {
+    const w = { ...tomb('p'), surprise: 'ignored' };
+    const sv = scriptedVerifier(() => NOTHING_TO_BIND);
+    const rec = recordingCache();
+    const h = harness({
+      verifier: sv.verifier, postCache: rec.cache,
+      postRes: w as unknown as PostResult, identityKey: ME,
+    });
+    h.ledger.add({
+      txId: 'wd' + w.id.slice(0, 10), kind: 'withdraw', postId: w.id,
+      inputs: [], expiresAtHeight: 721, submittedAtHeight: 1,
+    });
+    await h.drive.pollTick();
+    await flush();
+    expect(h.ledger.size).toBe(0);
+    expect(rec.withdraws).toHaveLength(1);
+    expect(rec.withdraws[0]!.id).toBe(w.id);
+    const r = rec.withdraws[0]!.row as unknown as Record<string, unknown>;
+    expect(r['surprise']).toBeUndefined();
+  });
+
+  it('a withdrawn answer whose `author` is not hex is withheld: the entry stays, the cache is not told', async () => {
+    const w = { ...tomb('p'), author: 'nothex' as unknown as string };
+    const sv = scriptedVerifier(() => NOTHING_TO_BIND);
+    const rec = recordingCache();
+    const h = harness({
+      verifier: sv.verifier, postCache: rec.cache,
+      postRes: w as unknown as PostResult, identityKey: ME,
+    });
+    h.ledger.add({
+      txId: 'wd' + w.id.slice(0, 10), kind: 'withdraw', postId: w.id,
+      inputs: [], expiresAtHeight: 721, submittedAtHeight: 1,
+    });
+    await h.drive.pollTick();
+    await flush();
+    expect(h.ledger.size).toBe(1);
+    expect(rec.withdraws).toHaveLength(0);
+  });
+
+  it('with no verifier the node\'s row is the row in state, extra key and all', async () => {
+    const base = row('p', { likedByViewer: true });
+    const answer = { ...base, likedByViewer: true, surprise: 'kept' };
+    const h = harness({
+      verifier: null, postRes: answer as unknown as PostResult, identityKey: ME,
+    });
+    h.ledger.add({
+      txId: 'like' + base.id.slice(0, 10), kind: 'like', postId: base.id,
+      inputs: [], expiresAtHeight: 721, submittedAtHeight: 1,
+    });
+    await h.drive.pollTick();
+    await flush();
+    expect(h.ledger.size).toBe(0);
+    const stored = h.drive.state.posts.get(base.id) as unknown as Record<string, unknown> | undefined;
+    expect(stored).toBeDefined();
+    expect(stored!['surprise']).toBe('kept');
   });
 });

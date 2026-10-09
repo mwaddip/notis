@@ -21,9 +21,8 @@ function isPostType(v: unknown): v is PostType {
 }
 
 /** A `bound` row's `content` is `null`, or a string whose UTF-8 encoding is
- *  1 to `MAX_CONTENT_BYTES` bytes (TYPES_INTERFACE → Content limits). The
- *  bound is the signature's — a transaction binds text of any length, and
- *  the length rule holds the row to the shape a node is allowed to send. */
+ *  1 to `MAX_CONTENT_BYTES` bytes (TYPES_INTERFACE → Content limits). A
+ *  signature binds text of any length, so the length is held here. */
 function isContent(v: unknown): v is string | null {
   if (v === null) return true;
   if (typeof v !== 'string') return false;
@@ -35,8 +34,8 @@ function isContent(v: unknown): v is string | null {
  *  `null` where it is not well-formed (WEB_INTERFACE → The extension →
  *  "A checked row is taken field by field"). A fresh object of the sixteen
  *  fields alone — no `tx`, no `kind`, no `confirmedAuthor`, no key beyond —
- *  so a node that carries one does not reach the client's state or its
- *  cache. Total: any value in, a row or `null` out, never a throw. */
+ *  so a key a node carries does not reach the client's state or its cache.
+ *  Total: any value in, a row or `null` out, never a throw. */
 export function readBoundRow(row: unknown): PostJson | null {
   if (typeof row !== 'object' || row === null || Array.isArray(row)) return null;
   const raw = row as Record<string, unknown>;
