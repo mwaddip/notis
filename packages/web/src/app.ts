@@ -4831,30 +4831,43 @@ export class App {
     return null;
   }
 
-  private replyDepth(parentId: string): number {
-    // Walk back through the submission chain to the first thread row — a
-    // landed submission is drawn one level deeper than its own parent card,
-    // and the composer under it one level deeper again, to the cap a
-    // thread's rows hold (WEB_INTERFACE → "A landed submission is replied
-    // to where it stands").
+  /** Walk back from a post id through the chain of the reader's landed
+   *  submissions, by `postId` to `parentId`. `anchor` is the id the walk
+   *  stops at — either a feed-root submission's `postId`
+   *  (`rootedInSubmissions` true), or the first id not held in a landed
+   *  submission (false; a thread row or a stranger). `subSteps` is the
+   *  number of submission links the walk crossed. The two callers below
+   *  share this one walk (WEB_INTERFACE → "A landed submission is replied
+   *  to where it stands"). */
+  private submissionWalk(from: string): { anchor: string; subSteps: number; rootedInSubmissions: boolean } {
     const byPostId = new Map<string, Submission>();
     for (const s of this.state.submissions) if (s.postId !== null) byPostId.set(s.postId, s);
     const seen = new Set<string>();
-    let cur: string = parentId;
+    let cur: string = from;
     let subSteps = 0;
     let sub = byPostId.get(cur);
     while (sub !== undefined && !seen.has(cur)) {
       seen.add(cur);
       const parent: string | null = sub.parentId;
-      if (parent === null) return Math.min(subSteps + 1, 3);
+      if (parent === null) return { anchor: cur, subSteps, rootedInSubmissions: true };
       cur = parent;
       subSteps++;
       sub = byPostId.get(cur);
     }
+    return { anchor: cur, subSteps, rootedInSubmissions: false };
+  }
+
+  /** A landed submission is drawn one level deeper than its own parent
+   *  card, and the composer under it one level deeper again, to the cap a
+   *  thread's rows hold (WEB_INTERFACE → "A landed submission is replied
+   *  to where it stands"). */
+  private replyDepth(parentId: string): number {
+    const walk = this.submissionWalk(parentId);
+    if (walk.rootedInSubmissions) return Math.min(walk.subSteps + 1, 3);
     for (const t of this.state.threads.values()) {
       if (!t.root) continue;
       for (const node of flattenThread(t.root, t.descendants)) {
-        if (node.row.id === cur) return Math.min(node.depth + subSteps + 1, 3);
+        if (node.row.id === walk.anchor) return Math.min(node.depth + walk.subSteps + 1, 3);
       }
     }
     return 1;
@@ -4889,19 +4902,7 @@ export class App {
    *  at; the caller then matches it against open threads
    *  (WEB_INTERFACE → "A landed submission is replied to where it stands"). */
   private threadAnchorFor(postId: string): string {
-    const byPostId = new Map<string, Submission>();
-    for (const s of this.state.submissions) if (s.postId !== null) byPostId.set(s.postId, s);
-    const seen = new Set<string>();
-    let cur: string = postId;
-    let sub = byPostId.get(cur);
-    while (sub !== undefined && !seen.has(cur)) {
-      seen.add(cur);
-      const parent: string | null = sub.parentId;
-      if (parent === null) return cur;
-      cur = parent;
-      sub = byPostId.get(cur);
-    }
-    return cur;
+    return this.submissionWalk(postId).anchor;
   }
 
   private setReportForPost(postId: string, text: string): void {
