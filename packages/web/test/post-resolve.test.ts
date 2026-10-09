@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   resolvePosts,
   BATCH_READ_MAX,
@@ -104,6 +104,7 @@ function nothingToBind(): PostCheck {
 interface Call {
   base: string;
   ids: readonly string[];
+  signal: AbortSignal;
 }
 
 interface AnswerMap {
@@ -112,7 +113,8 @@ interface AnswerMap {
 
 /** A fake set of nodes. Each node answers from a FIFO queue the test fills,
  *  and records the ids every call carried, with its base. `ask` resolves to
- *  the queued body or rejects where the body is `null`. */
+ *  the queued body or rejects where the body is `null`. An abort of the
+ *  signal rejects a pending answer with an AbortError. */
 function mockNodes(answers: AnswerMap): {
   calls: Call[];
   ask: ResolveDeps['ask'];
@@ -120,15 +122,19 @@ function mockNodes(answers: AnswerMap): {
   const calls: Call[] = [];
   return {
     calls,
-    ask: (base, ids) => {
-      calls.push({ base, ids });
+    ask: (base, ids, signal) => {
+      calls.push({ base, ids, signal });
       const q = answers[base] ?? [];
       const next = q.shift();
       if (next === undefined) {
         return Promise.reject(new Error('no answer'));
       }
       if (next.body === null) return Promise.reject(new Error('refused'));
-      return Promise.resolve(next.body);
+      return new Promise<unknown>((resolve, reject) => {
+        if (signal.aborted) { reject(new Error('aborted')); return; }
+        signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        resolve(next.body);
+      });
     },
   };
 }
@@ -158,11 +164,12 @@ describe('resolvePosts — one node serves every id in one request', () => {
     const r = recorder(); const c = clock();
     const net = mockNodes({ A: [{ ids: [row0.id, row1.id], body: { posts: [row0, row1] } }] });
     const check = makeCheck({ [row0.id]: bound(row0), [row1.id]: bound(row1) });
-    const res = await resolvePosts([row0.id, row1.id], {
+    const res = resolvePosts([row0.id, row1.id], {
       nodes: ['A'], start: 0, ask: net.ask, check, now: c.now, until: c.until, onBound: r.onBound,
     });
     expect(res.chunks).toBe(1);
-    expect(res.ends.size).toBe(0);
+    const ends = await res.ends;
+    expect(ends.size).toBe(0);
     expect(r.calls).toHaveLength(1);
     expect(r.calls[0]).toHaveLength(2);
   });
@@ -173,10 +180,11 @@ describe('resolvePosts — round-robin pointer across three nodes', () => {
     const ids = nIds(250);
     const net = mockNodes({ A: [{ ids: [], body: { posts: [] } }], B: [{ ids: [], body: { posts: [] } }], C: [{ ids: [], body: { posts: [] } }] });
     const r = recorder(); const c = clock();
-    const res = await resolvePosts(ids, {
+    const res = resolvePosts(ids, {
       nodes: ['A', 'B', 'C'], start: 0, ask: net.ask, check: makeCheck({}), now: c.now, until: c.until, onBound: r.onBound,
     });
     expect(res.chunks).toBe(3);
+    await res.ends;
     // Three nodes were asked, each once in round one.
     const roundOneCalls = net.calls.slice(0, 3);
     expect(roundOneCalls.map((cc) => cc.base).sort()).toEqual(['A', 'B', 'C']);
@@ -192,10 +200,11 @@ describe('resolvePosts — round-robin pointer across three nodes', () => {
       B: [{ ids: [], body: { posts: [] } }],
     });
     const r = recorder(); const c = clock();
-    const res = await resolvePosts(ids, {
+    const res = resolvePosts(ids, {
       nodes: ['A', 'B'], start: 0, ask: net.ask, check: makeCheck({}), now: c.now, until: c.until, onBound: r.onBound,
     });
     expect(res.chunks).toBe(3);
+    await res.ends;
     expect(net.calls[0]!.base).toBe('A');
     expect(net.calls[1]!.base).toBe('B');
     expect(net.calls[2]!.base).toBe('A');
@@ -211,10 +220,11 @@ describe('resolvePosts — a node that leaves ids out, the next node serves them
       B: [{ ids: [r1.id], body: { posts: [r1] } }],
     });
     const check = makeCheck({ [r0.id]: bound(r0), [r1.id]: bound(r1) });
-    const res = await resolvePosts([r0.id, r1.id], {
+    const res = resolvePosts([r0.id, r1.id], {
       nodes: ['A', 'B'], start: 0, ask: net.ask, check, now: c.now, until: c.until, onBound: r.onBound,
     });
-    expect(res.ends.size).toBe(0);
+    const ends = await res.ends;
+    expect(ends.size).toBe(0);
     expect(net.calls).toHaveLength(2);
     expect(net.calls[1]!.base).toBe('B');
     expect(net.calls[1]!.ids).toEqual([r1.id]);
@@ -229,10 +239,11 @@ describe('resolvePosts — a request that fails, served nothing', () => {
       A: [{ ids: [r0.id], body: null }], // rejected
       B: [{ ids: [r0.id], body: { posts: [r0] } }],
     });
-    const res = await resolvePosts([r0.id], {
+    const res = resolvePosts([r0.id], {
       nodes: ['A', 'B'], start: 0, ask: net.ask, check: makeCheck({ [r0.id]: bound(r0) }), now: c.now, until: c.until, onBound: r.onBound,
     });
-    expect(res.ends.size).toBe(0);
+    const ends = await res.ends;
+    expect(ends.size).toBe(0);
     expect(net.calls.map((x) => x.base)).toEqual(['A', 'B']);
   });
 
@@ -244,10 +255,11 @@ describe('resolvePosts — a request that fails, served nothing', () => {
         A: [{ ids: [r0.id], body: bad }],
         B: [{ ids: [r0.id], body: { posts: [r0] } }],
       });
-      const res = await resolvePosts([r0.id], {
+      const res = resolvePosts([r0.id], {
         nodes: ['A', 'B'], start: 0, ask: net.ask, check: makeCheck({ [r0.id]: bound(r0) }), now: c.now, until: c.until, onBound: r.onBound,
       });
-      expect(res.ends.size).toBe(0);
+      const ends = await res.ends;
+      expect(ends.size).toBe(0);
       expect(net.calls[1]!.base).toBe('B');
     }
   });
@@ -263,10 +275,11 @@ describe('resolvePosts — unbound rules', () => {
     });
     let calls = 0;
     const check = (rows: unknown[]): PostCheck[] => rows.map(() => (calls++ === 0 ? unbound() : bound(r0)));
-    const res = await resolvePosts([r0.id], {
+    const res = resolvePosts([r0.id], {
       nodes: ['A', 'B'], start: 0, ask: net.ask, check, now: c.now, until: c.until, onBound: r.onBound,
     });
-    expect(res.ends.size).toBe(0);
+    const ends = await res.ends;
+    expect(ends.size).toBe(0);
   });
 
   it('unbound at every node ends unbound', async () => {
@@ -277,10 +290,11 @@ describe('resolvePosts — unbound rules', () => {
       B: [{ ids: [r0.id], body: { posts: [r0] } }],
     });
     const check = makeCheck({ [r0.id]: unbound() });
-    const res = await resolvePosts([r0.id], {
+    const res = resolvePosts([r0.id], {
       nodes: ['A', 'B'], start: 0, ask: net.ask, check, now: c.now, until: c.until, onBound: r.onBound,
     });
-    expect(res.ends.get(r0.id)).toBe('unbound');
+    const ends = await res.ends;
+    expect(ends.get(r0.id)).toBe('unbound');
   });
 
   it('unbound at one and left out by the rest ends unbound', async () => {
@@ -291,10 +305,11 @@ describe('resolvePosts — unbound rules', () => {
       B: [{ ids: [r0.id], body: { posts: [] } }],
     });
     const check = makeCheck({ [r0.id]: unbound() });
-    const res = await resolvePosts([r0.id], {
+    const res = resolvePosts([r0.id], {
       nodes: ['A', 'B'], start: 0, ask: net.ask, check, now: c.now, until: c.until, onBound: r.onBound,
     });
-    expect(res.ends.get(r0.id)).toBe('unbound');
+    const ends = await res.ends;
+    expect(ends.get(r0.id)).toBe('unbound');
   });
 });
 
@@ -314,10 +329,11 @@ describe('resolvePosts — withdrawn and tx:null do not serve', () => {
       if (rid === r1.id) return bound(r1);
       return nothingToBind();
     });
-    const res = await resolvePosts([r0.id, r1.id], {
+    const res = resolvePosts([r0.id, r1.id], {
       nodes: ['A', 'B'], start: 0, ask: net.ask, check, now: c.now, until: c.until, onBound: r.onBound,
     });
-    expect(res.ends.size).toBe(0);
+    const ends = await res.ends;
+    expect(ends.size).toBe(0);
     expect(net.calls[1]!.base).toBe('B');
     expect(net.calls[1]!.ids).toEqual([r0.id, r1.id]);
   });
@@ -332,10 +348,11 @@ describe('resolvePosts — placeholder vs the text', () => {
       B: [{ ids: [place.id], body: { posts: [text] } }],
     });
     const check = makeCheck({ [place.id]: placeholderCheck(place) });
-    const res = await resolvePosts([place.id], {
+    const res = resolvePosts([place.id], {
       nodes: ['A', 'B'], start: 0, ask: net.ask, check, now: c.now, until: c.until, onBound: r.onBound,
     });
-    expect(res.ends.size).toBe(0);
+    const ends = await res.ends;
+    expect(ends.size).toBe(0);
     // Exactly one onBound call for the text — the chunk's bound rows.
     const flat = r.calls.flat();
     expect(flat).toHaveLength(1);
@@ -350,10 +367,11 @@ describe('resolvePosts — placeholder vs the text', () => {
       B: [{ ids: [p0.id], body: { posts: [p1] } }],
     });
     const check = makeCheck({ [p0.id]: placeholderCheck(p0) });
-    const res = await resolvePosts([p0.id], {
+    const res = resolvePosts([p0.id], {
       nodes: ['A', 'B'], start: 0, ask: net.ask, check, now: c.now, until: c.until, onBound: r.onBound,
     });
-    expect(res.ends.has(p0.id)).toBe(false);
+    const ends = await res.ends;
+    expect(ends.has(p0.id)).toBe(false);
     const flat = r.calls.flat();
     expect(flat).toHaveLength(1);
     expect(flat[0]!.row.content).toBeNull();
@@ -370,10 +388,11 @@ describe('resolvePosts — every node is asked for an id at most once; a served 
       C: [], // never asked
     });
     const check = makeCheck({ [r0.id]: bound(r0), [r1.id]: bound(r1) });
-    const res = await resolvePosts([r0.id, r1.id], {
+    const res = resolvePosts([r0.id, r1.id], {
       nodes: ['A', 'B', 'C'], start: 0, ask: net.ask, check, now: c.now, until: c.until, onBound: r.onBound,
     });
-    expect(res.ends.size).toBe(0);
+    const ends = await res.ends;
+    expect(ends.size).toBe(0);
     // Only two calls — A and B.
     expect(net.calls.map((x) => x.base)).toEqual(['A', 'B']);
   });
@@ -401,10 +420,11 @@ describe('resolvePosts — nobody-asked-for rows are not read', () => {
         return nothingToBind();
       });
     };
-    const res = await resolvePosts([r0.id, r1.id], {
+    const res = resolvePosts([r0.id, r1.id], {
       nodes: ['A'], start: 0, ask: net.ask, check, now: c.now, until: c.until, onBound: r.onBound,
     });
-    expect(res.ends.size).toBe(0);
+    const ends = await res.ends;
+    expect(ends.size).toBe(0);
     expect(checkCalls).toBe(1);
     // At most two rows reached check — the first row under each of r0 and r1.
     expect(checkedCount).toBeLessThanOrEqual(2);
@@ -420,14 +440,14 @@ describe("resolvePosts — a node that never answers: the clock reaches the dead
     // A node whose answer is a Promise that never resolves and never rejects.
     const stall = new Promise<unknown>(() => {});
     const calls: Call[] = [];
-    const ask: ResolveDeps['ask'] = (base, ids) => { calls.push({ base, ids }); return stall; };
-    const resolveP = resolvePosts([r0.id], {
+    const ask: ResolveDeps['ask'] = (base, ids, signal) => { calls.push({ base, ids, signal }); return stall; };
+    const res = resolvePosts([r0.id], {
       nodes: ['A'], start: 0, ask, check: makeCheck({}), now: c.now, until: c.until, onBound: r.onBound,
     });
     // Advance the clock past the deadline so `until` resolves.
     await c.tick(BATCH_RESOLVE_MS + 1);
-    const res = await resolveP;
-    expect(res.ends.get(r0.id)).toBe('unserved');
+    const ends = await res.ends;
+    expect(ends.get(r0.id)).toBe('unserved');
     expect(calls).toHaveLength(1); // No second request leaves after the deadline.
   });
 });
@@ -436,11 +456,12 @@ describe('resolvePosts — no id and no node', () => {
   it('no id: ends is empty, chunks is 0, nothing is asked', async () => {
     const net = mockNodes({});
     const r = recorder(); const c = clock();
-    const res = await resolvePosts([], {
+    const res = resolvePosts([], {
       nodes: ['A'], start: 0, ask: net.ask, check: makeCheck({}), now: c.now, until: c.until, onBound: r.onBound,
     });
     expect(res.chunks).toBe(0);
-    expect(res.ends.size).toBe(0);
+    const ends = await res.ends;
+    expect(ends.size).toBe(0);
     expect(net.calls).toHaveLength(0);
   });
 
@@ -448,12 +469,13 @@ describe('resolvePosts — no id and no node', () => {
     const r0 = fullRow('r0');
     const net = mockNodes({});
     const r = recorder(); const c = clock();
-    const res = await resolvePosts([r0.id, id('r1')], {
+    const res = resolvePosts([r0.id, id('r1')], {
       nodes: [], start: 0, ask: net.ask, check: makeCheck({}), now: c.now, until: c.until, onBound: r.onBound,
     });
     expect(res.chunks).toBe(0);
-    expect(res.ends.get(r0.id)).toBe('unserved');
-    expect(res.ends.get(id('r1'))).toBe('unserved');
+    const ends = await res.ends;
+    expect(ends.get(r0.id)).toBe('unserved');
+    expect(ends.get(id('r1'))).toBe('unserved');
     expect(net.calls).toHaveLength(0);
   });
 });
@@ -471,9 +493,10 @@ describe('resolvePosts — check is called once a chunk, never once a row', () =
       checkCalls += 1;
       return rows.map(() => nothingToBind());
     };
-    await resolvePosts(ids, {
+    const res = resolvePosts(ids, {
       nodes: ['A', 'B'], start: 0, ask: net.ask, check, now: c.now, until: c.until, onBound: r.onBound,
     });
+    await res.ends;
     expect(checkCalls).toBe(2);
   });
 });
@@ -484,18 +507,20 @@ describe('resolvePosts — dedup in order and the pointer at `start`', () => {
     const r = recorder(); const c = clock();
     const net = mockNodes({ B: [{ ids: [r0.id], body: { posts: [r0] } }] });
     const check = makeCheck({ [r0.id]: bound(r0) });
-    const res = await resolvePosts([r0.id, r0.id, r0.id], {
+    const res = resolvePosts([r0.id, r0.id, r0.id], {
       nodes: ['A', 'B'], start: 1, ask: net.ask, check, now: c.now, until: c.until, onBound: r.onBound,
     });
     expect(res.chunks).toBe(1);
+    await res.ends;
     expect(net.calls).toHaveLength(1);
     expect(net.calls[0]!.base).toBe('B');
     expect(net.calls[0]!.ids).toEqual([r0.id]);
   });
 });
 
-describe('resolvePosts — a thrown check is read as a request that failed', () => {
+describe('resolvePosts — a thrown check is logged once and read as a request that failed', () => {
   it("every id in the chunk advances a node; the resolve resolves", async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const r0 = fullRow('r0');
     const r = recorder(); const c = clock();
     const net = mockNodes({
@@ -508,25 +533,32 @@ describe('resolvePosts — a thrown check is read as a request that failed', () 
       if (calls === 1) throw new Error('check blew up');
       return rows.map(() => bound(r0));
     };
-    const res = await resolvePosts([r0.id], {
+    const res = resolvePosts([r0.id], {
       nodes: ['A', 'B'], start: 0, ask: net.ask, check, now: c.now, until: c.until, onBound: r.onBound,
     });
-    expect(res.ends.size).toBe(0);
+    const ends = await res.ends;
+    expect(ends.size).toBe(0);
     expect(net.calls.map((x) => x.base)).toEqual(['A', 'B']);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
   });
 });
 
-describe("resolvePosts — a thrown onBound is swallowed, and the resolve resolves", () => {
+describe("resolvePosts — a thrown onBound is logged once and the resolve resolves", () => {
   it('throws from onBound do not reject the resolve', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const r0 = fullRow('r0');
     const c = clock();
     const net = mockNodes({ A: [{ ids: [r0.id], body: { posts: [r0] } }] });
     const check = makeCheck({ [r0.id]: bound(r0) });
-    const res = await resolvePosts([r0.id], {
+    const res = resolvePosts([r0.id], {
       nodes: ['A'], start: 0, ask: net.ask, check, now: c.now, until: c.until,
       onBound: (): void => { throw new Error('oops'); },
     });
-    expect(res.ends.size).toBe(0);
+    const ends = await res.ends;
+    expect(ends.size).toBe(0);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
   });
 });
 
@@ -536,15 +568,167 @@ describe('resolvePosts — a synchronously thrown ask is a failed request', () =
     const r = recorder(); const c = clock();
     const calls: Call[] = [];
     let first = true;
-    const ask: ResolveDeps['ask'] = (base, ids) => {
-      calls.push({ base, ids });
+    const ask: ResolveDeps['ask'] = (base, ids, signal) => {
+      calls.push({ base, ids, signal });
       if (first) { first = false; throw new Error('synchronous'); }
       return Promise.resolve({ posts: [r0] });
     };
-    const res = await resolvePosts([r0.id], {
+    const res = resolvePosts([r0.id], {
       nodes: ['A', 'B'], start: 0, ask, check: makeCheck({ [r0.id]: bound(r0) }), now: c.now, until: c.until, onBound: r.onBound,
     });
-    expect(res.ends.size).toBe(0);
+    const ends = await res.ends;
+    expect(ends.size).toBe(0);
     expect(calls.map((x) => x.base)).toEqual(['A', 'B']);
+  });
+});
+
+// New cases (AF1 · Task 4b)
+
+describe("resolvePosts — a bound row the reader refuses is not well-formed: the id goes on, no unbound counted", () => {
+  it("a `bound` with a string for likeCount at one node and the well-formed row at the next: the second lands", async () => {
+    const r0 = fullRow('r0');
+    // The first node answers a row that is bound but malformed under the
+    // reader — likeCount a string.
+    const badRow = { ...r0, likeCount: '3' };
+    const r = recorder(); const c = clock();
+    const net = mockNodes({
+      A: [{ ids: [r0.id], body: { posts: [badRow] } }],
+      B: [{ ids: [r0.id], body: { posts: [r0] } }],
+    });
+    const check = (rows: unknown[]): PostCheck[] => rows.map(() => bound(r0));
+    const res = resolvePosts([r0.id], {
+      nodes: ['A', 'B'], start: 0, ask: net.ask, check, now: c.now, until: c.until, onBound: r.onBound,
+    });
+    const ends = await res.ends;
+    expect(ends.size).toBe(0);
+    const flat = r.calls.flat();
+    expect(flat).toHaveLength(1);
+    expect(flat[0]!.row.content).toBe('hello');
+  });
+
+  it("a bound-but-malformed row at every node ends 'unserved', never 'unbound'", async () => {
+    const r0 = fullRow('r0');
+    const badRow = { ...r0, likeCount: '3' };
+    const r = recorder(); const c = clock();
+    const net = mockNodes({
+      A: [{ ids: [r0.id], body: { posts: [badRow] } }],
+      B: [{ ids: [r0.id], body: { posts: [badRow] } }],
+    });
+    const check = (rows: unknown[]): PostCheck[] => rows.map(() => bound(r0));
+    const res = resolvePosts([r0.id], {
+      nodes: ['A', 'B'], start: 0, ask: net.ask, check, now: c.now, until: c.until, onBound: r.onBound,
+    });
+    const ends = await res.ends;
+    expect(ends.get(r0.id)).toBe('unserved');
+  });
+});
+
+describe('resolvePosts — the rebuilt row the resolve emits', () => {
+  it('an extra key is not carried on the row onBound receives, nor `tx`', async () => {
+    const r0 = fullRow('r0');
+    const rowWithExtra: unknown = { ...r0, surprise: 'ignored', confirmedAuthor: 'x' };
+    const r = recorder(); const c = clock();
+    const net = mockNodes({ A: [{ ids: [r0.id], body: { posts: [rowWithExtra] } }] });
+    const check = (): PostCheck[] => [bound(r0)];
+    const res = resolvePosts([r0.id], {
+      nodes: ['A'], start: 0, ask: net.ask, check, now: c.now, until: c.until, onBound: r.onBound,
+    });
+    await res.ends;
+    const flat = r.calls.flat();
+    expect(flat).toHaveLength(1);
+    const row = flat[0]!.row as unknown as Record<string, unknown>;
+    expect(row['surprise']).toBeUndefined();
+    expect(row['confirmedAuthor']).toBeUndefined();
+    expect(row['tx']).toBeUndefined();
+  });
+});
+
+describe('resolvePosts — the signal is aborted when the deadline fires, the second node is never asked', () => {
+  it("the signal reads `aborted` after the clock passes the deadline", async () => {
+    const r0 = fullRow('r0');
+    const r = recorder(); const c = clock();
+    const stall = new Promise<unknown>(() => {});
+    const calls: Call[] = [];
+    const ask: ResolveDeps['ask'] = (base, ids, signal) => { calls.push({ base, ids, signal }); return stall; };
+    const res = resolvePosts([r0.id], {
+      nodes: ['A', 'B'], start: 0, ask, check: makeCheck({}), now: c.now, until: c.until, onBound: r.onBound,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.signal.aborted).toBe(false);
+    await c.tick(BATCH_RESOLVE_MS + 1);
+    const ends = await res.ends;
+    expect(ends.get(r0.id)).toBe('unserved');
+    expect(calls).toHaveLength(1); // B never asked
+    expect(calls[0]!.signal.aborted).toBe(true);
+  });
+});
+
+describe('resolvePosts — a body that arrives after the deadline lands nothing', () => {
+  it("`onBound` is not called and the id ends 'unserved'", async () => {
+    const r0 = fullRow('r0');
+    const r = recorder(); const c = clock();
+    // `ask` returns a promise the test settles after the deadline fires.
+    let settle: (v: unknown) => void = () => {};
+    const askPromise = new Promise<unknown>((resolve) => { settle = resolve; });
+    const calls: Call[] = [];
+    const ask: ResolveDeps['ask'] = (base, ids, signal) => { calls.push({ base, ids, signal }); return askPromise; };
+    const res = resolvePosts([r0.id], {
+      nodes: ['A'], start: 0, ask, check: makeCheck({ [r0.id]: bound(r0) }), now: c.now, until: c.until, onBound: r.onBound,
+    });
+    // Pass the deadline — beat wins the race before the body settles.
+    await c.tick(BATCH_RESOLVE_MS + 1);
+    // Now settle the body after the tick.
+    settle({ posts: [r0] });
+    const ends = await res.ends;
+    expect(ends.get(r0.id)).toBe('unserved');
+    expect(r.calls).toHaveLength(0);
+  });
+});
+
+describe('resolvePosts — until is called once a resolve, never once a round', () => {
+  it('a resolve of three rounds calls `until` once', async () => {
+    const r0 = fullRow('r0');
+    // Three nodes, each failing r0 — a round advances all unbound counts
+    // and the next round asks the next node.
+    const r = recorder();
+    let untilCalls = 0;
+    const c = clock();
+    const wrappedUntil: ResolveDeps['until'] = (at: number): Promise<void> => {
+      untilCalls += 1;
+      return c.until(at);
+    };
+    const net = mockNodes({
+      A: [{ ids: [r0.id], body: null }],
+      B: [{ ids: [r0.id], body: null }],
+      C: [{ ids: [r0.id], body: null }],
+    });
+    const res = resolvePosts([r0.id], {
+      nodes: ['A', 'B', 'C'], start: 0, ask: net.ask, check: makeCheck({}), now: c.now, until: wrappedUntil, onBound: r.onBound,
+    });
+    await res.ends;
+    expect(untilCalls).toBe(1);
+    // All three nodes were asked, each in its own round.
+    expect(net.calls.map((x) => x.base)).toEqual(['A', 'B', 'C']);
+  });
+});
+
+describe('resolvePosts — a resolve that ends before the deadline leaves its signal not aborted', () => {
+  it("the signal is not aborted at the moment the promise settles", async () => {
+    const r0 = fullRow('r0');
+    const r = recorder(); const c = clock();
+    const net = mockNodes({ A: [{ ids: [r0.id], body: { posts: [r0] } }] });
+    const check = makeCheck({ [r0.id]: bound(r0) });
+    const seenSignals: AbortSignal[] = [];
+    const ask: ResolveDeps['ask'] = (base, ids, signal) => {
+      seenSignals.push(signal);
+      return net.ask(base, ids, signal);
+    };
+    const res = resolvePosts([r0.id], {
+      nodes: ['A'], start: 0, ask, check, now: c.now, until: c.until, onBound: r.onBound,
+    });
+    const ends = await res.ends;
+    expect(ends.size).toBe(0);
+    expect(seenSignals).toHaveLength(1);
+    expect(seenSignals[0]!.aborted).toBe(false);
   });
 });

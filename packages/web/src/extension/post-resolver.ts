@@ -32,14 +32,16 @@ function trimBase(base: string): string {
   return base.replace(/\/$/, '');
 }
 
-/** Dedup an ordered list keeping the first occurrence. */
-function dedup(xs: readonly string[]): string[] {
+/** Trim bases, then drop duplicates — `https://a/` and `https://a` are one
+ *  node (WEB_INTERFACE → The extension → "The resolve"). */
+function trimAndDedup(xs: readonly string[]): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const x of xs) {
-    if (seen.has(x)) continue;
-    seen.add(x);
-    out.push(x);
+    const t = trimBase(x);
+    if (seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
   }
   return out;
 }
@@ -58,17 +60,20 @@ export function createPostResolver(deps: PostResolverDeps): PostResolver {
   // raw sum is kept here and read `% n` at each call.
   let pointer = 0;
 
-  const ask = (base: string, ids: readonly string[]): Promise<unknown> => {
+  const ask = (base: string, ids: readonly string[], signal: AbortSignal): Promise<unknown> => {
     // `POST <base>/posts/batch?tx=1` with `Content-Type: application/json`
     // and the body `{"ids":[…]}` — no `viewer`, no other parameter, no
-    // credentials (WEB_INTERFACE → The extension → "A request"). A status
-    // outside 2xx, a body that will not parse as JSON and a network
-    // failure all reject.
-    const url = trimBase(base) + '/posts/batch?tx=1';
+    // credentials — and the resolve's abort signal, so a request still
+    // open when the deadline fires is aborted (WEB_INTERFACE → The
+    // extension → "The resolve"). A status outside 2xx, a body that will
+    // not parse as JSON, a network failure and the aborted arm all
+    // reject.
+    const url = base + '/posts/batch?tx=1';
     return deps.fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids }),
+      signal,
     }).then((res) => {
       if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
       return res.json();
@@ -79,15 +84,19 @@ export function createPostResolver(deps: PostResolverDeps): PostResolver {
     ids: readonly string[],
     onBound: (posts: BoundPost[]) => void,
   ): Promise<Map<string, ResolveEnd>> => {
-    const bases = dedup(deps.nodes()).map(trimBase);
+    const bases = trimAndDedup(deps.nodes());
     const n = bases.length;
     const start = n === 0 ? 0 : pointer % n;
-    const { ends, chunks } = await resolvePosts(ids, {
+    // The pointer moves at the call: `resolvePosts` returns `chunks`
+    // synchronously, so a second `resolve()` made before this one's
+    // promise settles starts at the node after this one's last
+    // (WEB_INTERFACE → The extension → "A pointer walks the nodes").
+    const { chunks, ends } = resolvePosts(ids, {
       nodes: bases, start,
       ask, check: deps.check, now, until, onBound,
     });
     pointer = pointer + chunks;
-    return ends;
+    return await ends;
   };
 
   return { resolve };
