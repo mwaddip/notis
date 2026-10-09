@@ -48,7 +48,13 @@ that created it** (`dag_posts.tx_id`, written by the row's three writers), and t
 transaction's bytes under `tx=1` — a pending post's from the pool, a confirmed post's read out of its stored body by id
 through `types`' `utxoTxBytesIn`, one body in memory at a time; a confirmed row its block does not list, or a stored
 body that will not read, is fail-stop under the route (NODE_INTERFACE → Posts → "The creating transaction rides a post
-row"). The node serves no client (NODE_INTERFACE → The node serves no client).
+row"). **The two list routes answer light under `light=1`** — each live row its id, its one parent and the node's word
+(status, block position and time, counts, name, `likedByViewer`), a withdrawn row whole, `light` and `tx` together a
+400 — **and `POST /posts/batch` answers posts by id**: 1 to `BATCH_READ_MAX` ids, the rows `GET /posts/:id` answers in
+the order asked, an unknown id left out, `viewer` and `tx=1` as on the post reads, nothing written (NODE_INTERFACE →
+Posts → "A light row is a post's id and the node's word", → "The batch read answers posts by id"). A body the parser
+refuses answers its own 4xx and logs nothing (NODE_INTERFACE → "500 `{ error: 'internal' }` is a fault of the node's").
+The node serves no client (NODE_INTERFACE → The node serves no client).
 
 - **Owns:** `src/server.ts`, `src/routes/*`, `src/services/*`, `src/store/*`, `src/state/*` (AVL+).
 - **Does NOT own:** the state-transition rules (`@dagsocial/consensus` — the node hands them a tree view over its
