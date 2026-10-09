@@ -79,6 +79,10 @@ export interface Fake {
   /** One entry per thread call: a result, `null` for a 404, or an `Error` to
    *  throw. A missing entry answers `null`. */
   threadQueue: Array<ThreadResult | null | Error>;
+  /** One answer for every `GET /posts/:id` the ledger's poll fires; absent is
+   *  `null` (the node knows no such post). */
+  postRes: PostResult | null;
+  postCalls: Array<{ id: string; withTx: boolean | undefined }>;
 }
 
 export function makeApi(f: Fake): Api {
@@ -116,7 +120,10 @@ export function makeApi(f: Fake): Api {
       if (next instanceof Error) throw next;
       return next;
     },
-    post: async (): Promise<PostResult | null> => null,
+    post: async (id, _viewer, withTx): Promise<PostResult | null> => {
+      f.postCalls.push({ id, withTx });
+      return f.postRes;
+    },
     status: async () => status(),
     currentBlock: async (): Promise<BlockCurrent> => ({ height: 10, hash: null }),
     karma: async () => ({
@@ -219,6 +226,7 @@ export interface Harness {
     renderRegionsFor(id: string): void;
     changeNode(origin: string): Promise<void>;
     onIdentityChange(): void;
+    pollTick(): Promise<void>;
     state: AppState;
     withdrawnSeen: Map<string, WithdrawnJson>;
     resolving: Set<string>;
@@ -235,6 +243,30 @@ export interface Opts {
   identityKey?: string | null;
   feedResults?: FeedResult[];
   threadResults?: Array<ThreadResult | null | Error>;
+  postRes?: PostResult | null;
+}
+
+/** A stub verifier the extension-build configuration hands beside a resolver
+ *  when a test does not script one — a list read brings no bytes and is not
+ *  checked (WEB_INTERFACE → The extension → "The post check" → "A list read
+ *  brings no bytes and is not checked"), so the stub is used for the single
+ *  post read's one row at a time: a `WithdrawnJson` reads `nothing-to-bind`
+ *  and every other row `bound`. */
+export function stubVerifier(): PostsVerifier {
+  return {
+    check: (rows) => rows.map((r) => {
+      const row = r as { kind?: string } & PostJson;
+      if (row.kind === 'withdrawn') return { status: 'nothing-to-bind' } as PostCheck;
+      return boundCheck(row);
+    }),
+  };
+}
+
+/** A stub resolver that never asks for anything: tests that drive only the
+ *  single post read's path (`ingestOne`, the ledger's poll, the submit's
+ *  cache hook) take it beside their verifier. */
+export function stubResolver(): PostResolver {
+  return { resolve: async () => new Map() };
 }
 
 export function harness(opts: Opts = {}): Harness {
@@ -243,18 +275,30 @@ export function harness(opts: Opts = {}): Harness {
     feedQueue: opts.feedResults ? [...opts.feedResults] : [],
     threadCalls: [],
     threadQueue: opts.threadResults ? [...opts.threadResults] : [],
+    postRes: opts.postRes ?? null,
+    postCalls: [],
   };
   const api = makeApi(fake);
   const writeClient = {} as unknown as WriteClient;
   const key = opts.identityKey === undefined ? null : opts.identityKey;
   const ledger = new PendingLedger(key);
   const identity = makeIdentity(key);
+  // The App's constructor refuses a posts verifier without a post resolver,
+  // or a resolver without a verifier: the extension build is the one build
+  // that holds either, and it holds both (WEB_INTERFACE → The extension →
+  // "The post check", → "The resolve"). The harness fills the missing seam
+  // of a pair with a stub, so a test naming one chooses that configuration
+  // whole.
+  let verifier = opts.verifier ?? null;
+  let resolver = opts.resolver ?? null;
+  if (resolver !== null && verifier === null) verifier = stubVerifier();
+  if (verifier !== null && resolver === null) resolver = stubResolver();
   const app = new App(
     api, writeClient, identity, ledger, undefined, undefined,
     null, null, null,
-    opts.verifier ?? null,
+    verifier,
     opts.cache ?? null,
-    opts.resolver ?? null,
+    resolver,
   );
   const appbar = document.createElement('header');
   const feedEl = document.createElement('section'); feedEl.id = 'feed';

@@ -7,11 +7,12 @@
 // count. With no resolver the three reads ask as at the tip.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { PendingLedger } from '../src/wallet/ledger';
 import type { PostCache, PostsVerifier } from '../src/model/state';
 import type { PostCheck } from '@dagsocial/nipopow-client';
-import type { PostJson, ThreadResult } from '../src/api/dto';
+import type { PostJson, PostResult, ThreadResult } from '../src/api/dto';
 import {
-  flush, settle, hid, fullRow, light, tomb, boundCheck,
+  ME, flush, settle, hid, fullRow, light, tomb,
   testResolver, makeCache, harness, seedCache,
 } from './app-light-shared';
 
@@ -62,13 +63,18 @@ describe('a cold thread reads light and fills from the resolver', () => {
     expect(h.fake.threadCalls[0]!.light).toBe(true);
     expect(h.fake.threadCalls[0]!.url).toContain('light=1');
     expect(h.fake.threadCalls[0]!.url).not.toContain('tx=1');
-    // The subject and both descendants stand as slots at their depths.
+    // The subject and both descendants stand as slots at their depths —
+    // the root carries no depth class, a reply `depth-1`, a nested reply
+    // `depth-2` (`src/view/card.ts`'s shellClasses).
     const slots = h.panes.querySelectorAll<HTMLElement>('.card.slot');
     expect(slots.length).toBe(3);
     expect(slots[0]!.dataset['postId']).toBe(root.id);
     expect(slots[1]!.dataset['postId']).toBe(reply.id);
     expect(slots[2]!.dataset['postId']).toBe(nested.id);
-    expect(slots[0]!.classList.contains('d0') || slots[0]!.className.includes('depth-0') || slots[0]!.getAttribute('data-depth') === '0' || true).toBeTruthy();
+    expect(slots[0]!.classList.contains('depth-1')).toBe(false);
+    expect(slots[0]!.classList.contains('depth-2')).toBe(false);
+    expect(slots[1]!.classList.contains('depth-1')).toBe(true);
+    expect(slots[2]!.classList.contains('depth-2')).toBe(true);
     // Resolve all three in one call, in listing order.
     expect(r.calls.length).toBe(1);
     expect(r.calls[0]!.ids.sort()).toEqual([root.id, reply.id, nested.id].sort());
@@ -78,13 +84,18 @@ describe('a cold thread reads light and fills from the resolver', () => {
     r.calls[0]!.bound([fr, fa, fb]);
     r.calls[0]!.end({});
     await settle();
-    // No slot stands; cards are the three composed posts in the same order.
+    // No slot stands; cards are the three composed posts in the same order,
+    // each at the depth its slot carried.
     expect(h.panes.querySelectorAll('.card.slot').length).toBe(0);
     const cards = h.panes.querySelectorAll<HTMLElement>('[data-post-id]');
     expect(cards.length).toBe(3);
     expect(cards[0]!.dataset['postId']).toBe(fr.id);
     expect(cards[1]!.dataset['postId']).toBe(fa.id);
     expect(cards[2]!.dataset['postId']).toBe(fb.id);
+    expect(cards[0]!.classList.contains('depth-1')).toBe(false);
+    expect(cards[0]!.classList.contains('depth-2')).toBe(false);
+    expect(cards[1]!.classList.contains('depth-1')).toBe(true);
+    expect(cards[2]!.classList.contains('depth-2')).toBe(true);
     // The verifier was never asked (no post rows carry bytes on a light
     // read); `checked` tracks every check call.
     expect(checked.length).toBe(0);
@@ -184,10 +195,12 @@ describe('ancestors and pending are not resolved', () => {
 
 // ---------------------------------------------------------------------------
 // A subject that ends 'unserved': no row, muted line (.hint.unserved), no
-// clay line.
+// clay line. The line reads *no node can serve this post yet.* — the
+// subject found a resolve that no node served (WEB_INTERFACE → The
+// extension → "The post check" → "A thread whose subject ends so").
 // ---------------------------------------------------------------------------
 describe('a subject that ends unserved renders the muted line and no row', () => {
-  it('subject slot unserved: root is null, subjectWithheld is unserved, pane shows .hint.unserved', async () => {
+  it('subject slot unserved: root is null, subjectWithheld is unserved, pane shows the line and its words', async () => {
     const r = testResolver();
     const { cache } = makeCache();
     await cache.open('C');
@@ -203,7 +216,9 @@ describe('a subject that ends unserved renders the muted line and no row', () =>
     const t = h.drive.state.threads.get(hid('s'))!;
     expect(t.root).toBeNull();
     expect(t.subjectWithheld).toBe('unserved');
-    expect(h.panes.querySelector('.hint.unserved')).not.toBeNull();
+    const line = h.panes.querySelector('.hint.unserved');
+    expect(line).not.toBeNull();
+    expect(line!.textContent).toBe('no node can serve this post yet.');
     expect(h.panes.querySelector('.withheld')).toBeNull();
   });
 });
@@ -683,48 +698,61 @@ describe('a landing after the list moved on', () => {
   });
 
   it('after a withdrawal landed on the subject: the withdrawn card stands', async () => {
+    // The landing drives applyWithdrawLanding — a pending withdraw entry
+    // in the ledger, the node answers the withdrawn row, pollTick fires
+    // (WEB_INTERFACE → The withdraw control). A reply's drop writes the
+    // withdrawn marker at its depth in every thread that holds it; the
+    // resolve that answers bound after is skipped because withdrawnSeen
+    // holds the id.
     const r = testResolver();
     const { cache } = makeCache();
     await cache.open('C');
     const ls = light('s');
+    const w = tomb('s');
     const h = harness({
-      resolver: r.resolver, cache,
+      resolver: r.resolver, cache, identityKey: ME,
       threadResults: [threadRes({ post: ls })],
+      postRes: w as unknown as PostResult,
     });
     h.drive.openThread(hid('s'), { from: 'feed' });
     await settle();
-    // The client sees the withdrawal land for the subject.
-    const w = tomb('s');
-    h.drive.withdrawnSeen.set(ls.id, w);
-    // The resolve answers bound; fillSlots skips the id because
-    // withdrawnSeen holds it.
+    const t0 = h.drive.state.threads.get(hid('s'))!;
+    expect('kind' in t0.root! && t0.root.kind === 'light').toBe(true);
+    const ledger = (h.app as unknown as { ledger: PendingLedger }).ledger;
+    ledger.add({
+      txId: hid('wd' + 's'),
+      kind: 'withdraw',
+      postId: ls.id,
+      inputs: [],
+      expiresAtHeight: 999,
+      submittedAtHeight: 0,
+    });
+    await h.drive.pollTick();
+    await settle();
+    const t1 = h.drive.state.threads.get(hid('s'))!;
+    expect(t1.root !== null && 'kind' in t1.root && t1.root.kind === 'withdrawn').toBe(true);
     const fs = fullRow('s');
     r.calls[0]!.bound([fs]);
     r.calls[0]!.end({});
     await settle();
-    const t = h.drive.state.threads.get(hid('s'))!;
-    // The subject stayed as the light slot — fillSlots did not replace it.
-    // `known` only replaces on next putThreadRows; the pane draws the slot
-    // (the withdrawal was recorded only in withdrawnSeen).
-    expect(t.root).not.toBeNull();
-    expect('kind' in t.root! && t.root.kind === 'light').toBe(true);
+    const t2 = h.drive.state.threads.get(hid('s'))!;
+    expect(t2.root !== null && 'kind' in t2.root && t2.root.kind === 'withdrawn').toBe(true);
   });
 });
 
 // ---------------------------------------------------------------------------
-// With no resolver the three thread reads ask as at the tip: with a
-// verifier, tx and no light; with neither held, neither.
+// Every thread read of either build asks no `tx` — the web build (no
+// verifier and no resolver) and the extension build (both). A list read
+// brings no bytes and is not checked (WEB_INTERFACE → The extension → "The
+// post check" → "A list read brings no bytes and is not checked").
 // ---------------------------------------------------------------------------
-describe('with no resolver the three thread reads ask as at the tip', () => {
-  it('no resolver, no verifier: fetchThread, refreshThread, threadMore ask neither light nor tx', async () => {
+describe('the three thread reads ask no tx in either build', () => {
+  it('the web build: no light and no tx on fetchThread, refreshThread, threadMore', async () => {
     const h = harness({
       resolver: null, verifier: null, cache: null,
       threadResults: [
-        // fetchThread leaves next='c1' so threadMore can read a cursor.
         threadRes({ post: fullRow('r'), descendants: [fullRow('a', { parentRefs: [hid('r')] })], next: 'c1' }),
-        // refreshThread keeps next='c2' so threadMore still has a cursor.
         threadRes({ post: fullRow('r'), descendants: [], next: 'c2' }),
-        // threadMore page.
         threadRes({ post: fullRow('r'), descendants: [], next: null }),
       ],
     });
@@ -735,31 +763,38 @@ describe('with no resolver the three thread reads ask as at the tip', () => {
     await h.drive.threadMore(hid('r'));
     await settle();
     for (const call of h.fake.threadCalls) {
-      expect(call.light).toBeFalsy();
-      expect(call.withTx).toBeFalsy();
+      expect(call.url).not.toContain('light=1');
+      expect(call.url).not.toContain('tx=1');
     }
     expect(h.fake.threadCalls.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('no resolver, a verifier: fetchThread, refreshThread, threadMore ask tx=1 and never light=1', async () => {
-    const verifier: PostsVerifier = { check: (rows) => rows.map((row) => boundCheck(row as PostJson) as PostCheck) };
+  it('the extension build: light and no tx on fetchThread, refreshThread, threadMore', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
     const h = harness({
-      resolver: null, verifier, cache: null,
+      resolver: r.resolver, cache,
       threadResults: [
-        threadRes({ post: fullRow('r'), descendants: [fullRow('a', { parentRefs: [hid('r')] })], next: 'c1' }),
-        threadRes({ post: fullRow('r'), descendants: [], next: 'c2' }),
-        threadRes({ post: fullRow('r'), descendants: [], next: null }),
+        threadRes({ post: light('r'), descendants: [light('a', { parentRefs: [hid('r')] })], next: 'c1' }),
+        threadRes({ post: light('r'), descendants: [], next: 'c2' }),
+        threadRes({ post: light('r'), descendants: [], next: null }),
       ],
     });
     h.drive.openThread(hid('r'), { from: 'feed' });
     await settle();
+    // Settle the first resolve so the next read's claim is not blocked.
+    r.calls[0]!.end({ [hid('r')]: 'unserved', [hid('a')]: 'unserved' });
+    await settle();
     await h.drive.refreshThread(hid('r'));
+    await settle();
+    r.calls[r.calls.length - 1]!.end({});
     await settle();
     await h.drive.threadMore(hid('r'));
     await settle();
     for (const call of h.fake.threadCalls) {
-      expect(call.light).toBeFalsy();
-      expect(call.withTx).toBe(true);
+      expect(call.url).toContain('light=1');
+      expect(call.url).not.toContain('tx=1');
     }
     expect(h.fake.threadCalls.length).toBeGreaterThanOrEqual(3);
   });

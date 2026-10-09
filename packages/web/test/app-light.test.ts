@@ -11,15 +11,14 @@ import { PendingLedger } from '../src/wallet/ledger';
 import { createPostCache } from '../src/extension/post-cache';
 import { PageError } from '../src/api/errors';
 import type { Api } from '../src/api/client';
-import type { AppState, PostCache, HeldPost, PostsVerifier } from '../src/model/state';
+import type { AppState, PostCache, HeldPost } from '../src/model/state';
 import type { WriteClient } from '../src/api/write';
-import type { PostCheck } from '@dagsocial/nipopow-client';
 import type {
-  PostJson, LightJson, WithdrawnJson, FeedResult, FeedRow,
+  PostJson, LightJson, WithdrawnJson, FeedResult, FeedRow, PostResult,
 } from '../src/api/dto';
 import {
-  ME, flush, settle, hid, status, fullRow, light, tomb, boundCheck,
-  makeApi, testResolver, makeCache, makeIdentity, harness, seedCache,
+  ME, flush, settle, hid, status, fullRow, light, tomb,
+  makeApi, testResolver, makeCache, makeIdentity, harness, seedCache, stubResolver, stubVerifier,
   type Fake,
 } from './app-light-shared';
 
@@ -30,25 +29,43 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// With no resolver the request URLs are the tip's — pins the first two
-// configurations of the table, with and without a verifier.
+// The App's constructor refuses a verifier without a resolver, or a
+// resolver without a verifier (WEB_INTERFACE → The extension → "The post
+// check", → "The resolve"): the extension build holds both; every other
+// build holds neither.
 // ---------------------------------------------------------------------------
-describe('with no resolver the six reads carry no light flag', () => {
-  it('the web build: no light, no tx on all six reads', async () => {
+describe('the App refuses half a seam', () => {
+  it('a verifier without a resolver throws', () => {
+    expect(() => new App(
+      undefined, undefined, undefined, undefined, undefined, undefined,
+      null, null, null, stubVerifier(), null, null,
+    )).toThrow(/handed together/);
+  });
+
+  it('a resolver without a verifier throws', () => {
+    expect(() => new App(
+      undefined, undefined, undefined, undefined, undefined, undefined,
+      null, null, null, null, null, stubResolver(),
+    )).toThrow(/handed together/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Every list read of either build asks no `tx` — the web build (no verifier
+// and no resolver) and the extension build (both). A list read brings no
+// bytes and is not checked (WEB_INTERFACE → The extension → "The post
+// check" → "A list read brings no bytes and is not checked").
+// ---------------------------------------------------------------------------
+describe('the six list reads ask no tx in either build', () => {
+  it('the web build: no light and no tx on all six reads', async () => {
     const h = harness({
       resolver: null, verifier: null, cache: null,
       feedResults: [
-        // loadFeed
         { posts: [fullRow('a')], next: 'cursor0', pending: [], pendingCount: 0 },
-        // refreshFeed first page (reconcile)
         { posts: [], next: null, pending: [], pendingCount: 0 },
-        // loadOlder
         { posts: [], next: null, pending: [], pendingCount: 0 },
-        // loadAuthorPosts
         { posts: [], next: 'cur-a', pending: [], pendingCount: 0 },
-        // refreshAuthorPosts
         { posts: [], next: null, pending: [], pendingCount: 0 },
-        // authorPostsMore
         { posts: [], next: null, pending: [], pendingCount: 0 },
       ],
     });
@@ -61,42 +78,40 @@ describe('with no resolver the six reads carry no light flag', () => {
     await h.drive.refreshAuthorPosts(K); await flush();
     await h.drive.authorPostsMore(K); await flush();
     for (const call of h.fake.feedCalls) {
-      expect(call.light).toBeFalsy();
-      expect(call.withTx).toBeFalsy();
+      expect(call.url).not.toContain('light=1');
+      expect(call.url).not.toContain('tx=1');
     }
     expect(h.fake.feedCalls.length).toBeGreaterThanOrEqual(6);
   });
 
-  it('with a verifier and no resolver: tx=1, never light=1', async () => {
-    const verifier: PostsVerifier = { check: (rows) => rows.map(() => ({ status: 'bound' } as PostCheck)) };
-    // These rows carry tx=1 under a verifier; the check mocks bound for each.
-    const r = fullRow('r');
-    const verifierBound: PostsVerifier = { check: (rows) => rows.map((row) => boundCheck(row as PostJson) as PostCheck) };
-    const K = hid('author2');
+  it('the extension build: light and no tx on all six reads', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
     const h = harness({
-      resolver: null, verifier: verifierBound, cache: null,
+      resolver: r.resolver, cache,
       feedResults: [
-        { posts: [r], next: 'cur1', pending: [], pendingCount: 0 },
+        { posts: [fullRow('a')], next: 'cursor0', pending: [], pendingCount: 0 },
         { posts: [], next: null, pending: [], pendingCount: 0 },
         { posts: [], next: null, pending: [], pendingCount: 0 },
-        { posts: [], next: 'cur2', pending: [], pendingCount: 0 },
+        { posts: [], next: 'cur-a', pending: [], pendingCount: 0 },
         { posts: [], next: null, pending: [], pendingCount: 0 },
         { posts: [], next: null, pending: [], pendingCount: 0 },
       ],
     });
-    // Silence the unused `verifier` to appease TS.
-    void verifier;
     await h.drive.loadFeed(); await flush();
     await h.drive.refreshFeed(); await flush();
     await h.drive.loadOlder(); await flush();
+    const K = hid('author2');
     h.drive.openAuthorPosts(K, { from: 'feed' });
     await flush();
     await h.drive.refreshAuthorPosts(K); await flush();
     await h.drive.authorPostsMore(K); await flush();
     for (const call of h.fake.feedCalls) {
-      expect(call.light).toBeFalsy();
-      expect(call.withTx).toBe(true);
+      expect(call.url).toContain('light=1');
+      expect(call.url).not.toContain('tx=1');
     }
+    expect(h.fake.feedCalls.length).toBeGreaterThanOrEqual(6);
   });
 });
 
@@ -887,30 +902,42 @@ describe('a landing after a node change writes nothing', () => {
     expect(r.calls[1]!.ids).toEqual([la.id]);
   });
 
-  it('fillSlots skips an id whose withdrawal the client saw land', async () => {
+  it('after a withdrawal landed in the feed: the row leaves and a bound resolve does not put it back', async () => {
+    // The landing drives applyWithdrawLanding — a pending withdraw entry in
+    // the ledger, the node answers the withdrawn row, pollTick fires
+    // (WEB_INTERFACE → The withdraw control). A root's drop leaves the
+    // feed, and the resolve that answers bound after is skipped because
+    // withdrawnSeen holds the id.
     const r = testResolver();
     const { cache } = makeCache();
     await cache.open('C');
     const la = light('a');
+    const w = tomb('a');
     const h = harness({
-      resolver: r.resolver, cache,
+      resolver: r.resolver, cache, identityKey: ME,
       feedResults: [{ posts: [la], next: null, pending: [], pendingCount: 0 }],
+      postRes: w as unknown as PostResult,
     });
     await h.drive.loadFeed();
     await settle();
-    // Mark `a` as a withdrawal the client saw land.
-    h.drive.withdrawnSeen.set(la.id, tomb('a'));
-    // The resolve answers bound for `a` — fillSlots skips it.
+    expect(h.drive.state.feed.posts.map((p) => p.id)).toEqual([la.id]);
+    const ledger = (h.app as unknown as { ledger: PendingLedger }).ledger;
+    ledger.add({
+      txId: hid('wd' + 'a'),
+      kind: 'withdraw',
+      postId: la.id,
+      inputs: [],
+      expiresAtHeight: 999,
+      submittedAtHeight: 0,
+    });
+    await h.drive.pollTick();
+    await settle();
+    expect(h.drive.state.feed.posts.map((p) => p.id)).toEqual([]);
     const fa = fullRow('a');
     r.calls[0]!.bound([fa]);
     r.calls[0]!.end({});
     await settle();
-    // The slot was not filled — it remains in the list as a LightJson.
-    // (The withdrawal has not reached the feed row through any other path
-    // in this harness; the point is fillSlots did not replace the slot.)
-    const row = h.drive.state.feed.posts[0];
-    expect(row).toBeDefined();
-    expect('kind' in row! && row.kind === 'light').toBe(true);
+    expect(h.drive.state.feed.posts.map((p) => p.id)).toEqual([]);
   });
 });
 
@@ -1079,7 +1106,7 @@ describe('a light page of the wrong shape is the list\'s error line', () => {
     const ledger = new PendingLedger(null);
     const app = new App(
       rejecting, writeClient, identity, ledger, undefined, undefined,
-      null, null, null, null, cache, r.resolver,
+      null, null, null, stubVerifier(), cache, r.resolver,
     );
     const appbar = document.createElement('header');
     const feedEl = document.createElement('section'); feedEl.id = 'feed';
@@ -1136,7 +1163,7 @@ describe('the seed walk under a resolver', () => {
       const r = testResolver();
       const { cache } = makeCache();
       await cache.open('C');
-      const fake: Fake = { feedCalls: [], feedQueue: [], threadCalls: [], threadQueue: [] };
+      const fake: Fake = { feedCalls: [], feedQueue: [], threadCalls: [], threadQueue: [], postRes: null, postCalls: [] };
       const api = makeApi(fake);
       // SEED1 is the initial node and its feed throws — the walk begins.
       api.feed = async () => { throw new Error('first seed fails'); };
@@ -1144,7 +1171,7 @@ describe('the seed walk under a resolver', () => {
       const ledger = new PendingLedger(null);
       const app = new FreshApp(
         api, {} as unknown as WriteClient, identity, ledger, undefined, undefined,
-        null, null, null, null, cache, r.resolver,
+        null, null, null, stubVerifier(), cache, r.resolver,
       );
       const appbar = document.createElement('header');
       const feedEl = document.createElement('section'); feedEl.id = 'feed';

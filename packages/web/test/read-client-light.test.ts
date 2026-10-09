@@ -6,8 +6,9 @@ import type { LightJson, WithdrawnJson } from '../src/api/dto';
 
 // `light=1` beside the list reads: every list of the answer is read field by
 // field through `readLightRows` (WEB_INTERFACE → The extension → "The light
-// read"). `light` and `tx` do not combine — `light` wins and `withTx` is
-// ignored under it. Without `light` the URLs are today's, to the byte.
+// read"). A list read brings no bytes and is not checked (→ "The post
+// check"); the single post read keeps `tx=1` where a verifier is held
+// (→ "The post check" → "the single post read's, asked with `tx=1`").
 
 const VIEWER = 'aa'.repeat(32);
 const SUBJECT = 'bb'.repeat(32);
@@ -50,37 +51,21 @@ afterEach(() => {
 
 const client = (): NodeClient => new NodeClient(() => '');
 
-describe('read client — under light=1 the URL carries light=1 and never tx=1', () => {
-  it('feed sends light=1 and no tx=1 even when withTx is passed too', async () => {
+describe('read client — the list reads under light=1 carry light=1 and no tx', () => {
+  it('feed under light sends light=1 and no tx', async () => {
     answers.push({ posts: [], pending: [], pendingCount: 0, next: null });
     const c = client();
-    await c.feed({ limit: 30 }, VIEWER, undefined, true, true, true);
+    await c.feed({ limit: 30 }, VIEWER, undefined, true, false, true);
     expect(calls[0]).toBe(`/posts?limit=30&viewer=${VIEWER}&roots=1&light=1`);
     expect(calls[0]).not.toContain('tx=1');
   });
 
-  it('thread sends light=1 and no tx=1 even when withTx is passed too', async () => {
+  it('thread under light sends light=1 and no tx', async () => {
     answers.push({ post: null, ancestors: [], ancestorCount: 0, descendants: [], descendantCount: 0, next: null, pending: [], pendingCount: 0 });
     const c = client();
-    await c.thread(SUBJECT, { limit: 50 }, VIEWER, true, true);
+    await c.thread(SUBJECT, { limit: 50 }, VIEWER, false, true);
     expect(calls[0]).toBe(`/posts/${SUBJECT}/thread?limit=50&viewer=${VIEWER}&light=1`);
     expect(calls[0]).not.toContain('tx=1');
-  });
-});
-
-describe('read client — without light the URLs are today, to the byte', () => {
-  it('feed with withTx keeps tx=1 and no light=1', async () => {
-    answers.push({ posts: [], pending: [], pendingCount: 0, next: null });
-    const c = client();
-    await c.feed({ limit: 30 }, VIEWER, undefined, true, true);
-    expect(calls[0]).toBe(`/posts?limit=30&viewer=${VIEWER}&roots=1&tx=1`);
-  });
-
-  it('thread with withTx keeps tx=1 and no light=1', async () => {
-    answers.push({ post: null, ancestors: [], ancestorCount: 0, descendants: [], descendantCount: 0, next: null, pending: [], pendingCount: 0 });
-    const c = client();
-    await c.thread(SUBJECT, { limit: 50 }, VIEWER, true);
-    expect(calls[0]).toBe(`/posts/${SUBJECT}/thread?limit=50&viewer=${VIEWER}&tx=1`);
   });
 
   it('feed with neither keeps no tx and no light', async () => {
@@ -88,6 +73,22 @@ describe('read client — without light the URLs are today, to the byte', () => 
     const c = client();
     await c.feed({ limit: 30 }, VIEWER);
     expect(calls[0]).toBe(`/posts?limit=30&viewer=${VIEWER}`);
+  });
+});
+
+describe('read client — the single post read keeps tx=1 where a verifier is held', () => {
+  it('post sends tx=1 under withTx; nothing else of the URL moves', async () => {
+    answers.push({});
+    const c = client();
+    await c.post(SUBJECT, VIEWER, true);
+    expect(calls[0]).toBe(`/posts/${SUBJECT}?viewer=${VIEWER}&tx=1`);
+  });
+
+  it('post sends no tx under no withTx', async () => {
+    answers.push({});
+    const c = client();
+    await c.post(SUBJECT, VIEWER);
+    expect(calls[0]).toBe(`/posts/${SUBJECT}?viewer=${VIEWER}`);
   });
 });
 

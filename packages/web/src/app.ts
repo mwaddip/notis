@@ -469,6 +469,13 @@ export class App {
     this.postsVerifier = postsVerifier ?? null;
     this.postCache = postCache ?? null;
     this.postResolver = postResolver ?? null;
+    // The posts verifier and the post resolver are handed together or not at
+    // all — the extension build is the one build that holds either, and it
+    // holds both (WEB_INTERFACE → The extension → "The post check",
+    // → "The resolve"). A cache alone, or none, is handed as before.
+    if ((this.postsVerifier === null) !== (this.postResolver === null)) {
+      throw new Error('a posts verifier and a post resolver are handed together');
+    }
     // With no verifier the verdict stays `undefined` — the corner reads the
     // first paragraph of the status corner, word for word (WEB_INTERFACE →
     // The status corner, → The extension → "The verified tip").
@@ -2388,10 +2395,15 @@ export class App {
     // `putThreadRows` keeps a withdrawal the client has seen land final and
     // keeps a like that landed since the read began (WEB_INTERFACE →
     // Reading the feed and threads → "A withdrawal the client has seen land
-    // is final on every write of rows").
+    // is final on every write of rows"). Clearing `subjectWithheld` beside
+    // the rows lets the pane draw them beneath the error line — the pane
+    // reads `subjectWithheld` before `root` (WEB_INTERFACE → The extension →
+    // "The post cache" → "A thread or a post the cache holds is read from it
+    // when the read from the node fails").
     this.putThreadRows(t, since, held.post, held.descendants);
     t.ancestorIds = new Set(held.ancestors.map((a) => a.id));
     t.descendantCount = held.descendants.length;
+    t.subjectWithheld = null;
     this.indexRows([t.root, ...held.ancestors, ...t.descendants]);
   }
 
