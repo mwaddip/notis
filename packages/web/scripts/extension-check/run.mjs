@@ -5223,9 +5223,8 @@ async function readFeedShape(cx) {
       bodyHasLink: !!c.querySelector('.card-body a'),
       slotTextEmpty: (c.querySelector('.slot-text')?.textContent ?? '').length === 0,
     }));
-    // The reader's own slot (`.card.slot[data-author]`) — we read the first
-    // slot's computed colour on its handle (or its when, when no handle).
-    const first = slots[0] ?? null;
+    // The inkMute token's computed colour, and the computed colour of each of
+    // the first three slots' handle, time or count, whichever stands first.
     const probe = document.createElement('span');
     probe.style.color = 'var(--inkMute)';
     document.body.appendChild(probe);
