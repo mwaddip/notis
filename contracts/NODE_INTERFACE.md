@@ -109,9 +109,6 @@ log a stranger can fill. A request with no JSON `Content-Type` has no body as fa
 and the route's own check answers it. **500 `{ error: 'internal' }` is a fault of the node's**, and it alone logs its
 stack.
 
-> ⚠ **AHEAD OF CODE (2026-10-08, AF1 — `node`)** — the public app's last handler answers every error 500
-> `{ error: 'internal' }` and logs its stack, a body the parser refuses among them.
-
 ### The node serves no client
 
 **The node is an HTTP API and nothing else.** It serves no page at `/`, no static file and no bundle;

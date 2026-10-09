@@ -373,8 +373,6 @@ Every rule here is a prohibition, and together they are most of what keeps the p
   measuring a screenshot that had caught the animation 11% of the way through, which is also a
   reminder that a rendered check catches what reasoning about the CSS does not.
 
-> ⚠ **AHEAD OF CODE (2026-10-08, AF1 — `web`)** — no build draws a slot, and no read lands in parts.
-
 ## Interaction
 
 The unifying idea: **you should be able to put your hands down without the interface
