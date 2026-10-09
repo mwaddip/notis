@@ -3,8 +3,8 @@ import { parseContent, renderContent } from './content';
 import { unlockForm } from './passphrase';
 import { copyGlyph } from './glyphs';
 import { markHandle } from './name-handle';
-import type { PostJson, WithdrawnJson } from '../api/dto';
-import { isWithdrawn } from '../api/dto';
+import type { FeedRow, LightJson, PostJson, WithdrawnJson } from '../api/dto';
+import { isLight, isWithdrawn } from '../api/dto';
 import { assertContentHash } from '../integrity';
 import type { Submission, FlightStage } from '../model/state';
 
@@ -525,8 +525,49 @@ function withdrawnCard(row: WithdrawnJson, opts: CardOpts): HTMLElement {
   return card;
 }
 
-/** Render any post-shaped row: a live/pending post, or the withdrawn state. */
-export function card(row: PostJson | WithdrawnJson, opts: CardOpts = {}): HTMLElement {
+/** The slot where a card will stand — a reader that lacks the post holds this
+ *  against its id (WEB_INTERFACE → The extension → "The light read",
+ *  HOUSE_STYLE → Motion → "A slot holds a post's place"). Draws what the row
+ *  carries and no more: the handle when it names one, the time, the counts,
+ *  everything in `inkMute`, with no text, no key and no control. The strip is
+ *  inert, as a pending card's; no `:hover` applies, and the stylesheet
+ *  declares no transition or animation on it. */
+function slotCard(row: LightJson, opts: CardOpts): HTMLElement {
+  const card = el('div', shellClasses(' slot', opts));
+  card.dataset.postId = row.id;
+  const body = el('div', 'card-body');
+
+  const who = el('div', 'who');
+  if (row.authorName !== null) {
+    // A plain `span.handle` — never a button, no key prefix, no
+    // `data-name-pair`, no `· you` (WEB_INTERFACE → The extension → "The
+    // light read" → "The name on a slot is the node's word, unchecked").
+    who.appendChild(el('span', 'handle', '@' + row.authorName));
+  }
+  if (row.blockCreatedAt !== null) who.appendChild(el('span', 'when', whenText(row.blockCreatedAt)));
+  body.appendChild(who);
+
+  // The text's place: one empty block, no words in it.
+  body.appendChild(el('div', 'slot-text'));
+
+  const meta = el('div', 'meta');
+  const rc = replyCountNode(row.descendantCount);
+  if (rc) meta.appendChild(rc);
+  const lk = likedCount(row.likeCount);
+  if (lk) meta.appendChild(lk);
+  body.appendChild(meta);
+  card.appendChild(body);
+
+  // The inert strip — the pending card's — no open control, keeps the band so
+  // the text column lands one width down the whole column.
+  strip(row.id, { ...opts, onOpen: null }, card);
+  return card;
+}
+
+/** Render any row the client holds: a live or pending post, the withdrawn
+ *  state, or a slot (WEB_INTERFACE → The extension → "The light read"). */
+export function card(row: FeedRow, opts: CardOpts = {}): HTMLElement {
   if (isWithdrawn(row)) return withdrawnCard(row, opts);
+  if (isLight(row)) return slotCard(row, opts);
   return livePostCard(row, opts);
 }

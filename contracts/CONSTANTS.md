@@ -338,6 +338,7 @@ drift test's converse does not reach them and the rows are marked.
 |---|---|---|---|---|---|---|
 | `PAGE_LIMIT_DEFAULT` (literal) | `50` | rows a view returns when no `limit` is named | policy | none stated. `node/src/routes/page.ts` | CHOSEN | `NODE_INTERFACE → "Every list a view returns is a page"` |
 | `PAGE_LIMIT_MAX` (literal) | `100` | the most rows one page carries, whatever `limit` names | policy | none stated. `node/src/routes/page.ts` | CHOSEN | `NODE_INTERFACE → "Every list a view returns is a page"` |
+| `BATCH_READ_MAX` (literal) | `100` | the most post ids one `POST /posts/batch` takes; the extension's resolver cuts its requests to the same number, its own literal | policy | ruled 2026-10-08: `PAGE_LIMIT_MAX`'s number, so a request reads at most what a page reads — 100 rows in 100 distinct full blocks, 142 ms with `tx=1` (`NODE_INTERFACE → Posts`). `node/src/routes/page.ts` | RULED | `NODE_INTERFACE → Posts → "The batch read answers posts by id"` |
 | `RANGE_PAGE_MAX` (literal) | `256` | the most entries one page of `GET /api/v1/range` carries, and the page served when no `limit` is named | policy | provisional: a page looks up at most `1 + 2 · 256` keys — about 110 KB of proof and 17–20 ms over a tree of 1.4·10⁶ leaves (`NODE_INTERFACE → AVL+ State Root`). `node/src/state/avl-endpoint.ts` | PROVISIONAL | `NODE_INTERFACE → AVL+ State Root` |
 
 ## Client defaults
@@ -356,6 +357,7 @@ drift test's converse does not reach them and the rows are marked.
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `POST_CACHE_BYTES` (web) | `50_000_000` | the post cache's size, over its entries' sizes | policy | provisional and unmeasured — a round figure, argued by nothing yet | PROVISIONAL | `WEB_INTERFACE → The extension → "The post cache"` |
+| `BATCH_RESOLVE_MS` (web) | `10_000` | how long one resolve of the posts a list lacks runs, over all its nodes and requests | policy | provisional: the light client's limit for one request, taken as the whole budget — argued by nothing else | PROVISIONAL | `WEB_INTERFACE → The extension → "The resolve"` |
 
 ## Excluded
 

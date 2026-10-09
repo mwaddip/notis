@@ -6,6 +6,7 @@ export type UsernameLookup = (nameLower: string) => { owner: string } | null;
 // CONSTANTS → HTTP view bounds
 export const PAGE_LIMIT_DEFAULT = 50;
 export const PAGE_LIMIT_MAX = 100;
+export const BATCH_READ_MAX = 100;
 
 const BOX_VALUE_BOUND = 1n << 63n;
 const DECIMAL_INT = /^\d+$/;
@@ -158,4 +159,47 @@ export function parseTx(query: Record<string, unknown>): boolean | { error: stri
 
 export function isTxError(v: boolean | { error: string }): v is { error: string } {
   return typeof v === 'object' && 'error' in v;
+}
+
+// NODE_INTERFACE → Posts → "A light row is a post's id and the node's word"
+export function parseLight(query: Record<string, unknown>): boolean | { error: string } {
+  const raw = query['light'] as string | undefined;
+  if (raw === undefined) return false;
+  if (raw === '1') return true;
+  return { error: 'light must be 1' };
+}
+
+export function isLightError(v: boolean | { error: string }): v is { error: string } {
+  return typeof v === 'object' && 'error' in v;
+}
+
+// NODE_INTERFACE → Posts → "The batch read answers posts by id": the body is
+// an object whose `ids` is an array of 1 to BATCH_READ_MAX strings, each 64
+// hex chars in either case, none twice once lower-cased. The ids are
+// answered lower-cased, in the order given.
+export function parseBatchIds(body: unknown): string[] | { error: string } {
+  if (body === null || body === undefined || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'ids required (array)' };
+  }
+  const ids = (body as { ids?: unknown }).ids;
+  if (!Array.isArray(ids)) return { error: 'ids required (array)' };
+  if (ids.length < 1 || ids.length > BATCH_READ_MAX) {
+    return { error: `ids must hold 1 to ${BATCH_READ_MAX} post ids` };
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of ids) {
+    if (typeof raw !== 'string' || !/^[0-9a-fA-F]{64}$/.test(raw)) {
+      return { error: 'ids must be 64-character hex strings' };
+    }
+    const lower = raw.toLowerCase();
+    if (seen.has(lower)) return { error: 'ids must not repeat' };
+    seen.add(lower);
+    out.push(lower);
+  }
+  return out;
+}
+
+export function isBatchIdsError(v: string[] | { error: string }): v is { error: string } {
+  return !Array.isArray(v) && typeof v === 'object' && 'error' in v;
 }

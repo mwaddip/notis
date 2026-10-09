@@ -79,21 +79,42 @@ export interface WithdrawnJson {
   authorName: string | null;
 }
 
+// NODE_INTERFACE → Posts → "A light row is a post's id and the node's word"
+export interface LightJson {
+  kind: 'light';
+  id: string;
+  parentRefs: string[];
+  status: PostStatus;
+  blockHeight: number | null;
+  blockIndex: number | null;
+  blockCreatedAt: number | null;
+  likeCount: number;
+  descendantCount: number;
+  authorName: string | null;
+  likedByViewer: boolean | null;
+}
+
+// Every list of FeedResult and ThreadResult, and ThreadResult.post, is one of
+// three arms — NODE_INTERFACE → Posts → "A light row is a post's id and the
+// node's word", "The JSON projection has two arms where the store has one
+// shape".
+export type PostRow = PostJson | WithdrawnJson | LightJson;
+
 export interface ThreadResult {
-  post: PostJson | WithdrawnJson | null;
-  ancestors: Array<PostJson | WithdrawnJson>;
+  post: PostRow | null;
+  ancestors: PostRow[];
   ancestorCount: number;
-  descendants: Array<PostJson | WithdrawnJson>;
+  descendants: PostRow[];
   descendantCount: number;
   next: PostKey | null;
-  pending: Array<PostJson | WithdrawnJson>;
+  pending: PostRow[];
   pendingCount: number;
 }
 
 export interface FeedResult {
-  posts: Array<PostJson | WithdrawnJson>;
+  posts: PostRow[];
   next: PostKey | null;
-  pending: Array<PostJson | WithdrawnJson>;
+  pending: PostRow[];
   pendingCount: number;
 }
 
@@ -130,6 +151,30 @@ function postToJson(
   };
   if (tx !== undefined) json.tx = tx;
   return json;
+}
+
+// NODE_INTERFACE → Posts → "A light row is a post's id and the node's word"
+function postToLightJson(
+  post: StoredPost,
+  likeCount: number,
+  descendantCount: number,
+  authorName: string | null,
+  likedByViewer: boolean | null,
+  blockCreatedAt: number | null,
+): LightJson {
+  return {
+    kind: 'light',
+    id: post.id,
+    parentRefs: post.parentRefs,
+    status: post.status,
+    blockHeight: post.blockHeight,
+    blockIndex: post.blockIndex,
+    blockCreatedAt,
+    likeCount,
+    descendantCount,
+    authorName,
+    likedByViewer,
+  };
 }
 
 function withdrawnToJson(
@@ -242,21 +287,64 @@ export class FeedService {
     return this.deps.hasLikeRecord(postId, viewer);
   }
 
+  // NODE_INTERFACE → Posts: the full form answers `PostJson | WithdrawnJson`,
+  // the light form `LightJson | WithdrawnJson` — the overload picks the arm
+  // from `light`'s own type, so a caller that passes `false` holds the full
+  // union without a cast.
   private storedPostToJson(
     post: StoredPost,
     viewer: Uint8Array | null,
     nameCache: Map<string, string | null>,
     txResolver: TxBytesResolver | null,
+    light: false,
     precomputedDescendantCount?: number,
-  ): PostJson | WithdrawnJson {
+  ): PostJson | WithdrawnJson;
+  private storedPostToJson(
+    post: StoredPost,
+    viewer: Uint8Array | null,
+    nameCache: Map<string, string | null>,
+    txResolver: TxBytesResolver | null,
+    light: true,
+    precomputedDescendantCount?: number,
+  ): LightJson | WithdrawnJson;
+  private storedPostToJson(
+    post: StoredPost,
+    viewer: Uint8Array | null,
+    nameCache: Map<string, string | null>,
+    txResolver: TxBytesResolver | null,
+    light: boolean,
+    precomputedDescendantCount?: number,
+  ): PostRow;
+  private storedPostToJson(
+    post: StoredPost,
+    viewer: Uint8Array | null,
+    nameCache: Map<string, string | null>,
+    txResolver: TxBytesResolver | null,
+    light: boolean,
+    precomputedDescendantCount?: number,
+  ): PostRow {
     const descendantCount = precomputedDescendantCount ?? this.deps.getDescendantCount(post.id);
     const authorName = this.authorNameFor(post.author, nameCache);
-    // NODE_INTERFACE → Posts → "The creating transaction rides a post row":
-    // a WithdrawnJson carries no `tx` — it holds no text for a transaction to bind.
+    // NODE_INTERFACE → Posts → "A withdrawn row is its WithdrawnJson, whole":
+    // a withdrawn row is its WithdrawnJson under either form, and a
+    // WithdrawnJson carries no `tx` — it holds no text for a transaction to
+    // bind.
     if (post.withdrawnAtHeight !== null) {
       return withdrawnToJson(post, descendantCount, authorName);
     }
     const likeCount = this.deps.getLikeRecordCount(post.id);
+    // NODE_INTERFACE → Posts → "A light row is a post's id and the node's
+    // word": no `TxBytesResolver` built and no body read for a light row.
+    if (light) {
+      return postToLightJson(
+        post,
+        likeCount,
+        descendantCount,
+        authorName,
+        this.likedByViewer(post.id, viewer),
+        this.blockCreatedAtFor(post),
+      );
+    }
     let tx: string | null | undefined;
     if (txResolver) {
       tx = post.status === 'pending'
@@ -287,7 +375,8 @@ export class FeedService {
   getPost(id: string, viewer: Uint8Array | null = null, tx = false): PostJson | WithdrawnJson | null {
     const result = this.deps.getPost(id);
     if (result === null) return null;
-    return this.storedPostToJson(result, viewer, new Map(), this.makeTxResolver(tx));
+    // NODE_INTERFACE → Posts: `GET /posts/:id` takes no `light`.
+    return this.storedPostToJson(result, viewer, new Map(), this.makeTxResolver(tx), false);
   }
 
   queryPosts(opts: {
@@ -297,6 +386,7 @@ export class FeedService {
     after?: PostKey;
     viewer?: Uint8Array | null;
     tx?: boolean;
+    light?: boolean;
   }): FeedResult {
     const result = this.deps.queryPostsPage({
       author: opts.author,
@@ -306,11 +396,14 @@ export class FeedService {
     });
     const viewer = opts.viewer ?? null;
     const nameCache = new Map<string, string | null>();
-    const txResolver = this.makeTxResolver(opts.tx ?? false);
+    const light = opts.light ?? false;
+    // NODE_INTERFACE → Posts → "`light` and `tx` do not combine": the route
+    // 400s when both are set, so a resolver is built only when `light` is off.
+    const txResolver = light ? null : this.makeTxResolver(opts.tx ?? false);
     return {
-      posts: result.rows.map((post) => this.storedPostToJson(post, viewer, nameCache, txResolver)),
+      posts: result.rows.map((post) => this.storedPostToJson(post, viewer, nameCache, txResolver, light)),
       next: result.next,
-      pending: result.pending.map((post) => this.storedPostToJson(post, viewer, nameCache, txResolver)),
+      pending: result.pending.map((post) => this.storedPostToJson(post, viewer, nameCache, txResolver, light)),
       pendingCount: result.pendingCount,
     };
   }
@@ -320,6 +413,7 @@ export class FeedService {
     page: Page<PostKey>,
     viewer: Uint8Array | null = null,
     tx = false,
+    light = false,
   ): ThreadResult | null {
     const result = this.deps.getPost(id);
     if (result === null) return null;
@@ -329,20 +423,21 @@ export class FeedService {
     // descendant's anchor survive the withdrawal.
     const post = result;
     const nameCache = new Map<string, string | null>();
-    const txResolver = this.makeTxResolver(tx);
+    // NODE_INTERFACE → Posts → "`light` and `tx` do not combine".
+    const txResolver = light ? null : this.makeTxResolver(tx);
 
     const ancestorResult = this.deps.getAncestorsNearest(id, page.limit);
-    const ancestors = ancestorResult.rows.map((p) => this.storedPostToJson(p, viewer, nameCache, txResolver));
+    const ancestors = ancestorResult.rows.map((p) => this.storedPostToJson(p, viewer, nameCache, txResolver, light));
 
     const descendantResult = this.deps.getSubtreePage(id, page);
-    const descendants = descendantResult.rows.map((p) => this.storedPostToJson(p, viewer, nameCache, txResolver));
+    const descendants = descendantResult.rows.map((p) => this.storedPostToJson(p, viewer, nameCache, txResolver, light));
 
     // NODE_INTERFACE → "A page read touches limit + 1 entries of one index
     // that serves both its predicate and its order": getDescendantCount is one
     // walk per row it is read for — descendantResult.count is already the
     // head's own walk, so its PostJson takes that value rather than reading it
     // again.
-    const postJson = this.storedPostToJson(post, viewer, nameCache, txResolver, descendantResult.count);
+    const postJson = this.storedPostToJson(post, viewer, nameCache, txResolver, light, descendantResult.count);
 
     return {
       post: postJson,
@@ -351,8 +446,27 @@ export class FeedService {
       descendants,
       descendantCount: descendantResult.count,
       next: descendantResult.next,
-      pending: descendantResult.pending.map((p) => this.storedPostToJson(p, viewer, nameCache, txResolver)),
+      pending: descendantResult.pending.map((p) => this.storedPostToJson(p, viewer, nameCache, txResolver, light)),
       pendingCount: descendantResult.pendingCount,
     };
+  }
+
+  // NODE_INTERFACE → Posts → "The batch read answers posts by id"
+  getPosts(
+    ids: readonly string[],
+    viewer: Uint8Array | null = null,
+    tx = false,
+  ): Array<PostJson | WithdrawnJson> {
+    const nameCache = new Map<string, string | null>();
+    const txResolver = this.makeTxResolver(tx);
+    const out: Array<PostJson | WithdrawnJson> = [];
+    for (const id of ids) {
+      const row = this.deps.getPost(id);
+      // NODE_INTERFACE → Posts → "The batch read answers posts by id": an id
+      // the node has never heard of is left out, in the order asked.
+      if (row === null) continue;
+      out.push(this.storedPostToJson(row, viewer, nameCache, txResolver, false));
+    }
+    return out;
   }
 }

@@ -376,17 +376,40 @@ non-2xx's `ApiError` is), so no read loops on a malformed cursor. **A run ends**
 the clock is an option beside `prove`), which the tool reads as not served — the row reads *the node served no proof
 for …*, never no line.
 
+**The light read and the resolve** (`WEB_INTERFACE → The extension → "The light read"`, `→ "The resolve"`): the
+extension reads every list of posts — the feed, an author window's list, a thread — as ids with the node's word.
+With a post resolver held (`src/extension/post-resolver.ts`, handed by `main.ts` in the extension build alone, beside
+the posts verifier — the App refuses one without the other) the nine list reads ask `light=1` and pass their rows
+through `intake`: a row whose post the cache holds with its text is a card at once, composed by `withNodeWord`
+(`src/model/light.ts`) from the entry's post under the listing's figures; a withdrawn row is the withdrawn card and
+empties a held entry's text; any other row stands as a **slot** (`LightJson`; `div.card.slot`, muted, no text and no
+control) — in a thread at the depth its `parentRefs` gives. A light page not held to its shape is `PageError`
+(`src/api/light-page.ts`) and reads as a failed listing. After each read writes state, `resolveSlots` claims every
+slot standing — the feed's, each author window's, each thread's subject and descendants — reads the cache once more,
+and asks the resolver for the rest: `POST <base>/posts/batch?tx=1`, at most `BATCH_READ_MAX` ids a request, no
+`viewer`, to the reading node and then each other base of the seed list in turn, a pointer walking the nodes across
+resolves, one limit of `BATCH_RESOLVE_MS` over all of a resolve's requests and every request it beats aborted
+(`src/model/post-resolve.ts`, pure, over seams). Each answer's rows pass the post check as one batch; a `bound`,
+well-formed row with text enters the cache and `fillSlots` turns its slot into its card — in the feed by replacing
+that one node, nothing else redrawn. `endSlots` takes out a slot no node served, with no line, and counts one some
+node answered `unbound` and none bound in the clay line at its list's head (`view/withheld-line.ts`); a thread whose
+subject ends so shows that line and no row, one whose subject no node served the muted *no node can serve this post
+yet.* An answer that returns after a node or identity change lands nowhere (`readerGen`). **A thread's `ancestors` and
+`pending` give ids and are not resolved.** The web build is handed neither seam, asks no `light`, draws no slot, and
+`build-release.sh` refuses `posts/batch` in its bundle.
+
 **The post check** (`WEB_INTERFACE → The extension → "The post check"`): the extension shows a post only when the
-transaction that created it binds it. With a posts verifier held — `src/extension/posts-verifier.ts`, over `checkPosts`
-of `@dagsocial/nipopow-client`, handed by `main.ts` in the extension build alone — the three post reads carry `tx=1`
-and **every row a read brings passes `ingestRows` before it enters state**, one `check` call a read: `bound` and
-`nothing-to-bind` rows enter, an `unbound` row is counted and an `unserved` one (`tx: null`) dropped uncounted. Each
-list — the feed, an author window, a thread — says what its standing reads withheld once at its head, in clay
-(`view/withheld-line.ts`); a thread whose subject is `unbound` shows that line and no row, one whose subject is
-`unserved` the muted *this node cannot serve this post yet.* **A withheld answer to the pending ledger's single post
-read decides nothing** — `reconcilePost`, `reconcileLike` and `reconcileWithdraw` take a `withheld` flag and keep the
-entry pending until its expiry height, never expired as on a 404. The web build is handed no verifier, sends no `tx`
-and shows every row the node serves.
+transaction that created it binds it. Every row that carries a post's bytes passes `checkPosts` of
+`@dagsocial/nipopow-client` (`src/extension/posts-verifier.ts`) before it enters state or the cache: each row of a
+batch answer, the pending ledger's single post read — the one read that asks `tx=1` — through `ingestOne`, and the
+reader's own post at its submit. **A list read brings no bytes and is not checked.** **A checked row is taken field
+by field** — `readBoundRow` and `readWithdrawnRow` (`src/api/post-row.ts`, the field rules shared with the light
+page's in `src/api/row-fields.ts`): a `bound` row is rebuilt as its sixteen `PostJson` fields, the text held to 1 to
+`MAX_CONTENT_BYTES` bytes, no `tx` and no key beyond; one that is not well-formed is one the node did not serve, and
+to the single post read a withheld answer. **A withheld answer to the single post read decides nothing** —
+`reconcilePost`, `reconcileLike` and `reconcileWithdraw` take a `withheld` flag and keep the entry pending until its
+expiry height, never expired as on a 404 — and the rebuilt row, not the node's, is what the reconciles and the
+landings read. The web build is handed no verifier, sends no `tx` and shows every row the node serves.
 
 **The post cache** (`WEB_INTERFACE → The extension → "The post cache"`): `src/extension/post-cache.ts`, IndexedDB at the
 extension page's origin, the database `notis.posts.<chain>` — `chain` the tip run's (`TipRun.chain`, the reading
@@ -394,10 +417,13 @@ node's `genesisHash`), the last name remembered in `localStorage` under `notis.p
 transaction's bytes, the row as the node last gave it, the author and the parent as the transaction states them, its
 last-seen time, its size and `own`; the running total is a record in a second store, written in the same transaction as
 every put, withdrawal and eviction. `POST_CACHE_BYTES` caps it: least recently seen evicted first, the reader's own
-never, the entry being put never. **Only `bound` rows enter** — from `offerBoundToCache` at each read, and the
-reader's own post at its submit, composed from the signed transaction and passed through the same check. **Every read
-still checks every row; the cache is read only when a thread's read from the node throws**, its rows written through
-`putThreadRows` beneath the pane's error line. A put is started and never awaited by a render; the module absorbs two
+never, the entry being put never. **Only `bound` rows enter** — from `offerBoundToCache`, at a resolve's landing and at
+the single post read — and the reader's own post at its submit, composed from the signed transaction and passed
+through the same check. **A list is read against it first**: `getMany` answers the entries a page's ids name, an
+entry without text — a placeholder's, or one a withdrawal emptied — is not held, and `refresh` writes each held
+entry's row and last-seen from the listing. **A thread the cache holds is read from it when its read from the node
+throws** (`thread`), its rows written through `putThreadRows` beneath the pane's error line; the feed and an author
+window's list have no such fallback. A put is started and never awaited by a render; the module absorbs two
 failures — a write the browser aborts, and no IndexedDB — and rejects on anything else. `build-release.sh` refuses
 `notis.posts.` in the web bundle. Tests run the real adapter over `fake-indexeddb`.
 
@@ -542,23 +568,35 @@ relay's log; **27d** the author window's name row turning clay in place with no 
 drawing the line; **28a** Eve's key over S's box and **28b** a made-up box refused at the press with no prompt — 28b
 pressed once A has mined past the anchor, so its first check reads `unchecked`, asks one tip run and the retry reads
 `absent`; **30** the hosted web build — no clay and no `/api/v1/proof/`. Each lie arm switched back to A and ink again.
-**With `--verified-posts` (it needs `--r-key`, `--node-dist`, `--miner`, `--scratch`, `--node-p2p`; `--public` and
-`--web-dist` for its last step) the verified-posts block**, P1–P12, runs alone after steps 1–16 on node A, a second
-verified node B, and a **posts relay** of the harness's own on `:19810` that passes every `/nipopow/proof/` through and
-lies over the three post reads in one mode at a time — `text`, `author`, `id-swap`, `tx-null`, `tx-drop`, `thread-down`
-— with a switchable upstream: **P1** bound rows, no line, every `/posts…` request carrying `tx=1`; **P2–P6** one lie
-arm each, three surfaces measured apart — the **standing feed** after `↻` keeps the card an earlier read bound beside
-the clay *1 post withheld — it does not match its signature* (no line under `tx-null`), a **fresh feed** after a node
-change shows no such card, and the **thread** shows the line and no row (under `tx-null` the muted *this node cannot
-serve this post yet.*); **P7** every arm back on A; **P8** the database `notis.posts.<A's block 1 hash>` with the root
-and the reply, still there after a reload; **P9** `thread-down` on a held thread — the error line and the held rows
-beneath it, then `↻` with the relay honest; **P10** a thread never held — the error line alone; **P11** the relay in
-front of an isolated node **D** on another chain — a second database beside the first, a failed read showing no row
-held under A's chain, a 404 reading *this post is gone.*, and A's entries intact afterwards; **P12** the hosted web
-build — no `tx`, no database, no line. ⚠ **A thread is opened the product's two ways and no other**: from a feed
-card's strip, or by id through the pending record `notis.open.<id>` written from the background's context — the page
-has no post-id hash route. ⚠ **Opening a thread that is already open reads nothing**: a step that needs a read presses
-the pane's `↻`. ⚠ **`GET /blocks/:height` carries no hash** — the harness recomputes block 1's through `blockHash`.
+**With `--light` (it needs `--r-key`, `--node-dist`, `--miner`, `--scratch`, `--node-p2p`; `--public` and `--web-dist`
+for its last step; it takes no other verified flag) the light block**, L1–L14, runs alone after steps 1–16. **Every
+base the extension knows is a relay of the harness's own**: `RA` on `:19810` in front of node A and `RB` on `:19815`
+in front of a second node B, started before the browser, so the extension for it is built with `VITE_NODES` naming
+those two and the harness refuses any other seed list. Each relay passes every request through — every
+`/nipopow/proof/` among them — logs it as it arrives, and lies over `POST /posts/batch` in one mode at a time: `text`
+(one row's text swapped), `drop` (no row answered), `hold` (answered at `release()`), `hang` (never answered), and
+beside them `list-down` (the list reads answer 503), `list-replay` (a recorded light page), `down` (every connection
+destroyed), with a switchable upstream. The steps: **L1** a cold feed under `hold` — slots with no text and no control
+in `inkMute`, one light list read and one batch of exactly those ids at `RA`, the cards in the same order at the
+release; **L2** a reload — one light list read, no batch; **L3** the reader's own new post named in no batch, and one
+deleted entry asked for in one batch of one id; **L4** the pointer — the feed's batch at `RA`, a thread's at `RB`;
+**L5** `drop` on `RA` — `RB` asked the same ids; **L6** `text` on `RA` — `RB` binds it, no clay; **L7** `text` on `RA`
+with `RB` `down` — that slot gone and *1 post withheld — it does not match its signature*; **L8** `drop` with `RB`
+`down` — no slot, no card, no line; **L9** `hang` with `RB` `down` — the slots standing at nine seconds, gone at
+twelve, the client's close of the batch at `BATCH_RESOLVE_MS`; **L10** a cold thread under `hold` on both relays —
+each reply's slot at the depth its card takes; **L11** `list-down` on a held thread — the error line over the held
+rows; **L12** a withdrawal — the withdrawn card, the entry's text gone, no batch after a reload; **L13** both relays
+in front of an isolated node **D** on another chain — a second database beside the first, a replayed listing drawing
+nothing from the first chain's entries; **L14** the hosted web build — no `light`, no `tx`, no batch, no database.
+⚠ **The workspace restores its open windows on every reload, and each restored thread is a resolve of its own**: a
+step that reads the feed alone closes every pane first. ⚠ **The pointer walks**: a page session's second resolve
+starts at the other relay, so a step that holds or hangs it sets both. ⚠ **A request's `close` fires when its body
+has been read** (Node 22): a relay reads the client's going away from the response's `close` while it is not ended.
+⚠ **A `//` comment inside a template passed to `cx.eval` carries no backtick** — one ends the string, and
+`node --check` passes it. ⚠ **A thread is opened the product's two ways and no other**: from a feed card's strip, or
+by id through the pending record `notis.open.<id>` written from the background's context — the page has no post-id
+hash route. ⚠ **Opening a thread that is already open reads nothing**: a step that needs a read presses the pane's
+`↻`. ⚠ **`GET /blocks/:height` carries no hash** — the harness recomputes block 1's through `blockHash`.
 ⚠ **A second `promote.mjs` on one stack is refused once** (`No karma box input found in transaction`) and passes on
 the next try; each run of the block needs a member that has not run steps 11–12.
 **The ten-minute timer and the visibility rule are the unit tests'**, not the proof's. ⚠ **17b guards a

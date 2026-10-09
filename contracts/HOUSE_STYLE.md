@@ -352,6 +352,17 @@ Every rule here is a prohibition, and together they are most of what keeps the p
   and a bounded watch: it runs only while the reader's own submissions are pending and stops at zero,
   it reconciles those entries and refreshes nothing else, and it moves no count but the reader's own. Anything else arriving
   unasked is the banner.
+- **A read the reader asked for may move what it is landing** (user, 2026-10-08: *"the Motion rule can be largely
+  ignored while the page is / posts are loaded"*). From the act that began a read — the start, a `↻`, `load older`,
+  `more`, a window opened — until the last of its rows has filled or left, its rows may arrive, grow, fill and leave,
+  and a line of its own may take the list's head, wherever the pointer rests: it is the reader's own request arriving
+  in parts, not the banner. **Once the read has landed the rules above hold again** — nothing it drew moves until the
+  reader acts.
+- **A slot holds a post's place.** Where a list names a post the client does not hold yet, a slot stands where the
+  card will: what is known of the post — a handle, the time, the counts — in `inkMute`, the text's place empty, no
+  control and no identity colour. It becomes the card or leaves (`WEB_INTERFACE → The extension → "The light read"`,
+  `→ "The resolve"`). **It is still while it waits**: no shimmer, no pulse and no transition into the card — honest
+  loading, below.
 - **150ms ceiling, ease-out. `prefers-reduced-motion` means none** — not less, none.
 - **Honest loading.** No fake progress, no skeleton shimmer. Shimmer is decorative motion
   impersonating progress.

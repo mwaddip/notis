@@ -2,17 +2,20 @@ import { describe, it, afterAll, expect } from 'vitest';
 import { spawn } from 'child_process';
 import { resolve } from 'path';
 import { computeTxId, computePostId, decodeTx, encodeTx } from '@dagsocial/types';
+import { checkPosts } from '@dagsocial/nipopow-client';
 import { createMesh, type Mesh } from '../src/mesh.js';
 import { assertDistFresh, NIPOPOW_CLIENT_LOADS } from '../src/dist-freshness.js';
 import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
-import { buildThreadTx } from '../src/tx/post.js';
+import { buildThreadTx, buildReplyTx } from '../src/tx/post.js';
 import {
   postInvite,
   postPost,
+  postBatch,
   getKarma,
   getPosts,
+  getThread,
   getStatus,
   hasKarma,
   getBlockCurrent,
@@ -112,6 +115,81 @@ function assertTxBinds(row: Record<string, unknown>): void {
   expect(computePostId(txId, 0)).toBe(row['id']);
   // The re-encoded bytes are the ones served.
   expect(Buffer.from(encodeTx(tx)).toString('hex')).toBe(row['tx']);
+}
+
+// NODE_INTERFACE → Posts → "A light row is a post's id and the node's word" —
+// the eleven keys a live row of a light answer carries, `kind: 'light'` among
+// them. A withdrawn row stays a WithdrawnJson, whole.
+const LIGHT_KEYS: readonly string[] = [
+  'authorName',
+  'blockCreatedAt',
+  'blockHeight',
+  'blockIndex',
+  'descendantCount',
+  'id',
+  'kind',
+  'likeCount',
+  'likedByViewer',
+  'parentRefs',
+  'status',
+];
+
+function assertLightKeys(row: Record<string, unknown>): void {
+  expect(row['kind']).toBe('light');
+  expect(Object.keys(row).sort()).toEqual([...LIGHT_KEYS]);
+}
+
+// The batch route's raw rows, with the single boundary cast every raw read
+// in this file uses — the existing `fetchJson`/`getPostRaw` pattern.
+async function postBatchRaw(
+  node: NodeProcess,
+  ids: readonly string[],
+  query: string,
+): Promise<Record<string, unknown>[]> {
+  const url = query ? `${node.url}/posts/batch?${query}` : `${node.url}/posts/batch`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  expect(res.status).toBe(200);
+  const body = await res.json() as { posts: Record<string, unknown>[] };
+  return body.posts;
+}
+
+async function getPostsLightRaw(
+  node: NodeProcess,
+): Promise<{ posts: Record<string, unknown>[]; pending: Record<string, unknown>[]; next: string | null; pendingCount: number }> {
+  const res = await fetch(`${node.url}/posts?light=1`);
+  expect(res.status).toBe(200);
+  return await res.json() as { posts: Record<string, unknown>[]; pending: Record<string, unknown>[]; next: string | null; pendingCount: number };
+}
+
+async function getThreadLightRaw(
+  node: NodeProcess,
+  id: string,
+): Promise<{
+  post: Record<string, unknown>;
+  ancestors: Record<string, unknown>[];
+  descendants: Record<string, unknown>[];
+  pending: Record<string, unknown>[];
+  ancestorCount: number;
+  descendantCount: number;
+  pendingCount: number;
+  next: string | null;
+}> {
+  const res = await fetch(`${node.url}/posts/${id}/thread?light=1`);
+  expect(res.status).toBe(200);
+  return await res.json() as {
+    post: Record<string, unknown>;
+    ancestors: Record<string, unknown>[];
+    descendants: Record<string, unknown>[];
+    pending: Record<string, unknown>[];
+    ancestorCount: number;
+    descendantCount: number;
+    pendingCount: number;
+    next: string | null;
+  };
 }
 
 describe('post-tx', () => {
@@ -270,5 +348,177 @@ describe('post-tx', () => {
     // (`src/node-process.ts` exposes `spawnNode` and `kill` only, with no
     // reopen-same-db path), and the brief says to leave it out when none
     // exists.
+
+    // ---- body refusal ----
+    // NODE_INTERFACE → HTTP API → "A body the parser refuses is the client's
+    // error" — a JSON body the parser refuses answers 400 with the mapped
+    // body, no route runs, and the next request answers as before.
+    {
+      const refused = await fetch(`${nodeA.url}/posts/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{',
+      });
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toEqual({ error: 400, reason: 'malformed JSON body' });
+      // The node answers the next request.
+      const sanity = await postBatch(nodeA, [threadRes.postId]);
+      expect(sanity.posts.length).toBe(1);
+      expect(sanity.posts[0]!.id).toBe(threadRes.postId);
+    }
+
+    // ---- the bounds ----
+    // NODE_INTERFACE → Posts → "The batch read answers posts by id":
+    // 1 to BATCH_READ_MAX ids; 101 is refused.
+    {
+      const tooMany = Array.from(
+        { length: 101 },
+        (_, i) => i.toString(16).padStart(2, '0').repeat(32),
+      );
+      try {
+        await postBatch(nodeA, tooMany);
+        expect.fail('101 ids should have been refused');
+      } catch (err) {
+        expect(err).toBeInstanceOf(NodeError);
+        if (err instanceof NodeError) {
+          expect(err.status).toBe(400);
+          expect(err.body['error']).toBe('ids must hold 1 to 100 post ids');
+        }
+      }
+    }
+    // NODE_INTERFACE → Posts → "`light` and `tx` do not combine".
+    try {
+      await getPosts(nodeA, 'light=1&tx=1');
+      expect.fail('light=1&tx=1 should have been refused');
+    } catch (err) {
+      expect(err).toBeInstanceOf(NodeError);
+      if (err instanceof NodeError) {
+        expect(err.status).toBe(400);
+        expect(err.body['error']).toBe('tx and light cannot both be 1');
+      }
+    }
+
+    // ---- the batch answers by id, in the order asked ----
+    // NODE_INTERFACE → Posts → "The batch read answers posts by id" — an id
+    // the node has never heard of is left out; the known rows are answered in
+    // the order asked. The row's `tx` binds through its id.
+    const zerosId = '0'.repeat(64);
+    const batchA = await postBatchRaw(nodeA, [zerosId, threadRes.postId], 'tx=1');
+    expect(batchA.length).toBe(1);
+    const batchRowA = batchA[0]!;
+    expect(batchRowA['id']).toBe(threadRes.postId);
+    assertTxBinds(batchRowA);
+    expect(batchRowA['tx']).toBe(pendingBytes);
+    {
+      const [check] = checkPosts([batchRowA]);
+      expect(check!.status).toBe('bound');
+      if (check!.status === 'bound') {
+        expect(check!.id).toBe(threadRes.postId);
+        expect(check!.author).toBe(alice.publicKeyHex);
+      }
+    }
+
+    // Reversed order — the known row still binds, the unknown is still left
+    // out.
+    const batchReversed = await postBatchRaw(nodeA, [threadRes.postId, zerosId], 'tx=1');
+    expect(batchReversed.length).toBe(1);
+    expect(batchReversed[0]!['id']).toBe(threadRes.postId);
+
+    // ---- two nodes answer one post ----
+    // NODE_INTERFACE → Posts → "The creating transaction rides a post row" —
+    // the `tx` the batch route answers is byte-equal to A's: the stored body's
+    // bytes derive the id either way.
+    const batchB = await postBatchRaw(nodeB, [threadRes.postId], 'tx=1');
+    expect(batchB.length).toBe(1);
+    const batchRowB = batchB[0]!;
+    expect(batchRowB['id']).toBe(threadRes.postId);
+    assertTxBinds(batchRowB);
+    expect(batchRowB['tx']).toBe(pendingBytes);
+
+    // ---- a light listing is the full listing's ids ----
+    // NODE_INTERFACE → Posts → "A light row is a post's id and the node's
+    // word" — `light=1` is the same page under the same `limit`, `after`,
+    // `author`, `roots` and `viewer`; the live rows are LightJson, every one
+    // of them its eleven keys with `kind: 'light'`. A pending reply beside the
+    // confirmed thread puts one pending and one confirmed row in the read.
+    const aliceKReply = (await getKarma(nodeA, alice.publicKeyHex))!;
+    const reply = buildReplyTx(
+      alice,
+      karmaBoxes(aliceKReply),
+      'post-tx reply',
+      threadRes.postId,
+      alice.publicKeyHex,
+      aliceKReply.height,
+      version,
+    );
+    const replyRes = await postPost(nodeA, reply.json, reply.content);
+    expect(replyRes.status).toBe('pending');
+
+    // Gossip the pending reply to B before the listing read on B.
+    const replyOnBDeadline = Date.now() + 10_000;
+    while (Date.now() < replyOnBDeadline) {
+      const pendingOnB = await getPosts(nodeB);
+      if (pendingOnB.pending.some((p) => p.id === replyRes.postId)) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+
+    for (const node of [nodeA, nodeB]) {
+      const full = await getPosts(node);
+      const light = await getPostsLightRaw(node);
+      // Same ids in the same order, same `next` and `pendingCount`.
+      expect(light.posts.map((r) => r['id'])).toEqual(full.posts.map((r) => r.id));
+      expect(light.pending.map((r) => r['id'])).toEqual(full.pending.map((r) => r.id));
+      expect(light.next).toEqual(full.next);
+      expect(light.pendingCount).toEqual(full.pendingCount);
+      // Every live row is LightJson under the eleven keys, `kind: 'light'`.
+      for (const row of light.posts) assertLightKeys(row);
+      for (const row of light.pending) assertLightKeys(row);
+      // One pending (the reply) and one confirmed (the thread) are among the
+      // rows read.
+      const pendingIds = light.pending.map((r) => r['id']);
+      const confirmedIds = light.posts.map((r) => r['id']);
+      expect(pendingIds).toContain(replyRes.postId);
+      expect(confirmedIds).toContain(threadRes.postId);
+    }
+
+    // ---- a light thread ----
+    // NODE_INTERFACE → Posts → "A light row is a post's id and the node's
+    // word" — the thread view's `post` and every live row of its lists is a
+    // LightJson under `light=1`; its counts and `next` match the full form.
+    await confirm(
+      async () => {
+        const p = await getThread(nodeA, threadRes.postId);
+        return (p?.descendants ?? []).some((d) => d.id === replyRes.postId);
+      },
+      nodeA, mesh.miningSecret,
+    );
+    await waitHeight([nodeB], (await getBlockCurrent(nodeA)).height);
+
+    const fullThread = (await getThread(nodeA, threadRes.postId))!;
+    const lightThread = await getThreadLightRaw(nodeA, threadRes.postId);
+    // Same ids in the same order; counts and next identical.
+    expect(lightThread.post['id']).toBe(fullThread.post.id);
+    expect(lightThread.descendants.map((r) => r['id'])).toEqual(
+      fullThread.descendants.map((r) => r.id),
+    );
+    expect(lightThread.ancestors.map((r) => r['id'])).toEqual(
+      fullThread.ancestors.map((r) => r.id),
+    );
+    expect(lightThread.pending.map((r) => r['id'])).toEqual(
+      fullThread.pending.map((r) => r.id),
+    );
+    expect(lightThread.ancestorCount).toBe(fullThread.ancestorCount);
+    expect(lightThread.descendantCount).toBe(fullThread.descendantCount);
+    expect(lightThread.pendingCount).toBe(fullThread.pendingCount);
+    expect(lightThread.next).toBe(fullThread.next);
+    // The subject and every live descendant are LightJson.
+    assertLightKeys(lightThread.post);
+    for (const row of lightThread.descendants) assertLightKeys(row);
+    for (const row of lightThread.ancestors) assertLightKeys(row);
+    for (const row of lightThread.pending) assertLightKeys(row);
+    // The reply among the descendants names its parent.
+    const replyDescendant = lightThread.descendants.find((d) => d['id'] === replyRes.postId);
+    expect(replyDescendant).toBeTruthy();
+    expect(replyDescendant!['parentRefs']).toEqual([threadRes.postId]);
   });
 });

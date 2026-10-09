@@ -1,4 +1,4 @@
-import type { PostJson, WithdrawnJson, FeedRow, StatusResult, KarmaResult, VouchesTargetResult, BondsResult, CreditsResult, UsernameResult } from '../api/dto';
+import type { PostJson, WithdrawnJson, LightJson, FeedRow, StatusResult, KarmaResult, VouchesTargetResult, BondsResult, CreditsResult, UsernameResult } from '../api/dto';
 import type { Workspace, Origin } from './workspace';
 import type { Theme, IdTint } from '../prefs';
 import type { Flight } from '../view/card';
@@ -7,6 +7,7 @@ import type { SendAnswer, SendRecipient } from '../view/wallet';
 import type { SignResult } from '../wallet/submit';
 import type { TipVerdict } from './tip-verdict';
 import type { Anchor, FiguresResult, Listing, NameClaim, NameResult, PostCheck } from '@dagsocial/nipopow-client';
+import type { BoundPost, ResolveEnd } from './post-resolve';
 export type { Anchor };
 
 /** What the App holds when a figures verifier run has returned — the tool's
@@ -31,8 +32,14 @@ export interface FiguresView {
 export const FEED_COMPOSER_KEY = '@feed';
 
 export interface FeedState {
-  posts: PostJson[];        // confirmed live posts (withdrawn rows filtered out)
-  pending: PostJson[];      // mempool posts, newest and not yet in a block
+  /** The feed's live rows: confirmed posts, with withdrawn rows filtered out
+   *  (WEB_INTERFACE → The withdrawn state), and the slot a reader that lacks
+   *  the post holds against its id (WEB_INTERFACE → The extension → "The
+   *  light read"). */
+  posts: Array<PostJson | LightJson>;
+  /** Mempool rows — a pending post or a pending slot (WEB_INTERFACE → The
+   *  extension → "The light read"). */
+  pending: Array<PostJson | LightJson>;
   next: string | null;      // keyset cursor for older posts
   report: string | null;    // what the last ↻ did
   olderReport: string | null; // what the last "load older" did
@@ -47,7 +54,10 @@ export interface FeedState {
 
 export interface ThreadState {
   id: string;
-  root: PostJson | WithdrawnJson | null;
+  /** The subject the pane draws — a full post, a withdrawn marker, a slot for
+   *  one not held, or `null` where no answer has stood yet (WEB_INTERFACE →
+   *  The extension → "The light read"). */
+  root: PostJson | WithdrawnJson | LightJson | null;
   ancestorIds: Set<string>;   // for the "↳ nested" check
   descendants: FeedRow[];
   descendantCount: number;
@@ -364,11 +374,14 @@ export interface NamesVerifier {
   run(readingBase: string, claim: NameClaim, anchor: Anchor): Promise<NameResult>;
 }
 
-/** The extension checks every post row the three post reads bring, before it
- *  enters the client's state (WEB_INTERFACE → The extension → "The post
- *  check"). A read's rows go as one batch; the result is positional over them.
- *  The App holds an implementation only in the extension build; the web build
- *  is handed none, and sends no `tx` on its reads. */
+/** The extension checks every row that carries a post's bytes — the single
+ *  post read's row, the resolver's batch answer, and the reader's own post
+ *  at its submit — before it enters the client's state (WEB_INTERFACE →
+ *  The extension → "The post check"). A call's rows go as one batch; the
+ *  result is positional over them. A list read brings no bytes and is not
+ *  checked (→ "A list read brings no bytes and is not checked"). The App
+ *  holds an implementation only in the extension build; the web build is
+ *  handed none, and sends no `tx` on any read. */
 export interface PostsVerifier {
   check(rows: unknown[]): PostCheck[];
 }
@@ -423,4 +436,42 @@ export interface PostCache {
    *  when the subject is not held. The walk stops at the first parent not
    *  held; descendants are collected through the parent index. */
   thread(id: string): Promise<CachedThread | null>;
+  /** The ids held, each with its row and the author and parent the
+   *  transaction states them. An id not held is absent from the map, so no
+   *  key is a placeholder. One read-only transaction over the entries store.
+   *  An empty list, no database or a transaction the browser refuses answers
+   *  an empty map. */
+  getMany(ids: readonly string[]): Promise<Map<string, HeldPost>>;
+  /** Refresh the rows held for the given ids. For each row whose id is
+   *  held, the entry's row (stored without `tx`) and `lastSeen` are
+   *  replaced; `txBytes`, `author`, `parent` and `own` are kept, and the
+   *  running total moves by the sum of the size differences in the same
+   *  transaction. An id not held is nothing. An entry whose row is a
+   *  `WithdrawnJson` is left as it is — the node's word, and a lie costs a
+   *  re-fetch. */
+  refresh(rows: readonly PostJson[]): Promise<void>;
+}
+
+/** One row held in the cache, as `getMany` answers. The row is the entry's
+ *  (`PostJson` or `WithdrawnJson`); the author and parent are the
+ *  transaction's, which the extension's post check wrote (WEB_INTERFACE →
+ *  The extension → "The post check"). */
+export interface HeldPost {
+  row: PostJson | WithdrawnJson;
+  author: string;
+  parent: string | null;
+}
+
+/** The extension's resolver (WEB_INTERFACE → The extension → "The resolve")
+ *  — the seam the App drives for the posts a list lacks. One resolver
+ *  serves every list; a call carries a batch of ids and resolves with the
+ *  end of every id no node bound. Never rejects: an id a node did not
+ *  serve ends `'unserved'` or `'unbound'`, and an id a node bound reaches
+ *  `onBound` as answers land. The App holds an implementation only in the
+ *  extension build; the web build is handed none. */
+export interface PostResolver {
+  resolve(
+    ids: readonly string[],
+    onBound: (posts: BoundPost[]) => void,
+  ): Promise<Map<string, ResolveEnd>>;
 }

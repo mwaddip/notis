@@ -179,6 +179,18 @@ describe('app.css — the arrows carry an optical lift, expressed in em', () => 
   });
 });
 
+describe('app.css — a slot holds a post\'s place without motion', () => {
+  it('no transition and no animation are declared for .card.slot', () => {
+    // A slot is still while it waits — no shimmer, no pulse, no transition
+    // into the card (HOUSE_STYLE → Motion → "A slot holds a post's place").
+    const blocks = css.match(/\.card\.slot[^{]*\{[^}]*\}/g) ?? [];
+    for (const b of blocks) {
+      expect(b).not.toMatch(/transition\s*:/);
+      expect(b).not.toMatch(/animation\s*:/);
+    }
+  });
+});
+
 describe('app.css — under 372px the workspace header wordmark yields', () => {
   it('the max-width: 371px block hides header.hdr-workspace h1, so the standalone bar keeps its wordmark', () => {
     const under = mediaBlock('@media (max-width: 371px) {');

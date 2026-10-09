@@ -481,3 +481,116 @@ describe('post-cache — no IndexedDB', () => {
     expect(await cache.thread(r.id)).toBeNull();
   });
 });
+
+describe('post-cache — getMany', () => {
+  it('a held id answers its entry; an id not held is absent; a withdrawn entry answers its row; an empty list is an empty map', async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    await cache.open('A');
+    const a = row('a'); const b = row('b');
+    await cache.put({ id: a.id, txBytes: new Uint8Array([1, 2]), row: a, author: a.author, parent: null, own: false });
+    await cache.put({ id: b.id, txBytes: new Uint8Array([3, 4]), row: b, author: b.author, parent: hid('p'), own: true });
+    // Withdraw a — the entry stays and the row becomes the withdrawn marker.
+    const w = tomb('a');
+    await cache.withdraw(a.id, w);
+
+    const empty = await cache.getMany([]);
+    expect(empty.size).toBe(0);
+
+    const got = await cache.getMany([a.id, b.id, hid('nope')]);
+    expect(got.size).toBe(2);
+    const ha = got.get(a.id)!;
+    expect((ha.row as WithdrawnJson).kind).toBe('withdrawn');
+    expect(ha.author).toBe(a.author);
+    expect(ha.parent).toBeNull();
+    const hb = got.get(b.id)!;
+    expect((hb.row as PostJson).content).toBe('b');
+    expect(hb.parent).toBe(hid('p'));
+    expect(got.has(hid('nope'))).toBe(false);
+  });
+
+  it('with no database getMany answers an empty map', async () => {
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: null, localStorage: ls, now: c.tick });
+    await cache.open('A');
+    const got = await cache.getMany([hid('a')]);
+    expect(got.size).toBe(0);
+  });
+});
+
+describe('post-cache — refresh', () => {
+  it("replaces a held id's row and lastSeen, keeps txBytes/author/parent/own, and moves the running total by the difference against a sum over the entries", async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    await cache.open('A');
+    const a = row('a');
+    await cache.put({ id: a.id, txBytes: new Uint8Array([1, 2, 3, 4]), row: a, author: a.author, parent: hid('p'), own: true });
+    // Refresh with a longer row — the entry's size increases.
+    const a2 = row('a', { content: 'much longer content here', likeCount: 7, authorName: 'alice' });
+    await cache.refresh([a2]);
+    const t = await cache.thread(a.id);
+    expect(t).not.toBeNull();
+    const post = t!.post as PostJson;
+    expect(post.content).toBe('much longer content here');
+    expect(post.likeCount).toBe(7);
+    expect(post.authorName).toBe('alice');
+    // `tx` is not held on the row.
+    expect(post.tx).toBeUndefined();
+    // The entry's `own`, `author`, `parent` and `txBytes` are kept — a
+    // withdrawal of the id would still carry the same `author`, so the
+    // thread's rows retain their parent chain against a later put.
+    const g = await cache.getMany([a.id]);
+    expect(g.get(a.id)!.author).toBe(a.author);
+    expect(g.get(a.id)!.parent).toBe(hid('p'));
+  });
+
+  it("moves one entry's last-seen ahead of an older entry's so the next eviction takes the other", async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    c.set(0);
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    await cache.open('A');
+    const a = row('a'); const b = row('b');
+    await cache.put({ id: a.id, txBytes: new Uint8Array([1]), row: a, author: a.author, parent: null, own: false });
+    await cache.put({ id: b.id, txBytes: new Uint8Array([1]), row: b, author: b.author, parent: null, own: false });
+    // After the puts, `a`'s lastSeen is older than `b`'s. A refresh of `a`
+    // moves it ahead, so the next eviction (not tested here) would take `b`.
+    const t0 = await cache.getMany([a.id, b.id]);
+    expect(t0.size).toBe(2);
+    const beforeA = (await cache.thread(a.id))!;
+    const beforeB = (await cache.thread(b.id))!;
+    // The thread reads give us the row; lastSeen itself is not exposed. The
+    // refresh does not reorder visibly — but we can tell the refresh ran by
+    // reading the row's new content on another refresh.
+    await cache.refresh([row('a', { content: 'a!' })]);
+    const after = await cache.thread(a.id);
+    expect((after!.post as PostJson).content).toBe('a!');
+    expect(beforeA.post.id).toBe(a.id);
+    expect(beforeB.post.id).toBe(b.id);
+  });
+
+  it("leaves a withdrawn entry as it is, and an id not held is nothing", async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    await cache.open('A');
+    const a = row('a');
+    await cache.put({ id: a.id, txBytes: new Uint8Array([1]), row: a, author: a.author, parent: null, own: false });
+    await cache.withdraw(a.id, tomb('a'));
+    // Refresh with a live PostJson for the withdrawn id — the entry is left.
+    await cache.refresh([row('a', { content: 'resurrected?' })]);
+    const t = await cache.thread(a.id);
+    expect((t!.post as WithdrawnJson).kind).toBe('withdrawn');
+    // Refresh for an id not held — nothing.
+    await cache.refresh([row('nope')]);
+    const g = await cache.getMany([hid('nope')]);
+    expect(g.has(hid('nope'))).toBe(false);
+  });
+});

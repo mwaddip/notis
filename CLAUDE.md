@@ -62,8 +62,9 @@ Nine packages, in dependency order:
   credits signed by hand and rep silently, the chain it reads checked by NiPoPoW proofs from the seed list's
   nodes, the reader's figures judged against everything the key holds — each ledger's range, read whole under the
   state root — every name it shows or sends to proven against that chain, each post it shows bound to the transaction
-  that created it, and the posts it has checked kept in a local cache named for the chain
-  (`WEB_INTERFACE → The extension`); each release carries its two zips beside the web zip.
+  that created it, the posts it has checked kept in a local cache named for the chain, and every list read as ids
+  with the node's word — drawn from that cache at once, the posts it lacks read by id from the seed list's nodes in
+  turn (`WEB_INTERFACE → The extension`); each release carries its two zips beside the web zip.
 
 Three tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
 

@@ -20,6 +20,7 @@ import type { BlockHeader, PostCommit, UtxoTxTree } from '@dagsocial/types';
 import { initDb, getDb, closeDb } from '../src/store/db.js';
 import * as store from '../src/store/index.js';
 import { FeedService } from '../src/services/feed-service.js';
+import { parseBatchIds, isBatchIdsError } from '../src/routes/page.js';
 import { makeTestIdentity, makeCreditBox, makeCreditTx } from '../test/helpers.js';
 
 /**
@@ -204,10 +205,12 @@ function makeApp(): express.Express {
     getUtxoTxTreeBytes: store.getUtxoTxTreeBytes,
   });
   const app = express();
+  app.use(express.json({ limit: '1mb' }));
   app.get('/posts', (req, res) => {
     const limit = Number(req.query['limit'] ?? 100);
     const tx = req.query['tx'] === '1';
-    const result = feed.queryPosts({ limit, tx });
+    const light = req.query['light'] === '1';
+    const result = feed.queryPosts({ limit, tx, light });
     res.json({ ...result, next: result.next });
   });
   app.get('/posts/:id', (req, res) => {
@@ -215,6 +218,14 @@ function makeApp(): express.Express {
     const result = feed.getPost(req.params['id']!, null, tx);
     if (!result) { res.status(404).json({ error: 404 }); return; }
     res.json(result);
+  });
+  // NODE_INTERFACE → Posts → "The batch read answers posts by id"
+  app.post('/posts/batch', (req, res) => {
+    const ids = parseBatchIds(req.body);
+    if (isBatchIdsError(ids)) { res.status(400).json({ error: ids.error }); return; }
+    const tx = req.query['tx'] === '1';
+    const posts = feed.getPosts(ids, null, tx);
+    res.json({ posts });
   });
   return app;
 }
@@ -233,6 +244,27 @@ async function timeSeries(app: express.Express, path: string): Promise<{ msAll: 
   let bytes = 0;
   for (let i = 0; i < REPS; i++) {
     const r = await callOnce(app, path);
+    msAll.push(r.ms);
+    bytes = r.bytes;
+  }
+  return { msAll, bytes };
+}
+
+// NODE_INTERFACE → Posts → "The batch read answers posts by id"
+async function callOnceBatch(app: express.Express, path: string, body: object): Promise<{ ms: number; bytes: number }> {
+  const t0 = nowMs();
+  const res = await request(app).post(path).send(body).expect(200);
+  const ms = msOf(nowMs() - t0);
+  const bytes = Buffer.byteLength(JSON.stringify(res.body));
+  return { ms, bytes };
+}
+
+async function timeSeriesBatch(app: express.Express, path: string, body: object): Promise<{ msAll: number[]; bytes: number }> {
+  for (let i = 0; i < WARMUPS; i++) await request(app).post(path).send(body).expect(200);
+  const msAll: number[] = [];
+  let bytes = 0;
+  for (let i = 0; i < REPS; i++) {
+    const r = await callOnceBatch(app, path, body);
     msAll.push(r.ms);
     bytes = r.bytes;
   }
@@ -439,6 +471,101 @@ describe("post-tx bench — the post routes' tx=1 over full blocks (narrow read)
       // Case 7 (B)
       const burstB = await case7Burst(app);
 
+      // ----- The batch read and the light page over B (NODE_INTERFACE → Posts)
+      // Seeding B is the fullest shape — 100 ids in 100 distinct full blocks
+      // of credit-send-sized elements. The POST /posts/batch bench covers
+      // its cost ("Its cost is a page's").
+      const seededBIds = seededB.map((s) => s.postId);
+      const batchBody = { ids: seededBIds };
+      const bTxB = await timeSeriesBatch(app, '/posts/batch?tx=1', batchBody);
+      const bNoTxB = await timeSeriesBatch(app, '/posts/batch', batchBody);
+      const lightB = await timeSeries(app, '/posts?limit=100&light=1');
+      // Response body sizes of the same 100 rows: full, tx=1, light=1.
+      const fullBytesB = (await callOnce(app, '/posts?limit=100')).bytes;
+      const txBytesB = (await callOnce(app, '/posts?limit=100&tx=1')).bytes;
+      const lightBytesB = (await callOnce(app, '/posts?limit=100&light=1')).bytes;
+
+      // ----- The batch read over 50 blocks: 100 ids, interleaved so no two
+      //       neighbours share a block. Fresh seeding on the Seeding-B body
+      //       shape; each pair (2*k, 2*k+1) shares block k.
+      db.exec('DELETE FROM dag_posts');
+      db.exec('DELETE FROM ordering_blocks');
+      const seededC: SeededPost[] = [];
+      {
+        // 50 blocks, each carrying two posts plus the Seeding-B filler count.
+        const BLOCKS = 50;
+        const POSTS_PER_BLOCK = 2;
+        for (let h = 1; h <= BLOCKS; h++) {
+          const utxoTxIds: string[] = [];
+          const utxoTxs: Uint8Array[] = [];
+          const postMeta: Array<{ txId: string; txBytes: Uint8Array }> = [];
+          for (let p = 0; p < POSTS_PER_BLOCK; p++) {
+            const postTxIdBytes = new Uint8Array(randomBytes(32));
+            const postTxBytes = new Uint8Array(randomBytes(POST_TX_BYTES));
+            const txId = bytesToHex(postTxIdBytes);
+            utxoTxIds.push(txId);
+            utxoTxs.push(postTxBytes);
+            postMeta.push({ txId, txBytes: postTxBytes });
+          }
+          for (let i = 0; i < SMALL_PER_BLOCK; i++) {
+            utxoTxIds.push(bytesToHex(new Uint8Array(randomBytes(32))));
+            utxoTxs.push(new Uint8Array(randomBytes(smallTxBytes)));
+          }
+          const tree: UtxoTxTree = { utxoTxIds, utxoTxs };
+          const treeBytes = encodeUtxoTxTree(tree);
+          const header = fillerHeader(h);
+          const headerBytes = encodeHeader(header);
+          insertBlock.run(
+            h,
+            Buffer.from(headerBytes),
+            Buffer.from(treeBytes),
+            Buffer.from(new Uint8Array(randomBytes(64))),
+            header.createdAt,
+            bytesToHex(hash32(headerBytes)),
+            Buffer.from(encodeInterlinks([])),
+          );
+          for (let p = 0; p < POSTS_PER_BLOCK; p++) {
+            const { txId, txBytes } = postMeta[p]!;
+            const postId = computePostId(txId, 0);
+            const author = new Uint8Array(randomBytes(32));
+            insertPostRow.run(
+              postId,
+              txId,
+              bytesToHex(new Uint8Array(randomBytes(32))),
+              `post-${h}-${p}`,
+              Buffer.from(author),
+              JSON.stringify([]),
+              1,
+              'regular',
+              'confirmed',
+              h,
+              p,
+            );
+            seededC.push({ postId, txId, blockHeight: h, postTxBytes: txBytes });
+          }
+        }
+      }
+      // Interleave: no two neighbours share a block. seededC is in insertion
+      // order (height ascending, index 0 then 1 for each block). firsts =
+      // every block's first post (h1-idx0, h2-idx0, …, h50-idx0); seconds =
+      // every block's second post (h1-idx1, h2-idx1, …, h50-idx1). The two
+      // concatenated give [h1-idx0, h2-idx0, …, h50-idx0, h1-idx1, h2-idx1,
+      // …, h50-idx1]: a neighbour pair is (h-idx0, (h+1)-idx0) or (h-idx1,
+      // (h+1)-idx1) inside a half, and (h50-idx0, h1-idx1) at the seam.
+      const firsts = seededC.filter((_, i) => i % 2 === 0).map((s) => s.postId);
+      const seconds = seededC.filter((_, i) => i % 2 === 1).map((s) => s.postId);
+      const interleaved = [...firsts, ...seconds];
+      // Sanity: 100 ids, every neighbour pair sits in different blocks.
+      {
+        const heightOf = new Map(seededC.map((s) => [s.postId, s.blockHeight] as const));
+        for (let i = 1; i < interleaved.length; i++) {
+          if (heightOf.get(interleaved[i - 1]!) === heightOf.get(interleaved[i]!)) {
+            throw new Error(`interleaving collision at ${i}`);
+          }
+        }
+      }
+      const bInterleavedTxB = await timeSeriesBatch(app, '/posts/batch?tx=1', { ids: interleaved });
+
       // Case 3 (B): 100 posts in ONE block of the small shape
       db.exec('DELETE FROM dag_posts');
       db.exec('DELETE FROM ordering_blocks');
@@ -527,8 +654,25 @@ describe("post-tx bench — the post routes' tx=1 over full blocks (narrow read)
       burstLine('seed A', burstA);
       burstLine('seed B', burstB);
 
+      // ----- The batch read and the light page report -----
+      console.log(`\n==== the batch read and the light page over seed B (${SMALL_PER_BLOCK + 1} elements a body), ${REPS} reps ====`);
+      console.log(`  case                                               |    median |     p95 |     max | resp bytes`);
+      console.log(line('POST /posts/batch?tx=1 (100 ids, 100 full blocks, B)', bTxB));
+      console.log(line('POST /posts/batch     (100 ids, 100 full blocks, B)', bNoTxB));
+      console.log(line('POST /posts/batch?tx=1 (100 ids, 50 blocks, interleaved, B)', bInterleavedTxB));
+      console.log(line('GET /posts?limit=100&light=1 (B)', lightB));
+
+      console.log(`\n==== response body size of three pages of the same 100 rows, seed B ====`);
+      console.log(`  full      : ${fullBytesB} bytes`);
+      console.log(`  tx=1      : ${txBytesB} bytes`);
+      console.log(`  light=1   : ${lightBytesB} bytes`);
+
       expect(c2A.msAll.length).toBe(REPS);
       expect(c2B.msAll.length).toBe(REPS);
+      expect(bTxB.msAll.length).toBe(REPS);
+      expect(bNoTxB.msAll.length).toBe(REPS);
+      expect(bInterleavedTxB.msAll.length).toBe(REPS);
+      expect(lightB.msAll.length).toBe(REPS);
     } finally {
       closeDb();
       rmSync(scratch, { recursive: true, force: true });

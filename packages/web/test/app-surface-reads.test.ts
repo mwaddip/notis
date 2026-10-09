@@ -5,7 +5,7 @@ import { PendingLedger } from '../src/wallet/ledger';
 import type { Api, Page } from '../src/api/client';
 import type { AppIdentity, AppState, AuthorWindowData, FeedState } from '../src/model/state';
 import type { WriteClient } from '../src/api/write';
-import type { FeedResult, FeedRow, PostJson, PostResult, StatusResult, ThreadResult, VouchesTargetResult, WithdrawnJson } from '../src/api/dto';
+import type { FeedResult, PostJson, PostResult, StatusResult, ThreadResult, VouchesTargetResult, WithdrawnJson } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
 import { prefs, setNode, KEY_LAYOUT } from '../src/prefs';
 import { contentHashHex } from '../src/integrity';
@@ -65,8 +65,10 @@ function pageOf<T>(rows: readonly T[], idOf: (r: T) => string, after: string | n
 }
 
 /** A row as a viewer reads it: `likedByViewer` is that viewer's, null with none;
- *  a withdrawn post is its marker. */
-function seenBy(n: NodeData, r: PostJson, viewer: string | undefined): FeedRow {
+ *  a withdrawn post is its marker. The non-light shape — a slot is a light
+ *  arm the full reads do not answer (WEB_INTERFACE → The extension → "The
+ *  light read"). */
+function seenBy(n: NodeData, r: PostJson, viewer: string | undefined): PostJson | WithdrawnJson {
   if (n.withdrawn.has(r.id)) {
     const marker: WithdrawnJson = {
       kind: 'withdrawn', id: r.id, author: r.author, withdrawnAtHeight: 1000, parentRefs: r.parentRefs, descendantCount: 0, authorName: null, txId: r.txId,

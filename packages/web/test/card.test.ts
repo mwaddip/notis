@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { card, submissionToPost } from '../src/view/card';
-import type { PostJson } from '../src/api/dto';
+import type { LightJson, PostJson } from '../src/api/dto';
 import type { Flight } from '../src/view/card';
 import { contentHashHex } from '../src/integrity';
 
@@ -627,3 +627,95 @@ describe('card — a handle the chain does not back is clay', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Slot — the row a reader that lacks the post holds against its id. The handle
+// when the row names one, the time, the counts — all in `inkMute`, with no
+// text, no key and no control (WEB_INTERFACE → The extension → "The light
+// read", HOUSE_STYLE → Motion → "A slot holds a post's place").
+// ---------------------------------------------------------------------------
+
+const SLOT_ID = 'ab'.repeat(32);
+
+function slotRow(over: Partial<LightJson> = {}): LightJson {
+  return {
+    kind: 'light', id: SLOT_ID, parentRefs: [], status: 'confirmed',
+    blockHeight: 100, blockIndex: 0, blockCreatedAt: 1_700_000_000_000,
+    likeCount: 3, descendantCount: 2, authorName: 'alice', likedByViewer: null,
+    ...over,
+  };
+}
+
+describe("card — a slot's shell carries .card.slot and data-post-id", () => {
+  it('the shell has the slot class, no identity button and no control button', () => {
+    const c = card(slotRow());
+    expect(c.classList.contains('card')).toBe(true);
+    expect(c.classList.contains('slot')).toBe(true);
+    expect(c.dataset['postId']).toBe(SLOT_ID);
+    // No button anywhere inside a slot — the row acts on nothing.
+    expect(c.querySelector('button')).toBeNull();
+    // The inert strip reserves the band — no control.
+    const s = c.querySelector('.strip')!;
+    expect(s.classList.contains('inert')).toBe(true);
+    expect(s.tagName).toBe('DIV');
+  });
+
+  it('the depth class matches the depth opt', () => {
+    const c = card(slotRow(), { depth: 2 });
+    expect(c.classList.contains('depth-2')).toBe(true);
+  });
+});
+
+describe("card — a slot's who row carries the handle as a plain span, no · you, no data-name-pair", () => {
+  it('a slot with a name shows @Name as a .handle span, never a button', () => {
+    const c = card(slotRow({ authorName: 'alice' }));
+    const h = c.querySelector('.who .handle')!;
+    expect(h.tagName).toBe('SPAN');
+    expect(h.textContent).toBe('@alice');
+    expect(h.hasAttribute('data-name-pair')).toBe(false);
+    expect(c.querySelector('.who .authorbtn')).toBeNull();
+    expect(c.querySelector('.who .hex')).toBeNull();
+    expect(c.querySelector('.who .you')).toBeNull();
+  });
+
+  it('a slot without a name shows no handle and no key prefix', () => {
+    const c = card(slotRow({ authorName: null }));
+    expect(c.querySelector('.who .handle')).toBeNull();
+    expect(c.querySelector('.who .hex')).toBeNull();
+  });
+
+  it('the time renders when blockCreatedAt is not null; a pending slot shows no time', () => {
+    const confirmed = card(slotRow({ blockCreatedAt: 1_700_000_000_000 }));
+    expect(confirmed.querySelector('.who .when')).not.toBeNull();
+    const pendingSlot = card(slotRow({ status: 'pending', blockHeight: null, blockIndex: null, blockCreatedAt: null }));
+    expect(pendingSlot.querySelector('.who .when')).toBeNull();
+  });
+});
+
+describe("card — a slot's body carries an empty .slot-text and a meta row with the counts", () => {
+  it('a .slot-text block stands in the text\'s place, with no words in it', () => {
+    const c = card(slotRow());
+    const text = c.querySelector('.slot-text')!;
+    expect(text).not.toBeNull();
+    expect(text.textContent).toBe('');
+  });
+
+  it('the meta row shows the reply and like counts, in muted ink, with no control', () => {
+    const c = card(slotRow({ likeCount: 3, descendantCount: 2 }));
+    const meta = c.querySelector('.meta')!;
+    expect(meta.querySelector('.replies .n')!.textContent).toBe('2');
+    expect(meta.querySelector('.liked .n')!.textContent).toBe('3');
+    expect(meta.querySelector('button')).toBeNull();
+    expect(meta.querySelector('.reply-ctl')).toBeNull();
+    expect(meta.querySelector('.withdraw-ctl')).toBeNull();
+    expect(meta.querySelector('.linkbtn')).toBeNull();
+  });
+
+  it('zero counts render no reply and no like line', () => {
+    const c = card(slotRow({ likeCount: 0, descendantCount: 0 }));
+    const meta = c.querySelector('.meta')!;
+    expect(meta.querySelector('.replies')).toBeNull();
+    expect(meta.querySelector('.liked')).toBeNull();
+  });
+});
+

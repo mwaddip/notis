@@ -8,11 +8,11 @@ import { markHandle } from './name-handle';
 import { flattenThread } from '../model/thread';
 import { withheldLine, unservedSubjectLine } from './withheld-line';
 import { identityHue } from '../model/identity';
-import { isWithdrawn } from '../api/dto';
+import { isFull, isLight, isWithdrawn } from '../api/dto';
 import { windowSubject } from '../model/arrangement';
 import type { PostJson, WithdrawnJson } from '../api/dto';
 import type { Column, Workspace } from '../model/workspace';
-import type { Handlers, RenderCtx } from '../model/state';
+import type { Handlers, RenderCtx, Submission } from '../model/state';
 
 // The tiling workspace on screen: one .col per column, framing one .region
 // stack — the .col is the strip member (its width and snap), the .region the
@@ -58,6 +58,12 @@ function threadLabel(k: string, ctx: RenderCtx): BarLabel {
   if (isWithdrawn(root)) {
     return { authorKey: root.author, authorName: root.authorName, excerpt: 'withdrawn', replyCount: 0, nested };
   }
+  if (isLight(root)) {
+    // A slot subject labels its bar as a loading thread does — no author key,
+    // the handle alone when the row names one, and `loading…`
+    // (WEB_INTERFACE → The extension → "The light read").
+    return { authorKey: undefined, authorName: root.authorName, excerpt: 'loading…', replyCount: t.descendantCount, nested };
+  }
   return { authorKey: root.author, authorName: root.authorName, excerpt: root.content ?? 'content not on this node yet', replyCount: t.descendantCount, nested };
 }
 
@@ -70,7 +76,10 @@ function subjectName(sub: { kind: 'author' | 'posts'; key: string }, ctx: Render
   const read = ctx.author.get(sub.key)?.username;
   if (read) return read.name;
   if (sub.kind === 'author') return null;
-  return ctx.authorPosts.get(sub.key)?.posts.find((row) => row.author === sub.key)?.authorName ?? null;
+  // An author-posts bar reads its subject's name from full rows alone — a
+  // slot carries a name but no key the bar can match (WEB_INTERFACE → The
+  // extension → "The light read").
+  return ctx.authorPosts.get(sub.key)?.posts.find((row) => isFull(row) && row.author === sub.key)?.authorName ?? null;
 }
 
 function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: Handlers, ctx: RenderCtx): HTMLElement {
@@ -237,6 +246,44 @@ function postsCtxFrom(key: string, ci: number, ctx: RenderCtx): PostsCtx {
   };
 }
 
+/** A submission card and, when it has landed, the composer open beneath it and
+ *  its own submissions in turn — each a level deeper than the card above it,
+ *  to the cap a thread's rows hold (WEB_INTERFACE → "A landed submission is
+ *  replied to where it stands"). A pending or expired card takes no reply, so
+ *  neither hangs under it. */
+function appendSubmissionBlock(
+  body: HTMLElement,
+  parentDepth: number,
+  sub: Submission,
+  ci: number,
+  handlers: Handlers,
+  ctx: RenderCtx,
+): void {
+  const depth = Math.min(parentDepth + 1, 3);
+  const landed = sub.stage === 'landed' && sub.postId !== null;
+  body.appendChild(
+    card(submissionToPost(sub, ctx.ownName?.name ?? null), {
+      depth,
+      replyCount: null,
+      flight: flightFor(sub, handlers.tryAgain),
+      you: ctx.ownKey !== null && sub.author === ctx.ownKey,
+      nameClay: ctx.nameClay,
+      expanded: ctx.expandedImages,
+      onExpand: handlers.expandImage,
+      onCollapse: handlers.collapseImage,
+      ...(landed
+        ? { onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }), onReply: (id) => handlers.openComposer(id), composerKey: sub.postId ?? undefined, linkUrl: ctx.linkUrl(sub.postId ?? sub.localKey) }
+        : {}),
+    }),
+  );
+  if (!landed || sub.postId === null) return;
+  const composerEl = ctx.composerFor(sub.postId);
+  if (composerEl) body.appendChild(composerEl);
+  for (const child of ctx.submissionsFor(sub.postId)) {
+    appendSubmissionBlock(body, depth, child, ci, handlers, ctx);
+  }
+}
+
 function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handlers: Handlers, ctx: RenderCtx): void {
   const sub = windowSubject(focusedK);
   if (sub?.kind === 'author') {
@@ -302,6 +349,12 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
   const rootId = t.root.id;
   for (const node of flattenThread(t.root, t.descendants)) {
     const row = node.row;
+    if (isLight(row)) {
+      // A slot stands at the row's own depth with no handler of its own
+      // (WEB_INTERFACE → The extension → "The light read").
+      body.appendChild(card(row, { depth: node.depth }));
+      continue;
+    }
     // A pane's own root does not advertise that it is open — you are looking at
     // it. A reply open in another pane still does.
     body.appendChild(
@@ -319,22 +372,7 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
     const composerEl = ctx.composerFor(row.id);
     if (composerEl) body.appendChild(composerEl);
     for (const sub of ctx.submissionsFor(row.id)) {
-      const landed = sub.stage === 'landed' && sub.postId !== null;
-      body.appendChild(
-        card(submissionToPost(sub, ctx.ownName?.name ?? null), {
-          depth: Math.min(node.depth + 1, 3),
-          replyCount: null,
-          flight: flightFor(sub, handlers.tryAgain),
-          you: ctx.ownKey !== null && sub.author === ctx.ownKey,
-          nameClay: ctx.nameClay,
-          expanded: ctx.expandedImages,
-          onExpand: handlers.expandImage,
-          onCollapse: handlers.collapseImage,
-          ...(landed
-            ? { onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }), onReply: (id) => handlers.openComposer(id), composerKey: sub.postId ?? undefined, linkUrl: ctx.linkUrl(sub.postId ?? sub.localKey) }
-            : {}),
-        }),
-      );
+      appendSubmissionBlock(body, node.depth, sub, ci, handlers, ctx);
     }
   }
 

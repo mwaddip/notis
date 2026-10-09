@@ -5,6 +5,7 @@ import { card, stageLine, listCardOpts } from './card';
 import { markHandle, nameLine } from './name-handle';
 import type { Flight } from './card';
 import type { VouchesTargetResult, UsernameResult, PostJson } from '../api/dto';
+import { isFull } from '../api/dto';
 import type { FeedState } from '../model/state';
 import type { Origin } from '../model/workspace';
 
@@ -286,8 +287,11 @@ export function authorPostsBody(handlers: PostsHandlers, ctx: PostsCtx): HTMLEle
     b.appendChild(el('div', 'empty', 'no posts yet'));
     return b;
   }
+  // A slot stands at the row the node named with no handler of its own
+  // (WEB_INTERFACE → The extension → "The light read").
   for (const post of feed.posts) {
-    b.appendChild(postCard(post, handlers, ctx));
+    if (isFull(post)) b.appendChild(postCard(post, handlers, ctx));
+    else b.appendChild(card(post));
   }
   if (feed.next !== null) {
     const foot = el('div', 'feed-foot');

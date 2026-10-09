@@ -208,6 +208,18 @@ header .spacer { flex: 1 1 auto; }
    not clay (warning). */
 .card.pending { background: var(--ground); }
 
+/* A slot holds a post's place — the handle, the time and the counts in
+   inkMute, the text's place empty, no control (WEB_INTERFACE → The extension →
+   "The light read", HOUSE_STYLE → Motion → "A slot holds a post's place"). No
+   identity colour: the spine's --idh is never set on it. No transition and no
+   animation — the slot is still while it waits, honest loading. No hover rule
+   either, so none sits outside the one block the style test pins. */
+.card.slot .who .handle,
+.card.slot .who .when,
+.card.slot .meta,
+.card.slot .meta .n { color: var(--inkMute); }
+.card.slot .slot-text { height: 1em; }
+
 /* ---------- write surface: stage line, composer, controls ---------- */
 
 /* The stage line shares the meta row's fixed 22px line box, so what it contains

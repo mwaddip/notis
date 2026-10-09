@@ -14,6 +14,8 @@ import {
   parseAfter, isAfterError,
   parseRoots, isRootsError,
   parseTx, isTxError,
+  parseLight, isLightError,
+  parseBatchIds, isBatchIdsError,
   parseViewer, isViewerError,
   resolveIdentityParam, isResolveError,
   formatKey,
@@ -94,6 +96,10 @@ export function createRouter(deps: PostsDeps): Router {
     if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
     const tx = parseTx(req.query as Record<string, unknown>);
     if (isTxError(tx)) { res.status(400).json({ error: tx.error }); return; }
+    const light = parseLight(req.query as Record<string, unknown>);
+    if (isLightError(light)) { res.status(400).json({ error: light.error }); return; }
+    // NODE_INTERFACE → Posts → "`light` and `tx` do not combine"
+    if (tx && light) { res.status(400).json({ error: 'tx and light cannot both be 1' }); return; }
     const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);
     if (isViewerError(viewer)) {
       res.status(viewer.status ?? 400).json({ error: viewer.error });
@@ -106,6 +112,7 @@ export function createRouter(deps: PostsDeps): Router {
         { limit, after: after as PostKey | undefined },
         viewer,
         tx,
+        light,
       );
     } catch (err) {
       // NODE_INTERFACE → Posts → "The creating transaction rides a post row":
@@ -161,6 +168,10 @@ export function createRouter(deps: PostsDeps): Router {
     if (isRootsError(roots)) { res.status(400).json({ error: roots.error }); return; }
     const tx = parseTx(req.query as Record<string, unknown>);
     if (isTxError(tx)) { res.status(400).json({ error: tx.error }); return; }
+    const light = parseLight(req.query as Record<string, unknown>);
+    if (isLightError(light)) { res.status(400).json({ error: light.error }); return; }
+    // NODE_INTERFACE → Posts → "`light` and `tx` do not combine"
+    if (tx && light) { res.status(400).json({ error: 'tx and light cannot both be 1' }); return; }
     const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);
     if (isViewerError(viewer)) {
       res.status(viewer.status ?? 400).json({ error: viewer.error });
@@ -183,6 +194,7 @@ export function createRouter(deps: PostsDeps): Router {
         after: after as PostKey | undefined,
         viewer,
         tx,
+        light,
       });
     } catch (err) {
       if (err instanceof CorruptChainStateError) failStopIfCorruptChain(err);
@@ -192,6 +204,27 @@ export function createRouter(deps: PostsDeps): Router {
       ...result,
       next: result.next ? formatKey('post', result.next) : null,
     });
+  });
+
+  // POST /posts/batch — NODE_INTERFACE → Posts → "The batch read answers posts by id"
+  router.post('/batch', (req, res) => {
+    const ids = parseBatchIds(req.body);
+    if (isBatchIdsError(ids)) { res.status(400).json({ error: ids.error }); return; }
+    const tx = parseTx(req.query as Record<string, unknown>);
+    if (isTxError(tx)) { res.status(400).json({ error: tx.error }); return; }
+    const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);
+    if (isViewerError(viewer)) {
+      res.status(viewer.status ?? 400).json({ error: viewer.error });
+      return;
+    }
+    let posts;
+    try {
+      posts = feedService.getPosts(ids, viewer, tx);
+    } catch (err) {
+      if (err instanceof CorruptChainStateError) failStopIfCorruptChain(err);
+      throw err;
+    }
+    res.json({ posts });
   });
 
   return router;

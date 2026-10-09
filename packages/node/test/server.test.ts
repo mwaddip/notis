@@ -1,9 +1,11 @@
 import { makeTestConfig } from './helpers.js';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import http from 'http';
 import type { AddressInfo } from 'net';
+import express from 'express';
 import { initDb, getDb, closeDb } from '../src/store/db.js';
 import { createApp, createAdminApp } from '../src/server.js';
+import { bodyRefusal } from '../src/routes/body-refusal.js';
 import type { Config } from '../src/config.js';
 import { MAX_BLOCK_BODY_BYTES, profileFor } from '@dagsocial/types';
 import { resetForTests, getCounters } from '../src/metrics.js';
@@ -204,6 +206,119 @@ describe('server', () => {
         headers: { Origin: 'https://example.com' },
       });
       expect(getCounters().httpRequestsTotal).toBe(1);
+    });
+  });
+
+  // NODE_INTERFACE → HTTP API → "A body the parser refuses is the client's
+  // error". The public app's last handler reads `bodyRefusal` first and
+  // answers 4xx with the mapped body, no log line, and the CORS header the
+  // middleware set ahead of the parser.
+  describe('a body the parser refuses', () => {
+    it('POST /posts/batch with Content-Type JSON and body `{` answers 400 malformed JSON body, not logged', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const res = await fetch(`${baseUrl}/posts/batch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{',
+        });
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({ error: 400, reason: 'malformed JSON body' });
+        expect(res.headers.get('access-control-allow-origin')).toBe('*');
+        expect(errorSpy).not.toHaveBeenCalled();
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it('POST /posts/batch with a top-level string `"x"` answers 400 malformed JSON body, not logged', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const res = await fetch(`${baseUrl}/posts/batch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '"x"',
+        });
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({ error: 400, reason: 'malformed JSON body' });
+        expect(res.headers.get('access-control-allow-origin')).toBe('*');
+        expect(errorSpy).not.toHaveBeenCalled();
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it('POST /posts/batch with a body over 1 MB answers 413 body too large, not logged', async () => {
+      // One byte past the parser's 1 MB limit, in valid JSON so the body
+      // bound is what refuses it (raw-body's `entity.too.large`).
+      const payload = '{"pad":"' + 'a'.repeat(1024 * 1024) + '"}';
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const res = await fetch(`${baseUrl}/posts/batch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload,
+        });
+        expect(res.status).toBe(413);
+        expect(await res.json()).toEqual({ error: 413, reason: 'body too large' });
+        expect(res.headers.get('access-control-allow-origin')).toBe('*');
+        expect(errorSpy).not.toHaveBeenCalled();
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it('a well-formed POST /posts/batch still answers 200', async () => {
+      const res = await fetch(`${baseUrl}/posts/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: ['a'.repeat(64)] }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { posts: unknown[] };
+      expect(body.posts).toEqual([]);
+    });
+
+    // A fault of the node's — the generic 500 answer and its one logged line
+    // stand (NODE_INTERFACE → HTTP API → "A body the parser refuses is the
+    // client's error"). A sync throw that reaches the public app's last
+    // handler without a parser mark answers `{ error: 'internal' }` with one
+    // `500 error:` log line.
+    it('an error thrown inside a route still answers 500 and logs once', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      let throwingServer: http.Server | undefined;
+      try {
+        const throwingApp = express();
+        throwingApp.get('/boom', (_req, _res, next) => {
+          next(new Error('inside a route'));
+        });
+        throwingApp.use(
+          (
+            err: unknown,
+            _req: express.Request,
+            res: express.Response,
+            _next: express.NextFunction,
+          ) => {
+            const refusal = bodyRefusal(err);
+            if (refusal !== null) {
+              res.status(refusal.status).json({ error: refusal.status, reason: refusal.reason });
+              return;
+            }
+            console.error('500 error:', err instanceof Error ? err.stack : err);
+            res.status(500).json({ error: 'internal' });
+          },
+        );
+        throwingServer = throwingApp.listen(0);
+        const addr = throwingServer.address() as AddressInfo;
+        const res = await fetch(`http://localhost:${addr.port}/boom`);
+        expect(res.status).toBe(500);
+        expect(await res.json()).toEqual({ error: 'internal' });
+        expect(errorSpy).toHaveBeenCalledTimes(1);
+        expect(String(errorSpy.mock.calls[0]![0])).toBe('500 error:');
+      } finally {
+        errorSpy.mockRestore();
+        throwingServer?.close();
+      }
     });
   });
 });

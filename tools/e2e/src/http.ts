@@ -118,13 +118,33 @@ export interface PostResponse {
   authorName: string | null;
 }
 
+// NODE_INTERFACE → Posts → "The JSON projection has two arms where the store
+// has one shape": the withdrawn row carries topology — `txId`, `author` and
+// `parentRefs` — the withdrawal keeps, and no `tx` or content field.
 export interface WithdrawnResponse {
   kind: 'withdrawn';
   id: string;
+  txId: string;
   author: string;
+  parentRefs: string[];
   withdrawnAtHeight: number;
   descendantCount: number;
   authorName: string | null;
+}
+
+// NODE_INTERFACE → Posts → "A light row is a post's id and the node's word"
+export interface LightJson {
+  kind: 'light';
+  id: string;
+  parentRefs: string[];
+  status: string;
+  blockHeight: number | null;
+  blockIndex: number | null;
+  blockCreatedAt: number | null;
+  likeCount: number;
+  descendantCount: number;
+  authorName: string | null;
+  likedByViewer: boolean | null;
 }
 
 export type GetPostResponse = PostResponse | WithdrawnResponse;
@@ -332,6 +352,27 @@ export async function getThread(
   const data = await res.json();
   if (!res.ok) throw new NodeError(res.status, data as Record<string, unknown>);
   return data as ThreadPage;
+}
+
+// NODE_INTERFACE → Posts → "The batch read answers posts by id"
+export interface BatchResponse {
+  posts: (PostResponse | WithdrawnResponse)[];
+}
+
+export async function postBatch(
+  node: NodeProcess,
+  ids: readonly string[],
+  query?: string,
+): Promise<BatchResponse> {
+  const path = query ? `/posts/batch?${query}` : '/posts/batch';
+  const res = await fetch(`${node.url}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new NodeError(res.status, data as Record<string, unknown>);
+  return data as BatchResponse;
 }
 
 // NODE_INTERFACE → Usernames

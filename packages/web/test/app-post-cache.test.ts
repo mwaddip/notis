@@ -17,7 +17,8 @@ import { PendingLedger } from '../src/wallet/ledger';
 import { createPostCache } from '../src/extension/post-cache';
 import { buildPost } from '../src/wallet/builders';
 import type { Api } from '../src/api/client';
-import type { AppState, PostCache, PostsVerifier, TipRun, TipVerifier } from '../src/model/state';
+import type { AppState, PostCache, PostResolver, PostsVerifier, TipRun, TipVerifier } from '../src/model/state';
+import type { ResolveEnd } from '../src/model/post-resolve';
 import type { WriteClient } from '../src/api/write';
 import type { PostCheck } from '@dagsocial/nipopow-client';
 import type {
@@ -61,9 +62,14 @@ function status(): StatusResult {
  *  cache keys on). Use a dummy `txBytes`. */
 const BOUND = (r: PostJson): PostCheck =>
   ({ status: 'bound', id: r.id, txBytes: new Uint8Array([1, 2, 3]), author: r.author, parent: r.parentRefs[0] ?? null });
-const UNBOUND: PostCheck = { status: 'unbound', reason: 'signature', verdict: 'u' };
 const NOTHING_TO_BIND: PostCheck = { status: 'nothing-to-bind' };
-const UNSERVED: PostCheck = { status: 'unserved' };
+
+/** A resolver that never asks for anything: the stays cases drive the
+ *  single post read's path, a thread read that throws, the cache's own
+ *  behaviour or the submit hook — never a list. */
+function emptyResolver(): PostResolver {
+  return { resolve: async (): Promise<Map<string, ResolveEnd>> => new Map() };
+}
 
 function scriptedVerifier(decide: (row: unknown, idx: number) => PostCheck): { verifier: PostsVerifier; calls: Array<unknown[]> } {
   const calls: Array<unknown[]> = [];
@@ -79,9 +85,9 @@ function scriptedVerifier(decide: (row: unknown, idx: number) => PostCheck): { v
 }
 
 interface Fake {
-  feedCalls: Array<{ withTx: boolean | undefined }>;
+  feedCalls: Array<{ light: boolean | undefined }>;
   feedRes: FeedResult;
-  threadCalls: Array<{ withTx: boolean | undefined; id: string }>;
+  threadCalls: Array<{ light: boolean | undefined; id: string }>;
   threadRes: ThreadResult | null;
   threadThrows: boolean;
   postRes: PostResult | null;
@@ -89,12 +95,12 @@ interface Fake {
 
 function makeApi(f: Fake): Api {
   return {
-    feed: async (_page, _viewer, _author, _roots, withTx): Promise<FeedResult> => {
-      f.feedCalls.push({ withTx });
+    feed: async (_page, _viewer, _author, _roots, light): Promise<FeedResult> => {
+      f.feedCalls.push({ light });
       return f.feedRes;
     },
-    thread: async (id, _page, _viewer, withTx): Promise<ThreadResult | null> => {
-      f.threadCalls.push({ withTx, id });
+    thread: async (id, _page, _viewer, light): Promise<ThreadResult | null> => {
+      f.threadCalls.push({ light, id });
       if (f.threadThrows) throw new Error('offline');
       return f.threadRes;
     },
@@ -149,10 +155,19 @@ function harness(opts: {
     backedUp: () => false,
     onChange: () => {},
   };
+  // The App's constructor refuses a verifier without a resolver, or the
+  // reverse (WEB_INTERFACE → The extension → "The post check", → "The
+  // resolve"). An empty resolver stands beside the verifier here, since
+  // these cases drive the single post read's path, the thread read's
+  // cache fallback, the cache's own behaviour or the submit hook — never
+  // a list.
+  const verifier = opts.verifier ?? null;
+  const resolver = verifier === null ? null : emptyResolver();
   const app = new App(
     api, writeClient, identity, ledger, undefined, undefined, null, null, null,
-    opts.verifier ?? null,
+    verifier,
     opts.cache ?? null,
+    resolver,
   );
   const appbar = document.createElement('div');
   const feedEl = document.createElement('section'); feedEl.id = 'feed';
@@ -184,64 +199,6 @@ function makeCache(): { cache: PostCache; ls: Pick<Storage, 'getItem' | 'setItem
 
 beforeEach(() => { document.body.innerHTML = ''; vi.useRealTimers(); });
 
-describe('app-post-cache — bound rows put, non-bound rows never', () => {
-  it('a feed read puts its bound rows and never an unbound or unserved row', async () => {
-    const a = row('a'), bad = row('b'), gone = row('c', { tx: null });
-    const sv = scriptedVerifier((r) => (r === bad ? UNBOUND : r === gone ? UNSERVED : BOUND(r as PostJson)));
-    const { cache } = makeCache();
-    await cache.open('C');
-    const h = harness({ verifier: sv.verifier, cache, feedRes: { posts: [a, bad, gone], next: null, pending: [], pendingCount: 0 } });
-    await h.drive.loadFeed();
-    await settle();
-    expect(await cache.thread(a.id)).not.toBeNull();
-    expect(await cache.thread(bad.id)).toBeNull();
-    expect(await cache.thread(gone.id)).toBeNull();
-  });
-
-  it('a thread read puts its bound rows', async () => {
-    const subject = row('r');
-    const d = row('d');
-    const sv = scriptedVerifier((r) => BOUND(r as PostJson));
-    const { cache } = makeCache();
-    await cache.open('C');
-    const h = harness({
-      verifier: sv.verifier, cache,
-      threadRes: { post: subject, ancestors: [], ancestorCount: 0, descendants: [d], descendantCount: 1, next: null, pending: [], pendingCount: 0 },
-    });
-    h.drive.openThread(subject.id, { from: 'feed' });
-    await settle();
-    expect(await cache.thread(subject.id)).not.toBeNull();
-    expect(await cache.thread(d.id)).not.toBeNull();
-  });
-});
-
-describe('app-post-cache — a withdrawn row for a held id empties its text', () => {
-  it('calls withdraw on the cache for a nothing-to-bind withdrawn row', async () => {
-    const r = row('r');
-    const w = tomb('r'); // same id (same label), the withdrawn marker
-    expect(w.id).toBe(r.id);
-    const sv = scriptedVerifier((rr) => (rr === r ? BOUND(r) : NOTHING_TO_BIND));
-    const { cache } = makeCache();
-    await cache.open('C');
-    const h = harness({
-      verifier: sv.verifier, cache,
-      threadRes: { post: r, ancestors: [], ancestorCount: 0, descendants: [], descendantCount: 0, next: null, pending: [], pendingCount: 0 },
-    });
-    await h.drive.fetchThread(r.id);
-    await settle();
-    // The subject was put — the cache holds it as a live row.
-    const first = await cache.thread(r.id);
-    expect(first).not.toBeNull();
-    // Second read brings a withdrawn row.
-    h.fake.threadRes = { post: w, ancestors: [], ancestorCount: 0, descendants: [], descendantCount: 0, next: null, pending: [], pendingCount: 0 };
-    await h.drive.refreshThread(r.id);
-    await settle();
-    const t = await cache.thread(r.id);
-    expect(t).not.toBeNull();
-    expect((t!.post as WithdrawnJson).kind).toBe('withdrawn');
-  });
-});
-
 describe('app-post-cache — a thread read that throws reads the cache', () => {
   it('with the subject held: the error line and the held rows render', async () => {
     const subject = row('r');
@@ -272,7 +229,7 @@ describe('app-post-cache — a thread read that throws reads the cache', () => {
     // cache"), covered by `view/panes.ts` directly in `panes.test.ts`.
   });
 
-  it('with the subject not held: today\'s failed read, unchanged', async () => {
+  it('with the subject not held: t.error is set, t.root is null', async () => {
     const subject = row('r');
     const sv = scriptedVerifier((r) => BOUND(r as PostJson));
     const { cache } = makeCache();
@@ -326,6 +283,8 @@ describe('app-post-cache — a thread read that answers does not call thread()',
       put: (e) => cache.put(e),
       withdraw: (i, r) => cache.withdraw(i, r),
       thread: (i) => { threadCalls++; return cache.thread(i); },
+      getMany: (ids) => cache.getMany(ids),
+      refresh: (rs) => cache.refresh(rs),
     };
     const h = harness({
       verifier: sv.verifier, cache: counted,
@@ -393,7 +352,7 @@ describe('app-post-cache — the reader\'s own post enters only when the post ch
     const api = makeApi({ feedCalls: [], feedRes: { posts: [], next: null, pending: [], pendingCount: 0 }, threadCalls: [], threadRes: null, threadThrows: false, postRes: null });
     const writeClient = {} as unknown as WriteClient;
     const ledger = new PendingLedger(authorHex);
-    const app = new App(api, writeClient, identity, ledger, undefined, undefined, null, null, null, verifier, cache);
+    const app = new App(api, writeClient, identity, ledger, undefined, undefined, null, null, null, verifier, cache, emptyResolver());
     const appbar = document.createElement('div');
     const feedEl = document.createElement('section'); feedEl.id = 'feed';
     const panes = document.createElement('section'); panes.id = 'panes';
@@ -430,9 +389,9 @@ describe('app-post-cache — the reader\'s own post enters only when the post ch
       importFile: async () => ({ pubKeyHex: '' }), exportFile: async () => '',
       unlock: async () => {}, lock: async () => {}, forget: async () => {}, backedUp: () => false, onChange: () => {},
     };
-    const verifier: PostsVerifier = { check: (rows) => rows.map(() => UNBOUND) };
+    const verifier: PostsVerifier = { check: (rows) => rows.map(() => ({ status: 'unbound', reason: 'signature', verdict: 'u' } as PostCheck)) };
     const api = makeApi({ feedCalls: [], feedRes: { posts: [], next: null, pending: [], pendingCount: 0 }, threadCalls: [], threadRes: null, threadThrows: false, postRes: null });
-    const app = new App(api, {} as unknown as WriteClient, identity, new PendingLedger(authorHex), undefined, undefined, null, null, null, verifier, cache);
+    const app = new App(api, {} as unknown as WriteClient, identity, new PendingLedger(authorHex), undefined, undefined, null, null, null, verifier, cache, emptyResolver());
     const appbar = document.createElement('div');
     const feedEl = document.createElement('section'); feedEl.id = 'feed';
     const panes = document.createElement('section'); panes.id = 'panes';
@@ -480,7 +439,7 @@ describe('app-post-cache — the reader\'s own post enters only when the post ch
       unlock: async () => {}, lock: async () => {}, forget: async () => {}, backedUp: () => false, onChange: () => {},
     };
     const verifier: PostsVerifier = { check: (rows) => checkPosts(rows) };
-    const app = new App(makeApi({ feedCalls: [], feedRes: { posts: [], next: null, pending: [], pendingCount: 0 }, threadCalls: [], threadRes: null, threadThrows: false, postRes: null }), {} as unknown as WriteClient, identity, new PendingLedger(authorHex), undefined, undefined, null, null, null, verifier, cache);
+    const app = new App(makeApi({ feedCalls: [], feedRes: { posts: [], next: null, pending: [], pendingCount: 0 }, threadCalls: [], threadRes: null, threadThrows: false, postRes: null }), {} as unknown as WriteClient, identity, new PendingLedger(authorHex), undefined, undefined, null, null, null, verifier, cache, emptyResolver());
     const appbar = document.createElement('div');
     const feedEl = document.createElement('section'); feedEl.id = 'feed';
     const panes = document.createElement('section'); panes.id = 'panes';
@@ -544,6 +503,8 @@ describe('app-post-cache — a cached thread goes through putThreadRows', () => 
       put: (e) => inner.put(e),
       withdraw: (i, r) => inner.withdraw(i, r),
       thread: async (i) => { await gate; return inner.thread(i); },
+      getMany: (ids) => inner.getMany(ids),
+      refresh: (rs) => inner.refresh(rs),
     };
     const h = harness({ verifier: sv.verifier, cache: wrapped, threadThrows: true });
     void h.drive.fetchThread(subject.id);
@@ -574,6 +535,8 @@ describe('app-post-cache — the cache opens under the chain the tip run names',
       put: (e) => cache.put(e),
       withdraw: (i, r) => cache.withdraw(i, r),
       thread: (i) => cache.thread(i),
+      getMany: (ids) => cache.getMany(ids),
+      refresh: (rs) => cache.refresh(rs),
     };
     const chains = ['X', 'X', 'Y'];
     let i = 0;
@@ -594,7 +557,7 @@ describe('app-post-cache — the cache opens under the chain the tip run names',
     };
     const { prefs } = await import('../src/prefs');
     prefs.node = 'http://x';
-    const app = new App(api, {} as unknown as WriteClient, identity, new PendingLedger(null), undefined, undefined, verifier, null, null, sv, wrapped);
+    const app = new App(api, {} as unknown as WriteClient, identity, new PendingLedger(null), undefined, undefined, verifier, null, null, sv, wrapped, emptyResolver());
     const appbar = document.createElement('div');
     const feedEl = document.createElement('section'); feedEl.id = 'feed';
     const panes = document.createElement('section'); panes.id = 'panes';

@@ -20,6 +20,7 @@ import {
   getUsernameByOwner,
   putUsername,
 } from '../../src/store/index.js';
+import { insertLikeRecord } from '../../src/store/likes.js';
 import { FeedService } from '../../src/services/feed-service.js';
 import type { PostJson, WithdrawnJson } from '../../src/services/feed-service.js';
 
@@ -899,4 +900,231 @@ describe('feed-service — tx bytes ride the row, over the real store', () => {
     expect(r.tx).toBe(Buffer.from(txBytes).toString('hex'));
   });
 
+});
+
+// ---------------------------------------------------------------------------
+// NODE_INTERFACE → Posts → "A light row is a post's id and the node's word"
+// ---------------------------------------------------------------------------
+
+import type { LightJson } from '../../src/services/feed-service.js';
+
+const LIGHT_KEYS = [
+  'kind', 'id', 'parentRefs', 'status', 'blockHeight', 'blockIndex',
+  'blockCreatedAt', 'likeCount', 'descendantCount', 'authorName',
+  'likedByViewer',
+] as const;
+
+describe('feed-service — the light projection', () => {
+  let authorId: Uint8Array;
+  let liveRootId: string;
+  let liveReplyId: string;
+  let feedService: FeedService;
+
+  beforeEach(() => {
+    initDb(':memory:');
+    const keys = generateKeyPairSync('ed25519');
+    authorId = rawPublicKey(keys.publicKey);
+    liveRootId = insertTestPost('Light root', authorId, []);
+    liveReplyId = insertTestPost('Light reply', authorId, [liveRootId]);
+    feedService = new FeedService({
+      getPost: storeGetPost,
+      queryPostsPage,
+      getLikeRecordCount,
+      getDescendantCount,
+      hasLikeRecord,
+      getAncestorsNearest,
+      getSubtreePage,
+      getBlockCreatedAt,
+      getPendingUtxoTxBytesByTxId,
+      getUtxoTxTreeBytes,
+      getUsernameByOwner,
+    });
+  });
+
+  afterEach(() => { closeDb(); });
+
+  it('a light page\'s live rows carry exactly the eleven LightJson keys', () => {
+    confirmPost(liveRootId, 100, 0);
+    const result = feedService.queryPosts({ limit: 50, light: true });
+    const row = result.posts.find((p) => p.id === liveRootId) as LightJson;
+    expect(row.kind).toBe('light');
+    expect(Object.keys(row).sort()).toEqual([...LIGHT_KEYS].sort());
+  });
+
+  it('a light page carries the full page\'s ids in order and the full page\'s next, pendingCount', () => {
+    confirmPost(liveRootId, 101, 0);
+    confirmPost(liveReplyId, 102, 0);
+    const full = feedService.queryPosts({ limit: 50 });
+    const light = feedService.queryPosts({ limit: 50, light: true });
+    expect(light.posts.map((p) => p.id)).toEqual(full.posts.map((p) => p.id));
+    expect(light.pending.map((p) => p.id)).toEqual(full.pending.map((p) => p.id));
+    expect(light.next).toEqual(full.next);
+    expect(light.pendingCount).toBe(full.pendingCount);
+  });
+
+  it('a light page under roots=1 restricts to roots, as the full page does', () => {
+    confirmPost(liveRootId, 103, 0);
+    confirmPost(liveReplyId, 104, 0);
+    const light = feedService.queryPosts({ limit: 50, roots: true, light: true });
+    const full = feedService.queryPosts({ limit: 50, roots: true });
+    expect(light.posts.map((p) => p.id)).toEqual(full.posts.map((p) => p.id));
+    expect(light.posts.find((p) => p.id === liveReplyId)).toBeUndefined();
+  });
+
+  it('a light page under author= filters as the full page does', () => {
+    const keysB = generateKeyPairSync('ed25519');
+    const authorB = rawPublicKey(keysB.publicKey);
+    const otherId = insertTestPost('A post by B', authorB, []);
+    confirmPost(liveRootId, 105, 0);
+    confirmPost(otherId, 106, 0);
+    const light = feedService.queryPosts({ limit: 50, author: authorId, light: true });
+    const full = feedService.queryPosts({ limit: 50, author: authorId });
+    expect(light.posts.map((p) => p.id)).toEqual(full.posts.map((p) => p.id));
+    expect(light.posts.find((p) => p.id === otherId)).toBeUndefined();
+  });
+
+  it('a light thread\'s post, ancestors, descendants and pending are all light; counts and next match the full form', () => {
+    confirmPost(liveRootId, 110, 0);
+    confirmPost(liveReplyId, 111, 0);
+    // One confirmed descendant and one pending descendant of the subject,
+    // so each list carries a row the `kind === 'light'` check runs over.
+    const confirmedChildId = insertTestPost('A confirmed descendant', authorId, [liveReplyId]);
+    confirmPost(confirmedChildId, 112, 0);
+    const pendingChildId = insertTestPost('A pending descendant', authorId, [liveReplyId]);
+    const fullThread = feedService.getThread(liveReplyId, { limit: 50 })!;
+    const lightThread = feedService.getThread(liveReplyId, { limit: 50 }, null, false, true)!;
+    expect((lightThread.post as LightJson).kind).toBe('light');
+    expect(lightThread.ancestors.length).toBe(1);
+    for (const a of lightThread.ancestors) expect((a as LightJson).kind).toBe('light');
+    expect(lightThread.descendants.length).toBe(1);
+    for (const d of lightThread.descendants) expect((d as LightJson).kind).toBe('light');
+    expect(lightThread.pending.length).toBe(1);
+    for (const p of lightThread.pending) expect((p as LightJson).kind).toBe('light');
+    expect(lightThread.ancestorCount).toBe(fullThread.ancestorCount);
+    expect(lightThread.descendantCount).toBe(fullThread.descendantCount);
+    expect(lightThread.next).toEqual(fullThread.next);
+    expect(lightThread.pendingCount).toBe(fullThread.pendingCount);
+    // Pending ids match the full thread's pending ids.
+    expect(lightThread.pending.map((p) => p.id)).toEqual(fullThread.pending.map((p) => p.id));
+    expect(lightThread.pending.map((p) => p.id)).toContain(pendingChildId);
+    expect(lightThread.descendants.map((p) => p.id)).toContain(confirmedChildId);
+  });
+
+  it('a withdrawn row among a light answer is its WithdrawnJson, whole', () => {
+    const withdrawnId = insertTestPost('A post about to be withdrawn', authorId, []);
+    confirmPost(withdrawnId, 120, 0);
+    withdrawPost(withdrawnId, 121);
+    const result = feedService.queryPosts({ limit: 50, light: true });
+    const row = result.posts.find((p) => p.id === withdrawnId) as WithdrawnJson;
+    expect(row.kind).toBe('withdrawn');
+    expect(typeof row.txId).toBe('string');
+    expect(typeof row.author).toBe('string');
+    expect(row.parentRefs).toEqual([]);
+    expect(row.withdrawnAtHeight).toBe(121);
+  });
+
+  it('likedByViewer follows viewer on a light row, null without one', () => {
+    confirmPost(liveRootId, 130, 0);
+    const keys = generateKeyPairSync('ed25519');
+    const viewer = rawPublicKey(keys.publicKey);
+    insertLikeRecord(liveRootId, viewer, 131);
+
+    const withViewer = feedService.queryPosts({ limit: 50, viewer, light: true });
+    const row = withViewer.posts.find((p) => p.id === liveRootId) as LightJson;
+    expect(row.likedByViewer).toBe(true);
+
+    const withoutViewer = feedService.queryPosts({ limit: 50, light: true });
+    const row2 = withoutViewer.posts.find((p) => p.id === liveRootId) as LightJson;
+    expect(row2.likedByViewer).toBeNull();
+  });
+});
+
+describe('feed-service — a light read of a confirmed row with no body in its block does not read the body', () => {
+  it('getThread light=true answers 200 for a row the full form\'s tx=1 would fail-stop on', () => {
+    // Mirror the mock state used earlier in this file: a confirmed row whose
+    // block holds no stored body — the full form's `tx=1` throws
+    // `UnreadableStoredBlockError` (above), the light form reads no body.
+    const state = {
+      byId: new Map<string, StoredPost>(),
+      page: [] as StoredPost[],
+      pending: [] as StoredPost[],
+      bodyBytesByHeight: new Map<number, Uint8Array>(),
+      lastReadBytes: null as Uint8Array | null,
+      pendingByTxId: new Map<string, Uint8Array>(),
+      bodyReads: [] as number[],
+      descendants: [] as StoredPost[],
+      ancestors: [] as StoredPost[],
+    };
+    const { commit, postId, txId } = (() => {
+      const id = makeTestIdentity();
+      const { commit, tx, postId } = makePostTx(id, 'light bypasses the body read');
+      return { commit, postId, txId: computeTxId(tx) };
+    })();
+    const row = storedPost({ id: postId, txId, commit, content: 'x', status: 'confirmed', blockHeight: 42, blockIndex: 0 });
+    state.byId.set(postId, row);
+
+    const feed = new FeedService({
+      getPost: (id) => state.byId.get(id) ?? null,
+      queryPostsPage: () => ({ rows: state.page, next: null, pending: state.pending, pendingCount: state.pending.length }),
+      getLikeRecordCount: () => 0,
+      getDescendantCount: () => 0,
+      hasLikeRecord: () => false,
+      getAncestorsNearest: () => ({ rows: state.ancestors, count: state.ancestors.length }),
+      getSubtreePage: () => ({ rows: state.descendants, next: null, count: state.descendants.length, pending: state.pending, pendingCount: state.pending.length }),
+      getBlockCreatedAt: () => null,
+      getUsernameByOwner: () => null,
+      getPendingUtxoTxBytesByTxId: (txId: TxId) => state.pendingByTxId.get(txId) ?? null,
+      getUtxoTxTreeBytes: (height: number) => {
+        state.bodyReads.push(height);
+        return state.bodyBytesByHeight.get(height) ?? null;
+      },
+    });
+
+    // Full form fail-stops.
+    expect(() => feed.getThread(postId, { limit: 10 }, null, true)).toThrow();
+    const beforeReads = state.bodyReads.length;
+    const light = feed.getThread(postId, { limit: 10 }, null, false, true)!;
+    expect((light.post as LightJson).kind).toBe('light');
+    // The light form read no body at all.
+    expect(state.bodyReads.length).toBe(beforeReads);
+  });
+});
+// ---------------------------------------------------------------------------
+// NODE_INTERFACE → Posts → "The batch read answers posts by id"
+// ---------------------------------------------------------------------------
+
+describe('feed-service — getPosts answers in the order asked, missing ids left out', () => {
+  let authorId: Uint8Array;
+  let feedService: FeedService;
+
+  beforeEach(() => {
+    initDb(':memory:');
+    const keys = generateKeyPairSync('ed25519');
+    authorId = rawPublicKey(keys.publicKey);
+    feedService = new FeedService({
+      getPost: storeGetPost,
+      queryPostsPage,
+      getLikeRecordCount,
+      getDescendantCount,
+      hasLikeRecord,
+      getAncestorsNearest,
+      getSubtreePage,
+      getBlockCreatedAt,
+      getPendingUtxoTxBytesByTxId,
+      getUtxoTxTreeBytes,
+      getUsernameByOwner,
+    });
+  });
+
+  afterEach(() => { closeDb(); });
+
+  it('answers rows in the order given, dropping unknown ids', () => {
+    const aId = insertTestPost('a', authorId, []);
+    const bId = insertTestPost('b', authorId, []);
+    const unknownId = 'ff'.repeat(32);
+    const order1 = feedService.getPosts([aId, unknownId, bId]);
+    expect(order1.map((p) => p.id)).toEqual([aId, bId]);
+    const order2 = feedService.getPosts([bId, aId, unknownId]);
+    expect(order2.map((p) => p.id)).toEqual([bId, aId]);
+  });
 });

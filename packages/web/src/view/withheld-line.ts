@@ -18,11 +18,11 @@ export function withheldLine(unboundCount: number): HTMLElement | null {
   return line;
 }
 
-/** The muted line a thread whose subject the check read `unserved` shows in
- *  place of the subject's row (WEB_INTERFACE → The extension → "The post
- *  check"): the node holds no bytes for the post, no claim about its text. */
+/** The muted line a thread whose subject no node served shows in place of the
+ *  subject's row (WEB_INTERFACE → The extension → "The post check" → "A thread
+ *  whose subject ends so"). */
 export function unservedSubjectLine(): HTMLElement {
   const line = el('div', 'hint unserved');
-  line.textContent = 'this node cannot serve this post yet.';
+  line.textContent = 'no node can serve this post yet.';
   return line;
 }
