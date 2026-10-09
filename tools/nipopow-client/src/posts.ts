@@ -1,6 +1,9 @@
-// WEB_INTERFACE → The extension → "The post check" — checkPosts binds every
-// row the three post reads bring to the transaction that created it, before
-// the extension shows one. The order is the rule, as the contract states.
+// WEB_INTERFACE → The extension → "The post check" — checkPosts binds each row
+// that carries a post's bytes to the transaction that created it, before the
+// extension shows the post: each row of a batch answer (`POST /posts/batch?tx=1`),
+// the single post read's (`GET /posts/:id?tx=1`) and the reader's own post at
+// its submit. A list read brings no bytes and is not checked. The order is the
+// rule, as the contract states.
 //
 // VALIDATION_INTERFACE → Acceptance criterion — every signature check is
 // verifyEd25519 / verifyEd25519Batch; the message is the transaction id's 32
@@ -8,8 +11,8 @@
 // `hexToBytes(computeTxId(tx))` to `verifyEd25519`).
 //
 // NODE_INTERFACE → Posts → "The creating transaction rides a post row" — the
-// row's PostJson / WithdrawnJson shape, plus `tx: hex | null` the three reads
-// add with `?tx=1`.
+// row's PostJson / WithdrawnJson shape, plus `tx: hex | null` on a PostJson,
+// which the three post reads and the batch read add with `?tx=1`.
 
 import {
   bytesToHex,
