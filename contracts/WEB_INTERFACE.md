@@ -573,8 +573,8 @@ It is the extension build's alone: the web build names no `posts/batch`.
 > ⚠ **AHEAD OF CODE (2026-10-08, AF1 — `web`)** — the extension asks the three post reads with `tx=1`, passes every row
 > of every read through the post check, draws a list from the node's answer alone and reads the cache only when a
 > thread's read fails; a thread whose subject is `unserved` reads *this node cannot serve this post yet.* The App is
-> handed no resolver, draws no slot and asks no node but the one it reads for a post. A `bound` row enters its state and
-> its cache as the node sent it; the resolver's module aborts no request and moves its pointer when a resolve ends.
+> handed no resolver, draws no slot and asks no node but the one it reads for a post. A list read's `bound` row enters
+> its state and its cache as the node sent it.
 
 **The post check.** The extension shows a post only when the transaction that created it binds it. Every row
 that carries a post's bytes — each row of a batch answer (→ "The resolve"), the single post read's, asked with `tx=1`
