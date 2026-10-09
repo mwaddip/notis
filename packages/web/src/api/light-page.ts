@@ -1,6 +1,9 @@
-import type { LightJson, WithdrawnJson, PostStatus } from './dto';
+import type { LightJson, WithdrawnJson } from './dto';
 import { PageError } from './errors';
-import { isValidUsernameBytes } from '@dagsocial/types';
+import {
+  isHex64Lower, isNonNegSafeInt, isNonNegSafeIntOrNull, isStatus,
+  isParentRefs, isAuthorName, readWithdrawn,
+} from './row-fields';
 
 // Read a light page's rows (WEB_INTERFACE → The extension → "The light read"):
 // every row of every list of the answer is a `LightJson` or a `WithdrawnJson`
@@ -8,44 +11,6 @@ import { isValidUsernameBytes } from '@dagsocial/types';
 // answer. Each row answered is a fresh object of its type's fields alone — a
 // key the type does not name is not carried
 // (WEB_INTERFACE → The extension → "Each row is taken field by field").
-
-const HEX64 = /^[0-9a-f]{64}$/;
-const utf8 = new TextEncoder();
-
-function isHex64Lower(v: unknown): v is string {
-  return typeof v === 'string' && HEX64.test(v);
-}
-
-function isNonNegSafeInt(v: unknown): v is number {
-  return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
-}
-
-function isNonNegSafeIntOrNull(v: unknown): v is number | null {
-  return v === null || isNonNegSafeInt(v);
-}
-
-function isStatus(v: unknown): v is PostStatus {
-  return v === 'pending' || v === 'confirmed';
-}
-
-/** A row's `parentRefs` is an array of none or one 64-lowercase-hex string
- *  (NODE_INTERFACE → Posts → "A light row is a post's id and the node's
- *  word", TYPES_INTERFACE → Content limits). */
-function isParentRefs(v: unknown): v is string[] {
-  if (!Array.isArray(v) || v.length > 1) return false;
-  for (const p of v) if (!isHex64Lower(p)) return false;
-  return true;
-}
-
-/** `authorName` is `null` or a well-formed name — the one rule
- *  `isValidUsernameBytes` of `@dagsocial/types` states over its UTF-8 bytes
- *  (TYPES_INTERFACE → Content limits). The web client is served by that rule,
- *  never a copy of it. */
-function isAuthorName(v: unknown): v is string | null {
-  if (v === null) return true;
-  if (typeof v !== 'string') return false;
-  return isValidUsernameBytes(utf8.encode(v));
-}
 
 function readLight(raw: Record<string, unknown>): LightJson | null {
   if (raw['kind'] !== 'light') return null;
@@ -75,27 +40,6 @@ function readLight(raw: Record<string, unknown>): LightJson | null {
     descendantCount: raw['descendantCount'],
     authorName: raw['authorName'],
     likedByViewer: liked,
-  };
-}
-
-function readWithdrawn(raw: Record<string, unknown>): WithdrawnJson | null {
-  if (raw['kind'] !== 'withdrawn') return null;
-  if (!isHex64Lower(raw['id'])) return null;
-  if (!isHex64Lower(raw['txId'])) return null;
-  if (!isHex64Lower(raw['author'])) return null;
-  if (!isParentRefs(raw['parentRefs'])) return null;
-  if (!isNonNegSafeInt(raw['withdrawnAtHeight'])) return null;
-  if (!isNonNegSafeInt(raw['descendantCount'])) return null;
-  if (!isAuthorName(raw['authorName'])) return null;
-  return {
-    kind: 'withdrawn',
-    id: raw['id'],
-    author: raw['author'],
-    withdrawnAtHeight: raw['withdrawnAtHeight'],
-    parentRefs: [...raw['parentRefs']],
-    descendantCount: raw['descendantCount'],
-    authorName: raw['authorName'],
-    txId: raw['txId'],
   };
 }
 
