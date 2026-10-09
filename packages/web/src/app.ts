@@ -16,6 +16,7 @@ import { personGlyph, sunGlyph, moonGlyph, gearGlyph, walletGlyph } from './view
 import { MARK } from './view/mark';
 import { serialise, parse, authorWindowId, postsWindowId, windowSubject } from './model/arrangement';
 import { reconcileNewer, isLivePost } from './model/feed-reconcile';
+import { withNodeWord } from './model/light';
 import { flattenThread } from './model/thread';
 import { WriteClient, type Rejection } from './api/write';
 import { FaucetClient, faucetLine } from './api/faucet';
@@ -48,7 +49,7 @@ import {
   FEED_COMPOSER_KEY, type AppState, type ThreadState, type RenderCtx, type Handlers, type Submission,
   type FlightStage, type AppIdentity, type AuthorWindowData, type FeedState, type FiguresView,
   type TipVerifier, type TipRun, type FiguresVerifier, type NamesVerifier, type PostsVerifier,
-  type PostCache, type CachedThread,
+  type PostCache, type CachedThread, type HeldPost, type PostResolver,
 } from './model/state';
 import { decideMove, type ScreenEntry } from './history';
 
@@ -389,6 +390,19 @@ export class App {
   // write to it; a thread's read that throws reads it; a put is started and
   // never awaited by a render path.
   private postCache: PostCache | null;
+  // The post resolver (WEB_INTERFACE → The extension → "The resolve") — non-
+  // null only in the extension build. The feed and the author window's list
+  // reads carry `light=1` while it is held, and `intake` composes the rows
+  // from the cache; the posts a list lacks are read by id from the seed
+  // list's nodes in turn by `resolveSlots`. The web build is handed none and
+  // sends no `light`.
+  private postResolver: PostResolver | null;
+  // The ids a resolve was asked for and has not answered (WEB_INTERFACE →
+  // The extension → "One resolve serves every list" → "an id asked for is
+  // not asked again while its answer is awaited"). `dropReaderState` empties
+  // the set beside the generation; a resolve round claims ids into it
+  // synchronously at the top of `resolveSlots`.
+  private resolving = new Set<string>();
   // The chain the verified tip run named — the hash of block 1 of the
   // reading node's verified proof (WEB_INTERFACE → The extension → "The
   // chain's name"). Written beside the verdict and the anchor, dropped on a
@@ -441,6 +455,7 @@ export class App {
     namesVerifier?: NamesVerifier | null,
     postsVerifier?: PostsVerifier | null,
     postCache?: PostCache | null,
+    postResolver?: PostResolver | null,
   ) {
     this.client = client ?? new NodeClient(() => prefs.node);
     this.writeClient = writeClient ?? new WriteClient(() => prefs.node);
@@ -452,6 +467,7 @@ export class App {
     this.namesVerifier = namesVerifier ?? null;
     this.postsVerifier = postsVerifier ?? null;
     this.postCache = postCache ?? null;
+    this.postResolver = postResolver ?? null;
     // With no verifier the verdict stays `undefined` — the corner reads the
     // first paragraph of the status corner, word for word (WEB_INTERFACE →
     // The status corner, → The extension → "The verified tip").
@@ -566,6 +582,15 @@ export class App {
     return this.postsVerifier !== null;
   }
 
+  /** True when the App holds a post resolver (WEB_INTERFACE → The extension →
+   *  "The resolve") — the extension build's feed and author-window list reads
+   *  carry `light=1`, and `intake` composes rows from the cache; the web
+   *  build's never do, by the same static substitution that keeps the
+   *  resolver out of its bundle. */
+  private listLight(): boolean {
+    return this.postResolver !== null;
+  }
+
   /** The chain the verified tip run named — the hash of block 1 of the
    *  reading node's verified proof (WEB_INTERFACE → The extension → "The
    *  chain's name"). Non-null under a verified reading node, null otherwise;
@@ -647,6 +672,80 @@ export class App {
         own: own !== null && check.author === own,
       });
     }
+  }
+
+  /** The six list reads' one gate (WEB_INTERFACE → The extension → "The
+   *  light read"): answer the input array positionally — `null` where the
+   *  check withheld a row — and the count of `unbound` rows withheld. The
+   *  three configurations are:
+   *
+   *  - no resolver, no verifier (the web build): every row stays, `unbound`
+   *    is 0, no cache call. `ingestRows` runs for the `nothing-to-bind`
+   *    branch's side effects (none under no verifier).
+   *  - a verifier, no resolver: `ingestRows` over the rows and its outcome
+   *    mapped positionally — `null` where it kept no row, `unbound` its
+   *    count. The bound rows reach `offerBoundToCache` through
+   *    `ingestRows`.
+   *  - a resolver (the extension build): a list read brings no bytes and is
+   *    not checked. Withdrawn rows reach `postCache.withdraw` unawaited; a
+   *    light row whose cached entry holds the post's text becomes the
+   *    composed `PostJson` (`withNodeWord`), the composed rows reach
+   *    `postCache.refresh` unawaited, every other light row stands as the
+   *    slot it is; `unbound` is 0. A generation that moved reads nothing
+   *    from the cache and writes nothing to it. */
+  private async intake(
+    rows: ReadonlyArray<FeedRow>,
+    gen: number,
+  ): Promise<{ rows: Array<FeedRow | null>; unbound: number }> {
+    if (this.postResolver === null) {
+      const ing = this.ingestRows(rows);
+      const kept = new Set(ing.rows);
+      return {
+        rows: rows.map((r) => (kept.has(r) ? r : null)),
+        unbound: ing.unboundCount,
+      };
+    }
+    // A generation that moved reads nothing from the cache and writes nothing
+    // to it (WEB_INTERFACE → The extension → "The light read" → "The feed and
+    // the author window's list have no such fallback").
+    if (gen !== this.readerGen) return { rows: rows.slice(), unbound: 0 };
+    const lightIds: string[] = [];
+    for (const row of rows) {
+      if (isLight(row)) lightIds.push(row.id);
+      else if (isWithdrawn(row) && this.postCache !== null) {
+        // A withdrawn row for a held id empties the entry's text and keeps
+        // the entry — the node's word, and a lie costs a re-fetch
+        // (WEB_INTERFACE → The extension → "The post cache").
+        void this.postCache.withdraw(row.id, row);
+      }
+    }
+    let held: Map<string, HeldPost> = new Map();
+    if (lightIds.length > 0 && this.postCache !== null) {
+      // A cache read that rejects is a cache that holds nothing, as
+      // `applyCachedThread` reads one; so is no cache at all.
+      try { held = await this.postCache.getMany(lightIds); } catch { held = new Map(); }
+    }
+    if (gen !== this.readerGen) return { rows: rows.slice(), unbound: 0 };
+    const outRows: Array<FeedRow | null> = [];
+    const composed: PostJson[] = [];
+    for (const row of rows) {
+      if (isLight(row)) {
+        const entry = held.get(row.id);
+        // An entry whose row is a placeholder, or one a withdrawal emptied,
+        // is not held (WEB_INTERFACE → The extension → "The post cache").
+        if (entry !== undefined && isFull(entry.row) && typeof entry.row.content === 'string') {
+          const full = withNodeWord(entry.row, row);
+          composed.push(full);
+          outRows.push(full);
+          continue;
+        }
+      }
+      outRows.push(row);
+    }
+    if (composed.length > 0 && this.postCache !== null) {
+      void this.postCache.refresh(composed);
+    }
+    return { rows: outRows, unbound: 0 };
   }
 
   /** The one row's gate — the single post read's answer (WEB_INTERFACE →
@@ -1449,6 +1548,15 @@ export class App {
     return rows.filter(isLivePost).filter((r) => !this.withdrawnSeen.has(r.id));
   }
 
+  /** Every slot standing in the feed and the author windows is being resolved
+   *  (WEB_INTERFACE → The extension → "The resolve"). Called by each of the
+   *  six list reads after it has written state. The body — the claim, the
+   *  cache re-read, the resolver call, `fillSlots` and `endSlots` — lands
+   *  next. */
+  private resolveSlots(): void {
+    return;
+  }
+
   /** A thread row as the client knows it: a post whose withdrawal it saw land
    *  is that withdrawal's marker, whatever the answer showed. */
   private known(row: FeedRow): FeedRow {
@@ -1479,9 +1587,9 @@ export class App {
     feed.error = null;
     this.renderFeed();
     try {
-      const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true, this.postsTx());
+      const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true, this.postsTx(), this.listLight());
       if (gen !== this.readerGen) return;
-      this.takeFeedPage(res, since);
+      await this.takeFeedPage(res, since, gen);
     } catch (e) {
       if (gen !== this.readerGen) return;
       // No stored preference and a seed list — walk it, adopting the first one
@@ -1493,7 +1601,7 @@ export class App {
         const walked = await this.walkSeedList(gen);
         if (walked !== null) {
           if (walked.gen !== this.readerGen) return;
-          this.takeFeedPage(walked.res, since);
+          await this.takeFeedPage(walked.res, since, walked.gen);
         } else {
           if (gen !== this.readerGen) return;
           this.dropFeedRows();
@@ -1505,27 +1613,31 @@ export class App {
       }
     }
     this.renderFeed();
+    void this.resolveSlots();
   }
 
   /** A first page, read from when `landings` stood at `since`, replaces the
    *  feed's rows and its cursor — its live rows, a like that landed since keeping
-   *  its row (keeper). */
-  private takeFeedPage(res: FeedResult, since: number): void {
+   *  its row (keeper). Holds to the generation it is handed, so the two
+   *  callers (`loadFeed` and `loadFeed` after `walkSeedList`'s adoption) pass
+   *  the generation their read ran under. */
+  private async takeFeedPage(res: FeedResult, since: number, gen: number): Promise<void> {
     const feed = this.state.feed;
-    // Every row the read brought passes through the post check as one page,
-    // before it enters the feed's state (WEB_INTERFACE → The extension →
-    // "The post check"). A first page resets the withheld count — "a
-    // refresh re-reads the list, and starts it again".
-    const ing = this.ingestRows([...res.posts, ...res.pending]);
-    const keptSet = new Set(ing.rows);
-    const keptPosts = res.posts.filter((r) => keptSet.has(r));
-    const keptPending = res.pending.filter((r) => keptSet.has(r));
+    // Every row the read brought passes through intake as one page, before
+    // it enters the feed's state (WEB_INTERFACE → The extension →
+    // "The light read", → "The post check"). A first page resets the
+    // withheld count — "a refresh re-reads the list, and starts it again".
+    const intakeRes = await this.intake([...res.posts, ...res.pending], gen);
+    if (gen !== this.readerGen) return;
+    const kept = intakeRes.rows;
+    const keptPosts = res.posts.map((_, i) => kept[i]).filter((r): r is FeedRow => r !== null);
+    const keptPending = res.pending.map((_, i) => kept[i + res.posts.length]).filter((r): r is FeedRow => r !== null);
     feed.posts = this.liveRows(keptPosts).map(this.keeper(feed.posts, since));
     feed.pending = this.dedupeOwn(keptPending.filter(isLivePost));
     feed.next = res.next;
     feed.loaded = true;
     feed.loading = false;
-    feed.unboundCount = ing.unboundCount;
+    feed.unboundCount = intakeRes.unbound;
     this.indexRows([...keptPosts, ...keptPending]);
   }
 
@@ -1554,7 +1666,7 @@ export class App {
       const probe = new NodeClient(() => base);
       let res: FeedResult;
       try {
-        res = await probe.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true, this.postsTx());
+        res = await probe.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true, this.postsTx(), this.listLight());
       } catch {
         if (gen !== this.readerGen) return null;
         continue; // try the next entry
@@ -1587,21 +1699,22 @@ export class App {
       // The reconnection paging lives in reconcileNewer; this fetches each page
       // and takes the mempool from page 0 (the only call with a null cursor).
       // The rows land together once the last page has answered; a page offers
-      // its live rows alone (liveRows). Each read's rows go through the post
-      // check as one page (WEB_INTERFACE → The extension → "The post check");
-      // a refresh resets the withheld count and the pages add to it.
+      // its live rows alone (liveRows). Each page's rows go through intake as
+      // one call (WEB_INTERFACE → The extension → "The light read", → "The
+      // post check"); a refresh resets the withheld count and the pages add
+      // to it.
       const rows: FeedRow[] = [];
       let pending: FeedRow[] = [];
       let unboundCount = 0;
       const r = await reconcileNewer(
         feed.posts,
         async (after) => {
-          const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer(), undefined, true, this.postsTx());
-          const ing = this.ingestRows([...res.posts, ...res.pending]);
-          const keptSet = new Set(ing.rows);
-          const keptPosts = res.posts.filter((p) => keptSet.has(p));
-          const keptPending = res.pending.filter((p) => keptSet.has(p));
-          unboundCount += ing.unboundCount;
+          const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer(), undefined, true, this.postsTx(), this.listLight());
+          const intakeRes = await this.intake([...res.posts, ...res.pending], gen);
+          const kept = intakeRes.rows;
+          const keptPosts = res.posts.map((_, i) => kept[i]).filter((p): p is FeedRow => p !== null);
+          const keptPending = res.pending.map((_, i) => kept[i + res.posts.length]).filter((p): p is FeedRow => p !== null);
+          unboundCount += intakeRes.unbound;
           rows.push(...keptPosts, ...keptPending);
           if (after === null) pending = keptPending;
           return { posts: this.liveRows(keptPosts), next: res.next };
@@ -1621,6 +1734,7 @@ export class App {
       feed.error = msg(e);
     }
     this.renderFeed();
+    void this.resolveSlots();
   }
 
   /** `load older` continues the cursor it was asked for: a page for the node or
@@ -1636,30 +1750,31 @@ export class App {
     feed.loading = true;
     this.renderFeed();
     try {
-      const res = await this.client.feed({ limit: FEED_LIMIT, after: cursor }, this.viewer(), undefined, true, this.postsTx());
+      const res = await this.client.feed({ limit: FEED_LIMIT, after: cursor }, this.viewer(), undefined, true, this.postsTx(), this.listLight());
       if (gen !== this.readerGen) return;
-      if (feed.next === cursor) {
-        // The page's rows go through the post check — a continuation adds to
-        // the feed's withheld count (WEB_INTERFACE → The extension → "The
-        // post check").
-        const ing = this.ingestRows(res.posts);
-        const keptSet = new Set(ing.rows);
-        const keptPosts = res.posts.filter((p) => keptSet.has(p));
-        const older = this.liveRows(keptPosts);
-        const have = new Set(feed.posts.map((p) => p.id));
-        const added = older.filter((p) => !have.has(p.id));
-        feed.posts = [...feed.posts, ...added];
-        feed.next = res.next;
-        feed.unboundCount += ing.unboundCount;
-        feed.olderReport = added.length ? `${added.length} older ${added.length === 1 ? 'post' : 'posts'}` : 'no older posts';
-        this.indexRows(keptPosts);
-      }
+      // The page's rows go through intake — a continuation adds to the
+      // feed's withheld count (WEB_INTERFACE → The extension → "The light
+      // read", → "The post check"). The cursor is re-read after intake, so
+      // a `↻` or a first page that moved it meanwhile writes nothing.
+      const intakeRes = await this.intake(res.posts, gen);
+      if (gen !== this.readerGen || feed.next !== cursor) return;
+      const kept = intakeRes.rows;
+      const keptPosts = res.posts.map((_, i) => kept[i]).filter((p): p is FeedRow => p !== null);
+      const older = this.liveRows(keptPosts);
+      const have = new Set(feed.posts.map((p) => p.id));
+      const added = older.filter((p) => !have.has(p.id));
+      feed.posts = [...feed.posts, ...added];
+      feed.next = res.next;
+      feed.unboundCount += intakeRes.unbound;
+      feed.olderReport = added.length ? `${added.length} older ${added.length === 1 ? 'post' : 'posts'}` : 'no older posts';
+      this.indexRows(keptPosts);
     } catch (e) {
       if (gen !== this.readerGen) return;
       if (feed.next === cursor) feed.error = msg(e);
     }
     feed.loading = false;
     this.renderFeed();
+    void this.resolveSlots();
   }
 
   // WEB_INTERFACE → The way into the workspace → "The page offers the thread to an extension first"
@@ -2208,6 +2323,12 @@ export class App {
     this.figuresGen += 1;
     this.figuresInFlight = false;
     this.figuresDirty = false;
+    // The ids a resolve was asked for and has not answered go with the
+    // generation; a resolve round in flight writes nothing more under its
+    // older gen, and the re-read the change starts asks again
+    // (WEB_INTERFACE → The extension → "The resolve", → "One resolve serves
+    // every list").
+    this.resolving.clear();
   }
 
   /** Read the reader's own state — the membership state with an identity, the
@@ -3096,19 +3217,20 @@ export class App {
     f.loading = true;
     this.renderRegionsFor(postsWindowId(key));
     try {
-      const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer(), key, false, this.postsTx());
+      const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer(), key, false, this.postsTx(), this.listLight());
       if (gen !== this.readerGen) return;
-      // The page's rows go through the post check (WEB_INTERFACE → The
-      // extension → "The post check"); a first page resets the window's
-      // withheld count.
-      const ing = this.ingestRows(res.posts);
-      const keptSet = new Set(ing.rows);
-      const keptPosts = res.posts.filter((p) => keptSet.has(p));
+      // The page's rows go through intake (WEB_INTERFACE → The extension →
+      // "The light read", → "The post check"); a first page resets the
+      // window's withheld count.
+      const intakeRes = await this.intake(res.posts, gen);
+      if (gen !== this.readerGen) return;
+      const kept = intakeRes.rows;
+      const keptPosts = res.posts.map((_, i) => kept[i]).filter((p): p is FeedRow => p !== null);
       f.posts = this.liveRows(keptPosts).map(this.keeper(f.posts, since));
       f.next = res.next;
       f.loaded = true;
       f.error = null;
-      f.unboundCount = ing.unboundCount;
+      f.unboundCount = intakeRes.unbound;
       this.indexRows(keptPosts);
     } catch (e) {
       if (gen !== this.readerGen) return;
@@ -3116,6 +3238,7 @@ export class App {
     }
     f.loading = false;
     this.renderPostsLoad(key);
+    void this.resolveSlots();
   }
 
   /** The posts window's ↻ reports what it did through the feed's own reconcile,
@@ -3135,11 +3258,11 @@ export class App {
       const r = await reconcileNewer(
         f.posts,
         async (after) => {
-          const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer(), key, false, this.postsTx());
-          const ing = this.ingestRows(res.posts);
-          const keptSet = new Set(ing.rows);
-          const keptPosts = res.posts.filter((p) => keptSet.has(p));
-          unboundCount += ing.unboundCount;
+          const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer(), key, false, this.postsTx(), this.listLight());
+          const intakeRes = await this.intake(res.posts, gen);
+          const kept = intakeRes.rows;
+          const keptPosts = res.posts.map((_, i) => kept[i]).filter((p): p is FeedRow => p !== null);
+          unboundCount += intakeRes.unbound;
           rows.push(...keptPosts);
           return { posts: this.liveRows(keptPosts), next: res.next };
         },
@@ -3157,6 +3280,7 @@ export class App {
       f.error = msg(e);
     }
     this.renderPostsLoad(key);
+    void this.resolveSlots();
   }
 
   /** An author-posts window's `more` continues the cursor it was asked for: a
@@ -3169,25 +3293,28 @@ export class App {
     const cursor = f.next;
     const gen = this.readerGen;
     try {
-      const res = await this.client.feed({ limit: FEED_LIMIT, after: cursor }, this.viewer(), key, false, this.postsTx());
+      const res = await this.client.feed({ limit: FEED_LIMIT, after: cursor }, this.viewer(), key, false, this.postsTx(), this.listLight());
       if (gen !== this.readerGen || f.next !== cursor) return;
-      // The page's rows go through the post check — a `more` adds to the
-      // window's withheld count (WEB_INTERFACE → The extension → "The
-      // post check").
-      const ing = this.ingestRows(res.posts);
-      const keptSet = new Set(ing.rows);
-      const keptPosts = res.posts.filter((p) => keptSet.has(p));
+      // The page's rows go through intake — a `more` adds to the window's
+      // withheld count (WEB_INTERFACE → The extension → "The light read",
+      // → "The post check"). The cursor is re-read after intake, so a `↻`
+      // or a first page that moved it meanwhile writes nothing.
+      const intakeRes = await this.intake(res.posts, gen);
+      if (gen !== this.readerGen || f.next !== cursor) return;
+      const kept = intakeRes.rows;
+      const keptPosts = res.posts.map((_, i) => kept[i]).filter((p): p is FeedRow => p !== null);
       const older = this.liveRows(keptPosts);
       const have = new Set(f.posts.map((p) => p.id));
       f.posts = [...f.posts, ...older.filter((p) => !have.has(p.id))];
       f.next = res.next;
-      f.unboundCount += ing.unboundCount;
+      f.unboundCount += intakeRes.unbound;
       this.indexRows(keptPosts);
     } catch (e) {
       if (gen !== this.readerGen || f.next !== cursor) return;
       f.error = msg(e);
     }
     this.renderPostsLoad(key);
+    void this.resolveSlots();
   }
 
   // ---- invite, from the profile's invites row (WEB_INTERFACE → The profile window) ----

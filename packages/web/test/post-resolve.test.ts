@@ -582,8 +582,6 @@ describe('resolvePosts — a synchronously thrown ask is a failed request', () =
   });
 });
 
-// New cases (AF1 · Task 4b)
-
 describe("resolvePosts — a bound row the reader refuses is not well-formed: the id goes on, no unbound counted", () => {
   it("a `bound` with a string for likeCount at one node and the well-formed row at the next: the second lands", async () => {
     const r0 = fullRow('r0');
