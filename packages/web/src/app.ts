@@ -1,6 +1,7 @@
 import { NodeClient, type Api } from './api/client';
-import type { PostJson, WithdrawnJson, LightJson, FeedRow, FeedResult, PostResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
+import type { PostJson, WithdrawnJson, LightJson, FeedRow, FeedResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
 import { isFull, isWithdrawn, isLight } from './api/dto';
+import { readBoundRow, readWithdrawnRow } from './api/post-row';
 import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { Mode } from './mode';
@@ -649,16 +650,34 @@ export class App {
   }
 
   /** The one row's gate — the single post read's answer (WEB_INTERFACE →
-   *  The extension → "The post check"). An `unbound` or `unserved` row is
-   *  used for nothing. */
+   *  The extension → "The post check"). With a verifier held, a `bound` row
+   *  goes through `readBoundRow` and a `nothing-to-bind` row through
+   *  `readWithdrawnRow`: `null` from either is a withheld answer, as an
+   *  `unbound` or `unserved` row is (→ "A row that is not well-formed is
+   *  not shown and not cached"). Otherwise the rebuilt row — not the
+   *  node's — is what the caller writes to state and hands to the cache
+   *  and the reconciles. With no verifier the node's row goes through as
+   *  it is. */
   private ingestOne(row: PostJson | WithdrawnJson): PostJson | WithdrawnJson | null {
     if (this.postsVerifier === null) return row;
     const [c] = this.postsVerifier.check([row]);
     if (c === undefined) return null;
-    if (c.status === 'bound' || c.status === 'nothing-to-bind') {
-      if (c.status === 'bound') this.offerBoundToCache([{ row, check: c }]);
-      return row;
+    if (c.status === 'bound') {
+      const rebuilt = readBoundRow(row);
+      if (rebuilt === null) return null;
+      this.offerBoundToCache([{ row: rebuilt, check: c }]);
+      return rebuilt;
     }
+    if (c.status === 'nothing-to-bind') {
+      const rebuilt = readWithdrawnRow(row);
+      if (rebuilt === null) return null;
+      // A withdrawn row for a held id empties the entry's text and keeps
+      // the entry — the node's word (WEB_INTERFACE → The extension →
+      // "The post cache"). Started and not awaited, as `ingestRows` does.
+      if (this.postCache !== null) void this.postCache.withdraw(rebuilt.id, rebuilt);
+      return rebuilt;
+    }
+    // `unbound` and `unserved` — withheld.
     return null;
   }
 
@@ -1392,8 +1411,10 @@ export class App {
    *  that contains it, the posts index, and any open @posts window — so the
    *  surface that re-renders next draws the node's row, not the stale one. A
    *  slot standing under the id is replaced by the fetched full row as a full
-   *  row is (WEB_INTERFACE → The extension → "The light read"). */
-  private applyFetchedRow(fetched: PostResult | null): void {
+   *  row is (WEB_INTERFACE → The extension → "The light read"). The row is
+   *  the rebuilt one `ingestOne` answered — the node's row reaches none of
+   *  these places (→ "A checked row is taken field by field"). */
+  private applyFetchedRow(fetched: PostJson | WithdrawnJson | null): void {
     if (!fetched || isWithdrawn(fetched)) return;
     this.stampLanding(fetched);
     const id = fetched.id;
@@ -2659,7 +2680,7 @@ export class App {
    *  changed, the keys of the @posts windows that lost the row, and the parent ids
    *  whose regions the caller must re-render explicitly. The withdrawal joins
    *  the ones the client has seen land, which every later write of rows keeps. */
-  private applyWithdrawLanding(postId: string, fetched: PostResult | null): { feedChanged: boolean; postsKeys: string[]; touchParents: string[] } {
+  private applyWithdrawLanding(postId: string, fetched: PostJson | WithdrawnJson | null): { feedChanged: boolean; postsKeys: string[]; touchParents: string[] } {
     const withdrawn = fetched !== null && isWithdrawn(fetched) ? fetched : null;
     if (withdrawn) this.withdrawnSeen.set(postId, withdrawn);
     for (const t of this.state.threads.values()) {
@@ -4265,14 +4286,13 @@ export class App {
       const rawFetched = await this.client.post(entry.postId, this.viewer(), this.postsTx());
       if (gen !== this.readerGen) return;
       // The single post read's answer passes through the one-row gate
-      // (WEB_INTERFACE → The extension → "The post check"): a kept row is
-      // the node's row for reconcile, a null is the node's 404, and a
-      // withheld answer (`unbound` or `unserved`) decides nothing — each
-      // kind's reconcile keeps the entry pending until the tip passes its
-      // `expiresAtHeight`.
-      const keptOne = rawFetched === null ? null : this.ingestOne(rawFetched);
-      const withheld: boolean = rawFetched !== null && keptOne === null;
-      const fetched: PostResult | null = keptOne === null ? null : rawFetched;
+      // (WEB_INTERFACE → The extension → "The post check"): the rebuilt
+      // row is what the reconciles, the cache and the landings see;
+      // `null` from a non-null answer is a withheld row — `unbound`,
+      // `unserved` or not well-formed — and each reconcile keeps the
+      // entry pending until the tip passes its `expiresAtHeight`.
+      const fetched = rawFetched === null ? null : this.ingestOne(rawFetched);
+      const withheld: boolean = rawFetched !== null && fetched === null;
       if (entry.kind === 'post') {
         const outcome = reconcilePost(entry, fetched, tip, withheld);
         if (outcome === 'pending') continue;

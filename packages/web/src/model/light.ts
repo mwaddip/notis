@@ -7,7 +7,7 @@ import type { PostJson, LightJson } from '../api/dto';
 // answer; the light row carries the node's word on it — status, block position
 // and time, counts, name and `likedByViewer`. `tx` is not carried: a cache
 // entry's transaction bytes are held once in `txBytes`, and the row beside
-// them restates no hex (WEB_INTERFACE → The extension → "An entry").
+// them restates no hex (WEB_INTERFACE → The extension → "The post cache").
 
 /** `full`'s id, txId, content, contentHash, author, parentRefs, protocolVersion
  *  and type under `light`'s status, blockHeight, blockIndex, blockCreatedAt,

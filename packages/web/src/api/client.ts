@@ -131,8 +131,7 @@ export class NodeClient implements Api {
     // `PageError` for a list that is not an array, as it does for a malformed
     // row (WEB_INTERFACE → The extension → "The light read" → "A light page is
     // held to its shape").
-    const raw = res as unknown as Record<string, unknown>;
-    return { ...res, posts: readLightRows(raw['posts']), pending: readLightRows(raw['pending']) };
+    return { ...res, posts: readLightRows(res.posts), pending: readLightRows(res.pending) };
   }
 
   async thread(id: string, page: Page = {}, viewer?: string, withTx?: boolean, light?: boolean): Promise<ThreadResult | null> {
@@ -146,13 +145,12 @@ export class NodeClient implements Api {
     // row (WEB_INTERFACE → The extension → "The light read" → "A light page is
     // held to its shape"). The subject is `null` or one row, so a `null`
     // short-circuits — `readLightRow` reads a non-null subject.
-    const raw = res as unknown as Record<string, unknown>;
     return {
       ...res,
-      post: res.post === null ? null : readLightRow(raw['post']),
-      ancestors: readLightRows(raw['ancestors']),
-      descendants: readLightRows(raw['descendants']),
-      pending: readLightRows(raw['pending']),
+      post: res.post === null ? null : readLightRow(res.post),
+      ancestors: readLightRows(res.ancestors),
+      descendants: readLightRows(res.descendants),
+      pending: readLightRows(res.pending),
     };
   }
 

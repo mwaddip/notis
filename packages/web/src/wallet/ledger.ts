@@ -1,7 +1,7 @@
 import { readStore, writeStore } from '../prefs';
 import { isWithdrawn } from '../api/dto';
 import { heldEntry } from './expiry';
-import type { PostResult, KarmaResult, UsernameResult, CreditsResult } from '../api/dto';
+import type { PostJson, WithdrawnJson, KarmaResult, UsernameResult, CreditsResult } from '../api/dto';
 import type { SpendableBox, ChangeRef, PendingEntry, EntryOutcome, SendRef, UnboundedEntry } from './types';
 
 // The persisted pending ledger and the spendable view over it
@@ -121,7 +121,7 @@ export class PendingLedger {
 // never expired as on the node's 404.
 // ---------------------------------------------------------------------------
 
-export function reconcilePost(entry: PendingEntry, fetched: PostResult | null, tip: number, withheld = false): EntryOutcome {
+export function reconcilePost(entry: PendingEntry, fetched: PostJson | WithdrawnJson | null, tip: number, withheld = false): EntryOutcome {
   if (withheld) return tip > entry.expiresAtHeight ? 'expired' : 'pending';
   if (fetched === null) return 'expired'; // 404 — the mempool purged it, or it was never admitted
   if (isWithdrawn(fetched)) return 'landed'; // on-chain, then withdrawn
@@ -129,7 +129,7 @@ export function reconcilePost(entry: PendingEntry, fetched: PostResult | null, t
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
 }
 
-export function reconcileLike(entry: PendingEntry, fetched: PostResult | null, tip: number, withheld = false): EntryOutcome {
+export function reconcileLike(entry: PendingEntry, fetched: PostJson | WithdrawnJson | null, tip: number, withheld = false): EntryOutcome {
   if (withheld) return tip > entry.expiresAtHeight ? 'expired' : 'pending';
   if (fetched !== null && !isWithdrawn(fetched) && fetched.likedByViewer === true) return 'landed';
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
@@ -234,7 +234,7 @@ export function reconcileInvite(
  *  nothing can land — as is the tip passing `expiresAtHeight`. A live post is
  *  still pending, unlike a post entry: a confirmed live post is not a landing
  *  for a withdrawal (WEB_INTERFACE → The withdraw control). */
-export function reconcileWithdraw(entry: PendingEntry, fetched: PostResult | null, tip: number, withheld = false): EntryOutcome {
+export function reconcileWithdraw(entry: PendingEntry, fetched: PostJson | WithdrawnJson | null, tip: number, withheld = false): EntryOutcome {
   if (withheld) return tip > entry.expiresAtHeight ? 'expired' : 'pending';
   if (fetched === null) return 'expired';
   if (isWithdrawn(fetched)) return 'landed';

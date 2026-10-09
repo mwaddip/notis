@@ -3,13 +3,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { App } from '../src/app';
 import { PendingLedger } from '../src/wallet/ledger';
 import type { Api } from '../src/api/client';
-import type { AppState, PostsVerifier } from '../src/model/state';
+import type { AppState, PostsVerifier, PostCache, CachedThread, HeldPost } from '../src/model/state';
 import type { WriteClient } from '../src/api/write';
 import type { PostCheck } from '@dagsocial/nipopow-client';
 import type {
   PostJson, PostResult, StatusResult, ThreadResult, FeedResult, BlockCurrent, WithdrawnJson,
 } from '../src/api/dto';
 import { contentHashHex } from '../src/integrity';
+import { MAX_CONTENT_BYTES } from '@dagsocial/types';
 
 // The App's post-check wiring (WEB_INTERFACE → The extension → "The post
 // check"): every row of a read passes through the verifier before it enters
@@ -107,11 +108,30 @@ function makeApi(f: Fake): Api {
   };
 }
 
+/** A test-only PostCache that records every put and withdraw and reads
+ *  nothing — threadInternal and getMany answer empty. The App's cache
+ *  interactions are started and not awaited by the renders, so the
+ *  recorded calls are the test's assertion surface. */
+function recordingCache(): { cache: PostCache; puts: Array<{ id: string; row: PostJson }>; withdraws: Array<{ id: string; row: WithdrawnJson }> } {
+  const puts: Array<{ id: string; row: PostJson }> = [];
+  const withdraws: Array<{ id: string; row: WithdrawnJson }> = [];
+  const cache: PostCache = {
+    open: async () => {},
+    put: async (entry) => { puts.push({ id: entry.id, row: entry.row }); },
+    withdraw: async (id, row) => { withdraws.push({ id, row }); },
+    thread: async (): Promise<CachedThread | null> => null,
+    getMany: async (): Promise<Map<string, HeldPost>> => new Map(),
+    refresh: async () => {},
+  };
+  return { cache, puts, withdraws };
+}
+
 function harness(opts: {
   verifier?: PostsVerifier | null;
   feedRes?: FeedResult;
   threadRes?: ThreadResult | null;
   postRes?: PostResult | null;
+  postCache?: PostCache | null;
 } = {}) {
   const fake: Fake = {
     feedCalls: [], feedRes: opts.feedRes ?? { posts: [], next: null, pending: [], pendingCount: 0 },
@@ -136,7 +156,7 @@ function harness(opts: {
     backedUp: () => false,
     onChange: () => {},
   };
-  const app = new App(api, writeClient, identity, ledger, undefined, undefined, null, null, null, opts.verifier ?? null);
+  const app = new App(api, writeClient, identity, ledger, undefined, undefined, null, null, null, opts.verifier ?? null, opts.postCache ?? null);
   const appbar = document.createElement('div');
   const feedEl = document.createElement('section'); feedEl.id = 'feed';
   const panes = document.createElement('section'); panes.id = 'panes';
@@ -377,5 +397,106 @@ describe('post-check — one check call per read', () => {
     expect(sv.calls.length).toBe(1);
     // The batch covers posts + pending.
     expect(sv.calls[0]!.length).toBe(3);
+  });
+});
+
+// New cases (AF1 · Task 4b) — the single row's gate rebuilds through the
+// readers and hands the rebuilt row on.
+
+describe('post-check — ingestOne rebuilds the row and strips every extra', () => {
+  it('a bound row carrying an extra key and `tx` enters state and the cache without either', async () => {
+    const r = { ...row('p'), surprise: 'ignored', confirmedAuthor: 'xx'.repeat(32), tx: 'de'.repeat(16) };
+    const sv = scriptedVerifier(() => BOUND(r as unknown as PostJson));
+    const rec = recordingCache();
+    const h = harness({ verifier: sv.verifier, postCache: rec.cache });
+    const app = h.app as unknown as {
+      ingestOne(r: unknown): PostJson | WithdrawnJson | null;
+    };
+    const kept = app.ingestOne(r as unknown as PostJson);
+    expect(kept).not.toBeNull();
+    expect(kept).not.toBe(r);
+    const keptRow = kept as unknown as Record<string, unknown>;
+    expect(keptRow['surprise']).toBeUndefined();
+    expect(keptRow['confirmedAuthor']).toBeUndefined();
+    expect(keptRow['tx']).toBeUndefined();
+    await flush();
+    expect(rec.puts).toHaveLength(1);
+    const putRow = rec.puts[0]!.row as unknown as Record<string, unknown>;
+    expect(putRow['surprise']).toBeUndefined();
+    expect(putRow['confirmedAuthor']).toBeUndefined();
+    expect(putRow['tx']).toBeUndefined();
+  });
+
+  it('a bound row with a string likeCount is withheld — nothing enters state, nothing is put', async () => {
+    const bad = { ...row('p'), likeCount: '3' as unknown as number };
+    const sv = scriptedVerifier(() => BOUND(bad as PostJson));
+    const rec = recordingCache();
+    const h = harness({ verifier: sv.verifier, postCache: rec.cache });
+    const app = h.app as unknown as {
+      ingestOne(r: unknown): PostJson | WithdrawnJson | null;
+    };
+    expect(app.ingestOne(bad as unknown as PostJson)).toBeNull();
+    await flush();
+    expect(rec.puts).toHaveLength(0);
+  });
+
+  it('a bound row whose content is over MAX_CONTENT_BYTES is withheld', async () => {
+    const bad = { ...row('p'), content: 'a'.repeat(MAX_CONTENT_BYTES + 1) };
+    const sv = scriptedVerifier(() => BOUND(bad as PostJson));
+    const rec = recordingCache();
+    const h = harness({ verifier: sv.verifier, postCache: rec.cache });
+    const app = h.app as unknown as {
+      ingestOne(r: unknown): PostJson | WithdrawnJson | null;
+    };
+    expect(app.ingestOne(bad as unknown as PostJson)).toBeNull();
+    await flush();
+    expect(rec.puts).toHaveLength(0);
+  });
+});
+
+describe('post-check — ingestOne and the withdrawn arm', () => {
+  it('a well-formed withdrawn answer calls the cache\'s withdraw once with the rebuilt row', async () => {
+    const w = tomb('p');
+    const sv = scriptedVerifier(() => NOTHING_TO_BIND);
+    const rec = recordingCache();
+    const h = harness({ verifier: sv.verifier, postCache: rec.cache });
+    const app = h.app as unknown as {
+      ingestOne(r: unknown): PostJson | WithdrawnJson | null;
+    };
+    const kept = app.ingestOne(w);
+    expect(kept).not.toBeNull();
+    expect((kept as WithdrawnJson).kind).toBe('withdrawn');
+    await flush();
+    expect(rec.withdraws).toHaveLength(1);
+    expect(rec.withdraws[0]!.id).toBe(w.id);
+    // The row handed to the cache carries no extra key.
+    const r = rec.withdraws[0]!.row as unknown as Record<string, unknown>;
+    expect(r['surprise']).toBeUndefined();
+  });
+
+  it('a withdrawn answer that is not well-formed is withheld — the cache is not told', async () => {
+    const bad = { ...tomb('p'), author: 'nothex' as unknown as string };
+    const sv = scriptedVerifier(() => NOTHING_TO_BIND);
+    const rec = recordingCache();
+    const h = harness({ verifier: sv.verifier, postCache: rec.cache });
+    const app = h.app as unknown as {
+      ingestOne(r: unknown): PostJson | WithdrawnJson | null;
+    };
+    expect(app.ingestOne(bad as unknown as WithdrawnJson)).toBeNull();
+    await flush();
+    expect(rec.withdraws).toHaveLength(0);
+  });
+});
+
+describe('post-check — with no verifier the node\'s row goes through as it is', () => {
+  it('a bound row with an extra key goes to state through ingestOne', async () => {
+    const r = { ...row('p'), surprise: 'kept' };
+    const h = harness({ verifier: null });
+    const app = h.app as unknown as {
+      ingestOne(r: unknown): PostJson | WithdrawnJson | null;
+    };
+    const kept = app.ingestOne(r as unknown as PostJson);
+    expect(kept).toBe(r);
+    expect((kept as unknown as Record<string, unknown>)['surprise']).toBe('kept');
   });
 });
