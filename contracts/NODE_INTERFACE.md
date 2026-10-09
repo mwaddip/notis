@@ -282,10 +282,12 @@ list, or a stored body that will not read, is fail-stop under this route as unde
 alone** — a hundred ids outgrow a query string — **and it writes nothing**: no store row, no pool entry, no gossip.
 **Its cost is a page's**: each id is resolved by the path a page's row takes, so the most a request reads is
 `BATCH_READ_MAX` rows in as many distinct blocks — the shape "What `tx=1` costs, so the exposure is a number" measures.
-
-> ⚠ **AHEAD OF CODE (2026-10-08, AF1 — `node`)** — the two list routes take `light` as they take any unknown parameter,
-> ignoring it; there is no `POST /posts/batch`, and `BATCH_READ_MAX` is in no module. The batch route's cost is argued
-> from the page's and not measured.
+**Measured beside the page** — 2026-10-09, that bench and its fullest shape, on mains under `powersave` with the
+testnet miner running, two runs of 20 calls a case, medians: 100 ids in 100 distinct full blocks with `tx=1` answer in
+156 ms and 164 ms (188 ms at worst) where the page of the same rows answers in 140 ms and 158 ms (196 ms at worst) —
+within the page's own spread from run to run; without `tx`, 44 ms and 39 ms beside the page's 43 ms and 41 ms; 100 ids
+two to a block in 50 blocks, no two neighbours in one block, 134 ms and 136 ms. **A light page of those 100 rows is
+26 245 bytes** and answers in 42 ms and 38 ms, where the full page is 53 837 bytes and the `tx=1` page 80 237.
 
 **`GET /posts/:id` adds `confirmedAuthor`** to whichever shape it returns: the consensus-recorded
 author from `block_topology`, hex, or `null` until an applied block confirms the post. It is a
