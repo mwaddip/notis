@@ -2517,7 +2517,7 @@ async function runFiguresStep21(cx) {
       `waited ${(wait.elapsedMs / 1000).toFixed(0)}s (~${rate} blocks/min); ` +
       `after press: gold=${JSON.stringify(after.goldText)} (clay=${after.goldHasClay}), figHint=${JSON.stringify(after.figHintText)}, silence=${after.figHintText === null}, all-hints=${JSON.stringify(after.allHints)}`);
   } catch (e) {
-    record(21, false, `error: ${String(e)}`);
+    record(21, false, `error: ${e?.stack ?? String(e)}`);
   }
 }
 
@@ -2681,7 +2681,7 @@ async function runFiguresStep24(cx) {
       `rep initial=${initialRep} → after=${repAfterWait}, drain estimate=${drainOverWait} rep; ` +
       `after press: hint=${JSON.stringify(after.hintText)} silence=${after.hintText === null}, mono=${JSON.stringify(after.monoText)} clay=${after.monoHasClay}`);
   } catch (e) {
-    record(24, false, `error: ${String(e)}`);
+    record(24, false, `error: ${e?.stack ?? String(e)}`);
   }
 }
 
@@ -3072,7 +3072,7 @@ async function runLieArm(cx, relay, arm) {
       `corner led=${corner.ledClass}, title=${JSON.stringify(corner.title)}, ok=${cornerOk}; ` +
       `back to A: ${back.detail}, ok=${back.ok}`);
   } catch (e) {
-    record(arm.step, false, `error: ${String(e)}`);
+    record(arm.step, false, `error: ${e?.stack ?? String(e)}`);
     // An arm that failed on the relay hands the next one A, as every arm
     // leaves it.
     if (onRelay) {
@@ -3162,7 +3162,7 @@ async function runFiguresStep25() {
       `/api/v1/range/ requests on hosted origin=${apiRangeRequests.length} (${JSON.stringify(apiRangeRequests.map((e) => e.params?.request?.url ?? ''))}), ` +
       `.credits-line .hint=${JSON.stringify(hints.creditsLineHint)}, .karma-field .hint=${JSON.stringify(hints.karmaFieldHint)}`);
   } catch (e) {
-    record(25, false, `error: ${String(e)}`);
+    record(25, false, `error: ${e?.stack ?? String(e)}`);
   } finally {
     try { if (cxH) cxH.s.close(); } catch {}
     if (bcx && createdTargetId) {
@@ -3643,7 +3643,7 @@ async function runNamesStep26(cx, rKey) {
       `the reload's log: /usernames?owner=R ×${reloadReqs.ownerLookups}, box proofs at ${JSON.stringify(reloadReqs.boxProofs.map((p) => p.atHeight))}, tip proofs ×${reloadReqs.tipProofs}, settled=${reloadCheck.settled}, ok=${logOk}`);
     return name;
   } catch (e) {
-    record(26, false, `error: ${String(e)}`);
+    record(26, false, `error: ${e?.stack ?? String(e)}`);
     return (await usernameOf(NODE, rKey).catch(() => null))?.name ?? null;
   }
 }
@@ -3957,7 +3957,7 @@ async function runNameLabelArm(cx, relay, arm, ctx) {
       `corner led=${corner.ledClass}, title=${JSON.stringify(corner.title)}, ok=${cornerOk}; ` +
       `back on A: ${back.detail}, ok=${back.ok}`);
   } catch (e) {
-    record(arm.step, false, `error: ${String(e)}`);
+    record(arm.step, false, `error: ${e?.stack ?? String(e)}`);
     // An arm that failed on the relay hands the next one A, as every arm
     // leaves it.
     if (onRelay) {
@@ -4170,7 +4170,7 @@ async function runNamesStep27d(cx, relay, ctx) {
       `back on A: ${back.detail}; the name row ${JSON.stringify(backRow.text)} ${backRow.clay ? 'clay' : 'ink'}, line ${JSON.stringify(backRow.line)}, ok=${back.ok && inkBack}`);
   } catch (e) {
     if (recording) await authorRecord(cx, true).catch(() => {});
-    record('27d', false, `error: ${String(e)}`);
+    record('27d', false, `error: ${e?.stack ?? String(e)}`);
     if (onRelay) {
       await blankNodeAndAwaitVerified(cx).catch((err) => console.error(`[vn] 27d: blank back to A failed: ${String(err)}`));
     }
@@ -4355,7 +4355,7 @@ async function runNameSendArm(cx, relay, arm, { sHeld }) {
       `corner led=${corner.ledClass}, title=${JSON.stringify(corner.title)}, ok=${cornerOk}; ` +
       `back on A: ${back.detail}, ok=${back.ok}`);
   } catch (e) {
-    record(arm.step, false, `error: ${String(e)}`);
+    record(arm.step, false, `error: ${e?.stack ?? String(e)}`);
     if (onRelay) {
       await blankNodeAndAwaitVerified(cx).catch((err) => console.error(`[vn] ${arm.step}: blank back to A failed: ${String(err)}`));
     }
@@ -4575,7 +4575,7 @@ async function runNamesStep29(cx, sHeld) {
       `declined=${declined}, flight ${JSON.stringify(after.flight)}, /credits/transfer requests=${transfers}, form kept ${JSON.stringify(after.to)} / ${JSON.stringify(after.amount)}; ` +
       `the check: /usernames/${sHeld.name} ×${reqs.handleLookups}, box ${sBox.slice(0, 12)}… proofs at ${JSON.stringify(heights)}, /blocks/current ×${reqs.blocksCurrent}, tip proofs ×${reqs.tipProofs}; S's box ${age}`);
   } catch (e) {
-    record(29, false, `error: ${String(e)}`);
+    record(29, false, `error: ${e?.stack ?? String(e)}`);
   }
 }
 
@@ -4671,7 +4671,7 @@ async function runNamesStep30(rName) {
       `/api/v1/proof/ requests=${proofs.length}; /usernames/<name> requests=${handleReads.length}; ` +
       `/usernames?owner= requests ×${ownerReads.length}: ${JSON.stringify(ownerReads.map((r) => `${r.owner.slice(0, 8)}… — ${r.named ?? 'unexplained'}`))}`);
   } catch (e) {
-    record(30, false, `error: ${String(e)}`);
+    record(30, false, `error: ${e?.stack ?? String(e)}`);
   } finally {
     try { if (cxH) cxH.s.close(); } catch {}
     if (bcx && createdTargetId) {
@@ -5122,10 +5122,13 @@ async function readCacheIds(cx, dbName) {
 
 // Empty both stores of the open database and then reload. The page holds
 // the database open, so a direct `indexedDB.deleteDatabase` would block; CDP
-// IndexedDB.clearObjectStore clears a store the page holds open. The reload
-// after is the reader's act that reads the feed afresh (WEB_INTERFACE → The
-// extension → "The light read" — "every list read is the reader's act").
+// IndexedDB.clearObjectStore clears a store the page holds open. Every pane
+// is closed first, so the restored arrangement reads no thread of its own
+// and the reload reads the feed alone (WEB_INTERFACE → The workspace, →
+// The extension → "The light read" — "every list read is the reader's
+// act"). A step that measures a thread opens it itself after the reload.
 async function clearCacheAndReload(cx, dbName) {
+  await closeAllPanes(cx);
   const originExpr = `location.origin`;
   const origin = await cx.eval(originExpr);
   await cx.call('IndexedDB.enable');
@@ -5172,10 +5175,8 @@ async function deleteCacheEntry(cx, dbName, id) {
 
 // Count the page's requests to the posts routes since startIdx and
 // classify each by method, path and whether the URL carries `tx=1` or
-// `light=1`. The brief's L-steps assert that: a list GET carries `light=1`
-// and no `tx`; a batch POST carries `tx=1`; the single post read carries
-// `tx=1`. The light build never asks a /posts/batch of the hosted web
-// build (L14).
+// `light=1`. L14 reads this of the hosted web build's session to assert
+// no `/posts/batch` of a node, no `tx` and no `light` on any posts read.
 function postRequestsSince(events, startIdx) {
   const all = [];
   for (let i = startIdx; i < events.length; i++) {
@@ -5209,8 +5210,8 @@ async function readFeedShape(cx) {
     const slotIds = slots.map((c) => c.dataset.postId);
     const cardIds = allCards.map((c) => c.dataset.postId);
     const nonSlotIds = allCards.filter((c) => !c.classList.contains('slot')).map((c) => c.dataset.postId);
-    // A slot's shape — the brief's L1 assertion — no text, no control (no
-    // button or link inside its body).
+    // A slot's shape — L1 asserts no text, no control (no button or link
+    // inside its body).
     const slotShapes = slots.map((c) => ({
       id: c.dataset.postId,
       hasHandle: !!c.querySelector('.who .handle'),
@@ -5267,14 +5268,33 @@ async function readThreadPaneShape(cx, rootId) {
       }
       return null;
     };
-    const cards = [...body.querySelectorAll('.card[data-post-id]')].map((c) => ({
-      id: c.dataset.postId,
-      content: (c.querySelector('.card-body')?.textContent ?? '').trim(),
-      isSlot: c.classList.contains('slot'),
-      depth: depthClass(c),
-      withdrawnText: c.querySelector('.withdrawn')?.textContent ?? null,
-      author: c.getAttribute('data-author') ?? null,
-    }));
+    const cards = [...body.querySelectorAll('.card[data-post-id]')].map((c) => {
+      // The author key is drawn in .who by whoRow: on a card with a name,
+      // a .handle carrying data-name-pair (<lowercased key>@<name>); on
+      // one with none, .hex with shortHex(key, 16) text.
+      const who = c.querySelector('.who');
+      let author = null;
+      if (who !== null) {
+        const paired = who.querySelector('[data-name-pair]');
+        if (paired !== null) {
+          const pair = paired.getAttribute('data-name-pair') ?? '';
+          const sep = pair.indexOf('@');
+          author = sep > 0 ? pair.slice(0, sep) : null;
+        } else {
+          const hex = who.querySelector('.hex');
+          const text = (hex?.textContent ?? '').replace(/…$/, '').trim();
+          author = text.length > 0 ? text.toLowerCase() : null;
+        }
+      }
+      return {
+        id: c.dataset.postId,
+        content: (c.querySelector('.card-body')?.textContent ?? '').trim(),
+        isSlot: c.classList.contains('slot'),
+        depth: depthClass(c),
+        withdrawnText: c.querySelector('.withdrawn')?.textContent ?? null,
+        author,
+      };
+    });
     const wl = body.querySelector('.hint.clay.withheld');
     const us = body.querySelector('.hint.unserved');
     const er = body.querySelector('.error');
@@ -5405,6 +5425,26 @@ async function refreshThreadPane(cx, rootId) {
     btn.click();
     return true;
   })()`, true);
+}
+
+// Press each pane's close control until none stands, so the next reload
+// restores none (WEB_INTERFACE → The workspace). The product persists the
+// arrangement to localStorage at every close, so a reload after reads an
+// empty workspace. Returns the number closed.
+async function closeAllPanes(cx) {
+  let closed = 0;
+  for (let i = 0; i < 32; i++) {
+    const went = await cx.eval(`(() => {
+      const btn = document.querySelector('#panes .bar-ctl button[aria-label^="close this"]');
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })()`, true);
+    if (!went) return closed;
+    closed += 1;
+    await sleep(100);
+  }
+  return closed;
 }
 
 // Set the node row to `origin`, then wait for either the feed to re-render
@@ -5547,8 +5587,15 @@ async function lightSteps(cx, targetId = 'unknown') {
     RB.mode = 'honest';
     RA.targetId = null;
     RB.targetId = null;
+
+    // The fixture opens two panes (root, reply1) to post under them; a
+    // thread window restored on reload re-reads itself and resolves its
+    // slots, which steps that measure the feed alone cannot have. Close
+    // every window the block does not open itself, so each cold reload
+    // restores none (WEB_INTERFACE → The workspace).
+    await closeAllPanes(cx);
   } catch (e) {
-    markLightFail(`the block could not start: ${String(e)}`);
+    markLightFail(`the block could not start: ${e?.stack ?? String(e)}`);
     return;
   }
 
@@ -5626,7 +5673,7 @@ async function lightSteps(cx, targetId = 'unknown') {
       `RB reads=${rbSinceHeld.length}, release=${releasedCount}, ` +
       `after release cards=${feedReleased.liveCards?.length} same order=${sameOrder}, line=${JSON.stringify(feedReleased.withheldLineText)}`);
   } catch (e) {
-    record('L1', false, `error: ${String(e)}`);
+    record('L1', false, `error: ${e?.stack ?? String(e)}`);
     RA.mode = 'honest';
     RA.release();
   }
@@ -5637,6 +5684,7 @@ async function lightSteps(cx, targetId = 'unknown') {
     RA.mode = 'honest';
     RB.mode = 'honest';
     const idxBefore = { ra: RA.log.length, rb: RB.log.length };
+    await closeAllPanes(cx);
     await cx.call('Page.reload');
     await cx.waitFor(`!!document.querySelector('#feed .card[data-post-id]:not(.slot)')`,
       'L2 feed has cards after reload', 60000);
@@ -5653,7 +5701,7 @@ async function lightSteps(cx, targetId = 'unknown') {
       `RA list reads=${listsRa.length}, RA batches=${batchesRa.length}, RB batches=${batchesRb.length}, ` +
       `feed slots=${feedShape.slots?.length}, cards=${feedShape.liveCards?.length}`);
   } catch (e) {
-    record('L2', false, `error: ${String(e)}`);
+    record('L2', false, `error: ${e?.stack ?? String(e)}`);
   }
 
   // ---- L3 — the reader's own new post asks no node; one missing post
@@ -5699,31 +5747,34 @@ async function lightSteps(cx, targetId = 'unknown') {
       const batchNamesOwn = (relay, slice) => batchesIn(slice).some((e) => batchIdsOf(e).includes(ownIdLower));
       const noBatchForOwn = !batchNamesOwn(RA, raSliceRefresh) && !batchNamesOwn(RB, rbSliceRefresh);
 
-      // Delete one other held entry — reply3 — and reload: exactly one
-      // batch for exactly that id; its card stands after.
-      const delRes = await deleteCacheEntry(cx, aDbName, reply3Id);
+      // Delete one entry the feed lists — the fixture's root — and reload:
+      // exactly one batch for exactly that id; the root's card stands after.
+      // The feed shows roots alone, so an id a batch is read for after a
+      // reload is a root the feed listed.
+      const delRes = await deleteCacheEntry(cx, aDbName, rootId);
       const idxBefore = { ra: RA.log.length, rb: RB.log.length };
+      await closeAllPanes(cx);
       await cx.call('Page.reload');
-      await cx.waitFor(`!!document.querySelector('#feed .card[data-post-id="${reply3Id}"]:not(.slot)')`,
-        'L3 reply3 card after reload', 60000);
+      await cx.waitFor(`!!document.querySelector('#feed .card[data-post-id="${rootId}"]:not(.slot)')`,
+        'L3 root card after reload', 60000);
       await sleep(2000);
       const raSlice = RA.log.slice(idxBefore.ra);
       const rbSlice = RB.log.slice(idxBefore.rb);
       const batchesAll = [...batchesIn(raSlice), ...batchesIn(rbSlice)];
-      const batchesForTarget = batchesAll.filter((e) => batchIdsOf(e).includes(reply3Id.toLowerCase()));
+      const batchesForTarget = batchesAll.filter((e) => batchIdsOf(e).includes(rootId.toLowerCase()));
       const exactlyOne = batchesForTarget.length === 1 && batchIdsOf(batchesForTarget[0]).length === 1
-        && batchIdsOf(batchesForTarget[0])[0] === reply3Id.toLowerCase();
+        && batchIdsOf(batchesForTarget[0])[0] === rootId.toLowerCase();
       const feedShape = await readFeedShape(cx);
-      const cardStands = feedShape.liveCards?.includes(reply3Id) === true
-        && !feedShape.slots?.includes(reply3Id);
+      const cardStands = feedShape.liveCards?.includes(rootId) === true
+        && !feedShape.slots?.includes(rootId);
       record('L3', noBatchForOwn && exactlyOne && cardStands && delRes === 'deleted',
         `own post id=${ownId.slice(0, 8)}…, no batch names it (RA=${raSliceRefresh.length} RB=${rbSliceRefresh.length} entries); ` +
-        `deleted ${reply3Id.slice(0, 8)}… from ${aDbName.slice(0, 24)}… (${delRes}); ` +
-        `batches naming reply3=${batchesForTarget.length} (ids=${JSON.stringify(batchesForTarget.map((e) => e.batchIds))}), ` +
-        `exactly one=${exactlyOne}, reply3 card stands=${cardStands}`);
+        `deleted root ${rootId.slice(0, 8)}… from ${aDbName.slice(0, 24)}… (${delRes}); ` +
+        `batches naming root=${batchesForTarget.length} (ids=${JSON.stringify(batchesForTarget.map((e) => e.batchIds))}), ` +
+        `exactly one=${exactlyOne}, root card stands=${cardStands}`);
     }
   } catch (e) {
-    record('L3', false, `error: ${String(e)}`);
+    record('L3', false, `error: ${e?.stack ?? String(e)}`);
   }
 
   // ---- L4 — the pointer walks. Cache emptied, reload: the feed's batch
@@ -5761,7 +5812,7 @@ async function lightSteps(cx, targetId = 'unknown') {
       `feed batches: RA=${batchesRa.length} RB=${batchesRb.length} (feed went to RA=${feedWentToRA}); ` +
       `thread batches: RA=${batchesRaThread.length} RB=${batchesRbThread.length} (thread went to RB=${threadWentToRB})`);
   } catch (e) {
-    record('L4', false, `error: ${String(e)}`);
+    record('L4', false, `error: ${e?.stack ?? String(e)}`);
   }
 
   // ---- L5 — a node that leaves ids out. Cache emptied, RA on drop,
@@ -5787,7 +5838,7 @@ async function lightSteps(cx, targetId = 'unknown') {
       `RA drop batches=${batchesRa.length} ids×${idsRa.length}, RB honest batches=${batchesRb.length} ids×${idsRb.length}, same ids=${sameIds}, line=${JSON.stringify(feedShape.withheldLineText)}, slots=${feedShape.slots?.length}`);
     RA.mode = 'honest';
   } catch (e) {
-    record('L5', false, `error: ${String(e)}`);
+    record('L5', false, `error: ${e?.stack ?? String(e)}`);
     RA.mode = 'honest';
   }
 
@@ -5814,7 +5865,7 @@ async function lightSteps(cx, targetId = 'unknown') {
     RA.mode = 'honest';
     RA.targetId = null;
   } catch (e) {
-    record('L6', false, `error: ${String(e)}`);
+    record('L6', false, `error: ${e?.stack ?? String(e)}`);
     RA.mode = 'honest';
     RA.targetId = null;
   }
@@ -5850,7 +5901,7 @@ async function lightSteps(cx, targetId = 'unknown') {
     RA.targetId = null;
     RB.mode = 'honest';
   } catch (e) {
-    record('L7', false, `error: ${String(e)}`);
+    record('L7', false, `error: ${e?.stack ?? String(e)}`);
     RA.mode = 'honest';
     RA.targetId = null;
     RB.mode = 'honest';
@@ -5872,7 +5923,7 @@ async function lightSteps(cx, targetId = 'unknown') {
     RA.mode = 'honest';
     RB.mode = 'honest';
   } catch (e) {
-    record('L8', false, `error: ${String(e)}`);
+    record('L8', false, `error: ${e?.stack ?? String(e)}`);
     RA.mode = 'honest';
     RB.mode = 'honest';
   }
@@ -5921,6 +5972,7 @@ async function lightSteps(cx, targetId = 'unknown') {
       // Then: both relays honest and reload — every card.
       RA.mode = 'honest';
       RB.mode = 'honest';
+      await closeAllPanes(cx);
       await cx.call('Page.reload');
       await cx.waitFor(`!!document.querySelector('#feed .card[data-post-id]:not(.slot)')`,
         'L9 feed cards after honest reload', 60000);
@@ -5936,17 +5988,19 @@ async function lightSteps(cx, targetId = 'unknown') {
     RA.mode = 'honest';
     RB.mode = 'honest';
   } catch (e) {
-    record('L9', false, `error: ${String(e)}`);
+    record('L9', false, `error: ${e?.stack ?? String(e)}`);
     RA.mode = 'honest';
     RB.mode = 'honest';
   }
 
   // ---- L10 — a cold thread. R's root carries reply1 (depth 1) and reply2
-  // (depth 2, reply to reply1). Cache emptied, RA on hold, reload, the
-  // thread opened: the subject and each reply are slots, the reply depth-1,
-  // the nested one depth-2; released: each is a card with the class its
-  // slot carried, in the same order. The thread's read asked
-  // …/thread?...light=1 and no tx.
+  // (depth 2, reply to reply1). Cache emptied, RA on hold, reload, the feed
+  // released into cards; the thread opened under both relays on hold — the
+  // feed's resolve walks the pointer, so the thread's batch (the session's
+  // second resolve) goes to RB. The subject and each reply stand as slots,
+  // the reply depth-1, the nested one depth-2; released: each is a card
+  // with the class its slot carried, in the same order. The thread's read
+  // asked …/thread?...light=1 and no tx.
   try {
     RA.mode = 'hold';
     RB.mode = 'honest';
@@ -5959,8 +6013,8 @@ async function lightSteps(cx, targetId = 'unknown') {
     // Simpler flow: let the feed read finish first — the feed read is
     // GET /posts?light=1, not a batch. The batch for the feed's slots is
     // what RA holds. We need to release the feed's batch first so a card
-    // stands and the strip is clickable. Then re-set hold for the
-    // thread's batch.
+    // stands and the strip is clickable. Then set hold on both relays for
+    // the thread's batch — the walking pointer sends it to RB.
     // Wait: slots > 0, batch request arrived, release.
     await cx.waitFor(`document.querySelectorAll('#feed .card.slot[data-post-id]').length > 0`,
       'L10 feed slots stand', 10000).catch(() => {});
@@ -5968,8 +6022,10 @@ async function lightSteps(cx, targetId = 'unknown') {
     RA.release();
     await cx.waitFor(`!!document.querySelector('#feed .card[data-post-id="${rootId}"]:not(.slot)')`,
       'L10 feed root bound after release', 30000);
-    // Re-set hold for the thread's batch.
+    // Both relays on hold for the thread's batch — the pointer walked by
+    // one at the feed's resolve, so the next resolve starts at RB.
     RA.mode = 'hold';
+    RB.mode = 'hold';
     const idxBeforeThread = { ra: RA.log.length, rb: RB.log.length };
     await openThread(cx, rootId);
     // Wait for the thread pane to show slots.
@@ -5980,18 +6036,21 @@ async function lightSteps(cx, targetId = 'unknown') {
         || regions.some((r) => r.querySelector('.region-body .card.slot[data-post-id="${reply2Id}"]'));
     })()`, 'L10 thread slots stand', 15000).catch(() => {});
     const paneHeld = await readThreadPaneShape(cx, rootId);
-    // Mid-hold slice — the thread list GET is pushed by its own `finish`;
-    // the batch's entry is held in flight, pushed only by its `finish`
-    // after release.
+    // Mid-hold slice — the thread list GET lands on RA (the client's base)
+    // and is pushed by its own `finish`; the batch's entry is held in
+    // flight at whichever relay the pointer picked, pushed only by its
+    // `finish` after release.
     const raMidHold = RA.log.slice(idxBeforeThread.ra);
     const threadLists = raMidHold.filter((e) =>
       e.method === 'GET' && /^\/posts\/[0-9a-f]{64}\/thread/.test(e.path.split('?')[0]));
     const threadListsLight = threadLists.filter((e) => /[?&]light=1(?:&|$)/.test(e.path));
     const threadListsHaveTx = threadLists.some((e) => /[?&]tx=/.test(e.path));
-    // Release — slot cards become cards; the reply depth-1 and the nested
-    // one depth-2.
+    // Release both — slot cards become cards; the reply depth-1 and the
+    // nested one depth-2.
     const releaseAt = Date.now();
-    const released = RA.release();
+    const releasedRa = RA.release();
+    const releasedRb = RB.release();
+    const released = releasedRa + releasedRb;
     await cx.waitFor(`(() => {
       const regions = [...document.querySelectorAll('#panes .region')];
       return regions.some((r) =>
@@ -6009,31 +6068,37 @@ async function lightSteps(cx, targetId = 'unknown') {
     const slotsBecameCards = r1Held?.isSlot === true && r2Held?.isSlot === true
       && r1Released?.isSlot === false && r2Released?.isSlot === false;
     // The batch's entry is pushed by `finish` on the honest fall-through
-    // after release, so the slice after the wait names it. It is the one
-    // RA answered: status 200, doneAt at or after the release moment. RB
-    // was not asked.
+    // after release, so the slice after the wait names it. The pointer
+    // walked by one at the feed's resolve, so the second resolve's batch
+    // goes to RB; both relays were on hold, so whichever caught it holds
+    // it. The held entry — the batch answered after the release — reads
+    // status 200, doneAt at or after the release moment.
     const raAfterRelease = RA.log.slice(idxBeforeThread.ra);
-    const threadBatches = batchesIn(raAfterRelease);
+    const rbAfterRelease = RB.log.slice(idxBeforeThread.rb);
+    const threadBatchesRa = batchesIn(raAfterRelease);
+    const threadBatchesRb = batchesIn(rbAfterRelease);
+    const threadBatches = [...threadBatchesRa, ...threadBatchesRb];
     const heldBatch = threadBatches[threadBatches.length - 1] ?? null;
     const batchAnsweredAfterRelease = heldBatch !== null
       && heldBatch.status === 200
       && typeof heldBatch.doneAt === 'number'
       && heldBatch.doneAt >= releaseAt;
-    const rbSinceThread = RB.log.slice(idxBeforeThread.rb);
-    const rbUntouched = rbSinceThread.length === 0;
     record('L10', threadListsLight.length >= 1 && !threadListsHaveTx && depthClassOk
-        && slotsBecameCards && released >= 1 && batchAnsweredAfterRelease && rbUntouched,
+        && slotsBecameCards && released >= 1 && batchAnsweredAfterRelease,
       `thread list reads=${threadLists.length} (light=${threadListsLight.length}, any tx=${threadListsHaveTx}); ` +
       `held pane: reply1 depth=${r1Held?.depth} isSlot=${r1Held?.isSlot}, reply2 depth=${r2Held?.depth} isSlot=${r2Held?.isSlot}; ` +
       `released pane: reply1 depth=${r1Released?.depth} isSlot=${r1Released?.isSlot}, reply2 depth=${r2Released?.depth} isSlot=${r2Released?.isSlot}; ` +
       `held batch answered after release=${batchAnsweredAfterRelease} (status=${heldBatch?.status}, doneAt-releaseAt=${heldBatch?.doneAt !== undefined && heldBatch.doneAt !== null ? heldBatch.doneAt - releaseAt : 'n/a'}ms); ` +
-      `RB reads=${rbSinceThread.length}; ` +
-      `release count=${released}`);
+      `thread batches RA=${threadBatchesRa.length} RB=${threadBatchesRb.length}; ` +
+      `release count=${released} (RA=${releasedRa}, RB=${releasedRb})`);
     RA.mode = 'honest';
+    RB.mode = 'honest';
   } catch (e) {
-    record('L10', false, `error: ${String(e)}`);
+    record('L10', false, `error: ${e?.stack ?? String(e)}`);
     RA.mode = 'honest';
+    RB.mode = 'honest';
     RA.release();
+    RB.release();
   }
 
   // ---- L11 — a held thread whose listing fails. With the thread held
@@ -6072,7 +6137,7 @@ async function lightSteps(cx, targetId = 'unknown') {
       `list-down pane: error=${JSON.stringify(paneDown.errorLineText)}, reply1 held=${hasReply1}, reply2 held=${hasReply2}, batches during list-down=${batchesDown.length}; ` +
       `honest pane: error=${JSON.stringify(paneHonest.errorLineText)}, root present=${honestHasRoot}`);
   } catch (e) {
-    record('L11', false, `error: ${String(e)}`);
+    record('L11', false, `error: ${e?.stack ?? String(e)}`);
     RA.mode = 'honest';
   }
 
@@ -6112,8 +6177,16 @@ async function lightSteps(cx, targetId = 'unknown') {
       await sleep(2000);
       const paneWithdrawn = await readThreadPaneShape(cx, rootId);
       const r2 = (paneWithdrawn.cards ?? []).find((c) => c.id === reply2Id);
+      // The author key read from the card is either R's full key
+      // (lowercased, from .who [data-name-pair]'s prefix) or R's 16-char
+      // hex prefix (from .who .hex's text, lowercased); R's full key as
+      // the file holds it may be mixed case, so the comparison takes
+      // both sides as lowercase and reads a prefix as a startsWith.
+      const rKeyLower = typeof R_JSON.pubKeyHex === 'string' ? R_JSON.pubKeyHex.toLowerCase() : '';
+      const authorOk = r2 !== undefined && typeof r2.author === 'string' && r2.author.length > 0
+        && (r2.author === rKeyLower || rKeyLower.startsWith(r2.author));
       const withdrawnTextOk = r2 !== undefined && typeof r2.withdrawnText === 'string'
-        && r2.withdrawnText.length > 0 && r2.author === R_JSON.pubKeyHex;
+        && r2.withdrawnText.length > 0 && authorOk;
       const depthOk = r2 !== undefined && r2.depth === 'depth-2';
       // The cache entry for reply2 holds no text — i.e., the row kind is
       // withdrawn.
@@ -6153,7 +6226,7 @@ async function lightSteps(cx, targetId = 'unknown') {
         `after reload: withdrawn card=${withdrawnReopenOk}, batches=${batchesSlice.length} name reply2=${!noBatchNamesReply2}`);
     }
   } catch (e) {
-    record('L12', false, `error: ${String(e)}`);
+    record('L12', false, `error: ${e?.stack ?? String(e)}`);
   }
 
   // ---- L13 — another chain. A light page of the feed is recorded from
@@ -6235,7 +6308,7 @@ async function lightSteps(cx, targetId = 'unknown') {
       }
     }
   } catch (e) {
-    record('L13', false, `error: ${String(e)}`);
+    record('L13', false, `error: ${e?.stack ?? String(e)}`);
     RA.upstream = NODE.replace(/\/+$/, '');
     RB.upstream = B_ORIGIN;
     RA.mode = 'honest';
@@ -6285,7 +6358,7 @@ async function lightSteps(cx, targetId = 'unknown') {
           `feed slots=${feedShape.slots?.length}, line=${JSON.stringify(feedShape.withheldLineText)}`);
       }
     } catch (e) {
-      record('L14', false, `error: ${String(e)}`);
+      record('L14', false, `error: ${e?.stack ?? String(e)}`);
     } finally {
       try { if (cxH) cxH.s.close(); } catch {}
       if (bcx && createdTargetId) await bcx.call('Target.closeTarget', { targetId: createdTargetId }).catch(() => {});
@@ -7717,7 +7790,7 @@ async function main() {
         if (bctxId) await bcx.call('Target.disposeBrowserContext', { browserContextId: bctxId }).catch(() => {});
       }
     } catch (e) {
-      record('13-uncancelled', false, `error: ${String(e)}`);
+      record('13-uncancelled', false, `error: ${e?.stack ?? String(e)}`);
     } finally {
       try { if (cxObserver) cxObserver.s.close(); } catch {}
     }
