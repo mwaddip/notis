@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from 'vitest';
-import type { PostJson, PostResult, ThreadResult, FeedResult, UsernameResult, CreditsResult, KarmaResult, BondsResult } from '../src/api/dto';
+import type { PostJson, PostResult, ThreadResult, FeedResult, UsernameResult, CreditsResult, KarmaResult, BondsResult, VouchesTargetResult } from '../src/api/dto';
 import {
   ME, fullRow, harness, settle, lockableIdentity, recordingWrites,
   karmaWithBox, membershipGate,
@@ -19,6 +19,7 @@ import { setNode, setTheme } from '../src/prefs';
 
 const OTHER = 'ee'.repeat(32);
 const BOB = 'bb'.repeat(32);
+const NEXT_KEY = 'cc'.repeat(32); // the key an identity change loads
 
 // ---------------------------------------------------------------------------
 // DOM helpers
@@ -177,6 +178,7 @@ function rig(o: {
   credits?: CreditsResult;
   ownName?: UsernameResult;
   bonds?: BondsResult;
+  endorsers?: VouchesTargetResult;
   boot?: 'mount' | 'start';
   membershipGate?: Promise<void>;
   /** The identity carries a sign policy, as the extension's proxy does: the
@@ -195,7 +197,7 @@ function rig(o: {
   const karma = o.karma ?? (o.member ? memberKarma() : karmaWithBox(ME));
   const h = harness({
     identityKey: ME, identity: id.identity, writeClient: writes.client,
-    karma, credits: o.credits, ownName: o.ownName, bonds: o.bonds, feedResults,
+    karma, credits: o.credits, ownName: o.ownName, bonds: o.bonds, endorsers: o.endorsers, feedResults,
     boot: o.boot, membershipGate: o.membershipGate,
   });
   for (const row of feedRows) h.fake.postById!.set(row.id, asResult(row));
@@ -636,8 +638,8 @@ describe('the passphrase row\'s unlock form while the profile is focused in colu
   });
 });
 
-describe('the author window\'s vouch unlock row while the author window is focused in column 2 across a window opening in column 1', () => {
-  it.fails('author window opened from R\'s pane (column 2); vouch pressed and typed; a new thread opened from Q\'s pane (column 1): the node is replaced', async () => {
+describe('the author window\'s vouch unlock row while the author window is focused in column 2 across a window opening in column 0', () => {
+  it('author window opened from R\'s pane (column 2); vouch pressed and typed; a thread opened from the feed joins column 0: the row is the same node under your vouch, its field holds what was typed, and the focus is in the field', async () => {
     const Q = fullRow('Q', { author: OTHER });
     const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
     const T = fullRow('T', { author: BOB });
@@ -668,17 +670,23 @@ describe('the author window\'s vouch unlock row while the author window is focus
     expect(focusedName(regionsOf(h.panes)[2]!)).toBe('author');
 
     // Press T's strip from the feed — origin feed, target 0 → joins column
-    // 0's stack. Column 2 (author) still visible but renderPanes rebuilds
-    // every region.
+    // 0's stack. The author window stays in front in column 2 while every
+    // region is drawn.
     await openFromFeed(h, T.id);
-    expect(regionsOf(h.panes).length).toBeGreaterThanOrEqual(3);
+    expect(regionsOf(h.panes)).toHaveLength(3);
+    expect(focusedName(regionsOf(h.panes)[0]!)).toBe(T.content);
 
     expect(row.isConnected).toBe(true);
+    const now = regionsOf(h.panes)[2]!;
+    expect(now.querySelector('.card-unlock')).toBe(row);
+    expect(rowByLabel(now, 'your vouch').nextElementSibling).toBe(row);
+    expect(field.value).toBe('secret');
+    expect(document.activeElement).toBe(field);
   });
 });
 
-describe('the author window\'s vouch unlock row while the author window is focused in column 1 across the thread it was opened from closing', () => {
-  it.fails('author window opened from Q\'s pane (column 1); vouch typed; R closed by its ✕ (column 2 removed, author shifts): the node is replaced', async () => {
+describe('the author window\'s vouch unlock row across the thread it was opened from closing', () => {
+  it('author window opened from R\'s pane (column 2); vouch typed; R closed by its ✕ — its column goes and the author window stands in column 1: the row is the same node under your vouch, its field holds what was typed, and the focus is in the field', async () => {
     const Q = fullRow('Q', { author: OTHER });
     const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
     const h = rig({
@@ -707,8 +715,14 @@ describe('the author window\'s vouch unlock row while the author window is focus
 
     closeAt(h.panes, 1, 0);
     await settle();
+    expect(regionsOf(h.panes).map(focusedName)).toEqual([Q.content, 'author']);
 
     expect(row.isConnected).toBe(true);
+    const now = regionsOf(h.panes)[1]!;
+    expect(now.querySelector('.card-unlock')).toBe(row);
+    expect(rowByLabel(now, 'your vouch').nextElementSibling).toBe(row);
+    expect(field.value).toBe('secret');
+    expect(document.activeElement).toBe(field);
   });
 });
 
@@ -909,7 +923,7 @@ describe('the settings node field across the theme pressed in its own window', (
 // ---------------------------------------------------------------------------
 
 describe('the author window\'s vouch unlock row in column 2 across the profile opening in column 0 and its reads landing', () => {
-  it.fails('author window opened from R\'s pane (column 2); vouch typed; profile opened from header with reads held back, then released: the node is replaced', async () => {
+  it('author window opened from R\'s pane (column 2); vouch typed; profile opened from header with reads held back, then released: the row is the same node under your vouch, its field holds what was typed, and the focus is in the field', async () => {
     const Q = fullRow('Q', { author: OTHER });
     const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
     const h = rig({ feed: [Q], threads: [thread(Q, [R]), thread(R)], locked: true, member: true });
@@ -934,13 +948,20 @@ describe('the author window\'s vouch unlock row in column 2 across the profile o
 
     const gate = membershipGate();
     h.fake.membershipGate = gate.promise;
-    openProfile(); // targets column 0, joins Q's column; column 2 untouched by placement but renderPanes fires
+    openProfile(); // targets column 0 and joins Q's column; every region is drawn
     await settle();
+    expect(row.isConnected).toBe(true);
+    expect(document.activeElement).toBe(field);
 
     gate.release();
     await settle();
 
     expect(row.isConnected).toBe(true);
+    const now = regionsOf(h.panes)[2]!;
+    expect(now.querySelector('.card-unlock')).toBe(row);
+    expect(rowByLabel(now, 'your vouch').nextElementSibling).toBe(row);
+    expect(field.value).toBe('secret');
+    expect(document.activeElement).toBe(field);
   });
 });
 
@@ -1189,7 +1210,7 @@ describe('a passphrase typed in a form whose window is covered is held in its fi
 });
 
 describe('the author window\'s vouch unlock row across its window being covered by a stacked thread and brought back', () => {
-  it.fails('author in column 1 opened from Q\'s pane; vouch typed; R opened from Q\'s pane joins column 1 and covers author; author brought back by its bar: the node is replaced', async () => {
+  it('author in column 1 opened from Q\'s pane; vouch typed; R opened from Q\'s pane joins column 1 and covers author; author brought back by its bar: off the document while covered, and on return the row is the same node under your vouch with what was typed in its field', async () => {
     const Q = fullRow('Q', { author: OTHER });
     const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
     const h = rig({ feed: [Q], threads: [thread(Q, [R]), thread(R)], locked: true, member: true });
@@ -1204,16 +1225,23 @@ describe('the author window\'s vouch unlock row across its window being covered 
     wordIn(col1, 'vouch').click();
     await settle();
     const row = col1.querySelector<HTMLElement>('.card-unlock')!;
-    fieldOf(row).value = 'secret';
-    fieldOf(row).focus();
+    const field = fieldOf(row);
+    field.value = 'secret';
+    field.focus();
 
     // R from Q's pane — joins column 1 and covers the author window.
     await openFromPane(regionsOf(h.panes)[0]!, R.id);
+    expect(row.isConnected).toBe(false);
+    expect(field.value).toBe('secret');
     // Column 1 wins = [author, R], bars = [author bar, R bar]. Focus author.
     focusAt(h.panes, 1, 0);
     await settle();
 
     expect(row.isConnected).toBe(true);
+    const now = regionsOf(h.panes)[1]!;
+    expect(now.querySelector('.card-unlock')).toBe(row);
+    expect(rowByLabel(now, 'your vouch').nextElementSibling).toBe(row);
+    expect(field.value).toBe('secret');
   });
 });
 
@@ -1660,9 +1688,61 @@ describe('a standing bond\'s name opens beside the column the profile stands in 
   });
 });
 
+describe('an endorser\'s name and posts open beside the column the author window stands in when pressed', () => {
+  it('the author window moved by ←, by →, and left in column 1 by the column on its left closing: each press opens one column right of the author window', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
+    const endorsers: VouchesTargetResult = {
+      vouches: [{ voucherId: BOB, targetId: OTHER, voucherName: null, targetName: null }], count: 1, next: null,
+    };
+    const h = rig({ feed: [Q], threads: [thread(Q, [R]), thread(R)], locked: false, member: true, endorsers });
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    await openFromPane(regionsOf(h.panes)[0]!, R.id); // column 1 [R]
+    authorBtnOf(cardOf(regionsOf(h.panes)[1]!, R.id)).click(); // column 2 [author:OTHER]
+    await settle();
+    const names = (): Array<string | null> => regionsOf(h.panes).map(focusedName);
+    const authorIn = (ci: number): HTMLElement => bodyOf(regionsOf(h.panes)[ci]!);
+    expect(names()).toEqual([Q.content, R.content, 'author']);
+    const body = authorIn(2);
+
+    // ← folds the author window into R's column: its children open in column 2.
+    moveAt(h.panes, 2, 0, '←');
+    await settle();
+    expect(names()).toEqual([Q.content, 'author']);
+    expect(authorIn(1)).toBe(body);
+    wordIn(rowByLabel(body, 'posts'), 'posts').click();
+    await settle();
+    expect(names()).toEqual([Q.content, 'author', 'posts']);
+    closeAt(h.panes, 2, 0);
+    await settle();
+
+    // → gives it column 2 again: an endorser's window opens in column 3.
+    moveAt(h.panes, 1, 1, '→');
+    await settle();
+    expect(names()).toEqual([Q.content, R.content, 'author']);
+    expect(authorIn(2)).toBe(body);
+    body.querySelector<HTMLButtonElement>('.endorser .authorbtn')!.click();
+    await settle();
+    expect(names()).toEqual([Q.content, R.content, 'author', 'author']);
+    closeAt(h.panes, 3, 0);
+    await settle();
+
+    // R's column goes: the author window stands in column 1, and posts opens in column 2.
+    closeAt(h.panes, 1, 0);
+    await settle();
+    expect(names()).toEqual([Q.content, 'author']);
+    expect(authorIn(1)).toBe(body);
+    wordIn(rowByLabel(body, 'posts'), 'posts').click();
+    await settle();
+    expect(names()).toEqual([Q.content, 'author', 'posts']);
+  });
+});
+
 // ===========================================================================
-// Group D — what ends a window's body: its window closed (WEB_INTERFACE →
-// The workspace → "What ends a form in a window").
+// Group D — what ends a window's body: its window closed, a change of the
+// identity, a change of the node read (WEB_INTERFACE → The workspace → "What
+// ends a form in a window").
 // ===========================================================================
 
 describe('a window closed with a form open ends the form, and the window opened again draws a fresh body', () => {
@@ -1789,5 +1869,115 @@ describe('a window closed with a form open ends the form, and the window opened 
     expect(again).not.toBe(body);
     expect(again.querySelector('.card-unlock')).toBeNull();
     expect(wordIn(again, 'vouch')).not.toBeNull();
+  });
+});
+
+/** The four windows open with a form in each: Q's thread in column 0 under
+ *  `@profile`, `@wallet` and `@settings` — the last opened in front — and Q's
+ *  author window in column 1. Answers each body and the fields typed into. */
+async function fourWithForms(h: Rig, Q: PostJson): Promise<{
+  bodies: { profile: HTMLElement; wallet: HTMLElement; settings: HTMLElement; author: HTMLElement };
+  typed: HTMLInputElement[];
+  node: HTMLInputElement;
+}> {
+  await boot(h);
+  await openFromFeed(h, Q.id);
+  authorBtnOf(cardOf(regionsOf(h.panes)[0]!, Q.id)).click(); // column 1 [author]
+  await settle();
+  const author = bodyOf(regionsOf(h.panes)[1]!);
+  wordIn(author, 'vouch').click();
+  const vouchField = fieldOf(author.querySelector<HTMLElement>('.card-unlock')!);
+  vouchField.value = 'secret';
+
+  openProfile(); // column 0 [Q, profile]
+  await settle();
+  const profile = bodyOf(regionsOf(h.panes)[0]!);
+  wordIn(profile.querySelector<HTMLElement>('.pp-field')!, 'unlock').click();
+  const unlockField = fieldOf(profile);
+  unlockField.value = 'secret';
+
+  openWallet(); // column 0 [Q, profile, wallet]
+  await settle();
+  const wallet = bodyOf(regionsOf(h.panes)[0]!);
+  const send = wallet.querySelectorAll<HTMLInputElement>('form.credits-form input');
+  send[0]!.value = BOB;
+  send[1]!.value = '1.5';
+
+  openSettings(); // column 0 [Q, profile, wallet, settings]
+  await settle();
+  const settings = bodyOf(regionsOf(h.panes)[0]!);
+  const node = nodeFieldOf(settings);
+  node.value = 'https://example.test';
+
+  return { bodies: { profile, wallet, settings, author }, typed: [vouchField, unlockField, send[0]!, send[1]!], node };
+}
+
+describe('a change of the identity builds every window\'s body anew', () => {
+  it('a form open in each of the four, then another key loaded: every field typed into reads empty, and each window in front is another node with no form', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const h = rig({ feed: [Q], threads: [thread(Q)], locked: true, member: true, credits: creditsWithBox(ME) });
+    const { bodies, typed, node } = await fourWithForms(h, Q);
+
+    h.fake.feedQueue.push(page([Q])); // the feed, read again for the new key
+    h.id.changeKey(NEXT_KEY);
+    await settle();
+    for (const field of [...typed, node]) expect(field.value).toBe('');
+    for (const body of Object.values(bodies)) expect(body.isConnected).toBe(false);
+
+    const settings = bodyOf(regionsOf(h.panes)[0]!);
+    expect(settings).not.toBe(bodies.settings);
+    expect(nodeFieldOf(settings).value).not.toBe('https://example.test');
+
+    const author = bodyOf(regionsOf(h.panes)[1]!);
+    expect(author).not.toBe(bodies.author);
+    expect(author.querySelector('.card-unlock')).toBeNull();
+
+    focusAt(h.panes, 0, 2); // the wallet
+    await settle();
+    const wallet = bodyOf(regionsOf(h.panes)[0]!);
+    expect(wallet).not.toBe(bodies.wallet);
+    for (const f of wallet.querySelectorAll<HTMLInputElement>('input')) expect(f.value).toBe('');
+
+    focusAt(h.panes, 0, 1); // the profile
+    await settle();
+    const profile = bodyOf(regionsOf(h.panes)[0]!);
+    expect(profile).not.toBe(bodies.profile);
+    expect(profile.querySelector('.pp-field form')).toBeNull();
+    expect(wordIn(profile.querySelector<HTMLElement>('.pp-field')!, 'unlock')).not.toBeNull();
+  });
+});
+
+describe('a change of the node read builds every window\'s body anew', () => {
+  it('a form open in each of the four, then the settings node committed: every other field typed into reads empty, and each window in front is another node with no form', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const h = rig({ feed: [Q], threads: [thread(Q)], locked: true, member: true, credits: creditsWithBox(ME) });
+    const { bodies, typed, node } = await fourWithForms(h, Q);
+
+    h.fake.feedQueue.push(page([Q])); // the feed, read again from the new node
+    node.dispatchEvent(new Event('change'));
+    await settle();
+    for (const field of typed) expect(field.value).toBe('');
+    for (const body of Object.values(bodies)) expect(body.isConnected).toBe(false);
+
+    const settings = bodyOf(regionsOf(h.panes)[0]!);
+    expect(settings).not.toBe(bodies.settings);
+    expect(nodeFieldOf(settings).value).toBe('https://example.test');
+
+    const author = bodyOf(regionsOf(h.panes)[1]!);
+    expect(author).not.toBe(bodies.author);
+    expect(author.querySelector('.card-unlock')).toBeNull();
+
+    focusAt(h.panes, 0, 2); // the wallet
+    await settle();
+    const wallet = bodyOf(regionsOf(h.panes)[0]!);
+    expect(wallet).not.toBe(bodies.wallet);
+    for (const f of wallet.querySelectorAll<HTMLInputElement>('input')) expect(f.value).toBe('');
+
+    focusAt(h.panes, 0, 1); // the profile
+    await settle();
+    const profile = bodyOf(regionsOf(h.panes)[0]!);
+    expect(profile).not.toBe(bodies.profile);
+    expect(profile.querySelector('.pp-field form')).toBeNull();
+    expect(wordIn(profile.querySelector<HTMLElement>('.pp-field')!, 'unlock')).not.toBeNull();
   });
 });

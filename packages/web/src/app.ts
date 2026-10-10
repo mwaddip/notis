@@ -1511,10 +1511,11 @@ export class App {
     }
     if (id === '@wallet') return { kind: 'wallet', body: walletBody(this.handlers, () => this.ctx()) };
     if (id === '@settings') return { kind: 'whole', body: settingsBody(this.handlers) };
-    const rows = this.bodyRows(id);
-    if (rows === null) return null;
-    const body = rows();
-    return { kind: 'whole', body: { el: body, update: () => body.replaceChildren(...rows().childNodes) } };
+    const sub = windowSubject(id);
+    if (sub?.kind === 'author') {
+      return { kind: 'whole', body: authorBody(this.handlers, () => this.authorCtx(sub.key)) };
+    }
+    return null;
   }
 
   /** The profile window's body, while the window is open. */
@@ -1527,14 +1528,6 @@ export class App {
   private wallet(): WalletBody | null {
     const held = this.bodies.get('@wallet');
     return held?.kind === 'wallet' ? held.body : null;
-  }
-
-  /** A window's rows, drawn from the state as it stands into a fresh node, or
-   *  null for a window drawn from its rows. */
-  private bodyRows(id: string): (() => HTMLElement) | null {
-    const sub = windowSubject(id);
-    if (sub?.kind === 'author') return () => authorBody(this.handlers, this.authorCtx(sub.key));
-    return null;
   }
 
   /** What an author window's rows read: its subject's reads and flight, the

@@ -1,4 +1,4 @@
-import { el, shortHex } from '../dom';
+import { el, shortHex, endForm } from '../dom';
 import { withheldLine } from './withheld-line';
 import { unlockForm } from './passphrase';
 import { card, stageLine, listCardOpts } from './card';
@@ -6,15 +6,25 @@ import { markHandle, nameLine } from './name-handle';
 import type { Flight, CardRow } from './card';
 import type { VouchesTargetResult, UsernameResult, PostJson } from '../api/dto';
 import { isFull } from '../api/dto';
-import type { FeedState } from '../model/state';
+import type { FeedState, WindowBody } from '../model/state';
 import type { Origin } from '../model/workspace';
 
 // The author window and the author-posts window — WEB_INTERFACE → The author
-// window. Pure views in the profile's row idiom: they declare the narrow shapes
+// window. Views in the profile's row idiom: they declare the narrow shapes
 // they read (AuthorCtx / PostsCtx) and call (AuthorHandlers / PostsHandlers), and
-// the App's RenderCtx and Handlers satisfy them structurally, so there is one
-// contract, not two. With no identity loaded the window is the read surface
-// exactly — no your-vouch row.
+// the App's Handlers satisfy the second structurally. With no identity loaded
+// the author window is the read surface exactly — no your-vouch row.
+//
+// The author window's body is one node from the window's open to its close
+// (WEB_INTERFACE → The workspace → "A window's body stands while the window is
+// open"): its rows are built once, `update` draws the name, the endorsers and
+// the reader's relation from the state it reads, and the unlock row under
+// `your vouch` stands through it while the identity is locked and the row
+// still offers the word it was opened from (→ "A draw updates a standing body
+// in place"). `vouch`, `unvouch`, an endorser's name and `posts` read the lock
+// and the column the window stands in when pressed (→ "A window's controls act
+// on the state as it stands at the press"). The author-posts window is drawn
+// from its rows at every draw.
 
 function row(label: string): { row: HTMLElement; field: HTMLElement } {
   const r = el('div', 'row');
@@ -59,86 +69,110 @@ export interface AuthorHandlers {
   unlockIdentity: (passphrase: string) => Promise<void>;
 }
 
-export function authorBody(handlers: AuthorHandlers, ctx: AuthorCtx): HTMLElement {
+/** `read` answers the window's state as it stands when called; the subject's
+ *  key is the window's own and never moves. */
+export function authorBody(handlers: AuthorHandlers, read: () => AuthorCtx): WindowBody {
   const b = el('div', 'winbody');
-
-  // A locked vouch mounts its unlock under the your-vouch row — the one unlock
-  // spot in this window (WEB_INTERFACE → The identity module).
-  let yourVouchRow: HTMLElement | null = null;
-  const vouchAction = (key: string): void => {
-    if (ctx.locked && ctx.ownKey && yourVouchRow) {
-      mountRowUnlock(yourVouchRow, ctx.ownKey, handlers.unlockIdentity, () => handlers.vouch(key));
-      return;
-    }
-    handlers.vouch(key);
-  };
-  const unvouchAction = (key: string): void => {
-    if (ctx.locked && ctx.ownKey && yourVouchRow) {
-      mountRowUnlock(yourVouchRow, ctx.ownKey, handlers.unlockIdentity, () => handlers.unvouch(key));
-      return;
-    }
-    handlers.unvouch(key);
-  };
+  const authorKey = read().authorKey;
 
   // key — the whole key, mono (WEB_INTERFACE → The author window).
   {
     const { row: r, field } = row('key');
-    field.appendChild(mono(ctx.authorKey));
+    field.appendChild(mono(authorKey));
     b.appendChild(r);
   }
 
-  // name — @Name when held, `no name` muted when not, loading… before the read
-  // (WEB_INTERFACE → The author window). A clay handle carries one clay line
-  // beneath it, the element the figures' line is, drawn by this render alone;
-  // no other site grows one.
-  {
-    const { row: r, field } = row('name');
-    if (!ctx.usernameLoaded) {
-      field.appendChild(el('span', 'inkmute', 'loading…'));
-    } else if (ctx.username) {
-      const handle = el('span', 'handle', '@' + ctx.username.name);
-      markHandle(handle, ctx.authorKey, ctx.username.name);
-      field.appendChild(handle);
-      if (ctx.nameClay(ctx.authorKey, ctx.username.name)) {
-        handle.classList.add('clay');
-        field.appendChild(nameLine());
-      }
-    } else {
-      field.appendChild(el('span', 'inkmute', 'no name'));
-    }
-    b.appendChild(r);
-  }
-
-  // endorsers — N vouches, then one row per voucher: their prefix (a ghost button
-  // into their window). One page; `more` follows `next`.
-  {
-    const { row: r, field } = row('endorsers');
-    endorsers(field, handlers, ctx);
-    b.appendChild(r);
-  }
-
-  // your vouch — the reader's relation and the action, absent with no identity.
-  if (ctx.yourVouch) {
-    const { row: r, field } = row('your vouch');
-    yourVouchRow = r;
-    yourVouch(field, ctx, vouchAction, unvouchAction);
-    b.appendChild(r);
-  }
+  const name = row('name');
+  const endorsersRow = row('endorsers');
+  const yourVouchRow = row('your vouch');
+  b.append(name.row, endorsersRow.row);
 
   // posts — a word that opens the author-posts window beside this one.
+  const posts = row('posts');
   {
-    const { row: r, field } = row('posts');
     const btn = el('button', 'word', 'posts');
     btn.setAttribute('aria-label', "open this author's posts");
-    btn.addEventListener('click', () => handlers.openAuthorPosts(ctx.authorKey, ctx.origin));
-    field.appendChild(btn);
-    b.appendChild(r);
+    btn.addEventListener('click', () => handlers.openAuthorPosts(authorKey, read().origin));
+    posts.field.appendChild(btn);
+    b.appendChild(posts.row);
   }
 
-  return b;
+  // A locked vouch or unvouch mounts its unlock under the your-vouch row — the
+  // one unlock spot in this window; a correct passphrase ends the row and the
+  // word pressed proceeds (WEB_INTERFACE → The identity module).
+  let unlock: { row: HTMLElement; word: 'vouch' | 'unvouch' } | null = null;
+  const endUnlock = (): void => {
+    if (unlock !== null) endForm(unlock.row);
+    unlock = null;
+  };
+  const press = (word: 'vouch' | 'unvouch'): void => {
+    const go = (): void => (word === 'vouch' ? handlers.vouch(authorKey) : handlers.unvouch(authorKey));
+    const now = read();
+    if (!now.locked || now.ownKey === null) {
+      go();
+      return;
+    }
+    if (unlock !== null) return;
+    const urow = el('div', 'card-unlock');
+    urow.appendChild(
+      unlockForm(
+        now.ownKey,
+        async (p) => {
+          await handlers.unlockIdentity(p);
+          endUnlock();
+          go();
+        },
+        endUnlock,
+      ),
+    );
+    unlock = { row: urow, word };
+    yourVouchRow.row.after(urow);
+  };
+
+  const update = (): void => {
+    const ctx = read();
+
+    // name — @Name when held, `no name` muted when not, loading… before the read
+    // (WEB_INTERFACE → The author window). A clay handle carries one clay line
+    // beneath it, the element the figures' line is, drawn by this draw alone;
+    // no other site grows one.
+    name.field.replaceChildren();
+    if (!ctx.usernameLoaded) {
+      name.field.appendChild(el('span', 'inkmute', 'loading…'));
+    } else if (ctx.username) {
+      const handle = el('span', 'handle', '@' + ctx.username.name);
+      markHandle(handle, authorKey, ctx.username.name);
+      name.field.appendChild(handle);
+      if (ctx.nameClay(authorKey, ctx.username.name)) {
+        handle.classList.add('clay');
+        name.field.appendChild(nameLine());
+      }
+    } else {
+      name.field.appendChild(el('span', 'inkmute', 'no name'));
+    }
+
+    // endorsers — N vouches, then one row per voucher: their prefix (a ghost button
+    // into their window). One page; `more` follows `next`.
+    endorsersRow.field.replaceChildren();
+    endorsers(endorsersRow.field, handlers, ctx, read);
+
+    // your vouch — the reader's relation and the action, absent with no identity.
+    const yv = ctx.yourVouch;
+    if (yv === null) {
+      yourVouchRow.row.remove();
+    } else {
+      if (yourVouchRow.row.parentNode !== b) posts.row.before(yourVouchRow.row);
+      yourVouchRow.field.replaceChildren();
+      yourVouch(yourVouchRow.field, yv, ctx.flight, press);
+    }
+    const offered = yv?.kind === 'plus' ? 'vouch' : yv?.kind === 'vouched' ? 'unvouch' : null;
+    if (unlock !== null && (!ctx.locked || offered !== unlock.word)) endUnlock();
+  };
+  update();
+  return { el: b, update };
 }
 
-function endorsers(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx): void {
+function endorsers(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx, read: () => AuthorCtx): void {
   const e = ctx.endorsers;
   if (e === null) {
     field.appendChild(el('span', 'inkmute', 'loading…'));
@@ -161,7 +195,7 @@ function endorsers(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx)
     if (v.voucherName !== null) markHandle(btn, v.voucherId, v.voucherName);
     btn.textContent = v.voucherName !== null ? '@' + v.voucherName : shortHex(v.voucherId, 10);
     btn.setAttribute('aria-label', 'open this author');
-    btn.addEventListener('click', () => handlers.openAuthor(v.voucherId, ctx.origin));
+    btn.addEventListener('click', () => handlers.openAuthor(v.voucherId, read().origin));
     line.appendChild(btn);
     field.appendChild(line);
   }
@@ -173,8 +207,7 @@ function endorsers(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx)
   }
 }
 
-function yourVouch(field: HTMLElement, ctx: AuthorCtx, vouchAction: (k: string) => void, unvouchAction: (k: string) => void): void {
-  const yv = ctx.yourVouch!;
+function yourVouch(field: HTMLElement, yv: YourVouch, flight: Flight | null, press: (word: 'vouch' | 'unvouch') => void): void {
   if (yv.kind === 'reason') {
     // A one-line reason the reader cannot vouch (WEB_INTERFACE → The author
     // window); no flight applies — there is nothing in flight.
@@ -184,7 +217,7 @@ function yourVouch(field: HTMLElement, ctx: AuthorCtx, vouchAction: (k: string) 
   if (yv.kind === 'pending') {
     // WEB_INTERFACE → The author window: while the vouch flies the row carries
     // the flight's stage line in the word's place.
-    if (ctx.flight) field.appendChild(stageLine(ctx.flight));
+    if (flight) field.appendChild(stageLine(flight));
     return;
   }
   if (yv.kind === 'plus') {
@@ -193,7 +226,7 @@ function yourVouch(field: HTMLElement, ctx: AuthorCtx, vouchAction: (k: string) 
     const btn = el('button', 'word');
     btn.textContent = 'vouch';
     btn.setAttribute('aria-label', 'vouch for this author — stakes 1 rep');
-    btn.addEventListener('click', () => vouchAction(ctx.authorKey));
+    btn.addEventListener('click', () => press('vouch'));
     field.appendChild(btn);
     const line = el('span', 'hint');
     line.append('stakes 1 rep, returned when you unvouch after a cooldown of ', mono(String(yv.cooldownBlocks)), ' blocks.');
@@ -207,7 +240,7 @@ function yourVouch(field: HTMLElement, ctx: AuthorCtx, vouchAction: (k: string) 
     }
     const unvouch = el('button', 'word', 'unvouch');
     unvouch.setAttribute('aria-label', 'withdraw your vouch');
-    unvouch.addEventListener('click', () => unvouchAction(ctx.authorKey));
+    unvouch.addEventListener('click', () => press('unvouch'));
     field.appendChild(unvouch);
     // The voice rule says what happens, in text — an aria-label is not that
     // (HOUSE_STYLE → Voice), parallel to the plus state's stakes sentence.
@@ -218,25 +251,7 @@ function yourVouch(field: HTMLElement, ctx: AuthorCtx, vouchAction: (k: string) 
   // The flight's stage line, whatever its ending — a vouch or unvouch rejected or
   // expired from this window shows it here, not nowhere (WEB_INTERFACE → The
   // author window).
-  if (ctx.flight) field.appendChild(stageLine(ctx.flight));
-}
-
-/** The unlock form in a row under the your-vouch row; a correct passphrase loads
- *  the seed and the vouch proceeds (WEB_INTERFACE → The identity module). */
-function mountRowUnlock(anchorRow: HTMLElement, ownKey: string, onUnlock: (p: string) => Promise<void>, onProceed: () => void): void {
-  if (anchorRow.parentElement?.querySelector('.card-unlock')) return; // already open
-  const urow = el('div', 'card-unlock');
-  urow.appendChild(
-    unlockForm(
-      ownKey,
-      async (p) => {
-        await onUnlock(p);
-        onProceed();
-      },
-      () => urow.remove(),
-    ),
-  );
-  anchorRow.insertAdjacentElement('afterend', urow);
+  if (flight) field.appendChild(stageLine(flight));
 }
 
 // ---------------------------------------------------------------------------

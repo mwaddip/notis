@@ -99,6 +99,8 @@ export interface Fake {
   ownName?: import('../src/api/dto').UsernameResult;
   /** The reader's `/invites/:key`; absent is no standing bond. */
   bonds?: import('../src/api/dto').BondsResult;
+  /** `GET /vouches?target=` for every key; absent is no vouch. */
+  endorsers?: import('../src/api/dto').VouchesTargetResult;
   /** The height `GET /blocks/current` answers; absent is 10. */
   height?: number;
   /** When set, every membership-level read (`/karma`, `/status`,
@@ -168,7 +170,7 @@ export function makeApi(f: Fake): Api {
       memberSinceBlock: 0, memberBar: 1, memberVouches: 0, memberLikes: '0',
       invitesUsed: 0, member: false, invitesAvailable: null, height: 10,
     }; },
-    vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
+    vouchesByTarget: async () => f.endorsers ?? { vouches: [], count: 0, next: null },
     vouchesByVoucher: async () => { await f.membershipGate; return { vouches: [], count: 0, next: null }; },
     vouchCooldowns: async () => { await f.membershipGate; return { cooldowns: [], count: 0, next: null }; },
     bonds: async () => { await f.membershipGate; return f.bonds ?? { bonds: [], bondCount: 0, next: null }; },
@@ -391,6 +393,8 @@ export interface Opts {
   ownName?: import('../src/api/dto').UsernameResult;
   /** The reader's standing bonds — the fake's `/invites/:key`. */
   bonds?: import('../src/api/dto').BondsResult;
+  /** The vouches every author window reads — the fake's `/vouches?target=`. */
+  endorsers?: import('../src/api/dto').VouchesTargetResult;
   mode?: Mode;
   /** `start` drives `App.start` instead of `App.mount` — the product's own
    *  path at page load, which fires `loadFeed`, `fetchThread` for every window
@@ -440,6 +444,7 @@ export function harness(opts: Opts = {}): Harness {
     credits: opts.credits,
     ownName: opts.ownName,
     bonds: opts.bonds,
+    endorsers: opts.endorsers,
     membershipGate: opts.membershipGate,
   };
   const api = makeApi(fake);
