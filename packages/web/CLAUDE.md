@@ -135,12 +135,30 @@ or the question, `link` beside it), as a composer is. A card's `like`, `withdraw
 `pressLike` / `pressWithdraw` / `linkRefused` with the list, the post and the control pressed; **the App reads the
 lock then** — `CardOpts` carries no `locked` — and `mountRow` (`src/view/card.ts`) puts the row under the card that
 control stands in, replacing no node. Every draw of a card passes `ctx.rowsUnder(list, postId)` and the card stands
-a row only where it draws the control the row was opened from (`standRows`). Every draw that replaces a card runs in
-`redraw`: an unlock form found unlocked ends before it — the extension's proxy takes an unlock made in another page
-into `current()` and notifies no one — a row left under no card ends after it, and the focus goes back into the
-composer or the row that held it. `endCardRow` is the one ending: out of the document, its fields emptied, no longer
-held. Every unlock in the App goes through `unlockIdentity`, which ends the unlock forms. The rows a window's own
-body mounts — the author window's vouch, the profile's and the wallet's forms — are not held. The way in is the `@profile`
+a row only where it draws the control the row was opened from (`standRows`). Every draw that replaces a card or attaches a
+window's body runs in `redraw`: an unlock form found unlocked ends before it — the extension's proxy takes an unlock
+made in another page into `current()` and notifies no one — a row left under no card ends after it, all but one whose
+list another window of its column covers, which is held off the document until its list is drawn again and ends with
+its window's close; and the focus goes back into the composer, or to the element of a row or of a moved body that held
+it. `endCardRow` is the one ending of a row: out of the document, its fields emptied (`endForm`, `src/dom.ts`), no
+longer held. **A window's body stands while the window is open** (`WEB_INTERFACE → The workspace → "A window's body
+stands while the window is open"`): the App holds the body of `@profile`, `@wallet`, `@settings` and each author
+window by window id (`bodies`) — `profileBody`, `walletBody`, `settingsBody` and `authorBody` answer `{ el, update }`
+over a reader of the state — built at the window's first draw, held off the document while its window is covered, and
+ended by the draw that follows its close (`endBody`) and by a change of the identity or of the node read.
+`ctx.windowBody(id)` runs the body's `update` and hands the panes the same node. Each row's update leaves alone a form
+open in it and a field with text in it, and adds or ends a form only where the state changed whether the row offers
+it; **a control reads the state through its reader when pressed**, never from the draw that built it. **A draw that
+leaves a window in front of its column never takes its body off the document**: `renderRegionOver`
+(`src/view/panes.ts`) draws the bars and the report around it, and `renderPanesInto` keeps every column that stays.
+⚠ A browser fires `blur` and `change` on a focused field the moment it is detached — the settings window's `node`
+field commits on `change` — and happy-dom fires neither, so the cases hold the rule by a `MutationObserver` over the
+panes (`inFront`, `test/app-pane-forms.test.ts`); a new draw path is checked the same way. Every unlock in the App
+goes through `unlockIdentity`; it and the profile's `lock` end in `lockChanged`, which draws every held body where it
+stands and ends every unlock form — in a body, under a card, owed by a send, in a composer's foot
+(`ComposerController.endUnlock`). A send's press belongs to the node, the key and the wallet window it was made under
+(`sendPress`, `endSendPress`). An Esc a passphrase form takes stops at the form (`wire`, `src/view/passphrase.ts`);
+the extension's prompt page reads its Esc first, in the capture phase, and declines. The way in is the `@profile`
 window's `create` and `import`; a production build has no other door. `draft()` makes the key before
 the passphrase is typed so the browser's saved entry names the key it later unlocks. An identity change
 takes effect at once through `onChange`: the App rebuilds the pending ledger for the new key, drops the

@@ -2,7 +2,6 @@ import type { PostJson, WithdrawnJson, LightJson, FeedRow, StatusResult, KarmaRe
 import type { Workspace, Origin } from './workspace';
 import type { Theme, IdTint } from '../prefs';
 import type { Flight, CardRow } from '../view/card';
-import type { YourVouch } from '../view/author';
 import type { SendAnswer, SendRecipient } from '../view/wallet';
 import type { SignResult } from '../wallet/submit';
 import type { TipVerdict } from './tip-verdict';
@@ -148,10 +147,6 @@ export interface RenderCtx {
   grant: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
   // Membership actions (WEB_INTERFACE → The identity display).
   member: boolean;
-  // The your-vouch row's state for an identity — the App derives it from the
-  // vouch set, member, the escrow and /status's cooldown (WEB_INTERFACE → The
-  // author window). null with no identity loaded — no row.
-  yourVouch: (key: string) => YourVouch | null;
   // The author and author-posts windows, one entry per open window
   // (WEB_INTERFACE → The author window).
   author: Map<string, AuthorWindowData>;
@@ -226,6 +221,21 @@ export interface RenderCtx {
   // list"). Every draw of the card reads them: the unlock form or the question
   // first, the link row after it.
   rowsUnder: (list: string, postId: string) => readonly CardRow[];
+  // The body of an `@profile`, `@wallet`, `@settings` or author window, its
+  // rows drawn from the state as it is at this draw; null for every other
+  // window. The App holds it from the window's open to its close, and a draw
+  // attaches the same node (WEB_INTERFACE → The workspace → "A window's body
+  // stands while the window is open").
+  windowBody: (windowId: string) => HTMLElement | null;
+}
+
+/** The body of an `@profile`, `@wallet`, `@settings` or author window: one
+ *  node from the window's open to its close, and `update`, which draws its
+ *  rows from the state as it is when called (WEB_INTERFACE → The workspace →
+ *  "A window's body stands while the window is open"). */
+export interface WindowBody {
+  readonly el: HTMLElement;
+  update(): void;
 }
 
 /** One open author window's reads and flight (WEB_INTERFACE → The author window). */
@@ -299,11 +309,14 @@ export interface Handlers {
   burnUsername: () => void;
   // The wallet's send row (WEB_INTERFACE → The wallet window → "The `send`
   // row"). beginSendPress opens every press — false while a handle's check runs,
-  // when the press does nothing; pressSend is the extension's press once the form
-  // has read its amount and recipient; resolveRecipient is the handle → holder
-  // read the web build's form runs at the press; send is the credits transfer;
-  // askFaucetCredits is the faucet's $NOTIS step (→ The faucet step).
+  // when the press does nothing; endSendPress ends the press made on a send
+  // form that has ended with nothing left to spend; pressSend is the
+  // extension's press once the form has read its amount and recipient;
+  // resolveRecipient is the handle → holder read the web build's form runs at
+  // the press; send is the credits transfer; askFaucetCredits is the faucet's
+  // $NOTIS step (→ The faucet step).
   beginSendPress: () => boolean;
+  endSendPress: () => void;
   pressSend: (to: SendRecipient, amount: bigint) => void;
   resolveRecipient: (name: string) => Promise<{ key: string; name: string | null } | { refusal: string }>;
   send: (toHex: string, toName: string | null, amount: bigint) => void;
@@ -344,8 +357,8 @@ export interface AppIdentity {
   backedUp(): boolean;
   onChange(listener: (id: { pubKeyHex: string } | null) => void): void;
   /** The extension's binary policy for karma-side signs (WEB_INTERFACE → The
-   *  profile window). Absent on the in-page module — the profile row renders
-   *  only when both are present. */
+   *  settings window → "The policy row"). Absent on the in-page module — the
+   *  settings window's row renders only when both are present. */
   policy?(): 'silent' | 'ask';
   setPolicy?(p: 'silent' | 'ask'): Promise<void>;
   /** The extension's links preference (WEB_INTERFACE → The settings window).

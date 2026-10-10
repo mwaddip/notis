@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { profileBody, renderInvitesRow, renderUsernameRow, type ProfileHandlers, type ProfileCtx } from '../src/view/profile';
+import { profileBody, type ProfileBody, type ProfileHandlers, type ProfileCtx } from '../src/view/profile';
 import { karmaResult } from './karma-fixture';
 import { prefs } from '../src/prefs';
 import type { Origin } from '../src/model/workspace';
@@ -60,7 +60,14 @@ function ctx(over: Partial<ProfileCtx> = {}): ProfileCtx {
   };
 }
 
-const render = (h: ProfileHandlers, c: ProfileCtx): HTMLElement => profileBody(h, c, ORIGIN);
+const render = (h: ProfileHandlers, c: ProfileCtx): HTMLElement => profileBody(h, () => c, () => ORIGIN).el;
+
+/** A body over a state the case moves: `set` replaces what the body reads at
+ *  its next draw and at the next press of one of its controls. */
+function live(h: ProfileHandlers, c: ProfileCtx, origin: () => Origin = () => ORIGIN): { body: ProfileBody; set(next: ProfileCtx): void } {
+  let now = c;
+  return { body: profileBody(h, () => now, origin), set: (next) => { now = next; } };
+}
 
 function rowField(body: HTMLElement, label: string): HTMLElement | null {
   for (const r of body.querySelectorAll('.row')) {
@@ -137,17 +144,16 @@ describe('profile window — the invites row', () => {
     expect(invited).toEqual([[INVITEE, 150n]]);
   });
 
-  it('after an in-row unlock, a second invite goes straight through with no new unlock row', async () => {
-    // An in-row unlock fires no onChange, so the App does not re-render the
-    // profile; the invite form holds its own effective ctx so the next press
-    // sees the unlocked identity (WEB_INTERFACE → The wallet).
+  it('a locked invite unlocks in a row under the form, which ends at the unlock; the next press reads the identity unlocked and goes straight through', async () => {
     const invited: Array<[string, bigint]> = [];
     const unlockedWith: string[] = [];
+    const lockedCtx = memberCtx({ identity: { pubKeyHex: KEY, locked: true } });
     const h = handlers({
       invite: (k, b) => invited.push([k, b]),
-      unlockIdentity: async (p) => { unlockedWith.push(p); },
+      unlockIdentity: async (p) => { unlockedWith.push(p); w.set(memberCtx()); },
     });
-    const field = rowField(render(h, memberCtx({ identity: { pubKeyHex: KEY, locked: true } })), 'invites')!;
+    const w = live(h, lockedCtx);
+    const field = rowField(w.body.el, 'invites')!;
     const form = field.querySelector('form.invite-form') as HTMLFormElement;
     const keyInput = form.querySelector('input[type="text"]') as HTMLInputElement;
     const bondInput = form.querySelector('input[type="number"]') as HTMLInputElement;
@@ -158,25 +164,44 @@ describe('profile window — the invites row', () => {
     form.dispatchEvent(new Event('submit', { cancelable: true }));
     const urow = field.querySelector('.card-unlock');
     expect(urow).not.toBeNull();
+    expect(form.nextElementSibling).toBe(urow);
     expect(invited).toHaveLength(0);
+    // A second press under the lock opens no second row.
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    expect(field.querySelectorAll('.card-unlock')).toHaveLength(1);
 
-    // The unlock's submit resolves; the invite fires.
+    // The unlock's submit resolves; the row ends, its field emptied, and the invite fires.
     const unlock = urow!.querySelector('form.pf') as HTMLFormElement;
-    (unlock.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    const pw = unlock.querySelector('input[type="password"]') as HTMLInputElement;
+    pw.value = 'pw';
     unlock.dispatchEvent(new Event('submit', { cancelable: true }));
     await flush();
     expect(unlockedWith).toEqual(['pw']);
     expect(invited).toEqual([[INVITEE, 150n]]);
+    expect(field.querySelector('.card-unlock')).toBeNull();
+    expect(pw.value).toBe('');
 
-    // Second press: the effective ctx is unlocked, so the invite fires directly —
-    // no second unlock is asked, and no new .card-unlock row appears.
+    // Second press: the identity reads unlocked at the press — no unlock is asked.
     const OTHER = 'ef'.repeat(32);
     keyInput.value = OTHER;
     bondInput.value = '200';
     form.dispatchEvent(new Event('submit', { cancelable: true }));
-    expect(field.querySelectorAll('.card-unlock')).toHaveLength(1); // still the one from the first press
-    expect(unlockedWith).toHaveLength(1); // no second unlock asked
+    expect(field.querySelector('.card-unlock')).toBeNull();
+    expect(unlockedWith).toHaveLength(1);
     expect(invited).toEqual([[INVITEE, 150n], [OTHER, 200n]]);
+  });
+
+  it('the invite form reads the lock when pressed: built unlocked, locked since, a press opens the unlock row', () => {
+    const invited: Array<[string, bigint]> = [];
+    const w = live(handlers({ invite: (k, b) => invited.push([k, b]) }), memberCtx());
+    const field = rowField(w.body.el, 'invites')!;
+    const form = field.querySelector('form.invite-form') as HTMLFormElement;
+    (form.querySelector('input[type="text"]') as HTMLInputElement).value = INVITEE;
+
+    w.set(memberCtx({ identity: { pubKeyHex: KEY, locked: true } })); // no draw between the lock and the press
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    expect(field.querySelector('.card-unlock')).not.toBeNull();
+    expect(invited).toHaveLength(0);
   });
 
   it('the standing bonds show the invitee identity and value; the invitee prefix opens their window', () => {
@@ -218,23 +243,77 @@ describe('profile window — the invites row', () => {
     expect(field.querySelector('.stage')?.textContent).toContain('already holds an account');
   });
 
-  it('renderInvitesRow updates the line and bonds in place, leaving the form the reader is filling', () => {
-    const field = rowField(render(handlers(), memberCtx()), 'invites')!;
+  it('a draw of the row updates the line and bonds in place, leaving the form the reader is filling', () => {
+    const w = live(handlers(), memberCtx());
+    const field = rowField(w.body.el, 'invites')!;
     const form = field.querySelector('form.invite-form') as HTMLFormElement;
     const key = form.querySelector('input[type="text"]') as HTMLInputElement;
     key.value = 'a-key-in-progress'; // the reader is filling it for the next invite
     // An invite lands: fewer available, a new bond — updated in place.
-    const landed = memberCtx({
+    w.set(memberCtx({
       karma: karmaResult({ userId: KEY, member: true, invitesAvailable: 1 }),
       bonds: { bonds: [{ id: 'b1', value: '100', inviterId: KEY, inviteePublicKey: INVITEE, inviterName: null, inviteeName: null }], bondCount: 1, next: null },
-    });
-    renderInvitesRow(field, handlers(), landed, ORIGIN);
+    }));
+    w.body.invites();
     // The same form element, its value intact — an unsolicited landing moves no form.
     expect(field.querySelector('form.invite-form')).toBe(form);
     expect((field.querySelector('input[type="text"]') as HTMLInputElement).value).toBe('a-key-in-progress');
     // The line dropped by one and the bond appeared.
     expect(field.querySelector('.invites-line')?.textContent).toContain('1 invite available');
     expect(field.querySelector('.invites-bonds')?.textContent).toContain('100 rep');
+  });
+
+  it('a draw that reads no invite available ends the form and the unlock row under it, every field emptied; one that reads an invite again offers a fresh form', () => {
+    const w = live(handlers(), memberCtx({ identity: { pubKeyHex: KEY, locked: true } }));
+    const field = rowField(w.body.el, 'invites')!;
+    const form = field.querySelector('form.invite-form') as HTMLFormElement;
+    const key = form.querySelector('input[type="text"]') as HTMLInputElement;
+    key.value = INVITEE;
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    const pw = field.querySelector('.card-unlock input[type="password"]') as HTMLInputElement;
+    pw.value = 'half';
+
+    w.set(memberCtx({ identity: { pubKeyHex: KEY, locked: true }, karma: karmaResult({ userId: KEY, member: true, invitesAvailable: 0 }) }));
+    w.body.update();
+    expect(field.querySelector('form')).toBeNull();
+    expect(field.querySelector('.card-unlock')).toBeNull();
+    expect(key.value).toBe('');
+    expect(pw.value).toBe('');
+    expect(field.querySelector('.invites-line')?.textContent).toContain('0 invites available');
+
+    w.set(memberCtx({ identity: { pubKeyHex: KEY, locked: true } }));
+    w.body.update();
+    const fresh = field.querySelector('form.invite-form') as HTMLFormElement;
+    expect(fresh).not.toBeNull();
+    expect(fresh).not.toBe(form);
+    expect((fresh.querySelector('input[type="text"]') as HTMLInputElement).value).toBe('');
+  });
+
+  it('the bond\'s bounds and the probation follow /status at each draw, the bond typed left as it is', () => {
+    const w = live(handlers(), memberCtx());
+    const field = rowField(w.body.el, 'invites')!;
+    const form = field.querySelector('form.invite-form') as HTMLFormElement;
+    const bond = form.querySelector('input[type="number"]') as HTMLInputElement;
+    bond.value = '150';
+    w.set(memberCtx({ invite: { bondMin: '120', bondMax: '900', probationBlocks: 100 } }));
+    w.body.update();
+    expect(field.querySelector('form.invite-form')).toBe(form);
+    expect(bond.min).toBe('120');
+    expect(bond.max).toBe('900');
+    expect(bond.value).toBe('150');
+    expect(form.textContent).toContain('after 100 blocks');
+  });
+
+  it('a standing bond\'s name opens beside the column the window stands in when pressed', () => {
+    const opened: Array<[string, Origin]> = [];
+    let at: Origin = { from: 'pane', ci: 0 };
+    const w = live(handlers({ openAuthor: (k, o) => opened.push([k, o]) }), memberCtx({
+      bonds: { bonds: [{ id: 'b1', value: '100', inviterId: KEY, inviteePublicKey: INVITEE, inviterName: null, inviteeName: null }], bondCount: 1, next: null },
+    }), () => at);
+    const btn = rowField(w.body.el, 'invites')!.querySelector('.bond .authorbtn') as HTMLElement;
+    at = { from: 'pane', ci: 2 }; // the window moved, and no draw followed
+    btn.click();
+    expect(opened).toEqual([[INVITEE, { from: 'pane', ci: 2 }]]);
   });
 });
 
@@ -333,19 +412,38 @@ describe('profile window — the forms in place', () => {
   });
 
   it('unlocking in place turns the passphrase row to unlocked · lock', async () => {
-    const field = rowField(render(handlers(), ctx({ identity: { pubKeyHex: KEY, locked: true } })), 'passphrase')!;
+    const w = live(handlers({ unlockIdentity: async () => { w.set(ctx({ identity: unlocked })); } }), ctx({ identity: { pubKeyHex: KEY, locked: true } }));
+    const field = rowField(w.body.el, 'passphrase')!;
     button(field, 'unlock')!.click();
     const form = field.querySelector('form.pf') as HTMLFormElement;
-    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    const pw = form.querySelector('input[type="password"]') as HTMLInputElement;
+    pw.value = 'pw';
     form.dispatchEvent(new Event('submit', { cancelable: true }));
     await flush();
     expect(field.querySelector('form.pf')).toBeNull(); // the form is gone
+    expect(pw.value).toBe('');
     expect(field.textContent).toContain('unlocked');
     expect(button(field, 'lock')).not.toBeNull();
   });
 
+  it('a passphrase the identity refuses leaves the form standing with the refusal beneath its field', async () => {
+    const w = live(
+      handlers({ unlockIdentity: async () => { throw new Error('that passphrase does not open this key.'); } }),
+      ctx({ identity: { pubKeyHex: KEY, locked: true } }),
+    );
+    const field = rowField(w.body.el, 'passphrase')!;
+    button(field, 'unlock')!.click();
+    const form = field.querySelector('form.pf') as HTMLFormElement;
+    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'nope';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(field.querySelector('form.pf')).toBe(form);
+    expect(form.querySelector('.pf-refusal')?.textContent).toBe('that passphrase does not open this key.');
+  });
+
   it('locking in place turns the row back to locked · unlock', async () => {
-    const field = rowField(render(handlers(), ctx({ identity: { pubKeyHex: KEY, locked: false } })), 'passphrase')!;
+    const w = live(handlers({ lockIdentity: async () => { w.set(ctx({ identity: { pubKeyHex: KEY, locked: true } })); } }), ctx({ identity: unlocked }));
+    const field = rowField(w.body.el, 'passphrase')!;
     button(field, 'lock')!.click();
     // lockIdentity is async — let its microtask settle before the row redraws.
     await new Promise((r) => setTimeout(r, 0));
@@ -574,18 +672,36 @@ describe('profile — the username row', () => {
 
   it('a landing updates the row where it stands and moves no row (HOUSE_STYLE → Motion → "Pending state is the one legitimate unsolicited update, and it pays for itself in geometry")', () => {
     // Built without a name — the row stands below key.
-    const b = render(handlers(), memberCtx({ canSignClaim: true }));
+    const w = live(handlers(), memberCtx({ canSignClaim: true }));
+    const b = w.body.el;
     const before = [...b.querySelectorAll('.row label')].map((l) => l.textContent);
     const usernameField = rowField(b, 'username')!;
     expect(usernameField.querySelector('form')).not.toBeNull();
-    // A landing renders the row in place with a name held.
-    renderUsernameRow(usernameField, handlers(), memberCtx({ ownName: HELD, canAffordBurn: true }));
+    // A landing draws the row in place with a name held.
+    w.set(memberCtx({ ownName: HELD, canAffordBurn: true }));
+    w.body.username();
     const after = [...b.querySelectorAll('.row label')].map((l) => l.textContent);
     // The order is unchanged: the row still stands below key.
     expect(after).toEqual(before);
     // The row's content is updated: the form is gone, the handle stands.
     expect(usernameField.querySelector('form')).toBeNull();
     expect(usernameField.querySelector('.handle')?.textContent).toBe('@Alice_01');
+  });
+
+  it('a draw of the window places the row by the name held as it draws: above key with a name, below it once the name is gone', () => {
+    const w = live(handlers(), memberCtx({ canSignClaim: true }));
+    const labels = (): Array<string | null> => [...w.body.el.querySelectorAll('.row label')].map((l) => l.textContent);
+    const usernameRow = rowField(w.body.el, 'username')!.parentElement!;
+    expect(labels()).toEqual(['key', 'username', 'rep', 'invites', 'passphrase', 'export', 'forget']);
+
+    w.set(memberCtx({ ownName: HELD, canAffordBurn: true }));
+    w.body.update();
+    expect(labels()).toEqual(['username', 'key', 'rep', 'invites', 'passphrase', 'export', 'forget']);
+    expect(rowField(w.body.el, 'username')!.parentElement).toBe(usernameRow); // the same row, moved
+
+    w.set(memberCtx({ canSignClaim: true }));
+    w.body.update();
+    expect(labels()).toEqual(['key', 'username', 'rep', 'invites', 'passphrase', 'export', 'forget']);
   });
 
   it('not read yet — muted dash', () => {
@@ -753,16 +869,660 @@ describe('profile — the username row', () => {
     expect(onTry).toHaveBeenCalledTimes(1);
   });
 
-  it('renderUsernameRow updates the row in place', () => {
-    const h = handlers();
-    const c = memberCtx({ canSignClaim: true });
-    const b = render(h, c);
-    const f = rowField(b, 'username')!;
-    expect(f.querySelector('form')).not.toBeNull();
-    const c2 = memberCtx({ ownName: HELD, canAffordBurn: true });
-    renderUsernameRow(f, h, c2);
+  it('a draw of the row that reads a name held ends the claim form, its field emptied', () => {
+    const w = live(handlers(), memberCtx({ canSignClaim: true }));
+    const f = rowField(w.body.el, 'username')!;
+    const input = f.querySelector('form input') as HTMLInputElement;
+    input.value = 'Alice_01';
+    w.set(memberCtx({ ownName: HELD, canAffordBurn: true }));
+    w.body.username();
     expect(f.querySelector('.handle')?.textContent).toBe('@Alice_01');
     expect(f.querySelector('form')).toBeNull();
+    expect(input.value).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WEB_INTERFACE → The workspace → "A draw updates a standing body in place",
+// → "A window's controls act on the state as it stands at the press",
+// → "What ends a form in a window" — row by row.
+// ---------------------------------------------------------------------------
+
+const lockedId = { pubKeyHex: KEY, locked: true };
+const pwOf = (root: Element): HTMLInputElement => root.querySelector('input[type="password"]') as HTMLInputElement;
+
+describe('profile — the body is the same node at every draw', () => {
+  it('update, karma, invites and username leave the body and its rows the nodes they were', () => {
+    const w = live(handlers(), memberCtx({ canSignClaim: true }));
+    const rows = [...w.body.el.querySelectorAll('.row')];
+    w.set(memberCtx({ canSignClaim: true, karma: karmaResult({ userId: KEY, member: true, invitesAvailable: 1, effective: '9' }) }));
+    w.body.update();
+    w.body.karma();
+    w.body.invites();
+    w.body.username();
+    expect([...w.body.el.querySelectorAll('.row')]).toEqual(rows);
+  });
+
+  it('a draw that reads another key builds the body anew in the same node, every field of the form that stood emptied', () => {
+    const w = live(handlers(), ctx({ identity: lockedId }));
+    const el = w.body.el;
+    button(rowField(el, 'passphrase')!, 'unlock')!.click();
+    const pw = pwOf(el);
+    pw.value = 'half';
+
+    w.set(ctx({ identity: { pubKeyHex: INVITEE, locked: true } }));
+    w.body.update();
+    expect(w.body.el).toBe(el);
+    expect(pw.value).toBe('');
+    expect(pw.isConnected).toBe(false);
+    expect(rowField(el, 'key')!.querySelector('.key-copy')!.textContent).toBe(INVITEE);
+    expect(rowField(el, 'passphrase')!.querySelector('form')).toBeNull();
+
+    w.set(ctx());
+    w.body.update();
+    expect(el.textContent).toContain('no identity in this browser');
+    expect(rowField(el, 'key')).toBeNull();
+  });
+});
+
+describe('profile — the passphrase row across a draw', () => {
+  it('the unlock form and what is typed stand while the identity reads locked; a draw that reads it unlocked ends the form, its field emptied, and the row reads unlocked · lock', () => {
+    const w = live(handlers(), ctx({ identity: lockedId }));
+    const field = rowField(w.body.el, 'passphrase')!;
+    button(field, 'unlock')!.click();
+    const form = field.querySelector('form.pf')!;
+    const pw = pwOf(form);
+    pw.value = 'half';
+
+    w.body.update();
+    expect(field.querySelector('form.pf')).toBe(form);
+    expect(pw.value).toBe('half');
+
+    w.set(ctx({ identity: unlocked })); // unlocked from another form
+    w.body.update();
+    expect(field.querySelector('form')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(field.textContent).toContain('unlocked');
+    expect(button(field, 'lock')).not.toBeNull();
+  });
+
+  it('a draw that reads the lock the words already read replaces no node of the row', () => {
+    const w = live(handlers(), ctx({ identity: lockedId }));
+    const field = rowField(w.body.el, 'passphrase')!;
+    const word = button(field, 'unlock');
+    w.body.update();
+    expect(button(field, 'unlock')).toBe(word);
+    w.set(ctx({ identity: unlocked }));
+    w.body.update();
+    expect(button(field, 'unlock')).toBeNull();
+    expect(button(field, 'lock')).not.toBeNull();
+  });
+
+  it('cancel ends the form, its field emptied, and the row reads the lock as it stands', () => {
+    const w = live(handlers(), ctx({ identity: lockedId }));
+    document.body.appendChild(w.body.el);
+    const field = rowField(w.body.el, 'passphrase')!;
+    button(field, 'unlock')!.click();
+    const pw = pwOf(field);
+    pw.value = 'half';
+    button(field, 'cancel')!.click();
+    expect(field.querySelector('form')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(document.activeElement).toBe(button(field, 'unlock'));
+    document.body.removeChild(w.body.el);
+  });
+});
+
+describe('profile — the export row across a draw', () => {
+  it('export reads the lock when pressed: built unlocked and locked since, the press asks for the unlock first', () => {
+    const w = live(handlers(), ctx({ identity: unlocked }));
+    const field = rowField(w.body.el, 'export')!;
+    w.set(ctx({ identity: lockedId })); // no draw between the lock and the press
+    button(field, 'export')!.click();
+    const pws = field.querySelectorAll('input[type="password"]');
+    expect(pws).toHaveLength(1);
+    expect((pws[0] as HTMLInputElement).autocomplete).toBe('current-password');
+  });
+
+  it('built locked and unlocked since, the press goes to the set form', () => {
+    const w = live(handlers(), ctx({ identity: lockedId }));
+    const field = rowField(w.body.el, 'export')!;
+    w.set(ctx({ identity: unlocked }));
+    button(field, 'export')!.click();
+    expect(field.querySelectorAll('input[type="password"]')).toHaveLength(2);
+  });
+
+  it('the unlock form stands across a draw while locked; a draw that reads the identity unlocked ends it, its field emptied, and the word returns', () => {
+    const w = live(handlers(), ctx({ identity: lockedId }));
+    const field = rowField(w.body.el, 'export')!;
+    button(field, 'export')!.click();
+    const form = field.querySelector('form.pf')!;
+    const pw = pwOf(form);
+    pw.value = 'half';
+    w.body.update();
+    expect(field.querySelector('form.pf')).toBe(form);
+    expect(pw.value).toBe('half');
+
+    w.set(ctx({ identity: unlocked }));
+    w.body.update();
+    expect(field.querySelector('form')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(button(field, 'export')).not.toBeNull();
+  });
+
+  it('the unlock form\'s own submit gives way to the set form', async () => {
+    const w = live(handlers({ unlockIdentity: async () => { w.set(ctx({ identity: unlocked })); } }), ctx({ identity: lockedId }));
+    const field = rowField(w.body.el, 'export')!;
+    button(field, 'export')!.click();
+    const pw = pwOf(field);
+    pw.value = 'pw';
+    field.querySelector('form.pf')!.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(pw.value).toBe('');
+    const set = field.querySelector('form.pf')!;
+    expect(set.querySelectorAll('input[type="password"]')).toHaveLength(2);
+    expect((set.querySelector('input[autocomplete="username"]') as HTMLInputElement).value).toBe(`${KEY} · file`);
+  });
+
+  it('the set form and what is typed stand across a draw; a file made ends it, its fields emptied, and the word returns with the focus', async () => {
+    const exported: string[] = [];
+    const w = live(handlers({ exportIdentity: async (p) => { exported.push(p); } }), ctx({ identity: unlocked }));
+    document.body.appendChild(w.body.el);
+    const field = rowField(w.body.el, 'export')!;
+    button(field, 'export')!.click();
+    const form = field.querySelector('form.pf')!;
+    const pws = [...form.querySelectorAll<HTMLInputElement>('input[type="password"]')];
+    pws[0]!.value = 'file-pw';
+    pws[1]!.value = 'file-pw';
+    w.body.update();
+    expect(field.querySelector('form.pf')).toBe(form);
+    expect(pws.map((x) => x.value)).toEqual(['file-pw', 'file-pw']);
+
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(exported).toEqual(['file-pw']);
+    expect(field.querySelector('form')).toBeNull();
+    expect(pws.map((x) => x.value)).toEqual(['', '']);
+    expect(document.activeElement).toBe(button(field, 'export'));
+    document.body.removeChild(w.body.el);
+  });
+});
+
+describe('profile — the forget row across a draw', () => {
+  it('forget reads the backup when pressed: built with no backup and backed up since, the question leaves the never-exported fact out', () => {
+    const w = live(handlers(), ctx({ identity: unlocked, backedUp: false }));
+    const field = rowField(w.body.el, 'forget')!;
+    w.set(ctx({ identity: unlocked, backedUp: true })); // no draw between the export and the press
+    button(field, 'forget')!.click();
+    expect(field.textContent).toContain('forget this key on this browser?');
+    expect(field.textContent).not.toContain('cannot be recovered');
+  });
+
+  it('the question stands across a draw, and keep brings the word back', () => {
+    const w = live(handlers(), ctx({ identity: unlocked }));
+    const field = rowField(w.body.el, 'forget')!;
+    button(field, 'forget')!.click();
+    const q = field.querySelector('.pf-confirm');
+    w.body.update();
+    expect(field.querySelector('.pf-confirm')).toBe(q);
+    button(field, 'keep')!.click();
+    expect(field.querySelector('.pf-confirm')).toBeNull();
+    expect(button(field, 'forget')).not.toBeNull();
+  });
+
+  it('Esc at the question keeps: the word forget is back with the focus on it, and nothing is forgotten', () => {
+    const forgotten: number[] = [];
+    const w = live(handlers({ forgetIdentity: async () => { forgotten.push(1); } }), ctx({ identity: unlocked }));
+    document.body.appendChild(w.body.el);
+    const field = rowField(w.body.el, 'forget')!;
+    button(field, 'forget')!.click();
+    expect(field.querySelector('.pf-confirm')).not.toBeNull();
+    expect(document.activeElement).toBe(button(field, 'keep'));
+
+    button(field, 'keep')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(field.querySelector('.pf-confirm')).toBeNull();
+    expect([...field.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['forget']);
+    expect(document.activeElement).toBe(button(field, 'forget'));
+    expect(forgotten).toEqual([]);
+
+    // The question asked again, Esc on its forget word keeps too.
+    button(field, 'forget')!.click();
+    const asked = field.querySelector('.pf-confirm') as HTMLElement;
+    button(asked, 'forget')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(field.querySelector('.pf-confirm')).toBeNull();
+    expect(document.activeElement).toBe(button(field, 'forget'));
+    expect(forgotten).toEqual([]);
+    document.body.removeChild(w.body.el);
+  });
+});
+
+describe('profile — the key row across a draw', () => {
+  it('the word copied stands until the window is next drawn, and the control is the same node', async () => {
+    const originalClipboard = (navigator as unknown as { clipboard?: unknown }).clipboard;
+    const writes: string[] = [];
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (t: string) => { writes.push(t); } } });
+    try {
+      const w = live(handlers(), ctx({ identity: unlocked }));
+      const f = rowField(w.body.el, 'key')!;
+      const btn = f.querySelector('button.key-copy') as HTMLButtonElement;
+      btn.click();
+      await flush();
+      expect(btn.textContent).toBe(KEY + ' copied');
+      w.body.karma(); // a row drawn in place is no draw of the window
+      expect(btn.textContent).toBe(KEY + ' copied');
+
+      w.body.update();
+      expect(f.querySelector('button.key-copy')).toBe(btn);
+      expect(btn.textContent).toBe(KEY);
+      btn.click();
+      await flush();
+      expect(writes).toEqual([KEY, KEY]);
+    } finally {
+      if (originalClipboard === undefined) delete (navigator as unknown as { clipboard?: unknown }).clipboard;
+      else Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard });
+    }
+  });
+
+  it('the key held as text for a refused clipboard gives way to the control at the next draw', () => {
+    const originalClipboard = (navigator as unknown as { clipboard?: unknown }).clipboard;
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+    try {
+      const w = live(handlers(), ctx({ identity: unlocked }));
+      const f = rowField(w.body.el, 'key')!;
+      const btn = f.querySelector('button.key-copy') as HTMLButtonElement;
+      btn.click();
+      expect(f.querySelector('button.key-copy')).toBeNull();
+      w.body.update();
+      expect(f.querySelector('button.key-copy')).toBe(btn);
+      expect(f.textContent).not.toContain('copy it by hand');
+    } finally {
+      if (originalClipboard === undefined) delete (navigator as unknown as { clipboard?: unknown }).clipboard;
+      else Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard });
+    }
+  });
+
+  it('the backup line follows the backup at each draw', () => {
+    const w = live(handlers(), ctx({ identity: unlocked, backedUp: false }));
+    const f = rowField(w.body.el, 'key')!;
+    expect(f.textContent).toContain('export it to keep it');
+    w.set(ctx({ identity: unlocked, backedUp: true }));
+    w.body.update();
+    expect(f.textContent).not.toContain('export it to keep it');
+    expect(f.querySelector('button.key-copy')!.textContent).toBe(KEY);
+  });
+});
+
+describe('profile — the username row across a draw', () => {
+  const claimCtx = (over: Partial<ProfileCtx> = {}): ProfileCtx => memberCtx({ canSignClaim: true, ...over });
+  const heldCtx = (over: Partial<ProfileCtx> = {}): ProfileCtx => memberCtx({ ownName: HELD, canAffordBurn: true, ...over });
+
+  it('the claim form and the name typed stand across a draw, the row\'s flight line drawn beside it', () => {
+    const w = live(handlers(), claimCtx());
+    const f = rowField(w.body.el, 'username')!;
+    const form = f.querySelector('form')!;
+    const input = form.querySelector('input') as HTMLInputElement;
+    input.value = 'Alice_01';
+    w.set(claimCtx({ usernameFlight: { stage: 'rejected', reason: 'claim rejected: that name is taken.' } }));
+    w.body.update();
+    expect(f.querySelector('form')).toBe(form);
+    expect(input.value).toBe('Alice_01');
+    expect(f.querySelector('.username-flight')?.textContent).toContain('that name is taken.');
+  });
+
+  it('a claim pending ends the form, its field emptied; the rejection that follows offers a fresh one', () => {
+    const w = live(handlers(), claimCtx());
+    const f = rowField(w.body.el, 'username')!;
+    const form = f.querySelector('form')!;
+    const input = form.querySelector('input') as HTMLInputElement;
+    input.value = 'Alice_01';
+    w.set(claimCtx({ pendingUsername: { kind: 'claim', name: 'Alice_01' }, usernameFlight: { stage: 'submitting' } }));
+    w.body.username();
+    expect(f.querySelector('form')).toBeNull();
+    expect(input.value).toBe('');
+    expect(f.querySelector('.handle.inkmute')?.textContent).toBe('@Alice_01');
+
+    w.set(claimCtx({ usernameFlight: { stage: 'rejected', reason: 'claim rejected: that name is taken.' } }));
+    w.body.username();
+    const fresh = f.querySelector('form')!;
+    expect(fresh).not.toBe(form);
+    expect((fresh.querySelector('input') as HTMLInputElement).value).toBe('');
+  });
+
+  it('the unlock row under the claim form stands while the identity reads locked, and ends, its field emptied, at a draw that reads it unlocked — the form and the name typed standing', () => {
+    const w = live(handlers(), claimCtx({ identity: lockedId }));
+    const f = rowField(w.body.el, 'username')!;
+    const form = f.querySelector('form')!;
+    const input = form.querySelector('input') as HTMLInputElement;
+    input.value = 'Alice_01';
+    form.dispatchEvent(new Event('submit'));
+    const urow = f.querySelector('.card-unlock')!;
+    const pw = pwOf(urow);
+    pw.value = 'half';
+    // A second press under the lock opens no second row.
+    form.dispatchEvent(new Event('submit'));
+    expect(f.querySelectorAll('.card-unlock')).toHaveLength(1);
+
+    w.body.update();
+    expect(f.querySelector('.card-unlock')).toBe(urow);
+    expect(pw.value).toBe('half');
+
+    w.set(claimCtx());
+    w.body.update();
+    expect(f.querySelector('.card-unlock')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(f.querySelector('form')).toBe(form);
+    expect(input.value).toBe('Alice_01');
+  });
+
+  it('the claim reads the lock when pressed: built locked and unlocked since, the press claims with no unlock row', () => {
+    const claimed: string[] = [];
+    const w = live(handlers({ claimUsername: (n) => claimed.push(n) }), claimCtx({ identity: lockedId }));
+    const f = rowField(w.body.el, 'username')!;
+    const form = f.querySelector('form')!;
+    (form.querySelector('input') as HTMLInputElement).value = 'Alice_01';
+    w.set(claimCtx()); // no draw between the unlock and the press
+    form.dispatchEvent(new Event('submit'));
+    expect(f.querySelector('.card-unlock')).toBeNull();
+    expect(claimed).toEqual(['Alice_01']);
+  });
+
+  it('the unlock row\'s own submit ends it and claims the name pressed', async () => {
+    const claimed: string[] = [];
+    const w = live(
+      handlers({ claimUsername: (n) => claimed.push(n), unlockIdentity: async () => { w.set(claimCtx()); } }),
+      claimCtx({ identity: lockedId }),
+    );
+    const f = rowField(w.body.el, 'username')!;
+    const form = f.querySelector('form')!;
+    (form.querySelector('input') as HTMLInputElement).value = 'Alice_01';
+    form.dispatchEvent(new Event('submit'));
+    const pw = pwOf(f.querySelector('.card-unlock')!);
+    pw.value = 'pw';
+    f.querySelector('.card-unlock form.pf')!.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(claimed).toEqual(['Alice_01']);
+    expect(f.querySelector('.card-unlock')).toBeNull();
+    expect(pw.value).toBe('');
+  });
+
+  it('the burn question stands across a draw; it ends at a draw that reads the name gone, and at one that reads the price not covered', () => {
+    const w = live(handlers(), heldCtx());
+    const f = rowField(w.body.el, 'username')!;
+    button(f, 'burn')!.click();
+    const q = f.querySelector('.pf-confirm');
+    w.body.update();
+    expect(f.querySelector('.pf-confirm')).toBe(q);
+    w.body.username();
+    expect(f.querySelector('.pf-confirm')).toBe(q);
+
+    w.set(heldCtx({ canAffordBurn: false }));
+    w.body.update();
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    expect((button(f, 'burn') as HTMLButtonElement).disabled).toBe(true);
+
+    w.set(heldCtx());
+    w.body.update();
+    button(f, 'burn')!.click();
+    expect(f.querySelector('.pf-confirm')).not.toBeNull();
+    w.set(claimCtx()); // the name burned from another tab
+    w.body.update();
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    expect(f.querySelector('form.username-form')).not.toBeNull();
+  });
+
+  it('the question\'s burn reads the lock when pressed: asked unlocked and locked since, it asks for the unlock in the question\'s place', () => {
+    const burned: number[] = [];
+    const w = live(handlers({ burnUsername: () => burned.push(1) }), heldCtx());
+    const f = rowField(w.body.el, 'username')!;
+    button(f, 'burn')!.click();
+    w.set(heldCtx({ identity: lockedId })); // no draw between the lock and the press
+    button(f.querySelector('.pf-confirm') as HTMLElement, 'burn')!.click();
+    expect(pwOf(f)).not.toBeNull();
+    expect(burned).toHaveLength(0);
+  });
+
+  it('asked locked and unlocked since, the question\'s burn ends the question and burns', () => {
+    const burned: number[] = [];
+    const w = live(handlers({ burnUsername: () => burned.push(1) }), heldCtx({ identity: lockedId }));
+    const f = rowField(w.body.el, 'username')!;
+    button(f, 'burn')!.click();
+    w.set(heldCtx());
+    button(f.querySelector('.pf-confirm') as HTMLElement, 'burn')!.click();
+    expect(burned).toHaveLength(1);
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    expect(f.querySelector('form')).toBeNull();
+    expect(f.querySelector('.handle')?.textContent).toBe('@Alice_01');
+  });
+
+  it('the unlock form in the question\'s place stands while locked; a draw that reads the identity unlocked ends it, its field emptied, and the words return', () => {
+    const w = live(handlers(), heldCtx({ identity: lockedId }));
+    const f = rowField(w.body.el, 'username')!;
+    button(f, 'burn')!.click();
+    button(f.querySelector('.pf-confirm') as HTMLElement, 'burn')!.click();
+    const pw = pwOf(f);
+    pw.value = 'half';
+    w.body.update();
+    expect(pwOf(f)).toBe(pw);
+    expect(pw.value).toBe('half');
+
+    w.set(heldCtx());
+    w.body.update();
+    expect(f.querySelector('form')).toBeNull();
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(f.querySelector('.handle')?.textContent).toBe('@Alice_01');
+    expect(button(f, 'burn')).not.toBeNull();
+  });
+
+  it('the unlock form\'s own submit ends the question and burns', async () => {
+    const burned: number[] = [];
+    const w = live(
+      handlers({ burnUsername: () => burned.push(1), unlockIdentity: async () => { w.set(heldCtx()); } }),
+      heldCtx({ identity: lockedId }),
+    );
+    const f = rowField(w.body.el, 'username')!;
+    button(f, 'burn')!.click();
+    button(f.querySelector('.pf-confirm') as HTMLElement, 'burn')!.click();
+    pwOf(f).value = 'pw';
+    f.querySelector('form.pf')!.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(burned).toHaveLength(1);
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+  });
+
+  it('Esc in the question brings the words back with the focus on burn', () => {
+    const w = live(handlers(), heldCtx());
+    document.body.appendChild(w.body.el);
+    const f = rowField(w.body.el, 'username')!;
+    button(f, 'burn')!.click();
+    button(f, 'keep')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    expect(document.activeElement).toBe(button(f, 'burn'));
+    document.body.removeChild(w.body.el);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Esc in a passphrase form — WEB_INTERFACE → The profile window → "The six
+// operations are forms in place, and each is a real `<form>`": Esc cancels the
+// form and returns the focus to the control that opened it. The press is the
+// form's: nothing the form stands in reads it.
+// ---------------------------------------------------------------------------
+
+/** Esc pressed in `at` — a keydown that travels up from it. Answers how many
+ *  times the press reached `above`. */
+function escIn(at: HTMLElement, above: HTMLElement): number {
+  let reached = 0;
+  const seen = (e: Event): void => { if ((e as KeyboardEvent).key === 'Escape') reached += 1; };
+  above.addEventListener('keydown', seen);
+  at.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  above.removeEventListener('keydown', seen);
+  return reached;
+}
+
+describe('profile — Esc in a passphrase form cancels that form and reaches nothing above it', () => {
+  const words = (root: Element): Array<string | null> => [...root.querySelectorAll('button')].map((b) => b.textContent);
+
+  it('the passphrase row\'s unlock form: the row reads locked · unlock with the focus on unlock, the field emptied', () => {
+    const unlockedWith: string[] = [];
+    const w = live(handlers({ unlockIdentity: async (p) => { unlockedWith.push(p); } }), ctx({ identity: lockedId }));
+    document.body.appendChild(w.body.el);
+    const field = rowField(w.body.el, 'passphrase')!;
+    button(field, 'unlock')!.click();
+    const pw = pwOf(field);
+    pw.value = 'half';
+    expect(escIn(pw, w.body.el)).toBe(0);
+    expect(field.querySelector('form')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(field.textContent).toBe('locked unlock');
+    expect(document.activeElement).toBe(button(field, 'unlock'));
+    expect(unlockedWith).toEqual([]);
+    document.body.removeChild(w.body.el);
+  });
+
+  it('the export row\'s unlock form, and its set form: the word export back with the focus, every field emptied, no file made', () => {
+    const exported: string[] = [];
+    const w = live(handlers({ exportIdentity: async (p) => { exported.push(p); } }), ctx({ identity: lockedId }));
+    document.body.appendChild(w.body.el);
+    const field = rowField(w.body.el, 'export')!;
+    button(field, 'export')!.click();
+    const pw = pwOf(field);
+    pw.value = 'half';
+    expect(escIn(pw, w.body.el)).toBe(0);
+    expect(field.querySelector('form')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(words(field)).toEqual(['export']);
+    expect(document.activeElement).toBe(button(field, 'export'));
+
+    w.set(ctx({ identity: unlocked }));
+    button(field, 'export')!.click();
+    const pws = [...field.querySelectorAll<HTMLInputElement>('input[type="password"]')];
+    expect(pws).toHaveLength(2);
+    pws[0]!.value = 'one'; pws[1]!.value = 'one';
+    expect(escIn(pws[1]!, w.body.el)).toBe(0);
+    expect(field.querySelector('form')).toBeNull();
+    expect(pws.map((x) => x.value)).toEqual(['', '']);
+    expect(words(field)).toEqual(['export']);
+    expect(document.activeElement).toBe(button(field, 'export'));
+    expect(exported).toEqual([]);
+    document.body.removeChild(w.body.el);
+  });
+
+  it('the create form: create and import back with the focus on create, its fields emptied, the draft discarded once and no identity made', async () => {
+    const discarded: number[] = [];
+    const created: string[] = [];
+    const body = render(handlers({ discardDraft: () => discarded.push(1), createIdentity: async (p) => { created.push(p); } }), ctx());
+    document.body.appendChild(body);
+    button(body, 'create')!.click();
+    await flush();
+    const pws = [...body.querySelectorAll<HTMLInputElement>('form.pf input[type="password"]')];
+    expect(pws).toHaveLength(2);
+    pws[0]!.value = 'one'; pws[1]!.value = 'one';
+    expect(escIn(pws[0]!, body)).toBe(0);
+    expect(body.querySelector('form')).toBeNull();
+    expect(pws.map((x) => x.value)).toEqual(['', '']);
+    expect(words(body)).toEqual(['create', 'import']);
+    expect(document.activeElement).toBe(button(body, 'create'));
+    expect(discarded).toHaveLength(1);
+    expect(created).toEqual([]);
+    document.body.removeChild(body);
+  });
+
+  /** `import` pressed and a file chosen in the browser's picker: the input the
+   *  press made reads the file and fires its change. */
+  async function chooseFile(body: HTMLElement): Promise<void> {
+    const made: HTMLInputElement[] = [];
+    const create = document.createElement.bind(document);
+    const spy = vi.spyOn(document, 'createElement').mockImplementation(((tag: string, o?: ElementCreationOptions) => {
+      const node = create(tag, o);
+      if (tag === 'input') made.push(node as HTMLInputElement);
+      return node;
+    }) as typeof document.createElement);
+    button(body, 'import')!.click();
+    spy.mockRestore();
+    const picker = made.find((i) => i.type === 'file')!;
+    Object.defineProperty(picker, 'files', { value: [{ text: async () => '{}' }] });
+    picker.dispatchEvent(new Event('change'));
+    await flush();
+  }
+
+  for (const [kind, fields] of [['clear', 2], ['encrypted', 1]] as const) {
+    it(`the import form of ${kind === 'clear' ? 'a clear file — the set form' : 'a sealed file — the unlock form'}: create and import back with the focus on create, every field emptied, nothing imported`, async () => {
+      const imported: string[] = [];
+      const body = render(handlers({
+        inspectFile: async () => ({ kind, pubKeyHex: KEY }),
+        importIdentity: async (_text, p) => { imported.push(p); },
+      }), ctx());
+      document.body.appendChild(body);
+      await chooseFile(body);
+      const pws = [...body.querySelectorAll<HTMLInputElement>('form.pf input[type="password"]')];
+      expect(pws).toHaveLength(fields);
+      for (const x of pws) x.value = 'one';
+      expect(escIn(pws[0]!, body)).toBe(0);
+      expect(body.querySelector('form')).toBeNull();
+      expect(pws.map((x) => x.value)).toEqual(pws.map(() => ''));
+      expect(words(body)).toEqual(['create', 'import']);
+      expect(document.activeElement).toBe(button(body, 'create'));
+      expect(imported).toEqual([]);
+      document.body.removeChild(body);
+    });
+  }
+
+  it('the unlock row under the invite form: the row gone with its field emptied, the invite form and what is typed standing, nothing invited', () => {
+    const invited: unknown[] = [];
+    const w = live(handlers({ invite: (...a) => invited.push(a) }), memberCtx({ identity: lockedId }));
+    const field = rowField(w.body.el, 'invites')!;
+    const form = field.querySelector('form.invite-form') as HTMLFormElement;
+    const keyInput = form.querySelector('input[type="text"]') as HTMLInputElement;
+    const bondInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+    keyInput.value = INVITEE;
+    bondInput.value = '150';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    const pw = pwOf(field.querySelector('.card-unlock')!);
+    pw.value = 'half';
+    expect(escIn(pw, w.body.el)).toBe(0);
+    expect(field.querySelector('.card-unlock')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(field.querySelector('form.invite-form')).toBe(form);
+    expect([keyInput.value, bondInput.value]).toEqual([INVITEE, '150']);
+    expect(invited).toEqual([]);
+  });
+
+  it('the unlock row under the claim form: the row gone with its field emptied, the claim form and the name typed standing, nothing claimed', () => {
+    const claimed: string[] = [];
+    const w = live(handlers({ claimUsername: (n) => claimed.push(n) }), memberCtx({ canSignClaim: true, identity: lockedId }));
+    const f = rowField(w.body.el, 'username')!;
+    const form = f.querySelector('form') as HTMLFormElement;
+    const input = form.querySelector('input') as HTMLInputElement;
+    input.value = 'Alice_01';
+    form.dispatchEvent(new Event('submit'));
+    const pw = pwOf(f.querySelector('.card-unlock')!);
+    pw.value = 'half';
+    expect(escIn(pw, w.body.el)).toBe(0);
+    expect(f.querySelector('.card-unlock')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(f.querySelector('form')).toBe(form);
+    expect(input.value).toBe('Alice_01');
+    expect(claimed).toEqual([]);
+  });
+
+  it('the unlock form in the burn question\'s place: the handle and burn back with the focus on burn, the field emptied, nothing burned', () => {
+    const burned: number[] = [];
+    const w = live(handlers({ burnUsername: () => burned.push(1) }), memberCtx({ ownName: HELD, canAffordBurn: true, identity: lockedId }));
+    document.body.appendChild(w.body.el);
+    const f = rowField(w.body.el, 'username')!;
+    button(f, 'burn')!.click();
+    button(f.querySelector('.pf-confirm') as HTMLElement, 'burn')!.click();
+    const pw = pwOf(f);
+    pw.value = 'half';
+    expect(escIn(pw, w.body.el)).toBe(0);
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    expect(f.querySelector('form')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(f.querySelector('.handle')?.textContent).toBe('@Alice_01');
+    expect(document.activeElement).toBe(button(f, 'burn'));
+    expect(burned).toEqual([]);
+    document.body.removeChild(w.body.el);
   });
 });
 
@@ -1130,9 +1890,10 @@ describe('profile — a handle the chain does not back is clay (WEB_INTERFACE �
   });
 
   it('an in-place update of the username row reads the predicate too', () => {
-    const b = render(handlers(), memberCtx({ canSignClaim: true }));
-    const field = rowField(b, 'username')!;
-    renderUsernameRow(field, handlers(), memberCtx({ ownName: HELD, canAffordBurn: true, nameClay: clayFor(KEY, 'Alice_01') }));
+    const w = live(handlers(), memberCtx({ canSignClaim: true }));
+    const field = rowField(w.body.el, 'username')!;
+    w.set(memberCtx({ ownName: HELD, canAffordBurn: true, nameClay: clayFor(KEY, 'Alice_01') }));
+    w.body.username();
     expect(field.querySelector('.handle.clay')?.textContent).toBe('@Alice_01');
   });
 

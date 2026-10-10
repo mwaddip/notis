@@ -93,8 +93,35 @@ export interface Fake {
   threadById?: Map<string, ThreadResult>;
   /** The reader's `/karma`; absent is the no-record page. */
   karma?: KarmaResult;
+  /** The reader's `/credits`; absent is the empty listing. */
+  credits?: import('../src/api/dto').CreditsResult;
+  /** The reader's `/usernames?owner=`; absent is `null` (no name held). */
+  ownName?: import('../src/api/dto').UsernameResult;
+  /** The reader's `/invites/:key`; absent is no standing bond. */
+  bonds?: import('../src/api/dto').BondsResult;
+  /** `GET /vouches?target=` for every key; absent is no vouch. */
+  endorsers?: import('../src/api/dto').VouchesTargetResult;
   /** The height `GET /blocks/current` answers; absent is 10. */
   height?: number;
+  /** When set, every membership-level read (`/karma`, `/status`,
+   *  `/vouches` by voucher, `/vouches` cooldowns, `/invites`,
+   *  `/usernames?owner=`) awaits this before answering — a case opens the
+   *  profile with the reads in flight and releases them by hand through the
+   *  gate's `release()`. Default: no gate; every call resolves at once. */
+  membershipGate?: Promise<void>;
+}
+
+/** A gate on the membership reads — set `f.membershipGate` to the gate's
+ *  promise, call `release()` to let the reads answer. */
+export interface MembershipGate {
+  readonly promise: Promise<void>;
+  release(): void;
+}
+
+export function membershipGate(): MembershipGate {
+  let release!: () => void;
+  const promise = new Promise<void>((r) => { release = r; });
+  return { promise, release };
 }
 
 export function makeApi(f: Fake): Api {
@@ -135,20 +162,20 @@ export function makeApi(f: Fake): Api {
       const named = f.postById?.get(id);
       return named !== undefined ? named : f.postRes;
     },
-    status: async () => status(),
+    status: async () => { await f.membershipGate; return status(); },
     currentBlock: async (): Promise<BlockCurrent> => ({ height: f.height ?? 10, hash: null }),
-    karma: async () => f.karma ?? {
+    karma: async () => { await f.membershipGate; return f.karma ?? {
       userId: ME, total: '0', effective: '0', boxes: [], boxCount: 0, next: null,
       lastActivityBlock: 0, lastDecayBlock: 0, lifetimeLikesReceived: '0',
       memberSinceBlock: 0, memberBar: 1, memberVouches: 0, memberLikes: '0',
       invitesUsed: 0, member: false, invitesAvailable: null, height: 10,
-    },
-    vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
-    vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
-    vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
-    bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
-    usernameByOwner: async () => null,
-    credits: async () => ({ userId: ME, total: '0', boxes: [], boxCount: 0, next: null }),
+    }; },
+    vouchesByTarget: async () => f.endorsers ?? { vouches: [], count: 0, next: null },
+    vouchesByVoucher: async () => { await f.membershipGate; return { vouches: [], count: 0, next: null }; },
+    vouchCooldowns: async () => { await f.membershipGate; return { cooldowns: [], count: 0, next: null }; },
+    bonds: async () => { await f.membershipGate; return f.bonds ?? { bonds: [], bondCount: 0, next: null }; },
+    usernameByOwner: async () => { await f.membershipGate; return f.ownName ?? null; },
+    credits: async () => f.credits ?? ({ userId: ME, total: '0', boxes: [], boxCount: 0, next: null }),
     usernameByName: async () => null,
   };
 }
@@ -359,7 +386,25 @@ export interface Opts {
   threadResults?: Array<ThreadResult | null | Error>;
   postRes?: PostResult | null;
   karma?: KarmaResult;
+  /** The reader's `/credits` the fake answers before a case changes it; absent
+   *  is the empty listing. */
+  credits?: import('../src/api/dto').CreditsResult;
+  /** The reader's name — the fake's `/usernames?owner=`. */
+  ownName?: import('../src/api/dto').UsernameResult;
+  /** The reader's standing bonds — the fake's `/invites/:key`. */
+  bonds?: import('../src/api/dto').BondsResult;
+  /** The vouches every author window reads — the fake's `/vouches?target=`. */
+  endorsers?: import('../src/api/dto').VouchesTargetResult;
   mode?: Mode;
+  /** `start` drives `App.start` instead of `App.mount` — the product's own
+   *  path at page load, which fires `loadFeed`, `fetchThread` for every window
+   *  of the restored arrangement, and `rereadReaderState`. Default is `mount`
+   *  (every case driving its own reads). */
+  boot?: 'mount' | 'start';
+  /** The gate the fake holds — the harness writes it onto the fake before any
+   *  read fires, so a case opting into `boot: 'start'` can hold the start-up
+   *  reads back. */
+  membershipGate?: Promise<void>;
 }
 
 /** A stub verifier the extension-build configuration hands beside a resolver
@@ -396,6 +441,11 @@ export function harness(opts: Opts = {}): Harness {
     postById: new Map(),
     threadById: new Map(),
     karma: opts.karma,
+    credits: opts.credits,
+    ownName: opts.ownName,
+    bonds: opts.bonds,
+    endorsers: opts.endorsers,
+    membershipGate: opts.membershipGate,
   };
   const api = makeApi(fake);
   const writeClient = opts.writeClient ?? ({} as unknown as WriteClient);
@@ -425,7 +475,8 @@ export function harness(opts: Opts = {}): Harness {
   const workspace = document.createElement('div'); workspace.className = 'workspace';
   workspace.append(feedEl, panes);
   document.body.append(appbar, workspace);
-  app.mount(appbar, feedEl, panes, opts.mode);
+  if (opts.boot === 'start') app.start(appbar, feedEl, panes, opts.mode);
+  else app.mount(appbar, feedEl, panes, opts.mode);
   const drive = app as unknown as Harness['drive'];
   return { app, drive, fake, feedEl, panes };
 }

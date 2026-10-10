@@ -1,11 +1,11 @@
-import { el, shortHex } from '../dom';
+import { el, shortHex, endForm, setText } from '../dom';
 import { prefs } from '../prefs';
 import { unlockForm, setPassphraseForm } from './passphrase';
 import { stageLine, type Flight } from './card';
 import { markHandle } from './name-handle';
 import { INVITE_BOND_VEST_PER_LIKES, USERNAME_BURN_PRICE, isValidUsernameBytes } from '@dagsocial/types';
 import { figuresLine } from '../model/figures-line';
-import type { FiguresView } from '../model/state';
+import type { FiguresView, WindowBody } from '../model/state';
 import type { TipVerdict } from '../model/tip-verdict';
 import type { KarmaResult, BondsResult, UsernameResult } from '../api/dto';
 import type { Origin } from '../model/workspace';
@@ -20,6 +20,16 @@ import type { Origin } from '../model/workspace';
 // each is a real <form> the browser's password manager can save from
 // (→ passphrase.ts). The copy is the voice register (HOUSE_STYLE → Voice):
 // what happens, never at the reader's expense, lowercase.
+//
+// The body is one node from the window's open to its close (WEB_INTERFACE →
+// The workspace → "A window's body stands while the window is open"). Each row
+// is built once and drawn by its `update`: the figures, lines and words from
+// the state handed in, a form open in the row and a field with text in it left
+// alone, a form added or ended only where the state has changed whether the
+// row offers it (→ "A draw updates a standing body in place"). A control reads
+// the state through `read` when it is pressed, never from the draw that made
+// it (→ "A window's controls act on the state as it stands at the press"), and
+// every form ends through `endForm` (→ "What ends a form in a window").
 //
 // The window declares the narrow shapes it reads and calls; the App's RenderCtx and
 // Handlers satisfy them structurally, so there is one contract, not two.
@@ -90,11 +100,54 @@ function mono(text: string): HTMLElement {
   return el('span', 'mono', text);
 }
 
-export function profileBody(handlers: ProfileHandlers, ctx: ProfileCtx, origin: Origin): HTMLElement {
+/** One row of the window: its node, and the draw of it from the state handed
+ *  in. */
+interface BodyRow {
+  row: HTMLElement;
+  update(ctx: ProfileCtx): void;
+}
+
+/** The profile window's body: `update` draws every row and places the
+ *  username row; `karma`, `invites` and `username` draw one row where it
+ *  stands, for a landing that moves text and colour in a fixed row
+ *  (HOUSE_STYLE → Motion). */
+export interface ProfileBody extends WindowBody {
+  karma(): void;
+  invites(): void;
+  username(): void;
+}
+
+/** `read` answers the state as it stands when called, and `origin` the column
+ *  the window stands in. The body is built for the identity `read` answers —
+ *  a key, or none — and a draw that reads another builds it anew, ending every
+ *  form in it. */
+export function profileBody(handlers: ProfileHandlers, read: () => ProfileCtx, origin: () => Origin): ProfileBody {
   const b = el('div', 'winbody');
-  if (ctx.identity === null) emptyState(b, handlers);
-  else loadedState(b, handlers, ctx, origin);
-  return b;
+  let builtFor: string | null = null;
+  let rows: LoadedRows | null = null;
+  const build = (ctx: ProfileCtx): void => {
+    for (const field of b.querySelectorAll('input')) field.value = '';
+    b.replaceChildren();
+    builtFor = ctx.identity?.pubKeyHex ?? null;
+    if (ctx.identity === null) {
+      rows = null;
+      emptyState(b, handlers);
+    } else {
+      rows = loadedState(b, handlers, read, origin, ctx.identity.pubKeyHex, ctx);
+    }
+  };
+  build(read());
+  return {
+    el: b,
+    update: () => {
+      const ctx = read();
+      if ((ctx.identity?.pubKeyHex ?? null) !== builtFor) build(ctx);
+      else rows?.update(ctx);
+    },
+    karma: () => rows?.rep.update(read()),
+    invites: () => rows?.invites.update(read()),
+    username: () => rows?.username.update(read()),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +176,7 @@ function emptyState(b: HTMLElement, handlers: ProfileHandlers): void {
   importBtn.addEventListener('click', () => pickFile((text) => void revealImport(field, handlers, text, restoreInline)));
 
   const restoreInline = (): void => {
+    for (const form of field.querySelectorAll('form')) endForm(form);
     field.replaceChildren(create, importBtn);
     create.focus();
   };
@@ -169,89 +223,59 @@ async function revealImport(field: HTMLElement, handlers: ProfileHandlers, text:
 // otherwise, and then rep, invites, passphrase, export, forget.
 // ---------------------------------------------------------------------------
 
-function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx, origin: Origin): void {
-  const id = ctx.identity!;
+interface LoadedRows {
+  update(ctx: ProfileCtx): void;
+  rep: BodyRow;
+  invites: BodyRow;
+  username: BodyRow;
+}
+
+function loadedState(
+  b: HTMLElement,
+  handlers: ProfileHandlers,
+  read: () => ProfileCtx,
+  origin: () => Origin,
+  pubKeyHex: string,
+  ctx: ProfileCtx,
+): LoadedRows {
+  const username = usernameRow(handlers, read);
+  const key = keyRow(pubKeyHex);
+  const rep = repRow(handlers);
+  const invites = invitesRow(handlers, read, origin);
+  const rest = [passphraseRow(handlers, read, pubKeyHex), exportRow(handlers, read, pubKeyHex), forgetRow(handlers, read)];
+  b.append(key.row, rep.row, invites.row, ...rest.map((r) => r.row));
+  const all = [username, key, rep, invites, ...rest];
 
   // WEB_INTERFACE → The username row → "A name is claimed and burned from the
   // profile window, in one row whose place follows the name": above key with a
-  // name held, below it otherwise, decided when the window is built. A landing
-  // updates the row in place (renderUsernameRow); the next build — a reopen,
-  // the ↻, a reload — places it (HOUSE_STYLE → Motion).
-  if (ctx.ownName !== null) appendUsernameRow(b, handlers, ctx);
-  appendKeyRow(b, ctx, id.pubKeyHex);
-  if (ctx.ownName === null) appendUsernameRow(b, handlers, ctx);
-
-  // rep — the balance that spends, the faucet step, or the grant in flight.
-  {
-    const { row: r, field } = row('rep');
-    field.classList.add('karma-field'); // the App updates this in place when a grant lands
-    renderKarmaField(field, handlers, ctx);
-    b.appendChild(r);
-  }
-
-  // invites — the tier line, the form, the flight, and the standing bonds.
-  {
-    const { row: r, field } = row('invites');
-    invitesRow(field, handlers, ctx, origin);
-    b.appendChild(r);
-  }
-
-  // passphrase — locked · unlock, or unlocked · lock.
-  {
-    const { row: r, field } = row('passphrase');
-    field.classList.add('pp-field'); // inline flow: the word and its button on one line
-    passphraseRow(field, handlers, id.pubKeyHex, id.locked);
-    b.appendChild(r);
-  }
-
-  // export — a fresh sealed file; a locked identity unlocks first.
-  {
-    const { row: r, field } = row('export');
-    const trigger = el('button', 'word', 'export') as HTMLButtonElement;
-    const restore = (): void => {
-      field.replaceChildren(trigger);
-      trigger.focus();
-    };
-    trigger.addEventListener('click', () => exportFlow(field, handlers, id, restore));
-    field.appendChild(trigger);
-    b.appendChild(r);
-  }
-
-  // forget — the one path off a key, confirmed in place.
-  {
-    const { row: r, field } = row('forget');
-    const trigger = el('button', 'word', 'forget') as HTMLButtonElement;
-    const restore = (): void => {
-      field.replaceChildren(trigger);
-      trigger.focus();
-    };
-    trigger.addEventListener('click', () => forgetConfirm(field, handlers, ctx.backedUp, restore));
-    field.appendChild(trigger);
-    b.appendChild(r);
-  }
+  // name held, below it otherwise. A draw of the window places the row; the
+  // row's own draw (`username`) leaves it where it stands, so a landing moves
+  // text and colour and never a row (HOUSE_STYLE → Motion).
+  const update = (now: ProfileCtx): void => {
+    for (const r of all) r.update(now);
+    if (now.ownName !== null) {
+      if (username.row.nextElementSibling !== key.row) key.row.before(username.row);
+    } else if (key.row.nextElementSibling !== username.row) {
+      key.row.after(username.row);
+    }
+  };
+  update(ctx);
+  return { update, rep, invites, username };
 }
 
 /** WEB_INTERFACE → The profile window → "The key is a control, and a press
  *  copies it": the whole 64 hex, mono, the labels' size, wrapping by break-all,
  *  left-aligned, labelled *copy this key*. The press writes the clipboard and
- *  the word `copied` follows the key, muted, until the window is next built —
+ *  the word `copied` follows the key, muted, until the window is next drawn —
  *  no timer, the copy glyph's pattern (→ Links). Where the clipboard refuses,
  *  the control is replaced by the key as selectable mono text followed by
- *  *— copy it by hand*. The backup line stays beneath until the first export. */
-function appendKeyRow(b: HTMLElement, ctx: ProfileCtx, pubKeyHex: string): void {
+ *  *— copy it by hand*, until the window is next drawn. The backup line stays
+ *  beneath until the first export. */
+function keyRow(pubKeyHex: string): BodyRow {
   const { row: r, field } = row('key');
-  keyCopyControl(field, pubKeyHex);
-  if (!ctx.backedUp) {
-    field.appendChild(el('div', 'hint', 'this key lives in this browser only. export it to keep it.'));
-  }
-  b.appendChild(r);
-}
-
-function keyCopyControl(field: HTMLElement, pubKeyHex: string): void {
   let copied = false;
   const btn = el('button', 'word mono key-copy') as HTMLButtonElement;
   btn.type = 'button';
-  btn.textContent = pubKeyHex;
   btn.setAttribute('aria-label', 'copy this key');
   const fallback = (): void => {
     if (!btn.parentNode) return; // guard against a rejection after the button is gone
@@ -271,79 +295,142 @@ function keyCopyControl(field: HTMLElement, pubKeyHex: string): void {
       fallback,
     );
   });
-  field.appendChild(btn);
+  const hint = el('div', 'hint', 'this key lives in this browser only. export it to keep it.');
+  return {
+    row: r,
+    update: (ctx) => {
+      copied = false;
+      setText(btn, pubKeyHex);
+      setChildren(field, ctx.backedUp ? [btn] : [btn, hint]);
+    },
+  };
 }
 
-function appendUsernameRow(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
-  const { row: r, field } = row('username');
-  field.classList.add('username-field');
-  usernameRow(field, handlers, ctx);
-  b.appendChild(r);
+/** Put `kids` in `parent`, touching the document only where they are not its
+ *  children already — a node that stays keeps the focus it holds. */
+function setChildren(parent: Element, kids: Node[]): void {
+  const now = [...parent.childNodes];
+  if (now.length === kids.length && now.every((n, i) => n === kids[i])) return;
+  parent.replaceChildren(...kids);
 }
 
-/** The invites row (WEB_INTERFACE → The profile window): the tier line, the form
- *  when an invite is available and the minimum bond is affordable, the flight, and
- *  the reader's standing bonds. Built into four slots so a landing can update the
- *  line, the flight and the bonds in place while the form the reader is filling
- *  for the next key stays put (renderInvitesRow). */
-function invitesRow(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx, origin: Origin): void {
-  field.classList.add('invites-field'); // the App updates it in place on an invite landing
-  field.replaceChildren(el('div', 'invites-line'), el('div', 'invites-form'), el('div', 'invites-flight'), el('div', 'invites-bonds'));
-  // The form is built once, here, and left alone by the in-place update.
-  const k = ctx.karma;
-  const isMember = k !== null && (k.member || k.invitesAvailable === null);
-  const available = k !== null && (k.invitesAvailable === null || (k.invitesAvailable ?? 0) >= 1);
-  if (isMember && available && ctx.canAffordMinBond && ctx.invite) {
-    inviteForm(field.querySelector('.invites-form') as HTMLElement, handlers, ctx, ctx.invite);
-  }
-  updateInvites(field, handlers, ctx, origin);
+/** rep — the balance that spends, the faucet step, or the grant in flight. */
+function repRow(handlers: ProfileHandlers): BodyRow {
+  const { row: r, field } = row('rep');
+  field.classList.add('karma-field');
+  return { row: r, update: (ctx) => renderKarmaField(field, handlers, ctx) };
 }
 
-/** Update the invites row's line, flight and standing bonds in place, leaving the
- *  form the reader may be filling untouched — the way the grant landing updates the
- *  karma field (renderKarmaField), so an unsolicited landing moves colour and text,
- *  not a form (WEB_INTERFACE → The profile window; HOUSE_STYLE → Motion). */
-export function renderInvitesRow(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx, origin: Origin): void {
-  updateInvites(field, handlers, ctx, origin);
+/** The invites row (WEB_INTERFACE → The profile window → "The `invites` row"):
+ *  the tier line, the form while an invite is available and the minimum bond
+ *  is affordable, the flight, and the reader's standing bonds — four slots.
+ *  The line, the flight and the bonds are drawn from the state at every
+ *  update; the form the reader is filling stands through it, and ends, with
+ *  the unlock row under it, once the row no longer offers it. */
+function invitesRow(handlers: ProfileHandlers, read: () => ProfileCtx, origin: () => Origin): BodyRow {
+  const { row: r, field } = row('invites');
+  field.classList.add('invites-field');
+  const line = el('div', 'invites-line');
+  const formSlot = el('div', 'invites-form');
+  const flight = el('div', 'invites-flight');
+  const bonds = el('div', 'invites-bonds');
+  field.append(line, formSlot, flight, bonds);
+
+  let form: InviteForm | null = null;
+  let unlock: HTMLElement | null = null; // the unlock row under the form
+  const endUnlock = (): void => {
+    if (unlock !== null) endForm(unlock);
+    unlock = null;
+  };
+  const endInvite = (): void => {
+    endUnlock();
+    if (form !== null) endForm(form.el);
+    form = null;
+  };
+
+  // A locked identity unlocks in a row under the form first; a correct
+  // passphrase ends the row and the invite proceeds, Esc and `cancel` end it
+  // (WEB_INTERFACE → The identity module).
+  const submit = (inviteeKey: string, bond: bigint): void => {
+    const id = read().identity;
+    if (id?.locked !== true) {
+      handlers.invite(inviteeKey, bond);
+      return;
+    }
+    if (unlock !== null || form === null) return;
+    const urow = el('div', 'card-unlock');
+    urow.appendChild(
+      unlockForm(
+        id.pubKeyHex,
+        async (p) => {
+          await handlers.unlockIdentity(p);
+          endUnlock();
+          handlers.invite(inviteeKey, bond);
+        },
+        endUnlock,
+      ),
+    );
+    unlock = urow;
+    form.el.after(urow);
+  };
+
+  const update = (ctx: ProfileCtx): void => {
+    const k = ctx.karma;
+    const offered =
+      k !== null && ctx.invite !== null && ctx.canAffordMinBond &&
+      (k.invitesAvailable === null || (k.member && k.invitesAvailable >= 1));
+    if (!offered || ctx.invite === null) {
+      endInvite();
+    } else {
+      if (form === null) {
+        form = inviteForm(ctx.invite, submit);
+        formSlot.appendChild(form.el);
+      }
+      form.range(ctx.invite);
+    }
+    if (ctx.identity?.locked !== true) endUnlock();
+
+    line.replaceChildren();
+    flight.replaceChildren();
+    bonds.replaceChildren();
+    if (k === null) {
+      line.appendChild(el('span', 'inkmute', '—'));
+      return;
+    }
+    if (k.invitesAvailable === null) {
+      line.appendChild(el('div', 'hint', 'as many as your rep covers.'));
+    } else if (k.member) {
+      const l = el('div', 'hint');
+      l.append(mono(String(k.invitesAvailable)), k.invitesAvailable === 1 ? ' invite available.' : ' invites available.');
+      line.appendChild(l);
+    } else {
+      // A resident: no form, no bonds (WEB_INTERFACE → The profile window).
+      line.appendChild(el('div', 'hint', 'invites come with membership.'));
+      return;
+    }
+    if (ctx.inviteFlight) flight.appendChild(stageLine(ctx.inviteFlight));
+    standingBonds(bonds, handlers, ctx, origin);
+  };
+  return { row: r, update };
 }
 
-function updateInvites(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx, origin: Origin): void {
-  const line = field.querySelector('.invites-line');
-  const flight = field.querySelector('.invites-flight');
-  const bonds = field.querySelector('.invites-bonds');
-  if (!line || !flight || !bonds) return;
-  line.replaceChildren();
-  flight.replaceChildren();
-  bonds.replaceChildren();
-  const k = ctx.karma;
-  if (k === null) {
-    line.appendChild(el('span', 'inkmute', '—'));
-    return;
-  }
-  if (k.invitesAvailable === null) {
-    line.appendChild(el('div', 'hint', 'as many as your rep covers.'));
-  } else if (k.member) {
-    const l = el('div', 'hint');
-    l.append(mono(String(k.invitesAvailable)), k.invitesAvailable === 1 ? ' invite available.' : ' invites available.');
-    line.appendChild(l);
-  } else {
-    // A resident: no form, no bonds (WEB_INTERFACE → The profile window).
-    line.appendChild(el('div', 'hint', 'invites come with membership.'));
-    return;
-  }
-  if (ctx.inviteFlight) flight.appendChild(stageLine(ctx.inviteFlight));
-  standingBonds(bonds as HTMLElement, handlers, ctx, origin);
+interface InviteParams {
+  bondMin: string;
+  bondMax: string;
+  probationBlocks: number;
+}
+
+/** The invite form, and `range`, which writes the bond's bounds and the
+ *  probation into it from /status as it stands, leaving what is typed. */
+interface InviteForm {
+  el: HTMLFormElement;
+  range(params: InviteParams): void;
 }
 
 /** A real `<form>` the password manager ignores — the invitee's key pasted out of
  *  band, the bond inside the range with the minimum as the default, and what
- *  happens under it. A locked identity unlocks in the row first. */
-function inviteForm(
-  field: HTMLElement,
-  handlers: ProfileHandlers,
-  ctx: ProfileCtx,
-  params: { bondMin: string; bondMax: string; probationBlocks: number },
-): void {
+ *  happens under it. */
+function inviteForm(params: InviteParams, onSubmit: (inviteeKey: string, bond: bigint) => void): InviteForm {
   const form = el('form', 'pf invite-form') as HTMLFormElement;
 
   const keyInput = el('input') as HTMLInputElement;
@@ -353,8 +440,6 @@ function inviteForm(
 
   const bondInput = el('input') as HTMLInputElement;
   bondInput.type = 'number';
-  bondInput.min = params.bondMin;
-  bondInput.max = params.bondMax;
   bondInput.step = '1';
   bondInput.value = params.bondMin; // default the minimum
   bondInput.setAttribute('aria-label', 'the bond, in rep');
@@ -362,12 +447,13 @@ function inviteForm(
   const submit = el('button', 'word', 'invite') as HTMLButtonElement;
   submit.type = 'submit';
 
+  const probation = mono('');
   const copy = el('div', 'hint');
   copy.append(
     "they receive the bond's rep from the pool. your bond comes back as they receive likes, one rep per ",
     String(INVITE_BOND_VEST_PER_LIKES),
     ', and the rest goes to the pool after ',
-    mono(String(params.probationBlocks)),
+    probation,
     ' blocks.',
   );
 
@@ -375,10 +461,6 @@ function inviteForm(
   refusal.hidden = true;
 
   form.append(keyInput, bondInput, submit, refusal, copy);
-  // The effective ctx — an in-row unlock fires no onChange, so every submit
-  // reads the identity from `cur`, which the unlock path replaces so the next
-  // press goes straight to the flow (WEB_INTERFACE → The wallet).
-  let cur = ctx;
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const key = keyInput.value.trim().toLowerCase();
@@ -388,38 +470,23 @@ function inviteForm(
       return;
     }
     refusal.hidden = true;
-    const bond = BigInt(bondInput.value || params.bondMin);
-    const go = (): void => handlers.invite(key, bond);
-    const id = cur.identity;
-    if (id?.locked) {
-      // The seed is not loaded and sign is synchronous, so unlock in a row under
-      // the form first; on success the invite proceeds, Esc drops the row
-      // (WEB_INTERFACE → The profile window).
-      if (form.parentElement?.querySelector('.card-unlock')) return; // already open
-      const urow = el('div', 'card-unlock');
-      urow.appendChild(
-        unlockForm(
-          id.pubKeyHex,
-          async (p) => {
-            await handlers.unlockIdentity(p);
-            cur = { ...cur, identity: { pubKeyHex: id.pubKeyHex, locked: false } };
-            go();
-          },
-          () => urow.remove(),
-        ),
-      );
-      form.insertAdjacentElement('afterend', urow);
-      return;
-    }
-    go();
+    onSubmit(key, BigInt(bondInput.value || bondInput.min));
   });
-  field.appendChild(form);
+  return {
+    el: form,
+    range: (p) => {
+      bondInput.min = p.bondMin;
+      bondInput.max = p.bondMax;
+      setText(probation, String(p.probationBlocks));
+    },
+  };
 }
 
 /** The reader's standing bonds — the invitee's identity (so the reader can vouch
  *  for their own invitee here) and the bond's value, following `next`. Empty:
- *  nothing (WEB_INTERFACE → The profile window). */
-function standingBonds(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx, origin: Origin): void {
+ *  nothing (WEB_INTERFACE → The profile window). A press on an invitee opens
+ *  their window beside the column this window stands in when pressed. */
+function standingBonds(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx, origin: () => Origin): void {
   const b = ctx.bonds;
   if (b === null || b.bonds.length === 0) return;
   for (const bond of b.bonds) {
@@ -432,7 +499,7 @@ function standingBonds(field: HTMLElement, handlers: ProfileHandlers, ctx: Profi
     if (bond.inviteeName !== null) markHandle(btn, bond.inviteePublicKey, bond.inviteeName);
     btn.textContent = bond.inviteeName !== null ? '@' + bond.inviteeName : shortHex(bond.inviteePublicKey, 10);
     btn.setAttribute('aria-label', 'open this author');
-    btn.addEventListener('click', () => handlers.openAuthor(bond.inviteePublicKey, origin));
+    btn.addEventListener('click', () => handlers.openAuthor(bond.inviteePublicKey, origin()));
     bondRow.appendChild(btn);
     const value = el('span', 'hint');
     value.append(mono(bond.value), ' rep');
@@ -447,10 +514,9 @@ function standingBonds(field: HTMLElement, handlers: ProfileHandlers, ctx: Profi
   }
 }
 
-/** The karma field's content, rebuilt from ctx — the App calls this in place when a
- *  grant lands or lapses, so the update is colour and text in a fixed box, never a
- *  full re-render of the window (HOUSE_STYLE → Motion). */
-export function renderKarmaField(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
+/** The karma field's content, drawn from ctx — colour and text in a fixed box
+ *  (HOUSE_STYLE → Motion). */
+function renderKarmaField(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
   const k = ctx.karma;
   field.replaceChildren();
   if (k === null) {
@@ -554,285 +620,368 @@ function balance(field: HTMLElement, k: KarmaResult, ctx: ProfileCtx): void {
   }
 }
 
-// Lock and unlock are local to the window — they fire no onChange, so the row
-// re-renders itself rather than waiting for the App (WEB_INTERFACE → The profile
-// window).
-function passphraseRow(field: HTMLElement, handlers: ProfileHandlers, pubKeyHex: string, locked: boolean): void {
-  field.replaceChildren();
-  if (locked) {
-    field.append(el('span', 'inkmute', 'locked'), ' ');
-    const unlock = el('button', 'word', 'unlock') as HTMLButtonElement;
-    unlock.addEventListener('click', () => {
-      const restore = (): void => {
-        passphraseRow(field, handlers, pubKeyHex, true);
-        (field.querySelector('button') as HTMLButtonElement | null)?.focus();
-      };
-      field.replaceChildren(
-        unlockForm(
-          pubKeyHex,
-          async (p) => {
-            await handlers.unlockIdentity(p);
-            passphraseRow(field, handlers, pubKeyHex, false); // now unlocked
-          },
-          restore,
-        ),
-      );
-    });
-    field.appendChild(unlock);
-  } else {
-    field.append(el('span', 'inkmute', 'unlocked'), ' ');
-    const lock = el('button', 'word', 'lock') as HTMLButtonElement;
-    lock.addEventListener('click', () => void (async () => {
-      // Await the lock so the extension's proxy refreshes its snapshot before
-      // the next draw reads current().locked (WEB_INTERFACE → The extension).
-      await handlers.lockIdentity();
-      passphraseRow(field, handlers, pubKeyHex, true);
-    })());
-    field.appendChild(lock);
-  }
-}
-
-/** Export needs the seed: a locked identity unlocks first, then the export form
- *  appears (WEB_INTERFACE → The profile window). */
-function exportFlow(
-  field: HTMLElement,
-  handlers: ProfileHandlers,
-  id: { pubKeyHex: string; locked: boolean },
-  restore: () => void,
-): void {
-  const showExport = (): void => {
-    field.replaceChildren(
-      setPassphraseForm(`${id.pubKeyHex} · file`, (p) => handlers.exportIdentity(p), restore),
-    );
+/** passphrase — `locked` and `unlock`, the unlock form in their place, or
+ *  `unlocked` and `lock`. The words follow the identity's lock as each update
+ *  reads it; the unlock form stands while the identity is locked and ends once
+ *  it is not, wherever the unlock was made (WEB_INTERFACE → The workspace →
+ *  "What ends a form in a window"). */
+function passphraseRow(handlers: ProfileHandlers, read: () => ProfileCtx, pubKeyHex: string): BodyRow {
+  const { row: r, field } = row('passphrase');
+  field.classList.add('pp-field'); // inline flow: the word and its button on one line
+  let form: HTMLFormElement | null = null;
+  let shown: boolean | null = null; // the lock the words on screen read; null while the form stands
+  const endUnlock = (): void => {
+    if (form !== null) endForm(form);
+    form = null;
   };
-  if (id.locked) {
-    field.replaceChildren(
-      unlockForm(
-        id.pubKeyHex,
-        async (p) => {
-          await handlers.unlockIdentity(p);
-          showExport();
-        },
-        restore,
-      ),
+  const update = (ctx: ProfileCtx): void => {
+    const locked = ctx.identity?.locked === true;
+    if (form !== null && locked) return;
+    endUnlock();
+    if (shown === locked) return;
+    shown = locked;
+    const word = el('button', 'word', locked ? 'unlock' : 'lock') as HTMLButtonElement;
+    word.addEventListener('click', locked ? openUnlock : lock);
+    field.replaceChildren(el('span', 'inkmute', locked ? 'locked' : 'unlocked'), ' ', word);
+  };
+  const openUnlock = (): void => {
+    shown = null;
+    form = unlockForm(
+      pubKeyHex,
+      async (p) => {
+        await handlers.unlockIdentity(p);
+        endUnlock();
+        update(read());
+      },
+      () => {
+        endUnlock();
+        update(read());
+        field.querySelector('button')?.focus();
+      },
     );
-  } else {
-    showExport();
-  }
+    field.replaceChildren(form);
+  };
+  // Await the lock so the extension's proxy refreshes its snapshot before the
+  // row reads current().locked (WEB_INTERFACE → The extension).
+  const lock = (): void => void (async () => {
+    await handlers.lockIdentity();
+    update(read());
+  })();
+  return { row: r, update };
 }
 
-function forgetConfirm(field: HTMLElement, handlers: ProfileHandlers, backedUp: boolean, restore: () => void): void {
-  const line = backedUp
-    ? 'forget this key on this browser?'
-    : 'forget this key on this browser? without an exported file it cannot be recovered.';
-  const wrap = el('div', 'pf-confirm');
-  wrap.appendChild(el('div', 'pf-refusal', line));
-  const actions = el('div', 'pf-actions');
-  const forget = el('button', 'word', 'forget') as HTMLButtonElement;
-  forget.addEventListener('click', () => void handlers.forgetIdentity());
-  const keep = el('button', 'word', 'keep') as HTMLButtonElement;
-  keep.addEventListener('click', restore);
-  actions.append(forget, keep);
-  wrap.appendChild(actions);
-  field.replaceChildren(wrap);
-  keep.focus(); // focus on keep — the non-destructive choice
-}
-
-
-// ---------------------------------------------------------------------------
-// The username row — WEB_INTERFACE → The username row.
-// Three slots (.username-line, .username-form, .username-flight) built once and
-// updated in place, the invites row's model.
-// ---------------------------------------------------------------------------
-
-function usernameRow(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
-  field.replaceChildren(el('div', 'username-line'), el('div', 'username-form'), el('div', 'username-flight'));
-  updateUsername(field, handlers, ctx);
-}
-
-/** Update the username row's three slots in place from the current ctx — the
- *  invites row's model (HOUSE_STYLE → Motion). */
-export function renderUsernameRow(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
-  updateUsername(field, handlers, ctx);
-}
-
-function updateUsername(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
-  const line = field.querySelector<HTMLElement>('.username-line');
-  const formSlot = field.querySelector<HTMLElement>('.username-form');
-  const flight = field.querySelector<HTMLElement>('.username-flight');
-  if (!line || !formSlot || !flight) return;
-  line.replaceChildren();
-  formSlot.replaceChildren();
-  flight.replaceChildren();
-
-  // The transient flight's ending renders in the flight slot alongside whatever
-  // state the line/form are in.
-  if (ctx.usernameFlight && (ctx.usernameFlight.stage === 'rejected' || ctx.usernameFlight.stage === 'expired')) {
-    flight.appendChild(stageLine(ctx.usernameFlight));
-  }
-
-  if (!ctx.ownNameLoaded) {
-    line.appendChild(el('span', 'inkmute', '—'));
-    return;
-  }
-
-  const pending = ctx.pendingUsername;
-
-  // A pending claim or burn — the ledger's entry, durable across a reload.
-  if (pending) {
-    const muted = el('span', 'handle inkmute');
-    muted.textContent = '@' + pending.name;
-    line.appendChild(muted);
-    if (ctx.usernameFlight?.stage === 'submitting') {
-      flight.replaceChildren(stageLine(ctx.usernameFlight));
-    } else if (!ctx.usernameFlight || ctx.usernameFlight.stage === 'submitted') {
-      flight.replaceChildren(stageLine({ stage: 'submitted' }));
+/** export — a fresh sealed file. Export needs the seed: an identity locked at
+ *  the press unlocks first, then the set form appears (WEB_INTERFACE → The
+ *  profile window). */
+function exportRow(handlers: ProfileHandlers, read: () => ProfileCtx, pubKeyHex: string): BodyRow {
+  const { row: r, field } = row('export');
+  const trigger = el('button', 'word', 'export') as HTMLButtonElement;
+  let unlock: HTMLFormElement | null = null;
+  let set: HTMLFormElement | null = null;
+  const end = (focus: boolean): void => {
+    for (const form of [unlock, set]) if (form !== null) endForm(form);
+    unlock = null;
+    set = null;
+    setChildren(field, [trigger]);
+    if (focus) trigger.focus();
+  };
+  const showSet = (): void => {
+    set = setPassphraseForm(
+      `${pubKeyHex} · file`,
+      async (p) => {
+        await handlers.exportIdentity(p);
+        end(true);
+      },
+      () => end(true),
+    );
+    field.replaceChildren(set);
+  };
+  trigger.addEventListener('click', () => {
+    if (read().identity?.locked !== true) {
+      showSet();
+      return;
     }
-    return;
-  }
+    unlock = unlockForm(
+      pubKeyHex,
+      async (p) => {
+        await handlers.unlockIdentity(p);
+        end(false);
+        showSet();
+      },
+      () => end(true),
+    );
+    field.replaceChildren(unlock);
+  });
+  field.appendChild(trigger);
+  return {
+    row: r,
+    update: (ctx) => {
+      if (unlock !== null && ctx.identity?.locked !== true) end(false);
+    },
+  };
+}
 
-  // Holding a name — the handle, burn, and the hint. In the extension a handle
-  // the chain does not back is clay (WEB_INTERFACE → The identity display).
-  if (ctx.ownName) {
-    const handle = el('span', 'handle');
-    handle.textContent = '@' + ctx.ownName.name;
-    if (ctx.identity !== null && ctx.nameClay(ctx.identity.pubKeyHex, ctx.ownName.name)) handle.classList.add('clay');
-    if (ctx.identity !== null) markHandle(handle, ctx.identity.pubKeyHex, ctx.ownName.name);
-    line.appendChild(handle);
-    line.appendChild(document.createTextNode(' '));
-
-    const burn = el('button', 'word', 'burn') as HTMLButtonElement;
-    if (!ctx.canAffordBurn) {
-      burn.disabled = true;
-      burn.title = `a burn costs ${USERNAME_BURN_PRICE} rep; this key has less`;
-    }
-    burn.addEventListener('click', () => {
-      burnConfirm(line, handlers, ctx, burn);
+/** forget — the one path off a key, asked in place, the never-exported fact
+ *  first when the key is not backed up at the press. `keep` and Esc bring the
+ *  word back with the focus on it (WEB_INTERFACE → The profile window). */
+function forgetRow(handlers: ProfileHandlers, read: () => ProfileCtx): BodyRow {
+  const { row: r, field } = row('forget');
+  const trigger = el('button', 'word', 'forget') as HTMLButtonElement;
+  trigger.addEventListener('click', () => {
+    const wrap = el('div', 'pf-confirm');
+    wrap.appendChild(el('div', 'pf-refusal', read().backedUp
+      ? 'forget this key on this browser?'
+      : 'forget this key on this browser? without an exported file it cannot be recovered.'));
+    const back = (): void => {
+      field.replaceChildren(trigger);
+      trigger.focus();
+    };
+    const actions = el('div', 'pf-actions');
+    const forget = el('button', 'word', 'forget') as HTMLButtonElement;
+    forget.addEventListener('click', () => void handlers.forgetIdentity());
+    const keep = el('button', 'word', 'keep') as HTMLButtonElement;
+    keep.addEventListener('click', back);
+    wrap.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') back();
     });
-    line.appendChild(burn);
+    actions.append(forget, keep);
+    wrap.appendChild(actions);
+    field.replaceChildren(wrap);
+    keep.focus(); // focus on keep — the non-destructive choice
+  });
+  field.appendChild(trigger);
+  return { row: r, update: () => {} };
+}
+
+// ---------------------------------------------------------------------------
+// The username row — WEB_INTERFACE → The username row. Three slots
+// (.username-line, .username-form, .username-flight). The flight slot is drawn
+// from the state at every update. The form slot holds the claim form while the
+// row offers it — a name read, none held, nothing pending, a rep box to spend —
+// and the unlock row under it while the identity is locked. The line slot
+// holds the row's words, or the burn question in their place — and the unlock
+// form in the question's — while the name it was asked for is held and can be
+// burned.
+// ---------------------------------------------------------------------------
+
+function usernameRow(handlers: ProfileHandlers, read: () => ProfileCtx): BodyRow {
+  const { row: r, field } = row('username');
+  field.classList.add('username-field');
+  const line = el('div', 'username-line');
+  const formSlot = el('div', 'username-form');
+  const flight = el('div', 'username-flight');
+  field.append(line, formSlot, flight);
+
+  let claim: HTMLFormElement | null = null;
+  let claimUnlock: HTMLElement | null = null;
+  let question: { wrap: HTMLElement; name: string; unlock: boolean } | null = null;
+  const endClaimUnlock = (): void => {
+    if (claimUnlock !== null) endForm(claimUnlock);
+    claimUnlock = null;
+  };
+  const endClaim = (): void => {
+    endClaimUnlock();
+    if (claim !== null) endForm(claim);
+    claim = null;
+  };
+  const endQuestion = (): void => {
+    if (question !== null) endForm(question.wrap);
+    question = null;
+  };
+
+  const update = (ctx: ProfileCtx): void => {
+    const locked = ctx.identity?.locked === true;
+    const pending = ctx.ownNameLoaded ? ctx.pendingUsername : null;
+    const held = ctx.ownNameLoaded && pending === null ? ctx.ownName : null;
+
+    // The flight's ending stands beside whatever the line and the form read; a
+    // pending claim or burn reads its stage — the ledger's entry, durable
+    // across a reload.
+    const f = ctx.usernameFlight;
+    let stage: Flight | null = f !== null && (f.stage === 'rejected' || f.stage === 'expired') ? f : null;
+    if (pending !== null) {
+      if (f?.stage === 'submitting') stage = f;
+      else if (f === null || f.stage === 'submitted') stage = { stage: 'submitted' };
+    }
+    flight.replaceChildren(...(stage === null ? [] : [stageLine(stage)]));
+
+    if (ctx.ownNameLoaded && pending === null && ctx.ownName === null && ctx.canSignClaim) {
+      if (claim === null) {
+        claim = claimForm();
+        formSlot.appendChild(claim);
+      }
+    } else {
+      endClaim();
+    }
+    if (!locked) endClaimUnlock();
+
+    if (question !== null && (held?.name !== question.name || !ctx.canAffordBurn || (question.unlock && !locked))) {
+      endQuestion();
+    }
+    if (question !== null) return;
+
+    line.replaceChildren();
+    if (!ctx.ownNameLoaded) {
+      line.appendChild(el('span', 'inkmute', '—'));
+      return;
+    }
+    if (pending !== null) {
+      const muted = el('span', 'handle inkmute');
+      muted.textContent = '@' + pending.name;
+      line.appendChild(muted);
+      return;
+    }
+    // Holding a name — the handle, burn, and the hint. In the extension a handle
+    // the chain does not back is clay (WEB_INTERFACE → The identity display).
+    if (ctx.ownName !== null) {
+      const handle = el('span', 'handle');
+      handle.textContent = '@' + ctx.ownName.name;
+      if (ctx.identity !== null && ctx.nameClay(ctx.identity.pubKeyHex, ctx.ownName.name)) handle.classList.add('clay');
+      if (ctx.identity !== null) markHandle(handle, ctx.identity.pubKeyHex, ctx.ownName.name);
+      line.appendChild(handle);
+      line.appendChild(document.createTextNode(' '));
+
+      const burn = el('button', 'word', 'burn') as HTMLButtonElement;
+      if (!ctx.canAffordBurn) {
+        burn.disabled = true;
+        burn.title = `a burn costs ${USERNAME_BURN_PRICE} rep; this key has less`;
+      }
+      burn.addEventListener('click', openQuestion);
+      line.appendChild(burn);
+
+      const hint = el('div', 'hint');
+      hint.append(
+        `held since block `,
+        mono(String(ctx.ownName.claimedAtBlock)),
+        `. a burn costs ${USERNAME_BURN_PRICE} rep and restores your free claim.`,
+      );
+      line.appendChild(hint);
+      return;
+    }
+    // Holding none and no rep box — the claim form's gate.
+    if (!ctx.canSignClaim) {
+      line.appendChild(el('div', 'hint', 'a claim spends and returns one rep box; this key has none.'));
+    }
+  };
+
+  const claimForm = (): HTMLFormElement => {
+    const form = el('form', 'pf username-form') as HTMLFormElement;
+
+    const input = el('input') as HTMLInputElement;
+    input.setAttribute('aria-label', 'the name to claim');
+    input.placeholder = 'a name';
+    input.maxLength = 24;
+    input.autocomplete = 'off';
+    (input as HTMLInputElement).autocapitalize = 'off';
+    input.spellcheck = false;
+
+    // HOUSE_STYLE → Interaction → "A box marks a commit pair and a surface's
+    // primary action": `claim` wears the primary-action box, green as the
+    // wallet's `send` (WEB_INTERFACE → The username row → "Holding none, nothing
+    // pending, a rep box to spend").
+    const submit = el('button', 'btn btn-primary', 'claim') as HTMLButtonElement;
+    submit.type = 'submit';
+
+    // The input and the boxed claim on one line, the wallet's send-row pattern.
+    const nameRow = el('div', 'name-row');
+    nameRow.append(input, submit);
+
+    const refusal = el('div', 'pf-refusal');
+    refusal.hidden = true;
 
     const hint = el('div', 'hint');
     hint.append(
-      `held since block `,
-      mono(String(ctx.ownName.claimedAtBlock)),
-      `. a burn costs ${USERNAME_BURN_PRICE} rep and restores your free claim.`,
+      `free, once per key. 1 to 24 letters, digits or _, shown as typed; one name is one name whatever its case. a later burn costs ${USERNAME_BURN_PRICE} rep and restores the claim.`,
     );
-    line.appendChild(hint);
-    return;
-  }
 
-  // Holding none — the claim form or the "no karma box" hint.
-  if (!ctx.canSignClaim) {
-    line.appendChild(el('div', 'hint', 'a claim spends and returns one rep box; this key has none.'));
-    return;
-  }
-  claimForm(formSlot as HTMLElement, handlers, ctx);
-}
-
-function claimForm(slot: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
-  const form = el('form', 'pf username-form') as HTMLFormElement;
-
-  const input = el('input') as HTMLInputElement;
-  input.setAttribute('aria-label', 'the name to claim');
-  input.placeholder = 'a name';
-  input.maxLength = 24;
-  input.autocomplete = 'off';
-  (input as HTMLInputElement).autocapitalize = 'off';
-  input.spellcheck = false;
-
-  // HOUSE_STYLE → Interaction → "A box marks a commit pair and a surface's
-  // primary action": `claim` wears the primary-action box, green as the
-  // wallet's `send` (WEB_INTERFACE → The username row → "Holding none, nothing
-  // pending, a rep box to spend").
-  const submit = el('button', 'btn btn-primary', 'claim') as HTMLButtonElement;
-  submit.type = 'submit';
-
-  // The input and the boxed claim on one line, the wallet's send-row pattern.
-  const nameRow = el('div', 'name-row');
-  nameRow.append(input, submit);
-
-  const refusal = el('div', 'pf-refusal');
-  refusal.hidden = true;
-
-  const hint = el('div', 'hint');
-  hint.append(
-    `free, once per key. 1 to 24 letters, digits or _, shown as typed; one name is one name whatever its case. a later burn costs ${USERNAME_BURN_PRICE} rep and restores the claim.`,
-  );
-
-  form.append(nameRow, refusal, hint);
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    let v = input.value.trim();
-    if (v.startsWith('@')) v = v.slice(1);
-    const bytes = new TextEncoder().encode(v);
-    if (!isValidUsernameBytes(bytes)) {
-      refusal.textContent = 'a name is 1 to 24 letters, digits or _.';
-      refusal.hidden = false;
-      return;
-    }
-    refusal.hidden = true;
-    const id = ctx.identity;
-    if (id?.locked) {
-      if (form.parentElement?.querySelector('.card-unlock')) return;
+    form.append(nameRow, refusal, hint);
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      let v = input.value.trim();
+      if (v.startsWith('@')) v = v.slice(1);
+      const bytes = new TextEncoder().encode(v);
+      if (!isValidUsernameBytes(bytes)) {
+        refusal.textContent = 'a name is 1 to 24 letters, digits or _.';
+        refusal.hidden = false;
+        return;
+      }
+      refusal.hidden = true;
+      const id = read().identity;
+      if (id?.locked !== true) {
+        handlers.claimUsername(v);
+        return;
+      }
+      if (claimUnlock !== null) return;
       const urow = el('div', 'card-unlock');
       urow.appendChild(
         unlockForm(
           id.pubKeyHex,
           async (p) => {
             await handlers.unlockIdentity(p);
+            endClaimUnlock();
             handlers.claimUsername(v);
           },
-          () => urow.remove(),
+          endClaimUnlock,
         ),
       );
-      form.insertAdjacentElement('afterend', urow);
-      return;
-    }
-    handlers.claimUsername(v);
-  });
-  slot.appendChild(form);
-}
+      claimUnlock = urow;
+      form.after(urow);
+    });
+    return form;
+  };
 
-function burnConfirm(line: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx, burnBtn: HTMLElement): void {
-  const name = ctx.ownName?.name;
-  if (!name) return;
-  const saved = [...line.childNodes];
-  const wrap = el('div', 'pf-confirm');
-  const q = el('div', 'pf-refusal');
-  q.textContent = `burn @${name} for ${USERNAME_BURN_PRICE} rep? the name is open to anyone again, and your free claim returns.`;
-  wrap.appendChild(q);
-  const actions = el('div', 'pf-actions');
-  const confirm = el('button', 'word', 'burn') as HTMLButtonElement;
-  confirm.addEventListener('click', () => {
-    const id = ctx.identity;
-    if (id?.locked) {
+  // `burn` asks in place, as `forget` does; `keep` and Esc bring the words
+  // back with the focus on `burn`. The question's `burn` signs — a locked
+  // identity through the unlock form in the question's place first.
+  function openQuestion(): void {
+    const name = read().ownName?.name;
+    if (!name || question !== null) return;
+    const wrap = el('div', 'pf-confirm');
+    const q = el('div', 'pf-refusal');
+    q.textContent = `burn @${name} for ${USERNAME_BURN_PRICE} rep? the name is open to anyone again, and your free claim returns.`;
+    wrap.appendChild(q);
+    const back = (): void => {
+      endQuestion();
+      update(read());
+      line.querySelector('button')?.focus();
+    };
+    const actions = el('div', 'pf-actions');
+    const confirm = el('button', 'word', 'burn') as HTMLButtonElement;
+    confirm.addEventListener('click', () => {
+      const asked = question;
+      if (asked === null) return;
+      const id = read().identity;
+      if (id?.locked !== true) {
+        endQuestion();
+        update(read());
+        handlers.burnUsername();
+        return;
+      }
+      asked.unlock = true;
       wrap.replaceChildren(
         unlockForm(
           id.pubKeyHex,
           async (p) => {
             await handlers.unlockIdentity(p);
+            endQuestion();
+            update(read());
             handlers.burnUsername();
           },
-          restore,
+          back,
         ),
       );
-      return;
-    }
-    handlers.burnUsername();
-  });
-  const keep = el('button', 'word', 'keep') as HTMLButtonElement;
-  const onEscape = (e: KeyboardEvent): void => { if (e.key === 'Escape') restore(); };
-  const restore = (): void => {
-    line.removeEventListener('keydown', onEscape);
-    line.replaceChildren(...saved);
-    burnBtn.focus();
-  };
-  keep.addEventListener('click', restore);
-  actions.append(confirm, keep);
-  wrap.appendChild(actions);
-  line.replaceChildren(wrap);
-  keep.focus();
+    });
+    const keep = el('button', 'word', 'keep') as HTMLButtonElement;
+    keep.addEventListener('click', back);
+    actions.append(confirm, keep);
+    wrap.appendChild(actions);
+    wrap.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && question?.wrap === wrap) back();
+    });
+    question = { wrap, name, unlock: false };
+    line.replaceChildren(wrap);
+    keep.focus();
+  }
 
-  line.addEventListener('keydown', onEscape);
+  return { row: r, update };
 }
-

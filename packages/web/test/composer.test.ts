@@ -143,6 +143,112 @@ describe('composer — submit and discard', () => {
   });
 });
 
+// WEB_INTERFACE → The workspace → "A window's body stands while the window is
+// open": the unlock form in the foot ends at an unlock made anywhere, the foot
+// returning with its field emptied and the drafts as they were; Esc in the
+// form cancels it and nothing else.
+describe('composer — the unlock form in the foot', () => {
+  const KEY = 'ab'.repeat(32);
+  const footOf = (el: HTMLElement): HTMLElement => el.querySelector('.composer-foot') as HTMLElement;
+  const passOf = (el: HTMLElement): HTMLInputElement => footOf(el).querySelector('input[type="password"]') as HTMLInputElement;
+
+  it('showUnlock puts the unlock form in the foot under its line, the draft untouched', () => {
+    const { ctrl, ta } = open();
+    ctrl.setAffordable(true);
+    type(ta, 'a draft');
+    ctrl.showUnlock(KEY, async () => {});
+    expect(footOf(ctrl.el).querySelector('.ask')?.textContent).toBe('your key is locked — unlock to post');
+    expect(passOf(ctrl.el)).not.toBeNull();
+    expect(postBtn(ctrl.el)).toBeUndefined();
+    expect(ta.value).toBe('a draft');
+  });
+
+  it('endUnlock returns the foot, empties the form\'s field and leaves every draft; with no form standing it changes nothing', () => {
+    const { ctrl, ta } = open();
+    ctrl.setAffordable(true);
+    type(ta, 'a draft');
+    setType(ctrl.el, 'link');
+    typeInput(urlIn(ctrl.el), 'https://example.test');
+    ctrl.showUnlock(KEY, async () => {});
+    const pass = passOf(ctrl.el);
+    pass.value = 'half';
+
+    ctrl.endUnlock();
+    expect(pass.isConnected).toBe(false);
+    expect(pass.value).toBe('');
+    expect(footOf(ctrl.el).querySelector('form')).toBeNull();
+    expect(footOf(ctrl.el).querySelector('.ask')).toBeNull();
+    expect([...footOf(ctrl.el).querySelectorAll('button')].map((b) => b.textContent)).toEqual(['post', 'cancel']);
+    expect(postBtn(ctrl.el).disabled).toBe(false);
+    expect(urlIn(ctrl.el).value).toBe('https://example.test');
+    setType(ctrl.el, 'text');
+    expect((ctrl.el.querySelector('textarea') as HTMLTextAreaElement).value).toBe('a draft');
+
+    const foot = [...footOf(ctrl.el).childNodes];
+    ctrl.endUnlock();
+    expect([...footOf(ctrl.el).childNodes]).toEqual(foot);
+  });
+
+  it('the form\'s cancel ends it, its field emptied, and the foot returns with the focus in the draft', () => {
+    const { ctrl, ta } = open();
+    ctrl.setAffordable(true);
+    type(ta, 'a draft');
+    ctrl.showUnlock(KEY, async () => {});
+    const pass = passOf(ctrl.el);
+    pass.value = 'half';
+    ([...footOf(ctrl.el).querySelectorAll('button')].find((b) => b.textContent === 'cancel') as HTMLButtonElement).click();
+    expect(pass.value).toBe('');
+    expect(footOf(ctrl.el).querySelector('form')).toBeNull();
+    expect(postBtn(ctrl.el)).not.toBeUndefined();
+    expect(document.activeElement).toBe(ta);
+    expect(ta.value).toBe('a draft');
+  });
+
+  it('Esc in the form cancels it and nothing else: its field emptied, the foot back, the focus in the draft, no question asked and the composer open; Esc in the draft is the composer\'s own and asks', () => {
+    const { ctrl, ta, onClose } = open();
+    ctrl.setAffordable(true);
+    type(ta, 'a draft');
+    ctrl.showUnlock(KEY, async () => {});
+    const pass = passOf(ctrl.el);
+    pass.value = 'half';
+    pass.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(pass.isConnected).toBe(false);
+    expect(pass.value).toBe('');
+    expect(footOf(ctrl.el).querySelector('.ask')).toBeNull();
+    expect([...footOf(ctrl.el).querySelectorAll('button')].map((b) => b.textContent)).toEqual(['post', 'cancel']);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(ta.value).toBe('a draft');
+    expect(document.activeElement).toBe(ta);
+
+    ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(footOf(ctrl.el).querySelector('.ask')?.textContent).toBe('discard this post?');
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('Esc in the form over a draft since emptied leaves the composer open, the foot back', () => {
+    const { ctrl, ta, onClose } = open();
+    ctrl.setAffordable(true);
+    type(ta, 'a draft');
+    ctrl.showUnlock(KEY, async () => {});
+    type(ta, '');
+    passOf(ctrl.el).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(footOf(ctrl.el).querySelector('form')).toBeNull();
+    expect([...footOf(ctrl.el).querySelectorAll('button')].map((b) => b.textContent)).toEqual(['post', 'cancel']);
+  });
+
+  it('a second showUnlock ends the form standing, its field emptied, and stands one form', () => {
+    const { ctrl } = open();
+    ctrl.showUnlock(KEY, async () => {});
+    const first = passOf(ctrl.el);
+    first.value = 'half';
+    ctrl.showUnlock(KEY, async () => {});
+    expect(first.isConnected).toBe(false);
+    expect(first.value).toBe('');
+    expect(footOf(ctrl.el).querySelectorAll('form')).toHaveLength(1);
+  });
+});
+
 describe('composer — the type control', () => {
   it('the select is first in the foot, with text, link, image', () => {
     const { ctrl } = open();

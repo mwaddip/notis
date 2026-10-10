@@ -3,8 +3,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  walletBody, renderCreditsRow, resetCreditsSendForm, sendUnlockRow,
-  type WalletHandlers, type WalletCtx, type SendRecipient,
+  walletBody, sendUnlockRow,
+  type WalletBody, type WalletHandlers, type WalletCtx, type SendRecipient,
 } from '../src/view/wallet';
 import { prefs } from '../src/prefs';
 import { shortHex } from '../src/dom';
@@ -28,6 +28,7 @@ function handlers(over: Partial<WalletHandlers> = {}): WalletHandlers {
     // Every press begins — no check runs: the web build always, the extension
     // between presses.
     beginSendPress: () => true,
+    endSendPress: () => {},
     pressSend: () => {},
     resolveRecipient: async () => ({ refusal: 'no one holds that name.' }),
     send: () => {},
@@ -47,6 +48,17 @@ function button(root: HTMLElement, text: string): HTMLButtonElement | null {
 }
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+/** Esc pressed in `at` — a keydown that travels up from it. Answers how many
+ *  times the press reached `above`. */
+function escIn(at: HTMLElement, above: HTMLElement): number {
+  let reached = 0;
+  const seen = (e: Event): void => { if ((e as KeyboardEvent).key === 'Escape') reached += 1; };
+  above.addEventListener('keydown', seen);
+  at.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  above.removeEventListener('keydown', seen);
+  return reached;
+}
 
 const REC = 'cd'.repeat(32);
 const REC_NAME = 'bob';
@@ -91,7 +103,14 @@ function extCtx(over: Partial<WalletCtx> = {}): WalletCtx {
   });
 }
 
-const render = (h: WalletHandlers, c: WalletCtx): HTMLElement => walletBody(h, c);
+const render = (h: WalletHandlers, c: WalletCtx): HTMLElement => walletBody(h, () => c).el;
+
+/** A body over a state the case moves: `set` replaces what the body reads at
+ *  its next draw and at the next press of one of its controls. */
+function live(h: WalletHandlers, c: WalletCtx): { body: WalletBody; set(next: WalletCtx): void } {
+  let now = c;
+  return { body: walletBody(h, () => now), set: (next) => { now = next; } };
+}
 
 beforeEach(() => {
   localStorage.clear();
@@ -110,10 +129,9 @@ describe('wallet window — the two states', () => {
     const body = render(handlers(), creditsCtx());
     const field = creditsField(body)!;
     expect(field).not.toBeNull();
-    // The two rows carry .balance-row and .send-row — the identity toggleSendRow
-    // selects by, so the geometry of credits-field does not decide the row's
-    // identity (WEB_INTERFACE → The wallet window → "The `balance` row",
-    // → "The `send` row").
+    // The two rows carry .balance-row and .send-row, so the geometry of
+    // credits-field does not decide a row's identity (WEB_INTERFACE → The
+    // wallet window → "The `balance` row", → "The `send` row").
     const balance = field.querySelector<HTMLElement>(':scope > .balance-row');
     const send = field.querySelector<HTMLElement>(':scope > .send-row');
     expect(balance).not.toBeNull();
@@ -286,9 +304,11 @@ describe('wallet window — the balance and send rows', () => {
 
   it('a /status answer landing in place turns the — into the step', () => {
     prefs.faucet = '/faucet';
-    const f = creditsField(render(handlers(), creditsCtx({ status: null })))!;
+    const w = live(handlers(), creditsCtx({ status: null }));
+    const f = creditsField(w.body.el)!;
     expect(button(f, 'ask the faucet for $NOTIS')).toBeNull();
-    renderCreditsRow(f, handlers(), creditsCtx());
+    w.set(creditsCtx());
+    w.body.update();
     expect(button(f, 'ask the faucet for $NOTIS')).not.toBeNull();
   });
 
@@ -296,10 +316,12 @@ describe('wallet window — the balance and send rows', () => {
     prefs.faucet = '/faucet';
     const pending = creditsField(render(handlers(), creditsCtx({ status: null, creditGrant: { state: 'pending' } })))!;
     expect(pending.querySelector('.credits-line')?.textContent).toBe('working…');
-    const lapsed = creditsField(render(handlers(), creditsCtx({ status: null, creditGrant: { state: 'expired', atHeight: 5999 } })))!;
+    const w = live(handlers(), creditsCtx({ status: null, creditGrant: { state: 'expired', atHeight: 5999 } }));
+    const lapsed = creditsField(w.body.el)!;
     expect(lapsed.querySelector('.credits-line')?.textContent).toBe("no block took the faucet's transfer by height 5999. ");
     expect(button(lapsed, 'ask again')).toBeNull();
-    renderCreditsRow(lapsed, handlers(), creditsCtx({ creditGrant: { state: 'expired', atHeight: 5999 } }));
+    w.set(creditsCtx({ creditGrant: { state: 'expired', atHeight: 5999 } }));
+    w.body.update();
     expect(button(lapsed, 'ask again')).not.toBeNull();
   });
 
@@ -391,11 +413,11 @@ describe('wallet window — the balance and send rows', () => {
     // The confirm row is up.
     expect(f.querySelector('.pf-confirm')).not.toBeNull();
     button(f, 'keep')!.click();
-    // The form is back with its values.
-    const back = f.querySelector('form.credits-form') as HTMLFormElement;
-    const inputs = back.querySelectorAll<HTMLInputElement>('input');
-    expect(inputs[0]!.value).toBe(REC);
-    expect(inputs[1]!.value).toBe('3.14');
+    // The form is back — the same node, with its values.
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    expect(f.querySelector('form.credits-form')).toBe(form);
+    expect(to.value).toBe(REC);
+    expect(amount.value).toBe('3.14');
   });
 
   it('a locked press on send mounts the unlock row and calls no handler', async () => {
@@ -421,51 +443,47 @@ describe('wallet window — the balance and send rows', () => {
     expect(sent).toHaveLength(0);
   });
 
-  it('after an in-row unlock, a second send goes straight through with no unlock form mounted', async () => {
-    // An in-row unlock fires no onChange, so the App does not re-render the
-    // profile; sendConfirm holds its own effective ctx so the rebuilt form and
-    // the next press see the unlocked identity (WEB_INTERFACE → The wallet).
+  it('a locked send unlocks in the confirm row\'s place, the form returns with its values and the send goes out; the next send reads the identity unlocked and asks for no unlock', async () => {
     const sent: Array<[string, string | null, bigint]> = [];
     const unlockedWith: string[] = [];
+    const spendable = creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 });
     const h = handlers({
       send: (k, n, a) => sent.push([k, n, a]),
-      unlockIdentity: async (p) => { unlockedWith.push(p); },
+      unlockIdentity: async (p) => { unlockedWith.push(p); w.set(creditsCtx({ credits: spendable })); },
     });
-    const c = creditsCtx({
-      identity: { pubKeyHex: KEY, locked: true },
-      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
-    });
-    const f = creditsField(render(h, c))!;
+    const w = live(h, creditsCtx({ identity: { pubKeyHex: KEY, locked: true }, credits: spendable }));
+    const f = creditsField(w.body.el)!;
 
     // First press: submit → confirm → send → unlock form mounts, no send yet.
-    const form1 = f.querySelector('form.credits-form') as HTMLFormElement;
-    const inputs1 = form1.querySelectorAll<HTMLInputElement>('input');
-    inputs1[0]!.value = REC; inputs1[1]!.value = '1';
-    form1.dispatchEvent(new Event('submit', { cancelable: true }));
+    const form = f.querySelector('form.credits-form') as HTMLFormElement;
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = REC; inputs[1]!.value = '1';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
     await flush();
     const confirm1 = f.querySelector('.pf-confirm') as HTMLElement;
     ([...confirm1.querySelectorAll('button')].find((b) => b.textContent === 'send') as HTMLButtonElement).click();
     // The confirm wrap now holds the unlock form (a password input identifies it).
     const unlock = f.querySelector('.pf-confirm form') as HTMLFormElement;
-    expect(unlock.querySelector('input[type="password"]')).not.toBeNull();
+    const pw = unlock.querySelector('input[type="password"]') as HTMLInputElement;
+    expect(pw).not.toBeNull();
     expect(sent).toHaveLength(0);
 
-    // The unlock's submit resolves: send fires, the unlock form is gone, and
-    // the slot holds a fresh sendForm built with an unlocked effective ctx.
-    (unlock.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    // The unlock's submit resolves: send fires, the unlock form has ended with
+    // its field emptied, and the form stands in the slot with its values.
+    pw.value = 'pw';
     unlock.dispatchEvent(new Event('submit', { cancelable: true }));
     await flush();
     expect(unlockedWith).toEqual(['pw']);
-    expect(sent).toHaveLength(1);
+    expect(sent).toEqual([[REC, null, 100_000_000n]]);
     expect(f.querySelector('input[type="password"]')).toBeNull();
-    expect(f.querySelector('form.credits-form')).not.toBeNull();
+    expect(pw.value).toBe('');
+    expect(f.querySelector('form.credits-form')).toBe(form);
+    expect([inputs[0]!.value, inputs[1]!.value]).toEqual([REC, '1']);
 
-    // Second press: fill the rebuilt form, submit, press send. The rebuilt
-    // form's ctx is unlocked, so send fires straight — no unlock form mounts.
-    const form2 = f.querySelector('form.credits-form') as HTMLFormElement;
-    const inputs2 = form2.querySelectorAll<HTMLInputElement>('input');
-    inputs2[0]!.value = REC; inputs2[1]!.value = '2';
-    form2.dispatchEvent(new Event('submit', { cancelable: true }));
+    // Second press: the identity reads unlocked at the press, so send fires
+    // straight — no unlock form mounts.
+    inputs[1]!.value = '2';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
     await flush();
     const confirm2 = f.querySelector('.pf-confirm') as HTMLElement;
     ([...confirm2.querySelectorAll('button')].find((b) => b.textContent === 'send') as HTMLButtonElement).click();
@@ -521,24 +539,24 @@ describe('wallet window — the balance and send rows', () => {
     expect(expired.querySelector('.credits-flight')?.textContent).toContain('9,000');
   });
 
-  it('renderCreditsRow leaves the form the reader is filling in place (READ-1 defect 3)', () => {
+  it('a draw leaves the form the reader is filling in place (READ-1 defect 3)', () => {
     const c = creditsCtx({
       credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
     });
-    const body = render(handlers(), c);
-    const f = creditsField(body)!;
+    const w = live(handlers(), c);
+    const f = creditsField(w.body.el)!;
     const form = f.querySelector('form.credits-form') as HTMLFormElement;
     const to = form.querySelector<HTMLInputElement>('input[aria-label*="recipient"]')!;
     const amount = form.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!;
     to.value = REC; amount.value = '3.14';
 
-    // A pending send lands on this row via renderCreditsRow — the form must stay
-    // with its values (WEB_INTERFACE → The wallet).
-    const c2 = creditsCtx({
+    // A send's ending lands on this row in place — the form must stay with
+    // its values (WEB_INTERFACE → The wallet).
+    w.set(creditsCtx({
       credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
       sendFlight: { stage: 'rejected', reason: 'send not sent.' },
-    });
-    renderCreditsRow(f, handlers(), c2);
+    }));
+    w.body.update();
     // Same form element, same values.
     expect(f.querySelector('form.credits-form')).toBe(form);
     const inputs = form.querySelectorAll<HTMLInputElement>('input');
@@ -548,30 +566,30 @@ describe('wallet window — the balance and send rows', () => {
     expect(f.querySelector('.credits-flight')?.textContent).toContain('send not sent.');
   });
 
-  it('resetCreditsSendForm clears the form after an accepted submission (READ-1 defect 3)', () => {
+  it('resetSend clears the form after an accepted submission (READ-1 defect 3)', () => {
     const c = creditsCtx({
       credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
     });
-    const f = creditsField(render(handlers(), c))!;
+    const w = live(handlers(), c);
+    const f = creditsField(w.body.el)!;
     const form = f.querySelector('form.credits-form') as HTMLFormElement;
     const inputs = form.querySelectorAll<HTMLInputElement>('input');
     inputs[0]!.value = REC; inputs[1]!.value = '3.14';
-    resetCreditsSendForm(f);
+    w.body.resetSend();
     expect(inputs[0]!.value).toBe('');
     expect(inputs[1]!.value).toBe('');
   });
 
-  it('renderCreditsRow builds a form when the spendable side turns from zero to non-zero', () => {
+  it('a draw builds a form when the spendable side turns from zero to non-zero', () => {
     // Empty at first — no form.
-    const empty = creditsCtx();
-    const body = render(handlers(), empty);
-    const f = creditsField(body)!;
+    const w = live(handlers(), creditsCtx());
+    const f = creditsField(w.body.el)!;
     expect(f.querySelector('form.credits-form')).toBeNull();
     // A grant lands: credits now hold a box; the update owes a fresh form.
-    const withCredits = creditsCtx({
+    w.set(creditsCtx({
       credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
-    });
-    renderCreditsRow(f, handlers(), withCredits);
+    }));
+    w.body.update();
     expect(f.querySelector('form.credits-form')).not.toBeNull();
   });
 
@@ -643,6 +661,217 @@ function extForm(f: HTMLElement): { form: HTMLFormElement; to: HTMLInputElement;
     amount: form.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!,
   };
 }
+
+// ---------------------------------------------------------------------------
+// WEB_INTERFACE → The workspace → "A draw updates a standing body in place",
+// → "A window's controls act on the state as it stands at the press",
+// → "What ends a form in a window" — the wallet's rows.
+// ---------------------------------------------------------------------------
+
+describe('wallet — the body across a draw', () => {
+  const lockedId = { pubKeyHex: KEY, locked: true };
+  const box = creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 });
+  const spendableCtx = (over: Partial<WalletCtx> = {}): WalletCtx => creditsCtx({ credits: box, ...over });
+  const sendIn = (root: Element): HTMLButtonElement =>
+    [...root.querySelectorAll('button')].find((b) => b.textContent === 'send') as HTMLButtonElement;
+
+  /** Type a key and an amount, and press the form's `send`: the confirm row. */
+  async function toConfirm(f: HTMLElement): Promise<{ form: HTMLFormElement; inputs: HTMLInputElement[]; confirm: HTMLElement }> {
+    const form = f.querySelector('form.credits-form') as HTMLFormElement;
+    const inputs = [...form.querySelectorAll<HTMLInputElement>('input')];
+    inputs[0]!.value = REC; inputs[1]!.value = '1';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    return { form, inputs, confirm: f.querySelector('.pf-confirm') as HTMLElement };
+  }
+
+  it('the body, its rows and the send form are the same nodes at every draw, and the balance follows the listing', () => {
+    const w = live(handlers(), spendableCtx());
+    const f = creditsField(w.body.el)!;
+    const rows = [...f.querySelectorAll('.row')];
+    const form = f.querySelector('form.credits-form');
+    expect(f.querySelector('.credits-line .gold')?.textContent).toBe('100');
+    w.set(spendableCtx({ credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '2500000000' }], boxCount: 1 }) }));
+    w.body.update();
+    expect(creditsField(w.body.el)).toBe(f);
+    expect([...f.querySelectorAll('.row')]).toEqual(rows);
+    expect(f.querySelector('form.credits-form')).toBe(form);
+    expect(f.querySelector('.credits-line .gold')?.textContent).toBe('25');
+  });
+
+  it('a draw that reads no box spendable ends the send form, its fields emptied, and hides the row; a box spendable again offers a fresh form', () => {
+    const w = live(handlers(), spendableCtx());
+    const f = creditsField(w.body.el)!;
+    const form = f.querySelector('form.credits-form') as HTMLFormElement;
+    const inputs = [...form.querySelectorAll<HTMLInputElement>('input')];
+    inputs[0]!.value = REC; inputs[1]!.value = '3.14';
+
+    w.set(creditsCtx());
+    w.body.update();
+    expect(f.querySelector('form')).toBeNull();
+    expect(inputs.map((x) => x.value)).toEqual(['', '']);
+    expect(f.querySelector<HTMLElement>(':scope > .send-row')?.hidden).toBe(true);
+
+    w.set(spendableCtx());
+    w.body.update();
+    const fresh = f.querySelector('form.credits-form') as HTMLFormElement;
+    expect(fresh).not.toBe(form);
+    expect([...fresh.querySelectorAll<HTMLInputElement>('input')].map((x) => x.value)).toEqual(['', '']);
+  });
+
+  it('the form ended with nothing left to spend tells the App once, and the rest of that draw reads the state after it: no *checking* line, no key, the row hidden', () => {
+    let ended = 0;
+    const w = live(
+      handlers({ endSendPress: () => { ended += 1; w.set(creditsCtx({ confirmInRow: false })); } }),
+      extCtx({ sendCheck: '@bob', sendAnswer: { key: REC, unlock: null } }),
+    );
+    const f = creditsField(w.body.el)!;
+    expect(f.querySelector('.credits-flight')?.textContent).toBe('checking @bob…');
+
+    w.set(creditsCtx({ confirmInRow: false, sendCheck: '@bob', sendAnswer: { key: REC, unlock: null } }));
+    w.body.update();
+    expect(ended).toBe(1);
+    expect(f.querySelector('form')).toBeNull();
+    expect(f.querySelector('.credits-flight')?.textContent).toBe('');
+    expect(f.querySelector<HTMLElement>(':scope > .send-row')?.hidden).toBe(true);
+
+    // With no form standing, a draw that reads nothing spendable tells the App nothing more.
+    w.body.update();
+    expect(ended).toBe(1);
+  });
+
+  it('the web build: a handle\'s resolve that answers after its form ended opens no confirm row', async () => {
+    let release: (r: { key: string; name: string | null }) => void = () => {};
+    const w = live(
+      handlers({ resolveRecipient: () => new Promise((resolve) => { release = resolve; }) }),
+      spendableCtx(),
+    );
+    const f = creditsField(w.body.el)!;
+    const form = f.querySelector('form.credits-form') as HTMLFormElement;
+    const inputs = [...form.querySelectorAll<HTMLInputElement>('input')];
+    inputs[0]!.value = '@bob'; inputs[1]!.value = '1';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+
+    w.set(creditsCtx());
+    w.body.update();
+    w.set(spendableCtx());
+    w.body.update();
+    release({ key: REC, name: 'bob' });
+    await flush();
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    expect(f.querySelector('form.credits-form')).not.toBe(form);
+  });
+
+  it('the confirm row stands across a draw; a draw that reads no box spendable ends it with the form behind it', async () => {
+    const w = live(handlers(), spendableCtx());
+    const f = creditsField(w.body.el)!;
+    const { inputs, confirm } = await toConfirm(f);
+    w.set(spendableCtx({ sendFlight: { stage: 'rejected', reason: 'send not sent.' } }));
+    w.body.update();
+    expect(f.querySelector('.pf-confirm')).toBe(confirm);
+    expect(f.querySelector('form.credits-form')).toBeNull();
+
+    w.set(creditsCtx());
+    w.body.update();
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    expect(inputs.map((x) => x.value)).toEqual(['', '']);
+  });
+
+  it('the confirm row\'s send reads the lock when pressed: asked unlocked and locked since, it asks for the unlock in the row\'s place', async () => {
+    const sent: unknown[] = [];
+    const w = live(handlers({ send: (...a) => sent.push(a) }), spendableCtx());
+    const f = creditsField(w.body.el)!;
+    const { confirm } = await toConfirm(f);
+    w.set(spendableCtx({ identity: lockedId })); // no draw between the lock and the press
+    sendIn(confirm).click();
+    expect(f.querySelector('.pf-confirm input[type="password"]')).not.toBeNull();
+    expect(sent).toHaveLength(0);
+  });
+
+  it('asked locked and unlocked since, the confirm row\'s send goes out and the form returns with its values', async () => {
+    const sent: unknown[] = [];
+    const w = live(handlers({ send: (...a) => sent.push(a) }), spendableCtx({ identity: lockedId }));
+    const f = creditsField(w.body.el)!;
+    const { form, inputs, confirm } = await toConfirm(f);
+    w.set(spendableCtx());
+    sendIn(confirm).click();
+    expect(sent).toHaveLength(1);
+    expect(f.querySelector('input[type="password"]')).toBeNull();
+    expect(f.querySelector('form.credits-form')).toBe(form);
+    expect(inputs.map((x) => x.value)).toEqual([REC, '1']);
+  });
+
+  it('the unlock in the confirm row\'s place stands while the identity reads locked; a draw that reads it unlocked ends it, its field emptied, and the form returns with its values', async () => {
+    const sent: unknown[] = [];
+    const w = live(handlers({ send: (...a) => sent.push(a) }), spendableCtx({ identity: lockedId }));
+    const f = creditsField(w.body.el)!;
+    const { form, inputs, confirm } = await toConfirm(f);
+    sendIn(confirm).click();
+    const pw = f.querySelector('.pf-confirm input[type="password"]') as HTMLInputElement;
+    pw.value = 'half';
+    w.body.update();
+    expect(f.querySelector('.pf-confirm input[type="password"]')).toBe(pw);
+    expect(pw.value).toBe('half');
+
+    w.set(spendableCtx()); // unlocked from another form
+    w.body.update();
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(f.querySelector('form.credits-form')).toBe(form);
+    expect(inputs.map((x) => x.value)).toEqual([REC, '1']);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('Esc in the confirm row puts the form back', async () => {
+    const w = live(handlers(), spendableCtx());
+    const f = creditsField(w.body.el)!;
+    const { form, confirm } = await toConfirm(f);
+    button(confirm, 'keep')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    expect(f.querySelector('form.credits-form')).toBe(form);
+  });
+
+  it('Esc in the unlock form in the confirm row\'s place puts the send form back with its values, the passphrase field emptied; nothing is unlocked or sent, and nothing above the form reads the press', async () => {
+    const sent: unknown[] = [];
+    const unlockedWith: string[] = [];
+    const w = live(
+      handlers({ send: (...a) => sent.push(a), unlockIdentity: async (p) => { unlockedWith.push(p); } }),
+      spendableCtx({ identity: lockedId }),
+    );
+    const f = creditsField(w.body.el)!;
+    const { form, inputs, confirm } = await toConfirm(f);
+    sendIn(confirm).click();
+    const pw = f.querySelector('.pf-confirm input[type="password"]') as HTMLInputElement;
+    pw.value = 'half';
+    expect(escIn(pw, w.body.el)).toBe(0);
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(f.querySelector('form.credits-form')).toBe(form);
+    expect(inputs.map((x) => x.value)).toEqual([REC, '1']);
+    expect(unlockedWith).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it('a draw that reads another key builds the body anew in the same node, every field of the form that stood emptied; one that reads none draws the lead line', () => {
+    const w = live(handlers(), spendableCtx());
+    const el = w.body.el;
+    const inputs = [...el.querySelectorAll<HTMLInputElement>('form.credits-form input')];
+    inputs[0]!.value = REC; inputs[1]!.value = '1';
+
+    w.set(spendableCtx({ identity: { pubKeyHex: REC, locked: true } }));
+    w.body.update();
+    expect(w.body.el).toBe(el);
+    expect(inputs.map((x) => x.value)).toEqual(['', '']);
+    expect(inputs[0]!.isConnected).toBe(false);
+    expect([...el.querySelectorAll<HTMLInputElement>('form.credits-form input')].map((x) => x.value)).toEqual(['', '']);
+
+    w.set(ctx());
+    w.body.update();
+    expect(el.textContent).toContain('no identity in this browser');
+    expect(creditsField(el)).toBeNull();
+  });
+});
 
 describe('wallet — the send flow, extension arm (confirmInRow: false)', () => {
   it('a handle: the form hands the App the press — the name less its `@`, the amount in base units — and builds no confirm row', async () => {
@@ -719,9 +948,11 @@ describe('wallet — the send flow, extension arm (confirmInRow: false)', () => 
   });
 
   it('the refusal the App holds reads in the form\'s line, taking away the key a press before left beneath the field', () => {
-    const f = creditsField(render(handlers(), extCtx({ sendAnswer: { key: REC, unlock: null } })))!;
+    const w = live(handlers(), extCtx({ sendAnswer: { key: REC, unlock: null } }));
+    const f = creditsField(w.body.el)!;
     const { form } = extForm(f);
-    renderCreditsRow(f, handlers(), extCtx({ sendAnswer: { refusal: 'no one holds that name.' } }));
+    w.set(extCtx({ sendAnswer: { refusal: 'no one holds that name.' } }));
+    w.body.update();
     const refusal = form.querySelector<HTMLElement>('.pf-refusal')!;
     const key = form.querySelector<HTMLElement>('.resolved-key')!;
     expect(refusal.hidden).toBe(false);
@@ -731,29 +962,30 @@ describe('wallet — the send flow, extension arm (confirmInRow: false)', () => 
   });
 
   it('with no answer held a render leaves the form\'s own lines as its press left them', async () => {
-    const h = handlers();
-    const f = creditsField(render(h, extCtx()))!;
+    const w = live(handlers(), extCtx());
+    const f = creditsField(w.body.el)!;
     const { form, to, amount } = extForm(f);
     to.value = '@bob'; amount.value = 'x';
     form.dispatchEvent(new Event('submit', { cancelable: true }));
     await flush();
-    renderCreditsRow(f, h, extCtx());
+    w.body.update();
     const refusal = form.querySelector<HTMLElement>('.pf-refusal')!;
     expect(refusal.hidden).toBe(false);
     expect(refusal.textContent).toBe('an amount is digits with up to eight decimals.');
   });
 
-  it('the unlock row the App holds stands after the form: a render in place leaves the same element, a rebuilt body moves it under its fresh form', () => {
+  it('the unlock row the App holds stands after the form: a draw leaves the same element in its place, and a body built while the App holds it stands it under its own form', () => {
     const row = sendUnlockRow(KEY, async () => {}, () => {});
     const c = extCtx({ sendAnswer: { key: REC, unlock: row } });
-    const f = creditsField(render(handlers(), c))!;
+    const w = live(handlers(), c);
+    const f = creditsField(w.body.el)!;
     const { form } = extForm(f);
     expect(form.nextElementSibling).toBe(row);
-    renderCreditsRow(f, handlers(), c);
+    w.body.update();
     expect(form.nextElementSibling).toBe(row);
     expect(f.querySelectorAll('.card-unlock')).toHaveLength(1);
-    const rebuilt = extForm(creditsField(render(handlers(), c))!).form;
-    expect(rebuilt.nextElementSibling).toBe(row);
+    const built = extForm(creditsField(render(handlers(), c))!).form;
+    expect(built.nextElementSibling).toBe(row);
     expect(form.nextElementSibling).toBeNull();
   });
 
@@ -772,16 +1004,24 @@ describe('wallet — the send flow, extension arm (confirmInRow: false)', () => 
     expect(cancelled).toBe(1);
   });
 
-  it('resetCreditsSendForm clears the resolved-key hint alongside the inputs', () => {
+  it('sendUnlockRow: Esc in its field is the row\'s cancel, once, and nothing above the form reads the press', () => {
+    let cancelled = 0;
+    const row = sendUnlockRow(KEY, async () => {}, () => { cancelled += 1; });
+    expect(escIn(row.querySelector<HTMLInputElement>('input[type="password"]')!, row)).toBe(0);
+    expect(cancelled).toBe(1);
+  });
+
+  it('resetSend clears the resolved-key hint alongside the inputs', () => {
     // Fill the form and reveal the resolved-key line, then reset.
-    const f = creditsField(render(handlers(), extCtx()))!;
+    const w = live(handlers(), extCtx());
+    const f = creditsField(w.body.el)!;
     const form = f.querySelector('form.credits-form') as HTMLFormElement;
     const key = form.querySelector<HTMLElement>('.resolved-key')!;
     key.textContent = REC;
     key.hidden = false;
     const inputs = form.querySelectorAll<HTMLInputElement>('input');
     inputs[0]!.value = REC; inputs[1]!.value = '1';
-    resetCreditsSendForm(f);
+    w.body.resetSend();
     expect(inputs[0]!.value).toBe('');
     expect(inputs[1]!.value).toBe('');
     expect(key.textContent).toBe('');
@@ -828,15 +1068,17 @@ describe('wallet — the send row while a handle is checked', () => {
   });
 
   it('an in-place render follows the check — the line comes and goes — and leaves the form and its values standing', () => {
-    const h = handlers();
-    const f = creditsField(render(h, extCtx()))!;
+    const w = live(handlers(), extCtx());
+    const f = creditsField(w.body.el)!;
     const form = f.querySelector('form.credits-form') as HTMLFormElement;
     const inputs = form.querySelectorAll<HTMLInputElement>('input');
     inputs[0]!.value = '@bob'; inputs[1]!.value = '12.5';
-    renderCreditsRow(f, h, extCtx({ sendCheck: '@bob' }));
+    w.set(extCtx({ sendCheck: '@bob' }));
+    w.body.update();
     expect(f.querySelector('.credits-flight')?.textContent).toBe('checking @bob…');
     expect(f.querySelector('form.credits-form')).toBe(form);
-    renderCreditsRow(f, h, extCtx());
+    w.set(extCtx());
+    w.body.update();
     expect(f.querySelector('.credits-flight')?.textContent).toBe('');
     expect(f.querySelector('form.credits-form')).toBe(form);
     expect([inputs[0]!.value, inputs[1]!.value]).toEqual(['@bob', '12.5']);

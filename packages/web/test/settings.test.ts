@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { settingsBody, type SettingsHandlers } from '../src/view/settings';
-import { prefs } from '../src/prefs';
+import { prefs, setNode } from '../src/prefs';
 
 const appCss = readFileSync(resolve(process.cwd(), 'src/style/app.css'), 'utf8');
 
@@ -23,6 +23,8 @@ function handlers(over: Partial<SettingsHandlers> = {}): SettingsHandlers {
   };
 }
 
+const render = (h: SettingsHandlers): HTMLElement => settingsBody(h).el;
+
 function rowField(body: HTMLElement, label: string): HTMLElement | null {
   for (const r of body.querySelectorAll('.row')) {
     if (r.querySelector('label')?.textContent === label) return r.querySelector('.field');
@@ -35,11 +37,12 @@ beforeEach(() => {
   prefs.faucet = '';
   prefs.idtint = 'spine';
   prefs.theme = 'light';
+  setNode('');
 });
 
 describe('settings window — the preference rows', () => {
   it('emits theme, identity tint and node — the same shape without an identity', () => {
-    const body = settingsBody(handlers());
+    const body = render(handlers());
     for (const label of ['theme', 'identity tint', 'node']) {
       expect(rowField(body, label), label).not.toBeNull();
     }
@@ -47,18 +50,18 @@ describe('settings window — the preference rows', () => {
 
   it('the theme control names and shows the theme it would switch TO', () => {
     prefs.theme = 'light';
-    const btn = rowField(settingsBody(handlers()), 'theme')!.querySelector('button')!;
+    const btn = rowField(render(handlers()), 'theme')!.querySelector('button')!;
     expect(btn.textContent).toBe('dark');
     expect(btn.getAttribute('aria-label')).toBe('switch to dark theme');
     prefs.theme = 'dark';
-    const btn2 = rowField(settingsBody(handlers()), 'theme')!.querySelector('button')!;
+    const btn2 = rowField(render(handlers()), 'theme')!.querySelector('button')!;
     expect(btn2.textContent).toBe('light');
     expect(btn2.getAttribute('aria-label')).toBe('switch to light theme');
   });
 
   it('a press on theme calls setTheme with the target', () => {
     const setTheme = vi.fn();
-    const body = settingsBody(handlers({ setTheme }));
+    const body = render(handlers({ setTheme }));
     (rowField(body, 'theme')!.querySelector('button') as HTMLButtonElement).click();
     expect(setTheme).toHaveBeenCalledWith('dark');
   });
@@ -66,7 +69,7 @@ describe('settings window — the preference rows', () => {
 
 describe('settings window — the identity-tint preview', () => {
   it('two aria-hidden .bar sample bars stand above the four words', () => {
-    const field = rowField(settingsBody(handlers()), 'identity tint')!;
+    const field = rowField(render(handlers()), 'identity tint')!;
     const preview = field.querySelector('.tint-preview')!;
     expect(preview.getAttribute('aria-hidden')).toBe('true');
     const samples = preview.querySelectorAll('.bar');
@@ -93,7 +96,7 @@ describe('settings window — the identity-tint preview', () => {
     // the bar-label's classes so its font-family, size and colour match a real
     // bar-label; on the sample it is a span, not a button — the preview is
     // aria-hidden and the tint follows a press with no re-render.
-    const field = rowField(settingsBody(handlers()), 'identity tint')!;
+    const field = rowField(render(handlers()), 'identity tint')!;
     const samples = field.querySelectorAll<HTMLElement>('.tint-preview .bar');
     const a = samples[0]!.querySelector<HTMLElement>('.bar-label');
     const b = samples[1]!.querySelector<HTMLElement>('.bar-label');
@@ -116,7 +119,7 @@ describe('settings window — the identity-tint preview', () => {
     const style = document.createElement('style');
     style.textContent = appCss;
     document.head.appendChild(style);
-    const body = settingsBody(handlers());
+    const body = render(handlers());
     document.body.appendChild(body);
     const root = document.documentElement;
     const prev = root.getAttribute('data-idtint');
@@ -133,7 +136,7 @@ describe('settings window — the identity-tint preview', () => {
 
   it('the four words each aria-pressed by prefs.idtint', () => {
     prefs.idtint = 'both';
-    const body = settingsBody(handlers());
+    const body = render(handlers());
     const field = rowField(body, 'identity tint')!;
     const words = [...field.querySelectorAll('.seg .word')];
     expect(words.map((w) => w.textContent)).toEqual(['spine', 'wash', 'both', 'off']);
@@ -142,7 +145,7 @@ describe('settings window — the identity-tint preview', () => {
 
   it('pressing a tint word calls setIdTint', () => {
     const setIdTint = vi.fn();
-    const body = settingsBody(handlers({ setIdTint }));
+    const body = render(handlers({ setIdTint }));
     const off = [...rowField(body, 'identity tint')!.querySelectorAll('.seg .word')].find((w) => w.textContent === 'off')! as HTMLButtonElement;
     off.click();
     expect(setIdTint).toHaveBeenCalledWith('off');
@@ -153,7 +156,7 @@ describe('settings window — the identity-tint preview', () => {
   // four nodes carry the new aria-pressed after a press.
   it('a press flips aria-pressed on the SAME four word nodes', () => {
     prefs.idtint = 'spine';
-    const body = settingsBody(handlers());
+    const body = render(handlers());
     const field = rowField(body, 'identity tint')!;
     const before = [...field.querySelectorAll<HTMLButtonElement>('.seg .word')];
     expect(before.map((w) => w.getAttribute('aria-pressed'))).toEqual(['true', 'false', 'false', 'false']);
@@ -168,7 +171,7 @@ describe('settings window — the identity-tint preview', () => {
 describe('settings window — the node row', () => {
   it('a change on the input calls setNode with the typed value', () => {
     const setNode = vi.fn();
-    const body = settingsBody(handlers({ setNode }));
+    const body = render(handlers({ setNode }));
     const input = rowField(body, 'node')!.querySelector('input') as HTMLInputElement;
     input.value = 'https://other.example';
     input.dispatchEvent(new Event('change'));
@@ -176,15 +179,79 @@ describe('settings window — the node row', () => {
   });
 });
 
+// WEB_INTERFACE → The workspace → "A draw updates a standing body in place",
+// → "A window's controls act on the state as it stands at the press".
+describe('settings window — the body across a draw', () => {
+  it('the body and its rows are the same nodes at every draw', () => {
+    const body = settingsBody(handlers());
+    const rows = [...body.el.querySelectorAll('.row')];
+    prefs.theme = 'dark';
+    prefs.idtint = 'off';
+    body.update();
+    expect([...body.el.querySelectorAll('.row')]).toEqual(rows);
+  });
+
+  it('the theme word follows the theme at each draw, on the same control', () => {
+    const body = settingsBody(handlers());
+    const btn = rowField(body.el, 'theme')!.querySelector('button')!;
+    expect(btn.textContent).toBe('dark');
+    prefs.theme = 'dark'; // switched from the header's word
+    body.update();
+    expect(rowField(body.el, 'theme')!.querySelector('button')).toBe(btn);
+    expect(btn.textContent).toBe('light');
+    expect(btn.getAttribute('aria-label')).toBe('switch to light theme');
+  });
+
+  it('the theme word reads the theme when pressed: drawn light and switched since with no draw, the press asks for light', () => {
+    const setTheme = vi.fn();
+    const body = settingsBody(handlers({ setTheme }));
+    const btn = rowField(body.el, 'theme')!.querySelector('button') as HTMLButtonElement;
+    prefs.theme = 'dark';
+    btn.click();
+    expect(setTheme).toHaveBeenCalledWith('light');
+  });
+
+  it('the four tint words follow the tint at each draw', () => {
+    const body = settingsBody(handlers());
+    const words = [...rowField(body.el, 'identity tint')!.querySelectorAll('.seg .word')];
+    prefs.idtint = 'wash';
+    body.update();
+    expect([...rowField(body.el, 'identity tint')!.querySelectorAll('.seg .word')]).toEqual(words);
+    expect(words.map((w) => w.getAttribute('aria-pressed'))).toEqual(['false', 'true', 'false', 'false']);
+  });
+
+  it('the node field reads the node in force at each draw while nothing is typed over it', () => {
+    setNode('https://a.example');
+    const body = settingsBody(handlers());
+    const input = rowField(body.el, 'node')!.querySelector('input') as HTMLInputElement;
+    expect(input.value).toBe('https://a.example');
+    setNode('https://b.example');
+    body.update();
+    expect(rowField(body.el, 'node')!.querySelector('input')).toBe(input);
+    expect(input.value).toBe('https://b.example');
+  });
+
+  it('text typed in node and not committed stands through a draw', () => {
+    setNode('https://a.example');
+    const body = settingsBody(handlers());
+    const input = rowField(body.el, 'node')!.querySelector('input') as HTMLInputElement;
+    input.value = 'https://typed.example';
+    prefs.theme = 'dark';
+    body.update();
+    expect(input.value).toBe('https://typed.example');
+    expect(rowField(body.el, 'theme')!.querySelector('button')!.textContent).toBe('light');
+  });
+});
+
 describe('settings window — the sign-each-rep-action row', () => {
   it('is absent when policy/setPolicy are — the in-page module', () => {
-    expect(rowField(settingsBody(handlers()), 'sign each rep action')).toBeNull();
+    expect(rowField(render(handlers()), 'sign each rep action')).toBeNull();
   });
 
   it('renders only when both policy and setPolicy are present — the extension', () => {
     const p = vi.fn(() => 'silent' as const);
     const sp = vi.fn(async () => {});
-    const body = settingsBody(handlers({ policy: p, setPolicy: sp }));
+    const body = render(handlers({ policy: p, setPolicy: sp }));
     const field = rowField(body, 'sign each rep action');
     expect(field).not.toBeNull();
     const buttons = [...(field?.querySelectorAll('button') ?? [])];
@@ -195,42 +262,41 @@ describe('settings window — the sign-each-rep-action row', () => {
     expect(sp).toHaveBeenCalledWith('ask');
   });
 
-  it('shows the new pressed state on the next render', async () => {
-    // policy() carries a mutable state; a re-render after setPolicy resolves
-    // reads the new value — the App does this via renderRegionsFor('@settings').
+  it('shows the new pressed state on the same two words at the next draw', async () => {
+    // policy() carries a mutable state; a draw after setPolicy resolves reads
+    // the new value.
     let policy: 'silent' | 'ask' = 'silent';
     const p = (): 'silent' | 'ask' => policy;
     const sp = async (v: 'silent' | 'ask'): Promise<void> => { policy = v; };
-    const h = handlers({ policy: p, setPolicy: sp });
-    const first = settingsBody(h);
-    const firstButtons = [...rowField(first, 'sign each rep action')!.querySelectorAll('button')];
-    firstButtons[1]!.click();
+    const body = settingsBody(handlers({ policy: p, setPolicy: sp }));
+    const buttons = [...rowField(body.el, 'sign each rep action')!.querySelectorAll('button')];
+    buttons[1]!.click();
     await new Promise((r) => setTimeout(r, 0));
-    const next = settingsBody(h);
-    const nextButtons = [...rowField(next, 'sign each rep action')!.querySelectorAll('button')];
-    expect(nextButtons[0]!.getAttribute('aria-pressed')).toBe('false');
-    expect(nextButtons[1]!.getAttribute('aria-pressed')).toBe('true');
+    body.update();
+    expect([...rowField(body.el, 'sign each rep action')!.querySelectorAll('button')]).toEqual(buttons);
+    expect(buttons[0]!.getAttribute('aria-pressed')).toBe('false');
+    expect(buttons[1]!.getAttribute('aria-pressed')).toBe('true');
   });
 });
 
 describe('settings window — the a-Notis-link-opens row', () => {
   it('is absent when links/setLinks are — the in-page module (the web build)', () => {
-    expect(rowField(settingsBody(handlers()), 'a Notis link opens')).toBeNull();
+    expect(rowField(render(handlers()), 'a Notis link opens')).toBeNull();
   });
 
   it('one hook alone does not render the row', () => {
     const l = vi.fn(() => 'here' as const);
-    const withGet = settingsBody(handlers({ links: l }));
+    const withGet = render(handlers({ links: l }));
     expect(rowField(withGet, 'a Notis link opens')).toBeNull();
     const sl = vi.fn(async () => {});
-    const withSet = settingsBody(handlers({ setLinks: sl }));
+    const withSet = render(handlers({ setLinks: sl }));
     expect(rowField(withSet, 'a Notis link opens')).toBeNull();
   });
 
   it('renders when both are present, with the label, the two words and the hint', () => {
     const l = vi.fn(() => 'here' as const);
     const sl = vi.fn(async () => {});
-    const body = settingsBody(handlers({ links: l, setLinks: sl }));
+    const body = render(handlers({ links: l, setLinks: sl }));
     const field = rowField(body, 'a Notis link opens');
     expect(field).not.toBeNull();
     const buttons = [...(field?.querySelectorAll('button') ?? [])];
@@ -241,25 +307,25 @@ describe('settings window — the a-Notis-link-opens row', () => {
     );
   });
 
-  it('aria-pressed follows links(): "here" pressed by default, "site" pressed after', () => {
+  it('aria-pressed follows links() at each draw, on the same two words: "here" pressed by default, "site" pressed after', () => {
     let stored: 'site' | 'here' = 'here';
     const l = (): 'site' | 'here' => stored;
     const sl = async (v: 'site' | 'here'): Promise<void> => { stored = v; };
-    const first = settingsBody(handlers({ links: l, setLinks: sl }));
-    const b1 = [...rowField(first, 'a Notis link opens')!.querySelectorAll('button')];
-    expect(b1[0]!.getAttribute('aria-pressed')).toBe('false');
-    expect(b1[1]!.getAttribute('aria-pressed')).toBe('true');
+    const body = settingsBody(handlers({ links: l, setLinks: sl }));
+    const buttons = [...rowField(body.el, 'a Notis link opens')!.querySelectorAll('button')];
+    expect(buttons[0]!.getAttribute('aria-pressed')).toBe('false');
+    expect(buttons[1]!.getAttribute('aria-pressed')).toBe('true');
     stored = 'site';
-    const next = settingsBody(handlers({ links: l, setLinks: sl }));
-    const b2 = [...rowField(next, 'a Notis link opens')!.querySelectorAll('button')];
-    expect(b2[0]!.getAttribute('aria-pressed')).toBe('true');
-    expect(b2[1]!.getAttribute('aria-pressed')).toBe('false');
+    body.update();
+    expect([...rowField(body.el, 'a Notis link opens')!.querySelectorAll('button')]).toEqual(buttons);
+    expect(buttons[0]!.getAttribute('aria-pressed')).toBe('true');
+    expect(buttons[1]!.getAttribute('aria-pressed')).toBe('false');
   });
 
   it('a press on each word calls setLinks with site / here', () => {
     const l = vi.fn(() => 'here' as const);
     const sl = vi.fn(async () => {});
-    const body = settingsBody(handlers({ links: l, setLinks: sl }));
+    const body = render(handlers({ links: l, setLinks: sl }));
     const buttons = [...rowField(body, 'a Notis link opens')!.querySelectorAll('button')];
     buttons[0]!.click();
     expect(sl).toHaveBeenLastCalledWith('site');
@@ -269,7 +335,7 @@ describe('settings window — the a-Notis-link-opens row', () => {
 
   it('stands AFTER the policy row when both render, and last when the policy row is absent', () => {
     // Both hooks present — the links row follows the policy row in DOM order.
-    const withBoth = settingsBody(handlers({
+    const withBoth = render(handlers({
       policy: () => 'silent',
       setPolicy: async () => {},
       links: () => 'here',
@@ -281,7 +347,7 @@ describe('settings window — the a-Notis-link-opens row', () => {
     expect(policyAt).toBeGreaterThan(-1);
     expect(linksAt).toBeGreaterThan(policyAt);
     // Only the links hooks — the links row is the last row.
-    const linksOnly = settingsBody(handlers({ links: () => 'here', setLinks: async () => {} }));
+    const linksOnly = render(handlers({ links: () => 'here', setLinks: async () => {} }));
     const labelsOnly = [...linksOnly.querySelectorAll<HTMLElement>('.row label')].map((l) => l.textContent);
     expect(labelsOnly[labelsOnly.length - 1]).toBe('a Notis link opens');
   });
@@ -294,13 +360,13 @@ describe('settings window — no faucet row', () => {
   // wired through — the hook has left the settings surface entirely and lives
   // on the App, called synchronously from the ask press (→ The faucet step).
   it('no `faucet` row in the settings window, without the hook (web build)', () => {
-    expect(rowField(settingsBody(handlers()), 'faucet')).toBeNull();
+    expect(rowField(render(handlers()), 'faucet')).toBeNull();
   });
 
   it('no `faucet` row in the settings window, with the hook (extension build)', () => {
     // The extension arm carries the sign policy; the SettingsHandlers shape
     // holds no faucet-side hook to pass here at all.
     const withPolicy = handlers({ policy: () => 'silent', setPolicy: async () => {} });
-    expect(rowField(settingsBody(withPolicy), 'faucet')).toBeNull();
+    expect(rowField(render(withPolicy), 'faucet')).toBeNull();
   });
 });

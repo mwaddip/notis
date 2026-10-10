@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { whatFor, amountFor, targetFor, feeFor } from '../src/extension/prompt-summary';
-import type { SignSummary } from '../src/extension/protocol';
+import type { SignRecord, SignSummary } from '../src/extension/protocol';
+import { fakeChrome } from './fake-chrome';
 
 const appCss = readFileSync(resolve(process.cwd(), 'src/style/app.css'), 'utf8');
 
@@ -184,5 +185,143 @@ describe('feeFor — a real `fee` box only', () => {
     expect(feeFor(claim)).toBeNull();
     expect(feeFor(burn)).toBeNull();
     expect(feeFor(other)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Esc on the prompt page — WEB_INTERFACE → The extension → "The prompt window":
+// decline, Esc — wherever the focus stands in the window, its unlock form
+// included — or closing the window is a decline. The unlock form's `cancel`
+// takes the form away, and the prompt stands with its pair.
+// ---------------------------------------------------------------------------
+
+describe('the prompt page — Esc', () => {
+  const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+  const esc = (at: Element): void => {
+    at.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  };
+  const word = (root: Element, text: string): HTMLButtonElement =>
+    [...root.querySelectorAll('button')].find((b) => b.textContent === text) as HTMLButtonElement;
+
+  interface Page {
+    main: HTMLElement;
+    /** The kinds of the messages the page sent the background, in order. */
+    sent: string[];
+    close: ReturnType<typeof vi.fn>;
+    pair(): Array<string | null>;
+    sign(): HTMLButtonElement;
+  }
+  let endPage: (() => void) | null = null;
+  afterEach(() => {
+    endPage?.();
+    endPage = null;
+  });
+
+  /** The prompt page loaded on a record. The background answers each `approve`
+   *  with the next of `approvals` — a seed gone where none is left — and every
+   *  other message with nothing. */
+  async function openPrompt(approvals: Array<Promise<unknown>> = []): Promise<Page> {
+    const id = 'ab'.repeat(16);
+    const record: SignRecord = {
+      id, txIdHex: 'cc'.repeat(32), txBytesHex: '', pubKeyHex: KEY_A, summary: like, hint: {}, createdAt: 0,
+    };
+    const c = fakeChrome();
+    c.storage.session.set('notis.sign.' + id, record);
+    const sent: string[] = [];
+    c.api.runtime.sendMessage = (async (m: { kind: string }) => {
+      sent.push(m.kind);
+      if (m.kind !== 'approve') return undefined;
+      return approvals.shift() ?? { error: 'locked' };
+    }) as unknown as typeof chrome.runtime.sendMessage;
+    vi.stubGlobal('chrome', c.api);
+    const close = vi.fn();
+    const closeSpy = vi.spyOn(window, 'close').mockImplementation(close);
+    const main = document.createElement('main');
+    main.id = 'prompt';
+    document.body.appendChild(main);
+    const before = location.href;
+    history.replaceState(null, '', '/prompt.html?id=' + id);
+    // The listeners the page puts on the document leave with the page.
+    const added = vi.spyOn(document, 'addEventListener');
+    endPage = () => {
+      for (const [type, listener, options] of added.mock.calls) document.removeEventListener(type, listener, options);
+      added.mockRestore();
+      history.replaceState(null, '', before);
+      main.remove();
+      closeSpy.mockRestore();
+      vi.unstubAllGlobals();
+    };
+
+    vi.resetModules();
+    await import('../src/extension/prompt');
+    await flush();
+    return {
+      main, sent, close,
+      pair: () => [...main.querySelectorAll('.actions button')].map((b) => b.textContent),
+      sign: () => main.querySelector<HTMLButtonElement>('.actions .btn-primary')!,
+    };
+  }
+
+  /** `sign` pressed with the seed gone: the unlock form above the pair. */
+  async function toUnlock(p: Page): Promise<HTMLElement> {
+    p.sign().click();
+    await flush();
+    const box = p.main.querySelector<HTMLElement>('.unlock-in-prompt')!;
+    expect(box.querySelector('input[type="password"]')).not.toBeNull();
+    expect(box.nextElementSibling).toBe(p.main.querySelector('.actions'));
+    return box;
+  }
+
+  it('Esc on the pair declines once and closes the window', async () => {
+    const p = await openPrompt();
+    expect(p.pair()).toEqual(['cancel', 'sign']);
+    esc(p.sign());
+    await flush();
+    expect(p.sent).toEqual(['decline']);
+    expect(p.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('sign pressed with the seed gone brings the unlock form above the pair; Esc in its field declines once and closes the window', async () => {
+    const p = await openPrompt();
+    const box = await toUnlock(p);
+    const pw = box.querySelector<HTMLInputElement>('input[type="password"]')!;
+    pw.value = 'half';
+    esc(pw);
+    await flush();
+    expect(p.sent).toEqual(['approve', 'decline']);
+    expect(p.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('the unlock form\'s cancel takes the form away and leaves the prompt standing with its pair; nothing is declined and the window stays open', async () => {
+    const p = await openPrompt();
+    const box = await toUnlock(p);
+    word(box, 'cancel').click();
+    await flush();
+    expect(p.main.querySelector('.unlock-in-prompt')).toBeNull();
+    expect(p.pair()).toEqual(['cancel', 'sign']);
+    expect(p.sent).toEqual(['approve']);
+    expect(p.close).not.toHaveBeenCalled();
+  });
+
+  it('while a signature is under way Esc declines nothing, in the unlock form as on the pair', async () => {
+    let signed!: (answer: unknown) => void;
+    const held = new Promise<unknown>((r) => { signed = r; });
+    const p = await openPrompt([Promise.resolve({ error: 'locked' }), held]);
+    const box = await toUnlock(p);
+    box.querySelector<HTMLInputElement>('input[type="password"]')!.value = 'pw';
+    box.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(p.sent).toEqual(['approve', 'unlock', 'approve']);
+
+    esc(word(box, 'cancel'));
+    esc(word(p.main.querySelector('.actions')!, 'cancel'));
+    await flush();
+    expect(p.sent).toEqual(['approve', 'unlock', 'approve']);
+    expect(p.close).not.toHaveBeenCalled();
+
+    signed(undefined);
+    await flush();
+    expect(p.sent).toEqual(['approve', 'unlock', 'approve']);
+    expect(p.close).toHaveBeenCalledTimes(1);
   });
 });

@@ -268,7 +268,8 @@ server that signs, no call home.
   'popup', width: 360, height: 420, focused: true, left, top })`, `left` and `top` placing it at the top-right
   of the last-focused browser window (`windows.getLastFocused`), under the toolbar; unplaced when that
   geometry is unknown. It shows what is being signed, derived by the background from the transaction bytes
-  it was handed, never taken from the page. Approve signs; decline, Esc, or closing the window is a decline.
+  it was handed, never taken from the page. Approve signs; decline, Esc — wherever the focus stands in the window, its
+  unlock form included — or closing the window is a decline; while an approval is under way Esc declines nothing.
   It is a surface, and every rule of `HOUSE_STYLE` applies to it: the face says `rep` and `$NOTIS`
   (`HOUSE_STYLE → Voice`); **the page is a padded column filling the popup — the lines at the top, the commit
   pair bottom-aligned, `cancel` on the left and `sign` on the right** (`HOUSE_STYLE → Interaction`), *working…*
@@ -841,10 +842,11 @@ one.
   and the unlock form mounts under the card on screen. **What ends a row**: its own controls; a redraw of its list
   that draws no card for its post offering the control the row was opened from — the post has left the list or stands
   as a slot, a like has taken the `like`, the `withdraw` is gone or cannot be pressed, while the withdrawn card keeps
-  its copy glyph and so its link row; its list leaving the screen — its window closed, or another window of its column
-  brought to the front; a change of the identity; and, for an unlock row, the identity unlocked from anywhere else.
-  The link row has no control of its own and ends in the other ways alone. A row that has ended is not drawn again and
-  nothing of it is kept: its field is emptied.
+  its copy glyph and so its link row; its window closed; a change of the identity; and, for an unlock row, the
+  identity unlocked from anywhere else. A list that another window of its column covers keeps its rows: they stand
+  beneath their cards, what was typed in them kept, when the list is brought back to the front (→ The workspace →
+  "A window's body stands while the window is open"). The link row has no control of its own and ends in the other
+  ways alone. A row that has ended is not drawn again and nothing of it is kept: its field is emptied.
 - **A card's reply count is the row's `descendantCount`** — the node's number, the whole subtree, pending
   included, on the feed's rows, the author window's rows and a pane's descendant rows; a pane's own root
   shows the thread's, which equals the head's. A withdrawn card shows its row's count too
@@ -862,6 +864,8 @@ one focused; focusing another swaps the body and no bar moves. A thread is one k
 → The wallet window, → The settings window, → The author window). **The arrangement is text** — `#r1,r2|r5`: `,`
 stacks windows in a column, `|` starts the next column — persisted under `notis.layout`, and `serialise` and
 `parse` are inverses over it. A stored `/` parses as a `,`, the stacks it separated joining in order, and is never written.
+`parse` reads a token lower-cased and drops one it has already read, the first standing: an open window stands in
+one place.
 
 **One placement rule.** Opening targets the column immediately right of the surface the press came from — the
 feed and the header sit left of column 0 — and creates it only if it is not already there, joining that
@@ -952,6 +956,27 @@ the wordmark yields and the mark stands alone**, 324px on a 360px screen; `dark`
 selection or a scroll in another window's body survives and a restored stack shows every excerpt as its thread
 lands.
 
+**A window's body stands while the window is open.** The body of `@profile`, `@wallet`, `@settings` and an author
+window is built when the window opens and is the same node until it closes. Covered by another window of its column
+and brought back, moved by `←` or `→`, or drawn again because another window opened, closed or loaded, it returns as
+it was: every form the reader opened in it, and what is typed in every field. **A draw that leaves the window in front
+of its column leaves the body's node in the document, where it stands**: the field that holds the focus keeps it, and
+no field in it reads a blur or a change from the draw — the bars and the report of its region are drawn around it.
+What is typed is held nowhere but its field. **A draw updates a
+standing body in place**: each row takes its figures, lines and words from the state as it is at the draw, and leaves
+alone a form open in it and a field with text in it; a row adds or removes a form only where the state has changed
+whether the form is offered — an invite no longer available, a name now held, a balance with nothing spendable.
+**A window's controls act on the state as it stands at the press** — the identity's lock, the backup, the name held,
+the column the window stands in — never as it stood when the body was built. **What ends a form in a window**: its own
+controls; its row no longer offering it; for an unlock form, the identity unlocked from anywhere else; its window
+closed; and a change of the identity or of the node read, which builds every body anew. A form that has ended is not
+drawn again and its fields are emptied. A thread and an author-posts window are drawn from their rows at every draw,
+and what the reader opened in them is held apart and stands through the same draws and the same covering: the
+composer with its drafts, and a card's rows (→ What the feed reads, and what a card shows for it → "A row the reader
+opened under a card outlasts a redraw of its list"). The unlock form in a composer's foot ends as every unlock form
+does, at an unlock made anywhere else: the foot returns, its field emptied, the drafts as they were. Esc in that form
+cancels it and nothing else: the composer stays open on its draft, with no question asked.
+
 **Hit size follows the pointer and hover applies where hover exists** (`HOUSE_STYLE → Interaction`), with
 this surface's numbers: under `(pointer: coarse)` every control's hit box is at least 36px tall and a bar's or
 the header's control 44px wide; the meta row's, the stage line's and the karma field's fixed line box is 36px;
@@ -1010,7 +1035,9 @@ lower-cased on read; a link is always absolute, since a chat app needs the origi
 root and its descendants at their depth, the reply composer and the reader's own submissions under their
 parent, `load more replies` following `next`, the absence states as they are — on the same card with the
 same controls: the strip, like, `↩ reply`, withdraw on the reader's own post, the unlock rows, images on the
-reader's press, `link` (→ Links). The identity module, the wallet, the pending ledger and the landing poll
+reader's press, `link` (→ Links). **A card's author prefix is display on this page, not a control** — the same text,
+face and clay as the control's, as the header's prefix is: the page holds one window and opens no other, and an
+author's window is the workspace's (→ The way into the workspace). The identity module, the wallet, the pending ledger and the landing poll
 run as in the workspace; with no identity loaded the page is the read surface exactly. The member is capped
 at 660 and centred at every width — the one-column member rule (→ The workspace) applied to a page with one
 member, by a `standalone` class on the workspace element outside every media query.
@@ -1073,7 +1100,8 @@ a lock held or waited for answers held.
   Chromium `window.open` with the name opens a blank tab instead — and the client cannot tell browsers apart
   without a user agent string and never reads one (`HOUSE_STYLE → Interaction`).
 - **Not held — the switch in place.** Without a navigation, so the identity stays unlocked and the poll
-  runs on: the stored arrangement is restored, the thread inserted by the placement rule from the feed, the
+  runs on: the stored arrangement is restored and its windows read as at a boot — the reader's own state, a
+  `@wallet`'s listing, each author and author-posts window's entry — the thread inserted by the placement rule from the feed, the
   lock requested — never awaited, since another tab may hold it, the arrangement persisting once it is
   granted — the URL replaced with the base, the feed rendered and loaded, the view moved to the thread's
   column, the title the workspace's. The tab is a workspace tab from then on. A link pasted into the workspace tab's own address bar
@@ -1450,7 +1478,7 @@ and every preference the settings window's (→ The settings window). The window
 
 **The key is a control, and a press copies it.** The whole 64 hex in mono at the labels' size, labelled *copy
 this key*; the press writes it to the clipboard and the word `copied` follows the key, muted, until the window
-is next built — the copy glyph's pattern (→ Links), no timer. Where the clipboard refuses, the key becomes
+is next drawn — the copy glyph's pattern (→ Links), no timer. Where the clipboard refuses, the key becomes
 selectable text followed by *— copy it by hand*. The backup line stays beneath it until the first export.
 
 **The six operations are forms in place, and each is a real `<form>`** the browser's password manager
@@ -1468,7 +1496,7 @@ opened it, and a refusal is one sentence in the voice register under the fields.
 - **Export** unlocks first if locked, takes two `new-password` fields under the username
   `<pubKeyHex> · file`, seals fresh and downloads `notis-identity-<prefix>.json`; the backup line clears.
 - **Forget** asks in place — *"forget this key on this browser? without an exported file it cannot be
-  recovered."*, the never-exported fact first when it applies — `forget` and `keep`, focus on `keep`.
+  recovered."*, the never-exported fact first when it applies — `forget` and `keep`, focus on `keep`, Esc keeps.
   It clears the envelope, the seed and the backup flag, leaves the key's pending ledger, and returns the
   window to its empty state.
 - **Lock** drops the seed; **unlock** takes the passphrase — *"that passphrase does not open this
@@ -1570,8 +1598,9 @@ $NOTIS.*; a decline is *send not sent.*, a refusal *send not sent: <reason>.*, t
 verify.* (`absent`, `unproven`), *the node served no proof for @bob.* (`no-proof`), *@bob is too new to check yet.* (a
 second `unchecked`), *@bob can't be checked — the chain is not verified.* (`thin`, `refused`), *@bob can't be
 checked.* (a check that ends without an answer — a check is total, so only a defect reaches it) — the form keeping its
-values, nothing signed. **A press belongs to the node and the key it was made under**: a change of either ends it — its
-check, its answer and an unlock it owed — and nothing of it lands. In the extension the prompt is the one
+values, nothing signed. **A press belongs to the node, the key and the window it was made under**: a change of the node or of the key, the
+wallet closed, or its form ended with nothing left to spend, ends it — its check, its answer and an unlock it owed —
+and nothing of it lands. In the extension the prompt is the one
 confirmation, because credits always prompt (→ The extension).
 
 ### The settings window *(read surface)*
@@ -1661,10 +1690,11 @@ once-per-key rule: *the faucet refused that key: <message>*.
 ### The username row *(username surface)*
 
 **A name is claimed and burned from the profile window, in one row whose place follows the name** — above `key`
-while the reader holds a name, below it while not, decided when the window is built — three
-slots, line, form and flight, updated in place as the invites row is, so a landing moves text and colour in a
-fixed row and never the window (`HOUSE_STYLE → Motion`): a claim that lands reads `@Name` where its form stood,
-and the next build — a reopen, the `↻`, a reload — places the row on top. What the row shows follows the
+while the reader holds a name, below it while not, placed by every draw of the window — three
+slots, line, form and flight, drawn where the row stands by a landing, as the invites row is, so a landing moves
+text and colour in a fixed row and never the window (`HOUSE_STYLE → Motion`): a claim that lands reads `@Name` where
+its form stood, and the next draw of the window — a window opened, closed or moved, the `↻`, a reload — places the
+row on top. What the row shows follows the
 reader's own name, read from `GET /usernames?owner=<key>` at identity load, on the profile's `↻`, and on every reconcile while a claim
 or burn stands (→ The wallet); a 404 is *holding none*, and a read not yet answered is `—`.
 
@@ -1744,8 +1774,8 @@ coarse pointer a 36px hit box by padding a negative margin absorbs.
 
 ### The author window *(membership actions)*
 
-**`@author:<64hex>`** — an `@`-window like `@profile`, opened from an identity's prefix by the placement
-rule every window follows, raised rather than duplicated, persisted in the arrangement (`isWindowId`
+**`@author:<64hex>`** — an `@`-window like `@profile`, opened from an identity's prefix — in the workspace; the
+standalone page opens none (→ The standalone thread) — by the placement rule every window follows, raised rather than duplicated, persisted in the arrangement (`isWindowId`
 accepts the prefix with 64 hex). The bar reads `author · <prefix>` — `author · @Name` when the subject holds a
 name (→ The identity display), in every column holding the window, stacked or focused, as its read lands, the way a
 thread's bar reads its load — and carries no spine. `↻` is live and re-reads the endorsers page and the

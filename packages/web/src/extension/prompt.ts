@@ -6,9 +6,11 @@ import type { SignRecord } from './protocol';
 // The prompt page — WEB_INTERFACE → The extension → "The prompt window". The
 // URL carries `?id=<record id>`; the background wrote the record to
 // storage.session under `notis.sign.<id>` before opening this window. Approve
-// signs; decline, Esc, or the window's close is a decline. If the seed is gone
-// at approve time — locked from another tab meanwhile — the unlock form takes
-// the body above the pair, and the flow continues once unlocked.
+// signs; decline, Esc — wherever the focus stands in the window, the unlock
+// form included — or the window's close is a decline. If the seed is gone at
+// approve time — locked from another tab meanwhile — the unlock form takes the
+// body above the pair, and the flow continues once unlocked; the form's
+// `cancel` takes the form away, and the prompt stands.
 //
 // The layout is a padded column filling the popup — the lines at the top in
 // the page face, the commit pair bottom-aligned right (WEB_INTERFACE → The
@@ -121,9 +123,16 @@ function drawPrompt(record: SignRecord): void {
 
   root!.replaceChildren(container);
   sign.focus();
+  // Esc is the window's, wherever the focus stands: the listener runs as the
+  // press travels down, before a form in the window reads it, and the press
+  // goes no further (WEB_INTERFACE → The extension → "The prompt window").
+  // While a signature is under way the window takes none.
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !armed) { e.preventDefault(); void decline(); }
-  });
+    if (e.key !== 'Escape' || armed) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void decline();
+  }, true);
 }
 
 async function approve(button: HTMLButtonElement): Promise<void> {

@@ -109,7 +109,13 @@ function focusOnMount(field: HTMLInputElement): void {
 
 /** Enter submits by the form's submit event; the run shows working… on the button,
  *  puts any thrown message on the refusal line, and re-enables the form for another
- *  try (a success removes the form, so nothing is re-enabled then). Esc cancels. */
+ *  try (a success removes the form, so nothing is re-enabled then). Esc cancels,
+ *  and the press is the form's: it travels no further, so nothing the form
+ *  stands in — a composer's foot, a question's place — reads it as an Esc of
+ *  its own (WEB_INTERFACE → The workspace → "A window's body stands while the
+ *  window is open"). The extension's prompt page reads an Esc before the form
+ *  does, and takes it as the window's decline unless a signature is under way
+ *  (WEB_INTERFACE → The extension → "The prompt window"). */
 function wire(
   form: HTMLFormElement,
   fields: HTMLInputElement[],
@@ -141,6 +147,7 @@ function wire(
   form.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       e.preventDefault();
+      e.stopPropagation();
       onCancel();
     }
   });

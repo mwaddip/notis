@@ -1,4 +1,4 @@
-import { el, shortHex } from '../dom';
+import { el, shortHex, endForm, setText } from '../dom';
 import { prefs } from '../prefs';
 import { unlockForm } from './passphrase';
 import { stageLine, type Flight } from './card';
@@ -6,15 +6,24 @@ import { isValidUsernameBytes } from '@dagsocial/types';
 import { formatCredits, parseCredits } from '../model/credits';
 import { spendableCreditBoxes, lockedCreditSummary } from '../wallet/reads';
 import { figuresLine } from '../model/figures-line';
-import type { FiguresView } from '../model/state';
+import type { FiguresView, WindowBody } from '../model/state';
 import type { TipVerdict } from '../model/tip-verdict';
 import type { CreditsResult, StatusResult } from '../api/dto';
 
 // The @wallet window — WEB_INTERFACE → The wallet window. Everything $NOTIS
 // lives here and on no profile: one .credits-field wrapping the `balance` and
 // `send` rows. The slot classes — .credits-line, .credits-form, .credits-flight,
-// .resolved-key, .amount-row, .pf-confirm, .card-unlock — the App's in-place
-// updates and the harness's selectors reach the row through them.
+// .resolved-key, .amount-row, .pf-confirm, .card-unlock — the harness's
+// selectors reach the row through them.
+//
+// The body is one node from the window's open to its close (WEB_INTERFACE →
+// The workspace → "A window's body stands while the window is open"). Its
+// `update` draws the balance line and the flight's place from the state it
+// reads, and leaves the send form, what is typed in it and the confirm row
+// alone; the form is added once a box is spendable and ends, with the confirm
+// row, once none is (→ "A draw updates a standing body in place"). The form
+// and the confirm row read the state through `read` when pressed (→ "A
+// window's controls act on the state as it stands at the press").
 //
 // The window declares the narrow shapes it reads and calls; the App's Handlers and
 // RenderCtx satisfy them structurally, so there is one contract, not two.
@@ -48,8 +57,12 @@ export interface WalletHandlers {
   // the App the press once its amount and recipient are read: the check, the
   // answer, the unlock a locked identity owes and the flow are the App's, and
   // the row draws each from it. The web build resolves a handle through
-  // resolveRecipient and confirms in the row before `send`.
+  // resolveRecipient and confirms in the row before `send`. endSendPress tells
+  // the App the form has ended with nothing left to spend: the press made on
+  // it ends — its check, its answer and an unlock it owed (→ "A press belongs
+  // to the node, the key and the window it was made under").
   beginSendPress: () => boolean;
+  endSendPress: () => void;
   pressSend: (to: SendRecipient, amount: bigint) => void;
   resolveRecipient: (text: string) => Promise<ResolvedRecipient | { refusal: string }>;
   send: (toHex: string, toName: string | null, amount: bigint) => void;
@@ -104,71 +117,46 @@ function mono(text: string): HTMLElement {
   return el('span', 'mono', text);
 }
 
+/** The wallet window's body: `update` draws it from the state as it stands,
+ *  and `resetSend` empties the send form — the one ending that clears it, an
+ *  accepted submission (WEB_INTERFACE → The wallet window → "The form keeps its
+ *  values on every ending but an accepted submission, which clears it"). */
+export interface WalletBody extends WindowBody {
+  resetSend(): void;
+}
+
 /** The @wallet window — WEB_INTERFACE → The wallet window. With no identity, one
  *  lead line pointing to the profile window; with one, the `.credits-field`
- *  wrapper carries the `balance` and `send` rows. `updateCredits` reveals the
- *  `send` row alongside mounting the form when a box is spendable, so a key
- *  with no spendable box sees the balance line and nothing else. */
-export function walletBody(handlers: WalletHandlers, ctx: WalletCtx): HTMLElement {
+ *  wrapper carries the `balance` and `send` rows. `read` answers the state as
+ *  it stands when called. The body is built for the identity `read` answers —
+ *  a key, or none — and a draw that reads another builds it anew, ending every
+ *  form in it. */
+export function walletBody(handlers: WalletHandlers, read: () => WalletCtx): WalletBody {
   const b = el('div', 'winbody');
-  if (ctx.identity === null) {
-    b.appendChild(el('div', 'pf-lead', 'no identity in this browser. the profile window creates or imports one.'));
-    return b;
-  }
-  const field = el('div', 'field credits-field');
-  const { row: balanceRow, field: balanceField } = row('balance');
-  balanceRow.classList.add('balance-row');
-  balanceField.appendChild(el('div', 'credits-line'));
-  field.appendChild(balanceRow);
-  const { row: sendRow, field: sendField } = row('send');
-  sendRow.classList.add('send-row');
-  sendField.appendChild(el('div', 'credits-form'));
-  sendField.appendChild(el('div', 'credits-flight'));
-  sendRow.hidden = true; // updateCredits sets the row's visibility from one predicate
-  field.appendChild(sendRow);
-  b.appendChild(field);
-  // sendForm mounts into .credits-form when a spendable box turns up; the row
-  // stands whenever spendable > 0 or a send's line stands, and updateCredits
-  // is the one place that decides.
-  const c = ctx.credits;
-  if (c !== null) {
-    const height = ctx.status?.blockHeight ?? 0;
-    const spendable = sumValues(spendableCreditBoxes(c.boxes, height));
-    if (spendable > 0n) sendForm(field.querySelector('.credits-form') as HTMLElement, handlers, ctx);
-  }
-  updateCredits(field, handlers, ctx);
-  return b;
-}
-
-
-/** Update the balance and send rows' slots in place from the current ctx —
- *  colour and text in a fixed box (HOUSE_STYLE → Motion). The form slot is left
- *  alone; the send/confirm/restoreForm chain owns it, and the App calls
- *  `resetCreditsSendForm` on an accepted submission
- *  (WEB_INTERFACE → The wallet window → "The form keeps its values on every ending but an accepted submission, which clears it"). */
-export function renderCreditsRow(field: HTMLElement, handlers: WalletHandlers, ctx: WalletCtx): void {
-  // A spendable side turning from zero to non-zero owes a fresh form.
-  const formSlot = field.querySelector<HTMLElement>('.credits-form');
-  const c = ctx.credits;
-  if (formSlot && c !== null && formSlot.children.length === 0) {
-    const height = ctx.status?.blockHeight ?? 0;
-    const spendable = sumValues(spendableCreditBoxes(c.boxes, height));
-    if (spendable > 0n) sendForm(formSlot, handlers, ctx);
-  }
-  updateCredits(field, handlers, ctx);
-}
-
-/** Reset the send form's inputs — the App calls it after `result.ok` in the
- *  send flow (WEB_INTERFACE → The wallet). Every other ending leaves the
- *  values intact. The extension arm's resolved-key hint clears here too. */
-export function resetCreditsSendForm(field: HTMLElement): void {
-  const form = field.querySelector<HTMLFormElement>('form.credits-form');
-  if (!form) return;
-  for (const inp of form.querySelectorAll<HTMLInputElement>('input')) inp.value = '';
-  const refusal = form.querySelector<HTMLElement>('.pf-refusal');
-  if (refusal) refusal.hidden = true;
-  const resolvedKey = form.querySelector<HTMLElement>('.resolved-key');
-  if (resolvedKey) { resolvedKey.textContent = ''; resolvedKey.hidden = true; }
+  let builtFor: string | null = null;
+  let rows: CreditsRows | null = null;
+  const build = (ctx: WalletCtx): void => {
+    for (const field of b.querySelectorAll('input')) field.value = '';
+    b.replaceChildren();
+    builtFor = ctx.identity?.pubKeyHex ?? null;
+    if (ctx.identity === null) {
+      rows = null;
+      b.appendChild(el('div', 'pf-lead', 'no identity in this browser. the profile window creates or imports one.'));
+    } else {
+      rows = creditsRows(b, handlers, read);
+      rows.update(ctx);
+    }
+  };
+  build(read());
+  return {
+    el: b,
+    update: () => {
+      const ctx = read();
+      if ((ctx.identity?.pubKeyHex ?? null) !== builtFor) build(ctx);
+      else rows?.update(ctx);
+    },
+    resetSend: () => rows?.resetSend(),
+  };
 }
 
 function sumValues(boxes: readonly { value: string }[]): bigint {
@@ -181,21 +169,19 @@ function sumValues(boxes: readonly { value: string }[]): bigint {
  *  beneath the field — that line names the key a send goes to
  *  (WEB_INTERFACE → The wallet window → "The `send` row"). */
 function refuseIn(refusal: HTMLElement, resolvedKey: HTMLElement, text: string): void {
-  resolvedKey.textContent = '';
+  setText(resolvedKey, '');
   resolvedKey.hidden = true;
-  refusal.textContent = text;
+  setText(refusal, text);
   refusal.hidden = false;
 }
 
-/** Write the answer the App holds into the form on screen, the same whether a
- *  rebuild mounted it or the reader pressed it (WEB_INTERFACE → The wallet
- *  window → "The `send` row"): a refusal in its line, or the key the send goes
- *  to beneath the field, whole, in mono — and after the form the unlock row the
- *  App holds while a locked identity owes it, moved rather than rebuilt, so
- *  what is typed in it stands. With no answer held the two lines stand as the
- *  form's own press left them. */
-function showSendAnswer(formSlot: HTMLElement, answer: SendAnswer | null): void {
-  const form = formSlot.querySelector<HTMLFormElement>('form.credits-form');
+/** Write the answer the App holds into the send form standing in its slot
+ *  (WEB_INTERFACE → The wallet window → "The `send` row"): a refusal in its
+ *  line, or the key the send goes to beneath the field, whole, in mono — and
+ *  after the form the unlock row the App holds while a locked identity owes
+ *  it, the same node at every draw, so what is typed in it stands. With no
+ *  answer held the two lines stand as the form's own press left them. */
+function showSendAnswer(form: HTMLFormElement | null, answer: SendAnswer | null): void {
   if (answer === null || form === null) return;
   const refusal = form.querySelector<HTMLElement>('.pf-refusal')!;
   const resolvedKey = form.querySelector<HTMLElement>('.resolved-key')!;
@@ -203,7 +189,7 @@ function showSendAnswer(formSlot: HTMLElement, answer: SendAnswer | null): void 
     refuseIn(refusal, resolvedKey, answer.refusal);
     return;
   }
-  resolvedKey.textContent = answer.key;
+  setText(resolvedKey, answer.key);
   resolvedKey.hidden = false;
   if (answer.unlock !== null && form.nextElementSibling !== answer.unlock) form.after(answer.unlock);
 }
@@ -253,128 +239,242 @@ function appendFiguresLine(
   line.appendChild(hint);
 }
 
-/** Toggle the `.send-row` — walletBody starts it hidden and updateCredits
- *  shows or hides it as the spendable side changes. Selects by class, so
- *  the geometry of the credits-field wrapper does not decide the row's
- *  identity (WEB_INTERFACE → The wallet window → "The `send` row"). */
-function toggleSendRow(field: HTMLElement, show: boolean): void {
-  const sendRow = field.querySelector<HTMLElement>(':scope > .send-row');
-  if (sendRow) sendRow.hidden = !show;
+/** The two rows as the body holds them. */
+interface CreditsRows {
+  update(ctx: WalletCtx): void;
+  resetSend(): void;
 }
 
-function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: WalletCtx): void {
-  const line = field.querySelector<HTMLElement>('.credits-line');
-  const formSlot = field.querySelector<HTMLElement>('.credits-form');
-  const flight = field.querySelector<HTMLElement>('.credits-flight');
-  if (!line || !formSlot || !flight) return;
-  line.replaceChildren();
-  flight.replaceChildren();
+/** What a press on the send form read, for the confirm row. */
+interface Built {
+  toHex: string;
+  toName: string | null;
+  amount: bigint;
+}
 
-  const c = ctx.credits;
-  const height = ctx.status?.blockHeight ?? 0;
-  // Spendable at the current tip — WEB_INTERFACE → The wallet. The row and
-  // readCreditContext read one implementation of the rule.
-  const spendable = c === null ? 0n : sumValues(spendableCreditBoxes(c.boxes, height));
+/** The send form, and `reset`, which empties it. */
+interface SendForm {
+  el: HTMLFormElement;
+  reset(): void;
+}
 
-  if (c === null) {
-    line.appendChild(el('span', 'inkmute', '—'));
+function creditsRows(b: HTMLElement, handlers: WalletHandlers, read: () => WalletCtx): CreditsRows {
+  const field = el('div', 'field credits-field');
+  const { row: balanceRow, field: balanceField } = row('balance');
+  balanceRow.classList.add('balance-row');
+  const line = el('div', 'credits-line');
+  balanceField.appendChild(line);
+  field.appendChild(balanceRow);
+  const { row: sendRow, field: sendField } = row('send');
+  sendRow.classList.add('send-row');
+  const formSlot = el('div', 'credits-form');
+  const flight = el('div', 'credits-flight');
+  sendField.append(formSlot, flight);
+  sendRow.hidden = true; // update shows the row by one predicate
+  field.appendChild(sendRow);
+  b.appendChild(field);
+
+  // The send form is one node while a box is spendable: the confirm row takes
+  // its place in the slot and `keep` puts it back, its values as they were.
+  let form: SendForm | null = null;
+  let confirm: { wrap: HTMLElement; unlock: boolean } | null = null;
+
+  const restoreForm = (): void => {
+    if (confirm === null) return;
+    endForm(confirm.wrap);
+    confirm = null;
+    if (form !== null) formSlot.replaceChildren(form.el);
+  };
+  const endSend = (): void => {
+    if (confirm !== null) endForm(confirm.wrap);
+    confirm = null;
+    if (form !== null) endForm(form.el);
+    form = null;
     formSlot.replaceChildren();
-  } else if (spendable > 0n) {
-    // Balance in gold + "$NOTIS"; the locked-hint beneath names only what is
-    // above the current height (WEB_INTERFACE → The wallet window). The
-    // extension's verified-figures line follows, muted or clay by the pure
-    // model's row (→ "The verified figures").
-    const goldSpan = el('span', 'mono gold', formatCredits(spendable));
-    line.append(goldSpan, ' $NOTIS');
-    const locked = lockedCreditSummary(c.boxes, height);
-    if (locked) {
-      const hint = el('div', 'hint');
-      hint.append(mono(formatCredits(locked.value)), ' $NOTIS more unlock by block ', mono(String(locked.height)), '.');
-      line.appendChild(hint);
+  };
+
+  /** The confirm row for a send — the burn's pattern. `keep` and Esc put the
+   *  form back with its values; `send` reads the lock when pressed, and a
+   *  locked identity unlocks in the row's place first. The prefix is 16 glyphs
+   *  (WEB_INTERFACE → The identity display). */
+  const openConfirm = (built: Built): void => {
+    const wrap = el('div', 'pf-confirm');
+    const q = el('div', 'pf-refusal');
+    const amount = formatCredits(built.amount);
+    const prefix = shortHex(built.toHex, 16);
+    if (built.toName !== null) {
+      q.append('send ', amount, ' $NOTIS to @' + built.toName + ' · ', mono(prefix), '?');
+    } else {
+      q.append('send ', amount, ' $NOTIS to ', mono(prefix), '?');
     }
-    appendFiguresLine(line, ctx, c.boxCount, height, spendable, goldSpan);
-  } else {
-    // No box spendable at the /status height → the faucet step when a faucet is
-    // set, else "no $NOTIS yet." — both, and the lapsed grant's `ask again`, only
-    // once a /status answer stands, since a grant records the highest tip the
-    // client has read; until then `—` stands in their place. A grant in flight
-    // or one that lapsed reads its own line (WEB_INTERFACE → The wallet window →
-    // "The `balance` row", → The faucet step). The locked hint still stands so
-    // the reader knows what is on its way.
-    const locked = lockedCreditSummary(c.boxes, height);
-    if (ctx.creditGrant?.state === 'pending') {
-      line.appendChild(el('span', 'inkmute', 'working…'));
-    } else if (ctx.creditGrant?.state === 'expired') {
-      line.appendChild(el('span', 'inkmute', "no block took the faucet's transfer by height "));
-      line.appendChild(mono(String(ctx.creditGrant.atHeight)));
-      line.appendChild(document.createTextNode('. '));
-      if (ctx.status !== null) {
-        const again = el('button', 'word', 'ask again') as HTMLButtonElement;
-        again.addEventListener('click', () => handlers.askFaucetCredits());
-        line.appendChild(again);
+    wrap.appendChild(q);
+    const actions = el('div', 'pf-actions');
+    const sendBtn = el('button', 'word', 'send') as HTMLButtonElement;
+    const keep = el('button', 'word', 'keep') as HTMLButtonElement;
+    // The form returns with its values before the flight begins — every
+    // ending but an accepted submission leaves them intact (WEB_INTERFACE →
+    // The wallet).
+    const go = (): void => {
+      restoreForm();
+      handlers.send(built.toHex, built.toName, built.amount);
+    };
+    sendBtn.addEventListener('click', () => {
+      const asked = confirm;
+      if (asked === null) return;
+      const id = read().identity;
+      if (id?.locked !== true) {
+        go();
+        return;
       }
-    } else if (ctx.status === null) {
+      asked.unlock = true;
+      wrap.replaceChildren(
+        unlockForm(
+          id.pubKeyHex,
+          async (p) => {
+            await handlers.unlockIdentity(p);
+            go();
+          },
+          restoreForm,
+        ),
+      );
+    });
+    keep.addEventListener('click', restoreForm);
+    wrap.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') restoreForm();
+    });
+    actions.append(sendBtn, keep);
+    wrap.appendChild(actions);
+    confirm = { wrap, unlock: false };
+    formSlot.replaceChildren(wrap);
+    keep.focus();
+  };
+
+  const update = (drawn: WalletCtx): void => {
+    let ctx = drawn;
+    const c = ctx.credits;
+    const height = ctx.status?.blockHeight ?? 0;
+    // Spendable at the current tip — WEB_INTERFACE → The wallet. The row and
+    // readCreditContext read one implementation of the rule.
+    const spendable = c === null ? 0n : sumValues(spendableCreditBoxes(c.boxes, height));
+
+    // The form stands while a box is spendable and ends once none is — and the
+    // press made on it ends with it, so the rest of the draw reads the state
+    // without that press: no check's line, no answer.
+    if (spendable > 0n) {
+      if (form === null) {
+        const made: SendForm = sendForm(handlers, read, (built) => {
+          if (form === made) openConfirm(built);
+        });
+        form = made;
+        formSlot.replaceChildren(made.el);
+      }
+    } else if (form !== null) {
+      endSend();
+      handlers.endSendPress();
+      ctx = read();
+    }
+    // The unlock in the confirm row's place ends once the identity reads
+    // unlocked, wherever the unlock was made.
+    if (confirm !== null && confirm.unlock && ctx.identity?.locked !== true) restoreForm();
+
+    line.replaceChildren();
+    if (c === null) {
       line.appendChild(el('span', 'inkmute', '—'));
-    } else if (prefs.faucet !== '') {
-      const ask = el('button', 'word', 'ask the faucet for $NOTIS') as HTMLButtonElement;
-      ask.addEventListener('click', () => handlers.askFaucetCredits());
-      line.appendChild(ask);
+    } else if (spendable > 0n) {
+      // Balance in gold + "$NOTIS"; the locked-hint beneath names only what is
+      // above the current height (WEB_INTERFACE → The wallet window). The
+      // extension's verified-figures line follows, muted or clay by the pure
+      // model's row (→ "The verified figures").
+      const goldSpan = el('span', 'mono gold', formatCredits(spendable));
+      line.append(goldSpan, ' $NOTIS');
+      const locked = lockedCreditSummary(c.boxes, height);
+      if (locked) {
+        const hint = el('div', 'hint');
+        hint.append(mono(formatCredits(locked.value)), ' $NOTIS more unlock by block ', mono(String(locked.height)), '.');
+        line.appendChild(hint);
+      }
+      appendFiguresLine(line, ctx, c.boxCount, height, spendable, goldSpan);
     } else {
-      line.appendChild(el('span', 'inkmute', 'no $NOTIS yet.'));
+      // No box spendable at the /status height → the faucet step when a faucet is
+      // set, else "no $NOTIS yet." — both, and the lapsed grant's `ask again`, only
+      // once a /status answer stands, since a grant records the highest tip the
+      // client has read; until then `—` stands in their place. A grant in flight
+      // or one that lapsed reads its own line (WEB_INTERFACE → The wallet window →
+      // "The `balance` row", → The faucet step). The locked hint still stands so
+      // the reader knows what is on its way.
+      const locked = lockedCreditSummary(c.boxes, height);
+      if (ctx.creditGrant?.state === 'pending') {
+        line.appendChild(el('span', 'inkmute', 'working…'));
+      } else if (ctx.creditGrant?.state === 'expired') {
+        line.appendChild(el('span', 'inkmute', "no block took the faucet's transfer by height "));
+        line.appendChild(mono(String(ctx.creditGrant.atHeight)));
+        line.appendChild(document.createTextNode('. '));
+        if (ctx.status !== null) {
+          const again = el('button', 'word', 'ask again') as HTMLButtonElement;
+          again.addEventListener('click', () => handlers.askFaucetCredits());
+          line.appendChild(again);
+        }
+      } else if (ctx.status === null) {
+        line.appendChild(el('span', 'inkmute', '—'));
+      } else if (prefs.faucet !== '') {
+        const ask = el('button', 'word', 'ask the faucet for $NOTIS') as HTMLButtonElement;
+        ask.addEventListener('click', () => handlers.askFaucetCredits());
+        line.appendChild(ask);
+      } else {
+        line.appendChild(el('span', 'inkmute', 'no $NOTIS yet.'));
+      }
+      if (locked) {
+        const hint = el('div', 'hint');
+        hint.append(mono(formatCredits(locked.value)), ' $NOTIS more unlock by block ', mono(String(locked.height)), '.');
+        line.appendChild(hint);
+      }
+      // The verified-figures line stands beneath every state this branch reads
+      // — the faucet step, *no $NOTIS yet.*, a grant's *working…*, a lapsed
+      // grant's line, and a listing whose boxes are all locked at `height` —
+      // so the ledger's own facts (`holdings` and `unlisted`) reach the reader
+      // there, and a fabricated locked box does not pass unremarked
+      // (WEB_INTERFACE → The extension → "The verified figures" — "An empty
+      // listing takes these lines as any listing does"; → The wallet window →
+      // "A listing with no box reads its line too"). `shown` is 0 here, with
+      // no gold to turn clay.
+      appendFiguresLine(line, ctx, c.boxCount, height, 0n, null);
     }
-    if (locked) {
-      const hint = el('div', 'hint');
-      hint.append(mono(formatCredits(locked.value)), ' $NOTIS more unlock by block ', mono(String(locked.height)), '.');
-      line.appendChild(hint);
+
+    showSendAnswer(form !== null && confirm === null ? form.el : null, ctx.sendAnswer);
+
+    // While a press's check runs the flight's place reads *checking @bob…* and
+    // nothing else — the handle as typed, in the flight line's element and voice
+    // (WEB_INTERFACE → The wallet window → "The `send` row"). The pending line
+    // reads from the ledger — durable across a reload. The row renders it
+    // directly rather than through stageLine, which prints only "submitted" on
+    // that stage and would lose the amount and recipient (WEB_INTERFACE → The
+    // wallet window; the identity display's 16-glyph prefix, → The identity
+    // display).
+    flight.replaceChildren();
+    const ps = ctx.pendingSend;
+    if (ctx.sendCheck !== null) {
+      flight.appendChild(el('div', 'stage', `checking ${ctx.sendCheck}…`));
+    } else if (ps !== null) {
+      const who = ps.toName !== null ? '@' + ps.toName : shortHex(ps.toHex, 16);
+      const l = el('div', 'stage');
+      l.textContent = `${formatCredits(ps.amount)} $NOTIS to ${who} · submitted`;
+      flight.appendChild(l);
+    } else if (ctx.sendFlight) {
+      if (ctx.sendFlight.stage === 'landed') {
+        flight.appendChild(el('div', 'stage', 'sent'));
+      } else {
+        flight.appendChild(stageLine(ctx.sendFlight));
+      }
     }
-    // The verified-figures line stands beneath every state this branch reads
-    // — the faucet step, *no $NOTIS yet.*, a grant's *working…*, a lapsed
-    // grant's line, and a listing whose boxes are all locked at `height` —
-    // so the ledger's own facts (`holdings` and `unlisted`) reach the reader
-    // there, and a fabricated locked box does not pass unremarked
-    // (WEB_INTERFACE → The extension → "The verified figures" — "An empty
-    // listing takes these lines as any listing does"; → The wallet window →
-    // "A listing with no box reads its line too"). `shown` is 0 here, with
-    // no gold to turn clay.
-    appendFiguresLine(line, ctx, c.boxCount, height, 0n, null);
-    // No spendable box means the form has nothing to spend — drop it.
-    formSlot.replaceChildren();
-  }
 
-  showSendAnswer(formSlot, ctx.sendAnswer);
+    // The `send` row stands while a box is spendable, and while a send's own
+    // line stands — its check, its flight, the pending line, *sent* — so a send
+    // of the whole balance still reads its ending (WEB_INTERFACE → The wallet
+    // window → "The `send` row"). One predicate, read here.
+    sendRow.hidden = !(spendable > 0n || ctx.pendingSend !== null || ctx.sendFlight !== null || ctx.sendCheck !== null);
+  };
 
-  // While a press's check runs the flight's place reads *checking @bob…* and
-  // nothing else — the handle as typed, in the flight line's element and voice
-  // (WEB_INTERFACE → The wallet window → "The `send` row"). The pending line
-  // reads from the ledger — durable across a reload. The row renders it
-  // directly rather than through stageLine, which prints only "submitted" on
-  // that stage and would lose the amount and recipient (WEB_INTERFACE → The
-  // wallet window; the identity display's 16-glyph prefix, → The identity
-  // display).
-  const ps = ctx.pendingSend;
-  if (ctx.sendCheck !== null) {
-    flight.appendChild(el('div', 'stage', `checking ${ctx.sendCheck}…`));
-  } else if (ps !== null) {
-    const who = ps.toName !== null ? '@' + ps.toName : shortHex(ps.toHex, 16);
-    const l = el('div', 'stage');
-    l.textContent = `${formatCredits(ps.amount)} $NOTIS to ${who} · submitted`;
-    flight.appendChild(l);
-  } else if (ctx.sendFlight) {
-    if (ctx.sendFlight.stage === 'landed') {
-      flight.appendChild(el('div', 'stage', 'sent'));
-    } else {
-      flight.appendChild(stageLine(ctx.sendFlight));
-    }
-  }
-
-  // The `send` row stands while a box is spendable, and while a send's own
-  // line stands — its check, its flight, the pending line, *sent* — so a send
-  // of the whole balance still reads its ending (WEB_INTERFACE → The wallet
-  // window → "The `send` row"). One predicate, read here.
-  toggleSendRow(
-    field,
-    spendable > 0n || ctx.pendingSend !== null || ctx.sendFlight !== null || ctx.sendCheck !== null,
-  );
+  return { update, resetSend: () => form?.reset() };
 }
 
 /** The send form — the recipient (a key or an @handle), the amount ($NOTIS
@@ -386,8 +486,8 @@ function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: Wallet
  *  there, and the row draws its answer from what the App holds
  *  (WEB_INTERFACE → The wallet window → "in the extension there is no confirm row");
  *  with it, the web build resolves a handle at the press, refuses the reader's
- *  own key in place, and stands the confirm row next. */
-function sendForm(slot: HTMLElement, handlers: WalletHandlers, ctx: WalletCtx): void {
+ *  own key in place, and hands `confirm` what the press read. */
+function sendForm(handlers: WalletHandlers, read: () => WalletCtx, confirm: (built: Built) => void): SendForm {
   const form = el('form', 'pf credits-form') as HTMLFormElement;
 
   const toInput = el('input') as HTMLInputElement;
@@ -399,8 +499,8 @@ function sendForm(slot: HTMLElement, handlers: WalletHandlers, ctx: WalletCtx): 
   toInput.spellcheck = false;
 
   // The resolved-key line beneath the recipient — extension arm only, drawn
-  // from the App's answer. Kept in the form so `resetCreditsSendForm` can
-  // clear it alongside the inputs on an accepted submission.
+  // from the App's answer. It stands in the form, so `reset` clears it
+  // alongside the inputs on an accepted submission.
   const resolvedKey = el('div', 'hint resolved-key mono');
   resolvedKey.hidden = true;
 
@@ -462,7 +562,7 @@ function sendForm(slot: HTMLElement, handlers: WalletHandlers, ctx: WalletCtx): 
       }
       to = { name: naked };
     }
-    if (!ctx.confirmInRow) {
+    if (!read().confirmInRow) {
       // The extension: the prompt is the one confirmation (WEB_INTERFACE → The
       // wallet window → "in the extension there is no confirm row"), and the
       // App takes the press from here.
@@ -470,9 +570,7 @@ function sendForm(slot: HTMLElement, handlers: WalletHandlers, ctx: WalletCtx): 
       return;
     }
     // The web build: a handle resolved at the press, then the confirm row in
-    // the form's slot; keep restores the form with its values (the fourth
-    // ending, WEB_INTERFACE → The wallet). A locked identity mounts the unlock
-    // form first.
+    // the form's slot.
     let toHex: string;
     let toName: string | null = null;
     if ('key' in to) {
@@ -486,87 +584,21 @@ function sendForm(slot: HTMLElement, handlers: WalletHandlers, ctx: WalletCtx): 
       toHex = res.key;
       toName = res.name;
     }
-    if (toHex === ctx.identity?.pubKeyHex) {
+    if (toHex === read().identity?.pubKeyHex) {
       refuse('that is your own key.');
       return;
     }
-    sendConfirm(slot, handlers, ctx, { toHex, toName, amount, raw, amountText: amountInput.value });
+    confirm({ toHex, toName, amount });
   };
 
-  slot.appendChild(form);
-}
-
-/** The confirm row for a send — the burn's pattern. `keep` restores the form
- *  with its values so the reader made no mistake; `send` on a locked identity
- *  mounts the unlock form first, then proceeds. The prefix is 16 glyphs
- *  (WEB_INTERFACE → The identity display). */
-function sendConfirm(
-  slot: HTMLElement,
-  handlers: WalletHandlers,
-  ctx: WalletCtx,
-  built: { toHex: string; toName: string | null; amount: bigint; raw: string; amountText: string },
-): void {
-  const wrap = el('div', 'pf-confirm');
-  const q = el('div', 'pf-refusal');
-  const amount = formatCredits(built.amount);
-  const prefix = shortHex(built.toHex, 16);
-  if (built.toName !== null) {
-    q.append('send ', amount, ' $NOTIS to @' + built.toName + ' · ', mono(prefix), '?');
-  } else {
-    q.append('send ', amount, ' $NOTIS to ', mono(prefix), '?');
-  }
-  wrap.appendChild(q);
-  const actions = el('div', 'pf-actions');
-  const sendBtn = el('button', 'word', 'send') as HTMLButtonElement;
-  const keep = el('button', 'word', 'keep') as HTMLButtonElement;
-
-  // The effective ctx — an in-row unlock fires no onChange, so every read of
-  // the identity goes through `cur`, which the unlock path replaces so the
-  // rebuilt form and any next press go straight to the flow (WEB_INTERFACE →
-  // The wallet).
-  let cur = ctx;
-
-  const onEscape = (e: KeyboardEvent): void => { if (e.key === 'Escape') restoreForm(); };
-  const restoreForm = (): void => {
-    slot.removeEventListener('keydown', onEscape);
-    slot.replaceChildren();
-    sendForm(slot, handlers, cur);
-    const f = slot.querySelector<HTMLFormElement>('form');
-    if (f) {
-      const inputs = f.querySelectorAll<HTMLInputElement>('input');
-      if (inputs[0]) inputs[0].value = built.raw;
-      if (inputs[1]) inputs[1].value = built.amountText;
-    }
+  return {
+    el: form,
+    reset: () => {
+      toInput.value = '';
+      amountInput.value = '';
+      refusal.hidden = true;
+      resolvedKey.textContent = '';
+      resolvedKey.hidden = true;
+    },
   };
-
-  sendBtn.addEventListener('click', () => {
-    const id = cur.identity;
-    if (id?.locked) {
-      wrap.replaceChildren(
-        unlockForm(
-          id.pubKeyHex,
-          async (p) => {
-            await handlers.unlockIdentity(p);
-            cur = { ...cur, identity: { pubKeyHex: id.pubKeyHex, locked: false } };
-            restoreForm();
-            handlers.send(built.toHex, built.toName, built.amount);
-          },
-          restoreForm,
-        ),
-      );
-      return;
-    }
-    // Restore the form with its values before the flight begins — every
-    // ending but `result.ok` leaves them intact; the App clears them via
-    // `resetCreditsSendForm` (WEB_INTERFACE → The wallet).
-    restoreForm();
-    handlers.send(built.toHex, built.toName, built.amount);
-  });
-
-  keep.addEventListener('click', restoreForm);
-  actions.append(sendBtn, keep);
-  wrap.appendChild(actions);
-  slot.replaceChildren(wrap);
-  keep.focus();
-  slot.addEventListener('keydown', onEscape);
 }
