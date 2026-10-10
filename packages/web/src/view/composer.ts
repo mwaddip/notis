@@ -1,5 +1,5 @@
 import { MAX_CONTENT_BYTES } from '@dagsocial/types';
-import { el } from '../dom';
+import { el, endForm } from '../dom';
 import { gateUrl } from './content';
 import { unlockForm } from './passphrase';
 
@@ -36,6 +36,11 @@ export interface ComposerController {
    *  success continues the flight, Esc returns to editing with the draft intact
    *  (WEB_INTERFACE → The identity module). */
   showUnlock(pubKeyHex: string, onSubmit: (passphrase: string) => Promise<void>): void;
+  /** End the unlock form in the foot, where one stands: the foot returns, the
+   *  form's field emptied, the drafts as they were. An unlock made anywhere
+   *  ends it, the form's own among them (WEB_INTERFACE → The workspace → "A
+   *  window's body stands while the window is open"). */
+  endUnlock(): void;
   /** The composer's *sending* look — post reads *working…* and the fields are
    *  disabled while the sign is unresolved. On false, the composer returns to
    *  editing (WEB_INTERFACE → The wallet). */
@@ -68,6 +73,7 @@ export function makeComposer(opts: ComposerOpts): ComposerController {
   let type: PostType = 'text'; // default every open; the choice is not remembered
   let sending = false; // WEB_INTERFACE → The wallet — the *sending* look
   let notSentMsg: string | null = null; // the fourth ending's foot line, cleared on the next keystroke
+  let unlock: HTMLFormElement | null = null; // the unlock form standing in the foot
 
   const box = el('div', 'composer' + (opts.depth ? ' depth-' + Math.min(opts.depth, 3) : ''));
   const body = el('div', 'composer-body');
@@ -262,6 +268,13 @@ export function makeComposer(opts: ComposerOpts): ComposerController {
     }
   });
 
+  function endUnlock(): void {
+    if (unlock === null) return;
+    endForm(unlock);
+    unlock = null;
+    drawFoot();
+  }
+
   showBody();
   drawFoot();
 
@@ -282,15 +295,16 @@ export function makeComposer(opts: ComposerOpts): ComposerController {
     showUnlock: (pubKeyHex: string, onSubmit: (passphrase: string) => Promise<void>) => {
       // The drafts in the body are untouched; only the foot changes. Esc or cancel
       // restores the foot and returns focus to the current type's field.
+      if (unlock !== null) endForm(unlock);
+      unlock = unlockForm(pubKeyHex, onSubmit, () => {
+        endUnlock();
+        focusField();
+      });
       foot.textContent = '';
       foot.appendChild(el('span', 'ask', 'your key is locked — unlock to post'));
-      foot.appendChild(
-        unlockForm(pubKeyHex, onSubmit, () => {
-          drawFoot();
-          focusField();
-        }),
-      );
+      foot.appendChild(unlock);
     },
+    endUnlock,
     setSending: (s: boolean) => {
       sending = s;
       if (!discarding) sync();

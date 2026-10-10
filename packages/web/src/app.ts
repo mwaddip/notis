@@ -5245,11 +5245,13 @@ export class App {
   }
 
   /** An unlocked identity leaves no unlock form the App holds standing: every
-   *  one under a card ends, in front or in a covered list, and the one a send
-   *  owes, wherever the unlock was made. The question and the link row stand. */
+   *  one under a card ends, in front or in a covered list, the one a send owes,
+   *  and the one in a composer's foot, wherever the unlock was made. The
+   *  question, the link row and a composer's drafts stand. */
   private endUnlockRows(): void {
     for (const held of [...this.cardRows.values()]) if (held.kind === 'unlock') this.endCardRow(held);
     this.endOwedUnlock();
+    for (const composer of this.composers.values()) composer.endUnlock();
   }
 
   /** Whether a list is a window that another window of its column covers. */
@@ -5280,9 +5282,9 @@ export class App {
   /** The identity's lock changed — the profile's `lock`, or an unlock made in
    *  any form. The lock is state every window's body shows, so each is drawn
    *  where it stands, in front or covered, and no card is replaced; an
-   *  unlocked identity leaves no unlock form standing, in a body, under a card
-   *  or owed by a send (WEB_INTERFACE → The workspace → "What ends a form in a
-   *  window"). */
+   *  unlocked identity leaves no unlock form standing, in a body, under a
+   *  card, owed by a send or in a composer's foot (WEB_INTERFACE → The
+   *  workspace → "What ends a form in a window"). */
   private lockChanged(): void {
     this.redraw(() => {
       for (const held of this.bodies.values()) held.body.update();

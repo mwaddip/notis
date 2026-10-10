@@ -2129,6 +2129,104 @@ describe('an unlock made in the composer\'s foot turns the passphrase row of the
   });
 });
 
+/** The feed's composer open on a draft, `post` pressed under the lock: the
+ *  unlock form in its foot, a passphrase typed in it. */
+async function draftUnderLock(h: Rig, draft: string): Promise<{ composer: HTMLElement; text: HTMLTextAreaElement; foot: HTMLElement; field: HTMLInputElement }> {
+  wordIn(h.feedEl.querySelector('.feed-head')!, 'new post').click();
+  await settle();
+  const composer = h.feedEl.querySelector<HTMLElement>('.composer')!;
+  const text = composer.querySelector<HTMLTextAreaElement>('textarea.composer-text')!;
+  text.value = draft;
+  text.dispatchEvent(new Event('input'));
+  wordIn(composer, 'post').click(); // locked: the unlock form takes the composer's foot
+  await settle();
+  const foot = composer.querySelector<HTMLElement>('.composer-foot')!;
+  const field = fieldOf(foot);
+  field.value = 'half';
+  return { composer, text, foot, field };
+}
+
+/** The foot reads as it does before a press: the type control, the budget, the
+ *  price, `post` and `cancel`, and no unlock form. */
+function expectFootAtRest(foot: HTMLElement): void {
+  expect(foot.querySelector('form')).toBeNull();
+  expect(foot.querySelector('input[type="password"]')).toBeNull();
+  expect(foot.querySelector('.ask')).toBeNull();
+  expect(foot.querySelector('select.composer-type')).not.toBeNull();
+  expect(foot.querySelector('.budget')).not.toBeNull();
+  expect([...foot.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['post', 'cancel']);
+}
+
+describe('the unlock form in a composer\'s foot ends at an unlock made anywhere else', () => {
+  it('a draft and the foot\'s unlock form with a passphrase typed; a feed card\'s unlock row submitted: the foot\'s form is gone with its field empty, the foot reads as before the press, the draft stands and nothing is posted', async () => {
+    const A = fullRow('A', { author: OTHER });
+    const h = rig({ feed: [A], locked: true });
+    await boot(h);
+    const { composer, text, foot, field } = await draftUnderLock(h, 'a root');
+
+    const card = cardOf(h.feedEl, A.id);
+    likeOf(card).click();
+    const row = card.querySelector<HTMLElement>('.card-unlock')!;
+    fieldOf(row).value = 'pw';
+    submit(row.querySelector('form.pf')!);
+    await settle();
+    expect(h.id.unlocks).toEqual(['pw']);
+    expect(h.writes.likes).toEqual([A.id]);
+
+    expect(field.isConnected).toBe(false);
+    expect(field.value).toBe('');
+    expect(h.feedEl.querySelector('.composer')).toBe(composer);
+    expectFootAtRest(foot);
+    expect(text.value).toBe('a root');
+    expect(h.writes.posts).toEqual([]);
+  });
+
+  it('a draft and the foot\'s unlock form with a passphrase typed; the profile\'s passphrase row unlocks: the foot\'s form is gone with its field empty, the foot reads as before the press, the draft stands and nothing is posted', async () => {
+    const h = rig({ feed: [], locked: true });
+    await boot(h);
+    const { composer, text, foot, field } = await draftUnderLock(h, 'a root');
+
+    openProfile();
+    await settle();
+    const pp = h.panes.querySelector<HTMLElement>('.pp-field')!;
+    wordIn(pp, 'unlock').click();
+    fieldOf(pp).value = 'pw';
+    submit(pp.querySelector('form.pf')!);
+    await settle();
+    expect(h.id.unlocks).toEqual(['pw']);
+
+    expect(field.isConnected).toBe(false);
+    expect(field.value).toBe('');
+    expect(h.feedEl.querySelector('.composer')).toBe(composer);
+    expectFootAtRest(foot);
+    expect(text.value).toBe('a root');
+    expect(h.writes.posts).toEqual([]);
+
+    // The draft posts from the foot that returned, with no unlock asked.
+    wordIn(foot, 'post').click();
+    await settle();
+    expect(h.writes.posts).toEqual(['a root']);
+    expect(h.id.unlocks).toEqual(['pw']);
+  });
+
+  it('the composer\'s own unlock posts the draft as it reads when the unlock is made, and its form\'s field is emptied', async () => {
+    const h = rig({ feed: [], locked: true });
+    await boot(h);
+    const { text, foot, field } = await draftUnderLock(h, 'a root');
+
+    text.value = 'a root, edited';
+    text.dispatchEvent(new Event('input'));
+    field.value = 'pw';
+    submit(foot.querySelector('form.pf')!);
+    await settle();
+
+    expect(h.id.unlocks).toEqual(['pw']);
+    expect(h.writes.posts).toEqual(['a root, edited']);
+    expect(field.isConnected).toBe(false);
+    expect(field.value).toBe('');
+  });
+});
+
 describe('the profile\'s lock is read by the wallet\'s send and an author window\'s vouch', () => {
   it('unlocked, the wallet and an author window open beside the profile; lock pressed in the profile: the row reads locked · unlock, the confirm row\'s send asks for the unlock, and vouch asks for it under its row — nothing signed', async () => {
     const Q = fullRow('Q', { author: BOB });
