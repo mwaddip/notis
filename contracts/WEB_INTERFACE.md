@@ -863,6 +863,7 @@ one focused; focusing another swaps the body and no bar moves. A thread is one k
 → The wallet window, → The settings window, → The author window). **The arrangement is text** — `#r1,r2|r5`: `,`
 stacks windows in a column, `|` starts the next column — persisted under `notis.layout`, and `serialise` and
 `parse` are inverses over it. A stored `/` parses as a `,`, the stacks it separated joining in order, and is never written.
+A token `parse` has already read is dropped, the first standing: an open window stands in one place.
 
 **One placement rule.** Opening targets the column immediately right of the surface the press came from — the
 feed and the header sit left of column 0 — and creates it only if it is not already there, joining that
@@ -956,8 +957,10 @@ lands.
 **A window's body stands while the window is open.** The body of `@profile`, `@wallet`, `@settings` and an author
 window is built when the window opens and is the same node until it closes. Covered by another window of its column
 and brought back, moved by `←` or `→`, or drawn again because another window opened, closed or loaded, it returns as
-it was: every form the reader opened in it, and what is typed in every field. Through a draw that leaves the window
-in front, the focus stays in the field that held it. What is typed is held nowhere but its field. **A draw updates a
+it was: every form the reader opened in it, and what is typed in every field. **A draw that leaves the window in front
+of its column leaves the body's node in the document, where it stands**: the field that holds the focus keeps it, and
+no field in it reads a blur or a change from the draw — the bars and the report of its region are drawn around it.
+What is typed is held nowhere but its field. **A draw updates a
 standing body in place**: each row takes its figures, lines and words from the state as it is at the draw, and leaves
 alone a form open in it and a field with text in it; a row adds or removes a form only where the state has changed
 whether the form is offered — an invite no longer available, a name now held, a balance with nothing spendable.
@@ -968,7 +971,8 @@ closed; and a change of the identity or of the node read, which builds every bod
 drawn again and its fields are emptied. A thread and an author-posts window are drawn from their rows at every draw,
 and what the reader opened in them is held apart and stands through the same draws and the same covering: the
 composer with its drafts, and a card's rows (→ What the feed reads, and what a card shows for it → "A row the reader
-opened under a card outlasts a redraw of its list").
+opened under a card outlasts a redraw of its list"). The unlock form in a composer's foot ends as every unlock form
+does, at an unlock made anywhere else: the foot returns, its field emptied, the drafts as they were.
 
 **Hit size follows the pointer and hover applies where hover exists** (`HOUSE_STYLE → Interaction`), with
 this surface's numbers: under `(pointer: coarse)` every control's hit box is at least 36px tall and a bar's or
@@ -1091,7 +1095,8 @@ a lock held or waited for answers held.
   Chromium `window.open` with the name opens a blank tab instead — and the client cannot tell browsers apart
   without a user agent string and never reads one (`HOUSE_STYLE → Interaction`).
 - **Not held — the switch in place.** Without a navigation, so the identity stays unlocked and the poll
-  runs on: the stored arrangement is restored, the thread inserted by the placement rule from the feed, the
+  runs on: the stored arrangement is restored and its windows read as at a boot — the reader's own state, a
+  `@wallet`'s listing, each author and author-posts window's entry — the thread inserted by the placement rule from the feed, the
   lock requested — never awaited, since another tab may hold it, the arrangement persisting once it is
   granted — the URL replaced with the base, the feed rendered and loaded, the view moved to the thread's
   column, the title the workspace's. The tab is a workspace tab from then on. A link pasted into the workspace tab's own address bar
@@ -1588,8 +1593,9 @@ $NOTIS.*; a decline is *send not sent.*, a refusal *send not sent: <reason>.*, t
 verify.* (`absent`, `unproven`), *the node served no proof for @bob.* (`no-proof`), *@bob is too new to check yet.* (a
 second `unchecked`), *@bob can't be checked — the chain is not verified.* (`thin`, `refused`), *@bob can't be
 checked.* (a check that ends without an answer — a check is total, so only a defect reaches it) — the form keeping its
-values, nothing signed. **A press belongs to the node and the key it was made under**: a change of either ends it — its
-check, its answer and an unlock it owed — and nothing of it lands. In the extension the prompt is the one
+values, nothing signed. **A press belongs to the node, the key and the window it was made under**: a change of the node or of the key, the
+wallet closed, or its form ended with nothing left to spend, ends it — its check, its answer and an unlock it owed —
+and nothing of it lands. In the extension the prompt is the one
 confirmation, because credits always prompt (→ The extension).
 
 ### The settings window *(read surface)*
@@ -1679,10 +1685,11 @@ once-per-key rule: *the faucet refused that key: <message>*.
 ### The username row *(username surface)*
 
 **A name is claimed and burned from the profile window, in one row whose place follows the name** — above `key`
-while the reader holds a name, below it while not, decided when the window is built — three
-slots, line, form and flight, updated in place as the invites row is, so a landing moves text and colour in a
-fixed row and never the window (`HOUSE_STYLE → Motion`): a claim that lands reads `@Name` where its form stood,
-and the next build — a reopen, the `↻`, a reload — places the row on top. What the row shows follows the
+while the reader holds a name, below it while not, placed by every draw of the window — three
+slots, line, form and flight, drawn where the row stands by a landing, as the invites row is, so a landing moves
+text and colour in a fixed row and never the window (`HOUSE_STYLE → Motion`): a claim that lands reads `@Name` where
+its form stood, and the next draw of the window — a window opened, closed or moved, the `↻`, a reload — places the
+row on top. What the row shows follows the
 reader's own name, read from `GET /usernames?owner=<key>` at identity load, on the profile's `↻`, and on every reconcile while a claim
 or burn stands (→ The wallet); a 404 is *holding none*, and a read not yet answered is `—`.
 
