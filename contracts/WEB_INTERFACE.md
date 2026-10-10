@@ -268,7 +268,8 @@ server that signs, no call home.
   'popup', width: 360, height: 420, focused: true, left, top })`, `left` and `top` placing it at the top-right
   of the last-focused browser window (`windows.getLastFocused`), under the toolbar; unplaced when that
   geometry is unknown. It shows what is being signed, derived by the background from the transaction bytes
-  it was handed, never taken from the page. Approve signs; decline, Esc, or closing the window is a decline.
+  it was handed, never taken from the page. Approve signs; decline, Esc — wherever the focus stands in the window, its
+  unlock form included — or closing the window is a decline; while an approval is under way Esc declines nothing.
   It is a surface, and every rule of `HOUSE_STYLE` applies to it: the face says `rep` and `$NOTIS`
   (`HOUSE_STYLE → Voice`); **the page is a padded column filling the popup — the lines at the top, the commit
   pair bottom-aligned, `cancel` on the left and `sign` on the right** (`HOUSE_STYLE → Interaction`), *working…*
@@ -863,7 +864,8 @@ one focused; focusing another swaps the body and no bar moves. A thread is one k
 → The wallet window, → The settings window, → The author window). **The arrangement is text** — `#r1,r2|r5`: `,`
 stacks windows in a column, `|` starts the next column — persisted under `notis.layout`, and `serialise` and
 `parse` are inverses over it. A stored `/` parses as a `,`, the stacks it separated joining in order, and is never written.
-A token `parse` has already read is dropped, the first standing: an open window stands in one place.
+`parse` reads a token lower-cased and drops one it has already read, the first standing: an open window stands in
+one place.
 
 **One placement rule.** Opening targets the column immediately right of the surface the press came from — the
 feed and the header sit left of column 0 — and creates it only if it is not already there, joining that
@@ -972,7 +974,8 @@ drawn again and its fields are emptied. A thread and an author-posts window are 
 and what the reader opened in them is held apart and stands through the same draws and the same covering: the
 composer with its drafts, and a card's rows (→ What the feed reads, and what a card shows for it → "A row the reader
 opened under a card outlasts a redraw of its list"). The unlock form in a composer's foot ends as every unlock form
-does, at an unlock made anywhere else: the foot returns, its field emptied, the drafts as they were.
+does, at an unlock made anywhere else: the foot returns, its field emptied, the drafts as they were. Esc in that form
+cancels it and nothing else: the composer stays open on its draft, with no question asked.
 
 **Hit size follows the pointer and hover applies where hover exists** (`HOUSE_STYLE → Interaction`), with
 this surface's numbers: under `(pointer: coarse)` every control's hit box is at least 36px tall and a bar's or
@@ -1491,7 +1494,7 @@ opened it, and a refusal is one sentence in the voice register under the fields.
 - **Export** unlocks first if locked, takes two `new-password` fields under the username
   `<pubKeyHex> · file`, seals fresh and downloads `notis-identity-<prefix>.json`; the backup line clears.
 - **Forget** asks in place — *"forget this key on this browser? without an exported file it cannot be
-  recovered."*, the never-exported fact first when it applies — `forget` and `keep`, focus on `keep`.
+  recovered."*, the never-exported fact first when it applies — `forget` and `keep`, focus on `keep`, Esc keeps.
   It clears the envelope, the seed and the backup flag, leaves the key's pending ledger, and returns the
   window to its empty state.
 - **Lock** drops the seed; **unlock** takes the passphrase — *"that passphrase does not open this
