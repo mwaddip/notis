@@ -39,10 +39,12 @@ export function serialise(ws: Workspace): string {
 /** Rebuild a workspace from its text form. Unknown tokens are dropped — a
  *  restored arrangement may name a post that has since been withdrawn, and its
  *  window renders the withdrawn marker (WEB_INTERFACE → The withdrawn state); a
- *  token that is not even a well-formed id is discarded here. A token already
- *  read is dropped, the first standing, and a column left with no window is not
- *  made: an open window stands in one place (WEB_INTERFACE → The workspace).
- *  Focus is not encoded, so every column opens focused on its first window. */
+ *  token that is not even a well-formed id is discarded here. A token is read
+ *  lower-cased — one window written in two cases is one window, and the id a
+ *  column holds is the id the client uses for it — and one already read is
+ *  dropped, the first standing; a column left with no window is not made: an
+ *  open window stands in one place (WEB_INTERFACE → The workspace). Focus is
+ *  not encoded, so every column opens focused on its first window. */
 export function parse(spec: string): Workspace {
   const ws = newWorkspace();
   const s = spec.replace(/^#/, '').trim();
@@ -53,7 +55,7 @@ export function parse(spec: string): Workspace {
     // A stored `/` reads as a `,`, so the stacks it separated join in order
     // (WEB_INTERFACE → The workspace).
     for (const token of colSpec.replace(/\//g, ',').split(',')) {
-      const k = token.trim();
+      const k = token.trim().toLowerCase();
       if (!isWindowId(k) || read.has(k)) continue;
       read.add(k);
       wins.push(k);
