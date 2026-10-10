@@ -172,8 +172,11 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
   return b;
 }
 
-/** The card opts for a pane card. The prefix opens the author window — a read,
- *  present even with no identity (WEB_INTERFACE → The identity display). The like
+/** The card opts for a pane card. In the workspace the prefix opens the author
+ *  window — a read, present even with no identity (WEB_INTERFACE → The identity
+ *  display); on the standalone page it is display, the card handed no opener:
+ *  the page holds one window and opens no other (WEB_INTERFACE → The standalone
+ *  thread → "A card's author prefix is display on this page, not a control"). The like
  *  and link come from listCardOpts; the pane adds ↩ reply and the withdraw
  *  control (WEB_INTERFACE → The withdraw control). `listKey` is the pane's
  *  focused window — the list a row opened under one of its cards belongs to
@@ -181,7 +184,7 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
  *  "A row the reader opened under a card outlasts a redraw of its list"). */
 function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, listKey: string, ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
   const base: Partial<CardOpts> = {
-    onAuthor: (key) => handlers.openAuthor(key, { from: 'pane', ci }),
+    onAuthor: ctx.standalone ? null : (key) => handlers.openAuthor(key, { from: 'pane', ci }),
     nameClay: ctx.nameClay,
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,

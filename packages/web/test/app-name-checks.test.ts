@@ -279,8 +279,9 @@ interface Harness {
 
 /** The App over fakes: the extension build's tip verifier and names verifier,
  *  each run held until the test answers it — or, with `verifiers: false`, the
- *  web build, handed neither. */
-function harness(opts: { verifiers?: boolean; world?: World; ledger?: PendingLedger } = {}): Harness {
+ *  web build, handed neither. `standalone` starts the page on that post's
+ *  thread alone (WEB_INTERFACE → The standalone thread). */
+function harness(opts: { verifiers?: boolean; world?: World; ledger?: PendingLedger; standalone?: string } = {}): Harness {
   const verifiers = opts.verifiers ?? true;
   const w = opts.world ?? world();
   let key = ME;
@@ -320,7 +321,8 @@ function harness(opts: { verifiers?: boolean; world?: World; ledger?: PendingLed
   const panes = document.createElement('section'); panes.id = 'panes';
   workspace.append(feed, panes);
   document.body.append(appbar, workspace);
-  app.mount(appbar, feed, panes);
+  if (opts.standalone !== undefined) app.start(appbar, feed, panes, { kind: 'standalone', id: opts.standalone, base: '/' });
+  else app.mount(appbar, feed, panes);
   return {
     appbar, feed, panes, drive: app as unknown as Drive, world: w, tipRuns, nameCalls,
     setKey: (k) => { key = k; listener?.({ pubKeyHex: k }); },
@@ -1156,6 +1158,40 @@ describe('the name checks — every handle carries the pair it reads', () => {
     expect(span.dataset.namePair).toBe(ALICE);
     const nameless = card({ ...row, authorName: null, txId: 'aa'.repeat(32) }, { onAuthor: () => {}, nameClay: () => false });
     expect(nameless.querySelector('[data-name-pair]')).toBeNull();
+  });
+});
+
+// WEB_INTERFACE → The standalone thread → "A card's author prefix is display on
+// this page, not a control": the same text, face and clay as the control's.
+describe('the name checks — a card\'s author prefix on the standalone page', () => {
+  const prefixOf = (h: Harness, id: string): HTMLElement =>
+    h.panes.querySelector<HTMLElement>(`.card[data-post-id="${id}"] .who`)!.firstElementChild as HTMLElement;
+
+  it('each named author\'s handle is a span carrying its pair; a result the chain does not back turns that span clay where it stands, and one it backs leaves its span ink — no node added or taken out', async () => {
+    const h = harness({ standalone: ROOT });
+    await flush();
+    await flush();
+    const alice = prefixOf(h, ROOT);
+    const bob = prefixOf(h, REPLY);
+    expect(document.querySelectorAll('.authorbtn')).toHaveLength(0);
+    expect([alice.tagName, alice.className, alice.textContent, alice.dataset['namePair']]).toEqual(['SPAN', 'handle', '@Alice', ALICE]);
+    expect([bob.tagName, bob.className, bob.textContent, bob.dataset['namePair']]).toEqual(['SPAN', 'handle', '@Bob', BOB]);
+
+    await verify(h, 0, anchorFor(100));
+    await flush();
+    const records = observeUnder([h.panes]);
+    const checks = await answer(h, (c) => (claimPair(c) === BOB ? 'absent' : 'proven'));
+    expect(checks.map(pairOf)).toEqual(expect.arrayContaining([ALICE, BOB]));
+
+    expect(prefixOf(h, REPLY)).toBe(bob);
+    expect(bob.className).toBe('handle clay');
+    expect(prefixOf(h, ROOT)).toBe(alice);
+    expect(alice.className).toBe('handle');
+    const rs = records();
+    expect(rs.filter((r) => r.type === 'childList')).toEqual([]);
+    expect(rs.filter((r) => r.type === 'attributes').map((r) => [r.target, r.attributeName])).toEqual([[bob, 'class']]);
+    expect(document.querySelectorAll('.authorbtn')).toHaveLength(0);
+    expect(h.panes.querySelectorAll('.col')).toHaveLength(1);
   });
 });
 

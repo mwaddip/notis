@@ -7,6 +7,7 @@ import type { FeedResult, ThreadResult, PostJson } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
 import { contentHashHex } from '../src/integrity';
 import { KEY_LAYOUT } from '../src/prefs';
+import { ME, fullRow, tomb, harness, settle, lockableIdentity, recordingWrites, karmaWithBox, type Harness } from './app-light-shared';
 
 const HEX = (c: string): string => c.repeat(64);
 const P1 = HEX('a'), P2 = HEX('b'), R1 = HEX('1');
@@ -596,5 +597,124 @@ describe('the way in — the extension offer', () => {
     const report = panes.querySelector('.report');
     expect(report?.textContent).toContain('added to your workspace');
     expect(panes.closest('.workspace')?.classList.contains('standalone')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WEB_INTERFACE → The standalone thread → "A card's author prefix is display on
+// this page, not a control": the same text, face and clay as the control's;
+// the page holds one window and opens no other. After the way into the
+// workspace the prefix is the control (→ The identity display).
+// ---------------------------------------------------------------------------
+
+describe('a card\'s author prefix on the standalone page', () => {
+  const OTHER = 'ee'.repeat(32);
+  const BOB = 'bb'.repeat(32);
+  const CAT = 'cc'.repeat(32);
+  const DAVE = 'dd'.repeat(32);
+  const row = (label: string, over: Partial<PostJson>): PostJson =>
+    fullRow(label, { content: 'says ' + label, contentHash: contentHashHex('says ' + label), ...over });
+  const Q = row('Q', { author: OTHER });
+  const R_BOB = row('rb', { author: BOB, authorName: 'Bob', parentRefs: [Q.id] });
+  const R_CAT = row('rc', { author: CAT, parentRefs: [Q.id] });
+  const R_MINE = row('rm', { author: ME, parentRefs: [Q.id] });
+  const R_GONE = { ...tomb('rw'), author: DAVE, authorName: 'Dave', parentRefs: [Q.id] }; // withdrawn by its author
+  const thread = (): ThreadResult => ({
+    post: { ...Q, descendantCount: 4 }, ancestors: [], ancestorCount: 0,
+    descendants: [R_BOB, R_CAT, R_MINE, R_GONE], descendantCount: 4,
+    next: null, pending: [], pendingCount: 0,
+  });
+  const cardOf = (root: ParentNode, id: string): HTMLElement =>
+    root.querySelector<HTMLElement>(`.card[data-post-id="${id}"]`)!;
+  /** The node a card's who row leads with — the author's handle or prefix. */
+  const prefixOf = (card: HTMLElement): HTMLElement => card.querySelector<HTMLElement>('.who')!.firstElementChild as HTMLElement;
+  const word = (root: ParentNode, text: string): HTMLButtonElement =>
+    [...root.querySelectorAll('button')].find((b) => b.textContent === text) as HTMLButtonElement;
+
+  /** The page booted on Q's thread with an identity loaded and unlocked: Bob's
+   *  reply under his name, Cat's under her key, the reader's own, and one Dave
+   *  withdrew. */
+  async function bootOnQ(): Promise<Harness & { posts: string[] }> {
+    document.body.innerHTML = '';
+    localStorage.clear();
+    history.replaceState(null, '', '/p/' + Q.id);
+    const id = lockableIdentity(ME, false);
+    const writes = recordingWrites(id);
+    const h = harness({
+      identityKey: ME, identity: id.identity, writeClient: writes.client, karma: karmaWithBox(ME),
+      threadResults: [thread()],
+      mode: { kind: 'standalone', id: Q.id, base: '/' }, boot: 'start',
+    });
+    h.fake.threadById!.set(Q.id, thread());
+    h.fake.postById!.set(Q.id, { ...Q, confirmedAuthor: Q.author }); // the read a reply's flow makes of its parent
+    await settle();
+    return { ...h, posts: writes.posts };
+  }
+
+  /** A reply typed under Q and posted: the reader's own card, not in a block yet. */
+  async function replyUnderQ(h: Harness): Promise<HTMLElement> {
+    cardOf(h.panes, Q.id).querySelector<HTMLButtonElement>('.reply-ctl')!.click();
+    await settle();
+    const composer = h.panes.querySelector<HTMLElement>('.composer')!;
+    const text = composer.querySelector<HTMLTextAreaElement>('textarea.composer-text')!;
+    text.value = 'my pending reply';
+    text.dispatchEvent(new Event('input'));
+    word(composer, 'post').click();
+    await settle();
+    return [...h.panes.querySelectorAll<HTMLElement>('.card')].find((c) => c.textContent!.includes('my pending reply'))!;
+  }
+
+  it('a thread with replies by a named author, an unnamed one and the reader, a withdrawn reply, and the reader\'s own pending reply: no author control stands on the page, each who row leads with a span reading the handle or the 16-glyph prefix, · you on the reader\'s own, and a click on it opens nothing', async () => {
+    const h = await bootOnQ();
+    const pending = await replyUnderQ(h);
+    expect(h.posts).toEqual(['my pending reply']);
+    expect(pending.textContent).toContain('submitted');
+
+    const cards = [...h.panes.querySelectorAll<HTMLElement>('.card')];
+    expect(cards).toHaveLength(6);
+    expect([...document.querySelectorAll('.authorbtn')].map((b) => b.textContent)).toEqual([]);
+    expect(document.querySelector('[aria-label="open this author"]')).toBeNull();
+    const read = (card: HTMLElement): [string, string, string | null, boolean] => {
+      const p = prefixOf(card);
+      return [p.tagName, p.className, p.textContent, card.querySelector('.who .you') !== null];
+    };
+    expect(read(cardOf(h.panes, Q.id))).toEqual(['SPAN', 'hex', OTHER.slice(0, 16) + '…', false]);
+    expect(read(cardOf(h.panes, R_BOB.id))).toEqual(['SPAN', 'handle', '@Bob', false]);
+    expect(read(cardOf(h.panes, R_CAT.id))).toEqual(['SPAN', 'hex', CAT.slice(0, 16) + '…', false]);
+    expect(read(cardOf(h.panes, R_MINE.id))).toEqual(['SPAN', 'hex', ME.slice(0, 16) + '…', true]);
+    expect(read(cardOf(h.panes, R_GONE.id))).toEqual(['SPAN', 'handle', '@Dave', false]);
+    expect(read(pending)).toEqual(['SPAN', 'hex', ME.slice(0, 16) + '…', true]);
+
+    for (const id of [Q.id, R_BOB.id, R_CAT.id, R_MINE.id, R_GONE.id]) prefixOf(cardOf(h.panes, id)).click();
+    prefixOf(pending).click();
+    await settle();
+    expect(h.panes.querySelectorAll('.col')).toHaveLength(1);
+    expect(h.panes.querySelectorAll('.bar')).toHaveLength(1);
+    expect(h.drive.state.workspace.columns.map((c) => c.wins)).toEqual([[Q.id]]);
+    expect(localStorage.getItem(KEY_LAYOUT)).toBeNull();
+  });
+
+  it('add to workspace pressed: the same cards\' prefixes are the control again, and a press opens that author\'s window in the column beside the thread', async () => {
+    const h = await bootOnQ();
+    expect(document.querySelectorAll('.authorbtn')).toHaveLength(0);
+
+    document.querySelector<HTMLButtonElement>('[aria-label="add this thread to your workspace"]')!.click();
+    await settle();
+    const bob = prefixOf(cardOf(h.panes, R_BOB.id));
+    expect([bob.tagName, bob.className, bob.textContent, bob.getAttribute('aria-label')])
+      .toEqual(['BUTTON', 'handle authorbtn', '@Bob', 'open this author']);
+    const cat = prefixOf(cardOf(h.panes, R_CAT.id));
+    expect([cat.tagName, cat.className, cat.textContent]).toEqual(['BUTTON', 'hex authorbtn', CAT.slice(0, 16) + '…']);
+    expect(prefixOf(cardOf(h.panes, Q.id)).tagName).toBe('BUTTON');
+    const dave = prefixOf(cardOf(h.panes, R_GONE.id));
+    expect([dave.tagName, dave.className, dave.textContent]).toEqual(['BUTTON', 'handle authorbtn', '@Dave']);
+
+    bob.click();
+    await settle();
+    expect(h.drive.state.workspace.columns.map((c) => c.wins)).toEqual([[Q.id], ['@author:' + BOB]]);
+    const regions = [...h.panes.querySelectorAll<HTMLElement>('.region')];
+    expect(regions).toHaveLength(2);
+    expect(regions[1]!.querySelector('.bar.focused .name')?.textContent).toBe('author');
+    expect(regions[1]!.querySelector('.region-body > .winbody')).not.toBeNull();
   });
 });
