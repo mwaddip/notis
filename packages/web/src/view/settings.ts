@@ -1,4 +1,4 @@
-import { el } from '../dom';
+import { el, setText } from '../dom';
 import { prefs, BUILD_BASE, type Theme, type IdTint } from '../prefs';
 import { stopHue } from '../model/identity';
 import type { WindowBody } from '../model/state';
@@ -71,7 +71,7 @@ export function settingsBody(handlers: SettingsHandlers): WindowBody {
     btn.addEventListener('click', () => handlers.setTheme(target()));
     draws.push(() => {
       const t = target();
-      btn.textContent = t;
+      setText(btn, t);
       btn.setAttribute('aria-label', `switch to ${t} theme`);
     });
     field.appendChild(btn);

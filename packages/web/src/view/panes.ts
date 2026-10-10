@@ -269,15 +269,9 @@ function appendSubmissionBlock(
   }
 }
 
-function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handlers: Handlers, ctx: RenderCtx): void {
-  // The body of `@profile`, `@wallet`, `@settings` and an author window is the
-  // App's node, the same at every draw: the region attaches it (WEB_INTERFACE →
-  // The workspace → "A window's body stands while the window is open").
-  const standing = ctx.windowBody(focusedK);
-  if (standing !== null) {
-    body.appendChild(standing);
-    return;
-  }
+/** The body of a window drawn from its rows at every draw: an author-posts
+ *  window and a thread. */
+function renderRows(body: HTMLElement, focusedK: string, ci: number, handlers: Handlers, ctx: RenderCtx): void {
   const sub = windowSubject(focusedK);
   if (sub?.kind === 'posts') {
     body.appendChild(authorPostsBody(handlers, postsCtxFrom(sub.key, focusedK, ci, ctx)));
@@ -375,7 +369,17 @@ export function renderBars(column: Column, ci: number, handlers: Handlers, ctx: 
   return bars;
 }
 
-export function renderRegionElement(column: Column, ci: number, handlers: Handlers, ctx: RenderCtx): HTMLElement {
+/** The body of the window in front of a column, where the App holds one: the
+ *  body of `@profile`, `@wallet`, `@settings` and an author window is the App's
+ *  node, the same at every draw, its rows drawn from the state as this asks
+ *  for it (WEB_INTERFACE → The workspace → "A window's body stands while the
+ *  window is open"). Null for a window drawn from its rows, and for no window. */
+function frontBody(column: Column, ctx: RenderCtx): HTMLElement | null {
+  const focusedK = column.wins[column.focus];
+  return focusedK == null ? null : ctx.windowBody(focusedK);
+}
+
+function buildRegion(column: Column, ci: number, handlers: Handlers, ctx: RenderCtx, standing: HTMLElement | null): HTMLElement {
   const regionEl = el('div', 'region');
   regionEl.dataset['uid'] = String(column.uid);
 
@@ -385,20 +389,68 @@ export function renderRegionElement(column: Column, ci: number, handlers: Handle
 
   const body = el('div', 'region-body');
   const focusedK = column.wins[column.focus];
-  if (focusedK != null) renderRegionBody(body, focusedK, ci, handlers, ctx);
+  if (standing !== null) body.appendChild(standing);
+  else if (focusedK != null) renderRows(body, focusedK, ci, handlers, ctx);
   regionEl.appendChild(body);
   return regionEl;
 }
 
+/** A column's region built anew: its bars, its report line, and the body of the
+ *  window in front. */
+export function renderRegionElement(column: Column, ci: number, handlers: Handlers, ctx: RenderCtx): HTMLElement {
+  return buildRegion(column, ci, handlers, ctx, frontBody(column, ctx));
+}
+
+/** Draw a column's region over the one standing in the panes for it, and
+ *  answer the region that stands after the draw. Where the window in front is
+ *  one whose body the App holds and that body is attached in `standing`, the
+ *  bars and the report line are drawn around it and `standing` is answered:
+ *  neither its `.region-body` nor the body leaves the document, so no field in
+ *  the body reads a blur or a change from the draw (WEB_INTERFACE → The
+ *  workspace → "A draw that leaves the window in front of its column leaves
+ *  the body's node in the document, where it stands"). Otherwise a region
+ *  built anew is answered, for the caller to put in `standing`'s place. */
+export function renderRegionOver(standing: HTMLElement, column: Column, ci: number, handlers: Handlers, ctx: RenderCtx): HTMLElement {
+  const front = frontBody(column, ctx);
+  const body = standing.querySelector<HTMLElement>(':scope > .region-body');
+  if (front === null || body === null || front.parentElement !== body) {
+    return buildRegion(column, ci, handlers, ctx, front);
+  }
+  standing.querySelector(':scope > .bars')?.replaceWith(renderBars(column, ci, handlers, ctx));
+  standing.querySelector(':scope > .report')?.remove();
+  if (column.report) body.before(reportNode(column.report));
+  return standing;
+}
+
+/** Draw the strip of columns. A column whose region stands in the container
+ *  keeps its `.col` where it is and its region is drawn over (renderRegionOver);
+ *  the columns that have gone are taken out and the new ones put in where they
+ *  belong, so a member that stays is never taken out and put back. */
 export function renderPanesInto(container: HTMLElement, ws: Workspace, handlers: Handlers, ctx: RenderCtx): void {
-  container.textContent = '';
   if (ws.columns.length === 0) {
-    container.appendChild(el('div', 'empty', EMPTY_TEXT));
+    container.replaceChildren(el('div', 'empty', EMPTY_TEXT));
     return;
   }
-  ws.columns.forEach((col, ci) => {
-    const colEl = el('div', 'col');
-    colEl.appendChild(renderRegionElement(col, ci, handlers, ctx));
-    container.appendChild(colEl);
+  const standing = new Map<string, { col: Element; region: HTMLElement }>();
+  for (const col of container.children) {
+    const region = col.querySelector<HTMLElement>(':scope > .region');
+    const uid = region?.dataset['uid'];
+    if (region && uid) standing.set(uid, { col, region });
+  }
+  const cols = ws.columns.map((column, ci) => {
+    const at = standing.get(String(column.uid));
+    if (at === undefined) {
+      const col = el('div', 'col');
+      col.appendChild(renderRegionElement(column, ci, handlers, ctx));
+      return col;
+    }
+    const region = renderRegionOver(at.region, column, ci, handlers, ctx);
+    if (region !== at.region) at.region.replaceWith(region);
+    return at.col;
+  });
+  const kept = new Set<Element>(cols);
+  for (const child of [...container.children]) if (!kept.has(child)) child.remove();
+  cols.forEach((col, i) => {
+    if (container.children[i] !== col) container.insertBefore(col, container.children[i] ?? null);
   });
 }

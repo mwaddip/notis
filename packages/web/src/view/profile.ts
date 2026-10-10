@@ -1,4 +1,4 @@
-import { el, shortHex, endForm } from '../dom';
+import { el, shortHex, endForm, setText } from '../dom';
 import { prefs } from '../prefs';
 import { unlockForm, setPassphraseForm } from './passphrase';
 import { stageLine, type Flight } from './card';
@@ -300,7 +300,7 @@ function keyRow(pubKeyHex: string): BodyRow {
     row: r,
     update: (ctx) => {
       copied = false;
-      btn.textContent = pubKeyHex;
+      setText(btn, pubKeyHex);
       setChildren(field, ctx.backedUp ? [btn] : [btn, hint]);
     },
   };
@@ -477,7 +477,7 @@ function inviteForm(params: InviteParams, onSubmit: (inviteeKey: string, bond: b
     range: (p) => {
       bondInput.min = p.bondMin;
       bondInput.max = p.bondMax;
-      probation.textContent = String(p.probationBlocks);
+      setText(probation, String(p.probationBlocks));
     },
   };
 }

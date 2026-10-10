@@ -75,6 +75,47 @@ const nodeFieldOf = (root: ParentNode): HTMLInputElement => {
   return f;
 };
 
+/** Watch the panes from this call on, for a window that stays in front of its
+ *  column. The check it answers holds every draw since: no node taken out of
+ *  the panes is the body `nodes` stand in, a node above it, one of `nodes`, or
+ *  a node one of them is made of as the watch begins; and the region and its
+ *  `.region-body` are the nodes they were (WEB_INTERFACE → The workspace → "A
+ *  draw that leaves the window in front of its column leaves the body's node
+ *  in the document, where it stands"). */
+function inFront(panes: HTMLElement, ...nodes: HTMLElement[]): () => void {
+  const first = nodes[0]!;
+  const body = first.closest<HTMLElement>('.winbody');
+  const regionBody = first.closest<HTMLElement>('.region-body');
+  const region = first.closest<HTMLElement>('.region');
+  if (body === null || regionBody === null || region === null) throw new Error('the node stands in no window in front');
+  const watched = new Set<Node>();
+  const within = (n: Node): void => {
+    watched.add(n);
+    for (const child of n.childNodes) within(child);
+  };
+  for (const node of nodes) within(node);
+  for (let n: Node | null = first; n !== null && n !== panes; n = n.parentNode) watched.add(n);
+  const records: MutationRecord[] = [];
+  const observer = new MutationObserver((batch) => { records.push(...batch); });
+  observer.observe(panes, { subtree: true, childList: true });
+  return () => {
+    records.push(...observer.takeRecords());
+    observer.disconnect();
+    const taken = records.flatMap((r) => [...r.removedNodes]).filter((n) => watched.has(n));
+    expect(taken.map((n) => (n instanceof HTMLElement ? n.className || n.tagName : n.nodeName))).toEqual([]);
+    expect(first.closest('.region-body')).toBe(regionBody);
+    expect(first.closest('.region')).toBe(region);
+  };
+}
+
+/** Record every call of `focus` on a node from this call on. */
+function focusCalls(node: HTMLElement): Array<FocusOptions | undefined> {
+  const asked: Array<FocusOptions | undefined> = [];
+  const focus = node.focus.bind(node);
+  node.focus = (options?: FocusOptions): void => { asked.push(options); focus(options); };
+  return asked;
+}
+
 /** Press the bar's close ✕ at (colIdx, barIdx). A column's bars are rendered
  *  in `column.wins` order. */
 function closeAt(panes: HTMLElement, colIdx: number, barIdx: number): void {
@@ -273,8 +314,10 @@ describe('the passphrase row\'s unlock form across the open\'s read landing', ()
     field.focus();
     expect(document.activeElement).toBe(field);
 
+    const stood = inFront(h.panes, form, field);
     gate.release();
     await settle();
+    stood();
 
     expect(form.isConnected).toBe(true);
     expect(h.panes.querySelector('.pp-field form.pf')).toBe(form);
@@ -305,6 +348,7 @@ describe('the passphrase row\'s unlock form across the profile\'s ↻', () => {
     const field = fieldOf(form);
     field.value = 'secret';
     field.focus();
+    const stood = inFront(h.panes, form, field);
 
     const gate = membershipGate();
     h.fake.membershipGate = gate.promise;
@@ -312,6 +356,7 @@ describe('the passphrase row\'s unlock form across the profile\'s ↻', () => {
     gate.release();
     await settle();
 
+    stood();
     expect(form.isConnected).toBe(true);
     expect(h.panes.querySelector('.pp-field form.pf')).toBe(form);
     expect(fieldOf(h.panes.querySelector('.pp-field')!)).toBe(field);
@@ -320,8 +365,8 @@ describe('the passphrase row\'s unlock form across the profile\'s ↻', () => {
   });
 });
 
-describe('the focus returns to a body\'s field after a draw without a scroll', () => {
-  it('unlock typed with the focus in its field; the profile\'s ↻ draws the panes: the field is given the focus once, asked not to scroll', async () => {
+describe('the focus of a body\'s field across a draw', () => {
+  it('unlock typed with the focus in its field; the profile\'s ↻ draws the panes with the profile in front: the field keeps the focus and is never given it', async () => {
     const h = rig({ feed: [], locked: true });
     await boot(h);
     openProfile();
@@ -329,15 +374,77 @@ describe('the focus returns to a body\'s field after a draw without a scroll', (
     const pp = h.panes.querySelector<HTMLElement>('.pp-field')!;
     wordIn(pp, 'unlock').click();
     await settle(); // the form's own frame passes
+    const form = pp.querySelector<HTMLFormElement>('form.pf')!;
     const field = fieldOf(pp);
     field.focus();
-    const asked: Array<FocusOptions | undefined> = [];
-    const focus = field.focus.bind(field);
-    field.focus = (options?: FocusOptions): void => { asked.push(options); focus(options); };
+    const asked = focusCalls(field);
+    const stood = inFront(h.panes, form, field);
 
     await refreshProfile(h);
 
+    stood();
+    expect(asked).toEqual([]);
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('unlock typed with the focus in its field, the profile over a thread; the profile moved by its bar\'s →: the form is the same node in the new column, and its field is given the focus once, asked not to scroll', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const h = rig({ feed: [Q], threads: [thread(Q)], locked: true });
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    openProfile(); // column 0 [Q, profile]
+    await settle();
+    const pp = h.panes.querySelector<HTMLElement>('.pp-field')!;
+    wordIn(pp, 'unlock').click();
+    await settle(); // the form's own frame passes
+    const form = pp.querySelector<HTMLFormElement>('form.pf')!;
+    const field = fieldOf(pp);
+    field.value = 'secret';
+    field.focus();
+    const asked = focusCalls(field);
+
+    moveAt(h.panes, 0, 1, '→'); // column 1 [profile]
+    await settle();
+
+    expect(regionsOf(h.panes).map(focusedName)).toEqual([Q.content, 'profile']);
+    expect(regionsOf(h.panes)[1]!.querySelector('.pp-field form.pf')).toBe(form);
+    expect(field.value).toBe('secret');
     expect(asked).toEqual([{ preventScroll: true }]);
+    expect(document.activeElement).toBe(field);
+  });
+});
+
+describe('the author window\'s vouch unlock row across the author\'s own read landing', () => {
+  it('an author window opened with its read held back; vouch pressed and typed; the read released: the region, its body and the row are the nodes they were, the name and the endorsers read the answer, and the field keeps the focus without being given it', async () => {
+    const A = fullRow('A', { author: OTHER });
+    const h = rig({ feed: [A], locked: true, member: true });
+    await boot(h);
+    const gate = membershipGate();
+    h.fake.membershipGate = gate.promise; // the author's own read waits on it
+    authorBtnOf(cardOf(h.feedEl, A.id)).click(); // column 0 [author]
+    await settle();
+    const body = bodyOf(regionsOf(h.panes)[0]!);
+    expect(rowByLabel(body, 'name').textContent).toContain('loading…');
+
+    wordIn(body, 'vouch').click();
+    await settle(); // the form's own frame passes
+    const row = body.querySelector<HTMLElement>('.card-unlock')!;
+    const field = fieldOf(row);
+    field.value = 'secret';
+    field.focus();
+    const asked = focusCalls(field);
+    const stood = inFront(h.panes, row, field);
+
+    gate.release();
+    await settle();
+
+    stood();
+    expect(bodyOf(regionsOf(h.panes)[0]!)).toBe(body);
+    expect(rowByLabel(body, 'name').textContent).toContain('no name');
+    expect(rowByLabel(body, 'endorsers').textContent).toContain('no vouches yet');
+    expect(rowByLabel(body, 'your vouch').nextElementSibling).toBe(row);
+    expect(field.value).toBe('secret');
+    expect(asked).toEqual([]);
     expect(document.activeElement).toBe(field);
   });
 });
@@ -360,11 +467,13 @@ describe('the unlock row under the invite form across the profile\'s ↻', () =>
     field.value = 'secret';
     field.focus();
 
+    const stood = inFront(h.panes, inviteForm, unlockRow, field);
     const gate = membershipGate();
     h.fake.membershipGate = gate.promise;
     await refreshProfile(h);
     gate.release();
     await settle();
+    stood();
 
     expect(unlockRow.isConnected).toBe(true);
     expect(h.panes.querySelector('form.invite-form')).toBe(inviteForm);
@@ -393,11 +502,13 @@ describe('the unlock row under the claim form across the profile\'s ↻', () => 
     field.value = 'secret';
     field.focus();
 
+    const stood = inFront(h.panes, claimForm, unlockRow, field);
     const gate = membershipGate();
     h.fake.membershipGate = gate.promise;
     await refreshProfile(h);
     gate.release();
     await settle();
+    stood();
 
     expect(unlockRow.isConnected).toBe(true);
     expect(h.panes.querySelector('form.username-form')).toBe(claimForm);
@@ -426,11 +537,13 @@ describe('the export form across the profile\'s ↻', () => {
     inputs[1]!.value = 'secret';
     inputs[0]!.focus();
 
+    const stood = inFront(h.panes, form, ...inputs);
     const gate = membershipGate();
     h.fake.membershipGate = gate.promise;
     await refreshProfile(h);
     gate.release();
     await settle();
+    stood();
 
     expect(form.isConnected).toBe(true);
     expect(rowByLabel(h.panes, 'export').querySelector('form.pf')).toBe(form);
@@ -451,11 +564,13 @@ describe('the invite form\'s own typed key across the profile\'s ↻', () => {
     keyInput.value = BOB;
     keyInput.focus();
 
+    const stood = inFront(h.panes, inviteForm, keyInput);
     const gate = membershipGate();
     h.fake.membershipGate = gate.promise;
     await refreshProfile(h);
     gate.release();
     await settle();
+    stood();
 
     expect(h.panes.querySelector('form.invite-form')).toBe(inviteForm);
     expect(inviteForm.querySelector('input[type="text"]')).toBe(keyInput);
@@ -476,11 +591,13 @@ describe('the claim field\'s own typed name across the profile\'s ↻', () => {
     nameInput.value = 'alice';
     nameInput.focus();
 
+    const stood = inFront(h.panes, claimForm, nameInput);
     const gate = membershipGate();
     h.fake.membershipGate = gate.promise;
     await refreshProfile(h);
     gate.release();
     await settle();
+    stood();
 
     expect(h.panes.querySelector('form.username-form')).toBe(claimForm);
     expect(claimForm.querySelector('input')).toBe(nameInput);
@@ -504,11 +621,13 @@ describe('the burn confirm across the profile\'s ↻', () => {
     const keep = wordIn(confirm, 'keep');
     expect(document.activeElement).toBe(keep);
 
+    const stood = inFront(h.panes, confirm, keep);
     const gate = membershipGate();
     h.fake.membershipGate = gate.promise;
     await refreshProfile(h);
     gate.release();
     await settle();
+    stood();
 
     expect(confirm.isConnected).toBe(true);
     expect(rowByLabel(h.panes, 'username').querySelector('.pf-confirm')).toBe(confirm);
@@ -531,11 +650,13 @@ describe('the forget confirm across the profile\'s ↻', () => {
     const keep = wordIn(confirm, 'keep');
     expect(document.activeElement).toBe(keep);
 
+    const stood = inFront(h.panes, confirm, keep);
     const gate = membershipGate();
     h.fake.membershipGate = gate.promise;
     await refreshProfile(h);
     gate.release();
     await settle();
+    stood();
 
     expect(confirm.isConnected).toBe(true);
     expect(rowByLabel(h.panes, 'forget').querySelector('.pf-confirm')).toBe(confirm);
@@ -592,8 +713,10 @@ describe('the passphrase row\'s unlock form while the profile is focused in colu
     // The focused window of column 0 is now @profile — Q is stacked under.
     expect(focusedName(regionsOf(h.panes)[0]!)).toBe('profile');
 
+    const stood = inFront(h.panes, form, field);
     // S is a reply to R inside R's thread; its strip opens S's thread.
     await openFromPane(col1, S.id); // column 2 [S]
+    stood();
     expect(regionsOf(h.panes)).toHaveLength(3);
 
     expect(form.isConnected).toBe(true);
@@ -624,8 +747,10 @@ describe('the passphrase row\'s unlock form while the profile is focused in colu
 
     expect(focusedName(regionsOf(h.panes)[0]!)).toBe('profile');
 
+    const stood = inFront(h.panes, form, field);
     closeAt(h.panes, 2, 0);
     await settle();
+    stood();
     expect(regionsOf(h.panes)).toHaveLength(2);
 
     expect(form.isConnected).toBe(true);
@@ -651,13 +776,49 @@ describe('the passphrase row\'s unlock form while the profile is focused in colu
     field.value = 'secret';
     field.focus();
 
+    const stood = inFront(h.panes, form, field);
     closeAt(h.panes, 0, 0);
     await settle();
+    stood();
     expect(focusedName(regionsOf(h.panes)[0]!)).toBe('profile');
 
     expect(form.isConnected).toBe(true);
     expect(h.panes.querySelector('.pp-field form.pf')).toBe(form);
     expect(field.value).toBe('secret');
+    expect(document.activeElement).toBe(field);
+  });
+});
+
+describe('the passphrase row\'s unlock form while the profile stands alone in its column across a column put in on its left', () => {
+  it('Q and T stacked in column 0, the profile alone in column 1, unlock typed; T moved by its bar\'s → into a column of its own between them: the profile stands in column 2, its form the same node, the field holding what was typed and the focus', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const T = fullRow('T', { author: OTHER });
+    const h = rig({ feed: [Q, T], threads: [thread(Q), thread(T)], locked: true });
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    openProfile(); // column 0 [Q, profile]
+    await settle();
+    moveAt(h.panes, 0, 1, '→'); // column 1 [profile]
+    await settle();
+    await openFromFeed(h, T.id); // column 0 [Q, T]
+    const pp = h.panes.querySelector<HTMLElement>('.pp-field')!;
+    wordIn(pp, 'unlock').click();
+    await settle(); // the form's own frame passes: its field has the focus before any draw
+    const form = pp.querySelector<HTMLFormElement>('form.pf')!;
+    const field = fieldOf(form);
+    field.value = 'secret';
+    field.focus();
+    const asked = focusCalls(field);
+    const stood = inFront(h.panes, form, field);
+
+    moveAt(h.panes, 0, 1, '→'); // column 1 [T], the profile in column 2
+    await settle();
+
+    stood();
+    expect(regionsOf(h.panes).map(focusedName)).toEqual([Q.content, T.content, 'profile']);
+    expect(regionsOf(h.panes)[2]!.querySelector('.pp-field form.pf')).toBe(form);
+    expect(field.value).toBe('secret');
+    expect(asked).toEqual([]);
     expect(document.activeElement).toBe(field);
   });
 });
@@ -693,10 +854,12 @@ describe('the author window\'s vouch unlock row while the author window is focus
     // The author window is focused of column 2 and visible.
     expect(focusedName(regionsOf(h.panes)[2]!)).toBe('author');
 
+    const stood = inFront(h.panes, row, field);
     // Press T's strip from the feed — origin feed, target 0 → joins column
     // 0's stack. The author window stays in front in column 2 while every
     // region is drawn.
     await openFromFeed(h, T.id);
+    stood();
     expect(regionsOf(h.panes)).toHaveLength(3);
     expect(focusedName(regionsOf(h.panes)[0]!)).toBe(T.content);
 
@@ -737,8 +900,10 @@ describe('the author window\'s vouch unlock row across the thread it was opened 
 
     expect(focusedName(regionsOf(h.panes)[2]!)).toBe('author');
 
+    const stood = inFront(h.panes, row, field);
     closeAt(h.panes, 1, 0);
     await settle();
+    stood();
     expect(regionsOf(h.panes).map(focusedName)).toEqual([Q.content, 'author']);
 
     expect(row.isConnected).toBe(true);
@@ -771,7 +936,9 @@ describe('the wallet\'s send form while the wallet is focused in column 0 across
 
     expect(focusedName(regionsOf(h.panes)[0]!)).toBe('wallet');
 
+    const stood = inFront(h.panes, form, inputs[0]!, inputs[1]!);
     await openFromPane(col1, S.id);
+    stood();
     expect(regionsOf(h.panes)).toHaveLength(3);
 
     expect(form.isConnected).toBe(true);
@@ -801,8 +968,10 @@ describe('the wallet\'s send form while the wallet is focused in column 0 across
     inputs[1]!.value = '1.5';
     inputs[0]!.focus();
 
+    const stood = inFront(h.panes, form, inputs[0]!, inputs[1]!);
     closeAt(h.panes, 2, 0);
     await settle();
+    stood();
     expect(regionsOf(h.panes)).toHaveLength(2);
 
     expect(form.isConnected).toBe(true);
@@ -826,8 +995,10 @@ describe('the wallet\'s send form while the wallet is focused in column 0 across
     inputs[1]!.value = '1.5';
     inputs[0]!.focus();
 
+    const stood = inFront(h.panes, form, inputs[0]!, inputs[1]!);
     closeAt(h.panes, 0, 0);
     await settle();
+    stood();
     expect(focusedName(regionsOf(h.panes)[0]!)).toBe('wallet');
 
     expect(form.isConnected).toBe(true);
@@ -855,7 +1026,9 @@ describe('the settings node field while settings is focused in column 0 across a
 
     expect(focusedName(regionsOf(h.panes)[0]!)).toBe('settings');
 
+    const stood = inFront(h.panes, nodeInput);
     await openFromPane(col1, S.id);
+    stood();
     expect(regionsOf(h.panes)).toHaveLength(3);
 
     expect(nodeInput.isConnected).toBe(true);
@@ -882,8 +1055,10 @@ describe('the settings node field while settings is focused in column 0 across a
     nodeInput.value = 'https://example.test';
     nodeInput.focus();
 
+    const stood = inFront(h.panes, nodeInput);
     closeAt(h.panes, 2, 0);
     await settle();
+    stood();
     expect(regionsOf(h.panes)).toHaveLength(2);
 
     expect(nodeInput.isConnected).toBe(true);
@@ -907,8 +1082,10 @@ describe('the settings node field while settings is focused in column 0 across t
     nodeInput.value = 'https://example.test';
     nodeInput.focus();
 
+    const stood = inFront(h.panes, nodeInput);
     closeAt(h.panes, 0, 0);
     await settle();
+    stood();
     expect(focusedName(regionsOf(h.panes)[0]!)).toBe('settings');
 
     expect(nodeInput.isConnected).toBe(true);
@@ -930,8 +1107,10 @@ describe('the settings node field across the theme pressed in its own window', (
     const theme = rowByLabel(h.panes, 'theme').querySelector<HTMLButtonElement>('button')!;
     expect(theme.textContent).toBe('dark');
 
+    const stood = inFront(h.panes, nodeInput);
     theme.click();
     await settle();
+    stood();
 
     expect(document.documentElement.getAttribute('data-t')).toBe('dark');
     expect(nodeFieldOf(h.panes)).toBe(nodeInput);
@@ -961,8 +1140,10 @@ describe('the settings policy row (extension) across its own press', () => {
     const words = [...rowByLabel(settings, 'sign each rep action').querySelectorAll<HTMLButtonElement>('.seg .word')];
     expect(words.map((w) => w.getAttribute('aria-pressed'))).toEqual(['true', 'false']);
 
+    const stood = inFront(h.panes, nodeInput, ...words);
     words[1]!.click();
     await settle();
+    stood();
 
     expect(h.id.identity.policy?.()).toBe('ask');
     expect(bodyOf(regionsOf(h.panes)[1]!)).toBe(settings);
@@ -1001,6 +1182,7 @@ describe('the author window\'s vouch unlock row in column 2 across the profile o
 
     expect(focusedName(regionsOf(h.panes)[2]!)).toBe('author');
 
+    const stood = inFront(h.panes, row, field);
     const gate = membershipGate();
     h.fake.membershipGate = gate.promise;
     openProfile(); // targets column 0 and joins Q's column; every region is drawn
@@ -1010,6 +1192,7 @@ describe('the author window\'s vouch unlock row in column 2 across the profile o
 
     gate.release();
     await settle();
+    stood();
 
     expect(row.isConnected).toBe(true);
     const now = regionsOf(h.panes)[2]!;
@@ -1059,7 +1242,9 @@ describe('the wallet\'s confirm row (web) across a window opening in column 2', 
 
     expect(focusedName(regionsOf(h.panes)[0]!)).toBe('wallet');
 
+    const stood = inFront(h.panes, confirm, keep);
     await openFromPane(col1, S.id);
+    stood();
     expect(regionsOf(h.panes)).toHaveLength(3);
 
     expect(confirm.isConnected).toBe(true);
@@ -1088,7 +1273,9 @@ describe('the wallet\'s confirm row (web) across the wallet\'s own ↻', () => {
     const confirm = h.panes.querySelector<HTMLElement>('.credits-form .pf-confirm')!;
     expect(confirm).not.toBeNull();
 
+    const stood = inFront(h.panes, confirm);
     await pressRefresh(h.panes, 'refresh the balance');
+    stood();
 
     expect(confirm.isConnected).toBe(true);
     expect(h.panes.querySelector('.credits-form .pf-confirm')).toBe(confirm);
@@ -1120,7 +1307,9 @@ describe('the unlock row a locked send owes (extension) across a window opening 
     field.value = 'secret';
     field.focus();
 
+    const stood = inFront(h.panes, form, row, field);
     await openFromPane(col1, S.id);
+    stood();
     expect(regionsOf(h.panes)).toHaveLength(3);
 
     expect(row.isConnected).toBe(true);
@@ -1152,8 +1341,10 @@ describe('the passphrase row\'s unlock form across a start-up read landing', () 
     field.value = 'secret';
     field.focus();
 
+    const stood = inFront(h.panes, form, field);
     gate.release();
     await settle();
+    stood();
 
     expect(form.isConnected).toBe(true);
     expect(h.panes.querySelector('.pp-field form.pf')).toBe(form);
@@ -1188,8 +1379,10 @@ describe('the create form with no identity loaded across the stacked-under threa
     inputs[1]!.value = 'new';
     inputs[0]!.focus();
 
+    const stood = inFront(h.panes, form, ...inputs);
     closeAt(h.panes, 0, 0);
     await settle();
+    stood();
     expect(focusedName(regionsOf(h.panes)[0]!)).toBe('profile');
 
     expect(form.isConnected).toBe(true);

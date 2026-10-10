@@ -11,7 +11,7 @@ import { contentHashHex } from './integrity';
 import { prefs, setTheme, setIdTint, setNode, writeStore, readStore, BUILD_NODES, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
 import { renderFeedInto, replaceFeedCard } from './view/feed';
 import { mountRow, type CardRow, type RowControl } from './view/card';
-import { renderPanesInto, renderRegionElement, renderBars } from './view/panes';
+import { renderPanesInto, renderRegionOver, renderBars } from './view/panes';
 import { makeComposer, type ComposerController } from './view/composer';
 import { buildUnlockRow, buildConfirmRow, buildLinkFallbackRow } from './view/card-rows';
 import { personGlyph, sunGlyph, moonGlyph, gearGlyph, walletGlyph } from './view/glyphs';
@@ -1396,9 +1396,11 @@ export class App {
     return null;
   }
 
-  /** Rebuild one region in place, preserving its body scroll — the feed and
+  /** Draw one region where it stands, preserving its body scroll — the feed and
    *  every other region are untouched, so their scroll and any text selection
-   *  in them survive. */
+   *  in them survive. A region whose window in front holds a standing body is
+   *  drawn around that body; any other is built anew in its place
+   *  (renderRegionOver). */
   private renderRegion(uid: number): void {
     this.redraw(() => this.renderRegionInPlace(uid));
     this.checkNames('new');
@@ -1413,9 +1415,10 @@ export class App {
       return;
     }
     const top = oldEl.querySelector<HTMLElement>('.region-body')?.scrollTop ?? 0;
-    const newEl = renderRegionElement(found.column, found.ci, this.handlers, this.ctx());
-    oldEl.replaceWith(newEl);
-    const newBody = newEl.querySelector<HTMLElement>('.region-body');
+    const drawn = renderRegionOver(oldEl, found.column, found.ci, this.handlers, this.ctx());
+    if (drawn === oldEl) return;
+    oldEl.replaceWith(drawn);
+    const newBody = drawn.querySelector<HTMLElement>('.region-body');
     if (newBody) newBody.scrollTop = top;
   }
 

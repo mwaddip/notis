@@ -1,4 +1,4 @@
-import { el, shortHex, endForm } from '../dom';
+import { el, shortHex, endForm, setText } from '../dom';
 import { prefs } from '../prefs';
 import { unlockForm } from './passphrase';
 import { stageLine, type Flight } from './card';
@@ -165,9 +165,9 @@ function sumValues(boxes: readonly { value: string }[]): bigint {
  *  beneath the field — that line names the key a send goes to
  *  (WEB_INTERFACE → The wallet window → "The `send` row"). */
 function refuseIn(refusal: HTMLElement, resolvedKey: HTMLElement, text: string): void {
-  resolvedKey.textContent = '';
+  setText(resolvedKey, '');
   resolvedKey.hidden = true;
-  refusal.textContent = text;
+  setText(refusal, text);
   refusal.hidden = false;
 }
 
@@ -185,7 +185,7 @@ function showSendAnswer(form: HTMLFormElement | null, answer: SendAnswer | null)
     refuseIn(refusal, resolvedKey, answer.refusal);
     return;
   }
-  resolvedKey.textContent = answer.key;
+  setText(resolvedKey, answer.key);
   resolvedKey.hidden = false;
   if (answer.unlock !== null && form.nextElementSibling !== answer.unlock) form.after(answer.unlock);
 }
