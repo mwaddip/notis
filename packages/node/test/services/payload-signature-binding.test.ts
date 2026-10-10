@@ -1,10 +1,13 @@
 // ---------------------------------------------------------------------------
 // Payload-signature binding (NODE_INTERFACE → Legal box transitions).
 //
-// Each test reproduces a consensus defect that was admitted through the shared
-// validator before the fix: a payload on the wrong transition, or a stray
-// signature key flipping the rent path. Every exploit builds through
-// `validateTx` at the same step ordering block-apply runs per embedded tx.
+// A `post` or `postWithdraw` is routed by the payload ahead of any
+// output-shape arm (NODE_INTERFACE → "A payload binds the transition,
+// exclusively"); a credit spend's authorization hangs on its signature map,
+// empty for a rent collection and non-empty for an ordinary transfer
+// (NODE_INTERFACE → Storage rent is a transition requiring no signature).
+// Every case builds through `validateTx` at the same step ordering block-apply
+// runs per embedded tx.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -223,10 +226,14 @@ describe('payload-signature binding', () => {
     });
   });
 
-  // ---- F3: stray signature on a rent-eligible credit box ----
+  // ---- F3: a non-empty map puts a past-period credit box on OWNER_SIGNATURE ----
 
-  describe('F3 — stray signature flips the rent path', () => {
-    it('rejects a rent-eligible box with one stray signature redirected to a stranger', () => {
+  describe('F3 — a key in the map requires every input\'s owner', () => {
+    it('rejects a past-period box signed only by a stranger with the box\'s owner-signature refusal', () => {
+      // NODE_INTERFACE → Storage rent is a transition requiring no signature →
+      // "The waiver and the shape hang on one predicate — the empty map." A key
+      // in the map waives nothing, so the box's own owner must sign; the
+      // stranger's signature does not.
       const height = 100;
       const box = seedCredit(alice, 100_000_000n, height - RENT_PERIOD - 1);
 
@@ -238,6 +245,29 @@ describe('payload-signature binding', () => {
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,
       };
+      signTransaction(tx, bob.privateKey, toHex(bob.userId));
+      const result = validateTx(deps, tx, height);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain(`Missing or invalid owner signature for box ${box.id}`);
+    });
+
+    it('rejects a past-period box signed by its owner and by a stranger key with "unrequired key"', () => {
+      // NODE_INTERFACE → Legal box transitions → "The signature map carries no
+      // key a transition does not require." The owner's signature satisfies the
+      // ordinary transfer rule; a second key no input requires is refused.
+      const height = 100;
+      const box = seedCredit(alice, 100_000_000n, height - RENT_PERIOD - 1);
+
+      const tx: UtxoTransaction = {
+        inputs: [box.id!],
+        outputs: [
+          { boxType: 'credit', value: box.value - 1_000n, owner: alice.userId, createdAtBlock: height },
+          { boxType: 'fee', value: 1_000n, createdAtBlock: height },
+        ],
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+      };
+      signTransaction(tx, alice.privateKey, toHex(alice.userId));
       signTransaction(tx, bob.privateKey, toHex(bob.userId));
       const result = validateTx(deps, tx, height);
       expect(result.valid).toBe(false);

@@ -186,7 +186,11 @@ describe('storage rent', () => {
     expect(result.valid).toBe(false);
   });
 
-  it('rejects a successor with a different owner', () => {
+  it('an unsigned rent collection whose successor carries a different owner is refused as a shape mismatch', () => {
+    // NODE_INTERFACE → Storage rent is a transition requiring no signature.
+    // A successor answers for one input and goes to that input's owner, so a
+    // successor to another owner is not among the expected successors and the
+    // shape refusal is `Rent: credit outputs do not match …`.
     const height = 100;
     const box = seedCredit(100_000_000n, height - RENT_PERIOD - 1);
     const charge = rentCharge(box);
@@ -203,15 +207,16 @@ describe('storage rent', () => {
     };
     const result = validateTx(deps, tx, height);
     expect(result.valid).toBe(false);
-    expect(result.error).toContain('same owner');
+    expect(result.error).toContain('Rent: credit outputs do not match');
   });
 
-  // ---- 3. Biconditional (backward) ----
+  // ---- 3. A non-empty map is an ordinary credit transfer ----
 
-  it('a signed credit spend on a rent-eligible box is rejected (unrequired key)', () => {
-    // NODE_INTERFACE → "The signature map carries no key a transition does not
-    // require." A rent-eligible box's authorization requires no key, so any
-    // signature is unrequired — retargeted from the old permissive behavior.
+  it('an owner-signed credit spend on a past-period box is an ordinary transfer', () => {
+    // NODE_INTERFACE → Storage rent is a transition requiring no signature →
+    // "Its owner's signature spends a box past its period as it spends any
+    // other." A key in the map puts every input on the ordinary transfer rule,
+    // past its period or not; the credit row admits any owner on the output.
     const height = 100;
     const box = seedCredit(100_000_000n, height - RENT_PERIOD - 1);
     const bob = rawPublicKey(generateKeyPairSync('ed25519').publicKey);
@@ -228,8 +233,38 @@ describe('storage rent', () => {
     const aliceHex = Buffer.from(alicePub).toString('hex');
     signTransaction(tx, alice.privateKey, aliceHex);
     const result = validateTx(deps, tx, height);
+    expect(result.valid).toBe(true);
+  });
+
+  it('a past-period box of one owner co-spent with a fresh box of a second owner, signed by the second owner only, is refused with the first box\'s owner-signature refusal', () => {
+    // NODE_INTERFACE → Storage rent is a transition requiring no signature →
+    // "The waiver and the shape hang on one predicate — the empty map." A
+    // transaction with a key in its map waives nothing, so the box past its
+    // period requires its own owner's signature, which the second owner's
+    // does not supply.
+    const height = 100;
+    const victim = seedCredit(50_000_000n, height - RENT_PERIOD - 1);
+    const attackerKp = generateKeyPairSync('ed25519');
+    const attackerPub = rawPublicKey(attackerKp.publicKey);
+    const attackerBox = seedProvenance<CreditBox>(
+      { boxType: 'credit', value: 1_000_000n, owner: attackerPub, createdAtBlock: height - 1 },
+      height - 1,
+      42,
+    );
+    insertBox(attackerBox);
+
+    const tx: UtxoTransaction = {
+      inputs: [victim.id!, attackerBox.id!],
+      outputs: [
+        { boxType: 'credit', value: victim.value + attackerBox.value, owner: attackerPub, createdAtBlock: height },
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, attackerKp.privateKey, Buffer.from(attackerPub).toString('hex'));
+    const result = validateTx(deps, tx, height);
     expect(result.valid).toBe(false);
-    expect(result.error).toContain('unrequired key');
+    expect(result.error).toContain(`Missing or invalid owner signature for box ${victim.id}`);
   });
 
   // ---- 4. Income term ----
