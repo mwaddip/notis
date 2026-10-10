@@ -1069,6 +1069,31 @@ describe('profile — the forget row across a draw', () => {
     expect(field.querySelector('.pf-confirm')).toBeNull();
     expect(button(field, 'forget')).not.toBeNull();
   });
+
+  it('Esc at the question keeps: the word forget is back with the focus on it, and nothing is forgotten', () => {
+    const forgotten: number[] = [];
+    const w = live(handlers({ forgetIdentity: async () => { forgotten.push(1); } }), ctx({ identity: unlocked }));
+    document.body.appendChild(w.body.el);
+    const field = rowField(w.body.el, 'forget')!;
+    button(field, 'forget')!.click();
+    expect(field.querySelector('.pf-confirm')).not.toBeNull();
+    expect(document.activeElement).toBe(button(field, 'keep'));
+
+    button(field, 'keep')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(field.querySelector('.pf-confirm')).toBeNull();
+    expect([...field.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['forget']);
+    expect(document.activeElement).toBe(button(field, 'forget'));
+    expect(forgotten).toEqual([]);
+
+    // The question asked again, Esc on its forget word keeps too.
+    button(field, 'forget')!.click();
+    const asked = field.querySelector('.pf-confirm') as HTMLElement;
+    button(asked, 'forget')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(field.querySelector('.pf-confirm')).toBeNull();
+    expect(document.activeElement).toBe(button(field, 'forget'));
+    expect(forgotten).toEqual([]);
+    document.body.removeChild(w.body.el);
+  });
 });
 
 describe('profile — the key row across a draw', () => {

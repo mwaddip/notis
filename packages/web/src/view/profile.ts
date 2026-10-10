@@ -722,7 +722,8 @@ function exportRow(handlers: ProfileHandlers, read: () => ProfileCtx, pubKeyHex:
 }
 
 /** forget — the one path off a key, asked in place, the never-exported fact
- *  first when the key is not backed up at the press. */
+ *  first when the key is not backed up at the press. `keep` and Esc bring the
+ *  word back with the focus on it (WEB_INTERFACE → The profile window). */
 function forgetRow(handlers: ProfileHandlers, read: () => ProfileCtx): BodyRow {
   const { row: r, field } = row('forget');
   const trigger = el('button', 'word', 'forget') as HTMLButtonElement;
@@ -731,13 +732,17 @@ function forgetRow(handlers: ProfileHandlers, read: () => ProfileCtx): BodyRow {
     wrap.appendChild(el('div', 'pf-refusal', read().backedUp
       ? 'forget this key on this browser?'
       : 'forget this key on this browser? without an exported file it cannot be recovered.'));
+    const back = (): void => {
+      field.replaceChildren(trigger);
+      trigger.focus();
+    };
     const actions = el('div', 'pf-actions');
     const forget = el('button', 'word', 'forget') as HTMLButtonElement;
     forget.addEventListener('click', () => void handlers.forgetIdentity());
     const keep = el('button', 'word', 'keep') as HTMLButtonElement;
-    keep.addEventListener('click', () => {
-      field.replaceChildren(trigger);
-      trigger.focus();
+    keep.addEventListener('click', back);
+    wrap.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') back();
     });
     actions.append(forget, keep);
     wrap.appendChild(actions);
