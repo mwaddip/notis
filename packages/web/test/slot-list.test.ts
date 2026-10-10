@@ -54,7 +54,7 @@ function noopHandlers(): Handlers {
     refreshAuthor: noop, openAuthorPosts: noop, refreshAuthorPosts: noop,
     authorPostsMore: noop, moreEndorsers: noop, invite: noop, moreBonds: noop,
     claimUsername: noop, burnUsername: noop,
-    beginSendPress: () => true, pressSend: noop,
+    beginSendPress: () => true, endSendPress: noop, pressSend: noop,
     resolveRecipient: async () => ({ refusal: 'none' }),
     send: noop, askFaucetCredits: noop,
   };

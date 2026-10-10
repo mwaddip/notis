@@ -57,8 +57,12 @@ export interface WalletHandlers {
   // the App the press once its amount and recipient are read: the check, the
   // answer, the unlock a locked identity owes and the flow are the App's, and
   // the row draws each from it. The web build resolves a handle through
-  // resolveRecipient and confirms in the row before `send`.
+  // resolveRecipient and confirms in the row before `send`. endSendPress tells
+  // the App the form has ended with nothing left to spend: the press made on
+  // it ends — its check, its answer and an unlock it owed (→ "A press belongs
+  // to the node, the key and the window it was made under").
   beginSendPress: () => boolean;
+  endSendPress: () => void;
   pressSend: (to: SendRecipient, amount: bigint) => void;
   resolveRecipient: (text: string) => Promise<ResolvedRecipient | { refusal: string }>;
   send: (toHex: string, toName: string | null, amount: bigint) => void;
@@ -345,21 +349,29 @@ function creditsRows(b: HTMLElement, handlers: WalletHandlers, read: () => Walle
     keep.focus();
   };
 
-  const update = (ctx: WalletCtx): void => {
+  const update = (drawn: WalletCtx): void => {
+    let ctx = drawn;
     const c = ctx.credits;
     const height = ctx.status?.blockHeight ?? 0;
     // Spendable at the current tip — WEB_INTERFACE → The wallet. The row and
     // readCreditContext read one implementation of the rule.
     const spendable = c === null ? 0n : sumValues(spendableCreditBoxes(c.boxes, height));
 
-    // The form stands while a box is spendable and ends once none is.
+    // The form stands while a box is spendable and ends once none is — and the
+    // press made on it ends with it, so the rest of the draw reads the state
+    // without that press: no check's line, no answer.
     if (spendable > 0n) {
       if (form === null) {
-        form = sendForm(handlers, read, openConfirm);
-        formSlot.replaceChildren(form.el);
+        const made: SendForm = sendForm(handlers, read, (built) => {
+          if (form === made) openConfirm(built);
+        });
+        form = made;
+        formSlot.replaceChildren(made.el);
       }
-    } else {
+    } else if (form !== null) {
       endSend();
+      handlers.endSendPress();
+      ctx = read();
     }
     // The unlock in the confirm row's place ends once the identity reads
     // unlocked, wherever the unlock was made.

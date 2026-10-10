@@ -28,6 +28,7 @@ function handlers(over: Partial<WalletHandlers> = {}): WalletHandlers {
     // Every press begins — no check runs: the web build always, the extension
     // between presses.
     beginSendPress: () => true,
+    endSendPress: () => {},
     pressSend: () => {},
     resolveRecipient: async () => ({ refusal: 'no one holds that name.' }),
     send: () => {},
@@ -705,6 +706,50 @@ describe('wallet — the body across a draw', () => {
     const fresh = f.querySelector('form.credits-form') as HTMLFormElement;
     expect(fresh).not.toBe(form);
     expect([...fresh.querySelectorAll<HTMLInputElement>('input')].map((x) => x.value)).toEqual(['', '']);
+  });
+
+  it('the form ended with nothing left to spend tells the App once, and the rest of that draw reads the state after it: no *checking* line, no key, the row hidden', () => {
+    let ended = 0;
+    const w = live(
+      handlers({ endSendPress: () => { ended += 1; w.set(creditsCtx({ confirmInRow: false })); } }),
+      extCtx({ sendCheck: '@bob', sendAnswer: { key: REC, unlock: null } }),
+    );
+    const f = creditsField(w.body.el)!;
+    expect(f.querySelector('.credits-flight')?.textContent).toBe('checking @bob…');
+
+    w.set(creditsCtx({ confirmInRow: false, sendCheck: '@bob', sendAnswer: { key: REC, unlock: null } }));
+    w.body.update();
+    expect(ended).toBe(1);
+    expect(f.querySelector('form')).toBeNull();
+    expect(f.querySelector('.credits-flight')?.textContent).toBe('');
+    expect(f.querySelector<HTMLElement>(':scope > .send-row')?.hidden).toBe(true);
+
+    // With no form standing, a draw that reads nothing spendable tells the App nothing more.
+    w.body.update();
+    expect(ended).toBe(1);
+  });
+
+  it('the web build: a handle\'s resolve that answers after its form ended opens no confirm row', async () => {
+    let release: (r: { key: string; name: string | null }) => void = () => {};
+    const w = live(
+      handlers({ resolveRecipient: () => new Promise((resolve) => { release = resolve; }) }),
+      spendableCtx(),
+    );
+    const f = creditsField(w.body.el)!;
+    const form = f.querySelector('form.credits-form') as HTMLFormElement;
+    const inputs = [...form.querySelectorAll<HTMLInputElement>('input')];
+    inputs[0]!.value = '@bob'; inputs[1]!.value = '1';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+
+    w.set(creditsCtx());
+    w.body.update();
+    w.set(spendableCtx());
+    w.body.update();
+    release({ key: REC, name: 'bob' });
+    await flush();
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    expect(f.querySelector('form.credits-form')).not.toBe(form);
   });
 
   it('the confirm row stands across a draw; a draw that reads no box spendable ends it with the form behind it', async () => {

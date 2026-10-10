@@ -309,11 +309,14 @@ export interface Handlers {
   burnUsername: () => void;
   // The wallet's send row (WEB_INTERFACE → The wallet window → "The `send`
   // row"). beginSendPress opens every press — false while a handle's check runs,
-  // when the press does nothing; pressSend is the extension's press once the form
-  // has read its amount and recipient; resolveRecipient is the handle → holder
-  // read the web build's form runs at the press; send is the credits transfer;
-  // askFaucetCredits is the faucet's $NOTIS step (→ The faucet step).
+  // when the press does nothing; endSendPress ends the press made on a send
+  // form that has ended with nothing left to spend; pressSend is the
+  // extension's press once the form has read its amount and recipient;
+  // resolveRecipient is the handle → holder read the web build's form runs at
+  // the press; send is the credits transfer; askFaucetCredits is the faucet's
+  // $NOTIS step (→ The faucet step).
   beginSendPress: () => boolean;
+  endSendPress: () => void;
   pressSend: (to: SendRecipient, amount: bigint) => void;
   resolveRecipient: (name: string) => Promise<{ key: string; name: string | null } | { refusal: string }>;
   send: (toHex: string, toName: string | null, amount: bigint) => void;

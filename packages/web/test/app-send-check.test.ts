@@ -69,12 +69,14 @@ interface World {
   locked: boolean;
   unlocks: string[];
   identityListeners: Array<(id: { pubKeyHex: string } | null) => void>;
+  // While true the node lists no credit box for the reader: nothing to spend.
+  spent: boolean;
 }
 
 function world(): World {
   return {
     ownName: null, sign: 'signed', signCalls: [], usernameByName: [], holdNames: false, nameWaiters: [],
-    me: ME, locked: false, unlocks: [], identityListeners: [],
+    me: ME, locked: false, unlocks: [], identityListeners: [], spent: false,
   };
 }
 
@@ -89,7 +91,7 @@ function fakeApi(w: World): Api {
       userId: key, member: true, invitesAvailable: 2, memberSinceBlock: 5, boxCount: 1,
       total: '250', effective: '250', boxes: [{ boxId: '11'.repeat(32), value: '250' }], height: 100,
     }),
-    credits: async (key): Promise<CreditsResult> => (key === w.me
+    credits: async (key): Promise<CreditsResult> => (key === w.me && !w.spent
       ? { userId: key, total: '10000000000', boxes: [{ boxId: CBOX, value: '10000000000' }], boxCount: 1, next: null }
       : { userId: key, total: '0', boxes: [], boxCount: 0, next: null }),
     vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
@@ -1477,5 +1479,176 @@ describe('the send check — the unlock a locked identity owes', () => {
     expect(document.querySelector('.card-unlock')).toBeNull();
     expect(h.world.signCalls).toHaveLength(2);
     expect(h.world.unlocks).toEqual(['pw']);
+  });
+});
+
+// WEB_INTERFACE → The wallet window → "A press belongs to the node, the key and
+// the window it was made under": the wallet closed, or its form ended with
+// nothing left to spend, ends the press — its check, its answer and an unlock
+// it owed — and nothing of it lands.
+
+/** Press the wallet window's bar: its `✕`, or its `↻`. */
+async function pressBar(label: 'close this window' | 'refresh the balance'): Promise<void> {
+  document.querySelector<HTMLButtonElement>(`#panes .bar [aria-label="${label}"]`)!.click();
+  await flush();
+  await flush();
+}
+/** Open the wallet from the header's control. */
+async function reopenWallet(): Promise<void> {
+  document.querySelector<HTMLButtonElement>('header [aria-label="open wallet"]')!.click();
+  await flush();
+  await flush();
+}
+
+describe('the send check — the wallet\'s close ends the press', () => {
+  it('locked, the check held back, the wallet closed by its ✕, the check released: no answer and no unlock row land, nothing is signed, and the reopened window reads a fresh form with no key line, no row and no *checking* line', async () => {
+    const h = harness();
+    h.world.locked = true;
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const pressed = await press('@bob');
+    expect(flightLine()).toBe('checking @bob…');
+
+    await pressBar('close this window');
+    expect(document.querySelector('form.credits-form')).toBeNull();
+    await answer(h, result('proven', REC, 'Bob'));
+    expect(document.querySelector('.card-unlock')).toBeNull();
+    expect(h.world.signCalls).toEqual([]);
+
+    await reopenWallet();
+    const fresh = document.querySelector<HTMLFormElement>('form.credits-form')!;
+    expect(fresh).not.toBe(pressed);
+    expect(values(fresh)).toEqual(['', '']);
+    expect(keyLine(fresh).hidden).toBe(true);
+    expect(refusalLine(fresh).hidden).toBe(true);
+    expect(document.querySelector('.card-unlock')).toBeNull();
+    expect(flightLine()).toBe('');
+    expect(h.world.unlocks).toEqual([]);
+    expect(h.world.signCalls).toEqual([]);
+    // The reopened form takes a press of its own.
+    await press('@bob');
+    expect(flightLine()).toBe('checking @bob…');
+  });
+
+  it('unlocked, the check held back, the wallet closed by its ✕, the check released: no prompt is asked and nothing is signed or pending', async () => {
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    await press('@bob');
+
+    await pressBar('close this window');
+    await answer(h, result('proven', REC, 'Bob'));
+    expect(h.world.signCalls).toEqual([]);
+    expect(sendEntries(h)).toEqual([]);
+
+    await reopenWallet();
+    const fresh = document.querySelector<HTMLFormElement>('form.credits-form')!;
+    expect(keyLine(fresh).hidden).toBe(true);
+    expect(flightLine()).toBe('');
+    expect(h.world.signCalls).toEqual([]);
+  });
+
+  it('the web build: a handle\'s resolve held back, the wallet closed and opened again, the resolve released — the reopened window reads its form and no confirm row', async () => {
+    const w = world();
+    w.holdNames = true;
+    const h = harness(w, 'web');
+    await ready(h);
+    const pressed = await press('@bob');
+    expect(h.world.usernameByName).toEqual(['bob']);
+
+    await pressBar('close this window');
+    await reopenWallet();
+    for (const release of w.nameWaiters.splice(0)) release();
+    await flush();
+    await flush();
+
+    const fresh = document.querySelector<HTMLFormElement>('form.credits-form')!;
+    expect(fresh).not.toBe(pressed);
+    expect(values(fresh)).toEqual(['', '']);
+    expect(document.querySelector('.pf-confirm')).toBeNull();
+    expect(h.world.signCalls).toEqual([]);
+  });
+});
+
+describe('the send check — the form\'s end with nothing left to spend ends the press', () => {
+  it('the owed unlock row standing with a passphrase typed, then a ↻ that reads nothing spendable: the row has ended with its field empty, and a later ↻ with a box to spend draws a form with no key line and no row — unlocking through the ended row sends nothing', async () => {
+    const h = harness();
+    h.world.locked = true;
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const pressed = await press('@bob');
+    await answer(h, result('proven', REC, 'Bob'));
+    const row = document.querySelector<HTMLElement>('.card-unlock')!;
+    const pass = row.querySelector<HTMLInputElement>('input[type="password"]')!;
+    pass.value = 'half';
+    expect(keyLine(pressed).textContent).toBe(REC);
+
+    h.world.spent = true;
+    await pressBar('refresh the balance');
+    expect(document.querySelector('form.credits-form')).toBeNull();
+    expect(row.isConnected).toBe(false);
+    expect(pass.value).toBe('');
+    expect(document.querySelector('.card-unlock')).toBeNull();
+
+    h.world.spent = false;
+    await pressBar('refresh the balance');
+    const fresh = document.querySelector<HTMLFormElement>('form.credits-form')!;
+    expect(fresh).not.toBe(pressed);
+    expect(keyLine(fresh).hidden).toBe(true);
+    expect(keyLine(fresh).textContent).toBe('');
+    expect(document.querySelector('.card-unlock')).toBeNull();
+
+    await unlockWith(row, 'pw');
+    expect(h.world.signCalls).toEqual([]);
+    expect(sendEntries(h)).toEqual([]);
+  });
+
+  it('the check held back, then a ↻ that reads nothing spendable, the check released: the flight\'s place reads nothing, nothing is signed, and a form drawn once a box is spendable again reads no key line', async () => {
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    await press('@bob');
+    expect(flightLine()).toBe('checking @bob…');
+
+    h.world.spent = true;
+    await pressBar('refresh the balance');
+    expect(document.querySelector('form.credits-form')).toBeNull();
+    expect(flightLine()).toBe('');
+    await answer(h, result('proven', REC, 'Bob'));
+    expect(flightLine()).toBe('');
+    expect(h.world.signCalls).toEqual([]);
+    expect(sendEntries(h)).toEqual([]);
+
+    h.world.spent = false;
+    await pressBar('refresh the balance');
+    const fresh = document.querySelector<HTMLFormElement>('form.credits-form')!;
+    expect(keyLine(fresh).hidden).toBe(true);
+    expect(shownRefusals()).toEqual([]);
+  });
+
+  it('the web build: a handle\'s resolve held back, then a ↻ that reads nothing spendable, the resolve released — no confirm row stands, and none once a box is spendable again', async () => {
+    const w = world();
+    w.holdNames = true;
+    const h = harness(w, 'web');
+    await ready(h);
+    await press('@bob');
+
+    h.world.spent = true;
+    await pressBar('refresh the balance');
+    expect(document.querySelector('form.credits-form')).toBeNull();
+    for (const release of w.nameWaiters.splice(0)) release();
+    await flush();
+    await flush();
+    expect(document.querySelector('.pf-confirm')).toBeNull();
+
+    h.world.spent = false;
+    await pressBar('refresh the balance');
+    expect(document.querySelector('form.credits-form')).not.toBeNull();
+    expect(document.querySelector('.pf-confirm')).toBeNull();
+    expect(h.world.signCalls).toEqual([]);
   });
 });

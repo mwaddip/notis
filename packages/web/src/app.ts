@@ -477,6 +477,13 @@ export class App {
   private sendFlight: Flight | null = null;
   private sendCheck: string | null = null;
   private sendAnswer: SendAnswer | null = null;
+  // A send's press belongs to the node, the key and the window it was made
+  // under. `sendPress` moves when one of them goes — a change of the node or of
+  // the key, the wallet closed, its form ended with nothing left to spend —
+  // and a press whose check answers under another value lands nowhere
+  // (WEB_INTERFACE → The wallet window → "A press belongs to the node, the key
+  // and the window it was made under").
+  private sendPress = 0;
 
   // Optional in the extension build — the App's own hook, called synchronously
   // from `askFaucet` / `askFaucetCredits` before any await, so the browser's
@@ -591,6 +598,7 @@ export class App {
       // transfer flow; askFaucetCredits is the faucet's $NOTIS step (→ The
       // faucet step).
       beginSendPress: () => this.beginSendPress(),
+      endSendPress: () => this.endSendPress(),
       pressSend: (to, amount) => void this.pressSend(to, amount),
       resolveRecipient: (name) => this.resolveRecipient(name),
       send: (toHex, toName, amount) => void this.send(toHex, toName, amount),
@@ -1563,16 +1571,16 @@ export class App {
   }
 
   /** The one ending of a window's body: out of the document, every field in it
-   *  emptied, and held nowhere — every form open in it ends with it, the
-   *  wallet's send form with the answer the App holds for it and the unlock
-   *  that answer owed (WEB_INTERFACE → The workspace → "What ends a form in a
-   *  window"). */
+   *  emptied, and held nowhere — every form open in it ends with it, and the
+   *  wallet's with the press made on its send form (WEB_INTERFACE → The
+   *  workspace → "What ends a form in a window"; → The wallet window → "A press
+   *  belongs to the node, the key and the window it was made under"). */
   private endBody(id: string): void {
     const held = this.bodies.get(id);
     if (held === undefined) return;
     this.bodies.delete(id);
     endForm(held.body.el);
-    if (held.kind === 'wallet') this.dropSendAnswer();
+    if (held.kind === 'wallet') this.endSendPress();
   }
 
   /** A change of the identity or of the node read builds every body anew. */
@@ -2731,13 +2739,13 @@ export class App {
    *  the reading node both call it (WEB_INTERFACE → The identity module, → The
    *  settings window, → The status corner); the reader's own acts in flight are
    *  the identity change's to drop, all but a send's press in the extension,
-   *  which belongs to the node and the key it was made under and ends with the
-   *  generation — its check, its answer, and the send an unlock was owed for
-   *  (→ The wallet window → "The `send` row"). */
+   *  which belongs to the node and the key it was made under and ends here —
+   *  its check, its answer, and the send an unlock was owed for (→ The wallet
+   *  window → "A press belongs to the node, the key and the window it was made
+   *  under"). */
   private dropReaderState(): void {
     this.readerGen += 1;
-    this.sendCheck = null;
-    this.dropSendAnswer();
+    this.endSendPress();
     this.lastPolledHeight = 0;
     this.profileKarma = null;
     this.profileKarmaStamp = null;
@@ -3904,18 +3912,18 @@ export class App {
    *  build carries the names verifier — and then the answer the App holds and
    *  the row draws on whichever form stands: a refusal, or the key the send
    *  goes to beneath the field and the flow, which a locked identity reaches
-   *  through the unlock it owes first. A press belongs to the node and the
-   *  identity it was made under: a change of either ends it (dropReaderState),
-   *  and its answer lands nowhere. */
+   *  through the unlock it owes first. A press that has ended while its handle
+   *  resolved (endSendPress) lands nowhere: no answer, no unlock owed, no
+   *  send. */
   private async pressSend(to: SendRecipient, amount: bigint): Promise<void> {
-    const gen = this.readerGen;
+    const press = this.sendPress;
     let key: string;
     let name: string | null = null;
     if ('key' in to) {
       key = to.key;
     } else {
       const res = await this.resolveRecipient(to.name);
-      if (gen !== this.readerGen) return;
+      if (press !== this.sendPress) return;
       if ('refusal' in res) {
         this.answerSend({ refusal: res.refusal });
         return;
@@ -3935,6 +3943,18 @@ export class App {
     }
     this.answerSend({ key, unlock: null });
     void this.send(key, name, amount);
+  }
+
+  /** End the send press: the check that runs for it, the answer the App holds
+   *  and the unlock that answer owed — and a check still in flight lands
+   *  nothing. A change of the node or of the key, the wallet's close and the
+   *  send form's end with nothing left to spend each end it (WEB_INTERFACE →
+   *  The wallet window → "A press belongs to the node, the key and the window
+   *  it was made under"). It draws nothing: each caller draws, or is a draw. */
+  private endSendPress(): void {
+    this.sendPress += 1;
+    this.sendCheck = null;
+    this.dropSendAnswer();
   }
 
   /** Hold a press's answer in place of the one before, and draw it on the row. */
@@ -3963,11 +3983,11 @@ export class App {
   /** The answer for a proven send a locked identity owes an unlock before: the
    *  key, and the unlock row. The row's own submit unlocks — which ends every
    *  unlock form, this row among them — and then sends, while its answer is
-   *  still the one the App holds: a press, a node change or an identity change
-   *  takes the send away with it. A row that has ended owes nothing: `cancel`
-   *  and an unlock made in any other form take the row away and leave the key
-   *  standing, and no send is made (WEB_INTERFACE → The wallet window → "The
-   *  `send` row"). */
+   *  still the one the App holds: a later press, and every ending of this one
+   *  (endSendPress), takes the send away with it. A row that has ended owes
+   *  nothing: `cancel` and an unlock made in any other form take the row away
+   *  and leave the key standing, and no send is made (WEB_INTERFACE → The
+   *  wallet window → "The `send` row"). */
   private owedUnlock(pubKeyHex: string, key: string, name: string | null, amount: bigint): SendAnswer {
     const answer: { key: string; unlock: HTMLElement | null } = { key, unlock: null };
     let cancelled = false;
@@ -4013,16 +4033,16 @@ export class App {
    *  away. The answer is the proven result's (recipientVerdict), never the
    *  node's word; a press left with no anchor to check against is *can't be
    *  checked — the chain is not verified.*, and one whose check throws *can't
-   *  be checked.* A node or identity change ends the check with the generation
-   *  it moves, the line going with it. */
+   *  be checked.* A press that ends while the check runs takes the line with
+   *  it (endSendPress). */
   private async proveRecipient(verifier: NamesVerifier, name: string): Promise<ResolvedRecipient | { refusal: string }> {
-    const gen = this.readerGen;
+    const press = this.sendPress;
     const handle = '@' + name;
     this.sendCheck = handle;
     this.renderCreditsRowInPlace();
     const result = await this.checkRecipient(verifier, name);
-    // Past a change the row's check, if any, is a later press's.
-    if (gen === this.readerGen) this.sendCheck = null;
+    // Past its press's end the row's check, if any, is a later press's.
+    if (press === this.sendPress) this.sendCheck = null;
     if (result === 'no-anchor') return { refusal: `${handle} can't be checked — the chain is not verified.` };
     if (result === 'threw') return { refusal: `${handle} can't be checked.` };
     return recipientVerdict(result, handle);
