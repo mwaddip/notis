@@ -58,16 +58,16 @@ const INVENTORY: HeightMention[] = [
     note: 'rent successor ceiling: the credit outputs declared createdAtBlock',
   },
   {
-    key: '`height ${currentBlockHeight}`',
+    key: 'height ${currentBlockHeight}',
     capsHeight: false,
-    note: 'error message template literal for the rent successor check',
+    note: 'error message fragment used by the rent arm\'s eligibility and successor-height checks',
   },
   {
     key: 'currentBlockHeight - credit.createdAtBlock > deps.storageRentPeriodBlocks',
     capsHeight: false,
     note:
-      'rent eligibility predicate — the same comparison creditAuthorization ' +
-      'uses, computed from input boxes rather than the signature map',
+      'rent eligibility predicate — the rent arm takes it once the empty-' +
+      'signature-map predicate has selected the arm',
   },
 ];
 

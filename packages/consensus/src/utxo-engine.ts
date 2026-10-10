@@ -284,6 +284,7 @@ function checkTransitions(
   post: PostCommit | undefined,
   postWithdraw: PostWithdrawCommit | undefined,
   currentBlockHeight: number,
+  isRentShape: boolean,
 ): { valid: boolean; error?: string } {
   // ⛔ **THE MARKER'S CONVERSE, AND IT HAS NO PREDECESSOR** (NODE_INTERFACE →
   // Karma transition rules — the like accrual marker is an exemption from the
@@ -895,70 +896,97 @@ function checkTransitions(
         };
       }
 
-      // ---- Rent biconditional (NODE_INTERFACE → "Storage rent is a
-      // transition requiring no signature") ----
-      //
-      // NODE_INTERFACE → "The unsigned rent path is identified by authorization
-      // requiring no signature, never by an empty signature map." Keyed on
-      // rent ELIGIBILITY of every input, not on `tx.signatures` being empty.
-      const allRentEligible = inputs.every(box => {
-        const credit = box as CreditBox;
-        return currentBlockHeight - credit.createdAtBlock > deps.storageRentPeriodBlocks;
-      });
-      if (allRentEligible) {
-        const creditOutputs = outputs.filter((o) => o.boxType === 'credit');
-        let totalCharge = 0n;
-        let expectedSuccessors = 0;
+      // NODE_INTERFACE → "The waiver and the shape hang on one predicate — the
+      // empty map." A credit spend whose signature map is empty is a rent
+      // collection and must take the rent shape below; a credit spend whose map
+      // holds a key is an ordinary transfer whose shape rules are the shared
+      // checks above (NODE_INTERFACE → "Its owner's signature spends a box past
+      // its period as it spends any other").
+      if (!isRentShape) return { valid: true };
 
-        for (const inp of inputs) {
-          const credit = inp as CreditBox;
-          const prov = deps.getBoxProvenance(credit.id!);
-          if (!prov) {
-            return { valid: false, error: `Rent: no provenance for input ${credit.id}` };
-          }
-          const recordLen = BigInt(boxRecordBytes(credit, prov.txId, prov.index).length);
-          const charge = STORAGE_RENT_PER_BYTE * recordLen;
-
-          if (credit.value >= charge) {
-            expectedSuccessors++;
-            const remainder = credit.value - charge;
-            const matched = creditOutputs.some((o) => {
-              const c = o as CreditBox;
-              return c.value === remainder &&
-                equalBytes(c.owner, credit.owner) &&
-                c.createdAtBlock === currentBlockHeight;
-            });
-            if (!matched) {
-              return {
-                valid: false,
-                error:
-                  `Rent: input ${credit.id} (value ${credit.value}) must produce ` +
-                  `a successor of ${remainder} to the same owner at ` +
-                  `height ${currentBlockHeight}`,
-              };
-            }
-            totalCharge += charge;
-          } else {
-            totalCharge += credit.value;
-          }
-        }
-
-        if (creditOutputs.length !== expectedSuccessors) {
+      // NODE_INTERFACE → "Storage rent is a transition requiring no signature":
+      // every input is past its period, the credit outputs are its inputs'
+      // successors as a multiset of (owner, value), each at the current height
+      // and with no `lockedUntilBlock`, and the one FeeBox carries the summed
+      // charge (every value of a box consumed whole included).
+      const creditOutputs = outputs.filter((o) => o.boxType === 'credit');
+      let totalCharge = 0n;
+      const expectedSuccessors: string[] = [];
+      for (const inp of inputs) {
+        const credit = inp as CreditBox;
+        // The period predicate: the rent arm holds on its own. A fresh input
+        // under an empty signature map is also refused by `checkAuthorization`
+        // first — its signer answers the owner (NODE_INTERFACE → "The waiver
+        // and the shape hang on one predicate — the empty map") and no owner
+        // signed — so this line fires only on a reader that reaches this arm
+        // out of band.
+        if (!(currentBlockHeight - credit.createdAtBlock > deps.storageRentPeriodBlocks)) {
           return {
             valid: false,
             error:
-              `Rent: expected ${expectedSuccessors} successor credit outputs, ` +
-              `got ${creditOutputs.length}`,
+              `Rent: input ${credit.id} is not past its rent period ` +
+              `(createdAtBlock ${credit.createdAtBlock}, height ${currentBlockHeight})`,
           };
         }
+        const prov = deps.getBoxProvenance(credit.id!);
+        if (!prov) {
+          return { valid: false, error: `Rent: no provenance for input ${credit.id}` };
+        }
+        const recordLen = BigInt(boxRecordBytes(credit, prov.txId, prov.index).length);
+        const charge = STORAGE_RENT_PER_BYTE * recordLen;
+        if (credit.value >= charge) {
+          const remainder = credit.value - charge;
+          expectedSuccessors.push(`${bytesToHex(credit.owner)}:${remainder}`);
+          totalCharge += charge;
+        } else {
+          totalCharge += credit.value;
+        }
+      }
 
-        if (feeOutputs.length !== 1 || feeOutputs[0]!.value !== totalCharge) {
+      // NODE_INTERFACE → "A successor carries no `lockedUntilBlock`." Each
+      // credit output is a successor at the current height with no lock; the
+      // match against expectedSuccessors is multiset — order-free — because
+      // the contract names the credit outputs as a MULTISET of (owner, value).
+      const actualSuccessors: string[] = [];
+      for (const o of creditOutputs) {
+        const c = o as CreditBox;
+        if (!(c.createdAtBlock === currentBlockHeight)) {
           return {
             valid: false,
             error:
-              `Rent: FeeBox must carry exactly the summed charge ${totalCharge}`,
+              `Rent: successor ${bytesToHex(c.owner)}:${c.value} declares ` +
+              `createdAtBlock ${c.createdAtBlock}, must equal height ${currentBlockHeight}`,
           };
         }
+        if (c.lockedUntilBlock !== undefined) {
+          return {
+            valid: false,
+            error:
+              `Rent: a successor carries no lockedUntilBlock, ` +
+              `got ${c.lockedUntilBlock} on ${bytesToHex(c.owner)}:${c.value}`,
+          };
+        }
+        actualSuccessors.push(`${bytesToHex(c.owner)}:${c.value}`);
+      }
+
+      expectedSuccessors.sort();
+      actualSuccessors.sort();
+      if (expectedSuccessors.length !== actualSuccessors.length ||
+          expectedSuccessors.some((k, i) => k !== actualSuccessors[i])) {
+        return {
+          valid: false,
+          error:
+            `Rent: credit outputs do not match the expected successors ` +
+            `(expected ${expectedSuccessors.length}, got ${actualSuccessors.length})`,
+        };
+      }
+
+      if (feeOutputs.length !== 1 || feeOutputs[0]!.value !== totalCharge) {
+        return {
+          valid: false,
+          error:
+            `Rent: FeeBox must carry exactly the summed charge ${totalCharge}`,
+        };
       }
 
       return { valid: true };
@@ -1970,9 +1998,9 @@ type Authorization =
        * The key that must have signed, read out of the box and the transition.
        *
        * Returns `Uint8Array` — this key must have signed.
-       * Returns `null` — no signature is required for this input (rent-eligible
-       * credit; NODE_INTERFACE → "Storage rent is a transition requiring no
-       * signature").
+       * Returns `null` — no signature is required for this input (a credit box
+       * past its rent period under an empty signature map; NODE_INTERFACE →
+       * "Storage rent is a transition requiring no signature").
        * Returns `undefined` — the box does not carry the field this transition
        * requires, which refuses rather than passing.
        */
@@ -2002,20 +2030,26 @@ const OWNER_SIGNATURE: Authorization = {
 };
 
 /**
- * A rent-eligible credit box requires no signature; all others require
- * OWNER_SIGNATURE (NODE_INTERFACE → "Storage rent is a transition requiring
- * no signature"). `null` means authorized without a signature.
+ * NODE_INTERFACE → "A rent collection carries no signature, and a `credit`
+ * spend that carries none is a rent collection." The waiver fires on both
+ * halves of the biconditional: the signature map is empty AND the box is past
+ * its rent period. A key in the map, or a box not past its period, falls to
+ * the owner's rule and the ordinary transfer arm (NODE_INTERFACE → "Its
+ * owner's signature spends a box past its period as it spends any other").
  *
- * Height-dependent: `signer` takes `currentBlockHeight` because a
- * rent-eligible box's requirement depends on it.
+ * The two halves together: an empty-map spend of a fresh credit box is
+ * refused here with the owner-signature refusal before the credit arm runs;
+ * a signed spend of a past-period box requires the owner's signature as any
+ * other credit transfer does.
  */
 function creditAuthorization(storageRentPeriodBlocks: number): Authorization {
   return {
-    signer: (box, _tx, currentBlockHeight) => {
+    signer: (box, tx, currentBlockHeight) => {
       const credit = box as CreditBox;
-      if (currentBlockHeight - credit.createdAtBlock > storageRentPeriodBlocks) {
-        return null;
-      }
+      const emptyMap = Object.keys(tx.signatures).length === 0;
+      const pastPeriod =
+        currentBlockHeight - credit.createdAtBlock > storageRentPeriodBlocks;
+      if (emptyMap && pastPeriod) return null;
       return credit.owner;
     },
     unsigned: missingOwnerSignature,
@@ -2350,6 +2384,11 @@ export function validateTx(
   if (!authCheck.valid) return authCheck;
 
   // ---- 9. Legal box transitions ----
+  // NODE_INTERFACE → "The waiver and the shape hang on one predicate — the
+  // empty map." Authorization has already read the predicate on each credit
+  // input's signer; the credit arm reads it here to pick between the rent
+  // shape and the ordinary transfer shape.
+  const isRentShape = Object.keys(tx.signatures).length === 0;
   const transitionCheck = checkTransitions(
     inputBoxes,
     tx.outputs,
@@ -2358,6 +2397,7 @@ export function validateTx(
     tx.post,
     tx.postWithdraw,
     currentBlockHeight,
+    isRentShape,
   );
   if (!transitionCheck.valid) return transitionCheck;
 
