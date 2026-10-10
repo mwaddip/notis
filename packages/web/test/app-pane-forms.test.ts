@@ -9,13 +9,14 @@ import {
 import { karmaResult } from './karma-fixture';
 import { setNode, setTheme } from '../src/prefs';
 
-// WEB_INTERFACE → The profile window → "The six operations are forms in place,
-// and each is a real `<form>`"; → The wallet window → "The `send` row"; → The
-// settings window; → The author window. Every case drives through the
-// product's own path — a header control, a card's authorbtn, a card's strip,
-// or a row's own submit — and every redraw is caused by what causes one in
-// the product: a held-back read released, a window's own ↻, another window
-// opened or closed in another column, pollTick, start-up.
+// WEB_INTERFACE → The workspace → "A window's body stands while the window is
+// open": the forms of → The profile window → "The six operations are forms in
+// place, and each is a real `<form>`"; → The wallet window → "The `send` row";
+// → The settings window; → The author window. Every case drives through the
+// product's own path — a header control, a card's authorbtn, a card's strip, a
+// bar's control, or a row's own submit — and every redraw is caused by what
+// causes one in the product: a held-back read released, a window's own ↻,
+// another window opened, closed or moved, pollTick, start-up.
 
 const OTHER = 'ee'.repeat(32);
 const BOB = 'bb'.repeat(32);
@@ -1541,7 +1542,7 @@ describe('a card\'s unlock row and the composer draft across the membership read
 });
 
 // ===========================================================================
-// Group E — a draw adds or ends a form only where the state has changed
+// Group D — a draw adds or ends a form only where the state has changed
 // whether its row offers it (WEB_INTERFACE → The workspace → "A draw updates a
 // standing body in place").
 // ===========================================================================
@@ -1643,7 +1644,7 @@ describe('a read that lands a name ends the claim form and places the username r
 });
 
 // ===========================================================================
-// Group F — a window's controls act on the state as it stands at the press
+// Group E — a window's controls act on the state as it stands at the press
 // (WEB_INTERFACE → The workspace → "A window's controls act on the state as it
 // stands at the press").
 // ===========================================================================
@@ -1820,7 +1821,7 @@ describe('an endorser\'s name and posts open beside the column the author window
 });
 
 // ===========================================================================
-// Group G — the identity's lock is state every standing body shows: a lock or
+// Group F — the identity's lock is state every standing body shows: a lock or
 // an unlock made anywhere draws each body where it stands (WEB_INTERFACE → The
 // workspace → "A draw updates a standing body in place", → "What ends a form
 // in a window").
@@ -2014,7 +2015,7 @@ describe('an unlock made in the profile ends the unlock row a locked send owes (
 });
 
 // ===========================================================================
-// Group D — what ends a window's body: its window closed, a change of the
+// Group G — what ends a window's body: its window closed, a change of the
 // identity, a change of the node read (WEB_INTERFACE → The workspace → "What
 // ends a form in a window").
 // ===========================================================================
