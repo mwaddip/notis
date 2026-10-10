@@ -828,17 +828,22 @@ one.
   not on a feed card: the composer and the confirm row live inside a pane. The author-posts window's cards
   follow the feed card (→ The author window).
 - **A row the reader opened under a card outlasts a redraw of its list.** Three rows mount under a card's meta
-  at the reader's press, one at a time: the unlock form a locked `like` or `withdraw` asks for (→ The identity
-  module), the withdraw question (→ The withdraw control) and the link held as text to copy by hand (→ Links). A
-  row belongs to the card it was opened under — that post, in that list: the feed, an author window, a pane, the
-  standalone thread. Every redraw of that list — a slot filling or leaving (→ The extension → "The resolve"), the
-  reader's own submission landing (→ The wallet), a `↻` — draws the card with its row beneath it: the same row,
-  what was typed in it kept, the focus back in it where it held the focus. What is typed in an unlock row is held
-  nowhere but its field. **A row's controls act on the card as it stands at the press**: the question's `withdraw`
-  reads the lock then, and the unlock form it asks for mounts under the card on screen. **A row ends** by its own
-  controls; when a redraw of its list draws no live card for its post; when the identity changes; and, for an
-  unlock row, when the identity is unlocked from anywhere else. A row that has ended is not drawn again and nothing
-  of it is kept.
+  at the reader's press: the unlock form a locked `like` or `withdraw` asks for (→ The identity module) and the
+  withdraw question (→ The withdraw control), one of the two at a time, and beside either the link held as text to
+  copy by hand (→ Links). **Opening a row and ending one redraw nothing else**: the row goes in under the card
+  pressed and comes out from under it, and no other node of the list is replaced. A row belongs to the card it was
+  opened under — that post, in that list: the feed, an author window, a pane, the standalone thread. Every redraw
+  of that list — a slot filling or leaving (→ The extension → "The resolve"), the reader's own submission landing
+  (→ The wallet), a `↻` — draws the card with its row beneath it: the same row, what was typed in it kept, the
+  focus back in it where it held the focus. What is typed in an unlock row is held nowhere but its field. **A
+  row's controls act on the card as it stands at the press**, and so do the card's own: `like`, `withdraw` and the
+  question's `withdraw` read the identity's lock when pressed — never as it stood when the card or the row was
+  drawn — and the unlock form mounts under the card on screen. **A row ends** by its own controls; when a redraw
+  of its list draws no card for its post that offers the control the row was opened from — the post has left the
+  list or stands as a slot, a like has taken the `like`, a withdrawal has taken the `withdraw`, while the withdrawn
+  card keeps its copy glyph and so its link row; when the identity changes; and, for an unlock row, when the
+  identity is unlocked from anywhere else. A row that has ended is not drawn again and nothing of it is kept: its
+  field is emptied.
 - **A card's reply count is the row's `descendantCount`** — the node's number, the whole subtree, pending
   included, on the feed's rows, the author window's rows and a pane's descendant rows; a pane's own root
   shows the thread's, which equals the head's. A withdrawn card shows its row's count too
