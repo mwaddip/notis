@@ -62,9 +62,9 @@ export async function reconcileNewer(
   return { posts: collected, next: lastNext, newCount: collected.length };
 }
 
-// The lines a ↻ and a `load older` write — the words a report counts the posts
-// that stand reads at the write and at every recount, so the two can never
-// differ in wording or in the singular (WEB_INTERFACE → The extension →
+// These two functions form the lines a `↻` and a `load older` write, at the
+// write and at every recount, so the two can never differ in wording or in
+// the singular (WEB_INTERFACE → The extension →
 // "A report counts the posts that stand").
 
 /** The line a feed's ↻ or an author window's ↻ reports: how many new posts

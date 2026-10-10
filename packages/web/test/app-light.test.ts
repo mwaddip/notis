@@ -1313,10 +1313,14 @@ describe('a report counts the posts that stand', () => {
     await h.drive.loadOlder();
     await settle();
     expect(h.drive.state.feed.olderReport).toBe('2 older posts');
+    // `renderFeedInto` draws `olderReport` as a `.note` span inside the
+    // `.feed-foot` (src/view/feed.ts).
+    expect(h.feedEl.querySelector('.feed-foot .note')?.textContent).toBe('2 older posts');
     const call = r.calls.find((c) => c.ids.length === 2 && c.ids.includes(la.id));
     call!.end({ [la.id]: 'unserved' });
     await settle();
     expect(h.drive.state.feed.olderReport).toBe('1 older post');
+    expect(h.feedEl.querySelector('.feed-foot .note')?.textContent).toBe('1 older post');
   });
 
   it('a `load older` brings two slots; both end and the line reads "no older posts"', async () => {
@@ -1335,11 +1339,13 @@ describe('a report counts the posts that stand', () => {
     await settle();
     await h.drive.loadOlder();
     await settle();
+    expect(h.feedEl.querySelector('.feed-foot .note')?.textContent).toBe('2 older posts');
     const call = r.calls.find((c) => c.ids.length === 2 && c.ids.includes(la.id));
     call!.end({ [la.id]: 'unserved', [lb.id]: 'unserved' });
     await settle();
     expect(h.drive.state.feed.posts.length).toBe(0);
     expect(h.drive.state.feed.olderReport).toBe('no older posts');
+    expect(h.feedEl.querySelector('.feed-foot .note')?.textContent).toBe('no older posts');
   });
 
   it('an author window\'s ↻ reports on the column; a slot ending recounts the line', async () => {
@@ -1363,10 +1369,14 @@ describe('a report counts the posts that stand', () => {
       state: AppState;
     }).state.workspace.columns[0]!;
     expect(column.report).toBe('2 new posts');
+    // `renderRegionElement` draws `column.report` as a `.report` node
+    // under the region (src/view/panes.ts, through `reportNode`).
+    expect(h.panes.querySelector('.region .report')?.textContent).toBe('2 new posts');
     const call = r.calls.find((c) => c.ids.length === 2 && c.ids.includes(la.id));
     call!.end({ [la.id]: 'unserved' });
     await settle();
     expect(column.report).toBe('1 new post');
+    expect(h.panes.querySelector('.region .report')?.textContent).toBe('1 new post');
   });
 
   it('an author window\'s ↻ line replaced by a re-focus writes nothing more when a slot ends', async () => {
@@ -1398,6 +1408,9 @@ describe('a report counts the posts that stand', () => {
     call!.end({ [la.id]: 'unserved', [lb.id]: 'unserved' });
     await settle();
     expect(column.report).toBeNull();
+    // No `.report` node is drawn under the region
+    // (src/view/panes.ts: `if (column.report) regionEl.appendChild(reportNode(...))`).
+    expect(h.panes.querySelector('.region .report')).toBeNull();
   });
 
   it('a descendant slot ending in a thread does not move its ↻ line', async () => {
@@ -1406,11 +1419,10 @@ describe('a report counts the posts that stand', () => {
     await cache.open('C');
     const root = fullRow('r');
     const reply1 = fullRow('d1', { parentRefs: [root.id] });
-    const reply2 = fullRow('d2', { parentRefs: [root.id] });
     const lx = light('x', { parentRefs: [root.id] });
     const h = harness({
       resolver: r.resolver, cache,
-      // The thread's first read: subject + one descendant, three total.
+      // The thread's first read: subject + one descendant.
       threadResults: [
         {
           post: root, ancestors: [], ancestorCount: 0,
@@ -1434,14 +1446,12 @@ describe('a report counts the posts that stand', () => {
       state: AppState;
     }).state.workspace.columns[0]!;
     expect(column.report).toBe('1 new reply');
-    // The slot resolves to a known reply2; and ends unserved as a case where
-    // the recount would otherwise fire — a thread's ↻ line is not recounted.
+    // The slot ends unserved; the thread's ↻ line is the node's reply
+    // count and stands.
     const call = r.calls.find((c) => c.ids.includes(lx.id));
     call!.end({ [lx.id]: 'unserved' });
     await settle();
     expect(column.report).toBe('1 new reply');
-    // The slot `reply2` is just there to make the harness quiet; drop it.
-    void reply2;
   });
 
   it('a second ↻ replaces the count: an id the first ↻ counted leaving after the second\'s line does not change it', async () => {
