@@ -565,6 +565,11 @@ holds no connection of the reader's past the limit. **A `bound` placeholder is k
 while the rest are asked for the text**, and where none has it the card reads *content not on this node yet*, as a
 placeholder's does. **At the end** a slot no node served leaves, with no line — no node said anything of its text — and
 one some node answered `unbound` and no node bound leaves and is counted at its list's head (→ "The post check").
+**A report counts the posts that stand**: where a `↻` or a `load older` said how many posts it brought — *4 new
+posts*, *3 older posts* — a row among them whose slot leaves comes off the count as it leaves, and the line reads
+what is left, *no new posts* or *no older posts* at none (`HOUSE_STYLE → Motion → "A read the reader asked for may
+move what it is landing"`). A line anything else has written since is not rewritten. A thread's `↻` reports the change
+in the node's own count of replies, which a leaving slot does not move.
 **One resolve serves every list**: an id asked for is not asked again while its answer is awaited, and an answer lands
 wherever a slot stands under its id; one that returns after a change of node or identity lands nowhere and enters no
 cache (→ Reading the feed and threads → "No answer overwrites a newer one") — the read that change starts asks again.
@@ -822,6 +827,18 @@ one.
   and a rejection or an expiry reports in the feed's report line, where `↻` reports. Reply and withdraw are
   not on a feed card: the composer and the confirm row live inside a pane. The author-posts window's cards
   follow the feed card (→ The author window).
+- **A row the reader opened under a card outlasts a redraw of its list.** Three rows mount under a card's meta
+  at the reader's press, one at a time: the unlock form a locked `like` or `withdraw` asks for (→ The identity
+  module), the withdraw question (→ The withdraw control) and the link held as text to copy by hand (→ Links). A
+  row belongs to the card it was opened under — that post, in that list: the feed, an author window, a pane, the
+  standalone thread. Every redraw of that list — a slot filling or leaving (→ The extension → "The resolve"), the
+  reader's own submission landing (→ The wallet), a `↻` — draws the card with its row beneath it: the same row,
+  what was typed in it kept, the focus back in it where it held the focus. What is typed in an unlock row is held
+  nowhere but its field. **A row's controls act on the card as it stands at the press**: the question's `withdraw`
+  reads the lock then, and the unlock form it asks for mounts under the card on screen. **A row ends** by its own
+  controls; when a redraw of its list draws no live card for its post; when the identity changes; and, for an
+  unlock row, when the identity is unlocked from anywhere else. A row that has ended is not drawn again and nothing
+  of it is kept.
 - **A card's reply count is the row's `descendantCount`** — the node's number, the whole subtree, pending
   included, on the feed's rows, the author window's rows and a pane's descendant rows; a pane's own root
   shows the thread's, which equals the head's. A withdrawn card shows its row's count too
