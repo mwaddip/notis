@@ -2201,3 +2201,42 @@ describe('a change of the node read builds every window\'s body anew', () => {
     expect(wordIn(profile.querySelector<HTMLElement>('.pp-field')!, 'unlock')).not.toBeNull();
   });
 });
+
+// ===========================================================================
+// Group H — the windows of an arrangement restored by the way into the
+// workspace have opened, and read as they do on a press (WEB_INTERFACE → The
+// way into the workspace, → The wallet window, → The author window).
+// ===========================================================================
+
+describe('add to workspace on the standalone page restores an arrangement whose windows read', () => {
+  it('a stored arrangement holding an author window, the wallet and an author-posts window; add to workspace pressed: the posts window reads its list, the author window its name and endorsers, and the wallet its balance', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    localStorage.setItem('notis.layout', `@author:${OTHER},@wallet|@posts:${OTHER}`);
+    const id = lockableIdentity(ME, false);
+    const h = harness({
+      identityKey: ME, identity: id.identity, karma: karmaWithBox(ME), credits: creditsWithBox(ME),
+      threadResults: [thread(Q)], // the standalone page's own read of its thread
+      mode: { kind: 'standalone', id: Q.id, base: '/' }, boot: 'start',
+    });
+    await settle();
+
+    headerBtn('add this thread to your workspace').click();
+    await settle();
+    // The thread joins column 0 in front of the author window and the wallet;
+    // the posts window stands in column 1.
+    expect(regionsOf(h.panes).map(focusedName)).toEqual([Q.content, 'posts']);
+    expect(h.fake.feedCalls.filter((c) => c.author === OTHER)).toHaveLength(1);
+    expect(regionsOf(h.panes)[1]!.querySelector('.region-body')!.textContent).toBe('no posts yet');
+
+    focusAt(h.panes, 0, 0); // the author window
+    await settle();
+    const author = bodyOf(regionsOf(h.panes)[0]!);
+    expect(rowByLabel(author, 'name').textContent).toContain('no name');
+    expect(rowByLabel(author, 'endorsers').textContent).toContain('no vouches yet');
+
+    focusAt(h.panes, 0, 1); // the wallet
+    await settle();
+    const wallet = bodyOf(regionsOf(h.panes)[0]!);
+    expect(wallet.querySelector('.credits-line .gold')?.textContent).toBe('12.5');
+  });
+});

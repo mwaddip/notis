@@ -2247,6 +2247,10 @@ export class App {
     for (const wid of openSet(this.state.workspace)) {
       if (!isWin(wid) && !this.threadLoaded(wid)) void this.fetchThread(wid);
     }
+    // The windows of the restored arrangement have opened, and read as they do
+    // on a press: the reader's own state, a @wallet's listing, an @author or
+    // @posts window's data.
+    this.rereadReaderState();
   }
 
   // -------------------------------------------------------------------------
@@ -2764,9 +2768,10 @@ export class App {
 
   /** Read the reader's own state — the membership state with an identity, the
    *  wallet's listing while its window is open, and every open author and
-   *  author-posts window: at start, for a restored identity and arrangement, and
-   *  again after dropReaderState (WEB_INTERFACE → The identity module, → The
-   *  settings window, → The wallet window). */
+   *  author-posts window: at start, for a restored identity and arrangement,
+   *  once the way into the workspace has restored an arrangement, and again
+   *  after dropReaderState (WEB_INTERFACE → The identity module, → The
+   *  settings window, → The wallet window, → The way into the workspace). */
   private rereadReaderState(): void {
     if (this.idm.current() !== null) void this.loadMembershipState();
     if (this.idm.current() !== null && openSet(this.state.workspace).has('@wallet')) {
