@@ -220,6 +220,15 @@ export interface RenderCtx {
   figures: FiguresView | null;
   // WEB_INTERFACE → Links
   linkUrl: (id: string) => string;
+  // WEB_INTERFACE → What the feed reads, and what a card shows for it →
+  // "A row the reader opened under a card outlasts a redraw of its list" —
+  // the holder's seams, keyed by the list the card stands in and the row's
+  // post id. Each render looks up the row for the card it draws; the openers
+  // mount a new one under the live card at the press.
+  heldCardRow: (list: string, postId: string) => HTMLElement | null;
+  openUnlockForLike: (list: string, postId: string) => void;
+  openConfirmWithdraw: (list: string, postId: string) => void;
+  openLinkFallback: (list: string, postId: string, url: string) => void;
 }
 
 /** One open author window's reads and flight (WEB_INTERFACE → The author window). */

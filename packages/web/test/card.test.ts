@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { card, submissionToPost } from '../src/view/card';
+import { buildUnlockRow, buildConfirmRow, buildLinkFallbackRow } from '../src/view/card-rows';
 import type { LightJson, PostJson } from '../src/api/dto';
 import type { Flight } from '../src/view/card';
 import { contentHashHex } from '../src/integrity';
@@ -204,33 +205,65 @@ describe('card — the reply count is the row\'s', () => {
   });
 });
 
+// WEB_INTERFACE → What the feed reads, and what a card shows for it →
+// "A row the reader opened under a card outlasts a redraw of its list" —
+// the card asks the holder to open the row and does not mount it itself;
+// the holder owns the row and attaches it beneath the card at every draw.
 describe('card — a locked like', () => {
-  it('shows the unlock form under the meta on the press, then the like proceeds', async () => {
-    const unlocked: string[] = [];
+  it('asks the holder to open the unlock row for the pressed card; no unlock form in the card', () => {
+    const asked: string[] = [];
     const liked: string[] = [];
     const c = card(confirmed('bb'.repeat(32)), {
       onLike: (id) => liked.push(id),
       locked: true,
-      ownKey: PUB,
-      onUnlock: async (p) => { unlocked.push(p); },
+      openUnlockForLike: () => { asked.push('p1'); },
     });
     [...c.querySelectorAll('button')].find((b) => b.textContent === 'like')!.click();
-    const form = c.querySelector('.card-unlock form.pf') as HTMLFormElement;
-    expect(form).not.toBeNull(); // the unlock form appeared under the meta
-    expect(liked).toHaveLength(0); // the like has not fired yet
-    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
-    form.dispatchEvent(new Event('submit', { cancelable: true }));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(unlocked).toEqual(['pw']); // the seed was unlocked
-    expect(liked).toEqual(['p1']); // and the like proceeded
+    expect(asked).toEqual(['p1']);
+    expect(liked).toHaveLength(0);
+    expect(c.querySelector('.card-unlock')).toBeNull();
   });
 
-  it('an unlocked like fires at once — no unlock form', () => {
+  it('an unlocked like fires at once — the holder is not asked', () => {
     const liked: string[] = [];
-    const c = card(confirmed('bb'.repeat(32)), { onLike: (id) => liked.push(id), locked: false, ownKey: PUB, onUnlock: async () => {} });
+    const asked: string[] = [];
+    const c = card(confirmed('bb'.repeat(32)), {
+      onLike: (id) => liked.push(id),
+      locked: false,
+      openUnlockForLike: () => { asked.push('p1'); },
+    });
     [...c.querySelectorAll('button')].find((b) => b.textContent === 'like')!.click();
     expect(c.querySelector('.card-unlock')).toBeNull();
     expect(liked).toEqual(['p1']);
+    expect(asked).toEqual([]);
+  });
+
+  // WEB_INTERFACE → "A row the reader opened under a card outlasts a redraw
+  // of its list" — the unlock row builder: unlock then proceed on submit,
+  // Esc on cancel.
+  it('buildUnlockRow — submit unlocks then proceeds; Esc cancels', async () => {
+    const unlocked: string[] = [];
+    const proceeded: string[] = [];
+    const cancelled: string[] = [];
+    const row = buildUnlockRow({
+      pubKeyHex: PUB,
+      onSubmit: async (p) => { unlocked.push(p); },
+      onProceed: () => { proceeded.push('.'); },
+      onCancel: () => { cancelled.push('.'); },
+    });
+    (row.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    (row.querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit', { cancelable: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(unlocked).toEqual(['pw']);
+    expect(proceeded).toEqual(['.']);
+    const row2 = buildUnlockRow({
+      pubKeyHex: PUB,
+      onSubmit: async () => {},
+      onProceed: () => {},
+      onCancel: () => { cancelled.push('esc'); },
+    });
+    [...row2.querySelectorAll('button')].find((b) => b.textContent === 'cancel')!.click();
+    expect(cancelled).toEqual(['esc']);
   });
 });
 
@@ -323,15 +356,17 @@ describe('card — the handle where a row carries a name', () => {
   });
 });
 
+// WEB_INTERFACE → The withdraw control, → "A row the reader opened under a
+// card outlasts a redraw of its list" — the withdraw button asks the holder
+// to open the question; the question's own behaviour (focus on keep, the
+// sentence, Esc) sits in the row builder.
 describe('card — the withdraw control', () => {
   const OTHER = 'bb'.repeat(32);
   const ownWithLikes = (): PostJson => ({ ...confirmed(PUB), likeCount: 3 });
   const metaWithdraw = (c: HTMLElement): HTMLButtonElement => c.querySelector('.meta .withdraw-ctl') as HTMLButtonElement;
-  const confirmBtn = (c: HTMLElement, text: string): HTMLButtonElement =>
-    [...c.querySelector('.card-confirm')!.querySelectorAll('button')].find((b) => b.textContent === text) as HTMLButtonElement;
 
   it('an own confirmed card keeps the like count N liked, the withdraw control after it, no like word', () => {
-    const c = card(ownWithLikes(), { you: true, onWithdraw: () => {}, canWithdraw: true, onReply: () => {} });
+    const c = card(ownWithLikes(), { you: true, openConfirmWithdraw: () => {}, canWithdraw: true, onReply: () => {} });
     expect(metaWithdraw(c)).not.toBeNull();
     const count = c.querySelector('.meta .liked');
     expect(count).not.toBeNull();
@@ -342,69 +377,25 @@ describe('card — the withdraw control', () => {
     expect(c.querySelector('.meta .reply-ctl')).not.toBeNull();
   });
 
-  it('a press mounts the confirm row after the meta: the sentence, withdraw and keep, focus on keep', () => {
-    const c = card(confirmed(PUB), { you: true, onWithdraw: () => {}, canWithdraw: true });
-    document.body.appendChild(c); // focus() needs the node in the document
-    metaWithdraw(c).click();
-    const row = c.querySelector('.card-confirm');
-    expect(row).not.toBeNull();
-    expect(row!.querySelector('.q')?.textContent).toBe('withdraw this post? the content goes; the replies stay.');
-    expect([...row!.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['withdraw', 'keep']);
-    // One row, mounted right after the meta.
-    expect(c.querySelector('.meta')!.nextElementSibling).toBe(row);
-    expect(document.activeElement?.textContent).toBe('keep');
-    // A second press opens no second row.
-    metaWithdraw(c).click();
-    expect(c.querySelectorAll('.card-confirm')).toHaveLength(1);
-    c.remove();
-  });
-
-  it('keep removes the row and signs nothing; the confirm withdraw calls onWithdraw', () => {
-    const withdrawn: string[] = [];
-    const c = card(confirmed(PUB), { you: true, onWithdraw: (id) => withdrawn.push(id), canWithdraw: true });
+  it('a press asks the holder to open the confirm row; no row inside the card', () => {
+    const asked: string[] = [];
+    const c = card(confirmed(PUB), { you: true, openConfirmWithdraw: () => { asked.push('p1'); }, canWithdraw: true });
     document.body.appendChild(c);
     metaWithdraw(c).click();
-    confirmBtn(c, 'keep').click();
+    expect(asked).toEqual(['p1']);
     expect(c.querySelector('.card-confirm')).toBeNull();
-    expect(withdrawn).toEqual([]);
-    // Press again, and this time confirm.
-    metaWithdraw(c).click();
-    confirmBtn(c, 'withdraw').click();
-    expect(withdrawn).toEqual(['p1']);
-    c.remove();
-  });
-
-  it('locked: the confirm withdraw mounts the unlock form in the row\'s place, then withdraws', async () => {
-    const unlocked: string[] = [];
-    const withdrawn: string[] = [];
-    const c = card(confirmed(PUB), {
-      you: true, onWithdraw: (id) => withdrawn.push(id), canWithdraw: true,
-      locked: true, ownKey: PUB, onUnlock: async (p) => { unlocked.push(p); },
-    });
-    document.body.appendChild(c);
-    metaWithdraw(c).click();
-    confirmBtn(c, 'withdraw').click();
-    expect(c.querySelector('.card-confirm')).toBeNull(); // the confirm made way for the unlock
-    const form = c.querySelector('.card-unlock form.pf') as HTMLFormElement;
-    expect(form).not.toBeNull();
-    expect(withdrawn).toHaveLength(0); // nothing signed yet
-    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
-    form.dispatchEvent(new Event('submit', { cancelable: true }));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(unlocked).toEqual(['pw']);
-    expect(withdrawn).toEqual(['p1']);
     c.remove();
   });
 
   it('canWithdraw false renders the button disabled with the reason as the title', () => {
-    const c = card(confirmed(PUB), { you: true, onWithdraw: () => {}, canWithdraw: false });
+    const asked: string[] = [];
+    const c = card(confirmed(PUB), { you: true, openConfirmWithdraw: () => { asked.push('p1'); }, canWithdraw: false });
     const wb = metaWithdraw(c);
     expect(wb.disabled).toBe(true);
     expect(wb.title).toBe('needs one rep box to sign with; this key has none');
-    // A disabled control opens no confirm row.
     document.body.appendChild(c);
     wb.click();
-    expect(c.querySelector('.card-confirm')).toBeNull();
+    expect(asked).toEqual([]);
     c.remove();
   });
 
@@ -427,22 +418,43 @@ describe('card — the withdraw control', () => {
 
   it('no withdraw control on another\'s card, a pending card, or a withdrawn card', () => {
     expect(card(confirmed(OTHER), { onLike: () => {} }).querySelector('.withdraw-ctl')).toBeNull();
-    expect(card(pending('x'), { you: true, onWithdraw: () => {}, canWithdraw: true }).querySelector('.withdraw-ctl')).toBeNull();
+    expect(card(pending('x'), { you: true, openConfirmWithdraw: () => {}, canWithdraw: true }).querySelector('.withdraw-ctl')).toBeNull();
     const tomb = { kind: 'withdrawn' as const, id: 'p1', author: PUB, withdrawnAtHeight: 10, parentRefs: [], descendantCount: 0, authorName: null, txId: 'aa'.repeat(32) };
-    expect(card(tomb, { you: true, onWithdraw: () => {}, canWithdraw: true }).querySelector('.withdraw-ctl')).toBeNull();
+    expect(card(tomb, { you: true, openConfirmWithdraw: () => {}, canWithdraw: true }).querySelector('.withdraw-ctl')).toBeNull();
   });
 
-  it('the word delete appears nowhere on the control or its confirm row', () => {
-    const c = card(confirmed(PUB), { you: true, onWithdraw: () => {}, canWithdraw: true });
-    document.body.appendChild(c);
-    metaWithdraw(c).click();
-    expect(c.textContent!.toLowerCase()).not.toContain('delete');
-    // aria-labels and titles too, not only visible text.
+  // The confirm row's own behaviour — the sentence, the two buttons, focus
+  // on keep, Esc — through the builder (WEB_INTERFACE → The withdraw control).
+  it('buildConfirmRow — the sentence, withdraw and keep, focus on keep, Esc runs onKeep', async () => {
+    const yes: string[] = [];
+    const keep: string[] = [];
+    const row = buildConfirmRow({
+      onYes: () => { yes.push('.'); },
+      onKeep: () => { keep.push('.'); },
+    });
+    document.body.appendChild(row);
+    expect(row.querySelector('.q')?.textContent).toBe('withdraw this post? the content goes; the replies stay.');
+    expect([...row.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['withdraw', 'keep']);
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    expect(document.activeElement?.textContent).toBe('keep');
+    [...row.querySelectorAll('button')].find((b) => b.textContent === 'withdraw')!.click();
+    expect(yes).toEqual(['.']);
+    row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(keep).toEqual(['.']);
+    row.remove();
+  });
+
+  it('the word delete appears nowhere on the control or in the confirm row builder', () => {
+    const c = card(confirmed(PUB), { you: true, openConfirmWithdraw: () => {}, canWithdraw: true });
     for (const b of c.querySelectorAll('button')) {
       expect((b.getAttribute('aria-label') ?? '').toLowerCase()).not.toContain('delete');
       expect((b.title ?? '').toLowerCase()).not.toContain('delete');
     }
-    c.remove();
+    const row = buildConfirmRow({ onYes: () => {}, onKeep: () => {} });
+    expect(row.textContent!.toLowerCase()).not.toContain('delete');
+    for (const b of row.querySelectorAll('button')) {
+      expect((b.getAttribute('aria-label') ?? '').toLowerCase()).not.toContain('delete');
+    }
   });
 });
 
@@ -490,18 +502,28 @@ describe('card — link', () => {
     c.remove();
   });
 
-  it('the fallback row appears when the clipboard is absent', () => {
+  it('the clipboard absence asks the holder to open the link fallback row; no row inside the card', () => {
     Object.defineProperty(navigator, 'clipboard', {
       value: undefined, writable: true, configurable: true,
     });
+    const asked: Array<string> = [];
     const c = card(confirmed('bb'.repeat(32)), {
       onReply: () => {},  linkUrl: URL,
+      openLinkFallback: (url) => { asked.push(url); },
     });
     document.body.appendChild(c);
     c.querySelector<HTMLButtonElement>('.linkbtn')!.click();
-    expect(c.querySelector('.card-link')).toBeTruthy();
+    expect(asked).toEqual([URL]);
+    expect(c.querySelector('.card-link')).toBeNull();
     expect(c.querySelector('.linkbtn svg')).not.toBeNull();
     c.remove();
+  });
+
+  it('buildLinkFallbackRow renders the url as text with the copy-by-hand suffix', () => {
+    const row = buildLinkFallbackRow(URL);
+    expect(row.classList.contains('card-link')).toBe(true);
+    expect(row.querySelector('.hex')?.textContent).toBe(URL);
+    expect(row.textContent).toContain(' — copy it by hand');
   });
 });
 

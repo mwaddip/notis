@@ -256,6 +256,14 @@ export interface PostsCtx {
   linkUrl: (id: string) => string;
   expandedImages: ReadonlySet<string>;    // images shown this session (WEB_INTERFACE → Content)
   nameClay: (key: string, name: string) => boolean; // the handle reads clay (→ The extension → "The verified names")
+  // WEB_INTERFACE → What the feed reads, and what a card shows for it →
+  // "A row the reader opened under a card outlasts a redraw of its list" —
+  // the posts window's list key, so a row the reader opened under one of its
+  // cards stands at every redraw of the window.
+  listKey: string;
+  heldCardRow: (list: string, postId: string) => HTMLElement | null;
+  openUnlockForLike: (list: string, postId: string) => void;
+  openLinkFallback: (list: string, postId: string, url: string) => void;
 }
 
 export interface PostsHandlers {
@@ -263,7 +271,6 @@ export interface PostsHandlers {
   openAuthor: (key: string, origin: Origin) => void;
   likePost: (postId: string) => void;
   authorPostsMore: (key: string) => void;
-  unlockIdentity: (passphrase: string) => Promise<void>;
   expandImage: (key: string) => void;     // an image loads on the reader's press (WEB_INTERFACE → Content)
   collapseImage: (key: string) => void;
 }
@@ -318,6 +325,11 @@ function postCard(post: PostJson, handlers: PostsHandlers, ctx: PostsCtx): HTMLE
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,
-    ...listCardOpts(post, ctx, handlers),
+    ...listCardOpts(post, ctx, {
+      likePost: (id) => handlers.likePost(id),
+      openUnlockForLike: (id) => ctx.openUnlockForLike(ctx.listKey, id),
+    }),
+    heldRow: ctx.heldCardRow(ctx.listKey, post.id),
+    openLinkFallback: (url) => ctx.openLinkFallback(ctx.listKey, post.id, url),
   });
 }

@@ -74,7 +74,12 @@ function baseCtx(over: Partial<RenderCtx> = {}): RenderCtx {
     canAffordBurn: false, status: null, credits: null, creditGrant: null,
     sendFlight: null, pendingSend: null, sendCheck: null, sendAnswer: null,
     confirmInRow: true, verdict: undefined, figures: null,
-    linkUrl: (id) => `http://localhost/p/${id}`, ...over,
+    linkUrl: (id) => `http://localhost/p/${id}`,
+    heldCardRow: () => null,
+    openUnlockForLike: () => {},
+    openConfirmWithdraw: () => {},
+    openLinkFallback: () => {},
+    ...over,
   };
 }
 
@@ -109,13 +114,17 @@ describe("the author-posts window renders a slot between two cards — order kep
     };
     const handlers: PostsHandlers = {
       openThread: () => {}, openAuthor: () => {}, likePost: () => {},
-      authorPostsMore: () => {}, unlockIdentity: async () => {},
+      authorPostsMore: () => {},
       expandImage: () => {}, collapseImage: () => {},
     };
     const ctx: PostsCtx = {
       authorKey: AUTHOR, origin: { from: 'feed' }, feed,
       writeEnabled: false, ownKey: null, locked: false, likePending: () => false,
       linkUrl: (id) => `/p/${id}`, expandedImages: new Set(), nameClay: () => false,
+      listKey: '@posts:' + AUTHOR,
+      heldCardRow: () => null,
+      openUnlockForLike: () => {},
+      openLinkFallback: () => {},
     };
     const body = authorPostsBody(handlers, ctx);
     const cards = [...body.querySelectorAll('.card')] as HTMLElement[];

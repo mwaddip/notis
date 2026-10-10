@@ -12,6 +12,7 @@ import { prefs, setTheme, setIdTint, setNode, writeStore, readStore, BUILD_NODES
 import { renderFeedInto, replaceFeedCard } from './view/feed';
 import { renderPanesInto, renderRegionElement, renderBars } from './view/panes';
 import { makeComposer, type ComposerController } from './view/composer';
+import { buildUnlockRow, buildConfirmRow, buildLinkFallbackRow } from './view/card-rows';
 import { personGlyph, sunGlyph, moonGlyph, gearGlyph, walletGlyph } from './view/glyphs';
 import { MARK } from './view/mark';
 import { serialise, parse, authorWindowId, postsWindowId, windowSubject } from './model/arrangement';
@@ -74,6 +75,27 @@ const isWin = (k: string): boolean => k.charAt(0) === '@';
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const composerKey = (parentId: string | null): string => parentId ?? FEED_COMPOSER;
 const isSettled = (stage: FlightStage): boolean => stage === 'landed' || stage === 'expired' || stage === 'rejected';
+
+/** The kind of row the holder holds for a card. The unlock variants carry the
+ *  write they proceed to on a correct passphrase (WEB_INTERFACE → The
+ *  identity module). */
+type CardRowKind = 'unlock-like' | 'unlock-withdraw' | 'confirm' | 'link';
+
+/** A row the reader opened under a card — held in the holder, attached under
+ *  the live card at every redraw of the list (WEB_INTERFACE → "A row the
+ *  reader opened under a card outlasts a redraw of its list"). */
+interface HeldCardRow {
+  kind: CardRowKind;
+  el: HTMLElement;
+  list: string;
+  postId: string;
+}
+
+/** The holder's key — the list the card stands in and the row's post id, so
+ *  one post drawn in two lists holds two independent rows (WEB_INTERFACE →
+ *  "A row the reader opened under a card outlasts a redraw of its list").
+ *  The null byte is not a legal character in either part. */
+const rowKey = (list: string, postId: string): string => list + '\0' + postId;
 
 /** Hand the reader a file — an exported identity. A data: URL needs no object-URL
  *  lifecycle and works from a static bundle (WEB_INTERFACE → The profile window). */
@@ -240,6 +262,14 @@ export class App {
   // Open composer widgets, held by key so the same element is re-parented across
   // a region rebuild rather than recreated (WEB_INTERFACE → The write surface).
   private composers = new Map<string, ComposerController>();
+  // Rows the reader opened under cards — the unlock form for a locked like or
+  // withdraw, the withdraw question, the link held as text — kept across
+  // redraws of the list they stand in, keyed by that list and the card's
+  // post id (WEB_INTERFACE → What the feed reads, and what a card shows for
+  // it → "A row the reader opened under a card outlasts a redraw of its
+  // list"). What is typed in an unlock row is held in its field alone; the
+  // row's handlers close over nothing of the render that opened it.
+  private cardRows = new Map<string, HeldCardRow>();
   // Targets the reader pressed like on, shown liked at once and reverted on a
   // rejection or expiry (WEB_INTERFACE → The wallet).
   private optimisticLikes = new Set<string>();
@@ -512,7 +542,7 @@ export class App {
       exportIdentity: (p) => this.exportIdentity(p),
       forgetIdentity: () => this.idm.forget(),
       lockIdentity: async () => { await this.idm.lock(); this.renderRegionsFor('@profile'); },
-      unlockIdentity: (p) => this.idm.unlock(p),
+      unlockIdentity: (p) => this.unlockIdentity(p),
       askFaucet: () => void this.askFaucet(),
       openComposer: (parentId) => this.openComposer(parentId),
       // The press records the key; the error drops it. Neither re-renders — the
@@ -935,6 +965,13 @@ export class App {
       linkUrl: (id) => BUILD_PUBLIC !== ''
         ? BUILD_PUBLIC + 'p/' + id
         : new URL(this.base + 'p/' + id, location.href).href,
+      // WEB_INTERFACE → What the feed reads, and what a card shows for it →
+      // "A row the reader opened under a card outlasts a redraw of its list"
+      // — the holder's seams, keyed by list and post id.
+      heldCardRow: (list, postId) => this.cardRows.get(rowKey(list, postId))?.el ?? null,
+      openUnlockForLike: (list, postId) => this.openUnlockForLike(list, postId),
+      openConfirmWithdraw: (list, postId) => this.openConfirmWithdraw(list, postId),
+      openLinkFallback: (list, postId, url) => this.openLinkFallback(list, postId, url),
     };
   }
 
@@ -2542,7 +2579,11 @@ export class App {
     this.stopPoll();
     // The reader's own acts under the key before — its flights, its optimistic
     // overlays and its submissions — go with it; the node's answers for that key
-    // drop with the reader's own state.
+    // drop with the reader's own state. A row the reader opened under any card
+    // ends too (WEB_INTERFACE → "A row the reader opened under a card outlasts
+    // a redraw of its list"), and the unlock field's bytes go with the dropped
+    // element — the field is the one place that text sat.
+    this.cardRows.clear();
     this.optimisticLikes.clear();
     this.withdrawFlights.clear();
     this.state.submissions = [];
@@ -4896,9 +4937,194 @@ export class App {
   }
 
   private withComposerFocus(fn: () => void): void {
-    const key = this.focusedComposerKey();
+    const composerFocused = this.focusedComposerKey();
+    // The element the row's focus is on at this moment — the same element
+    // across renders, since the row element and its children are held by
+    // reference (WEB_INTERFACE → "A row the reader opened under a card
+    // outlasts a redraw of its list"; the contract's inner lead says the
+    // focus is back in the row where it held the focus).
+    const rowFocusTarget = composerFocused === null
+      ? this.focusedRowElement()
+      : null;
     fn();
-    if (key !== null) this.composers.get(key)?.focus();
+    // The row-end invariant: after any render of the surface a row stood in,
+    // every held row is attached to the document, or it is no longer held
+    // (WEB_INTERFACE → "A row the reader opened under a card outlasts a
+    // redraw of its list"). An unlock row held once the identity is unlocked
+    // is dropped first — the contract's inner lead on row ends names the
+    // identity's unlock from elsewhere.
+    this.endUnlockRowsIfUnlocked();
+    this.pruneCardRows();
+    if (composerFocused !== null) this.composers.get(composerFocused)?.focus();
+    else if (rowFocusTarget !== null && rowFocusTarget.isConnected) rowFocusTarget.focus();
+  }
+
+  // -------------------------------------------------------------------------
+  // Rows under a card — the unlock form for a locked like or withdraw, the
+  // withdraw question, and the link held as text (WEB_INTERFACE → What the
+  // feed reads, and what a card shows for it → "A row the reader opened
+  // under a card outlasts a redraw of its list"). The holder owns the row's
+  // element, the renderer attaches it beneath the live card at every draw,
+  // and the row's controls read the lock, find the card and find the focus
+  // target at the press — not from a render-time closure
+  // (the contract's inner lead: a row's controls act on the card as it
+  // stands at the press).
+  // -------------------------------------------------------------------------
+
+  openUnlockForLike(list: string, postId: string): void {
+    this.openUnlockRow(list, postId, 'unlock-like', () => this.likePost(postId));
+  }
+
+  openConfirmWithdraw(list: string, postId: string): void {
+    const key = rowKey(list, postId);
+    if (this.cardRows.has(key)) return;
+    const row = buildConfirmRow({
+      onYes: () => {
+        // The row's withdraw reads the lock then (WEB_INTERFACE → The
+        // withdraw control, "A row's controls act on the card as it stands
+        // at the press"). A locked identity yields to an unlock row under
+        // the card on screen, which then signs the withdrawal.
+        if (this.idm.current()?.locked) {
+          this.cardRows.delete(key);
+          this.openUnlockRow(list, postId, 'unlock-withdraw', () => this.withdrawPost(postId));
+          return;
+        }
+        this.cardRows.delete(key);
+        this.renderListFor(list);
+        this.withdrawPost(postId);
+      },
+      onKeep: () => {
+        this.cardRows.delete(key);
+        this.renderListFor(list);
+        // Focus the withdraw control on the live card
+        // (WEB_INTERFACE → The withdraw control). The card as it stands is
+        // on screen now, and `isConnected` tells us so.
+        const live = this.findLiveCard(list, postId);
+        const btn = live?.querySelector<HTMLButtonElement>('.withdraw-ctl');
+        if (btn && btn.isConnected) btn.focus();
+      },
+    });
+    this.cardRows.set(key, { kind: 'confirm', el: row, list, postId });
+    this.renderListFor(list);
+  }
+
+  openLinkFallback(list: string, postId: string, url: string): void {
+    const key = rowKey(list, postId);
+    if (this.cardRows.has(key)) return;
+    const row = buildLinkFallbackRow(url);
+    this.cardRows.set(key, { kind: 'link', el: row, list, postId });
+    this.renderListFor(list);
+  }
+
+  /** Build an unlock row for this card's locked write — a like or a withdraw
+   *  — the row's submit unlocks and proceeds, Esc drops the row. The unlock
+   *  goes through the App's own seam so every unlock event ends every unlock
+   *  row and redraws each list that held one (WEB_INTERFACE → The identity
+   *  module; the inner lead on row ends names the identity's unlock from
+   *  elsewhere). */
+  private openUnlockRow(
+    list: string,
+    postId: string,
+    kind: 'unlock-like' | 'unlock-withdraw',
+    proceed: () => void,
+  ): void {
+    const key = rowKey(list, postId);
+    if (this.cardRows.has(key)) return;
+    const cur = this.idm.current();
+    if (cur === null) return;
+    const row = buildUnlockRow({
+      pubKeyHex: cur.pubKeyHex,
+      onSubmit: (p) => this.unlockIdentity(p),
+      onProceed: () => {
+        // `unlockIdentity` has already dropped this row and rendered its
+        // list; `proceed()` then takes the card as it stands.
+        proceed();
+      },
+      onCancel: () => {
+        this.cardRows.delete(key);
+        this.renderListFor(list);
+      },
+    });
+    this.cardRows.set(key, { kind, el: row, list, postId });
+    this.renderListFor(list);
+  }
+
+  /** The invariant that closes the row-ends inner lead on the identity's
+   *  unlock from elsewhere (WEB_INTERFACE → "A row the reader opened under a
+   *  card outlasts a redraw of its list"): every unlock row held while the
+   *  identity is unlocked is dropped. A confirm row stands — its withdraw at
+   *  the press now needs no unlock sub-row. */
+  private endUnlockRowsIfUnlocked(): void {
+    const cur = this.idm.current();
+    if (cur === null || cur.locked) return;
+    for (const [key, row] of this.cardRows) {
+      if (row.kind === 'unlock-like' || row.kind === 'unlock-withdraw') {
+        this.cardRows.delete(key);
+      }
+    }
+  }
+
+  /** The row-end invariant: after any render of the surface a row stood in,
+   *  every held row is attached to the document, or it is no longer held
+   *  (WEB_INTERFACE → "A row the reader opened under a card outlasts a
+   *  redraw of its list"). This closes the three card-level endings — the
+   *  post left the list, it is drawn as the withdrawn card or as a slot, the
+   *  region now shows another window, the window closed — without naming
+   *  any of them. */
+  private pruneCardRows(): void {
+    for (const [key, row] of this.cardRows) {
+      if (!row.el.isConnected) this.cardRows.delete(key);
+    }
+  }
+
+  /** The exact element inside a held row that has focus right now, or null —
+   *  the row element itself is held by reference across renders, so this
+   *  element is the one to refocus after (WEB_INTERFACE → "A row the reader
+   *  opened under a card outlasts a redraw of its list"; the contract's
+   *  inner lead names the focus back in the row where it held the focus). */
+  private focusedRowElement(): HTMLElement | null {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLElement)) return null;
+    for (const [, row] of this.cardRows) if (row.el.contains(active)) return active;
+    return null;
+  }
+
+  /** Dispatch a render of the surface a row stands in — the feed, or the
+   *  regions whose focused window is the list key (a thread window, a
+   *  @posts window, or the standalone thread). */
+  private renderListFor(list: string): void {
+    if (list === 'feed') { this.renderFeed(); return; }
+    this.renderRegionsFor(list);
+  }
+
+  /** The live card for `(list, postId)` on screen — the feed element at
+   *  `list === 'feed'`, else any pane. Used for focus restoration on
+   *  `keep` (WEB_INTERFACE → The withdraw control). */
+  private findLiveCard(list: string, postId: string): HTMLElement | null {
+    const sel = `[data-post-id="${CSS.escape(postId)}"]`;
+    if (list === 'feed') return this.feedEl.querySelector<HTMLElement>(sel);
+    return this.panesEl.querySelector<HTMLElement>(sel);
+  }
+
+  /** The unlock seam for every surface's unlock form (the profile window, the
+   *  wallet window, the author window's your-vouch row, the composer's foot).
+   *  After an unlock lands, every unlock row the holder held is ended
+   *  (WEB_INTERFACE → "A row the reader opened under a card outlasts a
+   *  redraw of its list"; its inner lead on row ends names the identity's
+   *  unlock from elsewhere) and the lists that held one are re-read — the
+   *  row's element is detached by its list's redraw, and the next prune
+   *  drops it. Confirm and link rows stand. */
+  private async unlockIdentity(passphrase: string): Promise<void> {
+    const listsHoldingUnlockRow = new Set<string>();
+    for (const row of this.cardRows.values()) {
+      if (row.kind === 'unlock-like' || row.kind === 'unlock-withdraw') listsHoldingUnlockRow.add(row.list);
+    }
+    await this.idm.unlock(passphrase);
+    // The unlock is landed. End every unlock row and redraw each list that
+    // held one, so a stale unlock row never reaches the screen on the next
+    // unrelated render.
+    this.endUnlockRowsIfUnlocked();
+    for (const list of listsHoldingUnlockRow) this.renderListFor(list);
   }
 
   private focusedComposerKey(): string | null {

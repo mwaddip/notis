@@ -178,8 +178,12 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
 /** The card opts for a pane card. The prefix opens the author window — a read,
  *  present even with no identity (WEB_INTERFACE → The identity display). The like
  *  and link come from listCardOpts; the pane adds ↩ reply and the withdraw
- *  control (WEB_INTERFACE → The withdraw control). */
-function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
+ *  control (WEB_INTERFACE → The withdraw control). The list key is the pane's
+ *  focused window — the thread window's id — so a row the reader opened under
+ *  the card stands under that same card at every redraw of the pane
+ *  (WEB_INTERFACE → "A row the reader opened under a card outlasts a redraw of
+ *  its list"). */
+function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, listKey: string, ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
   const locked = ctx.identity?.locked ?? false;
   const base: Partial<CardOpts> = {
     onAuthor: (key) => handlers.openAuthor(key, { from: 'pane', ci }),
@@ -187,7 +191,12 @@ function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,
-    ...listCardOpts(row, { ...ctx, locked }, handlers),
+    ...listCardOpts(row, { ...ctx, locked }, {
+      likePost: (id) => handlers.likePost(id),
+      openUnlockForLike: (id) => ctx.openUnlockForLike(listKey, id),
+    }),
+    heldRow: ctx.heldCardRow(listKey, row.id),
+    openLinkFallback: (url) => ctx.openLinkFallback(listKey, row.id, url),
   };
   if (!ctx.writeEnabled) return base;
   const opts: Partial<CardOpts> = {
@@ -196,13 +205,11 @@ function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx
     composerKey: row.id,
     you: ctx.ownKey !== null && row.author === ctx.ownKey,
     locked: ctx.identity?.locked ?? false,
-    ownKey: ctx.ownKey ?? undefined,
-    onUnlock: (p) => handlers.unlockIdentity(p),
   };
   if (!isWithdrawn(row) && row.status === 'confirmed') {
     const isOwn = ctx.ownKey !== null && row.author === ctx.ownKey;
     if (isOwn) {
-      opts.onWithdraw = (id) => handlers.withdrawPost(id);
+      opts.openConfirmWithdraw = () => ctx.openConfirmWithdraw(listKey, row.id);
       opts.withdraw = ctx.withdrawState(row.id);
       opts.canWithdraw = ctx.canSignWithdraw;
     }
@@ -230,7 +237,7 @@ function authorCtxFrom(key: string, ci: number, ctx: RenderCtx): AuthorCtx {
   };
 }
 
-function postsCtxFrom(key: string, ci: number, ctx: RenderCtx): PostsCtx {
+function postsCtxFrom(key: string, listKey: string, ci: number, ctx: RenderCtx): PostsCtx {
   const f = ctx.authorPosts.get(key);
   return {
     authorKey: key,
@@ -243,6 +250,10 @@ function postsCtxFrom(key: string, ci: number, ctx: RenderCtx): PostsCtx {
     linkUrl: (id) => ctx.linkUrl(id),
     expandedImages: ctx.expandedImages,
     nameClay: ctx.nameClay,
+    listKey,
+    heldCardRow: (list, id) => ctx.heldCardRow(list, id),
+    openUnlockForLike: (list, id) => ctx.openUnlockForLike(list, id),
+    openLinkFallback: (list, id, url) => ctx.openLinkFallback(list, id, url),
   };
 }
 
@@ -291,7 +302,7 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
     return;
   }
   if (sub?.kind === 'posts') {
-    body.appendChild(authorPostsBody(handlers, postsCtxFrom(sub.key, ci, ctx)));
+    body.appendChild(authorPostsBody(handlers, postsCtxFrom(sub.key, focusedK, ci, ctx)));
     return;
   }
   if (focusedK === '@profile') {
@@ -364,7 +375,7 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
         depth: node.depth,
         replyCount: row.id === rootId ? t.descendantCount : node.replyCount,
         onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }),
-        ...writeCardOpts(row, ci, ctx, handlers),
+        ...writeCardOpts(row, ci, focusedK, ctx, handlers),
       }),
     );
     // A reply composer open under this post, reused by reference across the
