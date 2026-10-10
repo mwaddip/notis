@@ -1611,9 +1611,6 @@ payload is refused.
 #### Storage rent is a transition requiring no signature
 
 
-> ⚠ **AHEAD OF CODE (2026-10-10).** The three leads below, and the successor rule under "The charge
-> is…", lead `consensus`' credit authorization and its credit arm.
-
 ⛔ **A rent collection carries no signature, and a `credit` spend that carries none is a rent
 collection.** A `credit` box is past its rent period when
 
