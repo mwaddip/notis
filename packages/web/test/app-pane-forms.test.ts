@@ -179,8 +179,16 @@ function rig(o: {
   bonds?: BondsResult;
   boot?: 'mount' | 'start';
   membershipGate?: Promise<void>;
+  /** The identity carries a sign policy, as the extension's proxy does: the
+   *  wallet's send has no confirm row, and a locked send owes its unlock in a
+   *  row the App holds (WEB_INTERFACE → The wallet window → "The `send` row"). */
+  extension?: boolean;
 }): Rig {
   const id = lockableIdentity(ME, o.locked ?? true);
+  if (o.extension) {
+    id.identity.policy = () => 'silent';
+    id.identity.setPolicy = async () => {};
+  }
   const writes = recordingWrites(id);
   const feedRows = o.feed ?? [];
   const feedResults: FeedResult[] = [page(feedRows)];
@@ -704,7 +712,7 @@ describe('the author window\'s vouch unlock row while the author window is focus
 });
 
 describe('the wallet\'s send form while the wallet is focused in column 0 across a window opening in column 2', () => {
-  it.fails('wallet opened over Q; recipient and amount typed; a new thread opened from R\'s pane (column 2): the new form reads empty', async () => {
+  it('wallet opened over Q; recipient and amount typed; a new thread opened from R\'s pane (column 2): the form is the same node, both fields hold what was typed, and the focus is in the recipient', async () => {
     const Q = fullRow('Q', { author: OTHER });
     const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
     const S = fullRow('S', { author: OTHER, parentRefs: [R.id] });
@@ -727,14 +735,15 @@ describe('the wallet\'s send form while the wallet is focused in column 0 across
     await openFromPane(col1, S.id);
     expect(regionsOf(h.panes)).toHaveLength(3);
 
-    const nowForm = h.panes.querySelector<HTMLFormElement>('form.credits-form')!;
-    const nowInputs = nowForm.querySelectorAll<HTMLInputElement>('input');
-    expect(nowInputs[0]!.value).toBe(BOB);
+    expect(form.isConnected).toBe(true);
+    expect(regionsOf(h.panes)[0]!.querySelector('form.credits-form')).toBe(form);
+    expect([inputs[0]!.value, inputs[1]!.value]).toEqual([BOB, '1.5']);
+    expect(document.activeElement).toBe(inputs[0]);
   });
 });
 
 describe('the wallet\'s send form while the wallet is focused in column 0 across a window closing in column 2', () => {
-  it.fails('wallet opened over Q; S already open in column 2 is closed: the new form reads empty', async () => {
+  it('wallet opened over Q; S already open in column 2 is closed: the form is the same node, both fields hold what was typed, and the focus is in the recipient', async () => {
     const Q = fullRow('Q', { author: OTHER });
     const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
     const S = fullRow('S', { author: OTHER, parentRefs: [R.id] });
@@ -755,14 +764,17 @@ describe('the wallet\'s send form while the wallet is focused in column 0 across
 
     closeAt(h.panes, 2, 0);
     await settle();
+    expect(regionsOf(h.panes)).toHaveLength(2);
 
-    const nowForm = h.panes.querySelector<HTMLFormElement>('form.credits-form')!;
-    expect(nowForm.querySelectorAll<HTMLInputElement>('input')[0]!.value).toBe(BOB);
+    expect(form.isConnected).toBe(true);
+    expect(regionsOf(h.panes)[0]!.querySelector('form.credits-form')).toBe(form);
+    expect([inputs[0]!.value, inputs[1]!.value]).toEqual([BOB, '1.5']);
+    expect(document.activeElement).toBe(inputs[0]);
   });
 });
 
 describe('the wallet\'s send form while the wallet is focused in column 0 across the stacked-under thread closing', () => {
-  it.fails('wallet opened over Q; typed; Q (stacked under) closed by its ✕: the new form reads empty', async () => {
+  it('wallet opened over Q; typed; Q (stacked under) closed by its ✕: the form is the same node, both fields hold what was typed, and the focus is in the recipient', async () => {
     const Q = fullRow('Q', { author: OTHER });
     const h = rig({ feed: [Q], threads: [thread(Q)], locked: false, credits: creditsWithBox(ME) });
     await boot(h);
@@ -777,9 +789,12 @@ describe('the wallet\'s send form while the wallet is focused in column 0 across
 
     closeAt(h.panes, 0, 0);
     await settle();
+    expect(focusedName(regionsOf(h.panes)[0]!)).toBe('wallet');
 
-    const nowForm = h.panes.querySelector<HTMLFormElement>('form.credits-form')!;
-    expect(nowForm.querySelectorAll<HTMLInputElement>('input')[0]!.value).toBe(BOB);
+    expect(form.isConnected).toBe(true);
+    expect(h.panes.querySelector('form.credits-form')).toBe(form);
+    expect([inputs[0]!.value, inputs[1]!.value]).toEqual([BOB, '1.5']);
+    expect(document.activeElement).toBe(inputs[0]);
   });
 });
 
@@ -916,7 +931,7 @@ describe('the author window\'s vouch unlock row in column 2 across the profile o
  *  (WEB_INTERFACE → The wallet window → "The `send` row"). */
 
 describe('the wallet\'s confirm row (web) across a window opening in column 2', () => {
-  it.fails('wallet opened over Q, send pressed with a key and amount, confirm wrap stands; a new thread opened from R\'s pane: the wrap\'s node is replaced', async () => {
+  it('wallet opened over Q, send pressed with a key and amount, the confirm row stands; a new thread opened from R\'s pane: the row is the same node in the form\'s slot, the focus on keep, and keep puts back the form with what was typed', async () => {
     const Q = fullRow('Q', { author: OTHER });
     const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
     const S = fullRow('S', { author: OTHER, parentRefs: [R.id] });
@@ -936,6 +951,8 @@ describe('the wallet\'s confirm row (web) across a window opening in column 2', 
     await settle();
     const confirm = h.panes.querySelector<HTMLElement>('.credits-form .pf-confirm')!;
     expect(confirm).not.toBeNull();
+    const keep = wordIn(confirm, 'keep');
+    expect(document.activeElement).toBe(keep);
 
     expect(focusedName(regionsOf(h.panes)[0]!)).toBe('wallet');
 
@@ -943,11 +960,18 @@ describe('the wallet\'s confirm row (web) across a window opening in column 2', 
     expect(regionsOf(h.panes)).toHaveLength(3);
 
     expect(confirm.isConnected).toBe(true);
+    expect(regionsOf(h.panes)[0]!.querySelector('.credits-form .pf-confirm')).toBe(confirm);
+    expect(document.activeElement).toBe(keep);
+
+    keep.click();
+    expect(h.panes.querySelector('.pf-confirm')).toBeNull();
+    expect(h.panes.querySelector('form.credits-form')).toBe(form);
+    expect([inputs[0]!.value, inputs[1]!.value]).toEqual([BOB, '1.5']);
   });
 });
 
 describe('the wallet\'s confirm row (web) across the wallet\'s own ↻', () => {
-  it('wallet open, send pressed with a key and amount, confirm wrap stands; wallet\'s ↻ pressed: the wrap stands (the form slot has children, `renderCreditsRow` leaves it alone)', async () => {
+  it('wallet open, send pressed with a key and amount, the confirm row stands; wallet\'s ↻ pressed: the row is the same node in the form\'s slot', async () => {
     const h = rig({ feed: [], locked: false, credits: creditsWithBox(ME) });
     await boot(h);
     openWallet();
@@ -965,6 +989,43 @@ describe('the wallet\'s confirm row (web) across the wallet\'s own ↻', () => {
 
     expect(confirm.isConnected).toBe(true);
     expect(h.panes.querySelector('.credits-form .pf-confirm')).toBe(confirm);
+  });
+});
+
+describe('the unlock row a locked send owes (extension) across a window opening in column 2', () => {
+  it('wallet opened over Q, a send pressed while locked, a passphrase typed in the row under the form; a new thread opened from R\'s pane: the row is the same node under the same form, every field holds what was typed, and the focus is in the passphrase field', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
+    const S = fullRow('S', { author: OTHER, parentRefs: [R.id] });
+    const h = rig({
+      feed: [Q], threads: [thread(Q, [R]), thread(R, [S]), thread(S)],
+      locked: true, credits: creditsWithBox(ME), extension: true,
+    });
+    const col1 = await withQR(h, Q, R);
+
+    openWallet();
+    await settle();
+    const form = h.panes.querySelector<HTMLFormElement>('form.credits-form')!;
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = BOB;
+    inputs[1]!.value = '1.5';
+    submit(form);
+    await settle();
+    const row = form.nextElementSibling as HTMLElement;
+    expect(row.classList.contains('card-unlock')).toBe(true);
+    const field = fieldOf(row);
+    field.value = 'secret';
+    field.focus();
+
+    await openFromPane(col1, S.id);
+    expect(regionsOf(h.panes)).toHaveLength(3);
+
+    expect(row.isConnected).toBe(true);
+    expect(regionsOf(h.panes)[0]!.querySelector('form.credits-form')).toBe(form);
+    expect(form.nextElementSibling).toBe(row);
+    expect([inputs[0]!.value, inputs[1]!.value, field.value]).toEqual([BOB, '1.5', 'secret']);
+    expect(form.querySelector('.resolved-key')?.textContent).toBe(BOB);
+    expect(document.activeElement).toBe(field);
   });
 });
 
@@ -1130,7 +1191,7 @@ describe('the author window\'s vouch unlock row across its window being covered 
 });
 
 describe('the wallet\'s send form across its window being covered by a stacked thread and brought back', () => {
-  it.fails('wallet over Q; recipient typed; Q brought to front; wallet brought back: the new form reads empty', async () => {
+  it('wallet over Q; recipient typed; Q brought to front; wallet brought back: off the document while covered, and on return the form is the same node with what was typed in its field', async () => {
     const Q = fullRow('Q', { author: OTHER });
     const h = rig({ feed: [Q], threads: [thread(Q)], locked: false, credits: creditsWithBox(ME) });
     await boot(h);
@@ -1144,11 +1205,46 @@ describe('the wallet\'s send form across its window being covered by a stacked t
 
     focusAt(h.panes, 0, 0); // Q
     await settle();
+    expect(form.isConnected).toBe(false);
+    expect(inputs[0]!.value).toBe(BOB);
     focusAt(h.panes, 0, 1); // wallet back
     await settle();
 
-    const nowForm = h.panes.querySelector<HTMLFormElement>('form.credits-form')!;
-    expect(nowForm.querySelectorAll<HTMLInputElement>('input')[0]!.value).toBe(BOB);
+    expect(form.isConnected).toBe(true);
+    expect(h.panes.querySelector('form.credits-form')).toBe(form);
+    expect(inputs[0]!.value).toBe(BOB);
+  });
+});
+
+describe('the unlock row a locked send owes (extension) across its window being covered by a stacked thread and brought back', () => {
+  it('wallet over Q, a send pressed while locked, a passphrase typed; Q brought to front; wallet brought back: off the document while covered, and on return the row is the same node under the same form with what was typed in its field', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const h = rig({ feed: [Q], threads: [thread(Q)], locked: true, credits: creditsWithBox(ME), extension: true });
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    openWallet();
+    await settle();
+    const form = h.panes.querySelector<HTMLFormElement>('form.credits-form')!;
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = BOB;
+    inputs[1]!.value = '1.5';
+    submit(form);
+    await settle();
+    const row = form.nextElementSibling as HTMLElement;
+    const field = fieldOf(row);
+    field.value = 'secret';
+
+    focusAt(h.panes, 0, 0); // Q
+    await settle();
+    expect(row.isConnected).toBe(false);
+    expect(field.value).toBe('secret');
+    focusAt(h.panes, 0, 1); // wallet back
+    await settle();
+
+    expect(row.isConnected).toBe(true);
+    expect(h.panes.querySelector('form.credits-form')).toBe(form);
+    expect(form.nextElementSibling).toBe(row);
+    expect(field.value).toBe('secret');
   });
 });
 
@@ -1341,6 +1437,49 @@ describe('a read that leaves no invite available ends the invite form', () => {
   });
 });
 
+describe('a read that leaves no box spendable ends the send form', () => {
+  it('the send form with a recipient and an amount typed; the wallet\'s ↻ reads an empty listing: the form is gone, both fields read empty, and the send row is hidden', async () => {
+    const h = rig({ feed: [], locked: false, credits: creditsWithBox(ME) });
+    await boot(h);
+    openWallet();
+    await settle();
+    const form = h.panes.querySelector<HTMLFormElement>('form.credits-form')!;
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = BOB;
+    inputs[1]!.value = '1.5';
+
+    h.fake.credits = { userId: ME, total: '0', boxes: [], boxCount: 0, next: null };
+    await pressRefresh(h.panes, 'refresh the balance');
+
+    expect(h.panes.querySelector('form.credits-form')).toBeNull();
+    expect(form.isConnected).toBe(false);
+    expect([inputs[0]!.value, inputs[1]!.value]).toEqual(['', '']);
+    expect(h.panes.querySelector<HTMLElement>('.send-row')!.hidden).toBe(true);
+  });
+
+  it('the confirm row standing in the form\'s place; the wallet\'s ↻ reads an empty listing: the row is gone and the fields behind it read empty', async () => {
+    const h = rig({ feed: [], locked: false, credits: creditsWithBox(ME) });
+    await boot(h);
+    openWallet();
+    await settle();
+    const form = h.panes.querySelector<HTMLFormElement>('form.credits-form')!;
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = BOB;
+    inputs[1]!.value = '1.5';
+    submit(form);
+    await settle();
+    const confirm = h.panes.querySelector<HTMLElement>('.credits-form .pf-confirm')!;
+    expect(confirm).not.toBeNull();
+
+    h.fake.credits = { userId: ME, total: '0', boxes: [], boxCount: 0, next: null };
+    await pressRefresh(h.panes, 'refresh the balance');
+
+    expect(confirm.isConnected).toBe(false);
+    expect(h.panes.querySelector('.pf-confirm')).toBeNull();
+    expect([inputs[0]!.value, inputs[1]!.value]).toEqual(['', '']);
+  });
+});
+
 describe('a read that lands a name ends the claim form and places the username row above key', () => {
   it('the claim form with a name typed; the ↻\'s read answers a name held: the form is gone, its field reads empty, the row reads the handle and stands above key', async () => {
     const h = rig({ feed: [], locked: false });
@@ -1400,6 +1539,52 @@ describe('the profile\'s export reads the identity\'s lock when pressed', () => 
     const fields = exportRow.querySelectorAll<HTMLInputElement>('input[type="password"]');
     expect(fields).toHaveLength(2);
     expect(fields[0]!.autocomplete).toBe('new-password');
+  });
+});
+
+describe('the wallet\'s send reads the identity\'s lock when pressed', () => {
+  it('the wallet drawn unlocked, the lock flipped with no notice and no draw: the confirm row\'s send asks for the unlock in the row\'s place, and nothing is signed', async () => {
+    const h = rig({ feed: [], locked: false, credits: creditsWithBox(ME) });
+    await boot(h);
+    openWallet();
+    await settle();
+    const form = h.panes.querySelector<HTMLFormElement>('form.credits-form')!;
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = BOB;
+    inputs[1]!.value = '1.5';
+
+    h.id.setLocked(true); // locked in another page of the extension
+    submit(form);
+    await settle();
+    const confirm = h.panes.querySelector<HTMLElement>('.credits-form .pf-confirm')!;
+    wordIn(confirm, 'send').click();
+    await settle();
+
+    expect(confirm.querySelector('input[type="password"]')).not.toBeNull();
+    expect(h.panes.querySelector('.credits-flight')?.textContent).toBe('');
+    expect(h.id.signed).toEqual([]);
+  });
+
+  it('the wallet drawn locked, the lock flipped with no notice and no draw: the confirm row\'s send asks for no unlock, and the form returns with what was typed', async () => {
+    const h = rig({ feed: [], locked: true, credits: creditsWithBox(ME) });
+    await boot(h);
+    openWallet();
+    await settle();
+    const form = h.panes.querySelector<HTMLFormElement>('form.credits-form')!;
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = BOB;
+    inputs[1]!.value = '1.5';
+
+    h.id.setLocked(false); // unlocked in another page of the extension
+    submit(form);
+    await settle();
+    wordIn(h.panes.querySelector<HTMLElement>('.credits-form .pf-confirm')!, 'send').click();
+    await settle();
+
+    expect(h.panes.querySelector('.credits-field input[type="password"]')).toBeNull();
+    expect(h.id.unlocks).toEqual([]);
+    expect(h.panes.querySelector('form.credits-form')).toBe(form);
+    expect([inputs[0]!.value, inputs[1]!.value]).toEqual([BOB, '1.5']);
   });
 });
 
@@ -1500,6 +1685,35 @@ describe('a window closed with a form open ends the form, and the window opened 
     const fresh = again.querySelectorAll<HTMLInputElement>('form.credits-form input');
     expect(fresh[0]!.value).toBe('');
     expect(fresh[1]!.value).toBe('');
+  });
+
+  it('the wallet in the extension: the unlock row a locked send owes is gone and its field reads empty after ✕, and the reopened window shows no row and no key beneath its field', async () => {
+    const h = rig({ feed: [], locked: true, credits: creditsWithBox(ME), extension: true });
+    await boot(h);
+    openWallet();
+    await settle();
+    const form = h.panes.querySelector<HTMLFormElement>('form.credits-form')!;
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = BOB;
+    inputs[1]!.value = '1.5';
+    submit(form);
+    await settle();
+    const row = form.nextElementSibling as HTMLElement;
+    const field = fieldOf(row);
+    field.value = 'secret';
+
+    closeAt(h.panes, 0, 0);
+    await settle();
+    expect(row.isConnected).toBe(false);
+    expect([inputs[0]!.value, inputs[1]!.value, field.value]).toEqual(['', '', '']);
+
+    openWallet();
+    await settle();
+    const again = bodyOf(regionsOf(h.panes)[0]!);
+    expect(again.querySelector('.card-unlock')).toBeNull();
+    expect(again.querySelector<HTMLElement>('.resolved-key')!.hidden).toBe(true);
+    expect(h.id.unlocks).toEqual([]);
+    expect(h.id.signed).toEqual([]);
   });
 
   it('the settings: text typed in node and not committed is gone after ✕, and the reopened window reads the node in force', async () => {

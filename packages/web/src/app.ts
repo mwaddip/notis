@@ -33,7 +33,7 @@ import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, sub
 import { identity as identitySingleton } from './identity/identity';
 import { profileBody, type ProfileBody } from './view/profile';
 import {
-  walletBody, renderCreditsRow, resetCreditsSendForm, sendUnlockRow, type ResolvedRecipient, type SendAnswer, type SendRecipient,
+  walletBody, sendUnlockRow, type WalletBody, type ResolvedRecipient, type SendAnswer, type SendRecipient,
 } from './view/wallet';
 import { settingsBody } from './view/settings';
 import { authorBody, type AuthorCtx, type YourVouch } from './view/author';
@@ -91,9 +91,11 @@ interface HeldCardRow extends CardRow {
 }
 
 /** A window's body as the App holds it. The profile's draws one row where it
- *  stands, for a landing; any other is drawn whole. */
+ *  stands, for a landing, and the wallet's empties its send form; any other is
+ *  drawn whole. */
 type HeldBody =
   | { kind: 'profile'; body: ProfileBody }
+  | { kind: 'wallet'; body: WalletBody }
   | { kind: 'rows'; body: WindowBody };
 
 /** The two places under a card: `ask` holds the unlock form or the question,
@@ -1507,6 +1509,7 @@ export class App {
     if (id === '@profile') {
       return { kind: 'profile', body: profileBody(this.handlers, () => this.ctx(), () => this.originOf(id)) };
     }
+    if (id === '@wallet') return { kind: 'wallet', body: walletBody(this.handlers, () => this.ctx()) };
     const rows = this.bodyRows(id);
     if (rows === null) return null;
     const body = rows();
@@ -1519,10 +1522,15 @@ export class App {
     return held?.kind === 'profile' ? held.body : null;
   }
 
+  /** The wallet window's body, while the window is open. */
+  private wallet(): WalletBody | null {
+    const held = this.bodies.get('@wallet');
+    return held?.kind === 'wallet' ? held.body : null;
+  }
+
   /** A window's rows, drawn from the state as it stands into a fresh node, or
    *  null for a window drawn from its rows. */
   private bodyRows(id: string): (() => HTMLElement) | null {
-    if (id === '@wallet') return () => walletBody(this.handlers, this.ctx());
     if (id === '@settings') return () => settingsBody(this.handlers);
     const sub = windowSubject(id);
     if (sub?.kind === 'author') return () => authorBody(this.handlers, this.authorCtx(sub.key));
@@ -1559,13 +1567,16 @@ export class App {
   }
 
   /** The one ending of a window's body: out of the document, every field in it
-   *  emptied, and held nowhere — every form open in it ends with it
-   *  (WEB_INTERFACE → The workspace → "What ends a form in a window"). */
+   *  emptied, and held nowhere — every form open in it ends with it, the
+   *  wallet's send form with the answer the App holds for it and the unlock
+   *  that answer owed (WEB_INTERFACE → The workspace → "What ends a form in a
+   *  window"). */
   private endBody(id: string): void {
     const held = this.bodies.get(id);
     if (held === undefined) return;
     this.bodies.delete(id);
     endForm(held.body.el);
+    if (held.kind === 'wallet') this.dropSendAnswer();
   }
 
   /** A change of the identity or of the node read builds every body anew. */
@@ -3932,11 +3943,11 @@ export class App {
     this.renderCreditsRowInPlace();
   }
 
-  /** Drop the answer the App holds; an unlock row it owed leaves the screen,
-   *  and the send it was owed for is not made. */
+  /** Drop the answer the App holds; an unlock row it owed ends, its field
+   *  emptied, and the send it was owed for is not made. */
   private dropSendAnswer(): void {
     const answer = this.sendAnswer;
-    if (answer !== null && 'key' in answer) answer.unlock?.remove();
+    if (answer !== null && 'key' in answer && answer.unlock !== null) endForm(answer.unlock);
     this.sendAnswer = null;
   }
 
@@ -4055,8 +4066,7 @@ export class App {
       // with it; every other ending leaves its values intact (WEB_INTERFACE →
       // The wallet).
       this.dropSendAnswer();
-      const field = document.querySelector<HTMLElement>('.credits-field');
-      if (field) resetCreditsSendForm(field);
+      this.wallet()?.resetSend();
       this.startPoll();
     } else if ('rejection' in result) {
       this.sendFlight = { stage: 'rejected', reason: 'send rejected: ' + result.rejection.message };
@@ -4122,9 +4132,11 @@ export class App {
     this.renderCreditsRowInPlace();
   }
 
+  /** Draw the wallet window's rows where they stand, from the state as it is —
+   *  colour and text in a fixed box (HOUSE_STYLE → Motion). With no wallet
+   *  window open there is no row; the state stands for its next open. */
   private renderCreditsRowInPlace(): void {
-    const field = document.querySelector<HTMLElement>('.credits-field');
-    if (field) renderCreditsRow(field, this.handlers, this.ctx());
+    this.wallet()?.update();
   }
 
   // ---- the status corner (WEB_INTERFACE → The status corner) ----
