@@ -1035,7 +1035,9 @@ lower-cased on read; a link is always absolute, since a chat app needs the origi
 root and its descendants at their depth, the reply composer and the reader's own submissions under their
 parent, `load more replies` following `next`, the absence states as they are — on the same card with the
 same controls: the strip, like, `↩ reply`, withdraw on the reader's own post, the unlock rows, images on the
-reader's press, `link` (→ Links). The identity module, the wallet, the pending ledger and the landing poll
+reader's press, `link` (→ Links). **A card's author prefix is display on this page, not a control** — the same text,
+face and clay as the control's, as the header's prefix is: the page holds one window and opens no other, and an
+author's window is the workspace's (→ The way into the workspace). The identity module, the wallet, the pending ledger and the landing poll
 run as in the workspace; with no identity loaded the page is the read surface exactly. The member is capped
 at 660 and centred at every width — the one-column member rule (→ The workspace) applied to a page with one
 member, by a `standalone` class on the workspace element outside every media query.
@@ -1772,8 +1774,8 @@ coarse pointer a 36px hit box by padding a negative margin absorbs.
 
 ### The author window *(membership actions)*
 
-**`@author:<64hex>`** — an `@`-window like `@profile`, opened from an identity's prefix by the placement
-rule every window follows, raised rather than duplicated, persisted in the arrangement (`isWindowId`
+**`@author:<64hex>`** — an `@`-window like `@profile`, opened from an identity's prefix — in the workspace; the
+standalone page opens none (→ The standalone thread) — by the placement rule every window follows, raised rather than duplicated, persisted in the arrangement (`isWindowId`
 accepts the prefix with 64 hex). The bar reads `author · <prefix>` — `author · @Name` when the subject holds a
 name (→ The identity display), in every column holding the window, stacked or focused, as its read lands, the way a
 thread's bar reads its load — and carries no spine. `↻` is live and re-reads the endorsers page and the
