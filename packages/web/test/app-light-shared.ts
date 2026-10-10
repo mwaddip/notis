@@ -97,6 +97,8 @@ export interface Fake {
   credits?: import('../src/api/dto').CreditsResult;
   /** The reader's `/usernames?owner=`; absent is `null` (no name held). */
   ownName?: import('../src/api/dto').UsernameResult;
+  /** The reader's `/invites/:key`; absent is no standing bond. */
+  bonds?: import('../src/api/dto').BondsResult;
   /** The height `GET /blocks/current` answers; absent is 10. */
   height?: number;
   /** When set, every membership-level read (`/karma`, `/status`,
@@ -169,7 +171,7 @@ export function makeApi(f: Fake): Api {
     vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
     vouchesByVoucher: async () => { await f.membershipGate; return { vouches: [], count: 0, next: null }; },
     vouchCooldowns: async () => { await f.membershipGate; return { cooldowns: [], count: 0, next: null }; },
-    bonds: async () => { await f.membershipGate; return { bonds: [], bondCount: 0, next: null }; },
+    bonds: async () => { await f.membershipGate; return f.bonds ?? { bonds: [], bondCount: 0, next: null }; },
     usernameByOwner: async () => { await f.membershipGate; return f.ownName ?? null; },
     credits: async () => f.credits ?? ({ userId: ME, total: '0', boxes: [], boxCount: 0, next: null }),
     usernameByName: async () => null,
@@ -387,6 +389,8 @@ export interface Opts {
   credits?: import('../src/api/dto').CreditsResult;
   /** The reader's name — the fake's `/usernames?owner=`. */
   ownName?: import('../src/api/dto').UsernameResult;
+  /** The reader's standing bonds — the fake's `/invites/:key`. */
+  bonds?: import('../src/api/dto').BondsResult;
   mode?: Mode;
   /** `start` drives `App.start` instead of `App.mount` — the product's own
    *  path at page load, which fires `loadFeed`, `fetchThread` for every window
@@ -435,6 +439,7 @@ export function harness(opts: Opts = {}): Harness {
     karma: opts.karma,
     credits: opts.credits,
     ownName: opts.ownName,
+    bonds: opts.bonds,
     membershipGate: opts.membershipGate,
   };
   const api = makeApi(fake);

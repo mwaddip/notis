@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from 'vitest';
-import type { PostJson, PostResult, ThreadResult, FeedResult, UsernameResult, CreditsResult, KarmaResult } from '../src/api/dto';
+import type { PostJson, PostResult, ThreadResult, FeedResult, UsernameResult, CreditsResult, KarmaResult, BondsResult } from '../src/api/dto';
 import {
   ME, fullRow, harness, settle, lockableIdentity, recordingWrites,
   karmaWithBox, membershipGate,
@@ -86,6 +86,15 @@ function closeAt(panes: HTMLElement, colIdx: number, barIdx: number): void {
   ctl.click();
 }
 
+/** Press the bar's `←` or `→` at (colIdx, barIdx). */
+function moveAt(panes: HTMLElement, colIdx: number, barIdx: number, glyph: '←' | '→'): void {
+  const bar = [...(regionsOf(panes)[colIdx]?.querySelectorAll<HTMLElement>('.bar') ?? [])][barIdx];
+  if (bar === undefined) throw new Error('no bar ' + barIdx + ' in column ' + colIdx);
+  const ctl = [...bar.querySelectorAll<HTMLButtonElement>('[aria-label^="move this "]')].find((b) => b.textContent === glyph);
+  if (ctl === undefined) throw new Error('no ' + glyph + ' at ' + colIdx + ',' + barIdx);
+  ctl.click();
+}
+
 /** Press the bar's label at (colIdx, barIdx) to focus it. */
 function focusAt(panes: HTMLElement, colIdx: number, barIdx: number): void {
   const col = regionsOf(panes)[colIdx];
@@ -167,6 +176,7 @@ function rig(o: {
   karma?: KarmaResult;
   credits?: CreditsResult;
   ownName?: UsernameResult;
+  bonds?: BondsResult;
   boot?: 'mount' | 'start';
   membershipGate?: Promise<void>;
 }): Rig {
@@ -177,7 +187,7 @@ function rig(o: {
   const karma = o.karma ?? (o.member ? memberKarma() : karmaWithBox(ME));
   const h = harness({
     identityKey: ME, identity: id.identity, writeClient: writes.client,
-    karma, credits: o.credits, ownName: o.ownName, feedResults,
+    karma, credits: o.credits, ownName: o.ownName, bonds: o.bonds, feedResults,
     boot: o.boot, membershipGate: o.membershipGate,
   });
   for (const row of feedRows) h.fake.postById!.set(row.id, asResult(row));
@@ -232,7 +242,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('the passphrase row\'s unlock form across the open\'s read landing', () => {
-  it.fails('a locked identity, the reads held back, the profile opened, unlock pressed and typed, then the reads released: the node, its typed value and the focus are lost', async () => {
+  it('a locked identity, the reads held back, the profile opened, unlock pressed and typed, then the reads released: the form is the same node, its field holds what was typed, and the focus is in the field', async () => {
     const h = rig({ feed: [], locked: true });
     await h.drive.loadFeed();
     const gate = membershipGate();
@@ -243,6 +253,7 @@ describe('the passphrase row\'s unlock form across the open\'s read landing', ()
 
     const pp = h.panes.querySelector<HTMLElement>('.pp-field')!;
     wordIn(pp, 'unlock').click();
+    await settle(); // the form's own frame passes: its field has the focus before any draw
     const form = pp.querySelector<HTMLFormElement>('form.pf')!;
     const field = fieldOf(form);
     field.value = 'secret';
@@ -253,7 +264,9 @@ describe('the passphrase row\'s unlock form across the open\'s read landing', ()
     await settle();
 
     expect(form.isConnected).toBe(true);
-    expect(fieldOf(h.panes.querySelector('.pp-field')!).value).toBe('secret');
+    expect(h.panes.querySelector('.pp-field form.pf')).toBe(form);
+    expect(fieldOf(h.panes.querySelector('.pp-field')!)).toBe(field);
+    expect(field.value).toBe('secret');
     expect(document.activeElement).toBe(field);
   });
 });
@@ -267,13 +280,14 @@ async function refreshProfile(h: Rig): Promise<void> {
 }
 
 describe('the passphrase row\'s unlock form across the profile\'s ↻', () => {
-  it.fails('locked after the first read landed, unlock pressed and typed, ↻ pressed with reads held back, released: the node, value and focus are lost', async () => {
+  it('locked after the first read landed, unlock pressed and typed, ↻ pressed with reads held back, released: the form is the same node, its field holds what was typed, and the focus is in the field', async () => {
     const h = rig({ feed: [], locked: true });
     await boot(h);
     openProfile();
     await settle();
     const pp = h.panes.querySelector<HTMLElement>('.pp-field')!;
     wordIn(pp, 'unlock').click();
+    await settle(); // the form's own frame passes: its field has the focus before any draw
     const form = pp.querySelector<HTMLFormElement>('form.pf')!;
     const field = fieldOf(form);
     field.value = 'secret';
@@ -286,13 +300,15 @@ describe('the passphrase row\'s unlock form across the profile\'s ↻', () => {
     await settle();
 
     expect(form.isConnected).toBe(true);
-    expect(fieldOf(h.panes.querySelector('.pp-field')!).value).toBe('secret');
+    expect(h.panes.querySelector('.pp-field form.pf')).toBe(form);
+    expect(fieldOf(h.panes.querySelector('.pp-field')!)).toBe(field);
+    expect(field.value).toBe('secret');
     expect(document.activeElement).toBe(field);
   });
 });
 
 describe('the unlock row under the invite form across the profile\'s ↻', () => {
-  it.fails('member karma loaded with one invite available; invite submitted with a 64-hex key, unlock row mounted and typed; ↻ with reads held back, released: the node is replaced', async () => {
+  it('member karma loaded with one invite available; invite submitted with a 64-hex key, unlock row mounted and typed; ↻ with reads held back, released: the row is the same node under the same form, both fields hold what was typed, and the focus is in the passphrase field', async () => {
     const h = rig({ feed: [], locked: true, member: true });
     await boot(h);
     openProfile();
@@ -316,11 +332,16 @@ describe('the unlock row under the invite form across the profile\'s ↻', () =>
     await settle();
 
     expect(unlockRow.isConnected).toBe(true);
+    expect(h.panes.querySelector('form.invite-form')).toBe(inviteForm);
+    expect(inviteForm.nextElementSibling).toBe(unlockRow);
+    expect(keyInput.value).toBe(BOB);
+    expect(field.value).toBe('secret');
+    expect(document.activeElement).toBe(field);
   });
 });
 
 describe('the unlock row under the claim form across the profile\'s ↻', () => {
-  it.fails('no name held, locked, claim submitted with a valid name, unlock row mounted and typed; ↻ with reads held back, released: the node is replaced', async () => {
+  it('no name held, locked, claim submitted with a valid name, unlock row mounted and typed; ↻ with reads held back, released: the row is the same node under the same form, both fields hold what was typed, and the focus is in the passphrase field', async () => {
     const h = rig({ feed: [], locked: true });
     await boot(h);
     openProfile();
@@ -344,11 +365,16 @@ describe('the unlock row under the claim form across the profile\'s ↻', () => 
     await settle();
 
     expect(unlockRow.isConnected).toBe(true);
+    expect(h.panes.querySelector('form.username-form')).toBe(claimForm);
+    expect(claimForm.nextElementSibling).toBe(unlockRow);
+    expect(nameInput.value).toBe('alice');
+    expect(field.value).toBe('secret');
+    expect(document.activeElement).toBe(field);
   });
 });
 
 describe('the export form across the profile\'s ↻', () => {
-  it.fails('unlocked, export pressed, both set-passphrase fields typed; ↻ with reads held back, released: the node is replaced', async () => {
+  it('unlocked, export pressed, both set-passphrase fields typed; ↻ with reads held back, released: the form is the same node, both fields hold what was typed, and the focus is in the first', async () => {
     const h = rig({ feed: [], locked: false });
     await boot(h);
     openProfile();
@@ -372,11 +398,14 @@ describe('the export form across the profile\'s ↻', () => {
     await settle();
 
     expect(form.isConnected).toBe(true);
+    expect(rowByLabel(h.panes, 'export').querySelector('form.pf')).toBe(form);
+    expect(inputs.map((x) => x.value)).toEqual(['secret', 'secret']);
+    expect(document.activeElement).toBe(inputs[0]);
   });
 });
 
 describe('the invite form\'s own typed key across the profile\'s ↻', () => {
-  it.fails('invite form open with its key typed and not yet submitted: ↻ with reads held back, released: the new field reads empty', async () => {
+  it('invite form open with its key typed and not yet submitted: ↻ with reads held back, released: the form is the same node, its field holds the key typed, and the focus is in the field', async () => {
     const h = rig({ feed: [], locked: false, member: true });
     await boot(h);
     openProfile();
@@ -393,13 +422,15 @@ describe('the invite form\'s own typed key across the profile\'s ↻', () => {
     gate.release();
     await settle();
 
-    const after = h.panes.querySelector<HTMLFormElement>('form.invite-form')!;
-    expect(after.querySelector<HTMLInputElement>('input[type="text"]')!.value).toBe(BOB);
+    expect(h.panes.querySelector('form.invite-form')).toBe(inviteForm);
+    expect(inviteForm.querySelector('input[type="text"]')).toBe(keyInput);
+    expect(keyInput.value).toBe(BOB);
+    expect(document.activeElement).toBe(keyInput);
   });
 });
 
 describe('the claim field\'s own typed name across the profile\'s ↻', () => {
-  it.fails('no name held, claim field typed and not submitted: ↻ with reads held back, released: the new field reads empty', async () => {
+  it('no name held, claim field typed and not submitted: ↻ with reads held back, released: the form is the same node, its field holds the name typed, and the focus is in the field', async () => {
     const h = rig({ feed: [], locked: false });
     await boot(h);
     openProfile();
@@ -416,13 +447,15 @@ describe('the claim field\'s own typed name across the profile\'s ↻', () => {
     gate.release();
     await settle();
 
-    const after = h.panes.querySelector<HTMLFormElement>('form.username-form')!;
-    expect(after.querySelector<HTMLInputElement>('input')!.value).toBe('alice');
+    expect(h.panes.querySelector('form.username-form')).toBe(claimForm);
+    expect(claimForm.querySelector('input')).toBe(nameInput);
+    expect(nameInput.value).toBe('alice');
+    expect(document.activeElement).toBe(nameInput);
   });
 });
 
 describe('the burn confirm across the profile\'s ↻', () => {
-  it.fails('a name is held, burn pressed, the confirm wrap stands; ↻ with reads held back, released: the node is replaced', async () => {
+  it('a name is held, burn pressed, the question stands; ↻ with reads held back, released: the question is the same node in the username row, and the focus is on keep', async () => {
     const h = rig({ feed: [], locked: false, member: true, ownName: ownNameRow() });
     await boot(h);
     openProfile();
@@ -433,6 +466,8 @@ describe('the burn confirm across the profile\'s ↻', () => {
     await settle();
     const confirm = h.panes.querySelector<HTMLElement>('.pf-confirm')!;
     expect(confirm).not.toBeNull();
+    const keep = wordIn(confirm, 'keep');
+    expect(document.activeElement).toBe(keep);
 
     const gate = membershipGate();
     h.fake.membershipGate = gate.promise;
@@ -441,11 +476,13 @@ describe('the burn confirm across the profile\'s ↻', () => {
     await settle();
 
     expect(confirm.isConnected).toBe(true);
+    expect(rowByLabel(h.panes, 'username').querySelector('.pf-confirm')).toBe(confirm);
+    expect(document.activeElement).toBe(keep);
   });
 });
 
 describe('the forget confirm across the profile\'s ↻', () => {
-  it.fails('forget pressed, the confirm wrap stands; ↻ with reads held back, released: the node is replaced', async () => {
+  it('forget pressed, the question stands; ↻ with reads held back, released: the question is the same node in the forget row, and the focus is on keep', async () => {
     const h = rig({ feed: [], locked: false });
     await boot(h);
     openProfile();
@@ -456,6 +493,8 @@ describe('the forget confirm across the profile\'s ↻', () => {
     await settle();
     const confirm = rowByLabel(h.panes, 'forget').querySelector<HTMLElement>('.pf-confirm')!;
     expect(confirm).not.toBeNull();
+    const keep = wordIn(confirm, 'keep');
+    expect(document.activeElement).toBe(keep);
 
     const gate = membershipGate();
     h.fake.membershipGate = gate.promise;
@@ -464,6 +503,8 @@ describe('the forget confirm across the profile\'s ↻', () => {
     await settle();
 
     expect(confirm.isConnected).toBe(true);
+    expect(rowByLabel(h.panes, 'forget').querySelector('.pf-confirm')).toBe(confirm);
+    expect(document.activeElement).toBe(keep);
   });
 });
 
@@ -484,30 +525,30 @@ describe('the forget confirm across the profile\'s ↻', () => {
 // ---------------------------------------------------------------------------
 
 /** The scaffold for a profile / wallet / settings redraw case: Q at column 0,
- *  R at column 1, S at column 2 pending. The form's window opens into column
- *  0 and is focused there — Q stays stacked under it. */
-async function withQR(h: Rig, Q: PostJson, R: PostJson, S: PostJson): Promise<HTMLElement> {
+ *  R at column 1, and R's reply S unopened — a case opens it to drive a new
+ *  column 2. The form's window opens into column 0 and is focused there — Q
+ *  stays stacked under it. Answers column 1's region. */
+async function withQR(h: Rig, Q: PostJson, R: PostJson): Promise<HTMLElement> {
   await boot(h);
   await openFromFeed(h, Q.id);
   const col0 = regionsOf(h.panes)[0]!;
   await openFromPane(col0, R.id); // column 1 [R]
   return regionsOf(h.panes)[1]!;
-  // S remains unopened — a case opens it later to drive a new column 2.
-  void S;
 }
 
 describe('the passphrase row\'s unlock form while the profile is focused in column 0 across a window opening in column 2', () => {
-  it.fails('profile opened over Q; a new thread opened from R\'s pane (column 2): the node is replaced', async () => {
+  it('profile opened over Q; a new thread opened from R\'s pane (column 2): the form is the same node, its field holds what was typed, and the focus is in the field', async () => {
     const Q = fullRow('Q', { author: OTHER });
     const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
     const S = fullRow('S', { author: OTHER, parentRefs: [R.id] });
     const h = rig({ feed: [Q], threads: [thread(Q, [R]), thread(R, [S]), thread(S)], locked: true });
-    const col1 = await withQR(h, Q, R, S);
+    const col1 = await withQR(h, Q, R);
 
     openProfile();
     await settle();
     const pp = h.panes.querySelector<HTMLElement>('.pp-field')!;
     wordIn(pp, 'unlock').click();
+    await settle(); // the form's own frame passes: its field has the focus before any draw
     const form = pp.querySelector<HTMLFormElement>('form.pf')!;
     const field = fieldOf(form);
     field.value = 'secret';
@@ -521,22 +562,26 @@ describe('the passphrase row\'s unlock form while the profile is focused in colu
     expect(regionsOf(h.panes)).toHaveLength(3);
 
     expect(form.isConnected).toBe(true);
+    expect(regionsOf(h.panes)[0]!.querySelector('.pp-field form.pf')).toBe(form);
+    expect(field.value).toBe('secret');
+    expect(document.activeElement).toBe(field);
   });
 });
 
 describe('the passphrase row\'s unlock form while the profile is focused in column 0 across a window closing in column 2', () => {
-  it.fails('profile opened over Q; S already open in column 2 is closed by its ✕: the node is replaced', async () => {
+  it('profile opened over Q; S already open in column 2 is closed by its ✕: the form is the same node, its field holds what was typed, and the focus is in the field', async () => {
     const Q = fullRow('Q', { author: OTHER });
     const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
     const S = fullRow('S', { author: OTHER, parentRefs: [R.id] });
     const h = rig({ feed: [Q], threads: [thread(Q, [R]), thread(R, [S]), thread(S)], locked: true });
-    const col1 = await withQR(h, Q, R, S);
+    const col1 = await withQR(h, Q, R);
     await openFromPane(col1, S.id); // column 2 [S]
 
     openProfile();
     await settle();
     const pp = h.panes.querySelector<HTMLElement>('.pp-field')!;
     wordIn(pp, 'unlock').click();
+    await settle(); // the form's own frame passes: its field has the focus before any draw
     const form = pp.querySelector<HTMLFormElement>('form.pf')!;
     const field = fieldOf(form);
     field.value = 'secret';
@@ -546,13 +591,17 @@ describe('the passphrase row\'s unlock form while the profile is focused in colu
 
     closeAt(h.panes, 2, 0);
     await settle();
+    expect(regionsOf(h.panes)).toHaveLength(2);
 
     expect(form.isConnected).toBe(true);
+    expect(regionsOf(h.panes)[0]!.querySelector('.pp-field form.pf')).toBe(form);
+    expect(field.value).toBe('secret');
+    expect(document.activeElement).toBe(field);
   });
 });
 
 describe('the passphrase row\'s unlock form while the profile is focused in column 0 across the stacked-under thread closing', () => {
-  it.fails('profile opened over Q, unlock typed; Q (stacked under) closed by its ✕: the node is replaced', async () => {
+  it('profile opened over Q, unlock typed; Q (stacked under) closed by its ✕: the form is the same node, its field holds what was typed, and the focus is in the field', async () => {
     const Q = fullRow('Q', { author: OTHER });
     const h = rig({ feed: [Q], threads: [thread(Q)], locked: true });
     await boot(h);
@@ -561,6 +610,7 @@ describe('the passphrase row\'s unlock form while the profile is focused in colu
     await settle();
     const pp = h.panes.querySelector<HTMLElement>('.pp-field')!;
     wordIn(pp, 'unlock').click();
+    await settle(); // the form's own frame passes: its field has the focus before any draw
     const form = pp.querySelector<HTMLFormElement>('form.pf')!;
     const field = fieldOf(form);
     field.value = 'secret';
@@ -568,8 +618,12 @@ describe('the passphrase row\'s unlock form while the profile is focused in colu
 
     closeAt(h.panes, 0, 0);
     await settle();
+    expect(focusedName(regionsOf(h.panes)[0]!)).toBe('profile');
 
     expect(form.isConnected).toBe(true);
+    expect(h.panes.querySelector('.pp-field form.pf')).toBe(form);
+    expect(field.value).toBe('secret');
+    expect(document.activeElement).toBe(field);
   });
 });
 
@@ -658,7 +712,7 @@ describe('the wallet\'s send form while the wallet is focused in column 0 across
       feed: [Q], threads: [thread(Q, [R]), thread(R, [S]), thread(S)],
       locked: false, credits: creditsWithBox(ME),
     });
-    const col1 = await withQR(h, Q, R, S);
+    const col1 = await withQR(h, Q, R);
 
     openWallet();
     await settle();
@@ -688,7 +742,7 @@ describe('the wallet\'s send form while the wallet is focused in column 0 across
       feed: [Q], threads: [thread(Q, [R]), thread(R, [S]), thread(S)],
       locked: false, credits: creditsWithBox(ME),
     });
-    const col1 = await withQR(h, Q, R, S);
+    const col1 = await withQR(h, Q, R);
     await openFromPane(col1, S.id);
 
     openWallet();
@@ -735,7 +789,7 @@ describe('the settings node field while settings is focused in column 0 across a
     const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
     const S = fullRow('S', { author: OTHER, parentRefs: [R.id] });
     const h = rig({ feed: [Q], threads: [thread(Q, [R]), thread(R, [S]), thread(S)], locked: false });
-    const col1 = await withQR(h, Q, R, S);
+    const col1 = await withQR(h, Q, R);
 
     openSettings();
     await settle();
@@ -763,7 +817,7 @@ describe('the settings node field while settings is focused in column 0 across a
     const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
     const S = fullRow('S', { author: OTHER, parentRefs: [R.id] });
     const h = rig({ feed: [Q], threads: [thread(Q, [R]), thread(R, [S]), thread(S)], locked: false });
-    const col1 = await withQR(h, Q, R, S);
+    const col1 = await withQR(h, Q, R);
     await openFromPane(col1, S.id);
 
     openSettings();
@@ -870,7 +924,7 @@ describe('the wallet\'s confirm row (web) across a window opening in column 2', 
       feed: [Q], threads: [thread(Q, [R]), thread(R, [S]), thread(S)],
       locked: false, credits: creditsWithBox(ME),
     });
-    const col1 = await withQR(h, Q, R, S);
+    const col1 = await withQR(h, Q, R);
 
     openWallet();
     await settle();
@@ -920,7 +974,7 @@ describe('the wallet\'s confirm row (web) across the wallet\'s own ↻', () => {
 // ---------------------------------------------------------------------------
 
 describe('the passphrase row\'s unlock form across a start-up read landing', () => {
-  it.fails('a restored arrangement with the profile open; the start-up read held back; unlock pressed and typed; the read released: the node is replaced', async () => {
+  it('a restored arrangement with the profile open; the start-up read held back; unlock pressed and typed; the read released: the form is the same node, its field holds what was typed, and the focus is in the field', async () => {
     localStorage.setItem('notis.layout', '@profile');
     const gate = membershipGate();
     const h = rig({ feed: [], locked: true, boot: 'start', membershipGate: gate.promise });
@@ -928,6 +982,7 @@ describe('the passphrase row\'s unlock form across a start-up read landing', () 
 
     const pp = h.panes.querySelector<HTMLElement>('.pp-field')!;
     wordIn(pp, 'unlock').click();
+    await settle(); // the form's own frame passes: its field has the focus before any draw
     const form = pp.querySelector<HTMLFormElement>('form.pf')!;
     const field = fieldOf(form);
     field.value = 'secret';
@@ -937,6 +992,46 @@ describe('the passphrase row\'s unlock form across a start-up read landing', () 
     await settle();
 
     expect(form.isConnected).toBe(true);
+    expect(h.panes.querySelector('.pp-field form.pf')).toBe(form);
+    expect(field.value).toBe('secret');
+    expect(document.activeElement).toBe(field);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A.7  The profile with no identity loaded.
+// ---------------------------------------------------------------------------
+
+describe('the create form with no identity loaded across the stacked-under thread closing', () => {
+  it('profile opened over Q, create pressed, both passphrase fields typed; Q closed by its ✕: the form is the same node, both fields hold what was typed, and the focus is in the first', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const h = harness({ identityKey: null, feedResults: [page([Q])] });
+    h.fake.threadById!.set(Q.id, thread(Q));
+    h.fake.postById!.set(Q.id, asResult(Q));
+    await h.drive.loadFeed();
+    await settle();
+    cardOf(h.feedEl, Q.id).querySelector<HTMLButtonElement>('button.strip')!.click();
+    await settle();
+    openProfile();
+    await settle();
+
+    wordIn(h.panes, 'create').click();
+    await settle();
+    const form = h.panes.querySelector<HTMLFormElement>('.pf-inline form.pf')!;
+    const inputs = [...form.querySelectorAll<HTMLInputElement>('input[type="password"]')];
+    expect(inputs).toHaveLength(2);
+    inputs[0]!.value = 'new';
+    inputs[1]!.value = 'new';
+    inputs[0]!.focus();
+
+    closeAt(h.panes, 0, 0);
+    await settle();
+    expect(focusedName(regionsOf(h.panes)[0]!)).toBe('profile');
+
+    expect(form.isConnected).toBe(true);
+    expect(h.panes.querySelector('.pf-inline form.pf')).toBe(form);
+    expect(inputs.map((x) => x.value)).toEqual(['new', 'new']);
+    expect(document.activeElement).toBe(inputs[0]);
   });
 });
 
@@ -946,7 +1041,7 @@ describe('the passphrase row\'s unlock form across a start-up read landing', () 
 // ===========================================================================
 
 describe('the profile\'s passphrase unlock form across its window being covered by a stacked thread and brought back', () => {
-  it.fails('profile open over Q; unlock typed; Q brought to front by pressing its bar; profile brought back by pressing its bar: the node is replaced', async () => {
+  it('profile open over Q; unlock typed; Q brought to front by pressing its bar; profile brought back by pressing its bar: off the document while covered, and on return the form is the same node with what was typed in its field', async () => {
     const Q = fullRow('Q', { author: OTHER });
     const h = rig({ feed: [Q], threads: [thread(Q)], locked: true });
     await boot(h);
@@ -955,6 +1050,7 @@ describe('the profile\'s passphrase unlock form across its window being covered 
     await settle();
     const pp = h.panes.querySelector<HTMLElement>('.pp-field')!;
     wordIn(pp, 'unlock').click();
+    await settle(); // the form's own frame passes: its field has the focus before any draw
     const form = pp.querySelector<HTMLFormElement>('form.pf')!;
     const field = fieldOf(form);
     field.value = 'secret';
@@ -963,10 +1059,44 @@ describe('the profile\'s passphrase unlock form across its window being covered 
     // Column 0 wins = [Q, @profile]; bars are [Q bar, profile bar].
     focusAt(h.panes, 0, 0); // Q to front
     await settle();
+    expect(form.isConnected).toBe(false);
+    expect(field.value).toBe('secret');
     focusAt(h.panes, 0, 1); // profile back to front
     await settle();
 
     expect(form.isConnected).toBe(true);
+    expect(h.panes.querySelector('.pp-field form.pf')).toBe(form);
+    expect(fieldOf(h.panes.querySelector('.pp-field')!)).toBe(field);
+    expect(field.value).toBe('secret');
+  });
+});
+
+describe('a passphrase typed in a form whose window is covered is held in its field and nowhere else', () => {
+  it('profile open over Q; a passphrase typed; Q brought to front: no field in the document holds it; profile brought back: one field holds it, the one it was typed in', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const h = rig({ feed: [Q], threads: [thread(Q)], locked: true });
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    openProfile();
+    await settle();
+    const pp = h.panes.querySelector<HTMLElement>('.pp-field')!;
+    wordIn(pp, 'unlock').click();
+    const field = fieldOf(pp);
+    field.value = 'correct horse';
+    const holding = (): HTMLInputElement[] =>
+      [...document.querySelectorAll<HTMLInputElement>('input')].filter((x) => x.value === 'correct horse');
+    expect(holding()).toEqual([field]);
+
+    focusAt(h.panes, 0, 0); // Q to front
+    await settle();
+    expect(holding()).toEqual([]);
+    expect(document.body.textContent).not.toContain('correct horse');
+    expect(field.value).toBe('correct horse');
+
+    focusAt(h.panes, 0, 1); // profile back to front
+    await settle();
+    expect(holding()).toEqual([field]);
+    expect(h.id.unlocks).toEqual([]);
   });
 });
 
@@ -1175,6 +1305,145 @@ describe('a card\'s unlock row and the composer draft across the membership read
     expect(composer.isConnected).toBe(true);
     expect(h.feedEl.querySelector('.composer')).toBe(composer);
     expect(composer.querySelector<HTMLTextAreaElement>('textarea.composer-text')!.value).toBe('a draft');
+  });
+});
+
+// ===========================================================================
+// Group E — a draw adds or ends a form only where the state has changed
+// whether its row offers it (WEB_INTERFACE → The workspace → "A draw updates a
+// standing body in place").
+// ===========================================================================
+
+describe('a read that leaves no invite available ends the invite form', () => {
+  it('the invite form with a key typed and its unlock row with a passphrase typed; the ↻\'s read answers no invite available: neither stands, both fields read empty, and the line reads the new count', async () => {
+    const h = rig({ feed: [], locked: true, member: true });
+    await boot(h);
+    openProfile();
+    await settle();
+    const inviteForm = h.panes.querySelector<HTMLFormElement>('form.invite-form')!;
+    const keyInput = inviteForm.querySelector<HTMLInputElement>('input[type="text"]')!;
+    keyInput.value = BOB;
+    submit(inviteForm);
+    const unlockRow = rowByLabel(h.panes, 'invites').querySelector<HTMLElement>('.card-unlock')!;
+    const field = fieldOf(unlockRow);
+    field.value = 'secret';
+
+    h.fake.karma = { ...memberKarma(), invitesAvailable: 0 };
+    await refreshProfile(h);
+
+    const row = rowByLabel(h.panes, 'invites');
+    expect(row.querySelector('form')).toBeNull();
+    expect(row.querySelector('.card-unlock')).toBeNull();
+    expect(inviteForm.isConnected).toBe(false);
+    expect(keyInput.value).toBe('');
+    expect(field.value).toBe('');
+    expect(row.querySelector('.invites-line')?.textContent).toBe('0 invites available.');
+  });
+});
+
+describe('a read that lands a name ends the claim form and places the username row above key', () => {
+  it('the claim form with a name typed; the ↻\'s read answers a name held: the form is gone, its field reads empty, the row reads the handle and stands above key', async () => {
+    const h = rig({ feed: [], locked: false });
+    await boot(h);
+    openProfile();
+    await settle();
+    const labels = (): Array<string | null> =>
+      [...h.panes.querySelectorAll<HTMLElement>('.winbody > .row > label')].map((l) => l.textContent);
+    expect(labels().slice(0, 2)).toEqual(['key', 'username']);
+    const usernameRow = rowByLabel(h.panes, 'username');
+    const claimForm = usernameRow.querySelector<HTMLFormElement>('form.username-form')!;
+    const nameInput = claimForm.querySelector<HTMLInputElement>('input')!;
+    nameInput.value = 'alice';
+
+    h.fake.ownName = ownNameRow();
+    await refreshProfile(h);
+
+    expect(rowByLabel(h.panes, 'username')).toBe(usernameRow);
+    expect(usernameRow.querySelector('form')).toBeNull();
+    expect(claimForm.isConnected).toBe(false);
+    expect(nameInput.value).toBe('');
+    expect(usernameRow.querySelector('.handle')?.textContent).toBe('@alice');
+    expect(labels().slice(0, 2)).toEqual(['username', 'key']);
+  });
+});
+
+// ===========================================================================
+// Group F — a window's controls act on the state as it stands at the press
+// (WEB_INTERFACE → The workspace → "A window's controls act on the state as it
+// stands at the press").
+// ===========================================================================
+
+describe('the profile\'s export reads the identity\'s lock when pressed', () => {
+  it('the profile drawn unlocked, the lock flipped with no notice and no draw: export asks for the unlock first', async () => {
+    const h = rig({ feed: [], locked: false });
+    await boot(h);
+    openProfile();
+    await settle();
+    const exportRow = rowByLabel(h.panes, 'export');
+
+    h.id.setLocked(true); // locked in another page of the extension
+    wordIn(exportRow, 'export').click();
+    const fields = exportRow.querySelectorAll<HTMLInputElement>('input[type="password"]');
+    expect(fields).toHaveLength(1);
+    expect(fields[0]!.autocomplete).toBe('current-password');
+  });
+
+  it('the profile drawn locked, the lock flipped with no notice and no draw: export goes to the file\'s set form', async () => {
+    const h = rig({ feed: [], locked: true });
+    await boot(h);
+    openProfile();
+    await settle();
+    const exportRow = rowByLabel(h.panes, 'export');
+
+    h.id.setLocked(false); // unlocked in another page of the extension
+    wordIn(exportRow, 'export').click();
+    const fields = exportRow.querySelectorAll<HTMLInputElement>('input[type="password"]');
+    expect(fields).toHaveLength(2);
+    expect(fields[0]!.autocomplete).toBe('new-password');
+  });
+});
+
+describe('a standing bond\'s name opens beside the column the profile stands in when pressed', () => {
+  it('the profile moved by →, by ←, and left in column 0 by the column on its left closing: each press opens the invitee\'s window one column right of the profile', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const bonds: BondsResult = {
+      bonds: [{ id: 'b1', value: '100', inviterId: ME, inviteePublicKey: BOB, inviterName: null, inviteeName: null }],
+      bondCount: 1, next: null,
+    };
+    const h = rig({ feed: [Q], threads: [thread(Q)], locked: false, member: true, bonds });
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    openProfile(); // column 0 [Q, profile]
+    await settle();
+    const names = (): Array<string | null> => regionsOf(h.panes).map(focusedName);
+    const pressBond = async (): Promise<void> => {
+      h.panes.querySelector<HTMLButtonElement>('.bond .authorbtn')!.click();
+      await settle();
+    };
+
+    moveAt(h.panes, 0, 1, '→'); // column 1 [profile]
+    await settle();
+    expect(names()).toEqual([Q.content, 'profile']);
+    await pressBond();
+    expect(names()).toEqual([Q.content, 'profile', 'author']);
+
+    closeAt(h.panes, 2, 0);
+    await settle();
+    moveAt(h.panes, 1, 0, '←'); // column 0 [Q, profile]
+    await settle();
+    expect(names()).toEqual(['profile']);
+    await pressBond();
+    expect(names()).toEqual(['profile', 'author']);
+
+    closeAt(h.panes, 1, 0);
+    await settle();
+    moveAt(h.panes, 0, 1, '→'); // column 1 [profile]
+    await settle();
+    closeAt(h.panes, 0, 0); // Q's column goes: the profile stands in column 0
+    await settle();
+    expect(names()).toEqual(['profile']);
+    await pressBond();
+    expect(names()).toEqual(['profile', 'author']);
   });
 });
 

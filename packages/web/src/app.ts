@@ -31,7 +31,7 @@ import type { PendingEntry, EntryOutcome } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps } from './wallet/submit';
 import { identity as identitySingleton } from './identity/identity';
-import { profileBody, renderKarmaField, renderInvitesRow, renderUsernameRow } from './view/profile';
+import { profileBody, type ProfileBody } from './view/profile';
 import {
   walletBody, renderCreditsRow, resetCreditsSendForm, sendUnlockRow, type ResolvedRecipient, type SendAnswer, type SendRecipient,
 } from './view/wallet';
@@ -89,6 +89,12 @@ interface HeldCardRow extends CardRow {
   list: string;
   postId: string;
 }
+
+/** A window's body as the App holds it. The profile's draws one row where it
+ *  stands, for a landing; any other is drawn whole. */
+type HeldBody =
+  | { kind: 'profile'; body: ProfileBody }
+  | { kind: 'rows'; body: WindowBody };
 
 /** The two places under a card: `ask` holds the unlock form or the question,
  *  one of the two at a time; `link` holds the link row, beside either. */
@@ -280,7 +286,7 @@ export class App {
   // reader opened in one, and what is typed in it, is held in that node and
   // nowhere else (WEB_INTERFACE → The workspace → "A window's body stands while
   // the window is open").
-  private bodies = new Map<string, WindowBody>();
+  private bodies = new Map<string, HeldBody>();
   // Targets the reader pressed like on, shown liked at once and reverted on a
   // rejection or expiry (WEB_INTERFACE → The wallet).
   private optimisticLikes = new Set<string>();
@@ -1484,26 +1490,38 @@ export class App {
   private windowBody(id: string): HTMLElement | null {
     const held = this.bodies.get(id);
     if (held !== undefined) {
-      held.update();
-      return held.el;
+      held.body.update();
+      return held.body.el;
     }
     const built = this.buildBody(id);
     if (built === null) return null;
     this.bodies.set(id, built);
-    return built.el;
+    return built.body.el;
   }
 
-  private buildBody(id: string): WindowBody | null {
+  /** A body reads the state through the App when it is drawn and when one of
+   *  its controls is pressed, never from the draw that built it (WEB_INTERFACE
+   *  → The workspace → "A window's controls act on the state as it stands at
+   *  the press"). */
+  private buildBody(id: string): HeldBody | null {
+    if (id === '@profile') {
+      return { kind: 'profile', body: profileBody(this.handlers, () => this.ctx(), () => this.originOf(id)) };
+    }
     const rows = this.bodyRows(id);
     if (rows === null) return null;
     const body = rows();
-    return { el: body, update: () => body.replaceChildren(...rows().childNodes) };
+    return { kind: 'rows', body: { el: body, update: () => body.replaceChildren(...rows().childNodes) } };
+  }
+
+  /** The profile window's body, while the window is open. */
+  private profile(): ProfileBody | null {
+    const held = this.bodies.get('@profile');
+    return held?.kind === 'profile' ? held.body : null;
   }
 
   /** A window's rows, drawn from the state as it stands into a fresh node, or
    *  null for a window drawn from its rows. */
   private bodyRows(id: string): (() => HTMLElement) | null {
-    if (id === '@profile') return () => profileBody(this.handlers, this.ctx(), this.originOf(id));
     if (id === '@wallet') return () => walletBody(this.handlers, this.ctx());
     if (id === '@settings') return () => settingsBody(this.handlers);
     const sub = windowSubject(id);
@@ -1547,7 +1565,7 @@ export class App {
     const held = this.bodies.get(id);
     if (held === undefined) return;
     this.bodies.delete(id);
-    endForm(held.el);
+    endForm(held.body.el);
   }
 
   /** A change of the identity or of the node read builds every body anew. */
@@ -2869,10 +2887,11 @@ export class App {
     this.renderProfileKarma();
   }
 
-  /** Rebuild the profile window's karma field in place from the current ctx. */
+  /** Draw the profile window's rep row where it stands, from the state as it
+   *  is. With no profile window open there is no row; the state stands for its
+   *  next open. */
   private renderProfileKarma(): void {
-    const field = document.querySelector<HTMLElement>('.karma-field');
-    if (field) renderKarmaField(field, this.handlers, this.ctx());
+    this.profile()?.karma();
   }
 
   // -------------------------------------------------------------------------
@@ -3770,13 +3789,12 @@ export class App {
     this.renderInvitesRowInPlace();
   }
 
-  /** Rebuild the invites row's line, flight and bonds in place from the current
-   *  ctx — the invite flight and its landing move colour and text, never the form
-   *  the reader may be filling (WEB_INTERFACE → The profile window). A closed
-   *  profile has no field; the state is already updated for the next open. */
+  /** Draw the invites row where it stands — the invite flight and its landing
+   *  move colour and text, never the form the reader may be filling
+   *  (WEB_INTERFACE → The profile window → "The `invites` row"). With no profile
+   *  window open there is no row; the state stands for its next open. */
   private renderInvitesRowInPlace(): void {
-    const field = document.querySelector<HTMLElement>('.invites-field');
-    if (field) renderInvitesRow(field, this.handlers, this.ctx(), this.originOf('@profile'));
+    this.profile()?.invites();
     this.checkNames('new');
   }
 
@@ -3840,9 +3858,11 @@ export class App {
     this.renderUsernameRowInPlace();
   }
 
+  /** Draw the username row where it stands: a claim or a burn in flight, and
+   *  its landing, move text and colour in a fixed row (WEB_INTERFACE → The
+   *  username row). */
   private renderUsernameRowInPlace(): void {
-    const field = document.querySelector<HTMLElement>('.username-field');
-    if (field) renderUsernameRow(field, this.handlers, this.ctx());
+    this.profile()?.username();
     this.checkNames('new');
   }
 
@@ -5187,7 +5207,7 @@ export class App {
     const active = document.activeElement;
     if (!(active instanceof HTMLElement)) return null;
     for (const held of this.cardRows.values()) if (held.el.contains(active)) return active;
-    for (const held of this.bodies.values()) if (held.el.contains(active)) return active;
+    for (const held of this.bodies.values()) if (held.body.el.contains(active)) return active;
     return null;
   }
 
