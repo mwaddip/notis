@@ -7074,14 +7074,16 @@ async function main() {
   record('12c', noConfirm12c && formKept12c && flightOk12c && !transferSeen12c && rowUnchanged12c,
     `no .pf-confirm=${noConfirm12c}, form to='${state12c.to?.slice(0, 8) ?? 'null'}…' amount='${state12c.amount}', flight='${state12c.flight}', no /credits/transfer=${!transferSeen12c}, row='${state12c.gold}'`);
 
-  // --- 12d — lock in the profile, return to the wallet, then send: the
-  // extension arm mounts the unlock form UNDER the credits form
-  // (`.credits-field .card-unlock`, the invites row's pattern — WEB_INTERFACE
-  // → The wallet window → "The `send` row"), never in a `.pf-confirm`. No
-  // prompt, no /credits/transfer under lock. Unlock → the flight proceeds →
-  // the first-send prompt after unlock. Decline it. A second send goes
-  // straight to the prompt — cur.identity was mutated, no second unlock
-  // (WEB_INTERFACE → The wallet window → "The `send` row").
+  // --- 12d — lock in the profile, return to the wallet, then send. The
+  // press reads the identity's lock (WEB_INTERFACE → The workspace → "A
+  // window's controls act on the state as it stands at the press"): locked,
+  // the send owes an unlock, and its row stands after the credits form
+  // (`.credits-field .card-unlock`), never in a `.pf-confirm` — no prompt
+  // and no /credits/transfer under lock (WEB_INTERFACE → The wallet window →
+  // "The `send` row"). The row's submit unlocks, and the send it was owed
+  // for goes to the prompt, which is declined. A second send's press reads
+  // the identity unlocked: it owes no unlock and goes to the prompt,
+  // declined too.
   await cx10.eval(`document.querySelector('[aria-label="open profile"]').click()`, true);
   await cx10.waitFor(`!!window.__btn('lock')`, 'lock button in profile 12d');
   await cx10.eval(`window.__btn('lock').click()`, true);
@@ -7129,8 +7131,8 @@ async function main() {
     inputs[1].value = '2';
     form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
   })()`, true);
-  // The resolved-key hint reveals; there must be no second `.card-unlock`
-  // — the closure's `cur.identity.locked` is false after the first unlock.
+  // The key the send goes to stands beneath the field, and no
+  // `.card-unlock` stands: this press read the identity unlocked.
   await cx10.waitFor(
     `(() => { const r = document.querySelector('.credits-field form.credits-form .resolved-key'); return !!r && !r.hidden; })()`,
     'resolved-key visible 12d second',
