@@ -24,17 +24,28 @@ import { parseBatchIds, isBatchIdsError } from '../src/routes/page.js';
 import { makeTestIdentity, makeCreditBox, makeCreditTx } from '../test/helpers.js';
 
 /**
- * What `GET /posts?limit=100&tx=1` costs when its 100 rows sit in 100 distinct
- * full blocks under the new read: a confirmed row's bytes come from
- * `getUtxoTxTreeBytes(height)` + `utxoTxBytesIn(bytes, txId)`
- * (NODE_INTERFACE → Posts; TYPES_INTERFACE → One transaction of a body),
- * the body neither decoded nor kept. Two seedings:
+ * What the post routes' `tx=1` read costs when its rows sit in full blocks: a
+ * confirmed row's bytes come from `getUtxoTxTreeBytes(height)` +
+ * `utxoTxBytesIn(bytes, txId)` (NODE_INTERFACE → Posts; TYPES_INTERFACE → One
+ * transaction of a body), the body neither decoded nor kept.
+ *
+ * Timed: `GET /posts?limit=100` bare, with `tx=1` and with `light=1`;
+ * `GET /posts/:id?tx=1`; `POST /posts/batch` of 100 ids with and without
+ * `tx=1`. Also reported: the response sizes of the three pages, peak memory
+ * over a burst of `tx=1` pages, and the split of one `tx=1` page over Seeding A
+ * into blob read, walk and hex encoding. Three seedings:
  *
  *   - A: 100 blocks, each carrying one small post-shaped tx plus 100 fillers
- *     of ~19.9 KB (the previous suite's shape — 101 elements a body).
- *   - B: 100 blocks, each carrying ~3 000 real-credit-send-sized elements —
- *     the id array is the costly shape for `utxoTxBytesIn` and the one the
- *     contract's figure must come from.
+ *     of ~19.9 KB (101 elements a body); and 100 posts in one block of that
+ *     shape.
+ *   - B: 100 blocks, each carrying one small post-shaped tx plus ~3 000
+ *     credit-send-sized fillers — the id array is the costly shape for
+ *     `utxoTxBytesIn` and the one the contract's figure is measured on; and
+ *     100 posts in one block of that shape. The batch and light cases run
+ *     over the 100-block form.
+ *   - C: 50 blocks, each carrying two posts plus Seeding B's filler count;
+ *     the batch case asks for its 100 posts interleaved so no two
+ *     neighbours in the request share a block.
  *
  * The suite excludes `bench/**`; this file is `vitest.bench.config.ts`'s alone.
  */
@@ -486,8 +497,8 @@ describe("post-tx bench — the post routes' tx=1 over full blocks (narrow read)
       const lightBytesB = (await callOnce(app, '/posts?limit=100&light=1')).bytes;
 
       // ----- The batch read over 50 blocks: 100 ids, interleaved so no two
-      //       neighbours share a block. Fresh seeding on the Seeding-B body
-      //       shape; each pair (2*k, 2*k+1) shares block k.
+      //       neighbours share a block. Seeding C: each pair (2*k, 2*k+1) of
+      //       `seededC` shares a block.
       db.exec('DELETE FROM dag_posts');
       db.exec('DELETE FROM ordering_blocks');
       const seededC: SeededPost[] = [];
