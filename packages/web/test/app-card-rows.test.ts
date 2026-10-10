@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import type { FeedRow, LightJson, PostJson, PostResult, ThreadResult, WithdrawnJson } from '../src/api/dto';
+import type { FeedRow, LightJson, PostJson, PostResult, ThreadResult, WithdrawnJson, FeedResult } from '../src/api/dto';
 import { isLight, isWithdrawn } from '../src/api/dto';
+import type { Mode } from '../src/mode';
 import {
   ME, fullRow, light, tomb, harness, testResolver, makeCache, settle,
   lockableIdentity, recordingWrites, karmaWithBox,
@@ -35,31 +36,45 @@ const thread = (root: PostJson, descendants: FeedRow[], ancestors: FeedRow[] = [
 
 const asResult = (row: PostJson): PostResult => ({ ...row, confirmedAuthor: row.author });
 
+/** The last rig built in this case; the file's afterEach reads it. */
+let currentRig: Rig | null = null;
+
 /** An App over the shared fakes: an identity whose lock the case moves, a
  *  write client that records, a key holding one rep box, and the node's
  *  answers for the feed and for each thread named. `resolver` hands the App
  *  the extension's seams, so a slot can fill or leave. */
-function rig(o: { feed: Array<PostJson | LightJson>; threads?: ThreadResult[]; locked?: boolean; resolver?: boolean }): Rig {
+function rig(o: {
+  feed: Array<PostJson | LightJson>;
+  threads?: ThreadResult[];
+  locked?: boolean;
+  resolver?: boolean;
+  feedPages?: FeedResult[];
+  mode?: Mode;
+}): Rig {
   const id = lockableIdentity(ME, o.locked ?? true);
   const writes = recordingWrites(id);
   const r = o.resolver ? testResolver() : null;
+  const feedResults: FeedResult[] = [page(o.feed), ...(o.feedPages ?? [])];
   const h = harness({
     identityKey: ME, identity: id.identity, writeClient: writes.client, karma: karmaWithBox(ME),
     resolver: r?.resolver ?? null, cache: r ? makeCache().cache : null,
-    feedResults: [page(o.feed)],
+    feedResults, mode: o.mode,
   });
   const answer = (row: FeedRow | null): void => {
     if (row !== null && !isWithdrawn(row) && !isLight(row)) h.fake.postById!.set(row.id, asResult(row));
   };
   for (const row of o.feed) answer(row);
+  for (const p of o.feedPages ?? []) for (const row of [...p.posts, ...p.pending]) answer(row);
   for (const t of o.threads ?? []) {
     h.fake.threadById!.set(t.post!.id, t);
     for (const row of [t.post, ...t.ancestors, ...t.descendants]) answer(row);
   }
-  return {
+  const rig: Rig = {
     ...h, id, writes, resolves: r?.calls ?? [],
     held: () => (h.app as unknown as { cardRows: { size: number } }).cardRows.size,
   };
+  currentRig = rig;
+  return rig;
 }
 
 /** The reads a start makes: the feed's first page and the reader's own state. */
@@ -110,8 +125,13 @@ const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard'
 beforeEach(() => {
   localStorage.clear();
   document.body.innerHTML = '';
+  currentRig = null;
 });
 afterEach(() => {
+  if (currentRig !== null) {
+    const inDoc = document.querySelectorAll('.card-unlock, .card-confirm, .card-link').length;
+    expect(inDoc).toBe(currentRig.held());
+  }
   if (originalClipboard === undefined) delete (navigator as unknown as { clipboard?: unknown }).clipboard;
   else Object.defineProperty(navigator, 'clipboard', originalClipboard);
 });
@@ -674,5 +694,365 @@ describe('a feed card replaced alone moves no focus', () => {
     expect(cardOf(h.feedEl, B.id).classList.contains('slot')).toBe(false);
     expect(cardOf(h.feedEl, A.id)).toBe(untouched); // the slot became its card in place
     expect(document.activeElement).toBe(type);
+  });
+});
+
+describe('an @posts window card\'s unlock row outlasts a slot filling and a slot leaving', () => {
+  it('two slots in the window beside the unlock row: a fill and a leaving each redraw the window, the row is the same node under A\'s card both times', async () => {
+    const A = fullRow('A', { author: OTHER });
+    const B = light('B'), C = light('C');
+    const h = rig({
+      feed: [],
+      resolver: true,
+      feedPages: [{ posts: [A, B, C], next: null, pending: [], pendingCount: 0 }],
+    });
+    await boot(h);
+    h.drive.openAuthorPosts(OTHER, { from: 'feed' });
+    await settle();
+    const pressed = cardOf(h.panes, A.id);
+    likeOf(pressed).click();
+    const row = pressed.querySelector<HTMLElement>('.card-unlock')!;
+    expect(row).not.toBeNull();
+    const field = fieldOf(row);
+    field.value = 'secret';
+    field.focus();
+    expect(document.activeElement).toBe(field);
+
+    const call = h.resolves.find((c) => c.ids.includes(B.id) && c.ids.includes(C.id))!;
+    call.bound([fullRow('B', { author: OTHER })]);
+    await settle();
+    const afterFill = cardOf(h.panes, A.id);
+    expect(afterFill).not.toBe(pressed);
+    expect(afterFill.querySelector('.card-unlock')).toBe(row);
+    expect(fieldOf(row).value).toBe('secret');
+    expect(document.activeElement).toBe(field);
+
+    call.end({ [C.id]: 'unserved' });
+    await settle();
+    const afterLeave = cardOf(h.panes, A.id);
+    expect(afterLeave).not.toBe(afterFill);
+    expect(afterLeave.querySelector('.card-unlock')).toBe(row);
+    expect(fieldOf(row).value).toBe('secret');
+    expect(document.activeElement).toBe(field);
+  });
+});
+
+describe('a pane\'s unlock row outlasts a descendant slot filling and another leaving', () => {
+  it('two descendant slots beside the unlock row under a reply\'s card: a fill and a leaving each redraw the thread, the row stands under R both times', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
+    const X = light('X', { parentRefs: [Q.id] }), Y = light('Y', { parentRefs: [Q.id] });
+    const h = rig({
+      feed: [Q],
+      threads: [thread(Q, [R, X, Y])],
+      resolver: true,
+    });
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    const pressed = cardOf(h.panes, R.id);
+    likeOf(pressed).click();
+    const row = pressed.querySelector<HTMLElement>('.card-unlock')!;
+    const field = fieldOf(row);
+    field.value = 'secret';
+    field.focus();
+
+    const call = h.resolves.find((c) => c.ids.includes(X.id) && c.ids.includes(Y.id))!;
+    call.bound([fullRow('X', { author: OTHER, parentRefs: [Q.id] })]);
+    await settle();
+    const afterFill = cardOf(h.panes, R.id);
+    expect(afterFill).not.toBe(pressed);
+    expect(afterFill.querySelector('.card-unlock')).toBe(row);
+    expect(fieldOf(row).value).toBe('secret');
+    expect(document.activeElement).toBe(field);
+
+    call.end({ [Y.id]: 'unserved' });
+    await settle();
+    const afterLeave = cardOf(h.panes, R.id);
+    expect(afterLeave).not.toBe(afterFill);
+    expect(afterLeave.querySelector('.card-unlock')).toBe(row);
+    expect(fieldOf(row).value).toBe('secret');
+    expect(document.activeElement).toBe(field);
+  });
+});
+
+describe('a feed card\'s unlock row stands when a slot in pending fills', () => {
+  it('a slot in feed.pending filling redraws the feed whole; the row under A is the same node, with its text and focus kept', async () => {
+    const A = fullRow('A', { author: OTHER });
+    const B = light('B');
+    const h = rig({ feed: [], resolver: true });
+    h.fake.feedQueue[0] = { posts: [A], next: null, pending: [B], pendingCount: 1 };
+    h.fake.postById!.set(A.id, asResult(A));
+    await boot(h);
+    const pressed = cardOf(h.feedEl, A.id);
+    likeOf(pressed).click();
+    const row = pressed.querySelector<HTMLElement>('.card-unlock')!;
+    const field = fieldOf(row);
+    field.value = 'secret';
+    field.focus();
+
+    const call = h.resolves.find((c) => c.ids.includes(B.id))!;
+    call.bound([fullRow('B', { author: OTHER })]);
+    await settle();
+    const redrawn = cardOf(h.feedEl, A.id);
+    expect(redrawn).not.toBe(pressed);
+    expect(redrawn.querySelector('.card-unlock')).toBe(row);
+    expect(fieldOf(row).value).toBe('secret');
+    expect(document.activeElement).toBe(field);
+  });
+});
+
+describe('the question stands under its card across a pane redraw', () => {
+  it('a ↻ of the pane redraws P\'s card; the question is the same node, and its withdraw sends one withdrawal for P', async () => {
+    const P = fullRow('P');
+    const h = rig({ feed: [P], threads: [thread(P, [])], locked: false });
+    await boot(h);
+    await openFromFeed(h, P.id);
+    const pressed = cardOf(h.panes, P.id);
+    withdrawOf(pressed).click();
+    const q = pressed.querySelector<HTMLElement>('.card-confirm')!;
+    expect(q).not.toBeNull();
+
+    h.panes.querySelector<HTMLButtonElement>('[aria-label="refresh replies to this thread"]')!.click();
+    await settle();
+    const redrawn = cardOf(h.panes, P.id);
+    expect(redrawn).not.toBe(pressed);
+    expect(redrawn.querySelector('.card-confirm')).toBe(q);
+
+    wordIn(q, 'withdraw').click();
+    await settle();
+    expect(h.writes.withdrawals).toEqual([P.id]);
+  });
+
+  it('a ↻ of the pane redraws P\'s card; keep ends the question and the focus returns to the withdraw control of the card on screen', async () => {
+    const P = fullRow('P');
+    const h = rig({ feed: [P], threads: [thread(P, [])], locked: false });
+    await boot(h);
+    await openFromFeed(h, P.id);
+    const pressed = cardOf(h.panes, P.id);
+    withdrawOf(pressed).click();
+    const q = pressed.querySelector<HTMLElement>('.card-confirm')!;
+
+    h.panes.querySelector<HTMLButtonElement>('[aria-label="refresh replies to this thread"]')!.click();
+    await settle();
+    const redrawn = cardOf(h.panes, P.id);
+    expect(redrawn.querySelector('.card-confirm')).toBe(q);
+
+    wordIn(q, 'keep').click();
+    expect(document.querySelector('.card-confirm')).toBeNull();
+    const ctl = withdrawOf(cardOf(h.panes, P.id));
+    expect(document.activeElement).toBe(ctl);
+    expect(ctl.isConnected).toBe(true);
+    expect(h.writes.withdrawals).toEqual([]);
+  });
+});
+
+describe('the lock changes under the question across a pane redraw', () => {
+  it('question opened unlocked, lock flips with no notice, a ↻ redraws; the question\'s withdraw puts the unlock form under the card on screen, submit sends the withdrawal', async () => {
+    const P = fullRow('P');
+    const h = rig({ feed: [P], threads: [thread(P, [])], locked: false });
+    await boot(h);
+    await openFromFeed(h, P.id);
+    const pressed = cardOf(h.panes, P.id);
+    withdrawOf(pressed).click();
+    const q = pressed.querySelector<HTMLElement>('.card-confirm')!;
+
+    h.id.setLocked(true);
+    h.panes.querySelector<HTMLButtonElement>('[aria-label="refresh replies to this thread"]')!.click();
+    await settle();
+    const redrawn = cardOf(h.panes, P.id);
+    expect(redrawn.querySelector('.card-confirm')).toBe(q);
+
+    wordIn(q, 'withdraw').click();
+    expect(document.querySelector('.card-confirm')).toBeNull();
+    const unlock = cardOf(h.panes, P.id).querySelector<HTMLElement>('.card-unlock')!;
+    expect(unlock).not.toBeNull();
+    expect(h.writes.withdrawals).toEqual([]);
+
+    fieldOf(unlock).value = 'pw';
+    submit(unlock);
+    await settle();
+    expect(h.id.unlocks).toEqual(['pw']);
+    expect(h.writes.withdrawals).toEqual([P.id]);
+  });
+
+  it('question opened locked, unlock flips with no notice, a ↻ redraws; the question\'s withdraw sends one withdrawal and opens no unlock form', async () => {
+    const P = fullRow('P');
+    const h = rig({ feed: [P], threads: [thread(P, [])] });
+    await boot(h);
+    await openFromFeed(h, P.id);
+    const pressed = cardOf(h.panes, P.id);
+    withdrawOf(pressed).click();
+    const q = pressed.querySelector<HTMLElement>('.card-confirm')!;
+
+    h.id.setLocked(false);
+    h.panes.querySelector<HTMLButtonElement>('[aria-label="refresh replies to this thread"]')!.click();
+    await settle();
+    const redrawn = cardOf(h.panes, P.id);
+    expect(redrawn.querySelector('.card-confirm')).toBe(q);
+
+    wordIn(q, 'withdraw').click();
+    await settle();
+    expect(document.querySelector('.card-unlock')).toBeNull();
+    expect(h.id.unlocks).toEqual([]);
+    expect(h.writes.withdrawals).toEqual([P.id]);
+  });
+});
+
+describe('a pollTick landing of a reader\'s own reply leaves rows under other cards standing', () => {
+  it('a link row under A in the feed and one under Q in the pane: the reply to Q lands through pollTick; both rows are the same node, A\'s card untouched', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const A = fullRow('A', { author: OTHER });
+    const h = rig({ feed: [Q, A], threads: [thread(Q, [])], locked: false });
+    refuseClipboard();
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    const feedA = cardOf(h.feedEl, A.id);
+    linkOf(feedA).click();
+    await settle();
+    const feedRow = feedA.querySelector<HTMLElement>('.card-link')!;
+    expect(feedRow).not.toBeNull();
+
+    const paneQ = cardOf(h.panes, Q.id);
+    linkOf(paneQ).click();
+    await settle();
+    const paneRow = paneQ.querySelector<HTMLElement>('.card-link')!;
+    expect(paneRow).not.toBeNull();
+
+    cardOf(h.panes, Q.id).querySelector<HTMLButtonElement>('.reply-ctl')!.click();
+    await settle();
+    const composer = h.panes.querySelector<HTMLElement>('.composer')!;
+    const text = composer.querySelector<HTMLTextAreaElement>('textarea.composer-text')!;
+    text.value = 'a reply';
+    text.dispatchEvent(new Event('input'));
+    wordIn(composer, 'post').click();
+    await settle();
+    expect(h.writes.posts).toEqual(['a reply']);
+    const NEW = h.writes.nextPostId;
+    h.fake.postById!.set(NEW, asResult(fullRow('new', { id: NEW, content: 'a reply', parentRefs: [Q.id] })));
+    await h.drive.pollTick();
+    await settle();
+
+    expect(cardOf(h.feedEl, A.id)).toBe(feedA);
+    expect(feedA.querySelector('.card-link')).toBe(feedRow);
+    const paneQAfter = cardOf(h.panes, Q.id);
+    expect(paneQAfter.querySelector('.card-link')).toBe(paneRow);
+  });
+});
+
+describe('a reply that leaves its list on a pane\'s ↻ ends the row under it', () => {
+  it('the ↻\'s answer no longer lists R: no row in the document and held() is 0', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
+    const h = rig({ feed: [Q], threads: [thread(Q, [R])] });
+    refuseClipboard();
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    linkOf(cardOf(h.panes, R.id)).click();
+    await settle();
+    expect(cardOf(h.panes, R.id).querySelector('.card-link')).not.toBeNull();
+    expect(h.held()).toBe(1);
+
+    h.fake.threadById!.set(Q.id, thread(Q, []));
+    h.panes.querySelector<HTMLButtonElement>('[aria-label="refresh replies to this thread"]')!.click();
+    await settle();
+    expect(h.panes.querySelector(`.card[data-post-id="${R.id}"]`)).toBeNull();
+    expect(document.querySelector('.card-link')).toBeNull();
+    expect(h.held()).toBe(0);
+  });
+
+  it('a later ↻ lists R again: R\'s card is drawn, carrying no row', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
+    const h = rig({ feed: [Q], threads: [thread(Q, [R])] });
+    refuseClipboard();
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    linkOf(cardOf(h.panes, R.id)).click();
+    await settle();
+
+    h.fake.threadById!.set(Q.id, thread(Q, []));
+    h.panes.querySelector<HTMLButtonElement>('[aria-label="refresh replies to this thread"]')!.click();
+    await settle();
+    expect(h.held()).toBe(0);
+
+    h.fake.threadById!.set(Q.id, thread(Q, [R]));
+    h.panes.querySelector<HTMLButtonElement>('[aria-label="refresh replies to this thread"]')!.click();
+    await settle();
+    const card = cardOf(h.panes, R.id);
+    expect(card.querySelector('.card-link')).toBeNull();
+    expect(h.held()).toBe(0);
+  });
+});
+
+describe('a list leaves and returns to the screen', () => {
+  it('a second window in the pane\'s column brought to the front: held() is 0, the row\'s field reads empty; the thread brought back draws its card with no row', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
+    const h = rig({ feed: [Q], threads: [thread(Q, [R])] });
+    refuseClipboard();
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    linkOf(cardOf(h.panes, R.id)).click();
+    await settle();
+    const row = cardOf(h.panes, R.id).querySelector<HTMLElement>('.card-link')!;
+    expect(row).not.toBeNull();
+
+    document.querySelector<HTMLButtonElement>('[aria-label="open profile"]')!.click();
+    await settle();
+    expect(h.held()).toBe(0);
+    expect(h.panes.querySelector(`.card[data-post-id="${R.id}"]`)).toBeNull();
+    expect(row.isConnected).toBe(false);
+
+    (h.app as unknown as { handlers: { focus(id: string): void } }).handlers.focus(Q.id);
+    await settle();
+    const card = cardOf(h.panes, R.id);
+    expect(card.querySelector('.card-link')).toBeNull();
+    expect(h.held()).toBe(0);
+  });
+
+  it('a window closed with a row under one of its cards: held() is 0', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
+    const h = rig({ feed: [Q], threads: [thread(Q, [R])] });
+    refuseClipboard();
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    linkOf(cardOf(h.panes, R.id)).click();
+    await settle();
+    expect(h.held()).toBe(1);
+
+    (h.app as unknown as { handlers: { close(id: string): void } }).handlers.close(Q.id);
+    await settle();
+    expect(h.held()).toBe(0);
+    expect(h.panes.querySelector(`.card[data-post-id="${R.id}"]`)).toBeNull();
+  });
+});
+
+describe('on the standalone page a card\'s unlock row outlasts a redraw of the thread', () => {
+  it('the ↻ reloads the thread; the row is the same node under R, its text and focus kept', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
+    const h = rig({
+      feed: [],
+      threads: [thread(Q, [R])],
+      mode: { kind: 'standalone', id: Q.id, base: '/' },
+    });
+    await (h.drive as unknown as { fetchThread(id: string): Promise<void> }).fetchThread(Q.id);
+    await settle();
+    const pressed = cardOf(h.panes, R.id);
+    likeOf(pressed).click();
+    const row = pressed.querySelector<HTMLElement>('.card-unlock')!;
+    expect(row).not.toBeNull();
+    const field = fieldOf(row);
+    field.value = 'secret';
+    field.focus();
+
+    h.panes.querySelector<HTMLButtonElement>('[aria-label="refresh replies to this thread"]')!.click();
+    await settle();
+    const redrawn = cardOf(h.panes, R.id);
+    expect(redrawn).not.toBe(pressed);
+    expect(redrawn.querySelector('.card-unlock')).toBe(row);
+    expect(fieldOf(row).value).toBe('secret');
+    expect(document.activeElement).toBe(field);
   });
 });

@@ -10,6 +10,7 @@ import { App } from '../src/app';
 import { PendingLedger } from '../src/wallet/ledger';
 import { createPostCache } from '../src/extension/post-cache';
 import type { Api } from '../src/api/client';
+import type { Mode } from '../src/mode';
 import type { AppIdentity, AppState, PostCache, PostResolver, PostsVerifier } from '../src/model/state';
 import type { BoundPost, ResolveEnd } from '../src/model/post-resolve';
 import type { WriteClient } from '../src/api/write';
@@ -358,6 +359,7 @@ export interface Opts {
   threadResults?: Array<ThreadResult | null | Error>;
   postRes?: PostResult | null;
   karma?: KarmaResult;
+  mode?: Mode;
 }
 
 /** A stub verifier the extension-build configuration hands beside a resolver
@@ -423,7 +425,7 @@ export function harness(opts: Opts = {}): Harness {
   const workspace = document.createElement('div'); workspace.className = 'workspace';
   workspace.append(feedEl, panes);
   document.body.append(appbar, workspace);
-  app.mount(appbar, feedEl, panes);
+  app.mount(appbar, feedEl, panes, opts.mode);
   const drive = app as unknown as Harness['drive'];
   return { app, drive, fake, feedEl, panes };
 }
