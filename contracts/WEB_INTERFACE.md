@@ -1099,9 +1099,11 @@ from the node's own origin): a plain `https` URL that opens for a reader without
 chat app, and a reader with the extension is brought from that page into it (→ The extension).
 
 **Where the clipboard API is absent** — an insecure context, such as a phone reaching the dev server over a
-LAN address on `http` — or a write is refused, the press mounts a row under the meta, where the unlock row
-mounts, holding the URL as selectable text for the reader to copy by hand, and the glyph stays. The
-address bar of a standalone page already holds the page's link; each card's glyph gives that card's own.
+LAN address on `http` — or a write is refused, the press mounts a row under the meta, beneath the unlock row
+or the question where one stands, holding the URL as selectable text for the reader to copy by hand, and the
+glyph stays. The row stands while its card carries the glyph (→ What the feed reads, and what a card shows for
+it → "What ends a row"). The address bar of a standalone page already holds the page's link; each card's glyph
+gives that card's own.
 
 **A link previews in a chat app because the server answers for it.** The host proxies `<base>p/<id>` to
 the node's `GET /shell/:id` (`NODE_INTERFACE → Link previews`), which answers the client's own shell with
