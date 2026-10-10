@@ -66,6 +66,38 @@ describe('arrangement codec', () => {
     expect(serialise(parse(`#${A}`))).toBe(A); // a leading # (URL-hash form) is stripped
   });
 
+  // WEB_INTERFACE → The workspace: a token `parse` has already read is dropped,
+  // the first standing.
+  it('a token read twice in one column stands once, where it was first read', () => {
+    expect(parse(`${A},${B},${A}`).columns.map((c) => c.wins)).toEqual([[A, B]]);
+    expect(parse(`${P},${P}`).columns.map((c) => c.wins)).toEqual([[P]]);
+    expect(parse(`${A},${W},${W},${B},${A},${W}`).columns.map((c) => c.wins)).toEqual([[A, W, B]]);
+    // A / joins before the tokens are read, so a repeat across it is one column's.
+    expect(parse(`${A}/${B}/${A}`).columns.map((c) => c.wins)).toEqual([[A, B]]);
+  });
+
+  it('a token read in an earlier column is dropped from every later one', () => {
+    expect(parse(`${A},${P}|${P},${B}`).columns.map((c) => c.wins)).toEqual([[A, P], [B]]);
+    expect(parse(`${P},${A}|${B}|${C},${A},${P}`).columns.map((c) => c.wins)).toEqual([[P, A], [B], [C]]);
+    expect(parse(`${AUTHOR}|${POSTS},${AUTHOR}|${POSTS},${S}`).columns.map((c) => c.wins)).toEqual([[AUTHOR], [POSTS], [S]]);
+  });
+
+  it('a column whose every token was read before is not made', () => {
+    expect(parse(`${P}|${P}`).columns.map((c) => c.wins)).toEqual([[P]]);
+    expect(parse(`${A}|${A},${A}|${B}`).columns.map((c) => c.wins)).toEqual([[A], [B]]);
+    expect(parse(`${A},${B}|${B},${A}|${A}|${C}`).columns.map((c) => c.wins)).toEqual([[A, B], [C]]);
+    expect(parse(`${W}|${W}|${W}`).columns).toHaveLength(1);
+  });
+
+  it('what parse answers for a spec with repeats serialises to a spec it reads back unchanged', () => {
+    for (const spec of [`${P}|${P}`, `${A},${B},${A}|${B},${C}`, `${A}/${A}|${S},${A}`]) {
+      const text = serialise(parse(spec));
+      expect(serialise(parse(text))).toBe(text);
+      const wins = parse(spec).columns.flatMap((c) => c.wins);
+      expect(new Set(wins).size).toBe(wins.length);
+    }
+  });
+
   it('recognises exactly 64-hex ids, @profile, @settings and @wallet — the three fixed @-windows', () => {
     expect(isWindowId(A)).toBe(true);
     expect(isWindowId(P)).toBe(true);

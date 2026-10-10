@@ -2586,3 +2586,39 @@ describe('add to workspace on the standalone page restores an arrangement whose 
     expect(wallet.querySelector('.credits-line .gold')?.textContent).toBe('12.5');
   });
 });
+
+// ===========================================================================
+// Group I — a stored arrangement that names a window twice restores it in one
+// place (WEB_INTERFACE → The workspace → "The workspace is a strip of columns,
+// and a column is a stack of windows").
+// ===========================================================================
+
+describe('a stored arrangement naming the profile in two columns restores one profile window', () => {
+  it('notis.layout holds @profile in column 0 and again in column 1; the client starts: one column, one profile bar, and the profile\'s body attached in it', async () => {
+    localStorage.setItem('notis.layout', '@profile|@profile');
+    const h = rig({ feed: [], locked: true, boot: 'start' });
+    await settle();
+
+    expect(h.panes.querySelectorAll('.col')).toHaveLength(1);
+    expect(regionsOf(h.panes).map(focusedName)).toEqual(['profile']);
+    expect(h.panes.querySelectorAll('.bar')).toHaveLength(1);
+    const body = bodyOf(regionsOf(h.panes)[0]!);
+    expect(body.isConnected).toBe(true);
+    expect(h.panes.querySelectorAll('.winbody')).toHaveLength(1);
+    expect(rowByLabel(body, 'passphrase').isConnected).toBe(true);
+  });
+
+  it('notis.layout holds @settings and @profile in column 0, and @profile again with @wallet in column 1; the client starts: the profile stands under settings in column 0, the wallet alone in column 1, and the profile brought to the front shows its body', async () => {
+    localStorage.setItem('notis.layout', '@settings,@profile|@profile,@wallet');
+    const h = rig({ feed: [], locked: true, boot: 'start' });
+    await settle();
+
+    expect(regionsOf(h.panes).map(focusedName)).toEqual(['settings', 'wallet']);
+    expect([...h.panes.querySelectorAll('.bar .name')].map((n) => n.textContent)).toEqual(['settings', 'profile', 'wallet']);
+    focusAt(h.panes, 0, 1); // the profile
+    await settle();
+    expect(regionsOf(h.panes).map(focusedName)).toEqual(['profile', 'wallet']);
+    expect(rowByLabel(bodyOf(regionsOf(h.panes)[0]!), 'passphrase').isConnected).toBe(true);
+    expect(rowByLabel(bodyOf(regionsOf(h.panes)[1]!), 'balance').isConnected).toBe(true);
+  });
+});
