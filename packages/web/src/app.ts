@@ -6,7 +6,7 @@ import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_P
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { Mode } from './mode';
 import type { Tabs } from './tabs';
-import { el, shortHex, preservingScroll } from './dom';
+import { el, shortHex, preservingScroll, endForm } from './dom';
 import { contentHashHex } from './integrity';
 import { prefs, setTheme, setIdTint, setNode, writeStore, readStore, BUILD_NODES, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
 import { renderFeedInto, replaceFeedCard } from './view/feed';
@@ -31,10 +31,12 @@ import type { PendingEntry, EntryOutcome } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps } from './wallet/submit';
 import { identity as identitySingleton } from './identity/identity';
-import { renderKarmaField, renderInvitesRow, renderUsernameRow } from './view/profile';
+import { profileBody, renderKarmaField, renderInvitesRow, renderUsernameRow } from './view/profile';
 import {
-  renderCreditsRow, resetCreditsSendForm, sendUnlockRow, type ResolvedRecipient, type SendAnswer, type SendRecipient,
+  walletBody, renderCreditsRow, resetCreditsSendForm, sendUnlockRow, type ResolvedRecipient, type SendAnswer, type SendRecipient,
 } from './view/wallet';
+import { settingsBody } from './view/settings';
+import { authorBody, type AuthorCtx, type YourVouch } from './view/author';
 import { cornerState, renderCorner, CORNER_POLL_MS, type CornerState } from './view/corner';
 import type { TipVerdict } from './model/tip-verdict';
 import { namePair, nameIsClay, recipientVerdict } from './model/name-verdict';
@@ -42,7 +44,6 @@ import { markHandle, landNameClay } from './view/name-handle';
 import type { Anchor } from './model/state';
 import type { Listing, NameResult, PostCheck } from '@dagsocial/nipopow-client';
 import type { Flight } from './view/card';
-import type { YourVouch } from './view/author';
 import {
   newColumn, newWorkspace, openWindow, closeWindow, moveLeft, moveRight, focusWindow, openSet, locate,
   type Origin, type Column,
@@ -51,7 +52,7 @@ import {
   FEED_COMPOSER_KEY, type AppState, type ThreadState, type RenderCtx, type Handlers, type Submission,
   type FlightStage, type AppIdentity, type AuthorWindowData, type FeedState, type FiguresView,
   type TipVerifier, type TipRun, type FiguresVerifier, type NamesVerifier, type PostsVerifier,
-  type PostCache, type CachedThread, type HeldPost, type PostResolver,
+  type PostCache, type CachedThread, type HeldPost, type PostResolver, type WindowBody,
 } from './model/state';
 import type { BoundPost, ResolveEnd } from './model/post-resolve';
 import { decideMove, type ScreenEntry } from './history';
@@ -272,6 +273,14 @@ export class App {
   // for it → "A row the reader opened under a card outlasts a redraw of its
   // list").
   private cardRows = new Map<string, HeldCardRow>();
+  // The body of each open `@profile`, `@wallet`, `@settings` and author window,
+  // by window id: built at the window's first draw, attached by every draw
+  // that shows the window, held off the document while another window of its
+  // column covers it, and ended by the draw that follows its close. A form the
+  // reader opened in one, and what is typed in it, is held in that node and
+  // nowhere else (WEB_INTERFACE → The workspace → "A window's body stands while
+  // the window is open").
+  private bodies = new Map<string, WindowBody>();
   // Targets the reader pressed like on, shown liked at once and reverted on a
   // rejection or expiry (WEB_INTERFACE → The wallet).
   private optimisticLikes = new Set<string>();
@@ -919,7 +928,6 @@ export class App {
       karma: this.profileKarma,
       grant: this.grantView,
       member: this.isMember(),
-      yourVouch: (key) => this.yourVouchFor(key),
       author: this.authorData,
       authorPosts: this.authorPostsData,
       invite: this.state.status
@@ -969,6 +977,7 @@ export class App {
         ? BUILD_PUBLIC + 'p/' + id
         : new URL(this.base + 'p/' + id, location.href).href,
       rowsUnder: (list, postId) => this.rowsUnder(list, postId),
+      windowBody: (windowId) => this.windowBody(windowId),
     };
   }
 
@@ -1461,6 +1470,89 @@ export class App {
     mutate();
     this.saveLayout();
     this.renderPanes();
+  }
+
+  // -------------------------------------------------------------------------
+  // Window bodies — `@profile`, `@wallet`, `@settings` and an author window
+  // (WEB_INTERFACE → The workspace → "A window's body stands while the window
+  // is open"). A thread and an author-posts window are drawn from their rows.
+  // -------------------------------------------------------------------------
+
+  /** The body a draw attaches for a window: built at the window's first draw,
+   *  and at every draw after it the same node, its rows drawn from the state
+   *  as it stands. Null for a window drawn from its rows. */
+  private windowBody(id: string): HTMLElement | null {
+    const held = this.bodies.get(id);
+    if (held !== undefined) {
+      held.update();
+      return held.el;
+    }
+    const built = this.buildBody(id);
+    if (built === null) return null;
+    this.bodies.set(id, built);
+    return built.el;
+  }
+
+  private buildBody(id: string): WindowBody | null {
+    const rows = this.bodyRows(id);
+    if (rows === null) return null;
+    const body = rows();
+    return { el: body, update: () => body.replaceChildren(...rows().childNodes) };
+  }
+
+  /** A window's rows, drawn from the state as it stands into a fresh node, or
+   *  null for a window drawn from its rows. */
+  private bodyRows(id: string): (() => HTMLElement) | null {
+    if (id === '@profile') return () => profileBody(this.handlers, this.ctx(), this.originOf(id));
+    if (id === '@wallet') return () => walletBody(this.handlers, this.ctx());
+    if (id === '@settings') return () => settingsBody(this.handlers);
+    const sub = windowSubject(id);
+    if (sub?.kind === 'author') return () => authorBody(this.handlers, this.authorCtx(sub.key));
+    return null;
+  }
+
+  /** What an author window's rows read: its subject's reads and flight, the
+   *  reader's relation to the subject, and where its children open
+   *  (WEB_INTERFACE → The author window). */
+  private authorCtx(key: string): AuthorCtx {
+    const d = this.authorData.get(key);
+    const cur = this.idm.current();
+    return {
+      authorKey: key,
+      origin: this.originOf(authorWindowId(key)),
+      endorsers: d?.endorsers ?? null,
+      endorsersNext: d?.endorsersNext ?? false,
+      writeEnabled: cur !== null,
+      ownKey: cur?.pubKeyHex ?? null,
+      locked: cur?.locked ?? false,
+      yourVouch: this.yourVouchFor(key),
+      flight: d?.flight ?? null,
+      username: d?.username ?? null,
+      usernameLoaded: d?.usernameLoaded ?? false,
+      nameClay: (k, name) => this.nameClay(k, name),
+    };
+  }
+
+  /** Where a window's children open from: the column it stands in, focused or
+   *  covered (WEB_INTERFACE → The workspace → "One placement rule"). */
+  private originOf(windowId: string): Origin {
+    const at = locate(this.state.workspace, windowId);
+    return at === null ? { from: 'feed' } : { from: 'pane', ci: at.ci };
+  }
+
+  /** The one ending of a window's body: out of the document, every field in it
+   *  emptied, and held nowhere — every form open in it ends with it
+   *  (WEB_INTERFACE → The workspace → "What ends a form in a window"). */
+  private endBody(id: string): void {
+    const held = this.bodies.get(id);
+    if (held === undefined) return;
+    this.bodies.delete(id);
+    endForm(held.el);
+  }
+
+  /** A change of the identity or of the node read builds every body anew. */
+  private endBodies(): void {
+    for (const id of [...this.bodies.keys()]) this.endBody(id);
   }
 
   // -------------------------------------------------------------------------
@@ -2596,6 +2688,7 @@ export class App {
     this.dropReaderState();
     this.ledger = new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
     this.startPoll(); // the new key's restored ledger may hold entries; guarded on empty
+    this.endBodies();
     this.renderHeader();
     this.renderPanes();
     void this.loadFeed();
@@ -3683,16 +3776,8 @@ export class App {
    *  profile has no field; the state is already updated for the next open. */
   private renderInvitesRowInPlace(): void {
     const field = document.querySelector<HTMLElement>('.invites-field');
-    if (field) renderInvitesRow(field, this.handlers, this.ctx(), this.profileOrigin());
+    if (field) renderInvitesRow(field, this.handlers, this.ctx(), this.originOf('@profile'));
     this.checkNames('new');
-  }
-
-  private profileOrigin(): Origin {
-    for (let ci = 0; ci < this.state.workspace.columns.length; ci++) {
-      const column = this.state.workspace.columns[ci]!;
-      if (column.wins[column.focus] === '@profile') return { from: 'pane', ci };
-    }
-    return { from: 'feed' };
   }
 
   // ---- username, from the profile's username row (WEB_INTERFACE → The username row) ----
@@ -4278,6 +4363,7 @@ export class App {
     this.state.posts.clear();
     this.dropFeedRows();
     this.dropReaderState();
+    this.endBodies();
     this.renderHeader();
     this.renderFeed();
     this.renderPanes();
@@ -4935,27 +5021,32 @@ export class App {
     document.querySelector<HTMLElement>(`[data-composer-open="${composerKey(parentId)}"]`)?.focus();
   }
 
-  /** Every draw that replaces a card runs here. An unlock form held while the
-   *  identity is unlocked ends before the draw: the extension's proxy takes an
-   *  unlock made in another page into `current()` and notifies no one. A row
-   *  the draw left under no card ends after it, so a held row is attached to
-   *  the document or it is not held. Where the draw moved the composer or the
-   *  row that held the focus, the focus goes back: into the composer, or to
-   *  the element of the row that held it; a draw that moved neither moves no
+  /** Every draw that replaces a card or attaches a window's body runs here. An
+   *  unlock form held while the identity is unlocked ends before the draw: the
+   *  extension's proxy takes an unlock made in another page into `current()`
+   *  and notifies no one. A row the draw left under no card ends after it, so
+   *  a held row is attached to the document or it is not held; and a body
+   *  whose window is no longer open ends after it. Where the draw moved the
+   *  composer, the row or the body that held the focus, the focus goes back:
+   *  into the composer, or to the element that held it where that element
+   *  still stands in the document; a draw that moved none of them moves no
    *  focus (WEB_INTERFACE → What the feed reads, and what a card shows for it
-   *  → "A row the reader opened under a card outlasts a redraw of its list"). */
+   *  → "A row the reader opened under a card outlasts a redraw of its list";
+   *  → The workspace → "A window's body stands while the window is open"). */
   private redraw(draw: () => void): void {
     const composerFocused = this.focusedComposerKey();
-    const rowFocused = composerFocused === null ? this.focusedRowElement() : null;
+    const heldFocused = composerFocused === null ? this.focusedHeldElement() : null;
     const cur = this.idm.current();
     if (cur !== null && !cur.locked) this.endUnlockRows();
     draw();
     for (const held of [...this.cardRows.values()]) if (!held.el.isConnected) this.endCardRow(held);
+    const open = openSet(this.state.workspace);
+    for (const id of [...this.bodies.keys()]) if (!open.has(id)) this.endBody(id);
     if (composerFocused !== null) {
       const composer = this.composers.get(composerFocused);
       if (composer !== undefined && !composer.el.contains(document.activeElement)) composer.focus();
-    } else if (rowFocused !== null && rowFocused.isConnected && document.activeElement !== rowFocused) {
-      rowFocused.focus();
+    } else if (heldFocused !== null && heldFocused.isConnected && document.activeElement !== heldFocused) {
+      heldFocused.focus();
     }
   }
 
@@ -5079,8 +5170,7 @@ export class App {
    *  the feed reads, and what a card shows for it → "A row the reader opened
    *  under a card outlasts a redraw of its list"). */
   private endCardRow(held: HeldCardRow): void {
-    held.el.remove();
-    for (const field of held.el.querySelectorAll('input')) field.value = '';
+    endForm(held.el);
     const key = rowKey(held.list, held.postId, rowPlace(held));
     if (this.cardRows.get(key) === held) this.cardRows.delete(key);
   }
@@ -5091,11 +5181,13 @@ export class App {
     for (const held of [...this.cardRows.values()]) if (held.kind === 'unlock') this.endCardRow(held);
   }
 
-  /** The element holding the focus inside a held row, or null. */
-  private focusedRowElement(): HTMLElement | null {
+  /** The element holding the focus inside a held row or a window's body, or
+   *  null. */
+  private focusedHeldElement(): HTMLElement | null {
     const active = document.activeElement;
     if (!(active instanceof HTMLElement)) return null;
     for (const held of this.cardRows.values()) if (held.el.contains(active)) return active;
+    for (const held of this.bodies.values()) if (held.el.contains(active)) return active;
     return null;
   }
 

@@ -66,7 +66,7 @@ function baseCtx(over: Partial<RenderCtx> = {}): RenderCtx {
     oneColumn: false, standalone: false, writeEnabled: false, ownKey: null,
     composerFor: () => null, submissionsFor: () => [], likePending: () => false,
     expandedImages: new Set(), identity: null, backedUp: false, karma: null,
-    grant: null, member: false, yourVouch: () => null, author: new Map(),
+    grant: null, member: false, author: new Map(),
     authorPosts: new Map(), invite: null, canAffordMinBond: false, bonds: null,
     inviteFlight: null, withdrawState: () => null, canSignWithdraw: false,
     ownName: null, ownNameLoaded: false, nameClay: () => false,
@@ -76,6 +76,7 @@ function baseCtx(over: Partial<RenderCtx> = {}): RenderCtx {
     confirmInRow: true, verdict: undefined, figures: null,
     linkUrl: (id) => `http://localhost/p/${id}`,
     rowsUnder: () => [],
+    windowBody: () => null,
     ...over,
   };
 }

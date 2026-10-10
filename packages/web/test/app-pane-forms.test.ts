@@ -7,6 +7,7 @@ import {
   type Harness, type LockableIdentity, type RecordingWrites,
 } from './app-light-shared';
 import { karmaResult } from './karma-fixture';
+import { setNode } from '../src/prefs';
 
 // WEB_INTERFACE → The profile window → "The six operations are forms in place,
 // and each is a real `<form>`"; → The wallet window → "The `send` row"; → The
@@ -60,6 +61,17 @@ const authorBtnOf = (card: HTMLElement): HTMLButtonElement => {
 };
 const regionsOf = (panes: HTMLElement): HTMLElement[] =>
   [...panes.querySelectorAll<HTMLElement>('.region')];
+/** The body of the window in front in a region. */
+const bodyOf = (region: HTMLElement): HTMLElement => {
+  const b = region.querySelector<HTMLElement>('.region-body > .winbody');
+  if (b === null) throw new Error('no window body in front');
+  return b;
+};
+const nodeFieldOf = (root: ParentNode): HTMLInputElement => {
+  const f = root.querySelector<HTMLInputElement>('[aria-label="the node this client reads"]');
+  if (f === null) throw new Error('no node field');
+  return f;
+};
 
 /** Press the bar's close ✕ at (colIdx, barIdx). A column's bars are rendered
  *  in `column.wins` order. */
@@ -206,6 +218,7 @@ async function pressRefresh(panes: HTMLElement, ariaLabel: string): Promise<void
 beforeEach(() => {
   localStorage.clear();
   document.body.innerHTML = '';
+  setNode('');
 });
 
 // ===========================================================================
@@ -1162,5 +1175,108 @@ describe('a card\'s unlock row and the composer draft across the membership read
     expect(composer.isConnected).toBe(true);
     expect(h.feedEl.querySelector('.composer')).toBe(composer);
     expect(composer.querySelector<HTMLTextAreaElement>('textarea.composer-text')!.value).toBe('a draft');
+  });
+});
+
+// ===========================================================================
+// Group D — what ends a window's body: its window closed (WEB_INTERFACE →
+// The workspace → "What ends a form in a window").
+// ===========================================================================
+
+describe('a window closed with a form open ends the form, and the window opened again draws a fresh body', () => {
+  it('the profile: the unlock form\'s field reads empty after ✕, and the reopened window is another node with no form', async () => {
+    const h = rig({ feed: [], locked: true });
+    await boot(h);
+    openProfile();
+    await settle();
+    const body = bodyOf(regionsOf(h.panes)[0]!);
+    wordIn(body.querySelector<HTMLElement>('.pp-field')!, 'unlock').click();
+    const field = fieldOf(body);
+    field.value = 'secret';
+
+    closeAt(h.panes, 0, 0);
+    await settle();
+    expect(body.isConnected).toBe(false);
+    expect(field.value).toBe('');
+
+    openProfile();
+    await settle();
+    const again = bodyOf(regionsOf(h.panes)[0]!);
+    expect(again).not.toBe(body);
+    const pp = again.querySelector<HTMLElement>('.pp-field')!;
+    expect(pp.querySelector('form')).toBeNull();
+    expect(wordIn(pp, 'unlock')).not.toBeNull();
+  });
+
+  it('the wallet: the send form\'s fields read empty after ✕, and the reopened window is another node with an empty form', async () => {
+    const h = rig({ feed: [], locked: false, credits: creditsWithBox(ME) });
+    await boot(h);
+    openWallet();
+    await settle();
+    const body = bodyOf(regionsOf(h.panes)[0]!);
+    const inputs = body.querySelectorAll<HTMLInputElement>('form.credits-form input');
+    inputs[0]!.value = BOB;
+    inputs[1]!.value = '1.5';
+
+    closeAt(h.panes, 0, 0);
+    await settle();
+    expect(body.isConnected).toBe(false);
+    expect(inputs[0]!.value).toBe('');
+    expect(inputs[1]!.value).toBe('');
+
+    openWallet();
+    await settle();
+    const again = bodyOf(regionsOf(h.panes)[0]!);
+    expect(again).not.toBe(body);
+    const fresh = again.querySelectorAll<HTMLInputElement>('form.credits-form input');
+    expect(fresh[0]!.value).toBe('');
+    expect(fresh[1]!.value).toBe('');
+  });
+
+  it('the settings: text typed in node and not committed is gone after ✕, and the reopened window reads the node in force', async () => {
+    const h = rig({ feed: [], locked: false });
+    await boot(h);
+    openSettings();
+    await settle();
+    const body = bodyOf(regionsOf(h.panes)[0]!);
+    const field = nodeFieldOf(body);
+    const inForce = field.value;
+    field.value = 'https://example.test';
+
+    closeAt(h.panes, 0, 0);
+    await settle();
+    expect(body.isConnected).toBe(false);
+    expect(field.value).toBe('');
+
+    openSettings();
+    await settle();
+    const again = bodyOf(regionsOf(h.panes)[0]!);
+    expect(again).not.toBe(body);
+    expect(nodeFieldOf(again).value).toBe(inForce);
+  });
+
+  it('an author window: the vouch\'s unlock row is gone and its field reads empty after ✕, and the reopened window is another node with no row', async () => {
+    const A = fullRow('A', { author: OTHER });
+    const h = rig({ feed: [A], locked: true, member: true });
+    await boot(h);
+    authorBtnOf(cardOf(h.feedEl, A.id)).click();
+    await settle();
+    const body = bodyOf(regionsOf(h.panes)[0]!);
+    wordIn(body, 'vouch').click();
+    const row = body.querySelector<HTMLElement>('.card-unlock')!;
+    const field = fieldOf(row);
+    field.value = 'secret';
+
+    closeAt(h.panes, 0, 0);
+    await settle();
+    expect(body.isConnected).toBe(false);
+    expect(field.value).toBe('');
+
+    authorBtnOf(cardOf(h.feedEl, A.id)).click();
+    await settle();
+    const again = bodyOf(regionsOf(h.panes)[0]!);
+    expect(again).not.toBe(body);
+    expect(again.querySelector('.card-unlock')).toBeNull();
+    expect(wordIn(again, 'vouch')).not.toBeNull();
   });
 });

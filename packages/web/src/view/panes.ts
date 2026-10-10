@@ -1,9 +1,6 @@
 import { el, reportNode, shortHex } from '../dom';
 import { card, submissionToPost, flightFor, listCardOpts, cardLink, type CardOpts } from './card';
-import { profileBody } from './profile';
-import { settingsBody } from './settings';
-import { walletBody } from './wallet';
-import { authorBody, authorPostsBody, type AuthorCtx, type PostsCtx } from './author';
+import { authorPostsBody, type PostsCtx } from './author';
 import { markHandle } from './name-handle';
 import { flattenThread } from '../model/thread';
 import { withheldLine, unservedSubjectLine } from './withheld-line';
@@ -209,26 +206,6 @@ function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, listKey: strin
   return opts;
 }
 
-/** The author window's ctx, adapted from the App's RenderCtx — the App satisfies
- *  AuthorHandlers structurally, so `handlers` is passed straight through. */
-function authorCtxFrom(key: string, ci: number, ctx: RenderCtx): AuthorCtx {
-  const d = ctx.author.get(key);
-  return {
-    authorKey: key,
-    origin: { from: 'pane', ci },
-    endorsers: d?.endorsers ?? null,
-    endorsersNext: d?.endorsersNext ?? false,
-    writeEnabled: ctx.writeEnabled,
-    ownKey: ctx.ownKey,
-    locked: ctx.identity?.locked ?? false,
-    yourVouch: ctx.yourVouch(key),
-    flight: d?.flight ?? null,
-    username: d?.username ?? null,
-    usernameLoaded: d?.usernameLoaded ?? false,
-    nameClay: ctx.nameClay,
-  };
-}
-
 function postsCtxFrom(key: string, listKey: string, ci: number, ctx: RenderCtx): PostsCtx {
   const f = ctx.authorPosts.get(key);
   return {
@@ -293,30 +270,21 @@ function appendSubmissionBlock(
 }
 
 function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handlers: Handlers, ctx: RenderCtx): void {
-  const sub = windowSubject(focusedK);
-  if (sub?.kind === 'author') {
-    body.appendChild(authorBody(handlers, authorCtxFrom(sub.key, ci, ctx)));
+  // The body of `@profile`, `@wallet`, `@settings` and an author window is the
+  // App's node, the same at every draw: the region attaches it (WEB_INTERFACE →
+  // The workspace → "A window's body stands while the window is open").
+  const standing = ctx.windowBody(focusedK);
+  if (standing !== null) {
+    body.appendChild(standing);
     return;
   }
+  const sub = windowSubject(focusedK);
   if (sub?.kind === 'posts') {
     body.appendChild(authorPostsBody(handlers, postsCtxFrom(sub.key, focusedK, ci, ctx)));
     return;
   }
-  if (focusedK === '@profile') {
-    body.appendChild(profileBody(handlers, ctx, { from: 'pane', ci }));
-    return;
-  }
-  if (focusedK === '@settings') {
-    body.appendChild(settingsBody(handlers));
-    return;
-  }
-  if (focusedK === '@wallet') {
-    body.appendChild(walletBody(handlers, ctx));
-    return;
-  }
   if (isWin(focusedK)) {
-    // An @-window neither arm knows renders nothing rather than the profile
-    // (WEB_INTERFACE → The workspace).
+    // An @-window no arm knows renders nothing (WEB_INTERFACE → The workspace).
     return;
   }
   const t = ctx.thread(focusedK);

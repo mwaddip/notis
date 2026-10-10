@@ -36,3 +36,11 @@ export function preservingScroll(node: HTMLElement, mutate: () => void): void {
   node.scrollTop = top;
   node.scrollLeft = left;
 }
+
+/** The one ending of a node the reader opened and typed into — a row under a
+ *  card, a form in a window, a window's body: out of the document, every field
+ *  in it emptied. */
+export function endForm(node: Element): void {
+  node.remove();
+  for (const field of node.querySelectorAll('input')) field.value = '';
+}
