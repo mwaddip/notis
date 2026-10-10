@@ -2,9 +2,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { card, submissionToPost } from '../src/view/card';
+import { card, cardLink, mountRow, submissionToPost } from '../src/view/card';
+import { buildUnlockRow, buildConfirmRow, buildLinkFallbackRow } from '../src/view/card-rows';
 import type { LightJson, PostJson } from '../src/api/dto';
-import type { Flight } from '../src/view/card';
+import type { CardRow, Flight } from '../src/view/card';
 import { contentHashHex } from '../src/integrity';
 
 const appCss = readFileSync(resolve(process.cwd(), 'src/style/app.css'), 'utf8');
@@ -204,33 +205,164 @@ describe('card — the reply count is the row\'s', () => {
   });
 });
 
-describe('card — a locked like', () => {
-  it('shows the unlock form under the meta on the press, then the like proceeds', async () => {
-    const unlocked: string[] = [];
-    const liked: string[] = [];
-    const c = card(confirmed('bb'.repeat(32)), {
-      onLike: (id) => liked.push(id),
-      locked: true,
-      ownKey: PUB,
-      onUnlock: async (p) => { unlocked.push(p); },
-    });
-    [...c.querySelectorAll('button')].find((b) => b.textContent === 'like')!.click();
-    const form = c.querySelector('.card-unlock form.pf') as HTMLFormElement;
-    expect(form).not.toBeNull(); // the unlock form appeared under the meta
-    expect(liked).toHaveLength(0); // the like has not fired yet
-    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
-    form.dispatchEvent(new Event('submit', { cancelable: true }));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(unlocked).toEqual(['pw']); // the seed was unlocked
-    expect(liked).toEqual(['p1']); // and the like proceeded
+// WEB_INTERFACE → What the feed reads, and what a card shows for it →
+// "A row's controls act on the card as it stands at the press" — the card
+// reads no lock and mounts no row: a press is handed on with the post and the
+// control pressed.
+describe('card — like', () => {
+  it('a press hands on the post and the control pressed; the card mounts no row', () => {
+    const liked: Array<[string, HTMLElement]> = [];
+    const c = card(confirmed('bb'.repeat(32)), { onLike: (id, control) => liked.push([id, control]) });
+    const likeBtn = [...c.querySelectorAll('button')].find((b) => b.textContent === 'like')!;
+    likeBtn.click();
+    expect(liked).toEqual([['p1', likeBtn]]);
+    expect(c.querySelector('.card-unlock')).toBeNull();
   });
 
-  it('an unlocked like fires at once — no unlock form', () => {
-    const liked: string[] = [];
-    const c = card(confirmed('bb'.repeat(32)), { onLike: (id) => liked.push(id), locked: false, ownKey: PUB, onUnlock: async () => {} });
-    [...c.querySelectorAll('button')].find((b) => b.textContent === 'like')!.click();
-    expect(c.querySelector('.card-unlock')).toBeNull();
-    expect(liked).toEqual(['p1']);
+  it('buildUnlockRow — submit unlocks then proceeds; cancel and Esc cancel; the field is the passphrase field', async () => {
+    const unlocked: string[] = [];
+    const proceeded: string[] = [];
+    const cancelled: string[] = [];
+    const { row, field } = buildUnlockRow({
+      pubKeyHex: PUB,
+      onSubmit: async (p) => { unlocked.push(p); },
+      onProceed: () => { proceeded.push('.'); },
+      onCancel: () => { cancelled.push('.'); },
+    });
+    expect(row.classList.contains('card-unlock')).toBe(true);
+    expect(field).toBe(row.querySelector('input[type="password"]'));
+    field.value = 'pw';
+    (row.querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit', { cancelable: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(unlocked).toEqual(['pw']);
+    expect(proceeded).toEqual(['.']);
+    [...row.querySelectorAll('button')].find((b) => b.textContent === 'cancel')!.click();
+    expect(cancelled).toEqual(['.']);
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(cancelled).toEqual(['.', '.']);
+  });
+
+  it('buildUnlockRow — a refused passphrase proceeds to nothing', async () => {
+    const proceeded: string[] = [];
+    const { row, field } = buildUnlockRow({
+      pubKeyHex: PUB,
+      onSubmit: async () => { throw new Error('that passphrase does not open this identity.'); },
+      onProceed: () => { proceeded.push('.'); },
+      onCancel: () => {},
+    });
+    document.body.appendChild(row);
+    field.value = 'wrong';
+    (row.querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit', { cancelable: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(proceeded).toEqual([]);
+    expect(row.querySelector('.pf-refusal')?.textContent).toBe('that passphrase does not open this identity.');
+    row.remove();
+  });
+});
+
+// WEB_INTERFACE → What the feed reads, and what a card shows for it →
+// "Opening a row and ending one redraw nothing else".
+describe('card — a row goes in under the card a control stands in', () => {
+  const rowOf = (control: CardRow['control']): CardRow => ({ control, el: document.createElement('div') });
+
+  it('mountRow puts the unlock form or the question directly beneath the meta row, the link row beneath that, and replaces no node', () => {
+    const c = card(confirmed('bb'.repeat(32)), { onLike: () => {} });
+    document.body.appendChild(c);
+    const body = c.querySelector('.card-body')!;
+    const before = [...body.children];
+    const likeBtn = [...c.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent === 'like')!;
+    const link = rowOf('link');
+    expect(mountRow(likeBtn, link)).toBe(true);
+    expect([...body.children]).toEqual([...before, link.el]);
+    // A row already under the card names the same card.
+    const ask = rowOf('like');
+    expect(mountRow(link.el, ask)).toBe(true);
+    expect(c.querySelector('.meta')!.nextElementSibling).toBe(ask.el);
+    expect([...body.children]).toEqual([...before, ask.el, link.el]);
+    c.remove();
+  });
+
+  it('mountRow answers false for a control that stands in no card on screen', () => {
+    const c = card(confirmed('bb'.repeat(32)), { onLike: () => {} });
+    const likeBtn = [...c.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent === 'like')!;
+    const row = rowOf('like');
+    expect(mountRow(likeBtn, row)).toBe(false); // the card is not in the document
+    expect(row.el.parentElement).toBeNull();
+    const loose = document.createElement('button');
+    document.body.appendChild(loose);
+    expect(mountRow(loose, row)).toBe(false); // in the document, in no card
+    loose.remove();
+  });
+});
+
+// WEB_INTERFACE → What the feed reads, and what a card shows for it →
+// "A row the reader opened under a card outlasts a redraw of its list" — a
+// card stands over a held row while it offers the control the row was opened
+// from.
+describe('card — a card stands over the rows whose control it offers', () => {
+  const OTHER = 'bb'.repeat(32);
+  const link = { url: 'http://localhost/p/x', refused: (): void => {} };
+  const rows = (): { like: CardRow; withdraw: CardRow; link: CardRow; all: CardRow[] } => {
+    const like: CardRow = { control: 'like', el: document.createElement('div') };
+    const withdraw: CardRow = { control: 'withdraw', el: document.createElement('div') };
+    const linkRow: CardRow = { control: 'link', el: document.createElement('div') };
+    return { like, withdraw, link: linkRow, all: [like, withdraw, linkRow] };
+  };
+  const under = (c: HTMLElement): Element[] => {
+    const kids = [...c.querySelector('.card-body')!.children];
+    return kids.slice(kids.indexOf(c.querySelector('.meta')!) + 1);
+  };
+
+  it('another\'s card with like and the copy glyph: the like row beneath the meta row, the link row beneath it, no withdraw row', () => {
+    const r = rows();
+    const c = card(confirmed(OTHER), { onLike: () => {}, link, rows: r.all });
+    expect(under(c)).toEqual([r.like.el, r.link.el]);
+    expect(r.withdraw.el.parentElement).toBeNull();
+  });
+
+  it('a card with the reader\'s like on it offers no like: the like row is not drawn, the link row is', () => {
+    const r = rows();
+    const c = card(confirmed(OTHER), { liked: true, likePending: true, link, rows: r.all });
+    expect(under(c)).toEqual([r.link.el]);
+  });
+
+  it('the reader\'s own card: the withdraw row while withdraw can be pressed, none while it is disabled or in flight', () => {
+    const offered = rows();
+    expect(under(card(confirmed(PUB), { onWithdraw: () => {}, canWithdraw: true, rows: offered.all }))).toEqual([offered.withdraw.el]);
+    const disabled = rows();
+    expect(under(card(confirmed(PUB), { onWithdraw: () => {}, canWithdraw: false, rows: disabled.all }))).toEqual([]);
+    const flying = rows();
+    expect(under(card(confirmed(PUB), { onWithdraw: () => {}, canWithdraw: true, withdraw: 'pending', rows: flying.all }))).toEqual([]);
+  });
+
+  it('a withdrawn card keeps its copy glyph and so its link row, and no other', () => {
+    const r = rows();
+    const tomb = { kind: 'withdrawn' as const, id: 'p1', author: OTHER, withdrawnAtHeight: 10, parentRefs: [], descendantCount: 0, authorName: null, txId: 'aa'.repeat(32) };
+    expect(under(card(tomb, { link, rows: r.all }))).toEqual([r.link.el]);
+    const bare = rows();
+    expect(under(card(tomb, { rows: bare.all }))).toEqual([]);
+  });
+
+  it('a pending card and a slot offer no control and draw no row', () => {
+    const r = rows();
+    const p: PostJson = { ...confirmed(OTHER), status: 'pending', blockHeight: null };
+    expect(under(card(p, { onLike: () => {}, link, rows: r.all }))).toEqual([]);
+    const slot: LightJson = {
+      kind: 'light', id: 'p1', parentRefs: [], status: 'confirmed', blockHeight: 1, blockIndex: 0, blockCreatedAt: 0,
+      likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null,
+    };
+    expect(under(card(slot, { rows: r.all }))).toEqual([]);
+  });
+
+  it('cardLink carries the URL and hands a refusal on with the list, the post and the control', () => {
+    const refused: unknown[] = [];
+    const opt = cardLink('feed', 'p1', { linkUrl: (id) => 'http://localhost/p/' + id }, {
+      linkRefused: (list, postId, url, control) => { refused.push([list, postId, url, control]); },
+    });
+    expect(opt.url).toBe('http://localhost/p/p1');
+    const glyph = document.createElement('button');
+    opt.refused(glyph);
+    expect(refused).toEqual([['feed', 'p1', 'http://localhost/p/p1', glyph]]);
   });
 });
 
@@ -323,12 +455,14 @@ describe('card — the handle where a row carries a name', () => {
   });
 });
 
+// WEB_INTERFACE → The withdraw control — the card's `withdraw` hands its press
+// on with the post and the control pressed; the question's own words and
+// controls are the row builder's, and its opening under the card, the focus on
+// `keep` and its endings are the App's (app-card-rows.test.ts).
 describe('card — the withdraw control', () => {
   const OTHER = 'bb'.repeat(32);
   const ownWithLikes = (): PostJson => ({ ...confirmed(PUB), likeCount: 3 });
   const metaWithdraw = (c: HTMLElement): HTMLButtonElement => c.querySelector('.meta .withdraw-ctl') as HTMLButtonElement;
-  const confirmBtn = (c: HTMLElement, text: string): HTMLButtonElement =>
-    [...c.querySelector('.card-confirm')!.querySelectorAll('button')].find((b) => b.textContent === text) as HTMLButtonElement;
 
   it('an own confirmed card keeps the like count N liked, the withdraw control after it, no like word', () => {
     const c = card(ownWithLikes(), { you: true, onWithdraw: () => {}, canWithdraw: true, onReply: () => {} });
@@ -342,69 +476,25 @@ describe('card — the withdraw control', () => {
     expect(c.querySelector('.meta .reply-ctl')).not.toBeNull();
   });
 
-  it('a press mounts the confirm row after the meta: the sentence, withdraw and keep, focus on keep', () => {
-    const c = card(confirmed(PUB), { you: true, onWithdraw: () => {}, canWithdraw: true });
-    document.body.appendChild(c); // focus() needs the node in the document
-    metaWithdraw(c).click();
-    const row = c.querySelector('.card-confirm');
-    expect(row).not.toBeNull();
-    expect(row!.querySelector('.q')?.textContent).toBe('withdraw this post? the content goes; the replies stay.');
-    expect([...row!.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['withdraw', 'keep']);
-    // One row, mounted right after the meta.
-    expect(c.querySelector('.meta')!.nextElementSibling).toBe(row);
-    expect(document.activeElement?.textContent).toBe('keep');
-    // A second press opens no second row.
-    metaWithdraw(c).click();
-    expect(c.querySelectorAll('.card-confirm')).toHaveLength(1);
-    c.remove();
-  });
-
-  it('keep removes the row and signs nothing; the confirm withdraw calls onWithdraw', () => {
-    const withdrawn: string[] = [];
-    const c = card(confirmed(PUB), { you: true, onWithdraw: (id) => withdrawn.push(id), canWithdraw: true });
+  it('a press hands on the post and the control pressed; the card mounts no row', () => {
+    const asked: Array<[string, HTMLElement]> = [];
+    const c = card(confirmed(PUB), { you: true, onWithdraw: (id, control) => { asked.push([id, control]); }, canWithdraw: true });
     document.body.appendChild(c);
     metaWithdraw(c).click();
-    confirmBtn(c, 'keep').click();
+    expect(asked).toEqual([['p1', metaWithdraw(c)]]);
     expect(c.querySelector('.card-confirm')).toBeNull();
-    expect(withdrawn).toEqual([]);
-    // Press again, and this time confirm.
-    metaWithdraw(c).click();
-    confirmBtn(c, 'withdraw').click();
-    expect(withdrawn).toEqual(['p1']);
-    c.remove();
-  });
-
-  it('locked: the confirm withdraw mounts the unlock form in the row\'s place, then withdraws', async () => {
-    const unlocked: string[] = [];
-    const withdrawn: string[] = [];
-    const c = card(confirmed(PUB), {
-      you: true, onWithdraw: (id) => withdrawn.push(id), canWithdraw: true,
-      locked: true, ownKey: PUB, onUnlock: async (p) => { unlocked.push(p); },
-    });
-    document.body.appendChild(c);
-    metaWithdraw(c).click();
-    confirmBtn(c, 'withdraw').click();
-    expect(c.querySelector('.card-confirm')).toBeNull(); // the confirm made way for the unlock
-    const form = c.querySelector('.card-unlock form.pf') as HTMLFormElement;
-    expect(form).not.toBeNull();
-    expect(withdrawn).toHaveLength(0); // nothing signed yet
-    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
-    form.dispatchEvent(new Event('submit', { cancelable: true }));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(unlocked).toEqual(['pw']);
-    expect(withdrawn).toEqual(['p1']);
     c.remove();
   });
 
   it('canWithdraw false renders the button disabled with the reason as the title', () => {
-    const c = card(confirmed(PUB), { you: true, onWithdraw: () => {}, canWithdraw: false });
+    const asked: string[] = [];
+    const c = card(confirmed(PUB), { you: true, onWithdraw: (id) => { asked.push(id); }, canWithdraw: false });
     const wb = metaWithdraw(c);
     expect(wb.disabled).toBe(true);
     expect(wb.title).toBe('needs one rep box to sign with; this key has none');
-    // A disabled control opens no confirm row.
     document.body.appendChild(c);
     wb.click();
-    expect(c.querySelector('.card-confirm')).toBeNull();
+    expect(asked).toEqual([]);
     c.remove();
   });
 
@@ -432,26 +522,46 @@ describe('card — the withdraw control', () => {
     expect(card(tomb, { you: true, onWithdraw: () => {}, canWithdraw: true }).querySelector('.withdraw-ctl')).toBeNull();
   });
 
-  it('the word delete appears nowhere on the control or its confirm row', () => {
+  it('buildConfirmRow — the sentence, withdraw and keep; keep and Esc run onKeep, withdraw runs onYes', () => {
+    const yes: string[] = [];
+    const kept: string[] = [];
+    const { row, keep } = buildConfirmRow({
+      onYes: () => { yes.push('.'); },
+      onKeep: () => { kept.push('.'); },
+    });
+    expect(row.classList.contains('card-confirm')).toBe(true);
+    expect(row.querySelector('.q')?.textContent).toBe('withdraw this post? the content goes; the replies stay.');
+    expect([...row.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['withdraw', 'keep']);
+    expect(keep).toBe([...row.querySelectorAll('button')].find((b) => b.textContent === 'keep'));
+    [...row.querySelectorAll('button')].find((b) => b.textContent === 'withdraw')!.click();
+    expect(yes).toEqual(['.']);
+    keep.click();
+    expect(kept).toEqual(['.']);
+    row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(kept).toEqual(['.', '.']);
+  });
+
+  it('the word delete appears nowhere on the control or in the confirm row builder', () => {
     const c = card(confirmed(PUB), { you: true, onWithdraw: () => {}, canWithdraw: true });
-    document.body.appendChild(c);
-    metaWithdraw(c).click();
-    expect(c.textContent!.toLowerCase()).not.toContain('delete');
-    // aria-labels and titles too, not only visible text.
     for (const b of c.querySelectorAll('button')) {
       expect((b.getAttribute('aria-label') ?? '').toLowerCase()).not.toContain('delete');
       expect((b.title ?? '').toLowerCase()).not.toContain('delete');
     }
-    c.remove();
+    const { row } = buildConfirmRow({ onYes: () => {}, onKeep: () => {} });
+    expect(row.textContent!.toLowerCase()).not.toContain('delete');
+    for (const b of row.querySelectorAll('button')) {
+      expect((b.getAttribute('aria-label') ?? '').toLowerCase()).not.toContain('delete');
+    }
   });
 });
 
 describe('card — link', () => {
   const URL = 'http://localhost/p/' + 'ab'.repeat(32);
+  const link = { url: URL, refused: (): void => {} };
 
   it('the copy glyph appears after ↩ reply as the meta row\'s last child', () => {
     const c = card(confirmed('bb'.repeat(32)), {
-      onReply: () => {},  linkUrl: URL,
+      onReply: () => {},  link,
     });
     const meta = c.querySelector('.meta')!;
     const linkbtn = meta.querySelector('.linkbtn')!;
@@ -460,7 +570,7 @@ describe('card — link', () => {
     expect(meta.lastElementChild).toBe(linkbtn);
   });
 
-  it('absent when no linkUrl is set', () => {
+  it('absent when no link is set', () => {
     const c = card(confirmed('bb'.repeat(32)));
     expect(c.querySelector('.linkbtn')).toBeNull();
   });
@@ -468,7 +578,7 @@ describe('card — link', () => {
   it('present on a withdrawn card', () => {
     const c = card(
       { kind: 'withdrawn', id: 'w1', author: 'cc'.repeat(32), withdrawnAtHeight: 5, parentRefs: [], descendantCount: 0, authorName: null, txId: 'aa'.repeat(32) },
-      { onReply: () => {},  linkUrl: URL },
+      { onReply: () => {},  link },
     );
     expect(c.querySelector('.linkbtn')).toBeTruthy();
   });
@@ -480,7 +590,7 @@ describe('card — link', () => {
       writable: true, configurable: true,
     });
     const c = card(confirmed('bb'.repeat(32)), {
-      onReply: () => {},  linkUrl: URL,
+      onReply: () => {},  link,
     });
     document.body.appendChild(c);
     c.querySelector<HTMLButtonElement>('.linkbtn')!.click();
@@ -490,27 +600,55 @@ describe('card — link', () => {
     c.remove();
   });
 
-  it('the fallback row appears when the clipboard is absent', () => {
+  it('where the clipboard is absent the press is handed on with the glyph; the card mounts no row and the glyph stays', () => {
     Object.defineProperty(navigator, 'clipboard', {
       value: undefined, writable: true, configurable: true,
     });
+    const asked: HTMLElement[] = [];
     const c = card(confirmed('bb'.repeat(32)), {
-      onReply: () => {},  linkUrl: URL,
+      onReply: () => {},
+      link: { url: URL, refused: (control) => { asked.push(control); } },
     });
     document.body.appendChild(c);
-    c.querySelector<HTMLButtonElement>('.linkbtn')!.click();
-    expect(c.querySelector('.card-link')).toBeTruthy();
+    const glyph = c.querySelector<HTMLButtonElement>('.linkbtn')!;
+    glyph.click();
+    expect(asked).toEqual([glyph]);
+    expect(c.querySelector('.card-link')).toBeNull();
     expect(c.querySelector('.linkbtn svg')).not.toBeNull();
     c.remove();
+  });
+
+  it('a refused clipboard write hands the press on the same way', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: () => Promise.reject(new Error('refused')) },
+      writable: true, configurable: true,
+    });
+    const asked: HTMLElement[] = [];
+    const c = card(confirmed('bb'.repeat(32)), {
+      link: { url: URL, refused: (control) => { asked.push(control); } },
+    });
+    document.body.appendChild(c);
+    const glyph = c.querySelector<HTMLButtonElement>('.linkbtn')!;
+    glyph.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(asked).toEqual([glyph]);
+    c.remove();
+  });
+
+  it('buildLinkFallbackRow renders the url as text with the copy-by-hand suffix', () => {
+    const row = buildLinkFallbackRow(URL);
+    expect(row.classList.contains('card-link')).toBe(true);
+    expect(row.querySelector('.hex')?.textContent).toBe(URL);
+    expect(row.textContent).toContain(' — copy it by hand');
   });
 });
 
 describe('card — feed-shaped: like and link without reply or withdraw', () => {
   const OTHER = 'bb'.repeat(32);
-  const URL = 'http://localhost/p/' + OTHER;
+  const link = { url: 'http://localhost/p/' + OTHER, refused: (): void => {} };
 
   it('the link follows the like word on a feed card', () => {
-    const c = card({ ...confirmed(OTHER), likeCount: 2 }, { onLike: () => {}, linkUrl: URL });
+    const c = card({ ...confirmed(OTHER), likeCount: 2 }, { onLike: () => {}, link });
     const meta = c.querySelector('.meta')!;
     const likeWord = [...meta.querySelectorAll('button')].find((b) => b.textContent === 'like')!;
     const linkbtn = meta.querySelector('.linkbtn')!;
@@ -522,7 +660,7 @@ describe('card — feed-shaped: like and link without reply or withdraw', () => 
 
   it('the read-only count N liked and link on the reader\'s own post, no like word', () => {
     const own = { ...confirmed(PUB), likeCount: 5 };
-    const c = card(own, { you: true, linkUrl: URL });
+    const c = card(own, { you: true, link });
     const liked = c.querySelector('.meta .liked');
     expect(liked).not.toBeNull();
     expect(liked!.textContent).toContain('5');

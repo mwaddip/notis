@@ -1,6 +1,5 @@
 import { el, shortHex } from '../dom';
 import { parseContent, renderContent } from './content';
-import { unlockForm } from './passphrase';
 import { copyGlyph } from './glyphs';
 import { markHandle } from './name-handle';
 import type { FeedRow, LightJson, PostJson, WithdrawnJson } from '../api/dto';
@@ -21,6 +20,21 @@ export interface Flight {
   onTryAgain?: (() => void) | null;
 }
 
+/** The control a row under a card was opened from: `like` and `withdraw` for
+ *  the unlock form, `withdraw` for the question, `link` for the link held as
+ *  text. */
+export type RowControl = 'like' | 'withdraw' | 'link';
+
+/** A row the reader opened under a card. A card stands over it while the card
+ *  offers the control it was opened from; a row that a draw of its list stands
+ *  under no card has ended (WEB_INTERFACE → What the feed reads, and what a
+ *  card shows for it → "A row the reader opened under a card outlasts a redraw
+ *  of its list"). */
+export interface CardRow {
+  control: RowControl;
+  el: HTMLElement;
+}
+
 export interface CardOpts {
   open?: boolean;                        // this thread is open in a pane
   root?: boolean;                        // the pane's own root
@@ -35,23 +49,32 @@ export interface CardOpts {
   // withdraw are in a pane alone (WEB_INTERFACE → What the feed reads, and what a card shows for it).
   flight?: Flight | null;                // the stage line for the client's own submission
   onReply?: ((id: string) => void) | null; // ↩ reply — present on a withdrawn card too
-  onLike?: ((id: string) => void) | null;   // like — on another's confirmed post
   liked?: boolean;                       // show 'liked' rather than a control
   likePending?: boolean;                 // the like has not settled — inkMute, count + 1
   composerKey?: string;                  // for the data-composer-open focus hook
   you?: boolean;                         // the reader's own card — · you after the prefix
-  locked?: boolean;                      // the identity is locked — a like or vouch prompts unlock first
-  ownKey?: string;                       // the reader's key, the unlock form's username
-  onUnlock?: (passphrase: string) => Promise<void>; // load the seed, then the like or vouch proceeds
+  // A press that may open a row under the card hands over the control pressed:
+  // the row goes in under the card that control stands in, and whether the
+  // identity is locked is read then, never when the card was drawn
+  // (WEB_INTERFACE → What the feed reads, and what a card shows for it →
+  // "A row's controls act on the card as it stands at the press").
+  onLike?: ((id: string, control: HTMLElement) => void) | null;     // like — on another's confirmed post
+  onWithdraw?: ((id: string, control: HTMLElement) => void) | null; // withdraw — on the reader's own, in a pane
+  // The rows held for this card. Each stands beneath the meta row where the
+  // card draws the control it was opened from, and nowhere else (WEB_INTERFACE
+  // → What the feed reads, and what a card shows for it → "A row the reader
+  // opened under a card outlasts a redraw of its list").
+  rows?: readonly CardRow[];
   // The identity display (WEB_INTERFACE → The identity display).
   onAuthor?: ((key: string) => void) | null; // the prefix button opens the author window
   nameClay?: (key: string, name: string) => boolean; // the handle reads clay (→ The extension → "The verified names")
   // The author's own controls (WEB_INTERFACE → The withdraw control).
-  onWithdraw?: ((id: string) => void) | null; // the confirm row's withdraw signs
   withdraw?: 'pending' | Flight | null;  // 'pending' from the ledger, else the transient flight in the slot
   canWithdraw?: boolean;                 // false → disabled with the reason as the title
-  // WEB_INTERFACE → Links
-  linkUrl?: string;
+  // The post's link and where its press goes when the clipboard takes no
+  // write — one option, so no card carries the copy glyph without the row its
+  // refusal opens (WEB_INTERFACE → Links).
+  link?: { url: string; refused: (control: HTMLElement) => void };
 }
 
 /** Compact absolute local time; the on-chain marker is the block height, this
@@ -189,8 +212,8 @@ export function stageLine(flight: Flight): HTMLElement {
 
 /** The like area — the count `N liked`, then the word `like` while it can act,
  *  the reader's state as the count's colour (WEB_INTERFACE → What the feed reads,
- *  and what a card shows for it). */
-function likeArea(post: PostJson, opts: CardOpts, meta: HTMLElement): void {
+ *  and what a card shows for it). Answers whether the word `like` was drawn. */
+function likeArea(post: PostJson, opts: CardOpts, meta: HTMLElement): boolean {
   if (opts.liked) {
     const count = post.likeCount + (opts.likePending ? 1 : 0);
     const lk = likedCount(count, !opts.likePending);
@@ -199,46 +222,17 @@ function likeArea(post: PostJson, opts: CardOpts, meta: HTMLElement): void {
       lk.setAttribute('aria-label', 'you liked this');
       meta.appendChild(lk);
     }
-    return;
+    return false;
   }
   const lk = likedCount(post.likeCount);
   if (lk) meta.appendChild(lk);
-  if (opts.onLike) {
-    const lb = el('button', 'word');
-    lb.setAttribute('aria-label', 'like this post — permanent, and moves rep to its author');
-    lb.textContent = 'like';
-    lb.addEventListener('click', () => {
-      // A locked identity unlocks first, in a row under the meta and in response to
-      // the press; on success the like proceeds (WEB_INTERFACE → The identity module).
-      if (opts.locked && opts.ownKey && opts.onUnlock) {
-        mountCardUnlock(lb, opts.ownKey, opts.onUnlock, () => opts.onLike!(post.id));
-        return;
-      }
-      opts.onLike!(post.id);
-    });
-    meta.appendChild(lb);
-  }
-}
-
-/** The unlock form in a row under the card's meta; a correct passphrase loads the
- *  seed and the like proceeds, Esc drops the row (WEB_INTERFACE → The identity
- *  module). */
-function mountCardUnlock(anchor: HTMLElement, ownKey: string, onUnlock: (p: string) => Promise<void>, onProceed: () => void): void {
-  const cardBody = anchor.closest('.card-body');
-  const meta = cardBody?.querySelector('.meta');
-  if (!meta || cardBody!.querySelector('.card-unlock')) return; // no meta, or already open
-  const row = el('div', 'card-unlock');
-  row.appendChild(
-    unlockForm(
-      ownKey,
-      async (p) => {
-        await onUnlock(p);
-        onProceed();
-      },
-      () => row.remove(),
-    ),
-  );
-  meta.insertAdjacentElement('afterend', row);
+  if (!opts.onLike) return false;
+  const lb = el('button', 'word');
+  lb.setAttribute('aria-label', 'like this post — permanent, and moves rep to its author');
+  lb.textContent = 'like';
+  lb.addEventListener('click', () => opts.onLike!(post.id, lb));
+  meta.appendChild(lb);
+  return true;
 }
 
 /** The withdraw slot — the meta row's first control on the reader's own confirmed
@@ -246,11 +240,12 @@ function mountCardUnlock(anchor: HTMLElement, ownKey: string, onUnlock: (p: stri
  *  control). A pending or flighted withdrawal shows the stage line — `submitted`
  *  from the ledger, or the transient `submitting…`/expired flight; otherwise the
  *  `withdraw` button, disabled with the reason as its `title` when the key has no
- *  karma box to sign with (HOUSE_STYLE → Interaction). */
-function withdrawArea(post: PostJson, opts: CardOpts): HTMLElement | null {
+ *  karma box to sign with (HOUSE_STYLE → Interaction). `offered` is true for
+ *  the button a press acts on, and for nothing else. */
+function withdrawArea(post: PostJson, opts: CardOpts): { el: HTMLElement; offered: boolean } | null {
   const w = opts.withdraw ?? null;
-  if (w === 'pending') return stageLine({ stage: 'submitted' });
-  if (w !== null) return stageLine(w); // the transient flight — submitting or expired
+  if (w === 'pending') return { el: stageLine({ stage: 'submitted' }), offered: false };
+  if (w !== null) return { el: stageLine(w), offered: false }; // the transient flight — submitting or expired
   if (!opts.onWithdraw) return null;
 
   const wb = el('button', 'word withdraw-ctl');
@@ -260,53 +255,11 @@ function withdrawArea(post: PostJson, opts: CardOpts): HTMLElement | null {
     const reason = 'needs one rep box to sign with; this key has none';
     wb.title = reason;
     wb.setAttribute('aria-label', reason);
-    return wb;
+    return { el: wb, offered: false };
   }
   wb.setAttribute('aria-label', 'withdraw this post — its content goes, its replies stay');
-  wb.addEventListener('click', () => mountCardConfirm(wb, post.id, opts));
-  return wb;
-}
-
-/** The confirm row — mounted after the card's one meta row, one row at a time
- *  (where the unlock row mounts), reading the question with `withdraw` and `keep`,
- *  focus on `keep`; `keep` and Esc remove it (WEB_INTERFACE → The withdraw
- *  control). The row's `withdraw` signs — through the unlock form in this row's
- *  place first when the identity is locked, the withdraw button in the meta
- *  anchoring it, and the withdrawal continuing on success (WEB_INTERFACE → The
- *  identity module). Never says "deleted" (WEB_INTERFACE → The withdrawn
- *  state). */
-function mountCardConfirm(anchor: HTMLElement, postId: string, opts: CardOpts): void {
-  const cardBody = anchor.closest('.card-body');
-  const meta = cardBody?.querySelector('.meta');
-  if (!meta || cardBody!.querySelector('.card-confirm') || cardBody!.querySelector('.card-unlock')) return;
-
-  const row = el('div', 'card-confirm');
-  row.appendChild(el('div', 'q', 'withdraw this post? the content goes; the replies stay.'));
-  const actions = el('div', 'actions');
-  const yes = el('button', 'word', 'withdraw') as HTMLButtonElement;
-  yes.setAttribute('aria-label', 'withdraw this post now');
-  const keep = el('button', 'word', 'keep') as HTMLButtonElement;
-  keep.setAttribute('aria-label', 'keep this post');
-  const dismiss = (): void => {
-    row.remove();
-    (anchor as HTMLButtonElement).focus();
-  };
-  yes.addEventListener('click', () => {
-    if (opts.locked && opts.ownKey && opts.onUnlock) {
-      row.remove();
-      mountCardUnlock(anchor, opts.ownKey, opts.onUnlock, () => opts.onWithdraw!(postId));
-      return;
-    }
-    opts.onWithdraw!(postId);
-  });
-  keep.addEventListener('click', dismiss);
-  row.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') dismiss();
-  });
-  actions.append(yes, keep);
-  row.appendChild(actions);
-  meta.insertAdjacentElement('afterend', row);
-  keep.focus(); // focus on keep — the non-destructive choice
+  wb.addEventListener('click', () => opts.onWithdraw!(post.id, wb));
+  return { el: wb, offered: true };
 }
 
 /** ↩ reply — a ghost button in the meta row (WEB_INTERFACE → The write surface). */
@@ -321,36 +274,71 @@ function replyButton(id: string, opts: CardOpts): HTMLElement | null {
   return rb;
 }
 
-// WEB_INTERFACE → Links — the copy glyph at the meta row's right edge.
-function linkButton(opts: CardOpts, meta: HTMLElement): HTMLElement | null {
-  if (!opts.linkUrl) return null;
-  const url = opts.linkUrl;
+// WEB_INTERFACE → Links — the copy glyph at the meta row's right edge; where
+// the clipboard is absent or takes no write, the press is handed on with the
+// glyph, for the link held as text.
+function linkButton(opts: CardOpts): HTMLElement | null {
+  if (!opts.link) return null;
+  const { url, refused: onRefused } = opts.link;
   let copied = false;
   const lb = el('button', 'word linkbtn');
   lb.setAttribute('aria-label', 'copy this post\'s link');
   lb.appendChild(copyGlyph());
+  const refused = (): void => onRefused(lb);
   lb.addEventListener('click', () => {
     if (copied) return;
     if (typeof navigator.clipboard?.writeText !== 'function') {
-      mountLinkFallback(url, meta);
+      refused();
       return;
     }
     navigator.clipboard.writeText(url).then(
       () => { copied = true; lb.textContent = 'copied'; },
-      () => mountLinkFallback(url, meta),
+      () => refused(),
     );
   });
   return lb;
 }
 
-function mountLinkFallback(url: string, meta: HTMLElement): void {
-  if (meta.parentElement?.querySelector('.card-link')) return;
-  const row = el('div', 'card-link');
-  const span = el('span', 'hex');
-  span.textContent = url;
-  row.appendChild(span);
-  row.appendChild(el('span', null, ' — copy it by hand'));
-  meta.insertAdjacentElement('afterend', row);
+/** A row's place in its card's body: the unlock form or the question directly
+ *  beneath the meta row, the link row beneath that — the link held as text
+ *  stands beside either (WEB_INTERFACE → What the feed reads, and what a card
+ *  shows for it → "A row the reader opened under a card outlasts a redraw of
+ *  its list"). */
+function placeRow(body: Element, meta: Element, row: CardRow): void {
+  if (row.control === 'link') body.appendChild(row.el);
+  else meta.insertAdjacentElement('afterend', row.el);
+}
+
+/** Put a row under the card `at` stands in — `at` a control of the card, or a
+ *  row already under it — replacing no node (WEB_INTERFACE → What the feed
+ *  reads, and what a card shows for it → "Opening a row and ending one redraw
+ *  nothing else"). Answers false where `at` stands in no card on screen. */
+export function mountRow(at: HTMLElement, row: CardRow): boolean {
+  if (!at.isConnected) return false;
+  const body = at.closest('.card-body');
+  const meta = body === null ? undefined : [...body.children].find((c) => c.classList.contains('meta'));
+  if (body === null || meta === undefined) return false;
+  placeRow(body, meta, row);
+  return true;
+}
+
+/** Stand the held rows under a card being drawn: each whose control the card
+ *  offers, and no other. */
+function standRows(body: Element, meta: Element, rows: readonly CardRow[] | undefined, offers: ReadonlySet<RowControl>): void {
+  for (const row of rows ?? []) if (offers.has(row.control)) placeRow(body, meta, row);
+}
+
+/** A card's link option: the post's URL, and the press handed on with the
+ *  card's list and post when the clipboard takes no write (WEB_INTERFACE →
+ *  Links). */
+export function cardLink(
+  list: string,
+  postId: string,
+  ctx: { linkUrl: (id: string) => string },
+  handlers: { linkRefused: (list: string, postId: string, url: string, control: HTMLElement) => void },
+): NonNullable<CardOpts['link']> {
+  const url = ctx.linkUrl(postId);
+  return { url, refused: (control) => handlers.linkRefused(list, postId, url, control) };
 }
 
 function inBlockNode(height: number): HTMLElement {
@@ -402,18 +390,28 @@ export function flightFor(sub: Submission, tryAgain: (localKey: string) => void)
   };
 }
 
-/** The like and link opts a feed card and an author-posts card carry — the shared
- *  half that a pane composes with reply and withdraw
- *  (WEB_INTERFACE → What the feed reads, and what a card shows for it). */
-// WEB_INTERFACE → What the feed reads, and what a card shows for it — the
-// unlock row under the meta when the identity is locked.
+/** The like, the link and the held rows a feed card and an author-posts card
+ *  carry — the shared half that a pane composes with reply and withdraw
+ *  (WEB_INTERFACE → What the feed reads, and what a card shows for it). `list`
+ *  names the list the card stands in — the feed, an author window, a pane —
+ *  and rides each press with the post and the control pressed. */
 export function listCardOpts(
   row: PostJson | WithdrawnJson,
-  ctx: { writeEnabled: boolean; ownKey: string | null; locked: boolean; likePending: (id: string) => boolean; linkUrl: (id: string) => string },
-  handlers: { likePost: (id: string) => void; unlockIdentity: (passphrase: string) => Promise<void> },
+  list: string,
+  ctx: {
+    writeEnabled: boolean;
+    ownKey: string | null;
+    likePending: (id: string) => boolean;
+    linkUrl: (id: string) => string;
+    rowsUnder: (list: string, postId: string) => readonly CardRow[];
+  },
+  handlers: {
+    pressLike: (list: string, postId: string, control: HTMLElement) => void;
+    linkRefused: (list: string, postId: string, url: string, control: HTMLElement) => void;
+  },
 ): Partial<CardOpts> {
-  const opts: Partial<CardOpts> = {};
-  if (isWithdrawn(row) || row.status === 'confirmed') opts.linkUrl = ctx.linkUrl(row.id);
+  const opts: Partial<CardOpts> = { rows: ctx.rowsUnder(list, row.id) };
+  if (isWithdrawn(row) || row.status === 'confirmed') opts.link = cardLink(list, row.id, ctx, handlers);
   if (isWithdrawn(row) || !ctx.writeEnabled || row.status !== 'confirmed') return opts;
   const isOwn = ctx.ownKey !== null && row.author === ctx.ownKey;
   if (isOwn) return opts;
@@ -423,10 +421,7 @@ export function listCardOpts(
     opts.liked = true;
     opts.likePending = overlaid && row.likedByViewer !== true;
   } else {
-    opts.onLike = (id) => handlers.likePost(id);
-    opts.locked = ctx.locked;
-    opts.ownKey = ctx.ownKey ?? undefined;
-    opts.onUnlock = (p) => handlers.unlockIdentity(p);
+    opts.onLike = (id, control) => handlers.pressLike(list, id, control);
   }
   return opts;
 }
@@ -470,6 +465,7 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
     body.appendChild(stageLine(flight));
   } else {
     const meta = el('div', 'meta');
+    const offers = new Set<RowControl>();
     const rc = replyCountNode(opts.replyCount ?? null);
     if (rc) meta.appendChild(rc);
     // Controls only on a landed or confirmed card, never a node's pending one.
@@ -477,22 +473,27 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
       // The first slot: on the reader's own confirmed post the read-only like
       // count stays and the withdraw control — or its stage line in flight —
       // follows it; on another's, the like control (WEB_INTERFACE → The withdraw
-      // control).
+      // control). A card draws one of the two, never both.
       const wa = withdrawArea(post, opts);
       if (wa) {
         const count = likedCount(post.likeCount);
         if (count) meta.appendChild(count);
-        meta.appendChild(wa);
-      } else {
-        likeArea(post, opts, meta);
+        meta.appendChild(wa.el);
+        if (wa.offered) offers.add('withdraw');
+      } else if (likeArea(post, opts, meta)) {
+        offers.add('like');
       }
       if (landed && post.blockHeight !== null) meta.appendChild(inBlockNode(post.blockHeight));
       const rb = replyButton(post.id, opts);
       if (rb) meta.appendChild(rb);
-      const lnk = linkButton(opts, meta);
-      if (lnk) meta.appendChild(lnk);
+      const lnk = linkButton(opts);
+      if (lnk) {
+        meta.appendChild(lnk);
+        offers.add('link');
+      }
     }
     body.appendChild(meta);
+    standRows(body, meta, opts.rows, offers);
   }
   card.appendChild(body);
 
@@ -517,9 +518,12 @@ function withdrawnCard(row: WithdrawnJson, opts: CardOpts): HTMLElement {
   // deletion (WEB_INTERFACE → The write surface).
   const rb = replyButton(row.id, opts);
   if (rb) meta.appendChild(rb);
-  const lnk = linkButton(opts, meta);
+  const lnk = linkButton(opts);
   if (lnk) meta.appendChild(lnk);
   body.appendChild(meta);
+  // The withdrawn card keeps its copy glyph and so its link row; it offers
+  // neither `like` nor `withdraw`.
+  standRows(body, meta, opts.rows, new Set<RowControl>(lnk ? ['link'] : []));
   card.appendChild(body);
   strip(row.id, opts, card); // there is something beneath — keep the control
   return card;

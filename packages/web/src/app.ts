@@ -10,12 +10,14 @@ import { el, shortHex, preservingScroll } from './dom';
 import { contentHashHex } from './integrity';
 import { prefs, setTheme, setIdTint, setNode, writeStore, readStore, BUILD_NODES, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
 import { renderFeedInto, replaceFeedCard } from './view/feed';
+import { mountRow, type CardRow, type RowControl } from './view/card';
 import { renderPanesInto, renderRegionElement, renderBars } from './view/panes';
 import { makeComposer, type ComposerController } from './view/composer';
+import { buildUnlockRow, buildConfirmRow, buildLinkFallbackRow } from './view/card-rows';
 import { personGlyph, sunGlyph, moonGlyph, gearGlyph, walletGlyph } from './view/glyphs';
 import { MARK } from './view/mark';
 import { serialise, parse, authorWindowId, postsWindowId, windowSubject } from './model/arrangement';
-import { reconcileNewer, isLivePost } from './model/feed-reconcile';
+import { reconcileNewer, isLivePost, newPostsLine, olderPostsLine } from './model/feed-reconcile';
 import { withNodeWord } from './model/light';
 import { flattenThread } from './model/thread';
 import { WriteClient, type Rejection } from './api/write';
@@ -74,6 +76,29 @@ const isWin = (k: string): boolean => k.charAt(0) === '@';
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const composerKey = (parentId: string | null): string => parentId ?? FEED_COMPOSER;
 const isSettled = (stage: FlightStage): boolean => stage === 'landed' || stage === 'expired' || stage === 'rejected';
+
+/** A row the reader opened under a card: the unlock form a locked `like` or
+ *  `withdraw` asks for, the withdraw question, or the link held as text, with
+ *  the control it was opened from. It belongs to the card it was opened under
+ *  — that post, in that list (WEB_INTERFACE → What the feed reads, and what a
+ *  card shows for it → "A row the reader opened under a card outlasts a redraw
+ *  of its list"). */
+interface HeldCardRow extends CardRow {
+  kind: 'unlock' | 'question' | 'link';
+  list: string;
+  postId: string;
+}
+
+/** The two places under a card: `ask` holds the unlock form or the question,
+ *  one of the two at a time; `link` holds the link row, beside either. */
+type RowPlace = 'ask' | 'link';
+const ROW_PLACES: readonly RowPlace[] = ['ask', 'link'];
+const rowPlace = (held: HeldCardRow): RowPlace => (held.kind === 'link' ? 'link' : 'ask');
+
+/** The key a row is held under: its list, its post and its place, so one post
+ *  drawn in two lists holds its rows in each. No list key and no post id
+ *  carries a null byte. */
+const rowKey = (list: string, postId: string, place: RowPlace): string => list + '\0' + postId + '\0' + place;
 
 /** Hand the reader a file — an exported identity. A data: URL needs no object-URL
  *  lifecycle and works from a static bundle (WEB_INTERFACE → The profile window). */
@@ -173,7 +198,7 @@ function usernameRejectionCopy(r: Rejection): string {
 
 /** A fresh empty feed state — the author-posts window's body shape, the feed's own. */
 function emptyFeedState(): FeedState {
-  return { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null, unboundCount: 0 };
+  return { posts: [], pending: [], next: null, report: null, olderReport: null, reportCount: null, olderReportCount: null, loaded: false, loading: false, error: null, unboundCount: 0 };
 }
 
 /** The rows a ↻ lands on. One that reconnected puts its new rows on top of the
@@ -240,6 +265,13 @@ export class App {
   // Open composer widgets, held by key so the same element is re-parented across
   // a region rebuild rather than recreated (WEB_INTERFACE → The write surface).
   private composers = new Map<string, ComposerController>();
+  // The rows the reader opened under cards, by `rowKey`. A held row is attached
+  // to the document, and every draw of its list puts the same element under
+  // its card again; what is typed in an unlock form is held in its field and
+  // nowhere else (WEB_INTERFACE → What the feed reads, and what a card shows
+  // for it → "A row the reader opened under a card outlasts a redraw of its
+  // list").
+  private cardRows = new Map<string, HeldCardRow>();
   // Targets the reader pressed like on, shown liked at once and reverted on a
   // rejection or expiry (WEB_INTERFACE → The wallet).
   private optimisticLikes = new Set<string>();
@@ -479,7 +511,7 @@ export class App {
     this.ledger = ledger ?? new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
     this.tabs = tabs ?? null;
     this.state = {
-      feed: { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null, unboundCount: 0 },
+      feed: { posts: [], pending: [], next: null, report: null, olderReport: null, reportCount: null, olderReportCount: null, loaded: false, loading: false, error: null, unboundCount: 0 },
       threads: new Map(),
       workspace: newWorkspace(),
       status: null,
@@ -512,15 +544,16 @@ export class App {
       exportIdentity: (p) => this.exportIdentity(p),
       forgetIdentity: () => this.idm.forget(),
       lockIdentity: async () => { await this.idm.lock(); this.renderRegionsFor('@profile'); },
-      unlockIdentity: (p) => this.idm.unlock(p),
+      unlockIdentity: (p) => this.unlockIdentity(p),
       askFaucet: () => void this.askFaucet(),
       openComposer: (parentId) => this.openComposer(parentId),
       // The press records the key; the error drops it. Neither re-renders — the
       // card already swapped the img or the failure line in place (WEB_INTERFACE → Content).
       expandImage: (key) => { this.expandedImages.add(key); },
       collapseImage: (key) => { this.expandedImages.delete(key); },
-      likePost: (postId) => void this.likePost(postId),
-      withdrawPost: (postId) => void this.withdrawPost(postId),
+      pressLike: (list, postId, control) => this.pressLike(list, postId, control),
+      pressWithdraw: (list, postId, control) => this.pressWithdraw(list, postId, control),
+      linkRefused: (list, postId, url, control) => this.linkRefused(list, postId, url, control),
       tryAgain: (localKey) => void this.tryAgain(localKey),
       vouch: (key) => void this.vouch(key),
       unvouch: (key) => void this.unvouch(key),
@@ -935,6 +968,7 @@ export class App {
       linkUrl: (id) => BUILD_PUBLIC !== ''
         ? BUILD_PUBLIC + 'p/' + id
         : new URL(this.base + 'p/' + id, location.href).href,
+      rowsUnder: (list, postId) => this.rowsUnder(list, postId),
     };
   }
 
@@ -1285,7 +1319,7 @@ export class App {
 
   private renderFeed(): void {
     if (this.standalone) return;
-    this.withComposerFocus(() => {
+    this.redraw(() => {
       const top = this.feedEl.scrollTop;
       renderFeedInto(this.feedEl, this.state.feed, this.handlers, this.ctx());
       this.feedEl.scrollTop = top;
@@ -1301,12 +1335,12 @@ export class App {
     if (this.standalone) return;
     const post = this.state.feed.posts.find((p) => p.id === postId);
     if (!post || !isFull(post)) return;
-    replaceFeedCard(this.feedEl, post, this.ctx(), this.handlers);
+    this.redraw(() => replaceFeedCard(this.feedEl, post, this.ctx(), this.handlers));
     this.checkNames('new');
   }
 
   private renderPanes(): void {
-    this.withComposerFocus(() => this.renderPanesBody());
+    this.redraw(() => this.renderPanesBody());
     this.checkNames('new');
   }
 
@@ -1349,7 +1383,7 @@ export class App {
    *  every other region are untouched, so their scroll and any text selection
    *  in them survive. */
   private renderRegion(uid: number): void {
-    this.withComposerFocus(() => this.renderRegionInPlace(uid));
+    this.redraw(() => this.renderRegionInPlace(uid));
     this.checkNames('new');
   }
 
@@ -1643,9 +1677,11 @@ export class App {
     if (feedPendingFilled) {
       this.renderFeed();
     } else if (feedPostsFills.length > 0) {
-      for (const composed of feedPostsFills) {
-        replaceFeedCard(this.feedEl, composed, this.ctx(), this.handlers);
-      }
+      this.redraw(() => {
+        for (const composed of feedPostsFills) {
+          replaceFeedCard(this.feedEl, composed, this.ctx(), this.handlers);
+        }
+      });
       this.checkNames('new');
     }
     for (const key of authorsTouched) this.renderPostsLoad(key);
@@ -1660,11 +1696,16 @@ export class App {
    *  row: `root` becomes `null` and `subjectWithheld` the end — `'unserved'`
    *  or `'unbound'` — and an `'unbound'` subject counts at the thread's
    *  head, as a descendant end does (→ "The post check" → "A thread whose
-   *  subject ends so"). The touched surfaces redraw. */
+   *  subject ends so"). A `↻` or a `load older` line a row leaving came off
+   *  reads what is left while the field still reads what the count wrote
+   *  (→ "A report counts the posts that stand"). The touched surfaces
+   *  redraw. */
   private endSlots(ends: ReadonlyMap<string, ResolveEnd>): void {
     if (ends.size === 0) return;
     const feedUnboundIds = new Set<string>();
+    const feedLeftIds = new Set<string>();
     const authorsUnbound = new Map<string, Set<string>>();
+    const authorsLeft = new Map<string, Set<string>>();
     const touchedAuthors = new Set<string>();
     const threadsUnbound = new Map<string, Set<string>>();
     const touchedThreads = new Set<string>();
@@ -1687,6 +1728,7 @@ export class App {
       }
       if (inFeed) {
         feedTouched = true;
+        feedLeftIds.add(id);
         if (end === 'unbound') feedUnboundIds.add(id);
       }
       for (const [key, f] of this.authorPostsData) {
@@ -1700,6 +1742,9 @@ export class App {
         }
         if (touched) {
           touchedAuthors.add(key);
+          let left = authorsLeft.get(key);
+          if (left === undefined) { left = new Set(); authorsLeft.set(key, left); }
+          left.add(id);
           if (end === 'unbound') {
             let s = authorsUnbound.get(key);
             if (s === undefined) { s = new Set(); authorsUnbound.set(key, s); }
@@ -1740,9 +1785,60 @@ export class App {
       const t = this.state.threads.get(tid);
       if (t) t.unboundCount += s.size;
     }
+    // A line a slot leaving came off reads what is left — only while the
+    // field still reads the text the count wrote (WEB_INTERFACE → The
+    // extension → "A report counts the posts that stand").
+    if (feedLeftIds.size > 0) {
+      this.recountFeedLine('report', feedLeftIds, newPostsLine);
+      this.recountFeedLine('olderReport', feedLeftIds, olderPostsLine);
+    }
+    for (const [key, left] of authorsLeft) this.recountAuthorLine(key, left);
     if (feedTouched) this.renderFeed();
     for (const key of touchedAuthors) this.renderPostsLoad(key);
     for (const tid of touchedThreads) this.renderThreadLoad(tid);
+  }
+
+  /** Recount one of the feed's two lines after the given ids left: the record
+   *  loses them, the line reads what is left under the same formatter, and the
+   *  write happens only while the field still reads the text the count wrote
+   *  (WEB_INTERFACE → The extension → "A report counts the posts that stand"). */
+  private recountFeedLine(
+    field: 'report' | 'olderReport',
+    left: ReadonlySet<string>,
+    line: (n: number) => string,
+  ): void {
+    const feed = this.state.feed;
+    const key = field === 'report' ? 'reportCount' : 'olderReportCount';
+    const rc = feed[key];
+    if (rc === null || rc.text !== feed[field]) return;
+    let changed = false;
+    for (const id of left) if (rc.ids.delete(id)) changed = true;
+    if (!changed) return;
+    const text = line(rc.ids.size);
+    feed[field] = text;
+    rc.text = text;
+  }
+
+  /** Recount an author window's `↻` line on the column that focuses its posts
+   *  window: the record on the author's own `FeedState` loses the ids, the
+   *  line reads what is left, and the write happens only while that column's
+   *  `report` still reads the text the count wrote (WEB_INTERFACE → The
+   *  extension → "A report counts the posts that stand"). A column that no
+   *  longer focuses the posts window — a focus change or a move cleared its
+   *  report — writes nothing. */
+  private recountAuthorLine(key: string, left: ReadonlySet<string>): void {
+    const f = this.authorPostsData.get(key);
+    if (!f) return;
+    const rc = f.reportCount;
+    if (rc === null) return;
+    const region = this.regionFocusedOn(postsWindowId(key));
+    if (region === null || rc.text !== region.report) return;
+    let changed = false;
+    for (const id of left) if (rc.ids.delete(id)) changed = true;
+    if (!changed) return;
+    const text = newPostsLine(rc.ids.size);
+    region.report = text;
+    rc.text = text;
   }
 
   /** A thread row as the client knows it: a post whose withdrawal it saw land
@@ -1911,7 +2007,12 @@ export class App {
       feed.posts = landRefresh(feed.posts, r);
       if (r.next !== undefined) feed.next = r.next; // reset only on the replace branch
       feed.unboundCount = 0;
-      feed.report = r.newCount ? `${r.newCount} new ${r.newCount === 1 ? 'post' : 'posts'}` : 'no new posts';
+      // The fresh rows the ↻ brought and the line that reads their count — the
+      // slot ids among them are what the recount removes as each leaves
+      // (WEB_INTERFACE → The extension → "A report counts the posts that stand").
+      const freshRows = r.posts.slice(0, r.newCount);
+      feed.report = newPostsLine(r.newCount);
+      feed.reportCount = { ids: new Set(freshRows.filter(isLight).map((p) => p.id)), text: feed.report };
       feed.error = null;
     } catch (e) {
       if (gen !== this.readerGen) return;
@@ -1949,7 +2050,11 @@ export class App {
         const added = older.filter((p) => !have.has(p.id));
         feed.posts = [...feed.posts, ...added];
         feed.next = res.next;
-        feed.olderReport = added.length ? `${added.length} older ${added.length === 1 ? 'post' : 'posts'}` : 'no older posts';
+        // The appended rows and the line that reads their count — the slot
+        // ids among them are what the recount removes as each leaves
+        // (WEB_INTERFACE → The extension → "A report counts the posts that stand").
+        feed.olderReport = olderPostsLine(added.length);
+        feed.olderReportCount = { ids: new Set(added.filter(isLight).map((p) => p.id)), text: feed.olderReport };
         this.indexRows(kept);
       }
     } catch (e) {
@@ -2473,7 +2578,11 @@ export class App {
     this.stopPoll();
     // The reader's own acts under the key before — its flights, its optimistic
     // overlays and its submissions — go with it; the node's answers for that key
-    // drop with the reader's own state.
+    // drop with the reader's own state. Every row the reader opened under a
+    // card ends (WEB_INTERFACE → What the feed reads, and what a card shows for
+    // it → "A row the reader opened under a card outlasts a redraw of its
+    // list").
+    for (const held of [...this.cardRows.values()]) this.endCardRow(held);
     this.optimisticLikes.clear();
     this.withdrawFlights.clear();
     this.state.submissions = [];
@@ -2789,7 +2898,7 @@ export class App {
       const ctrl = this.composers.get(composerKey(parentId));
       if (!ctrl) return;
       ctrl.showUnlock(cur.pubKeyHex, async (p) => {
-        await this.idm.unlock(p);
+        await this.unlockIdentity(p);
         // Re-read the current draft — the reader may have edited it while the unlock
         // form was open, so the captured text would be stale.
         await this.submitComposer(parentId, ctrl.text());
@@ -2863,7 +2972,7 @@ export class App {
     if (result.notSigned === 'locked') {
       ctrl.setSending(false);
       ctrl.showUnlock(cur.pubKeyHex, async (p) => {
-        await this.idm.unlock(p);
+        await this.unlockIdentity(p);
         await this.submitComposer(parentId, ctrl.text());
       });
     } else {
@@ -3475,7 +3584,15 @@ export class App {
       if (r.next !== undefined) f.next = r.next;
       f.error = null;
       f.unboundCount = 0;
-      if (region) region.report = r.newCount ? `${r.newCount} new ${r.newCount === 1 ? 'post' : 'posts'}` : 'no new posts';
+      // The author window's ↻ writes its line on the column that focuses the
+      // posts window; the fresh rows and the line are tied to the author in
+      // the window's own `FeedState` (WEB_INTERFACE → The extension →
+      // "A report counts the posts that stand"). The recount reads the text
+      // against the column that focuses the posts window at the time it runs.
+      const freshRows = r.posts.slice(0, r.newCount);
+      const text = newPostsLine(r.newCount);
+      f.reportCount = { ids: new Set(freshRows.filter(isLight).map((p) => p.id)), text };
+      if (region) region.report = text;
     } catch (e) {
       if (gen !== this.readerGen) return;
       f.error = msg(e);
@@ -3731,7 +3848,7 @@ export class App {
     const row = sendUnlockRow(
       pubKeyHex,
       async (passphrase) => {
-        await this.idm.unlock(passphrase);
+        await this.unlockIdentity(passphrase);
         if (!owed()) return;
         this.answerSend({ key, unlock: null });
         void this.send(key, name, amount);
@@ -4818,10 +4935,177 @@ export class App {
     document.querySelector<HTMLElement>(`[data-composer-open="${composerKey(parentId)}"]`)?.focus();
   }
 
-  private withComposerFocus(fn: () => void): void {
-    const key = this.focusedComposerKey();
-    fn();
-    if (key !== null) this.composers.get(key)?.focus();
+  /** Every draw that replaces a card runs here. An unlock form held while the
+   *  identity is unlocked ends before the draw: the extension's proxy takes an
+   *  unlock made in another page into `current()` and notifies no one. A row
+   *  the draw left under no card ends after it, so a held row is attached to
+   *  the document or it is not held. Where the draw moved the composer or the
+   *  row that held the focus, the focus goes back: into the composer, or to
+   *  the element of the row that held it; a draw that moved neither moves no
+   *  focus (WEB_INTERFACE → What the feed reads, and what a card shows for it
+   *  → "A row the reader opened under a card outlasts a redraw of its list"). */
+  private redraw(draw: () => void): void {
+    const composerFocused = this.focusedComposerKey();
+    const rowFocused = composerFocused === null ? this.focusedRowElement() : null;
+    const cur = this.idm.current();
+    if (cur !== null && !cur.locked) this.endUnlockRows();
+    draw();
+    for (const held of [...this.cardRows.values()]) if (!held.el.isConnected) this.endCardRow(held);
+    if (composerFocused !== null) {
+      const composer = this.composers.get(composerFocused);
+      if (composer !== undefined && !composer.el.contains(document.activeElement)) composer.focus();
+    } else if (rowFocused !== null && rowFocused.isConnected && document.activeElement !== rowFocused) {
+      rowFocused.focus();
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Rows under a card — the unlock form a locked like or withdraw asks for, the
+  // withdraw question, and the link held as text (WEB_INTERFACE → What the feed
+  // reads, and what a card shows for it → "A row the reader opened under a card
+  // outlasts a redraw of its list"). A press reaches here with its list, its
+  // post and the control pressed; the row goes in under the card that control
+  // stands in and comes out from under it, and nothing else is drawn
+  // (→ "Opening a row and ending one redraw nothing else"). Each handler of a
+  // row finds its card from the row itself and reads the identity's lock when
+  // it runs (→ "A row's controls act on the card as it stands at the press").
+  // A draw stands a row under the card that offers the control it was opened
+  // from; a row a draw stands under no card has ended.
+  // -------------------------------------------------------------------------
+
+  /** The rows held for a card, the unlock form or the question before the link
+   *  row. */
+  private rowsUnder(list: string, postId: string): HeldCardRow[] {
+    const rows: HeldCardRow[] = [];
+    for (const place of ROW_PLACES) {
+      const held = this.cardRows.get(rowKey(list, postId, place));
+      if (held !== undefined) rows.push(held);
+    }
+    return rows;
+  }
+
+  /** `like` on a card: a locked identity gets the unlock form under that card,
+   *  whose submit sends the like; an unlocked one sends it (WEB_INTERFACE → The
+   *  identity module). */
+  private pressLike(list: string, postId: string, control: HTMLElement): void {
+    const cur = this.idm.current();
+    if (cur === null) return;
+    if (cur.locked) {
+      this.openUnlockRow(list, postId, 'like', control, cur.pubKeyHex, () => void this.likePost(postId));
+      return;
+    }
+    void this.likePost(postId);
+  }
+
+  /** `withdraw` on the reader's own card: the question under that card, the
+   *  focus on `keep` (WEB_INTERFACE → The withdraw control). */
+  private pressWithdraw(list: string, postId: string, control: HTMLElement): void {
+    if (this.idm.current() === null || this.cardRows.has(rowKey(list, postId, 'ask'))) return;
+    const { row, keep } = buildConfirmRow({
+      onYes: () => this.confirmWithdraw(held),
+      onKeep: () => this.keepPost(held),
+    });
+    const held: HeldCardRow = { kind: 'question', control: 'withdraw', el: row, list, postId };
+    if (this.openRow(held, control)) keep.focus();
+  }
+
+  /** The question's `withdraw`: the question ends, and the withdrawal is
+   *  signed — by a locked identity after the unlock form, which takes the
+   *  question's place under the card (WEB_INTERFACE → The withdraw control). */
+  private confirmWithdraw(held: HeldCardRow): void {
+    const cur = this.idm.current();
+    const card = held.el.closest<HTMLElement>('.card-body');
+    this.endCardRow(held);
+    if (cur === null) return;
+    if (!cur.locked) {
+      void this.withdrawPost(held.postId);
+      return;
+    }
+    if (card !== null) {
+      this.openUnlockRow(held.list, held.postId, 'withdraw', card, cur.pubKeyHex, () => void this.withdrawPost(held.postId));
+    }
+  }
+
+  /** The question's `keep`, and Esc: the question ends and the focus returns to
+   *  the `withdraw` control of the card it stood under (WEB_INTERFACE → The
+   *  withdraw control). */
+  private keepPost(held: HeldCardRow): void {
+    const card = held.el.closest('.card-body');
+    this.endCardRow(held);
+    card?.querySelector<HTMLElement>('.withdraw-ctl')?.focus();
+  }
+
+  /** The copy glyph on a card whose link the clipboard did not take: the link
+   *  as text under that card, to copy by hand (WEB_INTERFACE → Links). */
+  private linkRefused(list: string, postId: string, url: string, control: HTMLElement): void {
+    if (this.cardRows.has(rowKey(list, postId, 'link'))) return;
+    this.openRow({ kind: 'link', control: 'link', el: buildLinkFallbackRow(url), list, postId }, control);
+  }
+
+  /** The unlock form under the card `at` stands in, the focus in its field,
+   *  opened from `control` — the card's `like`, or its `withdraw` by way of the
+   *  question. Its submit unlocks through the App's one unlock, which ends
+   *  every unlock form, and `proceed` then sends the write the form was opened
+   *  for; Esc and `cancel` end it (WEB_INTERFACE → The identity module). */
+  private openUnlockRow(
+    list: string,
+    postId: string,
+    control: Exclude<RowControl, 'link'>,
+    at: HTMLElement,
+    pubKeyHex: string,
+    proceed: () => void,
+  ): void {
+    if (this.cardRows.has(rowKey(list, postId, 'ask'))) return;
+    const { row, field } = buildUnlockRow({
+      pubKeyHex,
+      onSubmit: (p) => this.unlockIdentity(p),
+      onProceed: proceed,
+      onCancel: () => this.endCardRow(held),
+    });
+    const held: HeldCardRow = { kind: 'unlock', control, el: row, list, postId };
+    if (this.openRow(held, at)) field.focus();
+  }
+
+  /** Put a row under the card `at` stands in and hold it. A press whose card
+   *  left the screen before it was answered opens nothing. */
+  private openRow(held: HeldCardRow, at: HTMLElement): boolean {
+    if (!mountRow(at, held)) return false;
+    this.cardRows.set(rowKey(held.list, held.postId, rowPlace(held)), held);
+    return true;
+  }
+
+  /** The one ending of a row: out of the document, every field in it emptied,
+   *  and held nowhere. Nothing of an ended row is kept (WEB_INTERFACE → What
+   *  the feed reads, and what a card shows for it → "A row the reader opened
+   *  under a card outlasts a redraw of its list"). */
+  private endCardRow(held: HeldCardRow): void {
+    held.el.remove();
+    for (const field of held.el.querySelectorAll('input')) field.value = '';
+    const key = rowKey(held.list, held.postId, rowPlace(held));
+    if (this.cardRows.get(key) === held) this.cardRows.delete(key);
+  }
+
+  /** An unlocked identity leaves no unlock form standing: every one ends,
+   *  wherever the unlock was made. The question and the link row stand. */
+  private endUnlockRows(): void {
+    for (const held of [...this.cardRows.values()]) if (held.kind === 'unlock') this.endCardRow(held);
+  }
+
+  /** The element holding the focus inside a held row, or null. */
+  private focusedRowElement(): HTMLElement | null {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLElement)) return null;
+    for (const held of this.cardRows.values()) if (held.el.contains(active)) return active;
+    return null;
+  }
+
+  /** The App's one unlock — the profile's, the wallet's, the author window's,
+   *  a composer's and a card's own all pass through it (WEB_INTERFACE → The
+   *  identity module). Once the seed is loaded every unlock form under a card
+   *  ends. */
+  private async unlockIdentity(passphrase: string): Promise<void> {
+    await this.idm.unlock(passphrase);
+    this.endUnlockRows();
   }
 
   private focusedComposerKey(): string | null {

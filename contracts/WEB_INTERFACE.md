@@ -565,6 +565,11 @@ holds no connection of the reader's past the limit. **A `bound` placeholder is k
 while the rest are asked for the text**, and where none has it the card reads *content not on this node yet*, as a
 placeholder's does. **At the end** a slot no node served leaves, with no line — no node said anything of its text — and
 one some node answered `unbound` and no node bound leaves and is counted at its list's head (→ "The post check").
+**A report counts the posts that stand**: where a `↻` or a `load older` said how many posts it brought — *4 new
+posts*, *3 older posts* — a row among them whose slot leaves comes off the count as it leaves, and the line reads
+what is left, *no new posts* or *no older posts* at none (`HOUSE_STYLE → Motion → "A read the reader asked for may
+move what it is landing"`). A line anything else has written since is not rewritten. A thread's `↻` reports the change
+in the node's own count of replies, which a leaving slot does not move.
 **One resolve serves every list**: an id asked for is not asked again while its answer is awaited, and an answer lands
 wherever a slot stands under its id; one that returns after a change of node or identity lands nowhere and enters no
 cache (→ Reading the feed and threads → "No answer overwrites a newer one") — the read that change starts asks again.
@@ -822,6 +827,24 @@ one.
   and a rejection or an expiry reports in the feed's report line, where `↻` reports. Reply and withdraw are
   not on a feed card: the composer and the confirm row live inside a pane. The author-posts window's cards
   follow the feed card (→ The author window).
+- **A row the reader opened under a card outlasts a redraw of its list.** Three rows mount under a card's meta at the
+  reader's press: the unlock form a locked `like` or `withdraw` asks for (→ The identity module) and the withdraw
+  question (→ The withdraw control), one of the two at a time directly beneath the meta, and beside either — beneath
+  it — the link held as text to copy by hand (→ Links). **Opening a row and ending one redraw nothing else**: the row
+  goes in under the card pressed and comes out from under it, and no other node of the list is replaced. A row belongs
+  to the card it was opened under — that post, in that list: the feed, an author window, a pane, the standalone
+  thread. Every redraw of that list — a slot filling or leaving (→ The extension → "The resolve"), the reader's own
+  submission landing (→ The wallet), a `↻` — draws the card with its row beneath it: the same row, what was typed in
+  it kept, the focus back in it where it held the focus. What is typed in an unlock row is held nowhere but its field.
+  **A row's controls act on the card as it stands at the press**, and so does the card's own `like`: it and the
+  question's `withdraw` read the identity's lock when pressed — never as it stood when the card or the row was drawn —
+  and the unlock form mounts under the card on screen. **What ends a row**: its own controls; a redraw of its list
+  that draws no card for its post offering the control the row was opened from — the post has left the list or stands
+  as a slot, a like has taken the `like`, the `withdraw` is gone or cannot be pressed, while the withdrawn card keeps
+  its copy glyph and so its link row; its list leaving the screen — its window closed, or another window of its column
+  brought to the front; a change of the identity; and, for an unlock row, the identity unlocked from anywhere else.
+  The link row has no control of its own and ends in the other ways alone. A row that has ended is not drawn again and
+  nothing of it is kept: its field is emptied.
 - **A card's reply count is the row's `descendantCount`** — the node's number, the whole subtree, pending
   included, on the feed's rows, the author window's rows and a pane's descendant rows; a pane's own root
   shows the thread's, which equals the head's. A withdrawn card shows its row's count too
@@ -1076,9 +1099,11 @@ from the node's own origin): a plain `https` URL that opens for a reader without
 chat app, and a reader with the extension is brought from that page into it (→ The extension).
 
 **Where the clipboard API is absent** — an insecure context, such as a phone reaching the dev server over a
-LAN address on `http` — or a write is refused, the press mounts a row under the meta, where the unlock row
-mounts, holding the URL as selectable text for the reader to copy by hand, and the glyph stays. The
-address bar of a standalone page already holds the page's link; each card's glyph gives that card's own.
+LAN address on `http` — or a write is refused, the press mounts a row under the meta, beneath the unlock row
+or the question where one stands, holding the URL as selectable text for the reader to copy by hand, and the
+glyph stays. The row stands while its card carries the glyph (→ What the feed reads, and what a card shows for
+it → "What ends a row"). The address bar of a standalone page already holds the page's link; each card's glyph
+gives that card's own.
 
 **A link previews in a chat app because the server answers for it.** The host proxies `<base>p/<id>` to
 the node's `GET /shell/:id` (`NODE_INTERFACE → Link previews`), which answers the client's own shell with

@@ -1,13 +1,14 @@
 import type { PostJson, WithdrawnJson, LightJson, FeedRow, StatusResult, KarmaResult, VouchesTargetResult, BondsResult, CreditsResult, UsernameResult } from '../api/dto';
 import type { Workspace, Origin } from './workspace';
 import type { Theme, IdTint } from '../prefs';
-import type { Flight } from '../view/card';
+import type { Flight, CardRow } from '../view/card';
 import type { YourVouch } from '../view/author';
 import type { SendAnswer, SendRecipient } from '../view/wallet';
 import type { SignResult } from '../wallet/submit';
 import type { TipVerdict } from './tip-verdict';
 import type { Anchor, FiguresResult, Listing, NameClaim, NameResult, PostCheck } from '@dagsocial/nipopow-client';
 import type { BoundPost, ResolveEnd } from './post-resolve';
+import type { ReportCount } from './feed-reconcile';
 export type { Anchor };
 
 /** What the App holds when a figures verifier run has returned — the tool's
@@ -43,6 +44,17 @@ export interface FeedState {
   next: string | null;      // keyset cursor for older posts
   report: string | null;    // what the last ↻ did
   olderReport: string | null; // what the last "load older" did
+  /** The ids the last `↻` counted beside the text it wrote — the row's slot
+   *  leaving comes off the count, and the recount reads what is left only
+   *  while `report` still reads that text (WEB_INTERFACE → The extension →
+   *  "A report counts the posts that stand"). An author window's `↻` ties
+   *  its count to the author, so the column that focuses the posts window
+   *  reads the text from here when it recounts. */
+  reportCount: ReportCount | null;
+  /** The ids the last `load older` counted beside the text it wrote, under
+   *  the same rule as `reportCount` (WEB_INTERFACE → The extension →
+   *  "A report counts the posts that stand"). */
+  olderReportCount: ReportCount | null;
   loaded: boolean;
   loading: boolean;
   error: string | null;
@@ -208,6 +220,12 @@ export interface RenderCtx {
   figures: FiguresView | null;
   // WEB_INTERFACE → Links
   linkUrl: (id: string) => string;
+  // The rows held for a card — that post, in that list: the feed, an author
+  // window, a pane (WEB_INTERFACE → What the feed reads, and what a card shows
+  // for it → "A row the reader opened under a card outlasts a redraw of its
+  // list"). Every draw of the card reads them: the unlock form or the question
+  // first, the link row after it.
+  rowsUnder: (list: string, postId: string) => readonly CardRow[];
 }
 
 /** One open author window's reads and flight (WEB_INTERFACE → The author window). */
@@ -256,8 +274,14 @@ export interface Handlers {
   // Content — an image loads on the reader's press (WEB_INTERFACE → Content).
   expandImage: (key: string) => void;   // the reader pressed to load an image
   collapseImage: (key: string) => void; // a shown image failed to load — drop its key
-  likePost: (postId: string) => void;
-  withdrawPost: (postId: string) => void;          // the author's own control (WEB_INTERFACE → The withdraw control)
+  // A card's own presses, each with the list the card stands in, its post and
+  // the control pressed (WEB_INTERFACE → What the feed reads, and what a card
+  // shows for it → "A row's controls act on the card as it stands at the
+  // press"): `like`; `withdraw`, the author's own control (→ The withdraw
+  // control); and the copy glyph where the clipboard took no write (→ Links).
+  pressLike: (list: string, postId: string, control: HTMLElement) => void;
+  pressWithdraw: (list: string, postId: string, control: HTMLElement) => void;
+  linkRefused: (list: string, postId: string, url: string, control: HTMLElement) => void;
   tryAgain: (localKey: string) => void;            // rebuild a fresh transaction from the current view
   // membership actions (WEB_INTERFACE → The identity display, → The author window)
   vouch: (key: string) => void;                    // + at once, no confirmation

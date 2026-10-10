@@ -226,27 +226,30 @@ function post(id: string, author: string): PostJson {
   };
 }
 function feedState(over: Partial<FeedState> = {}): FeedState {
-  return { posts: [post(P1, AUTHOR), post(P2, ME)], pending: [], next: null, report: null, olderReport: null, loaded: true, loading: false, error: null, unboundCount: 0, ...over };
+  return { posts: [post(P1, AUTHOR), post(P2, ME)], pending: [], next: null, report: null, olderReport: null, reportCount: null, olderReportCount: null, loaded: true, loading: false, error: null, unboundCount: 0, ...over };
 }
 const postsHandlers = (): PostsHandlers & { calls: Record<string, unknown[]> } => {
-  const calls: Record<string, unknown[]> = { openThread: [], openAuthor: [], more: [], like: [] };
+  const calls: Record<string, unknown[]> = { openThread: [], openAuthor: [], more: [], like: [], linkRefused: [] };
   return {
     calls,
     openThread: (id, o) => calls.openThread!.push([id, o]),
     openAuthor: (k, o) => calls.openAuthor!.push([k, o]),
-    likePost: (id) => calls.like!.push(id),
+    pressLike: (list, id, control) => calls.like!.push([list, id, control]),
+    linkRefused: (list, id, url, control) => calls.linkRefused!.push([list, id, url, control]),
     authorPostsMore: (k) => calls.more!.push(k),
-    unlockIdentity: async () => {},
     expandImage: () => {},
     collapseImage: () => {},
   };
 };
 function postsCtx(over: Partial<PostsCtx> = {}): PostsCtx {
   return {
-    authorKey: AUTHOR, origin: ORIGIN, feed: feedState(), writeEnabled: true, ownKey: ME, locked: false,
+    authorKey: AUTHOR, origin: ORIGIN, feed: feedState(), writeEnabled: true, ownKey: ME,
     likePending: () => false, linkUrl: (id) => `http://localhost/p/${id}`,
     nameClay: () => false, // no check has decided a pair — every handle in ink
-    expandedImages: new Set(), ...over,
+    expandedImages: new Set(),
+    listKey: '@posts:' + AUTHOR,
+    rowsUnder: () => [],
+    ...over,
   };
 }
 
@@ -273,30 +276,19 @@ describe('the author-posts window', () => {
     expect(h.calls.openThread).toEqual([[P1, ORIGIN]]);
   });
 
-  it('a locked like mounts .card-unlock under the meta, calls no likePost; the form unlocks then likes', async () => {
-    const calls: Record<string, unknown[]> = { like: [], unlock: [] };
-    const h: PostsHandlers = {
-      openThread: () => {},
-      openAuthor: () => {},
-      likePost: (id) => calls.like!.push(id),
-      authorPostsMore: () => {},
-      unlockIdentity: async (p) => { calls.unlock!.push(p); },
-      expandImage: () => {},
-      collapseImage: () => {},
-    };
-    const b = authorPostsBody(h, postsCtx({ locked: true }));
+  // WEB_INTERFACE → What the feed reads, and what a card shows for it →
+  // "A row's controls act on the card as it stands at the press" — the window
+  // reads no lock: the press is handed on with the window as its list, the
+  // post and the control pressed. What the press opens is the App's
+  // (app-card-rows.test.ts).
+  it('like hands the press on with the window\'s list, the post and the control pressed', () => {
+    const h = postsHandlers();
+    const b = authorPostsBody(h, postsCtx());
     const otherCard = b.querySelectorAll('.card')[0]!;
     const likeBtn = [...otherCard.querySelectorAll('button')].find((x) => x.textContent === 'like')!;
-    expect(likeBtn).toBeTruthy();
     likeBtn.click();
-    const form = otherCard.querySelector('.card-unlock form.pf') as HTMLFormElement;
-    expect(form).not.toBeNull();
-    expect(calls.like).toHaveLength(0);
-    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
-    form.dispatchEvent(new Event('submit', { cancelable: true }));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(calls.unlock).toEqual(['pw']);
-    expect(calls.like).toEqual([P1]);
+    expect(h.calls.like).toEqual([['@posts:' + AUTHOR, P1, likeBtn]]);
+    expect(otherCard.querySelector('.card-unlock')).toBeNull();
   });
 
   it('`more posts` follows next; an empty page reads "no posts yet"', () => {

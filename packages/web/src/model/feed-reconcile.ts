@@ -61,3 +61,31 @@ export async function reconcileNewer(
   }
   return { posts: collected, next: lastNext, newCount: collected.length };
 }
+
+// These two functions form the lines a `↻` and a `load older` write, at the
+// write and at every recount, so the two can never differ in wording or in
+// the singular (WEB_INTERFACE → The extension →
+// "A report counts the posts that stand").
+
+/** The line a feed's ↻ or an author window's ↻ reports: how many new posts
+ *  the read brought that still stand (WEB_INTERFACE → The extension →
+ *  "A report counts the posts that stand"). */
+export function newPostsLine(n: number): string {
+  return n ? `${n} new ${n === 1 ? 'post' : 'posts'}` : 'no new posts';
+}
+
+/** The line a `load older` reports: how many older posts the page brought
+ *  that still stand (WEB_INTERFACE → The extension → "A report counts the
+ *  posts that stand"). */
+export function olderPostsLine(n: number): string {
+  return n ? `${n} older ${n === 1 ? 'post' : 'posts'}` : 'no older posts';
+}
+
+/** The ids a `↻` or a `load older` counted beside the text it wrote: a row
+ *  comes off the count as its slot leaves, and the recount reads what is left
+ *  only while the field still reads that text (WEB_INTERFACE → The extension →
+ *  "A report counts the posts that stand"). */
+export interface ReportCount {
+  ids: Set<string>;
+  text: string;
+}

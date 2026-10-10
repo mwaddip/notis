@@ -127,7 +127,20 @@ the seed in the clear; a page load restores the envelope and the public key only
 `{ pubKeyHex, locked: true }` until an unlock, and `sign(txBytes, txIdHex, hint?)` — the only path to the seed —
 answers `locked` while locked (`WEB_INTERFACE → The wallet`). **Every write checks `locked` before its flight** and mounts the unlock form in place: the
 composer's foot for `post`, a row under the card's meta for `like`, the confirm row's place for
-`withdraw`. The way in is the `@profile`
+`withdraw`. **A row the reader opened under a card outlasts a redraw of its list**
+(`WEB_INTERFACE → What the feed reads, and what a card shows for it → "A row the reader opened under a card
+outlasts a redraw of its list"`): the unlock form, the withdraw question and the link held as text are built by
+`src/view/card-rows.ts` and held by the App (`cardRows`, keyed by list, post and place — `ask` for the unlock form
+or the question, `link` beside it), as a composer is. A card's `like`, `withdraw` and refused copy reach the App as
+`pressLike` / `pressWithdraw` / `linkRefused` with the list, the post and the control pressed; **the App reads the
+lock then** — `CardOpts` carries no `locked` — and `mountRow` (`src/view/card.ts`) puts the row under the card that
+control stands in, replacing no node. Every draw of a card passes `ctx.rowsUnder(list, postId)` and the card stands
+a row only where it draws the control the row was opened from (`standRows`). Every draw that replaces a card runs in
+`redraw`: an unlock form found unlocked ends before it — the extension's proxy takes an unlock made in another page
+into `current()` and notifies no one — a row left under no card ends after it, and the focus goes back into the
+composer or the row that held it. `endCardRow` is the one ending: out of the document, its fields emptied, no longer
+held. Every unlock in the App goes through `unlockIdentity`, which ends the unlock forms. The rows a window's own
+body mounts — the author window's vouch, the profile's and the wallet's forms — are not held. The way in is the `@profile`
 window's `create` and `import`; a production build has no other door. `draft()` makes the key before
 the passphrase is typed so the browser's saved entry names the key it later unlocks. An identity change
 takes effect at once through `onChange`: the App rebuilds the pending ledger for the new key, drops the
@@ -394,7 +407,12 @@ well-formed row with text enters the cache and `fillSlots` turns its slot into i
 that one node, nothing else redrawn. `endSlots` takes out a slot no node served, with no line, and counts one some
 node answered `unbound` and none bound in the clay line at its list's head (`view/withheld-line.ts`); a thread whose
 subject ends so shows that line and no row, one whose subject no node served the muted *no node can serve this post
-yet.* An answer that returns after a node or identity change lands nowhere (`readerGen`). **A thread's `ancestors` and
+yet.* **A row a `↻` or a `load older` counted comes off its line as its slot leaves** (`→ "A report counts the posts
+that stand"`): the feed's two lines and an author window's `↻` keep the slot ids they counted beside the text they
+wrote (`FeedState.reportCount`, `olderReportCount`; `newPostsLine` / `olderPostsLine` in
+`src/model/feed-reconcile.ts` form the words at the write and at the recount), a line anything else has written
+since is left, and a thread's `↻` reports the node's own reply count. An answer that returns after a node or identity
+change lands nowhere (`readerGen`). **A thread's `ancestors` and
 `pending` give ids and are not resolved.** The web build is handed neither seam, asks no `light`, draws no slot, and
 `build-release.sh` refuses `posts/batch` in its bundle.
 

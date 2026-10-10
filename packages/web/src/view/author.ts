@@ -3,7 +3,7 @@ import { withheldLine } from './withheld-line';
 import { unlockForm } from './passphrase';
 import { card, stageLine, listCardOpts } from './card';
 import { markHandle, nameLine } from './name-handle';
-import type { Flight } from './card';
+import type { Flight, CardRow } from './card';
 import type { VouchesTargetResult, UsernameResult, PostJson } from '../api/dto';
 import { isFull } from '../api/dto';
 import type { FeedState } from '../model/state';
@@ -251,19 +251,23 @@ export interface PostsCtx {
   feed: FeedState;                        // the author's posts, the feed's own state shape
   writeEnabled: boolean;
   ownKey: string | null;
-  locked: boolean;
   likePending: (postId: string) => boolean;
   linkUrl: (id: string) => string;
   expandedImages: ReadonlySet<string>;    // images shown this session (WEB_INTERFACE → Content)
   nameClay: (key: string, name: string) => boolean; // the handle reads clay (→ The extension → "The verified names")
+  // The window as a list a row belongs to, and the rows held for one of its
+  // cards (WEB_INTERFACE → What the feed reads, and what a card shows for it →
+  // "A row the reader opened under a card outlasts a redraw of its list").
+  listKey: string;
+  rowsUnder: (list: string, postId: string) => readonly CardRow[];
 }
 
 export interface PostsHandlers {
   openThread: (id: string, origin: Origin) => void;
   openAuthor: (key: string, origin: Origin) => void;
-  likePost: (postId: string) => void;
+  pressLike: (list: string, postId: string, control: HTMLElement) => void;
+  linkRefused: (list: string, postId: string, url: string, control: HTMLElement) => void;
   authorPostsMore: (key: string) => void;
-  unlockIdentity: (passphrase: string) => Promise<void>;
   expandImage: (key: string) => void;     // an image loads on the reader's press (WEB_INTERFACE → Content)
   collapseImage: (key: string) => void;
 }
@@ -318,6 +322,6 @@ function postCard(post: PostJson, handlers: PostsHandlers, ctx: PostsCtx): HTMLE
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,
-    ...listCardOpts(post, ctx, handlers),
+    ...listCardOpts(post, ctx.listKey, ctx, handlers),
   });
 }

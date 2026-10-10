@@ -1123,6 +1123,373 @@ describe('a light page of the wrong shape is the list\'s error line', () => {
 });
 
 // ---------------------------------------------------------------------------
+// A ↻ or a `load older` writes a line and ties the ids it counted to it; a
+// slot leaving among them comes off the count, and the field reads what is
+// left (WEB_INTERFACE → The extension → "A report counts the posts that
+// stand"). A line anything else has written since is not rewritten.
+// ---------------------------------------------------------------------------
+describe('a report counts the posts that stand', () => {
+  it('a ↻ brings two slots; one ends unserved and the feed reads "1 new post"', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    const la = light('a'), lb = light('b');
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [
+        { posts: [], next: null, pending: [], pendingCount: 0 },
+        { posts: [la, lb], next: null, pending: [], pendingCount: 0 },
+      ],
+    });
+    await h.drive.loadFeed();
+    await settle();
+    await h.drive.refreshFeed();
+    await settle();
+    expect(h.drive.state.feed.report).toBe('2 new posts');
+    expect(h.feedEl.querySelector('.report')?.textContent).toBe('2 new posts');
+    // The ↻ scheduled a resolve for both slots.
+    const call = r.calls.find((c) => c.ids.length === 2 && c.ids.includes(la.id));
+    expect(call).toBeDefined();
+    call!.end({ [la.id]: 'unserved' });
+    await settle();
+    expect(h.drive.state.feed.posts.map((p) => p.id)).toEqual([lb.id]);
+    expect(h.drive.state.feed.report).toBe('1 new post');
+    expect(h.feedEl.querySelector('.report')?.textContent).toBe('1 new post');
+  });
+
+  it('a ↻ brings two slots; both end unserved and the feed reads "no new posts"', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    const la = light('a'), lb = light('b');
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [
+        { posts: [], next: null, pending: [], pendingCount: 0 },
+        { posts: [la, lb], next: null, pending: [], pendingCount: 0 },
+      ],
+    });
+    await h.drive.loadFeed();
+    await settle();
+    await h.drive.refreshFeed();
+    await settle();
+    const call = r.calls.find((c) => c.ids.length === 2 && c.ids.includes(la.id));
+    call!.end({ [la.id]: 'unserved', [lb.id]: 'unserved' });
+    await settle();
+    expect(h.drive.state.feed.posts.length).toBe(0);
+    expect(h.drive.state.feed.report).toBe('no new posts');
+    expect(h.feedEl.querySelector('.report')?.textContent).toBe('no new posts');
+  });
+
+  it('a ↻ brings two slots; one ends unbound and the clay line counts one beside the "1 new post" line', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    const la = light('a'), lb = light('b');
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [
+        { posts: [], next: null, pending: [], pendingCount: 0 },
+        { posts: [la, lb], next: null, pending: [], pendingCount: 0 },
+      ],
+    });
+    await h.drive.loadFeed();
+    await settle();
+    await h.drive.refreshFeed();
+    await settle();
+    const call = r.calls.find((c) => c.ids.length === 2 && c.ids.includes(la.id));
+    call!.end({ [la.id]: 'unbound' });
+    await settle();
+    expect(h.drive.state.feed.posts.map((p) => p.id)).toEqual([lb.id]);
+    expect(h.drive.state.feed.report).toBe('1 new post');
+    expect(h.feedEl.querySelector('.report')?.textContent).toBe('1 new post');
+    expect(h.drive.state.feed.unboundCount).toBe(1);
+    expect(h.feedEl.querySelector('.withheld')?.textContent)
+      .toBe('1 post withheld — it does not match its signature');
+  });
+
+  it('a ↻ brings two slots; both fill and the feed stays "2 new posts"', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    const la = light('a'), lb = light('b');
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [
+        { posts: [], next: null, pending: [], pendingCount: 0 },
+        { posts: [la, lb], next: null, pending: [], pendingCount: 0 },
+      ],
+    });
+    await h.drive.loadFeed();
+    await settle();
+    await h.drive.refreshFeed();
+    await settle();
+    const call = r.calls.find((c) => c.ids.length === 2 && c.ids.includes(la.id));
+    const fa = fullRow('a'), fb = fullRow('b');
+    call!.bound([fa, fb]);
+    call!.end({});
+    await settle();
+    expect(h.drive.state.feed.posts.map((p) => p.id)).toEqual([fa.id, fb.id]);
+    expect(h.drive.state.feed.report).toBe('2 new posts');
+    expect(h.feedEl.querySelector('.report')?.textContent).toBe('2 new posts');
+  });
+
+  it('a first-page slot leaving after a ↻ that brought one new row does not change the line', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    const la = light('a'), lb = light('b');
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [
+        // First page: la stands as a slot.
+        { posts: [la], next: null, pending: [], pendingCount: 0 },
+        // The ↻: lb is new, la reconnects.
+        { posts: [lb, la], next: null, pending: [], pendingCount: 0 },
+      ],
+    });
+    await h.drive.loadFeed();
+    await settle();
+    expect(r.calls.length).toBe(1);
+    expect(r.calls[0]!.ids).toEqual([la.id]);
+    await h.drive.refreshFeed();
+    await settle();
+    expect(h.drive.state.feed.report).toBe('1 new post');
+    // The first-page slot's resolve ends unserved — it was not counted by
+    // the ↻, so the line is unchanged.
+    r.calls[0]!.end({ [la.id]: 'unserved' });
+    await settle();
+    expect(h.drive.state.feed.posts.map((p) => p.id)).toEqual([lb.id]);
+    expect(h.drive.state.feed.report).toBe('1 new post');
+  });
+
+  it('a like rejection landing between the ↻ and the slot\'s end leaves the line it wrote', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    const la = light('a');
+    const target = fullRow('t');
+    const h = harness({
+      resolver: r.resolver, cache, identityKey: ME,
+      feedResults: [
+        // First page: the target is a full row, no slots to resolve.
+        { posts: [target], next: null, pending: [], pendingCount: 0 },
+        // The ↻: la is new, target reconnects.
+        { posts: [la, target], next: null, pending: [], pendingCount: 0 },
+      ],
+    });
+    await h.drive.loadFeed();
+    await settle();
+    await h.drive.refreshFeed();
+    await settle();
+    expect(h.drive.state.feed.report).toBe('1 new post');
+    // A like press on the target — the fake's `post` answers null, so the
+    // flow refuses with a client rejection and `setReportForPost` writes
+    // the feed line (WEB_INTERFACE → The write surface).
+    const likedWritten = 'like rejected: that post has no confirmed author to like.';
+    await (h.app as unknown as { likePost(id: string): Promise<void> }).likePost(target.id);
+    expect(h.drive.state.feed.report).toBe(likedWritten);
+    // The slot ends after the rejection — the line stands.
+    const call = r.calls.find((c) => c.ids.includes(la.id));
+    call!.end({ [la.id]: 'unserved' });
+    await settle();
+    expect(h.drive.state.feed.report).toBe(likedWritten);
+  });
+
+  it('a `load older` brings two slots; one ends and the line reads "1 older post"', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    const la = light('a'), lb = light('b');
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [
+        { posts: [], next: 'cur0', pending: [], pendingCount: 0 },
+        { posts: [la, lb], next: null, pending: [], pendingCount: 0 },
+      ],
+    });
+    await h.drive.loadFeed();
+    await settle();
+    await h.drive.loadOlder();
+    await settle();
+    expect(h.drive.state.feed.olderReport).toBe('2 older posts');
+    // `renderFeedInto` draws `olderReport` as a `.note` span inside the
+    // `.feed-foot` (src/view/feed.ts).
+    expect(h.feedEl.querySelector('.feed-foot .note')?.textContent).toBe('2 older posts');
+    const call = r.calls.find((c) => c.ids.length === 2 && c.ids.includes(la.id));
+    call!.end({ [la.id]: 'unserved' });
+    await settle();
+    expect(h.drive.state.feed.olderReport).toBe('1 older post');
+    expect(h.feedEl.querySelector('.feed-foot .note')?.textContent).toBe('1 older post');
+  });
+
+  it('a `load older` brings two slots; both end and the line reads "no older posts"', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    const la = light('a'), lb = light('b');
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [
+        { posts: [], next: 'cur0', pending: [], pendingCount: 0 },
+        { posts: [la, lb], next: null, pending: [], pendingCount: 0 },
+      ],
+    });
+    await h.drive.loadFeed();
+    await settle();
+    await h.drive.loadOlder();
+    await settle();
+    expect(h.feedEl.querySelector('.feed-foot .note')?.textContent).toBe('2 older posts');
+    const call = r.calls.find((c) => c.ids.length === 2 && c.ids.includes(la.id));
+    call!.end({ [la.id]: 'unserved', [lb.id]: 'unserved' });
+    await settle();
+    expect(h.drive.state.feed.posts.length).toBe(0);
+    expect(h.drive.state.feed.olderReport).toBe('no older posts');
+    expect(h.feedEl.querySelector('.feed-foot .note')?.textContent).toBe('no older posts');
+  });
+
+  it('an author window\'s ↻ reports on the column; a slot ending recounts the line', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    const K = hid('authorR');
+    const la = light('a'), lb = light('b');
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [
+        { posts: [], next: null, pending: [], pendingCount: 0 },
+        { posts: [la, lb], next: null, pending: [], pendingCount: 0 },
+      ],
+    });
+    h.drive.openAuthorPosts(K, { from: 'feed' });
+    await settle();
+    await h.drive.refreshAuthorPosts(K);
+    await settle();
+    const column = (h.app as unknown as {
+      state: AppState;
+    }).state.workspace.columns[0]!;
+    expect(column.report).toBe('2 new posts');
+    // `renderRegionElement` draws `column.report` as a `.report` node
+    // under the region (src/view/panes.ts, through `reportNode`).
+    expect(h.panes.querySelector('.region .report')?.textContent).toBe('2 new posts');
+    const call = r.calls.find((c) => c.ids.length === 2 && c.ids.includes(la.id));
+    call!.end({ [la.id]: 'unserved' });
+    await settle();
+    expect(column.report).toBe('1 new post');
+    expect(h.panes.querySelector('.region .report')?.textContent).toBe('1 new post');
+  });
+
+  it('an author window\'s ↻ line replaced by a re-focus writes nothing more when a slot ends', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    const K = hid('authorS');
+    const la = light('a'), lb = light('b');
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [
+        { posts: [], next: null, pending: [], pendingCount: 0 },
+        { posts: [la, lb], next: null, pending: [], pendingCount: 0 },
+      ],
+    });
+    h.drive.openAuthorPosts(K, { from: 'feed' });
+    await settle();
+    await h.drive.refreshAuthorPosts(K);
+    await settle();
+    const column = (h.app as unknown as {
+      state: AppState;
+    }).state.workspace.columns[0]!;
+    expect(column.report).toBe('2 new posts');
+    // A re-focus of the posts window clears the column's report line
+    // (model/workspace.ts: `focusWindow` sets `column.report = null`).
+    (h.app as unknown as { handlers: { focus(id: string): void } }).handlers.focus(`@posts:${K}`);
+    expect(column.report).toBeNull();
+    const call = r.calls.find((c) => c.ids.length === 2 && c.ids.includes(la.id));
+    call!.end({ [la.id]: 'unserved', [lb.id]: 'unserved' });
+    await settle();
+    expect(column.report).toBeNull();
+    // No `.report` node is drawn under the region
+    // (src/view/panes.ts: `if (column.report) regionEl.appendChild(reportNode(...))`).
+    expect(h.panes.querySelector('.region .report')).toBeNull();
+  });
+
+  it('a descendant slot ending in a thread does not move its ↻ line', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    const root = fullRow('r');
+    const reply1 = fullRow('d1', { parentRefs: [root.id] });
+    const lx = light('x', { parentRefs: [root.id] });
+    const h = harness({
+      resolver: r.resolver, cache,
+      // The thread's first read: subject + one descendant.
+      threadResults: [
+        {
+          post: root, ancestors: [], ancestorCount: 0,
+          descendants: [reply1], descendantCount: 1, next: null,
+          pending: [], pendingCount: 0,
+        },
+        // The ↻ re-reads the whole thread: one new descendant (slot) + the
+        // held reply1, descendantCount = 2 → delta = 1 → "1 new reply".
+        {
+          post: root, ancestors: [], ancestorCount: 0,
+          descendants: [lx, reply1], descendantCount: 2, next: null,
+          pending: [], pendingCount: 0,
+        },
+      ],
+    });
+    h.drive.openThread(root.id, { from: 'feed' });
+    await settle();
+    await h.drive.refreshThread(root.id);
+    await settle();
+    const column = (h.app as unknown as {
+      state: AppState;
+    }).state.workspace.columns[0]!;
+    expect(column.report).toBe('1 new reply');
+    // The slot ends unserved; the thread's ↻ line is the node's reply
+    // count and stands.
+    const call = r.calls.find((c) => c.ids.includes(lx.id));
+    call!.end({ [lx.id]: 'unserved' });
+    await settle();
+    expect(column.report).toBe('1 new reply');
+  });
+
+  it('a second ↻ replaces the count: an id the first ↻ counted leaving after the second\'s line does not change it', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    const la = light('a'), lb = light('b');
+    const h = harness({
+      resolver: r.resolver, cache,
+      feedResults: [
+        // First page: empty.
+        { posts: [], next: null, pending: [], pendingCount: 0 },
+        // ↻1: la is new.
+        { posts: [la], next: null, pending: [], pendingCount: 0 },
+        // ↻2: lb is new, la reconnects.
+        { posts: [lb, la], next: null, pending: [], pendingCount: 0 },
+      ],
+    });
+    await h.drive.loadFeed();
+    await settle();
+    await h.drive.refreshFeed();
+    await settle();
+    expect(h.drive.state.feed.report).toBe('1 new post');
+    await h.drive.refreshFeed();
+    await settle();
+    expect(h.drive.state.feed.report).toBe('1 new post');
+    // The slot la is still resolving under the first ↻'s call. Its ending
+    // is attributed to the first ↻, not the second — the second's record
+    // names lb only, so la is not in it and the line is unchanged.
+    const call = r.calls.find((c) => c.ids.includes(la.id));
+    call!.end({ [la.id]: 'unserved' });
+    await settle();
+    expect(h.drive.state.feed.posts.map((p) => p.id)).toEqual([lb.id]);
+    expect(h.drive.state.feed.report).toBe('1 new post');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The seed walk: with no stored node and a first node that fails, the probe
 // asks `light=1` and its page's slots are resolved under the adoption
 // generation (WEB_INTERFACE → "The client is served from the node's own

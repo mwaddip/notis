@@ -49,8 +49,8 @@ function noopHandlers(): Handlers {
     draftIdentity: async () => ({ pubKeyHex: '' }),
     createIdentity: async, discardDraft: noop, importIdentity: async, exportIdentity: async,
     forgetIdentity: async, lockIdentity: async, unlockIdentity: async, askFaucet: noop,
-    openComposer: noop, expandImage: noop, collapseImage: noop, likePost: noop,
-    withdrawPost: noop, tryAgain: noop, vouch: noop, unvouch: noop, openAuthor: noop,
+    openComposer: noop, expandImage: noop, collapseImage: noop, pressLike: noop,
+    pressWithdraw: noop, linkRefused: noop, tryAgain: noop, vouch: noop, unvouch: noop, openAuthor: noop,
     refreshAuthor: noop, openAuthorPosts: noop, refreshAuthorPosts: noop,
     authorPostsMore: noop, moreEndorsers: noop, invite: noop, moreBonds: noop,
     claimUsername: noop, burnUsername: noop,
@@ -74,7 +74,9 @@ function baseCtx(over: Partial<RenderCtx> = {}): RenderCtx {
     canAffordBurn: false, status: null, credits: null, creditGrant: null,
     sendFlight: null, pendingSend: null, sendCheck: null, sendAnswer: null,
     confirmInRow: true, verdict: undefined, figures: null,
-    linkUrl: (id) => `http://localhost/p/${id}`, ...over,
+    linkUrl: (id) => `http://localhost/p/${id}`,
+    rowsUnder: () => [],
+    ...over,
   };
 }
 
@@ -82,7 +84,8 @@ describe("the feed renders a slot between two cards — order kept, the slot car
   it('three rows in [post, slot, post] render as three cards in the same order', () => {
     const feed: FeedState = {
       posts: [post(P1, AUTHOR), slot(SLOT), post(P3, AUTHOR)],
-      pending: [], next: null, report: null, olderReport: null, loaded: true,
+      pending: [], next: null, report: null, olderReport: null,
+      reportCount: null, olderReportCount: null, loaded: true,
       loading: false, error: null, unboundCount: 0,
     };
     const container = document.createElement('div');
@@ -102,18 +105,21 @@ describe("the author-posts window renders a slot between two cards — order kep
   it('three rows in [post, slot, post] render as three cards in the same order', () => {
     const feed: FeedState = {
       posts: [post(P1, AUTHOR), slot(SLOT), post(P3, AUTHOR)],
-      pending: [], next: null, report: null, olderReport: null, loaded: true,
+      pending: [], next: null, report: null, olderReport: null,
+      reportCount: null, olderReportCount: null, loaded: true,
       loading: false, error: null, unboundCount: 0,
     };
     const handlers: PostsHandlers = {
-      openThread: () => {}, openAuthor: () => {}, likePost: () => {},
-      authorPostsMore: () => {}, unlockIdentity: async () => {},
+      openThread: () => {}, openAuthor: () => {}, pressLike: () => {}, linkRefused: () => {},
+      authorPostsMore: () => {},
       expandImage: () => {}, collapseImage: () => {},
     };
     const ctx: PostsCtx = {
       authorKey: AUTHOR, origin: { from: 'feed' }, feed,
-      writeEnabled: false, ownKey: null, locked: false, likePending: () => false,
+      writeEnabled: false, ownKey: null, likePending: () => false,
       linkUrl: (id) => `/p/${id}`, expandedImages: new Set(), nameClay: () => false,
+      listKey: '@posts:' + AUTHOR,
+      rowsUnder: () => [],
     };
     const body = authorPostsBody(handlers, ctx);
     const cards = [...body.querySelectorAll('.card')] as HTMLElement[];

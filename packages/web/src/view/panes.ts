@@ -1,5 +1,5 @@
 import { el, reportNode, shortHex } from '../dom';
-import { card, submissionToPost, flightFor, listCardOpts, type CardOpts } from './card';
+import { card, submissionToPost, flightFor, listCardOpts, cardLink, type CardOpts } from './card';
 import { profileBody } from './profile';
 import { settingsBody } from './settings';
 import { walletBody } from './wallet';
@@ -178,16 +178,18 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
 /** The card opts for a pane card. The prefix opens the author window — a read,
  *  present even with no identity (WEB_INTERFACE → The identity display). The like
  *  and link come from listCardOpts; the pane adds ↩ reply and the withdraw
- *  control (WEB_INTERFACE → The withdraw control). */
-function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
-  const locked = ctx.identity?.locked ?? false;
+ *  control (WEB_INTERFACE → The withdraw control). `listKey` is the pane's
+ *  focused window — the list a row opened under one of its cards belongs to
+ *  (WEB_INTERFACE → What the feed reads, and what a card shows for it →
+ *  "A row the reader opened under a card outlasts a redraw of its list"). */
+function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, listKey: string, ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
   const base: Partial<CardOpts> = {
     onAuthor: (key) => handlers.openAuthor(key, { from: 'pane', ci }),
     nameClay: ctx.nameClay,
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,
-    ...listCardOpts(row, { ...ctx, locked }, handlers),
+    ...listCardOpts(row, listKey, ctx, handlers),
   };
   if (!ctx.writeEnabled) return base;
   const opts: Partial<CardOpts> = {
@@ -195,14 +197,11 @@ function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx
     onReply: (id) => handlers.openComposer(id),
     composerKey: row.id,
     you: ctx.ownKey !== null && row.author === ctx.ownKey,
-    locked: ctx.identity?.locked ?? false,
-    ownKey: ctx.ownKey ?? undefined,
-    onUnlock: (p) => handlers.unlockIdentity(p),
   };
   if (!isWithdrawn(row) && row.status === 'confirmed') {
     const isOwn = ctx.ownKey !== null && row.author === ctx.ownKey;
     if (isOwn) {
-      opts.onWithdraw = (id) => handlers.withdrawPost(id);
+      opts.onWithdraw = (id, control) => handlers.pressWithdraw(listKey, id, control);
       opts.withdraw = ctx.withdrawState(row.id);
       opts.canWithdraw = ctx.canSignWithdraw;
     }
@@ -230,19 +229,20 @@ function authorCtxFrom(key: string, ci: number, ctx: RenderCtx): AuthorCtx {
   };
 }
 
-function postsCtxFrom(key: string, ci: number, ctx: RenderCtx): PostsCtx {
+function postsCtxFrom(key: string, listKey: string, ci: number, ctx: RenderCtx): PostsCtx {
   const f = ctx.authorPosts.get(key);
   return {
     authorKey: key,
     origin: { from: 'pane', ci },
-    feed: f ?? { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: true, error: null, unboundCount: 0 },
+    feed: f ?? { posts: [], pending: [], next: null, report: null, olderReport: null, reportCount: null, olderReportCount: null, loaded: false, loading: true, error: null, unboundCount: 0 },
     writeEnabled: ctx.writeEnabled,
     ownKey: ctx.ownKey,
-    locked: ctx.identity?.locked ?? false,
     likePending: (id) => ctx.likePending(id),
     linkUrl: (id) => ctx.linkUrl(id),
     expandedImages: ctx.expandedImages,
     nameClay: ctx.nameClay,
+    listKey,
+    rowsUnder: (list, id) => ctx.rowsUnder(list, id),
   };
 }
 
@@ -250,17 +250,19 @@ function postsCtxFrom(key: string, ci: number, ctx: RenderCtx): PostsCtx {
  *  its own submissions in turn — each a level deeper than the card above it,
  *  to the cap a thread's rows hold (WEB_INTERFACE → "A landed submission is
  *  replied to where it stands"). A pending or expired card takes no reply, so
- *  neither hangs under it. */
+ *  neither hangs under it. A landed card carries its link, and stands over the
+ *  link row held for it in the pane's list (WEB_INTERFACE → Links). */
 function appendSubmissionBlock(
   body: HTMLElement,
   parentDepth: number,
   sub: Submission,
   ci: number,
+  listKey: string,
   handlers: Handlers,
   ctx: RenderCtx,
 ): void {
   const depth = Math.min(parentDepth + 1, 3);
-  const landed = sub.stage === 'landed' && sub.postId !== null;
+  const landedId = sub.stage === 'landed' ? sub.postId : null;
   body.appendChild(
     card(submissionToPost(sub, ctx.ownName?.name ?? null), {
       depth,
@@ -271,16 +273,22 @@ function appendSubmissionBlock(
       expanded: ctx.expandedImages,
       onExpand: handlers.expandImage,
       onCollapse: handlers.collapseImage,
-      ...(landed
-        ? { onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }), onReply: (id) => handlers.openComposer(id), composerKey: sub.postId ?? undefined, linkUrl: ctx.linkUrl(sub.postId ?? sub.localKey) }
+      ...(landedId !== null
+        ? {
+            onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }),
+            onReply: (id) => handlers.openComposer(id),
+            composerKey: landedId,
+            link: cardLink(listKey, landedId, ctx, handlers),
+            rows: ctx.rowsUnder(listKey, landedId),
+          }
         : {}),
     }),
   );
-  if (!landed || sub.postId === null) return;
-  const composerEl = ctx.composerFor(sub.postId);
+  if (landedId === null) return;
+  const composerEl = ctx.composerFor(landedId);
   if (composerEl) body.appendChild(composerEl);
-  for (const child of ctx.submissionsFor(sub.postId)) {
-    appendSubmissionBlock(body, depth, child, ci, handlers, ctx);
+  for (const child of ctx.submissionsFor(landedId)) {
+    appendSubmissionBlock(body, depth, child, ci, listKey, handlers, ctx);
   }
 }
 
@@ -291,7 +299,7 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
     return;
   }
   if (sub?.kind === 'posts') {
-    body.appendChild(authorPostsBody(handlers, postsCtxFrom(sub.key, ci, ctx)));
+    body.appendChild(authorPostsBody(handlers, postsCtxFrom(sub.key, focusedK, ci, ctx)));
     return;
   }
   if (focusedK === '@profile') {
@@ -364,7 +372,7 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
         depth: node.depth,
         replyCount: row.id === rootId ? t.descendantCount : node.replyCount,
         onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }),
-        ...writeCardOpts(row, ci, ctx, handlers),
+        ...writeCardOpts(row, ci, focusedK, ctx, handlers),
       }),
     );
     // A reply composer open under this post, reused by reference across the
@@ -372,7 +380,7 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
     const composerEl = ctx.composerFor(row.id);
     if (composerEl) body.appendChild(composerEl);
     for (const sub of ctx.submissionsFor(row.id)) {
-      appendSubmissionBlock(body, node.depth, sub, ci, handlers, ctx);
+      appendSubmissionBlock(body, node.depth, sub, ci, focusedK, handlers, ctx);
     }
   }
 
