@@ -19,7 +19,6 @@ import {
   updateInterlinks,
 } from '@dagsocial/types';
 import { blockHash, cumulativeWork, level as headerLevel } from '@dagsocial/validation';
-import { MAX_CHAIN_RESPONSE_ITEMS } from '@dagsocial/net';
 import { label as avlLabel } from '@dagsocial/avltree';
 import type { AvlNode } from '@dagsocial/avltree';
 import type {
@@ -4410,92 +4409,6 @@ describe('the fork walk', () => {
     expect(net.headerRequests).toHaveLength(2);
   });
 
-  it('a height above the start on page 2', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const { setClock } = await import('../../src/services/difficulty.js');
-
-    const bigConfig = makeTestConfig({ maxReorgDepth: 450 });
-    vi.doMock('../../src/config.js', () => ({ config: bigConfig, loadConfig: () => bigConfig }));
-
-    const bc = await importBlockCreator();
-    bc.startBlockCreator(bigConfig);
-    const ordering = await importOrdering();
-    const forkResolution = await importForkResolution();
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    const t1 = 1_000_000;
-    for (let i = 0; i < 450; i++) {
-      setClock(() => t1 + i * 60_000);
-      await mineNextBlock(bc);
-    }
-    expect(ordering.getCurrentHeight()).toBe(450);
-
-    // Page 1: honest headers 450..51 (full). Page 2: the peer serves heights
-    // starting above the requested start (450 again instead of ≤ 50).
-    const honestHeaders: BlockHeader[] = [];
-    for (let h = 450; h >= 1; h--) {
-      honestHeaders.push({
-        height: h,
-        prevBlockHash: 'ff'.repeat(32),
-        stateRoot: EMPTY_STATE_ROOT,
-        utxoTxRoot: '00'.repeat(32),
-        powTargetBits: bigConfig.orderingBlockPowTargetBits,
-        powNonce: 0,
-        protocolVersion: PROTOCOL_VERSION,
-        createdAt: t1 + h * 60_000,
-        validatorId: new Uint8Array(32),
-        interlinkRoot: '00'.repeat(32),
-        adProofsRoot: '00'.repeat(32),
-      });
-    }
-
-    let requestCount = 0;
-    const headerRequests: Array<{ startHeight: number; maxCount: number }> = [];
-    const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
-    const net: ForkResolutionNet = {
-      getConnectedPeers: () => ['peer-above'],
-      requestHeaders: async (startHeight: number, maxCount: number) => {
-        headerRequests.push({ startHeight, maxCount });
-        requestCount++;
-        if (requestCount === 1) {
-          return honestHeaders
-            .filter(h => h.height <= startHeight)
-            .sort((a, b) => b.height - a.height)
-            .slice(0, maxCount);
-        }
-        // Page 2: maliciously top the page at 450 again.
-        return honestHeaders
-          .filter(h => h.height <= 450)
-          .sort((a, b) => b.height - a.height)
-          .slice(0, maxCount);
-      },
-      requestBlocks: async () => [],
-      penalizePeer: (peerId: string, kind: string, reason: string) => {
-        penalties.push({ peerId, kind, reason });
-      },
-      peerTipHeight: () => 450,
-    };
-
-    setClock(() => t1 + 451 * 60_000);
-    await forkResolution.resolveFork(
-      dummyBlock(honestHeaders[0]!),
-      net,
-      'peer-above',
-    );
-
-    expect(penalties).toEqual([
-      expect.objectContaining({
-        kind: 'misbehavior',
-        reason: expect.stringMatching(/above the requested start/),
-      }),
-    ]);
-    expect(headerRequests).toHaveLength(2);
-    expect(ordering.getCurrentHeight()).toBe(450);
-  }, 120_000);
-
   it('a hole in a page', async () => {
     const db = await importDb();
     db.initDb(':memory:');
@@ -4660,6 +4573,7 @@ describe('resolveFork — paged scoring walk', () => {
   beforeEach(async () => { vi.resetModules(); });
   afterEach(async () => {
     try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    vi.doUnmock('../../src/config.js');
     vi.restoreAllMocks();
     vi.resetModules();
   });
@@ -4988,80 +4902,6 @@ describe('resolveFork — paged scoring walk', () => {
     expect(scoringRequests.length).toBe(1);
   });
 
-  it('a test config with horizon 450 walks two pages to a fork at depth 400', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const { setClock } = await import('../../src/services/difficulty.js');
-
-    // Inject a config with maxReorgDepth 450.
-    const bigConfig = makeTestConfig({ maxReorgDepth: 450 });
-    vi.doMock('../../src/config.js', () => ({ config: bigConfig, loadConfig: () => bigConfig }));
-
-    const bc = await importBlockCreator();
-    bc.startBlockCreator(bigConfig);
-    const ordering = await importOrdering();
-    const forkResolution = await importForkResolution();
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    // Mine 450 blocks.
-    const t1 = 1_000_000;
-    for (let i = 0; i < 450; i++) {
-      setClock(() => t1 + i * 60_000);
-      await mineNextBlock(bc);
-    }
-    expect(ordering.getCurrentHeight()).toBe(450);
-
-    // Peer shares our block at height 50 (depth 400 from tip).
-    // Build headers that don't match at heights 51-450, then match at 50.
-    const sharedBlock = ordering.getOrderingBlock(50)!.header;
-    const fakeHeaders: BlockHeader[] = [];
-    for (let h = 450; h >= 1; h--) {
-      if (h === 50) {
-        fakeHeaders.push(sharedBlock);
-      } else if (h < 50) {
-        fakeHeaders.push(ordering.getOrderingBlock(h)!.header);
-      } else {
-        fakeHeaders.push({
-          height: h,
-          prevBlockHash: 'ff'.repeat(32),
-          stateRoot: EMPTY_STATE_ROOT,
-          utxoTxRoot: '00'.repeat(32),
-          powTargetBits: bigConfig.orderingBlockPowTargetBits,
-          powNonce: 0,
-          protocolVersion: PROTOCOL_VERSION,
-          createdAt: t1 + h * 60_000,
-          validatorId: new Uint8Array(32),
-          interlinkRoot: '00'.repeat(32),
-          adProofsRoot: '00'.repeat(32),
-        });
-      }
-    }
-
-    setClock(() => t1 + 451 * 60_000);
-    const net = stubNet(fakeHeaders, []);
-    await forkResolution.resolveFork(
-      { header: fakeHeaders[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
-      net,
-      'peer-withholding',
-    );
-
-    // The fork walk starts at 450, pages down in 400-header pages:
-    // Request 1: startHeight=450, maxCount=400 → headers 450..51
-    // Request 2: startHeight=50, maxCount=400 → headers 50..1, match at 50
-    // Two fork-walk requests.
-    const forkWalkRequests = net.headerRequests.filter(
-      r => r.startHeight <= 450,
-    );
-    expect(forkWalkRequests.length).toBe(2);
-    expect(forkWalkRequests[0]!.startHeight).toBe(450);
-    expect(forkWalkRequests[1]!.startHeight).toBeLessThanOrEqual(51);
-
-    // Chain untouched (the peer's headers above the fork fail verification).
-    expect(ordering.getCurrentHeight()).toBe(450);
-  }, 120_000);
-
   it('hazard 2 — first 21 lighter than our 20, whole heavier → reorg', async () => {
     const db = await importDb();
     db.initDb(':memory:');
@@ -5189,82 +5029,13 @@ describe('resolveFork — paged scoring walk', () => {
     expect(net.blockRequests[0]!.startHeight).toBe(2);
   });
 
-  it('floor-difficulty stub ends the walk within ceil(ourWork/floorWork)+400 headers', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const { setClock } = await import('../../src/services/difficulty.js');
-    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
-    const bc = await importBlockCreator();
-    bc.startBlockCreator(testConfig);
-    const ordering = await importOrdering();
-    const forkResolution = await importForkResolution();
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    // Mine 5 blocks at the ideal rate.
-    const t1 = 1_000_000;
-    setClock(() => t1);
-    await mineNextBlock(bc);
-    for (let i = 1; i < 5; i++) {
-      setClock(() => t1 + i * 60_000);
-      await mineNextBlock(bc);
-    }
-    expect(ordering.getCurrentHeight()).toBe(5);
-
-    const forkH = ordering.getOrderingBlock(1)!.header;
-    const forkHash = blockHash(forkH)!;
-    const forkLevel = headerLevel(forkH, testConfig.orderingBlockPowTargetBits);
-    const il1 = ordering.getInterlinks(1)!;
-    const anchorIl = updateInterlinks(il1, forkHash, forkLevel);
-    const params = rp();
-
-    // Our work above the fork (4 blocks).
-    const ourHdrs: BlockHeader[] = [];
-    for (let h = 2; h <= 5; h++) {
-      ourHdrs.push(ordering.getOrderingBlock(h)!.header);
-    }
-    const ourWork = cumulativeWork(ourHdrs);
-
-    // Build a peer chain with floor-difficulty headers (very long spacing
-    // → ASERT drops the target to the floor → minimum work per header).
-    const floorSpacingMs = 3_600_000; // 1 hour → target drops to floor
-    const peerCount = 2000; // More than enough to exceed ourWork at the floor
-    const { headers: floorChain } = buildMinedHeaderChain({
-      anchorPrevBlockHash: forkHash,
-      anchorInterlinks: anchorIl,
-      startHeight: 2,
-      count: peerCount,
-      params,
-      anchorCreatedAt: forkH.createdAt,
-      anchorStamp: forkH.createdAt,
-      startStamp: forkH.createdAt + floorSpacingMs,
-      spacingMs: floorSpacingMs,
-    });
-
-    // Work per floor-difficulty header.
-    const floorWork = cumulativeWork([floorChain[floorChain.length - 1]!]);
-    const boundHeaders = Number((ourWork + floorWork - 1n) / floorWork);
-    const requestBound = Math.ceil(boundHeaders / MAX_CHAIN_RESPONSE_ITEMS) + 1;
-
-    const theirHeaders = [...floorChain].reverse().concat(forkH);
-    setClock(() => forkH.createdAt + floorSpacingMs * peerCount + 60_000);
-    const net = stubNet(theirHeaders, []);
-    await forkResolution.resolveFork(
-      { header: floorChain[floorChain.length - 1]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
-      net,
-      'peer-withholding',
-    );
-
-    // The scoring walk's header requests should be bounded by
-    // ceil(ourWork / floorWork) + 400 headers worth of pages.
-    const scoringRequests = net.headerRequests.filter(
-      r => r.startHeight > ordering.getCurrentHeight(),
-    );
-    expect(scoringRequests.length).toBeLessThanOrEqual(requestBound);
-  });
-
   it('a fork at depth 40 converges', async () => {
+    // The fork is 41 deep; the walk examines `maxReorgDepth` blocks and the
+    // suite runs under the devnet profile (NODE_INTERFACE → Fork choice
+    // decides on verified headers). The case names the config it runs under.
+    const bigConfig = makeTestConfig({ maxReorgDepth: 450 });
+    vi.doMock('../../src/config.js', () => ({ config: bigConfig, loadConfig: () => bigConfig }));
+
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -5317,121 +5088,6 @@ describe('resolveFork — paged scoring walk', () => {
     expect(blockHash(ordering.getOrderingBlock(42)!.header)).toBe(theirTipHash);
     expect(net.penalties).toEqual([]);
   });
-
-  it('first page-aligned heavier prefix — the reorg target is the first stop-rule hit', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const { setClock } = await import('../../src/services/difficulty.js');
-    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
-
-    // Inject a config with maxReorgDepth 450.
-    const bigConfig = makeTestConfig({ maxReorgDepth: 450 });
-    vi.doMock('../../src/config.js', () => ({ config: bigConfig, loadConfig: () => bigConfig }));
-
-    const bc = await importBlockCreator();
-    bc.startBlockCreator(bigConfig);
-    const ordering = await importOrdering();
-    const forkResolution = await importForkResolution();
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    // Mine 450 blocks.
-    const t1 = 1_000_000;
-    for (let i = 0; i < 450; i++) {
-      setClock(() => t1 + i * 60_000);
-      await mineNextBlock(bc);
-    }
-    expect(ordering.getCurrentHeight()).toBe(450);
-
-    // Fork at height 1 (depth 449). Our work above 1 is 449 blocks.
-    const forkBlock = ordering.getOrderingBlock(1)!.header;
-    const forkHash = blockHash(forkBlock)!;
-    const forkLevel = headerLevel(forkBlock, bigConfig.orderingBlockPowTargetBits);
-    const anchorIl = updateInterlinks([], forkHash, forkLevel);
-
-    // Their branch: slightly faster spacing so each header is harder → more
-    // work per header. The crossing boundary is derived from cumulativeWork.
-    const params = rp();
-    const { headers: peerChain } = buildMinedHeaderChain({
-      anchorPrevBlockHash: forkHash,
-      anchorInterlinks: anchorIl,
-      startHeight: 2,
-      count: 450,
-      params,
-      anchorCreatedAt: forkBlock.createdAt,
-      anchorStamp: forkBlock.createdAt,
-      startStamp: forkBlock.createdAt + 57_000,
-      spacingMs: 57_000,
-    });
-
-    // Include the shared block 1 so the fork walk finds the match.
-    const theirHeaders = [...peerChain].reverse().concat(forkBlock);
-
-    const blockRequests: Array<{ startHeight: number; endHeight: number }> = [];
-    const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
-    const peerTip = 1 + 450;
-
-    const net: ForkResolutionNet & {
-      blockRequests: typeof blockRequests;
-      headerRequests: Array<{ startHeight: number; maxCount: number }>;
-      penalties: typeof penalties;
-    } = {
-      getConnectedPeers: () => ['peer-prefix'],
-      requestHeaders: async (startHeight: number, maxCount: number) => {
-        net.headerRequests.push({ startHeight, maxCount });
-        const clamped = Math.min(startHeight, peerTip);
-        return theirHeaders
-          .filter(h => h.height <= clamped)
-          .sort((a, b) => b.height - a.height)
-          .slice(0, maxCount);
-      },
-      requestBlocks: async (s: number, e: number) => {
-        blockRequests.push({ startHeight: s, endHeight: e });
-        return [];
-      },
-      penalizePeer: (peerId: string, kind: string, reason: string) => {
-        penalties.push({ peerId, kind, reason });
-      },
-      peerTipHeight: () => peerTip,
-      blockRequests,
-      headerRequests: [],
-      penalties,
-    };
-
-    setClock(() => t1 + 451 * 60_000);
-    // Spy getHeadersAbove to pin that ourWork reads the header-only store path.
-    const orderingMod = await import('../../src/store/ordering.js');
-    const headersAboveSpy = vi.spyOn(orderingMod, 'getHeadersAbove');
-
-    await forkResolution.resolveFork(
-      { header: peerChain[peerChain.length - 1]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
-      net,
-      'peer-prefix',
-    );
-
-    // The ourWork read went through getHeadersAbove, not the decode loop.
-    expect(headersAboveSpy).toHaveBeenCalledWith(1, 449);
-
-    // Derive the first page boundary at which their work exceeds ours.
-    // The residual (heights 2..450) is chunked at MAX_CHAIN_RESPONSE_ITEMS
-    // (400): pages of 2..401, 402..450. Fresh requests above that.
-    const ourWork = cumulativeWork(
-      Array.from({ length: 449 }, (_, i) => ordering.getOrderingBlock(2 + i)!.header),
-    );
-    const pageBoundaries = [400, 449];
-    let expectedK: number | null = null;
-    for (const k of pageBoundaries) {
-      const sliceWork = cumulativeWork(peerChain.slice(0, k));
-      if (sliceWork > ourWork) { expectedK = k; break; }
-    }
-    expect(expectedK, 'peer branch must exceed our work at some page boundary').not.toBeNull();
-
-    expect(blockRequests.length).toBeGreaterThan(0);
-    expect(blockRequests[0]!.startHeight).toBe(2);
-    expect(blockRequests[blockRequests.length - 1]!.endHeight).toBe(1 + expectedK!);
-    expect(penalties.some(p => p.kind === 'transient')).toBe(true);
-  }, 120_000);
 });
 
 // ---------------------------------------------------------------------------

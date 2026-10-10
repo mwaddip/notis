@@ -8,6 +8,7 @@
     "build": "tsup src/index.ts --format esm --dts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
+    "test:slow": "vitest run -c vitest.slow.config.ts",
     "test:watch": "vitest"
   },
   "dependencies": {
