@@ -38,8 +38,9 @@ import { makeTestIdentity, makeCreditBox, makeCreditTx } from '../test/helpers.j
  *   - A: 100 blocks, each carrying one small post-shaped tx plus 100 fillers
  *     of ~19.9 KB (101 elements a body); and 100 posts in one block of that
  *     shape.
- *   - B: 100 blocks, each carrying one small post-shaped tx plus ~3 000
- *     credit-send-sized fillers — the id array is the costly shape for
+ *   - B: 100 blocks, each carrying one small post-shaped tx plus as many
+ *     credit-send-sized fillers (`SMALL_PER_BLOCK`) as fill the body to
+ *     `MAX_BLOCK_BODY_BYTES` — the id array is the costly shape for
  *     `utxoTxBytesIn` and the one the contract's figure is measured on; and
  *     100 posts in one block of that shape. The batch and light cases run
  *     over the 100-block form.
@@ -457,7 +458,7 @@ describe("post-tx bench — the post routes' tx=1 over full blocks (narrow read)
       }
       const c3A = await timeSeries(app, '/posts?limit=100&tx=1');
 
-      // ============== Seeding B — ~3000 small elements a body ==============
+      // ============== Seeding B — a body filled to the cap with small elements ==
       // The id array is read on every call, so the small-tx body is the
       // costly shape and the one the contract's figure must come from.
       db.exec('DELETE FROM dag_posts');
