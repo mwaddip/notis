@@ -34,6 +34,10 @@ Run the last two **per package**: `pnpm -r test` fails fast and hides everything
 **The build step is load-bearing, not advisory:** `tools/e2e` spawns `packages/node/dist/index.js` and
 refuses to run against a missing or stale `dist`. See ARCHITECTURE → "Build and test resolution".
 
+**`pnpm -r test` leaves the node's slow tree out** — `pnpm --filter @dagsocial/node test:slow` runs the four deepest
+fork-walk cases (`packages/node/slow/`); run it when a change touches fork resolution or anything it reads. **Every
+pull request runs the full gate, the slow tree included** — `.github/workflows/ci.yml`, one job per workspace member.
+
 ## Architecture
 
 Nine packages, in dependency order:
