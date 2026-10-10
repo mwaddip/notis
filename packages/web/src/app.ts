@@ -5091,7 +5091,8 @@ export class App {
       const composer = this.composers.get(composerFocused);
       if (composer !== undefined && !composer.el.contains(document.activeElement)) composer.focus();
     } else if (heldFocused !== null && heldFocused.isConnected && document.activeElement !== heldFocused) {
-      heldFocused.focus();
+      // The draw put each region's scroll back; the focus returns without one.
+      heldFocused.focus({ preventScroll: true });
     }
   }
 

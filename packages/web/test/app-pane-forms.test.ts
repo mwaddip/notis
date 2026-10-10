@@ -319,6 +319,28 @@ describe('the passphrase row\'s unlock form across the profile\'s ↻', () => {
   });
 });
 
+describe('the focus returns to a body\'s field after a draw without a scroll', () => {
+  it('unlock typed with the focus in its field; the profile\'s ↻ draws the panes: the field is given the focus once, asked not to scroll', async () => {
+    const h = rig({ feed: [], locked: true });
+    await boot(h);
+    openProfile();
+    await settle();
+    const pp = h.panes.querySelector<HTMLElement>('.pp-field')!;
+    wordIn(pp, 'unlock').click();
+    await settle(); // the form's own frame passes
+    const field = fieldOf(pp);
+    field.focus();
+    const asked: Array<FocusOptions | undefined> = [];
+    const focus = field.focus.bind(field);
+    field.focus = (options?: FocusOptions): void => { asked.push(options); focus(options); };
+
+    await refreshProfile(h);
+
+    expect(asked).toEqual([{ preventScroll: true }]);
+    expect(document.activeElement).toBe(field);
+  });
+});
+
 describe('the unlock row under the invite form across the profile\'s ↻', () => {
   it('member karma loaded with one invite available; invite submitted with a 64-hex key, unlock row mounted and typed; ↻ with reads held back, released: the row is the same node under the same form, both fields hold what was typed, and the focus is in the passphrase field', async () => {
     const h = rig({ feed: [], locked: true, member: true });
