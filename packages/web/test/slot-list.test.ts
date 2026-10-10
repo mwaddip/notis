@@ -82,7 +82,8 @@ describe("the feed renders a slot between two cards — order kept, the slot car
   it('three rows in [post, slot, post] render as three cards in the same order', () => {
     const feed: FeedState = {
       posts: [post(P1, AUTHOR), slot(SLOT), post(P3, AUTHOR)],
-      pending: [], next: null, report: null, olderReport: null, loaded: true,
+      pending: [], next: null, report: null, olderReport: null,
+      reportCount: null, olderReportCount: null, loaded: true,
       loading: false, error: null, unboundCount: 0,
     };
     const container = document.createElement('div');
@@ -102,7 +103,8 @@ describe("the author-posts window renders a slot between two cards — order kep
   it('three rows in [post, slot, post] render as three cards in the same order', () => {
     const feed: FeedState = {
       posts: [post(P1, AUTHOR), slot(SLOT), post(P3, AUTHOR)],
-      pending: [], next: null, report: null, olderReport: null, loaded: true,
+      pending: [], next: null, report: null, olderReport: null,
+      reportCount: null, olderReportCount: null, loaded: true,
       loading: false, error: null, unboundCount: 0,
     };
     const handlers: PostsHandlers = {

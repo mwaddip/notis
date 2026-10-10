@@ -8,6 +8,7 @@ import type { SignResult } from '../wallet/submit';
 import type { TipVerdict } from './tip-verdict';
 import type { Anchor, FiguresResult, Listing, NameClaim, NameResult, PostCheck } from '@dagsocial/nipopow-client';
 import type { BoundPost, ResolveEnd } from './post-resolve';
+import type { ReportCount } from './feed-reconcile';
 export type { Anchor };
 
 /** What the App holds when a figures verifier run has returned — the tool's
@@ -43,6 +44,17 @@ export interface FeedState {
   next: string | null;      // keyset cursor for older posts
   report: string | null;    // what the last ↻ did
   olderReport: string | null; // what the last "load older" did
+  /** The ids the last `↻` counted beside the text it wrote — the row's slot
+   *  leaving comes off the count, and the recount reads what is left only
+   *  while `report` still reads that text (WEB_INTERFACE → The extension →
+   *  "A report counts the posts that stand"). An author window's `↻` ties
+   *  its count to the author, so the column that focuses the posts window
+   *  reads the text from here when it recounts. */
+  reportCount: ReportCount | null;
+  /** The ids the last `load older` counted beside the text it wrote, under
+   *  the same rule as `reportCount` (WEB_INTERFACE → The extension →
+   *  "A report counts the posts that stand"). */
+  olderReportCount: ReportCount | null;
   loaded: boolean;
   loading: boolean;
   error: string | null;

@@ -15,7 +15,7 @@ import { makeComposer, type ComposerController } from './view/composer';
 import { personGlyph, sunGlyph, moonGlyph, gearGlyph, walletGlyph } from './view/glyphs';
 import { MARK } from './view/mark';
 import { serialise, parse, authorWindowId, postsWindowId, windowSubject } from './model/arrangement';
-import { reconcileNewer, isLivePost } from './model/feed-reconcile';
+import { reconcileNewer, isLivePost, newPostsLine, olderPostsLine } from './model/feed-reconcile';
 import { withNodeWord } from './model/light';
 import { flattenThread } from './model/thread';
 import { WriteClient, type Rejection } from './api/write';
@@ -173,7 +173,7 @@ function usernameRejectionCopy(r: Rejection): string {
 
 /** A fresh empty feed state — the author-posts window's body shape, the feed's own. */
 function emptyFeedState(): FeedState {
-  return { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null, unboundCount: 0 };
+  return { posts: [], pending: [], next: null, report: null, olderReport: null, reportCount: null, olderReportCount: null, loaded: false, loading: false, error: null, unboundCount: 0 };
 }
 
 /** The rows a ↻ lands on. One that reconnected puts its new rows on top of the
@@ -479,7 +479,7 @@ export class App {
     this.ledger = ledger ?? new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
     this.tabs = tabs ?? null;
     this.state = {
-      feed: { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null, unboundCount: 0 },
+      feed: { posts: [], pending: [], next: null, report: null, olderReport: null, reportCount: null, olderReportCount: null, loaded: false, loading: false, error: null, unboundCount: 0 },
       threads: new Map(),
       workspace: newWorkspace(),
       status: null,
@@ -1660,11 +1660,16 @@ export class App {
    *  row: `root` becomes `null` and `subjectWithheld` the end — `'unserved'`
    *  or `'unbound'` — and an `'unbound'` subject counts at the thread's
    *  head, as a descendant end does (→ "The post check" → "A thread whose
-   *  subject ends so"). The touched surfaces redraw. */
+   *  subject ends so"). A `↻` or a `load older` line a row leaving came off
+   *  reads what is left while the field still reads what the count wrote
+   *  (→ "A report counts the posts that stand"). The touched surfaces
+   *  redraw. */
   private endSlots(ends: ReadonlyMap<string, ResolveEnd>): void {
     if (ends.size === 0) return;
     const feedUnboundIds = new Set<string>();
+    const feedLeftIds = new Set<string>();
     const authorsUnbound = new Map<string, Set<string>>();
+    const authorsLeft = new Map<string, Set<string>>();
     const touchedAuthors = new Set<string>();
     const threadsUnbound = new Map<string, Set<string>>();
     const touchedThreads = new Set<string>();
@@ -1687,6 +1692,7 @@ export class App {
       }
       if (inFeed) {
         feedTouched = true;
+        feedLeftIds.add(id);
         if (end === 'unbound') feedUnboundIds.add(id);
       }
       for (const [key, f] of this.authorPostsData) {
@@ -1700,6 +1706,9 @@ export class App {
         }
         if (touched) {
           touchedAuthors.add(key);
+          let left = authorsLeft.get(key);
+          if (left === undefined) { left = new Set(); authorsLeft.set(key, left); }
+          left.add(id);
           if (end === 'unbound') {
             let s = authorsUnbound.get(key);
             if (s === undefined) { s = new Set(); authorsUnbound.set(key, s); }
@@ -1740,9 +1749,60 @@ export class App {
       const t = this.state.threads.get(tid);
       if (t) t.unboundCount += s.size;
     }
+    // A line a slot leaving came off reads what is left — only while the
+    // field still reads the text the count wrote (WEB_INTERFACE → The
+    // extension → "A report counts the posts that stand").
+    if (feedLeftIds.size > 0) {
+      this.recountFeedLine('report', feedLeftIds, newPostsLine);
+      this.recountFeedLine('olderReport', feedLeftIds, olderPostsLine);
+    }
+    for (const [key, left] of authorsLeft) this.recountAuthorLine(key, left);
     if (feedTouched) this.renderFeed();
     for (const key of touchedAuthors) this.renderPostsLoad(key);
     for (const tid of touchedThreads) this.renderThreadLoad(tid);
+  }
+
+  /** Recount one of the feed's two lines after the given ids left: the record
+   *  loses them, the line reads what is left under the same formatter, and the
+   *  write happens only while the field still reads the text the count wrote
+   *  (WEB_INTERFACE → The extension → "A report counts the posts that stand"). */
+  private recountFeedLine(
+    field: 'report' | 'olderReport',
+    left: ReadonlySet<string>,
+    line: (n: number) => string,
+  ): void {
+    const feed = this.state.feed;
+    const key = field === 'report' ? 'reportCount' : 'olderReportCount';
+    const rc = feed[key];
+    if (rc === null || rc.text !== feed[field]) return;
+    let changed = false;
+    for (const id of left) if (rc.ids.delete(id)) changed = true;
+    if (!changed) return;
+    const text = line(rc.ids.size);
+    feed[field] = text;
+    rc.text = text;
+  }
+
+  /** Recount an author window's `↻` line on the column that focuses its posts
+   *  window: the record on the author's own `FeedState` loses the ids, the
+   *  line reads what is left, and the write happens only while that column's
+   *  `report` still reads the text the count wrote (WEB_INTERFACE → The
+   *  extension → "A report counts the posts that stand"). A column that no
+   *  longer focuses the posts window — a focus change or a move cleared its
+   *  report — writes nothing. */
+  private recountAuthorLine(key: string, left: ReadonlySet<string>): void {
+    const f = this.authorPostsData.get(key);
+    if (!f) return;
+    const rc = f.reportCount;
+    if (rc === null) return;
+    const region = this.regionFocusedOn(postsWindowId(key));
+    if (region === null || rc.text !== region.report) return;
+    let changed = false;
+    for (const id of left) if (rc.ids.delete(id)) changed = true;
+    if (!changed) return;
+    const text = newPostsLine(rc.ids.size);
+    region.report = text;
+    rc.text = text;
   }
 
   /** A thread row as the client knows it: a post whose withdrawal it saw land
@@ -1911,7 +1971,12 @@ export class App {
       feed.posts = landRefresh(feed.posts, r);
       if (r.next !== undefined) feed.next = r.next; // reset only on the replace branch
       feed.unboundCount = 0;
-      feed.report = r.newCount ? `${r.newCount} new ${r.newCount === 1 ? 'post' : 'posts'}` : 'no new posts';
+      // The fresh rows the ↻ brought and the line that reads their count — the
+      // slot ids among them are what the recount removes as each leaves
+      // (WEB_INTERFACE → The extension → "A report counts the posts that stand").
+      const freshRows = r.posts.slice(0, r.newCount);
+      feed.report = newPostsLine(r.newCount);
+      feed.reportCount = { ids: new Set(freshRows.filter(isLight).map((p) => p.id)), text: feed.report };
       feed.error = null;
     } catch (e) {
       if (gen !== this.readerGen) return;
@@ -1949,7 +2014,11 @@ export class App {
         const added = older.filter((p) => !have.has(p.id));
         feed.posts = [...feed.posts, ...added];
         feed.next = res.next;
-        feed.olderReport = added.length ? `${added.length} older ${added.length === 1 ? 'post' : 'posts'}` : 'no older posts';
+        // The appended rows and the line that reads their count — the slot
+        // ids among them are what the recount removes as each leaves
+        // (WEB_INTERFACE → The extension → "A report counts the posts that stand").
+        feed.olderReport = olderPostsLine(added.length);
+        feed.olderReportCount = { ids: new Set(added.filter(isLight).map((p) => p.id)), text: feed.olderReport };
         this.indexRows(kept);
       }
     } catch (e) {
@@ -3475,7 +3544,15 @@ export class App {
       if (r.next !== undefined) f.next = r.next;
       f.error = null;
       f.unboundCount = 0;
-      if (region) region.report = r.newCount ? `${r.newCount} new ${r.newCount === 1 ? 'post' : 'posts'}` : 'no new posts';
+      // The author window's ↻ writes its line on the column that focuses the
+      // posts window; the fresh rows and the line are tied to the author in
+      // the window's own `FeedState` (WEB_INTERFACE → The extension →
+      // "A report counts the posts that stand"). The recount reads the text
+      // against the column that focuses the posts window at the time it runs.
+      const freshRows = r.posts.slice(0, r.newCount);
+      const text = newPostsLine(r.newCount);
+      f.reportCount = { ids: new Set(freshRows.filter(isLight).map((p) => p.id)), text };
+      if (region) region.report = text;
     } catch (e) {
       if (gen !== this.readerGen) return;
       f.error = msg(e);

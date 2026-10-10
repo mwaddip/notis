@@ -226,7 +226,7 @@ function post(id: string, author: string): PostJson {
   };
 }
 function feedState(over: Partial<FeedState> = {}): FeedState {
-  return { posts: [post(P1, AUTHOR), post(P2, ME)], pending: [], next: null, report: null, olderReport: null, loaded: true, loading: false, error: null, unboundCount: 0, ...over };
+  return { posts: [post(P1, AUTHOR), post(P2, ME)], pending: [], next: null, report: null, olderReport: null, reportCount: null, olderReportCount: null, loaded: true, loading: false, error: null, unboundCount: 0, ...over };
 }
 const postsHandlers = (): PostsHandlers & { calls: Record<string, unknown[]> } => {
   const calls: Record<string, unknown[]> = { openThread: [], openAuthor: [], more: [], like: [] };

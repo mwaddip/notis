@@ -235,7 +235,7 @@ function postsCtxFrom(key: string, ci: number, ctx: RenderCtx): PostsCtx {
   return {
     authorKey: key,
     origin: { from: 'pane', ci },
-    feed: f ?? { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: true, error: null, unboundCount: 0 },
+    feed: f ?? { posts: [], pending: [], next: null, report: null, olderReport: null, reportCount: null, olderReportCount: null, loaded: false, loading: true, error: null, unboundCount: 0 },
     writeEnabled: ctx.writeEnabled,
     ownKey: ctx.ownKey,
     locked: ctx.identity?.locked ?? false,
