@@ -841,10 +841,11 @@ one.
   and the unlock form mounts under the card on screen. **What ends a row**: its own controls; a redraw of its list
   that draws no card for its post offering the control the row was opened from — the post has left the list or stands
   as a slot, a like has taken the `like`, the `withdraw` is gone or cannot be pressed, while the withdrawn card keeps
-  its copy glyph and so its link row; its list leaving the screen — its window closed, or another window of its column
-  brought to the front; a change of the identity; and, for an unlock row, the identity unlocked from anywhere else.
-  The link row has no control of its own and ends in the other ways alone. A row that has ended is not drawn again and
-  nothing of it is kept: its field is emptied.
+  its copy glyph and so its link row; its window closed; a change of the identity; and, for an unlock row, the
+  identity unlocked from anywhere else. A list that another window of its column covers keeps its rows: they stand
+  beneath their cards, what was typed in them kept, when the list is brought back to the front (→ The workspace →
+  "A window's body stands while the window is open"). The link row has no control of its own and ends in the other
+  ways alone. A row that has ended is not drawn again and nothing of it is kept: its field is emptied.
 - **A card's reply count is the row's `descendantCount`** — the node's number, the whole subtree, pending
   included, on the feed's rows, the author window's rows and a pane's descendant rows; a pane's own root
   shows the thread's, which equals the head's. A withdrawn card shows its row's count too
@@ -951,6 +952,23 @@ the wordmark yields and the mark stands alone**, 324px on a 360px screen; `dark`
 **A window's load updates its bar in every column holding it**, and its body only where it is focused, so a
 selection or a scroll in another window's body survives and a restored stack shows every excerpt as its thread
 lands.
+
+**A window's body stands while the window is open.** The body of `@profile`, `@wallet`, `@settings` and an author
+window is built when the window opens and is the same node until it closes. Covered by another window of its column
+and brought back, moved by `←` or `→`, or drawn again because another window opened, closed or loaded, it returns as
+it was: every form the reader opened in it, and what is typed in every field. Through a draw that leaves the window
+in front, the focus stays in the field that held it. What is typed is held nowhere but its field. **A draw updates a
+standing body in place**: each row takes its figures, lines and words from the state as it is at the draw, and leaves
+alone a form open in it and a field with text in it; a row adds or removes a form only where the state has changed
+whether the form is offered — an invite no longer available, a name now held, a balance with nothing spendable.
+**A window's controls act on the state as it stands at the press** — the identity's lock, the backup, the name held,
+the column the window stands in — never as it stood when the body was built. **What ends a form in a window**: its own
+controls; its row no longer offering it; for an unlock form, the identity unlocked from anywhere else; its window
+closed; and a change of the identity or of the node read, which builds every body anew. A form that has ended is not
+drawn again and its fields are emptied. A thread and an author-posts window are drawn from their rows at every draw,
+and what the reader opened in them is held apart and stands through the same draws and the same covering: the
+composer with its drafts, and a card's rows (→ What the feed reads, and what a card shows for it → "A row the reader
+opened under a card outlasts a redraw of its list").
 
 **Hit size follows the pointer and hover applies where hover exists** (`HOUSE_STYLE → Interaction`), with
 this surface's numbers: under `(pointer: coarse)` every control's hit box is at least 36px tall and a bar's or
@@ -1450,7 +1468,7 @@ and every preference the settings window's (→ The settings window). The window
 
 **The key is a control, and a press copies it.** The whole 64 hex in mono at the labels' size, labelled *copy
 this key*; the press writes it to the clipboard and the word `copied` follows the key, muted, until the window
-is next built — the copy glyph's pattern (→ Links), no timer. Where the clipboard refuses, the key becomes
+is next drawn — the copy glyph's pattern (→ Links), no timer. Where the clipboard refuses, the key becomes
 selectable text followed by *— copy it by hand*. The backup line stays beneath it until the first export.
 
 **The six operations are forms in place, and each is a real `<form>`** the browser's password manager
