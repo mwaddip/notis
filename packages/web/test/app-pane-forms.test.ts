@@ -188,8 +188,9 @@ function rig(o: {
 }): Rig {
   const id = lockableIdentity(ME, o.locked ?? true);
   if (o.extension) {
-    id.identity.policy = () => 'silent';
-    id.identity.setPolicy = async () => {};
+    let policy: 'silent' | 'ask' = 'silent';
+    id.identity.policy = () => policy;
+    id.identity.setPolicy = async (p) => { policy = p; };
   }
   const writes = recordingWrites(id);
   const feedRows = o.feed ?? [];
@@ -915,6 +916,37 @@ describe('the settings node field across the theme pressed in its own window', (
     expect(document.activeElement).toBe(nodeInput);
     expect(rowByLabel(h.panes, 'theme').querySelector('button')).toBe(theme);
     expect(theme.textContent).toBe('light');
+  });
+});
+
+describe('the settings policy row (extension) across its own press', () => {
+  it('settings open beside the profile, text typed in node; ask pressed: the pressed word moves on the same two words of the settings window, the node text stands, and the profile\'s body is the node it was', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const h = rig({ feed: [Q], threads: [thread(Q)], locked: false, extension: true });
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    openProfile(); // column 0 [Q, profile]
+    await settle();
+    openSettings(); // column 0 [Q, profile, settings]
+    await settle();
+    moveAt(h.panes, 0, 2, '→'); // column 1 [settings], the profile in front in column 0
+    await settle();
+    const profile = bodyOf(regionsOf(h.panes)[0]!);
+    const settings = bodyOf(regionsOf(h.panes)[1]!);
+    const nodeInput = nodeFieldOf(settings);
+    nodeInput.value = 'https://example.test';
+    const words = [...rowByLabel(settings, 'sign each rep action').querySelectorAll<HTMLButtonElement>('.seg .word')];
+    expect(words.map((w) => w.getAttribute('aria-pressed'))).toEqual(['true', 'false']);
+
+    words[1]!.click();
+    await settle();
+
+    expect(h.id.identity.policy?.()).toBe('ask');
+    expect(bodyOf(regionsOf(h.panes)[1]!)).toBe(settings);
+    expect([...rowByLabel(settings, 'sign each rep action').querySelectorAll('.seg .word')]).toEqual(words);
+    expect(words.map((w) => w.getAttribute('aria-pressed'))).toEqual(['false', 'true']);
+    expect(nodeInput.value).toBe('https://example.test');
+    expect(bodyOf(regionsOf(h.panes)[0]!)).toBe(profile);
   });
 });
 

@@ -596,10 +596,10 @@ export class App {
       send: (toHex, toName, amount) => void this.send(toHex, toName, amount),
       askFaucetCredits: () => void this.askFaucetCredits(),
       // The extension's identity exposes both policy and setPolicy; the in-page
-      // module implements neither, and the profile row renders only when both
-      // are present (WEB_INTERFACE → The profile window). setPolicy re-renders
-      // the profile after the proxy's snapshot refreshes, so the row's pressed
-      // state moves without waiting on the next unrelated draw.
+      // module implements neither, and the settings window's row renders only
+      // when both are present (WEB_INTERFACE → The settings window → "The
+      // policy row"). setPolicy draws the settings window once the proxy's
+      // snapshot has refreshed, so the row's pressed word moves with the press.
       ...(this.idm.policy && this.idm.setPolicy
         ? {
             policy: () => this.idm.policy!(),
@@ -964,8 +964,8 @@ export class App {
       sendCheck: this.sendCheck,
       sendAnswer: this.sendAnswer,
       // The web build's identity module has no `policy`; the extension's proxy
-      // has (WEB_INTERFACE → The profile window). `!this.idm.policy` is
-      // therefore the same predicate the sign-each-rep-action row renders on:
+      // has (WEB_INTERFACE → The settings window → "The policy row").
+      // `!this.idm.policy` is the predicate the sign-each-rep-action row renders on:
       // the confirm row stands where policy is absent, and yields to the
       // prompt where policy is defined.
       confirmInRow: !this.idm.policy,

@@ -354,8 +354,8 @@ export interface AppIdentity {
   backedUp(): boolean;
   onChange(listener: (id: { pubKeyHex: string } | null) => void): void;
   /** The extension's binary policy for karma-side signs (WEB_INTERFACE → The
-   *  profile window). Absent on the in-page module — the profile row renders
-   *  only when both are present. */
+   *  settings window → "The policy row"). Absent on the in-page module — the
+   *  settings window's row renders only when both are present. */
   policy?(): 'silent' | 'ask';
   setPolicy?(p: 'silent' | 'ask'): Promise<void>;
   /** The extension's links preference (WEB_INTERFACE → The settings window).
