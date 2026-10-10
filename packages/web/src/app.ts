@@ -96,7 +96,7 @@ interface HeldCardRow extends CardRow {
 type HeldBody =
   | { kind: 'profile'; body: ProfileBody }
   | { kind: 'wallet'; body: WalletBody }
-  | { kind: 'rows'; body: WindowBody };
+  | { kind: 'whole'; body: WindowBody };
 
 /** The two places under a card: `ask` holds the unlock form or the question,
  *  one of the two at a time; `link` holds the link row, beside either. */
@@ -1510,10 +1510,11 @@ export class App {
       return { kind: 'profile', body: profileBody(this.handlers, () => this.ctx(), () => this.originOf(id)) };
     }
     if (id === '@wallet') return { kind: 'wallet', body: walletBody(this.handlers, () => this.ctx()) };
+    if (id === '@settings') return { kind: 'whole', body: settingsBody(this.handlers) };
     const rows = this.bodyRows(id);
     if (rows === null) return null;
     const body = rows();
-    return { kind: 'rows', body: { el: body, update: () => body.replaceChildren(...rows().childNodes) } };
+    return { kind: 'whole', body: { el: body, update: () => body.replaceChildren(...rows().childNodes) } };
   }
 
   /** The profile window's body, while the window is open. */
@@ -1531,7 +1532,6 @@ export class App {
   /** A window's rows, drawn from the state as it stands into a fresh node, or
    *  null for a window drawn from its rows. */
   private bodyRows(id: string): (() => HTMLElement) | null {
-    if (id === '@settings') return () => settingsBody(this.handlers);
     const sub = windowSubject(id);
     if (sub?.kind === 'author') return () => authorBody(this.handlers, this.authorCtx(sub.key));
     return null;

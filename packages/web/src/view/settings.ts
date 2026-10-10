@@ -1,6 +1,7 @@
 import { el } from '../dom';
 import { prefs, BUILD_BASE, type Theme, type IdTint } from '../prefs';
 import { stopHue } from '../model/identity';
+import type { WindowBody } from '../model/state';
 
 // The @settings window — WEB_INTERFACE → The settings window. The client's
 // preferences in the .winbody/.row/label/.field pattern, no identity read, its
@@ -15,6 +16,14 @@ import { stopHue } from '../model/identity';
 // is the build's value (WEB_INTERFACE → The settings window → "No `faucet` row
 // and no `arrangement` row"). The window renders the same with and without an
 // identity.
+//
+// The body is one node from the window's open to its close (WEB_INTERFACE →
+// The workspace → "A window's body stands while the window is open"). Every
+// row is built once; `update` writes each word and pressed state from the
+// preferences as they stand, and leaves text typed in `node` and not committed
+// (→ "A draw updates a standing body in place"). The theme word reads the
+// theme when pressed (→ "A window's controls act on the state as it stands at
+// the press").
 
 /** The narrow shape the settings rows call. Handlers satisfies it structurally,
  *  so the App passes its own handlers straight through. */
@@ -49,17 +58,22 @@ function row(label: string): { row: HTMLElement; field: HTMLElement } {
   return { row: r, field };
 }
 
-export function settingsBody(handlers: SettingsHandlers): HTMLElement {
+export function settingsBody(handlers: SettingsHandlers): WindowBody {
   const b = el('div', 'winbody');
+  const draws: Array<() => void> = [];
 
   // theme — the control names and shows the theme it would switch TO
   // (HOUSE_STYLE → Colour), styled as the inverse ground.
   {
     const { row: r, field } = row('theme');
-    const target: Theme = prefs.theme === 'dark' ? 'light' : 'dark';
-    const btn = el('button', 'theme-btn', target);
-    btn.setAttribute('aria-label', `switch to ${target} theme`);
-    btn.addEventListener('click', () => handlers.setTheme(target));
+    const target = (): Theme => (prefs.theme === 'dark' ? 'light' : 'dark');
+    const btn = el('button', 'theme-btn');
+    btn.addEventListener('click', () => handlers.setTheme(target()));
+    draws.push(() => {
+      const t = target();
+      btn.textContent = t;
+      btn.setAttribute('aria-label', `switch to ${t} theme`);
+    });
     field.appendChild(btn);
     b.appendChild(r);
   }
@@ -80,35 +94,44 @@ export function settingsBody(handlers: SettingsHandlers): HTMLElement {
     preview.append(sampleA, sampleB);
     field.appendChild(preview);
     const seg = el('div', 'seg');
-    for (const v of ID_TINTS) {
+    const words = ID_TINTS.map((v) => {
       const btn = el('button', 'word', v);
-      btn.setAttribute('aria-pressed', prefs.idtint === v ? 'true' : 'false');
       btn.addEventListener('click', () => {
         // The tint follows :root's data-idtint and custom properties
         // (src/prefs.ts applyIdTint), so the press moves the four words'
         // pressed state in place and rebuilds nothing — the pressed word
         // keeps the keyboard's focus (WEB_INTERFACE → The settings window →
         // "The identity tint shows what it sets").
-        for (const w of seg.querySelectorAll<HTMLButtonElement>('.word')) {
-          w.setAttribute('aria-pressed', w === btn ? 'true' : 'false');
-        }
+        press(v);
         handlers.setIdTint(v);
       });
       seg.appendChild(btn);
-    }
+      return { v, btn };
+    });
+    const press = (now: IdTint): void => {
+      for (const w of words) w.btn.setAttribute('aria-pressed', w.v === now ? 'true' : 'false');
+    };
+    draws.push(() => press(prefs.idtint));
     field.appendChild(seg);
     field.appendChild(el('div', 'hint', 'the 4px edge on a title bar, from the author key. never an identifier.'));
     b.appendChild(r);
   }
 
-  // node — any origin works (NODE_INTERFACE → Cross-origin requests).
+  // node — any origin works (NODE_INTERFACE → Cross-origin requests). The
+  // field reads the node in force while the reader has typed nothing over it;
+  // text typed and not committed stands through a draw.
   {
     const { row: r, field } = row('node');
     const input = el('input') as HTMLInputElement;
-    input.value = prefs.node;
     input.placeholder = BUILD_BASE || 'same-origin (default)';
     input.setAttribute('aria-label', 'the node this client reads');
     input.addEventListener('change', () => handlers.setNode(input.value));
+    let shown = input.value; // what the last draw wrote in the field
+    draws.push(() => {
+      if (input.value !== shown) return;
+      shown = prefs.node;
+      input.value = shown;
+    });
     field.appendChild(input);
     field.appendChild(el('div', 'hint', 'blank resets to the build default. any origin works: the node answers every origin.'));
     b.appendChild(r);
@@ -118,16 +141,10 @@ export function settingsBody(handlers: SettingsHandlers): HTMLElement {
   // present. *sign each rep action* controls whether rep writes prompt; sends
   // always prompt (WEB_INTERFACE → The settings window, → The extension).
   if (handlers.policy && handlers.setPolicy) {
+    const policy = handlers.policy;
+    const setPolicy = handlers.setPolicy;
     const { row: r, field } = row('sign each rep action');
-    const current = handlers.policy();
-    const seg = el('div', 'seg');
-    for (const [label, value] of [['don\'t ask', 'silent'], ['ask', 'ask']] as const) {
-      const btn = el('button', 'word', label);
-      btn.setAttribute('aria-pressed', current === value ? 'true' : 'false');
-      btn.addEventListener('click', () => { void handlers.setPolicy?.(value); });
-      seg.appendChild(btn);
-    }
-    field.appendChild(seg);
+    field.appendChild(choice([["don't ask", 'silent'], ['ask', 'ask']], policy, (v) => void setPolicy(v), draws));
     field.appendChild(el('div', 'hint', 'sending $NOTIS always asks. rep is silent while unlocked unless you ask.'));
     b.appendChild(r);
   }
@@ -137,19 +154,35 @@ export function settingsBody(handlers: SettingsHandlers): HTMLElement {
   // stands only in an extension build wired to a public origin
   // (WEB_INTERFACE → The settings window, → The extension → "Links into the extension").
   if (handlers.links && handlers.setLinks) {
+    const links = handlers.links;
+    const setLinks = handlers.setLinks;
     const { row: r, field } = row('a Notis link opens');
-    const current = handlers.links();
-    const seg = el('div', 'seg');
-    for (const [label, value] of [['on the site', 'site'], ['here', 'here']] as const) {
-      const btn = el('button', 'word', label);
-      btn.setAttribute('aria-pressed', current === value ? 'true' : 'false');
-      btn.addEventListener('click', () => { void handlers.setLinks?.(value); });
-      seg.appendChild(btn);
-    }
-    field.appendChild(seg);
+    field.appendChild(choice([['on the site', 'site'], ['here', 'here']], links, (v) => void setLinks(v), draws));
     field.appendChild(el('div', 'hint', 'a link that opens a tab of its own lands in this workspace. a link followed inside a page stays there — its add to workspace brings it here.'));
     b.appendChild(r);
   }
 
-  return b;
+  const update = (): void => {
+    for (const draw of draws) draw();
+  };
+  update();
+  return { el: b, update };
+}
+
+/** Two words for one preference: each sets its value, and each draw marks the
+ *  one the preference reads as pressed. */
+function choice<T extends string>(
+  words: ReadonlyArray<readonly [label: string, value: T]>,
+  read: () => T,
+  set: (value: T) => void,
+  draws: Array<() => void>,
+): HTMLElement {
+  const seg = el('div', 'seg');
+  for (const [label, value] of words) {
+    const btn = el('button', 'word', label);
+    btn.addEventListener('click', () => set(value));
+    draws.push(() => btn.setAttribute('aria-pressed', read() === value ? 'true' : 'false'));
+    seg.appendChild(btn);
+  }
+  return seg;
 }

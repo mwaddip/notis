@@ -7,7 +7,7 @@ import {
   type Harness, type LockableIdentity, type RecordingWrites,
 } from './app-light-shared';
 import { karmaResult } from './karma-fixture';
-import { setNode } from '../src/prefs';
+import { setNode, setTheme } from '../src/prefs';
 
 // WEB_INTERFACE → The profile window → "The six operations are forms in place,
 // and each is a real `<form>`"; → The wallet window → "The `send` row"; → The
@@ -237,6 +237,7 @@ beforeEach(() => {
   localStorage.clear();
   document.body.innerHTML = '';
   setNode('');
+  setTheme('light');
 });
 
 // ===========================================================================
@@ -799,7 +800,7 @@ describe('the wallet\'s send form while the wallet is focused in column 0 across
 });
 
 describe('the settings node field while settings is focused in column 0 across a window opening in column 2', () => {
-  it.fails('settings opened over Q; node typed; a new thread opened from R\'s pane (column 2): the new field reads empty', async () => {
+  it('settings opened over Q; node typed; a new thread opened from R\'s pane (column 2): the field is the same node, it holds what was typed, and the focus is in it', async () => {
     const Q = fullRow('Q', { author: OTHER });
     const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
     const S = fullRow('S', { author: OTHER, parentRefs: [R.id] });
@@ -819,15 +820,15 @@ describe('the settings node field while settings is focused in column 0 across a
     await openFromPane(col1, S.id);
     expect(regionsOf(h.panes)).toHaveLength(3);
 
-    const nowInput = h.panes.querySelector<HTMLInputElement>(
-      '[aria-label="the node this client reads"]',
-    )!;
-    expect(nowInput.value).toBe('https://example.test');
+    expect(nodeInput.isConnected).toBe(true);
+    expect(nodeFieldOf(regionsOf(h.panes)[0]!)).toBe(nodeInput);
+    expect(nodeInput.value).toBe('https://example.test');
+    expect(document.activeElement).toBe(nodeInput);
   });
 });
 
 describe('the settings node field while settings is focused in column 0 across a window closing in column 2', () => {
-  it.fails('settings opened over Q; typed; S in column 2 closed: the new field reads empty', async () => {
+  it('settings opened over Q; typed; S in column 2 closed: the field is the same node, it holds what was typed, and the focus is in it', async () => {
     const Q = fullRow('Q', { author: OTHER });
     const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
     const S = fullRow('S', { author: OTHER, parentRefs: [R.id] });
@@ -845,16 +846,17 @@ describe('the settings node field while settings is focused in column 0 across a
 
     closeAt(h.panes, 2, 0);
     await settle();
+    expect(regionsOf(h.panes)).toHaveLength(2);
 
-    const nowInput = h.panes.querySelector<HTMLInputElement>(
-      '[aria-label="the node this client reads"]',
-    )!;
-    expect(nowInput.value).toBe('https://example.test');
+    expect(nodeInput.isConnected).toBe(true);
+    expect(nodeFieldOf(regionsOf(h.panes)[0]!)).toBe(nodeInput);
+    expect(nodeInput.value).toBe('https://example.test');
+    expect(document.activeElement).toBe(nodeInput);
   });
 });
 
 describe('the settings node field while settings is focused in column 0 across the stacked-under thread closing', () => {
-  it.fails('settings opened over Q; typed; Q (stacked under) closed by its ✕: the new field reads empty', async () => {
+  it('settings opened over Q; typed; Q (stacked under) closed by its ✕: the field is the same node, it holds what was typed, and the focus is in it', async () => {
     const Q = fullRow('Q', { author: OTHER });
     const h = rig({ feed: [Q], threads: [thread(Q)], locked: false });
     await boot(h);
@@ -869,11 +871,36 @@ describe('the settings node field while settings is focused in column 0 across t
 
     closeAt(h.panes, 0, 0);
     await settle();
+    expect(focusedName(regionsOf(h.panes)[0]!)).toBe('settings');
 
-    const nowInput = h.panes.querySelector<HTMLInputElement>(
-      '[aria-label="the node this client reads"]',
-    )!;
-    expect(nowInput.value).toBe('https://example.test');
+    expect(nodeInput.isConnected).toBe(true);
+    expect(nodeFieldOf(h.panes)).toBe(nodeInput);
+    expect(nodeInput.value).toBe('https://example.test');
+    expect(document.activeElement).toBe(nodeInput);
+  });
+});
+
+describe('the settings node field across the theme pressed in its own window', () => {
+  it('text typed in node and not committed; theme pressed: the field is the same node holding the text, the focus in it, and the theme row reads the other word on the same control', async () => {
+    const h = rig({ feed: [], locked: false });
+    await boot(h);
+    openSettings();
+    await settle();
+    const nodeInput = nodeFieldOf(h.panes);
+    nodeInput.value = 'https://example.test';
+    nodeInput.focus();
+    const theme = rowByLabel(h.panes, 'theme').querySelector<HTMLButtonElement>('button')!;
+    expect(theme.textContent).toBe('dark');
+
+    theme.click();
+    await settle();
+
+    expect(document.documentElement.getAttribute('data-t')).toBe('dark');
+    expect(nodeFieldOf(h.panes)).toBe(nodeInput);
+    expect(nodeInput.value).toBe('https://example.test');
+    expect(document.activeElement).toBe(nodeInput);
+    expect(rowByLabel(h.panes, 'theme').querySelector('button')).toBe(theme);
+    expect(theme.textContent).toBe('light');
   });
 });
 
@@ -1249,7 +1276,7 @@ describe('the unlock row a locked send owes (extension) across its window being 
 });
 
 describe('the settings node field across its window being covered by a stacked thread and brought back', () => {
-  it.fails('settings over Q; node typed; Q brought to front; settings brought back: the new field reads empty', async () => {
+  it('settings over Q; node typed; Q brought to front; settings brought back: off the document while covered, and on return the field is the same node with what was typed in it', async () => {
     const Q = fullRow('Q', { author: OTHER });
     const h = rig({ feed: [Q], threads: [thread(Q)], locked: false });
     await boot(h);
@@ -1264,13 +1291,14 @@ describe('the settings node field across its window being covered by a stacked t
 
     focusAt(h.panes, 0, 0); // Q
     await settle();
+    expect(nodeInput.isConnected).toBe(false);
+    expect(nodeInput.value).toBe('https://example.test');
     focusAt(h.panes, 0, 1); // settings back
     await settle();
 
-    const nowInput = h.panes.querySelector<HTMLInputElement>(
-      '[aria-label="the node this client reads"]',
-    )!;
-    expect(nowInput.value).toBe('https://example.test');
+    expect(nodeInput.isConnected).toBe(true);
+    expect(nodeFieldOf(h.panes)).toBe(nodeInput);
+    expect(nodeInput.value).toBe('https://example.test');
   });
 });
 
