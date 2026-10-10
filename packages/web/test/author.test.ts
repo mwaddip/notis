@@ -229,12 +229,13 @@ function feedState(over: Partial<FeedState> = {}): FeedState {
   return { posts: [post(P1, AUTHOR), post(P2, ME)], pending: [], next: null, report: null, olderReport: null, reportCount: null, olderReportCount: null, loaded: true, loading: false, error: null, unboundCount: 0, ...over };
 }
 const postsHandlers = (): PostsHandlers & { calls: Record<string, unknown[]> } => {
-  const calls: Record<string, unknown[]> = { openThread: [], openAuthor: [], more: [], like: [] };
+  const calls: Record<string, unknown[]> = { openThread: [], openAuthor: [], more: [], like: [], linkRefused: [] };
   return {
     calls,
     openThread: (id, o) => calls.openThread!.push([id, o]),
     openAuthor: (k, o) => calls.openAuthor!.push([k, o]),
-    likePost: (id) => calls.like!.push(id),
+    pressLike: (list, id, control) => calls.like!.push([list, id, control]),
+    linkRefused: (list, id, url, control) => calls.linkRefused!.push([list, id, url, control]),
     authorPostsMore: (k) => calls.more!.push(k),
     expandImage: () => {},
     collapseImage: () => {},
@@ -242,14 +243,12 @@ const postsHandlers = (): PostsHandlers & { calls: Record<string, unknown[]> } =
 };
 function postsCtx(over: Partial<PostsCtx> = {}): PostsCtx {
   return {
-    authorKey: AUTHOR, origin: ORIGIN, feed: feedState(), writeEnabled: true, ownKey: ME, locked: false,
+    authorKey: AUTHOR, origin: ORIGIN, feed: feedState(), writeEnabled: true, ownKey: ME,
     likePending: () => false, linkUrl: (id) => `http://localhost/p/${id}`,
     nameClay: () => false, // no check has decided a pair — every handle in ink
     expandedImages: new Set(),
     listKey: '@posts:' + AUTHOR,
     heldCardRow: () => null,
-    openUnlockForLike: () => {},
-    openLinkFallback: () => {},
     ...over,
   };
 }
@@ -277,25 +276,18 @@ describe('the author-posts window', () => {
     expect(h.calls.openThread).toEqual([[P1, ORIGIN]]);
   });
 
-  // WEB_INTERFACE → "A row the reader opened under a card outlasts a redraw
-  // of its list" — a locked like on another's card asks the holder to mount
-  // the unlock row under that card's list and post id; the row itself and
-  // its unlock-then-like path are tested over the App (app-card-rows.test.ts).
-  it('a locked like asks the holder to open the unlock row for that post, calls no likePost', () => {
+  // WEB_INTERFACE → What the feed reads, and what a card shows for it →
+  // "A row's controls act on the card as it stands at the press" — the window
+  // reads no lock: the press is handed on with the window as its list, the
+  // post and the control pressed. What the press opens is the App's
+  // (app-card-rows.test.ts).
+  it('like hands the press on with the window\'s list, the post and the control pressed', () => {
     const h = postsHandlers();
-    const asked: Array<{ list: string; postId: string }> = [];
-    const b = authorPostsBody(h, postsCtx({
-      locked: true,
-      openUnlockForLike: (list, postId) => { asked.push({ list, postId }); },
-    }));
+    const b = authorPostsBody(h, postsCtx());
     const otherCard = b.querySelectorAll('.card')[0]!;
     const likeBtn = [...otherCard.querySelectorAll('button')].find((x) => x.textContent === 'like')!;
     likeBtn.click();
-    expect(asked).toEqual([{ list: '@posts:' + AUTHOR, postId: P1 }]);
-    expect(h.calls.like).toHaveLength(0);
-    // The row is not mounted inside the card — the holder owns the row and
-    // the renderer attaches it on the next draw (WEB_INTERFACE → "A row the
-    // reader opened under a card outlasts a redraw of its list").
+    expect(h.calls.like).toEqual([['@posts:' + AUTHOR, P1, likeBtn]]);
     expect(otherCard.querySelector('.card-unlock')).toBeNull();
   });
 

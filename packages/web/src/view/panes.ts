@@ -178,25 +178,19 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
 /** The card opts for a pane card. The prefix opens the author window — a read,
  *  present even with no identity (WEB_INTERFACE → The identity display). The like
  *  and link come from listCardOpts; the pane adds ↩ reply and the withdraw
- *  control (WEB_INTERFACE → The withdraw control). The list key is the pane's
- *  focused window — the thread window's id — so a row the reader opened under
- *  the card stands under that same card at every redraw of the pane
- *  (WEB_INTERFACE → "A row the reader opened under a card outlasts a redraw of
- *  its list"). */
+ *  control (WEB_INTERFACE → The withdraw control). `listKey` is the pane's
+ *  focused window — the list a row opened under one of its cards belongs to
+ *  (WEB_INTERFACE → What the feed reads, and what a card shows for it →
+ *  "A row the reader opened under a card outlasts a redraw of its list"). */
 function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, listKey: string, ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
-  const locked = ctx.identity?.locked ?? false;
   const base: Partial<CardOpts> = {
     onAuthor: (key) => handlers.openAuthor(key, { from: 'pane', ci }),
     nameClay: ctx.nameClay,
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,
-    ...listCardOpts(row, { ...ctx, locked }, {
-      likePost: (id) => handlers.likePost(id),
-      openUnlockForLike: (id) => ctx.openUnlockForLike(listKey, id),
-    }),
+    ...listCardOpts(row, listKey, ctx, handlers),
     heldRow: ctx.heldCardRow(listKey, row.id),
-    openLinkFallback: (url) => ctx.openLinkFallback(listKey, row.id, url),
   };
   if (!ctx.writeEnabled) return base;
   const opts: Partial<CardOpts> = {
@@ -204,12 +198,11 @@ function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, listKey: strin
     onReply: (id) => handlers.openComposer(id),
     composerKey: row.id,
     you: ctx.ownKey !== null && row.author === ctx.ownKey,
-    locked: ctx.identity?.locked ?? false,
   };
   if (!isWithdrawn(row) && row.status === 'confirmed') {
     const isOwn = ctx.ownKey !== null && row.author === ctx.ownKey;
     if (isOwn) {
-      opts.openConfirmWithdraw = () => ctx.openConfirmWithdraw(listKey, row.id);
+      opts.onWithdraw = (id, control) => handlers.pressWithdraw(listKey, id, control);
       opts.withdraw = ctx.withdrawState(row.id);
       opts.canWithdraw = ctx.canSignWithdraw;
     }
@@ -245,15 +238,12 @@ function postsCtxFrom(key: string, listKey: string, ci: number, ctx: RenderCtx):
     feed: f ?? { posts: [], pending: [], next: null, report: null, olderReport: null, reportCount: null, olderReportCount: null, loaded: false, loading: true, error: null, unboundCount: 0 },
     writeEnabled: ctx.writeEnabled,
     ownKey: ctx.ownKey,
-    locked: ctx.identity?.locked ?? false,
     likePending: (id) => ctx.likePending(id),
     linkUrl: (id) => ctx.linkUrl(id),
     expandedImages: ctx.expandedImages,
     nameClay: ctx.nameClay,
     listKey,
     heldCardRow: (list, id) => ctx.heldCardRow(list, id),
-    openUnlockForLike: (list, id) => ctx.openUnlockForLike(list, id),
-    openLinkFallback: (list, id, url) => ctx.openLinkFallback(list, id, url),
   };
 }
 

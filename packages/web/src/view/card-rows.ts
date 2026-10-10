@@ -1,47 +1,44 @@
 import { el } from '../dom';
-import { unlockForm } from './passphrase';
+import { unlockFormParts } from './passphrase';
 
-// Rows the reader opens under a card's meta row — the unlock form a locked
+// The rows the reader opens under a card's meta row — the unlock form a locked
 // like or withdraw asks for, the withdraw question, and the link held as text
 // (WEB_INTERFACE → What the feed reads, and what a card shows for it →
 // "A row the reader opened under a card outlasts a redraw of its list").
-// Each constructor is pure — the row element is handed back to a holder, and
-// its handlers close over nothing of the render that opened it: a redraw of
-// the list draws the card with the same row beneath it, and the row's
-// controls act on the card as it stands at the press.
+// A builder answers the row and the control its opener gives the focus once
+// the row is attached. Every handler is the opener's: a row reads nothing of
+// the render that drew the card it stands under.
 
 /** The unlock form in a row — a correct passphrase runs `onSubmit` (the loader
- *  of the seed), then `onProceed` (the write the row was in service of); Esc
- *  runs `onCancel`. The caller holds the row and ends it (WEB_INTERFACE →
- *  "A row the reader opened under a card outlasts a redraw of its list"). */
+ *  of the seed), then `onProceed` (the write the row was opened for); Esc and
+ *  `cancel` run `onCancel` (WEB_INTERFACE → The identity module). */
 export function buildUnlockRow(args: {
   pubKeyHex: string;
   onSubmit: (passphrase: string) => Promise<void>;
   onProceed: () => void;
   onCancel: () => void;
-}): HTMLElement {
+}): { row: HTMLElement; field: HTMLInputElement } {
   const row = el('div', 'card-unlock');
-  row.appendChild(
-    unlockForm(
-      args.pubKeyHex,
-      async (p) => {
-        await args.onSubmit(p);
-        args.onProceed();
-      },
-      args.onCancel,
-    ),
+  const { form, field } = unlockFormParts(
+    args.pubKeyHex,
+    async (p) => {
+      await args.onSubmit(p);
+      args.onProceed();
+    },
+    args.onCancel,
   );
-  return row;
+  row.appendChild(form);
+  return { row, field };
 }
 
 /** The withdraw question — "withdraw this post? the content goes; the replies
- *  stay." with `withdraw` and `keep`, focus on `keep`; Esc runs `onKeep`. The
- *  row's `withdraw` is `onYes` — at the press the caller reads the lock live
- *  and takes the right path (WEB_INTERFACE → The withdraw control). */
+ *  stay." with `withdraw` (`onYes`) and `keep` (`onKeep`, Esc too); the focus
+ *  is `keep`'s, the choice that changes nothing. Never says "deleted"
+ *  (WEB_INTERFACE → The withdraw control, → The withdrawn state). */
 export function buildConfirmRow(args: {
   onYes: () => void;
   onKeep: () => void;
-}): HTMLElement {
+}): { row: HTMLElement; keep: HTMLButtonElement } {
   const row = el('div', 'card-confirm');
   row.appendChild(el('div', 'q', 'withdraw this post? the content goes; the replies stay.'));
   const actions = el('div', 'actions');
@@ -56,15 +53,11 @@ export function buildConfirmRow(args: {
   });
   actions.append(yes, keep);
   row.appendChild(actions);
-  // Focus on keep, the non-destructive choice (WEB_INTERFACE → The withdraw
-  // control). Deferred so the caller can attach the row before focus lands.
-  requestAnimationFrame(() => keep.focus());
-  return row;
+  return { row, keep };
 }
 
-/** The link held as text to copy by hand — the row the clipboard refusal
- *  mounts (WEB_INTERFACE → Links). Content is the url and ` — copy it by
- *  hand`. */
+/** The link held as text to copy by hand — the row a refused clipboard write
+ *  opens (WEB_INTERFACE → Links). */
 export function buildLinkFallbackRow(url: string): HTMLElement {
   const row = el('div', 'card-link');
   const span = el('span', 'hex');

@@ -1,284 +1,508 @@
 // @vitest-environment happy-dom
-import { describe, it, expect } from 'vitest';
-import { IDBFactory } from 'fake-indexeddb';
-import { App } from '../src/app';
-import { PendingLedger } from '../src/wallet/ledger';
-import { createPostCache } from '../src/extension/post-cache';
-import type { Api } from '../src/api/client';
-import type { AppIdentity, PostCache } from '../src/model/state';
-import type { WriteClient } from '../src/api/write';
-import type { FeedResult, PostJson, PostResult, StatusResult, BlockCurrent, ThreadResult } from '../src/api/dto';
-import { isFull } from '../src/api/dto';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import type { FeedRow, LightJson, PostJson, PostResult, ThreadResult } from '../src/api/dto';
+import { isLight, isWithdrawn } from '../src/api/dto';
 import {
-  ME, fullRow, light, status as fakeStatus, stubVerifier, testResolver, flush, settle,
+  ME, fullRow, light, harness, testResolver, makeCache, settle,
+  lockableIdentity, recordingWrites, karmaWithBox,
+  type Harness, type LockableIdentity, type RecordingWrites, type Call,
 } from './app-light-shared';
-import { karmaResult } from './karma-fixture';
 
 // WEB_INTERFACE → What the feed reads, and what a card shows for it →
-// "A row the reader opened under a card outlasts a redraw of its list"
-// — a row held under the card the reader opened it from (that post, in
-// that list), kept across the redraws of that list.
+// "A row the reader opened under a card outlasts a redraw of its list".
+// Every case presses the control on a card the App drew, types in the row's
+// own field, and causes a redraw by what causes one in the product.
 
-interface LockableIdentity {
-  identity: AppIdentity;
-  unlocks: string[];
-  setLocked(b: boolean): void;
-  notify(): void;
+const OTHER = 'ee'.repeat(32); // another author
+const NEXT_KEY = 'cc'.repeat(32); // the key an identity change loads
+const QUESTION = 'withdraw this post? the content goes; the replies stay.';
+
+interface Rig extends Harness {
+  id: LockableIdentity;
+  writes: RecordingWrites;
+  resolves: Call[];
+  /** The number of rows the App holds. */
+  held(): number;
 }
 
-function lockableIdentity(key: string): LockableIdentity {
-  const unlocks: string[] = [];
-  const listeners: Array<(id: { pubKeyHex: string } | null) => void> = [];
-  let locked = true;
-  const id = {
-    unlocks,
-    setLocked(b: boolean): void { locked = b; },
-    notify(): void { for (const l of listeners) l({ pubKeyHex: key }); },
-    identity: {
-      current: () => ({ pubKeyHex: key, locked }),
-      sign: async () => ({ signature: '00' }),
-      draft: async () => ({ pubKeyHex: key }),
-      create: async () => ({ pubKeyHex: key }),
-      discardDraft: () => {},
-      inspectFile: async () => ({ kind: 'clear' as const, pubKeyHex: key }),
-      importFile: async () => ({ pubKeyHex: key }),
-      exportFile: async () => '',
-      unlock: async (p: string): Promise<void> => { unlocks.push(p); locked = false; },
-      lock: async () => { locked = true; },
-      forget: async () => {},
-      backedUp: () => false,
-      onChange: (l: (id: { pubKeyHex: string } | null) => void): void => { listeners.push(l); },
-    } satisfies AppIdentity,
-  };
-  return id;
-}
+const page = (posts: Array<PostJson | LightJson>): { posts: FeedRow[]; next: null; pending: FeedRow[]; pendingCount: number } =>
+  ({ posts, next: null, pending: [], pendingCount: 0 });
 
-interface Harness {
-  app: App;
-  drive: {
-    loadFeed(): Promise<void>;
-    state: {
-      feed: { posts: Array<PostJson | { kind: 'light'; id: string }> };
-    };
-  };
-  feedEl: HTMLElement;
-  likes: Array<{ likeTarget: string }>;
-  identity: LockableIdentity;
-  resolverCalls: ReturnType<typeof testResolver>['calls'];
-  cache: PostCache;
-}
+const thread = (root: PostJson, descendants: FeedRow[], ancestors: FeedRow[] = []): ThreadResult => ({
+  post: root, ancestors, ancestorCount: ancestors.length, descendants, descendantCount: descendants.length,
+  next: null, pending: [], pendingCount: 0,
+});
 
-async function mkHarness(feedResult: FeedResult): Promise<Harness> {
-  const r = testResolver();
-  const likes: Array<{ likeTarget: string }> = [];
-  const feedCalls: unknown[] = [];
-  void feedCalls;
-  const idw = lockableIdentity(ME);
-  const api: Api = {
-    feed: async (): Promise<FeedResult> => feedResult,
-    thread: async (id: string): Promise<ThreadResult | null> => {
-      const found = feedResult.posts.find((p) => p.id === id);
-      if (!found || !isFull(found)) return null;
-      return {
-        post: found, ancestors: [], ancestorCount: 0,
-        descendants: [], descendantCount: 0, next: null, pending: [], pendingCount: 0,
-      };
-    },
-    post: async (id: string): Promise<PostResult | null> => {
-      const found = feedResult.posts.find((p) => p.id === id);
-      if (!found || !isFull(found)) return null;
-      return { ...found, confirmedAuthor: found.author };
-    },
-    status: async (): Promise<StatusResult> => fakeStatus(),
-    currentBlock: async (): Promise<BlockCurrent> => ({ height: 10, hash: null }),
-    karma: async () => karmaResult({ userId: ME, total: '227', effective: '227', boxes: [{ boxId: '11'.repeat(32), value: '227' }], boxCount: 1, height: 10 }),
-    vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
-    vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
-    vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
-    bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
-    usernameByOwner: async () => null,
-    credits: async () => ({ userId: ME, total: '0', boxes: [], boxCount: 0, next: null }),
-    usernameByName: async () => null,
-  };
-  const writeClient = {
-    submitLike: async (tx: { likeTarget: string }) => {
-      likes.push(tx);
-      return { status: 'pending' as const, txId: 'ff'.repeat(32), expiresAtHeight: 100 };
-    },
-  } as unknown as WriteClient;
-  const cache = createPostCache({
-    indexedDB: new IDBFactory(),
-    localStorage: {
-      getItem: () => null,
-      setItem: () => {},
-      removeItem: () => {},
-    },
+const asResult = (row: PostJson): PostResult => ({ ...row, confirmedAuthor: row.author });
+
+/** An App over the shared fakes: an identity whose lock the case moves, a
+ *  write client that records, a key holding one rep box, and the node's
+ *  answers for the feed and for each thread named. `resolver` hands the App
+ *  the extension's seams, so a slot can fill or leave. */
+function rig(o: { feed: Array<PostJson | LightJson>; threads?: ThreadResult[]; locked?: boolean; resolver?: boolean }): Rig {
+  const id = lockableIdentity(ME, o.locked ?? true);
+  const writes = recordingWrites(id);
+  const r = o.resolver ? testResolver() : null;
+  const h = harness({
+    identityKey: ME, identity: id.identity, writeClient: writes.client, karma: karmaWithBox(ME),
+    resolver: r?.resolver ?? null, cache: r ? makeCache().cache : null,
+    feedResults: [page(o.feed)],
   });
-  const app = new App(
-    api, writeClient, idw.identity, new PendingLedger(ME),
-    undefined, undefined,
-    null, null, null,
-    stubVerifier(),
-    cache,
-    r.resolver,
-  );
-  const appbar = document.createElement('header');
-  const feedEl = document.createElement('section'); feedEl.id = 'feed';
-  const panes = document.createElement('section'); panes.id = 'panes';
-  const workspace = document.createElement('div'); workspace.className = 'workspace';
-  workspace.append(feedEl, panes);
-  document.body.append(appbar, workspace);
-  app.mount(appbar, feedEl, panes);
+  const answer = (row: FeedRow | null): void => {
+    if (row !== null && !isWithdrawn(row) && !isLight(row)) h.fake.postById!.set(row.id, asResult(row));
+  };
+  for (const row of o.feed) answer(row);
+  for (const t of o.threads ?? []) {
+    h.fake.threadById!.set(t.post!.id, t);
+    for (const row of [t.post, ...t.ancestors, ...t.descendants]) answer(row);
+  }
   return {
-    app,
-    drive: app as unknown as Harness['drive'],
-    feedEl,
-    likes,
-    identity: idw,
-    resolverCalls: r.calls,
-    cache,
+    ...h, id, writes, resolves: r?.calls ?? [],
+    held: () => (h.app as unknown as { cardRows: { size: number } }).cardRows.size,
   };
 }
 
-// WEB_INTERFACE → What the feed reads, and what a card shows for it →
-// "A row the reader opened under a card outlasts a redraw of its list" —
-// the unlock row the reader opened under card A in the feed stands when a
-// slot elsewhere in the feed leaves and renderFeed draws every card again.
+/** The reads a start makes: the feed's first page and the reader's own state. */
+async function boot(h: Rig): Promise<void> {
+  await h.drive.loadFeed();
+  await h.drive.loadMembershipState();
+  await settle();
+}
+
+const cardOf = (root: ParentNode, id: string): HTMLElement => {
+  const c = root.querySelector<HTMLElement>(`.card[data-post-id="${id}"]`);
+  if (c === null) throw new Error('no card drawn for ' + id.slice(0, 8));
+  return c;
+};
+const wordIn = (root: ParentNode, text: string): HTMLButtonElement => {
+  const b = [...root.querySelectorAll<HTMLButtonElement>('button')].find((x) => x.textContent === text);
+  if (b === undefined) throw new Error('no control reads ' + text);
+  return b;
+};
+const likeOf = (card: HTMLElement): HTMLButtonElement => wordIn(card.querySelector('.meta')!, 'like');
+const withdrawOf = (card: HTMLElement): HTMLButtonElement => card.querySelector<HTMLButtonElement>('.meta .withdraw-ctl')!;
+const linkOf = (card: HTMLElement): HTMLButtonElement => card.querySelector<HTMLButtonElement>('.meta .linkbtn')!;
+const fieldOf = (root: ParentNode): HTMLInputElement => root.querySelector<HTMLInputElement>('input[type="password"]')!;
+const submit = (root: ParentNode): void => {
+  root.querySelector('form.pf')!.dispatchEvent(new Event('submit', { cancelable: true }));
+};
+const esc = (at: HTMLElement): void => {
+  at.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+};
+const regions = (h: Rig): HTMLElement[] => [...h.panes.querySelectorAll<HTMLElement>('.region')];
+
+/** The strip on a feed card opens its thread in a pane. */
+async function openFromFeed(h: Rig, id: string): Promise<void> {
+  cardOf(h.feedEl, id).querySelector<HTMLButtonElement>('button.strip')!.click();
+  await settle();
+}
+
+/** The clipboard refuses every write until the case ends. */
+function refuseClipboard(): void {
+  Object.defineProperty(navigator, 'clipboard', {
+    value: { writeText: () => Promise.reject(new Error('refused')) },
+    writable: true, configurable: true,
+  });
+}
+
+const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+
+beforeEach(() => {
+  localStorage.clear();
+  document.body.innerHTML = '';
+});
+afterEach(() => {
+  if (originalClipboard === undefined) delete (navigator as unknown as { clipboard?: unknown }).clipboard;
+  else Object.defineProperty(navigator, 'clipboard', originalClipboard);
+});
+
 describe('a feed card\'s unlock row outlasts a redraw of the feed', () => {
   it('a slot leaving redraws the feed; A\'s card is a new node, A\'s unlock row the same node beneath it, the field holds the text, the focus is in the field; the form submits, unlocks, and the like goes out for A', async () => {
-    document.body.innerHTML = '';
-    const A = fullRow('A', { author: 'ee'.repeat(32) });
+    const A = fullRow('A', { author: OTHER });
     const B = light('B');
-    const h = await mkHarness({ posts: [A, B], next: null, pending: [], pendingCount: 0 });
-    await h.drive.loadFeed();
-    await settle();
+    const h = rig({ feed: [A, B], resolver: true });
+    await boot(h);
 
-    const cardA = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${A.id}"]`)!;
-    expect(cardA).toBeTruthy();
-    const likeBtn = [...cardA.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'like')!;
-    expect(likeBtn).toBeTruthy();
-    likeBtn.click();
-    await flush();
-
-    // The press triggers a redraw of the feed that attaches the held row
-    // beneath A's card; the card A reference above is stale.
-    const cardAafterPress = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${A.id}"]`)!;
-    const row = cardAafterPress.querySelector<HTMLElement>('.card-unlock');
+    const pressed = cardOf(h.feedEl, A.id);
+    likeOf(pressed).click();
+    const row = cardOf(h.feedEl, A.id).querySelector<HTMLElement>('.card-unlock')!;
     expect(row).not.toBeNull();
-    const input = row!.querySelector<HTMLInputElement>('input[type="password"]')!;
-    expect(input).not.toBeNull();
-    input.value = 'secret';
-    input.focus();
-    expect(document.activeElement).toBe(input);
+    const field = fieldOf(row);
+    field.value = 'secret';
+    field.focus();
+    expect(document.activeElement).toBe(field);
 
-    // A slot elsewhere ends → endSlots → renderFeed (feed drawn whole).
-    expect(h.resolverCalls.length).toBe(1);
-    h.resolverCalls[0]!.end({ [B.id]: 'unserved' });
+    // The slot's resolve ends with no node serving it: the feed is drawn whole.
+    expect(h.resolves.length).toBe(1);
+    h.resolves[0]!.end({ [B.id]: 'unserved' });
     await settle();
 
-    // A's card is a new node — renderFeed replaced it; the row the reader
-    // opened is the SAME node beneath it; the field holds what was typed;
-    // the focus is back in the field.
-    const cardAafter = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${A.id}"]`)!;
-    expect(cardAafter).not.toBe(cardAafterPress);
-    const rowAfter = cardAafter.querySelector<HTMLElement>('.card-unlock');
-    expect(rowAfter).toBe(row);
-    const inputAfter = rowAfter!.querySelector<HTMLInputElement>('input[type="password"]')!;
-    expect(inputAfter.value).toBe('secret');
-    expect(document.activeElement).toBe(inputAfter);
+    const redrawn = cardOf(h.feedEl, A.id);
+    expect(redrawn).not.toBe(pressed);
+    expect(redrawn.querySelector('.card-unlock')).toBe(row);
+    expect(fieldOf(row).value).toBe('secret');
+    expect(document.activeElement).toBe(field);
 
-    // Submitting unlocks with the kept text, and the like goes out for A.
-    const form = rowAfter!.querySelector('form.pf') as HTMLFormElement;
-    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    submit(row);
     await settle();
-    expect(h.identity.unlocks).toEqual(['secret']);
-    expect(h.likes.map((l) => l.likeTarget)).toEqual([A.id]);
+    expect(h.id.unlocks).toEqual(['secret']);
+    expect(h.writes.likes).toEqual([A.id]);
   });
 });
 
-// WEB_INTERFACE → "A row the reader opened under a card outlasts a redraw of
-// its list" — an identity change ends every row and empties the field.
-describe('a change of identity ends every held row', () => {
-  it('a change of key drops every unlock row the holder held and empties the fields', async () => {
-    document.body.innerHTML = '';
-    const A = fullRow('A', { author: 'ee'.repeat(32) });
-    const h = await mkHarness({ posts: [A], next: null, pending: [], pendingCount: 0 });
-    await h.drive.loadFeed();
-    await settle();
-    const cardA = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${A.id}"]`)!;
-    [...cardA.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'like')!.click();
-    await flush();
-    const cardAafter = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${A.id}"]`)!;
-    expect(cardAafter.querySelector('.card-unlock')).not.toBeNull();
-    // A change of key fires onChange — the identity module's own notify path
-    // (WEB_INTERFACE → The identity module). The App drops every held row,
-    // and the field goes with the dropped element.
-    h.identity.notify();
-    await settle();
-    const cardAfinal = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${A.id}"]`);
-    // The feed is re-read after an identity change — the card may be gone
-    // until the new read lands. Either way, no held row anywhere.
-    expect(document.querySelector('.card-unlock')).toBeNull();
-    if (cardAfinal) expect(cardAfinal.querySelector('.card-unlock')).toBeNull();
-  });
-});
-
-// WEB_INTERFACE → "A row the reader opened under a card outlasts a redraw of
-// its list" — the key is `(list, postId)`, so one post drawn in two lists
-// holds two independent rows: a feed card's row stands only under that
-// card, and the pane's card has none.
 describe('a row belongs to the card it was opened under', () => {
   it('two lists: a row opened under the feed\'s card is not under the pane\'s card for the same post', async () => {
-    document.body.innerHTML = '';
-    const A = fullRow('A', { author: 'ee'.repeat(32) });
-    const h = await mkHarness({ posts: [A], next: null, pending: [], pendingCount: 0 });
-    await h.drive.loadFeed();
-    await settle();
-    // Open the thread for A in a pane. The feed card draws A again, the pane
-    // card draws A again — same id, two lists.
-    (h.feedEl.querySelector('.strip') as HTMLButtonElement).click();
-    await settle();
-    // Press like on the feed card.
-    const feedCardA = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${A.id}"]`)!;
-    [...feedCardA.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'like')!.click();
-    await flush();
-    const feedCardAafter = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${A.id}"]`)!;
-    expect(feedCardAafter.querySelector('.card-unlock')).not.toBeNull();
-    // The pane's card for the same post holds no row.
-    const paneA = document.querySelector<HTMLElement>(`.region [data-post-id="${A.id}"]`);
-    expect(paneA).not.toBeNull();
-    expect(paneA!.querySelector('.card-unlock')).toBeNull();
+    const A = fullRow('A', { author: OTHER });
+    const h = rig({ feed: [A], threads: [thread(A, [])] });
+    await boot(h);
+    await openFromFeed(h, A.id);
+    likeOf(cardOf(h.feedEl, A.id)).click();
+    expect(cardOf(h.feedEl, A.id).querySelector('.card-unlock')).not.toBeNull();
+    expect(cardOf(h.panes, A.id).querySelector('.card-unlock')).toBeNull();
   });
 });
 
-// WEB_INTERFACE → Links — a clipboard-less feed card opens the link row;
-// the row survives a redraw of the feed.
 describe('a link row outlasts a redraw of the feed', () => {
   it('the clipboard refuses, the link row stands; a slot leaving redraws the feed and the row stands', async () => {
-    document.body.innerHTML = '';
-    // Fresh identity-less harness via existing lockable one with no key: we
-    // need a feed with a confirmed card (feed cards carry the copy glyph).
-    const A = fullRow('A', { author: 'ee'.repeat(32) });
+    const A = fullRow('A', { author: OTHER });
     const B = light('B');
-    const h = await mkHarness({ posts: [A, B], next: null, pending: [], pendingCount: 0 });
-    // Make the clipboard refuse.
-    Object.defineProperty(navigator, 'clipboard', {
-      value: { writeText: () => Promise.reject(new Error('refused')) },
-      writable: true, configurable: true,
-    });
-    await h.drive.loadFeed();
+    const h = rig({ feed: [A, B], resolver: true });
+    refuseClipboard();
+    await boot(h);
+    const pressed = cardOf(h.feedEl, A.id);
+    linkOf(pressed).click();
     await settle();
-    const cardA = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${A.id}"]`)!;
-    (cardA.querySelector('.linkbtn') as HTMLButtonElement).click();
-    await settle();
-    const cardAafterPress = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${A.id}"]`)!;
-    const row = cardAafterPress.querySelector<HTMLElement>('.card-link');
+    const row = cardOf(h.feedEl, A.id).querySelector<HTMLElement>('.card-link');
     expect(row).not.toBeNull();
-    // A slot leaving redraws the feed.
-    h.resolverCalls[0]!.end({ [B.id]: 'unserved' });
+    h.resolves[0]!.end({ [B.id]: 'unserved' });
     await settle();
-    const cardAlast = h.feedEl.querySelector<HTMLElement>(`[data-post-id="${A.id}"]`)!;
-    expect(cardAlast).not.toBe(cardAafterPress);
-    expect(cardAlast.querySelector('.card-link')).toBe(row);
+    const redrawn = cardOf(h.feedEl, A.id);
+    expect(redrawn).not.toBe(pressed);
+    expect(redrawn.querySelector('.card-link')).toBe(row);
+  });
+});
+
+// WEB_INTERFACE → "Opening a row and ending one redraw nothing else".
+describe('opening a row and ending one replace no other node of the list', () => {
+  it('feed: a locked like puts the unlock form under the card pressed, the focus in its field; Esc and a submit take it out; neither card is replaced by the row', async () => {
+    const A = fullRow('A', { author: OTHER });
+    const B = fullRow('B', { author: OTHER });
+    const h = rig({ feed: [A, B] });
+    await boot(h);
+    const a = cardOf(h.feedEl, A.id);
+    const b = cardOf(h.feedEl, B.id);
+
+    likeOf(a).click();
+    expect(cardOf(h.feedEl, B.id)).toBe(b);
+    expect(cardOf(h.feedEl, A.id)).toBe(a);
+    const row = a.querySelector<HTMLElement>('.card-unlock')!;
+    expect(row).not.toBeNull();
+    expect(a.querySelector('.meta')!.nextElementSibling).toBe(row);
+    // The focus is in the field as the press returns — no frame is awaited.
+    expect(document.activeElement).toBe(fieldOf(row));
+    expect(h.writes.likes).toEqual([]);
+
+    esc(fieldOf(row));
+    expect(document.querySelector('.card-unlock')).toBeNull();
+    expect(cardOf(h.feedEl, B.id)).toBe(b);
+    expect(cardOf(h.feedEl, A.id)).toBe(a);
+    expect(h.held()).toBe(0);
+
+    likeOf(a).click();
+    const again = a.querySelector<HTMLElement>('.card-unlock')!;
+    fieldOf(again).value = 'pw';
+    submit(again);
+    await settle();
+    expect(h.id.unlocks).toEqual(['pw']);
+    expect(h.writes.likes).toEqual([A.id]);
+    expect(document.querySelector('.card-unlock')).toBeNull();
+    // The like redraws the card it is on and no other.
+    expect(cardOf(h.feedEl, B.id)).toBe(b);
+  });
+
+  it('pane: the question goes in under the card pressed and comes out at keep and at Esc; a locked withdraw puts the unlock form in its place, and its submit sends one withdrawal', async () => {
+    const P = fullRow('P'); // the reader's own
+    const R = fullRow('R', { author: OTHER, parentRefs: [P.id] });
+    const h = rig({ feed: [P], threads: [thread(P, [R])] });
+    await boot(h);
+    await openFromFeed(h, P.id);
+    const p = cardOf(h.panes, P.id);
+    const r = cardOf(h.panes, R.id);
+
+    withdrawOf(p).click();
+    expect(cardOf(h.panes, R.id)).toBe(r);
+    expect(cardOf(h.panes, P.id)).toBe(p);
+    const q = p.querySelector<HTMLElement>('.card-confirm')!;
+    expect(q).not.toBeNull();
+    expect(p.querySelector('.meta')!.nextElementSibling).toBe(q);
+    expect(q.querySelector('.q')?.textContent).toBe(QUESTION);
+    expect([...q.querySelectorAll('button')].map((x) => x.textContent)).toEqual(['withdraw', 'keep']);
+    // Withdrawn is never "deleted" (WEB_INTERFACE → The withdrawn state).
+    expect(p.textContent!.toLowerCase()).not.toContain('delete');
+    for (const x of p.querySelectorAll('button')) {
+      expect(((x.getAttribute('aria-label') ?? '') + x.title).toLowerCase()).not.toContain('delete');
+    }
+    // A second press opens no second question.
+    withdrawOf(p).click();
+    expect(p.querySelectorAll('.card-confirm')).toHaveLength(1);
+
+    wordIn(q, 'keep').click();
+    expect(document.querySelector('.card-confirm')).toBeNull();
+    expect(document.activeElement).toBe(withdrawOf(p));
+    expect(cardOf(h.panes, R.id)).toBe(r);
+    expect(h.held()).toBe(0);
+
+    withdrawOf(p).click();
+    esc(wordIn(p.querySelector('.card-confirm')!, 'keep'));
+    expect(document.querySelector('.card-confirm')).toBeNull();
+    expect(document.activeElement).toBe(withdrawOf(p));
+    expect(h.writes.withdrawals).toEqual([]);
+
+    // The identity is locked: the question's withdraw yields its place to the
+    // unlock form (WEB_INTERFACE → The withdraw control).
+    withdrawOf(p).click();
+    wordIn(p.querySelector('.card-confirm')!, 'withdraw').click();
+    expect(p.querySelector('.card-confirm')).toBeNull();
+    const unlock = p.querySelector<HTMLElement>('.card-unlock')!;
+    expect(unlock).not.toBeNull();
+    expect(p.querySelector('.meta')!.nextElementSibling).toBe(unlock);
+    expect(cardOf(h.panes, R.id)).toBe(r);
+    expect(cardOf(h.panes, P.id)).toBe(p);
+    expect(h.writes.withdrawals).toEqual([]);
+    // One of the two at a time: the card's withdraw opens no question beside it.
+    withdrawOf(p).click();
+    expect(p.querySelector('.card-confirm')).toBeNull();
+    expect(p.querySelectorAll('.card-unlock')).toHaveLength(1);
+
+    fieldOf(unlock).value = 'pw';
+    submit(unlock);
+    await settle();
+    expect(h.id.unlocks).toEqual(['pw']);
+    expect(h.writes.withdrawals).toEqual([P.id]);
+    expect(document.querySelector('.card-unlock')).toBeNull();
+  });
+});
+
+describe('the question takes the focus as the press returns', () => {
+  it('keep holds the focus with no frame awaited', async () => {
+    const P = fullRow('P');
+    const h = rig({ feed: [P], threads: [thread(P, [])], locked: false });
+    await boot(h);
+    await openFromFeed(h, P.id);
+    withdrawOf(cardOf(h.panes, P.id)).click();
+    expect(document.activeElement).toBe(wordIn(h.panes.querySelector('.card-confirm')!, 'keep'));
+  });
+});
+
+// WEB_INTERFACE → "A row's controls act on the card as it stands at the press".
+describe('a row\'s controls act on the card the row stands under', () => {
+  it('one post open in two panes: keep in the second pane returns the focus to the withdraw control of that pane', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const P = fullRow('P', { parentRefs: [Q.id] }); // the reader's own reply
+    const h = rig({ feed: [Q], threads: [thread(Q, [P]), thread(P, [], [Q])], locked: false });
+    await boot(h);
+    await openFromFeed(h, Q.id); // the parent's thread, P at depth 1
+    cardOf(regions(h)[0]!, P.id).querySelector<HTMLButtonElement>('button.strip')!.click(); // P's own thread, one column right
+    await settle();
+    expect(regions(h)).toHaveLength(2);
+    expect(withdrawOf(cardOf(regions(h)[0]!, P.id))).not.toBeNull();
+
+    withdrawOf(cardOf(regions(h)[1]!, P.id)).click();
+    expect(regions(h)[0]!.querySelector('.card-confirm')).toBeNull();
+    const q = regions(h)[1]!.querySelector<HTMLElement>('.card-confirm')!;
+    expect(q).not.toBeNull();
+    wordIn(q, 'keep').click();
+    expect(document.querySelector('.card-confirm')).toBeNull();
+    expect(document.activeElement).toBe(withdrawOf(cardOf(regions(h)[1]!, P.id)));
+  });
+});
+
+/** The profile window, opened from the header. */
+async function openProfile(h: Rig): Promise<HTMLElement> {
+  document.querySelector<HTMLButtonElement>('[aria-label="open profile"]')!.click();
+  await settle();
+  return h.panes.querySelector<HTMLElement>('.pp-field')!;
+}
+
+describe('a card\'s own like reads the lock at the press', () => {
+  it('unlocked from the profile window: like on a feed card and on a pane card each send one like and open no unlock form', async () => {
+    const A = fullRow('A', { author: OTHER });
+    const Q = fullRow('Q', { author: OTHER });
+    const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
+    const h = rig({ feed: [A, Q], threads: [thread(Q, [R]), thread(R, [], [Q])] });
+    await boot(h);
+    await openFromFeed(h, Q.id); // column 0
+    cardOf(regions(h)[0]!, R.id).querySelector<HTMLButtonElement>('button.strip')!.click(); // R's thread, column 1
+    await settle();
+
+    const pp = await openProfile(h); // stacks over Q's thread in column 0
+    const feedCard = cardOf(h.feedEl, A.id);
+    const paneCard = cardOf(regions(h)[1]!, R.id);
+    wordIn(pp, 'unlock').click();
+    fieldOf(pp).value = 'pw';
+    submit(pp);
+    await settle();
+    expect(h.id.unlocks).toEqual(['pw']);
+    // Neither card was drawn since the unlock.
+    expect(cardOf(h.feedEl, A.id)).toBe(feedCard);
+    expect(cardOf(regions(h)[1]!, R.id)).toBe(paneCard);
+
+    likeOf(feedCard).click();
+    await settle();
+    expect(h.feedEl.querySelector('.card-unlock')).toBeNull();
+    expect(h.writes.likes).toEqual([A.id]);
+
+    likeOf(cardOf(regions(h)[1]!, R.id)).click();
+    await settle();
+    expect(document.querySelector('.card .card-unlock')).toBeNull();
+    expect(h.writes.likes).toEqual([A.id, R.id]);
+  });
+
+  it('locked from the profile window: like opens the unlock form and sends no like', async () => {
+    const A = fullRow('A', { author: OTHER });
+    const h = rig({ feed: [A], locked: false });
+    await boot(h);
+    const pp = await openProfile(h);
+    const card = cardOf(h.feedEl, A.id);
+    wordIn(pp, 'lock').click();
+    await settle();
+    expect(h.id.identity.current()?.locked).toBe(true);
+    expect(cardOf(h.feedEl, A.id)).toBe(card); // not drawn since the lock
+
+    likeOf(card).click();
+    await settle();
+    expect(card.querySelector('.card-unlock')).not.toBeNull();
+    expect(h.writes.likes).toEqual([]);
+    expect(h.id.signed).toEqual([]);
+  });
+
+  it('unlocked from the profile window with an unlock form open under a card: the form is gone, its field empty, and no card is replaced', async () => {
+    const A = fullRow('A', { author: OTHER });
+    const B = fullRow('B', { author: OTHER });
+    const h = rig({ feed: [A, B] });
+    await boot(h);
+    likeOf(cardOf(h.feedEl, A.id)).click();
+    const row = h.feedEl.querySelector<HTMLElement>('.card-unlock')!;
+    const field = fieldOf(row);
+    field.value = 'half';
+
+    const pp = await openProfile(h);
+    const a = cardOf(h.feedEl, A.id);
+    const b = cardOf(h.feedEl, B.id);
+    expect(a.querySelector('.card-unlock')).toBe(row);
+    wordIn(pp, 'unlock').click();
+    fieldOf(pp).value = 'pw';
+    submit(pp);
+    await settle();
+    expect(h.id.unlocks).toEqual(['pw']);
+    expect(row.isConnected).toBe(false);
+    expect(field.value).toBe('');
+    expect(h.held()).toBe(0);
+    expect(cardOf(h.feedEl, A.id)).toBe(a);
+    expect(cardOf(h.feedEl, B.id)).toBe(b);
+    expect(h.writes.likes).toEqual([]);
+  });
+});
+
+describe('a change of identity ends every row', () => {
+  it('a change of key: no row in the document, and the field of the unlock form that stood reads empty', async () => {
+    const A = fullRow('A', { author: OTHER });
+    const B = fullRow('B', { author: OTHER });
+    const h = rig({ feed: [A, B] });
+    refuseClipboard();
+    await boot(h);
+    linkOf(cardOf(h.feedEl, B.id)).click();
+    await settle();
+    const link = h.feedEl.querySelector<HTMLElement>('.card-link')!;
+    expect(link).not.toBeNull();
+    likeOf(cardOf(h.feedEl, A.id)).click();
+    const row = h.feedEl.querySelector<HTMLElement>('.card-unlock')!;
+    expect(row).not.toBeNull();
+    const field = fieldOf(row);
+    field.value = 'secret';
+
+    h.fake.feedQueue.push(page([A, B])); // the feed, read again for the new key
+    h.id.changeKey(NEXT_KEY);
+    expect(row.isConnected).toBe(false);
+    expect(link.isConnected).toBe(false);
+    expect(field.value).toBe('');
+    expect(h.held()).toBe(0);
+    await settle();
+    expect(cardOf(h.feedEl, A.id)).not.toBeNull();
+    expect(document.querySelector('.card-unlock')).toBeNull();
+    expect(document.querySelector('.card-link')).toBeNull();
+  });
+});
+
+describe('an unlock made where the App is not told ends the unlock rows', () => {
+  it('the lock flips with no notice: the next redraw of the list draws no unlock form and holds none, and like then sends', async () => {
+    const A = fullRow('A', { author: OTHER });
+    const B = light('B');
+    const h = rig({ feed: [A, B], resolver: true });
+    await boot(h);
+    likeOf(cardOf(h.feedEl, A.id)).click();
+    const row = h.feedEl.querySelector<HTMLElement>('.card-unlock')!;
+    const field = fieldOf(row);
+    field.value = 'half';
+
+    h.id.setLocked(false); // unlocked in another page of the extension
+    h.resolves[0]!.end({ [B.id]: 'unserved' }); // the slot leaves: the feed is drawn whole
+    await settle();
+    expect(document.querySelector('.card-unlock')).toBeNull();
+    expect(row.isConnected).toBe(false);
+    expect(field.value).toBe('');
+    expect(h.held()).toBe(0);
+
+    likeOf(cardOf(h.feedEl, A.id)).click();
+    await settle();
+    expect(document.querySelector('.card-unlock')).toBeNull();
+    expect(h.writes.likes).toEqual([A.id]);
+  });
+
+  it('the lock flips with no notice and the reader presses like under the form: the like goes out and the form ends', async () => {
+    const A = fullRow('A', { author: OTHER });
+    const h = rig({ feed: [A] });
+    await boot(h);
+    likeOf(cardOf(h.feedEl, A.id)).click();
+    const row = h.feedEl.querySelector<HTMLElement>('.card-unlock')!;
+    const field = fieldOf(row);
+    field.value = 'half';
+
+    h.id.setLocked(false);
+    likeOf(cardOf(h.feedEl, A.id)).click();
+    await settle();
+    expect(h.writes.likes).toEqual([A.id]);
+    expect(document.querySelector('.card-unlock')).toBeNull();
+    expect(field.value).toBe('');
+    expect(h.held()).toBe(0);
+  });
+
+  it('an unlock in the composer\'s foot ends the unlock form under a card at once', async () => {
+    const A = fullRow('A', { author: OTHER });
+    const h = rig({ feed: [A] });
+    await boot(h);
+    likeOf(cardOf(h.feedEl, A.id)).click();
+    const row = h.feedEl.querySelector<HTMLElement>('.card .card-unlock')!;
+    const field = fieldOf(row);
+    field.value = 'half';
+
+    wordIn(h.feedEl.querySelector('.feed-head')!, 'new post').click();
+    await settle();
+    const composer = h.feedEl.querySelector<HTMLElement>('.composer')!;
+    const text = composer.querySelector<HTMLTextAreaElement>('textarea.composer-text')!;
+    text.value = 'a root';
+    text.dispatchEvent(new Event('input'));
+    wordIn(composer, 'post').click(); // locked: the unlock form takes the composer's foot
+    await settle();
+    const foot = composer.querySelector<HTMLElement>('.composer-foot')!;
+    fieldOf(foot).value = 'pw';
+    submit(foot);
+    await settle();
+    expect(h.id.unlocks).toEqual(['pw']);
+    expect(h.writes.posts).toEqual(['a root']);
+    expect(h.feedEl.querySelector('.card .card-unlock')).toBeNull();
+    expect(row.isConnected).toBe(false);
+    expect(field.value).toBe('');
+    expect(h.held()).toBe(0);
   });
 });

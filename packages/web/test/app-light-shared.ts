@@ -1,8 +1,9 @@
 // Shared harness for the App's extension-build reads over the light / resolver
 // path (WEB_INTERFACE → The extension → "The light read", → "The resolve",
-// → "The post cache"). `app-light.test.ts` and `app-light-thread.test.ts`
-// import this module; the fake `Api`'s `thread` and `feed` both record
-// arguments and dequeue answers.
+// → "The post cache"). `app-light.test.ts`, `app-light-thread.test.ts` and
+// `app-card-rows.test.ts` import this module; the fake `Api`'s `thread` and
+// `feed` both record arguments and dequeue answers. A case that writes takes
+// `lockableIdentity` and `recordingWrites` beside it.
 
 import { IDBFactory } from 'fake-indexeddb';
 import { App } from '../src/app';
@@ -15,8 +16,9 @@ import type { WriteClient } from '../src/api/write';
 import type { PostCheck } from '@dagsocial/nipopow-client';
 import type {
   PostJson, LightJson, WithdrawnJson, FeedResult, ThreadResult, PostResult,
-  StatusResult, BlockCurrent,
+  StatusResult, BlockCurrent, KarmaResult,
 } from '../src/api/dto';
+import { karmaResult } from './karma-fixture';
 
 export const ME = 'aa'.repeat(32);
 
@@ -83,6 +85,15 @@ export interface Fake {
    *  `null` (the node knows no such post). */
   postRes: PostResult | null;
   postCalls: Array<{ id: string; withTx: boolean | undefined }>;
+  /** `GET /posts/:id` by id — an id named here answers its entry, any other
+   *  `postRes`. */
+  postById?: Map<string, PostResult | null>;
+  /** A thread read by id, answered once `threadQueue` is empty. */
+  threadById?: Map<string, ThreadResult>;
+  /** The reader's `/karma`; absent is the no-record page. */
+  karma?: KarmaResult;
+  /** The height `GET /blocks/current` answers; absent is 10. */
+  height?: number;
 }
 
 export function makeApi(f: Fake): Api {
@@ -113,23 +124,24 @@ export function makeApi(f: Fake): Api {
         .join('&');
       const url = '/posts/' + encodeURIComponent(id) + '/thread' + (qs ? '?' + qs : '');
       f.threadCalls.push({ id, url, light: lightFlag, after: page?.after ?? undefined });
-      const next = f.threadQueue.shift();
+      const next = f.threadQueue.length > 0 ? f.threadQueue.shift() : f.threadById?.get(id);
       if (next === undefined || next === null) return null;
       if (next instanceof Error) throw next;
       return next;
     },
     post: async (id, _viewer, withTx): Promise<PostResult | null> => {
       f.postCalls.push({ id, withTx });
-      return f.postRes;
+      const named = f.postById?.get(id);
+      return named !== undefined ? named : f.postRes;
     },
     status: async () => status(),
-    currentBlock: async (): Promise<BlockCurrent> => ({ height: 10, hash: null }),
-    karma: async () => ({
+    currentBlock: async (): Promise<BlockCurrent> => ({ height: f.height ?? 10, hash: null }),
+    karma: async () => f.karma ?? {
       userId: ME, total: '0', effective: '0', boxes: [], boxCount: 0, next: null,
       lastActivityBlock: 0, lastDecayBlock: 0, lifetimeLikesReceived: '0',
       memberSinceBlock: 0, memberBar: 1, memberVouches: 0, memberLikes: '0',
       invitesUsed: 0, member: false, invitesAvailable: null, height: 10,
-    }),
+    },
     vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
     vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
     vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
@@ -208,6 +220,104 @@ export function makeIdentity(key: string | null): AppIdentity {
   };
 }
 
+/** An identity whose lock and key a case moves. `setLocked` flips the lock
+ *  and tells no one — an unlock or a lock made in another page of the
+ *  extension reaches `current()` that way; `changeKey` loads another key and
+ *  fires `onChange` (WEB_INTERFACE → The identity module). `sign` answers
+ *  `locked` while locked. */
+export interface LockableIdentity {
+  identity: AppIdentity;
+  /** Every passphrase `unlock` was called with, in order. */
+  unlocks: string[];
+  /** The transaction ids signed, in order. */
+  signed: string[];
+  setLocked(locked: boolean): void;
+  changeKey(key: string): void;
+}
+
+export function lockableIdentity(key: string, locked = true): LockableIdentity {
+  const unlocks: string[] = [];
+  const signed: string[] = [];
+  const listeners: Array<(id: { pubKeyHex: string } | null) => void> = [];
+  let cur = key;
+  let isLocked = locked;
+  return {
+    unlocks,
+    signed,
+    setLocked: (next) => { isLocked = next; },
+    changeKey: (next) => {
+      cur = next;
+      isLocked = true;
+      for (const l of listeners) l({ pubKeyHex: next });
+    },
+    identity: {
+      current: () => ({ pubKeyHex: cur, locked: isLocked }),
+      sign: async (_bytes, txId) => {
+        if (isLocked) return { locked: true };
+        signed.push(txId);
+        return { signature: 'ab'.repeat(64) };
+      },
+      draft: async () => ({ pubKeyHex: cur }),
+      create: async () => ({ pubKeyHex: cur }),
+      discardDraft: () => {},
+      inspectFile: async () => ({ kind: 'clear' as const, pubKeyHex: cur }),
+      importFile: async () => ({ pubKeyHex: cur }),
+      exportFile: async () => '',
+      unlock: async (p) => { unlocks.push(p); isLocked = false; },
+      lock: async () => { isLocked = true; },
+      forget: async () => {},
+      backedUp: () => false,
+      onChange: (l) => { listeners.push(l); },
+    },
+  };
+}
+
+/** A write client that records what reaches it and answers as a node that
+ *  took the transaction: the id it echoes is the last one `id` signed, which
+ *  is the id the flow built (WEB_INTERFACE → The wallet). */
+export interface RecordingWrites {
+  client: WriteClient;
+  /** The target of every like submitted, in order. */
+  likes: string[];
+  /** The post of every withdrawal submitted, in order. */
+  withdrawals: string[];
+  /** The content of every post submitted, in order. */
+  posts: string[];
+  /** The id the node answers the next submitted post under. */
+  nextPostId: string;
+}
+
+export function recordingWrites(id: LockableIdentity, expiresAtHeight = 730): RecordingWrites {
+  const last = (): string => id.signed[id.signed.length - 1]!;
+  const w: RecordingWrites = {
+    likes: [],
+    withdrawals: [],
+    posts: [],
+    nextPostId: hid('new'),
+    client: {
+      submitLike: async (tx: Record<string, unknown>) => {
+        w.likes.push(String(tx['likeTarget']));
+        return { status: 'pending', txId: last(), expiresAtHeight };
+      },
+      submitWithdraw: async (postId: string) => {
+        w.withdrawals.push(postId);
+        return { status: 'submitted', txId: last(), postId, expiresAtHeight };
+      },
+      submitPost: async (_tx: Record<string, unknown>, content: string) => {
+        w.posts.push(content);
+        return { postId: w.nextPostId, status: 'pending', expiresAtHeight, txId: last() };
+      },
+    } as unknown as WriteClient,
+  };
+  return w;
+}
+
+/** A `/karma` page holding one box — a key that can sign a like, a reply and
+ *  a withdrawal (WEB_INTERFACE → The withdraw control). */
+export function karmaWithBox(key: string): KarmaResult {
+  return karmaResult({ userId: key, total: '227', effective: '227', boxes: [{ boxId: '11'.repeat(32), value: '227' }], boxCount: 1, height: 10 });
+}
+
 export interface Harness {
   app: App;
   drive: {
@@ -224,6 +334,7 @@ export interface Harness {
     renderRegionsFor(id: string): void;
     changeNode(origin: string): Promise<void>;
     onIdentityChange(): void;
+    loadMembershipState(): Promise<void>;
     pollTick(): Promise<void>;
     state: AppState;
     withdrawnSeen: Map<string, WithdrawnJson>;
@@ -239,9 +350,14 @@ export interface Opts {
   verifier?: PostsVerifier | null;
   cache?: PostCache | null;
   identityKey?: string | null;
+  /** The identity the App holds, in place of the unlocked one `identityKey`
+   *  makes; `identityKey` still names the ledger's key. */
+  identity?: AppIdentity;
+  writeClient?: WriteClient;
   feedResults?: FeedResult[];
   threadResults?: Array<ThreadResult | null | Error>;
   postRes?: PostResult | null;
+  karma?: KarmaResult;
 }
 
 /** A stub verifier the extension-build configuration hands beside a resolver
@@ -275,12 +391,15 @@ export function harness(opts: Opts = {}): Harness {
     threadQueue: opts.threadResults ? [...opts.threadResults] : [],
     postRes: opts.postRes ?? null,
     postCalls: [],
+    postById: new Map(),
+    threadById: new Map(),
+    karma: opts.karma,
   };
   const api = makeApi(fake);
-  const writeClient = {} as unknown as WriteClient;
+  const writeClient = opts.writeClient ?? ({} as unknown as WriteClient);
   const key = opts.identityKey === undefined ? null : opts.identityKey;
   const ledger = new PendingLedger(key);
-  const identity = makeIdentity(key);
+  const identity = opts.identity ?? makeIdentity(key);
   // The App's constructor refuses a posts verifier without a post resolver,
   // or a resolver without a verifier: the extension build is the one build
   // that holds either, and it holds both (WEB_INTERFACE → The extension →

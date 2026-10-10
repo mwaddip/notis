@@ -35,25 +35,20 @@ function identityOpts(ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
   };
 }
 
-// WEB_INTERFACE → What the feed reads, and what a card shows for it →
-// "A row the reader opened under a card outlasts a redraw of its list" —
-// the feed's list key is `'feed'`.
+// The feed as a list a row belongs to (WEB_INTERFACE → What the feed reads,
+// and what a card shows for it → "A row the reader opened under a card
+// outlasts a redraw of its list").
 const FEED_LIST = 'feed';
 
 function feedCardOpts(p: PostJson, ctx: RenderCtx, handlers: Handlers): CardOpts {
-  const locked = ctx.identity?.locked ?? false;
   return {
     open: ctx.openSet.has(p.id),
     replyCount: p.descendantCount,
     onOpen: (id) => handlers.openThread(id, { from: 'feed' }),
     you: isYou(p.author, ctx),
     ...identityOpts(ctx, handlers),
-    ...listCardOpts(p, { ...ctx, locked }, {
-      likePost: (id) => handlers.likePost(id),
-      openUnlockForLike: (id) => ctx.openUnlockForLike(FEED_LIST, id),
-    }),
+    ...listCardOpts(p, FEED_LIST, ctx, handlers),
     heldRow: ctx.heldCardRow(FEED_LIST, p.id),
-    openLinkFallback: (url) => ctx.openLinkFallback(FEED_LIST, p.id, url),
   };
 }
 
@@ -111,7 +106,6 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
   if (feedComposer) container.appendChild(feedComposer);
 
   // The client's own root submissions, newest first, above the node's rows.
-  const locked = ctx.identity?.locked ?? false;
   for (const sub of [...ctx.submissionsFor(null)].reverse()) {
     const post = submissionToPost(sub, ctx.ownName?.name ?? null);
     container.appendChild(card(post, {
@@ -120,12 +114,8 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
       onOpen: (id) => handlers.openThread(id, { from: 'feed' }),
       you: isYou(sub.author, ctx),
       ...identityOpts(ctx, handlers),
-      ...listCardOpts(post, { ...ctx, locked }, {
-        likePost: (id) => handlers.likePost(id),
-        openUnlockForLike: (id) => ctx.openUnlockForLike(FEED_LIST, id),
-      }),
+      ...listCardOpts(post, FEED_LIST, ctx, handlers),
       heldRow: ctx.heldCardRow(FEED_LIST, post.id),
-      openLinkFallback: (url) => ctx.openLinkFallback(FEED_LIST, post.id, url),
     }));
   }
 

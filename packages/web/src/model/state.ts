@@ -220,15 +220,11 @@ export interface RenderCtx {
   figures: FiguresView | null;
   // WEB_INTERFACE → Links
   linkUrl: (id: string) => string;
-  // WEB_INTERFACE → What the feed reads, and what a card shows for it →
-  // "A row the reader opened under a card outlasts a redraw of its list" —
-  // the holder's seams, keyed by the list the card stands in and the row's
-  // post id. Each render looks up the row for the card it draws; the openers
-  // mount a new one under the live card at the press.
+  // The row held for a card — that post, in that list: the feed, an author
+  // window, a pane (WEB_INTERFACE → What the feed reads, and what a card shows
+  // for it → "A row the reader opened under a card outlasts a redraw of its
+  // list"). Every draw of the card reads it.
   heldCardRow: (list: string, postId: string) => HTMLElement | null;
-  openUnlockForLike: (list: string, postId: string) => void;
-  openConfirmWithdraw: (list: string, postId: string) => void;
-  openLinkFallback: (list: string, postId: string, url: string) => void;
 }
 
 /** One open author window's reads and flight (WEB_INTERFACE → The author window). */
@@ -277,8 +273,14 @@ export interface Handlers {
   // Content — an image loads on the reader's press (WEB_INTERFACE → Content).
   expandImage: (key: string) => void;   // the reader pressed to load an image
   collapseImage: (key: string) => void; // a shown image failed to load — drop its key
-  likePost: (postId: string) => void;
-  withdrawPost: (postId: string) => void;          // the author's own control (WEB_INTERFACE → The withdraw control)
+  // A card's own presses, each with the list the card stands in, its post and
+  // the control pressed (WEB_INTERFACE → What the feed reads, and what a card
+  // shows for it → "A row's controls act on the card as it stands at the
+  // press"): `like`; `withdraw`, the author's own control (→ The withdraw
+  // control); and the copy glyph where the clipboard took no write (→ Links).
+  pressLike: (list: string, postId: string, control: HTMLElement) => void;
+  pressWithdraw: (list: string, postId: string, control: HTMLElement) => void;
+  linkRefused: (list: string, postId: string, url: string, control: HTMLElement) => void;
   tryAgain: (localKey: string) => void;            // rebuild a fresh transaction from the current view
   // membership actions (WEB_INTERFACE → The identity display, → The author window)
   vouch: (key: string) => void;                    // + at once, no confirmation

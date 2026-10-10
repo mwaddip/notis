@@ -251,25 +251,22 @@ export interface PostsCtx {
   feed: FeedState;                        // the author's posts, the feed's own state shape
   writeEnabled: boolean;
   ownKey: string | null;
-  locked: boolean;
   likePending: (postId: string) => boolean;
   linkUrl: (id: string) => string;
   expandedImages: ReadonlySet<string>;    // images shown this session (WEB_INTERFACE → Content)
   nameClay: (key: string, name: string) => boolean; // the handle reads clay (→ The extension → "The verified names")
-  // WEB_INTERFACE → What the feed reads, and what a card shows for it →
-  // "A row the reader opened under a card outlasts a redraw of its list" —
-  // the posts window's list key, so a row the reader opened under one of its
-  // cards stands at every redraw of the window.
+  // The window as a list a row belongs to, and the row held for one of its
+  // cards (WEB_INTERFACE → What the feed reads, and what a card shows for it →
+  // "A row the reader opened under a card outlasts a redraw of its list").
   listKey: string;
   heldCardRow: (list: string, postId: string) => HTMLElement | null;
-  openUnlockForLike: (list: string, postId: string) => void;
-  openLinkFallback: (list: string, postId: string, url: string) => void;
 }
 
 export interface PostsHandlers {
   openThread: (id: string, origin: Origin) => void;
   openAuthor: (key: string, origin: Origin) => void;
-  likePost: (postId: string) => void;
+  pressLike: (list: string, postId: string, control: HTMLElement) => void;
+  linkRefused: (list: string, postId: string, url: string, control: HTMLElement) => void;
   authorPostsMore: (key: string) => void;
   expandImage: (key: string) => void;     // an image loads on the reader's press (WEB_INTERFACE → Content)
   collapseImage: (key: string) => void;
@@ -325,11 +322,7 @@ function postCard(post: PostJson, handlers: PostsHandlers, ctx: PostsCtx): HTMLE
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,
-    ...listCardOpts(post, ctx, {
-      likePost: (id) => handlers.likePost(id),
-      openUnlockForLike: (id) => ctx.openUnlockForLike(ctx.listKey, id),
-    }),
+    ...listCardOpts(post, ctx.listKey, ctx, handlers),
     heldRow: ctx.heldCardRow(ctx.listKey, post.id),
-    openLinkFallback: (url) => ctx.openLinkFallback(ctx.listKey, post.id, url),
   });
 }

@@ -49,8 +49,8 @@ function noopHandlers(): Handlers {
     draftIdentity: async () => ({ pubKeyHex: '' }),
     createIdentity: async, discardDraft: noop, importIdentity: async, exportIdentity: async,
     forgetIdentity: async, lockIdentity: async, unlockIdentity: async, askFaucet: noop,
-    openComposer: noop, expandImage: noop, collapseImage: noop, likePost: noop,
-    withdrawPost: noop, tryAgain: noop, vouch: noop, unvouch: noop, openAuthor: noop,
+    openComposer: noop, expandImage: noop, collapseImage: noop, pressLike: noop,
+    pressWithdraw: noop, linkRefused: noop, tryAgain: noop, vouch: noop, unvouch: noop, openAuthor: noop,
     refreshAuthor: noop, openAuthorPosts: noop, refreshAuthorPosts: noop,
     authorPostsMore: noop, moreEndorsers: noop, invite: noop, moreBonds: noop,
     claimUsername: noop, burnUsername: noop,
@@ -76,9 +76,6 @@ function baseCtx(over: Partial<RenderCtx> = {}): RenderCtx {
     confirmInRow: true, verdict: undefined, figures: null,
     linkUrl: (id) => `http://localhost/p/${id}`,
     heldCardRow: () => null,
-    openUnlockForLike: () => {},
-    openConfirmWithdraw: () => {},
-    openLinkFallback: () => {},
     ...over,
   };
 }
@@ -113,18 +110,16 @@ describe("the author-posts window renders a slot between two cards — order kep
       loading: false, error: null, unboundCount: 0,
     };
     const handlers: PostsHandlers = {
-      openThread: () => {}, openAuthor: () => {}, likePost: () => {},
+      openThread: () => {}, openAuthor: () => {}, pressLike: () => {}, linkRefused: () => {},
       authorPostsMore: () => {},
       expandImage: () => {}, collapseImage: () => {},
     };
     const ctx: PostsCtx = {
       authorKey: AUTHOR, origin: { from: 'feed' }, feed,
-      writeEnabled: false, ownKey: null, locked: false, likePending: () => false,
+      writeEnabled: false, ownKey: null, likePending: () => false,
       linkUrl: (id) => `/p/${id}`, expandedImages: new Set(), nameClay: () => false,
       listKey: '@posts:' + AUTHOR,
       heldCardRow: () => null,
-      openUnlockForLike: () => {},
-      openLinkFallback: () => {},
     };
     const body = authorPostsBody(handlers, ctx);
     const cards = [...body.querySelectorAll('.card')] as HTMLElement[];

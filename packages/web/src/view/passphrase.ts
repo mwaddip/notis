@@ -40,20 +40,33 @@ function actionRow(submitLabel: string, onCancel: () => void): { row: HTMLElemen
   return { row, submit };
 }
 
-/** The one-field unlock form (autocomplete current-password). onSubmit throws to
- *  refuse — its message becomes the refusal line. */
-export function unlockForm(
+/** The one-field unlock form (autocomplete current-password) and its passphrase
+ *  field, for a caller that attaches the form and then gives the field the
+ *  focus itself. onSubmit throws to refuse — its message becomes the refusal
+ *  line. */
+export function unlockFormParts(
   pubKeyHex: string,
   onSubmit: (passphrase: string) => Promise<void>,
   onCancel: () => void,
-): HTMLFormElement {
+): { form: HTMLFormElement; field: HTMLInputElement } {
   const form = el('form', 'pf') as HTMLFormElement;
   const pass = passwordField('current-password', 'passphrase');
   const refusal = refusalLine();
   const { row, submit } = actionRow('unlock', onCancel);
   form.append(usernameField(pubKeyHex), pass, row, refusal);
   wire(form, [pass], submit, refusal, onCancel, submit.textContent ?? 'unlock', () => onSubmit(pass.value));
-  focusOnMount(pass);
+  return { form, field: pass };
+}
+
+/** The unlock form for a caller that appends it as it is returned: the focus
+ *  lands on the passphrase field on mount. */
+export function unlockForm(
+  pubKeyHex: string,
+  onSubmit: (passphrase: string) => Promise<void>,
+  onCancel: () => void,
+): HTMLFormElement {
+  const { form, field } = unlockFormParts(pubKeyHex, onSubmit, onCancel);
+  focusOnMount(field);
   return form;
 }
 
