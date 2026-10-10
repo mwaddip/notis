@@ -4939,10 +4939,11 @@ export class App {
    *  identity is unlocked ends before the draw: the extension's proxy takes an
    *  unlock made in another page into `current()` and notifies no one. A row
    *  the draw left under no card ends after it, so a held row is attached to
-   *  the document or it is not held. The focus goes back where it was: into
-   *  the composer, or into the row that held it (WEB_INTERFACE → What the feed
-   *  reads, and what a card shows for it → "A row the reader opened under a
-   *  card outlasts a redraw of its list"). */
+   *  the document or it is not held. Where the draw moved the composer or the
+   *  row that held the focus, the focus goes back: into the composer, or to
+   *  the element of the row that held it; a draw that moved neither moves no
+   *  focus (WEB_INTERFACE → What the feed reads, and what a card shows for it
+   *  → "A row the reader opened under a card outlasts a redraw of its list"). */
   private redraw(draw: () => void): void {
     const composerFocused = this.focusedComposerKey();
     const rowFocused = composerFocused === null ? this.focusedRowElement() : null;
@@ -4950,8 +4951,12 @@ export class App {
     if (cur !== null && !cur.locked) this.endUnlockRows();
     draw();
     for (const held of [...this.cardRows.values()]) if (!held.el.isConnected) this.endCardRow(held);
-    if (composerFocused !== null) this.composers.get(composerFocused)?.focus();
-    else if (rowFocused !== null && rowFocused.isConnected) rowFocused.focus();
+    if (composerFocused !== null) {
+      const composer = this.composers.get(composerFocused);
+      if (composer !== undefined && !composer.el.contains(document.activeElement)) composer.focus();
+    } else if (rowFocused !== null && rowFocused.isConnected && document.activeElement !== rowFocused) {
+      rowFocused.focus();
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -5070,9 +5075,9 @@ export class App {
   }
 
   /** The one ending of a row: out of the document, every field in it emptied,
-   *  no longer held. Nothing of an ended row is kept (WEB_INTERFACE → What the
-   *  feed reads, and what a card shows for it → "A row the reader opened under
-   *  a card outlasts a redraw of its list"). */
+   *  and held nowhere. Nothing of an ended row is kept (WEB_INTERFACE → What
+   *  the feed reads, and what a card shows for it → "A row the reader opened
+   *  under a card outlasts a redraw of its list"). */
   private endCardRow(held: HeldCardRow): void {
     held.el.remove();
     for (const field of held.el.querySelectorAll('input')) field.value = '';

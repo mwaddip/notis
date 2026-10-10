@@ -655,3 +655,24 @@ describe('an unlock made where the App is not told ends the unlock rows', () => 
     expect(h.held()).toBe(0);
   });
 });
+
+describe('a feed card replaced alone moves no focus', () => {
+  it('a slot filling in place leaves the focus on the control of the open composer that holds it', async () => {
+    const A = fullRow('A', { author: OTHER });
+    const B = light('B');
+    const h = rig({ feed: [A, B], resolver: true, locked: false });
+    await boot(h);
+    wordIn(h.feedEl.querySelector('.feed-head')!, 'new post').click();
+    await settle();
+    const type = h.feedEl.querySelector<HTMLSelectElement>('.composer select.composer-type')!;
+    type.focus();
+    expect(document.activeElement).toBe(type);
+
+    const untouched = cardOf(h.feedEl, A.id);
+    h.resolves[0]!.bound([fullRow('B', { author: OTHER })]);
+    await settle();
+    expect(cardOf(h.feedEl, B.id).classList.contains('slot')).toBe(false);
+    expect(cardOf(h.feedEl, A.id)).toBe(untouched); // the slot became its card in place
+    expect(document.activeElement).toBe(type);
+  });
+});
