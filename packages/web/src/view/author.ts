@@ -3,7 +3,7 @@ import { withheldLine } from './withheld-line';
 import { unlockForm } from './passphrase';
 import { card, stageLine, listCardOpts } from './card';
 import { markHandle, nameLine } from './name-handle';
-import type { Flight } from './card';
+import type { Flight, CardRow } from './card';
 import type { VouchesTargetResult, UsernameResult, PostJson } from '../api/dto';
 import { isFull } from '../api/dto';
 import type { FeedState } from '../model/state';
@@ -255,11 +255,11 @@ export interface PostsCtx {
   linkUrl: (id: string) => string;
   expandedImages: ReadonlySet<string>;    // images shown this session (WEB_INTERFACE → Content)
   nameClay: (key: string, name: string) => boolean; // the handle reads clay (→ The extension → "The verified names")
-  // The window as a list a row belongs to, and the row held for one of its
+  // The window as a list a row belongs to, and the rows held for one of its
   // cards (WEB_INTERFACE → What the feed reads, and what a card shows for it →
   // "A row the reader opened under a card outlasts a redraw of its list").
   listKey: string;
-  heldCardRow: (list: string, postId: string) => HTMLElement | null;
+  rowsUnder: (list: string, postId: string) => readonly CardRow[];
 }
 
 export interface PostsHandlers {
@@ -323,6 +323,5 @@ function postCard(post: PostJson, handlers: PostsHandlers, ctx: PostsCtx): HTMLE
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,
     ...listCardOpts(post, ctx.listKey, ctx, handlers),
-    heldRow: ctx.heldCardRow(ctx.listKey, post.id),
   });
 }

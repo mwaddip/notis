@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import type { FeedRow, LightJson, PostJson, PostResult, ThreadResult } from '../src/api/dto';
+import type { FeedRow, LightJson, PostJson, PostResult, ThreadResult, WithdrawnJson } from '../src/api/dto';
 import { isLight, isWithdrawn } from '../src/api/dto';
 import {
-  ME, fullRow, light, harness, testResolver, makeCache, settle,
+  ME, fullRow, light, tomb, harness, testResolver, makeCache, settle,
   lockableIdentity, recordingWrites, karmaWithBox,
   type Harness, type LockableIdentity, type RecordingWrites, type Call,
 } from './app-light-shared';
@@ -401,6 +401,155 @@ describe('a card\'s own like reads the lock at the press', () => {
     expect(cardOf(h.feedEl, A.id)).toBe(a);
     expect(cardOf(h.feedEl, B.id)).toBe(b);
     expect(h.writes.likes).toEqual([]);
+  });
+});
+
+// WEB_INTERFACE → What the feed reads, and what a card shows for it →
+// "A row the reader opened under a card outlasts a redraw of its list": a row
+// stands under a card that offers the control it was opened from.
+describe('a row stands under a card that offers the control it was opened from', () => {
+  it('a withdrawn card in a pane keeps its copy glyph and so its link row, across a redraw', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const W: WithdrawnJson = { ...tomb('W'), author: OTHER, parentRefs: [Q.id] };
+    const h = rig({ feed: [Q], threads: [thread(Q, [W])] });
+    refuseClipboard();
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    const pressed = cardOf(h.panes, W.id);
+    expect(pressed.querySelector('.withdrawn')).not.toBeNull();
+    linkOf(pressed).click();
+    await settle();
+    const row = cardOf(h.panes, W.id).querySelector<HTMLElement>('.card-link');
+    expect(row).not.toBeNull();
+    expect(row!.querySelector('.hex')?.textContent).toContain('p/' + W.id);
+
+    h.panes.querySelector<HTMLButtonElement>('[aria-label="refresh replies to this thread"]')!.click();
+    await settle();
+    const redrawn = cardOf(h.panes, W.id);
+    expect(redrawn).not.toBe(pressed);
+    expect(redrawn.querySelector('.withdrawn')).not.toBeNull();
+    expect(redrawn.querySelector('.card-link')).toBe(row);
+  });
+
+  it('a landed reply of the reader\'s own stands as a submission card in a pane: the clipboard absent, its link row stands under it', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const h = rig({ feed: [Q], threads: [thread(Q, [])], locked: false });
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, writable: true, configurable: true });
+    await boot(h);
+    await openFromFeed(h, Q.id);
+
+    // The reader replies under Q through the composer, and the poll lands it.
+    cardOf(h.panes, Q.id).querySelector<HTMLButtonElement>('.reply-ctl')!.click();
+    await settle();
+    const composer = h.panes.querySelector<HTMLElement>('.composer')!;
+    const text = composer.querySelector<HTMLTextAreaElement>('textarea.composer-text')!;
+    text.value = 'a reply';
+    text.dispatchEvent(new Event('input'));
+    wordIn(composer, 'post').click();
+    await settle();
+    expect(h.writes.posts).toEqual(['a reply']);
+    const NEW = h.writes.nextPostId;
+    h.fake.postById!.set(NEW, asResult(fullRow('new', { id: NEW, content: 'a reply', parentRefs: [Q.id] })));
+    await h.drive.pollTick();
+    await settle();
+    const landed = cardOf(h.panes, NEW);
+    expect(landed.classList.contains('pending')).toBe(false);
+
+    linkOf(landed).click();
+    const row = cardOf(h.panes, NEW).querySelector<HTMLElement>('.card-link');
+    expect(row).not.toBeNull();
+    expect(row!.querySelector('.hex')?.textContent).toContain('p/' + NEW);
+    // The glyph stays (WEB_INTERFACE → Links).
+    expect(linkOf(cardOf(h.panes, NEW)).querySelector('svg')).not.toBeNull();
+  });
+
+  it('an unlock form for a like ends when a redraw draws the card with the like on it', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const R = fullRow('R', { author: OTHER, parentRefs: [Q.id] });
+    const h = rig({ feed: [Q], threads: [thread(Q, [R])] });
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    likeOf(cardOf(h.panes, R.id)).click();
+    const row = cardOf(h.panes, R.id).querySelector<HTMLElement>('.card-unlock')!;
+    const field = fieldOf(row);
+    field.value = 'half';
+
+    // The reader's like for R landed from another tab: the pane's ↻ reads it.
+    h.fake.threadById!.set(Q.id, thread(Q, [{ ...R, likedByViewer: true, likeCount: 1 }]));
+    h.panes.querySelector<HTMLButtonElement>('[aria-label="refresh replies to this thread"]')!.click();
+    await settle();
+    expect(cardOf(h.panes, R.id).querySelector('.liked')).not.toBeNull();
+    expect(document.querySelector('.card-unlock')).toBeNull();
+    expect(field.value).toBe('');
+    expect(h.held()).toBe(0);
+  });
+
+  it('the question ends when the post\'s withdrawal is submitted from another pane, and the withdrawn card it lands as carries none', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const P = fullRow('P', { parentRefs: [Q.id] }); // the reader's own reply
+    const h = rig({ feed: [Q], threads: [thread(Q, [P]), thread(P, [], [Q])], locked: false });
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    cardOf(regions(h)[0]!, P.id).querySelector<HTMLButtonElement>('button.strip')!.click();
+    await settle();
+
+    withdrawOf(cardOf(regions(h)[0]!, P.id)).click(); // the question in the parent's thread
+    expect(regions(h)[0]!.querySelector('.card-confirm')).not.toBeNull();
+    withdrawOf(cardOf(regions(h)[1]!, P.id)).click(); // and in P's own
+    wordIn(regions(h)[1]!.querySelector('.card-confirm')!, 'withdraw').click();
+    await settle();
+    expect(h.writes.withdrawals).toEqual([P.id]);
+    // Neither card offers `withdraw` while the withdrawal is submitted.
+    expect(withdrawOf(cardOf(regions(h)[0]!, P.id))).toBeNull();
+    expect(document.querySelector('.card-confirm')).toBeNull();
+    expect(h.held()).toBe(0);
+
+    const marker: WithdrawnJson = { ...tomb('P'), parentRefs: [Q.id] };
+    h.fake.postById!.set(P.id, { ...marker, confirmedAuthor: ME });
+    h.fake.height = 11;
+    await h.drive.pollTick();
+    await settle();
+    expect(cardOf(regions(h)[0]!, P.id).querySelector('.withdrawn')).not.toBeNull();
+    expect(cardOf(regions(h)[1]!, P.id).querySelector('.withdrawn')).not.toBeNull();
+    expect(document.querySelector('.card-confirm')).toBeNull();
+    expect(h.held()).toBe(0);
+  });
+
+  it('the unlock form opens beside a link row and ends beside it; the link row stands when the like redraws its card', async () => {
+    const A = fullRow('A', { author: OTHER });
+    const h = rig({ feed: [A] });
+    refuseClipboard();
+    await boot(h);
+    linkOf(cardOf(h.feedEl, A.id)).click();
+    await settle();
+    const card = cardOf(h.feedEl, A.id);
+    const link = card.querySelector<HTMLElement>('.card-link')!;
+    expect(link).not.toBeNull();
+
+    likeOf(card).click();
+    const unlock = card.querySelector<HTMLElement>('.card-unlock')!;
+    expect(unlock).not.toBeNull();
+    expect(card.querySelector('.card-link')).toBe(link);
+    // The form under the meta row, the link row beneath it.
+    expect([...card.querySelector('.card-body')!.children].slice(-3)).toEqual([card.querySelector('.meta'), unlock, link]);
+
+    esc(fieldOf(unlock));
+    expect(card.querySelector('.card-unlock')).toBeNull();
+    expect(card.querySelector('.card-link')).toBe(link);
+    expect(h.held()).toBe(1);
+
+    likeOf(card).click();
+    const again = card.querySelector<HTMLElement>('.card-unlock')!;
+    fieldOf(again).value = 'pw';
+    submit(again);
+    await settle();
+    expect(h.writes.likes).toEqual([A.id]);
+    const liked = cardOf(h.feedEl, A.id);
+    expect(liked).not.toBe(card);
+    expect(liked.querySelector('.liked')).not.toBeNull();
+    expect(liked.querySelector('.card-link')).toBe(link);
+    expect(document.querySelector('.card-unlock')).toBeNull();
+    expect(h.held()).toBe(1);
   });
 });
 

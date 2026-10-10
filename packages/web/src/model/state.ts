@@ -1,7 +1,7 @@
 import type { PostJson, WithdrawnJson, LightJson, FeedRow, StatusResult, KarmaResult, VouchesTargetResult, BondsResult, CreditsResult, UsernameResult } from '../api/dto';
 import type { Workspace, Origin } from './workspace';
 import type { Theme, IdTint } from '../prefs';
-import type { Flight } from '../view/card';
+import type { Flight, CardRow } from '../view/card';
 import type { YourVouch } from '../view/author';
 import type { SendAnswer, SendRecipient } from '../view/wallet';
 import type { SignResult } from '../wallet/submit';
@@ -220,11 +220,12 @@ export interface RenderCtx {
   figures: FiguresView | null;
   // WEB_INTERFACE → Links
   linkUrl: (id: string) => string;
-  // The row held for a card — that post, in that list: the feed, an author
+  // The rows held for a card — that post, in that list: the feed, an author
   // window, a pane (WEB_INTERFACE → What the feed reads, and what a card shows
   // for it → "A row the reader opened under a card outlasts a redraw of its
-  // list"). Every draw of the card reads it.
-  heldCardRow: (list: string, postId: string) => HTMLElement | null;
+  // list"). Every draw of the card reads them: the unlock form or the question
+  // first, the link row after it.
+  rowsUnder: (list: string, postId: string) => readonly CardRow[];
 }
 
 /** One open author window's reads and flight (WEB_INTERFACE → The author window). */

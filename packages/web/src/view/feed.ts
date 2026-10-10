@@ -48,7 +48,6 @@ function feedCardOpts(p: PostJson, ctx: RenderCtx, handlers: Handlers): CardOpts
     you: isYou(p.author, ctx),
     ...identityOpts(ctx, handlers),
     ...listCardOpts(p, FEED_LIST, ctx, handlers),
-    heldRow: ctx.heldCardRow(FEED_LIST, p.id),
   };
 }
 
@@ -115,7 +114,6 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
       you: isYou(sub.author, ctx),
       ...identityOpts(ctx, handlers),
       ...listCardOpts(post, FEED_LIST, ctx, handlers),
-      heldRow: ctx.heldCardRow(FEED_LIST, post.id),
     }));
   }
 

@@ -2,10 +2,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { card, mountRow, submissionToPost } from '../src/view/card';
+import { card, cardLink, mountRow, submissionToPost } from '../src/view/card';
 import { buildUnlockRow, buildConfirmRow, buildLinkFallbackRow } from '../src/view/card-rows';
 import type { LightJson, PostJson } from '../src/api/dto';
-import type { Flight } from '../src/view/card';
+import type { CardRow, Flight } from '../src/view/card';
 import { contentHashHex } from '../src/integrity';
 
 const appCss = readFileSync(resolve(process.cwd(), 'src/style/app.css'), 'utf8');
@@ -263,32 +263,106 @@ describe('card — like', () => {
 // WEB_INTERFACE → What the feed reads, and what a card shows for it →
 // "Opening a row and ending one redraw nothing else".
 describe('card — a row goes in under the card a control stands in', () => {
-  it('mountRow puts the row directly beneath the meta row and replaces no node', () => {
+  const rowOf = (control: CardRow['control']): CardRow => ({ control, el: document.createElement('div') });
+
+  it('mountRow puts the unlock form or the question directly beneath the meta row, the link row beneath that, and replaces no node', () => {
     const c = card(confirmed('bb'.repeat(32)), { onLike: () => {} });
     document.body.appendChild(c);
-    const before = [...c.querySelector('.card-body')!.children];
+    const body = c.querySelector('.card-body')!;
+    const before = [...body.children];
     const likeBtn = [...c.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent === 'like')!;
-    const row = buildLinkFallbackRow('http://localhost/p/x');
-    expect(mountRow(likeBtn, row)).toBe(true);
-    expect(c.querySelector('.meta')!.nextElementSibling).toBe(row);
-    expect([...c.querySelector('.card-body')!.children]).toEqual([...before, row]);
+    const link = rowOf('link');
+    expect(mountRow(likeBtn, link)).toBe(true);
+    expect([...body.children]).toEqual([...before, link.el]);
     // A row already under the card names the same card.
-    const second = buildLinkFallbackRow('http://localhost/p/y');
-    expect(mountRow(row, second)).toBe(true);
-    expect(c.querySelector('.meta')!.nextElementSibling).toBe(second);
+    const ask = rowOf('like');
+    expect(mountRow(link.el, ask)).toBe(true);
+    expect(c.querySelector('.meta')!.nextElementSibling).toBe(ask.el);
+    expect([...body.children]).toEqual([...before, ask.el, link.el]);
     c.remove();
   });
 
   it('mountRow answers false for a control that stands in no card on screen', () => {
     const c = card(confirmed('bb'.repeat(32)), { onLike: () => {} });
     const likeBtn = [...c.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent === 'like')!;
-    const row = buildLinkFallbackRow('http://localhost/p/x');
+    const row = rowOf('like');
     expect(mountRow(likeBtn, row)).toBe(false); // the card is not in the document
-    expect(row.parentElement).toBeNull();
+    expect(row.el.parentElement).toBeNull();
     const loose = document.createElement('button');
     document.body.appendChild(loose);
     expect(mountRow(loose, row)).toBe(false); // in the document, in no card
     loose.remove();
+  });
+});
+
+// WEB_INTERFACE → What the feed reads, and what a card shows for it →
+// "A row the reader opened under a card outlasts a redraw of its list" — a
+// card stands over a held row while it offers the control the row was opened
+// from.
+describe('card — a card stands over the rows whose control it offers', () => {
+  const OTHER = 'bb'.repeat(32);
+  const link = { url: 'http://localhost/p/x', refused: (): void => {} };
+  const rows = (): { like: CardRow; withdraw: CardRow; link: CardRow; all: CardRow[] } => {
+    const like: CardRow = { control: 'like', el: document.createElement('div') };
+    const withdraw: CardRow = { control: 'withdraw', el: document.createElement('div') };
+    const linkRow: CardRow = { control: 'link', el: document.createElement('div') };
+    return { like, withdraw, link: linkRow, all: [like, withdraw, linkRow] };
+  };
+  const under = (c: HTMLElement): Element[] => {
+    const kids = [...c.querySelector('.card-body')!.children];
+    return kids.slice(kids.indexOf(c.querySelector('.meta')!) + 1);
+  };
+
+  it('another\'s card with like and the copy glyph: the like row beneath the meta row, the link row beneath it, no withdraw row', () => {
+    const r = rows();
+    const c = card(confirmed(OTHER), { onLike: () => {}, link, rows: r.all });
+    expect(under(c)).toEqual([r.like.el, r.link.el]);
+    expect(r.withdraw.el.parentElement).toBeNull();
+  });
+
+  it('a card with the reader\'s like on it offers no like: the like row is not drawn, the link row is', () => {
+    const r = rows();
+    const c = card(confirmed(OTHER), { liked: true, likePending: true, link, rows: r.all });
+    expect(under(c)).toEqual([r.link.el]);
+  });
+
+  it('the reader\'s own card: the withdraw row while withdraw can be pressed, none while it is disabled or in flight', () => {
+    const offered = rows();
+    expect(under(card(confirmed(PUB), { onWithdraw: () => {}, canWithdraw: true, rows: offered.all }))).toEqual([offered.withdraw.el]);
+    const disabled = rows();
+    expect(under(card(confirmed(PUB), { onWithdraw: () => {}, canWithdraw: false, rows: disabled.all }))).toEqual([]);
+    const flying = rows();
+    expect(under(card(confirmed(PUB), { onWithdraw: () => {}, canWithdraw: true, withdraw: 'pending', rows: flying.all }))).toEqual([]);
+  });
+
+  it('a withdrawn card keeps its copy glyph and so its link row, and no other', () => {
+    const r = rows();
+    const tomb = { kind: 'withdrawn' as const, id: 'p1', author: OTHER, withdrawnAtHeight: 10, parentRefs: [], descendantCount: 0, authorName: null, txId: 'aa'.repeat(32) };
+    expect(under(card(tomb, { link, rows: r.all }))).toEqual([r.link.el]);
+    const bare = rows();
+    expect(under(card(tomb, { rows: bare.all }))).toEqual([]);
+  });
+
+  it('a pending card and a slot offer no control and draw no row', () => {
+    const r = rows();
+    const p: PostJson = { ...confirmed(OTHER), status: 'pending', blockHeight: null };
+    expect(under(card(p, { onLike: () => {}, link, rows: r.all }))).toEqual([]);
+    const slot: LightJson = {
+      kind: 'light', id: 'p1', parentRefs: [], status: 'confirmed', blockHeight: 1, blockIndex: 0, blockCreatedAt: 0,
+      likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null,
+    };
+    expect(under(card(slot, { rows: r.all }))).toEqual([]);
+  });
+
+  it('cardLink carries the URL and hands a refusal on with the list, the post and the control', () => {
+    const refused: unknown[] = [];
+    const opt = cardLink('feed', 'p1', { linkUrl: (id) => 'http://localhost/p/' + id }, {
+      linkRefused: (list, postId, url, control) => { refused.push([list, postId, url, control]); },
+    });
+    expect(opt.url).toBe('http://localhost/p/p1');
+    const glyph = document.createElement('button');
+    opt.refused(glyph);
+    expect(refused).toEqual([['feed', 'p1', 'http://localhost/p/p1', glyph]]);
   });
 });
 
@@ -483,10 +557,11 @@ describe('card — the withdraw control', () => {
 
 describe('card — link', () => {
   const URL = 'http://localhost/p/' + 'ab'.repeat(32);
+  const link = { url: URL, refused: (): void => {} };
 
   it('the copy glyph appears after ↩ reply as the meta row\'s last child', () => {
     const c = card(confirmed('bb'.repeat(32)), {
-      onReply: () => {},  linkUrl: URL,
+      onReply: () => {},  link,
     });
     const meta = c.querySelector('.meta')!;
     const linkbtn = meta.querySelector('.linkbtn')!;
@@ -495,7 +570,7 @@ describe('card — link', () => {
     expect(meta.lastElementChild).toBe(linkbtn);
   });
 
-  it('absent when no linkUrl is set', () => {
+  it('absent when no link is set', () => {
     const c = card(confirmed('bb'.repeat(32)));
     expect(c.querySelector('.linkbtn')).toBeNull();
   });
@@ -503,7 +578,7 @@ describe('card — link', () => {
   it('present on a withdrawn card', () => {
     const c = card(
       { kind: 'withdrawn', id: 'w1', author: 'cc'.repeat(32), withdrawnAtHeight: 5, parentRefs: [], descendantCount: 0, authorName: null, txId: 'aa'.repeat(32) },
-      { onReply: () => {},  linkUrl: URL },
+      { onReply: () => {},  link },
     );
     expect(c.querySelector('.linkbtn')).toBeTruthy();
   });
@@ -515,7 +590,7 @@ describe('card — link', () => {
       writable: true, configurable: true,
     });
     const c = card(confirmed('bb'.repeat(32)), {
-      onReply: () => {},  linkUrl: URL,
+      onReply: () => {},  link,
     });
     document.body.appendChild(c);
     c.querySelector<HTMLButtonElement>('.linkbtn')!.click();
@@ -525,19 +600,19 @@ describe('card — link', () => {
     c.remove();
   });
 
-  it('where the clipboard is absent the press is handed on with the URL and the glyph; the card mounts no row and the glyph stays', () => {
+  it('where the clipboard is absent the press is handed on with the glyph; the card mounts no row and the glyph stays', () => {
     Object.defineProperty(navigator, 'clipboard', {
       value: undefined, writable: true, configurable: true,
     });
-    const asked: Array<[string, HTMLElement]> = [];
+    const asked: HTMLElement[] = [];
     const c = card(confirmed('bb'.repeat(32)), {
-      onReply: () => {},  linkUrl: URL,
-      onLinkRefused: (url, control) => { asked.push([url, control]); },
+      onReply: () => {},
+      link: { url: URL, refused: (control) => { asked.push(control); } },
     });
     document.body.appendChild(c);
     const glyph = c.querySelector<HTMLButtonElement>('.linkbtn')!;
     glyph.click();
-    expect(asked).toEqual([[URL, glyph]]);
+    expect(asked).toEqual([glyph]);
     expect(c.querySelector('.card-link')).toBeNull();
     expect(c.querySelector('.linkbtn svg')).not.toBeNull();
     c.remove();
@@ -548,16 +623,15 @@ describe('card — link', () => {
       value: { writeText: () => Promise.reject(new Error('refused')) },
       writable: true, configurable: true,
     });
-    const asked: Array<[string, HTMLElement]> = [];
+    const asked: HTMLElement[] = [];
     const c = card(confirmed('bb'.repeat(32)), {
-      linkUrl: URL,
-      onLinkRefused: (url, control) => { asked.push([url, control]); },
+      link: { url: URL, refused: (control) => { asked.push(control); } },
     });
     document.body.appendChild(c);
     const glyph = c.querySelector<HTMLButtonElement>('.linkbtn')!;
     glyph.click();
     await new Promise((r) => setTimeout(r, 0));
-    expect(asked).toEqual([[URL, glyph]]);
+    expect(asked).toEqual([glyph]);
     c.remove();
   });
 
@@ -571,10 +645,10 @@ describe('card — link', () => {
 
 describe('card — feed-shaped: like and link without reply or withdraw', () => {
   const OTHER = 'bb'.repeat(32);
-  const URL = 'http://localhost/p/' + OTHER;
+  const link = { url: 'http://localhost/p/' + OTHER, refused: (): void => {} };
 
   it('the link follows the like word on a feed card', () => {
-    const c = card({ ...confirmed(OTHER), likeCount: 2 }, { onLike: () => {}, linkUrl: URL });
+    const c = card({ ...confirmed(OTHER), likeCount: 2 }, { onLike: () => {}, link });
     const meta = c.querySelector('.meta')!;
     const likeWord = [...meta.querySelectorAll('button')].find((b) => b.textContent === 'like')!;
     const linkbtn = meta.querySelector('.linkbtn')!;
@@ -586,7 +660,7 @@ describe('card — feed-shaped: like and link without reply or withdraw', () => 
 
   it('the read-only count N liked and link on the reader\'s own post, no like word', () => {
     const own = { ...confirmed(PUB), likeCount: 5 };
-    const c = card(own, { you: true, linkUrl: URL });
+    const c = card(own, { you: true, link });
     const liked = c.querySelector('.meta .liked');
     expect(liked).not.toBeNull();
     expect(liked!.textContent).toContain('5');

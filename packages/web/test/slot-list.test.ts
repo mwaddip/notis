@@ -75,7 +75,7 @@ function baseCtx(over: Partial<RenderCtx> = {}): RenderCtx {
     sendFlight: null, pendingSend: null, sendCheck: null, sendAnswer: null,
     confirmInRow: true, verdict: undefined, figures: null,
     linkUrl: (id) => `http://localhost/p/${id}`,
-    heldCardRow: () => null,
+    rowsUnder: () => [],
     ...over,
   };
 }
@@ -119,7 +119,7 @@ describe("the author-posts window renders a slot between two cards — order kep
       writeEnabled: false, ownKey: null, likePending: () => false,
       linkUrl: (id) => `/p/${id}`, expandedImages: new Set(), nameClay: () => false,
       listKey: '@posts:' + AUTHOR,
-      heldCardRow: () => null,
+      rowsUnder: () => [],
     };
     const body = authorPostsBody(handlers, ctx);
     const cards = [...body.querySelectorAll('.card')] as HTMLElement[];

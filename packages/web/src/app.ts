@@ -10,7 +10,7 @@ import { el, shortHex, preservingScroll } from './dom';
 import { contentHashHex } from './integrity';
 import { prefs, setTheme, setIdTint, setNode, writeStore, readStore, BUILD_NODES, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
 import { renderFeedInto, replaceFeedCard } from './view/feed';
-import { mountRow } from './view/card';
+import { mountRow, type CardRow, type RowControl } from './view/card';
 import { renderPanesInto, renderRegionElement, renderBars } from './view/panes';
 import { makeComposer, type ComposerController } from './view/composer';
 import { buildUnlockRow, buildConfirmRow, buildLinkFallbackRow } from './view/card-rows';
@@ -78,21 +78,27 @@ const composerKey = (parentId: string | null): string => parentId ?? FEED_COMPOS
 const isSettled = (stage: FlightStage): boolean => stage === 'landed' || stage === 'expired' || stage === 'rejected';
 
 /** A row the reader opened under a card: the unlock form a locked `like` or
- *  `withdraw` asks for, the withdraw question, or the link held as text. It
- *  belongs to the card it was opened under — that post, in that list
- *  (WEB_INTERFACE → What the feed reads, and what a card shows for it →
- *  "A row the reader opened under a card outlasts a redraw of its list"). */
-interface HeldCardRow {
+ *  `withdraw` asks for, the withdraw question, or the link held as text, with
+ *  the control it was opened from. It belongs to the card it was opened under
+ *  — that post, in that list (WEB_INTERFACE → What the feed reads, and what a
+ *  card shows for it → "A row the reader opened under a card outlasts a redraw
+ *  of its list"). */
+interface HeldCardRow extends CardRow {
   kind: 'unlock' | 'question' | 'link';
-  el: HTMLElement;
   list: string;
   postId: string;
 }
 
-/** The key a row is held under: its list and its post, so one post drawn in
- *  two lists holds a row in each. No list key and no post id carries a null
- *  byte. */
-const rowKey = (list: string, postId: string): string => list + '\0' + postId;
+/** The two places under a card: `ask` holds the unlock form or the question,
+ *  one of the two at a time; `link` holds the link row, beside either. */
+type RowPlace = 'ask' | 'link';
+const ROW_PLACES: readonly RowPlace[] = ['ask', 'link'];
+const rowPlace = (held: HeldCardRow): RowPlace => (held.kind === 'link' ? 'link' : 'ask');
+
+/** The key a row is held under: its list, its post and its place, so one post
+ *  drawn in two lists holds its rows in each. No list key and no post id
+ *  carries a null byte. */
+const rowKey = (list: string, postId: string, place: RowPlace): string => list + '\0' + postId + '\0' + place;
 
 /** Hand the reader a file — an exported identity. A data: URL needs no object-URL
  *  lifecycle and works from a static bundle (WEB_INTERFACE → The profile window). */
@@ -962,7 +968,7 @@ export class App {
       linkUrl: (id) => BUILD_PUBLIC !== ''
         ? BUILD_PUBLIC + 'p/' + id
         : new URL(this.base + 'p/' + id, location.href).href,
-      heldCardRow: (list, postId) => this.cardRows.get(rowKey(list, postId))?.el ?? null,
+      rowsUnder: (list, postId) => this.rowsUnder(list, postId),
     };
   }
 
@@ -4958,7 +4964,20 @@ export class App {
   // (→ "Opening a row and ending one redraw nothing else"). Each handler of a
   // row finds its card from the row itself and reads the identity's lock when
   // it runs (→ "A row's controls act on the card as it stands at the press").
+  // A draw stands a row under the card that offers the control it was opened
+  // from; a row a draw stands under no card has ended.
   // -------------------------------------------------------------------------
+
+  /** The rows held for a card, the unlock form or the question before the link
+   *  row. */
+  private rowsUnder(list: string, postId: string): HeldCardRow[] {
+    const rows: HeldCardRow[] = [];
+    for (const place of ROW_PLACES) {
+      const held = this.cardRows.get(rowKey(list, postId, place));
+      if (held !== undefined) rows.push(held);
+    }
+    return rows;
+  }
 
   /** `like` on a card: a locked identity gets the unlock form under that card,
    *  whose submit sends the like; an unlocked one sends it (WEB_INTERFACE → The
@@ -4967,7 +4986,7 @@ export class App {
     const cur = this.idm.current();
     if (cur === null) return;
     if (cur.locked) {
-      this.openUnlockRow(list, postId, control, cur.pubKeyHex, () => void this.likePost(postId));
+      this.openUnlockRow(list, postId, 'like', control, cur.pubKeyHex, () => void this.likePost(postId));
       return;
     }
     void this.likePost(postId);
@@ -4976,12 +4995,12 @@ export class App {
   /** `withdraw` on the reader's own card: the question under that card, the
    *  focus on `keep` (WEB_INTERFACE → The withdraw control). */
   private pressWithdraw(list: string, postId: string, control: HTMLElement): void {
-    if (this.idm.current() === null || this.cardRows.has(rowKey(list, postId))) return;
+    if (this.idm.current() === null || this.cardRows.has(rowKey(list, postId, 'ask'))) return;
     const { row, keep } = buildConfirmRow({
       onYes: () => this.confirmWithdraw(held),
       onKeep: () => this.keepPost(held),
     });
-    const held: HeldCardRow = { kind: 'question', el: row, list, postId };
+    const held: HeldCardRow = { kind: 'question', control: 'withdraw', el: row, list, postId };
     if (this.openRow(held, control)) keep.focus();
   }
 
@@ -4998,7 +5017,7 @@ export class App {
       return;
     }
     if (card !== null) {
-      this.openUnlockRow(held.list, held.postId, card, cur.pubKeyHex, () => void this.withdrawPost(held.postId));
+      this.openUnlockRow(held.list, held.postId, 'withdraw', card, cur.pubKeyHex, () => void this.withdrawPost(held.postId));
     }
   }
 
@@ -5014,31 +5033,39 @@ export class App {
   /** The copy glyph on a card whose link the clipboard did not take: the link
    *  as text under that card, to copy by hand (WEB_INTERFACE → Links). */
   private linkRefused(list: string, postId: string, url: string, control: HTMLElement): void {
-    if (this.cardRows.has(rowKey(list, postId))) return;
-    this.openRow({ kind: 'link', el: buildLinkFallbackRow(url), list, postId }, control);
+    if (this.cardRows.has(rowKey(list, postId, 'link'))) return;
+    this.openRow({ kind: 'link', control: 'link', el: buildLinkFallbackRow(url), list, postId }, control);
   }
 
-  /** The unlock form under the card `at` stands in, the focus in its field.
-   *  Its submit unlocks through the App's one unlock, which ends every unlock
-   *  form, and `proceed` then sends the write the form was opened for; Esc and
-   *  `cancel` end it (WEB_INTERFACE → The identity module). */
-  private openUnlockRow(list: string, postId: string, at: HTMLElement, pubKeyHex: string, proceed: () => void): void {
-    if (this.cardRows.has(rowKey(list, postId))) return;
+  /** The unlock form under the card `at` stands in, the focus in its field,
+   *  opened from `control` — the card's `like`, or its `withdraw` by way of the
+   *  question. Its submit unlocks through the App's one unlock, which ends
+   *  every unlock form, and `proceed` then sends the write the form was opened
+   *  for; Esc and `cancel` end it (WEB_INTERFACE → The identity module). */
+  private openUnlockRow(
+    list: string,
+    postId: string,
+    control: Exclude<RowControl, 'link'>,
+    at: HTMLElement,
+    pubKeyHex: string,
+    proceed: () => void,
+  ): void {
+    if (this.cardRows.has(rowKey(list, postId, 'ask'))) return;
     const { row, field } = buildUnlockRow({
       pubKeyHex,
       onSubmit: (p) => this.unlockIdentity(p),
       onProceed: proceed,
       onCancel: () => this.endCardRow(held),
     });
-    const held: HeldCardRow = { kind: 'unlock', el: row, list, postId };
+    const held: HeldCardRow = { kind: 'unlock', control, el: row, list, postId };
     if (this.openRow(held, at)) field.focus();
   }
 
   /** Put a row under the card `at` stands in and hold it. A press whose card
    *  left the screen before it was answered opens nothing. */
   private openRow(held: HeldCardRow, at: HTMLElement): boolean {
-    if (!mountRow(at, held.el)) return false;
-    this.cardRows.set(rowKey(held.list, held.postId), held);
+    if (!mountRow(at, held)) return false;
+    this.cardRows.set(rowKey(held.list, held.postId, rowPlace(held)), held);
     return true;
   }
 
@@ -5049,7 +5076,7 @@ export class App {
   private endCardRow(held: HeldCardRow): void {
     held.el.remove();
     for (const field of held.el.querySelectorAll('input')) field.value = '';
-    const key = rowKey(held.list, held.postId);
+    const key = rowKey(held.list, held.postId, rowPlace(held));
     if (this.cardRows.get(key) === held) this.cardRows.delete(key);
   }
 

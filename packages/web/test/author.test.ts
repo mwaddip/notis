@@ -248,7 +248,7 @@ function postsCtx(over: Partial<PostsCtx> = {}): PostsCtx {
     nameClay: () => false, // no check has decided a pair — every handle in ink
     expandedImages: new Set(),
     listKey: '@posts:' + AUTHOR,
-    heldCardRow: () => null,
+    rowsUnder: () => [],
     ...over,
   };
 }
