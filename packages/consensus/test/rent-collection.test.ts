@@ -207,21 +207,21 @@ describe('validateTx — the three findings the rule retires', () => {
 // - inputs: one past · one fresh · two past of one owner · two past of two
 //   owners · two past of one owner and one value · one past + one fresh · one
 //   past that cannot cover its charge
-// - signature map: empty · every owner · the fresh box's owner only · a
+// - signature map: empty · every owner · the fresh box's owner only (C-5) · a
 //   stranger alone · every owner + a stranger
-// - outputs: exact rent · successor to another owner · locked successor ·
-//   one short · one over · fee off by one · ordinary transfer · signed with
-//   rent-shape outputs
+// - outputs: exact rent · successor to another owner (whole value with and
+//   without a fee, and the exact-rent-shape value) · locked successor ·
+//   successor at a wrong height · one short · one over · fee off by one ·
+//   below-charge box with a credit output beside the fee · ordinary transfer ·
+//   signed with rent-shape outputs
 //
 // Folded cells:
-// - "successor to another owner" with a single past-period input and empty
-//   map is folded into C-5b (two inputs; the same refusal argument).
-// - "signature map holds a stranger plus every owner" and "stranger alone,
-//   every input past its period, empty-ish of required keys" are folded —
-//   both refuse at auth with the unrequired-key rule for the same reason.
-// - "fresh input signed by its owner, empty transition" is folded into the
-//   ordinary-transfer accept case (any-sig non-empty, past or fresh, is
-//   the same arm).
+// - "fresh input signed by its owner" (whatever the outputs) is folded into
+//   the ordinary-transfer accept cases: a non-empty map puts every input on
+//   OWNER_SIGNATURE, past or fresh, so the arm is the same.
+// - "two past-period inputs, successor to another owner on only one of them"
+//   is folded into C-5b: the refusal is the same multiset argument the
+//   single-input "successor to another owner" case asserts.
 // ---------------------------------------------------------------------------
 
 describe('validateTx — the empty-map rent transition', () => {
@@ -314,9 +314,12 @@ describe('validateTx — the empty-map rent transition', () => {
     expect(validateTx(depsOver([v]), tx, H).valid).toBe(false);
   });
 
-  it('empty map + one past + one fresh → REFUSE (not every input past its period)', () => {
+  it('empty map + one past + one fresh → REFUSE at auth with the fresh input\'s owner-signature refusal', () => {
+    // The past-period input's signer answers null; the fresh input's answers
+    // the owner, so `checkAuthorization` fires `missingOwnerSignature` on the
+    // fresh box before the credit arm's period predicate is reached.
     const past = creditBox(victim.userId, 50_000_000n, PAST, 19);
-    const fresh = creditBox(victim.userId, 1_000_000n, FRESH, 20);
+    const fresh = creditBox(victim.userId, 50_000_000n, FRESH, 20);
     const cp = chargeFor(past);
     const cf = chargeFor(fresh);
     const tx = makeTx(
@@ -327,7 +330,112 @@ describe('validateTx — the empty-map rent transition', () => {
         { boxType: 'fee', value: cp + cf, createdAtBlock: H } as AnyBoxCandidate,
       ],
     );
-    expect(validateTx(depsOver([past, fresh]), tx, H).valid).toBe(false);
+    const r = validateTx(depsOver([past, fresh]), tx, H);
+    expect(r.valid).toBe(false);
+    expect(r.error).toContain(`Missing or invalid owner signature for box ${fresh.id}`);
+  });
+
+  it('empty map, one past-period input, whole value to another owner, NO fee → REFUSE', () => {
+    const v = creditBox(victim.userId, 50_000_000n, PAST, 35);
+    const tx = makeTx(
+      [v],
+      [{ boxType: 'credit', value: v.value, createdAtBlock: H, owner: stranger.userId } as AnyBoxCandidate],
+    );
+    const r = validateTx(depsOver([v]), tx, H);
+    expect(r.valid).toBe(false);
+    expect(r.error).toContain('Rent: credit outputs do not match');
+  });
+
+  it('empty map, one past-period input, whole value to another owner, with a fee → REFUSE', () => {
+    // Value conservation holds: credit[stranger, v - f] + fee[f] = v. The fee
+    // is not the rent charge, so the shape is wrong on both value and owner.
+    const v = creditBox(victim.userId, 50_000_000n, PAST, 36);
+    const fee = 1n;
+    const tx = makeTx(
+      [v],
+      [
+        { boxType: 'credit', value: v.value - fee, createdAtBlock: H, owner: stranger.userId } as AnyBoxCandidate,
+        { boxType: 'fee', value: fee, createdAtBlock: H } as AnyBoxCandidate,
+      ],
+    );
+    const r = validateTx(depsOver([v]), tx, H);
+    expect(r.valid).toBe(false);
+    expect(r.error).toContain('Rent: credit outputs do not match');
+  });
+
+  it('empty map, one past-period input, exact rent shape but successor to another owner → REFUSE', () => {
+    const v = creditBox(victim.userId, 50_000_000n, PAST, 37);
+    const c = chargeFor(v);
+    const tx = makeTx(
+      [v],
+      [
+        { boxType: 'credit', value: v.value - c, createdAtBlock: H, owner: stranger.userId } as AnyBoxCandidate,
+        { boxType: 'fee', value: c, createdAtBlock: H } as AnyBoxCandidate,
+      ],
+    );
+    const r = validateTx(depsOver([v]), tx, H);
+    expect(r.valid).toBe(false);
+    expect(r.error).toContain('Rent: credit outputs do not match');
+  });
+
+  it('empty map, one past-period input, exact rent shape but successor at a height other than the current → REFUSE', () => {
+    // A height in the past still passes step 6 (createdAtBlock <=
+    // currentBlockHeight) and reaches the rent arm's successor-height check.
+    const v = creditBox(victim.userId, 50_000_000n, PAST, 38);
+    const c = chargeFor(v);
+    const tx = makeTx(
+      [v],
+      [
+        { boxType: 'credit', value: v.value - c, createdAtBlock: H - 1, owner: victim.userId } as AnyBoxCandidate,
+        { boxType: 'fee', value: c, createdAtBlock: H } as AnyBoxCandidate,
+      ],
+    );
+    const r = validateTx(depsOver([v]), tx, H);
+    expect(r.valid).toBe(false);
+    expect(r.error).toContain(`must equal height ${H}`);
+  });
+
+  it('empty map, one past-period input below its charge, a credit output beside the fee → REFUSE', () => {
+    // The ACCEPT shape for a below-charge box is FeeBox only, no successor.
+    // Emitting a credit output alongside the fee makes expectedSuccessors=0
+    // and actualSuccessors=1. The input value sits between the per-byte floor
+    // and the charge, so the credit output can satisfy step 6's floor.
+    const belowCharge = creditBox(victim.userId, 20_000_000n, PAST, 39);
+    expect(belowCharge.value).toBeLessThan(chargeFor(belowCharge));
+    const tx = makeTx(
+      [belowCharge],
+      [
+        { boxType: 'credit', value: 10_000_000n, createdAtBlock: H, owner: victim.userId } as AnyBoxCandidate,
+        { boxType: 'fee', value: 10_000_000n, createdAtBlock: H } as AnyBoxCandidate,
+      ],
+    );
+    const r = validateTx(depsOver([belowCharge]), tx, H);
+    expect(r.valid).toBe(false);
+    expect(r.error).toContain('Rent: credit outputs do not match');
+  });
+
+  it('empty map, one FRESH box, an ordinary transfer → REFUSE at auth with the owner-signature refusal', () => {
+    // The input is not past its period, so its signer answers the owner; the
+    // map holds no signature, so `checkAuthorization` fires first, before the
+    // credit arm's period predicate.
+    const fresh = creditBox(victim.userId, 50_000_000n, FRESH, 40);
+    const tx = makeTx(
+      [fresh],
+      [{ boxType: 'credit', value: 50_000_000n, createdAtBlock: H, owner: stranger.userId } as AnyBoxCandidate],
+    );
+    const r = validateTx(depsOver([fresh]), tx, H);
+    expect(r.valid).toBe(false);
+    expect(r.error).toContain(`Missing or invalid owner signature for box ${fresh.id}`);
+  });
+
+  it('empty map, one FRESH box, the exact rent shape → REFUSE at auth with the owner-signature refusal', () => {
+    // Even when the outputs are the rent shape, a fresh input under an empty
+    // map still refuses at auth: the signer answers the owner.
+    const fresh = creditBox(victim.userId, 50_000_000n, FRESH, 41);
+    const tx = makeTx([fresh], exactRentOutputs([fresh]));
+    const r = validateTx(depsOver([fresh]), tx, H);
+    expect(r.valid).toBe(false);
+    expect(r.error).toContain(`Missing or invalid owner signature for box ${fresh.id}`);
   });
 });
 
