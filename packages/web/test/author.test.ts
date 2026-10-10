@@ -353,6 +353,25 @@ describe('the author window — the body across a draw', () => {
     expect(b.querySelector('.card-unlock')).toBeNull();
     expect(pw.value).toBe('');
   });
+
+  it('Esc in the unlock row\'s field ends the row, its field emptied; the word vouch stands, nothing is unlocked or vouched, and nothing above the form reads the press', () => {
+    const h = noHandlers();
+    const w = live(h, baseCtx({ locked: true }));
+    const b = w.body.el;
+    word(rowOf(b, 'your vouch'), 'vouch').click();
+    const urow = b.querySelector('.card-unlock') as HTMLElement;
+    const pw = urow.querySelector('input[type="password"]') as HTMLInputElement;
+    pw.value = 'half';
+    let reached = 0;
+    b.addEventListener('keydown', (e) => { if (e.key === 'Escape') reached += 1; });
+    pw.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(reached).toBe(0);
+    expect(b.querySelector('.card-unlock')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(word(rowOf(b, 'your vouch'), 'vouch')).not.toBeUndefined();
+    expect(h.calls.unlock).toEqual([]);
+    expect(h.calls.vouch).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------

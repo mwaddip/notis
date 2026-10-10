@@ -1422,6 +1422,28 @@ describe('the send check — the unlock a locked identity owes', () => {
     expect(h.world.signCalls).toEqual([]);
   });
 
+  it('Esc in the owed row\'s field takes the row away, its field emptied, and leaves the key standing; nothing is unlocked or sent', async () => {
+    const h = harness();
+    h.world.locked = true;
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@bob');
+    await answer(h, result('proven', REC, 'Bob'));
+    const row = document.querySelector<HTMLElement>('.card-unlock')!;
+    const pw = row.querySelector<HTMLInputElement>('input[type="password"]')!;
+    pw.value = 'half';
+    pw.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await flush();
+    expect(document.querySelector('.card-unlock')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(document.querySelector('form.credits-form')).toBe(form);
+    expect(keyLine(form).textContent).toBe(REC);
+    expect(h.world.unlocks).toEqual([]);
+    expect(h.world.signCalls).toEqual([]);
+    expect(sendEntries(h)).toEqual([]);
+  });
+
   it('a wrong passphrase: the unlock refuses in its row, the owed send stands, and the right one sends', async () => {
     const h = harness();
     h.world.locked = true;

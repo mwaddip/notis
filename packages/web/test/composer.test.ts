@@ -145,7 +145,8 @@ describe('composer — submit and discard', () => {
 
 // WEB_INTERFACE → The workspace → "A window's body stands while the window is
 // open": the unlock form in the foot ends at an unlock made anywhere, the foot
-// returning with its field emptied and the drafts as they were.
+// returning with its field emptied and the drafts as they were; Esc in the
+// form cancels it and nothing else.
 describe('composer — the unlock form in the foot', () => {
   const KEY = 'ab'.repeat(32);
   const footOf = (el: HTMLElement): HTMLElement => el.querySelector('.composer-foot') as HTMLElement;
@@ -201,6 +202,39 @@ describe('composer — the unlock form in the foot', () => {
     expect(postBtn(ctrl.el)).not.toBeUndefined();
     expect(document.activeElement).toBe(ta);
     expect(ta.value).toBe('a draft');
+  });
+
+  it('Esc in the form cancels it and nothing else: its field emptied, the foot back, the focus in the draft, no question asked and the composer open; Esc in the draft is the composer\'s own and asks', () => {
+    const { ctrl, ta, onClose } = open();
+    ctrl.setAffordable(true);
+    type(ta, 'a draft');
+    ctrl.showUnlock(KEY, async () => {});
+    const pass = passOf(ctrl.el);
+    pass.value = 'half';
+    pass.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(pass.isConnected).toBe(false);
+    expect(pass.value).toBe('');
+    expect(footOf(ctrl.el).querySelector('.ask')).toBeNull();
+    expect([...footOf(ctrl.el).querySelectorAll('button')].map((b) => b.textContent)).toEqual(['post', 'cancel']);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(ta.value).toBe('a draft');
+    expect(document.activeElement).toBe(ta);
+
+    ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(footOf(ctrl.el).querySelector('.ask')?.textContent).toBe('discard this post?');
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('Esc in the form over a draft since emptied leaves the composer open, the foot back', () => {
+    const { ctrl, ta, onClose } = open();
+    ctrl.setAffordable(true);
+    type(ta, 'a draft');
+    ctrl.showUnlock(KEY, async () => {});
+    type(ta, '');
+    passOf(ctrl.el).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(footOf(ctrl.el).querySelector('form')).toBeNull();
+    expect([...footOf(ctrl.el).querySelectorAll('button')].map((b) => b.textContent)).toEqual(['post', 'cancel']);
   });
 
   it('a second showUnlock ends the form standing, its field emptied, and stands one form', () => {

@@ -1318,6 +1318,190 @@ describe('profile — the username row across a draw', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Esc in a passphrase form — WEB_INTERFACE → The profile window → "The six
+// operations are forms in place, and each is a real `<form>`": Esc cancels the
+// form and returns the focus to the control that opened it. The press is the
+// form's: nothing the form stands in reads it.
+// ---------------------------------------------------------------------------
+
+/** Esc pressed in `at` — a keydown that travels up from it. Answers how many
+ *  times the press reached `above`. */
+function escIn(at: HTMLElement, above: HTMLElement): number {
+  let reached = 0;
+  const seen = (e: Event): void => { if ((e as KeyboardEvent).key === 'Escape') reached += 1; };
+  above.addEventListener('keydown', seen);
+  at.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  above.removeEventListener('keydown', seen);
+  return reached;
+}
+
+describe('profile — Esc in a passphrase form cancels that form and reaches nothing above it', () => {
+  const words = (root: Element): Array<string | null> => [...root.querySelectorAll('button')].map((b) => b.textContent);
+
+  it('the passphrase row\'s unlock form: the row reads locked · unlock with the focus on unlock, the field emptied', () => {
+    const unlockedWith: string[] = [];
+    const w = live(handlers({ unlockIdentity: async (p) => { unlockedWith.push(p); } }), ctx({ identity: lockedId }));
+    document.body.appendChild(w.body.el);
+    const field = rowField(w.body.el, 'passphrase')!;
+    button(field, 'unlock')!.click();
+    const pw = pwOf(field);
+    pw.value = 'half';
+    expect(escIn(pw, w.body.el)).toBe(0);
+    expect(field.querySelector('form')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(field.textContent).toBe('locked unlock');
+    expect(document.activeElement).toBe(button(field, 'unlock'));
+    expect(unlockedWith).toEqual([]);
+    document.body.removeChild(w.body.el);
+  });
+
+  it('the export row\'s unlock form, and its set form: the word export back with the focus, every field emptied, no file made', () => {
+    const exported: string[] = [];
+    const w = live(handlers({ exportIdentity: async (p) => { exported.push(p); } }), ctx({ identity: lockedId }));
+    document.body.appendChild(w.body.el);
+    const field = rowField(w.body.el, 'export')!;
+    button(field, 'export')!.click();
+    const pw = pwOf(field);
+    pw.value = 'half';
+    expect(escIn(pw, w.body.el)).toBe(0);
+    expect(field.querySelector('form')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(words(field)).toEqual(['export']);
+    expect(document.activeElement).toBe(button(field, 'export'));
+
+    w.set(ctx({ identity: unlocked }));
+    button(field, 'export')!.click();
+    const pws = [...field.querySelectorAll<HTMLInputElement>('input[type="password"]')];
+    expect(pws).toHaveLength(2);
+    pws[0]!.value = 'one'; pws[1]!.value = 'one';
+    expect(escIn(pws[1]!, w.body.el)).toBe(0);
+    expect(field.querySelector('form')).toBeNull();
+    expect(pws.map((x) => x.value)).toEqual(['', '']);
+    expect(words(field)).toEqual(['export']);
+    expect(document.activeElement).toBe(button(field, 'export'));
+    expect(exported).toEqual([]);
+    document.body.removeChild(w.body.el);
+  });
+
+  it('the create form: create and import back with the focus on create, its fields emptied, the draft discarded once and no identity made', async () => {
+    const discarded: number[] = [];
+    const created: string[] = [];
+    const body = render(handlers({ discardDraft: () => discarded.push(1), createIdentity: async (p) => { created.push(p); } }), ctx());
+    document.body.appendChild(body);
+    button(body, 'create')!.click();
+    await flush();
+    const pws = [...body.querySelectorAll<HTMLInputElement>('form.pf input[type="password"]')];
+    expect(pws).toHaveLength(2);
+    pws[0]!.value = 'one'; pws[1]!.value = 'one';
+    expect(escIn(pws[0]!, body)).toBe(0);
+    expect(body.querySelector('form')).toBeNull();
+    expect(pws.map((x) => x.value)).toEqual(['', '']);
+    expect(words(body)).toEqual(['create', 'import']);
+    expect(document.activeElement).toBe(button(body, 'create'));
+    expect(discarded).toHaveLength(1);
+    expect(created).toEqual([]);
+    document.body.removeChild(body);
+  });
+
+  /** `import` pressed and a file chosen in the browser's picker: the input the
+   *  press made reads the file and fires its change. */
+  async function chooseFile(body: HTMLElement): Promise<void> {
+    const made: HTMLInputElement[] = [];
+    const create = document.createElement.bind(document);
+    const spy = vi.spyOn(document, 'createElement').mockImplementation(((tag: string, o?: ElementCreationOptions) => {
+      const node = create(tag, o);
+      if (tag === 'input') made.push(node as HTMLInputElement);
+      return node;
+    }) as typeof document.createElement);
+    button(body, 'import')!.click();
+    spy.mockRestore();
+    const picker = made.find((i) => i.type === 'file')!;
+    Object.defineProperty(picker, 'files', { value: [{ text: async () => '{}' }] });
+    picker.dispatchEvent(new Event('change'));
+    await flush();
+  }
+
+  for (const [kind, fields] of [['clear', 2], ['encrypted', 1]] as const) {
+    it(`the import form of ${kind === 'clear' ? 'a clear file — the set form' : 'a sealed file — the unlock form'}: create and import back with the focus on create, every field emptied, nothing imported`, async () => {
+      const imported: string[] = [];
+      const body = render(handlers({
+        inspectFile: async () => ({ kind, pubKeyHex: KEY }),
+        importIdentity: async (_text, p) => { imported.push(p); },
+      }), ctx());
+      document.body.appendChild(body);
+      await chooseFile(body);
+      const pws = [...body.querySelectorAll<HTMLInputElement>('form.pf input[type="password"]')];
+      expect(pws).toHaveLength(fields);
+      for (const x of pws) x.value = 'one';
+      expect(escIn(pws[0]!, body)).toBe(0);
+      expect(body.querySelector('form')).toBeNull();
+      expect(pws.map((x) => x.value)).toEqual(pws.map(() => ''));
+      expect(words(body)).toEqual(['create', 'import']);
+      expect(document.activeElement).toBe(button(body, 'create'));
+      expect(imported).toEqual([]);
+      document.body.removeChild(body);
+    });
+  }
+
+  it('the unlock row under the invite form: the row gone with its field emptied, the invite form and what is typed standing, nothing invited', () => {
+    const invited: unknown[] = [];
+    const w = live(handlers({ invite: (...a) => invited.push(a) }), memberCtx({ identity: lockedId }));
+    const field = rowField(w.body.el, 'invites')!;
+    const form = field.querySelector('form.invite-form') as HTMLFormElement;
+    const keyInput = form.querySelector('input[type="text"]') as HTMLInputElement;
+    const bondInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+    keyInput.value = INVITEE;
+    bondInput.value = '150';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    const pw = pwOf(field.querySelector('.card-unlock')!);
+    pw.value = 'half';
+    expect(escIn(pw, w.body.el)).toBe(0);
+    expect(field.querySelector('.card-unlock')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(field.querySelector('form.invite-form')).toBe(form);
+    expect([keyInput.value, bondInput.value]).toEqual([INVITEE, '150']);
+    expect(invited).toEqual([]);
+  });
+
+  it('the unlock row under the claim form: the row gone with its field emptied, the claim form and the name typed standing, nothing claimed', () => {
+    const claimed: string[] = [];
+    const w = live(handlers({ claimUsername: (n) => claimed.push(n) }), memberCtx({ canSignClaim: true, identity: lockedId }));
+    const f = rowField(w.body.el, 'username')!;
+    const form = f.querySelector('form') as HTMLFormElement;
+    const input = form.querySelector('input') as HTMLInputElement;
+    input.value = 'Alice_01';
+    form.dispatchEvent(new Event('submit'));
+    const pw = pwOf(f.querySelector('.card-unlock')!);
+    pw.value = 'half';
+    expect(escIn(pw, w.body.el)).toBe(0);
+    expect(f.querySelector('.card-unlock')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(f.querySelector('form')).toBe(form);
+    expect(input.value).toBe('Alice_01');
+    expect(claimed).toEqual([]);
+  });
+
+  it('the unlock form in the burn question\'s place: the handle and burn back with the focus on burn, the field emptied, nothing burned', () => {
+    const burned: number[] = [];
+    const w = live(handlers({ burnUsername: () => burned.push(1) }), memberCtx({ ownName: HELD, canAffordBurn: true, identity: lockedId }));
+    document.body.appendChild(w.body.el);
+    const f = rowField(w.body.el, 'username')!;
+    button(f, 'burn')!.click();
+    button(f.querySelector('.pf-confirm') as HTMLElement, 'burn')!.click();
+    const pw = pwOf(f);
+    pw.value = 'half';
+    expect(escIn(pw, w.body.el)).toBe(0);
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    expect(f.querySelector('form')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(f.querySelector('.handle')?.textContent).toBe('@Alice_01');
+    expect(document.activeElement).toBe(button(f, 'burn'));
+    expect(burned).toEqual([]);
+    document.body.removeChild(w.body.el);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The verified-figures line beneath the rep number (WEB_INTERFACE → The
 // extension → "The verified figures", → The profile window → "The `rep` row
 // is the `effective` number alone"). The pure model's rows are pinned in

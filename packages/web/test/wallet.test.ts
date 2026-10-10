@@ -49,6 +49,17 @@ function button(root: HTMLElement, text: string): HTMLButtonElement | null {
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
+/** Esc pressed in `at` — a keydown that travels up from it. Answers how many
+ *  times the press reached `above`. */
+function escIn(at: HTMLElement, above: HTMLElement): number {
+  let reached = 0;
+  const seen = (e: Event): void => { if ((e as KeyboardEvent).key === 'Escape') reached += 1; };
+  above.addEventListener('keydown', seen);
+  at.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  above.removeEventListener('keydown', seen);
+  return reached;
+}
+
 const REC = 'cd'.repeat(32);
 const REC_NAME = 'bob';
 
@@ -821,6 +832,27 @@ describe('wallet — the body across a draw', () => {
     expect(f.querySelector('form.credits-form')).toBe(form);
   });
 
+  it('Esc in the unlock form in the confirm row\'s place puts the send form back with its values, the passphrase field emptied; nothing is unlocked or sent, and nothing above the form reads the press', async () => {
+    const sent: unknown[] = [];
+    const unlockedWith: string[] = [];
+    const w = live(
+      handlers({ send: (...a) => sent.push(a), unlockIdentity: async (p) => { unlockedWith.push(p); } }),
+      spendableCtx({ identity: lockedId }),
+    );
+    const f = creditsField(w.body.el)!;
+    const { form, inputs, confirm } = await toConfirm(f);
+    sendIn(confirm).click();
+    const pw = f.querySelector('.pf-confirm input[type="password"]') as HTMLInputElement;
+    pw.value = 'half';
+    expect(escIn(pw, w.body.el)).toBe(0);
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    expect(pw.value).toBe('');
+    expect(f.querySelector('form.credits-form')).toBe(form);
+    expect(inputs.map((x) => x.value)).toEqual([REC, '1']);
+    expect(unlockedWith).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
   it('a draw that reads another key builds the body anew in the same node, every field of the form that stood emptied; one that reads none draws the lead line', () => {
     const w = live(handlers(), spendableCtx());
     const el = w.body.el;
@@ -969,6 +1001,13 @@ describe('wallet — the send flow, extension arm (confirmInRow: false)', () => 
     await flush();
     expect(unlocked).toEqual(['pw']);
     button(row, 'cancel')!.click();
+    expect(cancelled).toBe(1);
+  });
+
+  it('sendUnlockRow: Esc in its field is the row\'s cancel, once, and nothing above the form reads the press', () => {
+    let cancelled = 0;
+    const row = sendUnlockRow(KEY, async () => {}, () => { cancelled += 1; });
+    expect(escIn(row.querySelector<HTMLInputElement>('input[type="password"]')!, row)).toBe(0);
     expect(cancelled).toBe(1);
   });
 

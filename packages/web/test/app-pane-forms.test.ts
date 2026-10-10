@@ -2227,6 +2227,60 @@ describe('the unlock form in a composer\'s foot ends at an unlock made anywhere 
   });
 });
 
+describe('Esc in the unlock form of a composer\'s foot cancels that form alone', () => {
+  it('a draft and the foot\'s unlock form with a passphrase typed; Escape pressed in its field: the form is gone with its field empty, no discard question stands, the foot reads as before the press, and the draft stands with the focus in it', async () => {
+    const h = rig({ feed: [], locked: true });
+    await boot(h);
+    const { composer, text, foot, field } = await draftUnderLock(h, 'a root');
+    field.focus();
+
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await settle();
+
+    expect(field.isConnected).toBe(false);
+    expect(field.value).toBe('');
+    expect(h.feedEl.querySelector('.composer')).toBe(composer);
+    expect([...foot.querySelectorAll('.ask')].map((a) => a.textContent)).toEqual([]);
+    expectFootAtRest(foot);
+    expect(text.value).toBe('a root');
+    expect(document.activeElement).toBe(text);
+    expect(h.id.unlocks).toEqual([]);
+    expect(h.writes.posts).toEqual([]);
+  });
+
+  it('a reply\'s draft and its foot\'s unlock form; Escape pressed in its field: the reply composer stays open on its draft, no discard question stands, and the focus is in the draft', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const h = rig({ feed: [Q], threads: [thread(Q)], locked: true });
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    replyCtl(cardOf(h.panes, Q.id)).click();
+    await settle();
+    const composer = h.panes.querySelector<HTMLElement>('.composer')!;
+    const text = composer.querySelector<HTMLTextAreaElement>('textarea.composer-text')!;
+    text.value = 'a reply';
+    text.dispatchEvent(new Event('input'));
+    wordIn(composer, 'post').click();
+    await settle();
+    const foot = composer.querySelector<HTMLElement>('.composer-foot')!;
+    const field = fieldOf(foot);
+    field.value = 'half';
+    field.focus();
+
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await settle();
+
+    expect(field.isConnected).toBe(false);
+    expect(field.value).toBe('');
+    expect(h.panes.querySelector('.composer')).toBe(composer);
+    expect(cardOf(h.panes, Q.id).nextElementSibling).toBe(composer);
+    expect([...foot.querySelectorAll('.ask')].map((a) => a.textContent)).toEqual([]);
+    expectFootAtRest(foot);
+    expect(text.value).toBe('a reply');
+    expect(document.activeElement).toBe(text);
+    expect(h.writes.posts).toEqual([]);
+  });
+});
+
 describe('the profile\'s lock is read by the wallet\'s send and an author window\'s vouch', () => {
   it('unlocked, the wallet and an author window open beside the profile; lock pressed in the profile: the row reads locked · unlock, the confirm row\'s send asks for the unlock, and vouch asks for it under its row — nothing signed', async () => {
     const Q = fullRow('Q', { author: BOB });
