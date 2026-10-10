@@ -1180,6 +1180,32 @@ describe('the profile\'s passphrase unlock form across its window being covered 
   });
 });
 
+describe('a reply\'s composer with a draft across its thread being covered and brought back', () => {
+  it('a reply drafted under Q in Q\'s pane; the profile opened over Q; Q brought back by its bar: the composer is the same node under Q\'s card, the draft in it', async () => {
+    const Q = fullRow('Q', { author: OTHER });
+    const h = rig({ feed: [Q], threads: [thread(Q)], locked: false });
+    await boot(h);
+    await openFromFeed(h, Q.id);
+    replyCtl(cardOf(h.panes, Q.id)).click();
+    await settle();
+    const composer = h.panes.querySelector<HTMLElement>('.composer')!;
+    const text = composer.querySelector<HTMLTextAreaElement>('textarea.composer-text')!;
+    text.value = 'a draft';
+    text.dispatchEvent(new Event('input'));
+
+    openProfile(); // column 0 [Q, profile]
+    await settle();
+    expect(composer.isConnected).toBe(false);
+
+    focusAt(h.panes, 0, 0); // Q back to the front
+    await settle();
+    expect(composer.isConnected).toBe(true);
+    expect(h.panes.querySelector('.composer')).toBe(composer);
+    expect(cardOf(h.panes, Q.id).nextElementSibling).toBe(composer);
+    expect(composer.querySelector<HTMLTextAreaElement>('textarea.composer-text')!.value).toBe('a draft');
+  });
+});
+
 describe('a passphrase typed in a form whose window is covered is held in its field and nowhere else', () => {
   it('profile open over Q; a passphrase typed; Q brought to front: no field in the document holds it; profile brought back: one field holds it, the one it was typed in', async () => {
     const Q = fullRow('Q', { author: OTHER });
@@ -1736,6 +1762,200 @@ describe('an endorser\'s name and posts open beside the column the author window
     wordIn(rowByLabel(body, 'posts'), 'posts').click();
     await settle();
     expect(names()).toEqual([Q.content, 'author', 'posts']);
+  });
+});
+
+// ===========================================================================
+// Group G — the identity's lock is state every standing body shows: a lock or
+// an unlock made anywhere draws each body where it stands (WEB_INTERFACE → The
+// workspace → "A draw updates a standing body in place", → "What ends a form
+// in a window").
+// ===========================================================================
+
+/** Q's thread in column 0 with its author's window in column 1; the profile,
+ *  then the wallet, opened over Q. Answers the profile's and the author
+ *  window's bodies. */
+async function profileWalletAuthor(h: Rig, Q: PostJson): Promise<{ author: HTMLElement }> {
+  await boot(h);
+  await openFromFeed(h, Q.id);
+  authorBtnOf(cardOf(regionsOf(h.panes)[0]!, Q.id)).click(); // column 1 [author]
+  await settle();
+  return { author: bodyOf(regionsOf(h.panes)[1]!) };
+}
+
+describe('an unlock made under a card ends every unlock form in a window and turns the passphrase row', () => {
+  it('an unlock form open in the profile (covered), in the wallet\'s confirm row (in front) and under an author window\'s your vouch; a feed card\'s unlock row submitted: all three have ended with their fields empty, the wallet\'s form is back with what was typed, and the passphrase row reads unlocked on return', async () => {
+    const A = fullRow('A', { author: OTHER });
+    const Q = fullRow('Q', { author: BOB });
+    const h = rig({ feed: [A, Q], threads: [thread(Q)], locked: true, member: true, credits: creditsWithBox(ME) });
+    const { author } = await profileWalletAuthor(h, Q);
+    wordIn(author, 'vouch').click();
+    const vouchField = fieldOf(author.querySelector<HTMLElement>('.card-unlock')!);
+    vouchField.value = 'half';
+
+    openProfile(); // column 0 [Q, profile]
+    await settle();
+    const profile = bodyOf(regionsOf(h.panes)[0]!);
+    wordIn(profile.querySelector<HTMLElement>('.pp-field')!, 'unlock').click();
+    const ppField = fieldOf(profile.querySelector<HTMLElement>('.pp-field')!);
+    ppField.value = 'half';
+
+    openWallet(); // column 0 [Q, profile, wallet] — the profile is covered
+    await settle();
+    const wallet = bodyOf(regionsOf(h.panes)[0]!);
+    const sendForm = wallet.querySelector<HTMLFormElement>('form.credits-form')!;
+    const sendInputs = sendForm.querySelectorAll<HTMLInputElement>('input');
+    sendInputs[0]!.value = BOB;
+    sendInputs[1]!.value = '1.5';
+    submit(sendForm);
+    await settle();
+    wordIn(wallet.querySelector<HTMLElement>('.pf-confirm')!, 'send').click();
+    const confirmField = fieldOf(wallet.querySelector<HTMLElement>('.pf-confirm')!);
+    confirmField.value = 'half';
+
+    // The unlock is made under a feed card.
+    const feedCard = cardOf(h.feedEl, A.id);
+    likeOf(feedCard).click();
+    const cardRow = feedCard.querySelector<HTMLElement>('.card-unlock')!;
+    fieldOf(cardRow).value = 'pw';
+    submit(cardRow.querySelector('form.pf')!);
+    await settle();
+    expect(h.id.unlocks).toEqual(['pw']);
+
+    for (const field of [vouchField, ppField, confirmField]) {
+      expect(field.value).toBe('');
+      expect(field.isConnected).toBe(false);
+    }
+    expect(author.querySelector('.card-unlock')).toBeNull();
+    expect(wordIn(author, 'vouch')).not.toBeNull();
+    expect(wallet.querySelector('.pf-confirm')).toBeNull();
+    expect(wallet.querySelector('form.credits-form')).toBe(sendForm);
+    expect([sendInputs[0]!.value, sendInputs[1]!.value]).toEqual([BOB, '1.5']);
+    // No card but the one liked is replaced, and nothing is signed for a window.
+    expect(bodyOf(regionsOf(h.panes)[0]!)).toBe(wallet);
+    expect(bodyOf(regionsOf(h.panes)[1]!)).toBe(author);
+
+    focusAt(h.panes, 0, 1); // the profile back to the front
+    await settle();
+    const pp = bodyOf(regionsOf(h.panes)[0]!).querySelector<HTMLElement>('.pp-field')!;
+    expect(bodyOf(regionsOf(h.panes)[0]!)).toBe(profile);
+    expect(pp.querySelector('form')).toBeNull();
+    expect(pp.textContent).toContain('unlocked');
+    expect(wordIn(pp, 'lock')).not.toBeNull();
+  });
+});
+
+describe('an unlock made in the composer\'s foot turns the passphrase row of the profile in front', () => {
+  it('the profile in front with its unlock form open and typed; a root posted from the feed\'s composer under the lock, unlocked in its foot: the profile\'s form has ended with its field empty and the row reads unlocked · lock', async () => {
+    const h = rig({ feed: [], locked: true });
+    await boot(h);
+    openProfile();
+    await settle();
+    const profile = bodyOf(regionsOf(h.panes)[0]!);
+    const pp = profile.querySelector<HTMLElement>('.pp-field')!;
+    wordIn(pp, 'unlock').click();
+    const ppField = fieldOf(pp);
+    ppField.value = 'half';
+
+    wordIn(h.feedEl.querySelector('.feed-head')!, 'new post').click();
+    await settle();
+    const composer = h.feedEl.querySelector<HTMLElement>('.composer')!;
+    const text = composer.querySelector<HTMLTextAreaElement>('textarea.composer-text')!;
+    text.value = 'a root';
+    text.dispatchEvent(new Event('input'));
+    wordIn(composer, 'post').click(); // locked: the unlock form takes the composer's foot
+    await settle();
+    const foot = composer.querySelector<HTMLElement>('.composer-foot')!;
+    fieldOf(foot).value = 'pw';
+    submit(foot.querySelector('form.pf')!);
+    await settle();
+    expect(h.id.unlocks).toEqual(['pw']);
+    expect(h.writes.posts).toEqual(['a root']);
+
+    expect(bodyOf(regionsOf(h.panes)[0]!)).toBe(profile);
+    expect(ppField.value).toBe('');
+    expect(ppField.isConnected).toBe(false);
+    expect(pp.querySelector('form')).toBeNull();
+    expect(pp.textContent).toContain('unlocked');
+    expect(wordIn(pp, 'lock')).not.toBeNull();
+  });
+});
+
+describe('the profile\'s lock is read by the wallet\'s send and an author window\'s vouch', () => {
+  it('unlocked, the wallet and an author window open beside the profile; lock pressed in the profile: the row reads locked · unlock, the confirm row\'s send asks for the unlock, and vouch asks for it under its row — nothing signed', async () => {
+    const Q = fullRow('Q', { author: BOB });
+    const h = rig({ feed: [Q], threads: [thread(Q)], locked: false, member: true, credits: creditsWithBox(ME) });
+    const { author } = await profileWalletAuthor(h, Q);
+    openWallet(); // column 0 [Q, wallet]
+    await settle();
+    const wallet = bodyOf(regionsOf(h.panes)[0]!);
+    openProfile(); // column 0 [Q, wallet, profile]
+    await settle();
+    const pp = bodyOf(regionsOf(h.panes)[0]!).querySelector<HTMLElement>('.pp-field')!;
+
+    wordIn(pp, 'lock').click();
+    await settle();
+    expect(h.id.identity.current()?.locked).toBe(true);
+    expect(pp.textContent).toContain('locked');
+    expect(wordIn(pp, 'unlock')).not.toBeNull();
+
+    wordIn(author, 'vouch').click();
+    await settle();
+    expect(rowByLabel(author, 'your vouch').nextElementSibling?.classList.contains('card-unlock')).toBe(true);
+
+    focusAt(h.panes, 0, 1); // the wallet back to the front
+    await settle();
+    expect(bodyOf(regionsOf(h.panes)[0]!)).toBe(wallet);
+    const sendForm = wallet.querySelector<HTMLFormElement>('form.credits-form')!;
+    const inputs = sendForm.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = BOB;
+    inputs[1]!.value = '1.5';
+    submit(sendForm);
+    await settle();
+    wordIn(wallet.querySelector<HTMLElement>('.pf-confirm')!, 'send').click();
+    await settle();
+    expect(wallet.querySelector('.pf-confirm input[type="password"]')).not.toBeNull();
+    expect(h.id.signed).toEqual([]);
+    expect(h.id.unlocks).toEqual([]);
+  });
+});
+
+describe('an unlock made in the profile ends the unlock row a locked send owes (extension)', () => {
+  it('the wallet with the owed unlock row typed, covered by the profile; the profile\'s passphrase row unlocks: the owed row has ended with its field empty, the key stands beneath the recipient, and nothing is sent', async () => {
+    const h = rig({ feed: [], locked: true, credits: creditsWithBox(ME), extension: true });
+    await boot(h);
+    openWallet();
+    await settle();
+    const wallet = bodyOf(regionsOf(h.panes)[0]!);
+    const form = wallet.querySelector<HTMLFormElement>('form.credits-form')!;
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = BOB;
+    inputs[1]!.value = '1.5';
+    submit(form);
+    await settle();
+    const row = form.nextElementSibling as HTMLElement;
+    const owedField = fieldOf(row);
+    owedField.value = 'half';
+
+    openProfile(); // column 0 [wallet, profile]
+    await settle();
+    const pp = bodyOf(regionsOf(h.panes)[0]!).querySelector<HTMLElement>('.pp-field')!;
+    wordIn(pp, 'unlock').click();
+    fieldOf(pp).value = 'pw';
+    submit(pp.querySelector('form.pf')!);
+    await settle();
+    expect(h.id.unlocks).toEqual(['pw']);
+    expect(owedField.value).toBe('');
+    expect(h.id.signed).toEqual([]);
+
+    focusAt(h.panes, 0, 0); // the wallet back to the front
+    await settle();
+    expect(bodyOf(regionsOf(h.panes)[0]!)).toBe(wallet);
+    expect(wallet.querySelector('.card-unlock')).toBeNull();
+    expect(wallet.querySelector('form.credits-form')).toBe(form);
+    expect(form.querySelector<HTMLElement>('.resolved-key')!.textContent).toBe(BOB);
+    expect([inputs[0]!.value, inputs[1]!.value]).toEqual([BOB, '1.5']);
+    expect(h.id.signed).toEqual([]);
   });
 });
 

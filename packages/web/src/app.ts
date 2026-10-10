@@ -275,11 +275,11 @@ export class App {
   // a region rebuild rather than recreated (WEB_INTERFACE → The write surface).
   private composers = new Map<string, ComposerController>();
   // The rows the reader opened under cards, by `rowKey`. A held row is attached
-  // to the document, and every draw of its list puts the same element under
-  // its card again; what is typed in an unlock form is held in its field and
-  // nowhere else (WEB_INTERFACE → What the feed reads, and what a card shows
-  // for it → "A row the reader opened under a card outlasts a redraw of its
-  // list").
+  // to the document — or off it while another window of its column covers its
+  // list — and every draw of its list puts the same element under its card
+  // again; what is typed in an unlock form is held in its field and nowhere
+  // else (WEB_INTERFACE → What the feed reads, and what a card shows for it →
+  // "A row the reader opened under a card outlasts a redraw of its list").
   private cardRows = new Map<string, HeldCardRow>();
   // The body of each open `@profile`, `@wallet`, `@settings` and author window,
   // by window id: built at the window's first draw, attached by every draw
@@ -560,7 +560,7 @@ export class App {
       importIdentity: async (text, p) => { await this.idm.importFile(text, p); },
       exportIdentity: (p) => this.exportIdentity(p),
       forgetIdentity: () => this.idm.forget(),
-      lockIdentity: async () => { await this.idm.lock(); this.renderRegionsFor('@profile'); },
+      lockIdentity: async () => { await this.idm.lock(); this.lockChanged(); },
       unlockIdentity: (p) => this.unlockIdentity(p),
       askFaucet: () => void this.askFaucet(),
       openComposer: (parentId) => this.openComposer(parentId),
@@ -3922,7 +3922,7 @@ export class App {
       return;
     }
     if (cur.locked) {
-      this.answerSend({ key, unlock: this.owedUnlock(cur.pubKeyHex, key, name, amount) });
+      this.answerSend(this.owedUnlock(cur.pubKeyHex, key, name, amount));
       return;
     }
     this.answerSend({ key, unlock: null });
@@ -3936,37 +3936,48 @@ export class App {
     this.renderCreditsRowInPlace();
   }
 
-  /** Drop the answer the App holds; an unlock row it owed ends, its field
-   *  emptied, and the send it was owed for is not made. */
+  /** Drop the answer the App holds; an unlock row it owed ends, and the send
+   *  it was owed for is not made. */
   private dropSendAnswer(): void {
-    const answer = this.sendAnswer;
-    if (answer !== null && 'key' in answer && answer.unlock !== null) endForm(answer.unlock);
+    this.endOwedUnlock();
     this.sendAnswer = null;
   }
 
-  /** The unlock a locked identity owes before a proven send: the unlock, then
-   *  the send — while the row is still the one owed, since a press, a node
-   *  change or an identity change takes the send away with it. `cancel` takes
-   *  the row away and leaves the key standing (WEB_INTERFACE → The wallet
-   *  window → "The `send` row"). */
-  private owedUnlock(pubKeyHex: string, key: string, name: string | null, amount: bigint): HTMLElement {
-    const owed = (): boolean => {
-      const answer = this.sendAnswer;
-      return answer !== null && 'key' in answer && answer.unlock === row;
-    };
+  /** End the unlock row the held answer owes: out of the document, its field
+   *  emptied. The key the send goes to stands beneath the field. */
+  private endOwedUnlock(): void {
+    const answer = this.sendAnswer;
+    if (answer === null || !('key' in answer) || answer.unlock === null) return;
+    endForm(answer.unlock);
+    answer.unlock = null;
+  }
+
+  /** The answer for a proven send a locked identity owes an unlock before: the
+   *  key, and the unlock row. The row's own submit unlocks — which ends every
+   *  unlock form, this row among them — and then sends, while its answer is
+   *  still the one the App holds: a press, a node change or an identity change
+   *  takes the send away with it. A row that has ended owes nothing: `cancel`
+   *  and an unlock made in any other form take the row away and leave the key
+   *  standing, and no send is made (WEB_INTERFACE → The wallet window → "The
+   *  `send` row"). */
+  private owedUnlock(pubKeyHex: string, key: string, name: string | null, amount: bigint): SendAnswer {
+    const answer: { key: string; unlock: HTMLElement | null } = { key, unlock: null };
+    let cancelled = false;
     const row = sendUnlockRow(
       pubKeyHex,
       async (passphrase) => {
+        if (answer.unlock !== row) return;
         await this.unlockIdentity(passphrase);
-        if (!owed()) return;
-        this.answerSend({ key, unlock: null });
+        if (cancelled || this.sendAnswer !== answer) return;
         void this.send(key, name, amount);
       },
       () => {
-        if (owed()) this.answerSend({ key, unlock: null });
+        cancelled = true;
+        if (this.sendAnswer === answer) this.endOwedUnlock();
       },
     );
-    return row;
+    answer.unlock = row;
+    return answer;
   }
 
   /** Resolve an @handle to its holder — the row's send form calls this at the
@@ -5049,9 +5060,11 @@ export class App {
   /** Every draw that replaces a card or attaches a window's body runs here. An
    *  unlock form held while the identity is unlocked ends before the draw: the
    *  extension's proxy takes an unlock made in another page into `current()`
-   *  and notifies no one. A row the draw left under no card ends after it, so
-   *  a held row is attached to the document or it is not held; and a body
-   *  whose window is no longer open ends after it. Where the draw moved the
+   *  and notifies no one. A row the draw left under no card ends after it —
+   *  all but a row whose list another window of its column covers, which is
+   *  held off the document until its list is drawn again — so the rows of a
+   *  closed window end with the draw that follows its close; and a body whose
+   *  window is no longer open ends after it. Where the draw moved the
    *  composer, the row or the body that held the focus, the focus goes back:
    *  into the composer, or to the element that held it where that element
    *  still stands in the document; a draw that moved none of them moves no
@@ -5064,7 +5077,9 @@ export class App {
     const cur = this.idm.current();
     if (cur !== null && !cur.locked) this.endUnlockRows();
     draw();
-    for (const held of [...this.cardRows.values()]) if (!held.el.isConnected) this.endCardRow(held);
+    for (const held of [...this.cardRows.values()]) {
+      if (!held.el.isConnected && !this.covered(held.list)) this.endCardRow(held);
+    }
     const open = openSet(this.state.workspace);
     for (const id of [...this.bodies.keys()]) if (!open.has(id)) this.endBody(id);
     if (composerFocused !== null) {
@@ -5200,10 +5215,18 @@ export class App {
     if (this.cardRows.get(key) === held) this.cardRows.delete(key);
   }
 
-  /** An unlocked identity leaves no unlock form standing: every one ends,
-   *  wherever the unlock was made. The question and the link row stand. */
+  /** An unlocked identity leaves no unlock form the App holds standing: every
+   *  one under a card ends, in front or in a covered list, and the one a send
+   *  owes, wherever the unlock was made. The question and the link row stand. */
   private endUnlockRows(): void {
     for (const held of [...this.cardRows.values()]) if (held.kind === 'unlock') this.endCardRow(held);
+    this.endOwedUnlock();
+  }
+
+  /** Whether a list is a window that another window of its column covers. */
+  private covered(list: string): boolean {
+    const at = locate(this.state.workspace, list);
+    return at !== null && at.column.focus !== at.idx;
   }
 
   /** The element holding the focus inside a held row or a window's body, or
@@ -5218,11 +5241,23 @@ export class App {
 
   /** The App's one unlock — the profile's, the wallet's, the author window's,
    *  a composer's and a card's own all pass through it (WEB_INTERFACE → The
-   *  identity module). Once the seed is loaded every unlock form under a card
-   *  ends. */
+   *  identity module). Once the seed is loaded every unlock form ends, the one
+   *  submitted among them. */
   private async unlockIdentity(passphrase: string): Promise<void> {
     await this.idm.unlock(passphrase);
-    this.endUnlockRows();
+    this.lockChanged();
+  }
+
+  /** The identity's lock changed — the profile's `lock`, or an unlock made in
+   *  any form. The lock is state every window's body shows, so each is drawn
+   *  where it stands, in front or covered, and no card is replaced; an
+   *  unlocked identity leaves no unlock form standing, in a body, under a card
+   *  or owed by a send (WEB_INTERFACE → The workspace → "What ends a form in a
+   *  window"). */
+  private lockChanged(): void {
+    this.redraw(() => {
+      for (const held of this.bodies.values()) held.body.update();
+    });
   }
 
   private focusedComposerKey(): string | null {
