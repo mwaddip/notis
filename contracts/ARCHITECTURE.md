@@ -1516,8 +1516,9 @@ chain or owed one:
 | **the backer pool** (2026-09-12) | the genesis box set on testnet and devnet — one `BackerStakeBox` per table row and the `BackerPoolBox`, so both networks' `genesisStateRoot` pins; the settlement of every block inside the accrual window (the pool box's successor) and of every block carrying an unstake; three box-type tags. Mainnet's genesis is untouched while its table is empty. **Rides the collected reset** with the row above |
 | **the tree layout** (2026-09-30) | every tree key and its width (`TREE_KEY_LENGTH`, 65), so every `stateRoot` and all three `genesisStateRoot` pins; the tree gains post, like and index entries and a cast count per voucher; the name record gains `claimedAtBlock`; the lapse leg's order, so the settlement of every block with two or more lapsed vouches. **Owes the reset**, which it rides with the block proof (N3) |
 | **the block proof** (2026-09-30) | the header's eleventh field, `adProofsRoot`, so every block hash; the budget's verdict — a block over `MAX_BLOCK_COST` is refused, which moves the verdict of a body of more than 6 000 signatures. **Owes the reset**, and rides the tree layout's |
+| **the rent rule** (2026-10-10) | the verdict of a `credit` spend with a box past its rent period among its inputs — with a key in the map every input requires its owner's signature, so the owner's own spend is admitted and a spend its owner did not sign is refused; and the verdict of a rent collection whose successors do not answer one input each, or carry a lock (NODE_INTERFACE → Storage rent is a transition requiring no signature). **Owes the reset**, and rides the tree layout's |
 
-**Outstanding against the live node: the tree layout and the block proof** (the two rows above). Testnet's live chain began at the
+**Outstanding against the live node: the tree layout, the block proof and the rent rule** (the three rows above). Testnet's live chain began at the
 2026-09-15 reset; every row above is in it, and the usernames row owes none. The profile leaves testnet's `genesisId`
 empty (§What varies per network) until the reset the tree layout owes mines a new block 1.
 

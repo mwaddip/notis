@@ -1588,11 +1588,11 @@ is a requirement of those transitions, stated once here, not a property the box 
 
 ⛔ **The signature map carries no key a transition does not require.** Authorization looks each
 required signer up in the map and verifies it; a key beyond that set is verified by nothing, so it
-must be refused rather than ignored. An unrequired key is not free malleability — `computeTxId`
-hashes the map, so it moves the id — but it is a **shape lever**: the rent transition below is the
-unsigned credit spend, and a rule that read "the map is empty" would let one unrequired key turn a
-rent collection into an ordinary transfer to any owner. `checkAuthorization` collects the keys the
-inputs require and refuses a transaction whose map holds any other.
+must be refused rather than ignored. `computeTxId` covers no signature (TYPES_INTERFACE → Layout —
+UtxoTransaction), so an unrequired key would be a second spelling of one transaction under one id.
+`checkAuthorization` collects the keys the inputs require and refuses a transaction whose map holds
+any other. The rent collection below is the transaction whose map holds none; with one key present,
+every `credit` input requires its owner's (→ Storage rent is a transition requiring no signature).
 
 ⛔ **A payload binds the transition, exclusively.** A `post`, `postWithdraw` or `likeTarget` is
 present ⟹ every input is a `karma` box **and** the transition is the payload's — selected by the
@@ -1611,24 +1611,32 @@ payload is refused.
 #### Storage rent is a transition requiring no signature
 
 
-⛔ **A `credit` box past its rent period is spendable with NO owner signature.** Eligibility is the
-whole authorization rule:
+> ⚠ **AHEAD OF CODE (2026-10-10).** The three leads below, and the successor rule under "The charge
+> is…", lead `consensus`' credit authorization and its credit arm.
+
+⛔ **A rent collection carries no signature, and a `credit` spend that carries none is a rent
+collection.** A `credit` box is past its rent period when
 
 ```
 currentBlockHeight - box.createdAtBlock > profile.storageRentPeriodBlocks
 ```
 
-**It names no key**, so it satisfies the rule above rather than excepting it: the requirement is *no
-signature at all*, which this table already admits as a shape.
+A transaction whose signature map is empty may spend `credit` boxes only where every one is past its
+period, and it takes the rent shape (below) and no other. **It names no key**: the requirement is *no
+signature at all* — a requirement of the transition, as every requirement here is, and not a property
+of the box.
 
-⛔ **The unsigned rent path is identified by authorization requiring no signature, never by an empty
-signature map.** The two coincide only while the map cannot hold an unrequired key — which is exactly
-what "The signature map carries no key a transition does not require" (→ Legal box transitions)
-guarantees. The rent shape (successor to the **same owner**, or the box consumed whole, with the
-charge as the fee) governs a transaction precisely when no input required a signature; a signed credit
-spend takes the ordinary transfer shape. Deciding this on map-emptiness would let one unrequired
-signature skip the rent shape and redirect a rent-eligible box's whole value to a stranger — the two
-rules close that together.
+⛔ **Its owner's signature spends a box past its period as it spends any other.** A `credit` spend
+whose map holds a key requires the owner's signature for every input, past its period or not, and
+takes the ordinary transfer shape (the `CreditBox` row below). Rent is taken by whoever collects, and
+only then: an owner who moves a box before a producer collects it has paid none, and the boxes that
+transfer creates begin their own periods at their own heights.
+
+⛔ **The waiver and the shape hang on one predicate — the empty map.** A transaction with a key in its
+map waives nothing, so a signature placed beside a box past its period reaches none of that box's
+value: the box's owner must sign like any other input's, and a key no input requires is refused ("The
+signature map carries no key a transition does not require"). A transaction with an empty map has the
+rent shape or is refused, so every box it spends returns to its own owner less the charge.
 
 ⛔ **RENT IS AN ORDINARY BODY TRANSACTION, NOT A SETTLEMENT LEG, AND THE CHOICE IS LOAD-BEARING.**
 The settlement's input list is **derived whole** and a verifier recomputes it position by position
@@ -1644,7 +1652,7 @@ and sums both (MINING_INTERFACE → Coinbase Application).
 
 ✅ **This is where a guarding script would sit on Ergo, and the absence of scripting makes it
 simpler, not harder.** Ergo's rent works by the protocol **overriding** a box's script so a miner may
-spend it. Nothing here holds a script to override, so the eligibility predicate is the entire
+spend it. Nothing here holds a script to override, so the empty map and the period predicate are the entire
 mechanism.
 
 ⛔ **Which eligible boxes are collected is nobody's rule.** A producer includes the rent transactions
@@ -1672,7 +1680,11 @@ that is expressed.
 **The charge is `STORAGE_RENT_PER_BYTE × byteLength(boxRecordBytes(box))`, exactly.** Where the box
 covers it, exactly one successor `credit` box carries `value − charge` to the **same owner** at the
 current height, which resets the clock. Where it does not, the box is **consumed whole and no
-successor exists**. ⚠ **A box at the credit minimum cannot cover one period** — the rent-to-floor
+successor exists**. **A successor answers for one input and no other**: the transaction's `credit`
+outputs are, as a multiset of `(owner, value)`, exactly its inputs' successors, so two boxes of one
+owner and one value yield two. **A successor carries no `lockedUntilBlock`.** The one `FeeBox` carries
+the summed charge, the whole value of each box consumed whole included. ⚠ **A box at the credit
+minimum cannot cover one period** — the rent-to-floor
 ratio is 3,889× (TYPES_INTERFACE → Box value domain) — so the minimum is a spam bound and never a
 survival guarantee.
 
@@ -1709,6 +1721,7 @@ the treasury.
 | VouchEscrowBox | KarmaBox | **Block application only**: the settlement of the first block at or past `releaseAtBlock` consumes the escrow and returns its value to `owner` as karma (§The settlement transaction) — **no user transaction can spend a `VouchEscrowBox`**. Withdrawal itself is never gated — only the stake's return waits, and it waits in the escrow |
 | LikeAccrualBox | — | **Settlement only.** No user transition admits one as an input |
 | CreditBox | CreditBox(s) and/or FeeBox | Any owner, value conserved. **At most one FeeBox**, and it may not hold `0` — zero fee means no box. A transaction whose only output is the FeeBox is legal |
+| CreditBox, every input past its rent period | One successor CreditBox for each input that covers its charge, and one FeeBox | **Rent collection**: the signature map is **empty** — the transition requires no signature and admits none. Each successor carries `value − charge` to its input's owner at the current height, with no lock; the FeeBox carries the summed charge (→ Storage rent is a transition requiring no signature) |
 | KarmaPriceBox | — | **Settlement only.** No user transition admits one as an input; the settlement of the block that created it consumes it and returns its value to the pool |
 | BondBox | KarmaBox / — | Block application only: settlement at the probation deadline — **no user transaction can spend a `BondBox`** |
 | KarmaPoolBox | KarmaPoolBox + … | **Settlement only** — the pool's sole spender, spent in blocks whose settlement moves karma and left alone otherwise |
