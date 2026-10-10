@@ -6,10 +6,12 @@ export default mergeConfig(
   defineConfig({
     test: {
       globals: true,
-      // The shadow replay is `vitest.shadow.config.ts`'s alone, run against a
-      // stored chain; the proof-route bench is `vitest.bench.config.ts`'s
-      // alone, run on its own; this suite neither runs nor counts either.
-      exclude: [...configDefaults.exclude, 'shadow/**', 'bench/**'],
+      // The deepest fork-walk cases are `vitest.slow.config.ts`'s alone, run
+      // on their own by `test:slow`; the shadow replay is
+      // `vitest.shadow.config.ts`'s alone, run against a stored chain; the
+      // proof-route bench is `vitest.bench.config.ts`'s alone, run on its
+      // own; this suite neither runs nor counts any.
+      exclude: [...configDefaults.exclude, 'slow/**', 'shadow/**', 'bench/**'],
       // Block-application suites mine real PoW solutions (the powTargetBits
       // schedule is enforced at apply, so fixtures cannot fake it) and are
       // compute-bound by design. Under a full-repo parallel run the 5s

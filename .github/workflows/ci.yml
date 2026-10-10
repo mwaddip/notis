@@ -1,0 +1,55 @@
+name: ci
+
+# The full gate, on every pull request: each workspace member built, typechecked and tested in a job of its own, and
+# a member's slow tree (`test:slow`) in one more. The matrix is the workspace's own, read at the pull request's head
+# by `.github/ci-members.mjs`. Every job builds every member first: a member's typecheck follows its siblings'
+# built types, and the mesh suite (`@dagsocial/e2e`) runs the built node, which it does not declare.
+on:
+  pull_request:
+
+# A push to an open pull request ends the run the push before it began.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  members:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: list
+        run: node .github/ci-members.mjs >> "$GITHUB_OUTPUT"
+
+  gate:
+    needs: members
+    name: ${{ matrix.member }} · ${{ matrix.run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.members.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - if: matrix.typecheck
+        run: pnpm --filter "${{ matrix.member }}" typecheck
+      - run: pnpm --filter "${{ matrix.member }}" run "${{ matrix.run }}"

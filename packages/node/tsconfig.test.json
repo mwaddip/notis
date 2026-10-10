@@ -28,5 +28,5 @@
       "@dagsocial/*": ["../*/src/index.ts"]
     }
   },
-  "include": ["src", "test", "shadow", "bench"]
+  "include": ["src", "test", "slow", "shadow", "bench"]
 }
