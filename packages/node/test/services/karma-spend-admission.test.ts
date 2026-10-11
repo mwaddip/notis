@@ -3,10 +3,10 @@
 // rule needs": admission reads `held = store.getKarmaValue(owner) -
 // pendingKarmaSpend(hex(owner))` and `owed = karmaOwed(sum, record, height,
 // decayCfg)`, through the one implementation in `services/karma-admission.ts`
-// wired into both engine-deps literals (`server.ts`,
+// wired by both engine-deps literals (`server.ts`,
 // `services/handle-tx.ts`). Every case here goes through the service
 // functions the routes call, over the real store and the real `validateTx`.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { generateKeyPairSync, type KeyObject } from 'crypto';
 import {
   computeBoxId,
@@ -16,6 +16,7 @@ import {
   effectiveKarma,
   KARMA_MINIMUM,
   LIKE_KARMA_COST,
+  MAX_BLOCK_BODY_BYTES,
   POST_PRICE_THREAD,
   PROTOCOL_VERSION,
   VOUCH_KARMA_AMOUNT,
@@ -51,20 +52,35 @@ import {
   getPendingEntries,
   pendingKarmaSpend,
   getKarmaValue as storeKarmaValue,
+  getPost as storeGetPost,
 } from '../../src/store/index.js';
 import { castLike } from '../../src/services/likes.js';
 import { createInvite } from '../../src/services/invites.js';
 import { castVouch } from '../../src/services/vouch.js';
+import { createPost } from '../../src/services/post-service.js';
+import { verifyPost } from '../../src/services/verifier.js';
+import { admitTx } from '../../src/services/admit-tx.js';
+import {
+  startBlockCreator,
+  stopBlockCreator,
+  createOrderingBlock,
+  getCurrentTemplate,
+  submitMinedBlock,
+} from '../../src/services/block-creator.js';
 import { admissionHeld, admissionOwed } from '../../src/services/karma-admission.js';
 import { ClientError } from '../../src/services/client-error.js';
 import {
+  makeTestConfig,
+  mineNextBlock,
   rawPublicKey,
+  seedCommittedState,
   seedProvenance,
   signTransaction,
   fixturePostId,
   fixtureTxId,
   type Stored,
 } from '../helpers.js';
+import type { PostServiceDeps } from '../../src/services/post-service.js';
 import { config } from '../../src/config.js';
 
 const AUTHOR = new Uint8Array(32).fill(0x7a);
@@ -317,32 +333,36 @@ function putRoot(pub: Uint8Array): void {
   storePutIdentityRecord(pub, rec);
 }
 
-/**
- * The admitted karma transactions clear from the pool and the owner's karma
- * resolves to the post-body state — the simulation of a block confirming the
- * body without replaying `applyBlock`. The input is spent, each change box
- * lands, and the markers do not: the settlement consumes them in the same
- * block. The pool is cleared of every `tx_id`.
- */
-function confirmPendingKarmaTxs(txs: UtxoTransaction[], atBlock: number): void {
-  for (const tx of txs) {
-    const txId = computeTxId(tx);
-    for (const id of tx.inputs) {
-      storeConsumeBox(id, atBlock);
-    }
-    // Output 0 is the change box when there is one; the markers settle out.
-    const change = tx.outputs[0];
-    if (change && change.boxType === 'karma') {
-      const changeBox = {
-        ...(change as KarmaBox),
-        txId,
-        index: 0,
-      } as KarmaBox;
-      insertBox({ ...changeBox, id: computeBoxId(changeBox) } as AnyBox);
-    }
-    removeUtxoTxEntry(txId);
-  }
+/** The deps `routes/posts.ts` passes `createPost`, built over `engine` and `storeGetPost`. */
+function postServiceDeps(engine: UtxoEngineDeps, getCurrentHeight: () => number): PostServiceDeps {
+  return {
+    verifyPost,
+    getKarmaBoxes,
+    getIdentityRecord: engine.getIdentityRecord,
+    decayCfg: engine.decayCfg,
+    getPost: storeGetPost,
+    insertPost,
+    getCurrentHeight,
+    protocolVersionSchedule: engine.protocolVersionSchedule,
+    admitTx,
+    validateTx: (tx, h) => validateTx(engine, tx, h),
+    getBox: engine.getBox,
+    runInTransaction: engine.runInTransaction,
+  };
 }
+
+/** The config a block creator starts under in these cases — testnet, miner, the consensus budget. */
+const miningConfig = makeTestConfig({
+  port: 3000,
+  dbPath: ':memory:',
+  networkType: 'testnet' as const,
+  nodeRole: 'miner' as const,
+  blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES,
+  orderingBlockPowTargetBits: 3072,
+  bootstrapPeers: [] as string[],
+  listenAddrs: '/ip4/127.0.0.1/tcp/0',
+  maxPeers: 50,
+});
 
 /** Insert a post with the given content; returns its id. */
 function insertNamedPost(content: string): string {
@@ -374,18 +394,23 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
   });
 
   afterEach(() => {
+    try {
+      stopBlockCreator();
+    } catch {
+      // The creator may not have started in this case.
+    }
     closeDb();
   });
 
-  // -------- Scenario 1: one 12-karma box --------
+  // -------- One 12-karma box --------
 
   describe('a fresh identity with one 12-karma box', () => {
     it('admits a like; admits a second over the pooled change; refuses a third with the floor\'s text', () => {
       // Three posts so `(liker, post)` dedup does not refuse the second like
       // ahead of the karma rule (NODE_INTERFACE → Likes).
       const target1 = postId;
-      const target2 = insertNamedPost('scenario-1-second');
-      const target3 = insertNamedPost('scenario-1-third');
+      const target2 = insertNamedPost('one-box-second');
+      const target3 = insertNamedPost('one-box-third');
       const karma = seedKarma(liker.pub, 12n, 1);
       const deps = admissionDeps();
 
@@ -420,11 +445,35 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
       expect(pendingKarmaSpend(liker.pubHex)).toBe(2n);
     });
 
-    it('after a body confirms the first two likes, a like is still refused and a thread is admitted', () => {
-      const target1 = postId;
-      const target2 = insertNamedPost('scenario-1b-second');
-      const target3 = insertNamedPost('scenario-1b-after');
+    it('a confirming block holds the two likes, drains the pool, and a thread is admitted by createPost', async () => {
+      // Seed the karma box FIRST so the prover's bootstrap finds it in the
+      // store — the apply path's engine reads boxes through the tree view,
+      // and a box inserted after the bootstrap sits in the store without
+      // sitting under the state root.
       const karma = seedKarma(liker.pub, 12n, 1);
+      // The like targets must sit under the state root before a block can
+      // apply a like referencing them (NODE_INTERFACE → Karma transition
+      // rules). `seedCommittedState` writes the post record to the tree and
+      // the row to `block_topology` under the author the apply path reads.
+      const makeCommit = (content: string) => ({
+        contentHash: computeContentHash(content),
+        author: AUTHOR,
+        parentRefs: [] as string[],
+        protocolVersion: PROTOCOL_VERSION,
+        type: 'regular' as const,
+      });
+      const targets = [
+        'karma-spend admission subject',
+        'one-box-confirmed-second',
+        'one-box-confirmed-after',
+      ].map((content) => {
+        const commit = makeCommit(content);
+        return { postId: fixturePostId(commit), txId: fixtureTxId(commit), post: commit };
+      });
+      await seedCommittedState({ posts: targets }, 0);
+      const target1 = targets[0]!.postId;
+      const target2 = targets[1]!.postId;
+      const target3 = targets[2]!.postId;
       const deps = admissionDeps();
 
       const like1 = buildLike(liker, karma, target1);
@@ -433,11 +482,24 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
       const like2 = buildLike(liker, change1, target2);
       castLike(deps, like2, 10);
 
-      confirmPendingKarmaTxs([like1, like2], 10);
+      // The confirming block is built from the pool by `createOrderingBlock`
+      // — the function the mining template route calls — and applied by the
+      // path a submitted block takes (`submitMinedBlock`), one call of
+      // `mineNextBlock`.
+      startBlockCreator(miningConfig);
+      const block = await mineNextBlock({ createOrderingBlock, getCurrentTemplate, submitMinedBlock });
+      expect(block).not.toBeNull();
+      // The body holds the two user txs (and the settlement last), in order.
+      const ids = block!.utxoTxTree.utxoTxIds;
+      expect(ids.length).toBe(3);
+      expect(ids[0]).toBe(computeTxId(like1));
+      expect(ids[1]).toBe(computeTxId(like2));
 
-      // The confirmed sum is now 10 (the change-of-change). The pool is empty.
-      expect(storeKarmaValue(liker.pub)).toBe(10n);
+      // The pool is empty — the node's own cleanup drained the rows.
+      expect(getPendingEntries(100)).toHaveLength(0);
       expect(pendingKarmaSpend(liker.pubHex)).toBe(0n);
+      // The confirmed sum is 10 — the change-of-change box.
+      expect(storeKarmaValue(liker.pub)).toBe(10n);
 
       // A like at remaining 10, spend 1: 10 - 1 = 9 < floor 10 → refused.
       const change2 = pendingChangeBox(like2);
@@ -446,20 +508,22 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
       expect(() => castLike(deps, likeAfter, 11)).toThrow(/below the floor of 10/);
 
       // A thread: remaining 10 ≥ spend 5, floor not read on the post arm.
-      const threadTx = buildThread(liker, liveChange, 'a thread the owner can still write');
-      const threadResult = validateTx(deps, threadTx, 11);
-      expect(threadResult.valid).toBe(true);
+      // Through `createPost`, the function `POST /posts` calls.
+      const threadContent = 'a thread the owner can still write';
+      const threadTx = buildThread(liker, liveChange, threadContent);
+      const result = createPost(postServiceDeps(deps, () => 10), threadTx, threadContent);
+      expect(result.status).toBe('pending');
     });
   });
 
-  // -------- Scenario 2: 12 karma spread over two 6-value boxes --------
+  // -------- 12 karma spread over two 6-value boxes --------
 
   it('two 6-karma boxes: a like from each is admitted, a third is refused', () => {
     // Two posts are needed because `(liker, post)` dedup refuses the same
     // liker a second like on one post (NODE_INTERFACE → Likes).
     const postIdA = postId;
-    const postIdB = insertNamedPost('second-target-for-scenario-2');
-    const postIdC = insertNamedPost('third-target-for-scenario-2');
+    const postIdB = insertNamedPost('two-boxes-second');
+    const postIdC = insertNamedPost('two-boxes-third');
     const first = seedKarma(liker.pub, 6n, 1);
     seedKarma(liker.pub, 6n, 2);
     const deps = admissionDeps();
@@ -481,9 +545,9 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
     expect(() => castLike(deps, like3, 10)).toThrow(/below the floor of 10/);
   });
 
-  // -------- Scenario 3: a stale identity with effective karma of 10 --------
+  // -------- A stale identity with effective karma of 10 --------
 
-  it('a stale identity whose effective karma is 10: a like refused, two threads admitted, a third refused', () => {
+  it('a stale identity whose effective karma is 10: a like refused, a thread admitted by createPost', () => {
     // Stale is `lastActivityBlock + staleThresholdBlocks ≤ height` and
     // `karmaOwed` grants decay to the floor. We seed 20 face and record a
     // stale clock so `owed = 10` leaves `remaining = 10`.
@@ -513,13 +577,14 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
     expect(() => castLike(deps, likeTx, height)).toThrow(/below the floor of 10/);
 
     // A thread: remaining 10 ≥ spend 5, admitted (the post arm does not read
-    // the floor).
-    const t1 = buildThread(liker, karma, 'thread 1');
-    const t1Result = validateTx(deps, t1, height);
-    expect(t1Result.valid).toBe(true);
+    // the floor). Through `createPost`, the function `POST /posts` calls.
+    const content = 'thread 1';
+    const t1 = buildThread(liker, karma, content);
+    const result = createPost(postServiceDeps(deps, () => height - 1), t1, content);
+    expect(result.status).toBe('pending');
   });
 
-  // -------- Scenario 4: invite --------
+  // -------- Invite --------
 
   it('invite by a root holding the bond plus the floor: admitted at bond+KARMA_MINIMUM, refused at bond+KARMA_MINIMUM-1', () => {
     const inviter = newIdentity();
@@ -554,7 +619,41 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
     expect(caught!.message).toContain(`${bond}`);
   });
 
-  // -------- Scenario 5: vouch --------
+  it('a stale root with a thread in the pool is refused an invite, and the message names 5', () => {
+    // Face 1000, a stale clock (lastActivityBlock 0) at a height that drains
+    // its decay to the floor so `karmaOwed = 990` and `effectiveKarma = 10`.
+    // One POST_PRICE_THREAD (= 5) of karma spent by a pooled thread, so
+    // `held = 1000 - 5 = 995`, `owed = 990` over the confirmed sum, and
+    // `remaining = 995 - 990 = 5`.
+    const inviter = newIdentity();
+    putRoot(inviter.pub);
+    const inviteeKey = new Uint8Array(32).fill(0x77);
+    const karma = seedKarma(inviter.pub, 1000n, 1);
+    // decayAmount = 5, so 198 periods drain 1000 face to the floor of 10.
+    const height = (198 + 1) * KARMA_DECAY_INTERVAL_BLOCKS;
+    const deps = admissionDeps();
+
+    // A thread of POST_PRICE_THREAD (= 5) in the pool, through `createPost`.
+    const threadContent = 'a stale root posts a thread';
+    const threadTx = buildThread(inviter, karma, threadContent);
+    createPost(postServiceDeps(deps, () => height - 1), threadTx, threadContent);
+    expect(pendingKarmaSpend(Buffer.from(inviter.pub).toString('hex'))).toBe(POST_PRICE_THREAD);
+
+    // The invite reads `remaining = held − owed = 5`, below the bond's floor.
+    const change = pendingChangeBox(threadTx);
+    const inviteTx = buildInvite(inviter, change, config.inviteBondMin, inviteeKey);
+    let caught: ClientError | null = null;
+    try {
+      createInvite(deps, inviteTx, height);
+    } catch (err) {
+      caught = err as ClientError;
+    }
+    expect(caught).not.toBeNull();
+    expect(caught!.message).toMatch(/Insufficient karma to invite/);
+    expect(caught!.message).toMatch(/inviter holds 5/);
+  });
+
+  // -------- Vouch --------
 
   it('vouch cast at VOUCH_MIN_BALANCE: admitted; at VOUCH_MIN_BALANCE - 1: refused', () => {
     const voucher = newIdentity();
@@ -596,9 +695,9 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
     expect(caught!.message).toMatch(new RegExp(`need at least ${VOUCH_MIN_BALANCE}`));
   });
 
-  // -------- Scenario 6: the relay --------
+  // -------- The relay --------
 
-  it('handleRelayedTx refuses the third like of scenario 1, and the pool holds what it held', async () => {
+  it('handleRelayedTx refuses a third chained like over two pooled ones, and the pool holds what it held', async () => {
     const target1 = postId;
     const target2 = insertNamedPost('relay-second');
     const target3 = insertNamedPost('relay-third');
@@ -618,7 +717,6 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
 
     const { handleRelayedTx } = await import('../../src/services/handle-tx.js');
     // The handler logs the refusal and returns — the suite silences stdout.
-    const { vi } = await import('vitest');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
