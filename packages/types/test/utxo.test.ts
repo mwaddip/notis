@@ -2499,3 +2499,132 @@ describe('computeTxId with postWithdraw', () => {
     expect(computeTxId(decoded)).toBe(computeTxId(full));
   });
 });
+
+// ---------------------------------------------------------------------------
+// The karma box carries an own/income mark
+// ---------------------------------------------------------------------------
+
+/**
+ * TYPES_INTERFACE → KarmaBox, "An owner holds at most two karma boxes: their
+ * own box and one income box", and TYPES_INTERFACE → Layout — Boxes, the
+ * `karma` row of the trailing-fields table:
+ *
+ *   enum8(karma) ‖ vlqU64(value) ‖ vlqU(createdAtBlock) ‖ b32(owner) ‖ u8(income)
+ *
+ * The mark is the one byte at the end of the content tail. `0x00` is an own
+ * box, `0x01` is an income box, every other byte has no decoding — a bare
+ * `u8`, not an `opt()` with a payload (TYPES_INTERFACE → Totality names `u8
+ * (bare)` as the throwing writer).
+ *
+ * An own box decodes with NO `income` key at all — not a key holding
+ * `undefined`, so two decodings of one box cannot differ by a key.
+ *
+ * Written with a local type so the test tree compiles under KarmaBox's
+ * current shape AND under the shape this block anchors.
+ */
+describe('the karma box carries an own/income mark', () => {
+  type KarmaWithMark = CandidateOf<KarmaBox> & { income?: true };
+
+  const makeOwn = (): KarmaWithMark => ({
+    boxType: 'karma',
+    value: 100n,
+    createdAtBlock: FIXTURE_HEIGHT,
+    owner,
+  });
+
+  const makeIncome = (): KarmaWithMark => ({
+    boxType: 'karma',
+    value: 100n,
+    createdAtBlock: FIXTURE_HEIGHT,
+    owner,
+    income: true,
+  });
+
+  it('an own karma box round-trips, decoding with no income key', () => {
+    // The present tree already gets this right — an unmarked karma box has
+    // nothing in the trailing byte and the reader has no key to emit.
+    const own = makeOwn();
+    const record = boxRecordFromBytes(boxRecordBytes(own, GOLDEN_TX_ID, 0));
+    expect(record.candidate).toEqual(own);
+    expect('income' in (record.candidate as object)).toBe(false);
+  });
+
+  it.fails('an income karma box round-trips, decoding with income: true', () => {
+    const income = makeIncome();
+    const record = boxRecordFromBytes(boxRecordBytes(income, GOLDEN_TX_ID, 0));
+    expect(record.candidate).toEqual(income);
+    expect((record.candidate as KarmaWithMark).income).toBe(true);
+  });
+
+  it.fails('an own box and an income box differ in exactly one byte, at the tail', () => {
+    const ownBytes = canonicalBoxBytes(makeOwn());
+    const incomeBytes = canonicalBoxBytes(makeIncome());
+    expect(ownBytes.length).toBe(incomeBytes.length);
+    let diffs = 0;
+    let diffPos = -1;
+    for (let i = 0; i < ownBytes.length; i++) {
+      if (ownBytes[i] !== incomeBytes[i]) { diffs++; diffPos = i; }
+    }
+    expect(diffs).toBe(1);
+    expect(diffPos).toBe(ownBytes.length - 1);
+    expect(ownBytes[ownBytes.length - 1]).toBe(0x00);
+    expect(incomeBytes[incomeBytes.length - 1]).toBe(0x01);
+  });
+
+  it.fails('a karma box is one byte longer with the mark than without it', () => {
+    // The shared prefix at this height is `enum8(karma)` ‖ `vlqU64(100)` ‖
+    // `vlqU(300)` — 4 bytes — followed by `b32(owner)` 32 bytes and the mark
+    // `u8` 1 byte, 37 in total. Before the mark the tail stopped at the owner
+    // and the box was 36 bytes.
+    expect(canonicalBoxBytes(makeOwn()).length).toBe(37);
+  });
+
+  it.fails('an own box and an income box have different ids', () => {
+    expect(computeCandidateBoxId(makeOwn(), GOLDEN_TX_ID, 0))
+      .not.toBe(computeCandidateBoxId(makeIncome(), GOLDEN_TX_ID, 0));
+  });
+
+  it.fails('a mark byte of 0x02 has no decoding', () => {
+    // The mark sits at the last byte of `canonicalBoxBytes`, before the
+    // `b32(txId) ‖ vlqU(index)` tail `boxRecordBytes` appends.
+    const bytes = boxRecordBytes(makeOwn(), GOLDEN_TX_ID, 0);
+    const contentLen = canonicalBoxBytes(makeOwn()).length;
+    const bad = bytes.slice();
+    bad[contentLen - 1] = 0x02;
+    expect(() => boxRecordFromBytes(bad)).toThrow(ReaderError);
+  });
+
+  it.fails('a mark byte of 0xff has no decoding', () => {
+    const bytes = boxRecordBytes(makeOwn(), GOLDEN_TX_ID, 0);
+    const contentLen = canonicalBoxBytes(makeOwn()).length;
+    const bad = bytes.slice();
+    bad[contentLen - 1] = 0xff;
+    expect(() => boxRecordFromBytes(bad)).toThrow(ReaderError);
+  });
+
+  it.fails('a transaction with a marked karma output round-trips, keeping the mark', () => {
+    const tx: UtxoTransaction = {
+      inputs: [IN_1],
+      outputs: [makeIncome()],
+      signatures: {},
+      protocolVersion: 1,
+    };
+    const decoded = decodeTx(encodeTx(tx));
+    expect(decoded).toEqual(tx);
+    expect((decoded.outputs[0] as KarmaWithMark).income).toBe(true);
+  });
+
+  it('a transaction with an unmarked karma output round-trips, with no income key on the decoded output', () => {
+    // The present tree already gets this right — an unmarked karma output
+    // round-trips with no income key, which is the standing the mark preserves.
+    const tx: UtxoTransaction = {
+      inputs: [IN_1],
+      outputs: [makeOwn()],
+      signatures: {},
+      protocolVersion: 1,
+    };
+    const decoded = decodeTx(encodeTx(tx));
+    expect(decoded).toEqual(tx);
+    expect('income' in (decoded.outputs[0] as object)).toBe(false);
+  });
+});
