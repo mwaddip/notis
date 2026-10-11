@@ -70,6 +70,12 @@ candidate whose nonce, signature and `stateRoot` are placeholders (`NODE_INTERFA
 
 > ⚠ **AHEAD OF CODE (2026-10-11).** The owed-decay capture among the pre-body captures leads `apply-block`.
 
+**The owed-decay capture reads the record of every identity the body touches** — one the body leaves with no karma
+box among them, which the decay plans pass over: its posts are judged against `owed` as any other spend is. Only a
+post's author can be left with none (`NODE_INTERFACE → Karma transition rules`, "Only a post spends the floor"), and
+a post reads its author's record for the activity bump, so the capture adds no key to a block's lookups (→ The
+block's cost): it is that record's place among them, ahead of the body's, that the block's proof carries.
+
 **A block's signatures are checked together, before any transaction applies.** Once every declared id is proven,
 `applyBlock` gathers each entry of every embedded transaction's signature map — in body order, and within a
 transaction in its map's decoded order — as the signature, the transaction id's 32 bytes and the key, and makes one
