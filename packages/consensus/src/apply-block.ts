@@ -351,7 +351,10 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // `owed` for every identity the body touches, from the view as it stands
   // before the block writes. The sum reads the owner's live karma boxes once,
   // and the record once; `postBodyKarma`'s keys are the touched set in sorted
-  // owner-hex order, so the capture's reads follow that order.
+  // owner-hex order, so the capture's reads follow that order. An owner the
+  // body leaves with no karma box is read as every other is
+  // (CONSENSUS_INTERFACE → Applying a block → "The owed-decay capture reads
+  // the record of every identity the body touches").
   const preBodyOwed = new Map<string, bigint>();
   for (const { owner } of postBodyKarma.values()) {
     const face = state.getKarmaBoxes(owner).reduce((s, b) => s + b.value, 0n);

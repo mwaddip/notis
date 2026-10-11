@@ -836,3 +836,48 @@ describe('the spend rule is the arm\'s last word', () => {
     expect(s.view.digest()).toBe(before);
   });
 });
+
+// ---------------------------------------------------------------------------
+// A body that leaves its owner no karma box
+// ---------------------------------------------------------------------------
+
+describe('a body that leaves its owner no karma box', () => {
+  // Stale, three boxes of 5: face 15, effective 10, owed 5.
+  //  Thread 1 (spend 5): held=15, owed=5, remaining=10, 10 ≥ 5 ✓.
+  //  Thread 2 (spend 5): held=10, owed=5, remaining=5, 5 ≥ 5 ✓.
+  //  Thread 3 (spend 5): held=5, owed=5, remaining=0, 0 < 5 → refused.
+  it('a stale identity, face 15 effective 10 — the third thread is refused', () => {
+    const s = seed('empty-stale-3', [5n, 5n, 5n], { lastActivityBlock: 1 });
+    const boxes = s.view.getKarmaBoxes(s.actor.userId);
+    const t0 = threadTx(s.actor, boxes[0]!, 'one', H);
+    const t1 = threadTx(s.actor, boxes[1]!, 'two', H);
+    const t2 = threadTx(s.actor, boxes[2]!, 'three', H);
+    expectRefusedAt(s, [t0, t1, t2], t2, POST_RULE);
+  });
+
+  // Stale, three boxes of 5: face 15, effective 10, owed 5.
+  //  Thread 1 (spend 5): held=15, owed=5, remaining=10, 10 ≥ 5 ✓.
+  //  Thread 2 (spend 5): held=10, owed=5, remaining=5, 5 ≥ 5 ✓.
+  it('a stale identity, face 15 effective 10 — the first two threads are accepted', () => {
+    const s = seed('empty-stale-2', [5n, 5n, 5n], { lastActivityBlock: 1 });
+    const boxes = s.view.getKarmaBoxes(s.actor.userId);
+    const t0 = threadTx(s.actor, boxes[0]!, 'one', H);
+    const t1 = threadTx(s.actor, boxes[1]!, 'two', H);
+    expectAccepted(s, [t0, t1]);
+  });
+
+  // Fresh, three boxes of 5: face 15, owed 0.
+  //  Thread 1 (spend 5): held=15, owed=0, remaining=15, 15 ≥ 5 ✓.
+  //  Thread 2 (spend 5): held=10, owed=0, remaining=10, 10 ≥ 5 ✓.
+  //  Thread 3 (spend 5): held=5, owed=0, remaining=5, 5 ≥ 5 ✓.
+  // After the body the owner holds no karma box.
+  it('a fresh identity, face 15 — three threads accepted, the owner holds no karma box', () => {
+    const s = seed('empty-fresh-3', [5n, 5n, 5n], { lastActivityBlock: H - 1 });
+    const boxes = s.view.getKarmaBoxes(s.actor.userId);
+    const t0 = threadTx(s.actor, boxes[0]!, 'one', H);
+    const t1 = threadTx(s.actor, boxes[1]!, 'two', H);
+    const t2 = threadTx(s.actor, boxes[2]!, 'three', H);
+    expectAccepted(s, [t0, t1, t2]);
+    expect(karmaFaceOf(s.view, s.actor.userId)).toBe(0n);
+  });
+});
