@@ -15,7 +15,7 @@ import type { StateView } from './state-view.js';
 /**
  * The decay an owner owes at `height` — face less effective karma, over the
  * valuation `@dagsocial/types` holds (NODE_INTERFACE → Karma transition rules →
- * `karmaOwed(face, record, height, decayCfg)`). The one implementation of the
+ * "Engine inputs the rule needs"). The one implementation of the
  * formula: `applyBlock`'s pre-body capture reads it, and the node's admission
  * reads it over the confirmed set.
  */

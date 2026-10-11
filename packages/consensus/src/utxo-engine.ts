@@ -771,13 +771,12 @@ function checkTransitions(
             error: `A live vouch already exists for this (voucher, target) pair`,
           };
         }
-        // The voucher's balance clearing `VOUCH_MIN_BALANCE` is the spend
-        // rule's — a vouch cast is a non-post karma spend of
-        // `VOUCH_KARMA_AMOUNT`, so what remains of the voucher's effective
-        // karma covers the stake and leaves `KARMA_MINIMUM` standing, which is
-        // `KARMA_MINIMUM + VOUCH_KARMA_AMOUNT` = `VOUCH_MIN_BALANCE`
-        // (NODE_INTERFACE → Karma transition rules → "A karma spend is covered
-        // by effective karma, over the block's body as a whole").
+        // A vouch cast is a non-post karma spend of `VOUCH_KARMA_AMOUNT`, so
+        // the voucher's balance clearing `VOUCH_MIN_BALANCE` is the spend
+        // rule's: what remains of their effective karma covers the stake and
+        // leaves `KARMA_MINIMUM` standing, and `KARMA_MINIMUM +
+        // VOUCH_KARMA_AMOUNT` is `VOUCH_MIN_BALANCE` (NODE_INTERFACE → Karma
+        // transition rules → "Only a post spends the floor").
         // The vouch's cast height may not lag the carrying block by more than
         // VOUCH_CAST_HEIGHT_WINDOW blocks. Step 6 enforces the upper bound
         // (createdAtBlock <= currentBlockHeight).
@@ -883,9 +882,10 @@ function checkTransitions(
           };
         }
       }
-      // else: karma → karma only — consolidate, withdraw and a claim fall
-      // through here; the spend check below runs on every arm's successful
-      // exit and skips a transaction whose spend is 0.
+      // else: karma → karma only — a consolidation and a withdrawal end here.
+      // The spend check stands at the burn's exit and on this case's last
+      // line; a claim returns at its own exit and spends nothing (its
+      // username box carries 0).
       const finalSpend = spendCheck();
       if (!finalSpend.valid) return finalSpend;
 
