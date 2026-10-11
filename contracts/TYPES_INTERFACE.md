@@ -3276,7 +3276,7 @@ carries no PoW of its own.
 export const KARMA_STALE_THRESHOLD_BLOCKS = 40320;   // consensus — 28d grace at 60s blocks
 export const KARMA_DECAY_INTERVAL_BLOCKS = 1440;     // consensus — 24h decay period at 60s blocks
 export const KARMA_DECAY_AMOUNT = 5n;                // consensus — karma burned per interval
-export const KARMA_MINIMUM = 10n;                    // consensus — floor, decay never reduces below
+export const KARMA_MINIMUM = 10n;                    // consensus — floor: decay never reduces below it, and only a post spends it
 ```
 
 > ⚠ **The two `*_BLOCKS` values above were CORRECTED on 2026-08-06 from a 2-minute basis.**
@@ -3387,7 +3387,7 @@ reaches: `k · N` for `N` a `u32`.
 
 ```typescript
 export const VOUCH_KARMA_AMOUNT = 1n;              // consensus — karma escrowed per vouch
-export const VOUCH_MIN_BALANCE = 11n;              // consensus — minimum balance to cast a vouch
+export const VOUCH_MIN_BALANCE = KARMA_MINIMUM + VOUCH_KARMA_AMOUNT;   // consensus — minimum balance to cast a vouch: the floor and the stake
 export const VOUCH_COOLDOWN_BLOCKS = 60;           // consensus — blocks before escrow is released
 export const VOUCH_CAST_HEIGHT_WINDOW = 5;         // consensus — a cast's createdAtBlock may lag its carrying block by at most this many blocks
 ```

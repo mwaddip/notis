@@ -124,7 +124,7 @@ none replays a block (`CONSENSUS_INTERFACE → The tree session`).
 | `KARMA_STALE_THRESHOLD_BLOCKS` | `40320` | 28 days at 60 s | consensus → profile | user ruling, 2026-08-19: 28 days | RULED | `TYPES_INTERFACE → Network profiles` |
 | `KARMA_DECAY_INTERVAL_BLOCKS` | `1440` | 24 h at 60 s | consensus → profile | none stated for the duration; the unit is 60-second blocks | CHOSEN | `TYPES_INTERFACE → Karma` |
 | `KARMA_DECAY_AMOUNT` | `5n` | 5 karma per period | consensus | none stated | CHOSEN | `ARCHITECTURE → Karma decay` |
-| `KARMA_MINIMUM` | `10n` | the decay floor | consensus | none stated | CHOSEN | `ARCHITECTURE → Karma decay` |
+| `KARMA_MINIMUM` | `10n` | the decay floor, and the karma only a post spends | consensus | none stated for the number; its use for posting alone is the user's ruling, 2026-10-11 | CHOSEN | `ARCHITECTURE → Karma decay` |
 
 ### Post price and likes
 
@@ -149,7 +149,7 @@ none replays a block (`CONSENSUS_INTERFACE → The tree session`).
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `VOUCH_KARMA_AMOUNT` | `1n` | one vote stakes 1 karma | consensus | user ruling, 2026-08-07 | RULED | `NODE_INTERFACE → Vouch transition rules` |
-| `VOUCH_MIN_BALANCE` | `11n` | summed karma balance to cast | consensus | none stated | CHOSEN | `ARCHITECTURE → Vouch boxes` |
+| `VOUCH_MIN_BALANCE` | `11n` | summed karma balance to cast | consensus | `KARMA_MINIMUM + VOUCH_KARMA_AMOUNT` — the floor every spend but a post leaves, and the stake | DERIVED | `NODE_INTERFACE → Vouch transition rules` |
 | `VOUCH_COOLDOWN_BLOCKS` | `60` | 1 h at 60 s | consensus → profile | none stated | CHOSEN | `ARCHITECTURE → Vouch boxes` |
 | `VOUCH_CAST_HEIGHT_WINDOW` | `5` | a vouch output's `createdAtBlock` may lag its carrying block by at most 5 | consensus | protocol-level, the same on every network — never a profile field; none stated for the number | CHOSEN | `NODE_INTERFACE → Vouch transition rules` |
 
@@ -379,7 +379,7 @@ check can tell an omission from an exclusion.
 
 - **CHOSEN is the largest class after the derived and decided ones**, and it is the class no marker
   in the tree names: `MAX_CONTENT_BYTES`, `MAX_BLOCK_BODY_BYTES`, `MAX_TX_BYTES`, the karma decay
-  pair and floors, `VOUCH_MIN_BALANCE`, `VOUCH_COOLDOWN_BLOCKS`, `GENESIS_KARMA_PER_MEMBER`,
+  pair and floors, `VOUCH_COOLDOWN_BLOCKS`, `GENESIS_KARMA_PER_MEMBER`,
   `CREDIT_MINER_REWARD_DELAY`, and most of net's bounds. None is marked
   provisional, and none has an argument on record. Marking or arguing them is a decision for their
   owner, not for this register.

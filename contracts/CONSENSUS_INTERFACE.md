@@ -59,13 +59,16 @@ ApplyResult = { ok: true; effects: BlockEffects } | { ok: false; reason: string 
 **`applyBlock` is the mutation phase** (`NODE_INTERFACE → "Apply funnel: validation and mutation phases"`), in its
 order: the block's posts and their topology rows · the body decoded, every declared id proven, the settlement found by
 position · every signature the body carries, checked as one batch · the pre-body captures (decay's projection and
-plans, the releasable escrows, the lapsed vouches, the backer
+plans, the decay each identity the body touches owes — `validateTx`'s `owed`, `NODE_INTERFACE → Karma transition
+rules` — the releasable escrows, the lapsed vouches, the backer
 pool) · the user transactions in committed order — inputs resolved, `validateTx`, the like binds, one invitee per
 block, `applyTx`, the post's activity bump, the like record, the name claim or burn · the withdrawals · the settlement
 (`checkSettlement`, then applied) · the grants · the like counters · the membership pass · the decay clocks. It runs at
 `block.header.height` and reads no other header field but `validatorId`: the node has run the checks that need the
 chain first (`NODE_INTERFACE → Ordering block apply-time authorization`), and the creator's speculative run passes a
 candidate whose nonce, signature and `stateRoot` are placeholders (`NODE_INTERFACE → Post-block stateRoot`).
+
+> ⚠ **AHEAD OF CODE (2026-10-11).** The owed-decay capture among the pre-body captures leads `apply-block`.
 
 **A block's signatures are checked together, before any transaction applies.** Once every declared id is proven,
 `applyBlock` gathers each entry of every embedded transaction's signature map — in body order, and within a

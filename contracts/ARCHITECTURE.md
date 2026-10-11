@@ -421,6 +421,10 @@ inactivity an identity's karma decays *virtually*: every karma-sufficiency
 read computes the **effective** value from committed state, and the face
 values in boxes move only when a transaction touches the identity.
 
+> ⚠ **AHEAD OF CODE (2026-10-11).** "The floor is the way back", the body-wide half of "Sufficiency
+> reads effective; conservation stays face" and the vouch balance under Vouch boxes lead `consensus`'
+> karma arm.
+
 - **Staleness:** `(height − lastActivityBlock) >= KARMA_STALE_THRESHOLD_BLOCKS`,
   read from the identity record — the committed clock, not box heights.
 - **Effective value:** `faceTotal − owedPeriods · KARMA_DECAY_AMOUNT`, clamped
@@ -431,7 +435,17 @@ values in boxes move only when a transaction touches the identity.
   implementation per rule").
 - **Sufficiency reads effective; conservation stays face.** A transaction's
   value-conservation equality is over face values, unconditionally; whether an
-  identity *may* spend is judged against effective.
+  identity *may* spend is judged against effective — over a block's body as a
+  whole: what its transactions spend of an identity's karma totals at most the
+  identity's effective value before the body, so the decay it owes is still
+  there for the settlement to burn (`NODE_INTERFACE → Karma transition rules`).
+- **The floor is the way back.** Posting is the one spend that earns karma — a
+  like pays a post's author — and the one that resets the activity clock, so the
+  last `KARMA_MINIMUM` of an identity's effective karma is a post's alone: a
+  thread or a reply may spend it, and a like, an invite, a vouch cast and a name
+  burn leave it standing. It binds every identity, stale or not; one that spent
+  its floor on anything else would hold nothing to post with and have no way to
+  earn more (user, 2026-10-11).
 - **Squaring, per identity, on touch:** when a block's body consumes any of an
   identity's karma boxes, that block's settlement squares the identity — it
   consumes their post-body karma boxes and re-emits the effective value to the
@@ -469,7 +483,7 @@ holding different values diverge. Classes are defined in
 | `KARMA_STALE_THRESHOLD_BLOCKS` | **consensus** | 40320 | Grace period before decay begins (28d at 60s blocks) |
 | `KARMA_DECAY_INTERVAL_BLOCKS` | **consensus** | 1440 | Decay period (24h at 60s blocks) |
 | `KARMA_DECAY_AMOUNT` | **consensus** | 5 | Karma burned per period |
-| `KARMA_MINIMUM` | **consensus** | 10 | Floor — decay never reduces below this |
+| `KARMA_MINIMUM` | **consensus** | 10 | Floor — decay never reduces below this, and only a post spends it |
 
 > ✅ **RESOLVED — closed by P2-A, re-verified 2026-08-11.** None of the four is
 > environment-readable. In `node/src/config.ts`, `karmaStaleThresholdBlocks` and
@@ -582,12 +596,13 @@ unspent escrow names the voucher, and the escrow stands until the settlement at
 cooldown window however briefly each vouch is held — the anti-spam property,
 priced identically for a rapid cycler and a long-term voucher.
 
-The minimum karma
-balance to cast a vouch is `VOUCH_MIN_BALANCE` (11) — **a balance, summed across
-the voucher's karma boxes, not the value of any single one.** Both halves hold
-in the engine: the cast arm reads the summed `getKarmaValue` at apply, so the
-rule travels with the transaction, and the service gate reads the same
-function.
+A cast leaves the floor standing, as every spend but a post does (§Karma decay):
+the minimum karma balance to cast a vouch is `VOUCH_MIN_BALANCE` (11) —
+`KARMA_MINIMUM` and the stake, of what remains of the voucher's effective karma
+— **a balance, summed across the voucher's karma boxes, not the value of any
+single one.** The engine's karma arm judges it at apply, so the rule travels
+with the transaction, and the service gate applies the same threshold as a
+courtesy.
 
 ```
 VouchEscrowBox {
@@ -1517,8 +1532,9 @@ chain or owed one:
 | **the tree layout** (2026-09-30) | every tree key and its width (`TREE_KEY_LENGTH`, 65), so every `stateRoot` and all three `genesisStateRoot` pins; the tree gains post, like and index entries and a cast count per voucher; the name record gains `claimedAtBlock`; the lapse leg's order, so the settlement of every block with two or more lapsed vouches. **Owes the reset**, which it rides with the block proof (N3) |
 | **the block proof** (2026-09-30) | the header's eleventh field, `adProofsRoot`, so every block hash; the budget's verdict — a block over `MAX_BLOCK_COST` is refused, which moves the verdict of a body of more than 6 000 signatures. **Owes the reset**, and rides the tree layout's |
 | **the rent rule** (2026-10-10) | the verdict of a `credit` spend with a box past its rent period among its inputs — with a key in the map every input requires its owner's signature, so the owner's own spend is admitted and a spend its owner did not sign is refused; and the verdict of a rent collection whose successors do not answer one input each, or carry a lock (NODE_INTERFACE → Storage rent is a transition requiring no signature). **Owes the reset**, and rides the tree layout's |
+| **the karma spend rule** (2026-10-11) | the verdict of a karma transaction that spends — a thread, a reply, a like, an invite, a vouch cast, a name burn: refused where what remains of its owner's effective karma, as the body's transactions ahead of it have left it, does not cover the spend, and for every spend but a post where it would not leave `KARMA_MINIMUM` standing (NODE_INTERFACE → Karma transition rules). **Owes the reset**, and rides the tree layout's |
 
-**Outstanding against the live node: the tree layout, the block proof and the rent rule** (the three rows above). Testnet's live chain began at the
+**Outstanding against the live node: the tree layout, the block proof, the rent rule and the karma spend rule** (the four rows above). Testnet's live chain began at the
 2026-09-15 reset; every row above is in it, and the usernames row owes none. The profile leaves testnet's `genesisId`
 empty (§What varies per network) until the reset the tree layout owes mines a new block 1.
 

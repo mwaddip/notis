@@ -34,6 +34,7 @@ CREATE TABLE mempool (
     tx_inputs TEXT, tx_output_ids TEXT,         -- conflict-gate metadata
     tx_id TEXT,                                 -- the entry's own TxId (confirmed-entry cleanup)
     username_lower TEXT, username_claimant TEXT, -- claim-gate metadata (below)
+    karma_owner TEXT, karma_spend INTEGER,      -- spend-gate metadata (below)
     cost_estimate INTEGER                       -- the cost gate's marginal cost (§The cost gate); NULL uncosted
 );
 
@@ -97,6 +98,8 @@ Nullable, populated by `insertUtxoTx` from the transaction outputs, indexed
 | `vouch_target` | a `vouch` output | `targetId` (hex) — `hasPendingVouch` keys on the pair |
 | `username_lower` | a `username` output — a claim | the name's canonical form, the byte-wise ASCII lowercase (`TYPES_INTERFACE` → Content limits) |
 | `username_claimant` | a `username` output — a claim | its `owner` (hex) |
+| `karma_owner` | an output of type `karma_price`, `like_accrual`, `bond` or `vouch` — a karma spend (`NODE_INTERFACE` → Karma transition rules) AND `tx.signatures` has exactly one key | that key (hex) — the karma inputs' owner, the one key `validateTx` admits in a karma transaction's map. **Any other key count → NULL**, as `like_liker` |
+| `karma_spend` | the same | the summed value of those outputs — the transaction's spend |
 
 ---
 
@@ -152,6 +155,7 @@ countPendingInvites(inviterId: string): number
 hasPendingVouch(voucherId: string, targetId: string): boolean
 hasPendingClaim(nameLower: string): boolean
 hasPendingClaimBy(claimantId: string): boolean
+pendingKarmaSpend(ownerId: string): bigint
 ```
 
 SQL `EXISTS`/`COUNT` over the gate-metadata columns — never a bounded scan.
@@ -162,6 +166,16 @@ other pending casts are no reason to refuse one. `hasPendingClaim` mirrors one l
 form and `hasPendingClaimBy` one name per identity (`NODE_INTERFACE` → Username transition rules). **A
 burn needs no gate of its own**: it spends the name box, and a second spend of that box is the
 pending-spend conflict every transaction meets.
+
+> ⚠ **AHEAD OF CODE (2026-10-11).** `pendingKarmaSpend`, its two columns and the paragraph below lead the store
+> and the two deps literals that pool a transaction.
+
+**`pendingKarmaSpend` is an input of `validateTx`, not a gate a path can skip.** It answers the `SUM` of
+`karma_spend` over the rows whose `karma_owner` is the owner — what the pool's karma transactions have
+already spent of that owner's karma, `0n` where it holds none. Admission's `held` is the confirmed karma
+sum less it (`NODE_INTERFACE` → Karma transition rules), in the deps of the HTTP routes and of the relay
+alike, so a transaction is judged against the owner's karma as the pool's entries ahead of it leave it. An
+entry that leaves the pool — confirmed, expired or removed — leaves the sum with its row.
 
 ### The cost gate
 
