@@ -184,7 +184,9 @@ cost is over `MAX_BLOCK_COST` (`CONSENSUS_INTERFACE → The block's cost`), the 
 block is refused for its signatures alone, before its cost is counted. **A transaction that cannot be costed alone is
 admitted on the other gates** — one spending a pooled output, a settlement the tip cannot build, a node with no prover:
 packing trims it if it does not fit. Without it a transaction no block can carry would sit in the pool, trimmed from
-every template until it expired. A transaction that fits alone may still be
+every template until it expired. **The run reads two karma boxes per owner at most**
+(`CONSENSUS_INTERFACE → The block's cost`), so what an owner holds does not price their transaction out of
+the gate. A transaction that fits alone may still be
 trimmed from a full block: that is packing (`MINING_INTERFACE → Template and submit → "Packing to the budget"`), not
 admission.
 
@@ -213,6 +215,25 @@ Block finalization`). The relay path validates against the confirmed set alone (
 stricter and orders the same way. ⛔ **Never block application's.** Apply resolves inputs against the
 confirmed set (`NODE_INTERFACE → Block finalization`); a block's inputs decided by one node's unshared
 pool would be a fork.
+
+### getOwnKarmaBoxIdsWithPending
+
+```
+getOwnKarmaBoxIdsWithPending(ownerId: string): string[]
+```
+
+`getBoxWithPending`'s view, asked by owner: the ids of the owner's **unmarked** karma boxes among the
+confirmed set and the pooled transactions' outputs, less every box a pooled transaction spends. It is
+submission's `getOwnKarmaBoxIds` — rule 3 of `NODE_INTERFACE → Karma transition rules → "An identity
+holds at most two karma boxes"` — and nothing else's. An owner with a pooled karma spend holds that
+spend's change, and none where it returned no change; an owner with nothing pooled holds their
+confirmed own box. So a transaction that chains on a pooled spend names its change, and one that names
+the income box alone is admitted exactly where the pool's entries ahead of it leave the owner no own
+box. The pooled rows are found by `karma_owner`, never by a scan. The relay answers the same rule over
+the confirmed set, as it resolves inputs.
+
+> ⚠ **AHEAD OF CODE (2026-10-12).** The read and its wiring lead `node/src/store/mempool.ts` and the HTTP routes'
+> deps.
 
 ### getPendingEntries
 
@@ -463,7 +484,21 @@ above `MAX_SETTLEMENT_BYTES`, as the first ends it at the body budget; it is bli
 to its first protocol-box input, a few bytes across the body, and it counts the whole lapse list under an unvouch that
 takes a vouch out of it — over, the safe direction. **A pop for the settlement drops the tail entries whose
 marginal bytes cover the overshoot**, never one entry a rebuild: an entry that adds nothing to the settlement — an
-ordinary karma transfer — takes nothing off it. **So the settlement's loop runs at most once, but for a returned
+ordinary karma transfer by an owner who owes no decay — takes nothing off it.
+
+⛔ **An entry whose owner owes decay adds the squaring.** Its figure is `settlementMarginalBytes` plus
+`decayLegMaxBytes` — two inputs and one karma output at most (`CONSENSUS_INTERFACE → The settlement build`) — in the
+accumulator and in the pop's covering sum alike. The predicate is `karmaOwed > 0n` for the entry's `karma_owner` at
+the block's height over confirmed state, the reader admission's `owed` already is (`NODE_INTERFACE → Karma transition
+rules → "Engine inputs the rule needs"`). It holds wherever the settlement squares that owner: a body adds no karma to
+an owner's boxes, so what they owe after it is never more than before. Two entries of one such owner both reserve it —
+over, the safe direction. **A leg the covering sum does not price is a leg a pop cannot take off**: an overshoot made
+of unpriced bytes is covered by no tail, and the pop then drops the whole selection. **The income box's input is
+bounded and not priced**, as the carry box's is: one per paid owner, beside marker terms that each take their own
+input off with the entry.
+
+> ⚠ **AHEAD OF CODE (2026-10-12).** The decay term leads `node/src/services/block-creator.ts`, whose accumulator and
+> covering sum price no squaring. **So the settlement's loop runs at most once, but for a returned
 vouch**: a dropped tail holding such an unvouch covers the overshoot and returns that vouch's bytes, and the loop pops
 again where the rebuilt settlement is still over. The settlement's pop runs after the body's, and popping only shrinks
 the tree, so it cannot reopen the body's bound. Measured 2026-09-30, a pool of fee-paying transfers meets the settlement's

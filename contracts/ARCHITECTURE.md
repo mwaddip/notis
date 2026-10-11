@@ -399,8 +399,24 @@ KarmaBox {
   value: bigint                // Karma balance (bigint base units — see value denomination)
   owner: PublicKey             // Ed25519 public key (32 bytes)
   createdAtBlock: number       // The height its creator DECLARED (<= current height)
+  income?: true                // the mark: the owner's income box; absent on their own box
 }
 ```
+
+**An identity holds at most two karma boxes: its own, and one income box.** The own box is the one
+its transactions spend and return change to. The income box is where a block's settlement pays the
+identity — like payouts, the vested part of a bond, a returned vouch — and the settlement adds to that
+one box for as long as the identity leaves it there. A spend names the own box and may take the income
+box with it; it makes at most one karma output, never a marked one. Both are the identity's karma
+wherever it is counted. **So nothing an identity is paid, and nothing it does, grows what a block
+reads for it**: two boxes is the ceiling (`NODE_INTERFACE → Karma transition rules → "An identity
+holds at most two karma boxes"`).
+
+**The income box is what keeps a payout from breaking a waiting transaction.** A payout that merged
+into the box an identity spends would replace it, and every transaction of theirs still in a pool
+would name a box that no longer exists. Paid beside it, the own box stands until its owner spends it.
+
+> ⚠ **AHEAD OF CODE (2026-10-12).** The two-box rule and the mark lead `types`, `consensus` and the builders.
 
 Provenance is `txId`/`index`, not a field on the box. A mint's `txId` is
 `computeMintTxId(height, reason, subject)`, whose `reason` tag names why the karma
@@ -412,7 +428,7 @@ transfers between existing accounts are forbidden — this is what makes karma
 non-tradeable. An account's karma box can be consumed only to:
 - Create invite boxes
 - Create like boxes (spending karma to vote)
-- Create a new karma box for the same owner (a balance change)
+- Create one new karma box for the same owner (a balance change)
 
 #### Karma decay (virtual, squared on touch)
 
@@ -968,9 +984,13 @@ For an author with `n` markers this block — likes received and replies to thei
 and a carry box holding `r`, in ascending author-hex order, where `x = LIKES_PER_KARMA_PAYOUT`:
 
 ```
-settlement   markers×n + carry(r) → authorKarma(+q·(x−1)) + pool(+q) + carry(r′)
+settlement   markers×n + carry(r) → income(author)(+q·(x−1)) + pool(+q) + carry(r′)
              total = n + r,   q = ⌊total / x⌋,   r′ = total mod x
 ```
+
+**The author's share lands in their income box** (§Karma boxes): the settlement sums what a block pays
+an identity and adds it to that one box, so a liked author's range never grows by a like
+(`NODE_INTERFACE → The settlement transaction → "The income leg pays each owner once"`).
 
 ✅ **The payout draws from the accrual, never from the pool.** The likers funded it; on this path
 the pool is a **sink** and never a source. Per `x` likes: likers paid `x`, the author receives

@@ -579,13 +579,17 @@ constraint and must not be described as one.
 KarmaBox extends BoxBase {
   boxType: "karma"
   owner: Uint8Array            // 32 raw bytes — Ed25519 public key
+  income?: true                // the mark: present on the owner's income box, absent on their own box
 }
 ```
+
+> ⚠ **AHEAD OF CODE (2026-10-12).** `income`, its byte (→ Layout — Boxes) and the two-box rule below lead
+> `types/src/utxo.ts`, `consensus` and every builder of a karma spend.
 
 Karma boxes are non-tradeable. They can only be consumed by the owner to:
 - Create a bond box (inviting — ARCHITECTURE → Invite System)
 - Fund a like — the `LIKE_KARMA_COST` rides the transaction's own `LikeAccrualBox` marker
-- Create a new karma box for the same owner (balance change)
+- Create one new karma box for the same owner, unmarked (balance change)
 - Pay a post's price into a `KarmaPriceBox` — and a reply's `REPLY_AUTHOR_SHARE` into a
   `LikeAccrualBox` for the parent's author (ARCHITECTURE → The post price)
 - Create a vouch box (staking for another member)
@@ -598,10 +602,17 @@ clock it nominally represented now lives in the committed per-identity record
 preimage. A mint's `txId` is `computeMintTxId(height, reason, subject)`, whose `reason` tag
 names why the karma was created; a user-path box carries the transaction that made it.
 
-⚠ **Settlement karma outputs do not consolidate** — they land beside whatever karma the owner
-already holds. The one block-application path that consumes an owner's boxes and re-emits one is
-decay's squaring (`ARCHITECTURE → Karma decay`), and nothing it chooses between reaches an id
-preimage: `getKarmaBoxes` orders by `value DESC, id`, a total order.
+**An owner holds at most two karma boxes: their own box and one income box**
+(`NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes"`). `income` is
+the mark that tells them apart, and it is the settlement's alone to write: everything a block's
+settlement pays an owner lands in their one marked box (`NODE_INTERFACE → The settlement transaction →
+"The income leg pays each owner once"`), and a karma output of a user transaction never carries it. An
+own box is the one a user transaction, decay's squaring, the invite grant or genesis made. Both are the
+owner's karma wherever it is summed. `income` is `true` or absent, never `false`: one shape per box, so
+two decodings of one box cannot differ by a key.
+
+`getKarmaBoxes` orders by `value DESC, id`, a total order, and nothing it chooses between reaches an id
+preimage.
 
 ### CreditBox
 
@@ -1995,7 +2006,7 @@ from this table — a use that reads every cell as an instruction rather than as
 
 | Type | Trailing fields |
 |---|---|
-| `karma` | `b32(owner)` |
+| `karma` | `b32(owner)` ‖ `u8(income)` — `0x00` an own box, `0x01` an income box; any other byte has no decoding (→ KarmaBox) |
 | `credit` | `b32(owner)` ‖ `opt(lockedUntilBlock, vlqU)` |
 | `invite` | `b32(inviterId)` ‖ `b32(inviteePublicKey)` |
 | `genesis_proof` | `lp(payload)` |
@@ -3097,10 +3108,15 @@ enforces on one field; these bound whole structures and no codec consults them.
 **The settlement has its own bound because it is derived.** `MAX_TX_BYTES` exists so a transaction
 cannot be valid, poolable and unminable at once (below); a settlement is never pooled, and its size
 is a function of the body and of chain state — one 32-byte input per like marker, per fee box, per
-settling bond, per releasable escrow, per price box, per lapsed vouch; one karma output per paid
-author or owner, one escrow output per lapsed vouch (measured: 70 bytes with the four protocol
+settling bond, per releasable escrow, per price box, per lapsed vouch, per paid owner's income box, and
+two at most per owner decay squares; one karma output per paid owner and one per decayed owner, one
+escrow output per lapsed vouch (measured: 70 bytes with the four protocol
 outputs and nothing else, +32 per input, +38 per karma output). **The settlement, not the encoding, sets the per-block ceiling on likes**: the bound
 divided by the marker input's 32 bytes, less what the block's other legs take.
+
+> ⚠ **AHEAD OF CODE (2026-10-12).** The income box's input, the two-input ceiling of a decayed owner and
+> the karma output's byte for the mark lead `consensus/src/settlement.ts`; the `+38` is the measure
+> before the mark and is re-measured with it.
 
 **Two relations are the rule; the numbers are provisional** (`CONSTANTS → Size caps`).
 
@@ -3139,7 +3155,8 @@ this does not.
 transactions per block. **A transaction costs `32 + vlqU(len) + len` in the body** — the fixed-width
 `utxoTxIds` entry plus the `lp` prefix `arr(utxoTxs, lp)` writes before each one, so 34 bytes of
 framing at present transaction sizes, not 32. `MAX_TX_BYTES` admits roughly 148 credit inputs at the current encoding and
-288 under the positional one — far past any single consolidation a wallet builds. Its job is to keep
+288 under the positional one — far past a karma spend, which names two boxes at most
+(`NODE_INTERFACE → Karma transition rules`). Its job is to keep
 a transaction from being valid, poolable and unminable at once: without it, one larger than the block
 budget occupies a mempool slot that no block can ever drain.
 
