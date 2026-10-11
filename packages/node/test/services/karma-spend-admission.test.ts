@@ -547,10 +547,10 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
 
   // -------- A stale identity with effective karma of 10 --------
 
-  it('a stale identity whose effective karma is 10: a like refused, a thread admitted by createPost', () => {
+  it('a stale identity whose effective karma is 10: a like refused, two threads admitted over the pool, a third refused by the post rule', () => {
     // Stale is `lastActivityBlock + staleThresholdBlocks ≤ height` and
-    // `karmaOwed` grants decay to the floor. We seed 20 face and record a
-    // stale clock so `owed = 10` leaves `remaining = 10`.
+    // `karmaOwed` grants decay to the floor. Face 20 under a stale clock
+    // gives `owed = 10`, leaving `effectiveKarma = 10`.
     const karma = seedKarma(liker.pub, 20n, 1);
     const rec: IdentityRecord = {
       lastActivityBlock: 0,
@@ -567,21 +567,57 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
     const height = KARMA_STALE_THRESHOLD_BLOCKS + 1000;
     const deps = admissionDeps();
 
-    // The pre-body effective karma is 10 under these settings.
+    // Pre-body: held 20, owed 10, remaining 10.
     const face = storeKarmaValue(liker.pub);
     const remaining = effectiveKarma(face, rec, height, deps.decayCfg);
     expect(remaining).toBe(10n);
 
-    // A like: 10 - 1 = 9 < floor 10 → refused.
+    // A like — held 20, pending 0, owed 10; remaining − spend = 9 < floor 10,
+    // refused with the floor's text.
     const likeTx = buildLike(liker, karma, postId);
     expect(() => castLike(deps, likeTx, height)).toThrow(/below the floor of 10/);
 
-    // A thread: remaining 10 ≥ spend 5, admitted (the post arm does not read
-    // the floor). Through `createPost`, the function `POST /posts` calls.
-    const content = 'thread 1';
-    const t1 = buildThread(liker, karma, content);
-    const result = createPost(postServiceDeps(deps, () => height - 1), t1, content);
-    expect(result.status).toBe('pending');
+    // Thread 1 through `createPost`, the function `POST /posts` calls — held
+    // 20, pending 0, owed 10; remaining 10 ≥ spend 5. Admitted; the pool's
+    // karma spend by the owner is POST_PRICE_THREAD.
+    const t1Content = 'thread 1';
+    const t1 = buildThread(liker, karma, t1Content);
+    const r1 = createPost(postServiceDeps(deps, () => height - 1), t1, t1Content);
+    expect(r1.status).toBe('pending');
+    expect(pendingKarmaSpend(liker.pubHex)).toBe(POST_PRICE_THREAD);
+
+    // Thread 2 spends thread 1's pooled change box — held 20 − 5 = 15, owed 10;
+    // remaining 5 ≥ spend 5. Admitted; the pool's karma spend by the owner is
+    // 2 × POST_PRICE_THREAD.
+    const change1 = pendingChangeBox(t1);
+    const t2Content = 'thread 2';
+    const t2 = buildThread(liker, change1, t2Content);
+    const r2 = createPost(postServiceDeps(deps, () => height - 1), t2, t2Content);
+    expect(r2.status).toBe('pending');
+    expect(pendingKarmaSpend(liker.pubHex)).toBe(POST_PRICE_THREAD * 2n);
+
+    // Thread 3 spends thread 2's pooled change — held 20 − 10 = 10, owed 10;
+    // remaining 0 < spend 5. Refused by the engine's post rule, naming a
+    // `remaining` of 0.
+    const change2 = pendingChangeBox(t2);
+    const t3Content = 'thread 3';
+    const t3 = buildThread(liker, change2, t3Content);
+    let caught: ClientError | null = null;
+    try {
+      createPost(postServiceDeps(deps, () => height - 1), t3, t3Content);
+    } catch (err) {
+      caught = err as ClientError;
+    }
+    expect(caught).not.toBeNull();
+    expect(caught!).toBeInstanceOf(ClientError);
+    expect(caught!.message).toMatch(
+      /Karma spend of 5 exceeds what remains of the owner's effective karma \(0\)/,
+    );
+
+    // The pool stands as it stood after thread 2 — two entries, karma spend
+    // 2 × POST_PRICE_THREAD.
+    expect(getPendingEntries(100)).toHaveLength(2);
+    expect(pendingKarmaSpend(liker.pubHex)).toBe(POST_PRICE_THREAD * 2n);
   });
 
   // -------- Invite --------
