@@ -211,6 +211,24 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
   switch (box.boxType) {
     case 'karma':
       writeBytesNOrThrow(w, box.owner, 32);
+      // TYPES_INTERFACE → KarmaBox. The mark: `0x00` an own box, `0x01` an
+      // income box. The field is `income?: true`, so `true` and absent are the
+      // two in-domain values and a key holding `undefined` writes the same byte
+      // as absence. Every other value — `false`, a number, a string — is out of
+      // domain, and the u8 (bare) writer throws there rather than sentinelling
+      // (TYPES_INTERFACE → Totality names `u8 (bare)` as the throwing arm;
+      // the whole fixed-width-writer discipline is to refuse what has no
+      // in-domain encoding so a malformed box can never share a well-formed
+      // box's id).
+      if (box.income === true) {
+        w.writeU8(1);
+      } else if (box.income === undefined) {
+        w.writeU8(0);
+      } else {
+        throw new Error(
+          `writeBoxTypeFields: karma.income out of domain: ${String(box.income)}`,
+        );
+      }
       return;
     case 'credit':
       writeBytesNOrThrow(w, box.owner, 32);
@@ -312,13 +330,26 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
   // thirteen arms, so no arm can walk the shared prefix differently from another.
   const createdAtBlock = readVlqU(r);
   switch (boxType) {
-    case 'karma':
-      return {
-        boxType,
-        value,
-        createdAtBlock,
-        owner: readBytesN(r, 32),
-      };
+    case 'karma': {
+      const owner = readBytesN(r, 32);
+      // TYPES_INTERFACE → KarmaBox. The mark is a bare `u8`, not an `opt()`
+      // with a payload: `0x00` emits a box with no `income` key, `0x01` emits
+      // one with `income: true`, every other byte has no decoding
+      // (WIRE_INTERFACE → ReaderError codes: `invalid-tag` for a discriminant
+      // outside its set). A box with no key is NOT a key holding `undefined`
+      // — so two decodings of one box cannot differ by a key.
+      const mark = r.readU8();
+      if (mark === 0) {
+        return { boxType, value, createdAtBlock, owner };
+      }
+      if (mark === 1) {
+        return { boxType, value, createdAtBlock, owner, income: true };
+      }
+      throw new ReaderError(
+        `readBoxContentFields: karma income mark is ${mark}, expected 0 or 1`,
+        'invalid-tag',
+      );
+    }
     case 'credit':
       return {
         boxType,
@@ -731,6 +762,11 @@ export type CandidateOf<B extends BoxBase> = Omit<B, 'id' | 'txId' | 'index'>;
 export interface KarmaBox extends BoxBase {
   boxType: 'karma';
   owner: Uint8Array;          // 32 raw bytes — Ed25519 public key
+  // TYPES_INTERFACE → KarmaBox. `true` on the owner's one income box, absent
+  // on their own box — the mark is the one byte at the end of the content
+  // tail (→ Layout — Boxes, the karma row). Never `false`: one shape per box,
+  // so two decodings of one box cannot differ by a key.
+  income?: true;
   // No per-box age field: the decay clock reads the committed per-identity
   // record, not box ages.
 }

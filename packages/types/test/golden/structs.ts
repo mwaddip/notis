@@ -124,7 +124,7 @@ const postBodyCodec: ValueCodec<string> = {
  * could not reconstruct it if it did.
  */
 type BoxContent =
-  | { boxType: 'karma'; value: bigint; createdAtBlock: number; owner: Uint8Array }
+  | { boxType: 'karma'; value: bigint; createdAtBlock: number; owner: Uint8Array; income?: true }
   | { boxType: 'credit'; value: bigint; createdAtBlock: number; owner: Uint8Array; lockedUntilBlock: number | null }
   /** `payload` is `lp` — opaque bytes, not `lpUtf8`. `value` is always 0. */
   | { boxType: 'genesis_proof'; value: bigint; createdAtBlock: number; payload: Uint8Array }
@@ -207,13 +207,19 @@ const boxContentCodec: ValueCodec<BoxContent> = {
     // u64 values only).
     const createdAtBlock = j.createdAtBlock as number;
     switch (j.boxType as BoxContent['boxType']) {
-      case 'karma':
-        return {
+      case 'karma': {
+        // TYPES_INTERFACE → KarmaBox. `income` is `true` or absent on the
+        // decoded shape; the JSON carries `true` for an income box and omits
+        // the key for an own box. A key is only emitted when the JSON set it.
+        const karma: BoxContent & { boxType: 'karma' } = {
           boxType: 'karma',
           value,
           createdAtBlock,
           owner: hex(j.owner as string),
         };
+        if (j.income === true) karma.income = true;
+        return karma;
+      }
       case 'credit':
         return {
           boxType: 'credit',
@@ -291,13 +297,22 @@ const boxContentCodec: ValueCodec<BoxContent> = {
     // field's type rather than from any byte string.
     const createdAtBlock = readVlqU(r);
     switch (boxType) {
-      case 'karma':
-        return {
-          boxType,
-          value,
-          createdAtBlock,
-          owner: readBytesN(r, 32),
-        };
+      case 'karma': {
+        // TYPES_INTERFACE → Layout — Boxes, the karma row — the `u8(income)`
+        // mark is the tail's second field. `0x00` has no key, `0x01` sets
+        // `income: true`, every other byte has no decoding
+        // (WIRE_INTERFACE → ReaderError codes: `invalid-tag`). The reader is
+        // where the one-byte-two-shapes rule shows up as refusing to emit a
+        // key holding `undefined`.
+        const owner = readBytesN(r, 32);
+        const mark = r.readU8();
+        if (mark === 0) return { boxType, value, createdAtBlock, owner };
+        if (mark === 1) return { boxType, value, createdAtBlock, owner, income: true };
+        throw new ReaderError(
+          `boxContent: karma income mark is ${mark}, expected 0 or 1`,
+          'invalid-tag',
+        );
+      }
       case 'credit':
         return {
           boxType,

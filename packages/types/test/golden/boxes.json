@@ -1,6 +1,6 @@
 {
   "$schema": "./README.md",
-  "$description": "Struct-level golden vectors for canonicalBoxBytes \u2014 the box identity encoding that computeBoxId and computeTxId hash (TYPES_INTERFACE → Layout — Boxes). A positional layout. One vector per box type, because the per-type field lists are separate layouts sharing a three-field prefix \u2014 plus a second genesis_proof vector, because an empty payload is what its length prefix exists for, and a second emission vector at zero in BOTH prefix integers, because that is where the format's three-byte floor is, and a second fee vector at zero, because that is a shape the encoder must write and the ledger never holds, and a second karma_pool vector at zero, because that zero is one the ledger DOES hold, and a second like_accrual vector because one type carries two roles there. Two groups are deliberate: bond and vouch share identical trailing fields, and emission, treasury, fee and karma_pool share the absence of any, so in both the tag byte is the whole of what separates their leaves. The numbering has a RESERVED HOLE at 2, and rejects cover it separately from the past-the-end case at 255: a reader can refuse one and fall through the other. 255 is the permanently-unassigned probe value, and no reject vector here may be pinned at the next free tag - such a vector stops testing what it was written to test the moment that tag is assigned.",
+  "$description": "Struct-level golden vectors for canonicalBoxBytes \u2014 the box identity encoding that computeBoxId and computeTxId hash (TYPES_INTERFACE → Layout — Boxes). A positional layout. One vector per box type, because the per-type field lists are separate layouts sharing a three-field prefix \u2014 plus a second karma vector because the mark separates the owner's two boxes (TYPES_INTERFACE \u2192 KarmaBox), a second genesis_proof vector, because an empty payload is what its length prefix exists for, and a second emission vector at zero in BOTH prefix integers, because that is where the format's three-byte floor is, and a second fee vector at zero, because that is a shape the encoder must write and the ledger never holds, and a second karma_pool vector at zero, because that zero is one the ledger DOES hold, and a second like_accrual vector because one type carries two roles there. Two groups are deliberate: bond and vouch share identical trailing fields, and emission, treasury, fee and karma_pool share the absence of any, so in both the tag byte is the whole of what separates their leaves. The numbering has a RESERVED HOLE at 2, and rejects cover it separately from the past-the-end case at 255: a reader can refuse one and fall through the other. 255 is the permanently-unassigned probe value, and no reject vector here may be pinned at the next free tag - such a vector stops testing what it was written to test the moment that tag is assigned.",
   "vectors": [
     {
       "name": "box/karma-minimal",
@@ -11,8 +11,21 @@
         "createdAtBlock": 300,
         "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
       },
-      "bytes": "0064ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-      "note": "36 bytes: enum8(karma) 1 + vlqU64(100) 1 + vlqU(300) 2 + b32(owner) 32. The karma tail is the owner alone (TYPES_INTERFACE \u2192 Layout \u2014 Boxes). Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
+      "bytes": "0064ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
+      "note": "37 bytes: enum8(karma) 1 + vlqU64(100) 1 + vlqU(300) 2 + b32(owner) 32 + u8(income) 1. The karma tail is the owner and the one-byte own/income mark (TYPES_INTERFACE \u2192 KarmaBox; \u2192 Layout \u2014 Boxes). The mark is 0x00 here \u2014 the own box \u2014 and absent on the decoded value, not a key holding undefined. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
+    },
+    {
+      "name": "box/karma-income",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "karma",
+        "value": "100",
+        "createdAtBlock": 300,
+        "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "income": true
+      },
+      "bytes": "0064ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f01",
+      "note": "37 bytes, byte-for-byte box/karma-minimal under the other mark \u2014 the one byte at the end is 0x01, so this is the owner's income box (TYPES_INTERFACE \u2192 KarmaBox, \"An owner holds at most two karma boxes\"). The mark is where the two shapes separate and the whole of what separates their ids; nothing else in the layout can tell them apart. The field is `true` or absent, never `false`, so a decoded income box carries `income: true` as a present key \u2014 the one-byte-two-shapes rule in the layout."
     },
     {
       "name": "box/karma-value-u64-max",
@@ -23,8 +36,8 @@
         "createdAtBlock": 300,
         "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
       },
-      "bytes": "00ffffffffffffffffff01ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-      "note": "The whole argument for the bigint exception, in one vector: those ten bytes are the all-ones sentinel a malformed NUMBER field takes, and here they are a value the writer emits without complaint. `value: bigint` spans the entire u64, so no sentinel is unreachable and its writer has to throw instead \u2014 sentinelling would give a malformed box a well-formed box's id. ENCODABLE, and deliberately NOT acceptable: consensus admits [0, BOX_VALUE_BOUND) and this value is above it, so what the vector pins is the writer's domain \u2014 a vector proving a value encodes is not a claim consensus accepts it. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
+      "bytes": "00ffffffffffffffffff01ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
+      "note": "The whole argument for the bigint exception, in one vector: those ten bytes are the all-ones sentinel a malformed NUMBER field takes, and here they are a value the writer emits without complaint. `value: bigint` spans the entire u64, so no sentinel is unreachable and its writer has to throw instead \u2014 sentinelling would give a malformed box a well-formed box's id. ENCODABLE, and deliberately NOT acceptable: consensus admits [0, BOX_VALUE_BOUND) and this value is above it, so what the vector pins is the writer's domain \u2014 a vector proving a value encodes is not a claim consensus accepts it. The trailing 0x00 is the own/income mark, so this is still an own box. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
     },
     {
       "name": "box/credit-transfer-sentinel",
@@ -199,7 +212,7 @@
         "author": "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a"
       },
       "bytes": "0b01ac027a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
-      "note": "The marker a like transaction outputs, at LIKE_KARMA_COST. 36 bytes, equal to box/karma-minimal at the same value: both tails are a single b32 with nothing after it. A MARKER CARRIES ITS VALUE: the 01 is the karma the marker stands for, and a zero-value marker would mean those units ceased to exist between the transaction and the settlement. author is ATTRIBUTION, not authorization - no signature by it unlocks the box, exactly as bond.inviterId names a party that cannot spend. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
+      "note": "The marker a like transaction outputs, at LIKE_KARMA_COST. 36 bytes, one shorter than box/karma-minimal at the same value: the karma tail carries the own/income mark after its owner, and the like_accrual tail is a single b32 with nothing after it. A MARKER CARRIES ITS VALUE: the 01 is the karma the marker stands for, and a zero-value marker would mean those units ceased to exist between the transaction and the settlement. author is ATTRIBUTION, not authorization - no signature by it unlocks the box, exactly as bond.inviterId names a party that cannot spend. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
     },
     {
       "name": "box/like-accrual-carry",
@@ -326,16 +339,30 @@
     {
       "name": "box/non-minimal-value",
       "codec": "boxContent",
-      "bytes": "00e400ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "bytes": "00e400ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
       "failure": "non-canonical",
-      "note": "box/karma-minimal with `value` padded from 64 to e4 00. It decodes to 100 either way \u2014 only the re-encode compare rejects it, and this is the field a malleability attempt would target because it is what a box is worth. The prefix carries createdAtBlock 300 as its third field, so the shape this vector targets sits where the layout puts it rather than three bytes early."
+      "note": "box/karma-minimal with `value` padded from 64 to e4 00. It decodes to 100 either way \u2014 only the re-encode compare rejects it, and this is the field a malleability attempt would target because it is what a box is worth. The trailing 0x00 is the own/income mark that keeps the length well formed; without it the reader would run out of bytes before refusing on canonicity. The prefix carries createdAtBlock 300 as its third field, so the shape this vector targets sits where the layout puts it rather than three bytes early."
     },
     {
       "name": "box/trailing-byte",
       "codec": "boxContent",
-      "bytes": "0064ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fff",
+      "bytes": "0064ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00ff",
       "failure": "trailing-bytes",
-      "note": "box/karma-minimal plus a byte. Appended junk is a rejection, not slack \u2014 the defect class this format exists to close is junk riding inside a committed structure. The prefix carries createdAtBlock 300 as its third field, so the shape this vector targets sits where the layout puts it rather than three bytes early."
+      "note": "box/karma-minimal plus a byte. Appended junk is a rejection, not slack \u2014 the defect class this format exists to close is junk riding inside a committed structure. The 0x00 before the junk is the own/income mark that completes the box; the trailing 0xff is what the boundary check refuses. The prefix carries createdAtBlock 300 as its third field, so the shape this vector targets sits where the layout puts it rather than three bytes early."
+    },
+    {
+      "name": "box/karma-mark-byte-2",
+      "codec": "boxContent",
+      "bytes": "0064ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f02",
+      "code": "invalid-tag",
+      "note": "box/karma-minimal with mark 0x02 instead of 0x00. The mark is a bare u8 with a closed set of two values \u2014 0x00 for an own box and 0x01 for an income box \u2014 so every other byte has no decoding (TYPES_INTERFACE \u2192 KarmaBox). 0x02 is the smallest unassigned mark; a reader that fell through into whichever branch its switch defaulted to would give a malformed box a well-formed box's shape and id."
+    },
+    {
+      "name": "box/karma-mark-byte-ff",
+      "codec": "boxContent",
+      "bytes": "0064ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fff",
+      "code": "invalid-tag",
+      "note": "box/karma-minimal with mark 0xff instead of 0x00. 0xff is the all-ones byte, so a reader taking a sentinel for the mark would decode this as if it were valid; the mark throws instead, exactly as every other closed-set discriminant in the format does (WIRE_INTERFACE \u2192 ReaderError codes). This vector and box/karma-mark-byte-2 cover the sentinel end and the inside-the-set end of the same rejection, so a reader built around either one alone cannot catch the other."
     },
     {
       "name": "box/bond-short-invitee-key",
