@@ -1072,6 +1072,21 @@ export function emptyBody(): SettlementBody {
 }
 
 /**
+ * The lapse leg: the pre-body capture less every vouch a body transaction
+ * names as an input (NODE_INTERFACE → The settlement transaction → "The lapse
+ * leg leaves out a vouch the body spends"). Pure — reads no state. The
+ * capture's order is kept, an id in `spent` the capture does not hold changes
+ * nothing, and the capture is not mutated.
+ *
+ * ⛔ **`spent` is the body's user-transaction inputs — never the settlement's
+ * own**, which name every listed vouch (CONSENSUS_INTERFACE → The settlement
+ * build → "The lapse list is one function's answer on both sides").
+ */
+export function lapseLegOf(captured: readonly VouchBox[], spent: ReadonlySet<string>): VouchBox[] {
+  return captured.filter((v) => !spent.has(v.id!));
+}
+
+/**
  * The bond output this transaction creates, or null.
  *
  * ⛔ **At most one bond per transaction** — the invite arm pins it
