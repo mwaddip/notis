@@ -20,6 +20,7 @@ import { seedProvenance, signTransaction, txToJson, rawPublicKey } from '../help
 import { config } from '../../src/config.js';
 import { setMempoolCap, DEFAULT_MAX_MEMPOOL_ENTRIES, PendingSpendConflictError } from '../../src/store/mempool.js';
 import { generateKeyPairSync } from 'crypto';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 
 const TEST_DB = ':memory:';
 
@@ -61,6 +62,7 @@ function makeDeps(): UtxoEngineDeps {
     consumeBox: (id: string, atBlock: number) => {
       db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
     },
+    getKarmaOwed: admissionOwed({ staleThresholdBlocks: config.karmaStaleThresholdBlocks, decayIntervalBlocks: config.karmaDecayIntervalBlocks, decayAmount: config.karmaDecayAmount, karmaMinimum: config.karmaMinimum }),
     getKarmaValue,
     getIdentityRecord,
     hasActiveVouchEscrow,

@@ -70,6 +70,14 @@ describe('POST /faucet/karma', () => {
     expect(res.body.error).toMatch(/insufficient karma/);
   });
 
+  it('answers 503 when it holds exactly the bond and no floor beside it', async () => {
+    client.karmaBoxes = async () => [{ boxId: K1, value: cfg.bondAmount }];
+    const res = await request(createApp(cfg, client))
+      .post('/faucet/karma').send({ pubkey: recipient });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/insufficient karma/);
+  });
+
   it('refuses past the rate limit, per IP', async () => {
     const app = createApp(cfg, client);
     for (let i = 0; i < 2; i++) {

@@ -338,6 +338,8 @@ interface GateMetadata {
   vouchTarget: string | null;
   usernameLower: string | null;
   usernameClaimant: string | null;
+  karmaOwner: string | null;
+  karmaSpend: bigint | null;
 }
 
 /**
@@ -364,12 +366,38 @@ function gateMetadata(tx: UtxoTransaction): GateMetadata {
     vouchTarget: null,
     usernameLower: null,
     usernameClaimant: null,
+    karmaOwner: null,
+    karmaSpend: null,
   };
 
   if (tx.likeTarget !== undefined) {
     meta.likeTarget = tx.likeTarget;
     const signers = Object.keys(tx.signatures ?? {});
     meta.likeLiker = signers.length === 1 ? signers[0]! : null;
+  }
+
+  // MEMPOOL_INTERFACE → Gate metadata columns: the karma spend row.
+  // `karma_spend` is the summed value of outputs that are a karma spend's exits
+  // (NODE_INTERFACE → Karma transition rules); `karma_owner` is the one signing
+  // key, mirroring `like_liker`'s rule so any other key count leaves the row
+  // unpaired and `pendingKarmaSpend` sums nothing from it.
+  let karmaSpend = 0n;
+  for (const output of tx.outputs ?? []) {
+    if (
+      output.boxType === 'karma_price' ||
+      output.boxType === 'like_accrual' ||
+      output.boxType === 'bond' ||
+      output.boxType === 'vouch'
+    ) {
+      karmaSpend += (output as { value: bigint }).value;
+    }
+  }
+  if (karmaSpend > 0n) {
+    const signers = Object.keys(tx.signatures ?? {});
+    if (signers.length === 1) {
+      meta.karmaOwner = signers[0]!;
+      meta.karmaSpend = karmaSpend;
+    }
   }
 
   for (const output of tx.outputs ?? []) {
@@ -473,8 +501,9 @@ export function insertUtxoTx(
                           tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes,
                           max_valid_height,
                           username_lower, username_claimant,
+                          karma_owner, karma_spend,
                           cost_estimate)
-     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     Buffer.from(encoded),
     expiresAtHeight,
@@ -491,6 +520,8 @@ export function insertUtxoTx(
     ceiling,
     meta.usernameLower,
     meta.usernameClaimant,
+    meta.karmaOwner,
+    meta.karmaSpend,
     costEstimate,
   );
   return Number(result.lastInsertRowid);
@@ -552,6 +583,24 @@ export function hasPendingClaimBy(claimantId: string): boolean {
     `SELECT 1 FROM mempool WHERE username_claimant = ? LIMIT 1`,
   ).get(claimantId);
   return row !== undefined;
+}
+
+/**
+ * MEMPOOL_INTERFACE → Correctness gates → "`pendingKarmaSpend` is an input of
+ * `validateTx`, not a gate a path can skip". The `SUM` of `karma_spend` over
+ * the rows whose `karma_owner` is `ownerId`, `0n` where it holds none —
+ * admission's `held` is the confirmed karma sum less it (NODE_INTERFACE →
+ * Karma transition rules). `.safeIntegers()` keeps the sum in `bigint`: a box
+ * value is below `BOX_VALUE_BOUND` and above what a double holds exactly
+ * (TYPES_INTERFACE → Box value domain), so a cast through `number` would lose
+ * low bits as the pool grows.
+ */
+export function pendingKarmaSpend(ownerId: string): bigint {
+  const db = getDb();
+  const row = db.prepare(
+    `SELECT COALESCE(SUM(karma_spend), 0) AS total FROM mempool WHERE karma_owner = ?`,
+  ).safeIntegers().get(ownerId) as { total: bigint };
+  return row.total;
 }
 
 /**

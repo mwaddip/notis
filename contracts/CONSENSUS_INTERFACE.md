@@ -31,7 +31,7 @@ for a block's body (`VALIDATION_INTERFACE → Acceptance criterion`). The browse
 | `state-view` | — (`StateView`, `ApplyContext`) | this contract's `StateView` and `ApplyContext` | — |
 | `utxo-engine` | `validateTx` · `applyTx` · `checkTxEnvelope` · `checkOutputShape` · `checkSettlementOutputShape` · `materializeOutput` · `ceilingOf` · `isMember` · `isRoot` | `NODE_INTERFACE → validateTx` · `→ Legal box transitions` · `→ Transaction envelope shape` · `→ Output shape` · `→ Spend timing` · `→ Validity ceiling` | `UtxoEngineDeps` |
 | `settlement` | `buildBlockSettlement` · `buildSettlement` · `bondOutputOf` · `settlementMarginalBytes` | `NODE_INTERFACE → The settlement transaction` | `StateView` (the build) · `SettlementDeps` |
-| `decay` | `deriveKarmaDecay` · `commitDecayClocks` | `NODE_INTERFACE → Karma decay` | `DecayDeps` |
+| `decay` | `deriveKarmaDecay` · `commitDecayClocks` · `karmaOwed` | `NODE_INTERFACE → Karma decay` · `→ Karma transition rules` | `DecayDeps` |
 | `coinbase-split` | `computeBlockReward` · `splitCoinbase` · `isCreditSideTx` | `MINING_INTERFACE → Emission Schedule` · `→ Coinbase Application` | none |
 | `block-posts` | `postsOf` · `postIdsOf` | `NODE_INTERFACE → Post transactions` · `→ Withdrawal transactions` | none |
 | `tree-session` | — (`TreeSession`, `TreeLookup`, `isSentinel`) | this contract's `The tree session` | — |
@@ -59,13 +59,20 @@ ApplyResult = { ok: true; effects: BlockEffects } | { ok: false; reason: string 
 **`applyBlock` is the mutation phase** (`NODE_INTERFACE → "Apply funnel: validation and mutation phases"`), in its
 order: the block's posts and their topology rows · the body decoded, every declared id proven, the settlement found by
 position · every signature the body carries, checked as one batch · the pre-body captures (decay's projection and
-plans, the releasable escrows, the lapsed vouches, the backer
+plans, the decay each identity the body touches owes — `validateTx`'s `owed`, `NODE_INTERFACE → Karma transition
+rules` — the releasable escrows, the lapsed vouches, the backer
 pool) · the user transactions in committed order — inputs resolved, `validateTx`, the like binds, one invitee per
 block, `applyTx`, the post's activity bump, the like record, the name claim or burn · the withdrawals · the settlement
 (`checkSettlement`, then applied) · the grants · the like counters · the membership pass · the decay clocks. It runs at
 `block.header.height` and reads no other header field but `validatorId`: the node has run the checks that need the
 chain first (`NODE_INTERFACE → Ordering block apply-time authorization`), and the creator's speculative run passes a
 candidate whose nonce, signature and `stateRoot` are placeholders (`NODE_INTERFACE → Post-block stateRoot`).
+
+**The owed-decay capture reads the record of every identity the body touches** — one the body leaves with no karma
+box among them, which the decay plans pass over: its posts are judged against `owed` as any other spend is. Only a
+post's author can be left with none (`NODE_INTERFACE → Karma transition rules`, "Only a post spends the floor"), and
+a post reads its author's record for the activity bump, so the capture adds no key to a block's lookups (→ The
+block's cost): it is that record's place among them, ahead of the body's, that the block's proof carries.
 
 **A block's signatures are checked together, before any transaction applies.** Once every declared id is proven,
 `applyBlock` gathers each entry of every embedded transaction's signature map — in body order, and within a

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  KARMA_MINIMUM,
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
   VOUCH_COOLDOWN_BLOCKS,
@@ -19,6 +20,10 @@ describe('VouchBox', () => {
 
   it('VOUCH_MIN_BALANCE is 11n', () => {
     expect(VOUCH_MIN_BALANCE).toBe(11n);
+  });
+
+  it('VOUCH_MIN_BALANCE is KARMA_MINIMUM + VOUCH_KARMA_AMOUNT', () => {
+    expect(VOUCH_MIN_BALANCE).toBe(KARMA_MINIMUM + VOUCH_KARMA_AMOUNT);
   });
 
   it('VOUCH_COOLDOWN_BLOCKS is 60', () => {

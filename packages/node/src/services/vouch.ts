@@ -2,7 +2,6 @@ import {
   computeTxId,
   VOUCH_MIN_BALANCE,
   MEMPOOL_EXPIRY_BLOCKS,
-  effectiveKarma,
 } from '@dagsocial/types';
 import type { VouchBox, VouchEscrowBox, UtxoTransaction } from '@dagsocial/types';
 import {
@@ -56,10 +55,15 @@ export function castVouch(
     throw new ClientError('A vouch for this pair is already pending');
   }
 
-  // The balance check and escrow gate are consensus-enforced in checkTransitions.
-  const voucherFace = deps.getKarmaValue(voucherId);
-  const balance = effectiveKarma(voucherFace, voucherRecord, currentBlockHeight, deps.decayCfg);
-  if (balance < VOUCH_MIN_BALANCE) {
+  // A vouch cast is a karma spend of VOUCH_KARMA_AMOUNT, which must leave the
+  // floor standing (NODE_INTERFACE → Karma transition rules → "Only a post
+  // spends the floor"; → "Engine inputs the rule needs"): the voucher's
+  // `remaining = held − owed` must cover VOUCH_MIN_BALANCE (the stake plus the
+  // floor; TYPES_INTERFACE → VOUCH_MIN_BALANCE).
+  const voucherHeld = deps.getKarmaValue(voucherId);
+  const voucherOwed = deps.getKarmaOwed(voucherId, currentBlockHeight);
+  const voucherRemaining = voucherHeld - voucherOwed;
+  if (voucherRemaining < VOUCH_MIN_BALANCE) {
     throw new ClientError(
       `Insufficient karma: need at least ${VOUCH_MIN_BALANCE} to vouch`,
     );

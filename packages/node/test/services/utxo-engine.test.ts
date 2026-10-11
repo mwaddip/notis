@@ -63,6 +63,7 @@ import {
 import { validateTx, applyTx } from '@dagsocial/consensus';
 import type { UtxoEngineDeps, UtxoResult } from '@dagsocial/consensus';
 import { config } from '../../src/config.js';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 
 /**
  * Local convenience wrapper that replaces the removed validateAndApplyTx.
@@ -138,6 +139,7 @@ describe('validateAndApplyTx', () => {
       getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => storeInsertBox(box),
       consumeBox: (id: string, atBlock: number) => storeConsumeBox(id, atBlock),
+      getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,
@@ -1933,6 +1935,10 @@ describe('validateAndApplyTx', () => {
     });
 
     it('T1: karma(1n) control passes', () => {
+      // Reserve box so the owner's remaining covers the floor; the subject is
+      // the output's own 1n, not what else the owner holds (NODE_INTERFACE →
+      // Karma transition rules → "Only a post spends the floor").
+      createAndInsertKarma(ownerPubKey, KARMA_MINIMUM, 2);
       const karma = createAndInsertKarma(ownerPubKey, LIKE_KARMA_COST + 1n, 1);
       const tx = buildSignedTx(
         [karma.id!],
@@ -1946,6 +1952,9 @@ describe('validateAndApplyTx', () => {
     // --- T2: exact-spend like accepted with one output (the marker) --------
 
     it('T2: a like whose inputs total exactly LIKE_KARMA_COST is accepted with one output', () => {
+      // Reserve box so the floor stands; the subject is a like consuming one
+      // input entirely into the marker, not what else the owner holds.
+      createAndInsertKarma(ownerPubKey, KARMA_MINIMUM, 2);
       const karma = createAndInsertKarma(ownerPubKey, LIKE_KARMA_COST, 1);
       const tx = buildSignedTx(
         [karma.id!],
@@ -1982,6 +1991,10 @@ describe('validateAndApplyTx', () => {
 
     it('T3: an exact-spend invite is accepted with bond alone; inviterId pins through the input', () => {
       seedAsRoot(ownerPubKey);
+      // Reserve box so the floor stands; the subject is an invite consuming
+      // one input entirely into the bond, not what else the inviter holds
+      // (NODE_INTERFACE → Karma transition rules → "A bond leaves the floor").
+      createAndInsertKarma(ownerPubKey, KARMA_MINIMUM, 2);
       const karma = createAndInsertKarma(ownerPubKey, FIXTURE_BOND_KARMA, 1);
       const bondBox: AnyBoxCandidate = {
         boxType: 'bond',

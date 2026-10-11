@@ -101,6 +101,7 @@ function depsOver(boxes: AnyBox[]): UtxoEngineDeps {
     insertBox: unread('insertBox'),
     consumeBox: unread('consumeBox'),
     getKarmaValue: unread('getKarmaValue'),
+    getKarmaOwed: unread('getKarmaOwed'),
     getIdentityRecord: unread('getIdentityRecord'),
     hasActiveVouchEscrow: unread('hasActiveVouchEscrow'),
     vouchCooldownBlocks: ctx.vouchCooldownBlocks,

@@ -63,6 +63,7 @@ import { applyTx, validateTx } from '@dagsocial/consensus';
 import { castVouch } from '../../src/services/vouch.js';
 import { createInvite } from '../../src/services/invites.js';
 import { config } from '../../src/config.js';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 
 interface TestKeys {
   pub: Uint8Array;
@@ -100,6 +101,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => storeInsertBox(box),
       consumeBox: (id: string, atBlock: number) => storeConsumeBox(id, atBlock),
+      getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: (owner: Uint8Array): bigint =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       // Present from the before-leg on so both halves run the same fixture
@@ -376,7 +378,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
 
     const result = validateTx(deps, tx, 10);
     expect(result.valid).toBe(false);
-    expect(result.error).toContain('requires a karma balance of at least');
+    expect(result.error).toContain('below the floor of');
   });
 
   it('V5: a balance spread over two boxes clears a threshold neither box alone covers', () => {

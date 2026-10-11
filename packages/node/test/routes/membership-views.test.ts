@@ -69,6 +69,7 @@ import {
 } from '../helpers.js';
 import { config } from '../../src/config.js';
 import type Database from 'better-sqlite3';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 
 const DECAY_CFG = {
   staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
@@ -129,6 +130,7 @@ describe('/karma/:userId membership fields', () => {
           getBox: getBoxWithPending,
           insertBox,
           consumeBox,
+          getKarmaOwed: admissionOwed(DECAY_CFG),
           getKarmaValue,
           hasActiveVouchEscrow,
           vouchCooldownBlocks: 2,
@@ -370,6 +372,7 @@ describe('POST /vouches — the four membership 400s', () => {
       },
       insertBox: (box: AnyBox) => insertBox(box),
       consumeBox: (id: string, atBlock: number) => consumeBox(id, atBlock),
+      getKarmaOwed: admissionOwed(DECAY_CFG),
       getKarmaValue: (owner: Uint8Array): bigint =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       getIdentityRecord,
@@ -570,6 +573,7 @@ describe('POST /invites — membership 400', () => {
         },
         insertBox: (box: AnyBox) => insertBox(box),
         consumeBox: (id: string, atBlock: number) => consumeBox(id, atBlock),
+        getKarmaOwed: admissionOwed(DECAY_CFG),
         getKarmaValue: (owner: Uint8Array): bigint =>
           getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
         getIdentityRecord,

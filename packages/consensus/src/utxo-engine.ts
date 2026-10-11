@@ -13,7 +13,6 @@ import {
   protocolVersionAt,
   VOUCH_CAST_HEIGHT_WINDOW,
   VOUCH_KARMA_AMOUNT,
-  VOUCH_MIN_BALANCE,
   membershipBar,
   isValidUsernameBytes,
   canonicalUsernameBytes,
@@ -23,7 +22,6 @@ import {
   equalBytes,
 } from '@dagsocial/types';
 import { isCreditSideTx } from './coinbase-split.js';
-import { effectiveKarma } from '@dagsocial/types';
 import type { DecayCfg, UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, UsernameBox, BackerStakeBox, BackerUnstakeBox, PostCommit, PostWithdrawCommit, ProtocolEra } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
@@ -120,14 +118,24 @@ export interface UtxoEngineDeps {
   /**
    * Summed value of every unspent KarmaBox owned by `owner`.
    *
-   * Consensus input, not a convenience read: the vouch cast is a predicate on
-   * the voucher's *current* karma (ARCHITECTURE → "Vouch boxes"). Summed rather
-   * than one box's value because multiple unspent karma boxes per owner is
-   * reachable — an invite grant alongside a mint, or a plain karma split — and
-   * reading one box would let the threshold be evaded, or met, by how the karma
-   * happens to be partitioned.
+   * Consensus input, not a convenience read: the spend rule compares `held` —
+   * this sum — against the owner's `owed` and the transaction's `spend`
+   * (NODE_INTERFACE → Karma transition rules → "Engine inputs the rule needs").
+   * Summed rather than one box's value because multiple unspent karma boxes per
+   * owner is reachable, and reading one box would let the predicate be met or
+   * evaded by how the karma happens to be partitioned.
    */
   getKarmaValue: (owner: Uint8Array) => bigint;
+  /**
+   * The decay the owner owes at `height` — `face − effectiveKarma(face, record,
+   * height, decayCfg)` over `karmaOwed` in `decay.ts`, the one implementation
+   * of the formula (NODE_INTERFACE → Karma transition rules → "Engine inputs
+   * the rule needs"). Block application answers it from a pre-body capture of
+   * the owner's karma boxes and record, so a post that advances the activity
+   * clock earlier in the body does not move the valuation this transaction
+   * reads; admission answers it from the confirmed state at `tip + 1`.
+   */
+  getKarmaOwed: (owner: Uint8Array, height: number) => bigint;
   /**
    * The committed per-identity record, or null when the identity has none.
    *
@@ -416,6 +424,45 @@ function checkTransitions(
         };
       }
 
+      // NODE_INTERFACE → Karma transition rules → "A karma spend is covered by
+      // effective karma, over the block's body as a whole" and "Only a post
+      // spends the floor". `spend` is the summed value of the transaction's
+      // outputs that are not karma boxes, `held` the owner's live karma summed
+      // through the deps' reader, and `owed` the pre-body decay the deps hold
+      // at this height. A transaction that spends nothing (a consolidation, a
+      // claim, a withdrawal) is not judged; a post is admitted while
+      // `remaining ≥ spend`, every other spend while
+      // `remaining − spend ≥ karmaMinimum`.
+      let spend = 0n;
+      for (const o of outputs) if (o.boxType !== 'karma') spend += (o as { value: bigint }).value;
+      const spendCheck = (): { valid: true } | { valid: false; error: string } => {
+        if (spend === 0n) return { valid: true };
+        const held = deps.getKarmaValue(inputKarma.owner);
+        const owed = deps.getKarmaOwed(inputKarma.owner, currentBlockHeight);
+        const remaining = held - owed;
+        const floor = deps.decayCfg.karmaMinimum;
+        if (post !== undefined) {
+          if (remaining < spend) {
+            return {
+              valid: false,
+              error:
+                `Karma spend of ${spend} exceeds what remains of the owner's ` +
+                `effective karma (${remaining})`,
+            };
+          }
+          return { valid: true };
+        }
+        if (remaining - spend < floor) {
+          return {
+            valid: false,
+            error:
+              `Karma spend of ${spend} would leave ${remaining - spend} of the ` +
+              `owner's effective karma, below the floor of ${floor}`,
+          };
+        }
+        return { valid: true };
+      };
+
       // The burn and claim dispatch ahead of every other karma branch — a
       // burn's KarmaPriceBox would be caught by the price-without-post guard
       // otherwise, and a claim's username output would fall through unchecked.
@@ -438,6 +485,8 @@ function checkTransitions(
         if (karmaOutputs.length > 1 || outputs.length !== karmaOutputs.length + 1) {
           return { valid: false, error: 'Burn: at most one karma output beside the price box' };
         }
+        const burnSpend = spendCheck();
+        if (!burnSpend.valid) return burnSpend;
         return { valid: true };
       }
 
@@ -722,29 +771,12 @@ function checkTransitions(
             error: `A live vouch already exists for this (voucher, target) pair`,
           };
         }
-        // The voucher's balance clears VOUCH_MIN_BALANCE (ARCHITECTURE →
-        // "Vouch boxes"). Summed over every unspent karma box the voucher
-        // holds, not over this transaction's inputs: a voucher may stake from
-        // one box while the threshold is covered across several, and reading
-        // the inputs alone would make the verdict depend on how their karma
-        // happens to be partitioned. Read here rather than at submission
-        // alone, because a vouch reaching a node inside a block never passes a
-        // service gate — `getKarmaValue` is the confirmed-set reader every
-        // validation path shares, so the predicate decides the same way on
-        // every node.
-        const voucherFace = deps.getKarmaValue(vouchOut.voucherId);
-        const voucherRecord = deps.getIdentityRecord(vouchOut.voucherId);
-        const voucherBalance = effectiveKarma(
-          voucherFace, voucherRecord, currentBlockHeight, deps.decayCfg,
-        );
-        if (voucherBalance < VOUCH_MIN_BALANCE) {
-          return {
-            valid: false,
-            error:
-              `Vouch cast requires a karma balance of at least ` +
-              `${VOUCH_MIN_BALANCE}, voucher holds ${voucherBalance}`,
-          };
-        }
+        // A vouch cast is a non-post karma spend of `VOUCH_KARMA_AMOUNT`, so
+        // the voucher's balance clearing `VOUCH_MIN_BALANCE` is the spend
+        // rule's: what remains of their effective karma covers the stake and
+        // leaves `KARMA_MINIMUM` standing, and `KARMA_MINIMUM +
+        // VOUCH_KARMA_AMOUNT` is `VOUCH_MIN_BALANCE` (NODE_INTERFACE → Karma
+        // transition rules → "Only a post spends the floor").
         // The vouch's cast height may not lag the carrying block by more than
         // VOUCH_CAST_HEIGHT_WINDOW blocks. Step 6 enforces the upper bound
         // (createdAtBlock <= currentBlockHeight).
@@ -850,7 +882,12 @@ function checkTransitions(
           };
         }
       }
-      // else: karma → karma only, which is always valid
+      // else: karma → karma only — a consolidation and a withdrawal end here.
+      // The spend check stands at the burn's exit and on this case's last
+      // line; a claim returns at its own exit and spends nothing (its
+      // username box carries 0).
+      const finalSpend = spendCheck();
+      if (!finalSpend.valid) return finalSpend;
 
       return { valid: true };
     }

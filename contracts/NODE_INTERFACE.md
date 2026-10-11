@@ -434,8 +434,8 @@ and the block's settlement grants the invitee the bond's value from the pool.
    `⌊memberVouches / D(N)⌋ − invitesUsed`, `D` from the network record (`ARCHITECTURE → The
    invite budget`). A courtesy ahead of the engine's rule (→ Bond transition rules), like every
    check below: the refusal names the reason, and the verdict is the arm's
-1. Verify the inviter holds ≥ **this transaction's own bond value** in available
-   karma. ⛔ **Against the bond named, never against a constant** — the inviter
+1. Verify what remains of the inviter's effective karma covers **this transaction's own bond value** and
+   `KARMA_MINIMUM` beside it (→ Karma transition rules). ⛔ **Against the bond named, never against a constant** — the inviter
    picks it, so a fixed threshold passes someone who cannot afford the invite
    they built, and the rejection then arrives from conservation, which is the
    message this layer exists to replace. The bond is still the whole cost: the
@@ -548,7 +548,9 @@ on touch)") — a client that derives it from the clocks holds a second implemen
 consensus valuation, which is the mirror class. The three plain numbers beside them —
 `lastActivityBlock` and `lastDecayBlock`, the owner's identity-record clocks (`0` where no record
 exists), and `height`, the chain height at the time of the response — are that valuation's inputs,
-served so a client can show when the next period falls.
+served so a client can show when the next period falls. Of `effective`, a post may spend all and
+any other spend what stands above `KARMA_MINIMUM` (→ Karma transition rules); the pool's pending
+spends are not in the number.
 
 **`/karma/:userId` answers standing, and the client evaluates nothing.** `memberSinceBlock`,
 `memberBar`, `memberVouches` and `invitesUsed` are the record's plain numbers, `memberLikes` its
@@ -689,7 +691,8 @@ origin could spend each visitor's allowance on a key of its choosing (→ Cross-
 `expiresAtHeight` the node's own mempool expiry for that invite (→ Invites), relayed so a client can
 bound its wait rather than guess a bound; `400 { error }` relays the node's refusal (a key that already
 holds a record — the once-per-identity rule) or names a malformed key; `429 { error }` is the service's
-own rate limit; `503 { error }` is a drained faucet. `POST <faucet>/credits { pubkey }` answers
+own rate limit; `503 { error }` is a drained faucet — for an invite, one whose karma does not cover its bond
+and the `KARMA_MINIMUM` an invite leaves standing (→ Karma transition rules). `POST <faucet>/credits { pubkey }` answers
 `202 { txId, status, expiresAtHeight, boxId }` and repeats — `expiresAtHeight` the node's expiry for the
 transfer, relayed from `POST /credits/transfer`'s answer (→ Credits) for the reason the invite's is, and
 `boxId` the granted `credit` box's id, `computeCandidateBoxId` over the payment output at index 0
@@ -930,9 +933,10 @@ existence is what remains checkable here.
 ## UTXO Engine Contract
 
 The UTXO engine manages box lifecycle, transaction validation, and
-conservation rules. Karma sufficiency is judged against the **effective**
-value (`ARCHITECTURE` → Karma decay); conservation is checked over face
-values. The engine is split into three functions:
+conservation rules. A karma spend is judged against the owner's **effective**
+value, over the block's body as a whole, and only a post spends the last
+`KARMA_MINIMUM` of it (→ Karma transition rules; `ARCHITECTURE` → Karma decay);
+conservation is checked over face values. The engine is split into three functions:
 
 ### validateTx
 
@@ -1707,13 +1711,13 @@ the treasury.
 | Consumed | Created | Condition |
 |----------|---------|-----------|
 | KarmaBox | KarmaBox | **Consolidation**: same owner, value conserved — the one karma-side row that pays nothing, so it counts no actor toward the inclusion bonus (MINING_INTERFACE → Coinbase Application) and moves no activity clock (→ Populating the record) |
-| KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's recorded author (→ Block Topology), and that author is not the liker — the karma inputs' owner — **and the converse**, a `LikeAccrualBox` output ⟺ exactly one of `likeTarget` present or `post` present with a parent (the Reply row). At most one karma output, same owner as all inputs — omitted when the change would be zero; target live; `(liker, target)` not recorded. **Value conserved** |
-| KarmaBox | KarmaBox + KarmaPriceBox | **Thread**: `post` present with no `parentRefs` ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_THREAD` and no `LikeAccrualBox`. At most one karma output, same owner as all inputs — omitted when the change would be zero; the signing key is the post's author. **Value conserved** — a post carries **no** deficit and **no** surplus |
-| KarmaBox | KarmaBox + KarmaPriceBox + LikeAccrualBox | **Reply**: `post` present with one parent ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE` **and** exactly one `LikeAccrualBox` output of exactly `REPLY_AUTHOR_SHARE` whose `author` is the parent's recorded author (→ Block Topology). The karma output as above; the signing key is the post's author. **Value conserved** |
-| KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it**; `bond.inviterId` is a root, or a member with `⌊memberVouches / D(N)⌋ − invitesUsed ≥ 1` on its record at apply, `N` from pre-body state (→ Bond transition rules, → Membership pass) |
-| KarmaBox | KarmaBox + VouchBox | Vouch cast: karma outputs same owner; `vouch.value == VOUCH_KARMA_AMOUNT`; `vouch.voucherId` == the karma input's owner; the voucher is a member — `member(voucher)` on its record at apply (→ Membership pass); `vouch.targetId ≠ vouch.voucherId`; the target holds an `IdentityRecord`; no unspent `vouch` box carries the same `(voucherId, targetId)`; the voucher's **summed** karma balance ≥ `VOUCH_MIN_BALANCE`; no unspent escrow names the voucher; `vouch.createdAtBlock` within `[height − VOUCH_CAST_HEIGHT_WINDOW, height]` (the upper bound is step 6's; the window bounds backdating, which would shorten the cooldown the escrow derives from it) |
+| KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's recorded author (→ Block Topology), and that author is not the liker — the karma inputs' owner — **and the converse**, a `LikeAccrualBox` output ⟺ exactly one of `likeTarget` present or `post` present with a parent (the Reply row). At most one karma output, same owner as all inputs — omitted when the change would be zero; target live; `(liker, target)` not recorded; the cost leaves the floor (→ Karma transition rules). **Value conserved** |
+| KarmaBox | KarmaBox + KarmaPriceBox | **Thread**: `post` present with no `parentRefs` ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_THREAD` and no `LikeAccrualBox`. At most one karma output, same owner as all inputs — omitted when the change would be zero; the signing key is the post's author; the price covered by what remains of the author's effective karma (→ Karma transition rules). **Value conserved** — a post carries **no** deficit and **no** surplus |
+| KarmaBox | KarmaBox + KarmaPriceBox + LikeAccrualBox | **Reply**: `post` present with one parent ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE` **and** exactly one `LikeAccrualBox` output of exactly `REPLY_AUTHOR_SHARE` whose `author` is the parent's recorded author (→ Block Topology). The karma output and the cover as above; the signing key is the post's author. **Value conserved** |
+| KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it**; `bond.inviterId` is a root, or a member with `⌊memberVouches / D(N)⌋ − invitesUsed ≥ 1` on its record at apply, `N` from pre-body state (→ Bond transition rules, → Membership pass); the bond leaves the floor (→ Karma transition rules) |
+| KarmaBox | KarmaBox + VouchBox | Vouch cast: karma outputs same owner; `vouch.value == VOUCH_KARMA_AMOUNT`; `vouch.voucherId` == the karma input's owner; the voucher is a member — `member(voucher)` on its record at apply (→ Membership pass); `vouch.targetId ≠ vouch.voucherId`; the target holds an `IdentityRecord`; no unspent `vouch` box carries the same `(voucherId, targetId)`; the stake leaves the floor — what remains of the voucher's effective karma, **summed**, ≥ `VOUCH_MIN_BALANCE` (→ Karma transition rules); no unspent escrow names the voucher; `vouch.createdAtBlock` within `[height − VOUCH_CAST_HEIGHT_WINDOW, height]` (the upper bound is step 6's; the window bounds backdating, which would shorten the cooldown the escrow derives from it) |
 | KarmaBox | KarmaBox + UsernameBox | **Claim**: exactly one `username` output — `owner` = the karma inputs' owner, `value == 0n`, its `name` valid (`TYPES_INTERFACE → UsernameBox`); no name record for the name's canonical form; **no holder record for the owner** (available, holding none); the karma output same owner, value conserved; the signing key is the owner's (→ Username transition rules) |
-| KarmaBox + UsernameBox | KarmaBox + KarmaPriceBox | **Burn**: exactly one `username` input, its `owner` the karma inputs' owner, holder-signed; exactly one `KarmaPriceBox` output of exactly `USERNAME_BURN_PRICE`; no `username` output; the karma output same owner, value conserved (→ Username transition rules) |
+| KarmaBox + UsernameBox | KarmaBox + KarmaPriceBox | **Burn**: exactly one `username` input, its `owner` the karma inputs' owner, holder-signed; exactly one `KarmaPriceBox` output of exactly `USERNAME_BURN_PRICE`; no `username` output; the karma output same owner, value conserved (→ Username transition rules); the price leaves the floor (→ Karma transition rules) |
 | VouchBox | VouchEscrowBox | **Unvouch**: exactly one VouchBox input, voucher-signed; exactly one escrow output with `value ==` the consumed box's, `owner == voucherId`, and `releaseAtBlock == vouch.createdAtBlock + vouchCooldownBlocks` — an exact pin, derivable from the consumed box alone. The cooldown runs from the **cast**, so a long-held endorsement costs no extra lockup and no withdrawal pattern returns the stake early. Value conserved |
 | VouchEscrowBox | KarmaBox | **Block application only**: the settlement of the first block at or past `releaseAtBlock` consumes the escrow and returns its value to `owner` as karma (§The settlement transaction) — **no user transaction can spend a `VouchEscrowBox`**. Withdrawal itself is never gated — only the stake's return waits, and it waits in the escrow |
 | LikeAccrualBox | — | **Settlement only.** No user transition admits one as an input |
@@ -1968,8 +1972,12 @@ There is **no other legal bond or invite shape**. In particular:
   record for `D`; block application
   gains a settlement sweep keyed on `invitedAtBlock` —
   `getBondsSettlingAt`'s shape — and its grant step reads the inviter's record for the conferral.
-  `checkTransitions` needs no karma-sum read
-  and no settle height.
+  The arm's one karma-sum read is the spend rule's (→ Karma transition rules), and it needs
+  no settle height.
+- ⛔ **A bond leaves the floor.** A bond is a karma spend like every other that is not a post: what
+  remains of the inviter's effective karma covers it and `KARMA_MINIMUM` beside it (→ Karma
+  transition rules). A root's invites, which no budget counts, are bounded by this and nothing
+  else.
 
 ### Karma transition rules
 
@@ -2000,7 +2008,7 @@ inside the network's reported supply.
 - ⛔ **A karma output carries at least `1n`, and the change output is optional**
   (`TYPES_INTERFACE` → Box value domain: zero means no box). A spend whose karma
   inputs total exactly its cost — a like from a single 1-karma box, a thread from
-  a 5-karma box, an invite or a vouch that empties the wallet — emits no karma
+  a 5-karma box, an invite or a vouch from a box of exactly its stake — emits no karma
   output at all, and the like shape is then the marker alone. No pin needs a
   karma output to name the owner: `bond.inviterId`, `vouch.voucherId` and the
   lock's `owner` bind to the karma **input's** owner, and the signature is that
@@ -2045,10 +2053,54 @@ inside the network's reported supply.
 > rule §Likes already states, and the marker inherits it. A placeholder row carries a zeroed author, so a marker
 > built from the wrong source would earmark karma to the zero key.
 
+⛔ **A karma spend is covered by effective karma, over the block's body as a whole.** A karma
+transaction's **spend** is the summed value of its outputs that are not karma boxes — a thread's or a
+burn's `karma_price`, a like's marker, a reply's price box and marker, a bond, a vouch stake.
+Conservation makes it the karma inputs less the change; a consolidation, a claim and a withdrawal
+spend nothing. What **remains** of the owner's effective karma where the transaction stands is
+
+```
+remaining = held − owed
+held      = the summed value of the owner's unspent karma boxes, as the transactions ahead of this one have left them
+owed      = face − effectiveKarma(face, record, height, decayCfg)    // face and record: the owner's, at pre-body state
+```
+
+and a transaction that spends is refused unless `remaining` covers it, by the measure the next lead
+states. `owed` is the decay the owner owes at this height — what the block's settlement burns from an
+identity whose karma the body moves and does not spend (→ Karma decay). It is read once, from the
+state the block began with: a post ahead in the body advances the activity clock (→ Populating the
+record), and a valuation read after it would find the owner fresh. Within a body the only karma that
+reaches an owner's boxes is its own change — every settlement output follows the body — so `held`
+falls by each transaction's spend and the bound is cumulative: an identity's spends in one block
+total at most its effective karma at pre-body state, however many transactions carry them and
+however small each is.
+
+⛔ **Only a post spends the floor.** A thread or a reply — a transaction carrying `post` — is
+admitted while `remaining ≥ spend`. Every other spend — a like, an invite, a vouch cast, a name
+burn — is admitted while `remaining − spend ≥ KARMA_MINIMUM` (`decayCfg.karmaMinimum`): it leaves
+the floor standing. The rule binds every identity, stale or not, so one holding `KARMA_MINIMUM` or
+less posts and does nothing else with its karma
+(`ARCHITECTURE → Karma decay → "The floor is the way back"`). A transaction that spends nothing is
+not judged.
+
+**Engine inputs the rule needs:** `getKarmaValue(owner)` answers `held` and
+`getKarmaOwed(owner, height)` answers `owed` — on both paths through `consensus`'
+`karmaOwed(face, record, height, decayCfg)`, the one implementation of the formula above. Block application answers `held` over the overlay —
+the body as applied so far — and `owed` from its pre-body captures: the karma boxes and the record
+of every identity the body touches, as the view holds them before the block writes
+(`CONSENSUS_INTERFACE → Applying a block`). Admission answers `owed` from the confirmed state, for
+`tip + 1`, and `held` as the confirmed sum less the spend of every pooled karma transaction of the
+owner (`MEMPOOL_INTERFACE → Correctness gates`, `pendingKarmaSpend`): the pool's karma entries ahead
+of a transaction are the body's transactions ahead of it (`MEMPOOL_INTERFACE → Ordering`), so
+admission judges a transaction, at `tip + 1`, as a block at that height carrying the pool does. Both
+are inputs of `validateTx`, in the deps of the HTTP routes and of the relay alike.
+
 ### Vouch transition rules
 
-- **The voucher's karma balance is at least `VOUCH_MIN_BALANCE` at cast**, summed across their
-  karma boxes — not the value of any single one. Enforced at block application like every other
+- **The voucher's karma balance is at least `VOUCH_MIN_BALANCE` at cast** — what remains of their
+  effective karma (→ Karma transition rules), summed across their karma boxes, not the value of any
+  single one. It is the floor every spend but a post leaves standing, and the stake:
+  `KARMA_MINIMUM + VOUCH_KARMA_AMOUNT`. Enforced at block application like every other
   rule in this list, so it travels with the transaction rather than guarding one node's front
   door. The service layer applies the same threshold before pooling, which is a courtesy: a vouch
   that would be refused at apply is refused earlier, and refusing it earlier changes no verdict.
@@ -2282,10 +2334,11 @@ pool — with the trigger being **touch**, never a per-block walk. See
 
 **The valuation function and its two helpers are `@dagsocial/types`'** — `effectiveKarma`, `isIdentityStale`,
 `owedPeriods`, `DecayCfg` and `decayCfgFor` (`TYPES_INTERFACE → Identity record and karma valuation`) — and `decay.ts`
-holds the execution: `deriveKarmaDecay`, `commitDecayClocks`, the deps, the leg. `loadConfig` builds its `DecayCfg`
+holds the execution: `karmaOwed`, `deriveKarmaDecay`, `commitDecayClocks`, the deps, the leg. `loadConfig` builds its `DecayCfg`
 through `decayCfgFor(profile)`, and the sites that pass a cfg on pass the one it built. **One implementation**: the
-engine, the read API and a light client reproducing `effective` from a proven face total and a proven record call the
-same function, and an inline copy anywhere is the mirror defect class.
+settlement's decay, the spend rule's `owed` (`karmaOwed`, the face less it), the read API and a light client
+reproducing `effective` from a proven face total and a proven record call the same function, and an inline copy
+anywhere is the mirror defect class.
 
 The clock is the `IdentityRecord` (Store Interface → Identity Records):
 
@@ -3262,7 +3315,7 @@ walks a subtree over topology (the thread's subtree is `dag_parent_refs`', Store
 | `getBackerStakeBox(owner)` | `(UserId) => BackerStakeBox \| null` — the identity's live stake, at most one (→ Backer transition rules) |
 | `getBackerPoolBox()` | `() => BackerPoolBox \| null` — the one live pool box, `ORDER BY id LIMIT 1` like the emission, treasury and karma-pool reads; null on a network whose table is empty. The store's answer to the settlement's backer-leg read (§The settlement transaction), for the API and the shadow run; the rules read the tree's (→ AVL+ State Root, "The rules read the tree, and nothing else") |
 | `getKarmaBoxesPage(owner, page)` | `(Uint8Array, Page<BoxKey>) => { rows: KarmaBox[], next: BoxKey \| null, count: number }` — the view's page of the set `getKarmaBoxes` reads, `ORDER BY value DESC, id` strictly after `after` (two index ranges — `value = ? AND id > ?`, then `value < ?` — concatenated in that order), over the same `KARMA_UNSPENT_WHERE` fragment; never a consensus input — every balance check reads the whole set through `getKarmaBoxes` / `getKarmaValue` |
-| `getKarmaValue(owner)` | `(Uint8Array) => bigint` — **summed** value of every unspent karma box: the pool's admission reads it for the vouch minimum-balance gate; the rules read the tree's (→ AVL+ State Root, "The rules read the tree, and nothing else"). It must sum, never read one box: `getKarmaBox` is `LIMIT 1` with no `ORDER BY`, so a single-box read makes the verdict a function of SQLite's physical row order — M-12's class. Kept as one store function rather than a closure per deps literal, because a consensus-critical read reproduced at each call site is the mirror pattern that produced `computeTxIdLocal` and the copied `u32BE`. The predicate is the `KARMA_UNSPENT_WHERE` fragment that `getKarmaTotal`, the `COUNT` and the page share — the set is named once; the sum is computed here, in process |
+| `getKarmaValue(owner)` | `(Uint8Array) => bigint` — **summed** value of every unspent karma box: admission reads it for the karma spend rule — `held` is this sum less the pool's pending spends (→ Karma transition rules) — and the services for their courtesy checks; the rules read the tree's (→ AVL+ State Root, "The rules read the tree, and nothing else"). It must sum, never read one box: `getKarmaBox` is `LIMIT 1` with no `ORDER BY`, so a single-box read makes the verdict a function of SQLite's physical row order — M-12's class. Kept as one store function rather than a closure per deps literal, because a consensus-critical read reproduced at each call site is the mirror pattern that produced `computeTxIdLocal` and the copied `u32BE`. The predicate is the `KARMA_UNSPENT_WHERE` fragment that `getKarmaTotal`, the `COUNT` and the page share — the set is named once; the sum is computed here, in process |
 | `getKarmaTotal(owner)` | `(Uint8Array) => bigint` — the view's total: `COALESCE(SUM(value), 0)` over `KARMA_UNSPENT_WHERE`, an index scan of the owner's unspent entries; `/karma/:userId`'s `total`. Never a consensus input, and equal to `getKarmaValue` on every owner (a test pins it) |
 | `getCreditBoxes(owner)` | `(Uint8Array) => CreditBox[]` — multi-box, `ORDER BY value DESC, id` — a total order, so element `[0]` is a deterministic read; there is deliberately **no single-box credit accessor** (an unordered `LIMIT 1` names an arbitrary row — M-12's class) |
 | `getCreditBoxesPage(owner, page)` | `(Uint8Array, Page<BoxKey>) => { rows: CreditBox[], next: BoxKey \| null, count: number }` — the view's page of the set `getCreditBoxes` reads, the same order and clause, over the `CREDIT_UNSPENT_WHERE` fragment |

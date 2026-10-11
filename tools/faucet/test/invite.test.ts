@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeTxId } from '@dagsocial/types';
+import { KARMA_MINIMUM, computeTxId } from '@dagsocial/types';
 import { buildInviteTx } from '../src/invite.js';
 import { B1, B2, ERA, baseCfg as cfg, outputsOf, pubHex, recipient as invitee, verifies } from './fixture.js';
 
@@ -22,7 +22,10 @@ describe('buildInviteTx', () => {
 
   // TYPES_INTERFACE → Box value domain: a karma output carries value ≥ 1.
   it('an exact spend builds the bond alone and change is null', () => {
-    const { tx, changeValue, change } = buildInviteTx(cfg, [{ boxId: B1, value: 250n }], invitee, 512, ERA);
+    const { tx, changeValue, change } = buildInviteTx(cfg, [
+      { boxId: B1, value: 250n }, { boxId: B2, value: KARMA_MINIMUM },
+    ], invitee, 512, ERA);
+    expect(tx.inputs).toEqual([B1]);
     expect(changeValue).toBe(0n);
     expect(change).toBeNull();
     expect(outputsOf(tx)).toHaveLength(1);
@@ -112,6 +115,25 @@ describe('buildInviteTx', () => {
   it('refuses when the boxes cannot cover the bond', () => {
     expect(() => buildInviteTx(cfg, [{ boxId: B1, value: 10n }], invitee, 512, ERA))
       .toThrow(/insufficient/i);
+  });
+
+  // NODE_INTERFACE → Karma transition rules → "Only a post spends the floor".
+  it('builds at exactly the bond plus KARMA_MINIMUM', () => {
+    const { tx, changeValue } = buildInviteTx(
+      cfg, [{ boxId: B1, value: 250n + KARMA_MINIMUM }], invitee, 512, ERA,
+    );
+    expect(changeValue).toBe(KARMA_MINIMUM);
+    expect(outputsOf(tx)[0]).toMatchObject({ boxType: 'karma', value: String(KARMA_MINIMUM) });
+  });
+
+  it('refuses one below the bond plus KARMA_MINIMUM', () => {
+    expect(() => buildInviteTx(cfg, [{ boxId: B1, value: 250n + KARMA_MINIMUM - 1n }], invitee, 512, ERA))
+      .toThrow(/insufficient karma/);
+  });
+
+  it('refuses a faucet holding exactly the bond', () => {
+    expect(() => buildInviteTx(cfg, [{ boxId: B1, value: 250n }], invitee, 512, ERA))
+      .toThrow(/floor/);
   });
 
   it('refuses a malformed invitee key', () => {

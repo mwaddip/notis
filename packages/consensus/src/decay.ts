@@ -9,8 +9,24 @@ import type { StateView } from './state-view.js';
 
 // The valuation — `effectiveKarma`, `isIdentityStale`, `owedPeriods`, `DecayCfg`
 // — is `@dagsocial/types`' (TYPES_INTERFACE → Identity record and karma
-// valuation). `decay.ts` keeps the execution: `collectPostBodyKarma`,
-// `deriveKarmaDecay` and `commitDecayClocks` below.
+// valuation). `decay.ts` keeps the execution: `karmaOwed`,
+// `collectPostBodyKarma`, `deriveKarmaDecay` and `commitDecayClocks` below.
+
+/**
+ * The decay an owner owes at `height` — face less effective karma, over the
+ * valuation `@dagsocial/types` holds (NODE_INTERFACE → Karma transition rules →
+ * "Engine inputs the rule needs"). The one implementation of the
+ * formula: `applyBlock`'s pre-body capture reads it, and the node's admission
+ * reads it over the confirmed set.
+ */
+export function karmaOwed(
+  face: bigint,
+  record: IdentityRecord | null,
+  height: number,
+  cfg: DecayCfg,
+): bigint {
+  return face - effectiveKarma(face, record, height, cfg);
+}
 
 // ---------------------------------------------------------------------------
 // Decay execution

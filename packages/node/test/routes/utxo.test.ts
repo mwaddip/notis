@@ -43,6 +43,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { config } from '../../src/config.js';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 // A directory private to this run, so two runs of the suite on one machine
 // never write the same store file.
 let testDir: string;
@@ -84,6 +85,7 @@ async function request(
         getBox: getBoxWithPending,
         insertBox,
         consumeBox,
+        getKarmaOwed: admissionOwed(DECAY_CFG),
         getKarmaValue,
         hasActiveVouchEscrow: () => false,
         vouchCooldownBlocks: 2,
@@ -691,6 +693,7 @@ describe('UTXO routes', () => {
           getBox: () => { throw new PendingSpendConflictError(boxId); },
           insertBox: () => {},
           consumeBox: () => {},
+          getKarmaOwed: () => 0n,
           getKarmaValue: () => 0n,
           hasActiveVouchEscrow: () => false,
           vouchCooldownBlocks: 2,
@@ -797,6 +800,7 @@ describe('utxo routes — alias resolution', () => {
           getBox: () => null,
           insertBox: () => {},
           consumeBox: () => {},
+          getKarmaOwed: () => 0n,
           getKarmaValue: () => 0n,
           hasActiveVouchEscrow: () => false,
           vouchCooldownBlocks: 2,

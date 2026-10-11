@@ -772,7 +772,7 @@ async function runScenario(m: Modules, carrier: PinCarrier): Promise<ApplyPinCap
     const spent1 = thread(i1, largest(i1), 'a first spend', 3);
     const spent2 = thread(i1, changeOf(spent1), 'a second spend', 3);
     const spent3 = thread(i1, changeOf(spent2), 'a third spend', 3);
-    await refuse('a cast after the voucher\'s own spends', 'Vouch cast requires a karma balance of at least', [
+    await refuse('a cast after the voucher\'s own spends', 'below the floor of', [
       spent1,
       spent2,
       spent3,
@@ -878,11 +878,12 @@ async function runScenario(m: Modules, carrier: PinCarrier): Promise<ApplyPinCap
     like(r2, largest(r2), pDormant.postId, d1, 7),
   ]);
 
-  // Block 8 — a root's vouch re-qualifies the lapsed target; decay held at the
-  // floor; a consolidation of three karma boxes.
+  // Block 8 — a root's vouch re-qualifies the lapsed target; a stale identity
+  // squares from the floor by replying to the dormant author; a consolidation
+  // of three karma boxes.
   await applyNext([
     vouch(r2, largest(r2), t, 8),
-    like(l1, largest(l1), pDormant.postId, d1, 8),
+    reply(l1, largest(l1), 'the stale liker replies', pDormant.postId, d1, 8),
     consolidate(t, karma(t), 8),
   ]);
 

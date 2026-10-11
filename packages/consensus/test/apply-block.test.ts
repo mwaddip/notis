@@ -359,7 +359,7 @@ describe('applyBlock — a chain of blocks over a stub view', () => {
 
     it('a vouch after the voucher\'s own spend took it below the bar', () => {
       const spend = threadTx(r3, largest(at2(), r3), 'a root spends down', 3);
-      expectRefused(at2(), 3, [spend, vouchTx(r3, changeOf(spend), t.userId, 3)], 'Vouch cast requires a karma balance');
+      expectRefused(at2(), 3, [spend, vouchTx(r3, changeOf(spend), t.userId, 3)], 'below the floor of 10');
     });
 
     it('one name claimed twice', () => {

@@ -189,6 +189,7 @@ interface EngineDeps {
   insertBox: (box: AnyBox) => void;
   consumeBox: (id: string, atBlock: number) => void;
   getKarmaValue: (owner: Uint8Array) => bigint;
+  getKarmaOwed: (owner: Uint8Array, height: number) => bigint;
   getIdentityRecord: (id: Uint8Array) => IdentityRecord | null;
   hasActiveVouchEscrow: (voucherId: Uint8Array) => boolean;
   vouchCooldownBlocks: number;
@@ -211,11 +212,12 @@ interface EngineDeps {
   protocolVersionSchedule: readonly { version: number; fromHeight: number }[];
 }
 
-function makeEngineDeps(
+async function makeEngineDeps(
   db: Database.Database,
   utxoModule: Awaited<ReturnType<typeof importUtxo>>,
   recordsModule: Awaited<ReturnType<typeof importIdentityRecords>>,
-): EngineDeps {
+): Promise<EngineDeps> {
+  const { admissionOwed } = await import('../../src/services/karma-admission.js');
   return {
     getBox: (id: string) => {
       const box = utxoModule.getBox(id);
@@ -229,6 +231,7 @@ function makeEngineDeps(
     consumeBox: (id: string, atBlock: number) => {
       db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
     },
+    getKarmaOwed: admissionOwed({ staleThresholdBlocks: config.karmaStaleThresholdBlocks, decayIntervalBlocks: config.karmaDecayIntervalBlocks, decayAmount: config.karmaDecayAmount, karmaMinimum: config.karmaMinimum }),
     getKarmaValue: (owner: Uint8Array) =>
       utxoModule.getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
     // The invite-create once-ever bar reads it (NODE_INTERFACE → "Bond
@@ -368,7 +371,7 @@ describe('full-pipeline', () => {
 
     // ---- Step 1: Cast like (validateTx + mempool) ----
     const likesSvc = await importLikesService();
-    const deps = makeEngineDeps(db, utxo, await importIdentityRecords());
+    const deps = await makeEngineDeps(db, utxo, await importIdentityRecords());
     const result = likesSvc.castLike(deps, likeTx, 1);
 
     expect(result.castLikeResult).toBe('pending');
@@ -479,7 +482,7 @@ describe('full-pipeline', () => {
     signTransaction(likeTx, liker.privateKey, likerPubHex);
 
     const likesSvc = await importLikesService();
-    const deps = makeEngineDeps(db, utxo, await importIdentityRecords());
+    const deps = await makeEngineDeps(db, utxo, await importIdentityRecords());
     const likeResult = likesSvc.castLike(deps, likeTx, 0);
     expect(likeResult.castLikeResult).toBe('pending');
 
@@ -564,7 +567,7 @@ describe('full-pipeline', () => {
 
     // ---- Step 1: Create invite (validateTx + mempool) ----
     const invitesSvc = await importInvitesService();
-    const deps = makeEngineDeps(db, utxo, await importIdentityRecords());
+    const deps = await makeEngineDeps(db, utxo, await importIdentityRecords());
     const result = invitesSvc.createInvite(deps, inviteTx, 0);
 
     expect(result.status).toBe('pending');
@@ -616,7 +619,7 @@ describe('full-pipeline', () => {
     });
     const utxo = await importUtxo();
     const invitesSvc = await importInvitesService();
-    const deps = makeEngineDeps(db, utxo, await importIdentityRecords());
+    const deps = await makeEngineDeps(db, utxo, await importIdentityRecords());
     await seedKarmaPoolBox();
 
     const invitee = makeTestIdentity().userId;

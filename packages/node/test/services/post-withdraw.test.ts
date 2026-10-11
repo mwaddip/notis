@@ -421,8 +421,12 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     // only monotonic (TYPES_INTERFACE → Monotonic creation height) above an
     // input seeded no later — height 2 here would refuse the tx on that bound
     // before the withdrawn-post rule under test is ever reached.
-    const { LIKE_KARMA_COST } = await import('@dagsocial/types');
-    const likerKarma = makeKarmaBox(LIKE_KARMA_COST + 1n, liker.userId, 0, 71);
+    //
+    // The liker's karma clears the spend rule's floor so the body reaches the
+    // withdrawn-post rule the subject under test (NODE_INTERFACE → Karma
+    // transition rules → "Only a post spends the floor").
+    const { LIKE_KARMA_COST, KARMA_MINIMUM } = await import('@dagsocial/types');
+    const likerKarma = makeKarmaBox(LIKE_KARMA_COST + KARMA_MINIMUM, liker.userId, 0, 71);
     await seedBoxes([likerKarma]);
     const likeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
 
@@ -470,14 +474,16 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     expect(apply.applyOrderingBlock(block2)).toBe(true);
     posts.setPostBody(replyId, 'reply');
 
-    // Block 3: C likes P
-    const { LIKE_KARMA_COST } = await import('@dagsocial/types');
-    const likerKarma = makeKarmaBox(LIKE_KARMA_COST + 1n, C.userId, 2, 90);
+    // Block 3: C likes P — enough karma to leave the floor standing
+    // (NODE_INTERFACE → Karma transition rules → "Only a post spends the
+    // floor"), the subject being the like-record outliving withdrawal.
+    const { LIKE_KARMA_COST, KARMA_MINIMUM } = await import('@dagsocial/types');
+    const likerKarma = makeKarmaBox(LIKE_KARMA_COST + KARMA_MINIMUM, C.userId, 2, 90);
     await seedBoxes([likerKarma]);
     const likeTx: UtxoTransaction = {
       inputs: [likerKarma.id!],
       outputs: [
-        { boxType: 'karma', value: 1n, createdAtBlock: likerKarma.createdAtBlock, owner: C.userId } as never,
+        { boxType: 'karma', value: KARMA_MINIMUM, createdAtBlock: likerKarma.createdAtBlock, owner: C.userId } as never,
         { boxType: 'like_accrual', value: LIKE_KARMA_COST, createdAtBlock: likerKarma.createdAtBlock, author: B.userId } as never,
       ],
       signatures: {},

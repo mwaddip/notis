@@ -49,6 +49,7 @@ import {
   FIXTURE_BOND_KARMA,
 } from '../helpers.js';
 import { config } from '../../src/config.js';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -98,6 +99,7 @@ describe('invites service', () => {
       getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => storeInsertBox(box),
       consumeBox: (id: string, atBlock: number) => storeConsumeBox(id, atBlock),
+      getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,
@@ -374,7 +376,7 @@ describe('invites service', () => {
     signTransaction(tx, inviterPrivKey, inviterPubKeyHex);
 
     expect(() => createInvite(deps, tx, 5))
-      .toThrow(new RegExp(`this invite bonds ${config.inviteBondMax}, inviter holds ${held}`));
+      .toThrow(new RegExp(`this invite bonds ${config.inviteBondMax}`));
   });
 
   it('createInvite rejects a bond naming someone else as inviter', () => {
@@ -409,7 +411,13 @@ describe('invites service', () => {
   // NODE_INTERFACE → Karma transition rules: the karma output is optional
   // -----------------------------------------------------------------------
 
-  it('createInvite accepts a bond alone when the inviter spends exactly', () => {
+  it('createInvite accepts a bond alone when the inviter spends exactly, leaving the floor standing', () => {
+    // The karma output is optional (NODE_INTERFACE → Karma transition rules →
+    // "A karma output carries at least 1n, and the change output is
+    // optional"). The inviter needs KARMA_MINIMUM beside the bond, held in a
+    // reserve box the invite does not spend ("A bond leaves the floor").
+    const reserve = createKarmaBox(inviterId, KARMA_MINIMUM, 42);
+    void reserve;
     const karma = createKarmaBox(inviterId, FIXTURE_BOND_KARMA, 1);
     const tx: UtxoTransaction = {
       inputs: [karma.id!],
