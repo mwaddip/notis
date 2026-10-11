@@ -126,14 +126,14 @@ const FLOOR_RULE = 'below the floor of 10';
 
 describe('karma spend rule, shapes A–E', () => {
   // Shape A — a stale root, face 1000, effective 10; one bond of 250 refused at the 1st.
-  it.fails('A: stale root with effective 10 cannot afford a bond of 250', () => {
+  it('A: stale root with effective 10 cannot afford a bond of 250', () => {
     const s = seed('A', [1000n], { memberSinceBlock: 1, lastActivityBlock: 1 });
     const invite = inviteTx(s.actor, s.view.getKarmaBoxes(s.actor.userId)[0]!, seededIdentity('A/invitee').userId, 250n, H);
     expectRefusedAt(s, [invite], invite, FLOOR_RULE);
   });
 
   // Shape B — the same root; 99 bonds of 10, each spending the change of the one before.
-  it.fails('B: stale root with effective 10 cannot afford even one bond of 10', () => {
+  it('B: stale root with effective 10 cannot afford even one bond of 10', () => {
     const s = seed('B', [1000n], { memberSinceBlock: 1, lastActivityBlock: 1 });
     const txs: Built[] = [];
     let input = s.view.getKarmaBoxes(s.actor.userId)[0]!;
@@ -149,7 +149,7 @@ describe('karma spend rule, shapes A–E', () => {
   // Pre-body remaining = 600. Bond 1: 600 - 250 = 350 >= 10 ✓. Bond 2: 350 - 250 = 100 >= 10 ✓.
   // Bond 3: 100 - 250 = -150 < 10 → refused at the third. After a body of two the inviter holds 100
   // (settlement burns 400 to the pool from the 500 face left in the body).
-  it.fails('C: face 1000 effective 600 — the first two bonds valid, the third refused', () => {
+  it('C: face 1000 effective 600 — the first two bonds valid, the third refused', () => {
     const s = seed('C', [1000n], { memberSinceBlock: 1, lastActivityBlock: 1, lastDecayBlock: 360 });
     const txs: Built[] = [];
     let input = s.view.getKarmaBoxes(s.actor.userId)[0]!;
@@ -177,7 +177,7 @@ describe('karma spend rule, shapes A–E', () => {
   });
 
   // Shape D — a stale identity, face 1000, effective 10; 990 likes refused at the 1st.
-  it.fails('D: stale identity with effective 10 cannot afford one like', () => {
+  it('D: stale identity with effective 10 cannot afford one like', () => {
     const s = seed('D', [1000n], { lastActivityBlock: 1 });
     const authorKey = seededIdentity('D/author').userId;
     const postId = hex(uid('D/post'));
@@ -203,7 +203,7 @@ describe('karma spend rule, shapes A–E', () => {
     expectAccepted(s, txs);
   });
 
-  it.fails('E: fresh identity with face 1000 — a 991st like refused', () => {
+  it('E: fresh identity with face 1000 — a 991st like refused', () => {
     const s = seed('E-991', [1000n], { lastActivityBlock: H - 1 });
     const authorKey = seededIdentity('E/author991').userId;
     s.view.putIdentityRecord(authorKey, identityRecord({ lastActivityBlock: H - 1 }));
@@ -227,7 +227,7 @@ describe('karma spend rule, shapes A–E', () => {
 describe('above the floor, likes', () => {
   // face 1000, lastDecayBlock 360: owed 400, effective 600, remaining pre-body 600.
   // Like k (1-indexed): remaining - 1 = 600 - k. 590 at k=590. 591st falls to 9 < 10.
-  it.fails('effective 600 — 590 likes valid, the 591st refused', () => {
+  it('effective 600 — 590 likes valid, the 591st refused', () => {
     const s = seed('above-floor-591', [1000n], { lastActivityBlock: 1, lastDecayBlock: 360 });
     const authorKey = seededIdentity('above-floor/author').userId;
     s.view.putIdentityRecord(authorKey, identityRecord({ lastActivityBlock: H - 1 }));
@@ -269,7 +269,7 @@ describe('a post at the floor', () => {
   // Thread 1 (spend 5): 10 >= 5 ✓, change = 995, held after = 995.
   // Thread 2 (spend 5): held = 995, owed_pre = 990, remaining = 5, 5 >= 5 ✓, change = 990.
   // Thread 3 (spend 5): held = 990, remaining = 0, 0 < 5 → refused with the post rule.
-  it.fails('stale effective 10 — a third thread is refused with the post rule', () => {
+  it('stale effective 10 — a third thread is refused with the post rule', () => {
     const s = seed('post-floor-3', [1000n], { lastActivityBlock: 1 });
     const txs: Built[] = [];
     let input = s.view.getKarmaBoxes(s.actor.userId)[0]!;
@@ -301,7 +301,7 @@ describe('a post at the floor', () => {
 
   // After the thread the owner has remaining 5 (held 995, owed 990). A like's floor is 10,
   // so the like is refused — only a post spends the floor.
-  it.fails('stale effective 10 — a thread then a like, the like refused', () => {
+  it('stale effective 10 — a thread then a like, the like refused', () => {
     const s = seed('post-then-like', [1000n], { lastActivityBlock: 1 });
     const authorKey = seededIdentity('post-then-like/author').userId;
     s.view.putIdentityRecord(authorKey, identityRecord({ lastActivityBlock: H - 1 }));
@@ -357,7 +357,7 @@ describe('each arm — a fresh identity, each side of its line', () => {
     expectAccepted(s, [like]);
   });
 
-  it.fails('like at 10 — refused (below the floor)', () => {
+  it('like at 10 — refused (below the floor)', () => {
     const s = seed('like-10', [10n], { lastActivityBlock: H - 1 });
     const authorKey = seededIdentity('like-10/author').userId;
     s.view.putIdentityRecord(authorKey, identityRecord({ lastActivityBlock: H - 1 }));
@@ -376,7 +376,7 @@ describe('each arm — a fresh identity, each side of its line', () => {
     expectAccepted(s, [vouch]);
   });
 
-  it.fails('vouch cast at 10 — refused (below the floor)', () => {
+  it('vouch cast at 10 — refused (below the floor)', () => {
     const s = seed('vouch-10', [10n], { memberSinceBlock: 1, lastActivityBlock: H - 1 });
     const target = seededIdentity('vouch-10/target');
     s.view.putIdentityRecord(target.userId, identityRecord({}));
@@ -391,7 +391,7 @@ describe('each arm — a fresh identity, each side of its line', () => {
     expectAccepted(s, [invite]);
   });
 
-  it.fails('invite with bond 25 at face 34 — refused (below the floor)', () => {
+  it('invite with bond 25 at face 34 — refused (below the floor)', () => {
     const s = seed('invite-34', [34n], { memberSinceBlock: 1, lastActivityBlock: H - 1 });
     const invite = inviteTx(s.actor, s.view.getKarmaBoxes(s.actor.userId)[0]!, seededIdentity('invite-34/invitee').userId, 25n, H);
     expectRefusedAt(s, [invite], invite, FLOOR_RULE);
@@ -421,7 +421,7 @@ describe('each arm — a fresh identity, each side of its line', () => {
     expectAccepted(s, [burn]);
   });
 
-  it.fails('name burn at face 19 — refused (below the floor)', () => {
+  it('name burn at face 19 — refused (below the floor)', () => {
     const { s, burn } = nameBurn('burn-19', 19n);
     expectRefusedAt(s, [burn], burn, FLOOR_RULE);
   });
@@ -518,7 +518,7 @@ describe('`owed` is read once, from pre-body state', () => {
   //  Like 1 (spend 1): held=16, owed_pre=5 (NOT the overlay record), remaining=11, 11-1=10 >= 10 ✓.
   //  Like 2 (spend 1): held=15, remaining=10, 10-1=9 < 10 → refused.
   // A reader of the overlay record would find the identity fresh after the thread and accept all three.
-  it.fails('a stale identity, effective 16 — thread + two likes: the second like refused', () => {
+  it('a stale identity, effective 16 — thread + two likes: the second like refused', () => {
     const s = seed('owed-prebody', [21n], { lastActivityBlock: 1, lastDecayBlock: 597 });
     const authorKey = seededIdentity('owed-prebody/author').userId;
     s.view.putIdentityRecord(authorKey, identityRecord({ lastActivityBlock: H - 1 }));
@@ -563,7 +563,7 @@ describe('`held` is the summed value across karma boxes', () => {
   });
 
   // Same shape but the second box holds 9: held = 1 + 9 = 10, 10 - 1 = 9 < 10 → refused.
-  it.fails('a like spends a 1-karma box while a second box holds 9 — refused', () => {
+  it('a like spends a 1-karma box while a second box holds 9 — refused', () => {
     const s = seed('held-sum-fail', [1n, 9n], { lastActivityBlock: H - 1 });
     const authorKey = seededIdentity('held-sum-fail/author').userId;
     s.view.putIdentityRecord(authorKey, identityRecord({ lastActivityBlock: H - 1 }));
@@ -583,7 +583,7 @@ describe('two owners in one body are judged apart', () => {
   // A: face 11, remaining 11. A1 (12-1=10) ✓, A2 (10-1=9<10) ✗.
   // B: face 12, remaining 12. B1 (12-1=11) ✓, B2 would be 11-1=10 ✓, B3 would be 10-1=9 ✗.
   // Interleaved A1, B1, A2 — the block fails at A2 (never reaches B2).
-  it.fails('two owners interleaved — one owner\'s second spend crosses the floor, the other\'s does not', () => {
+  it('two owners interleaved — one owner\'s second spend crosses the floor, the other\'s does not', () => {
     const view = new MemoryStateView({ memberCount: 1 });
     const A = seededIdentity('two-owners/A');
     const B = seededIdentity('two-owners/B');
@@ -629,8 +629,6 @@ describe('validateTx answers from `getKarmaValue` and `getKarmaOwed`', () => {
   const parentPostId = hex(uid('validate/parent-post'));
 
   // One deps literal: controlled `getKarmaValue` and `getKarmaOwed`, every other dep refused.
-  // The `getKarmaOwed` field is an excess the current `UtxoEngineDeps` type does not yet declare;
-  // the local object type carries it, and the `as` boundary presents it as the deps type.
   function deps(opts: {
     held: bigint;
     owed: bigint;
@@ -669,7 +667,7 @@ describe('validateTx answers from `getKarmaValue` and `getKarmaOwed`', () => {
       getUsername: () => null,
       getUsernameByOwner: () => null,
     };
-    return literal as unknown as UtxoEngineDeps;
+    return literal as UtxoEngineDeps;
   }
 
   // A reply: spend = POST_PRICE_REPLY (3n). Post rule — remaining ≥ spend.
@@ -705,22 +703,22 @@ describe('validateTx answers from `getKarmaValue` and `getKarmaOwed`', () => {
     }, actor);
   }
 
-  it.fails('a reply with held=5 owed=1 (remaining=4, spend=3) is refused', () => {
+  it('a reply with held=3 owed=1 (remaining=2, spend=3) is refused', () => {
     const k = karma(POST_PRICE_REPLY); // input value must equal the spend's non-karma outputs
     const reply = replyTxFor(k);
-    const result = validateTx(deps({ held: 5n, owed: 1n, boxes: [k] }), reply.tx, H);
+    const result = validateTx(deps({ held: 3n, owed: 1n, boxes: [k] }), reply.tx, H);
     expect(result.valid).toBe(false);
     expect(result.error).toContain(POST_RULE);
   });
 
-  it('a reply with held=5 owed=0 (remaining=5, spend=3) is valid', () => {
+  it('a reply with held=3 owed=0 (remaining=3, spend=3) is valid', () => {
     const k = karma(POST_PRICE_REPLY);
     const reply = replyTxFor(k);
-    const result = validateTx(deps({ held: 5n, owed: 0n, boxes: [k] }), reply.tx, H);
+    const result = validateTx(deps({ held: 3n, owed: 0n, boxes: [k] }), reply.tx, H);
     expect(result.valid).toBe(true);
   });
 
-  it.fails('a like with held=10 owed=0 (remaining=10, spend=1) is refused — below the floor', () => {
+  it('a like with held=10 owed=0 (remaining=10, spend=1) is refused — below the floor', () => {
     const k = karma(1n);
     const like = likeTxFor(k);
     const result = validateTx(deps({ held: 10n, owed: 0n, boxes: [k] }), like.tx, H);
@@ -735,7 +733,7 @@ describe('validateTx answers from `getKarmaValue` and `getKarmaOwed`', () => {
     expect(result.valid).toBe(true);
   });
 
-  it.fails('getKarmaOwed is called with the owner and the height validateTx was given', () => {
+  it('getKarmaOwed is called with the owner and the height validateTx was given', () => {
     const k = karma(LIKE_KARMA_COST);
     const like = likeTxFor(k);
     const spy = vi.fn((_owner: Uint8Array, _height: number) => 0n);
@@ -758,7 +756,7 @@ describe('the spend rule is the arm\'s last word', () => {
   // Today the balance check runs ahead of the window check (balance's reason wins).
   // Under the contract the window check runs before the spend rule, which is the arm's
   // last check — the window's reason wins.
-  it.fails('a vouch failing the window and the spend rule — the window reason wins', () => {
+  it('a vouch failing the window and the spend rule — the window reason wins', () => {
     const s = seed('arms-last', [5n], { memberSinceBlock: 1, lastActivityBlock: H - 1 });
     const target = seededIdentity('arms-last/target');
     s.view.putIdentityRecord(target.userId, identityRecord({}));

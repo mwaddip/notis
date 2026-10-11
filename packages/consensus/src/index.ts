@@ -19,7 +19,7 @@ export {
 } from './settlement.js';
 export type { SettlementDeps, SettlementBody } from './settlement.js';
 
-export { deriveKarmaDecay, commitDecayClocks } from './decay.js';
+export { deriveKarmaDecay, commitDecayClocks, karmaOwed } from './decay.js';
 export type { DecayDeps, DecayPlan } from './decay.js';
 
 export { computeBlockReward, splitCoinbase, isCreditSideTx } from './coinbase-split.js';

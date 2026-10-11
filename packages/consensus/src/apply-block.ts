@@ -26,7 +26,7 @@ import { blockCost } from './block-cost.js';
 import { postsOf, withdrawalsOf } from './block-posts.js';
 import type { BlockPost } from './block-posts.js';
 import { computeBlockReward, countKarmaActors, isCreditSideTx, type EmbeddedTx } from './coinbase-split.js';
-import { collectPostBodyKarma, commitDecayClocks, deriveKarmaDecay } from './decay.js';
+import { collectPostBodyKarma, commitDecayClocks, deriveKarmaDecay, karmaOwed } from './decay.js';
 import type { DecayDeps } from './decay.js';
 import { BlockOverlay } from './overlay.js';
 import type { BlockMutation } from './overlay.js';
@@ -287,7 +287,6 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   if (verified === null) {
     return reject(`Rejected block height=${height}: a signature in the body does not verify`);
   }
-  const utxoDeps = utxoDepsOver(state, ctx, verified);
 
   // Per-block like accrual: in-memory, this invocation only — the
   // end-of-phase settlement (§11b) reads both maps. Local by design, so every
@@ -348,6 +347,18 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   );
   const decayDeps = decayDepsOver(state);
   const decayPlans = deriveKarmaDecay(decayDeps, postBodyKarma, height, ctx.decayCfg);
+  // NODE_INTERFACE → Karma transition rules → "Engine inputs the rule needs":
+  // `owed` for every identity the body touches, from the view as it stands
+  // before the block writes. The sum reads the owner's live karma boxes once,
+  // and the record once; `postBodyKarma`'s keys are the touched set in sorted
+  // owner-hex order, so the capture's reads follow that order.
+  const preBodyOwed = new Map<string, bigint>();
+  for (const { owner } of postBodyKarma.values()) {
+    const face = state.getKarmaBoxes(owner).reduce((s, b) => s + b.value, 0n);
+    const record = state.getIdentityRecord(owner);
+    preBodyOwed.set(bytesToHex(owner), karmaOwed(face, record, height, ctx.decayCfg));
+  }
+  const utxoDeps = utxoDepsOver(state, ctx, verified, preBodyOwed, height);
   // Escrows and release candidates: captured before the apply loop so the
   // body's own mutations do not appear in the settlement's input list on one
   // side only.
@@ -893,17 +904,42 @@ function signatureEntryKey(txIdHex: string, keyHex: string, signature: Uint8Arra
  * read answers over the state as the block has left it, and every write lands in
  * the overlay, so `validateTx` and `applyTx` run unchanged. `verifySignature`
  * answers from the set the body check verified — `true` only for an entry the
- * set holds.
+ * set holds. `getKarmaOwed` answers from the pre-body capture: an owner the
+ * capture does not hold is a defect, never `0n` — the lookup throws, and so
+ * does a height other than the block's. A silent default would switch the
+ * spend rule off for that owner (NODE_INTERFACE → Karma transition rules).
  */
-function utxoDepsOver(state: BlockOverlay, ctx: ApplyContext, verified: ReadonlySet<string>): UtxoEngineDeps {
+function utxoDepsOver(
+  state: BlockOverlay,
+  ctx: ApplyContext,
+  verified: ReadonlySet<string>,
+  preBodyOwed: ReadonlyMap<string, bigint>,
+  blockHeight: number,
+): UtxoEngineDeps {
   return {
     getBox: (id) => state.getBox(id),
     insertBox: (box) => state.insertBox(box),
     consumeBox: (id) => state.consumeBox(id),
-    // The vouch cast's minimum-balance gate reads the voucher's current summed
-    // karma (ARCHITECTURE → Vouch boxes): the sum over the owner's whole live
-    // set, the one definition the pool's check sums too (NODE_INTERFACE → UTXO).
+    // The spend rule's `held` — the owner's live karma summed through the
+    // overlay (NODE_INTERFACE → Karma transition rules → "Engine inputs the
+    // rule needs"), the one definition the pool's check sums too
+    // (NODE_INTERFACE → UTXO).
     getKarmaValue: (owner) => state.getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+    getKarmaOwed: (owner, height) => {
+      if (height !== blockHeight) {
+        throw new Error(
+          `getKarmaOwed: ${height} is not this block's height ${blockHeight}`,
+        );
+      }
+      const ownerHex = bytesToHex(owner);
+      const owed = preBodyOwed.get(ownerHex);
+      if (owed === undefined) {
+        throw new Error(
+          `getKarmaOwed: the pre-body capture holds no entry for ${ownerHex}`,
+        );
+      }
+      return owed;
+    },
     // The vouch cast's cooldown gate (NODE_INTERFACE → Vouch transition rules).
     hasActiveVouchEscrow: (voucherId) => state.getVouchEscrowsFor(voucherId).length > 0,
     vouchCooldownBlocks: ctx.vouchCooldownBlocks,

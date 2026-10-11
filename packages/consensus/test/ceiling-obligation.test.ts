@@ -33,12 +33,11 @@ const INVENTORY: HeightMention[] = [
     note: 'parameter declaration',
   },
   {
-    key: 'voucherFace, voucherRecord, currentBlockHeight, deps.decayCfg,',
+    key: 'const owed = deps.getKarmaOwed(inputKarma.owner, currentBlockHeight);',
     capsHeight: false,
     note:
-      'effectiveKarma decays with height (decay.ts:105-121), and the vouch ' +
-      'arm then tests voucherBalance < VOUCH_MIN_BALANCE — validity IS ' +
-      'height-dependent here, but it turns on the voucher\'s karma STATE ' +
+      'The spend rule reads owed-decay at the current height — validity IS ' +
+      'height-dependent here, but it turns on the owner\'s karma STATE ' +
       'rather than the transaction\'s bytes, so no bytes-only ceiling can ' +
       'express it and the pool cannot know it',
   },
