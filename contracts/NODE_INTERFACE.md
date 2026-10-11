@@ -2088,7 +2088,8 @@ less posts and does nothing else with its karma
 not judged.
 
 **Engine inputs the rule needs:** `getKarmaValue(owner)` answers `held` and
-`getKarmaOwed(owner, height)` answers `owed`. Block application answers `held` over the overlay —
+`getKarmaOwed(owner, height)` answers `owed` — on both paths through `consensus`'
+`karmaOwed(face, record, height, decayCfg)`, the one implementation of the formula above. Block application answers `held` over the overlay —
 the body as applied so far — and `owed` from its pre-body captures: the karma boxes and the record
 of every identity the body touches, as the view holds them before the block writes
 (`CONSENSUS_INTERFACE → Applying a block`). Admission answers `owed` from the confirmed state, for
