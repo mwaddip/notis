@@ -20,6 +20,7 @@ import { castLike } from './services/likes.js';
 import { castVouch, initiateUnvouch } from './services/vouch.js';
 import { createInvite } from './services/invites.js';
 import { executePostWithdraw } from './services/post-withdraw.js';
+import { admissionHeld, admissionOwed } from './services/karma-admission.js';
 import { readFileSync } from 'fs';
 import { isLivePost, type StoredPost } from './store/posts.js';
 import { getDb } from './store/db.js';
@@ -219,10 +220,11 @@ export function createApp(config: Config): express.Express {
 
   // ---- Shared UTXO engine deps (curried into validateTx for routes) ----
 
-  // Bond settlement's unlock predicate reads the invitee's summed unspent
-  // karma (NODE_INTERFACE → "Bond transition rules"). Every deps literal below
-  // references the store's getKarmaValue directly — the single implementation
-  // shared with block application and the relay path.
+  // Admission's `held` and `owed` are the spend rule's engine inputs
+  // (NODE_INTERFACE → Karma transition rules → "Engine inputs the rule needs"),
+  // written once in `services/karma-admission.ts` and wired here as the
+  // engine's `getKarmaValue` and `getKarmaOwed` — the same two closures also
+  // ride into `handleRelayedTx`'s deps literal.
   // ⛔ **Every `getBox` below is `getBoxWithPending`, and that is an admission
   // convenience, not a consensus one.** These deps reach submission services
   // only. Block application takes its `getBox` from a direct store import
@@ -238,7 +240,8 @@ export function createApp(config: Config): express.Express {
     getBox: store.getBoxWithPending,
     insertBox: store.insertBox,
     consumeBox: store.consumeBox,
-    getKarmaValue: store.getKarmaValue,
+    getKarmaValue: admissionHeld,
+    getKarmaOwed: admissionOwed(decayConfig()),
     getIdentityRecord: store.getIdentityRecord,
     hasActiveVouchEscrow: store.hasActiveVouchEscrow,
     vouchCooldownBlocks: config.vouchCooldownBlocks,

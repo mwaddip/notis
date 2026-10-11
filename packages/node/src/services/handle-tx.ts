@@ -5,7 +5,6 @@ import { config } from '../config.js';
 import { emitPostReceived, emitPostValidated } from '../journal.js';
 import { getDb } from '../store/db.js';
 import {
-  getKarmaValue,
   hasActiveVouchEscrow,
   getTopologyAuthorBytes,
   getPendingPostAuthor,
@@ -23,6 +22,7 @@ import {
   getUsernameByOwner,
 } from '../store/index.js';
 import { admitTx } from './admit-tx.js';
+import { admissionHeld, admissionOwed } from './karma-admission.js';
 import { ClientError } from './client-error.js';
 
 /**
@@ -41,26 +41,29 @@ export function handleRelayedTx(
   content: string | undefined,
   fromPeerId: string,
 ): void {
+  // Admission's `held` and `owed` are the spend rule's engine inputs
+  // (NODE_INTERFACE → Karma transition rules → "Engine inputs the rule
+  // needs"), the one implementation the HTTP routes' deps literal also wires
+  // (`server.ts`).
+  const decayCfg = {
+    staleThresholdBlocks: config.karmaStaleThresholdBlocks,
+    decayIntervalBlocks: config.karmaDecayIntervalBlocks,
+    decayAmount: config.karmaDecayAmount,
+    karmaMinimum: config.karmaMinimum,
+  };
   const deps = {
     getBox,
     insertBox: () => {},
     consumeBox: () => {},
-    // The vouch cast's minimum-balance gate (ARCHITECTURE → "Vouch boxes").
-    // Relay validation has to reach the same verdict the block path will — the
-    // store's getKarmaValue is the single implementation all three paths share.
-    getKarmaValue,
+    getKarmaValue: admissionHeld,
+    getKarmaOwed: admissionOwed(decayCfg),
     // The vouch cast's cooldown gate (NODE_INTERFACE → "Vouch transition
     // rules") — same rule.
     hasActiveVouchEscrow,
     vouchCooldownBlocks: config.vouchCooldownBlocks,
     inviteBondMin: config.inviteBondMin,
     inviteBondMax: config.inviteBondMax,
-    decayCfg: {
-      staleThresholdBlocks: config.karmaStaleThresholdBlocks,
-      decayIntervalBlocks: config.karmaDecayIntervalBlocks,
-      decayAmount: config.karmaDecayAmount,
-      karmaMinimum: config.karmaMinimum,
-    },
+    decayCfg,
     // The like marker's author pin (NODE_INTERFACE → Karma transition rules) —
     // same rule again: a relayed like whose marker names the wrong author must
     // be refused here as well as at the block path.

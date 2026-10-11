@@ -56,10 +56,21 @@ export function castVouch(
     throw new ClientError('A vouch for this pair is already pending');
   }
 
-  // The balance check and escrow gate are consensus-enforced in checkTransitions.
-  const voucherFace = deps.getKarmaValue(voucherId);
-  const balance = effectiveKarma(voucherFace, voucherRecord, currentBlockHeight, deps.decayCfg);
-  if (balance < VOUCH_MIN_BALANCE) {
+  // A vouch cast is a karma spend of VOUCH_KARMA_AMOUNT that must leave the
+  // floor standing (NODE_INTERFACE → Karma transition rules → "Only a post
+  // spends the floor"; → "Engine inputs the rule needs"), so the voucher's
+  // `remaining = held - owed` must cover VOUCH_MIN_BALANCE (the stake plus the
+  // floor; TYPES_INTERFACE → VOUCH_MIN_BALANCE). The deps' `getKarmaValue`
+  // already answers `held` — the confirmed sum less what the pool's karma
+  // transactions have spent of it (MEMPOOL_INTERFACE → Correctness gates →
+  // "`pendingKarmaSpend` is an input of `validateTx`, not a gate a path can
+  // skip") — so the engine's spend check holds the same ground; this
+  // restatement names the reason more kindly.
+  const voucherHeld = deps.getKarmaValue(voucherId);
+  const voucherRemaining = effectiveKarma(
+    voucherHeld, voucherRecord, currentBlockHeight, deps.decayCfg,
+  );
+  if (voucherRemaining < VOUCH_MIN_BALANCE) {
     throw new ClientError(
       `Insufficient karma: need at least ${VOUCH_MIN_BALANCE} to vouch`,
     );

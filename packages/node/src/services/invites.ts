@@ -3,6 +3,7 @@ import {
   MEMPOOL_EXPIRY_BLOCKS,
   effectiveKarma,
   membershipBar,
+  KARMA_MINIMUM,
 } from '@dagsocial/types';
 import type { BondBox, KarmaBox, UtxoTransaction } from '@dagsocial/types';
 import { isMember, isRoot, materializeOutput, validateTx } from '@dagsocial/consensus';
@@ -82,26 +83,31 @@ export function createInvite(
     );
   }
 
-  // ---- 3. Verify the inviter can afford the bond ----
+  // ---- 3. Verify the inviter can afford the bond AND the floor ----
   //
-  // The whole cost of an invite, and the network's only sybil price. Read as the
-  // inviter's summed balance rather than off this transaction's inputs, so the
-  // diagnosis is "you do not hold enough" rather than "this transaction does not
-  // balance" — conservation says the latter either way.
+  // The invite bonds the inviter's karma, so an invite is a karma spend of the
+  // bond that must leave the floor standing (NODE_INTERFACE → Karma transition
+  // rules → "Only a post spends the floor"; → "Engine inputs the rule needs"):
+  // `remaining ≥ bond + KARMA_MINIMUM`, where `remaining = held - owed` and the
+  // deps' `getKarmaValue` already answers `held` — the confirmed sum less what
+  // the pool's karma transactions have spent of it (MEMPOOL_INTERFACE →
+  // Correctness gates → "`pendingKarmaSpend` is an input of `validateTx`, not a
+  // gate a path can skip"). The engine's spend check holds the same ground;
+  // this restatement names the reason more kindly.
   //
   // ⛔ **Against THIS invite's bond, not against a constant.** The inviter picks
   // the bond from the network's range, so a fixed threshold passes an inviter
   // who cannot afford the one they named — and the rejection then arrives from
   // conservation, which is the message this layer exists to replace.
   const bondValue = (bondOutputs[0] as BondBox).value;
-  const inviterFace = deps.getKarmaValue(karmaInput.owner);
-  const inviterBalance = effectiveKarma(
-    inviterFace, inviterRecord, currentBlockHeight, deps.decayCfg,
+  const inviterHeld = deps.getKarmaValue(karmaInput.owner);
+  const inviterRemaining = effectiveKarma(
+    inviterHeld, inviterRecord, currentBlockHeight, deps.decayCfg,
   );
-  if (inviterBalance < bondValue) {
+  if (inviterRemaining < bondValue + KARMA_MINIMUM) {
     throw new ClientError(
-      `Insufficient karma to invite: this invite bonds ${bondValue}, ` +
-      `inviter holds ${inviterBalance}`,
+      `Insufficient karma to invite: this invite bonds ${bondValue} and ` +
+      `the floor is ${KARMA_MINIMUM}, inviter holds ${inviterRemaining}`,
     );
   }
 
