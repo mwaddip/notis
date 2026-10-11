@@ -122,7 +122,7 @@ describe('lapseLegOf (NODE_INTERFACE → The settlement transaction → "The lap
 // ---------------------------------------------------------------------------
 
 describe('applyBlock — the body\'s unvouch and the lapse leg (NODE_INTERFACE → The settlement transaction)', () => {
-  it.fails('the unvouch applies and the leg emits no escrow for the spent vouch', () => {
+  it('the unvouch applies and the leg emits no escrow for the spent vouch', () => {
     const voucher = seededIdentity('lapse-apply/one/voucher');
     const target = seededIdentity('lapse-apply/one/target');
     const view = genesisView();
@@ -152,7 +152,7 @@ describe('applyBlock — the body\'s unvouch and the lapse leg (NODE_INTERFACE �
     expect(escrows[0]!.releaseAtBlock).toBe(vouch.createdAtBlock + ctx.vouchCooldownBlocks);
   });
 
-  it.fails('the target\'s count falls once, and the membership pass sees it', () => {
+  it('the target\'s count falls once, and the membership pass sees it', () => {
     const voucher = seededIdentity('lapse-apply/count/voucher');
     const target = seededIdentity('lapse-apply/count/target');
     // The voucher's age is strictly below the target's — the counted() predicate
@@ -181,7 +181,7 @@ describe('applyBlock — the body\'s unvouch and the lapse leg (NODE_INTERFACE �
     expect(view.getNetworkRecord().memberCount).toBe(0);
   });
 
-  it.fails('the voucher\'s other vouches are still taken by the leg, in target order', () => {
+  it('the voucher\'s other vouches are still taken by the leg, in target order', () => {
     const voucher = seededIdentity('lapse-apply/three/voucher');
     const unsortedTargets = [1, 2, 3].map((i) =>
       seededIdentity(`lapse-apply/three/t/${i}`).userId);
@@ -225,7 +225,7 @@ describe('applyBlock — the body\'s unvouch and the lapse leg (NODE_INTERFACE �
     expect(view.getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK)).toEqual([]);
   });
 
-  it.fails('at the cap: 65 lapsed, body unvouches one of the first 64, settlement consumes the other 63', () => {
+  it('at the cap: 65 lapsed, body unvouches one of the first 64, settlement consumes the other 63', () => {
     const voucher = seededIdentity('lapse-apply/cap/voucher');
     const unsorted = Array.from({ length: 65 }, (_, i) =>
       seededIdentity(`lapse-apply/cap/t/${i.toString().padStart(3, '0')}`).userId);
@@ -452,7 +452,7 @@ describe('checkSettlement — the comparison refuses', () => {
 // ---------------------------------------------------------------------------
 
 describe('applyBlock over the tree view — one voucher\'s vouches leave by the body and by the leg', () => {
-  it.fails('the voucher\'s cast count and its lapsed entry are each removed by one write', () => {
+  it('the voucher\'s cast count and its lapsed entry are each removed by one write', () => {
     const voucher = seededIdentity('lapse-tree/voucher');
     const unsorted = [1, 2, 3].map((i) =>
       seededIdentity(`lapse-tree/t/${i}`).userId);

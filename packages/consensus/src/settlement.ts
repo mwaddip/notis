@@ -1234,7 +1234,15 @@ export function buildBlockSettlement(
   });
   const postBody = collectPostBodyKarma(view, decoded);
   const escrows = view.getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
-  const lapsed = view.getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
+  // The leg is the pre-body capture less every vouch a body transaction
+  // names as an input (NODE_INTERFACE → The settlement transaction → "The
+  // lapse leg leaves out a vouch the body spends"); `applyBlock` takes its
+  // from the same function (CONSENSUS_INTERFACE → The settlement build →
+  // "The lapse list is one function's answer on both sides").
+  const lapsedCapture = view.getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
+  const spent = new Set<string>();
+  for (const d of decoded) for (const inp of d.inputs) spent.add(inp);
+  const lapsed = lapseLegOf(lapsedCapture, spent);
   const capturedPool = view.getBackerPoolBox();
   // The build writes no state, and `deriveKarmaDecay` writes no record.
   const decayDeps: DecayDeps = {
