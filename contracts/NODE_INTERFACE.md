@@ -691,7 +691,8 @@ origin could spend each visitor's allowance on a key of its choosing (→ Cross-
 `expiresAtHeight` the node's own mempool expiry for that invite (→ Invites), relayed so a client can
 bound its wait rather than guess a bound; `400 { error }` relays the node's refusal (a key that already
 holds a record — the once-per-identity rule) or names a malformed key; `429 { error }` is the service's
-own rate limit; `503 { error }` is a drained faucet. `POST <faucet>/credits { pubkey }` answers
+own rate limit; `503 { error }` is a drained faucet — for an invite, one whose karma does not cover its bond
+and the `KARMA_MINIMUM` an invite leaves standing (→ Karma transition rules). `POST <faucet>/credits { pubkey }` answers
 `202 { txId, status, expiresAtHeight, boxId }` and repeats — `expiresAtHeight` the node's expiry for the
 transfer, relayed from `POST /credits/transfer`'s answer (→ Credits) for the reason the invite's is, and
 `boxId` the granted `credit` box's id, `computeCandidateBoxId` over the payment output at index 0
