@@ -434,7 +434,7 @@ and the block's settlement grants the invitee the bond's value from the pool.
    `⌊memberVouches / D(N)⌋ − invitesUsed`, `D` from the network record (`ARCHITECTURE → The
    invite budget`). A courtesy ahead of the engine's rule (→ Bond transition rules), like every
    check below: the refusal names the reason, and the verdict is the arm's
-1. Verify the inviter's effective karma covers **this transaction's own bond value** and
+1. Verify what remains of the inviter's effective karma covers **this transaction's own bond value** and
    `KARMA_MINIMUM` beside it (→ Karma transition rules). ⛔ **Against the bond named, never against a constant** — the inviter
    picks it, so a fixed threshold passes someone who cannot afford the invite
    they built, and the rejection then arrives from conservation, which is the
@@ -2053,11 +2053,6 @@ inside the network's reported supply.
 > rule §Likes already states, and the marker inherits it. A placeholder row carries a zeroed author, so a marker
 > built from the wrong source would earmark karma to the zero key.
 
-> ⚠ **AHEAD OF CODE (2026-10-11).** The two leads below and the inputs they name lead `consensus`'
-> karma arm and the node's admission. The transition table's cover clauses, the vouch balance under
-> Vouch transition rules, "A bond leaves the floor" under Bond transition rules and step 1 of the
-> invite create flow state the same rule.
-
 ⛔ **A karma spend is covered by effective karma, over the block's body as a whole.** A karma
 transaction's **spend** is the summed value of its outputs that are not karma boxes — a thread's or a
 burn's `karma_price`, a like's marker, a reply's price box and marker, a bond, a vouch stake.
@@ -2339,10 +2334,11 @@ pool — with the trigger being **touch**, never a per-block walk. See
 
 **The valuation function and its two helpers are `@dagsocial/types`'** — `effectiveKarma`, `isIdentityStale`,
 `owedPeriods`, `DecayCfg` and `decayCfgFor` (`TYPES_INTERFACE → Identity record and karma valuation`) — and `decay.ts`
-holds the execution: `deriveKarmaDecay`, `commitDecayClocks`, the deps, the leg. `loadConfig` builds its `DecayCfg`
+holds the execution: `karmaOwed`, `deriveKarmaDecay`, `commitDecayClocks`, the deps, the leg. `loadConfig` builds its `DecayCfg`
 through `decayCfgFor(profile)`, and the sites that pass a cfg on pass the one it built. **One implementation**: the
-engine, the read API and a light client reproducing `effective` from a proven face total and a proven record call the
-same function, and an inline copy anywhere is the mirror defect class.
+settlement's decay, the spend rule's `owed` (`karmaOwed`, the face less it), the read API and a light client
+reproducing `effective` from a proven face total and a proven record call the same function, and an inline copy
+anywhere is the mirror defect class.
 
 The clock is the `IdentityRecord` (Store Interface → Identity Records):
 

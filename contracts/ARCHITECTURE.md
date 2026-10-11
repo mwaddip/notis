@@ -421,17 +421,13 @@ inactivity an identity's karma decays *virtually*: every karma-sufficiency
 read computes the **effective** value from committed state, and the face
 values in boxes move only when a transaction touches the identity.
 
-> ⚠ **AHEAD OF CODE (2026-10-11).** "The floor is the way back", the body-wide half of "Sufficiency
-> reads effective; conservation stays face" and the vouch balance under Vouch boxes lead `consensus`'
-> karma arm.
-
 - **Staleness:** `(height − lastActivityBlock) >= KARMA_STALE_THRESHOLD_BLOCKS`,
   read from the identity record — the committed clock, not box heights.
 - **Effective value:** `faceTotal − owedPeriods · KARMA_DECAY_AMOUNT`, clamped
   so it never drops below `min(faceTotal, KARMA_MINIMUM)`, where
   `owedPeriods = floor((height − max(lastActivityBlock, lastDecayBlock)) / KARMA_DECAY_INTERVAL_BLOCKS)`.
-  **One implementation** — the engine and the verifier call the
-  same exported valuation function (`VALIDATION_INTERFACE` → "One
+  **One implementation** — the settlement's decay, the spend rule's `owed`
+  and the verifier read the same exported valuation function (`VALIDATION_INTERFACE` → "One
   implementation per rule").
 - **Sufficiency reads effective; conservation stays face.** A transaction's
   value-conservation equality is over face values, unconditionally; whether an

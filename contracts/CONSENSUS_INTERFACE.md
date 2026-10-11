@@ -68,8 +68,6 @@ block, `applyTx`, the post's activity bump, the like record, the name claim or b
 chain first (`NODE_INTERFACE → Ordering block apply-time authorization`), and the creator's speculative run passes a
 candidate whose nonce, signature and `stateRoot` are placeholders (`NODE_INTERFACE → Post-block stateRoot`).
 
-> ⚠ **AHEAD OF CODE (2026-10-11).** The owed-decay capture among the pre-body captures leads `apply-block`.
-
 **The owed-decay capture reads the record of every identity the body touches** — one the body leaves with no karma
 box among them, which the decay plans pass over: its posts are judged against `owed` as any other spend is. Only a
 post's author can be left with none (`NODE_INTERFACE → Karma transition rules`, "Only a post spends the floor"), and

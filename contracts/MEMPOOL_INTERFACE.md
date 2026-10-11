@@ -167,9 +167,6 @@ form and `hasPendingClaimBy` one name per identity (`NODE_INTERFACE` → Usernam
 burn needs no gate of its own**: it spends the name box, and a second spend of that box is the
 pending-spend conflict every transaction meets.
 
-> ⚠ **AHEAD OF CODE (2026-10-11).** `pendingKarmaSpend`, its two columns and the paragraph below lead the store
-> and the two deps literals that pool a transaction.
-
 **`pendingKarmaSpend` is an input of `validateTx`, not a gate a path can skip.** It answers the `SUM` of
 `karma_spend` over the rows whose `karma_owner` is the owner — what the pool's karma transactions have
 already spent of that owner's karma, `0n` where it holds none. Admission's `held` is the confirmed karma
