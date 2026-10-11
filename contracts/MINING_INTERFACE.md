@@ -496,7 +496,8 @@ not parallel arrays").
    included, and the settlement is derived from the body, so it is built **last**. It is
    itself part of the body, which the producer's byte budget must absorb: the settlement
    grows with what was selected, so it is **rebuilt on each trim iteration**, never measured
-   once (trimming shrinks it monotonically)
+   once (every trim leaves the tree smaller — `MEMPOOL_INTERFACE` → The fill budget is bytes;
+   `getPendingEntries` is a count → "Popping is monotone")
 2. `income = computeBlockReward(height) + fees`, `fees = Σ FeeBox.value` over the body
 3. Split per the slice table below. **Only the miner's slice becomes a settlement credit
    output**; the treasury's accrues to the `TreasuryBox` (TYPES_INTERFACE → TreasuryBox), and the

@@ -60,7 +60,7 @@ ApplyResult = { ok: true; effects: BlockEffects } | { ok: false; reason: string 
 order: the block's posts and their topology rows · the body decoded, every declared id proven, the settlement found by
 position · every signature the body carries, checked as one batch · the pre-body captures (decay's projection and
 plans, the decay each identity the body touches owes — `validateTx`'s `owed`, `NODE_INTERFACE → Karma transition
-rules` — the releasable escrows, the lapsed vouches, the backer
+rules` — the releasable escrows, the lapsed vouches less those the body spends, the backer
 pool) · the user transactions in committed order — inputs resolved, `validateTx`, the like binds, one invitee per
 block, `applyTx`, the post's activity bump, the like record, the name claim or burn · the withdrawals · the settlement
 (`checkSettlement`, then applied) · the grants · the like counters · the membership pass · the decay clocks. It runs at
@@ -415,6 +415,16 @@ body's own outputs resolved from the body. **It shares every derivation with `ap
 (`collectPostBodyKarma`), the settlement's read wiring (`settlementDepsWith`), the reward (`computeBlockReward`) — so
 producer and applier derive from one implementation, and a settlement the build gets wrong is the speculative run's
 `body-rejected` (`NODE_INTERFACE → Post-block stateRoot`), never a mined block.
+
+> ⚠ **AHEAD OF CODE (2026-10-11).** `lapseLegOf` and "less those the body spends" among the pre-body captures lead
+> `settlement` and `apply-block`.
+
+**The lapse list is one function's answer on both sides.** `lapseLegOf(captured, spent)` answers the view's
+`getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK)` over pre-body state, in its order, less every vouch whose id is
+among `spent` — the box ids the body's transactions name as inputs (`NODE_INTERFACE → The settlement transaction →
+"The lapse leg leaves out a vouch the body spends"`). It reads no state. `applyBlock` calls it at the capture, before
+the apply loop, and hands its answer to `checkSettlement` and to the membership pass's touched identities;
+`buildBlockSettlement` calls it over the body it decodes.
 
 ## Cost
 
