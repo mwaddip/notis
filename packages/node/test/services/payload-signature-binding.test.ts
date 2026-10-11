@@ -49,6 +49,7 @@ import {
   type Stored,
 } from '../helpers.js';
 import { config } from '../../src/config.js';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 
 const RENT_PERIOD = 40;
 
@@ -57,7 +58,7 @@ function makeDeps(topologyAuthors: Map<string, Uint8Array> = new Map()): UtxoEng
     getBox,
     insertBox,
     consumeBox,
-    getKarmaOwed: () => 0n,
+    getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
     getKarmaValue,
     getIdentityRecord,
     hasActiveVouchEscrow: () => false,

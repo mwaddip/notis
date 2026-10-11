@@ -27,6 +27,7 @@ import type { KarmaBox, UsernameBox, UtxoTransaction } from '@dagsocial/types';
 import { rawPublicKey, seedProvenance, signTransaction, txToJson } from '../helpers.js';
 import { config } from '../../src/config.js';
 import { setMempoolCap, DEFAULT_MAX_MEMPOOL_ENTRIES, PendingSpendConflictError } from '../../src/store/mempool.js';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 
 // A directory private to this run, so two runs of the suite on one machine
 // never write the same store file.
@@ -70,7 +71,7 @@ function makeDeps(): UtxoEngineDeps {
     consumeBox: (id: string, atBlock: number) => {
       db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
     },
-    getKarmaOwed: () => 0n,
+    getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
     getKarmaValue,
     getIdentityRecord,
     hasActiveVouchEscrow,

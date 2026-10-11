@@ -25,6 +25,7 @@ import {
 } from '../helpers.js';
 import { config } from '../../src/config.js';
 import { putIdentityRecord } from '../../src/store/identity-records.js';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 
 const HEIGHT = 10;
 
@@ -35,7 +36,7 @@ function makeDeps(): UtxoEngineDeps {
     getBox: getBoxWithPending,
     insertBox,
     consumeBox,
-    getKarmaOwed: () => 0n,
+    getKarmaOwed: admissionOwed({ staleThresholdBlocks: config.karmaStaleThresholdBlocks, decayIntervalBlocks: config.karmaDecayIntervalBlocks, decayAmount: config.karmaDecayAmount, karmaMinimum: config.karmaMinimum }),
     getKarmaValue,
     getIdentityRecord,
     hasActiveVouchEscrow,

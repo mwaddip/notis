@@ -33,6 +33,7 @@ import type {
 } from '@dagsocial/types';
 import type { RecordMutation } from '../../src/store/journal.js';
 import { config } from '../../src/config.js';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 import {
   makeKarmaBox,
   makeLikeTx,
@@ -613,7 +614,7 @@ describe('the invite at block application', () => {
       getBox: utxo.getBox,
       insertBox: utxo.insertBox,
       consumeBox: utxo.consumeBox,
-      getKarmaOwed: () => 0n,
+      getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: utxo.getKarmaValue,
       getIdentityRecord: records.getIdentityRecord,
       hasActiveVouchEscrow: () => false,

@@ -41,6 +41,7 @@ import {
 import { castVouch, initiateUnvouch } from '../../src/services/vouch.js';
 import { config } from '../../src/config.js';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 import {
   fixtureProvenance,
   rawPublicKey,
@@ -165,7 +166,7 @@ describe('vouch service', () => {
       consumeBox: (id: string, atBlock: number) => {
         db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
       },
-      getKarmaOwed: () => 0n,
+      getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       // ⛔ The real predicate, so a seeded `VouchEscrowBox` actually bars a

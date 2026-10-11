@@ -44,6 +44,7 @@ import {
 import { castLike } from '../../src/services/likes.js';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { config } from '../../src/config.js';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 import {
   rawPublicKey,
   seedProvenance,
@@ -115,7 +116,7 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
       consumeBox: (id: string, atBlock: number) => {
         db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
       },
-      getKarmaOwed: () => 0n,
+      getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,

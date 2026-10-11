@@ -31,6 +31,7 @@ import type {
 import type Database from 'better-sqlite3';
 import type { BlockJournal } from '../../src/store/journal.js';
 import { config } from '../../src/config.js';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 import {
   makeApplicableBlock,
   makeTestConfig,
@@ -206,7 +207,7 @@ describe('credit transfers ride consensus', () => {
       getIdentityRecord: identityRecords.getIdentityRecord,
       insertBox: utxo.insertBox,
       consumeBox: utxo.consumeBox,
-      getKarmaOwed: () => 0n,
+      getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: utxo.getKarmaValue,
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
@@ -332,7 +333,7 @@ describe('credit transfers ride consensus', () => {
       getIdentityRecord: identityRecords.getIdentityRecord,
       insertBox: utxo.insertBox,
       consumeBox: utxo.consumeBox,
-      getKarmaOwed: () => 0n,
+      getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: utxo.getKarmaValue,
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,

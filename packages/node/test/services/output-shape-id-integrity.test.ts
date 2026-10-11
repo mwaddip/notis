@@ -46,6 +46,7 @@ import {
 import { validateTx, applyTx } from '@dagsocial/consensus';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { config } from '../../src/config.js';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 
 function rawPublicKey(keyObj: KeyObject): Uint8Array {
   const der = keyObj.export({ type: 'spki', format: 'der' }) as Buffer;
@@ -82,7 +83,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
       getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => storeInsertBox(box),
       consumeBox: (id: string, atBlock: number) => storeConsumeBox(id, atBlock),
-      getKarmaOwed: () => 0n,
+      getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,

@@ -127,12 +127,13 @@ async function storeBackedDeps() {
   const utxoStore = await import('../../src/store/utxo.js');
   const identityStore = await import('../../src/store/identity-records.js');
   const { getDb } = await import('../../src/store/db.js');
+  const { admissionOwed } = await import('../../src/services/karma-admission.js');
   return {
     getBox: utxoStore.getBox,
     getIdentityRecord: identityStore.getIdentityRecord,
     insertBox: utxoStore.insertBox,
     consumeBox: utxoStore.consumeBox,
-    getKarmaOwed: () => 0n,
+    getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
     getKarmaValue: utxoStore.getKarmaValue,
     hasActiveVouchEscrow: () => false,
     vouchCooldownBlocks: 2,

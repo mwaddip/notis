@@ -20,6 +20,7 @@ import {
   KARMA_MINIMUM,
 } from '@dagsocial/types';
 import type { CreditBox, FeeBox, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 import {
   blockBudgetSeam,
   liveProver,
@@ -246,7 +247,7 @@ describe('rent admission refusal', () => {
       getBox: utxo.getBox,
       insertBox: utxo.insertBox,
       consumeBox: utxo.consumeBox,
-      getKarmaOwed: () => 0n,
+      getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: utxo.getKarmaValue,
       getIdentityRecord: (await import('../../src/store/identity-records.js')).getIdentityRecord,
       hasActiveVouchEscrow: () => false,

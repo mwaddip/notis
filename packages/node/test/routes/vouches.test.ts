@@ -83,6 +83,7 @@ import { materializeOutput } from '@dagsocial/consensus';
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { createRouter } from '../../src/routes/vouches.js';
 import { config } from '../../src/config.js';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 
 const HEIGHT = 100;
 
@@ -109,7 +110,7 @@ describe('vouch routes — the JSON edge', () => {
       },
           insertBox: (box: AnyBox) => insertBox(box),
       consumeBox: (id: string, atBlock: number) => consumeBox(id, atBlock),
-      getKarmaOwed: () => 0n,
+      getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: (owner: Uint8Array): bigint =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       getIdentityRecord,

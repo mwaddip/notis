@@ -31,6 +31,7 @@ import {
 import type { TestIdentity } from '../helpers.js';
 import { config } from '../../src/config.js';
 import type { Config } from '../../src/config.js';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 
 const testConfig = makeTestConfig({
   port: 3000,
@@ -509,7 +510,7 @@ describe('escrow settlement leg', () => {
         getIdentityRecord,
         insertBox: (box) => insertBox(box),
         consumeBox: (id, atBlock) => consumeBox(id, atBlock),
-        getKarmaOwed: () => 0n,
+        getKarmaOwed: admissionOwed({ staleThresholdBlocks: 1000, decayIntervalBlocks: 1000, decayAmount: 0n, karmaMinimum: 0n }),
         getKarmaValue: (owner) => getKarmaBoxes(owner).reduce((s, b) => s + b.value, 0n),
         hasActiveVouchEscrow,
         vouchCooldownBlocks: config.vouchCooldownBlocks,

@@ -35,6 +35,7 @@ import {
   type Stored,
 } from '../helpers.js';
 import { config } from '../../src/config.js';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 
 function signTxId(
   tx: UtxoTransaction,
@@ -50,7 +51,7 @@ const engineDeps: UtxoEngineDeps = {
   getBox,
   insertBox,
   consumeBox,
-  getKarmaOwed: () => 0n,
+  getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
   getKarmaValue,
   getIdentityRecord,
   hasActiveVouchEscrow: () => false,

@@ -16,6 +16,7 @@ import { insertBox, getBox, getKarmaBoxes } from '../../src/store/utxo.js';
 import { putIdentityRecord } from '../../src/store/identity-records.js';
 import { createInvite } from '../../src/services/invites.js';
 import { validateTx, materializeOutput } from '@dagsocial/consensus';
+import { admissionOwed } from '../../src/services/karma-admission.js';
 import {
   seedProvenance,
   signTransaction,
@@ -113,7 +114,7 @@ describe('invite id prediction carries transaction provenance', () => {
     getBox,
     insertBox,
     consumeBox: () => {},
-    getKarmaOwed: () => 0n,
+    getKarmaOwed: admissionOwed({ staleThresholdBlocks: 40320, decayIntervalBlocks: 1440, decayAmount: 5n, karmaMinimum: 10n }),
     getKarmaValue: (owner: Uint8Array) =>
       getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
     getIdentityRecord: (id: Uint8Array) =>
