@@ -121,53 +121,53 @@ const POST_RULE = 'exceeds what remains of the owner\'s effective karma';
 const FLOOR_RULE = 'below the floor of 10';
 
 // ---------------------------------------------------------------------------
-// Shapes A–E (brief table): the stale/fresh scenarios the audit PoC named
+// A stale identity and a fresh one, each of face 1000
 // ---------------------------------------------------------------------------
 
-describe('karma spend rule, shapes A–E', () => {
-  // Shape A — a stale root, face 1000, effective 10; one bond of 250 refused at the 1st.
-  it('A: stale root with effective 10 cannot afford a bond of 250', () => {
-    const s = seed('A', [1000n], { memberSinceBlock: 1, lastActivityBlock: 1 });
-    const invite = inviteTx(s.actor, s.view.getKarmaBoxes(s.actor.userId)[0]!, seededIdentity('A/invitee').userId, 250n, H);
+describe('karma spend rule, a stale identity and a fresh one, each of face 1000', () => {
+  // A stale root, face 1000, effective 10; one bond of 250 refused at the 1st.
+  it('a stale root with effective 10 cannot afford a bond of 250', () => {
+    const s = seed('stale-bond-250', [1000n], { memberSinceBlock: 1, lastActivityBlock: 1 });
+    const invite = inviteTx(s.actor, s.view.getKarmaBoxes(s.actor.userId)[0]!, seededIdentity('stale-bond-250/invitee').userId, 250n, H);
     expectRefusedAt(s, [invite], invite, FLOOR_RULE);
   });
 
-  // Shape B — the same root; 99 bonds of 10, each spending the change of the one before.
-  it('B: stale root with effective 10 cannot afford even one bond of 10', () => {
-    const s = seed('B', [1000n], { memberSinceBlock: 1, lastActivityBlock: 1 });
+  // The same root; 99 bonds of 10, each spending the change of the one before.
+  it('a stale root with effective 10 cannot afford even one bond of 10', () => {
+    const s = seed('stale-bond-10', [1000n], { memberSinceBlock: 1, lastActivityBlock: 1 });
     const txs: Built[] = [];
     let input = s.view.getKarmaBoxes(s.actor.userId)[0]!;
     for (let i = 0; i < 99; i++) {
-      const tx = inviteTx(s.actor, input, seededIdentity(`B/invitee/${i}`).userId, 10n, H);
+      const tx = inviteTx(s.actor, input, seededIdentity(`stale-bond-10/invitee/${i}`).userId, 10n, H);
       txs.push(tx);
       input = changeOf(tx);
     }
     expectRefusedAt(s, txs, txs[0]!, FLOOR_RULE);
   });
 
-  // Shape C — face 1000, lastDecayBlock 360 so owed is 400 and effective is 600; three bonds of 250.
+  // Face 1000, lastDecayBlock 360 so owed is 400 and effective is 600; three bonds of 250.
   // Pre-body remaining = 600. Bond 1: 600 - 250 = 350 >= 10 ✓. Bond 2: 350 - 250 = 100 >= 10 ✓.
   // Bond 3: 100 - 250 = -150 < 10 → refused at the third. After a body of two the inviter holds 100
   // (settlement burns 400 to the pool from the 500 face left in the body).
-  it('C: face 1000 effective 600 — the first two bonds valid, the third refused', () => {
-    const s = seed('C', [1000n], { memberSinceBlock: 1, lastActivityBlock: 1, lastDecayBlock: 360 });
+  it('face 1000 effective 600 — the first two bonds valid, the third refused', () => {
+    const s = seed('bonds-250', [1000n], { memberSinceBlock: 1, lastActivityBlock: 1, lastDecayBlock: 360 });
     const txs: Built[] = [];
     let input = s.view.getKarmaBoxes(s.actor.userId)[0]!;
     for (let i = 0; i < 3; i++) {
-      const tx = inviteTx(s.actor, input, seededIdentity(`C/invitee/${i}`).userId, 250n, H);
+      const tx = inviteTx(s.actor, input, seededIdentity(`bonds-250/invitee/${i}`).userId, 250n, H);
       txs.push(tx);
       input = changeOf(tx);
     }
     expectRefusedAt(s, txs, txs[2]!, FLOOR_RULE);
   });
 
-  it('C: a body of two bonds of 250 settles the inviter at 100 and burns 400 to the pool', () => {
-    const s = seed('C-settles', [1000n], { memberSinceBlock: 1, lastActivityBlock: 1, lastDecayBlock: 360 });
+  it('a body of two bonds of 250 settles the inviter at 100 and burns 400 to the pool', () => {
+    const s = seed('bonds-250-settles', [1000n], { memberSinceBlock: 1, lastActivityBlock: 1, lastDecayBlock: 360 });
     const poolBefore = s.view.getKarmaPoolBox()!.value;
     const txs: Built[] = [];
     let input = s.view.getKarmaBoxes(s.actor.userId)[0]!;
     for (let i = 0; i < 2; i++) {
-      const tx = inviteTx(s.actor, input, seededIdentity(`Csettle/invitee/${i}`).userId, 250n, H);
+      const tx = inviteTx(s.actor, input, seededIdentity(`bonds-250-settles/invitee/${i}`).userId, 250n, H);
       txs.push(tx);
       input = changeOf(tx);
     }
@@ -176,41 +176,46 @@ describe('karma spend rule, shapes A–E', () => {
     expect(s.view.getKarmaPoolBox()!.value - poolBefore).toBe(400n - 2n * 250n); // 2 bonds drawn, 400 burned
   });
 
-  // Shape D — a stale identity, face 1000, effective 10; 990 likes refused at the 1st.
-  it('D: stale identity with effective 10 cannot afford one like', () => {
-    const s = seed('D', [1000n], { lastActivityBlock: 1 });
-    const authorKey = seededIdentity('D/author').userId;
-    const postId = hex(uid('D/post'));
+  // A stale identity, face 1000, effective 10; a like refused at the 1st.
+  it('a stale identity with effective 10 cannot afford one like', () => {
+    const s = seed('stale-like', [1000n], { lastActivityBlock: 1 });
+    const authorKey = seededIdentity('stale-like/author').userId;
+    const postId = hex(uid('stale-like/post'));
     putConfirmedPost(s.view, postId, authorKey);
     const like = likeTx(s.actor, s.view.getKarmaBoxes(s.actor.userId)[0]!, postId, authorKey, H);
     expectRefusedAt(s, [like], like, FLOOR_RULE);
   });
 
-  // Shape E — a fresh identity, face 1000; 990 likes accepted, a 991st refused.
-  it('E: fresh identity with face 1000 — 990 likes accepted', () => {
-    const s = seed('E-990', [1000n], { lastActivityBlock: H - 1 });
-    const authorKey = seededIdentity('E/author').userId;
+  // A fresh identity, face 1000; 990 likes accepted, a 991st refused. The 990 likes
+  // leave the liker 10, pay the author 792 and add 198 to the karma pool.
+  it('a fresh identity with face 1000 — 990 likes accepted', () => {
+    const s = seed('fresh-990', [1000n], { lastActivityBlock: H - 1 });
+    const authorKey = seededIdentity('fresh-990/author').userId;
     s.view.putIdentityRecord(authorKey, identityRecord({ lastActivityBlock: H - 1 }));
+    const poolBefore = s.view.getKarmaPoolBox()!.value;
     const txs: Built[] = [];
     let input = s.view.getKarmaBoxes(s.actor.userId)[0]!;
     for (let i = 0; i < 990; i++) {
-      const postId = hex(uid(`E/post/${i}`));
+      const postId = hex(uid(`fresh-990/post/${i}`));
       putConfirmedPost(s.view, postId, authorKey);
       const tx = likeTx(s.actor, input, postId, authorKey, H);
       txs.push(tx);
       input = changeOf(tx);
     }
     expectAccepted(s, txs);
+    expect(karmaFaceOf(s.view, s.actor.userId)).toBe(10n);
+    expect(karmaFaceOf(s.view, authorKey)).toBe(792n);
+    expect(s.view.getKarmaPoolBox()!.value - poolBefore).toBe(198n);
   });
 
-  it('E: fresh identity with face 1000 — a 991st like refused', () => {
-    const s = seed('E-991', [1000n], { lastActivityBlock: H - 1 });
-    const authorKey = seededIdentity('E/author991').userId;
+  it('a fresh identity with face 1000 — a 991st like refused', () => {
+    const s = seed('fresh-991', [1000n], { lastActivityBlock: H - 1 });
+    const authorKey = seededIdentity('fresh-991/author').userId;
     s.view.putIdentityRecord(authorKey, identityRecord({ lastActivityBlock: H - 1 }));
     const txs: Built[] = [];
     let input = s.view.getKarmaBoxes(s.actor.userId)[0]!;
     for (let i = 0; i < 991; i++) {
-      const postId = hex(uid(`E991/post/${i}`));
+      const postId = hex(uid(`fresh-991/post/${i}`));
       putConfirmedPost(s.view, postId, authorKey);
       const tx = likeTx(s.actor, input, postId, authorKey, H);
       txs.push(tx);
@@ -326,12 +331,12 @@ describe('a post at the floor', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Settlement unchanged — the decay leg stays what it was
+// The settlement of a stale identity's thread
 // ---------------------------------------------------------------------------
 
-describe('the settlement is unchanged', () => {
+describe('the settlement of a stale identity\'s thread', () => {
   it('a stale identity, face 1000 effective 10 — one thread leaves 10 and burns 985', () => {
-    const s = seed('settle-unchanged', [1000n], { lastActivityBlock: 1 });
+    const s = seed('settle-thread', [1000n], { lastActivityBlock: 1 });
     const poolBefore = s.view.getKarmaPoolBox()!.value;
     const thread = threadTx(s.actor, s.view.getKarmaBoxes(s.actor.userId)[0]!, 'opens', H);
     expectAccepted(s, [thread]);
@@ -499,6 +504,22 @@ describe('a transaction that spends nothing is not judged', () => {
     expectAccepted(s, [withdraw]);
   });
 
+  // A claim by a stale identity exactly at the floor (one box of 10, effective 10) is accepted.
+  it('a claim by a stale identity at the floor is accepted', () => {
+    const s = seed('claim-stale-floor', [10n], { lastActivityBlock: 1 });
+    const claim = claimTx(s.actor, s.view.getKarmaBoxes(s.actor.userId)[0]!, 'floorclaim', H);
+    expectAccepted(s, [claim]);
+  });
+
+  // A withdrawal by a stale identity exactly at the floor is accepted.
+  it('a withdrawal by a stale identity at the floor is accepted', () => {
+    const s = seed('withdraw-stale-floor', [10n], { lastActivityBlock: 1 });
+    const postId = hex(uid('withdraw-stale-floor/post'));
+    putConfirmedPost(s.view, postId, s.actor.userId);
+    const withdraw = withdrawTx(s.actor, s.view.getKarmaBoxes(s.actor.userId)[0]!, postId, H);
+    expectAccepted(s, [withdraw]);
+  });
+
   // A consolidation by a stale identity exactly at the floor (face 10, effective 10) is accepted.
   it('a consolidation by a stale identity at the floor is accepted', () => {
     const s = seed('consolidate-stale-floor', [5n, 5n], { lastActivityBlock: 1 });
@@ -580,10 +601,9 @@ describe('`held` is the summed value across karma boxes', () => {
 // ---------------------------------------------------------------------------
 
 describe('two owners in one body are judged apart', () => {
-  // A: face 11, remaining 11. A1 (12-1=10) ✓, A2 (10-1=9<10) ✗.
-  // B: face 12, remaining 12. B1 (12-1=11) ✓, B2 would be 11-1=10 ✓, B3 would be 10-1=9 ✗.
-  // Interleaved A1, B1, A2 — the block fails at A2 (never reaches B2).
-  it('two owners interleaved — one owner\'s second spend crosses the floor, the other\'s does not', () => {
+  // A: face 11, remaining 11. A1 (11-1=10) ✓, A2 would be 10-1=9 ✗.
+  // B: face 12, remaining 12. B1 (12-1=11) ✓, B2 (11-1=10) ✓, B3 would be 10-1=9 ✗.
+  function twoOwners() {
     const view = new MemoryStateView({ memberCount: 1 });
     const A = seededIdentity('two-owners/A');
     const B = seededIdentity('two-owners/B');
@@ -602,6 +622,12 @@ describe('two owners in one body are judged apart', () => {
       putConfirmedPost(view, id, authorKey);
       return id;
     });
+    return { view, A, B, authorKey, posts };
+  }
+
+  // Interleaved A1, B1, A2 — the block fails at A2 (never reaches B2).
+  it('two owners interleaved — one owner\'s second spend crosses the floor, the other\'s does not', () => {
+    const { view, A, B, authorKey, posts } = twoOwners();
     const A1 = likeTx(A, view.getKarmaBoxes(A.userId)[0]!, posts[0]!, authorKey, H);
     const B1 = likeTx(B, view.getKarmaBoxes(B.userId)[0]!, posts[1]!, authorKey, H);
     const A2 = likeTx(A, changeOf(A1), posts[2]!, authorKey, H);
@@ -611,6 +637,17 @@ describe('two owners in one body are judged apart', () => {
     expect(result).toEqual({ ok: false, reason: expect.stringContaining(A2.txId) });
     expect(result).toEqual({ ok: false, reason: expect.stringContaining(FLOOR_RULE) });
     expect(view.digest()).toBe(before);
+  });
+
+  // A1, B1, B2 — each owner stays on its own side of the line; both end holding 10.
+  it('two owners interleaved — each owner\'s spends stay on their side of the floor, both accepted', () => {
+    const { view, A, B, authorKey, posts } = twoOwners();
+    const A1 = likeTx(A, view.getKarmaBoxes(A.userId)[0]!, posts[0]!, authorKey, H);
+    const B1 = likeTx(B, view.getKarmaBoxes(B.userId)[0]!, posts[1]!, authorKey, H);
+    const B2 = likeTx(B, changeOf(B1), posts[2]!, authorKey, H);
+    expectAccepted({ view, actor: A }, [A1, B1, B2]);
+    expect(karmaFaceOf(view, A.userId)).toBe(10n);
+    expect(karmaFaceOf(view, B.userId)).toBe(10n);
   });
 });
 
@@ -636,10 +673,10 @@ describe('validateTx answers from `getKarmaValue` and `getKarmaOwed`', () => {
     getKarmaOwed?: (owner: Uint8Array, height: number) => bigint;
   }): UtxoEngineDeps {
     const live = new Map(opts.boxes.map((b) => [b.id!, b]));
-    const unread = (name: string) => () => {
+    const unread = (name: string) => (..._args: unknown[]): never => {
       throw new Error(`validate case reads no ${name}`);
     };
-    const literal = {
+    const literal: UtxoEngineDeps = {
       getBox: (id: string) => live.get(id) ?? null,
       insertBox: unread('insertBox'),
       consumeBox: unread('consumeBox'),
@@ -667,7 +704,7 @@ describe('validateTx answers from `getKarmaValue` and `getKarmaOwed`', () => {
       getUsername: () => null,
       getUsernameByOwner: () => null,
     };
-    return literal as UtxoEngineDeps;
+    return literal;
   }
 
   // A reply: spend = POST_PRICE_REPLY (3n). Post rule — remaining ≥ spend.
@@ -753,9 +790,8 @@ describe('validateTx answers from `getKarmaValue` and `getKarmaOwed`', () => {
 
 describe('the spend rule is the arm\'s last word', () => {
   // A vouch whose createdAtBlock lags the window AND whose voucher is below the floor.
-  // Today the balance check runs ahead of the window check (balance's reason wins).
-  // Under the contract the window check runs before the spend rule, which is the arm's
-  // last check — the window's reason wins.
+  // The cast window is judged ahead of the spend rule, which is the arm's last check,
+  // so the window's reason wins.
   it('a vouch failing the window and the spend rule — the window reason wins', () => {
     const s = seed('arms-last', [5n], { memberSinceBlock: 1, lastActivityBlock: H - 1 });
     const target = seededIdentity('arms-last/target');
