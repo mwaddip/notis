@@ -1,4 +1,4 @@
-import { selectBoxes } from '@dagsocial/types';
+import { KARMA_MINIMUM, selectBoxes } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { FaucetConfig } from './config.js';
 import { InsufficientFundsError, checkRecipient, signAndRender, valueDescending } from './tx.js';
@@ -24,9 +24,13 @@ export function buildInviteTx(
   checkRecipient(cfg, inviteeHex, 'invitee');
 
   const total = boxes.reduce((sum, b) => sum + b.value, 0n);
-  if (total < cfg.bondAmount) {
+  // An invite is a karma spend of its bond that must leave `KARMA_MINIMUM` of the
+  // inviter's karma standing, so the faucet is drained below bond + floor
+  // (NODE_INTERFACE → Karma transition rules → "Only a post spends the floor").
+  if (total < cfg.bondAmount + KARMA_MINIMUM) {
     throw new InsufficientFundsError(
-      `insufficient karma: the bond is ${cfg.bondAmount}, the faucet holds ${total}`,
+      `insufficient karma: an invite needs the bond ${cfg.bondAmount} and the ${KARMA_MINIMUM} ` +
+        `karma floor beside it, the faucet holds ${total}`,
     );
   }
 
