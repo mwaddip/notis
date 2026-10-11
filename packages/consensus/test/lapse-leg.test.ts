@@ -190,9 +190,17 @@ describe('applyBlock — the body\'s unvouch and the lapse leg (NODE_INTERFACE �
     const [t1, t2, t3] = sortedTargets as [Uint8Array, Uint8Array, Uint8Array];
 
     const view = genesisView();
+    // The voucher's age is 2; each target's is strictly above it, so every
+    // vouch is counted (NODE_INTERFACE → Vouch transition rules → "The
+    // counter has two writers and one predicate"). Each target starts with
+    // `memberVouches: 1` so the consumption lands at 0.
     view.putIdentityRecord(voucher.userId, lapsedRecord());
     for (const t of sortedTargets) {
-      view.putIdentityRecord(t, identityRecord({ memberSinceBlock: 1 }));
+      view.putIdentityRecord(t, identityRecord({
+        memberSinceBlock: 3,
+        memberBar: 0,
+        memberVouches: 1,
+      }));
     }
     const v1 = vouchBox(voucher.userId, t1, 1, 3);
     const v2 = vouchBox(voucher.userId, t2, 2, 3);
@@ -219,6 +227,7 @@ describe('applyBlock — the body\'s unvouch and the lapse leg (NODE_INTERFACE �
     expect(escrows).toHaveLength(3);
     for (const t of sortedTargets) {
       expect(view.getVouchBoxes(voucher.userId, t)).toEqual([]);
+      expect(view.getIdentityRecord(t)!.memberVouches).toBe(0);
     }
 
     // The next block's capture holds none of the voucher's vouches.
@@ -396,6 +405,8 @@ describe('checkSettlement — the comparison refuses', () => {
 
     const result = applyBlock(view, block, ctx);
     expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain('settlement consumes 2 boxes, the body derives 1');
   });
 
   it('a block whose body carries no unvouch and whose settlement omits a listed vouch', () => {
@@ -444,6 +455,8 @@ describe('checkSettlement — the comparison refuses', () => {
 
     const result = applyBlock(view, block, ctx);
     expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain('settlement consumes 1 boxes, the body derives 2');
   });
 });
 
