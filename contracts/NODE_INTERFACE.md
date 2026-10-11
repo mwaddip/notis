@@ -2728,9 +2728,6 @@ the same function the unvouch uses, and the membership pass of the same block re
 that follow (→ Membership pass). The list is captured before the apply loop on both sides, like
 the escrows and decay.
 
-> ⚠ **AHEAD OF CODE (2026-10-11).** The lead below, "less those the body spends" in the Consumes row and the
-> last bullet of Vouch transition rules lead `consensus`' settlement and `apply-block`.
-
 ⛔ **The lapse leg leaves out a vouch the body spends.** The leg's list is the capture above — the
 first `MAX_LAPSE_WITHDRAWALS_PER_BLOCK` lapsed vouches of pre-body state, in that order — **less
 every vouch a body transaction names as an input**: its voucher's own unvouch, the one user
@@ -2742,9 +2739,10 @@ holds an escrow of one value, owner and release height whichever consumes the vo
 candidate is read in its place**: the vouch leaves the queue through the body, so the queue drains
 no slower, and the capture reads what it reads under any body. The list is a function of the
 capture and the body's input ids alone — it reads no state — and both sides take it from one
-function (`CONSENSUS_INTERFACE → The settlement build`), which hands the same list to the
-derivation and to the membership pass's touched identities. A settlement naming a vouch the body
-spent, or omitting a listed vouch the body left, fails the comparison at that position.
+function (`CONSENSUS_INTERFACE → The settlement build`); in `applyBlock` its answer is the one
+list the derivation and the membership pass's touched identities read. A settlement naming a
+vouch the body spent, or omitting a listed vouch the body left, is refused by the comparison of
+its input list with the derived one.
 
 ⛔ **`CoinbaseOutput` is not a block-body concept.** Coinbase outputs are outputs of this
 transaction; the block body has no `coinbaseOutputs` field and `utxoTxRoot` has no `'coinbase'`

@@ -644,9 +644,6 @@ The stake returns to the voucher by the escrow leg above, and the escrow bars th
 until it is released, exactly as their own unvouch would. Nothing node-local remembers a lapse:
 the leg reads the vouch boxes and identity records of pre-body state (NODE_INTERFACE → The
 settlement transaction), and a voucher who re-qualifies before the leg reaches a box keeps it.
-
-> ⚠ **AHEAD OF CODE (2026-10-11).** The sentence below leads `consensus`' settlement.
-
 A lapsed voucher's own unvouch withdraws a vouch as a member's does, and the leg leaves out a
 vouch the block's body spends: one escrow per vouch, whichever consumes it.
 

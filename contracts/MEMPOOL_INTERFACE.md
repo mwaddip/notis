@@ -446,9 +446,6 @@ settlement transaction → "The lapse leg leaves out a vouch the body spends"`):
 escrow output, which the unvouch itself carried beside its signature, so the tree is smaller after
 that pop as after any other.
 
-> ⚠ **AHEAD OF CODE (2026-10-11).** The returned vouch — under "Popping is monotone" and in the two leads below —
-> and the settlement's loop popping again after a rebuild lead the creator's sizing step.
-
 ⛔ **The settlement is trimmed against its own bound as well.** The loop pops a user entry while
 the rebuilt settlement encodes above `MAX_SETTLEMENT_BYTES` (`TYPES_INTERFACE` → Size caps), not
 only while the tree exceeds the body budget — every body-driven settlement leg (markers, fee boxes,
