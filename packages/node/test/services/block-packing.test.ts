@@ -814,7 +814,13 @@ describe('a returned vouch grows the settlement in a second rebuild', () => {
     vi.resetModules();
   });
 
-  it.fails('a tail dropped from the first pop returns a vouch to the lapse leg, and a second pop runs', async () => {
+  it('a tail dropped from the first pop returns a vouch to the lapse leg, and a second pop runs', async () => {
+    // The mock registers before any import of `@dagsocial/consensus` — a
+    // factory the module graph has walked past is a factory this test's
+    // creator's fresh import never sees.
+    let mockedMarginal = 0;
+    const settles = countSettlementBuilds({ settlementMarginalBytes: () => mockedMarginal });
+
     await freshStore();
     const utxo = await import('../../src/store/utxo.js');
     const records = await import('../../src/store/identity-records.js');
@@ -896,8 +902,11 @@ describe('a returned vouch grows the settlement in a second rebuild', () => {
     for (const tx of postTxs) mempool.insertUtxoTx(tx, 5000);
     mempool.insertUtxoTx(unvouch, 5000);
     // Pre-written estimates keep the fill from pricing an entry alone — a
-    // candidate-cost build would land in `settles.count` otherwise, and the
-    // count this case asserts is the sizer's alone.
+    // candidate-cost build would land in `settles.count` otherwise. The small
+    // positive value stays below any realistic block-marginal cost, so the
+    // refill arm reads `actualMarginal >= priorEstimate` and leaves the
+    // selection untouched (MINING_INTERFACE → Template and submit →
+    // "An estimate misses both ways").
     for (const entry of mempool.getPendingEntries(1000)) {
       mempool.setCostEstimate(entry.rowid, 1);
     }
@@ -951,7 +960,7 @@ describe('a returned vouch grows the settlement in a second rebuild', () => {
     expect(d2).toBeGreaterThan(0);
 
     settlementBudget.set(BOUND);
-    const settles = countSettlementBuilds({ settlementMarginalBytes: () => MOCKED_MARGINAL });
+    mockedMarginal = MOCKED_MARGINAL;
     settles.count = 0;
 
     const bc = await import('../../src/services/block-creator.js');
@@ -963,8 +972,9 @@ describe('a returned vouch grows the settlement in a second rebuild', () => {
     const heldSettlementLen = template!.utxoTxTree.utxoTxs[template!.utxoTxTree.utxoTxs.length - 1]!.length;
     expect(heldSettlementLen).toBeLessThanOrEqual(BOUND);
     expect(heldSettlementLen).toBe(L_after_pop2);
-    // Seeding + the fill's settlement + two pop-rebuilds.
-    expect(settles.count).toBe(4);
+    // Seeding + the empty-block cost + the fill's settlement + two
+    // pop-rebuilds — five builds, two of them the loop this case runs twice.
+    expect(settles.count).toBe(5);
 
     // The template applies — through the mined-submit path, which signs the
     // header and runs `applyOrderingBlock` (NODE_INTERFACE → Block finalization).

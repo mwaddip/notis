@@ -773,16 +773,20 @@ export function createOrderingBlock(): OrderingBlock | null {
         if ('error' in retrimmed) return retrimmed;
         sizedBody = retrimmed.tree;
       }
-      // ⛔ **The settlement is trimmed against its own bound separately, in one
-      // more rebuild, never one entry a rebuild** (MEMPOOL_INTERFACE → The fill
-      // budget is bytes; getPendingEntries is a count → "The fill counts the
-      // settlement's bytes, so that loop too runs at most once"). The fill's own
-      // settlement accumulator above already ends a class within a few bytes of
-      // `MAX_SETTLEMENT_BYTES`, so the tail whose `settlementMarginalBytes` cover
-      // the real overshoot is dropped whole, by the same accumulator-then-sizer
-      // shape the body-budget loop above uses. Popping only shrinks the body, so
-      // this cannot reopen the bound the loop above just settled.
-      if (selection.length > 0 && settlementExceedsBound(sizedBody)) {
+      // ⛔ **The settlement is trimmed against its own bound by rebuilds, each
+      // pass dropping the tail whose `settlementMarginalBytes` cover the
+      // overshoot** (MEMPOOL_INTERFACE → The fill budget is bytes;
+      // getPendingEntries is a count → "The fill counts the settlement's
+      // bytes"). The lapse leg takes back a listed vouch when the unvouch that
+      // spent it is popped (NODE_INTERFACE → The settlement transaction →
+      // "The lapse leg leaves out a vouch the body spends"), so a pop can grow
+      // the settlement by one lapse withdrawal and a second pass runs where it
+      // still measures above the bound. Each pass drops at least one entry,
+      // and the empty selection's settlement fits by the three state-driven
+      // caps (TYPES_INTERFACE → Size caps), so the loop ends. The settlement's
+      // loop runs after the body's and popping only shrinks the body, so it
+      // cannot reopen the body's bound.
+      while (selection.length > 0 && settlementExceedsBound(sizedBody)) {
         const overshoot = sizedBody.utxoTxs[sizedBody.utxoTxs.length - 1]!.length - MAX_SETTLEMENT_BYTES;
         selection.length = settlementCoveringLength(selection, selection.length, overshoot);
         const retrimmed = bodyOf(selection.length);
