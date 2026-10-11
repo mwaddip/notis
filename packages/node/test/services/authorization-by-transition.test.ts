@@ -220,6 +220,7 @@ describe('authorization is a property of the transition', () => {
       getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => storeInsertBox(box),
       consumeBox: (id: string, atBlock: number) => storeConsumeBox(id, atBlock),
+      getKarmaOwed: () => 0n,
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,

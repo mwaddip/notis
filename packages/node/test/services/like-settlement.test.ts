@@ -3,6 +3,8 @@ import {
   PROTOCOL_VERSION,
   LIKES_PER_KARMA_PAYOUT,
   REPLY_AUTHOR_SHARE,
+  LIKE_KARMA_COST,
+  KARMA_MINIMUM,
   computeTxId,
 } from '@dagsocial/types';
 import type {
@@ -198,9 +200,15 @@ async function confirmPostBlock(
 /** n fresh likers, each with a committed 2n karma box (nonce-distinct). */
 async function seedLikers(n: number, nonceBase = 0): Promise<Array<{ id: TestIdentity; box: KarmaBox }>> {
   const likers: Array<{ id: TestIdentity; box: KarmaBox }> = [];
+  // A liker needs enough karma for one spend to leave the floor standing
+  // (NODE_INTERFACE → Karma transition rules → "Only a post spends the
+  // floor"). LIKE_KARMA_COST + KARMA_MINIMUM is the smallest value that
+  // clears the rule while leaving the subject of these tests — the
+  // settlement arithmetic — untouched.
+  const perBox = LIKE_KARMA_COST + KARMA_MINIMUM;
   for (let i = 0; i < n; i++) {
     const id = makeTestIdentity();
-    likers.push({ id, box: makeKarmaBox(2n, id.userId, 0, nonceBase + i) });
+    likers.push({ id, box: makeKarmaBox(perBox, id.userId, 0, nonceBase + i) });
   }
   await seedBoxes(likers.map(({ box }) => box));
   return likers;
@@ -504,8 +512,11 @@ describe('per-block like settlement (P2-D N2b)', () => {
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
     const liker = makeTestIdentity();
-    const box1 = makeKarmaBox(2n, liker.userId, 0, 0);
-    const box2 = makeKarmaBox(2n, liker.userId, 0, 1);
+    // Boxes clear the spend rule's floor (NODE_INTERFACE → Karma transition
+    // rules → "Only a post spends the floor"); the subject is the cross-block
+    // dedup, not the owner's holdings.
+    const box1 = makeKarmaBox(LIKE_KARMA_COST + KARMA_MINIMUM, liker.userId, 0, 0);
+    const box2 = makeKarmaBox(LIKE_KARMA_COST + KARMA_MINIMUM, liker.userId, 0, 1);
     await seedBoxes([box1, box2]);
 
     expect(

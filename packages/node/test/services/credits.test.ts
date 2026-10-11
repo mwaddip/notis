@@ -50,6 +50,7 @@ const engineDeps: UtxoEngineDeps = {
   getBox,
   insertBox,
   consumeBox,
+  getKarmaOwed: () => 0n,
   getKarmaValue,
   getIdentityRecord,
   hasActiveVouchEscrow: () => false,

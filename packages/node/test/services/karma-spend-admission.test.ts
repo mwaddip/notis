@@ -27,11 +27,9 @@ import {
 import { validateTx } from '@dagsocial/consensus';
 import type {
   AnyBox,
-  BondBox,
   IdentityRecord,
   KarmaBox,
   UtxoTransaction,
-  VouchBox,
 } from '@dagsocial/types';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import {
@@ -70,7 +68,6 @@ import {
 import { config } from '../../src/config.js';
 
 const AUTHOR = new Uint8Array(32).fill(0x7a);
-const AUTHOR_HEX = Buffer.from(AUTHOR).toString('hex');
 
 interface Identity {
   pub: Uint8Array;

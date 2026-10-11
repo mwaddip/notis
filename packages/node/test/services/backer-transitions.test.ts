@@ -35,6 +35,7 @@ function makeDeps(): UtxoEngineDeps {
     getBox: getBoxWithPending,
     insertBox,
     consumeBox,
+    getKarmaOwed: () => 0n,
     getKarmaValue,
     getIdentityRecord,
     hasActiveVouchEscrow,

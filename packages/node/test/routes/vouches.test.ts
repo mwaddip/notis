@@ -109,6 +109,7 @@ describe('vouch routes — the JSON edge', () => {
       },
           insertBox: (box: AnyBox) => insertBox(box),
       consumeBox: (id: string, atBlock: number) => consumeBox(id, atBlock),
+      getKarmaOwed: () => 0n,
       getKarmaValue: (owner: Uint8Array): bigint =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       getIdentityRecord,
@@ -639,6 +640,7 @@ describe('vouch routes — alias resolution', () => {
             getBox: () => null,
             insertBox: () => {},
             consumeBox: () => {},
+            getKarmaOwed: () => 0n,
             getKarmaValue: () => 0n,
             getIdentityRecord: () => null,
             hasActiveVouchEscrow: () => false,

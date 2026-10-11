@@ -613,6 +613,7 @@ describe('the invite at block application', () => {
       getBox: utxo.getBox,
       insertBox: utxo.insertBox,
       consumeBox: utxo.consumeBox,
+      getKarmaOwed: () => 0n,
       getKarmaValue: utxo.getKarmaValue,
       getIdentityRecord: records.getIdentityRecord,
       hasActiveVouchEscrow: () => false,
@@ -1094,7 +1095,11 @@ describe('the invite at block application — decay adjacency', () => {
     // to come from the settlement's grant: decay acts on karma boxes, and a
     // hand-seeded bond leaves the invitee holding nothing for it to act on.
     await seedKarmaPoolBox();
-    const inviterKarma = makeKarmaBox(FIXTURE_BOND_KARMA + 5n, inviter.userId, 0, 880);
+    // The inviter clears the bond and KARMA_MINIMUM beside it (NODE_INTERFACE
+    // → Karma transition rules → "A bond leaves the floor"): without the floor
+    // standing the invite is refused and the subject — the bond's survival
+    // through virtual decay — is unobservable.
+    const inviterKarma = makeKarmaBox(FIXTURE_BOND_KARMA + KARMA_MINIMUM + 5n, inviter.userId, 0, 880);
     utxo.insertBox(inviterKarma);
 
     // Every box the run spends, seeded before the tree is built from the store.
@@ -1147,6 +1152,8 @@ describe('the invite at block application — decay adjacency', () => {
     expect(after.lifetimeLikesReceived).toBe(earned);
     // The bond settled on the correct counter — no forfeit.
     expect(utxo.getBox(bond.id!)).toBeNull();
-    expect(utxo.getKarmaValue(inviter.userId)).toBe(5n + 1n);
+    // The inviter's final karma is their invite's change (bond + floor + 5
+    // less the bond = floor + 5) plus the 1 karma the bond vested.
+    expect(utxo.getKarmaValue(inviter.userId)).toBe(KARMA_MINIMUM + 5n + 1n);
   });
 });

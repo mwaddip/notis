@@ -129,6 +129,7 @@ async function request(
             },
             getIdentityRecord: (identityId: Uint8Array) =>
               storeGetIdentityRecord(identityId),
+            getKarmaOwed: () => 0n,
             getKarmaValue: (owner: Uint8Array) =>
               getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
             hasActiveVouchEscrow: (voucherId: Uint8Array) =>

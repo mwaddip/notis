@@ -57,6 +57,7 @@ function makeDeps(topologyAuthors: Map<string, Uint8Array> = new Map()): UtxoEng
     getBox,
     insertBox,
     consumeBox,
+    getKarmaOwed: () => 0n,
     getKarmaValue,
     getIdentityRecord,
     hasActiveVouchEscrow: () => false,

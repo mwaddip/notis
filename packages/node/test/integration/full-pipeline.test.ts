@@ -189,6 +189,7 @@ interface EngineDeps {
   insertBox: (box: AnyBox) => void;
   consumeBox: (id: string, atBlock: number) => void;
   getKarmaValue: (owner: Uint8Array) => bigint;
+  getKarmaOwed: (owner: Uint8Array, height: number) => bigint;
   getIdentityRecord: (id: Uint8Array) => IdentityRecord | null;
   hasActiveVouchEscrow: (voucherId: Uint8Array) => boolean;
   vouchCooldownBlocks: number;
@@ -229,6 +230,7 @@ function makeEngineDeps(
     consumeBox: (id: string, atBlock: number) => {
       db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
     },
+    getKarmaOwed: () => 0n,
     getKarmaValue: (owner: Uint8Array) =>
       utxoModule.getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
     // The invite-create once-ever bar reads it (NODE_INTERFACE → "Bond

@@ -70,6 +70,7 @@ function makeDeps(): UtxoEngineDeps {
     consumeBox: (id: string, atBlock: number) => {
       db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
     },
+    getKarmaOwed: () => 0n,
     getKarmaValue,
     getIdentityRecord,
     hasActiveVouchEscrow,

@@ -37,6 +37,7 @@ const deps: UtxoEngineDeps = {
   getBox,
   insertBox,
   consumeBox,
+  getKarmaOwed: () => 0n,
   getKarmaValue,
   getIdentityRecord,
   hasActiveVouchEscrow: () => false,

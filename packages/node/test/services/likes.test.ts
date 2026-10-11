@@ -115,6 +115,7 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
       consumeBox: (id: string, atBlock: number) => {
         db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
       },
+      getKarmaOwed: () => 0n,
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,

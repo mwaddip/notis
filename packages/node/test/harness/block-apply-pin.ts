@@ -772,7 +772,7 @@ async function runScenario(m: Modules, carrier: PinCarrier): Promise<ApplyPinCap
     const spent1 = thread(i1, largest(i1), 'a first spend', 3);
     const spent2 = thread(i1, changeOf(spent1), 'a second spend', 3);
     const spent3 = thread(i1, changeOf(spent2), 'a third spend', 3);
-    await refuse('a cast after the voucher\'s own spends', 'Vouch cast requires a karma balance of at least', [
+    await refuse('a cast after the voucher\'s own spends', 'below the floor of', [
       spent1,
       spent2,
       spent3,

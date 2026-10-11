@@ -509,6 +509,7 @@ describe('escrow settlement leg', () => {
         getIdentityRecord,
         insertBox: (box) => insertBox(box),
         consumeBox: (id, atBlock) => consumeBox(id, atBlock),
+        getKarmaOwed: () => 0n,
         getKarmaValue: (owner) => getKarmaBoxes(owner).reduce((s, b) => s + b.value, 0n),
         hasActiveVouchEscrow,
         vouchCooldownBlocks: config.vouchCooldownBlocks,
