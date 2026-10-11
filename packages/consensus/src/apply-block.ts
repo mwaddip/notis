@@ -30,7 +30,7 @@ import { collectPostBodyKarma, commitDecayClocks, deriveKarmaDecay, karmaOwed } 
 import type { DecayDeps } from './decay.js';
 import { BlockOverlay } from './overlay.js';
 import type { BlockMutation } from './overlay.js';
-import { bondOutputOf, checkSettlement, contributeToBody, emptyBody, settlementDepsWith } from './settlement.js';
+import { bondOutputOf, checkSettlement, contributeToBody, emptyBody, lapseLegOf, settlementDepsWith } from './settlement.js';
 import type { ApplyContext, StateView } from './state-view.js';
 import {
   applyTx,
@@ -366,7 +366,17 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // body's own mutations do not appear in the settlement's input list on one
   // side only.
   const escrows = state.getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
-  const lapsedVouches = state.getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
+  // The leg is the pre-body capture less every vouch a body transaction names
+  // as an input (NODE_INTERFACE → The settlement transaction → "The lapse leg
+  // leaves out a vouch the body spends"). ⛔ **`spent` is the user
+  // transactions' inputs — never the settlement's own**, which name every
+  // listed vouch. One list feeds `settlementDepsWith` and the membership
+  // loop (CONSENSUS_INTERFACE → The settlement build → "The lapse list is
+  // one function's answer on both sides").
+  const lapsedCapture = state.getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
+  const spentByBody = new Set<string>();
+  for (const q of queue) for (const inp of q.tx.inputs) spentByBody.add(inp);
+  const lapsedVouches = lapseLegOf(lapsedCapture, spentByBody);
   const capturedBackerPool = state.getBackerPoolBox();
 
   // One pass, in committed order (NODE_INTERFACE → Block finalization).

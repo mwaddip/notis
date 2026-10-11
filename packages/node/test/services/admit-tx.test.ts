@@ -538,6 +538,75 @@ describe('the gate keeps what it measured', () => {
 
     expect(mem.getPendingEntries(10).map((entry) => entry.costEstimate)).toEqual([null]);
   });
+
+  it('a lapsed voucher\'s unvouch carries its block alone\'s marginal cost', async () => {
+    // The unvouch of a listed vouch cuts the lapse leg by one withdrawal
+    // (NODE_INTERFACE → The settlement transaction →
+    // "The lapse leg leaves out a vouch the body spends"), which the cost
+    // gate's `costAlone` sees as the ordinary block-apply difference.
+    const { seedProvenance: seed, makeTestIdentity: makeIdentity } =
+      await vi.importActual<typeof import('../helpers.js')>('../helpers.js');
+    const { VOUCH_KARMA_AMOUNT: VK, PROTOCOL_VERSION: PV } =
+      await vi.importActual<typeof import('@dagsocial/types')>('@dagsocial/types');
+    const { signTransaction: sign, toHex: hex } =
+      await vi.importActual<typeof import('../helpers.js')>('../helpers.js');
+    type VBox = import('@dagsocial/types').VouchBox;
+
+    const db = await import('../../src/store/db.js');
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await import('../../src/store/utxo.js');
+    const records = await import('../../src/store/identity-records.js');
+
+    const voucher = makeIdentity();
+    const target = makeIdentity();
+    records.putIdentityRecord(voucher.userId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock: 1, memberBar: 2, memberVouches: 0,
+      memberLikes: 0n, invitesUsed: 0,
+    });
+    records.putIdentityRecord(target.userId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0, memberBar: 0, memberVouches: 0,
+      memberLikes: 0n, invitesUsed: 0,
+    });
+    const vouch = seed<VBox>({
+      boxType: 'vouch', value: VK, createdAtBlock: 1,
+      voucherId: voucher.userId, targetId: target.userId,
+    }, 1, 701);
+    utxo.insertBox(vouch);
+
+    await liveProver();
+
+    const { config: nodeConfig } = await import('../../src/config.js');
+    const releaseAtBlock = vouch.createdAtBlock + nodeConfig.vouchCooldownBlocks;
+    const tx: UtxoTransaction = {
+      inputs: [vouch.id!],
+      outputs: [{
+        boxType: 'vouch_escrow',
+        value: VK,
+        createdAtBlock: 1,
+        owner: voucher.userId,
+        releaseAtBlock,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any],
+      signatures: {},
+      protocolVersion: PV,
+    };
+    sign(tx, voucher.privateKey, hex(voucher.userId));
+
+    const admit = await import('../../src/services/admit-tx.js');
+    const mem = await import('../../src/store/mempool.js');
+
+    admit.admitTx(tx, 5000);
+
+    const [row] = mem.getPendingEntries(10);
+    expect(row).toBeDefined();
+    expect(row!.costEstimate).toEqual(expect.any(Number));
+    expect(row!.costEstimate).not.toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

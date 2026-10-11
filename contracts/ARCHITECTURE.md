@@ -632,8 +632,8 @@ cast's pin holding for the box in hand.
 
 **The settlement withdraws a lapsed member's vouches.** A vouch stands only while its voucher is
 a member: when a member lapses (§Membership), every live vouch they cast is withdrawn by the
-settlement — at most `MAX_LAPSE_WITHDRAWALS_PER_BLOCK` per block, ascending box id, in the
-unvouch shape exactly (TYPES_INTERFACE → Settlement caps):
+settlement — at most `MAX_LAPSE_WITHDRAWALS_PER_BLOCK` per block, voucher by voucher and each
+voucher's in target order, in the unvouch shape exactly (TYPES_INTERFACE → Settlement caps):
 
 ```
 lapse leg     VouchBox(V) → VouchEscrowBox(V, owner = voucherId,
@@ -644,6 +644,8 @@ The stake returns to the voucher by the escrow leg above, and the escrow bars th
 until it is released, exactly as their own unvouch would. Nothing node-local remembers a lapse:
 the leg reads the vouch boxes and identity records of pre-body state (NODE_INTERFACE → The
 settlement transaction), and a voucher who re-qualifies before the leg reaches a box keeps it.
+A lapsed voucher's own unvouch withdraws a vouch as a member's does, and the leg leaves out a
+vouch the block's body spends: one escrow per vouch, whichever consumes it.
 
 #### Box lifecycle
 
@@ -1529,8 +1531,9 @@ chain or owed one:
 | **the block proof** (2026-09-30) | the header's eleventh field, `adProofsRoot`, so every block hash; the budget's verdict — a block over `MAX_BLOCK_COST` is refused, which moves the verdict of a body of more than 6 000 signatures. **Owes the reset**, and rides the tree layout's |
 | **the rent rule** (2026-10-10) | the verdict of a `credit` spend with a box past its rent period among its inputs — with a key in the map every input requires its owner's signature, so the owner's own spend is admitted and a spend its owner did not sign is refused; and the verdict of a rent collection whose successors do not answer one input each, or carry a lock (NODE_INTERFACE → Storage rent is a transition requiring no signature). **Owes the reset**, and rides the tree layout's |
 | **the karma spend rule** (2026-10-11) | the verdict of a karma transaction that spends — a thread, a reply, a like, an invite, a vouch cast, a name burn: refused where what remains of its owner's effective karma, as the body's transactions ahead of it have left it, does not cover the spend, and for every spend but a post where it would not leave `KARMA_MINIMUM` standing (NODE_INTERFACE → Karma transition rules). **Owes the reset**, and rides the tree layout's |
+| **the lapse leg and a spent vouch** (2026-10-11) | the verdict of a block whose body carries the unvouch of a vouch its settlement's lapse leg lists: the leg leaves that vouch out and the block applies (NODE_INTERFACE → The settlement transaction). **Owes the reset**, and rides the tree layout's |
 
-**Outstanding against the live node: the tree layout, the block proof, the rent rule and the karma spend rule** (the four rows above). Testnet's live chain began at the
+**Outstanding against the live node: the tree layout, the block proof, the rent rule, the karma spend rule and the lapse leg's spent vouch** (the five rows above). Testnet's live chain began at the
 2026-09-15 reset; every row above is in it, and the usernames row owes none. The profile leaves testnet's `genesisId`
 empty (§What varies per network) until the reset the tree layout owes mines a new block 1.
 

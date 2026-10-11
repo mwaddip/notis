@@ -2156,9 +2156,10 @@ are inputs of `validateTx`, in the deps of the HTTP routes and of the relay alik
 - **The escrow is committed state, and nothing node-local remembers
   anything.** It sits in the UTXO set and therefore in the `stateRoot`, so a
   node holds the obligation itself rather than a root it cannot interpret.
-  The return is a settlement leg (§The settlement transaction): every unspent
-  escrow with `releaseAtBlock <= height`, read from pre-body state in ascending
-  box id, is an input of the block's settlement and its value a karma output to
+  The return is a settlement leg (§The settlement transaction): at most
+  `MAX_ESCROW_RETURNS_PER_BLOCK` of the unspent escrows with `releaseAtBlock <=
+  height`, read from pre-body state in ascending `(releaseAtBlock, box id)`, are
+  inputs of the block's settlement, each one's value a karma output to its
   `owner`. No user transaction spends an escrow — `vouch_escrow` is block
   application's, like `bond`.
 - ⛔ **Only a member casts.** The arm evaluates `member(voucher)` on the voucher's record as it
@@ -2191,6 +2192,11 @@ are inputs of `validateTx`, in the deps of the HTTP routes and of the relay alik
   than handled, the same reasoning as the bond settlement's single-input
   bound. There is no cap on a voucher's live vouches; the escrow gate above is
   what rate-limits re-vouching after any withdrawal.
+- **An unvouch reads no membership, and a vouch box is consumed once.** A lapsed
+  voucher withdraws their own vouch as a member does; where the settlement's
+  lapse leg lists that vouch in the same block, the leg leaves it out
+  (→ The settlement transaction, "The lapse leg leaves out a vouch the body
+  spends").
 
 ### Username transition rules
 
@@ -2658,7 +2664,7 @@ boxes and unstake markers.
 
 | | |
 |---|---|
-| **Consumes, in this order** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · the backer pool box (on every block inside the accrual window, and on every block whose body carries an unstake — MINING_INTERFACE → The backer pool) · every `BackerUnstakeBox` the body's transactions created, in committed transaction order · every `LikeAccrualBox` marker the block's like and reply transactions emitted, in committed transaction order · every `KarmaPriceBox` the block's transactions created — a post's price or a burn's (→ Username transition rules) — in committed transaction order · the carry box of every author the block credits, ascending author hex · **at most `MAX_BOND_SETTLEMENTS_PER_BLOCK`** `BondBox`es whose invitee's `invitedAtBlock` is at or before `height − inviteProbationBlocks` in pre-body state, ascending `(invitedAtBlock, box id)` · **at most `MAX_ESCROW_RETURNS_PER_BLOCK`** `VouchEscrowBox`es at or past their `releaseAtBlock` in pre-body state, ascending `(releaseAtBlock, box id)` · **at most `MAX_LAPSE_WITHDRAWALS_PER_BLOCK`** `VouchBox`es whose `voucherId` is not a member in pre-body state, ascending box id · the karma boxes decay charges · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created, in committed transaction order |
+| **Consumes, in this order** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · the backer pool box (on every block inside the accrual window, and on every block whose body carries an unstake — MINING_INTERFACE → The backer pool) · every `BackerUnstakeBox` the body's transactions created, in committed transaction order · every `LikeAccrualBox` marker the block's like and reply transactions emitted, in committed transaction order · every `KarmaPriceBox` the block's transactions created — a post's price or a burn's (→ Username transition rules) — in committed transaction order · the carry box of every author the block credits, ascending author hex · **at most `MAX_BOND_SETTLEMENTS_PER_BLOCK`** `BondBox`es whose invitee's `invitedAtBlock` is at or before `height − inviteProbationBlocks` in pre-body state, ascending `(invitedAtBlock, box id)` · **at most `MAX_ESCROW_RETURNS_PER_BLOCK`** `VouchEscrowBox`es at or past their `releaseAtBlock` in pre-body state, ascending `(releaseAtBlock, box id)` · **at most `MAX_LAPSE_WITHDRAWALS_PER_BLOCK`** `VouchBox`es whose `voucherId` is not a member in pre-body state, voucher by voucher and each voucher's in target order, less those the body spends · the karma boxes decay charges · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created, in committed transaction order |
 | **Emits, in this order** | the successors of the four protocol boxes — emission, treasury, backer pool, karma pool · the invite grants · like payouts and carry successors · the vested part of each settling bond, back to its inviter · each released escrow's value, back to its owner · one `VouchEscrowBox` per lapse withdrawal — the vouch's value, `owner` its voucher, `releaseAtBlock = vouch.createdAtBlock + vouchCooldownBlocks` · decay replacements · one credit release per `BackerUnstakeBox` whose release is positive, in committed transaction order — `value` the release, `owner` the marker's, no lock, `createdAtBlock` the height · the coinbase's single credit output |
 
 ⛔ **A leg the body does not drive is capped, and the remainder waits.** Bonds, escrows and
@@ -2666,7 +2672,10 @@ lapsed vouches are read from chain state, so no producer can shrink them by sele
 smaller body; each takes at most its cap per block in the stated total order — the order key is
 unique, so every verifier takes the same items — and a candidate stays eligible **at or past** its
 height until a block consumes it. A consumed candidate leaves the queue by being spent — there
-is no cursor to store. ⚠ **The three caps and the empty-body settlement are the liveness
+is no cursor to store. **One candidate has a second spender**: a `vouch` box is its voucher's to
+unvouch (→ Vouch transition rules), and the lapse leg leaves out a listed vouch the body spends
+(→ "The lapse leg leaves out a vouch the body spends"); a bond and an escrow are block
+application's alone. ⚠ **The three caps and the empty-body settlement are the liveness
 relation** (`TYPES_INTERFACE` → Size caps): whatever the chain state holds, the settlement of an
 empty body fits `MAX_SETTLEMENT_BYTES`, so a block exists at every height.
 
@@ -2718,6 +2727,22 @@ is stored. Each consumption subtracts one from the target's `memberVouches` iff 
 the same function the unvouch uses, and the membership pass of the same block records the lapses
 that follow (→ Membership pass). The list is captured before the apply loop on both sides, like
 the escrows and decay.
+
+⛔ **The lapse leg leaves out a vouch the body spends.** The leg's list is the capture above — the
+first `MAX_LAPSE_WITHDRAWALS_PER_BLOCK` lapsed vouches of pre-body state, in that order — **less
+every vouch a body transaction names as an input**: its voucher's own unvouch, the one user
+transaction that spends a `vouch` box, which reads no membership and so is a lapsed voucher's to
+sign as it is a member's (→ Vouch transition rules). The unvouch emits the escrow the leg would
+have — the vouch's value, to its voucher, `releaseAtBlock = vouch.createdAtBlock +
+vouchCooldownBlocks` — and subtracts the target's count through the same function, so the voucher
+holds an escrow of one value, owner and release height whichever consumes the vouch. **No further
+candidate is read in its place**: the vouch leaves the queue through the body, so the queue drains
+no slower, and the capture reads what it reads under any body. The list is a function of the
+capture and the body's input ids alone — it reads no state — and both sides take it from one
+function (`CONSENSUS_INTERFACE → The settlement build`); in `applyBlock` its answer is the one
+list the derivation and the membership pass's touched identities read. A settlement naming a
+vouch the body spent, or omitting a listed vouch the body left, is refused by the comparison of
+its input list with the derived one.
 
 ⛔ **`CoinbaseOutput` is not a block-body concept.** Coinbase outputs are outputs of this
 transaction; the block body has no `coinbaseOutputs` field and `utxoTxRoot` has no `'coinbase'`
@@ -2877,8 +2902,10 @@ is not last, is refused without reading a single box.
    coinbase already occupies.
 3. ⚠ **The producer's byte budget must absorb a body-dependent tail.** The reservation that seeds the
    fill with the largest possible coinbase no longer bounds it. ✅ **The existing trim loop
-   generalises** — trimming a transaction shrinks the settlement too, monotonically — **provided the
-   settlement is rebuilt on each iteration** rather than measured once.
+   generalises** — trimming a transaction takes its settlement contribution with it, and the tree is
+   smaller after every trim (`MEMPOOL_INTERFACE` → The fill budget is bytes; `getPendingEntries` is a
+   count → "Popping is monotone") — **provided the settlement is rebuilt on each iteration** rather
+   than measured once.
 
 ### Triggers
 

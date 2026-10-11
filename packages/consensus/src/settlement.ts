@@ -1072,6 +1072,21 @@ export function emptyBody(): SettlementBody {
 }
 
 /**
+ * The lapse leg: the pre-body capture less every vouch a body transaction
+ * names as an input (NODE_INTERFACE → The settlement transaction → "The lapse
+ * leg leaves out a vouch the body spends"). Pure — reads no state. The
+ * capture's order is kept, an id in `spent` the capture does not hold changes
+ * nothing, and the capture is not mutated.
+ *
+ * ⛔ **`spent` is the body's user-transaction inputs — never the settlement's
+ * own**, which name every listed vouch (CONSENSUS_INTERFACE → The settlement
+ * build → "The lapse list is one function's answer on both sides").
+ */
+export function lapseLegOf(captured: readonly VouchBox[], spent: ReadonlySet<string>): VouchBox[] {
+  return captured.filter((v) => !spent.has(v.id!));
+}
+
+/**
  * The bond output this transaction creates, or null.
  *
  * ⛔ **At most one bond per transaction** — the invite arm pins it
@@ -1219,7 +1234,15 @@ export function buildBlockSettlement(
   });
   const postBody = collectPostBodyKarma(view, decoded);
   const escrows = view.getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
-  const lapsed = view.getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
+  // The leg is the pre-body capture less every vouch a body transaction
+  // names as an input (NODE_INTERFACE → The settlement transaction → "The
+  // lapse leg leaves out a vouch the body spends"); `applyBlock` takes its
+  // from the same function (CONSENSUS_INTERFACE → The settlement build →
+  // "The lapse list is one function's answer on both sides").
+  const lapsedCapture = view.getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
+  const spent = new Set<string>();
+  for (const d of decoded) for (const inp of d.inputs) spent.add(inp);
+  const lapsed = lapseLegOf(lapsedCapture, spent);
   const capturedPool = view.getBackerPoolBox();
   // The build writes no state, and `deriveKarmaDecay` writes no record.
   const decayDeps: DecayDeps = {

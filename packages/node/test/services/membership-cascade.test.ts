@@ -17,6 +17,7 @@ import type {
 import {
   makeKarmaBox,
   makeTestIdentity,
+  mineNextBlock,
   seedProvenance,
   signTransaction,
   hex,
@@ -330,6 +331,118 @@ describe('membership cascade across blocks', () => {
     const karma = utxo.getKarmaBoxes(lapsed.userId);
     const returned = karma.find((b) => b.value === VOUCH_KARMA_AMOUNT);
     expect(returned).toBeDefined();
+
+    db.closeDb();
+  });
+
+  // The body's unvouch takes a listed vouch out of the lapse leg
+  // (NODE_INTERFACE → The settlement transaction →
+  // "The lapse leg leaves out a vouch the body spends"): the escrow it emits
+  // stands in for the leg's, the leg emits the other one, and both targets'
+  // `memberVouches` fall by one.
+  it('a lapsed voucher\'s unvouch admitted into the pool rides a block the creator builds', async () => {
+    vi.resetModules();
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 3)').run();
+    const utxo = await importUtxo();
+    const records = await importRecords();
+
+    const root = makeTestIdentity();
+    const lapsed = makeTestIdentity();
+    const target1 = makeTestIdentity();
+    const target2 = makeTestIdentity();
+
+    records.putIdentityRecord(root.userId, rootRecord(1));
+    // Lapsed voucher: `memberBar` 2 and `memberVouches` 1 — not a member, so
+    // its vouches are read into the lapse-leg capture (NODE_INTERFACE →
+    // The settlement transaction → "The lapse leg reads PRE-BODY state too,
+    // and its predicate is the record's").
+    records.putIdentityRecord(lapsed.userId, {
+      ...memberRecord(1, 2, 1), memberVouches: 1,
+    });
+    // Each target starts with `memberVouches` 1 (the lapsed one counting), so
+    // a fall by one lands at 0.
+    records.putIdentityRecord(target1.userId, {
+      ...residentRecord(1), memberVouches: 1,
+    });
+    records.putIdentityRecord(target2.userId, {
+      ...residentRecord(1), memberVouches: 1,
+    });
+
+    const vouch1 = makeVouchBox(lapsed.userId, target1.userId, 0, 701);
+    const vouch2 = makeVouchBox(lapsed.userId, target2.userId, 0, 702);
+    utxo.insertBox(vouch1);
+    utxo.insertBox(vouch2);
+
+    await activateProverOverStore();
+
+    const { config: nodeConfig } = await import('../../src/config.js');
+    const cooldown = nodeConfig.vouchCooldownBlocks;
+    const releaseAtBlock = vouch1.createdAtBlock + cooldown;
+    const unvouchTx = makeUnvouchTx(vouch1.id!, lapsed, releaseAtBlock, 1);
+
+    // Admit through this node's admission seam, so the pool row carries the
+    // estimate the creator packs by.
+    const admit = await import('../../src/services/admit-tx.js');
+    const mem = await import('../../src/store/mempool.js');
+    admit.admitTx(unvouchTx, 5000);
+    const [pooled] = mem.getPendingEntries(10);
+    const pooledRowid = pooled!.rowid;
+
+    // The creator builds a block from the pool, the signer signs over the
+    // header the PoW solver stamps, and the finalize path applies it
+    // (NODE_INTERFACE → Block finalization).
+    const bc = await import('../../src/services/block-creator.js');
+    const { makeTestConfig: cfg } = await import('../helpers.js');
+    bc.startBlockCreator(cfg({ dbPath: ':memory:', nodeRole: 'miner', bootstrapPeers: [] }));
+    const mined = await mineNextBlock({
+      createOrderingBlock: bc.createOrderingBlock,
+      getCurrentTemplate: bc.getCurrentTemplate,
+      submitMinedBlock: bc.submitMinedBlock,
+    });
+    expect(mined).not.toBeNull();
+
+    const { computeTxId } = await import('@dagsocial/types');
+    // The body carries the admitted unvouch, then the settlement last.
+    expect(mined!.utxoTxTree.utxoTxIds[0]).toBe(computeTxId(unvouchTx));
+    const settlementTxId = mined!.utxoTxTree.utxoTxIds[mined!.utxoTxTree.utxoTxIds.length - 1]!;
+    expect(mined!.utxoTxTree.utxoTxIds).toHaveLength(2);
+    expect(settlementTxId).toBeDefined();
+
+    // The settlement's inputs name V2 (the leg kept it) and not V1 (the body
+    // spent it) — the lapse-leg comparison fails otherwise.
+    const { decodeTx } = await import('@dagsocial/types');
+    const settlementTx = decodeTx(mined!.utxoTxTree.utxoTxs[mined!.utxoTxTree.utxoTxs.length - 1]!);
+    expect(settlementTx.inputs).toContain(vouch2.id!);
+    expect(settlementTx.inputs).not.toContain(vouch1.id!);
+
+    // Two escrows, one from the body's unvouch and one from the leg's — both
+    // of V1's and V2's `createdAtBlock + vouchCooldownBlocks`, both owned by
+    // the lapsed voucher (NODE_INTERFACE → The settlement transaction →
+    // "The lapse leg reads PRE-BODY state too, and its predicate is the
+    // record's", → Vouch transition rules).
+    expect(utxo.hasActiveVouchEscrow(lapsed.userId)).toBe(true);
+    const escrows = utxo.getVouchEscrowsFor(lapsed.userId);
+    expect(escrows).toHaveLength(2);
+    const releases = escrows.map((e) => e.releaseAtBlock).sort();
+    expect(releases).toEqual([
+      vouch1.createdAtBlock + cooldown,
+      vouch2.createdAtBlock + cooldown,
+    ]);
+    for (const escrow of escrows) {
+      expect(escrow.value).toBe(VOUCH_KARMA_AMOUNT);
+    }
+
+    // Each target's `memberVouches` fell by one — the consumption subtracts
+    // through the one function the lapse-leg and the unvouch arm share
+    // (NODE_INTERFACE → The settlement transaction).
+    expect(records.getIdentityRecord(target1.userId)!.memberVouches).toBe(0);
+    expect(records.getIdentityRecord(target2.userId)!.memberVouches).toBe(0);
+
+    // The pool row is confirmed — nothing of the unvouch stays pending.
+    expect(mem.getPendingEntries(10)).toHaveLength(0);
+    expect(mem.getPendingEntries(10).find((row) => row.rowid === pooledRowid)).toBeUndefined();
 
     db.closeDb();
   });

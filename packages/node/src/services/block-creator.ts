@@ -219,11 +219,11 @@ function coveringLength(selection: readonly SelectedEntry[], length: number, ove
  * The length the selection's first `length` entries keep once the tail whose
  * `settlementMarginalBytes` cover `overshoot` is dropped (MEMPOOL_INTERFACE →
  * The fill budget is bytes; getPendingEntries is a count → "The fill counts the
- * settlement's bytes, so that loop too runs at most once"). Unlike
- * `coveringLength`, dropping the whole selection is a legal answer rather than a
- * signal to escalate: an empty selection's settlement is the state-driven legs
- * alone, which consensus bounds below `MAX_SETTLEMENT_BYTES` on their own (→ "The
- * settlement is trimmed against its own bound as well"), so `0` always covers.
+ * settlement's bytes"). Unlike `coveringLength`, dropping the whole selection
+ * is a legal answer rather than a signal to escalate: an empty selection's
+ * settlement is the state-driven legs alone, which consensus bounds below
+ * `MAX_SETTLEMENT_BYTES` on their own (→ "The settlement is trimmed against
+ * its own bound as well"), so `0` always covers.
  */
 function settlementCoveringLength(selection: readonly SelectedEntry[], length: number, overshoot: number): number {
   let kept = length;
@@ -603,10 +603,10 @@ export function createOrderingBlock(): OrderingBlock | null {
     // A second baseline, against the settlement's own bound rather than the
     // body's: the empty selection's settlement length alone
     // (MEMPOOL_INTERFACE → The fill budget is bytes; getPendingEntries is a
-    // count → "The fill counts the settlement's bytes, so that loop too runs
-    // at most once"). `entryByteCost` already folds the same marginal bytes
-    // into `spent` so the BODY total stays accurate; `settlementSpent` tracks
-    // them again, alone, against `MAX_SETTLEMENT_BYTES`.
+    // count → "The fill counts the settlement's bytes"). `entryByteCost`
+    // already folds the same marginal bytes into `spent` so the BODY total
+    // stays accurate; `settlementSpent` tracks them again, alone, against
+    // `MAX_SETTLEMENT_BYTES`.
     const seededSettlementSpent = seeded.tree.utxoTxs[seeded.tree.utxoTxs.length - 1]!.length;
     const costBudget = blockCostBudget();
     const packTo = Math.floor((costBudget * (100 - PACKING_COST_MARGIN)) / 100);
@@ -636,9 +636,9 @@ export function createOrderingBlock(): OrderingBlock | null {
         const cost = entryByteCost(entry.utxoTxBytes);
         if (spent + cost > budget) return;
         // MEMPOOL_INTERFACE → The fill budget is bytes; getPendingEntries is a
-        // count → "The fill counts the settlement's bytes, so that loop too runs
-        // at most once" — ends the class here, as the body-budget check above
-        // does, at the entry that would take the settlement over its own bound.
+        // count → "The fill counts the settlement's bytes" — ends the class
+        // here, as the body-budget check above does, at the entry that would
+        // take the settlement over its own bound.
         const settlementBytes = settlementMarginalBytes(tx);
         if (settlementSpent + settlementBytes > MAX_SETTLEMENT_BYTES) return;
         let estimate = entry.costEstimate;
@@ -693,7 +693,7 @@ export function createOrderingBlock(): OrderingBlock | null {
         if (spent + cost > budget) break;
         // A rent transaction's own fee output is a settlement input like any
         // other (MEMPOOL_INTERFACE → The fill budget is bytes; getPendingEntries
-        // is a count → "The fill counts the settlement's bytes...").
+        // is a count → "The fill counts the settlement's bytes").
         const settlementBytes = settlementMarginalBytes(rentTx);
         if (settlementSpent + settlementBytes > MAX_SETTLEMENT_BYTES) break;
         const rentTxId = computeTxId(rentTx);
@@ -773,16 +773,20 @@ export function createOrderingBlock(): OrderingBlock | null {
         if ('error' in retrimmed) return retrimmed;
         sizedBody = retrimmed.tree;
       }
-      // ⛔ **The settlement is trimmed against its own bound separately, in one
-      // more rebuild, never one entry a rebuild** (MEMPOOL_INTERFACE → The fill
-      // budget is bytes; getPendingEntries is a count → "The fill counts the
-      // settlement's bytes, so that loop too runs at most once"). The fill's own
-      // settlement accumulator above already ends a class within a few bytes of
-      // `MAX_SETTLEMENT_BYTES`, so the tail whose `settlementMarginalBytes` cover
-      // the real overshoot is dropped whole, by the same accumulator-then-sizer
-      // shape the body-budget loop above uses. Popping only shrinks the body, so
-      // this cannot reopen the bound the loop above just settled.
-      if (selection.length > 0 && settlementExceedsBound(sizedBody)) {
+      // ⛔ **The settlement is trimmed against its own bound by rebuilds, each
+      // pass dropping the tail whose `settlementMarginalBytes` cover the
+      // overshoot** (MEMPOOL_INTERFACE → The fill budget is bytes;
+      // getPendingEntries is a count → "The fill counts the settlement's
+      // bytes"). The lapse leg takes back a listed vouch when the unvouch that
+      // spent it is popped (NODE_INTERFACE → The settlement transaction →
+      // "The lapse leg leaves out a vouch the body spends"), so a pop can grow
+      // the settlement by one lapse withdrawal and a second pass runs where it
+      // still measures above the bound. Each pass drops at least one entry,
+      // and the empty selection's settlement fits by the three state-driven
+      // caps (TYPES_INTERFACE → Size caps), so the loop ends. The settlement's
+      // loop runs after the body's and popping only shrinks the body, so it
+      // cannot reopen the body's bound.
+      while (selection.length > 0 && settlementExceedsBound(sizedBody)) {
         const overshoot = sizedBody.utxoTxs[sizedBody.utxoTxs.length - 1]!.length - MAX_SETTLEMENT_BYTES;
         selection.length = settlementCoveringLength(selection, selection.length, overshoot);
         const retrimmed = bodyOf(selection.length);

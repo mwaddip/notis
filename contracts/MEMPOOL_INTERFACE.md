@@ -440,23 +440,33 @@ a marker the settlement consumes and may add an author's carry-box output; an or
 transfer adds nothing — and under-reserving is the direction that puts an assembled body over
 a budget every peer measures. ✅ **Popping is monotone**, so the trim loop converges: removing
 a transaction removes its settlement contribution too, and the settlement is rebuilt on each
-iteration rather than measured once.
+iteration rather than measured once. **One pop returns bytes to the settlement** — an unvouch of
+a vouch the lapse leg lists, whose removal puts that vouch back in the leg (`NODE_INTERFACE → The
+settlement transaction → "The lapse leg leaves out a vouch the body spends"`): one input and one
+escrow output, which the unvouch itself carried beside its signature, so the tree is smaller after
+that pop as after any other.
 
 ⛔ **The settlement is trimmed against its own bound as well.** The loop pops a user entry while
 the rebuilt settlement encodes above `MAX_SETTLEMENT_BYTES` (`TYPES_INTERFACE` → Size caps), not
 only while the tree exceeds the body budget — every body-driven settlement leg (markers, fee boxes,
-touched identities, carry boxes, grants, withdrawal locks) shrinks with the body, so this condition
-is monotone for the same reason the first is. The state-driven legs are capped by consensus and
-cannot push an empty body's settlement over the bound, so the loop always terminates with a legal
-settlement, and a size refusal at submit is unreachable (`MINING_INTERFACE` → Template and submit).
+touched identities, carry boxes, grants, withdrawal locks) shrinks with the body. **One state-driven
+leg grows under a pop**: the lapse leg takes back a listed vouch when the unvouch that spent it is
+popped (above), so the settlement is measured again after every rebuild and the loop pops while it
+is over. The state-driven legs are capped by consensus and cannot push an empty body's settlement
+over the bound — the empty body's settlement holds the whole lapse list — so the loop always
+terminates with a legal settlement, and a size refusal at submit is unreachable (`MINING_INTERFACE`
+→ Template and submit).
 
-⛔ **The fill counts the settlement's bytes, so that loop too runs at most once.** A second accumulator — the empty
+⛔ **The fill counts the settlement's bytes.** A second accumulator — the empty
 body's settlement plus each entry's `settlementMarginalBytes` — ends a class's fill at the entry that would take it
 above `MAX_SETTLEMENT_BYTES`, as the first ends it at the body budget; it is blind to the settlement's count prefixes and
-to its first protocol-box input, a few bytes across the body. **A pop for the settlement drops the tail entries whose
+to its first protocol-box input, a few bytes across the body, and it counts the whole lapse list under an unvouch that
+takes a vouch out of it — over, the safe direction. **A pop for the settlement drops the tail entries whose
 marginal bytes cover the overshoot**, never one entry a rebuild: an entry that adds nothing to the settlement — an
-ordinary karma transfer — takes nothing off it. The settlement's pop runs after the body's, and popping only shrinks
-the body, so it cannot reopen the body's bound. Measured 2026-09-30, a pool of fee-paying transfers meets the settlement's
+ordinary karma transfer — takes nothing off it. **So the settlement's loop runs at most once, but for a returned
+vouch**: a dropped tail holding such an unvouch covers the overshoot and returns that vouch's bytes, and the loop pops
+again where the rebuilt settlement is still over. The settlement's pop runs after the body's, and popping only shrinks
+the tree, so it cannot reopen the body's bound. Measured 2026-09-30, a pool of fee-paying transfers meets the settlement's
 bound at 3 122 entries, 88.5% of the cost budget, before the body's.
 
 ### Confirmed-entry cleanup reaches every row, and it is a lookup rather than a scan
