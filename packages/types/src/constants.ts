@@ -110,7 +110,7 @@ export const TREE_KEY_LENGTH = 65;
 export const KARMA_STALE_THRESHOLD_BLOCKS = 40320; // 28 days at 60s blocks → profile: karmaStaleThresholdBlocks
 export const KARMA_DECAY_INTERVAL_BLOCKS = 1440;   // 24 hours at 60s blocks → profile: karmaDecayIntervalBlocks
 export const KARMA_DECAY_AMOUNT = 5n;              // karma burned per interval
-export const KARMA_MINIMUM = 10n;                  // floor — decay never reduces below this
+export const KARMA_MINIMUM = 10n;                  // floor — decay never reduces below it, and only a post spends it
 
 // Post price — a post pays a price rather than locking a bond
 // (ARCHITECTURE → The post price; CONSTANTS → Post price and likes)
@@ -130,7 +130,7 @@ export const MEMBER_LIKES_MULTIPLIER = 2; // Y(N) = MEMBER_LIKES_MULTIPLIER · D
 
 // Vouch
 export const VOUCH_KARMA_AMOUNT = 1n;         // Karma locked per vouch
-export const VOUCH_MIN_BALANCE = 11n;          // Must have >= this to vouch
+export const VOUCH_MIN_BALANCE = KARMA_MINIMUM + VOUCH_KARMA_AMOUNT;  // the floor plus the stake: a cast leaves KARMA_MINIMUM standing
 export const VOUCH_COOLDOWN_BLOCKS = 60;       // Blocks before karma returned → profile: vouchCooldownBlocks
 // NODE_INTERFACE → Vouch transition rules: a cast's createdAtBlock may lag its
 // carrying block by at most this many blocks.
