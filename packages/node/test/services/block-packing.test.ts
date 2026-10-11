@@ -200,7 +200,7 @@ async function prefixCost(order: string[], length: number): Promise<number> {
  * The settlement transaction's own encoded length for the block carrying
  * `bodies`, built as the creator builds one (MEMPOOL_INTERFACE → The fill
  * budget is bytes; getPendingEntries is a count → "The fill counts the
- * settlement's bytes...").
+ * settlement's bytes").
  */
 async function settlementLength(bodies: Uint8Array[]): Promise<number> {
   const { buildBlockSettlement, treeStateView } = await import('@dagsocial/consensus');
@@ -691,11 +691,11 @@ describe('packing to the budget', () => {
 
 /**
  * The settlement in the fill (MEMPOOL_INTERFACE → The fill budget is bytes;
- * getPendingEntries is a count → "The fill counts the settlement's bytes, so
- * that loop too runs at most once"): a second accumulator ends a class's fill
- * at `MAX_SETTLEMENT_BYTES` as the first ends it at the body budget, and a pop
- * for an overshoot the accumulator missed drops the whole covering tail in one
- * rebuild rather than one entry a rebuild.
+ * getPendingEntries is a count → "The fill counts the settlement's bytes"):
+ * a second accumulator ends a class's fill at `MAX_SETTLEMENT_BYTES` as the
+ * first ends it at the body budget, and a pop for an overshoot the
+ * accumulator missed drops the whole covering tail in one pass rather than
+ * one entry a pass.
  */
 describe('the settlement in the fill', () => {
   let settlementBudget: { set(bound: number): void };
@@ -744,7 +744,7 @@ describe('the settlement in the fill', () => {
     expect(settles.count).toBeLessThanOrEqual(3);
   });
 
-  it('a forced overshoot — settlementMarginalBytes mocked to under-count during the fill — is popped in one rebuild, and the template stays legal', async () => {
+  it('a forced overshoot — settlementMarginalBytes mocked to under-count during the fill — is popped in one pass, and the template stays legal', async () => {
     // Mocked to zero: the fill's accumulator never sees the settlement grow, so
     // it admits the whole pool — a forced overshoot no natural pool reaches,
     // standing in for the accumulator's real (few-byte) blind spot.
