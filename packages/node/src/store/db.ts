@@ -141,6 +141,8 @@ const MIGRATIONS = [
     max_valid_height INTEGER,
     username_lower TEXT,
     username_claimant TEXT,
+    karma_owner TEXT,
+    karma_spend INTEGER,
     cost_estimate INTEGER
   )`,
 
@@ -369,6 +371,15 @@ function migrateMempoolTxColumns(database: Database.Database): void {
   if (!has('tx_bytes')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_bytes INTEGER`);
   if (!has('username_lower')) database.exec(`ALTER TABLE mempool ADD COLUMN username_lower TEXT`);
   if (!has('username_claimant')) database.exec(`ALTER TABLE mempool ADD COLUMN username_claimant TEXT`);
+  // The karma spend gate: `karma_owner` is the pooled karma transaction's one
+  // signing key, `karma_spend` the summed value of its outputs that are not
+  // karma boxes — `pendingKarmaSpend` sums the column by the owner, and
+  // admission's `held` is the confirmed sum less it (MEMPOOL_INTERFACE → Gate
+  // metadata columns; `NODE_INTERFACE` → Karma transition rules). A row written
+  // before these existed holds NULL in both and contributes nothing to the sum;
+  // the pool drains within `MEMPOOL_EXPIRY_BLOCKS` regardless.
+  if (!has('karma_owner')) database.exec(`ALTER TABLE mempool ADD COLUMN karma_owner TEXT`);
+  if (!has('karma_spend')) database.exec(`ALTER TABLE mempool ADD COLUMN karma_spend INTEGER`);
   // A row written before this existed holds NULL, as a row the gate did not
   // cost does (MEMPOOL_INTERFACE → The cost gate).
   if (!has('cost_estimate')) database.exec(`ALTER TABLE mempool ADD COLUMN cost_estimate INTEGER`);
@@ -463,6 +474,8 @@ function createMempoolGateIndexes(database: Database.Database): void {
       ON mempool(username_lower) WHERE username_lower IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_username_claimant
       ON mempool(username_claimant) WHERE username_claimant IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_mempool_karma_owner
+      ON mempool(karma_owner) WHERE karma_owner IS NOT NULL;
   `);
 }
 

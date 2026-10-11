@@ -26,6 +26,8 @@ const ALTER_COLUMNS = [
   'cost_estimate',
   'vouch_target',
   'max_valid_height',
+  'karma_owner',
+  'karma_spend',
 ];
 
 // Every index createMempoolGateIndexes declares, derived from db.ts.
@@ -40,6 +42,7 @@ const GATE_INDEX_NAMES = [
   'idx_mempool_fee_rate',
   'idx_mempool_username_lower',
   'idx_mempool_username_claimant',
+  'idx_mempool_karma_owner',
 ];
 
 // Pre-column mempool schema: literal SQL without the six ALTER columns and
@@ -177,7 +180,8 @@ describe('migrateMempoolTxColumns', () => {
     const row = db.prepare(
       `SELECT tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes,
               username_lower, username_claimant, cost_estimate,
-              vouch_target, max_valid_height
+              vouch_target, max_valid_height,
+              karma_owner, karma_spend
        FROM mempool WHERE rowid = ?`,
     ).get(inserted.rowid) as Record<string, unknown>;
     expect(row).toBeDefined();

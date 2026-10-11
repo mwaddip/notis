@@ -121,6 +121,7 @@ export {
   hasPendingVouch,
   hasPendingClaim,
   hasPendingClaimBy,
+  pendingKarmaSpend,
   hasPendingSpend,
   findPendingOutput,
   getBoxWithPending,
