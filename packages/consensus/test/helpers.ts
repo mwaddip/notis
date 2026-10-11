@@ -200,6 +200,15 @@ export function karmaBox(owner: Uint8Array, value: bigint, nonce: number, create
   return seedProvenance<KarmaBox>({ boxType: 'karma', value, createdAtBlock, owner }, createdAtBlock, nonce);
 }
 
+/** The income box the settlement writes — the owner's one marked karma box (TYPES_INTERFACE → KarmaBox). */
+export function incomeBox(owner: Uint8Array, value: bigint, nonce: number, createdAtBlock = 1): Stored<KarmaBox> {
+  return seedProvenance<KarmaBox>(
+    { boxType: 'karma', value, createdAtBlock, owner, income: true },
+    createdAtBlock,
+    nonce,
+  );
+}
+
 export function escrowBox(
   owner: Uint8Array,
   releaseAtBlock: number,
