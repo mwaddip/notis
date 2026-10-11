@@ -878,11 +878,12 @@ async function runScenario(m: Modules, carrier: PinCarrier): Promise<ApplyPinCap
     like(r2, largest(r2), pDormant.postId, d1, 7),
   ]);
 
-  // Block 8 — a root's vouch re-qualifies the lapsed target; decay held at the
-  // floor; a consolidation of three karma boxes.
+  // Block 8 — a root's vouch re-qualifies the lapsed target; a stale identity
+  // squares from the floor by replying to the dormant author; a consolidation
+  // of three karma boxes.
   await applyNext([
     vouch(r2, largest(r2), t, 8),
-    like(l1, largest(l1), pDormant.postId, d1, 8),
+    reply(l1, largest(l1), 'the stale liker replies', pDormant.postId, d1, 8),
     consolidate(t, karma(t), 8),
   ]);
 
