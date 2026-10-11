@@ -1,16 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { MAX_BLOCK_BODY_BYTES, PROTOCOL_VERSION, bytesToHex, computeTxId, decodeTx, encodeTx, hash32 } from '@dagsocial/types';
-import type { CreditBox, FeeBox, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
+import { MAX_BLOCK_BODY_BYTES, PROTOCOL_VERSION, VOUCH_KARMA_AMOUNT, bytesToHex, computeTxId, decodeTx, encodeTx, hash32 } from '@dagsocial/types';
+import type { CreditBox, FeeBox, IdentityRecord, OrderingBlock, UtxoTransaction, VouchBox } from '@dagsocial/types';
 import type { Config } from '../../src/config.js';
 import {
+  activateProverOverStore,
   blockBudgetSeam,
   liveProver,
   makeCreditBox,
+  makePostTx,
   makeTestConfig,
   makeTestIdentity,
   mineNextBlock,
   seedPostTx,
+  seedProvenance,
   signTransaction,
+  solveHeaderPow,
+  toHex,
 } from '../helpers.js';
 import type { TestIdentity } from '../helpers.js';
 
@@ -767,6 +772,204 @@ describe('the settlement in the fill', () => {
     expect(heldSettlementLen).toBe(lengths[0]);
     expect(heldSettlementLen).toBeLessThanOrEqual(lengths[within]!);
     expect(settles.count).toBeLessThanOrEqual(3);
+  });
+});
+
+/**
+ * A returned vouch grows the settlement in a second rebuild
+ * (MEMPOOL_INTERFACE → The fill budget is bytes; getPendingEntries is a count →
+ * "The settlement is trimmed against its own bound as well";
+ * NODE_INTERFACE → The settlement transaction →
+ * "The lapse leg leaves out a vouch the body spends").
+ *
+ * One state-driven leg of the settlement grows under a pop — the lapse leg
+ * takes back a listed vouch when the unvouch that spent it is popped — so a
+ * single rebuild cannot be the invariant. The suite seeds a lapsed voucher
+ * with two listed vouches and pools their unvouch of one BEHIND karma-side
+ * posts, so FIFO puts the unvouch at the tail of the selection. The pool's
+ * `settlementMarginalBytes` is mocked below the natural one — the only
+ * construct that lets the fill admit the whole pool while the real settlement
+ * still measures over `MAX_SETTLEMENT_BYTES`: when an unvouch is selected the
+ * natural accumulator always over-counts the real settlement by one lapse
+ * withdrawal, so the sizer finds the real settlement under the fill's claim
+ * and never pops (NODE_INTERFACE → The settlement transaction →
+ * "The lapse leg leaves out a vouch the body spends"). The bound and the mock
+ * are picked so the first pop drops the unvouch (and the fewer posts the
+ * covering pass covers with it), the rebuilt settlement grows by the lapse
+ * withdrawal returned to the leg and the second pop runs.
+ */
+describe('a returned vouch grows the settlement in a second rebuild', () => {
+  let settlementBudget: { set(bound: number): void };
+
+  beforeEach(() => {
+    vi.resetModules();
+    settlementBudget = settlementBudgetSeam();
+  });
+  afterEach(async () => {
+    (await import('../../src/services/block-creator.js')).stopBlockCreator();
+    vi.doUnmock('@dagsocial/types');
+    vi.doUnmock('@dagsocial/consensus');
+    vi.doUnmock('../../src/services/cost-estimate.js');
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it.fails('a tail dropped from the first pop returns a vouch to the lapse leg, and a second pop runs', async () => {
+    await freshStore();
+    const utxo = await import('../../src/store/utxo.js');
+    const records = await import('../../src/store/identity-records.js');
+    const db = await import('../../src/store/db.js');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    // The lapsed voucher — `memberVouches` below `memberBar`, so the voucher
+    // fails `member()` and `getLapsedVouches` reads their boxes
+    // (NODE_INTERFACE → The settlement transaction →
+    // "The lapse leg reads PRE-BODY state too, and its predicate is the
+    // record's").
+    const lapsedVoucher = makeTestIdentity();
+    const residentAt = (height: number): IdentityRecord => ({
+      lastActivityBlock: height, lastDecayBlock: 0, invitedAtBlock: height,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0, memberBar: 0, memberVouches: 0,
+      memberLikes: 0n, invitesUsed: 0,
+    });
+    records.putIdentityRecord(lapsedVoucher.userId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock: 1, memberBar: 2, memberVouches: 0,
+      memberLikes: 0n, invitesUsed: 0,
+    });
+
+    const target1 = makeTestIdentity();
+    const target2 = makeTestIdentity();
+    records.putIdentityRecord(target1.userId, residentAt(1));
+    records.putIdentityRecord(target2.userId, residentAt(1));
+
+    // Two live vouch boxes the leg lists: the body spends V1, the leg keeps V2.
+    const V1 = seedProvenance<VouchBox>({
+      boxType: 'vouch', value: VOUCH_KARMA_AMOUNT, createdAtBlock: 1,
+      voucherId: lapsedVoucher.userId, targetId: target1.userId,
+    }, 1, 801);
+    const V2 = seedProvenance<VouchBox>({
+      boxType: 'vouch', value: VOUCH_KARMA_AMOUNT, createdAtBlock: 1,
+      voucherId: lapsedVoucher.userId, targetId: target2.userId,
+    }, 1, 802);
+    utxo.insertBox(V1);
+    utxo.insertBox(V2);
+
+    // N post transactions by N distinct authors — each karma-side and FIFO in
+    // its class, so the unvouch inserted after them lands at the selection's
+    // tail (MEMPOOL_INTERFACE → Ordering).
+    const N = 10;
+    const postTxs: UtxoTransaction[] = [];
+    for (let i = 0; i < N; i++) {
+      const author = makeTestIdentity();
+      records.putIdentityRecord(author.userId, residentAt(1));
+      const made = makePostTx(author, `returned-vouch-pop ${i}`);
+      utxo.insertBox(made.karmaBox);
+      postTxs.push(made.tx);
+    }
+
+    // The unvouch of V1 by the lapsed voucher — `releaseAtBlock` reads off the
+    // same arithmetic the engine's unvouch arm pins (NODE_INTERFACE → Vouch
+    // transition rules).
+    const { config: nodeConfig } = await import('../../src/config.js');
+    const releaseAtBlock = V1.createdAtBlock + nodeConfig.vouchCooldownBlocks;
+    const unvouch: UtxoTransaction = {
+      inputs: [V1.id!],
+      outputs: [{
+        boxType: 'vouch_escrow',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 1,
+        owner: lapsedVoucher.userId,
+        releaseAtBlock,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(unvouch, lapsedVoucher.privateKey, toHex(lapsedVoucher.userId));
+
+    await activateProverOverStore();
+
+    const mempool = await import('../../src/store/mempool.js');
+    for (const tx of postTxs) mempool.insertUtxoTx(tx, 5000);
+    mempool.insertUtxoTx(unvouch, 5000);
+    // Pre-written estimates keep the fill from pricing an entry alone — a
+    // candidate-cost build would land in `settles.count` otherwise, and the
+    // count this case asserts is the sizer's alone.
+    for (const entry of mempool.getPendingEntries(1000)) {
+      mempool.setCostEstimate(entry.rowid, 1);
+    }
+
+    // Pool's karma-class fill order (FIFO), with the unvouch at the tail.
+    const karmaOrder = [...mempool.iteratePendingEntries({ klass: 'karma' })]
+      .map((entry) => computeTxId(decodeTx(entry.utxoTxBytes!)));
+    expect(karmaOrder).toEqual([...postTxs.map((tx) => computeTxId(tx)), computeTxId(unvouch)]);
+
+    // Natural settlement lengths, measured through this file's `settlementLength`
+    // — read against the real settlementMarginalBytes, before the mock below
+    // replaces it.
+    const postBytes = postTxs.map((tx) => encodeTx(tx));
+    const unvouchBytes = encodeTx(unvouch);
+    const L_before_pop = await settlementLength([...postBytes, unvouchBytes]);
+    const L_after_pop1 = await settlementLength(postBytes);
+    const L_empty = await settlementLength([]);
+    const W = L_after_pop1 - L_before_pop;
+    const naturalMarginal = Math.round((L_after_pop1 - L_empty) / N);
+
+    // The mocked marginal, chosen so the fill admits the whole pool and the
+    // first pop drops exactly the unvouch: M covers the overshoot in one
+    // decrement, and the fill's accumulator reaches `BOUND` only at the last
+    // entry (NODE_INTERFACE → The settlement transaction).
+    const MOCKED_MARGINAL = Math.ceil((N * naturalMarginal - W) / (N + 2)) + 1;
+    const BOUND = L_empty + (N + 1) * MOCKED_MARGINAL;
+
+    const overshoot1 = L_before_pop - BOUND;
+    const d1 = Math.ceil(overshoot1 / MOCKED_MARGINAL);
+    const sizeAfterPop1 = (N + 1) - d1;
+    const L_after_pop1_actual = await settlementLength(postBytes.slice(0, sizeAfterPop1));
+    const overshoot2 = L_after_pop1_actual - BOUND;
+    const d2 = overshoot2 > 0 ? Math.ceil(overshoot2 / MOCKED_MARGINAL) : 0;
+    const sizeAfterPop2 = sizeAfterPop1 - d2;
+    const L_after_pop2 = await settlementLength(postBytes.slice(0, sizeAfterPop2));
+
+    // The three lengths the case turns on, stated here:
+    //   L_before_pop        — the body carries [N posts + unvouch]; the leg
+    //                         holds V2 only, so the settlement sits BELOW
+    //                         `L_after_pop1` by one lapse withdrawal.
+    //   L_after_pop1_actual — the body carries [sizeAfterPop1 posts]; the
+    //                         unvouch is gone, so V1 is back in the leg and
+    //                         the settlement has GROWN above `BOUND`.
+    //   L_after_pop2        — the body carries [sizeAfterPop2 posts]; the
+    //                         covering pass drops enough tail posts for the
+    //                         settlement to sit at or under `BOUND`.
+    expect(L_before_pop).toBeGreaterThan(BOUND);
+    expect(L_after_pop1_actual).toBeGreaterThan(BOUND);
+    expect(L_after_pop2).toBeLessThanOrEqual(BOUND);
+    expect(d1).toBe(1);
+    expect(d2).toBeGreaterThan(0);
+
+    settlementBudget.set(BOUND);
+    const settles = countSettlementBuilds({ settlementMarginalBytes: () => MOCKED_MARGINAL });
+    settles.count = 0;
+
+    const bc = await import('../../src/services/block-creator.js');
+    bc.startBlockCreator(testConfig);
+    const template = bc.getCurrentTemplate();
+
+    expect(template).not.toBeNull();
+    expect(userTxIds(template!)).toEqual(postTxs.slice(0, sizeAfterPop2).map((tx) => computeTxId(tx)));
+    const heldSettlementLen = template!.utxoTxTree.utxoTxs[template!.utxoTxTree.utxoTxs.length - 1]!.length;
+    expect(heldSettlementLen).toBeLessThanOrEqual(BOUND);
+    expect(heldSettlementLen).toBe(L_after_pop2);
+    // Seeding + the fill's settlement + two pop-rebuilds.
+    expect(settles.count).toBe(4);
+
+    // The template applies — through the mined-submit path, which signs the
+    // header and runs `applyOrderingBlock` (NODE_INTERFACE → Block finalization).
+    const nonce = solveHeaderPow(template!.header);
+    expect(bc.submitMinedBlock(nonce, template!.header.height)).not.toBeNull();
   });
 });
 
