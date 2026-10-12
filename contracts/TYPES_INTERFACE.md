@@ -394,10 +394,6 @@ transaction id**, so there is exactly one derivation path:
 mintTxId = blake2b512( MINT_ID_DOMAIN ‖ lp(genesisProof) ‖ vlqU(height) ‖ enum8(reason) ‖ lp(subject) )[0:32]
 ```
 
-> ⚠ **AHEAD OF CODE (2026-10-12).** The `genesisProof` field leads `computeMintTxId` and the node's seeder
-> (`mintTxIdFor`), whose preimage opens at `vlqU(height)`; testnet's payload and the case that compares it with
-> the release line lead `network.ts` and `network.test.ts`.
-
 **A mint id opens with its chain's genesis proof.** `genesisProof` is the chain's genesis proof payload — the raw
 bytes `NetworkProfile.genesisProofPayload` decodes to, the ones the chain's `GenesisProofBox` holds
 (→ GenesisProofBox) — **passed by the caller as an argument**: this package reads no profile to find it.

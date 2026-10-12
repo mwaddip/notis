@@ -2465,9 +2465,6 @@ boxId    = blake2b512( BOX_ID_DOMAIN ‖ boxRecordBytes(candidate, mintTxId, ind
 Box derivation is then identical to the user-transaction path — one derivation,
 not two.
 
-> ⚠ **AHEAD OF CODE (2026-10-12).** The `genesisProof` field and the seeder's passing it lead `mintTxIdFor` and
-> the mint sites of `store/system.ts`, which derive a mint id from a `MintContext` and a height.
-
 **Every mint id opens with the chain's genesis proof.** `genesisProof` is the profile's `genesisProofPayload`,
 decoded — the bytes the proof box holds. `seedGenesisState` reads it off the profile once and hands it to every
 mint site, and `mintTxIdFor` is the one place it reaches the derivation (`TYPES_INTERFACE → Mint identity`).
@@ -4771,8 +4768,7 @@ rest on it**.
 **The genesis mint height is `GENESIS_HEIGHT`.** Seeding requires a store at height 0, so there is
 no other height a genesis box could commit to; the seeders raise it to 1 for the mint txId, because
 0 is not a height a block ever settles at. That clamp is one function (`store/system.ts` →
-`genesisMintHeight`) and is shared with the non-genesis callers of `ensureSystemKarmaBox` and
-`ensureFaucetCreditBox`, which pass real heights.
+`genesisMintHeight`), and each of the eight mint sites takes its height through it.
 
 **A refused genesis exits in three steps**: the message, then `closeDb()`, then a non-zero exit.
 It is the only startup gate in `index.ts` with this shape, and closing the handle before exiting

@@ -1903,10 +1903,6 @@ so a transaction signed on one chain names inputs that **do not exist** on anoth
 fails on the UTXO graph, without any network check. The magic is the early rejection; genesis
 is the one that cannot be circumvented.
 
-> ⚠ **AHEAD OF CODE (2026-10-12).** The payload in the mint id leads `types`' `computeMintTxId` and the
-> node's seeder: until they carry it, a genesis box two profiles seed with the same content has one id
-> under both.
-
 **A chain is named by its payload, so a reset is a new chain only if it mints a new one.** A reset
 that kept its network's payload would seed the retired chain's genesis boxes again — every one whose
 content it left alone — and a transaction of the retired chain that spends one, or a box descending
