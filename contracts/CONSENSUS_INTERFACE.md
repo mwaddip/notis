@@ -152,9 +152,6 @@ view's range. A projection over a body not yet judged can hold more — a body w
 outputs — and that body is refused by verdict at the transaction. `StateView.getKarmaBoxes(owner)` takes no limit:
 the bound is the state's, so the overlay composes its answer with the block's writes as it composes any whole read.
 
-> ⚠ **AHEAD OF CODE (2026-10-12).** The walk for three and its throw lead `tree-view`, whose karma read has no
-> limit.
-
 The members share their names with the node's store reads (`getBox`, `getKarmaBoxes`, `getBondsInvitedAt`, …), which
 answer the node's API. The shapes the rules share with the node's store — `NetworkRecord` and `UsernameRow` — live in
 the package, and the store imports them.
@@ -364,7 +361,8 @@ replay's work**: the signatures it verifies and the operations the block's proof
 input the body names — at most `MAX_BLOCK_BODY_BYTES / 32` of them — and, for each owner the body touches, that
 owner's karma boxes and record. An owner's karma boxes are two at most (→ StateView), so no state an owner holds, and
 nothing another party sends them, raises what a transaction of theirs costs a block or the cost gate's
-single-transaction run (`MEMPOOL_INTERFACE → The cost gate`).
+single-transaction run (`MEMPOOL_INTERFACE → The cost gate`). Measured: the tree view answers an owner at two boxes
+in five lookups — the range's start, two index entries and two boxes (`tree-view.test.ts`).
 
 ## The overlay
 
@@ -445,12 +443,10 @@ for that owner consumes (`NODE_INTERFACE → The settlement transaction → "The
 where a box the body spent is gone — and over pre-body state the answer is one box or none, the same.
 
 **`decayLegMaxBytes(protocolVersion)` is what one squaring adds to a settlement at most** — two inputs and one karma
-output, at that version's widths. The node's fill and its settlement trim add it for an entry whose owner owes decay
+output, the output priced at the widest value and height the codec writes for a karma box: 115 bytes at the current
+version, against a measured 100 to 111 (`settlement-bound.test.ts`). The node's fill and its settlement trim add it for an entry whose owner owes decay
 (`MEMPOOL_INTERFACE → The fill budget is bytes`); `settlementMarginalBytes(tx)` stays a function of the transaction
 alone and prices no state.
-
-> ⚠ **AHEAD OF CODE (2026-10-12).** The income read on `settlementDepsWith` and `decayLegMaxBytes` lead
-> `settlement`.
 
 ## Cost
 

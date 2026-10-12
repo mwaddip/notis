@@ -583,9 +583,6 @@ KarmaBox extends BoxBase {
 }
 ```
 
-> ⚠ **AHEAD OF CODE (2026-10-12).** `income`, its byte (→ Layout — Boxes) and the two-box rule below lead
-> `types/src/utxo.ts`, `consensus` and every builder of a karma spend.
-
 Karma boxes are non-tradeable. They can only be consumed by the owner to:
 - Create a bond box (inviting — ARCHITECTURE → Invite System)
 - Fund a like — the `LIKE_KARMA_COST` rides the transaction's own `LikeAccrualBox` marker
@@ -3111,12 +3108,15 @@ is a function of the body and of chain state — one 32-byte input per like mark
 settling bond, per releasable escrow, per price box, per lapsed vouch, per paid owner's income box, and
 two at most per owner decay squares; one karma output per paid owner and one per decayed owner, one
 escrow output per lapsed vouch (measured: 70 bytes with the four protocol
-outputs and nothing else, +32 per input, +38 per karma output). **The settlement, not the encoding, sets the per-block ceiling on likes**: the bound
+outputs and nothing else, +32 per input; a karma output is 36 bytes at the narrowest value and height and 51 at the
+widest, the mark's byte among them). **The settlement, not the encoding, sets the per-block ceiling on likes**: the bound
 divided by the marker input's 32 bytes, less what the block's other legs take.
 
-> ⚠ **AHEAD OF CODE (2026-10-12).** The income box's input, the two-input ceiling of a decayed owner and
-> the karma output's byte for the mark lead `consensus/src/settlement.ts`; the `+38` is the measure
-> before the mark and is re-measured with it.
+**Measured with the income leg** (`consensus`' `settlement-bound.test.ts`): an empty body's settlement with the three
+capped legs full is 17 395 bytes when every paid owner is a distinct identity already holding an income box, and
+8 632 when one owner is every bond's inviter and every escrow's owner. A decay squaring adds 100 to 111 bytes
+across heights 1 to 5 000 000 and values 1 to 2⁶³ − 1; `decayLegMaxBytes` — 115 at the current version — is its
+ceiling (`CONSENSUS_INTERFACE → The settlement build`).
 
 **Two relations are the rule; the numbers are provisional** (`CONSTANTS → Size caps`).
 

@@ -416,8 +416,6 @@ holds at most two karma boxes"`).
 into the box an identity spends would replace it, and every transaction of theirs still in a pool
 would name a box that no longer exists. Paid beside it, the own box stands until its owner spends it.
 
-> ⚠ **AHEAD OF CODE (2026-10-12).** The two-box rule and the mark lead `types`, `consensus` and the builders.
-
 Provenance is `txId`/`index`, not a field on the box. A mint's `txId` is
 `computeMintTxId(height, reason, subject)`, whose `reason` tag names why the karma
 was created; a user-path box carries the transaction that made it. Both are inside

@@ -1325,9 +1325,6 @@ when a payout to the reader lands before it does, since the payout replaces that
 box alone is not. A reader who holds no own box spends the income box. So a reader's rep can stand in two
 boxes for as long as the own box covers what they do, and the total shown is the sum of both.
 
-> ⚠ **AHEAD OF CODE (2026-10-12).** The paragraph above, and the own box as a withdrawal's and a claim's input
-> below, lead `wallet/builders.ts`, which selects largest-first and takes the smallest box for those two.
-
 **The pending ledger is persisted, per identity** —
 `notis.pending.<pubKeyHex>`, constructed for the loaded identity at start, so a key never sees another
 key's entries and cannot try to spend its predicted change; a reload that forgot the ledger would

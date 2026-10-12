@@ -529,14 +529,16 @@ invites, vouches, credits, withdraw).
 
 | Method | Path | Response | Errors |
 |--------|------|----------|--------|
-| `GET` | `/karma/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, effective, boxes: [{ boxId, value, income? }], boxCount, next, lastActivityBlock, lastDecayBlock, lifetimeLikesReceived, memberSinceBlock, memberBar, memberVouches, memberLikes, invitesUsed, invitedAtBlock, member, invitesAvailable, height }` — a box carries `income: true` when it is the owner's income box and no such key when it is their own (`TYPES_INTERFACE → KarmaBox`; ⚠ AHEAD OF CODE, 2026-10-12: the key leads the route); `total` the face sum over every unspent karma box, own and income (`getKarmaTotal`, the view's `SUM` over the set `getKarmaValue` sums), `effective` that sum after virtual decay (`effectiveKarma`, the call every karma-sufficiency check on the node makes), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from. **An identity with no unspent karma box answers the empty page** — `boxes: []`, `boxCount 0`, `total "0"`, `effective "0"`, `next null`, its clocks, `lifetimeLikesReceived` and `memberLikes` (decimal strings, the record's counters — `"0"` where none) and the membership fields from the record, `height` — an exact spend leaves a live identity holding no box, and a page of zero is a page ("Every list a view returns is a page"). `invitedAtBlock` is the record's invite height as stored, `0` = never invited (→ Identity Records), so a client evaluates `root` exactly as the node does | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
+| `GET` | `/karma/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, effective, boxes: [{ boxId, value, income? }], boxCount, next, lastActivityBlock, lastDecayBlock, lifetimeLikesReceived, memberSinceBlock, memberBar, memberVouches, memberLikes, invitesUsed, invitedAtBlock, member, invitesAvailable, height }` — a box carries `income: true` when it is the owner's income box and no such key when it is their own (`TYPES_INTERFACE → KarmaBox`); `total` the face sum over every unspent karma box, own and income (`getKarmaTotal`, the view's `SUM` over the set `getKarmaValue` sums), `effective` that sum after virtual decay (`effectiveKarma`, the call every karma-sufficiency check on the node makes), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from. **An identity with no unspent karma box answers the empty page** — `boxes: []`, `boxCount 0`, `total "0"`, `effective "0"`, `next null`, its clocks, `lifetimeLikesReceived` and `memberLikes` (decimal strings, the record's counters — `"0"` where none) and the membership fields from the record, `height` — an exact spend leaves a live identity holding no box, and a page of zero is a page ("Every list a view returns is a page"). `invitedAtBlock` is the record's invite height as stored, `0` = never invited (→ Identity Records), so a client evaluates `root` exactly as the node does | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
 | `GET` | `/credits/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, boxes: [{ boxId, value, lockedUntilBlock? }], boxCount, next }` — `total` over every unspent credit box (`getCreditValue`), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from; an identity with no unspent credit box answers the empty page — `boxes: []`, `boxCount 0`, `total "0"`, `next null` | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
 | `GET` | `/invites/:userId?limit=50&after=<boxId>` | `{ bonds: [{ id, value, inviterId, inviterName, inviteePublicKey, inviteeName, createdAtBlock }], bondCount, next }` — the inviter's **unspent** bonds, each with its box's `createdAtBlock` (the bond's settle height) and each name the holder's username as typed or `null` (→ Usernames → "A list row carries its names"), one page ascending box id strictly after `after`, `bondCount` over the whole set, `next` the key to continue from; a bond IS the open invite, so a settled one is not listed and there is no second list | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse; an inviter holding no live bond answers `{ bonds: [], bondCount: 0, next: null }` |
 
-Multi-box UTXO model — identities can hold multiple karma/credit boxes.
-`total` is the sum across all boxes, and `boxes` is a page of them in the order coin selection
-reads — largest first — so a client covering an amount takes boxes from the front of the page and
-never needs the whole set to know its balance. **`value`, `total` and `effective` are decimal
+Multi-box UTXO model — an identity can hold any number of credit boxes, and two karma boxes at most: its
+own box and its income box (→ Karma transition rules → "An identity holds at most two karma boxes").
+`total` is the sum across all boxes, and `boxes` is a page of them, largest first. That is the order
+credit selection reads, so a client covering a credit amount takes boxes from the front of the page and
+never needs the whole set to know its balance; a karma spend names the own box whatever its place on
+the page, and adds the income box only as the client chooses. **`value`, `total` and `effective` are decimal
 strings** in the JSON (box values are `bigint`; JSON cannot carry one) — clients parse them with
 `BigInt(...)`. Applies to every response carrying a `value`/`total` (`/karma`,
 `/credits`, `/status` totals, mining template, etc.). See "Values are BigInt (P0)".
@@ -1225,6 +1227,9 @@ schema for its `boxType`**:
   field — `CreditBox.lockedUntilBlock` — may be present
   or absent, nothing else may vary). A key the schema does not name is a
   reject, not a strip: a stripped key would change the bytes the client signed.
+  **`KarmaBox.income` is not a user transaction's to carry**: the karma row names no
+  `income` key, and the settlement's own shape check alone admits `income: true` on a
+  karma output (→ The settlement transaction → "The income leg pays each owner once").
   > **`fee` is user-created and consumable only by block application**, which is
   > the shape `bond`, `like_accrual` and `karma_price` have: a user transaction creates the
   > box, and only block application may consume it. The schema below has a row for
@@ -2055,10 +2060,6 @@ inside the network's reported supply.
 > rule §Likes already states, and the marker inherits it. A placeholder row carries a zeroed author, so a marker
 > built from the wrong source would earmark karma to the zero key.
 
-> ⚠ **AHEAD OF CODE (2026-10-12).** The lead below, "at most one karma output" on the consolidation, invite and
-> vouch rows of the transition table, and `getOwnKarmaBoxIds` under "Engine inputs the rule needs" lead
-> `consensus/src/utxo-engine.ts` and its wirings in `consensus`, the HTTP routes and the relay; `income` leads `types`.
-
 ⛔ **An identity holds at most two karma boxes** — its **own box**, unmarked, and its **income box**,
 marked `income` (`TYPES_INTERFACE → KarmaBox`) — at every block boundary. Three rules of the karma arm
 hold a user transaction to it, on every row of the transition table:
@@ -2066,8 +2067,10 @@ hold a user transaction to it, on every row of the transition table:
 1. **At most one karma output.** A spend returns its change in one box or in none.
 2. **No karma output carries the mark.** An income box is the settlement's to make
    (→ The settlement transaction → "The income leg pays each owner once"). `jsonToTx` carries an
-   output's `income` key through as it stands, so a marked output is refused by this rule on the
-   HTTP path as on the relay's and in a block, and is never dropped on the way in.
+   output's `income` key through as it stands, so the key is refused and never dropped on the way
+   in: the closed schema of a user transaction's karma output holds no `income` key (→ Output
+   shape), and an output carrying it — `true` or `false` — answers `unexpected key 'income'` on
+   the HTTP path as on the relay's and in a block, ahead of this rule.
 3. **Every unmarked karma box the owner holds is among the inputs.** That is the owner's own box, or
    nothing: the income box may ride beside the own box, and is the only input of an owner who holds no
    own box.
@@ -2390,9 +2393,6 @@ consumes both as the body leaves them and emits one own box, unmarked, of the ef
 is valued over the two together. **An identity paid in the block that squares it** ends the block
 with that own box and a new income box: the squaring took the old one, so the income leg names no
 input for it (→ The settlement transaction → "The income leg pays each owner once").
-
-> ⚠ **AHEAD OF CODE (2026-10-12).** The two-input ceiling leads `consensus`: the leg consumes every karma box the
-> identity holds, and nothing bounds how many that is.
 
 **The valuation function and its two helpers are `@dagsocial/types`'** — `effectiveKarma`, `isIdentityStale`,
 `owedPeriods`, `DecayCfg` and `decayCfgFor` (`TYPES_INTERFACE → Identity record and karma valuation`) — and `decay.ts`
@@ -2799,10 +2799,6 @@ function (`CONSENSUS_INTERFACE → The settlement build`); in `applyBlock` its a
 list the derivation and the membership pass's touched identities read. A settlement naming a
 vouch the body spent, or omitting a listed vouch the body left, is refused by the comparison of
 its input list with the derived one.
-
-> ⚠ **AHEAD OF CODE (2026-10-12).** The income leg — its input and its output in the two orders above, and the lead
-> below — leads `consensus/src/settlement.ts`, which emits one unmarked karma box per like payout, per vested bond
-> and per returned escrow and consumes none of the owner's.
 
 ⛔ **The income leg pays each owner once.** What a block pays an owner is one sum:
 
