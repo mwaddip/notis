@@ -284,6 +284,44 @@ describe('submitLikeFlow', () => {
   });
 });
 
+describe('each press reads the view afresh', () => {
+  it('a submit refused because its input is spent leaves no pending entry, and the next build names the boxes the next read answers', async () => {
+    // Two /karma reads in a row: the first serves `OLD` and the node refuses
+    // the like (its box is spent elsewhere); the second serves `NEW`, and the
+    // next like's one input is `NEW`. Nothing from the first press persists
+    // in the ledger (WEB_INTERFACE → The wallet).
+    const OLD = '99'.repeat(32);
+    const NEW = '88'.repeat(32);
+    const ledger = new PendingLedger(PUB);
+    const karmaPages: KarmaResult[] = [
+      karmaFixture({ userId: PUB, boxes: [{ boxId: OLD, value: '227' }], boxCount: 1, height: 6000 }),
+      karmaFixture({ userId: PUB, boxes: [{ boxId: NEW, value: '227' }], boxCount: 1, height: 6000 }),
+    ];
+    let readIx = 0;
+    const freshReads: Pick<Api, 'karma' | 'credits' | 'status' | 'post' | 'vouchesByVoucher' | 'usernameByOwner'> = {
+      karma: async () => karmaPages[readIx++]!,
+      credits: async () => creditsResult(),
+      status: async () => statusResult(),
+      post: async (id) => postResult(id, PARENT_AUTHOR),
+      vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
+      usernameByOwner: async () => null,
+    };
+    const rejection: Rejection = { status: 409, message: 'input was spent' };
+    const deps1: SubmitDeps = { reads: freshReads, write: write(okPost, rejection), ledger, identity };
+    const r1 = await submitLikeFlow(deps1, TARGET_ID);
+    expect(r1).toEqual({ ok: false, rejection });
+    expect(ledger.size).toBe(0);
+
+    writeCalls = [];
+    const deps2: SubmitDeps = { reads: freshReads, write: write(okPost, okLike), ledger, identity };
+    const r2 = await submitLikeFlow(deps2, TARGET_ID);
+    expect(r2.ok).toBe(true);
+    // The second build's one input is the second read's box, not the first.
+    expect(writeCalls[0]!.tx.inputs).toEqual([NEW]);
+    expect(readIx).toBe(2);
+  });
+});
+
 describe('the node txId is compared to the client id', () => {
   // A node whose id disagrees with the client's over the same tx: the encodings
   // diverged, so the entry is refused and the mismatch named.

@@ -17,7 +17,7 @@ import {
   type BuildContext,
 } from '../src/wallet/builders';
 import {
-  VOUCH_KARMA_AMOUNT, USERNAME_BURN_PRICE, MIN_BOX_VALUE_PER_BYTE,
+  VOUCH_KARMA_AMOUNT, USERNAME_BURN_PRICE, MIN_BOX_VALUE_PER_BYTE, LIKE_KARMA_COST,
   computeCandidateBoxId,
   type UtxoTransaction, type CandidateOf, type CreditBox,
 } from '@dagsocial/types';
@@ -543,6 +543,166 @@ describe('send builder — frozen vectors', () => {
     expect(built.change?.boxId).toBe(SEND_TWO_CHANGE);
     expect(built.paymentBoxId).toBe(SEND_TWO_PAYMENT);
     expect(built.tx.inputs).toEqual([CREDIT_BOX, CREDIT_BOX_2]);
+  });
+});
+
+// -------------------------------------------------------------------------
+// Two-box karma selection — WEB_INTERFACE → The wallet → "The rep view holds
+// two boxes at most, and every karma builder tells them apart". Own is the
+// unmarked box; income the one marked `income: true`. The own box is named
+// first, and the income box rides with it only when the own box does not
+// cover the spend; with no own box, the income box is spent alone. A
+// withdrawal and a claim take the same one box (own, or income where there
+// is no own). A view carries both when the key holds both, and the two sum
+// to the figure the row shows.
+// -------------------------------------------------------------------------
+
+const OWN_BOX = '77'.repeat(32);
+const INC_BOX = '88'.repeat(32);
+
+function twoBoxCtx(own: bigint | null, income: bigint | null): BuildContext {
+  const spendable: Array<{ boxId: string; value: bigint; income?: true }> = [];
+  if (own !== null) spendable.push({ boxId: OWN_BOX, value: own });
+  if (income !== null) spendable.push({ boxId: INC_BOX, value: income, income: true });
+  return { spendable: spendable as BuildContext['spendable'], height: 5000, era: 1, author: PUB };
+}
+
+describe('builders — the own box is named first, the income box only when it must', () => {
+  it.fails('every karma builder takes the own box alone when it covers (own 50, income 100)', () => {
+    const builts = [
+      buildPost(twoBoxCtx(50n, 100n), 'x'),
+      buildPost(twoBoxCtx(50n, 100n), 'x', { id: PARENT_ID, authorHex: PARENT_AUTHOR }),
+      buildLike(twoBoxCtx(50n, 100n), TARGET_ID, PARENT_AUTHOR),
+      buildVouch(twoBoxCtx(50n, 100n), VOUCH_TARGET),
+      buildInvite(twoBoxCtx(50n, 100n), INVITEE, 10n),
+      buildBurn(twoBoxCtx(50n, 100n), { boxId: NAME_BOX_ID }),
+    ];
+    for (const built of builts) {
+      // The input list begins with the own box; a burn adds its name box
+      // after (an input it carries beside the karma one), everything else
+      // takes the own box alone.
+      expect(built.tx.inputs[0]).toBe(OWN_BOX);
+      expect(built.tx.inputs).not.toContain(INC_BOX);
+      // Exactly one karma output, carrying no `income` key.
+      const karmaOuts = built.tx.outputs.filter((o) => o.boxType === 'karma');
+      expect(karmaOuts).toHaveLength(1);
+      expect((karmaOuts[0] as { income?: unknown }).income).toBeUndefined();
+    }
+  });
+
+  it.fails('with own 3 and income 100, a root post takes both and returns one change of the sum less the price', () => {
+    const built = buildPost(twoBoxCtx(3n, 100n), 'x');
+    // Both inputs ride, the own one first.
+    expect(built.tx.inputs).toEqual([OWN_BOX, INC_BOX]);
+    // One karma output: 103 - 5 = 98.
+    expect(built.change?.value).toBe(98n);
+    const karmaOuts = built.tx.outputs.filter((o) => o.boxType === 'karma');
+    expect(karmaOuts).toHaveLength(1);
+    expect((karmaOuts[0] as { income?: unknown }).income).toBeUndefined();
+  });
+
+  it('with no own box, a like takes the income box alone and returns an unmarked change', () => {
+    const built = buildLike(twoBoxCtx(null, 100n), TARGET_ID, PARENT_AUTHOR);
+    expect(built.tx.inputs).toEqual([INC_BOX]);
+    const karmaOuts = built.tx.outputs.filter((o) => o.boxType === 'karma');
+    expect(karmaOuts).toHaveLength(1);
+    expect((karmaOuts[0] as { income?: unknown }).income).toBeUndefined();
+    // The unmarked change equals the income value less the like's cost.
+    expect(built.change?.value).toBe(100n - LIKE_KARMA_COST);
+  });
+
+  it('neither covers — the typed refusal names the price and the sum of both', () => {
+    // own 3 + income 1 = 4; a root post needs 5.
+    expect(() => buildPost(twoBoxCtx(3n, 1n), 'x')).toThrow(InsufficientKarma);
+    try {
+      buildPost(twoBoxCtx(3n, 1n), 'x');
+    } catch (e) {
+      expect(e).toBeInstanceOf(InsufficientKarma);
+      expect((e as InsufficientKarma).required).toBe(5n);
+      expect((e as InsufficientKarma).available).toBe(4n);
+    }
+  });
+
+  it.fails('a withdrawal and a claim take the own box, even when the income box is smaller', () => {
+    // Own 100, income 50 — the old "smallest" rule would pick income.
+    const w = buildWithdraw(twoBoxCtx(100n, 50n), WITHDRAW_POST_ID);
+    expect(w.tx.inputs).toEqual([OWN_BOX]);
+    expect(w.change?.value).toBe(100n);
+    expect((w.tx.outputs[0] as { income?: unknown }).income).toBeUndefined();
+
+    const c = buildClaim(twoBoxCtx(100n, 50n), 'Alice_01');
+    expect(c.tx.inputs).toEqual([OWN_BOX]);
+    expect(c.change?.value).toBe(100n);
+  });
+
+  it('with no own box, a withdrawal and a claim take the income box and return its value', () => {
+    const w = buildWithdraw(twoBoxCtx(null, 50n), WITHDRAW_POST_ID);
+    expect(w.tx.inputs).toEqual([INC_BOX]);
+    expect(w.change?.value).toBe(50n);
+    expect((w.tx.outputs[0] as { income?: unknown }).income).toBeUndefined();
+
+    const c = buildClaim(twoBoxCtx(null, 50n), 'Alice_01');
+    expect(c.tx.inputs).toEqual([INC_BOX]);
+    expect(c.change?.value).toBe(50n);
+  });
+
+  it.fails('a pending spend moves the own box: the next build names the predicted change', () => {
+    // A prior like took the own box of value 50 and emitted a change of 49
+    // (unmarked) beside the still-unspent income box of 100. The next like
+    // (cost 1) names the change alone, since it covers.
+    const CHG = '66'.repeat(32);
+    const spendable = [
+      { boxId: INC_BOX, value: 100n, income: true },
+      { boxId: CHG, value: 49n },
+    ] as BuildContext['spendable'];
+    const built = buildLike({ spendable, height: 5000, era: 1, author: PUB }, TARGET_ID, PARENT_AUTHOR);
+    expect(built.tx.inputs).toEqual([CHG]);
+    expect(built.tx.inputs).not.toContain(INC_BOX);
+  });
+
+  it.fails('a pending spend whose change does not cover the next spend brings the income box with it', () => {
+    // Prior spend left a tiny change (1); the next thread post needs 5. Both
+    // must ride, the change first.
+    const TINY = '99'.repeat(32);
+    const spendable = [
+      { boxId: INC_BOX, value: 100n, income: true },
+      { boxId: TINY, value: 1n },
+    ] as BuildContext['spendable'];
+    const built = buildPost({ spendable, height: 5000, era: 1, author: PUB }, 'x');
+    expect(built.tx.inputs).toEqual([TINY, INC_BOX]);
+  });
+
+  it('a pending spend that took the income box leaves the view holding the predicted change alone', () => {
+    // Both own and income are spent by the prior entry; the view carries one
+    // unmarked change. The next build names it, and the output is unmarked.
+    const CHG = 'aa'.repeat(32);
+    const spendable = [{ boxId: CHG, value: 49n }] as BuildContext['spendable'];
+    const built = buildLike({ spendable, height: 5000, era: 1, author: PUB }, TARGET_ID, PARENT_AUTHOR);
+    expect(built.tx.inputs).toEqual([CHG]);
+    const karmaOuts = built.tx.outputs.filter((o) => o.boxType === 'karma');
+    expect(karmaOuts).toHaveLength(1);
+    expect((karmaOuts[0] as { income?: unknown }).income).toBeUndefined();
+  });
+
+  it('no builder makes two karma outputs or a marked one, over the shapes above', () => {
+    const builts = [
+      buildPost(twoBoxCtx(50n, 100n), 'x'),
+      buildPost(twoBoxCtx(50n, 100n), 'x', { id: PARENT_ID, authorHex: PARENT_AUTHOR }),
+      buildLike(twoBoxCtx(50n, 100n), TARGET_ID, PARENT_AUTHOR),
+      buildVouch(twoBoxCtx(50n, 100n), VOUCH_TARGET),
+      buildInvite(twoBoxCtx(50n, 100n), INVITEE, 10n),
+      buildBurn(twoBoxCtx(50n, 100n), { boxId: NAME_BOX_ID }),
+      buildWithdraw(twoBoxCtx(50n, 100n), WITHDRAW_POST_ID),
+      buildClaim(twoBoxCtx(50n, 100n), 'Alice_01'),
+      buildLike(twoBoxCtx(null, 100n), TARGET_ID, PARENT_AUTHOR),
+    ];
+    for (const built of builts) {
+      const karmaOuts = built.tx.outputs.filter((o) => o.boxType === 'karma');
+      expect(karmaOuts.length).toBeLessThanOrEqual(1);
+      for (const k of karmaOuts) {
+        expect((k as { income?: unknown }).income).toBeUndefined();
+      }
+    }
   });
 });
 

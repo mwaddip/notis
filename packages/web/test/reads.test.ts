@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { readBuildContext, readCreditContext } from '../src/wallet/reads';
 import { PendingLedger } from '../src/wallet/ledger';
+import { PageError } from '../src/api/errors';
 import type { Api } from '../src/api/client';
 import type { KarmaResult, KarmaBoxRow, StatusResult, CreditsResult, CreditBoxRow } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
@@ -118,5 +119,54 @@ describe('readCreditContext — WEB_INTERFACE → The wallet ("A send reads the 
     ], null)];
     const ctx = await readCreditContext(fakeCreditReads(pages), new PendingLedger(AUTHOR), AUTHOR);
     expect(ctx.spendable.map((b) => b.boxId)).toEqual(['c1', 'c2', 'c4']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The DTO reads the mark — WEB_INTERFACE → The wallet. A `/karma/:userId`
+// answer with a marked box parses to a view that carries the mark; a bare
+// row parses as the owner's own box. `income: false`, or any value but
+// `true`, is a refused answer and not an unmarked box — the mark's domain is
+// `true` or absent (TYPES_INTERFACE → KarmaBox).
+// ---------------------------------------------------------------------------
+
+describe("readBuildContext — the mark on each karma row", () => {
+  it.fails('a marked and an unmarked box parse to one own box and one income box', async () => {
+    // The row with `income: true` reaches the view carrying the mark; the
+    // bare row has no `income` key.
+    const pages = [karmaPage(
+      [
+        { boxId: 'own', value: '50' },
+        { boxId: 'inc', value: '100', income: true } as unknown as KarmaBoxRow,
+      ],
+      null,
+    )];
+    const ctx = await readBuildContext(fakeReads(pages), new PendingLedger(AUTHOR), AUTHOR);
+    expect(ctx.spendable).toEqual([
+      { boxId: 'own', value: 50n },
+      { boxId: 'inc', value: 100n, income: true },
+    ]);
+  });
+
+  it.fails('income: false — any value but true — is a refused answer, not an unmarked box', async () => {
+    const pages = [karmaPage(
+      [{ boxId: 'bad', value: '10', income: false } as unknown as KarmaBoxRow],
+      null,
+    )];
+    await expect(
+      readBuildContext(fakeReads(pages), new PendingLedger(AUTHOR), AUTHOR),
+    ).rejects.toBeInstanceOf(PageError);
+  });
+
+  it.fails('a row carrying income as a string, a number or null is a refused answer', async () => {
+    for (const bad of ['yes', 1, 0, null]) {
+      const pages = [karmaPage(
+        [{ boxId: 'bad', value: '10', income: bad } as unknown as KarmaBoxRow],
+        null,
+      )];
+      await expect(
+        readBuildContext(fakeReads(pages), new PendingLedger(AUTHOR), AUTHOR),
+      ).rejects.toBeInstanceOf(PageError);
+    }
   });
 });
