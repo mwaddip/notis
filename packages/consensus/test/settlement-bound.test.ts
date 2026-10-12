@@ -5,8 +5,9 @@
 // leg pays each owner once"), whatever they hold. The decay leg's ceiling
 // is `decayLegMaxBytes(version)` — two inputs and one karma output, priced
 // at the widest `value` and `createdAtBlock` the codec writes for a karma
-// box (CONSENSUS_INTERFACE → The settlement build → "`decayLegMaxBytes` is
-// what one squaring adds to a settlement at most").
+// box (CONSENSUS_INTERFACE → The settlement build →
+// "`decayLegMaxBytes(protocolVersion)` is what one squaring adds to a
+// settlement at most").
 import { describe, it, expect } from 'vitest';
 import {
   BOX_VALUE_BOUND,
