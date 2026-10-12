@@ -242,6 +242,30 @@ describe('getOwnKarmaBoxIdsWithPending — confirmed ∪ pending outputs − pen
     expect(mempool.getOwnKarmaBoxIdsWithPending(OWNER_HEX)).toEqual([changeAfter3]);
   });
 
+  it.fails("a chain of three pooled spends, rows inserted child-first — the last change alone", () => {
+    // The grandchild is inserted first, so SQLite walks the owner's index with
+    // the child at the lowest rowid: the row-by-row answer carries every
+    // change box, since each row's inputs are added by the row ahead of it.
+    // MEMPOOL_INTERFACE → getOwnKarmaBoxIdsWithPending: "less every box a
+    // pooled transaction spends" — the subtraction answers over the gathered
+    // outputs, not row by row.
+    const own = karmaBox(100n, OWNER, 1);
+    utxo.insertBox(own);
+
+    const tx1 = likeTx(OWNER, own.id!, 100n - LIKE_KARMA_COST);
+    const changeAfter1 = pendingOutputId(tx1, 0);
+    const tx2 = likeTx(OWNER, changeAfter1, 100n - 2n * LIKE_KARMA_COST);
+    const changeAfter2 = pendingOutputId(tx2, 0);
+    const tx3 = likeTx(OWNER, changeAfter2, 100n - 3n * LIKE_KARMA_COST);
+    const changeAfter3 = pendingOutputId(tx3, 0);
+
+    mempool.insertUtxoTx(tx3, 999);
+    mempool.insertUtxoTx(tx2, 999);
+    mempool.insertUtxoTx(tx1, 999);
+
+    expect(mempool.getOwnKarmaBoxIdsWithPending(OWNER_HEX)).toEqual([changeAfter3]);
+  });
+
   it("a pooled spend that returned no change — the empty list", () => {
     // A karma box of exactly LIKE_KARMA_COST — the spend emits only the
     // like_accrual marker, no karma output (NODE_INTERFACE → Karma transition
