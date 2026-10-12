@@ -122,6 +122,29 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
     expect(tx.postWithdraw).toBeDefined();
     expect(tx.postWithdraw!.postId).toBe(postId);
   });
+
+  // NODE_INTERFACE → Karma transition rules → "No karma output carries the
+  // mark": the edge carries the `income` key through as the JSON gave it, so
+  // the refusal is the engine's or the shape check's — never a silently
+  // dropped key.
+  for (const [label, raw, expected] of [
+    ['income true', true, true],
+    ['income false', false, false],
+    ['income as a string', 'yes', 'yes'],
+  ] as const) {
+    it(`carries ${label} on a karma output through unchanged`, () => {
+      const r = rawTx(10);
+      (r.outputs as Record<string, unknown>[])[0]!.income = raw;
+      const tx = toTx(r);
+      const out = tx.outputs[0] as { income?: unknown };
+      expect(out.income).toBe(expected);
+    });
+  }
+
+  it('omits the key entirely on a karma output that supplies none', () => {
+    const tx = toTx(rawTx(10));
+    expect('income' in tx.outputs[0]!).toBe(false);
+  });
 });
 
 describe('the default protocolVersion is the era the route supplies', () => {

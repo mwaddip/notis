@@ -91,9 +91,14 @@ export function createRouter(deps: UtxoDeps): Router {
       userId: Buffer.from(userIdBytes).toString('hex'),
       total: total.toString(),
       effective: eff.toString(),
+      // NODE_INTERFACE → UTXO queries, the `/karma/:userId` row of the API
+      // table: a box carries `income: true` when it is the owner's income
+      // box and no such key when it is their own (TYPES_INTERFACE →
+      // KarmaBox).
       boxes: pageResult.rows.map(b => ({
         boxId: b.id!,
         value: b.value.toString(),
+        ...(b.income === true ? { income: true } : {}),
       })),
       boxCount: pageResult.count,
       next: pageResult.next ? formatKey('box', pageResult.next) : null,
