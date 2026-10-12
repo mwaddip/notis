@@ -44,7 +44,12 @@ export interface UtxoRow {
 // ---------------------------------------------------------------------------
 
 interface KarmaExtra {
-  // No karma-specific fields; the extra_data column stays for credit's lockedUntilBlock.
+  // TYPES_INTERFACE → KarmaBox. The mark that tells the owner's own box and
+  // income box apart (`income?: true` on the box, present on the one marked
+  // box the settlement writes and absent on the owner's own). Carried through
+  // the row so a box the settlement writes reads back marked, and the two
+  // halves of `canonicalBoxBytes` the store round-trips agree.
+  income?: true;
 }
 
 interface CreditExtra {
@@ -124,14 +129,22 @@ export function rowToBox(row: UtxoRow): AnyBox {
 
   switch (row.box_type) {
     case 'karma': {
-      return {
+      // TYPES_INTERFACE → KarmaBox. The mark is kept as it stands on the box
+      // itself: `income: true` only on the owner's one income box, absent on
+      // their own. A row without the field — written before the mark existed
+      // or by a user-path insert — reads back as an own box, which is what
+      // every pre-mark row was.
+      const e = extra as KarmaExtra;
+      const k: KarmaBox = {
         id: row.id,
         boxType: 'karma',
         value: row.value,
         createdAtBlock,
         owner: new Uint8Array(row.owner!),
         ...prov,
-      } satisfies KarmaBox;
+      };
+      if (e.income === true) k.income = true;
+      return k;
     }
 
     case 'credit': {
@@ -993,7 +1006,12 @@ export function insertBox(box: AnyBox): void {
   switch (box.boxType) {
     case 'karma': {
       const k = box as KarmaBox;
-      extraData = {} satisfies KarmaExtra;
+      // TYPES_INTERFACE → KarmaBox. The mark goes in `extra_data`: present
+      // only on the owner's income box, absent on the own box. One shape per
+      // box, so two reads cannot differ by a key.
+      const ke: KarmaExtra = {};
+      if (k.income === true) ke.income = true;
+      extraData = ke satisfies KarmaExtra;
       owner = Buffer.from(k.owner);
       break;
     }
