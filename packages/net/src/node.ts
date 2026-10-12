@@ -532,8 +532,8 @@ export class NetNode {
   private karmaMembers = new Set<string>();
   // The two topic strings this node hears (NET_INTERFACE → Gossip Topics →
   // "A topic is named for its network"). Built from `config.magic` at
-  // `start()`; broadcasts, subscriptions and the listener's dispatch all read
-  // this one pair.
+  // `start()`; broadcasts, subscriptions and the listener's `topic` compare
+  // all read this one pair.
   private topics: GossipTopics | null = null;
   private orderingBlockHandlers: OrderingBlockCallback[] = [];
   private txHandlers: TxCallback[] = [];

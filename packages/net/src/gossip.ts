@@ -116,7 +116,7 @@ export interface GossipHandlers {
    * `fromPeerId` is the peer that **relayed** this block to us
    * (`propagationSource`), not the peer that published it. Fork resolution asks
    * that peer for the competing chain, because it provably holds one — see the
-   * dispatch below for why `propagationSource` is the value handed on.
+   * listener below for why `propagationSource` is the value handed on.
    */
   onOrderingBlock: (block: OrderingBlock, fromPeerId: string) => void;
   onTx: (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => void;
