@@ -35,6 +35,7 @@ import type { RecordMutation } from '../../src/store/journal.js';
 import { config } from '../../src/config.js';
 import { admissionOwed } from '../../src/services/karma-admission.js';
 import {
+  changeBoxOf,
   makeKarmaBox,
   makeLikeTx,
   makeTestConfig,
@@ -218,20 +219,54 @@ describe('the invite at block application', () => {
     ]);
     utxo.insertBox(bond!);
 
+    // NODE_INTERFACE → Karma transition rules → "An identity holds at most
+    // two karma boxes". The invitee's posts chain through one own box across
+    // rounds; seed its karma once, big enough for every post the batch
+    // mines in one block.
+    const types = await import('@dagsocial/types');
+    const totalPosts = likeRounds.reduce((sum, r) => sum + r.count, 0);
+    const inviteeKarmaValue = BigInt(totalPosts) * (types.POST_PRICE_THREAD + 1n);
+    const inviteeKarma = totalPosts === 0
+      ? null
+      : makeKarmaBox(inviteeKarmaValue, inviteeId.userId, 0, 777);
+    if (inviteeKarma !== null) utxo.insertBox(inviteeKarma);
+
     // Every like round's boxes, seeded here rather than between the blocks that
     // spend them: the rules read the tree, and a box inserted after the
     // bootstrap is one the tree never received. `poolLikes` pools and mines each
-    // batch later.
+    // batch later. The invitee's post transactions in each batch chain
+    // through overlay — the first spends `inviteeKarma`'s standing change,
+    // and each successor spends the previous one's change.
     const likeBatches: LikeFixture[][] = [];
+    let runningKarma: KarmaBox | null = inviteeKarma;
     for (const round of likeRounds) {
       const batch: LikeFixture[] = [];
       for (let i = 0; i < round.count; i++) {
         const nonce = round.nonceBase + i;
-        const { commit, tx: postTx, postId, content } = await seedPostTx(inviteeId, `post ${nonce}`);
+        const content = `post ${nonce}`;
+        const commit = types.computePostCommitDefault
+          ? makePostCommit(inviteeId.userId, content)
+          : makePostCommit(inviteeId.userId, content);
+        const inputKarma = runningKarma!;
+        const changeValue = inputKarma.value - types.POST_PRICE_THREAD;
+        const postTx: UtxoTransaction = {
+          inputs: [inputKarma.id!],
+          outputs: [
+            { boxType: 'karma', value: changeValue, createdAtBlock: inputKarma.createdAtBlock, owner: inviteeId.userId } as never,
+            { boxType: 'karma_price', value: types.POST_PRICE_THREAD, createdAtBlock: inputKarma.createdAtBlock } as never,
+          ],
+          signatures: {},
+          protocolVersion: types.PROTOCOL_VERSION,
+          post: commit,
+        };
+        signTransaction(postTx, inviteeId.privateKey, Buffer.from(inviteeId.userId).toString('hex'));
+        const postId = types.computePostId(types.computeTxId(postTx), 0);
         const liker = makeTestIdentity();
         const karma = makeKarmaBox(100n, liker.userId, 0, 500 + nonce);
         utxo.insertBox(karma);
         batch.push({ commit, content, postTx, postId, liker, karma });
+        // The next post's input is this post's change box in the same body.
+        runningKarma = changeBoxOf(postTx);
       }
       likeBatches.push(batch);
     }
@@ -398,16 +433,16 @@ describe('the invite at block application', () => {
       lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
       memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
     });
-    const karmaA = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, root.userId, 0, 91);
-    const karmaB = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, root.userId, 0, 92);
-    utxo.insertBox(karmaA);
-    utxo.insertBox(karmaB);
+    // Rule 3 of "An identity holds at most two karma boxes": root has one
+    // own box; the second invite chains on the first's change.
+    const karmaRoot = makeKarmaBox(2n * (FIXTURE_BOND_KARMA + 10n), root.userId, 0, 91);
+    utxo.insertBox(karmaRoot);
     await activateProverOverStore();
 
     const networkBefore = records.getNetworkRecord().memberCount;
 
-    const txA = inviteTx(root, inviteeA, karmaA);
-    const txB = inviteTx(root, inviteeB, karmaB);
+    const txA = inviteTx(root, inviteeA, karmaRoot);
+    const txB = inviteTx(root, inviteeB, changeBoxOf(txA));
 
     const { applyOrderingBlock } = await importBlockApply();
     const block = await makeApplicableBlock({ height: 1, utxoTxs: [txA, txB] });
@@ -1097,24 +1132,31 @@ describe('the invite at block application — decay adjacency', () => {
     // to come from the settlement's grant: decay acts on karma boxes, and a
     // hand-seeded bond leaves the invitee holding nothing for it to act on.
     await seedKarmaPoolBox();
+    const types = await import('@dagsocial/types');
     // The inviter clears the bond and KARMA_MINIMUM beside it (NODE_INTERFACE
     // → Karma transition rules → "A bond leaves the floor"): without the floor
     // standing the invite is refused and the subject — the bond's survival
     // through virtual decay — is unobservable.
-    const inviterKarma = makeKarmaBox(FIXTURE_BOND_KARMA + KARMA_MINIMUM + 5n, inviter.userId, 0, 880);
+    // The bond is big enough that the invite's grant covers the invitee's
+    // five posts and leaves 1n for a vested-bond assertion. The inviter's
+    // karma pays the bond and the KARMA_MINIMUM floor.
+    const bondValue = BigInt(INVITE_BOND_VEST_PER_LIKES) * types.POST_PRICE_THREAD;
+    const inviterKarma = makeKarmaBox(bondValue + KARMA_MINIMUM + 5n, inviter.userId, 0, 880);
     utxo.insertBox(inviterKarma);
 
-    // Every box the run spends, seeded before the tree is built from the store.
-    // The transactions are pooled block by block below; only the boxes have to
-    // be here, because a box the tree never received is one the block that
-    // spends it cannot remove.
-    const likeFixtures = [];
+    // Every box the LIKES spend is seeded here, before the tree is built: the
+    // rules read the tree, and a box inserted after the bootstrap is one the
+    // tree never received. NODE_INTERFACE → Karma transition rules → "An
+    // identity holds at most two karma boxes": the invitee has no karma box
+    // before the invite grant, so the fixture lets the grant stand as their
+    // own box; the post transactions build after the invite applies and
+    // chain through that box.
+    const likerFixtures: Array<{ liker: TestIdentity; karma: KarmaBox }> = [];
     for (let i = 0; i < INVITE_BOND_VEST_PER_LIKES; i++) {
-      const { tx: postTx, postId } = await seedPostTx(invitee, `decay post ${i}`);
       const liker = makeTestIdentity();
       const karma = makeKarmaBox(100n, liker.userId, 0, 900 + i);
       utxo.insertBox(karma);
-      likeFixtures.push({ postTx, postId, liker, karma });
+      likerFixtures.push({ liker, karma });
     }
 
     // Last, so the tree covers every box the blocks below spend, and still ahead
@@ -1122,24 +1164,44 @@ describe('the invite at block application — decay adjacency', () => {
     // precede.
     await activateProverOverStore();
 
-    // The invitee already holds the karma boxes their posts will lock, so the
-    // grant is asserted as a DELTA rather than as a balance.
+    // The invitee holds no karma before the invite grant.
     const inviteeBefore = utxo.getKarmaValue(invitee.userId);
-    mempool.insertUtxoTx(inviteTx(inviter, invitee, inviterKarma), 1000);
+    mempool.insertUtxoTx(inviteTx(inviter, invitee, inviterKarma, bondValue), 1000);
     const invitedAtBlock = (await mine()).header.height;
     // The settlement granted, and the grant started the clock.
-    expect(utxo.getKarmaValue(invitee.userId)).toBe(inviteeBefore + FIXTURE_BOND_KARMA);
+    expect(utxo.getKarmaValue(invitee.userId)).toBe(inviteeBefore + bondValue);
     expect(records.getIdentityRecord(invitee.userId)!.invitedAtBlock).toBe(invitedAtBlock);
     const bond = utxo.getBondFor(invitee.userId)!;
 
     // Five likes in one block → floor(5 / 5) = 1 karma vested at the deadline.
-    for (const { postTx, postId, liker, karma } of likeFixtures) {
-      // The post transaction itself, ahead of the like that targets it: a like
-      // is rejected unless `block_topology` already names its target, and that
-      // row is written when this transaction applies (NODE_INTERFACE → Post
-      // transactions). Both ride the same block, in this order.
+    // Build the posts chained through the grant's change — one unmarked
+    // karma box per transaction (NODE_INTERFACE → Karma transition rules →
+    // "An identity holds at most two karma boxes").
+    const inviteeKarmaBox = utxo.getKarmaBoxes(invitee.userId).find((b) => b.income !== true);
+    expect(inviteeKarmaBox).not.toBeUndefined();
+    let runningKarma: KarmaBox | null = inviteeKarmaBox!;
+    for (let i = 0; i < INVITE_BOND_VEST_PER_LIKES; i++) {
+      const commit = makePostCommit(invitee.userId, `decay post ${i}`);
+      const changeValue = runningKarma!.value - types.POST_PRICE_THREAD;
+      // A karma output of value 0 is refused — zero means no box
+      // (TYPES_INTERFACE → Box value domain).
+      const outputs: UtxoTransaction['outputs'] = [];
+      if (changeValue > 0n) {
+        outputs.push({ boxType: 'karma', value: changeValue, createdAtBlock: invitedAtBlock, owner: invitee.userId } as never);
+      }
+      outputs.push({ boxType: 'karma_price', value: types.POST_PRICE_THREAD, createdAtBlock: invitedAtBlock } as never);
+      const postTx: UtxoTransaction = {
+        inputs: [runningKarma!.id!],
+        outputs,
+        signatures: {},
+        protocolVersion: types.PROTOCOL_VERSION,
+        post: commit,
+      };
+      signTransaction(postTx, invitee.privateKey, Buffer.from(invitee.userId).toString('hex'));
+      const postId = types.computePostId(types.computeTxId(postTx), 0);
       mempool.insertUtxoTx(postTx, 1000);
-      mempool.insertUtxoTx(makeLikeTx(liker, karma, postId, invitee.userId), 1000);
+      mempool.insertUtxoTx(makeLikeTx(likerFixtures[i]!.liker, likerFixtures[i]!.karma, postId, invitee.userId), 1000);
+      runningKarma = changeValue > 0n ? changeBoxOf(postTx) : null;
     }
     await mine();
     const earned = records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived;
