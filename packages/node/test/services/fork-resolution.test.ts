@@ -1052,20 +1052,20 @@ describe('reorg', () => {
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
-    const author = makeTestIdentity();
-
-
     const posts = await importPosts();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
 
-    // Build 3 blocks
-    // Every post's karma box is committed before the first block, so the fork
-    // point the reorg returns to holds it — a box `seedCommittedState` adds
-    // mid-chain has no journal, and a revert past it leaves it in the store alone.
+    // Build 3 blocks, one post per author — NODE_INTERFACE → Karma transition
+    // rules → "An identity holds at most two karma boxes". Each post's karma
+    // box is committed before the first block, so the fork point the reorg
+    // returns to holds it — a box `seedCommittedState` adds mid-chain has no
+    // journal, and a revert past it leaves it in the store alone.
     const seededPosts = [];
-    for (let i = 0; i < 3; i++) seededPosts.push(await seedPostTx(author, `reorg test ${i}`));
+    for (let i = 0; i < 3; i++) {
+      seededPosts.push(await seedPostTx(makeTestIdentity(), `reorg test ${i}`));
+    }
     for (const { commit, tx: postTx, postId, content } of seededPosts) {
       posts.insertPost(postId, computeTxId(postTx), commit, content);
       mempool.insertUtxoTx(postTx, 1000);
@@ -1236,18 +1236,21 @@ describe('reorg', () => {
     const { decodeTx } = await import("@dagsocial/types");
 
     const liker = makeTestIdentity();
-    const author = makeTestIdentity();
+    // Two authors — NODE_INTERFACE → Karma transition rules → "An identity
+    // holds at most two karma boxes".
+    const authorA = makeTestIdentity();
+    const authorB = makeTestIdentity();
     const startBox = makeKarmaBox(100n, liker.userId, 0);
     utxo.insertBox(startBox);
 
     // Two posts, seeded so the block confirms them at §8b.
-    const { commit: cA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(author, 'reorg order a');
-    const { commit: cB, tx: postBTx, postId: postBId, content: contentB } = await seedPostTx(author, 'reorg order b');
+    const { commit: cA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(authorA, 'reorg order a');
+    const { commit: cB, tx: postBTx, postId: postBId, content: contentB } = await seedPostTx(authorB, 'reorg order b');
     posts.insertPost(postAId, computeTxId(postATx), cA, contentA);
     posts.insertPost(postBId, computeTxId(postBTx), cB, contentB);
 
     // Block 1: txA (like from startBox).
-    const txA = makeLikeTx(liker, startBox, postAId, author.userId);
+    const txA = makeLikeTx(liker, startBox, postAId, authorA.userId);
     const txAId = computeTxId(txA);
     mempool.insertUtxoTx(postATx, 1000);
     mempool.insertUtxoTx(txA, 1000);
@@ -1259,7 +1262,7 @@ describe('reorg', () => {
 
     // Block 2: txB (like from txA's change box — depends on txA).
     mempool.insertUtxoTx(postBTx, 1000);
-    const txB = makeLikeTx(liker, changeBoxOf(txA), postBId, author.userId);
+    const txB = makeLikeTx(liker, changeBoxOf(txA), postBId, authorB.userId);
     const txBId = computeTxId(txB);
     mempool.insertUtxoTx(txB, 1000);
     await mineNextBlock(bc);
@@ -1351,20 +1354,15 @@ describe('reorg', () => {
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
-    const author = makeTestIdentity();
-
-
     const posts = await importPosts();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
 
-    // Build 2 blocks
-    // Every post's karma box is committed before the first block, so the fork
-    // point the reorg returns to holds it — a box `seedCommittedState` adds
-    // mid-chain has no journal, and a revert past it leaves it in the store alone.
+    // Build 2 blocks, one post per author — NODE_INTERFACE → Karma
+    // transition rules → "An identity holds at most two karma boxes".
     const seededPosts = [];
-    for (let i = 0; i < 2; i++) seededPosts.push(await seedPostTx(author, `chain a ${i}`));
+    for (let i = 0; i < 2; i++) seededPosts.push(await seedPostTx(makeTestIdentity(), `chain a ${i}`));
     for (const { commit, tx: postTx, postId, content } of seededPosts) {
       posts.insertPost(postId, computeTxId(postTx), commit, content);
       mempool.insertUtxoTx(postTx, 1000);
@@ -1402,20 +1400,15 @@ describe('reorg', () => {
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
-    const author = makeTestIdentity();
-
-
     const posts = await importPosts();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
 
-    // Build 3 blocks
-    // Every post's karma box is committed before the first block, so the fork
-    // point the reorg returns to holds it — a box `seedCommittedState` adds
-    // mid-chain has no journal, and a revert past it leaves it in the store alone.
+    // Build 3 blocks, one post per author — NODE_INTERFACE → Karma
+    // transition rules → "An identity holds at most two karma boxes".
     const seededPosts = [];
-    for (let i = 0; i < 3; i++) seededPosts.push(await seedPostTx(author, `original ${i}`));
+    for (let i = 0; i < 3; i++) seededPosts.push(await seedPostTx(makeTestIdentity(), `original ${i}`));
     for (const { commit, tx: postTx, postId, content } of seededPosts) {
       posts.insertPost(postId, computeTxId(postTx), commit, content);
       mempool.insertUtxoTx(postTx, 1000);
@@ -1471,22 +1464,18 @@ describe('reorg', () => {
       db.initDb(':memory:');
       db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
-      const author = makeTestIdentity();
-
       const posts = await importPosts();
       const mempool = await importMempoolFresh();
       mempool.setMempoolCap(1);
       const bc = await importBlockCreator();
       bc.startBlockCreator(testConfig);
 
-      // Two blocks, one post transaction each. Each insert sits alone in the pool
-      // (cap 1) and is consumed by its block, so building the chain is fine.
-      // Every post's karma box is committed before the first block, so the fork
-      // point the reorg returns to holds it — a box `seedCommittedState` adds
-      // mid-chain has no journal, and a revert past it leaves it in the store alone.
+      // Two blocks, one post per author — NODE_INTERFACE → Karma transition
+      // rules → "An identity holds at most two karma boxes". Each insert
+      // sits alone in the pool (cap 1) and is consumed by its block.
       const occupier = await seededSelfSpend();
       const seededPosts = [];
-      for (let i = 0; i < 2; i++) seededPosts.push(await seedPostTx(author, `full pool ${i}`));
+      for (let i = 0; i < 2; i++) seededPosts.push(await seedPostTx(makeTestIdentity(), `full pool ${i}`));
       for (const { commit, tx: postTx, postId, content } of seededPosts) {
         posts.insertPost(postId, computeTxId(postTx), commit, content);
         mempool.insertUtxoTx(postTx, 1000);
@@ -1522,20 +1511,16 @@ describe('reorg', () => {
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
-    const author = makeTestIdentity();
-
-
     const posts = await importPosts();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
 
-    // Every post's karma box is committed before the first block, so the fork
-    // point the reorg returns to holds it — a box `seedCommittedState` adds
-    // mid-chain has no journal, and a revert past it leaves it in the store alone.
+    // Two blocks, one post per author — NODE_INTERFACE → Karma transition
+    // rules → "An identity holds at most two karma boxes".
     const occupier = await seededSelfSpend();
     const seededPosts = [];
-    for (let i = 0; i < 2; i++) seededPosts.push(await seedPostTx(author, `room in pool ${i}`));
+    for (let i = 0; i < 2; i++) seededPosts.push(await seedPostTx(makeTestIdentity(), `room in pool ${i}`));
     for (const { commit, tx: postTx, postId, content } of seededPosts) {
       posts.insertPost(postId, computeTxId(postTx), commit, content);
       mempool.insertUtxoTx(postTx, 1000);
@@ -3210,18 +3195,15 @@ describe('reorg — ceiling screen', () => {
       db.initDb(':memory:');
       db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
-      const author = makeTestIdentity();
       const posts = await importPosts();
       const mempool = await importMempoolFresh();
       const bc = await importBlockCreator();
       bc.startBlockCreator(testConfig);
 
-      // Build 7 blocks so reorg(0, chain) has newTipHeight = 7
-      // Every post's karma box is committed before the first block, so the fork
-      // point the reorg returns to holds it — a box `seedCommittedState` adds
-      // mid-chain has no journal, and a revert past it leaves it in the store alone.
+      // Build 7 blocks, one post per author (NODE_INTERFACE → Karma
+      // transition rules → "An identity holds at most two karma boxes").
       const seededPosts = [];
-      for (let i = 0; i < 7; i++) seededPosts.push(await seedPostTx(author, `ceiling ${i}`));
+      for (let i = 0; i < 7; i++) seededPosts.push(await seedPostTx(makeTestIdentity(), `ceiling ${i}`));
       for (const { commit, tx: postTx, postId, content } of seededPosts) {
         posts.insertPost(postId, computeTxId(postTx), commit, content);
         mempool.insertUtxoTx(postTx, 1000);
@@ -3254,18 +3236,15 @@ describe('reorg — ceiling screen', () => {
       db.initDb(':memory:');
       db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
-      const author = makeTestIdentity();
       const posts = await importPosts();
       const mempool = await importMempoolFresh();
       const bc = await importBlockCreator();
       bc.startBlockCreator(testConfig);
 
-      // Build 6 blocks so reorg(0, chain) has newTipHeight = 6
-      // Every post's karma box is committed before the first block, so the fork
-      // point the reorg returns to holds it — a box `seedCommittedState` adds
-      // mid-chain has no journal, and a revert past it leaves it in the store alone.
+      // Build 6 blocks, one post per author (NODE_INTERFACE → Karma
+      // transition rules → "An identity holds at most two karma boxes").
       const seededPosts = [];
-      for (let i = 0; i < 6; i++) seededPosts.push(await seedPostTx(author, `no-screen ${i}`));
+      for (let i = 0; i < 6; i++) seededPosts.push(await seedPostTx(makeTestIdentity(), `no-screen ${i}`));
       for (const { commit, tx: postTx, postId, content } of seededPosts) {
         posts.insertPost(postId, computeTxId(postTx), commit, content);
         mempool.insertUtxoTx(postTx, 1000);
@@ -3298,17 +3277,15 @@ describe('reorg — ceiling screen', () => {
       db.initDb(':memory:');
       db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
-      const author = makeTestIdentity();
       const posts = await importPosts();
       const mempool = await importMempoolFresh();
       const bc = await importBlockCreator();
       bc.startBlockCreator(testConfig);
 
-      // Every post's karma box is committed before the first block, so the fork
-      // point the reorg returns to holds it — a box `seedCommittedState` adds
-      // mid-chain has no journal, and a revert past it leaves it in the store alone.
+      // Build 7 blocks, one post per author (NODE_INTERFACE → Karma
+      // transition rules → "An identity holds at most two karma boxes").
       const seededPosts = [];
-      for (let i = 0; i < 7; i++) seededPosts.push(await seedPostTx(author, `null-ceiling ${i}`));
+      for (let i = 0; i < 7; i++) seededPosts.push(await seedPostTx(makeTestIdentity(), `null-ceiling ${i}`));
       for (const { commit, tx: postTx, postId, content } of seededPosts) {
         posts.insertPost(postId, computeTxId(postTx), commit, content);
         mempool.insertUtxoTx(postTx, 1000);
@@ -3367,10 +3344,12 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
 
       // Seed karma boxes before the prover: a box entering the store
       // after the bootstrap is absent from the tree
-      // (NODE_INTERFACE → AVL+ State Root).
+      // (NODE_INTERFACE → AVL+ State Root). One post per author so each
+      // identity holds one own karma box (NODE_INTERFACE → Karma transition
+      // rules → "An identity holds at most two karma boxes").
       const postFixtures = [];
       for (let i = 0; i < 6; i++) {
-        postFixtures.push(await seedPostTx(author, `floor ${i}`));
+        postFixtures.push(await seedPostTx(makeTestIdentity(), `floor ${i}`));
       }
 
       await activateProverOverStore();
