@@ -5,6 +5,7 @@ import http from 'http';
 import { createPrivateKey, sign } from 'crypto';
 import { initDb, closeDb } from '../../src/store/db.js';
 import {
+  getKarmaBoxes,
   getKarmaBoxesPage,
   getKarmaValue,
   getKarmaTotal,
@@ -87,7 +88,8 @@ async function request(
         consumeBox,
         getKarmaOwed: admissionOwed(DECAY_CFG),
         getKarmaValue,
-        getOwnKarmaBoxIds: () => [],
+        getOwnKarmaBoxIds: (owner: Uint8Array) =>
+          getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
         hasActiveVouchEscrow: () => false,
         vouchCooldownBlocks: 2,
         inviteBondMin: config.inviteBondMin,

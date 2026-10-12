@@ -4,7 +4,7 @@ import express from 'express';
 import http from 'http';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import {
-  insertBox, getBox as storeGetBox, getKarmaValue,
+  insertBox, getBox as storeGetBox, getKarmaBoxes, getKarmaValue,
   getBoxProvenance, hasActiveVouchEscrow, getBackerPoolBox, getBackerStakeBox,
 } from '../../src/store/utxo.js';
 import { getVouchBox } from '../../src/store/vouch-queries.js';
@@ -64,7 +64,8 @@ function makeDeps(): UtxoEngineDeps {
     },
     getKarmaOwed: admissionOwed({ staleThresholdBlocks: config.karmaStaleThresholdBlocks, decayIntervalBlocks: config.karmaDecayIntervalBlocks, decayAmount: config.karmaDecayAmount, karmaMinimum: config.karmaMinimum }),
     getKarmaValue,
-    getOwnKarmaBoxIds: () => [],
+    getOwnKarmaBoxIds: (owner: Uint8Array) =>
+      getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
     getIdentityRecord,
     hasActiveVouchEscrow,
     vouchCooldownBlocks: 2,

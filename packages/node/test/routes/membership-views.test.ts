@@ -47,6 +47,7 @@ import {
   hasActiveVouchEscrow,
   getVouchBox,
   getNetworkRecord,
+  getKarmaBoxes,
   getKarmaValue,
 } from '../../src/store/index.js';
 import { getBoxWithPending } from '../../src/store/mempool.js';
@@ -132,7 +133,8 @@ describe('/karma/:userId membership fields', () => {
           consumeBox,
           getKarmaOwed: admissionOwed(DECAY_CFG),
           getKarmaValue,
-          getOwnKarmaBoxIds: () => [],
+          getOwnKarmaBoxIds: (owner: Uint8Array) =>
+            getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
           hasActiveVouchEscrow,
           vouchCooldownBlocks: 2,
           inviteBondMin: config.inviteBondMin,
@@ -376,7 +378,8 @@ describe('POST /vouches — the four membership 400s', () => {
       getKarmaOwed: admissionOwed(DECAY_CFG),
       getKarmaValue: (owner: Uint8Array): bigint =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-      getOwnKarmaBoxIds: () => [],
+      getOwnKarmaBoxIds: (owner: Uint8Array) =>
+        getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
       getIdentityRecord,
       hasActiveVouchEscrow,
       vouchCooldownBlocks: 2,
@@ -578,7 +581,8 @@ describe('POST /invites — membership 400', () => {
         getKarmaOwed: admissionOwed(DECAY_CFG),
         getKarmaValue: (owner: Uint8Array): bigint =>
           getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-        getOwnKarmaBoxIds: () => [],
+        getOwnKarmaBoxIds: (owner: Uint8Array) =>
+          getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
         getIdentityRecord,
         hasActiveVouchEscrow,
         vouchCooldownBlocks: 2,
