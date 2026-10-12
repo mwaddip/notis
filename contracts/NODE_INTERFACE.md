@@ -4926,8 +4926,8 @@ tip + 1 cost the same walk.
 **One resolution at a time.** `handleOrderingBlock` hands a non-extending block to a runner, and the
 runner runs `resolveFork` for one block at a time. With none running, the block's resolution starts.
 With one running, the block is kept as **its delivering peer's pending block**: one per peer id, a
-later block from the same peer replacing the earlier, and a block that is the one running for that
-peer, or the one already pending for it, dropped. What waits is therefore bounded by the peers
+later block from the same peer replacing the earlier in the earlier's place in the order, and a block
+that is the one running for that peer, or the one already pending for it, dropped. What waits is therefore bounded by the peers
 connected, never by what they send, and a peer's disconnect removes its pending block. When a
 resolution ends — at any step, with any outcome — each pending block is handed back to
 `handleOrderingBlock`, in the order it arrived, and judged on the tip that then stands: a block now
@@ -4941,6 +4941,17 @@ chain. Nothing switches the chain but `reorg`, and `reorg` runs inside a resolut
 the tip moves only by extension — a block applied, this node's own or a peer's — so no resolution
 reads a store another is switching, and a height at or below the tip a resolution read always holds
 a block.
+
+> ⚠ **AHEAD OF CODE (2026-10-13).** The hand-back after a switch leads
+> `services/fork-resolution-runner.ts`, which hands a resolution's own block back only when the tip
+> moved.
+
+**A resolution that ends in a switch hands its own block back too**, unless its peer has a later one
+pending. The switch lands on the shortest heavier prefix a page reaches (step 7), and that prefix can
+end below the block the resolution started from. Handed back, the block is held and a no-op, or
+extends the new tip and is applied, or starts the resolution that fetches the rest of its branch.
+Each such return is paid for by a switch that left our chain heavier, so a block is handed back no
+more often than the chain grows toward it.
 
 **The walk reaches as deep as the journals do, and no deeper.** The switch reverts every block of
 ours above `f`, one journal each, so `f` sits no lower than one below the lowest journal kept.
