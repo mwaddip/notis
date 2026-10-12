@@ -2,9 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   PROTOCOL_VERSION,
   LIKES_PER_KARMA_PAYOUT,
+  POST_PRICE_THREAD,
   REPLY_AUTHOR_SHARE,
   LIKE_KARMA_COST,
   KARMA_MINIMUM,
+  computePostId,
   computeTxId,
 } from '@dagsocial/types';
 import type {
@@ -14,10 +16,12 @@ import type {
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 import {
+  changeBoxOf,
   hex,
   makeApplicableBlock,
   makeKarmaBox,
   makeLikeTx,
+  makePostCommit,
   makeTestIdentity,
   seedPostTx,
   signTransaction,
@@ -411,16 +415,48 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const blockApply = await importBlockApply();
 
     const author = makeTestIdentity();
+    // The author posts twice across two blocks; the second post consumes
+    // the first's change box, so rule 3 of "An identity holds at most two
+    // karma boxes" sees one own box per transaction.
     const p1 = await seedPostTx(author, 'consolidation target 1');
-    const p2 = await seedPostTx(author, 'consolidation target 2');
     const post1Id = p1.postId;
-    const post2Id = p2.postId;
     posts.insertPost(p1.postId, computeTxId(p1.tx), p1.commit, p1.content);
-    posts.insertPost(p2.postId, computeTxId(p2.tx), p2.commit, p2.content);
-
     expect(
       blockApply.applyOrderingBlock(
-        await makeApplicableBlock({ utxoTxs: [p1.tx, p2.tx] }),
+        await makeApplicableBlock({ utxoTxs: [p1.tx] }),
+      ),
+    ).toBe(true);
+
+    // p1 leaves a 1n change box, not enough for a thread's price; seed a
+    // top-up and consolidate the two before posting p2.
+    const topUp = makeKarmaBox(POST_PRICE_THREAD, author.userId, 1, 777);
+    await seedBoxes([topUp]);
+    const p1Change = changeBoxOf(p1.tx);
+    const consolidationTx: UtxoTransaction = {
+      inputs: [p1Change.id!, topUp.id!],
+      outputs: [{ boxType: 'karma', value: p1Change.value + topUp.value, createdAtBlock: 1, owner: author.userId }],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(consolidationTx, author.privateKey, hex(author.userId));
+    const consolidated = changeBoxOf(consolidationTx);
+    const commit2 = makePostCommit(author.userId, 'consolidation target 2');
+    const postTx2: UtxoTransaction = {
+      inputs: [consolidated.id!],
+      outputs: [
+        { boxType: 'karma', value: 1n, createdAtBlock: 1, owner: author.userId } as never,
+        { boxType: 'karma_price', value: POST_PRICE_THREAD, createdAtBlock: 1 } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      post: commit2,
+    };
+    signTransaction(postTx2, author.privateKey, hex(author.userId));
+    const post2Id = computePostId(computeTxId(postTx2), 0);
+    posts.insertPost(post2Id, computeTxId(postTx2), commit2, 'consolidation target 2');
+    expect(
+      blockApply.applyOrderingBlock(
+        await makeApplicableBlock({ height: 2, utxoTxs: [consolidationTx, postTx2] }),
       ),
     ).toBe(true);
 
@@ -431,7 +467,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     ];
     expect(
       blockApply.applyOrderingBlock(
-        await makeApplicableBlock({ height: 2, utxoTxs: likeTxs }),
+        await makeApplicableBlock({ height: 3, utxoTxs: likeTxs }),
       ),
     ).toBe(true);
 
@@ -442,18 +478,22 @@ describe('per-block like settlement (P2-D N2b)', () => {
     // settlement would have derived the same `(height, reason, subject)` twice
     // and tripped `UNIQUE(tx_id, output_index)`, so applying at all was part of
     // the property. Two outputs of one transaction cannot collide, so the
-    // per-author grouping has to be asserted directly: exactly one payout box.
+    // per-author grouping has to be asserted directly: exactly one marked
+    // income box carries the payout (NODE_INTERFACE → The settlement
+    // transaction → "The income leg pays each owner once").
     const payouts = utxo
       .getUnspentBoxes()
       .filter(
         (b) =>
           b.boxType === 'karma' &&
-          Buffer.from((b as KarmaBox).owner).equals(Buffer.from(author.userId)) &&
-          b.value === X - 1n,
+          (b as KarmaBox).income === true &&
+          Buffer.from((b as KarmaBox).owner).equals(Buffer.from(author.userId)),
       );
     expect(payouts).toHaveLength(1);
-    // Two posts, so two lots of change alongside the one payout.
-    expect(utxo.getKarmaValue(author.userId)).toBe(X - 1n + 2n * POST_CHANGE);
+    expect(payouts[0]!.value).toBe(X - 1n);
+    // Two posts, so one own box (the second post's change) alongside the
+    // one income box the payout wrote.
+    expect(utxo.getKarmaValue(author.userId)).toBe(X - 1n + POST_CHANGE);
   });
 
   // -------------------------------------------------------------------------
@@ -476,12 +516,13 @@ describe('per-block like settlement (P2-D N2b)', () => {
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
     const liker = makeTestIdentity();
-    const box1 = makeKarmaBox(2n, liker.userId, 0, 0);
-    const box2 = makeKarmaBox(2n, liker.userId, 0, 1);
-    await seedBoxes([box1, box2]);
+    // One own box clears the spend rule's floor; the second like chains on
+    // the first's change box so the fixture holds the invariant.
+    const box1 = makeKarmaBox(2n * LIKE_KARMA_COST + KARMA_MINIMUM, liker.userId, 0, 0);
+    await seedBoxes([box1]);
 
     const tx1 = makeLikeTx(liker, box1, postId, author.userId);
-    const tx2 = makeLikeTx(liker, box2, postId, author.userId);
+    const tx2 = makeLikeTx(liker, changeBoxOf(tx1), postId, author.userId);
     expect(
       blockApply.applyOrderingBlock(
         await makeApplicableBlock({ height: 2, utxoTxs: [tx1, tx2] }),
@@ -491,7 +532,6 @@ describe('per-block like settlement (P2-D N2b)', () => {
     // All-or-nothing: the first like's effects rolled back with the block.
     expect(ordering.getCurrentHeight()).toBe(1);
     expect(utxo.getBox(box1.id!)).not.toBeNull();
-    expect(utxo.getBox(box2.id!)).not.toBeNull();
     expect(likeRecords.hasLikeRecord(postId, liker.userId)).toBe(false);
   });
 
@@ -512,28 +552,31 @@ describe('per-block like settlement (P2-D N2b)', () => {
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
     const liker = makeTestIdentity();
-    // Boxes clear the spend rule's floor (NODE_INTERFACE → Karma transition
-    // rules → "Only a post spends the floor"); the subject is the cross-block
-    // dedup, not the owner's holdings.
-    const box1 = makeKarmaBox(LIKE_KARMA_COST + KARMA_MINIMUM, liker.userId, 0, 0);
-    const box2 = makeKarmaBox(LIKE_KARMA_COST + KARMA_MINIMUM, liker.userId, 0, 1);
-    await seedBoxes([box1, box2]);
+    // The liker holds one own box clearing the spend rule's floor
+    // (NODE_INTERFACE → Karma transition rules → "Only a post spends the
+    // floor"), and the second block's like chains on the first's change.
+    const box1 = makeKarmaBox(2n * LIKE_KARMA_COST + KARMA_MINIMUM, liker.userId, 0, 0);
+    await seedBoxes([box1]);
 
+    const likeTx1 = makeLikeTx(liker, box1, postId, author.userId);
     expect(
       blockApply.applyOrderingBlock(
-        await makeApplicableBlock({ height: 2, utxoTxs: [makeLikeTx(liker, box1, postId, author.userId)] }),
+        await makeApplicableBlock({ height: 2, utxoTxs: [likeTx1] }),
       ),
     ).toBe(true);
     expect(likeRecords.hasLikeRecord(postId, liker.userId)).toBe(true);
 
+    const likeTx2 = makeLikeTx(liker, changeBoxOf(likeTx1), postId, author.userId);
     expect(
       blockApply.applyOrderingBlock(
-        await makeApplicableBlock({ height: 3, utxoTxs: [makeLikeTx(liker, box2, postId, author.userId)] }),
+        await makeApplicableBlock({ height: 3, utxoTxs: [likeTx2] }),
       ),
     ).toBe(false);
 
     expect(ordering.getCurrentHeight()).toBe(2);
-    expect(utxo.getBox(box2.id!)).not.toBeNull();
+    // The second block was rejected, so its tx's change is nothing in the
+    // store; the first block's change box remains live.
+    expect(utxo.getBox(changeBoxOf(likeTx1).id!)).not.toBeNull();
     expect(await carryOf(author.userId)).toBe(1n);
   });
 
@@ -656,7 +699,11 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'round-trip payout target');
     posts.insertPost(postId, computeTxId(postTx), commit, content);
-    const authorKarma = makeKarmaBox(100n, author.userId, 0, 999);
+    // The author's pre-existing karma is their income box (NODE_INTERFACE →
+    // Karma transition rules → "An identity holds at most two karma boxes");
+    // the settlement's income leg merges into it at every payout.
+    const authorKarma: KarmaBox = { ...makeKarmaBox(100n, author.userId, 0, 999), income: true };
+    authorKarma.id = (await import('@dagsocial/types')).computeBoxId(authorKarma);
     utxo.insertBox(authorKarma);
     const likers = await seedLikers(5);
 
@@ -676,19 +723,16 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const pre = takeSnapshot(db, handle, 2);
     expect(await carryOf(author.userId)).toBe(4n);
 
-    // Block 3: the 5th like → paid 4, merging the author's 100n box.
+    // Block 3: the 5th like → paid 4, merging the author's 100n income box.
     const classBlock = await makeApplicableBlock({
       height: 3,
       utxoTxs: [makeLikeTx(likers[4]!.id, likers[4]!.box, postId, author.userId)],
     });
     expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
-    // ⚠ **No merge, so nothing pre-existing is consumed.** The settlement emits
-    // a fresh karma output rather than consolidating the author's holdings, so
-    // the seeded box stands and the BALANCE carries the claim. The round trip
-    // below is therefore over a plain insert rather than over a
-    // consume-and-replace pair — a strictly simpler inverse, and the one the
-    // journal's box primitives already own.
-    expect(utxo.getBox(authorKarma.id!)).not.toBeNull();
+    // The settlement's income leg consumed the pre-existing income box and
+    // wrote a new one of 100 + 4 (NODE_INTERFACE → The settlement
+    // transaction → "The income leg pays each owner once").
+    expect(utxo.getBox(authorKarma.id!)).toBeNull();
     expect(utxo.getKarmaValue(author.userId)).toBe(100n + POST_CHANGE + 4n);
     expect(await carryOf(author.userId)).toBe(0n);
 
@@ -711,13 +755,13 @@ describe('per-block like settlement (P2-D N2b)', () => {
     // Block 1: confirms the post.
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
-    // Block 2: withdraw the post through the real path.
-    const withdrawKarma = makeKarmaBox(1n, author.userId, 0, 8001);
-    await seedBoxes([withdrawKarma]);
+    // Block 2: withdraw the post through the real path. The author's own
+    // box after block 1 is the post's change box.
+    const withdrawKarma = changeBoxOf(postTx);
     const withdrawTx: UtxoTransaction = {
       inputs: [withdrawKarma.id!],
       outputs: [
-        { boxType: 'karma', value: 1n, createdAtBlock: 0, owner: author.userId } as never,
+        { boxType: 'karma', value: withdrawKarma.value, createdAtBlock: 1, owner: author.userId } as never,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
