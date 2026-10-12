@@ -3,9 +3,13 @@
 // cap fits `MAX_SETTLEMENT_BYTES`. Each paid owner costs one input and one
 // karma output (NODE_INTERFACE → The settlement transaction → "The income
 // leg pays each owner once"), whatever they hold. The decay leg's ceiling
-// is `decayLegMaxBytes(version)` — two inputs and one karma output.
+// is `decayLegMaxBytes(version)` — two inputs and one karma output, priced
+// at the widest `value` and `createdAtBlock` the codec writes for a karma
+// box (CONSENSUS_INTERFACE → The settlement build → "`decayLegMaxBytes` is
+// what one squaring adds to a settlement at most").
 import { describe, it, expect } from 'vitest';
 import {
+  BOX_VALUE_BOUND,
   INVITE_BOND_VEST_PER_LIKES,
   LIKES_PER_KARMA_PAYOUT,
   MAX_BOND_SETTLEMENTS_PER_BLOCK,
@@ -45,24 +49,37 @@ const ONE_ERA = PROFILE.protocolVersionSchedule;
 const H = 1_000;
 const miner = seededIdentity('bound/miner');
 
-describe('decayLegMaxBytes — one squaring\'s ceiling', () => {
-  it('two settlement inputs and one karma output grow a settlement by exactly `decayLegMaxBytes`', () => {
-    // Compare two settlements that already move the karma pool box (so the
-    // present-pool-input delta is already counted on both sides): the
-    // reference has no decay plan, the comparee's plan consumes two boxes
-    // and emits a karma output of 1n.
-    const owner = uid('decay-grow/owner');
-    const b1 = karmaBox(owner, 10n, 1, 0);
-    const b2 = karmaBox(owner, 5n, 2, 0);
+describe('decayLegMaxBytes — the ceiling at every (height, value) pair', () => {
+  // The widest `value` the codec writes for a karma box: `BOX_VALUE_BOUND -
+  // 1n`, the ceiling the accepted domain pins at `2⁶³ − 1` (TYPES_INTERFACE
+  // → Box value domain). The widest `createdAtBlock` the codec writes
+  // faithfully is `Number.MAX_SAFE_INTEGER` — beyond it `writeVlqU` writes
+  // the sentinel (TYPES_INTERFACE → Totality names `vlqU` as the sentinel
+  // arm).
+  const WIDEST_VALUE = BOX_VALUE_BOUND - 1n;
+  const WIDEST_HEIGHT = Number.MAX_SAFE_INTEGER;
+
+  /**
+   * The settlement's growth over the empty-decay reference, measured by
+   * encoding both sides: a decay plan consuming two boxes and emitting one
+   * karma output of `value` at the block's `height`. The ref body carries
+   * one bond invite so the karma pool is already a settlement input on both
+   * sides — the "first protocol-box input" delta the figure's comment names
+   * is zero here.
+   */
+  function measure(height: number, value: bigint): number {
+    const owner = uid(`ceiling/owner/${height}/${value}`);
+    const b1 = karmaBox(owner, 10n, labelNonce(`ceiling/b1/${height}/${value}`), 0);
+    const b2 = karmaBox(owner, 5n, labelNonce(`ceiling/b2/${height}/${value}`), 0);
     const emission = seedProvenance<AnyBox>(
       { boxType: 'emission', value: PROFILE.creditEmissionTotal, createdAtBlock: 0 },
       0,
-      labelNonce('decay-grow/emission'),
+      labelNonce(`ceiling/emission/${height}/${value}`),
     );
     const pool = seedProvenance<AnyBox>(
       { boxType: 'karma_pool', value: 1_000_000n, createdAtBlock: 0 },
       0,
-      labelNonce('decay-grow/pool'),
+      labelNonce(`ceiling/pool/${height}/${value}`),
     );
     const boxMap = new Map<string, AnyBox>([
       [emission.id!, emission],
@@ -70,10 +87,7 @@ describe('decayLegMaxBytes — one squaring\'s ceiling', () => {
       [b1.id!, b1 as AnyBox],
       [b2.id!, b2 as AnyBox],
     ]);
-    // The reference's body carries one bond invite so the karma pool is
-    // spent: the pool input stands on both sides, so the per-input delta
-    // the one measures is the decay inputs alone.
-    const invitee = uid('decay-grow/invitee');
+    const invitee = uid(`ceiling/invitee/${height}/${value}`);
     const refBody: SettlementBody = {
       fees: 0n, rent: 0n, actors: 0,
       feeBoxIds: [],
@@ -97,35 +111,44 @@ describe('decayLegMaxBytes — one squaring\'s ceiling', () => {
       backerSupply: 0n,
       creditFixedRateBlocks: PROFILE.creditFixedRateBlocks,
     };
-    const refResult = buildSettlement(noDecayDeps, H, ONE_ERA, 0n, PROFILE.creditMinerRewardDelay, refBody, miner.userId);
+    const refResult = buildSettlement(
+      noDecayDeps, height, ONE_ERA, 0n, PROFILE.creditMinerRewardDelay, refBody, miner.userId,
+    );
     if ('error' in refResult) throw new Error(refResult.error);
-
     const plan: DecayPlan = {
       owner,
       consumedBoxIds: [b1.id!, b2.id!],
-      newValue: 1n,
-      burnAmount: 14n,
+      newValue: value,
+      burnAmount: 15n - value < 0n ? 0n : 15n - value,
     };
     const withDecayDeps: SettlementDeps = {
       ...noDecayDeps,
       getDecayPlans: () => [plan],
     };
-    const result = buildSettlement(withDecayDeps, H, ONE_ERA, 0n, PROFILE.creditMinerRewardDelay, refBody, miner.userId);
+    const result = buildSettlement(
+      withDecayDeps, height, ONE_ERA, 0n, PROFILE.creditMinerRewardDelay, refBody, miner.userId,
+    );
     if ('error' in result) throw new Error(result.error);
+    return encodeTx(result.tx).length - encodeTx(refResult.tx).length;
+  }
 
-    const refBytes = encodeTx(refResult.tx).length;
-    const withBytes = encodeTx(result.tx).length;
-    const delta = withBytes - refBytes;
-    // `decayLegMaxBytes` prices the leg's structure — two input ids and one
-    // karma output's fixed-width fields — at the probe's `createdAtBlock: 0`
-    // and `value: 1n`. At real heights the output's `createdAtBlock` VLQ
-    // widens by one byte above 127 and again above 16 383, and the value's
-    // VLQ by the same cadence; the array count prefixes a decay charge
-    // moves across the same thresholds have the same bite. All three bite
-    // once each in a settlement, and the sizer has the last word, so the
-    // figure is a close reservation rather than an exact match.
-    expect(delta).toBeLessThanOrEqual(decayLegMaxBytes(PROTOCOL_VERSION) + 4);
-    expect(delta).toBeGreaterThanOrEqual(decayLegMaxBytes(PROTOCOL_VERSION) - 4);
+  const HEIGHTS = [1, 200, 20_000, 5_000_000] as const;
+  const VALUES = [1n, 200n, 20_000n, WIDEST_VALUE] as const;
+
+  it.fails('every (height, value) pair fits inside decayLegMaxBytes', () => {
+    const figure = decayLegMaxBytes(PROTOCOL_VERSION);
+    for (const h of HEIGHTS) {
+      for (const v of VALUES) {
+        expect(measure(h, v), `h=${h}, v=${v}`).toBeLessThanOrEqual(figure);
+      }
+    }
+  });
+
+  it.fails('at the widest height and value the growth equals decayLegMaxBytes modulo count prefixes and the first protocol-box input', () => {
+    const figure = decayLegMaxBytes(PROTOCOL_VERSION);
+    const delta = measure(WIDEST_HEIGHT, WIDEST_VALUE);
+    expect(delta).toBeLessThanOrEqual(figure);
+    expect(delta).toBeGreaterThanOrEqual(figure - 4);
   });
 
   it('reports decayLegMaxBytes at the current version', () => {

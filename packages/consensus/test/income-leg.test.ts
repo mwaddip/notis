@@ -14,21 +14,29 @@ import {
   KARMA_MINIMUM,
   LIKES_PER_KARMA_PAYOUT,
   PROTOCOL_VERSION,
+  bytesToHex,
   computeTxId,
   decodeTx,
   encodeTx,
+  hexToBytes,
+  postKey,
+  postRecordBytes,
   profileFor,
 } from '@dagsocial/types';
 import type {
   AnyBox,
   AnyBoxCandidate,
+  IdentityRecord,
   KarmaBox,
+  NetworkRecord,
   OrderingBlock,
   UtxoTransaction,
 } from '@dagsocial/types';
 import {
   applyBlock,
   buildBlockSettlement,
+  seedTreeWrites,
+  treeStateView,
 } from '@dagsocial/consensus';
 import type { ApplyContext } from '@dagsocial/consensus';
 import {
@@ -51,6 +59,8 @@ import {
   writeEffects,
   type Built,
 } from './helpers.js';
+import { proveBlock, proverFrom, replayBlock } from './block-proof.js';
+import { mapSessionFrom } from './tree-session-map.js';
 
 const PROFILE = profileFor('devnet');
 const CTX: ApplyContext = {
@@ -489,7 +499,246 @@ describe('settlements that do not pay through the income leg are refused', () =>
 });
 
 // ---------------------------------------------------------------------------
-// The tree view's karma read — reported in the final report
+// Paid, decayed and swept in one block
 // ---------------------------------------------------------------------------
-// The tree view's throw and lookup count are pinned in tree-view.test.ts;
-// the shape is covered by this file's checks and by settlement-bound.test.ts.
+
+describe('a stale owner spends both karma boxes in the block they are paid', () => {
+  it(
+    'decay charges the body\'s change, the income leg emits one fresh marked box, applyBlock and buildBlockSettlement answer the same bytes',
+    () => {
+      const view = genesisView();
+      const owner = seededIdentity('swept-and-paid/owner');
+      // lastActivityBlock = 0, so the owner is stale at any H ≥
+      // staleThresholdBlocks = 6.
+      view.putIdentityRecord(owner.userId, identityRecord());
+      const ownBox = karmaBox(owner.userId, 20n, 1, 0);
+      const incomeBoxOwned = incomeBox(owner.userId, 30n, 2, 0);
+      view.insertBox(ownBox);
+      view.insertBox(incomeBoxOwned);
+
+      // One liker whose like credits owner as author.
+      const liker = seededIdentity('swept-and-paid/liker');
+      view.putIdentityRecord(liker.userId, identityRecord({ lastActivityBlock: 20 }));
+      view.insertBox(karmaBox(liker.userId, 11n, 3, 0));
+      const postId = hex(uid('swept-and-paid/post'));
+      putConfirmedPost(view, postId, owner.userId, 0);
+      // One pre-seeded carry of 4 so the one new marker brings the author's
+      // total to LIKES_PER_KARMA_PAYOUT and the payout fires.
+      view.insertBox(
+        seedProvenance<AnyBox>(
+          { boxType: 'like_accrual', value: 4n, createdAtBlock: 0, author: owner.userId },
+          0,
+          600,
+        ),
+      );
+
+      const H = 20;
+      // Owner spends BOTH karma boxes — rule 3 of the karma arm permits an
+      // income box to ride beside the own box (NODE_INTERFACE → Karma
+      // transition rules → "An identity holds at most two karma boxes").
+      const spend = consolidateTx(owner, view.getKarmaBoxes(owner.userId), H);
+      const like = likeTx(liker, view.getKarmaBoxes(liker.userId)[0]!, postId, owner.userId, H);
+
+      // The producer's build over pre-body state matches the applier's.
+      const txBytes = [encodeTx(spend.tx), encodeTx(like.tx)];
+      const built = buildBlockSettlement(view, txBytes, H, miner.userId, miner.userId, CTX);
+      if ('error' in built) throw new Error(built.error);
+
+      const block = applied(view, H, [spend, like]);
+      const applierSettlement = settlementOf(block);
+      expect(encodeTx(applierSettlement)).toEqual(encodeTx(built.tx));
+
+      // Decay fires on the body's change — the one karma box post-body —
+      // and emits one unmarked box of the effective value; the income leg
+      // names no karma input for the owner (the body already spent them)
+      // and emits one fresh marked box of the payout.
+      const changeId = spend.out[0]!.id!;
+      expect(applierSettlement.inputs).toContain(changeId);
+      expect(applierSettlement.inputs).not.toContain(ownBox.id);
+      expect(applierSettlement.inputs).not.toContain(incomeBoxOwned.id);
+      expect(new Set(applierSettlement.inputs).size).toBe(applierSettlement.inputs.length);
+
+      const after = view.getKarmaBoxes(owner.userId);
+      expect(after).toHaveLength(2);
+      const ownAfter = after.filter((b) => b.income !== true);
+      const incomeAfter = after.filter((b) => b.income === true);
+      expect(ownAfter).toHaveLength(1);
+      expect(incomeAfter).toHaveLength(1);
+      expect(incomeAfter[0]!.value).toBe(BigInt(LIKES_PER_KARMA_PAYOUT - 1));
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Paid and decayed, not swept
+// ---------------------------------------------------------------------------
+
+describe('a stale owner spends the own box alone in the block they are paid', () => {
+  it(
+    'decay consumes the income box with the change, the income leg names no input and emits one fresh marked box, both builders agree byte for byte',
+    () => {
+      const view = genesisView();
+      const owner = seededIdentity('not-swept/owner');
+      view.putIdentityRecord(owner.userId, identityRecord());
+      const ownBox = karmaBox(owner.userId, 20n, 1, 0);
+      const incomeBoxOwned = incomeBox(owner.userId, 30n, 2, 0);
+      view.insertBox(ownBox);
+      view.insertBox(incomeBoxOwned);
+
+      const liker = seededIdentity('not-swept/liker');
+      view.putIdentityRecord(liker.userId, identityRecord({ lastActivityBlock: 20 }));
+      view.insertBox(karmaBox(liker.userId, 11n, 3, 0));
+      const postId = hex(uid('not-swept/post'));
+      putConfirmedPost(view, postId, owner.userId, 0);
+      view.insertBox(
+        seedProvenance<AnyBox>(
+          { boxType: 'like_accrual', value: 4n, createdAtBlock: 0, author: owner.userId },
+          0,
+          700,
+        ),
+      );
+
+      const H = 20;
+      // Owner spends the own box alone; the income box stands pre-body.
+      const spend = consolidateTx(owner, [ownBox], H);
+      const like = likeTx(liker, view.getKarmaBoxes(liker.userId)[0]!, postId, owner.userId, H);
+
+      const txBytes = [encodeTx(spend.tx), encodeTx(like.tx)];
+      const built = buildBlockSettlement(view, txBytes, H, miner.userId, miner.userId, CTX);
+      if ('error' in built) throw new Error(built.error);
+
+      const block = applied(view, H, [spend, like]);
+      const applierSettlement = settlementOf(block);
+      expect(encodeTx(applierSettlement)).toEqual(encodeTx(built.tx));
+
+      // Decay consumes both — the income box standing pre-body and the
+      // body's change (NODE_INTERFACE → Karma decay → "The leg is two
+      // inputs at most and one output") — and emits one unmarked box. The
+      // income leg takes the income box out through decay's excludeIds and
+      // emits one fresh marked box of the payout.
+      const changeId = spend.out[0]!.id!;
+      expect(applierSettlement.inputs).toContain(incomeBoxOwned.id);
+      expect(applierSettlement.inputs).toContain(changeId);
+      expect(applierSettlement.inputs).not.toContain(ownBox.id);
+      expect(new Set(applierSettlement.inputs).size).toBe(applierSettlement.inputs.length);
+
+      const after = view.getKarmaBoxes(owner.userId);
+      expect(after).toHaveLength(2);
+      const ownAfter = after.filter((b) => b.income !== true);
+      const incomeAfter = after.filter((b) => b.income === true);
+      expect(ownAfter).toHaveLength(1);
+      expect(incomeAfter).toHaveLength(1);
+      expect(incomeAfter[0]!.value).toBe(BigInt(LIKES_PER_KARMA_PAYOUT - 1));
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Twenty blocks over the tree view
+// ---------------------------------------------------------------------------
+
+describe('an author paid in twenty consecutive blocks over the tree view', () => {
+  it(
+    'ends with their own box and one marked box of the sum, and one of the blocks replays from its proof alone',
+    () => {
+      // Seed a MapTreeSession for building and a BatchAVLProver for
+      // proving: both carry the identical initial writes
+      // (CONSENSUS_INTERFACE → The tree session · The block proof).
+      const author = seededIdentity('twenty-over-tree/author');
+      const authorOwn = karmaBox(author.userId, 10n, 1, 0);
+      const BLOCKS = 20;
+      const likers = Array.from({ length: BLOCKS }, (_, i) =>
+        seededIdentity(`twenty-over-tree/liker-${i}`),
+      );
+      const initialBoxes: AnyBox[] = [
+        protocolBox('emission', PROFILE.creditEmissionTotal, 2000),
+        protocolBox('karma_pool', 1_000_000n, 2001),
+        authorOwn as AnyBox,
+      ];
+      let seedNonce = 2100;
+      for (let i = 0; i < BLOCKS; i++) {
+        initialBoxes.push(karmaBox(likers[i]!.userId, 11n, seedNonce++, 0));
+      }
+      const authorRec: IdentityRecord = identityRecord();
+      const initialRecords: Array<{ identityId: Uint8Array; record: IdentityRecord }> = [
+        { identityId: miner.userId, record: identityRecord({ memberSinceBlock: 1 }) },
+        { identityId: author.userId, record: authorRec },
+      ];
+      for (let i = 0; i < BLOCKS; i++) {
+        initialRecords.push({
+          identityId: likers[i]!.userId,
+          // lastActivityBlock = 2 + i − 1 keeps each liker fresh at the
+          // block they sign, so decay never fires on them.
+          record: identityRecord({ lastActivityBlock: 1 + i }),
+        });
+      }
+      const network: NetworkRecord = { memberCount: 1 };
+
+      const initialWrites = seedTreeWrites(initialBoxes, initialRecords, network);
+      const session = mapSessionFrom(initialWrites);
+      const prover = proverFrom(initialWrites);
+
+      // The author's confirmed post, inserted into both the MapTreeSession
+      // and the prover before the first block. The tree view answers a
+      // post's author and standing from this row.
+      const postId = bytesToHex(uid('twenty-over-tree/post'));
+      const postSeed = [
+        {
+          tag: 'Insert' as const,
+          key: postKey(hexToBytes(postId)),
+          value: postRecordBytes({ author: author.userId, height: 1, standing: 'live' as const }),
+        },
+      ];
+      session.apply(postSeed);
+      for (const w of postSeed) {
+        if (!prover.performOneOperation(w).success) throw new Error('prover refused post seed');
+      }
+      prover.generateProof();
+
+      const chain: Array<{
+        height: number;
+        block: OrderingBlock;
+        parentDigest: Uint8Array;
+        proof: Uint8Array;
+        digest: Uint8Array;
+      }> = [];
+
+      for (let i = 0; i < BLOCKS; i++) {
+        const H = 2 + i;
+        const liker = likers[i]!;
+        const buildView = treeStateView(session);
+        const likerBox = buildView.getKarmaBoxes(liker.userId)[0]!;
+        const like = likeTx(liker, likerBox, postId, author.userId, H);
+        const block = candidateBlock(buildView, H, [like], miner.userId, CTX);
+        const parentDigest = prover.digest();
+        const proven = proveBlock(prover, block, CTX);
+        if (!proven.result.ok) {
+          throw new Error(`block ${H} was refused over the prover: ${proven.result.reason}`);
+        }
+        session.apply(proven.writes);
+        chain.push({ height: H, block, parentDigest, proof: proven.proof, digest: proven.digest });
+      }
+
+      // After the twenty blocks the tree holds the author's unchanged own
+      // box and one marked income box whose value is the sum of the
+      // payouts.
+      const finalView = treeStateView(session);
+      const held = finalView.getKarmaBoxes(author.userId);
+      expect(held).toHaveLength(2);
+      const ownHeld = held.filter((b) => b.income !== true);
+      const incomeHeld = held.filter((b) => b.income === true);
+      expect(ownHeld).toHaveLength(1);
+      expect(ownHeld[0]!.id).toBe(authorOwn.id);
+      expect(incomeHeld).toHaveLength(1);
+      const expectedPayout = BigInt(Math.floor(BLOCKS / LIKES_PER_KARMA_PAYOUT)) * BigInt(LIKES_PER_KARMA_PAYOUT - 1);
+      expect(incomeHeld[0]!.value).toBe(expectedPayout);
+
+      // One of the twenty blocks replays from its parent's digest and its
+      // proof alone, to the same digest proveBlock answered
+      // (CONSENSUS_INTERFACE → The tree session).
+      const picked = chain[Math.floor(chain.length / 2)]!;
+      const replay = replayBlock(picked.parentDigest, picked.proof, picked.block, CTX);
+      expect(replay.digest).toEqual(picked.digest);
+    },
+  );
+});
