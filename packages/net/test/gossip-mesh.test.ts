@@ -6,6 +6,7 @@ import {
   encodeOrderingBlock,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   MAGIC_DEVNET,
+  MAGIC_TESTNET,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
 import type {
@@ -25,8 +26,24 @@ import {
   verifyPostBody,
 } from '@dagsocial/validation';
 import { TopicValidatorResult } from '@libp2p/interface';
+import type { PubSub } from '@libp2p/interface';
+import type { Libp2p } from 'libp2p';
+import { createLibp2p } from 'libp2p';
+import { tcp } from '@libp2p/tcp';
+import { noise } from '@chainsafe/libp2p-noise';
+import { yamux } from '@chainsafe/libp2p-yamux';
+import { identify } from '@libp2p/identify';
+import { gossipsub } from '@chainsafe/libp2p-gossipsub';
+import type { GossipsubEvents } from '@chainsafe/libp2p-gossipsub';
+import { multiaddr } from '@multiformats/multiaddr';
 import { NetNode } from '../src/node.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
+import {
+  GOSSIP_SEEN_WINDOW_MS,
+  gossipMessageId,
+  gossipTopics,
+} from '../src/gossip.js';
+import type { GossipTopics } from '../src/gossip.js';
 import { makeConfig as makeBaseConfig } from './helpers.js';
 
 // NET_INTERFACE → Gossip Topics
@@ -896,4 +913,371 @@ describe('A topic the node does not hear, a message\'s envelope, a message\'s na
     },
     TIMEOUT,
   );
+});
+
+// ---------------------------------------------------------------------------
+// A bare publisher dials B — what only the unsigned envelope expresses
+//
+// Each case builds a libp2p node of this package's own dependencies, with a
+// gossipsub router of the case's own options, dials B, and publishes without
+// running the dagsocial handshake. B's `allowedTopics` carry the pair that
+// `gossipTopics(B.magic)` builds, and the bare node subscribes to the same
+// pair so the mesh grafts.
+//
+// NET_INTERFACE → Gossip Topics → "A message is its topic and its data"
+// NET_INTERFACE → Gossip Topics → "A message is named by its bytes"
+// NET_INTERFACE → Gossip Topics → "A message is heard once in a seen window"
+// NET_INTERFACE → libp2p Stack
+// ---------------------------------------------------------------------------
+
+interface BareOptions {
+  globalSignaturePolicy?: 'StrictSign' | 'StrictNoSign';
+  msgIdFn?: (msg: { topic: string; data: Uint8Array }) => Uint8Array | Promise<Uint8Array>;
+}
+
+async function startBarePublisher(
+  bAddr: string,
+  bareTopics: GossipTopics,
+  options: BareOptions = {},
+): Promise<Libp2p> {
+  const bare = await createLibp2p({
+    addresses: { listen: ['/ip4/127.0.0.1/tcp/0'] },
+    transports: [tcp()],
+    connectionEncryption: [noise()],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    streamMuxers: [yamux() as any],
+    services: {
+      pubsub: gossipsub({
+        globalSignaturePolicy: options.globalSignaturePolicy ?? 'StrictNoSign',
+        msgIdFn: options.msgIdFn ?? ((msg) => gossipMessageId(msg.topic, msg.data)),
+        seenTTL: GOSSIP_SEEN_WINDOW_MS,
+        ignoreDuplicatePublishError: true,
+        allowedTopics: [bareTopics.orderingBlock, bareTopics.tx],
+        allowPublishToZeroTopicPeers: true,
+      }),
+      identify: identify(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any,
+  });
+  const ps = (bare as unknown as { services: { pubsub: PubSub<GossipsubEvents> } })
+    .services.pubsub;
+  ps.subscribe(bareTopics.orderingBlock);
+  ps.subscribe(bareTopics.tx);
+  await bare.dial(multiaddr(bAddr));
+  return bare;
+}
+
+async function waitForBareMeshPeer(
+  bare: Libp2p,
+  nodeB: NetNode,
+  topic: string,
+): Promise<void> {
+  await vi.waitFor(
+    () => {
+      const barePubsub = (bare as unknown as {
+        services: { pubsub: { getMeshPeers(t: string): string[] } };
+      }).services.pubsub;
+      const bPubsub = (nodeB.libp2pNode as unknown as {
+        services: { pubsub: { getMeshPeers(t: string): string[] } };
+      } | null)?.services.pubsub;
+      if (!bPubsub) throw new Error('B is not started');
+      expect(barePubsub.getMeshPeers(topic)).toContain(nodeB.peerId());
+      expect(bPubsub.getMeshPeers(topic)).toContain(bare.peerId.toString());
+    },
+    { timeout: 15_000, interval: 100 },
+  );
+}
+
+async function stopBare(bare: Libp2p | undefined): Promise<void> {
+  if (!bare) return;
+  try {
+    await bare.stop();
+  } catch {
+    // Discard close-while-closed and other teardown races.
+  }
+}
+
+describe('A bare publisher dials B', () => {
+  const openNodes: NetNode[] = [];
+  const openBare: Libp2p[] = [];
+  afterEach(async () => {
+    while (openBare.length > 0) await stopBare(openBare.pop());
+    while (openNodes.length > 0) {
+      const n = openNodes.pop();
+      await n?.stop().catch(() => {});
+    }
+  });
+
+  async function startB(
+    overrides: Partial<NetConfig> = {},
+  ): Promise<{ nodeB: NetNode; bAddr: string; topicsB: GossipTopics }> {
+    const nodeB = new NetNode(makeConfig(overrides), validators);
+    await nodeB.start();
+    openNodes.push(nodeB);
+    const bAddr = nodeB.libp2pNode?.getMultiaddrs()[0]?.toString();
+    if (!bAddr) throw new Error('B has no listen address');
+    return { nodeB, bAddr, topicsB: gossipTopics(MAGIC_TESTNET) };
+  }
+
+  it(
+    'the receiver names the message: five publishes with changing own ids deliver once',
+    async () => {
+      // B.1 — the publisher's own id function returns a new value on every
+      // call, so its seen cache never dedupes; B names the message by our rule
+      // and dedupes.
+      const { nodeB, bAddr, topicsB } = await startB();
+
+      let counter = 0;
+      const bare = await startBarePublisher(bAddr, topicsB, {
+        msgIdFn: () => {
+          counter += 1;
+          const buf = new Uint8Array(32);
+          buf[0] = counter & 0xff;
+          buf[1] = (counter >> 8) & 0xff;
+          return buf;
+        },
+      });
+      openBare.push(bare);
+      await waitForBareMeshPeer(bare, nodeB, topicsB.orderingBlock);
+
+      const bValidator = newCounter();
+      const topicsBfromNode = topicsOf(nodeB);
+      wrapValidator(nodeB, topicsBfromNode.orderingBlock, bValidator);
+
+      const bDeliveries: OrderingBlock[] = [];
+      nodeB.onOrderingBlock((b) => {
+        bDeliveries.push(b);
+      });
+
+      const block = makeBlockAt(1, PROTOCOL_VERSION);
+      const data = encodeOrderingBlock(block);
+      const ps = (bare as unknown as { services: { pubsub: PubSub<GossipsubEvents> } })
+        .services.pubsub;
+      for (let i = 0; i < 5; i++) {
+        await ps.publish(topicsB.orderingBlock, data);
+      }
+
+      await vi.waitFor(() => expect(bDeliveries.length).toBe(1), {
+        timeout: 10_000,
+        interval: 100,
+      });
+      await new Promise((r) => setTimeout(r, SETTLE_MS));
+
+      expect({ bValidator: bValidator.count, bDeliveries: bDeliveries.length })
+        .toEqual({ bValidator: 1, bDeliveries: 1 });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    'the same bytes on the two topics are two messages',
+    async () => {
+      // B.2 — a bare publisher sends a block's bytes on B's tx topic: B's tx
+      // validator runs and refuses them. Then A, a NetNode Active at B,
+      // broadcasts that block on the ordering-block topic: B's block validator
+      // runs and the handler is called once.
+      const { nodeB, bAddr, topicsB } = await startB();
+
+      const bare = await startBarePublisher(bAddr, topicsB);
+      openBare.push(bare);
+      await waitForBareMeshPeer(bare, nodeB, topicsB.tx);
+      await waitForBareMeshPeer(bare, nodeB, topicsB.orderingBlock);
+
+      const bTxValidator = newCounter();
+      const bBlockValidator = newCounter();
+      const topicsBfromNode = topicsOf(nodeB);
+      wrapValidator(nodeB, topicsBfromNode.tx, bTxValidator);
+      wrapValidator(nodeB, topicsBfromNode.orderingBlock, bBlockValidator);
+
+      const bDeliveries: OrderingBlock[] = [];
+      nodeB.onOrderingBlock((b) => {
+        bDeliveries.push(b);
+      });
+
+      const block = makeBlockAt(1, PROTOCOL_VERSION);
+      const data = encodeOrderingBlock(block);
+      const ps = (bare as unknown as { services: { pubsub: PubSub<GossipsubEvents> } })
+        .services.pubsub;
+      // Block bytes on the tx topic — the tx validator will see them.
+      await ps.publish(topicsB.tx, data);
+
+      await vi.waitFor(() => expect(bTxValidator.count).toBe(1), {
+        timeout: 10_000,
+        interval: 100,
+      });
+      expect(bTxValidator.lastResult).toBe(TopicValidatorResult.Reject);
+      expect(bBlockValidator.count).toBe(0);
+
+      // Now A broadcasts the same block on the ordering-block topic. B's
+      // block validator runs and the handler fires.
+      const nodeA = new NetNode(makeConfig({ bootstrapPeers: [bAddr] }), validators);
+      await nodeA.start();
+      openNodes.push(nodeA);
+      await vi.waitFor(
+        () => {
+          expect(nodeB.getConnectedPeers()).toContain(nodeA.peerId());
+          expect(nodeA.getConnectedPeers()).toContain(nodeB.peerId());
+        },
+        { timeout: 15_000, interval: 250 },
+      );
+      await waitForMesh(nodeA, nodeB);
+
+      await nodeA.broadcastOrderingBlock(block);
+
+      await vi.waitFor(() => expect(bDeliveries.length).toBe(1), {
+        timeout: 10_000,
+        interval: 100,
+      });
+      await new Promise((r) => setTimeout(r, SETTLE_MS));
+
+      expect({
+        bTxValidator: bTxValidator.count,
+        bBlockValidator: bBlockValidator.count,
+        bDeliveries: bDeliveries.length,
+      }).toEqual({ bTxValidator: 1, bBlockValidator: 1, bDeliveries: 1 });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    'a signed message reaches no validator',
+    async () => {
+      // B.3 — a bare publisher on the library's default signing options
+      // publishes a block on B's block topic. B's StrictNoSign refuses the
+      // signed envelope at the policy gate, so B's validator does not run.
+      // The control: an unsigned publisher on the same mesh is heard.
+      const { nodeB, bAddr, topicsB } = await startB();
+
+      const signedBare = await startBarePublisher(bAddr, topicsB, {
+        globalSignaturePolicy: 'StrictSign',
+      });
+      openBare.push(signedBare);
+      // Under StrictSign, the publisher's own id uses (from, seqno) rather
+      // than our bytes-id, and that mismatch is what makes this case tell
+      // the two apart from the receiver side.
+      await waitForBareMeshPeer(signedBare, nodeB, topicsB.orderingBlock);
+
+      const bValidator = newCounter();
+      const topicsBfromNode = topicsOf(nodeB);
+      wrapValidator(nodeB, topicsBfromNode.orderingBlock, bValidator);
+
+      const block = makeBlockAt(1, PROTOCOL_VERSION);
+      const data = encodeOrderingBlock(block);
+      const signedPs = (signedBare as unknown as {
+        services: { pubsub: PubSub<GossipsubEvents> };
+      }).services.pubsub;
+      await signedPs.publish(topicsB.orderingBlock, data);
+
+      await new Promise((r) => setTimeout(r, SETTLE_MS));
+      expect(bValidator.count).toBe(0);
+
+      // Control: an unsigned bare publisher IS heard.
+      const unsignedBare = await startBarePublisher(bAddr, topicsB);
+      openBare.push(unsignedBare);
+      await waitForBareMeshPeer(unsignedBare, nodeB, topicsB.orderingBlock);
+
+      const unsignedPs = (unsignedBare as unknown as {
+        services: { pubsub: PubSub<GossipsubEvents> };
+      }).services.pubsub;
+      await unsignedPs.publish(topicsB.orderingBlock, data);
+
+      await vi.waitFor(() => expect(bValidator.count).toBe(1), {
+        timeout: 10_000,
+        interval: 100,
+      });
+      expect(bValidator.lastResult).toBe(TopicValidatorResult.Accept);
+    },
+    TIMEOUT,
+  );
+
+  it(
+    'a refusal stands for the window: two bare publishers send the same bytes, B\'s validator runs once',
+    async () => {
+      // B.4 — the refusal taken here is a protocol-version mismatch
+      // (NET_INTERFACE → Stage 1): the block declares version PROTOCOL_VERSION
+      // but B's schedule at the header's height is PROTOCOL_VERSION + 1, so
+      // the Reject is Transient (50 points, below B's 500-point threshold —
+      // no ban, no stream close).
+      const { nodeB, bAddr, topicsB } = await startB({
+        protocolVersionSchedule: [
+          { version: PROTOCOL_VERSION, fromHeight: 0 },
+          { version: PROTOCOL_VERSION + 1, fromHeight: 1 },
+        ],
+      });
+
+      const bareOne = await startBarePublisher(bAddr, topicsB);
+      openBare.push(bareOne);
+      await waitForBareMeshPeer(bareOne, nodeB, topicsB.orderingBlock);
+
+      const bValidator = newCounter();
+      const topicsBfromNode = topicsOf(nodeB);
+      wrapValidator(nodeB, topicsBfromNode.orderingBlock, bValidator);
+
+      // Height 1 declares PROTOCOL_VERSION; B's era at height 1 is
+      // PROTOCOL_VERSION + 1 — a mismatch, so Transient Reject.
+      const block = makeBlockAt(1, PROTOCOL_VERSION);
+      const data = encodeOrderingBlock(block);
+      const psOne = (bareOne as unknown as {
+        services: { pubsub: PubSub<GossipsubEvents> };
+      }).services.pubsub;
+      await psOne.publish(topicsB.orderingBlock, data);
+
+      await vi.waitFor(() => expect(bValidator.count).toBe(1), {
+        timeout: 10_000,
+        interval: 100,
+      });
+      expect(bValidator.lastResult).toBe(TopicValidatorResult.Reject);
+      expect(nodeB.libp2pNode?.getConnections().length ?? 0).toBeGreaterThan(0);
+
+      // A second bare publisher sends the SAME bytes. B's seen cache was
+      // recorded before the validator ran, so the second copy is not
+      // validated, not delivered and not forwarded.
+      const bareTwo = await startBarePublisher(bAddr, topicsB);
+      openBare.push(bareTwo);
+      await waitForBareMeshPeer(bareTwo, nodeB, topicsB.orderingBlock);
+
+      const psTwo = (bareTwo as unknown as {
+        services: { pubsub: PubSub<GossipsubEvents> };
+      }).services.pubsub;
+      await psTwo.publish(topicsB.orderingBlock, data);
+
+      await new Promise((r) => setTimeout(r, SETTLE_MS));
+      expect(bValidator.count).toBe(1);
+    },
+    TIMEOUT,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// The seen window carries the constant — NET_INTERFACE → Gossip Topics →
+// "A message is heard once in a seen window"
+//
+// A case that waits two minutes is not a case: the pin reads the router's own
+// record of its options. What it cannot see is whether the router honours that
+// number as a window — the field is checked once, by the library's constructor
+// in `node_modules/.../gossipsub/dist/src/index.js` (`this.opts = opts`), and
+// a future gossipsub that renamed the field or stopped reading it would pass
+// this pin and break the rule.
+// ---------------------------------------------------------------------------
+
+describe('The seen window carries the constant', () => {
+  const open: NetNode[] = [];
+  afterEach(async () => {
+    while (open.length > 0) {
+      const n = open.pop();
+      await n?.stop().catch(() => {});
+    }
+  });
+
+  it('a running node\'s gossipsub carries seenTTL = GOSSIP_SEEN_WINDOW_MS', async () => {
+    const nodeB = new NetNode(makeConfig(), validators);
+    await nodeB.start();
+    open.push(nodeB);
+
+    const router = (nodeB.libp2pNode as unknown as {
+      services: { pubsub: { opts?: { seenTTL?: number } } };
+    } | null)?.services.pubsub;
+    expect(router).toBeDefined();
+    expect(router?.opts?.seenTTL).toBe(GOSSIP_SEEN_WINDOW_MS);
+  });
 });
