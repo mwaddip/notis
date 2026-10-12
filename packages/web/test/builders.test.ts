@@ -166,15 +166,16 @@ describe('builders — structural rules', () => {
     expect(() => buildLike({ ...ctx(), spendable: [] }, TARGET_ID, PARENT_AUTHOR)).toThrow(InsufficientKarma);
   });
 
-  it('selection sorts value-descending before selectBoxes', () => {
+  it('the own box leads the spend when it covers the price', () => {
+    const OWN = 'a'.repeat(64);
+    const INC = 'b'.repeat(64);
     const spendable = [
-      { boxId: 'a'.repeat(64), value: 3n },
-      { boxId: 'b'.repeat(64), value: 10n },
-      { boxId: 'c'.repeat(64), value: 1n },
+      { boxId: OWN, value: 10n },
+      { boxId: INC, value: 100n, income: true as const },
     ];
-    // Price 5 is covered by the single largest box; the others are untouched.
+    // Price 5: the own box alone covers it, the income box is untouched.
     const built = buildPost({ ...ctx(), spendable }, 'x');
-    expect(built.tx.inputs).toEqual(['b'.repeat(64)]);
+    expect(built.tx.inputs).toEqual([OWN]);
     expect(built.change!.value).toBe(5n);
   });
 
@@ -272,14 +273,16 @@ describe('withdraw builder — frozen against the independent vector', () => {
 });
 
 describe('withdraw builder — structural rules', () => {
-  it('spends the smallest box when the view holds several', () => {
+  it('takes the own box when the view holds the own and the income box', () => {
+    const OWN = 'a'.repeat(64);
+    const INC = 'b'.repeat(64);
     const spendable = [
-      { boxId: 'a'.repeat(64), value: 10n },
-      { boxId: 'b'.repeat(64), value: 3n },
-      { boxId: 'c'.repeat(64), value: 7n },
+      // Own leads, even though the income box carries more.
+      { boxId: OWN, value: 3n },
+      { boxId: INC, value: 10n, income: true as const },
     ];
     const built = buildWithdraw({ ...ctx(), spendable }, WITHDRAW_POST_ID);
-    expect(built.tx.inputs).toEqual(['b'.repeat(64)]);
+    expect(built.tx.inputs).toEqual([OWN]);
     expect(built.change!.value).toBe(3n);
     expect(built.tx.outputs).toEqual([
       { boxType: 'karma', value: 3n, createdAtBlock: 5000, owner: hexToBytes(PUB) },
@@ -425,14 +428,15 @@ describe('claim builder — structural rules', () => {
     }
   });
 
-  it('spends the smallest box when the view holds several', () => {
+  it('takes the own box when the view holds the own and the income box', () => {
+    const OWN = 'a'.repeat(64);
+    const INC = 'b'.repeat(64);
     const spendable = [
-      { boxId: 'a'.repeat(64), value: 10n },
-      { boxId: 'b'.repeat(64), value: 3n },
-      { boxId: 'c'.repeat(64), value: 7n },
+      { boxId: OWN, value: 3n },
+      { boxId: INC, value: 10n, income: true as const },
     ];
     const built = buildClaim({ ...ctx(), spendable }, 'Test');
-    expect(built.tx.inputs).toEqual(['b'.repeat(64)]);
+    expect(built.tx.inputs).toEqual([OWN]);
     expect(built.change!.value).toBe(3n);
   });
 });
@@ -568,7 +572,7 @@ function twoBoxCtx(own: bigint | null, income: bigint | null): BuildContext {
 }
 
 describe('builders — the own box is named first, the income box only when it must', () => {
-  it.fails('every karma builder takes the own box alone when it covers (own 50, income 100)', () => {
+  it('every karma builder takes the own box alone when it covers (own 50, income 100)', () => {
     const builts = [
       buildPost(twoBoxCtx(50n, 100n), 'x'),
       buildPost(twoBoxCtx(50n, 100n), 'x', { id: PARENT_ID, authorHex: PARENT_AUTHOR }),
@@ -590,7 +594,7 @@ describe('builders — the own box is named first, the income box only when it m
     }
   });
 
-  it.fails('with own 3 and income 100, a root post takes both and returns one change of the sum less the price', () => {
+  it('with own 3 and income 100, a root post takes both and returns one change of the sum less the price', () => {
     const built = buildPost(twoBoxCtx(3n, 100n), 'x');
     // Both inputs ride, the own one first.
     expect(built.tx.inputs).toEqual([OWN_BOX, INC_BOX]);
@@ -623,7 +627,7 @@ describe('builders — the own box is named first, the income box only when it m
     }
   });
 
-  it.fails('a withdrawal and a claim take the own box, even when the income box is smaller', () => {
+  it('a withdrawal and a claim take the own box, even when the income box is smaller', () => {
     // Own 100, income 50 — the old "smallest" rule would pick income.
     const w = buildWithdraw(twoBoxCtx(100n, 50n), WITHDRAW_POST_ID);
     expect(w.tx.inputs).toEqual([OWN_BOX]);
@@ -646,7 +650,7 @@ describe('builders — the own box is named first, the income box only when it m
     expect(c.change?.value).toBe(50n);
   });
 
-  it.fails('a pending spend moves the own box: the next build names the predicted change', () => {
+  it('a pending spend moves the own box: the next build names the predicted change', () => {
     // A prior like took the own box of value 50 and emitted a change of 49
     // (unmarked) beside the still-unspent income box of 100. The next like
     // (cost 1) names the change alone, since it covers.
@@ -660,7 +664,7 @@ describe('builders — the own box is named first, the income box only when it m
     expect(built.tx.inputs).not.toContain(INC_BOX);
   });
 
-  it.fails('a pending spend whose change does not cover the next spend brings the income box with it', () => {
+  it('a pending spend whose change does not cover the next spend brings the income box with it', () => {
     // Prior spend left a tiny change (1); the next thread post needs 5. Both
     // must ride, the change first.
     const TINY = '99'.repeat(32);

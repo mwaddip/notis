@@ -133,6 +133,10 @@ export interface BlockCurrent {
 export interface KarmaBoxRow {
   boxId: string;
   value: string;                  // decimal — the client holds it as bigint
+  /** `true` on the owner's income box, absent on their own box
+   *  (NODE_INTERFACE → UTXO queries, TYPES_INTERFACE → KarmaBox). Any value
+   *  but `true` or absent is a refused answer, read as PageError (→ reads.ts). */
+  income?: true;
 }
 
 /** `GET /karma/:userId` — the spendable view's confirmed boxes, paged by `next`.

@@ -3,10 +3,15 @@
 
 /** A box the client may spend: the id the node reported and its value. A
  *  `/karma` row carries no `createdAtBlock`, which is why the read order matters
- *  (WEB_INTERFACE → The wallet). */
+ *  (WEB_INTERFACE → The wallet). The mark follows a `/karma` row through the
+ *  parse: `true` on the owner's income box, absent on their own box
+ *  (TYPES_INTERFACE → KarmaBox). A credit box and a pending karma change
+ *  carry no mark — the mark is the settlement's to make, and a karma output
+ *  of a user transaction never carries it. */
 export interface SpendableBox {
   boxId: string;
   value: bigint;
+  income?: true;
 }
 
 /** A predicted change box: the id the node will assign it, its value, and the

@@ -172,7 +172,7 @@ describe('summarise — the derived summary matches the transaction shape', () =
     });
   });
 
-  it.fails('a two-input karma spend (own and income) summarises as the one-input act — the kind is unchanged, the prompt path does not refuse the shape', () => {
+  it('a two-input karma spend (own and income) summarises as the one-input act — the kind is unchanged, the prompt path does not refuse the shape', () => {
     // The view carries both the own and the income box; the own alone does
     // not cover a thread, so both inputs ride (WEB_INTERFACE → The wallet).
     // The derived summary is a thread, with the same `spendRep` as the one

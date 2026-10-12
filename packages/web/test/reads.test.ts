@@ -131,7 +131,7 @@ describe('readCreditContext — WEB_INTERFACE → The wallet ("A send reads the 
 // ---------------------------------------------------------------------------
 
 describe("readBuildContext — the mark on each karma row", () => {
-  it.fails('a marked and an unmarked box parse to one own box and one income box', async () => {
+  it('a marked and an unmarked box parse to one own box and one income box', async () => {
     // The row with `income: true` reaches the view carrying the mark; the
     // bare row has no `income` key.
     const pages = [karmaPage(
@@ -148,7 +148,7 @@ describe("readBuildContext — the mark on each karma row", () => {
     ]);
   });
 
-  it.fails('income: false — any value but true — is a refused answer, not an unmarked box', async () => {
+  it('income: false — any value but true — is a refused answer, not an unmarked box', async () => {
     const pages = [karmaPage(
       [{ boxId: 'bad', value: '10', income: false } as unknown as KarmaBoxRow],
       null,
@@ -158,7 +158,7 @@ describe("readBuildContext — the mark on each karma row", () => {
     ).rejects.toBeInstanceOf(PageError);
   });
 
-  it.fails('a row carrying income as a string, a number or null is a refused answer', async () => {
+  it('a row carrying income as a string, a number or null is a refused answer', async () => {
     for (const bad of ['yes', 1, 0, null]) {
       const pages = [karmaPage(
         [{ boxId: 'bad', value: '10', income: bad } as unknown as KarmaBoxRow],
