@@ -20,7 +20,7 @@ import { castLike } from './services/likes.js';
 import { castVouch, initiateUnvouch } from './services/vouch.js';
 import { createInvite } from './services/invites.js';
 import { executePostWithdraw } from './services/post-withdraw.js';
-import { admissionHeld, admissionOwed } from './services/karma-admission.js';
+import { admissionHeld, admissionOwed, admissionGetOwnKarmaBoxIds } from './services/karma-admission.js';
 import { readFileSync } from 'fs';
 import { isLivePost, type StoredPost } from './store/posts.js';
 import { getDb } from './store/db.js';
@@ -242,6 +242,7 @@ export function createApp(config: Config): express.Express {
     consumeBox: store.consumeBox,
     getKarmaValue: admissionHeld,
     getKarmaOwed: admissionOwed(decayConfig()),
+    getOwnKarmaBoxIds: admissionGetOwnKarmaBoxIds,
     getIdentityRecord: store.getIdentityRecord,
     hasActiveVouchEscrow: store.hasActiveVouchEscrow,
     vouchCooldownBlocks: config.vouchCooldownBlocks,
