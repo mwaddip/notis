@@ -2,6 +2,7 @@ import { USERNAME_BURN_PRICE } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { Identity } from '../identities.js';
 import { signAndRender, type BoxRef, type BuiltTx } from './render.js';
+import { selectKarmaInputs } from './karma.js';
 
 export function buildBurnTx(
   holder: Identity,
@@ -10,7 +11,8 @@ export function buildBurnTx(
   height: number,
   protocolVersion: number,
 ): BuiltTx {
-  const karmaTotal = karmaBoxes.reduce((sum, b) => sum + b.value, 0n);
+  const selected = selectKarmaInputs(karmaBoxes, USERNAME_BURN_PRICE);
+  const karmaTotal = selected.reduce((sum, b) => sum + b.value, 0n);
   const changeValue = karmaTotal - USERNAME_BURN_PRICE;
   const owner = Buffer.from(holder.publicKeyHex, 'hex');
 
@@ -21,7 +23,7 @@ export function buildBurnTx(
   outputs.push({ boxType: 'karma_price', value: USERNAME_BURN_PRICE, createdAtBlock: height });
 
   const tx: UtxoTransaction = {
-    inputs: [...karmaBoxes.map((b) => b.boxId), usernameBoxId],
+    inputs: [...selected.map((b) => b.boxId), usernameBoxId],
     outputs,
     signatures: {},
     protocolVersion,

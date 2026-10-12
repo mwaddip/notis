@@ -3,9 +3,12 @@ import { computeTxId, computeCandidateBoxId } from '@dagsocial/types';
 import type { UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
 import type { Identity } from '../identities.js';
 
+// NODE_INTERFACE → UTXO queries — `income: true` marks the owner's income box
+// (TYPES_INTERFACE → KarmaBox); absent on their own box and on every non-karma box.
 export interface BoxRef {
   readonly boxId: string;
   readonly value: bigint;
+  readonly income?: true;
 }
 
 export interface BuiltTx {

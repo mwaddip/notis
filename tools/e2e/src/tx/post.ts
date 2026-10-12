@@ -1,5 +1,4 @@
 import {
-  selectBoxes,
   computeContentHash,
   POST_PRICE_THREAD,
   POST_PRICE_REPLY,
@@ -8,6 +7,7 @@ import {
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { Identity } from '../identities.js';
 import { signAndRender, type BoxRef, type BuiltTx } from './render.js';
+import { selectKarmaInputs } from './karma.js';
 
 export interface PostTx extends BuiltTx {
   readonly content: string;
@@ -48,8 +48,7 @@ function buildPostTx(
   commitVersion: number,
   parentAuthorHex?: string,
 ): PostTx {
-  const sorted = [...boxes].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
-  const selected = selectBoxes(sorted, price);
+  const selected = selectKarmaInputs(boxes, price);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
   const changeValue = selectedTotal - price;
 

@@ -1,7 +1,7 @@
-import { selectBoxes } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { Identity } from '../identities.js';
 import { signAndRender, type BoxRef, type BuiltTx } from './render.js';
+import { selectKarmaInputs } from './karma.js';
 
 export function buildClaimTx(
   claimant: Identity,
@@ -10,8 +10,10 @@ export function buildClaimTx(
   height: number,
   protocolVersion: number,
 ): BuiltTx {
-  const sorted = [...boxes].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
-  const selected = selectBoxes(sorted, 1n);
+  // A claim is `karma → karma + username(0)`: no karma leaves the owner, so the
+  // helper takes the own box alone when one stands and the income box only when
+  // the owner holds no own box (NODE_INTERFACE → Karma transition rules).
+  const selected = selectKarmaInputs(boxes, 1n);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
 
   const owner = Buffer.from(claimant.publicKeyHex, 'hex');
