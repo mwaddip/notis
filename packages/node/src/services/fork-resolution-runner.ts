@@ -102,7 +102,7 @@ export function handOverForkResolution(
 
 /**
  * NODE_INTERFACE → "One resolution at a time": a disconnected peer loses its
- * pending block. NODE_INTERFACE → Re-scoring is memoised removes the memo
+ * pending block. NODE_INTERFACE → "Re-scoring is memoised" removes the memo
  * entry at the same seam — an entry a peer leaves takes its memo with it.
  * `src/index.ts`'s `net.onPeerDisconnected` registration calls this.
  */
