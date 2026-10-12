@@ -384,52 +384,57 @@ describe('mempool karma spend gate', () => {
     expect(pendingKarmaSpend(OWNER_A)).toBe(USERNAME_BURN_PRICE);
   });
 
-  // ---- the non-spending shapes write NULL in both columns ----
+  // ---- the non-spending shapes write the signer and NULL in karma_spend ----
+  //
+  // MEMPOOL_INTERFACE → Gate metadata columns: a transaction that moves an
+  // owner's own box writes the owner's one signer into karma_owner so
+  // getOwnKarmaBoxIdsWithPending finds it, and leaves karma_spend NULL so
+  // pendingKarmaSpend sums nothing from a row that spends none.
 
-  it('a consolidation writes NULL in both columns', async () => {
+  it("a consolidation writes the signer in karma_owner and NULL in karma_spend", async () => {
     const { getDb } = await importDb();
     const { insertUtxoTx, pendingKarmaSpend } = await importMempool();
     insertUtxoTx(consolidationTx(OWNER_A), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).get() as { karma_owner: string | null; karma_spend: number | null };
-    expect(row.karma_owner).toBeNull();
+    expect(row.karma_owner).toBe(OWNER_A);
     expect(row.karma_spend).toBeNull();
     expect(pendingKarmaSpend(OWNER_A)).toBe(0n);
   });
 
-  it('a claim writes NULL in both columns', async () => {
+  it("a claim writes the signer in karma_owner and NULL in karma_spend", async () => {
     const { getDb } = await importDb();
     const { insertUtxoTx, pendingKarmaSpend } = await importMempool();
     insertUtxoTx(claimTx(OWNER_A), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).get() as { karma_owner: string | null; karma_spend: number | null };
-    expect(row.karma_owner).toBeNull();
+    expect(row.karma_owner).toBe(OWNER_A);
     expect(row.karma_spend).toBeNull();
     expect(pendingKarmaSpend(OWNER_A)).toBe(0n);
   });
 
-  it('a withdrawal writes NULL in both columns', async () => {
+  it("a withdrawal writes the signer in karma_owner and NULL in karma_spend", async () => {
     const { getDb } = await importDb();
     const { insertUtxoTx, pendingKarmaSpend } = await importMempool();
     insertUtxoTx(withdrawalTx(OWNER_A), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).get() as { karma_owner: string | null; karma_spend: number | null };
-    expect(row.karma_owner).toBeNull();
+    expect(row.karma_owner).toBe(OWNER_A);
     expect(row.karma_spend).toBeNull();
     expect(pendingKarmaSpend(OWNER_A)).toBe(0n);
   });
 
-  it('an unvouch writes NULL in both columns', async () => {
+  it("an unvouch writes the signer in karma_owner and NULL in karma_spend", async () => {
     const { getDb } = await importDb();
     const { insertUtxoTx, pendingKarmaSpend } = await importMempool();
     insertUtxoTx(unvouchTx(OWNER_A), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).get() as { karma_owner: string | null; karma_spend: number | null };
-    expect(row.karma_owner).toBeNull();
+    expect(row.karma_owner).toBe(OWNER_A);
     expect(row.karma_spend).toBeNull();
     expect(pendingKarmaSpend(OWNER_A)).toBe(0n);
   });
