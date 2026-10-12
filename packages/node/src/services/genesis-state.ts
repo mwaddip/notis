@@ -263,12 +263,12 @@ export function seedGenesisState(): void {
       // seeded mint id opens with.
       //
       // ⛔ **The payload reaches every genesis box's id, not only this box's
-      // content** (TYPES_INTERFACE → "The payload is this box's content and
-      // every genesis box's id"; NODE_INTERFACE → "Two chains share a genesis
-      // box only if they share a payload"). A chain with a different payload
-      // mints a different synthetic txId at every site above and below, so no
-      // two chains with distinct payloads share a genesis box, whatever else
-      // their profiles share.
+      // content**
+      // (TYPES_INTERFACE → "The payload is this box's content and every genesis box's id";
+      // NODE_INTERFACE → "Two chains share a genesis box only if they share a payload").
+      // A chain with a different payload mints a different synthetic txId at every
+      // site above and below, so no two chains with distinct payloads share a
+      // genesis box, whatever else their profiles share.
       ensureGenesisProofBox(genesisProofPayload, GENESIS_HEIGHT);
 
       // Every network too, and for a sharper reason than the proof box's: this

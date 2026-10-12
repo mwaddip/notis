@@ -920,9 +920,10 @@ export function blockBudgetSeam(): { set(budget: number): void } {
 
 /**
  * The genesis proof payload every direct seeder call in this test tree feeds
- * `mintTxIdFor` (NODE_INTERFACE → "Every mint id opens with the chain's
- * genesis proof"). One shared value, so fixtures hand `ensureEmissionBox`,
- * `ensureKarmaPoolBox` and the seven siblings the same bytes a real genesis
+ * `mintTxIdFor`
+ * (NODE_INTERFACE → "Every mint id opens with the chain's genesis proof").
+ * One shared value, so fixtures hand `ensureEmissionBox`,
+ * `ensureKarmaPoolBox` and their siblings the same bytes a real genesis
  * seed would — the fixture's boxes stay byte-identical to the devnet
  * genesis's, their mint ids included. Read off `profileFor('devnet')` rather
  * than off the module-level `config`, so a case's `vi.doMock('config')`
