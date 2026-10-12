@@ -693,13 +693,19 @@ export function getBoxWithPending(boxId: string): AnyBox | null {
  * (MEMPOOL_INTERFACE → getOwnKarmaBoxIdsWithPending).
  *
  * The pending view is the confirmed unmarked set, plus every unmarked karma
- * output of a pooled transaction the owner signed, less every box a pooled
+ * output of a pooled transaction the owner signed, less every box any pooled
  * transaction spends. The pooled rows are found by `karma_owner` — every
  * karma transaction's row carries it (`gateMetadata`'s karma arm) — and only
  * the matching rows are decoded, so the read is a few hashes rather than a
- * walk of the pool. Admission wires this as the engine's
- * `getOwnKarmaBoxIds`; the relay's `getOwnKarmaBoxIds` reads the confirmed
- * set alone.
+ * walk of the pool. The by-owner rows cover every input that could remove one
+ * of the owner's unmarked karma boxes from the set: a karma box is spent only
+ * by a karma transaction signed by its owner, and such a transaction carries
+ * `karma_owner` through `gateMetadata` (TYPES_INTERFACE → KarmaBox;
+ * NODE_INTERFACE → Karma transition rules → "All karma inputs must share one
+ * owner"). The gather and the subtract run as two passes, so the answer is
+ * the same whatever order SQLite returns the rows in. Admission wires this
+ * as the engine's `getOwnKarmaBoxIds`; the relay's `getOwnKarmaBoxIds` reads
+ * the confirmed set alone.
  */
 export function getOwnKarmaBoxIdsWithPending(ownerId: string): string[] {
   const db = getDb();
@@ -727,6 +733,10 @@ export function getOwnKarmaBoxIdsWithPending(ownerId: string): string[] {
         AND utxo_tx_bytes IS NOT NULL`,
   ).all(ownerId) as Array<{ utxo_tx_bytes: Buffer; tx_inputs: string | null }>;
 
+  // Pass one: gather every pooled karma output the owner signs for. Reading
+  // ahead of the subtraction keeps the answer order-free — a chain's child
+  // row ahead of its parent in the index would otherwise remove a parent box
+  // the parent row has not yet added.
   for (const row of rows) {
     const tx = decodeTx(new Uint8Array(row.utxo_tx_bytes));
     const txId = computeTxId(tx);
@@ -744,9 +754,15 @@ export function getOwnKarmaBoxIdsWithPending(ownerId: string): string[] {
       const box = materializeOutput(candidate, txId, i);
       if (box.id !== undefined) kept.add(box.id);
     }
-    if (row.tx_inputs !== null) {
-      for (const spent of JSON.parse(row.tx_inputs) as string[]) kept.delete(spent);
-    }
+  }
+
+  // Pass two: remove every box the owner's pooled rows spend. Each of the
+  // owner's unmarked karma boxes a pooled transaction spends is removed
+  // whether its row stood ahead of or behind the one that would have added
+  // its predecessor.
+  for (const row of rows) {
+    if (row.tx_inputs === null) continue;
+    for (const spent of JSON.parse(row.tx_inputs) as string[]) kept.delete(spent);
   }
 
   return [...kept];

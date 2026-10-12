@@ -242,7 +242,7 @@ describe('getOwnKarmaBoxIdsWithPending — confirmed ∪ pending outputs − pen
     expect(mempool.getOwnKarmaBoxIdsWithPending(OWNER_HEX)).toEqual([changeAfter3]);
   });
 
-  it.fails("a chain of three pooled spends, rows inserted child-first — the last change alone", () => {
+  it("a chain of three pooled spends, rows inserted child-first — the last change alone", () => {
     // The grandchild is inserted first, so SQLite walks the owner's index with
     // the child at the lowest rowid: the row-by-row answer carries every
     // change box, since each row's inputs are added by the row ahead of it.
