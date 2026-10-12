@@ -114,8 +114,8 @@ function pubsubOf(node: NetNode): PubSubShape {
   return (lp as unknown as { services: { pubsub: PubSubShape } }).services.pubsub;
 }
 
-// The two topic strings a node's router is subscribed to, picked by their
-// ending — not a literal, not the `TOPICS` export.
+// The two topic strings a node's router is subscribed to, read off the live
+// pubsub by their endings — not built here by the function under test.
 function topicsOf(node: NetNode): { orderingBlock: string; tx: string } {
   const ts = pubsubOf(node).getTopics();
   const orderingBlock = ts.find((t) => t.endsWith('/ordering-block/1'));
@@ -388,7 +388,7 @@ describe('Gossip on a line A — B — C', () => {
     TIMEOUT,
   );
 
-  it.fails(
+  it(
     'five publishes of the same bytes deliver once at B and run C\'s validator once (ordering block)',
     async () => {
       const { nodeA, nodeB, nodeC } = await startLine();
@@ -419,7 +419,7 @@ describe('Gossip on a line A — B — C', () => {
     TIMEOUT,
   );
 
-  it.fails(
+  it(
     'five publishes of the same bytes deliver once at B and run C\'s validator once (tx packet)',
     async () => {
       const { nodeA, nodeB, nodeC } = await startLine();
@@ -456,7 +456,7 @@ describe('Gossip on a line A — B — C', () => {
     TIMEOUT,
   );
 
-  it.fails(
+  it(
     'one publish by A is delivered once at C over two hops (ordering block)',
     async () => {
       const { nodeA, nodeB, nodeC } = await startLine();
@@ -485,7 +485,7 @@ describe('Gossip on a line A — B — C', () => {
     TIMEOUT,
   );
 
-  it.fails(
+  it(
     'one publish by A is delivered once at C over two hops (tx packet)',
     async () => {
       const { nodeA, nodeB, nodeC } = await startLine();
@@ -554,10 +554,10 @@ async function startBAndStranger(): Promise<{
     },
     { timeout: 10_000, interval: 250 },
   );
-  // The pair cannot poll for the other's presence on a topic: once topics are
-  // named for their network, that never comes. A fixed quiet of SETTLE_MS
-  // waits out a gossipsub heartbeat so a subscription record (and a mesh
-  // graft) that would arrive, does.
+  // The pair shares no topic (NET_INTERFACE → Gossip Topics → "A topic is
+  // named for its network"), so there is nothing to poll on. The fixed quiet
+  // waits out two gossipsub heartbeats — any subscription record or mesh
+  // graft that would arrive, does.
   await new Promise((r) => setTimeout(r, SETTLE_MS));
   return { nodeB, nodeX };
 }
@@ -589,7 +589,7 @@ describe('A node of another network is no peer of ours', () => {
     TIMEOUT,
   );
 
-  it.fails(
+  it(
     'B\'s router lists no peer of another magic among the subscribers of either of B\'s own topics',
     async () => {
       const { nodeB, nodeX } = await startBAndStranger();
@@ -612,7 +612,7 @@ describe('A node of another network is no peer of ours', () => {
     TIMEOUT,
   );
 
-  it.fails(
+  it(
     'a block X publishes runs no validator at B',
     async () => {
       const { nodeB, nodeX } = await startBAndStranger();
@@ -720,7 +720,7 @@ describe('A carrier that is not Active', () => {
     TIMEOUT,
   );
 
-  it.fails(
+  it(
     'a block Y publishes is delivered once at B although Y is not Active there',
     async () => {
       const { nodeB, nodeY } = await startBAndSoftRefused();
@@ -773,7 +773,7 @@ describe('A topic the node does not hear, a message\'s envelope, a message\'s na
     for (const n of nodes) open.push(n);
   };
 
-  it.fails(
+  it(
     'a topic B does not hear leaves no record of A at B, though A subscribes to it',
     async () => {
       const { nodeA, nodeB } = await startAB();
@@ -785,7 +785,7 @@ describe('A topic the node does not hear, a message\'s envelope, a message\'s na
 
       pubsubOf(nodeA).subscribe(extraTopic);
 
-      // One heartbeat for A's SUBSCRIBE RPC to reach B.
+      // Two heartbeats for A's SUBSCRIBE RPC to reach B.
       await new Promise((r) => setTimeout(r, SETTLE_MS));
 
       // The subscription exchange has run — B lists A among the subscribers
@@ -805,7 +805,7 @@ describe('A topic the node does not hear, a message\'s envelope, a message\'s na
     TIMEOUT,
   );
 
-  it.fails(
+  it(
     'a message delivered at B names no publisher, sequence number, signature or key',
     async () => {
       const { nodeA, nodeB } = await startAB();
@@ -844,7 +844,7 @@ describe('A topic the node does not hear, a message\'s envelope, a message\'s na
     TIMEOUT,
   );
 
-  it.fails(
+  it(
     'the id B\'s router names a block by equals hash32(lpUtf8(topic) ‖ data)',
     async () => {
       const { nodeA, nodeB } = await startAB();

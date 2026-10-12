@@ -16,9 +16,16 @@ import type {
   GetHeadersMsg, GetBlocksMsg,
 } from './types.js';
 import { PeerState, PenaltyKind } from './types.js';
-import type { Libp2pGossip, GossipHandlers } from './gossip.js';
+import type { Libp2pGossip, GossipHandlers, GossipTopics } from './gossip.js';
 import { PeerManager } from './peer-mgr.js';
-import { subscribeTopics, broadcastOrderingBlock, broadcastTx } from './gossip.js';
+import {
+  subscribeTopics,
+  broadcastOrderingBlock,
+  broadcastTx,
+  gossipTopics,
+  gossipMessageId,
+  GOSSIP_SEEN_WINDOW_MS,
+} from './gossip.js';
 import {
   SYNC_PROTOCOL,
   requestHeaders,
@@ -523,6 +530,11 @@ export class NetNode {
    * package seam per message; node moves it on the two events that change it.
    */
   private karmaMembers = new Set<string>();
+  // The two topic strings this node hears (NET_INTERFACE → Gossip Topics →
+  // "A topic is named for its network"). Built from `config.magic` at
+  // `start()`; broadcasts, subscriptions and the listener's dispatch all read
+  // this one pair.
+  private topics: GossipTopics | null = null;
   private orderingBlockHandlers: OrderingBlockCallback[] = [];
   private txHandlers: TxCallback[] = [];
   private started = false;
@@ -603,6 +615,12 @@ export class NetNode {
     // us in an era; the base era 1 stands if they somehow do not.
     this.eraInForce = this.currentEra() ?? 1;
 
+    // NET_INTERFACE → Gossip Topics → "A topic is named for its network".
+    // A magic that is not an unsigned 32-bit integer throws here — a node with
+    // no network does not start on a topic of its own.
+    this.topics = gossipTopics(this.config.magic);
+    const topics = this.topics;
+
     // createLibp2p options cast to `any` works around @libp2p/interface version
     // mismatches in the dependency tree (v1.7, v2.11, v3.2 coexist).  The
     // runtime behaviour is correct; only the static types disagree.
@@ -615,7 +633,26 @@ export class NetNode {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       streamMuxers: [yamux() as any],
       services: {
+        // NET_INTERFACE → libp2p Stack — "Gossipsub 1.1 — unsigned messages
+        // named by their bytes, the node's two topics alone".
         pubsub: gossipsub({
+          // NET_INTERFACE → Gossip Topics → "A message is its topic and its
+          // data": the router refuses a signed envelope and emits none.
+          globalSignaturePolicy: 'StrictNoSign',
+          // NET_INTERFACE → Gossip Topics → "A message is named by its bytes".
+          msgIdFn: (msg) => gossipMessageId(msg.topic, msg.data),
+          // NET_INTERFACE → Gossip Topics → "A message is heard once in a seen
+          // window".
+          seenTTL: GOSSIP_SEEN_WINDOW_MS,
+          // NET_INTERFACE → Gossip → "A broadcast that sends nothing still
+          // resolves": a publish of bytes this node has seen inside the window
+          // resolves without sending.
+          ignoreDuplicatePublishError: true,
+          // NET_INTERFACE → Gossip Topics → "A topic is named for its
+          // network": the two topic strings are the whole of what the router
+          // hears; a subscription or a message on any other topic is passed
+          // over before the router names, caches or forwards anything.
+          allowedTopics: [topics.orderingBlock, topics.tx],
           allowPublishToZeroTopicPeers: true,
         }),
         identify: identify(),
@@ -769,6 +806,7 @@ export class NetNode {
       this.validators,
       this.peerMgr,
       handlers,
+      topics,
       this.karmaMembers,
       this.config.protocolVersionSchedule,
       () => this.syncStore.chainHeight(),
@@ -841,6 +879,7 @@ export class NetNode {
     this.lastGetPeersSentMs.clear();
     await this.libp2p.stop();
     this.libp2p = null;
+    this.topics = null;
     this.peerDb = null;
     this.syncMachine?.stop();
     this.syncMachine = null;
@@ -1487,13 +1526,13 @@ export class NetNode {
   // -----------------------------------------------------------------------
 
   async broadcastOrderingBlock(block: OrderingBlock): Promise<void> {
-    if (!this.libp2p) return;
-    await broadcastOrderingBlock(asGossip(this.libp2p), block);
+    if (!this.libp2p || !this.topics) return;
+    await broadcastOrderingBlock(asGossip(this.libp2p), this.topics, block);
   }
 
   async broadcastTx(tx: UtxoTransaction, content?: string): Promise<void> {
-    if (!this.libp2p) return;
-    await broadcastTx(asGossip(this.libp2p), tx, content);
+    if (!this.libp2p || !this.topics) return;
+    await broadcastTx(asGossip(this.libp2p), this.topics, tx, content);
   }
 
   // -----------------------------------------------------------------------
