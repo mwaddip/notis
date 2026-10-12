@@ -5,6 +5,7 @@ import type { DecayCfg, IdentityRecord, KarmaBox } from '@dagsocial/types';
 import {
   labelNonce,
   seedProvenance,
+  TEST_GENESIS_PROOF_PAYLOAD,
 } from '../helpers.js';
 
 /**
@@ -151,7 +152,7 @@ function applyDecayPlans(
       value: plan.newValue,
       createdAtBlock: height,
       owner: plan.owner,
-      txId: m.provenance.mintTxIdFor(m.provenance.genesisCommitteeContext(plan.owner), height),
+      txId: m.provenance.mintTxIdFor(TEST_GENESIS_PROOF_PAYLOAD, m.provenance.genesisCommitteeContext(plan.owner), height),
       index: m.provenance.MINT_OUTPUT_INDEX,
     };
     m.utxo.insertBox({ ...box, id: computeBoxId(box) });

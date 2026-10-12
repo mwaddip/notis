@@ -61,8 +61,16 @@ function genesisMintHeight(currentHeight: number): number {
 /**
  * Ensure the system karma box exists with the initial balance.
  * Idempotent — if a system karma box already exists, returns it without creating.
+ *
+ * `genesisProofPayload` reaches the mint id's preimage (NODE_INTERFACE →
+ * "Every mint id opens with the chain's genesis proof"); the caller supplies
+ * it, so this function reads no config.
  */
-export function ensureSystemKarmaBox(systemPubKey: Uint8Array, currentHeight: number): KarmaBox {
+export function ensureSystemKarmaBox(
+  genesisProofPayload: Uint8Array,
+  systemPubKey: Uint8Array,
+  currentHeight: number,
+): KarmaBox {
   const existing = getKarmaBox(systemPubKey);
   if (existing) return existing;
 
@@ -77,7 +85,7 @@ export function ensureSystemKarmaBox(systemPubKey: Uint8Array, currentHeight: nu
     value: SYSTEM_KARMA_INITIAL,
     createdAtBlock: genesisHeight,
     owner: systemPubKey,
-    txId: mintTxIdFor(genesisContext(GENESIS_SYSTEM_KARMA), genesisHeight),
+    txId: mintTxIdFor(genesisProofPayload, genesisContext(GENESIS_SYSTEM_KARMA), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };
   box.id = computeBoxId(box);
@@ -134,6 +142,7 @@ export function ensureSystemKarmaBox(systemPubKey: Uint8Array, currentHeight: nu
  * input back from the store, never from a seeder's return (`seedGenesisState`).
  */
 export function ensureFaucetCreditBox(
+  genesisProofPayload: Uint8Array,
   systemPubKey: Uint8Array,
   currentHeight: number,
 ): CreditBox {
@@ -150,7 +159,7 @@ export function ensureFaucetCreditBox(
     value: FAUCET_CREDITS_INITIAL,
     createdAtBlock: genesisHeight,
     owner: systemPubKey,
-    txId: mintTxIdFor(genesisContext(GENESIS_FAUCET_CREDITS), genesisHeight),
+    txId: mintTxIdFor(genesisProofPayload, genesisContext(GENESIS_FAUCET_CREDITS), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };
   box.id = computeBoxId(box);
@@ -166,10 +175,14 @@ export function ensureFaucetCreditBox(
  * Ensure the genesis proof box exists, carrying this network's payload.
  * Idempotent — if one is already seeded, returns it without creating.
  *
- * The payload is a parameter rather than a config read, following the two
- * seeders above: the caller supplies what distinguishes the box, so this
- * function is testable under a payload without a module reset, and `store/`
- * gains no edge into config.
+ * ⛔ **One parameter serves two roles — the box's content and the prefix every
+ * seeded mint id's preimage opens with** (TYPES_INTERFACE →
+ * "The payload is this box's content and every genesis box's id";
+ * NODE_INTERFACE → "Every mint id opens with the chain's genesis proof"). The
+ * siblings take the payload as a bare `genesisProofPayload`; here it is also
+ * what the box carries. The caller supplies it, so `store/` gains no edge
+ * into config and this function is testable under a payload without a module
+ * reset.
  *
  * ⚠ **No identity record.** `ensureSystemKarmaBox` writes one because the
  * system identity holds karma and decay would otherwise read "never active".
@@ -193,7 +206,7 @@ export function ensureGenesisProofBox(
     value: 0n,
     createdAtBlock: genesisHeight,
     payload,
-    txId: mintTxIdFor(genesisContext(GENESIS_PROOF), genesisHeight),
+    txId: mintTxIdFor(payload, genesisContext(GENESIS_PROOF), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };
   box.id = computeBoxId(box);
@@ -224,7 +237,11 @@ export function ensureGenesisProofBox(
  * ⚠ **No identity record**, for `ensureGenesisProofBox`'s reason: the box has no
  * owner and holds no karma, so there is no activity clock for a record to hold.
  */
-export function ensureEmissionBox(total: bigint, currentHeight: number): EmissionBox {
+export function ensureEmissionBox(
+  genesisProofPayload: Uint8Array,
+  total: bigint,
+  currentHeight: number,
+): EmissionBox {
   const existing = getEmissionBox();
   if (existing) return existing;
 
@@ -237,7 +254,7 @@ export function ensureEmissionBox(total: bigint, currentHeight: number): Emissio
     boxType: 'emission',
     value: total,
     createdAtBlock: genesisHeight,
-    txId: mintTxIdFor(genesisContext(GENESIS_EMISSION), genesisHeight),
+    txId: mintTxIdFor(genesisProofPayload, genesisContext(GENESIS_EMISSION), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };
   box.id = computeBoxId(box);
@@ -276,6 +293,7 @@ export function ensureEmissionBox(total: bigint, currentHeight: number): Emissio
  * granted a second box.
  */
 export function seedGenesisCommittee(
+  genesisProofPayload: Uint8Array,
   committeeKeys: readonly string[],
   karmaPerMember: bigint,
   currentHeight: number,
@@ -298,7 +316,7 @@ export function seedGenesisCommittee(
       value: karmaPerMember,
       createdAtBlock: genesisHeight,
       owner: member,
-      txId: mintTxIdFor(genesisCommitteeContext(member), genesisHeight),
+      txId: mintTxIdFor(genesisProofPayload, genesisCommitteeContext(member), genesisHeight),
       index: MINT_OUTPUT_INDEX,
     };
     box.id = computeBoxId(box);
@@ -365,7 +383,11 @@ export const KARMA_SUPPLY_TOTAL = BOX_VALUE_BOUND - 1n;
  * ⚠ **No identity record**, for `ensureGenesisProofBox`'s reason: the box has no
  * owner and no holder, so there is no activity clock for a record to hold.
  */
-export function ensureKarmaPoolBox(granted: bigint, currentHeight: number): KarmaPoolBox {
+export function ensureKarmaPoolBox(
+  genesisProofPayload: Uint8Array,
+  granted: bigint,
+  currentHeight: number,
+): KarmaPoolBox {
   const existing = getKarmaPoolBox();
   if (existing) return existing;
 
@@ -390,7 +412,7 @@ export function ensureKarmaPoolBox(granted: bigint, currentHeight: number): Karm
     boxType: 'karma_pool',
     value: KARMA_SUPPLY_TOTAL - granted,
     createdAtBlock: genesisHeight,
-    txId: mintTxIdFor(genesisContext(GENESIS_KARMA_POOL), genesisHeight),
+    txId: mintTxIdFor(genesisProofPayload, genesisContext(GENESIS_KARMA_POOL), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };
   box.id = computeBoxId(box);
@@ -449,6 +471,7 @@ export function validateBackerTable(
  * writes boxes and nothing else").
  */
 export function seedGenesisBackers(
+  genesisProofPayload: Uint8Array,
   rows: readonly BackerRow[],
   currentHeight: number,
 ): bigint {
@@ -463,7 +486,7 @@ export function seedGenesisBackers(
       createdAtBlock: genesisHeight,
       owner,
       weight: row.weight,
-      txId: mintTxIdFor(genesisBackerContext(owner), genesisHeight),
+      txId: mintTxIdFor(genesisProofPayload, genesisBackerContext(owner), genesisHeight),
       index: MINT_OUTPUT_INDEX,
     };
     box.id = computeBoxId(box);
@@ -479,6 +502,7 @@ export function seedGenesisBackers(
  * non-empty (NODE_INTERFACE → The genesis state root is checked fail-stop).
  */
 export function ensureBackerPoolBox(
+  genesisProofPayload: Uint8Array,
   staked: bigint,
   currentHeight: number,
 ): BackerPoolBox {
@@ -492,7 +516,7 @@ export function ensureBackerPoolBox(
     staked,
     accrual: 0n,
     createdAtBlock: genesisHeight,
-    txId: mintTxIdFor(genesisContext(GENESIS_BACKER_POOL), genesisHeight),
+    txId: mintTxIdFor(genesisProofPayload, genesisContext(GENESIS_BACKER_POOL), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };
   box.id = computeBoxId(box);

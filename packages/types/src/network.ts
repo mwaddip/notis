@@ -117,9 +117,13 @@ export interface NetworkProfile {
 
   /**
    * The `genesis_proof` box's payload, hex of raw bytes. **Differs on all three
-   * networks**, and it is the one genesis input every network seeds, so it is
-   * what separates mainnet's height-0 state from the two that also seed a faucet
-   * identity.
+   * networks**: a mint id opens with it, so every genesis box's id, every
+   * transaction id over a box descending from one, and every `stateRoot`
+   * covering such a box is bound to this chain's payload
+   * (TYPES_INTERFACE → Mint identity → "A mint id opens with its chain's genesis proof").
+   * Testnet's payload names its release line
+   * (TYPES_INTERFACE → Network profiles → "Testnet's names its release line");
+   * mainnet's and devnet's are mock content.
    *
    * Hex `string`, not `Uint8Array`, and the reason is immutability rather than
    * style: every profile is an `Object.freeze`d literal, and freezing a typed
@@ -133,8 +137,10 @@ export interface NetworkProfile {
    * root label followed by a one-byte tree height, the same 33-byte shape
    * `EMPTY_STATE_ROOT` and the block header's `stateRoot` carry.
    *
-   * Derived rather than chosen — it is the digest a node computes after seeding,
-   * and `genesisProofPayload` is the only input to it that differs per network.
+   * Derived rather than chosen — it is the digest a node computes after seeding.
+   * The genesis proof payload reaches every genesis box's id, so a change to it
+   * moves every root along with it
+   * (TYPES_INTERFACE → Mint identity → "A mint id opens with its chain's genesis proof").
    * A node whose seeded state does not reproduce this value is on a chain that
    * forks from every honest peer at height 1, so node compares the two inside
    * the seeding transaction and throws, rolling the whole genesis back.
@@ -239,10 +245,12 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   inviteBondMin: INVITE_BOND_MIN,
   inviteBondMax: INVITE_BOND_MAX,
 
-  // ⚠ MOCK CONTENT (user, 2026-08-13). What has to hold is that the three
-  // payloads DIFFER; what is inside them does not. Substituting real
-  // no-premine evidence later is a value change on a network that has not
-  // launched, not a format change. hex("dagsocial/mainnet/genesis-proof/mock")
+  // ⚠ MOCK CONTENT (user, 2026-08-13). Two chains meant to stand apart never
+  // share a payload; what is inside one need not be anything more
+  // (TYPES_INTERFACE → Network profiles). Mainnet's content is mock while the
+  // chain has not launched. Substituting real no-premine
+  // evidence later is a value change on a network that has not launched, not a
+  // format change. hex("dagsocial/mainnet/genesis-proof/mock")
   genesisProofPayload: '646167736f6369616c2f6d61696e6e65742f67656e657369732d70726f6f662f6d6f636b',
   // Six leaves, height byte `03`: `0x01` box ×3 (the genesis proof, the emission
   // box, the karma pool box), `0x18` type ×2 (the emission box, the karma pool
@@ -252,7 +260,7 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // `faucetPublicKey`; the backer pool box and per-row stake boxes are absent
   // because its `backerTable` is empty — the other two networks seed all of
   // these, which is why their height byte (`04`) differs from this one.
-  genesisStateRoot: 'c5996d8349a7bb27eca6e287f77ceb85a37e26e319b754c7f27e45052c709b7303',
+  genesisStateRoot: '98fab18e51ee76737ce83aed0d7117571aad4dd8283a56f0425d86b01bdfc92203',
   genesisId: '',
 
   backerSupply: MAINNET_BACKERS.supply,
@@ -293,10 +301,14 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
 
   genesisCommitteeKeys: Object.freeze([] as string[]),
   // Overridden explicitly, and it must be: the spread above would otherwise
-  // hand testnet mainnet's payload, making the two genesis states byte-identical
-  // — the one field whose whole job is to keep them apart.
-  // hex("dagsocial/testnet/genesis-proof/mock")
-  genesisProofPayload: '646167736f6369616c2f746573746e65742f67656e657369732d70726f6f662f6d6f636b',
+  // hand testnet mainnet's payload. The UTF-8 bytes of
+  // `dagsocial/testnet/genesis-proof/<major>.<minor>`, the two numbers the
+  // root `package.json` version opens with — so a reset moves the minor and
+  // the payload moves with it. `network.test.ts` holds the two together.
+  // TYPES_INTERFACE → Network profiles → "Testnet's names its release line"
+  // ARCHITECTURE → Deploy gate → "A reset mints a new genesis proof payload"
+  // hex("dagsocial/testnet/genesis-proof/0.3")
+  genesisProofPayload: '646167736f6369616c2f746573746e65742f67656e657369732d70726f6f662f302e33',
   // Overridden for the same reason as the payload above — the spread would hand
   // testnet mainnet's root. Fourteen leaves, height byte `04`: `0x01` box ×7 (the
   // genesis proof, the emission box, the karma pool box, the backer pool box, one
@@ -308,7 +320,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // backer stake box carry no index entry. What separates this root from
   // mainnet's: the proof payload, the faucet identity (mainnet names none) and
   // the backer table (mainnet's is empty; this one seeds a single row).
-  genesisStateRoot: '11fd9ba41b4e69f0731ae99308568aeec9500c6c7b095ae8abdc774d4cf3591204',
+  genesisStateRoot: 'c0da272f8e01ef1ab37d46719b6a897d1ab7af2d519dc00309ed6382ce7e22de04',
   // TYPES_INTERFACE → "genesisId pins block 1, and is empty until a network
   // has one" — testnet has none pinned.
   genesisId: '',
@@ -388,7 +400,9 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
 
   genesisCommitteeKeys: Object.freeze([] as string[]),
   genesisKarmaPerMember: GENESIS_KARMA_PER_MEMBER,
-  // hex("dagsocial/devnet/genesis-proof/mock") — mock, see mainnet above
+  // hex("dagsocial/devnet/genesis-proof/mock"): a devnet chain is a debugging
+  // run and nothing rests on its content.
+  // TYPES_INTERFACE → Network profiles → "Devnet's is one value for every run"
   genesisProofPayload: '646167736f6369616c2f6465766e65742f67656e657369732d70726f6f662f6d6f636b',
   // Fifteen leaves, height byte `04`: as testnet, with `0x01` box ×8 — two
   // backer stake boxes rather than one, neither carrying an index entry. Four
@@ -398,7 +412,7 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // the two profiles name DIFFERENT `faucetPublicKey`s and therefore seed
   // differently-owned boxes, and the backer table — two rows here, one on
   // testnet — which seeds a different stake set.
-  genesisStateRoot: '3257b1616af322ece38eceebf36d20899b13455b0dd95a2491cc1e3480257b3a04',
+  genesisStateRoot: '048097f646b2e887e5456dd074d3a18ad2049b0f0a4d3758cbbc27eaf1219c6a04',
   genesisId: '',
 
   backerSupply: DEVNET_BACKERS.supply,

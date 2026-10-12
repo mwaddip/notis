@@ -11,6 +11,8 @@ import {
   encodeTx,
   encodeHeader,
   encodeUtxoTxTree,
+  hexToBytes,
+  profileFor,
   u32BE,
   PROTOCOL_VERSION,
   LIKE_KARMA_COST,
@@ -917,6 +919,20 @@ export function blockBudgetSeam(): { set(budget: number): void } {
 }
 
 /**
+ * The genesis proof payload every direct seeder call in this test tree feeds
+ * `mintTxIdFor`
+ * (NODE_INTERFACE → "Every mint id opens with the chain's genesis proof").
+ * One shared value, so fixtures hand `ensureEmissionBox`,
+ * `ensureKarmaPoolBox` and their siblings the same bytes a real genesis
+ * seed would — the fixture's boxes stay byte-identical to the devnet
+ * genesis's, their mint ids included. Read off `profileFor('devnet')` rather
+ * than off the module-level `config`, so a case's `vi.doMock('config')`
+ * cannot drift it.
+ */
+export const TEST_GENESIS_PROOF_PAYLOAD: Uint8Array =
+  hexToBytes(profileFor('devnet').genesisProofPayload);
+
+/**
  * Put this network's emission box in the store, if it is not there already.
  *
  * ⛔ **A chain below the emission terminus cannot produce a block without one.**
@@ -938,7 +954,7 @@ export function blockBudgetSeam(): { set(budget: number): void } {
 export async function seedEmissionBox(): Promise<void> {
   const { ensureEmissionBox } = await import('../src/store/system.js');
   const { emissionTotal } = await import('../src/services/block-creator.js');
-  ensureEmissionBox(emissionTotal(), 0);
+  ensureEmissionBox(TEST_GENESIS_PROOF_PAYLOAD, emissionTotal(), 0);
 }
 
 /**
@@ -970,7 +986,7 @@ export async function seedKarmaPoolBox(): Promise<void> {
   // the conservation axiom seeds its own pool from the summed circulating total,
   // which is the only way that constant is the real one
   // (`conservation-axiom.test.ts`).
-  ensureKarmaPoolBox(KARMA_SUPPLY_TOTAL / 2n, 0);
+  ensureKarmaPoolBox(TEST_GENESIS_PROOF_PAYLOAD, KARMA_SUPPLY_TOTAL / 2n, 0);
 }
 
 /**

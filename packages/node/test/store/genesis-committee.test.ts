@@ -8,6 +8,7 @@ import {
   genesisContext,
   mintTxIdFor,
 } from '../../src/mint-provenance.js';
+import { TEST_GENESIS_PROOF_PAYLOAD } from '../helpers.js';
 
 /**
  * Genesis committee seeding, and the karma supply pool it draws from.
@@ -52,7 +53,7 @@ describe('genesis committee seeding', () => {
     const s = await importFresh();
     s.initDb(':memory:');
 
-    const granted = s.system.seedGenesisCommittee([MEMBER_A, MEMBER_B], GRANT, 0);
+    const granted = s.system.seedGenesisCommittee(TEST_GENESIS_PROOF_PAYLOAD, [MEMBER_A, MEMBER_B], GRANT, 0);
 
     expect(granted).toBe(2n * GRANT);
 
@@ -76,14 +77,14 @@ describe('genesis committee seeding', () => {
     const s = await importFresh();
     s.initDb(':memory:');
 
-    s.system.seedGenesisCommittee([MEMBER_A, MEMBER_B], GRANT, 0);
+    s.system.seedGenesisCommittee(TEST_GENESIS_PROOF_PAYLOAD, [MEMBER_A, MEMBER_B], GRANT, 0);
 
     // Height 0 is clamped to 1 — a synthetic mint txId commits to a height, and
     // no block ever settles at 0.
     expect(s.utxo.getKarmaBox(bytesOf(MEMBER_A))!.txId)
-      .toBe(mintTxIdFor(genesisCommitteeContext(bytesOf(MEMBER_A)), 1));
+      .toBe(mintTxIdFor(TEST_GENESIS_PROOF_PAYLOAD, genesisCommitteeContext(bytesOf(MEMBER_A)), 1));
     expect(s.utxo.getKarmaBox(bytesOf(MEMBER_B))!.txId)
-      .toBe(mintTxIdFor(genesisCommitteeContext(bytesOf(MEMBER_B)), 1));
+      .toBe(mintTxIdFor(TEST_GENESIS_PROOF_PAYLOAD, genesisCommitteeContext(bytesOf(MEMBER_B)), 1));
   });
 
   it('the colliding implementation is a real shape — one selector, one txId', () => {
@@ -92,12 +93,12 @@ describe('genesis committee seeding', () => {
     // txId for every member, at any height. Nothing in the profiles reaches it,
     // so without this the collision is only ever described in prose.
     const viaSelector = [MEMBER_A, MEMBER_B, MEMBER_C].map(
-      () => mintTxIdFor(genesisContext(GENESIS_KARMA_POOL), 1),
+      () => mintTxIdFor(TEST_GENESIS_PROOF_PAYLOAD, genesisContext(GENESIS_KARMA_POOL), 1),
     );
     expect(new Set(viaSelector).size).toBe(1);
 
     const viaMember = [MEMBER_A, MEMBER_B, MEMBER_C].map((k) =>
-      mintTxIdFor(genesisCommitteeContext(bytesOf(k)), 1),
+      mintTxIdFor(TEST_GENESIS_PROOF_PAYLOAD, genesisCommitteeContext(bytesOf(k)), 1),
     );
     expect(new Set(viaMember).size).toBe(3);
   });
@@ -106,7 +107,7 @@ describe('genesis committee seeding', () => {
     const s = await importFresh();
     s.initDb(':memory:');
 
-    const granted = s.system.seedGenesisCommittee([MEMBER_A, MEMBER_B, MEMBER_C], GRANT, 0);
+    const granted = s.system.seedGenesisCommittee(TEST_GENESIS_PROOF_PAYLOAD, [MEMBER_A, MEMBER_B, MEMBER_C], GRANT, 0);
     expect(granted).toBe(3n * GRANT);
 
     const ids = [MEMBER_A, MEMBER_B, MEMBER_C].map(
@@ -119,7 +120,7 @@ describe('genesis committee seeding', () => {
     const s = await importFresh();
     s.initDb(':memory:');
 
-    s.system.seedGenesisCommittee([MEMBER_A, MEMBER_B], GRANT, 500);
+    s.system.seedGenesisCommittee(TEST_GENESIS_PROOF_PAYLOAD, [MEMBER_A, MEMBER_B], GRANT, 500);
 
     for (const member of [MEMBER_A, MEMBER_B]) {
       expect(s.records.getIdentityRecord(bytesOf(member)), member).toEqual({
@@ -140,7 +141,7 @@ describe('genesis committee seeding', () => {
     const s = await importFresh();
     s.initDb(':memory:');
 
-    expect(s.system.seedGenesisCommittee([], GRANT, 0)).toBe(0n);
+    expect(s.system.seedGenesisCommittee(TEST_GENESIS_PROOF_PAYLOAD, [], GRANT, 0)).toBe(0n);
     expect(s.utxo.getUnspentBoxes()).toHaveLength(0);
   });
 
@@ -148,7 +149,7 @@ describe('genesis committee seeding', () => {
     const s = await importFresh();
     s.initDb(':memory:');
 
-    expect(() => s.system.seedGenesisCommittee([MEMBER_A, 'aabb'], GRANT, 0))
+    expect(() => s.system.seedGenesisCommittee(TEST_GENESIS_PROOF_PAYLOAD, [MEMBER_A, 'aabb'], GRANT, 0))
       .toThrow(/is 2 bytes, not 32/);
   });
 
@@ -156,8 +157,8 @@ describe('genesis committee seeding', () => {
     const s = await importFresh();
     s.initDb(':memory:');
 
-    expect(s.system.seedGenesisCommittee([MEMBER_A, MEMBER_B], GRANT, 0)).toBe(2n * GRANT);
-    expect(s.system.seedGenesisCommittee([MEMBER_A, MEMBER_B], GRANT, 0)).toBe(0n);
+    expect(s.system.seedGenesisCommittee(TEST_GENESIS_PROOF_PAYLOAD, [MEMBER_A, MEMBER_B], GRANT, 0)).toBe(2n * GRANT);
+    expect(s.system.seedGenesisCommittee(TEST_GENESIS_PROOF_PAYLOAD, [MEMBER_A, MEMBER_B], GRANT, 0)).toBe(0n);
     expect(s.utxo.getUnspentBoxes()).toHaveLength(2);
   });
 });
@@ -170,8 +171,8 @@ describe('the karma supply pool draws the grants out of the total', () => {
     const s = await importFresh();
     s.initDb(':memory:');
 
-    const granted = s.system.seedGenesisCommittee([MEMBER_A, MEMBER_B], GRANT, 0);
-    const pool = s.system.ensureKarmaPoolBox(granted, 0);
+    const granted = s.system.seedGenesisCommittee(TEST_GENESIS_PROOF_PAYLOAD, [MEMBER_A, MEMBER_B], GRANT, 0);
+    const pool = s.system.ensureKarmaPoolBox(TEST_GENESIS_PROOF_PAYLOAD, granted, 0);
 
     // ⛔ **The arithmetic the real profiles cannot exercise.** All three ship an
     // empty committee, so `granted` is 0 and `TOTAL - 0` equals `TOTAL` — the
@@ -183,8 +184,8 @@ describe('the karma supply pool draws the grants out of the total', () => {
     const s = await importFresh();
     s.initDb(':memory:');
 
-    const granted = s.system.seedGenesisCommittee([MEMBER_A, MEMBER_B, MEMBER_C], GRANT, 0);
-    const pool = s.system.ensureKarmaPoolBox(granted, 0);
+    const granted = s.system.seedGenesisCommittee(TEST_GENESIS_PROOF_PAYLOAD, [MEMBER_A, MEMBER_B, MEMBER_C], GRANT, 0);
+    const pool = s.system.ensureKarmaPoolBox(TEST_GENESIS_PROOF_PAYLOAD, granted, 0);
 
     // Summed from the store rather than from `granted`, so this is not the
     // seeder's own arithmetic restated: what must hold is that the boxes the
@@ -204,7 +205,7 @@ describe('the karma supply pool draws the grants out of the total', () => {
     // exists: burns must always have somewhere to return, so the pool never
     // terminates. `ensureEmissionBox`'s rule is the opposite and does not apply
     // here (TYPES_INTERFACE → KarmaPoolBox).
-    const pool = s.system.ensureKarmaPoolBox(s.system.KARMA_SUPPLY_TOTAL, 0);
+    const pool = s.system.ensureKarmaPoolBox(TEST_GENESIS_PROOF_PAYLOAD, s.system.KARMA_SUPPLY_TOTAL, 0);
 
     expect(pool.value).toBe(0n);
     expect(s.utxo.getKarmaPoolBox()).not.toBeNull();
@@ -215,7 +216,7 @@ describe('the karma supply pool draws the grants out of the total', () => {
     const s = await importFresh();
     s.initDb(':memory:');
 
-    expect(() => s.system.ensureKarmaPoolBox(s.system.KARMA_SUPPLY_TOTAL + 1n, 0))
+    expect(() => s.system.ensureKarmaPoolBox(TEST_GENESIS_PROOF_PAYLOAD, s.system.KARMA_SUPPLY_TOTAL + 1n, 0))
       .toThrow(/more than the .* a network can hold/);
   });
 
@@ -223,7 +224,7 @@ describe('the karma supply pool draws the grants out of the total', () => {
     const s = await importFresh();
     s.initDb(':memory:');
 
-    s.system.ensureKarmaPoolBox(0n, 0);
+    s.system.ensureKarmaPoolBox(TEST_GENESIS_PROOF_PAYLOAD, 0n, 0);
 
     // ⛔ Giving the pool the `karma` type would put the maximum supply inside
     // every balance query (TYPES_INTERFACE → KarmaPoolBox). It has no owner, so

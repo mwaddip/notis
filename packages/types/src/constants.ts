@@ -187,8 +187,9 @@ export const INVITE_BOND_VEST_PER_LIKES = 3;
 
 // Genesis
 export const GENESIS_KARMA_PER_MEMBER = 1000n; // → profile: genesisKarmaPerMember
-// TYPES_INTERFACE → Genesis: universal, not profile fields — the boxes are
-// byte-identical everywhere they are seeded (NODE_INTERFACE → Faucet).
+// TYPES_INTERFACE → Genesis: the two amounts are universal, not profile fields —
+// the same everywhere the boxes are seeded at all; whose they are, and whether
+// they are seeded, is `faucetPublicKey` (NODE_INTERFACE → Faucet).
 export const SYSTEM_KARMA_INITIAL = 1_000_000n;
 export const FAUCET_CREDITS_INITIAL = 100_000n * 10n ** 8n;
 // Credit emission (Ergo-style linear decay) — amounts in base units of 10^-8 credit

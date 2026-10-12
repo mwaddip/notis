@@ -2458,12 +2458,19 @@ creates boxes with no transaction behind them**, and only it derives a synthetic
 - **genesis seeding** (`store/system.ts`) — the store is seeded before any block exists.
 
 ```
-mintTxId = blake2b512( MINT_ID_DOMAIN ‖ vlqU(height) ‖ enum8(reason) ‖ lp(subject) )[0:32]
-boxId    = blake2b512( BOX_ID_DOMAIN ‖ canonicalBoxBytes(candidate) ‖ utf8(mintTxId) ‖ u32BE(index) )[0:32]
+mintTxId = blake2b512( MINT_ID_DOMAIN ‖ lp(genesisProof) ‖ vlqU(height) ‖ enum8(reason) ‖ lp(subject) )[0:32]
+boxId    = blake2b512( BOX_ID_DOMAIN ‖ boxRecordBytes(candidate, mintTxId, index) )[0:32]
 ```
 
 Box derivation is then identical to the user-transaction path — one derivation,
 not two.
+
+**Every mint id opens with the chain's genesis proof.** `genesisProof` is the profile's `genesisProofPayload`,
+decoded — the bytes the proof box holds. `seedGenesisState` reads it off the profile once and hands it to every
+mint site, and `mintTxIdFor` is the one place it reaches the derivation (`TYPES_INTERFACE → Mint identity`).
+**Two chains share a genesis box only if they share a payload**, so a transaction signed on one names inputs
+no other holds: every user transaction spends a box (`validateTx` step 1), and every box descends from a
+genesis mint.
 
 ### The subject encoding rule
 
@@ -2507,7 +2514,8 @@ renumbered (TYPES_INTERFACE → Primitives).
 **Why `(height, reason, subject)` cannot repeat, per row.** Genesis seeding runs once, on an empty store; each
 `genesis` selector names exactly one box, a committee key appears at most once in
 `genesisCommitteeKeys`, and a backer key at most once in `backerTable` — the seeder refuses a duplicate before
-the root is compared.
+the root is compared. `genesisProof` is one value for the whole seeding, so it separates chains and no two
+mints of one.
 
 ⛔ **One `genesis` selector names ONE box.** N boxes under one `k` would derive one synthetic
 txId, one `computeBoxId` preimage, and the second insert violates `UNIQUE(tx_id, output_index)`
@@ -2574,8 +2582,8 @@ share one code path.
 
 A box gets provenance **where it is stored**, not where it is first constructed.
 
-- **Mint sites** derive a synthetic txId from their `MintContext` and use
-  `index` 0.
+- **Mint sites** derive a synthetic txId from their `MintContext` and the chain's genesis proof,
+  and use `index` 0.
 - **The apply path** materialises transaction outputs through the single
   `materializeOutput(box, txId, index)` rule — both the mempool path
   (`validateTx`) and the block-embedded path go through it, so there is one
@@ -4760,8 +4768,7 @@ rest on it**.
 **The genesis mint height is `GENESIS_HEIGHT`.** Seeding requires a store at height 0, so there is
 no other height a genesis box could commit to; the seeders raise it to 1 for the mint txId, because
 0 is not a height a block ever settles at. That clamp is one function (`store/system.ts` →
-`genesisMintHeight`) and is shared with the non-genesis callers of `ensureSystemKarmaBox` and
-`ensureFaucetCreditBox`, which pass real heights.
+`genesisMintHeight`), and each of the eight mint sites takes its height through it.
 
 **A refused genesis exits in three steps**: the message, then `closeDb()`, then a non-zero exit.
 It is the only startup gate in `index.ts` with this shape, and closing the handle before exiting
