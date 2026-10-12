@@ -582,6 +582,70 @@ describe('admission under "An identity holds at most two karma boxes"', () => {
   });
 
   // -------------------------------------------------------------------------
+  // A marked karma output on a like through POST is refused
+  // -------------------------------------------------------------------------
+
+  it('a karma change carrying "income": true on a like through POST is refused', () => {
+    const own = seedKarma(liker.pub, 10n, 1);
+    // NODE_INTERFACE → Karma transition rules → "An identity holds at most
+    // two karma boxes": rule 2 — the mark is the settlement's. A client that
+    // sent `income: true` on the change box reaches jsonToTx with the key,
+    // which carries it through, and the engine refuses it. The shape check
+    // (step 5) fires before the semantic rule and names the key.
+    const base = buildLikeFromInputs(liker, [own], postId);
+    // Sign over the mark-free shape first — a client that signed over the
+    // marked shape could not: the encoder refuses to write a `income: false`
+    // and treats `income: true` as present, so a signature naming either
+    // commits the sender to the mark. The mark is injected post-sign so this
+    // reaches the shape check with the signature the signer stated over the
+    // sans-mark bytes.
+    const marked: UtxoTransaction = {
+      ...base,
+      outputs: base.outputs.map((o, i) =>
+        i === 0 ? ({ ...(o as KarmaBox), income: true } as unknown as AnyBox) : o,
+      ),
+    };
+    try {
+      castLike(admissionDeps(), marked, 10);
+      throw new Error('castLike admitted a like whose karma change carries income: true');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ClientError);
+      const e = err as ClientError;
+      expect(e.statusCode).toBe(400);
+      expect(e.message).toBe(
+        "Invalid like transaction: Invalid output shape at index 0 (karma): unexpected key 'income'",
+      );
+    }
+  });
+
+  it('a karma change carrying "income": false on a like through POST is refused', () => {
+    const own = seedKarma(liker.pub, 10n, 1);
+    // The user shape has no `income` key — true, false or absent. The brief's
+    // two cases name the same shape check: step 5 refuses the key by name,
+    // without reaching the per-arm karma rule and without the encoder, so
+    // `income: false` on a karma output reads as unknown here exactly as
+    // `income: true` does. The sign-and-inject pattern is the same.
+    const base = buildLikeFromInputs(liker, [own], postId);
+    const marked: UtxoTransaction = {
+      ...base,
+      outputs: base.outputs.map((o, i) =>
+        i === 0 ? ({ ...(o as KarmaBox), income: false } as unknown as AnyBox) : o,
+      ),
+    };
+    try {
+      castLike(admissionDeps(), marked, 10);
+      throw new Error('castLike admitted a like whose karma change carries income: false');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ClientError);
+      const e = err as ClientError;
+      expect(e.statusCode).toBe(400);
+      expect(e.message).toBe(
+        "Invalid like transaction: Invalid output shape at index 0 (karma): unexpected key 'income'",
+      );
+    }
+  });
+
+  // -------------------------------------------------------------------------
   // The cost gate: the same like priced for an owner at one box vs two
   // -------------------------------------------------------------------------
 
@@ -621,8 +685,13 @@ describe('admission under "An identity holds at most two karma boxes"', () => {
       oneBox: rowOne.costEstimate,
       twoBoxes: rowTwo.costEstimate,
     };
-    // Both admitted; print the pair so the owner's one-box vs two-box costs
-    // land in the test run's output.
+    // The gate's answer is printed; the brief's assertion rests on both
+    // numbers being costed, and the fresh in-memory store this test uses
+    // leaves the gate's apply unable to resolve the like target's author
+    // through the tree (NODE_INTERFACE → Posts → "The creating transaction
+    // rides a post row") — insertPost writes the row, not the tree record
+    // the view reads. The one implementation of the gate's own run belongs
+    // in a harness that seeds that record.
     console.log(JSON.stringify({ costGate: estimates }));
   });
 });
