@@ -620,11 +620,11 @@ describe('admission under "An identity holds at most two karma boxes"', () => {
 
   it('a karma change carrying "income": false on a like through POST is refused', () => {
     const own = seedKarma(liker.pub, 10n, 1);
-    // The user shape has no `income` key — true, false or absent. The brief's
-    // two cases name the same shape check: step 5 refuses the key by name,
-    // without reaching the per-arm karma rule and without the encoder, so
-    // `income: false` on a karma output reads as unknown here exactly as
-    // `income: true` does. The sign-and-inject pattern is the same.
+    // A user transaction's karma output admits no `income` key, whatever its
+    // value. Step 5 refuses the key by name — without reaching the per-arm
+    // karma rule and without the encoder — so `income: false` reads as unknown
+    // here exactly as `income: true` does. The sign-and-inject pattern is the
+    // same.
     const base = buildLikeFromInputs(liker, [own], postId);
     const marked: UtxoTransaction = {
       ...base,
@@ -685,13 +685,13 @@ describe('admission under "An identity holds at most two karma boxes"', () => {
       oneBox: rowOne.costEstimate,
       twoBoxes: rowTwo.costEstimate,
     };
-    // The gate's answer is printed; the brief's assertion rests on both
-    // numbers being costed, and the fresh in-memory store this test uses
-    // leaves the gate's apply unable to resolve the like target's author
-    // through the tree (NODE_INTERFACE → Posts → "The creating transaction
-    // rides a post row") — insertPost writes the row, not the tree record
-    // the view reads. The one implementation of the gate's own run belongs
-    // in a harness that seeds that record.
+    // The gate's answer is printed; a case comparing the two numbers needs
+    // both to be costed, and the fresh in-memory store this test uses leaves
+    // the gate's apply unable to resolve the like target's author through
+    // the tree (NODE_INTERFACE → Posts → "The creating transaction rides a
+    // post row") — insertPost writes the row, not the tree record the view
+    // reads. The one implementation of the gate's own run belongs in a
+    // harness that seeds that record.
     console.log(JSON.stringify({ costGate: estimates }));
   });
 });

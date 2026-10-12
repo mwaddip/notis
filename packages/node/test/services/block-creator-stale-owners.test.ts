@@ -259,12 +259,13 @@ describe('the fill counts a squaring for an entry whose owner owes decay', () =>
     // ceiling and matches to within a few bytes.
     expect(perEntrySquaring).toBeGreaterThan(60);
     expect(perEntrySquaring).toBeLessThan(decayLegMaxBytes(PROTOCOL_VERSION) + 1);
-    // The brief's claim is that the covering sum under-covers an overshoot
-    // made of unpriced bytes. With `gap` bytes added by squarings and only
-    // `perLikeMarginal` bytes per entry in the covering sum, dropping the
-    // whole selection recovers at most `N × perLikeMarginal` from the sum —
-    // which falls short of the gap if `gap > N × perLikeMarginal`. Assert the
-    // under-covering, since this is the failure mode the rule exists to close.
+    // A covering sum that reads only `settlementMarginalBytes` under-covers an
+    // overshoot made of unpriced bytes. With `gap` bytes added by squarings
+    // and only `perLikeMarginal` bytes per entry in the covering sum, dropping
+    // the whole selection recovers at most `N × perLikeMarginal` from the sum
+    // — which falls short of the gap if `gap > N × perLikeMarginal`. Assert
+    // the under-covering, since this is the failure mode the rule exists to
+    // close.
     expect(gap).toBeGreaterThan(sumMarginal);
   });
 });
