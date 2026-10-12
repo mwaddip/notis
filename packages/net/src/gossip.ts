@@ -275,9 +275,9 @@ export function subscribeTopics(
 
   // -------------------------------------------------------------------------
   // Event listener — delivers every message the router hands on
-  // (NET_INTERFACE → Inbound Processing → "A gossip message that passes Stage 1
-  // is delivered, whichever peer carried it"). Topic validators (above) are
-  // the only gate before this point.
+  // (NET_INTERFACE → Inbound Processing →
+  // "A gossip message that passes Stage 1 is delivered, whichever peer carried it").
+  // Topic validators (above) are the only gate before this point.
   // -------------------------------------------------------------------------
 
   gs.addEventListener('gossipsub:message', (evt) => {
@@ -287,8 +287,8 @@ export function subscribeTopics(
     const { topic } = detail.msg;
     const raw = new Uint8Array(detail.msg.data);
 
-    // The peer that sent this message to *us* — the carrier, hand on as the
-    // relay source (NET_INTERFACE → Pull Requests): `propagationSource` is by
+    // The peer that sent this message to *us* — the carrier — is handed on as
+    // the relay source (NET_INTERFACE → Pull Requests): `propagationSource` is by
     // construction the peer we received it from, so it is the one that provably
     // holds the chain a competing block belongs to.
     //
@@ -297,8 +297,8 @@ export function subscribeTopics(
     // method here panics on one. The empty string is not a peer id, so a
     // consumer testing membership in its connected set falls back exactly as it
     // does for a source that has since disconnected
-    // (NET_INTERFACE → Inbound Processing → "fromPeerId is not guaranteed to be
-    // a peer id").
+    // (NET_INTERFACE → Inbound Processing →
+    // "`fromPeerId` is not guaranteed to be a peer id").
     const relayPeerId =
       (detail as { propagationSource?: { toString(): string } }).propagationSource?.toString() ?? '';
 

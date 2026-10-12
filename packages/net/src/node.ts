@@ -633,25 +633,27 @@ export class NetNode {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       streamMuxers: [yamux() as any],
       services: {
-        // NET_INTERFACE → libp2p Stack — "Gossipsub 1.1 — unsigned messages
-        // named by their bytes, the node's two topics alone".
+        // NET_INTERFACE → libp2p Stack.
         pubsub: gossipsub({
-          // NET_INTERFACE → Gossip Topics → "A message is its topic and its
-          // data": the router refuses a signed envelope and emits none.
+          // NET_INTERFACE → Gossip Topics →
+          // "A message is its topic and its data"
+          // The router refuses a signed envelope and emits none.
           globalSignaturePolicy: 'StrictNoSign',
           // NET_INTERFACE → Gossip Topics → "A message is named by its bytes".
           msgIdFn: (msg) => gossipMessageId(msg.topic, msg.data),
-          // NET_INTERFACE → Gossip Topics → "A message is heard once in a seen
-          // window".
+          // NET_INTERFACE → Gossip Topics →
+          // "A message is heard once in a seen window"
           seenTTL: GOSSIP_SEEN_WINDOW_MS,
-          // NET_INTERFACE → Gossip → "A broadcast that sends nothing still
-          // resolves": a publish of bytes this node has seen inside the window
-          // resolves without sending.
+          // NET_INTERFACE → Gossip →
+          // "A broadcast that sends nothing still resolves"
+          // A publish of bytes this node has seen inside the window resolves
+          // without sending.
           ignoreDuplicatePublishError: true,
-          // NET_INTERFACE → Gossip Topics → "A topic is named for its
-          // network": the two topic strings are the whole of what the router
-          // hears; a subscription or a message on any other topic is passed
-          // over before the router names, caches or forwards anything.
+          // NET_INTERFACE → Gossip Topics →
+          // "A topic is named for its network"
+          // The two topic strings are the whole of what the router hears; a
+          // subscription or a message on any other topic is passed over before
+          // the router names, caches or forwards anything.
           allowedTopics: [topics.orderingBlock, topics.tx],
           allowPublishToZeroTopicPeers: true,
         }),

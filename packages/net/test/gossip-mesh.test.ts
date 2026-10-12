@@ -6,7 +6,6 @@ import {
   encodeOrderingBlock,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   MAGIC_DEVNET,
-  MAGIC_TESTNET,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
 import type {
@@ -41,9 +40,7 @@ import type { NetConfig, NetValidators } from '../src/types.js';
 import {
   GOSSIP_SEEN_WINDOW_MS,
   gossipMessageId,
-  gossipTopics,
 } from '../src/gossip.js';
-import type { GossipTopics } from '../src/gossip.js';
 import { makeConfig as makeBaseConfig } from './helpers.js';
 
 // NET_INTERFACE → Gossip Topics
@@ -327,7 +324,7 @@ describe('Gossip on a line A — B — C', () => {
   afterEach(async () => {
     while (open.length > 0) {
       const n = open.pop();
-      await n?.stop().catch(() => {});
+      await n?.stop();
     }
   });
   const track = (nodes: NetNode[]): void => {
@@ -571,10 +568,10 @@ async function startBAndStranger(): Promise<{
     },
     { timeout: 10_000, interval: 250 },
   );
-  // The pair shares no topic (NET_INTERFACE → Gossip Topics → "A topic is
-  // named for its network"), so there is nothing to poll on. The fixed quiet
-  // waits out two gossipsub heartbeats — any subscription record or mesh
-  // graft that would arrive, does.
+  // The pair shares no topic (NET_INTERFACE → Gossip Topics →
+  // "A topic is named for its network"), so there is nothing to poll on. The
+  // fixed quiet waits out two gossipsub heartbeats — any subscription record
+  // or mesh graft that would arrive, does.
   await new Promise((r) => setTimeout(r, SETTLE_MS));
   return { nodeB, nodeX };
 }
@@ -584,7 +581,7 @@ describe('A node of another network is no peer of ours', () => {
   afterEach(async () => {
     while (open.length > 0) {
       const n = open.pop();
-      await n?.stop().catch(() => {});
+      await n?.stop();
     }
   });
   const track = (nodes: NetNode[]): void => {
@@ -703,7 +700,7 @@ describe('A carrier that is not Active', () => {
   afterEach(async () => {
     while (open.length > 0) {
       const n = open.pop();
-      await n?.stop().catch(() => {});
+      await n?.stop();
     }
   });
   const track = (nodes: NetNode[]): void => {
@@ -783,7 +780,7 @@ describe('A topic the node does not hear, a message\'s envelope, a message\'s na
   afterEach(async () => {
     while (open.length > 0) {
       const n = open.pop();
-      await n?.stop().catch(() => {});
+      await n?.stop();
     }
   });
   const track = (nodes: NetNode[]): void => {
@@ -920,9 +917,8 @@ describe('A topic the node does not hear, a message\'s envelope, a message\'s na
 //
 // Each case builds a libp2p node of this package's own dependencies, with a
 // gossipsub router of the case's own options, dials B, and publishes without
-// running the dagsocial handshake. B's `allowedTopics` carry the pair that
-// `gossipTopics(B.magic)` builds, and the bare node subscribes to the same
-// pair so the mesh grafts.
+// running the dagsocial handshake. The bare node subscribes to the pair B's
+// router is subscribed to, so the mesh grafts.
 //
 // NET_INTERFACE → Gossip Topics → "A message is its topic and its data"
 // NET_INTERFACE → Gossip Topics → "A message is named by its bytes"
@@ -937,7 +933,7 @@ interface BareOptions {
 
 async function startBarePublisher(
   bAddr: string,
-  bareTopics: GossipTopics,
+  bareTopics: { orderingBlock: string; tx: string },
   options: BareOptions = {},
 ): Promise<Libp2p> {
   const bare = await createLibp2p({
@@ -990,11 +986,7 @@ async function waitForBareMeshPeer(
 
 async function stopBare(bare: Libp2p | undefined): Promise<void> {
   if (!bare) return;
-  try {
-    await bare.stop();
-  } catch {
-    // Discard close-while-closed and other teardown races.
-  }
+  await bare.stop();
 }
 
 describe('A bare publisher dials B', () => {
@@ -1004,28 +996,29 @@ describe('A bare publisher dials B', () => {
     while (openBare.length > 0) await stopBare(openBare.pop());
     while (openNodes.length > 0) {
       const n = openNodes.pop();
-      await n?.stop().catch(() => {});
+      await n?.stop();
     }
   });
 
   async function startB(
     overrides: Partial<NetConfig> = {},
-  ): Promise<{ nodeB: NetNode; bAddr: string; topicsB: GossipTopics }> {
+  ): Promise<{ nodeB: NetNode; bAddr: string }> {
     const nodeB = new NetNode(makeConfig(overrides), validators);
     await nodeB.start();
     openNodes.push(nodeB);
     const bAddr = nodeB.libp2pNode?.getMultiaddrs()[0]?.toString();
     if (!bAddr) throw new Error('B has no listen address');
-    return { nodeB, bAddr, topicsB: gossipTopics(MAGIC_TESTNET) };
+    return { nodeB, bAddr };
   }
 
   it(
     'the receiver names the message: five publishes with changing own ids deliver once',
     async () => {
-      // B.1 — the publisher's own id function returns a new value on every
+      // The publisher's own id function returns a new value on every
       // call, so its seen cache never dedupes; B names the message by our rule
       // and dedupes.
-      const { nodeB, bAddr, topicsB } = await startB();
+      const { nodeB, bAddr } = await startB();
+      const topicsB = topicsOf(nodeB);
 
       let counter = 0;
       const bare = await startBarePublisher(bAddr, topicsB, {
@@ -1041,8 +1034,7 @@ describe('A bare publisher dials B', () => {
       await waitForBareMeshPeer(bare, nodeB, topicsB.orderingBlock);
 
       const bValidator = newCounter();
-      const topicsBfromNode = topicsOf(nodeB);
-      wrapValidator(nodeB, topicsBfromNode.orderingBlock, bValidator);
+      wrapValidator(nodeB, topicsB.orderingBlock, bValidator);
 
       const bDeliveries: OrderingBlock[] = [];
       nodeB.onOrderingBlock((b) => {
@@ -1072,11 +1064,12 @@ describe('A bare publisher dials B', () => {
   it(
     'the same bytes on the two topics are two messages',
     async () => {
-      // B.2 — a bare publisher sends a block's bytes on B's tx topic: B's tx
+      // A bare publisher sends a block's bytes on B's tx topic: B's tx
       // validator runs and refuses them. Then A, a NetNode Active at B,
       // broadcasts that block on the ordering-block topic: B's block validator
       // runs and the handler is called once.
-      const { nodeB, bAddr, topicsB } = await startB();
+      const { nodeB, bAddr } = await startB();
+      const topicsB = topicsOf(nodeB);
 
       const bare = await startBarePublisher(bAddr, topicsB);
       openBare.push(bare);
@@ -1085,9 +1078,8 @@ describe('A bare publisher dials B', () => {
 
       const bTxValidator = newCounter();
       const bBlockValidator = newCounter();
-      const topicsBfromNode = topicsOf(nodeB);
-      wrapValidator(nodeB, topicsBfromNode.tx, bTxValidator);
-      wrapValidator(nodeB, topicsBfromNode.orderingBlock, bBlockValidator);
+      wrapValidator(nodeB, topicsB.tx, bTxValidator);
+      wrapValidator(nodeB, topicsB.orderingBlock, bBlockValidator);
 
       const bDeliveries: OrderingBlock[] = [];
       nodeB.onOrderingBlock((b) => {
@@ -1142,24 +1134,21 @@ describe('A bare publisher dials B', () => {
   it(
     'a signed message reaches no validator',
     async () => {
-      // B.3 — a bare publisher on the library's default signing options
+      // A bare publisher on the library's default signing options
       // publishes a block on B's block topic. B's StrictNoSign refuses the
       // signed envelope at the policy gate, so B's validator does not run.
       // The control: an unsigned publisher on the same mesh is heard.
-      const { nodeB, bAddr, topicsB } = await startB();
+      const { nodeB, bAddr } = await startB();
+      const topicsB = topicsOf(nodeB);
 
       const signedBare = await startBarePublisher(bAddr, topicsB, {
         globalSignaturePolicy: 'StrictSign',
       });
       openBare.push(signedBare);
-      // Under StrictSign, the publisher's own id uses (from, seqno) rather
-      // than our bytes-id, and that mismatch is what makes this case tell
-      // the two apart from the receiver side.
       await waitForBareMeshPeer(signedBare, nodeB, topicsB.orderingBlock);
 
       const bValidator = newCounter();
-      const topicsBfromNode = topicsOf(nodeB);
-      wrapValidator(nodeB, topicsBfromNode.orderingBlock, bValidator);
+      wrapValidator(nodeB, topicsB.orderingBlock, bValidator);
 
       const block = makeBlockAt(1, PROTOCOL_VERSION);
       const data = encodeOrderingBlock(block);
@@ -1193,25 +1182,25 @@ describe('A bare publisher dials B', () => {
   it(
     'a refusal stands for the window: two bare publishers send the same bytes, B\'s validator runs once',
     async () => {
-      // B.4 — the refusal taken here is a protocol-version mismatch
+      // The refusal taken here is a protocol-version mismatch
       // (NET_INTERFACE → Stage 1): the block declares version PROTOCOL_VERSION
       // but B's schedule at the header's height is PROTOCOL_VERSION + 1, so
       // the Reject is Transient (50 points, below B's 500-point threshold —
       // no ban, no stream close).
-      const { nodeB, bAddr, topicsB } = await startB({
+      const { nodeB, bAddr } = await startB({
         protocolVersionSchedule: [
           { version: PROTOCOL_VERSION, fromHeight: 0 },
           { version: PROTOCOL_VERSION + 1, fromHeight: 1 },
         ],
       });
+      const topicsB = topicsOf(nodeB);
 
       const bareOne = await startBarePublisher(bAddr, topicsB);
       openBare.push(bareOne);
       await waitForBareMeshPeer(bareOne, nodeB, topicsB.orderingBlock);
 
       const bValidator = newCounter();
-      const topicsBfromNode = topicsOf(nodeB);
-      wrapValidator(nodeB, topicsBfromNode.orderingBlock, bValidator);
+      wrapValidator(nodeB, topicsB.orderingBlock, bValidator);
 
       // Height 1 declares PROTOCOL_VERSION; B's era at height 1 is
       // PROTOCOL_VERSION + 1 — a mismatch, so Transient Reject.
@@ -1253,11 +1242,9 @@ describe('A bare publisher dials B', () => {
 // "A message is heard once in a seen window"
 //
 // A case that waits two minutes is not a case: the pin reads the router's own
-// record of its options. What it cannot see is whether the router honours that
-// number as a window — the field is checked once, by the library's constructor
-// in `node_modules/.../gossipsub/dist/src/index.js` (`this.opts = opts`), and
-// a future gossipsub that renamed the field or stopped reading it would pass
-// this pin and break the rule.
+// record of its options. It does not show that the router keeps an id for that
+// long, and the library's default is the same number, so it does not show the
+// option is set either.
 // ---------------------------------------------------------------------------
 
 describe('The seen window carries the constant', () => {
@@ -1265,7 +1252,7 @@ describe('The seen window carries the constant', () => {
   afterEach(async () => {
     while (open.length > 0) {
       const n = open.pop();
-      await n?.stop().catch(() => {});
+      await n?.stop();
     }
   });
 

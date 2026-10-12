@@ -550,8 +550,7 @@ function makeDispatchHarness(handlers: {
 
   // `propagationSource` is the peer that relayed the message to us — the one
   // value handed on as the handler's `fromPeerId` (NET_INTERFACE → Inbound
-  // Processing). A separate field precisely because the gossip event names
-  // only the carrier, never a publisher.
+  // Processing). The gossip event names the carrier and no publisher.
   // `null` is how a caller asks for an event with no source at all — an explicit
   // `undefined` would take the default, which is the opposite of the request.
   const deliver = (
@@ -709,9 +708,9 @@ describe('gossip dispatch listener', () => {
 
   it('delivers although the carrier is not an Active peer', () => {
     // NET_INTERFACE → Inbound Processing →
-    // "A gossip message that passes Stage 1 is delivered, whichever peer
-    // carried it". The handler fires with the carrier's id, and the
-    // membership of the Active set has no bearing on delivery.
+    // "A gossip message that passes Stage 1 is delivered, whichever peer carried it"
+    // The handler fires with the carrier's id, and the membership of the
+    // Active set has no bearing on delivery.
     const seen: string[] = [];
     const { deliver, peerMgr } = makeDispatchHarness({
       onOrderingBlock: (_b, from) => seen.push(from),
@@ -1040,8 +1039,8 @@ describe('ordering-block topic validator — network floor and schedule', () => 
 });
 
 // ---------------------------------------------------------------------------
-// gossipTopics — NET_INTERFACE → Gossip Topics → "A topic is named for its
-// network"
+// gossipTopics — NET_INTERFACE → Gossip Topics →
+// "A topic is named for its network"
 //
 // The strings here are typed by hand from the contract: a case that built both
 // sides through `gossipTopics` would pass by its own definition.
@@ -1069,15 +1068,16 @@ describe('gossipTopics — the topic pair per network', () => {
   });
 
   it('GOSSIP_SEEN_WINDOW_MS is two minutes', () => {
-    // NET_INTERFACE → Gossip Topics → "A message is heard once in a seen
-    // window"; CONSTANTS → net.
+    // NET_INTERFACE → Gossip Topics →
+    // "A message is heard once in a seen window"
+    // CONSTANTS → net.
     expect(GOSSIP_SEEN_WINDOW_MS).toBe(120_000);
   });
 });
 
 // ---------------------------------------------------------------------------
-// gossipMessageId — NET_INTERFACE → Gossip Topics → "A message is named by
-// its bytes"
+// gossipMessageId — NET_INTERFACE → Gossip Topics →
+// "A message is named by its bytes"
 //
 // `hash32(lpUtf8(topic) ‖ data)`: the preimage is built by hand from the
 // topic's bytes and a one-byte VLQ length, as the mesh file's id case does.
