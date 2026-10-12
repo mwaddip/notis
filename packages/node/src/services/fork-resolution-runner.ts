@@ -154,10 +154,7 @@ async function runResolution(entry: PendingEntry): Promise<void> {
   const samePeerHasLater = !fatal && pendingByPeer.has(entry.peerId);
   const handBacks: PendingEntry[] = fatal ? [] : drainPending();
   if (fatal) {
-    // After a corrupt-state throw the runner holds nothing — pending blocks
-    // are abandoned alongside the one that ran, so the idle wait rests and
-    // the runner refuses no further dispatch beyond what the fail-stop
-    // boundary already covers.
+    // After the boundary is called the runner holds no pending block.
     pendingByPeer.clear();
     pendingOrder.length = 0;
   }
@@ -174,7 +171,18 @@ async function runResolution(entry: PendingEntry): Promise<void> {
     try {
       handleOrderingBlock(handBack.block, handBack.peerId, handBack.net);
     } catch (err) {
-      failStopIfCorruptChain(err);
+      // NODE_INTERFACE → "An unhandled rejection is logged, and the node keeps running":
+      // the runner owns each resolution's promise, the hand-back loop
+      // included. A corrupt-state throw reaches the fail-stop boundary; any
+      // other throw is logged with its stack and the remaining hand-backs
+      // still run, so one plain error cannot strand every pending block
+      // behind it.
+      if (err instanceof CorruptChainStateError) {
+        failStopIfCorruptChain(err);
+      } else {
+        const stack = err instanceof Error && err.stack ? err.stack : String(err);
+        console.error(`A fork-resolution hand-back ended with an unexpected error: ${stack}`);
+      }
     }
   }
 }
@@ -200,13 +208,7 @@ function drainPending(): PendingEntry[] {
  */
 export async function waitForForkResolutionIdle(): Promise<void> {
   while (running !== null) {
-    try {
-      await running.settled;
-    } catch {
-      // `runResolution` handles its own errors; a rejection here is a non-
-      // family rethrow out of `failStopIfCorruptChain` during the hand-back.
-      // The next iteration reads the state the throw left behind.
-    }
+    await running.settled;
   }
 }
 

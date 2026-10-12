@@ -1769,6 +1769,122 @@ describe('a resolution ending in a corrupt-state throw leaves the idle wait rest
   });
 });
 
+// ===========================================================================
+// NODE_INTERFACE → "An unhandled rejection is logged, and the node keeps
+// running".
+// The runner owns the hand-back loop's throws too: a corrupt-state throw
+// reaches the fail-stop boundary, any other throw is logged and the remaining
+// pending blocks are still handed back.
+// ===========================================================================
+describe('a hand-back that throws a plain error does not strand the pending blocks behind it', () => {
+  const ctx: Trackers = { caughtCorrupt: [] };
+  const armBox: { armed: boolean } = { armed: false };
+
+  beforeEach(() => {
+    ctx.caughtCorrupt = [];
+    armBox.armed = false;
+    vi.resetModules();
+    installTrackers(ctx);
+    // The throw is staged inside the real `handleOrderingBlock` by wrapping
+    // one of its direct imports — `extendsOurTip`, called by the handler and
+    // by nothing else in the tree (`services/handle-block.ts`). The wrapper
+    // throws on its next call when `armBox.armed` is set and clears the arm
+    // in the same step, so one hand-back raises a plain `Error` and the next
+    // runs through the real implementation.
+    vi.doMock('../../src/services/fork-resolution.js', async (importOriginal) => {
+      const actual = await importOriginal<
+        typeof import('../../src/services/fork-resolution.js')
+      >();
+      return {
+        ...actual,
+        extendsOurTip: (block: OrderingBlock) => {
+          if (armBox.armed) {
+            armBox.armed = false;
+            throw new Error('a plain error from a stubbed store read');
+          }
+          return actual.extendsOurTip(block);
+        },
+      };
+    });
+  });
+
+  afterEach(async () => {
+    vi.doUnmock('../../src/services/fork-resolution.js');
+    await teardownTrackers();
+  });
+
+  it('the second pending block is still judged after the first throws', async () => {
+    await initChainStore();
+    await startCreator(testConfig);
+
+    const [shared1] = await buildAndApply([[1, T1]]);
+    // Three non-extending blocks of the shared fork at height 1, each with a
+    // distinct stamp so their hashes differ.
+    const [a2] = await buildAndApply([[2, T1 + 1]]);
+    await revertChainTo(1);
+    const [b2] = await buildAndApply([[2, T1 + 2]]);
+    await revertChainTo(1);
+    const [c2] = await buildAndApply([[2, T1 + 3]]);
+    await revertChainTo(1);
+    // Our chain = a slow height-2 block so a2, b2 and c2 are all non-extending.
+    await buildAndApply([[2, T1 + 60_000 + HL]]);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(2);
+
+    let openRun!: () => void;
+    const gateRun = new Promise<void>((r) => { openRun = r; });
+    // The running block's net serves no headers — resolveFork reads an empty
+    // page and ends with 'done' (NODE_INTERFACE → Fork choice decides on
+    // verified headers, step 3).
+    const netRun: ForkResolutionNet = {
+      getConnectedPeers: () => ['peer-RUN'],
+      peerTipHeight: () => 10,
+      penalizePeer: () => undefined,
+      requestBlocks: async () => [],
+      requestHeaders: async () => {
+        await gateRun;
+        return [];
+      },
+    };
+    const netA = singleBranchNet('peer-A', [shared1!, a2!], { peerTipOverride: 11 });
+    const netB = singleBranchNet('peer-B', [shared1!, b2!], { peerTipOverride: 12 });
+
+    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
+
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown): void => { rejections.push(reason); };
+    process.on('unhandledRejection', onRejection);
+    try {
+      // peer-RUN's resolution starts and holds at its header fetch — a
+      // microtask settles the dispatch past `requestHeaders`'s suspension on
+      // the gate, so the running slot is seated by the time the pending
+      // deliveries arrive.
+      handleOrderingBlock(c2!, 'peer-RUN', netRun);
+      await Promise.resolve();
+      await Promise.resolve();
+      // peer-A and peer-B each deliver a non-extending block that waits.
+      handleOrderingBlock(a2!, 'peer-A', netA);
+      handleOrderingBlock(b2!, 'peer-B', netB);
+
+      // Arm the stubbed extendsOurTip so the next call — the first hand-back
+      // — throws. The arm sits between the gate release and the hand-back
+      // loop; nothing between the two statements calls extendsOurTip.
+      armBox.armed = true;
+      openRun();
+      await settleResolveForks(ctx);
+
+      // The rule: peer-A's hand-back threw a plain Error and peer-B's
+      // hand-back still ran, so netB was asked for headers.
+      expect(netB.headerCalls.count).toBeGreaterThanOrEqual(1);
+      expect(ctx.caughtCorrupt).toEqual([]);
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+  });
+});
+
 // Suppress an unused-variable warning for `BlockHeader` and `StubNetOptions`
 // — exports a type-level reference keeps TS happy under isolatedModules.
 export type _CaseFileTypeAnchors = BlockHeader | StubNetOptions;
