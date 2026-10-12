@@ -3,10 +3,16 @@ import { computeCandidateBoxId, computeTxId } from '@dagsocial/types';
 import type { AnyBoxCandidate, UtxoTransaction } from '@dagsocial/types';
 import type { FaucetConfig } from './config.js';
 
-/** A box the faucet may spend: the id the node reported, and its value. */
+/**
+ * A box the faucet may spend: the id the node reported, its value, and — on a
+ * karma read — the mark that tells the owner's income box from their own box
+ * (TYPES_INTERFACE → KarmaBox).
+ */
 export interface BoxRef {
   readonly boxId: string;
   readonly value: bigint;
+  // NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes"
+  readonly income?: true;
 }
 
 export interface BuiltTx {
