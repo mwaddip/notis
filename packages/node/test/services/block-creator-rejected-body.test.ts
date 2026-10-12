@@ -135,7 +135,8 @@ async function storeBackedDeps() {
     consumeBox: utxoStore.consumeBox,
     getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
     getKarmaValue: utxoStore.getKarmaValue,
-    getOwnKarmaBoxIds: () => [],
+    getOwnKarmaBoxIds: (owner: Uint8Array) =>
+      utxoStore.getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
     hasActiveVouchEscrow: () => false,
     vouchCooldownBlocks: 2,
     inviteBondMin: config.inviteBondMin,
@@ -224,11 +225,14 @@ async function seedStaleVouchCast() {
     memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
   });
 
-  // 6 + 6 = 12, above VOUCH_MIN_BALANCE (11) at pool time. Split across two
-  // boxes on purpose: the cast names only the first, so consuming the second is
-  // a change to the voucher's balance that leaves the cast's input live.
+  // 6 + 6 = 12, above VOUCH_MIN_BALANCE (11) at pool time. The spent half is
+  // the voucher's own box and the other half is their income box, which rule
+  // 3 does not require among the cast's inputs; consuming the income box
+  // after is a change to the voucher's balance that leaves the cast's input
+  // live (NODE_INTERFACE → Karma transition rules → "An identity holds at
+  // most two karma boxes").
   const spent = makeKarmaBox(6n, voucher.userId, 0, 0);
-  const other = makeKarmaBox(6n, voucher.userId, 0, 1);
+  const other = makeKarmaBox(6n, voucher.userId, 0, 1, true);
   utxo.insertBox(spent);
   utxo.insertBox(other);
 

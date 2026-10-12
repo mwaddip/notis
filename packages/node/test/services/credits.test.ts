@@ -21,6 +21,7 @@ import { initDb, getDb, closeDb } from '../../src/store/db.js';
 import {
   getBox,
   getCreditBoxes,
+  getKarmaBoxes,
   getKarmaValue,
   insertBox,
   consumeBox,
@@ -53,7 +54,8 @@ const engineDeps: UtxoEngineDeps = {
   consumeBox,
   getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
   getKarmaValue,
-  getOwnKarmaBoxIds: () => [],
+  getOwnKarmaBoxIds: (owner: Uint8Array) =>
+    getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
   getIdentityRecord,
   hasActiveVouchEscrow: () => false,
   vouchCooldownBlocks: 2,

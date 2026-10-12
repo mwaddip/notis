@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   initDb, closeDb, getDb,
   insertBox, consumeBox,
+  getKarmaBoxes,
   getKarmaValue,
   getIdentityRecord,
   hasActiveVouchEscrow,
@@ -38,7 +39,8 @@ function makeDeps(): UtxoEngineDeps {
     consumeBox,
     getKarmaOwed: admissionOwed({ staleThresholdBlocks: config.karmaStaleThresholdBlocks, decayIntervalBlocks: config.karmaDecayIntervalBlocks, decayAmount: config.karmaDecayAmount, karmaMinimum: config.karmaMinimum }),
     getKarmaValue,
-    getOwnKarmaBoxIds: () => [],
+    getOwnKarmaBoxIds: (owner: Uint8Array) =>
+      getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
     getIdentityRecord,
     hasActiveVouchEscrow,
     vouchCooldownBlocks: 2,
