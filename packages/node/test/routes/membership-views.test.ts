@@ -47,7 +47,6 @@ import {
   hasActiveVouchEscrow,
   getVouchBox,
   getNetworkRecord,
-  getKarmaBoxes,
   getKarmaValue,
 } from '../../src/store/index.js';
 import { getBoxWithPending } from '../../src/store/mempool.js';

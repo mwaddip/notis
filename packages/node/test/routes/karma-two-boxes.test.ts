@@ -20,11 +20,10 @@ import type {
   AnyBox,
   IdentityRecord,
   KarmaBox,
-  UsernameBox,
   UtxoTransaction,
 } from '@dagsocial/types';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
-import { materializeOutput, validateTx } from '@dagsocial/consensus';
+import { materializeOutput } from '@dagsocial/consensus';
 import {
   initDb,
   closeDb,
@@ -135,23 +134,6 @@ function seedKarma(
 ): Stored<KarmaBox> {
   const box = seedProvenance<KarmaBox>(
     { boxType: 'karma', value, createdAtBlock: 0, owner, ...(income === true ? { income: true as const } : {}) },
-    0,
-    seed,
-  );
-  insertBox(box);
-  return box;
-}
-
-/** A UsernameBox seeded in the committed set. */
-function seedUsername(owner: Uint8Array, name: string, seed: number): Stored<UsernameBox> {
-  const box = seedProvenance<UsernameBox>(
-    {
-      boxType: 'username',
-      value: 0n as 0n,
-      createdAtBlock: 0,
-      owner,
-      name: new Uint8Array(Buffer.from(name, 'utf8')),
-    },
     0,
     seed,
   );
