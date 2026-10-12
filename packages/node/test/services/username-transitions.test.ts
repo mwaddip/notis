@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   initDb, closeDb, getDb,
   insertBox, consumeBox,
+  getKarmaBoxes,
   getKarmaValue,
   getIdentityRecord, putIdentityRecord,
   hasActiveVouchEscrow,
@@ -38,7 +39,8 @@ function makeDeps(): UtxoEngineDeps {
     consumeBox,
     getKarmaOwed: admissionOwed({ staleThresholdBlocks: config.karmaStaleThresholdBlocks, decayIntervalBlocks: config.karmaDecayIntervalBlocks, decayAmount: config.karmaDecayAmount, karmaMinimum: config.karmaMinimum }),
     getKarmaValue,
-    getOwnKarmaBoxIds: () => [],
+    getOwnKarmaBoxIds: (owner: Uint8Array) =>
+      getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
     getIdentityRecord,
     hasActiveVouchEscrow,
     vouchCooldownBlocks: 2,
@@ -347,6 +349,11 @@ describe('username claim and burn transitions', () => {
   // --- Claim → burn → re-claim ---
 
   it('claim → burn → claim the same name by another identity', () => {
+    // The burn and the second claim chain through the previous
+    // transaction's own-box change, keeping each owner's unmarked karma
+    // set a single box rule 3 asks for among the inputs (NODE_INTERFACE →
+    // Karma transition rules → "An identity holds at most two karma
+    // boxes").
     const a = makeTestIdentity();
     const ka = seedKarma(a.userId, 100n);
     insertBox(ka);
@@ -356,14 +363,13 @@ describe('username claim and burn transitions', () => {
     expect(r1.valid, r1.error).toBe(true);
     applyTx(deps, claimA, r1.computedOutputs!, HEIGHT);
     const uOut = r1.computedOutputs!.find(o => o.boxType === 'username')!;
+    const kaChange1 = r1.computedOutputs!.find(o => o.boxType === 'karma')! as KarmaBox;
     putUsername({
       nameLower: 'reclaim', name: 'Reclaim',
       owner: hex(a.userId), boxId: uOut.id!, claimedAtBlock: HEIGHT,
     });
 
-    const ka2 = seedKarma(a.userId, 100n);
-    insertBox(ka2);
-    const burnA = burnTx(a, ka2, uOut as UsernameBox);
+    const burnA = burnTx(a, kaChange1, uOut as UsernameBox);
     const r2 = validateTx(deps, burnA, HEIGHT + 1);
     expect(r2.valid, r2.error).toBe(true);
     applyTx(deps, burnA, r2.computedOutputs!, HEIGHT + 1);
@@ -378,6 +384,10 @@ describe('username claim and burn transitions', () => {
   });
 
   it('claim → burn → claim the same name by the same identity', () => {
+    // The chain names the previous transaction's own-box change at every
+    // step, so the owner's unmarked karma set never grows past one box
+    // (NODE_INTERFACE → Karma transition rules → "An identity holds at
+    // most two karma boxes").
     const a = makeTestIdentity();
     const ka = seedKarma(a.userId, 100n);
     insertBox(ka);
@@ -387,22 +397,20 @@ describe('username claim and burn transitions', () => {
     expect(r1.valid, r1.error).toBe(true);
     applyTx(deps, c1, r1.computedOutputs!, HEIGHT);
     const uOut = r1.computedOutputs!.find(o => o.boxType === 'username')!;
+    const kaChange1 = r1.computedOutputs!.find(o => o.boxType === 'karma')! as KarmaBox;
     putUsername({
       nameLower: 'selfreclaim', name: 'SelfReclaim',
       owner: hex(a.userId), boxId: uOut.id!, claimedAtBlock: HEIGHT,
     });
 
-    const ka2 = seedKarma(a.userId, 100n);
-    insertBox(ka2);
-    const b1 = burnTx(a, ka2, uOut as UsernameBox);
+    const b1 = burnTx(a, kaChange1, uOut as UsernameBox);
     const r2 = validateTx(deps, b1, HEIGHT + 1);
     expect(r2.valid, r2.error).toBe(true);
     applyTx(deps, b1, r2.computedOutputs!, HEIGHT + 1);
     deleteUsername('selfreclaim');
 
-    const ka3 = seedKarma(a.userId, 100n);
-    insertBox(ka3);
-    const c2 = claimTx(a, ka3, 'SelfReclaim');
+    const kaChange2 = r2.computedOutputs!.find(o => o.boxType === 'karma')! as KarmaBox;
+    const c2 = claimTx(a, kaChange2, 'SelfReclaim');
     const r3 = validateTx(deps, c2, HEIGHT + 2);
     expect(r3.valid, r3.error).toBe(true);
   });
