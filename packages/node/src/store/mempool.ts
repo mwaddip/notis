@@ -1,5 +1,5 @@
 import { getDb } from './db.js';
-import { getBox } from './utxo.js';
+import { getBox, getKarmaBoxes } from './utxo.js';
 import { deletePendingPost } from './posts.js';
 import { ClientError } from '../services/client-error.js';
 import { materializeOutput, ceilingOf } from '@dagsocial/consensus';
@@ -376,12 +376,22 @@ function gateMetadata(tx: UtxoTransaction): GateMetadata {
     meta.likeLiker = signers.length === 1 ? signers[0]! : null;
   }
 
-  // MEMPOOL_INTERFACE → Gate metadata columns: the karma spend row.
-  // `karma_spend` is the summed value of outputs that are a karma spend's exits
-  // (NODE_INTERFACE → Karma transition rules); `karma_owner` is the one signing
-  // key, mirroring `like_liker`'s rule so any other key count leaves the row
-  // unpaired and `pendingKarmaSpend` sums nothing from it.
+  // MEMPOOL_INTERFACE → Gate metadata columns: the karma spend row, and the
+  // `karma_owner` column that `getOwnKarmaBoxIdsWithPending` keys on
+  // (MEMPOOL_INTERFACE → getOwnKarmaBoxIdsWithPending). `karma_owner` is the
+  // one signing key — any other key count leaves the row unpaired, mirroring
+  // `like_liker`'s rule — and it is written for every karma transaction, not
+  // only the spending ones: a consolidation, a name claim and a withdrawal
+  // move the owner's own box without a karma_price / like_accrual / bond /
+  // vouch output, so a reader keyed on this column would miss them. The row
+  // is a karma transaction's whenever it carries one of {karma, karma_price,
+  // like_accrual, bond, vouch} as an output — the admitted karma-arm shapes
+  // (NODE_INTERFACE → Legal box transitions). `karma_spend` stays the summed
+  // value of the spend's exits alone: `pendingKarmaSpend` sums nothing from a
+  // row that spends none, and a non-spending karma transaction leaves `held`
+  // what the pool's spends ahead of it leave it.
   let karmaSpend = 0n;
+  let hasKarmaArmOutput = false;
   for (const output of tx.outputs ?? []) {
     if (
       output.boxType === 'karma_price' ||
@@ -390,13 +400,16 @@ function gateMetadata(tx: UtxoTransaction): GateMetadata {
       output.boxType === 'vouch'
     ) {
       karmaSpend += (output as { value: bigint }).value;
+      hasKarmaArmOutput = true;
+    } else if (output.boxType === 'karma') {
+      hasKarmaArmOutput = true;
     }
   }
-  if (karmaSpend > 0n) {
+  if (hasKarmaArmOutput) {
     const signers = Object.keys(tx.signatures ?? {});
     if (signers.length === 1) {
       meta.karmaOwner = signers[0]!;
-      meta.karmaSpend = karmaSpend;
+      meta.karmaSpend = karmaSpend > 0n ? karmaSpend : null;
     }
   }
 
@@ -671,6 +684,76 @@ export function findPendingOutput(boxId: string): AnyBox | null {
 export function getBoxWithPending(boxId: string): AnyBox | null {
   if (hasPendingSpend([boxId]) !== null) throw new PendingSpendConflictError(boxId);
   return getBox(boxId) ?? findPendingOutput(boxId);
+}
+
+/**
+ * Submission's answer to rule 3 of NODE_INTERFACE → Karma transition rules →
+ * "An identity holds at most two karma boxes": the ids of the owner's unmarked
+ * karma boxes under `getBoxWithPending`'s view
+ * (MEMPOOL_INTERFACE → getOwnKarmaBoxIdsWithPending).
+ *
+ * The pending view is the confirmed unmarked set, plus every unmarked karma
+ * output of a pooled transaction the owner signed, less every box a pooled
+ * transaction spends. The pooled rows are found by `karma_owner` — every
+ * karma transaction's row carries it (`gateMetadata`'s karma arm) — and only
+ * the matching rows are decoded, so the read is a few hashes rather than a
+ * walk of the pool. Admission wires this as the engine's
+ * `getOwnKarmaBoxIds`; the relay's `getOwnKarmaBoxIds` reads the confirmed
+ * set alone.
+ */
+export function getOwnKarmaBoxIdsWithPending(ownerId: string): string[] {
+  const db = getDb();
+  const ownerBuf = Buffer.from(ownerId, 'hex');
+  const ownerBytes = new Uint8Array(ownerBuf);
+
+  // Confirmed unmarked karma box ids. `getKarmaBoxes` holds every karma box
+  // the owner has — own and income — in `(value DESC, id)` order, and the
+  // owner's range is at most two rows (NODE_INTERFACE → Karma transition
+  // rules), so the filter and the set it feeds walk the owner's slice alone.
+  const kept = new Set<string>();
+  for (const box of getKarmaBoxes(ownerBytes)) {
+    if (box.income === true) continue;
+    if (box.id !== undefined) kept.add(box.id);
+  }
+
+  // The owner's pooled rows, found by the single-key index on `karma_owner`.
+  // One decode per row, and the owner's active transactions in the pool are
+  // what the invariant leaves bounded: a spend reads two inputs and emits one
+  // karma output at most, so each decode adds one or none and takes one off.
+  const rows = db.prepare(
+    `SELECT utxo_tx_bytes, tx_inputs
+       FROM mempool
+      WHERE karma_owner = ?
+        AND utxo_tx_bytes IS NOT NULL`,
+  ).all(ownerId) as Array<{ utxo_tx_bytes: Buffer; tx_inputs: string | null }>;
+
+  for (const row of rows) {
+    const tx = decodeTx(new Uint8Array(row.utxo_tx_bytes));
+    const txId = computeTxId(tx);
+    for (let i = 0; i < tx.outputs.length; i++) {
+      const candidate = tx.outputs[i]!;
+      if (candidate.boxType !== 'karma') continue;
+      // TYPES_INTERFACE → KarmaBox. The mark is the one difference between
+      // the two shapes; the engine's rule 2 refuses a marked karma output on
+      // a user transaction, so a pooled karma output is unmarked by rule —
+      // the check here is defensive and does not reach a tree the engine
+      // admitted (NODE_INTERFACE → Karma transition rules → "No karma output
+      // carries the mark").
+      if ((candidate as { income?: true }).income === true) continue;
+      if (bytesToHexOwner(candidate.owner) !== ownerId) continue;
+      const box = materializeOutput(candidate, txId, i);
+      if (box.id !== undefined) kept.add(box.id);
+    }
+    if (row.tx_inputs !== null) {
+      for (const spent of JSON.parse(row.tx_inputs) as string[]) kept.delete(spent);
+    }
+  }
+
+  return [...kept];
+}
+
+function bytesToHexOwner(owner: Uint8Array): string {
+  return Buffer.from(owner).toString('hex');
 }
 
 /**
