@@ -110,6 +110,7 @@ function admissionDeps(): UtxoEngineDeps {
     insertBox,
     consumeBox: storeConsumeBox,
     getKarmaValue: admissionHeld,
+    getOwnKarmaBoxIds: () => [],
     getKarmaOwed: admissionOwed(decayCfg),
     getIdentityRecord: storeGetIdentityRecord,
     hasActiveVouchEscrow: storeHasActiveVouchEscrow,

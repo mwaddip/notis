@@ -87,6 +87,9 @@ function settle(
       getEscrowsReleasableAt: () => [],
       getLapsedVouches: () => [],
       getLifetimeLikes: () => 0n,
+      // The income box is the settlement's own leg; this suite's body spends
+      // no karma and triggers no payout, so the pre-body income box is null.
+      getIncomeBox: () => null,
       getDecayPlans: () => [],
       vouchCooldownBlocks: 2,
       getBackerPoolBox: () => null,

@@ -249,6 +249,7 @@ describe('rent admission refusal', () => {
       consumeBox: utxo.consumeBox,
       getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: utxo.getKarmaValue,
+      getOwnKarmaBoxIds: () => [],
       getIdentityRecord: (await import('../../src/store/identity-records.js')).getIdentityRecord,
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,

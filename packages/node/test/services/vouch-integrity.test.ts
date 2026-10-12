@@ -104,6 +104,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: (owner: Uint8Array): bigint =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+      getOwnKarmaBoxIds: () => [],
       // Present from the before-leg on so both halves run the same fixture
       // code: HEAD ignores it, the tightened engine requires it. Backed by the
       // store's real predicate — the one implementation every path shares.

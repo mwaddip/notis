@@ -512,6 +512,7 @@ describe('escrow settlement leg', () => {
         consumeBox: (id, atBlock) => consumeBox(id, atBlock),
         getKarmaOwed: admissionOwed({ staleThresholdBlocks: 1000, decayIntervalBlocks: 1000, decayAmount: 0n, karmaMinimum: 0n }),
         getKarmaValue: (owner) => getKarmaBoxes(owner).reduce((s, b) => s + b.value, 0n),
+        getOwnKarmaBoxIds: () => [],
         hasActiveVouchEscrow,
         vouchCooldownBlocks: config.vouchCooldownBlocks,
         inviteBondMin: config.inviteBondMin,

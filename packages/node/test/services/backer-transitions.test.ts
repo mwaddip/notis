@@ -38,6 +38,7 @@ function makeDeps(): UtxoEngineDeps {
     consumeBox,
     getKarmaOwed: admissionOwed({ staleThresholdBlocks: config.karmaStaleThresholdBlocks, decayIntervalBlocks: config.karmaDecayIntervalBlocks, decayAmount: config.karmaDecayAmount, karmaMinimum: config.karmaMinimum }),
     getKarmaValue,
+    getOwnKarmaBoxIds: () => [],
     getIdentityRecord,
     hasActiveVouchEscrow,
     vouchCooldownBlocks: 2,

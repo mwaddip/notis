@@ -132,6 +132,7 @@ describe('/karma/:userId membership fields', () => {
           consumeBox,
           getKarmaOwed: admissionOwed(DECAY_CFG),
           getKarmaValue,
+          getOwnKarmaBoxIds: () => [],
           hasActiveVouchEscrow,
           vouchCooldownBlocks: 2,
           inviteBondMin: config.inviteBondMin,
@@ -375,6 +376,7 @@ describe('POST /vouches — the four membership 400s', () => {
       getKarmaOwed: admissionOwed(DECAY_CFG),
       getKarmaValue: (owner: Uint8Array): bigint =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+      getOwnKarmaBoxIds: () => [],
       getIdentityRecord,
       hasActiveVouchEscrow,
       vouchCooldownBlocks: 2,
@@ -576,6 +578,7 @@ describe('POST /invites — membership 400', () => {
         getKarmaOwed: admissionOwed(DECAY_CFG),
         getKarmaValue: (owner: Uint8Array): bigint =>
           getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+        getOwnKarmaBoxIds: () => [],
         getIdentityRecord,
         hasActiveVouchEscrow,
         vouchCooldownBlocks: 2,
