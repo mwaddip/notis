@@ -1327,10 +1327,10 @@ tree collapse into clean rejections:
 > |---|---|---|
 > | `UnhashableStoredHeaderError` | a header already in our store cannot be hashed | ⚠ **now dead `src`** — see below |
 > | `MissingStoredBlockError` | a block the chain refers to is absent from the store | `services/block-apply.ts`, `services/fork-resolution.ts`, `services/block-creator.ts` |
-> | `UnreadableStoredBlockError` | a stored block's bytes will not decode | `store/ordering.ts` → `rowToOrderingBlock` |
+> | `UnreadableStoredBlockError` | a stored block's bytes, its interlinks vector or its journal will not decode | `store/ordering.ts` → `rowToOrderingBlock`, `getInterlinks`; `store/journal.ts` → `getBlockJournal` |
 > | `DivergedStateTreeError` | the AVL+ tree refuses one of a block's writes or of genesis's — writes derived from the tree's own state, so the tree contradicts itself | `state/avl-prover.ts` |
 > | `InconsistentStateTreeError` | a read of this node's own tree contradicts itself — `consensus`'s `TreeInconsistencyError` over the node's prover session (`CONSENSUS_INTERFACE → The tree view`), in block application, the speculative run or the settlement's build | `services/block-apply.ts`, `services/block-creator.ts` |
-> | `MissingJournalError` | a block journal inside retention is absent. Every height `revertBlock` can be asked for lies inside what `purgeOldJournals` keeps: deletion is strictly below `tip − maxReorgDepth`, the fork walk's lowest non-genesis answer is `tip − maxReorgDepth + 1` and the revert starts one above it, and its genesis answer is reachable only while `tip ≤ maxReorgDepth` | `services/fork-resolution.ts` → `revertBlock` |
+> | `MissingJournalError` | a block journal at or above the lowest one kept is absent. Every height `revertBlock` can be asked for lies there: the fork walk answers no fork point below `lowestJournal − 1`, the revert starts one above its answer, and its genesis answer is reachable only while `lowestJournal ≤ 1` (Fork choice decides on verified headers, step 3) | `services/fork-resolution.ts` → `revertBlock` |
 > | `MissingStateVersionError` | no AVL version at or before a fork height the walk answers within. `MAX_PROOF_HISTORY < maxReorgDepth` is refused at load (Configuration), so a missing version is a row the store lost | `services/fork-resolution.ts` → `reorg` |
 > | `DuplicateStateVersionError` | a version row already stands at the height being checkpointed — the store's version history has run ahead of its chain. The write path keeps one row per height and `idx_avl_tree_versions_height` refuses a second (AVL+ State Root) | `state/avl-storage.ts` → `update` |
 >
@@ -3922,7 +3922,7 @@ See `MEMPOOL_INTERFACE.md` for the full mempool contract.
 | `getCurrentHeight()` | `() => number` |
 | `getOrderingBlockHash(height)` | `(number) => string \| null` — the stored `block_hash` column, no row decode |
 | `getHeightByBlockHash(hash)` | `(string) => number \| null` — indexed point lookup on the same column |
-| `getInterlinks(height)` | `(number) => string[] \| null` — the stored vector, decoded; `null` for no row |
+| `getInterlinks(height)` | `(number) => string[] \| null` — the stored vector, decoded; `null` for no row; a row that will not decode is `UnreadableStoredBlockError` |
 | `getHeadersAbove(height, n)` | `(number, number) => BlockHeader[]` — `WHERE height > ? ORDER BY height ASC LIMIT n`, `header_bytes` decoded and nothing else; **the caller bounds `n`** — fork choice passes `ourTip − f ≤ maxReorgDepth` (Fork choice decides on verified headers, step 4). Not the NiPoPoW reader: `getHeadersAfter` is capped at `MAX_NIPOPOW_PARAM` for the prover and answers at most 128 rows, which a work comparison over a horizon must never read through |
 | `deleteOrderingBlock(height)` | `(number) => void` — for fork rollback |
 
@@ -4096,9 +4096,15 @@ like every other.
 | Function | Signature |
 |----------|-----------|
 | `insertBlockJournal(journal)` | `(BlockJournal) => void` |
-| `getBlockJournal(height)` | `(number) => BlockJournal \| null` |
+| `getBlockJournal(height)` | `(number) => BlockJournal \| null` — `null` for no row; a row that will not decode is `UnreadableStoredBlockError` |
+| `getLowestJournalHeight()` | `() => number \| null` — the lowest height a journal is kept for, an indexed point read; `null` for none |
 | `deleteBlockJournal(height)` | `(number) => void` |
 | `purgeOldJournals(belowHeight)` | `(number) => void` |
+
+> ⚠ **AHEAD OF CODE (2026-10-12).** `getLowestJournalHeight` and the two decode refusals —
+> `getBlockJournal`'s here, `getInterlinks`' under Ordering blocks — lead `store/journal.ts` and
+> `store/ordering.ts`, which answer a row that will not decode with a plain error and hold no
+> lowest-journal read; the two rows of the corrupt-state family's table that name them lead with it.
 
 **Rollback (`revertBlock`).** A
 journal absent for a height inside retention is `MissingJournalError` —
@@ -4786,16 +4792,26 @@ and runs once per process, and an index there would tax every `insertBox` on the
 out a decision already made.** The decision, in order — each step that ends the resolution ends it
 with the chain untouched:
 
+> ⚠ **AHEAD OF CODE (2026-10-12).** One resolution at a time, the pending block per peer, the block
+> judged again after a tip that moved, the tip read as a height and a hash, the walk bounded by the
+> lowest journal kept, and the memo entry that leaves with its peer lead `services/handle-block.ts`
+> and `services/fork-resolution.ts`: the code launches a resolution per non-extending block, compares
+> the tip's height alone, walks to `ourTip − maxReorgDepth + 1` whatever journals are kept, drops a
+> block whose resolution aborts and keeps a memo entry for a peer that has gone.
+
 1. **Counterparty.** The peer that relayed or served the block, if it is Active; else the head of
    the Active list (NET_INTERFACE → Pull Requests).
 2. **The memo.** `net.peerTipHeight(peer)` equals the tip this peer's branch was last scored lighter
    at → return: nothing to re-score ("Re-scoring is memoised", below).
 3. **The fork walk.** Their headers paged **down from our tip** — `requestHeaders(ourTip, 400)`, then
    from the lowest height seen − 1 — each compared to our `block_hash` at its height, a point read;
-   the highest match is `f`. Heights examined: `ourTip … max(ourTip − maxReorgDepth + 1, 1)`. No
-   match: `f = GENESIS_HEIGHT` when `ourTip ≤ maxReorgDepth` (the chains share only the genesis
-   state), else `null` → no decision, no penalty: a fork past the horizon is indistinguishable from an
-   honest peer. No headers at all → no decision, no penalty: "has nothing" is legitimate.
+   the highest match is `f`. Heights examined: `ourTip … max(ourTip − maxReorgDepth + 1,
+   lowestJournal − 1, 1)`, `lowestJournal` the lowest height a block journal is kept for
+   (`getLowestJournalHeight()`), read once beside the tip
+   ("The walk reaches as deep as the journals do", below). No match: `f = GENESIS_HEIGHT` when
+   `ourTip ≤ maxReorgDepth` and `lowestJournal ≤ 1` (the chains share only the genesis state, and
+   every block of ours can be reverted), else `null` → no decision, no penalty: a fork past the
+   horizon is indistinguishable from an honest peer. No headers at all → no decision, no penalty: "has nothing" is legitimate.
    **A page is held to the request it answers, before any of it is hashed or matched** — the one
    shape the serve arm produces (NET_INTERFACE → `GetHeaders` / `GetBlocks` responses): every height
    at or below the start requested, heights consecutive and descending, and the page full
@@ -4835,7 +4851,8 @@ with the chain untouched:
 7. **Work — the stop rules**, after every page: accumulated `work > ourWork` (strictly greater; a tie
    keeps the incumbent) → the headers verified so far are the target, `n` their count — **page-aligned,
    at most 399 blocks past the shortest heavier prefix**; their tip reached with `work ≤ ourWork` →
-   keep ours, no penalty, the memo written; our tip moved between pages → abort, no penalty. **The walk
+   keep ours, no penalty, the memo written; our tip moved between pages — its height or its hash
+   (step 9) → abort, no penalty, the block judged again ("One resolution at a time", below). **The walk
    needs no cap**: every verified header passed `'target'`, so it carries at least the floor's work and
    the sum exceeds ours within `⌈ourWork / floorWork⌉ + 1` headers — a branch longer than that is
    heavier by then, and a branch is bounded by its own length, which cost its author real PoW.
@@ -4845,7 +4862,9 @@ with the chain untouched:
    adding nothing → refuse, penalise `transient` (non-delivery), chain untouched. A wrong hash or
    height → refuse, penalise `misbehavior`, nothing reverted. The range is the verified branch's,
    never a peer-claimed tip height.
-9. **Tip re-read.** Our tip moved during the awaits → abort, no penalty.
+9. **Tip re-read.** The tip a resolution read at its start is a height **and a hash**; either one
+   differing is a tip that moved during the awaits → abort, no penalty, and the block is judged
+   again on the tip that stands ("One resolution at a time", below).
 10. **The switch.** `reorg(f, blocks)`, atomic, every block through the funnel's classified entry
     (`applyOrderingBlockVerdict`, → "The funnel answers with a class"): a **consensus** refusal throws
     `ReorgBlockRejectedError { height, hash }` after the transaction has rolled back and the prover is
@@ -4874,7 +4893,8 @@ and a walk costs up to seven pages. `resolveFork` keeps `{ peer → the tip it w
 read against `net.peerTipHeight(peer)` at step 2, **cleared whenever our own tip moves** (every
 verdict's baseline is gone), written only by step 7's "keep ours" — never by a `'clock'` refusal or an
 abort — and keyed on the peer because the walk asks the *relayer* for headers: the branch scored is the
-relayer's, whatever block it relayed. A future-bound refusal never reaches this function (an extending
+relayer's, whatever block it relayed. An entry leaves with its peer — a disconnect deletes it — so
+the memo holds at most one entry per connected peer. A future-bound refusal never reaches this function (an extending
 block goes to apply), so its re-delivery path is untouched.
 
 **What is remembered, and what is not.** Header-stage refusals (steps 3, 5, 6, 8) are cheap to
@@ -4895,16 +4915,40 @@ outright.
 **Both entries converge.** Gossip receipt and pull-sync both reach `handleOrderingBlock(block,
 fromPeerId)`: a block already held (our block at its height hashes to its header) is a **no-op** —
 neither applied nor resolved; a block that extends our tip, or arrives at height 0, is applied;
-anything else enters `resolveFork` with the delivering peer as counterparty. The pull handler's
+anything else is handed to the resolution runner with the delivering peer as counterparty
+("One resolution at a time", below). The pull handler's
 return is the batch's **continue** signal — `true` for applied or already held, `false` for rejected
 or for a non-extending block — and `net` stops the batch at the first `false` (NET_INTERFACE → Sync
 Handler Registration). The trigger's own height decides nothing: the fork walk starts at **our** tip
 whatever height the block arrived at, so a gossiped block far above us and a pull trigger at our
 tip + 1 cost the same walk.
 
-**Concurrency.** Resolutions may overlap — gossip already allows it, and the pull path adds
-triggers, not a class. Two resolutions serialise at step 9: `reorg` is synchronous and nothing awaits
-between the re-read and the call, so the second always sees the first's height and aborts.
+**One resolution at a time.** `handleOrderingBlock` hands a non-extending block to a runner, and the
+runner runs `resolveFork` for one block at a time. With none running, the block's resolution starts.
+With one running, the block is kept as **its delivering peer's pending block**: one per peer id, a
+later block from the same peer replacing the earlier, and a block that is the one running for that
+peer, or the one already pending for it, dropped. What waits is therefore bounded by the peers
+connected, never by what they send, and a peer's disconnect removes its pending block. When a
+resolution ends — at any step, with any outcome — each pending block is handed back to
+`handleOrderingBlock`, in the order it arrived, and judged on the tip that then stands: a block now
+held is a no-op, one that extends the tip is applied, and any other starts the next resolution while
+the rest go on waiting.
+
+**A resolution that ends because the tip moved hands its own block back the same way** (steps 7
+and 9), unless its peer has a later one pending. A tip that moved under a resolution says nothing
+about the branch it was scoring, and each such return is paid for by a block that extended our
+chain. Nothing switches the chain but `reorg`, and `reorg` runs inside a resolution: while one runs
+the tip moves only by extension — a block applied, this node's own or a peer's — so no resolution
+reads a store another is switching, and a height at or below the tip a resolution read always holds
+a block.
+
+**The walk reaches as deep as the journals do, and no deeper.** The switch reverts every block of
+ours above `f`, one journal each, so `f` sits no lower than one below the lowest journal kept.
+`purgeOldJournals` deletes strictly below `tip − maxReorgDepth` at every apply, against the tip of
+that moment; a switch to a heavier chain that is shorter leaves the tip below the one the purge
+last ran against, and the journals then stop short of `ourTip − maxReorgDepth + 1`. Step 3 bounds the
+walk by what is kept, and its fall-through to the genesis state by `lowestJournal ≤ 1`: a fork below
+the bound is past the horizon — no decision, no penalty — as one below `maxReorgDepth` is.
 
 **Apply stays the authority.** `reorg` runs every block through `applyOrderingBlock`, so the
 header-level rules run twice — once over the pages, once in the funnel. The funnel is unchanged
@@ -4927,8 +4971,9 @@ downstream of the chain-link gate in the same function. All four callers of `app
 **The horizon is the profile's `maxReorgDepth`** (TYPES_INTERFACE → Chain reorganisation), and how far
 back a reorg may go is bounded by it because journal retention is the real floor under revert depth —
 `revertBlock` throws without a journal. The walk reaches 0 only when our height is at or below the
-horizon, which is exactly when every journal down to height 1 is still retained. Deeper than that the
-answer is still `null`.
+horizon **and the journals reach height 1** ("The walk reaches as deep as the journals do"): a tip that
+has only risen keeps every journal down to height 1 for as long as it stands at or below the horizon,
+and one that dropped there from above it does not. Deeper than that the answer is still `null`.
 
 **The genesis fallback sits behind the page check, deliberately.** A page with an unhashable entry is
 refused whole (`misbehavior`) — it does not fall through to genesis. In front, a peer could turn one
@@ -5457,12 +5502,24 @@ for an explicit rejection, with the error logged server-side. This is the
 ARCHITECTURE invariant "no method panics on untrusted input" applied at the
 consensus boundary, and it is load-bearing rather than
 defensive: the gossip callback is `async` and its promise is discarded by the
-net layer, so a propagated throw becomes an unhandled rejection, which
-terminates the process on Node ≥ 15. Because a rejected block is never stored,
-a crashing block is re-fetched on restart and crashes again — a single
-cheaply-mined block would otherwise be a permanent, self-reapplying kill for
-every node that receives it. Structure validation closes the known instance;
-totality bounds every future one.
+net layer, so a propagated throw becomes an unhandled rejection, which the
+process survives ("An unhandled rejection is logged, and the node keeps
+running", below) with the prover's in-memory state wherever the throw left it —
+SQLite's rollback does not reach it — and every later block judged against
+that state. Structure validation closes the known instance; totality bounds
+every future one.
+
+> ⚠ **AHEAD OF CODE (2026-10-12).** The process-level handler leads `index.ts`, which registers
+> none: an unhandled rejection ends the process.
+
+**An unhandled rejection is logged, and the node keeps running.** One process-level handler
+receives every promise rejection nothing else handled. A `CorruptChainStateError` — any subclass — is
+fail-stop there as at every boundary ("What the funnel's totality catch is FOR"); any other reason is
+logged with its stack and the process runs on. An uncaught synchronous exception has no handler:
+Node's default stands and the process exits. The handler is a backstop and not a boundary — a path
+that can reject is handled where it is launched, as the resolution runner owns each resolution's
+promise ("One resolution at a time") — so a rejection that reaches it is a defect of the path it
+came from.
 
 **The funnel answers with a class.** `applyOrderingBlockVerdict(block)` is the funnel's body: it
 answers `{ applied: true }` or `{ applied: false, class }`, `class` one of `'consensus'` (every
