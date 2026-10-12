@@ -114,13 +114,11 @@ function mockConfig(opts: {
  * `faucetPublicKey` replaced.
  *
  * The profile pins `genesisStateRoot` and the seeder refuses a mismatched
- * one (`services/genesis-state.ts` → `assertGenesisRoot`); a literal pin in
- * this file would move with the next change to the branch and the case
- * would fail for a reason that is not its subject. The pin is instead
- * measured at run time: the seeder is run once under a known-wrong placeholder
- * and the actual seeded root is read out of the refusal, then the config is
- * remocked with the measured value and the seeder runs again — a path the
- * node already offers through its own refusal, not a seam added for the test.
+ * one (`services/genesis-state.ts` → `assertGenesisRoot`). The root a profile
+ * must pin depends on every seeded byte, so the pin is measured at run time:
+ * the seeder is run once under a known-wrong placeholder and the actual
+ * seeded root is read out of its refusal, then the config is remocked with
+ * the measured value and the seeder runs again.
  */
 async function openChain(opts: {
   genesisProofPayload: string;
@@ -229,7 +227,7 @@ function engineDepsOf(chain: Chain): UtxoEngineDeps {
  * Build and sign a one-input one-output credit transfer of the faucet's
  * genesis credit box.
  *
- * The transaction conserves exactly (NODE_INTERFACE → `validateTx` step 5):
+ * The transaction conserves exactly (NODE_INTERFACE → `validateTx` step 7):
  * one credit input, one credit output of the same value, no fee box. A
  * client could build this; what the signature covers is `computeTxId(tx)`
  * (TYPES_INTERFACE → UtxoTransaction).
@@ -241,9 +239,9 @@ function buildSignedCreditTransfer(opts: {
 }): UtxoTransaction {
   // `createdAtBlock` is the OUTPUT's declared creation height. A transaction's
   // outputs may not be older than its oldest input (TYPES_INTERFACE →
-  // Monotonic creation height) and the genesis credit box sits at height 1
-  // (NODE_INTERFACE → "the seeders clamp it to the `>= 1` their synthetic
-  // mint txIds require"), so a transfer that keeps that height passes step 6.
+  // Monotonic creation height), and a genesis box is created at height 1
+  // (NODE_INTERFACE → The genesis state root is checked fail-stop), so a
+  // transfer that keeps that height is not older than its input.
   const output: CandidateOf<CreditBox> = {
     boxType: 'credit',
     value: opts.creditBox.value,
@@ -260,6 +258,13 @@ function buildSignedCreditTransfer(opts: {
   const sig = cryptoSign(null, Buffer.from(txId, 'hex'), opts.faucet.privateKey);
   tx.signatures[opts.faucet.publicKeyHex] = new Uint8Array(sig);
   return tx;
+}
+
+/** The whole refusal `sendCredits` throws for an input no store holds. */
+function inputNotFound(boxId: string): RegExp {
+  return new RegExp(
+    'Invalid credit transfer: Input box not found or already spent: ' + boxId,
+  );
 }
 
 const PAYLOAD_A = Buffer.from(
@@ -324,6 +329,31 @@ describe('two chains differ in genesisProofPayload — the mint id opens with it
     closeChain(chain);
   });
 
+  it('a transaction naming a box no store holds is refused — input not found', async () => {
+    const faucet = makeFaucetKey();
+    const chain = await openChain({
+      genesisProofPayload: PAYLOAD_A,
+      faucetPublicKey: faucet.publicKeyHex,
+    });
+    try {
+      const credits = chain.modules.utxo.getCreditBoxes(faucet.publicKey);
+      expect(credits).toHaveLength(1);
+      const unheldId = 'ab'.repeat(32);
+      expect(chain.boxes.map((b) => b.id)).not.toContain(unheldId);
+
+      const tx = buildSignedCreditTransfer({
+        faucet,
+        creditBox: { ...credits[0]!, id: unheldId },
+        recipient: faucet.publicKey,
+      });
+      expect(() =>
+        chain.modules.credits.sendCredits(engineDepsOf(chain), tx, 1),
+      ).toThrow(inputNotFound(unheldId));
+    } finally {
+      closeChain(chain);
+    }
+  });
+
   it.fails('chains A and B share no genesis box id', async () => {
     const faucet = makeFaucetKey();
 
@@ -371,16 +401,11 @@ describe('two chains differ in genesisProofPayload — the mint id opens with it
     try {
       // The id names a box no store on chain B holds — `validateTx` step 2
       // (NODE_INTERFACE → `validateTx` step 2), wrapped by `sendCredits` as
-      // "Invalid credit transfer: ...". Pattern pinned to that whole text so
-      // a bare `ok === false` cannot pass it.
+      // "Invalid credit transfer: ...". The case asserts that refusal, by its
+      // whole text.
       expect(() =>
         b.modules.credits.sendCredits(engineDepsOf(b), tx, 1),
-      ).toThrow(
-        new RegExp(
-          'Invalid credit transfer: Input box not found or already spent: ' +
-            tx.inputs[0],
-        ),
-      );
+      ).toThrow(inputNotFound(tx.inputs[0]!));
     } finally {
       closeChain(b);
     }
