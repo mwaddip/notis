@@ -441,8 +441,11 @@ describe('settlements that do not pay through the income leg are refused', () =>
     const result = applyBlock(view, block, CTX);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      // The reason is the output-position comparison's.
+      // The reason is the output-position comparison's: the derivation
+      // emits a marked income box where the tampered settlement emits an
+      // unmarked one.
       expect(result.reason).toMatch(/settlement output/);
+      expect(result.reason).toContain('income=true');
     }
   });
 
@@ -478,7 +481,9 @@ describe('settlements that do not pay through the income leg are refused', () =>
     const result = applyBlock(view, block, CTX);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toMatch(/settlement/);
+      // The reason is the input count comparison: the tampered settlement
+      // consumes one box fewer than the derivation.
+      expect(result.reason).toMatch(/settlement consumes/);
     }
   });
 });
