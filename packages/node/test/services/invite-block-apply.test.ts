@@ -44,7 +44,7 @@ import {
   seedAsOneTx,
   signTransaction,
   uid,
-  type TestIdentity, seedPostTx, makePostCommit, activateProverOverStore,
+  type TestIdentity, makePostCommit, activateProverOverStore,
   seedKarmaPoolBox, makeApplicableBlock,
   FIXTURE_BOND_KARMA } from '../helpers.js';
 
@@ -244,9 +244,7 @@ describe('the invite at block application', () => {
       for (let i = 0; i < round.count; i++) {
         const nonce = round.nonceBase + i;
         const content = `post ${nonce}`;
-        const commit = types.computePostCommitDefault
-          ? makePostCommit(inviteeId.userId, content)
-          : makePostCommit(inviteeId.userId, content);
+        const commit = makePostCommit(inviteeId.userId, content);
         const inputKarma = runningKarma!;
         const changeValue = inputKarma.value - types.POST_PRICE_THREAD;
         const postTx: UtxoTransaction = {
@@ -1182,7 +1180,7 @@ describe('the invite at block application — decay adjacency', () => {
     let runningKarma: KarmaBox | null = inviteeKarmaBox!;
     for (let i = 0; i < INVITE_BOND_VEST_PER_LIKES; i++) {
       const commit = makePostCommit(invitee.userId, `decay post ${i}`);
-      const changeValue = runningKarma!.value - types.POST_PRICE_THREAD;
+      const changeValue: bigint = runningKarma!.value - types.POST_PRICE_THREAD;
       // A karma output of value 0 is refused — zero means no box
       // (TYPES_INTERFACE → Box value domain).
       const outputs: UtxoTransaction['outputs'] = [];
