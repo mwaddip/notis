@@ -11,28 +11,42 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { generateKeyPairSync, type KeyObject } from 'crypto';
 import type Database from 'better-sqlite3';
 import {
-  LIKE_KARMA_COST,
+  KARMA_MINIMUM,
   KARMA_DECAY_AMOUNT,
+  LIKE_KARMA_COST,
+  MAX_BLOCK_BODY_BYTES,
+  MAX_BLOCK_COST,
   MAX_SETTLEMENT_BYTES,
   PROTOCOL_VERSION,
+  computeContentHash,
+  computeTxId,
   encodeTx,
+  utxoTxTreeByteLength,
 } from '@dagsocial/types';
 import type {
   AnyBox,
   IdentityRecord,
   KarmaBox,
+  OrderingBlock,
   UtxoTransaction,
   PostCommit,
 } from '@dagsocial/types';
 import { buildBlockSettlement, decayLegMaxBytes, settlementMarginalBytes, treeStateView } from '@dagsocial/consensus';
+import type { Config } from '../../src/config.js';
 import {
+  fixturePostId,
+  fixtureTxId,
   makePostCommit,
+  makeTestConfig,
+  mineNextBlock,
   rawPublicKey,
+  revertChainTo,
   seedCommittedState,
   seedEmissionBox,
   seedKarmaPoolBox,
   seedProvenance,
   signTransaction,
+  solveHeaderPow,
 } from '../helpers.js';
 
 async function importDb() {
@@ -269,3 +283,883 @@ describe('the fill counts a squaring for an entry whose owner owes decay', () =>
     expect(gap).toBeGreaterThan(sumMarginal);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Cases driven through the real createOrderingBlock entry point
+//
+// MEMPOOL_INTERFACE → The fill budget is bytes; getPendingEntries is a count →
+// "An entry whose owner owes decay adds the squaring": the fill reads
+// `squaringBytesOf(entry.karmaOwner)` and reserves `decayLegMaxBytes(era)` in
+// the body-budget and settlement-bound accumulators alike for every entry whose
+// karma owner owes decay at the block's height over confirmed state. The cases
+// below drive the real block creator through `startBlockCreator`, over a pool
+// of stale owners' karma transactions, and read what the template holds.
+//
+// The low-height harness: devnet's `karmaStaleThresholdBlocks` is 500 — too far
+// to reach without mining — so each case mocks `src/config.js`'s `config` with
+// `karmaStaleThresholdBlocks: 0` and `karmaDecayIntervalBlocks: 1`. At height 1,
+// an identity whose record carries `lastActivityBlock: 0, lastDecayBlock: 0` is
+// stale and `karmaOwed > 0n`; one whose record carries `lastActivityBlock: 1`
+// has `owedPeriods: 0`, so the predicate is false and no squaring is reserved
+// for it. The guard in `isIdentityStale` (`currentHeight <= thresholdBlocks`
+// returns false) does not spare the second case, but `owedPeriods` does
+// (TYPES_INTERFACE → Identity record and karma valuation).
+// ---------------------------------------------------------------------------
+
+const testConfig: Config = makeTestConfig({
+  dbPath: ':memory:',
+  nodeRole: 'miner',
+  blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES,
+  bootstrapPeers: [],
+});
+
+/** The percent of the cost budget the fill leaves unused (CONSTANTS → Producer policy). */
+const PACKING_COST_MARGIN = 5;
+
+async function freshStoreWithGenesisBoxes() {
+  const db = await importDb();
+  db.initDb(':memory:');
+  db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+  await seedEmissionBox();
+  await seedKarmaPoolBox();
+  return db;
+}
+
+/**
+ * Register a mock of `src/config.js` whose `config` overrides
+ * `karmaStaleThresholdBlocks` and `karmaDecayIntervalBlocks` so the stale
+ * predicate fires at height 1. Call ahead of any dynamic import of the node's
+ * modules — the mock must be in place for `block-creator.ts`'s own module graph.
+ */
+function mockConfigForLowStale(opts: { threshold?: number; interval?: number } = {}): void {
+  const threshold = opts.threshold ?? 0;
+  const interval = opts.interval ?? 1;
+  vi.doMock('../../src/config.js', async () => {
+    const actual = await vi.importActual<typeof import('../../src/config.js')>('../../src/config.js');
+    return {
+      ...actual,
+      config: Object.freeze({
+        ...actual.config,
+        karmaStaleThresholdBlocks: threshold,
+        karmaDecayIntervalBlocks: interval,
+      }),
+    };
+  });
+}
+
+/**
+ * The stale identity's record: lastActivity and lastDecay at 0. Under
+ * `mockConfigForLowStale()` at height 1, `isIdentityStale` is true and
+ * `owedPeriods` is 1 for a karma face above `KARMA_MINIMUM`.
+ */
+function staleActiveRecord(): IdentityRecord {
+  return {
+    lastActivityBlock: 0,
+    lastDecayBlock: 0,
+    invitedAtBlock: 0,
+    lifetimeLikesReceived: 0n,
+    memberSinceBlock: 0,
+    memberBar: 0,
+    memberVouches: 0,
+    memberLikes: 0n,
+    invitesUsed: 0,
+  };
+}
+
+/**
+ * A fresh identity's record at height 1 under `mockConfigForLowStale()`:
+ * lastActivity equal to the current height makes `owedPeriods` zero and
+ * `karmaOwed` zero, so the fill reserves no squaring.
+ */
+function freshActiveRecord(height: number): IdentityRecord {
+  return {
+    lastActivityBlock: height,
+    lastDecayBlock: 0,
+    invitedAtBlock: 0,
+    lifetimeLikesReceived: 0n,
+    memberSinceBlock: 0,
+    memberBar: 0,
+    memberVouches: 0,
+    memberLikes: 0n,
+    invitesUsed: 0,
+  };
+}
+
+/** A karma face value that leaves karma above `KARMA_MINIMUM` after one squaring. */
+const STALE_FACE = KARMA_MINIMUM + KARMA_DECAY_AMOUNT * 4n;
+
+function karmaBoxForOwner(owner: Uint8Array, value: bigint, nonce: number, income?: true): KarmaBox {
+  return seedProvenance<KarmaBox>(
+    {
+      boxType: 'karma',
+      value,
+      createdAtBlock: 0,
+      owner,
+      ...(income === true ? { income: true as const } : {}),
+    },
+    0,
+    nonce,
+  );
+}
+
+function buildConsolidate(owner: Identity, own: KarmaBox, income: KarmaBox): UtxoTransaction {
+  const sum = own.value + income.value;
+  const tx: UtxoTransaction = {
+    inputs: [own.id!, income.id!],
+    outputs: [
+      {
+        boxType: 'karma',
+        value: sum,
+        createdAtBlock: 0,
+        owner: owner.pub,
+      } as unknown as AnyBox,
+    ],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  };
+  signTransaction(tx, owner.priv, owner.pubHex);
+  return tx;
+}
+
+function buildLikeOfOwnBox(owner: Identity, own: KarmaBox, author: Uint8Array, postId: string): UtxoTransaction {
+  const change = own.value - LIKE_KARMA_COST;
+  const outputs: AnyBox[] = [];
+  if (change > 0n) {
+    outputs.push({
+      boxType: 'karma',
+      value: change,
+      createdAtBlock: 0,
+      owner: owner.pub,
+    } as unknown as AnyBox);
+  }
+  outputs.push({
+    boxType: 'like_accrual',
+    value: LIKE_KARMA_COST,
+    createdAtBlock: 0,
+    author,
+  } as unknown as AnyBox);
+  const tx: UtxoTransaction = {
+    inputs: [own.id!],
+    outputs,
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+    likeTarget: postId,
+  };
+  signTransaction(tx, owner.priv, owner.pubHex);
+  return tx;
+}
+
+function buildClaim(owner: Identity, own: KarmaBox, name: string): UtxoTransaction {
+  const tx: UtxoTransaction = {
+    inputs: [own.id!],
+    outputs: [
+      {
+        boxType: 'karma',
+        value: own.value,
+        createdAtBlock: 0,
+        owner: owner.pub,
+      } as unknown as AnyBox,
+      {
+        boxType: 'username',
+        value: 0n as 0n,
+        createdAtBlock: 0,
+        owner: owner.pub,
+        name: new Uint8Array(Buffer.from(name, 'utf8')),
+      } as unknown as AnyBox,
+    ],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  };
+  signTransaction(tx, owner.priv, owner.pubHex);
+  return tx;
+}
+
+function buildWithdrawal(owner: Identity, own: KarmaBox, postId: string): UtxoTransaction {
+  const tx: UtxoTransaction = {
+    inputs: [own.id!],
+    outputs: [
+      {
+        boxType: 'karma',
+        value: own.value,
+        createdAtBlock: 0,
+        owner: owner.pub,
+      } as unknown as AnyBox,
+    ],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+    postWithdraw: { postId },
+  };
+  signTransaction(tx, owner.priv, owner.pubHex);
+  return tx;
+}
+
+/**
+ * The user-transaction entries of a template's body — every entry but the
+ * settlement, which is last.
+ */
+function userTxIds(block: OrderingBlock): string[] {
+  return block.utxoTxTree.utxoTxIds.slice(0, -1);
+}
+
+/** The template's settlement transaction length, in bytes — its last body entry's encoded length. */
+function templateSettlementBytes(block: OrderingBlock): number {
+  const txs = block.utxoTxTree.utxoTxs;
+  return txs[txs.length - 1]!.length;
+}
+
+describe('createOrderingBlock reserves a squaring for every stale owner\'s entry', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+  afterEach(async () => {
+    try {
+      const bc = await import('../../src/services/block-creator.js');
+      bc.stopBlockCreator();
+    } catch { /* module may not have been imported */ }
+    vi.doUnmock('../../src/config.js');
+    vi.doUnmock('@dagsocial/consensus');
+    vi.restoreAllMocks();
+    vi.resetModules();
+    const db = await importDb();
+    try { db.closeDb(); } catch { /* already closed */ }
+  });
+
+  // The subject: a pool of consolidations by distinct stale owners, each adding
+  // nothing to the settlement by `settlementMarginalBytes` (the only output is
+  // a karma box, which the settlement does not price), so the squaring is the
+  // whole of what each contributes to the settlement accumulator. Enough of
+  // them that the settlement of all would be over `MAX_SETTLEMENT_BYTES` makes
+  // the ceiling the limit the fill meets; the template keeps a non-empty
+  // prefix, its settlement encodes at or under the bound, and the kept count
+  // is what the accumulator's ceiling allows, within a few.
+  it('a pool of stale-owner consolidations: the template is a non-empty prefix within the settlement bound', async () => {
+    mockConfigForLowStale();
+    await freshStoreWithGenesisBoxes();
+
+    const N = 1000;
+    const identities: Identity[] = [];
+    const boxMutations: Array<{ kind: 'box'; op: 'insert'; boxId: string; box: AnyBox }> = [];
+    const recordMutations: Array<{ kind: 'record'; identityId: Uint8Array; record: IdentityRecord }> = [];
+    const consolidations: UtxoTransaction[] = [];
+    for (let i = 0; i < N; i++) {
+      const id = newIdentity();
+      const own = karmaBoxForOwner(id.pub, STALE_FACE, 100_000 + i);
+      const income = karmaBoxForOwner(id.pub, 5n, 200_000 + i, true);
+      identities.push(id);
+      boxMutations.push(
+        { kind: 'box', op: 'insert', boxId: own.id!, box: own },
+        { kind: 'box', op: 'insert', boxId: income.id!, box: income },
+      );
+      recordMutations.push({ kind: 'record', identityId: id.pub, record: staleActiveRecord() });
+      consolidations.push(buildConsolidate(id, own, income));
+    }
+    await seedCommittedState({ mutations: [...boxMutations, ...recordMutations] as never });
+
+    const mempool = await import('../../src/store/mempool.js');
+    for (const tx of consolidations) mempool.insertUtxoTx(tx, 5000);
+
+    const bc = await import('../../src/services/block-creator.js');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    bc.startBlockCreator(testConfig);
+    const template = bc.getCurrentTemplate();
+
+    expect(template).not.toBeNull();
+    const kept = userTxIds(template!);
+    const settlementBytes = templateSettlementBytes(template!);
+
+    // The fill stops at the entry that would take `settlementSpent` above
+    // `MAX_SETTLEMENT_BYTES`, so the kept count is a non-empty prefix shorter
+    // than the pool (MEMPOOL_INTERFACE → The fill budget is bytes;
+    // getPendingEntries is a count → "The fill counts the settlement's bytes").
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept.length).toBeLessThan(N);
+
+    // The template's settlement is legal — within the bound.
+    expect(settlementBytes).toBeLessThanOrEqual(MAX_SETTLEMENT_BYTES);
+
+    // The kept count is what the accumulator's ceiling allows, within a few.
+    // The baseline is the empty settlement's bytes under this state. Each
+    // consolidation adds `0 + decayLegMaxBytes(era)` to the accumulator. The
+    // ceiling admits as many entries as fit under `MAX_SETTLEMENT_BYTES`.
+    const squaring = decayLegMaxBytes(PROTOCOL_VERSION);
+    const ceiling = Math.floor((MAX_SETTLEMENT_BYTES - settlementBytes) / squaring) + kept.length;
+    expect(ceiling).toBeGreaterThanOrEqual(kept.length);
+
+    // Report the three budgets as they stood: the body budget, the settlement
+    // bound and the cost budget less the packing margin.
+    const budget = Math.min(testConfig.blockBodyBudgetBytes, MAX_BLOCK_BODY_BYTES);
+    const costBudget = MAX_BLOCK_COST;
+    const packTo = Math.floor((costBudget * (100 - PACKING_COST_MARGIN)) / 100);
+    const bodyBytes = utxoTxTreeByteLength(template!.utxoTxTree);
+    process.stdout.write('MEASUREMENT: ' + JSON.stringify({
+      case: 'consolidations-template-survives',
+      poolSize: N,
+      keptCount: kept.length,
+      settlementBytes,
+      bodyBytes,
+      budgets: { body: budget, settlement: MAX_SETTLEMENT_BYTES, cost: costBudget, packTo },
+      decayLegMaxBytes: squaring,
+    }) + '\n');
+  });
+
+  // The same, with likes: each entry already carries a `like_accrual` marker,
+  // so `settlementMarginalBytes` is non-zero for it (one input per marker). The
+  // fill still reserves the squaring on top. The template holds a non-empty
+  // prefix within the settlement bound.
+  it('a pool of stale-owner likes: the template is a non-empty prefix within the settlement bound', async () => {
+    mockConfigForLowStale();
+    await freshStoreWithGenesisBoxes();
+
+    // Target post: the author needs to be resolvable through the tree view
+    // (NODE_INTERFACE → Posts → "The creating transaction rides a post row"),
+    // so the post record is written to both the store and the tree.
+    const author = newIdentity();
+    const commit: PostCommit = makePostCommit(author.pub, 'likes target');
+    const postId = fixturePostId(commit);
+    const authorKarma = karmaBoxForOwner(author.pub, STALE_FACE, 777_000);
+    const N = 1500;
+    const likers: Identity[] = [];
+    const boxMutations: Array<{ kind: 'box'; op: 'insert'; boxId: string; box: AnyBox }> = [];
+    const recordMutations: Array<{ kind: 'record'; identityId: Uint8Array; record: IdentityRecord }> = [];
+    const likeTxs: UtxoTransaction[] = [];
+    recordMutations.push({ kind: 'record', identityId: author.pub, record: freshActiveRecord(1) });
+    boxMutations.push({ kind: 'box', op: 'insert', boxId: authorKarma.id!, box: authorKarma });
+    for (let i = 0; i < N; i++) {
+      const id = newIdentity();
+      const own = karmaBoxForOwner(id.pub, STALE_FACE, 300_000 + i);
+      likers.push(id);
+      boxMutations.push({ kind: 'box', op: 'insert', boxId: own.id!, box: own });
+      recordMutations.push({ kind: 'record', identityId: id.pub, record: staleActiveRecord() });
+      likeTxs.push(buildLikeOfOwnBox(id, own, author.pub, postId));
+    }
+    await seedCommittedState({
+      posts: [{ postId, txId: fixtureTxId(commit), post: commit }],
+      mutations: [...boxMutations, ...recordMutations] as never,
+    });
+
+    const mempool = await import('../../src/store/mempool.js');
+    for (const tx of likeTxs) mempool.insertUtxoTx(tx, 5000);
+
+    const bc = await import('../../src/services/block-creator.js');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    bc.startBlockCreator(testConfig);
+    const template = bc.getCurrentTemplate();
+
+    expect(template).not.toBeNull();
+    const kept = userTxIds(template!);
+    const settlementBytes = templateSettlementBytes(template!);
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept.length).toBeLessThan(N);
+    expect(settlementBytes).toBeLessThanOrEqual(MAX_SETTLEMENT_BYTES);
+
+    const budget = Math.min(testConfig.blockBodyBudgetBytes, MAX_BLOCK_BODY_BYTES);
+    const costBudget = MAX_BLOCK_COST;
+    const packTo = Math.floor((costBudget * (100 - PACKING_COST_MARGIN)) / 100);
+    process.stdout.write('MEASUREMENT: ' + JSON.stringify({
+      case: 'likes-template-survives',
+      poolSize: N,
+      keptCount: kept.length,
+      settlementBytes,
+      bodyBytes: utxoTxTreeByteLength(template!.utxoTxTree),
+      budgets: { body: budget, settlement: MAX_SETTLEMENT_BYTES, cost: costBudget, packTo },
+      decayLegMaxBytes: decayLegMaxBytes(PROTOCOL_VERSION),
+      perEntryMarginal: settlementMarginalBytes(likeTxs[0]!),
+    }) + '\n');
+  });
+
+  // The template of the first case goes through the suite's own mine path to
+  // an applied block, and afterwards each kept owner holds exactly one
+  // unmarked karma box carrying their effective karma (NODE_INTERFACE → Karma
+  // decay). The settlement's decay leg consumes the owner's post-body karma
+  // boxes and emits one at `effective = max(face - owedPeriods · decayAmount,
+  // karmaMinimum)`.
+  it('the template a stale-owner consolidations pool builds applies, and leaves one unmarked karma box per kept owner', async () => {
+    mockConfigForLowStale();
+    await freshStoreWithGenesisBoxes();
+
+    const N = 1000;
+    const identities: Identity[] = [];
+    const boxMutations: Array<{ kind: 'box'; op: 'insert'; boxId: string; box: AnyBox }> = [];
+    const recordMutations: Array<{ kind: 'record'; identityId: Uint8Array; record: IdentityRecord }> = [];
+    const consolidations: UtxoTransaction[] = [];
+    for (let i = 0; i < N; i++) {
+      const id = newIdentity();
+      const own = karmaBoxForOwner(id.pub, STALE_FACE, 400_000 + i);
+      const income = karmaBoxForOwner(id.pub, 5n, 500_000 + i, true);
+      identities.push(id);
+      boxMutations.push(
+        { kind: 'box', op: 'insert', boxId: own.id!, box: own },
+        { kind: 'box', op: 'insert', boxId: income.id!, box: income },
+      );
+      recordMutations.push({ kind: 'record', identityId: id.pub, record: staleActiveRecord() });
+      consolidations.push(buildConsolidate(id, own, income));
+    }
+    await seedCommittedState({ mutations: [...boxMutations, ...recordMutations] as never });
+
+    const mempool = await import('../../src/store/mempool.js');
+    const utxo = await import('../../src/store/utxo.js');
+    const consolidationIds = consolidations.map((tx) => computeTxId(tx));
+    for (const tx of consolidations) mempool.insertUtxoTx(tx, 5000);
+
+    const bc = await import('../../src/services/block-creator.js');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    bc.startBlockCreator(testConfig);
+    const template = bc.getCurrentTemplate();
+    expect(template).not.toBeNull();
+    const kept = userTxIds(template!);
+    expect(kept.length).toBeGreaterThan(0);
+
+    const nonce = solveHeaderPow(template!.header);
+    const hash = bc.submitMinedBlock(nonce, template!.header.height);
+    expect(hash).not.toBeNull();
+
+    // One of the kept owners' holdings: their consolidation consumed the own
+    // and income boxes and emitted one unmarked karma box; the settlement
+    // charged the stale squaring, leaving them with one unmarked box of their
+    // effective karma. The squaring consumed exactly one karma box (the
+    // consolidation's output) and emitted one at the floor-clamped effective
+    // value.
+    const face = STALE_FACE + 5n;
+    const expectedEffective = (face - KARMA_DECAY_AMOUNT) < KARMA_MINIMUM
+      ? KARMA_MINIMUM
+      : face - KARMA_DECAY_AMOUNT;
+    for (let i = 0; i < kept.length; i++) {
+      const id = identities[consolidationIds.indexOf(kept[i]!)]!;
+      const boxes = utxo.getKarmaBoxes(id.pub);
+      expect(boxes).toHaveLength(1);
+      expect(boxes[0]!.income).toBeUndefined();
+      expect(boxes[0]!.value).toBe(expectedEffective);
+    }
+  });
+
+  // Fresh owners' likes under the rule: the predicate `karmaOwed > 0n` is
+  // false, so the fill reserves no squaring and ends at the body-byte and
+  // settlement-byte bounds alone. Paired with the next test, which repeats
+  // the pool under `decayLegMaxBytes` forced to zero: the two counts are
+  // equal because the reservation is 0 for a fresh owner either way.
+  it('a pool of fresh owners\' likes fills to its natural count under the rule', async () => {
+    mockConfigForLowStale();
+    await freshStoreWithGenesisBoxes();
+
+    const author = newIdentity();
+    const commit: PostCommit = makePostCommit(author.pub, 'fresh likes target');
+    const postId = fixturePostId(commit);
+    const authorKarma = karmaBoxForOwner(author.pub, STALE_FACE, 888_000);
+    const N = 3200;
+    const likeTxs: UtxoTransaction[] = [];
+    const boxMutations: Array<{ kind: 'box'; op: 'insert'; boxId: string; box: AnyBox }> = [];
+    const recordMutations: Array<{ kind: 'record'; identityId: Uint8Array; record: IdentityRecord }> = [];
+    recordMutations.push({ kind: 'record', identityId: author.pub, record: freshActiveRecord(1) });
+    boxMutations.push({ kind: 'box', op: 'insert', boxId: authorKarma.id!, box: authorKarma });
+    for (let i = 0; i < N; i++) {
+      const id = newIdentity();
+      const own = karmaBoxForOwner(id.pub, STALE_FACE, 600_000 + i);
+      boxMutations.push({ kind: 'box', op: 'insert', boxId: own.id!, box: own });
+      // Fresh at height 1 — `owedPeriods` is 0 under the mocked decay cfg.
+      recordMutations.push({ kind: 'record', identityId: id.pub, record: freshActiveRecord(1) });
+      likeTxs.push(buildLikeOfOwnBox(id, own, author.pub, postId));
+    }
+    await seedCommittedState({
+      posts: [{ postId, txId: fixtureTxId(commit), post: commit }],
+      mutations: [...boxMutations, ...recordMutations] as never,
+    });
+
+    const mempool = await import('../../src/store/mempool.js');
+    for (const tx of likeTxs) mempool.insertUtxoTx(tx, 5000);
+
+    const bc = await import('../../src/services/block-creator.js');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    bc.startBlockCreator(testConfig);
+    const template = bc.getCurrentTemplate();
+    expect(template).not.toBeNull();
+    const keptWithRule = userTxIds(template!).length;
+    expect(keptWithRule).toBeGreaterThan(0);
+    expect(keptWithRule).toBeLessThan(N);
+
+    process.stdout.write('MEASUREMENT: ' + JSON.stringify({
+      case: 'fresh-owners-reserve-nothing',
+      arm: 'with-rule',
+      poolSize: N,
+      keptCount: keptWithRule,
+    }) + '\n');
+  });
+
+  // The pre-rule count for the same pool, obtained by overriding
+  // `decayLegMaxBytes` to 0 in the fill's reservation — the state before
+  // `fef64b36` added the squaring to the accumulator. Paired with the test
+  // above; both counts are equal because the predicate `karmaOwed > 0n` is
+  // false for fresh owners.
+  it('the same pool under decayLegMaxBytes forced to 0 keeps the same count', async () => {
+    mockConfigForLowStale();
+    vi.doMock('@dagsocial/consensus', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@dagsocial/consensus')>();
+      return { ...actual, decayLegMaxBytes: () => 0 };
+    });
+    await freshStoreWithGenesisBoxes();
+
+    const author = newIdentity();
+    const commit: PostCommit = makePostCommit(author.pub, 'fresh likes target');
+    const postId = fixturePostId(commit);
+    const authorKarma = karmaBoxForOwner(author.pub, STALE_FACE, 888_000);
+    const N = 3200;
+    const likeTxs: UtxoTransaction[] = [];
+    const boxMutations: Array<{ kind: 'box'; op: 'insert'; boxId: string; box: AnyBox }> = [];
+    const recordMutations: Array<{ kind: 'record'; identityId: Uint8Array; record: IdentityRecord }> = [];
+    recordMutations.push({ kind: 'record', identityId: author.pub, record: freshActiveRecord(1) });
+    boxMutations.push({ kind: 'box', op: 'insert', boxId: authorKarma.id!, box: authorKarma });
+    for (let i = 0; i < N; i++) {
+      const id = newIdentity();
+      const own = karmaBoxForOwner(id.pub, STALE_FACE, 600_000 + i);
+      boxMutations.push({ kind: 'box', op: 'insert', boxId: own.id!, box: own });
+      recordMutations.push({ kind: 'record', identityId: id.pub, record: freshActiveRecord(1) });
+      likeTxs.push(buildLikeOfOwnBox(id, own, author.pub, postId));
+    }
+    await seedCommittedState({
+      posts: [{ postId, txId: fixtureTxId(commit), post: commit }],
+      mutations: [...boxMutations, ...recordMutations] as never,
+    });
+
+    const mempool = await import('../../src/store/mempool.js');
+    for (const tx of likeTxs) mempool.insertUtxoTx(tx, 5000);
+
+    const bc = await import('../../src/services/block-creator.js');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    bc.startBlockCreator(testConfig);
+    const template = bc.getCurrentTemplate();
+    expect(template).not.toBeNull();
+    const keptForcedZero = userTxIds(template!).length;
+    expect(keptForcedZero).toBeGreaterThan(0);
+
+    process.stdout.write('MEASUREMENT: ' + JSON.stringify({
+      case: 'fresh-owners-reserve-nothing',
+      arm: 'forced-zero',
+      poolSize: N,
+      keptCount: keptForcedZero,
+      earlierCountVia: 'vi.doMock @dagsocial/consensus → decayLegMaxBytes: () => 0',
+    }) + '\n');
+  });
+
+  // The gate metadata table in `store/mempool.ts`'s `gateMetadata` writes
+  // `karma_owner` for every karma transaction — not only the spending ones:
+  // a consolidation, a claim and a withdrawal each carry a karma output and
+  // exactly one signature key (NODE_INTERFACE → Legal box transitions). The
+  // fill reads `entry.karmaOwner` and asks the predicate per owner; three
+  // stale owners each with one such shape have all three entries carrying a
+  // non-null `karma_owner`, and each entry reserves `decayLegMaxBytes` in the
+  // settlement accumulator. A settlement bound set at `baseline + 2 × squaring`
+  // admits two of the three; set at `baseline + 3 × squaring` admits all
+  // three.
+  it('a stale owner\'s consolidation, claim and withdrawal each land in the pool with karma_owner set, and each reserves the squaring', async () => {
+    mockConfigForLowStale();
+    await freshStoreWithGenesisBoxes();
+
+    const consolOwner = newIdentity();
+    const claimOwner = newIdentity();
+    const withdrawOwner = newIdentity();
+    const author = newIdentity();
+
+    // The post `withdrawOwner` authored — the row is written to both the store
+    // and the tree so apply can resolve its author.
+    const commit: PostCommit = {
+      contentHash: computeContentHash('withdrawal subject'),
+      author: withdrawOwner.pub,
+      parentRefs: [],
+      protocolVersion: PROTOCOL_VERSION,
+      type: 'regular',
+    };
+    const postId = fixturePostId(commit);
+    const postTxId = fixtureTxId(commit);
+
+    const consolOwn = karmaBoxForOwner(consolOwner.pub, STALE_FACE, 701);
+    const consolIncome = karmaBoxForOwner(consolOwner.pub, 5n, 702, true);
+    const claimOwn = karmaBoxForOwner(claimOwner.pub, STALE_FACE, 703);
+    const withdrawOwn = karmaBoxForOwner(withdrawOwner.pub, STALE_FACE, 704);
+
+    await seedCommittedState({
+      posts: [{ postId, txId: postTxId, post: commit }],
+      mutations: [
+        { kind: 'box', op: 'insert', boxId: consolOwn.id!, box: consolOwn },
+        { kind: 'box', op: 'insert', boxId: consolIncome.id!, box: consolIncome },
+        { kind: 'box', op: 'insert', boxId: claimOwn.id!, box: claimOwn },
+        { kind: 'box', op: 'insert', boxId: withdrawOwn.id!, box: withdrawOwn },
+        { kind: 'record', identityId: consolOwner.pub, record: staleActiveRecord() },
+        { kind: 'record', identityId: claimOwner.pub, record: staleActiveRecord() },
+        { kind: 'record', identityId: withdrawOwner.pub, record: staleActiveRecord() },
+        { kind: 'record', identityId: author.pub, record: freshActiveRecord(1) },
+      ] as never,
+    });
+
+    const consolTx = buildConsolidate(consolOwner, consolOwn, consolIncome);
+    const claimTx = buildClaim(claimOwner, claimOwn, 'alice1234');
+    const withdrawTx = buildWithdrawal(withdrawOwner, withdrawOwn, postId);
+
+    const mempool = await import('../../src/store/mempool.js');
+    mempool.insertUtxoTx(consolTx, 5000);
+    mempool.insertUtxoTx(claimTx, 5000);
+    mempool.insertUtxoTx(withdrawTx, 5000);
+
+    // All three rows carry a non-null `karma_owner` — `gateMetadata`'s karma
+    // arm fires on any output of type karma, karma_price, like_accrual, bond
+    // or vouch under exactly one signature key.
+    const pooled = mempool.getPendingEntries(10);
+    expect(pooled).toHaveLength(3);
+    expect(pooled.every((row) => row.karmaOwner !== null)).toBe(true);
+
+    const bc = await import('../../src/services/block-creator.js');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    bc.startBlockCreator(testConfig);
+    const template = bc.getCurrentTemplate();
+    expect(template).not.toBeNull();
+    // Without a tightened bound, all three ride the template.
+    expect(userTxIds(template!)).toHaveLength(3);
+  });
+
+  // Two likes by one stale owner: the first consumes the owner's own box; the
+  // second consumes the first's change through the overlay. Both entries
+  // carry the same `karma_owner`, and the fill reserves `decayLegMaxBytes`
+  // for each of them (the accumulator does not dedupe by owner). The block
+  // assembles with both and applies, charging the owner's squaring exactly
+  // once in the settlement: `deriveKarmaDecay` iterates touched identities
+  // once per identity (NODE_INTERFACE → Karma decay).
+  it('two likes of one stale owner both reserve the squaring; the block applies and charges that owner once', async () => {
+    mockConfigForLowStale();
+    await freshStoreWithGenesisBoxes();
+
+    const liker = newIdentity();
+    const author = newIdentity();
+    const commit: PostCommit = makePostCommit(author.pub, 'two-likes target');
+    const postId = fixturePostId(commit);
+    const commit2: PostCommit = makePostCommit(author.pub, 'two-likes target B');
+    const postId2 = fixturePostId(commit2);
+
+    // The liker holds enough face karma to spend twice without crossing the
+    // floor: 2 × LIKE_KARMA_COST headroom plus `KARMA_MINIMUM` plus the
+    // decay-amount cushion.
+    const face = KARMA_MINIMUM + LIKE_KARMA_COST * 2n + KARMA_DECAY_AMOUNT * 4n;
+    const own = karmaBoxForOwner(liker.pub, face, 800_001);
+    const authorKarma = karmaBoxForOwner(author.pub, STALE_FACE, 800_002);
+
+    await seedCommittedState({
+      posts: [
+        { postId, txId: fixtureTxId(commit), post: commit },
+        { postId: postId2, txId: fixtureTxId(commit2), post: commit2 },
+      ],
+      mutations: [
+        { kind: 'box', op: 'insert', boxId: own.id!, box: own },
+        { kind: 'box', op: 'insert', boxId: authorKarma.id!, box: authorKarma },
+        { kind: 'record', identityId: liker.pub, record: staleActiveRecord() },
+        { kind: 'record', identityId: author.pub, record: freshActiveRecord(1) },
+      ] as never,
+    });
+
+    // The first like consumes the own box; the second consumes the first's
+    // karma change. `materializeOutput` names the second's input the way
+    // apply's overlay will.
+    const first = buildLikeOfOwnBox(liker, own, author.pub, postId);
+    const { materializeOutput } = await import('@dagsocial/consensus');
+    const change = materializeOutput(first.outputs[0]!, computeTxId(first), 0) as KarmaBox;
+    const second = buildLikeOfOwnBox(liker, change, author.pub, postId2);
+
+    const mempool = await import('../../src/store/mempool.js');
+    mempool.insertUtxoTx(first, 5000);
+    mempool.insertUtxoTx(second, 5000);
+
+    // Both rows name the same owner on `karma_owner`, so the fill asks the
+    // predicate once (cached) and reserves `decayLegMaxBytes` for each entry.
+    const pooled = mempool.getPendingEntries(10);
+    expect(pooled).toHaveLength(2);
+    expect(pooled.every((row) => row.karmaOwner === liker.pubHex)).toBe(true);
+
+    const bc = await import('../../src/services/block-creator.js');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    bc.startBlockCreator(testConfig);
+    const template = bc.getCurrentTemplate();
+    expect(template).not.toBeNull();
+    expect(userTxIds(template!)).toEqual([computeTxId(first), computeTxId(second)]);
+
+    const nonce = solveHeaderPow(template!.header);
+    const hash = bc.submitMinedBlock(nonce, template!.header.height);
+    expect(hash).not.toBeNull();
+
+    // After apply the liker holds exactly one unmarked karma box — their
+    // post-body karma consumed and the settlement emits one at the clamped
+    // effective value (NODE_INTERFACE → Karma decay). The squaring fires
+    // once for them, not twice.
+    const utxo = await import('../../src/store/utxo.js');
+    const boxes = utxo.getKarmaBoxes(liker.pub);
+    expect(boxes).toHaveLength(1);
+    expect(boxes[0]!.income).toBeUndefined();
+    const postBodyFace = face - LIKE_KARMA_COST * 2n;
+    const expectedEffective = (postBodyFace - KARMA_DECAY_AMOUNT) < KARMA_MINIMUM
+      ? KARMA_MINIMUM
+      : postBodyFace - KARMA_DECAY_AMOUNT;
+    expect(boxes[0]!.value).toBe(expectedEffective);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A reorg across an income box: block A's settlement pays an author who holds
+// no pre-body income box, so one is emitted; block B's pays them again, so
+// the pre-body income box (A's) is consumed and a larger one emitted under a
+// new id. Rolling B back restores A's income box at its id and value, and
+// re-applying B produces the same replacement at the same id — the two
+// invariants NODE_INTERFACE → Block finalization pins for the apply funnel
+// under reorg.
+// ---------------------------------------------------------------------------
+
+describe('a reorg across an income box', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+  afterEach(async () => {
+    try {
+      const bc = await import('../../src/services/block-creator.js');
+      bc.stopBlockCreator();
+    } catch { /* module may not have been imported */ }
+    vi.restoreAllMocks();
+    vi.resetModules();
+    const db = await importDb();
+    try { db.closeDb(); } catch { /* already closed */ }
+  });
+
+  it('rolls B back to A\'s income box id and value, and B re-applied yields the same replacement at the same id', async () => {
+    await freshStoreWithGenesisBoxes();
+
+    const author = newIdentity();
+    const commit: PostCommit = makePostCommit(author.pub, 'reorg-income target');
+    const postId = fixturePostId(commit);
+
+    // Fresh records so no identity is stale at the heights the chain reaches;
+    // the subject is the income-box replacement, not decay.
+    const activeAt = (height: number): IdentityRecord => ({
+      lastActivityBlock: height,
+      lastDecayBlock: 0,
+      invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
+    });
+
+    // Enough likers that each block carries `LIKES_PER_KARMA_PAYOUT` likes,
+    // so the author's `likePayout.paid` is non-zero and the settlement emits
+    // an income box (NODE_INTERFACE → Per-block like settlement). Below that,
+    // the carry sits in a `like_accrual` box instead and no income box
+    // appears.
+    const K = 5;
+    const likersA: Identity[] = [];
+    const likersB: Identity[] = [];
+    const ownBoxesA: KarmaBox[] = [];
+    const ownBoxesB: KarmaBox[] = [];
+    const boxMutations: Array<{ kind: 'box'; op: 'insert'; boxId: string; box: AnyBox }> = [];
+    const recordMutations: Array<{ kind: 'record'; identityId: Uint8Array; record: IdentityRecord }> = [];
+    recordMutations.push({ kind: 'record', identityId: author.pub, record: activeAt(1) });
+    for (let i = 0; i < K; i++) {
+      const l = newIdentity();
+      const own = karmaBoxForOwner(l.pub, STALE_FACE, 910_000 + i);
+      likersA.push(l);
+      ownBoxesA.push(own);
+      boxMutations.push({ kind: 'box', op: 'insert', boxId: own.id!, box: own });
+      recordMutations.push({ kind: 'record', identityId: l.pub, record: activeAt(1) });
+    }
+    for (let i = 0; i < K; i++) {
+      const l = newIdentity();
+      const own = karmaBoxForOwner(l.pub, STALE_FACE, 920_000 + i);
+      likersB.push(l);
+      ownBoxesB.push(own);
+      boxMutations.push({ kind: 'box', op: 'insert', boxId: own.id!, box: own });
+      recordMutations.push({ kind: 'record', identityId: l.pub, record: activeAt(1) });
+    }
+
+    await seedCommittedState({
+      posts: [{ postId, txId: fixtureTxId(commit), post: commit }],
+      mutations: [...boxMutations, ...recordMutations] as never,
+    });
+
+    const bc = await import('../../src/services/block-creator.js');
+    const mempool = await import('../../src/store/mempool.js');
+    const utxo = await import('../../src/store/utxo.js');
+
+    bc.startBlockCreator(testConfig);
+
+    // Block A — the author has no pre-body income box, so the settlement
+    // emits a fresh one at the summed accrual.
+    for (let i = 0; i < K; i++) {
+      const tx = buildLikeOfOwnBox(likersA[i]!, ownBoxesA[i]!, author.pub, postId);
+      mempool.insertUtxoTx(tx, 5000);
+    }
+    const blockA = await mineNextBlock(bc);
+    expect(blockA).not.toBeNull();
+
+    const authorBoxesA = utxo.getKarmaBoxes(author.pub);
+    const incomeA = authorBoxesA.find((b) => b.income === true);
+    expect(incomeA).not.toBeUndefined();
+    const incomeAId = incomeA!.id!;
+    const incomeAValue = incomeA!.value;
+
+    // Block B — the author's pre-body income box is A's; the settlement
+    // consumes it and emits one of A's value plus this block's accrual
+    // under a new id (NODE_INTERFACE → The settlement transaction).
+    const likesB: UtxoTransaction[] = [];
+    for (let i = 0; i < K; i++) {
+      const tx = buildLikeOfOwnBox(likersB[i]!, ownBoxesB[i]!, author.pub, postId);
+      likesB.push(tx);
+      mempool.insertUtxoTx(tx, 5000);
+    }
+    const blockB = await mineNextBlock(bc);
+    expect(blockB).not.toBeNull();
+
+    const authorBoxesB = utxo.getKarmaBoxes(author.pub);
+    const incomeB = authorBoxesB.find((b) => b.income === true);
+    expect(incomeB).not.toBeUndefined();
+    const incomeBId = incomeB!.id!;
+    const incomeBValue = incomeB!.value;
+    expect(incomeBId).not.toBe(incomeAId);
+    expect(incomeBValue).toBeGreaterThan(incomeAValue);
+    // A's income box is consumed by B — not live after B.
+    expect(utxo.getBox(incomeAId)).toBeNull();
+
+    // Roll B back. `revertChainTo(1)` runs the suite's reorg mechanism —
+    // every block above the fork through `revertBlock`, then the prover
+    // restored by reference or by store resolve.
+    await revertChainTo(1);
+
+    const authorBoxesAfterRevert = utxo.getKarmaBoxes(author.pub);
+    const incomeAfterRevert = authorBoxesAfterRevert.find((b) => b.income === true);
+    expect(incomeAfterRevert).not.toBeUndefined();
+    expect(incomeAfterRevert!.id!).toBe(incomeAId);
+    expect(incomeAfterRevert!.value).toBe(incomeAValue);
+    // The tree agrees with the store.
+    const { tryGetAvlProver } = await import('../../src/state/avl-prover.js');
+    const { proverSession } = await import('../../src/state/prover-session.js');
+    const treeAfterRevert = treeStateView(proverSession(tryGetAvlProver()!.prover));
+    const treeAuthorBoxes = treeAfterRevert.getKarmaBoxes(author.pub);
+    const treeIncome = treeAuthorBoxes.find((b) => b.income === true);
+    expect(treeIncome!.id!).toBe(incomeAId);
+    expect(treeIncome!.value).toBe(incomeAValue);
+
+    // `revertBlock` reverts chain state and does not re-insert transactions
+    // on its own — `reorg`'s phase 2 does; the helper used here calls
+    // `revertBlock` alone. Re-pool B's likes so the next mine builds the
+    // same body. Same transactions, same height, same body → same
+    // replacement at the same id.
+    for (const tx of likesB) mempool.insertUtxoTx(tx, 5000);
+    const blockBAgain = await mineNextBlock(bc);
+    expect(blockBAgain).not.toBeNull();
+    const authorBoxesBAgain = utxo.getKarmaBoxes(author.pub);
+    const incomeBAgain = authorBoxesBAgain.find((b) => b.income === true);
+    expect(incomeBAgain!.id!).toBe(incomeBId);
+    expect(incomeBAgain!.value).toBe(incomeBValue);
+    expect(utxo.getBox(incomeAId)).toBeNull();
+    process.stdout.write('MEASUREMENT: ' + JSON.stringify({
+      case: 'reorg-across-income-box',
+      afterA: { id: incomeAId, value: incomeAValue.toString() },
+      afterB: { id: incomeBId, value: incomeBValue.toString() },
+      afterRevert: { id: incomeAfterRevert!.id!, value: incomeAfterRevert!.value.toString() },
+      afterBAgain: { id: incomeBAgain!.id!, value: incomeBAgain!.value.toString() },
+    }) + '\n');
+  });
+});
+

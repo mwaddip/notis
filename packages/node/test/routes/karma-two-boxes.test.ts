@@ -15,11 +15,13 @@ import {
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
+  W_OP,
 } from '@dagsocial/types';
 import type {
   AnyBox,
   IdentityRecord,
   KarmaBox,
+  PostCommit,
   UtxoTransaction,
 } from '@dagsocial/types';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
@@ -55,6 +57,7 @@ import {
   fixturePostId,
   fixtureTxId,
   rawPublicKey,
+  seedCommittedState,
   seedProvenance,
   signTransaction,
   type Stored,
@@ -660,14 +663,42 @@ describe('admission under "An identity holds at most two karma boxes"', () => {
     const ownOne = seedKarma(likerOne.pub, KARMA_MINIMUM + LIKE_KARMA_COST, 100);
     const ownTwo = seedKarma(likerTwo.pub, KARMA_MINIMUM + LIKE_KARMA_COST, 200);
     seedKarma(likerTwo.pub, 5n, 201, true);
-    const postOne = insertTargetPost('gate-one');
-    const postTwo = insertTargetPost('gate-two');
+    // The cost gate's `applyBlock` reads the target post's author through
+    // the tree view (NODE_INTERFACE → Posts → "The creating transaction
+    // rides a post row"). `insertPost` writes the store row but no tree
+    // record, so admission's apply refuses the body and `costAlone`
+    // returns null — the row carries no estimate. `seedCommittedState`
+    // writes the post to the store, the tree and `block_topology`
+    // together, which is what the gate needs. Posts are seeded after the
+    // prover is active so `treeWritesOf` runs over the live view.
+    const commitOne: PostCommit = {
+      contentHash: computeContentHash('two-boxes subject gate-one'),
+      author: AUTHOR,
+      parentRefs: [],
+      protocolVersion: PROTOCOL_VERSION,
+      type: 'regular',
+    };
+    const commitTwo: PostCommit = {
+      contentHash: computeContentHash('two-boxes subject gate-two'),
+      author: AUTHOR,
+      parentRefs: [],
+      protocolVersion: PROTOCOL_VERSION,
+      type: 'regular',
+    };
+    const postOne = fixturePostId(commitOne);
+    const postTwo = fixturePostId(commitTwo);
     // The cost gate costs a transaction's block alone over the live tree;
     // activate a prover over the seeded store before the admission calls so
     // the gate measures (MEMPOOL_INTERFACE → The cost gate). admitTx reads
     // `nextBlockHeight` for the gate's run — the next height after a fresh
     // store with no mined block is 1, so the test judges at that height.
     await activateProverOverStore();
+    await seedCommittedState({
+      posts: [
+        { postId: postOne, txId: fixtureTxId(commitOne), post: commitOne },
+        { postId: postTwo, txId: fixtureTxId(commitTwo), post: commitTwo },
+      ],
+    });
     const deps = admissionDeps();
 
     const txOne = buildLikeFromInputs(likerOne, [ownOne], postOne);
@@ -681,17 +712,21 @@ describe('admission under "An identity holds at most two karma boxes"', () => {
     const entries = getPendingEntries(100);
     const rowOne = entries.find((e) => computeTxId(decodeTx(e.utxoTxBytes!)) === resOne.txId)!;
     const rowTwo = entries.find((e) => computeTxId(decodeTx(e.utxoTxBytes!)) === resTwo.txId)!;
-    const estimates = {
-      oneBox: rowOne.costEstimate,
-      twoBoxes: rowTwo.costEstimate,
-    };
-    // The gate's answer is printed; a case comparing the two numbers needs
-    // both to be costed, and the fresh in-memory store this test uses leaves
-    // the gate's apply unable to resolve the like target's author through
-    // the tree (NODE_INTERFACE → Posts → "The creating transaction rides a
-    // post row") — insertPost writes the row, not the tree record the view
-    // reads. The one implementation of the gate's own run belongs in a
-    // harness that seeds that record.
-    console.log(JSON.stringify({ costGate: estimates }));
+    const oneBox = rowOne.costEstimate;
+    const twoBoxes = rowTwo.costEstimate;
+    // Both estimates are numbers — the gate measured each transaction's
+    // block alone over the live tree (MEMPOOL_INTERFACE → The cost gate).
+    expect(oneBox).not.toBeNull();
+    expect(twoBoxes).not.toBeNull();
+
+    // The second exceeds the first by no more than `W_OP` times the lookups
+    // one more karma box costs. One extra box = one extra tree lookup to
+    // read it through `getKarmaBoxes`, plus a bounded number of range-walk
+    // ops to confirm the invariant (TYPES_INTERFACE → The block's cost);
+    // W_OP × a small bound is the upper limit this case holds the diff to.
+    const diff = (twoBoxes as number) - (oneBox as number);
+    expect(diff).toBeGreaterThanOrEqual(0);
+    expect(diff).toBeLessThanOrEqual(W_OP * 8);
+    console.log(JSON.stringify({ costGate: { oneBox, twoBoxes, diff } }));
   });
 });
