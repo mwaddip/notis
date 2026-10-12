@@ -41,12 +41,19 @@ const TARGET_ID = 'ee'.repeat(32);
 const THREAD_CONTENT = 'a test thread ✓';
 const REPLY_CONTENT = 'a test reply ✓';
 
-const THREAD_TXID = 'c44b433f6a46671d9dc3977fd85fb9ddbad951c9dfc17e39e07a017e4c3b8197';
-const THREAD_CHANGE = 'ca865902ed1a20c9ad69b3fbe54c770ac9f54c7f02e4d8188ae2cc0702d80eec';
-const REPLY_TXID = '367d003c4e7480f96481ccf36b7a984b6c5b18240d1c2722f47b0b947ca5065f';
-const REPLY_CHANGE = '65326b56c014d1f40933ebcf1d071a253eabe341a25eee07b51fe430a143eeff';
-const LIKE_TXID = '7ccf15c3b930fa33eb8558e594f2c192cede855c6e558a896313f03ac1f6639c';
-const LIKE_CHANGE = '24e438a4227fc1a99fdff98cd6942907c614c1bf200f7a7316c7c52b8e337281';
+// The frozen txIds and the change-box ids they derive moved under the karma
+// box's one-byte `income` mark (TYPES_INTERFACE → KarmaBox): every karma
+// output (change on a post, a reply, a like, a vouch, an invite and a burn,
+// and the returned box on a withdrawal and a claim) now encodes a trailing
+// `u8(0)` on an own box, so the preimage `computeTxId` and
+// `computeCandidateBoxId` hash is one byte longer. The content hash and the
+// unvouch's vectors are unchanged — the escrow box carries no mark.
+const THREAD_TXID = 'ff8329bdb14b0afd6a32e2f89f1924bbd1e03298e26d90929eb0c898701fc796';
+const THREAD_CHANGE = 'a99bf6eeccf10dfae365cdbf17d652394385ad511821b33b4b75015618217c4e';
+const REPLY_TXID = '86046d10064b3755c09bf25408de409bc63c5376402d86adbfffef31ff460ea6';
+const REPLY_CHANGE = '0bf449c6cb43898ba081027a3585726c052bb59783d2ccbdc3f0e724e02dd25e';
+const LIKE_TXID = '76551a603b4f28cb13ab2f08abc44120b6ea41dcc8452232be342768e731733a';
+const LIKE_CHANGE = '089da24b9f9132961e0aeafd4d42461bebfbb89c3fd351deef63714d796275b9';
 const THREAD_CONTENT_HASH = '8bc41f00d29d7adc055bc479bf21e13473a34426470b92aa675c6f83eba2429f';
 
 // The membership vectors, frozen the same way — txIds over fixed inputs: height
@@ -60,28 +67,28 @@ const VOUCH_BOX = '33'.repeat(32);
 // a node's confirmedAuthor, a vouch target or a pasted key can take when it
 // is not what it claims (TYPES_INTERFACE → Export table).
 const BAD_KEY = 'gg'.repeat(32);
-const VOUCH_TXID = '6b5e1ba32c2bfe23b6db0db940fbadf1166ff2a5cbd472d1a2017934149e3e50';
-const VOUCH_CHANGE = '80626928e3ad938060005951abb752273d45ab6965f7593c955b20670723cf45';
-const INVITE_TXID = '764853c48611aa6d2a6d568d59a048af5a251d0e60caa80b22846e7215437d30';
-const INVITE_CHANGE = '2e1beb54dd3028bd7acace8edafaea4bef9ab23b2f89890c9ae20619963c3a1d';
+const VOUCH_TXID = 'aee92c3169b71ff7b28391f3b42ad5021a08f008524e741d381fa371dc676ac9';
+const VOUCH_CHANGE = '70bd6ce743bc1701d6fad83153dbc8263d8e2ef950423289fd5de41e0d124b3c';
+const INVITE_TXID = '3a1f6cc577452b93ccf731f672a4ed94d37e73be0afa7e70455f402cf8f20a05';
+const INVITE_CHANGE = 'f2b2a7499dbfe0371d3a1d14bd73c5b382b5d5472e2d6a6cc5c300000e7875b5';
 const UNVOUCH_TXID = '5988584f619b498ca161e9d7739c975370bb75ea0c6ce6d3c87ac7efcfd11f6b';
 
 // The withdraw vector, frozen the same way — txId and output id over fixed
 // inputs: height 5000, era 1, one spendable box of 227 ('cc'*32), author
 // 'aa'*32, over a post id 'ff'*32.
 const WITHDRAW_POST_ID = 'ff'.repeat(32);
-const WITHDRAW_TXID = '1ee0e7e76e1d2c03414a37135b7d08930bfe7d477b4504379978f2cbf6bacf89';
-const WITHDRAW_OUTPUT = '0aa7e4a5c67536ccee34946d3276bd2631752a5df5eddca32115e9ab44cd4658';
+const WITHDRAW_TXID = 'a93c11ebccc94dd1781b002a987a1470ce29441fc694fa12f0c77ee572917cc8';
+const WITHDRAW_OUTPUT = '37ca9c1d70085316a6eaa3d9059c81c45fcbf9424f85a011adb31d7d32f3cab8';
 
 // The claim vector: a claim of 'Alice_01' from the same fixed ctx.
-const CLAIM_TXID = '68b2b843d3c55d78aec782222f44ffdda2b8dd2943fa431a6895a5d6602d13b4';
-const CLAIM_CHANGE = 'e41e61413908a4ecb8623cea5cc9adab847304754039a877ea46c25057cfa0d0';
+const CLAIM_TXID = '4e49c7b9820868ce5ccb944af09faca7eb15c4db2c80311b17cd3f574e2b2eba';
+const CLAIM_CHANGE = '4b405733943ce53de0d63b6453740bf71702063462b2d8aa081b759222539e69';
 
 // The burn vectors: a burn over a name box '44'*32 beside the 227 box, and a
 // burn over a box of exactly 10 with no change.
 const NAME_BOX_ID = '44'.repeat(32);
-const BURN_TXID = '5007669b660cc3d10a98c21b458bb659f1269cb7aa34f3b37f99b39f3de8b1e6';
-const BURN_CHANGE = '4b865e3ed2874e1d2ed4a55dfb581fb1a093c360af050990e9f249bedd59fdee';
+const BURN_TXID = '43b340fb44450093b529989f0ea6cf6f3f26bf80b4631f3a6ceaae0d118577b7';
+const BURN_CHANGE = '9a22f86f083449159456ce6078779d78acf482070aaf6f844c87b95a943733c2';
 const EXACT_BOX = '55'.repeat(32);
 const BURN_EXACT_TXID = 'ec3fde946eb20fe3d1eb26917b049720acbd5ed41f336b0f7fd62b56bfe9a8bc';
 
