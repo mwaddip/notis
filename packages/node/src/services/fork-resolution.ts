@@ -30,6 +30,7 @@ import {
   anyRefusedHeader,
   getInterlinks,
   getKarmaOwners,
+  getLowestJournalHeight,
 } from '../store/index.js';
 import { ceilingOf } from '@dagsocial/consensus';
 import { getDb } from '../store/db.js';
@@ -422,9 +423,27 @@ export function resetForkResolutionMemo(): void {
   forkResolutionMemo.clear();
 }
 
+/**
+ * NODE_INTERFACE → "Re-scoring is memoised": "An entry leaves with its peer
+ * — a disconnect deletes it". The runner's own disconnect hook calls this.
+ */
+export function dropForkResolutionMemoForPeer(peerId: string): void {
+  forkResolutionMemo.delete(peerId);
+}
+
 // ---------------------------------------------------------------------------
 // resolveFork — the decision, step by step
 // ---------------------------------------------------------------------------
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "A resolution
+ * that ends because the tip moved hands its own block back the same way".
+ * The runner reads this to decide whether to hand the resolution's own block
+ * back for a second judgment, so a `'tip-moved'` return names the two paths
+ * the rule covers — step 7's between-pages re-read and step 9's — and `'done'`
+ * names every other end.
+ */
+export type ResolveForkOutcome = 'done' | 'tip-moved';
 
 /**
  * Decide a fork against one peer and, if their chain wins, switch to it.
@@ -437,8 +456,13 @@ export async function resolveFork(
   block: OrderingBlock,
   net: ForkResolutionNet,
   fromPeerId: string,
-): Promise<void> {
+): Promise<ResolveForkOutcome> {
   const currentHeight = getCurrentHeight();
+  // NODE_INTERFACE → Fork choice decides on verified headers, step 9:
+  // "the tip a resolution read at its start is a height **and a hash**".
+  // At height 0 there is no block to hash, and extendsOurTip's path handles
+  // every height-0 case ahead of this function.
+  const currentHash = currentHeight > 0 ? getOrderingBlockHash(currentHeight) : null;
 
   console.log(
     `Fork detected: our height=${currentHeight}, ` +
@@ -449,7 +473,7 @@ export async function resolveFork(
   const peers = net.getConnectedPeers();
   if (peers.length === 0) {
     console.warn('Fork resolution failed: no connected peers');
-    return;
+    return 'done';
   }
   const peerId = peers.includes(fromPeerId) ? fromPeerId : peers[0]!;
 
@@ -461,14 +485,25 @@ export async function resolveFork(
       if (memo.atOurTip !== currentHeight) {
         forkResolutionMemo.delete(peerId);
       } else if (peerTip !== null && memo.theirTip === peerTip) {
-        return;
+        return 'done';
       }
     }
 
     // 3. The fork walk — page down from ourTip
     // (NODE_INTERFACE → Fork choice decides on verified headers, step 3).
+    // NODE_INTERFACE → "The walk reaches as deep as the journals do, and no
+    // deeper" — the walk bounded by `lowestJournal − 1` and the genesis
+    // fall-through gated on `lowestJournal ≤ 1`. `lowestJournal` is read once
+    // beside the tip; a null answer (no journal kept) is treated as
+    // `currentHeight + 1`, which collapses the bound to the depth cap alone.
     const maxReorgDepth = config.maxReorgDepth;
-    const lowestExamined = Math.max(currentHeight - maxReorgDepth + 1, 1);
+    const lowestJournalRow = getLowestJournalHeight();
+    const lowestJournal = lowestJournalRow ?? currentHeight + 1;
+    const lowestExamined = Math.max(
+      currentHeight - maxReorgDepth + 1,
+      lowestJournal - 1,
+      1,
+    );
     let forkHeight: number | null = null;
     const allForkWalkHeaders: BlockHeader[] = [];
     let requestStart = currentHeight;
@@ -479,7 +514,7 @@ export async function resolveFork(
       const page = await net.requestHeaders(requestStart, MAX_CHAIN_RESPONSE_ITEMS, peerId);
       if (page.length === 0) {
         console.warn('Fork resolution failed: no headers from peer');
-        return;
+        return 'done';
       }
 
       // NET_INTERFACE → `GetHeaders` / `GetBlocks` responses: a page has
@@ -487,7 +522,7 @@ export async function resolveFork(
       if (page[0]!.height > requestStart) {
         net.penalizePeer(peerId, 'misbehavior',
           `fork-walk page: height ${page[0]!.height} above the requested start ${requestStart}`);
-        return;
+        return 'done';
       }
       for (let i = 1; i < page.length; i++) {
         const expected = page[i - 1]!.height - 1;
@@ -498,14 +533,14 @@ export async function resolveFork(
             : 'hole';
           net.penalizePeer(peerId, 'misbehavior',
             `fork-walk page: ${fault} at height ${actual} (expected ${expected})`);
-          return;
+          return 'done';
         }
       }
       const lowestInPage = page[page.length - 1]!.height;
       if (page.length < MAX_CHAIN_RESPONSE_ITEMS && lowestInPage > 1) {
         net.penalizePeer(peerId, 'transient',
           `fork-walk page: short page (${page.length} headers, lowest height ${lowestInPage})`);
-        return;
+        return 'done';
       }
 
       pageCount++;
@@ -529,7 +564,7 @@ export async function resolveFork(
             `penalising peer ${peerId} (misbehavior)`,
           );
           net.penalizePeer(peerId, 'misbehavior', `unhashable header in fork-walk page at index ${i}`);
-          return;
+          return 'done';
         }
         pageHashes.push({ header: page[i]!, hash: h });
       }
@@ -556,14 +591,18 @@ export async function resolveFork(
     }
 
     if (forkHeight === null) {
-      if (currentHeight <= maxReorgDepth) {
+      // NODE_INTERFACE → Fork choice decides on verified headers, step 3:
+      // "f = GENESIS_HEIGHT when ourTip ≤ maxReorgDepth and lowestJournal ≤ 1".
+      // The journals clause is why a tip that dropped below the horizon from
+      // above never reaches genesis — the walk stops at the lowest journal.
+      if (currentHeight <= maxReorgDepth && lowestJournal <= 1) {
         // NODE_INTERFACE → Fork resolution bottoms out at the genesis state.
         forkHeight = GENESIS_HEIGHT;
       } else {
         console.warn(
           `Fork resolution failed: no common ancestor within ${maxReorgDepth} blocks`,
         );
-        return;
+        return 'done';
       }
     }
 
@@ -656,7 +695,7 @@ export async function resolveFork(
             `Fork resolution: future-bound refusal, no penalty ` +
             `(index=${verdict.index})`,
           );
-          return;
+          return 'done';
         }
         // A 'version' verdict is a compatibility refusal — the peer serves a
         // chain of another era — penalised transient, not misbehavior
@@ -667,7 +706,7 @@ export async function resolveFork(
           `(index=${verdict.index}, reason=${verdict.reason}), penalising peer ${peerId} (${tier})`,
         );
         net.penalizePeer(peerId, tier, `header verification: ${verdict.reason} at index ${verdict.index}`);
-        return;
+        return 'done';
       }
 
       // 6. Memory — any verified hash in refused_headers, per page.
@@ -677,7 +716,7 @@ export async function resolveFork(
           `penalising peer ${peerId}`,
         );
         net.penalizePeer(peerId, 'misbehavior', 'served a chain containing a refused header');
-        return;
+        return 'done';
       }
 
       allVerifiedHashes.push(...verdict.hashes);
@@ -689,13 +728,18 @@ export async function resolveFork(
       // (NODE_INTERFACE → Fork choice decides on verified headers, step 7).
       if (theirWork > ourWork) break;
 
-      // Our tip moved between pages → abort, no penalty.
-      if (getCurrentHeight() !== currentHeight) {
+      // Our tip moved between pages → abort, no penalty. The re-read compares
+      // height AND the tip's hash: a chain switched at the same height is
+      // "a tip that moved" exactly as a growth to a new height is.
+      const heightBetween = getCurrentHeight();
+      const hashBetween = heightBetween > 0 ? getOrderingBlockHash(heightBetween) : null;
+      if (heightBetween !== currentHeight || hashBetween !== currentHash) {
         console.warn(
           `Tip changed during fork resolution scoring ` +
-          `(was ${currentHeight}, now ${getCurrentHeight()}), aborting`,
+          `(was ${currentHeight}/${currentHash ?? 'genesis'}, ` +
+          `now ${heightBetween}/${hashBetween ?? 'genesis'}), aborting`,
         );
-        return;
+        return 'tip-moved';
       }
     }
 
@@ -710,7 +754,7 @@ export async function resolveFork(
       if (peerTip !== null) {
         forkResolutionMemo.set(peerId, { theirTip: peerTip, atOurTip: currentHeight });
       }
-      return;
+      return 'done';
     }
 
     console.log(
@@ -731,7 +775,7 @@ export async function resolveFork(
           `penalising (transient)`,
         );
         net.penalizePeer(peerId, 'transient', `empty block page from height ${blockStart}`);
-        return;
+        return 'done';
       }
 
       for (let i = 0; i < page.length; i++) {
@@ -742,7 +786,7 @@ export async function resolveFork(
             `does not match expected ${expectedHeight}, penalising (misbehavior)`,
           );
           net.penalizePeer(peerId, 'misbehavior', `block height mismatch at index ${i}`);
-          return;
+          return 'done';
         }
         const deliveredHash = blockHash(page[i]!.header);
         const hashIndex = expectedHeight - forkHeight - 1;
@@ -752,7 +796,7 @@ export async function resolveFork(
             `penalising peer ${peerId} (misbehavior)`,
           );
           net.penalizePeer(peerId, 'misbehavior', `block identity mismatch at height ${expectedHeight}`);
-          return;
+          return 'done';
         }
       }
 
@@ -760,19 +804,23 @@ export async function resolveFork(
       blockStart += page.length;
     }
 
-    // 9. Tip re-read.
+    // 9. Tip re-read — height AND hash
+    // (NODE_INTERFACE → Fork choice decides on verified headers, step 9).
     const heightNow = getCurrentHeight();
-    if (heightNow !== currentHeight) {
+    const hashNow = heightNow > 0 ? getOrderingBlockHash(heightNow) : null;
+    if (heightNow !== currentHeight || hashNow !== currentHash) {
       console.warn(
         `Tip changed during fork resolution ` +
-        `(was ${currentHeight}, now ${heightNow}), aborting reorg`,
+        `(was ${currentHeight}/${currentHash ?? 'genesis'}, ` +
+        `now ${heightNow}/${hashNow ?? 'genesis'}), aborting reorg`,
       );
-      return;
+      return 'tip-moved';
     }
 
     // 10. The switch — nothing awaits between the re-read and this call.
     reorg(forkHeight, allBlocks);
     console.log(`Reorg complete: new tip at height=${forkHeight + n}`);
+    return 'done';
   } catch (err) {
     // NODE_INTERFACE → Fork choice decides on verified headers, step 10–11.
     if (err instanceof ReorgAbortedError) {
@@ -787,16 +835,17 @@ export async function resolveFork(
           `class=local: ${err.detail ?? '(no detail)'}`,
         );
       }
-      return;
+      return 'done';
     }
     // 11. The mark — after the rollback, in its own write.
     if (err instanceof ReorgBlockRejectedError) {
       insertRefusedHeader(err.hash, err.height, getCurrentHeight());
       net.penalizePeer(peerId, 'misbehavior', `reorg rejected block at height ${err.height}`);
       console.warn(`Fork resolution: reorg rejected block at height ${err.height} (${err.hash}), marked and penalised`);
-      return;
+      return 'done';
     }
     if (err instanceof CorruptChainStateError) throw err;
     console.warn(`Fork resolution error: ${String(err)}`);
+    return 'done';
   }
 }

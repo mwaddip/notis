@@ -25,6 +25,7 @@ import { setNet } from './services/net-instance.js';
 import { enterDiscovery, notePeerMet } from './services/peer-readiness.js';
 import { createAvlProver } from './state/avl-prover.js';
 import { handleOrderingBlock, pullBlocksHandler } from './services/handle-block.js';
+import { onPeerDisconnectedForForkResolution } from './services/fork-resolution-runner.js';
 import { handleRelayedTx } from './services/handle-tx.js';
 import { failStopIfCorruptChain, guardStoreRead } from './services/corrupt-state.js';
 import { scheduledPowTargetBits } from './services/difficulty.js';
@@ -251,6 +252,9 @@ net.onPeerActive((peerId: string, direction: 'inbound' | 'outbound') => {
   emitPeerConnected(peerId, direction);
 });
 net.onPeerDisconnected((peerId: string, reason: string) => {
+  // NODE_INTERFACE → "One resolution at a time": the runner's pending block
+  // and the re-score memo leave with the peer.
+  onPeerDisconnectedForForkResolution(peerId);
   emitPeerDisconnected(peerId, reason);
 });
 net.onPeerPenalised((peerId: string, kind: string, detail: string | null) => {
