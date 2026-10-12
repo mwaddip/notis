@@ -206,7 +206,14 @@ async function openNode() {
   const inviterKarma = seededKarmaBox(100n, inviter.userId, 0, 1);
   const lastBox = seededKarmaBox(POST_PRICE_THREAD, lastBoxPoster.userId, 0, 2);
   const spentBox = seededKarmaBox(POST_PRICE_THREAD, spareBoxPoster.userId, 0, 3);
+  // NODE_INTERFACE → Karma transition rules → "An identity holds at most two
+  // karma boxes". The owner's second karma box is their one income box,
+  // marked; a karma spend names every unmarked karma box the owner holds and
+  // leaves this one, so a post that spends `spentBox` keeps `spareBox` live
+  // and the owner is still a member after the block.
   const spareBox = seededKarmaBox(50n, spareBoxPoster.userId, 0, 4);
+  spareBox.income = true;
+  spareBox.id = (await import('@dagsocial/types')).computeBoxId(spareBox);
   for (const box of [inviterKarma, lastBox, spentBox, spareBox]) utxo.insertBox(box);
   const handle = await activateProverOverStore();
 
