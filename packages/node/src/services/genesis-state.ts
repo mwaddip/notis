@@ -244,26 +244,32 @@ export function seedGenesisState(): void {
       // assertion decays while the assertion stays green — the seeders below are
       // gated one at a time, so the set is read off the gates rather than off a
       // sentence that has to be re-read every time one is added.
+      //
+      // ⛔ **One decoded payload reaches every mint site** (NODE_INTERFACE →
+      // "Every mint id opens with the chain's genesis proof"). Decoded once
+      // and passed in, so the derivation reads nothing from config and every
+      // mint id in this genesis opens with the same bytes.
+      const genesisProofPayload = hexToBytes(config.profile.genesisProofPayload);
+
       let faucetKarma = 0n;
       const faucetPubKeyHex = config.profile.faucetPublicKey;
       if (faucetPubKeyHex !== undefined) {
         const faucetPubKey = hexToBytes(faucetPubKeyHex);
-        faucetKarma = ensureSystemKarmaBox(faucetPubKey, GENESIS_HEIGHT).value;
-        ensureFaucetCreditBox(faucetPubKey, GENESIS_HEIGHT);
+        faucetKarma = ensureSystemKarmaBox(genesisProofPayload, faucetPubKey, GENESIS_HEIGHT).value;
+        ensureFaucetCreditBox(genesisProofPayload, faucetPubKey, GENESIS_HEIGHT);
       }
 
-      // Every network, mainnet included — this box IS the network axis.
+      // Every network, mainnet included — this box carries the payload every
+      // seeded mint id opens with.
       //
-      // ⚠ **The payload is not the only separator, on any pair.** Testnet and
-      // devnet name DIFFERENT faucet identities, so the two boxes above carry
-      // different owners and therefore different ids and AVL entries; and
-      // mainnet names none at all, so it holds neither. The payload is what
-      // separates two networks that agree on everything else, and no pair of
-      // these three does.
-      ensureGenesisProofBox(
-        hexToBytes(config.profile.genesisProofPayload),
-        GENESIS_HEIGHT,
-      );
+      // ⛔ **The payload reaches every genesis box's id, not only this box's
+      // content** (TYPES_INTERFACE → "The payload is this box's content and
+      // every genesis box's id"; NODE_INTERFACE → "Two chains share a genesis
+      // box only if they share a payload"). A chain with a different payload
+      // mints a different synthetic txId at every site above and below, so no
+      // two chains with distinct payloads share a genesis box, whatever else
+      // their profiles share.
+      ensureGenesisProofBox(genesisProofPayload, GENESIS_HEIGHT);
 
       // Every network too, and for a sharper reason than the proof box's: this
       // is what every block's coinbase is paid out of (TYPES_INTERFACE →
@@ -272,7 +278,7 @@ export function seedGenesisState(): void {
       //
       // The profile's carried total, strictly below the curve's own sum
       // (MINING_INTERFACE → Emission Schedule).
-      ensureEmissionBox(emissionTotal(), GENESIS_HEIGHT);
+      ensureEmissionBox(genesisProofPayload, emissionTotal(), GENESIS_HEIGHT);
 
       // The committee, on every network — one karma box per profile key. All
       // three profiles carry an empty array, so this grants nothing today and
@@ -283,6 +289,7 @@ export function seedGenesisState(): void {
       // returns. Seeding the pool first would leave it holding a total the
       // committee then added to, putting supply above the ceiling.
       const granted = seedGenesisCommittee(
+        genesisProofPayload,
         config.profile.genesisCommitteeKeys,
         config.profile.genesisKarmaPerMember,
         GENESIS_HEIGHT,
@@ -303,11 +310,12 @@ export function seedGenesisState(): void {
         config.profile.backerSupply,
       );
       const backerStaked = seedGenesisBackers(
+        genesisProofPayload,
         config.profile.backerTable,
         GENESIS_HEIGHT,
       );
       if (config.profile.backerTable.length > 0) {
-        ensureBackerPoolBox(backerStaked, GENESIS_HEIGHT);
+        ensureBackerPoolBox(genesisProofPayload, backerStaked, GENESIS_HEIGHT);
       }
 
       // Every network too, and for the emission box's reason sharpened: every
@@ -327,7 +335,7 @@ export function seedGenesisState(): void {
       // beside the pool.** Minting it alongside a full pool puts supply above
       // the ceiling at genesis, silently: nothing encodes the sum, because the
       // value bound is per-box and both boxes are individually legal.
-      ensureKarmaPoolBox(granted + faucetKarma, GENESIS_HEIGHT);
+      ensureKarmaPoolBox(genesisProofPayload, granted + faucetKarma, GENESIS_HEIGHT);
 
       // ⛔ **No treasury box.** It would hold `0`, and a zero-value box is not
       // created (TYPES_INTERFACE → EmissionBox's rule, which TreasuryBox

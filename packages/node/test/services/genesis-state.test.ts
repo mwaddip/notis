@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { hexToBytes, profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
-import { makeTestConfig, mineNextBlock, openAvlDb } from '../helpers.js';
+import { makeTestConfig, mineNextBlock, openAvlDb, TEST_GENESIS_PROOF_PAYLOAD } from '../helpers.js';
 
 /**
  * Genesis is **state, not a block**, and this suite pins the half of that claim
@@ -380,7 +380,7 @@ describe('seedGenesisState — a store that is not empty', () => {
     // `ensureFaucetCreditBox` returns `existing[0]` of a `value DESC` read, so a
     // feed built from its return value is a strict subset of the UTXO set — and
     // the refusal below is what keeps that subset from reaching the tree.
-    s.system.ensureFaucetCreditBox(faucetPubKey(), 1);
+    s.system.ensureFaucetCreditBox(TEST_GENESIS_PROOF_PAYLOAD, faucetPubKey(), 1);
     expect(s.utxo.getCreditBoxes(faucetPubKey()).length).toBeGreaterThan(0);
 
     let message = '';
@@ -405,7 +405,7 @@ describe('seedGenesisState — a store that is not empty', () => {
     s.initDb(':memory:');
     s.prover.createAvlProver();
 
-    s.system.ensureSystemKarmaBox(faucetPubKey(), 1);
+    s.system.ensureSystemKarmaBox(TEST_GENESIS_PROOF_PAYLOAD, faucetPubKey(), 1);
     s.records.deleteIdentityRecord(faucetPubKey());
     expect(s.records.getAllIdentityRecords()).toHaveLength(0);
 

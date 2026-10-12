@@ -40,7 +40,8 @@ import {
   signHeader,
   signTransaction,
   solveHeaderPow, seedPostTx, activateProverOverStore, insertPoisonedBlock,
-  buildMinedHeaderChain, changeBoxOf, revertChainTo, ringHeights, seedBoxes} from '../helpers.js';
+  buildMinedHeaderChain, changeBoxOf, revertChainTo, ringHeights, seedBoxes,
+  TEST_GENESIS_PROOF_PAYLOAD} from '../helpers.js';
 import {
   testConfig,
   importDb,
@@ -999,7 +1000,7 @@ describe('revertBlock', () => {
       value: plan.newValue,
       createdAtBlock: DECAY_HEIGHT,
       owner: plan.owner,
-      txId: provenance.mintTxIdFor(provenance.genesisCommitteeContext(plan.owner), DECAY_HEIGHT),
+      txId: provenance.mintTxIdFor(TEST_GENESIS_PROOF_PAYLOAD, provenance.genesisCommitteeContext(plan.owner), DECAY_HEIGHT),
       index: provenance.MINT_OUTPUT_INDEX,
     };
     const newBoxId = computeBoxId(emitted);

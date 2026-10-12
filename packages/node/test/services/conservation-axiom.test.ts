@@ -48,6 +48,7 @@ import {
   makeTestIdentity,
   seedPostTx,
   signTransaction,
+  TEST_GENESIS_PROOF_PAYLOAD,
   type TestIdentity,
   FIXTURE_BOND_KARMA,
 } from '../helpers.js';
@@ -266,7 +267,7 @@ describe('the conservation axiom holds over a chain', () => {
     // by adding up the literals above, so a box added to this fixture cannot
     // silently unbalance it.
     const { ensureKarmaPoolBox } = await import('../../src/store/system.js');
-    ensureKarmaPoolBox(await conservationTotal(), 0);
+    ensureKarmaPoolBox(TEST_GENESIS_PROOF_PAYLOAD, await conservationTotal(), 0);
 
     await activateProverOverStore();
     return {

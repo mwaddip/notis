@@ -354,7 +354,7 @@ describe('two chains differ in genesisProofPayload — the mint id opens with it
     }
   });
 
-  it.fails('chains A and B share no genesis box id', async () => {
+  it('chains A and B share no genesis box id', async () => {
     const faucet = makeFaucetKey();
 
     const a = await openChain({
@@ -378,7 +378,7 @@ describe('two chains differ in genesisProofPayload — the mint id opens with it
     expect(shared).toEqual([]);
   });
 
-  it.fails('the same transaction, byte for byte, is refused on chain B — input not found', async () => {
+  it('the same transaction, byte for byte, is refused on chain B — input not found', async () => {
     const faucet = makeFaucetKey();
 
     const a = await openChain({

@@ -8,6 +8,7 @@ import {
   genesisContext,
   mintTxIdFor,
 } from '../../src/mint-provenance.js';
+import { TEST_GENESIS_PROOF_PAYLOAD } from '../helpers.js';
 
 /**
  * Genesis writes its own identity record.
@@ -86,14 +87,14 @@ describe('genesis identity record (Spec G phase D)', () => {
     s.initDb(':memory:');
 
     // `getCurrentHeight()` is 0 on a fresh chain, and genesis clamps to 1.
-    const box = s.system.ensureSystemKarmaBox(faucetPubKey(), 0);
+    const box = s.system.ensureSystemKarmaBox(TEST_GENESIS_PROOF_PAYLOAD, faucetPubKey(), 0);
 
     // A box carries no height field, so the cross-check is against the height
     // baked into its **mint txId** — the only place a genesis height appears in
     // the box, and consensus-visible, which the `created_at_block` store column
     // is not (NODE_INTERFACE → "`created_at_block` is a store column, never a
     // consensus input").
-    expect(box.txId).toBe(mintTxIdFor(genesisContext(GENESIS_SYSTEM_KARMA), 1));
+    expect(box.txId).toBe(mintTxIdFor(TEST_GENESIS_PROOF_PAYLOAD, genesisContext(GENESIS_SYSTEM_KARMA), 1));
     expect(s.records.getIdentityRecord(faucetPubKey())).toEqual({
       lastActivityBlock: 1,
       lastDecayBlock: 0,
@@ -111,9 +112,9 @@ describe('genesis identity record (Spec G phase D)', () => {
     const s = await importFresh();
     s.initDb(':memory:');
 
-    const box = s.system.ensureSystemKarmaBox(faucetPubKey(), 500);
+    const box = s.system.ensureSystemKarmaBox(TEST_GENESIS_PROOF_PAYLOAD, faucetPubKey(), 500);
 
-    expect(box.txId).toBe(mintTxIdFor(genesisContext(GENESIS_SYSTEM_KARMA), 500));
+    expect(box.txId).toBe(mintTxIdFor(TEST_GENESIS_PROOF_PAYLOAD, genesisContext(GENESIS_SYSTEM_KARMA), 500));
     expect(s.records.getIdentityRecord(faucetPubKey())).toEqual({
       lastActivityBlock: 500,
       lastDecayBlock: 0,
@@ -131,10 +132,10 @@ describe('genesis identity record (Spec G phase D)', () => {
     const s = await importFresh();
     s.initDb(':memory:');
 
-    s.system.ensureSystemKarmaBox(faucetPubKey(), 0);
+    s.system.ensureSystemKarmaBox(TEST_GENESIS_PROOF_PAYLOAD, faucetPubKey(), 0);
     // A later call must not move the clock forward and hand the system a fresh
     // staleness window.
-    s.system.ensureSystemKarmaBox(faucetPubKey(), 900);
+    s.system.ensureSystemKarmaBox(TEST_GENESIS_PROOF_PAYLOAD, faucetPubKey(), 900);
 
     expect(s.records.getIdentityRecord(faucetPubKey())).toEqual({
       lastActivityBlock: 1,
@@ -152,7 +153,7 @@ describe('genesis identity record (Spec G phase D)', () => {
   it("the system's first decay charges from genesis height, not from zero", async () => {
     const s = await importFresh();
     s.initDb(':memory:');
-    s.system.ensureSystemKarmaBox(faucetPubKey(), 0);
+    s.system.ensureSystemKarmaBox(TEST_GENESIS_PROOF_PAYLOAD, faucetPubKey(), 0);
 
     // threshold 11, interval 3 — chosen so `(threshold + 1) % interval === 0`,
     // the exact boundary where counting from 0 buys a whole extra interval.
@@ -175,7 +176,7 @@ describe('genesis identity record (Spec G phase D)', () => {
   it('the system identity is not stale before genesis height + threshold', async () => {
     const s = await importFresh();
     s.initDb(':memory:');
-    s.system.ensureSystemKarmaBox(faucetPubKey(), 0);
+    s.system.ensureSystemKarmaBox(TEST_GENESIS_PROOF_PAYLOAD, faucetPubKey(), 0);
 
     const cfg = {
       staleThresholdBlocks: 11,
@@ -194,7 +195,7 @@ describe('genesis identity record (Spec G phase D)', () => {
     s.initDb(':memory:');
 
     // Credits are not karma and carry no decay clock. Only the karma leg writes.
-    s.system.ensureFaucetCreditBox(faucetPubKey(), 0);
+    s.system.ensureFaucetCreditBox(TEST_GENESIS_PROOF_PAYLOAD, faucetPubKey(), 0);
 
     expect(s.records.getIdentityRecord(faucetPubKey())).toBeNull();
   });

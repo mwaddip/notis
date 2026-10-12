@@ -41,6 +41,7 @@ import {
   seedEmissionBox,
   seedKarmaPoolBox,
   signTransaction,
+  TEST_GENESIS_PROOF_PAYLOAD,
   type TestIdentity } from '../helpers.js';
 
 /**
@@ -618,7 +619,7 @@ const CREDIT = 10n ** 8n;
  */
 async function seedPreSetState(m: Modules, ids: ReturnType<typeof preSetIdentities>): Promise<void> {
   const { r1, r2, t, x, l1, l2, w1, w2, u, d1, c1, c3 } = ids;
-  m.system.seedGenesisCommittee([hex(r1.userId), hex(r2.userId)], 1000n, 0);
+  m.system.seedGenesisCommittee(TEST_GENESIS_PROOF_PAYLOAD, [hex(r1.userId), hex(r2.userId)], 1000n, 0);
   const residents: Array<[TestIdentity, bigint]> = [
     [t, 200n], [x, 50n], [l1, 20n], [l2, 50n], [w1, 50n], [w2, 50n], [u, 100n], [d1, 100n],
   ];
@@ -630,7 +631,11 @@ async function seedPreSetState(m: Modules, ids: ReturnType<typeof preSetIdentiti
   m.utxo.insertBox(makeCreditBox(10n * CREDIT, c3.userId, 0));
   await seedEmissionBox();
   await seedKarmaPoolBox();
-  m.system.ensureBackerPoolBox(m.system.seedGenesisBackers(m.config.profile.backerTable, 0), 0);
+  m.system.ensureBackerPoolBox(
+    TEST_GENESIS_PROOF_PAYLOAD,
+    m.system.seedGenesisBackers(TEST_GENESIS_PROOF_PAYLOAD, m.config.profile.backerTable, 0),
+    0,
+  );
   m.records.putNetworkRecord({ memberCount: 2 });
 }
 

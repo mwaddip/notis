@@ -105,7 +105,17 @@ export function genesisBackerContext(owner: Uint8Array): MintContext {
  *
  * Genesis seeding routes through here; every other block-application effect is
  * a settlement output with an ordinary txId.
+ *
+ * The chain's genesis proof payload is the first argument every mint id's
+ * preimage opens with (TYPES_INTERFACE → Mint identity; NODE_INTERFACE →
+ * "Every mint id opens with the chain's genesis proof"). It is passed in
+ * rather than read off a config, so this one site keeps carrying the whole
+ * derivation and nothing above it reaches for the profile.
  */
-export function mintTxIdFor(ctx: MintContext, blockHeight: number): TxId {
-  return computeMintTxId(blockHeight, ctx.reason, ctx.subject);
+export function mintTxIdFor(
+  genesisProofPayload: Uint8Array,
+  ctx: MintContext,
+  blockHeight: number,
+): TxId {
+  return computeMintTxId(genesisProofPayload, blockHeight, ctx.reason, ctx.subject);
 }
