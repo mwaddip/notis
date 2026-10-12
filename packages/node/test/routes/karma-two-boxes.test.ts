@@ -511,7 +511,7 @@ describe('admission under "An identity holds at most two karma boxes"', () => {
         expect(err).toBeInstanceOf(ClientError);
         const e = err as ClientError;
         expect(e.statusCode).toBe(400);
-        expect(e.message).toContain('Invalid like transaction');
+        expect(e.message).toContain(`Input box not found or already spent: ${income.id}`);
       }
     });
 
@@ -593,7 +593,9 @@ describe('admission under "An identity holds at most two karma boxes"', () => {
       expect(err).toBeInstanceOf(ClientError);
       const e = err as ClientError;
       expect(e.statusCode).toBe(400);
-      expect(e.message).toContain('Invalid like transaction');
+      expect(e.message).toBe(
+        'Invalid like transaction: A karma spend emits at most one karma output',
+      );
     }
   });
 
