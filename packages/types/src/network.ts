@@ -259,7 +259,7 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // `faucetPublicKey`; the backer pool box and per-row stake boxes are absent
   // because its `backerTable` is empty — the other two networks seed all of
   // these, which is why their height byte (`04`) differs from this one.
-  genesisStateRoot: 'c5996d8349a7bb27eca6e287f77ceb85a37e26e319b754c7f27e45052c709b7303',
+  genesisStateRoot: '98fab18e51ee76737ce83aed0d7117571aad4dd8283a56f0425d86b01bdfc92203',
   genesisId: '',
 
   backerSupply: MAINNET_BACKERS.supply,
@@ -319,7 +319,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // backer stake box carry no index entry. What separates this root from
   // mainnet's: the proof payload, the faucet identity (mainnet names none) and
   // the backer table (mainnet's is empty; this one seeds a single row).
-  genesisStateRoot: '11fd9ba41b4e69f0731ae99308568aeec9500c6c7b095ae8abdc774d4cf3591204',
+  genesisStateRoot: 'c0da272f8e01ef1ab37d46719b6a897d1ab7af2d519dc00309ed6382ce7e22de04',
   // TYPES_INTERFACE → "genesisId pins block 1, and is empty until a network
   // has one" — testnet has none pinned.
   genesisId: '',
@@ -411,7 +411,7 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // the two profiles name DIFFERENT `faucetPublicKey`s and therefore seed
   // differently-owned boxes, and the backer table — two rows here, one on
   // testnet — which seeds a different stake set.
-  genesisStateRoot: '3257b1616af322ece38eceebf36d20899b13455b0dd95a2491cc1e3480257b3a04',
+  genesisStateRoot: '048097f646b2e887e5456dd074d3a18ad2049b0f0a4d3758cbbc27eaf1219c6a04',
   genesisId: '',
 
   backerSupply: DEVNET_BACKERS.supply,
