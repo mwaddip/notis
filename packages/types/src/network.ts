@@ -308,7 +308,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // backer stake box carry no index entry. What separates this root from
   // mainnet's: the proof payload, the faucet identity (mainnet names none) and
   // the backer table (mainnet's is empty; this one seeds a single row).
-  genesisStateRoot: '15dbea0c403cf8a1b553e3d5215129e833c91938b507ca0e133dcef82f42800104',
+  genesisStateRoot: '11fd9ba41b4e69f0731ae99308568aeec9500c6c7b095ae8abdc774d4cf3591204',
   // TYPES_INTERFACE → "genesisId pins block 1, and is empty until a network
   // has one" — testnet has none pinned.
   genesisId: '',
@@ -398,7 +398,7 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // the two profiles name DIFFERENT `faucetPublicKey`s and therefore seed
   // differently-owned boxes, and the backer table — two rows here, one on
   // testnet — which seeds a different stake set.
-  genesisStateRoot: 'a247e41fb667bbf79622044e56bb1779c2d5dc90cb6fb3de04595cc83449fdca04',
+  genesisStateRoot: '3257b1616af322ece38eceebf36d20899b13455b0dd95a2491cc1e3480257b3a04',
   genesisId: '',
 
   backerSupply: DEVNET_BACKERS.supply,
