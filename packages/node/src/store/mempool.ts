@@ -179,6 +179,15 @@ export interface PoolEntry {
   expiresAtHeight: number;
   createdAt: string;
   costEstimate: number | null;
+  /**
+   * The karma inputs' owner (hex) — the one key `validateTx` admits in a
+   * karma transaction's signatures map (MEMPOOL_INTERFACE → Gate metadata
+   * columns → `karma_owner`); `null` where the row has no karma spend and
+   * no owner to key on. The fill reads this to ask the decay predicate for
+   * one owner per entry (NODE_INTERFACE → Karma transition rules → "Engine
+   * inputs the rule needs").
+   */
+  karmaOwner: string | null;
 }
 
 interface MempoolRow {
@@ -188,6 +197,7 @@ interface MempoolRow {
   expires_at_height: number;
   created_at: string;
   cost_estimate: number | null;
+  karma_owner: string | null;
 }
 
 function rowToEntry(row: MempoolRow): PoolEntry {
@@ -198,6 +208,7 @@ function rowToEntry(row: MempoolRow): PoolEntry {
     expiresAtHeight: row.expires_at_height,
     createdAt: row.created_at,
     costEstimate: row.cost_estimate,
+    karmaOwner: row.karma_owner,
   };
 }
 
@@ -791,7 +802,7 @@ export function getPendingUtxoTxBytesByTxId(txId: string): Uint8Array | null {
 
 /** The columns a `PoolEntry` is read from — every reader of the pool selects these. */
 const ENTRY_COLUMNS = `rowid, entry_type, utxo_tx_bytes,
-                       expires_at_height, created_at, cost_estimate`;
+                       expires_at_height, created_at, cost_estimate, karma_owner`;
 
 /**
  * Pending entries in FIFO order, at most `limit` of them, starting after
