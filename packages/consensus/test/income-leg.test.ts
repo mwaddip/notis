@@ -103,7 +103,7 @@ const karmaOutputs = (tx: UtxoTransaction, owner: Uint8Array): KarmaBox[] =>
 // ---------------------------------------------------------------------------
 
 describe('an author paid in twenty consecutive blocks ends with one marked box of the sum', () => {
-  it.fails(
+  it(
     'the author holds their own box, untouched, and one income box whose value is the sum of the payouts',
     () => {
       const view = genesisView();
@@ -115,14 +115,16 @@ describe('an author paid in twenty consecutive blocks ends with one marked box o
 
       const BLOCKS = 20;
       // One liker per block, each holding enough karma for one like above the
-      // floor: 1 own + 1 like cost = 11 karma, remaining ≥ KARMA_MINIMUM.
+      // floor: 11 face karma, with `lastActivityBlock: i` so no liker is stale
+      // at the block it signs — effective karma stays 11, remaining ≥ floor.
       const likers = Array.from({ length: BLOCKS }, (_, i) =>
         seededIdentity(`payouts-gather/liker-${i}`),
       );
       let nonce = 100;
-      for (const liker of likers) {
+      for (let i = 0; i < BLOCKS; i++) {
+        const liker = likers[i]!;
         view.insertBox(karmaBox(liker.userId, 11n, nonce++, 0));
-        view.putIdentityRecord(liker.userId, identityRecord({ lastActivityBlock: 0 }));
+        view.putIdentityRecord(liker.userId, identityRecord({ lastActivityBlock: 1 + i }));
       }
 
       // One post the author owns, confirmed in a block before.
@@ -157,7 +159,7 @@ describe('an author paid in twenty consecutive blocks ends with one marked box o
 // ---------------------------------------------------------------------------
 
 describe('three legs settling to one owner in one block emit one marked box', () => {
-  it.fails(
+  it(
     'the owner is the liked author, the vesting bond\'s inviter and the escrow\'s owner — one marked output of the sum',
     () => {
       const view = genesisView();
@@ -187,18 +189,17 @@ describe('three legs settling to one owner in one block emit one marked box', ()
       const postId = hex(uid('one-output/post'));
       putConfirmedPost(view, postId, owner.userId, 0);
 
-      // Pre-seed four accrual markers under the author so the one more marker
-      // in this block makes q = 1.
-      let anonce = 500;
-      for (let i = 0; i < 4; i++) {
-        view.insertBox(
-          seedProvenance<AnyBox>(
-            { boxType: 'like_accrual', value: 1n, createdAtBlock: 0, author: owner.userId },
-            0,
-            anonce++,
-          ),
-        );
-      }
+      // Pre-seed one carry box of 4 under the author — the carry a prior
+      // block's settlement would have left, so this block's one new marker
+      // tips the total to LIKES_PER_KARMA_PAYOUT and the payout fires: q = 1,
+      // paid = q*(x−1) = 4.
+      view.insertBox(
+        seedProvenance<AnyBox>(
+          { boxType: 'like_accrual', value: 4n, createdAtBlock: 0, author: owner.userId },
+          0,
+          500,
+        ),
+      );
 
       const H = 1 + CTX.inviteProbationBlocks; // first block the bond settles
       const like = likeTx(liker, view.getKarmaBoxes(liker.userId)[0]!, postId, owner.userId, H);
@@ -220,7 +221,7 @@ describe('three legs settling to one owner in one block emit one marked box', ()
 // ---------------------------------------------------------------------------
 
 describe('a first payout: an owner with no income box gets one', () => {
-  it.fails('the settlement names no karma input of theirs and emits one marked box of the payout', () => {
+  it('the settlement names no karma input of theirs and emits one marked box of the payout', () => {
     const view = genesisView();
     const author = seededIdentity('first/author');
     view.putIdentityRecord(author.userId, identityRecord());
@@ -229,16 +230,16 @@ describe('a first payout: an owner with no income box gets one', () => {
     view.insertBox(karmaBox(liker.userId, 11n, 1, 0));
     const postId = hex(uid('first/post'));
     putConfirmedPost(view, postId, author.userId, 0);
-    // Four pre-existing markers under the author so one more makes q = 1.
-    for (let i = 0; i < 4; i++) {
-      view.insertBox(
-        seedProvenance<AnyBox>(
-          { boxType: 'like_accrual', value: 1n, createdAtBlock: 0, author: author.userId },
-          0,
-          100 + i,
-        ),
-      );
-    }
+    // One carry box of 4 under the author — the carry a prior block would
+    // have left, so this block's new marker makes the total 5 (= x), q = 1,
+    // paid = 4.
+    view.insertBox(
+      seedProvenance<AnyBox>(
+        { boxType: 'like_accrual', value: 4n, createdAtBlock: 0, author: author.userId },
+        0,
+        100,
+      ),
+    );
 
     const H = 2;
     const like = likeTx(liker, view.getKarmaBoxes(liker.userId)[0]!, postId, author.userId, H);
@@ -267,7 +268,7 @@ describe('a first payout: an owner with no income box gets one', () => {
 // ---------------------------------------------------------------------------
 
 describe('the owner spends their income box in the same block they are paid', () => {
-  it.fails(
+  it(
     'applyBlock over the overlay and buildBlockSettlement over pre-body state answer the same settlement, byte for byte',
     () => {
       const view = genesisView();
@@ -285,15 +286,13 @@ describe('the owner spends their income box in the same block they are paid', ()
       view.insertBox(karmaBox(liker.userId, 11n, 3, 0));
       const postId = hex(uid('took-first/post'));
       putConfirmedPost(view, postId, owner.userId, 0);
-      for (let i = 0; i < 4; i++) {
-        view.insertBox(
-          seedProvenance<AnyBox>(
-            { boxType: 'like_accrual', value: 1n, createdAtBlock: 0, author: owner.userId },
-            0,
-            200 + i,
-          ),
-        );
-      }
+      view.insertBox(
+        seedProvenance<AnyBox>(
+          { boxType: 'like_accrual', value: 4n, createdAtBlock: 0, author: owner.userId },
+          0,
+          200,
+        ),
+      );
 
       const H = 2;
       // Owner spends both of their karma boxes — rule 3 of the karma arm
@@ -405,7 +404,7 @@ describe('the invite grant and decay\'s replacement stay unmarked', () => {
 // ---------------------------------------------------------------------------
 
 describe('settlements that do not pay through the income leg are refused', () => {
-  it.fails('a settlement paying a liked author with a fresh unmarked box is refused by position', () => {
+  it('a settlement paying a liked author with a fresh unmarked box is refused by position', () => {
     const view = genesisView();
     const author = seededIdentity('wrong-fresh/author');
     view.putIdentityRecord(author.userId, identityRecord());
@@ -414,15 +413,13 @@ describe('settlements that do not pay through the income leg are refused', () =>
     view.insertBox(karmaBox(liker.userId, 11n, 1, 0));
     const postId = hex(uid('wrong-fresh/post'));
     putConfirmedPost(view, postId, author.userId, 0);
-    for (let i = 0; i < 4; i++) {
-      view.insertBox(
-        seedProvenance<AnyBox>(
-          { boxType: 'like_accrual', value: 1n, createdAtBlock: 0, author: author.userId },
-          0,
-          300 + i,
-        ),
-      );
-    }
+    view.insertBox(
+      seedProvenance<AnyBox>(
+        { boxType: 'like_accrual', value: 4n, createdAtBlock: 0, author: author.userId },
+        0,
+        300,
+      ),
+    );
     const H = 2;
     const like = likeTx(liker, view.getKarmaBoxes(liker.userId)[0]!, postId, author.userId, H);
     const block = candidateBlock(view, H, [like], miner.userId, CTX);
@@ -449,7 +446,7 @@ describe('settlements that do not pay through the income leg are refused', () =>
     }
   });
 
-  it.fails('a settlement omitting the income box it must consume is refused', () => {
+  it('a settlement omitting the income box it must consume is refused', () => {
     const view = genesisView();
     const author = seededIdentity('wrong-omit/author');
     view.putIdentityRecord(author.userId, identityRecord());
@@ -459,15 +456,13 @@ describe('settlements that do not pay through the income leg are refused', () =>
     view.insertBox(karmaBox(liker.userId, 11n, 2, 0));
     const postId = hex(uid('wrong-omit/post'));
     putConfirmedPost(view, postId, author.userId, 0);
-    for (let i = 0; i < 4; i++) {
-      view.insertBox(
-        seedProvenance<AnyBox>(
-          { boxType: 'like_accrual', value: 1n, createdAtBlock: 0, author: author.userId },
-          0,
-          400 + i,
-        ),
-      );
-    }
+    view.insertBox(
+      seedProvenance<AnyBox>(
+        { boxType: 'like_accrual', value: 4n, createdAtBlock: 0, author: author.userId },
+        0,
+        400,
+      ),
+    );
 
     const H = 2;
     const like = likeTx(liker, view.getKarmaBoxes(liker.userId)[0]!, postId, author.userId, H);

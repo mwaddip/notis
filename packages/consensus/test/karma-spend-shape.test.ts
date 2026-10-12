@@ -489,9 +489,10 @@ describe('rule 3 — the own box is named', () => {
       input = changeOf(tx);
     }
     expectAccepted(s.view, txs);
-    // The settlement's income leg paid both authors a karma box, each one unmarked
-    // on this branch (the mark is a later dispatch's write — the rules on this
-    // commit never read a settlement output).
+    // The settlement's income leg pays each author one marked karma box
+    // (NODE_INTERFACE → The settlement transaction → "The income leg pays
+    // each owner once"); the user-transaction rules do not read a settlement
+    // output.
     expect(s.view.getKarmaBoxes(authorA.userId).reduce((sum, b) => sum + b.value, 0n)).toBeGreaterThan(0n);
     expect(s.view.getKarmaBoxes(authorB.userId).reduce((sum, b) => sum + b.value, 0n)).toBeGreaterThan(0n);
   });

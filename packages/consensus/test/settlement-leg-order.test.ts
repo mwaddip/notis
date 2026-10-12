@@ -167,6 +167,7 @@ const deps: SettlementDeps = {
   getLapsedVouches: () => [lapsedVouchBox as VouchBox],
   getLifetimeLikes: (invitee) =>
     hex(invitee) === hex(bondInvitee.userId) ? 9n : 0n,
+  getIncomeBox: () => null,
   getDecayPlans: () => [decayPlan],
   vouchCooldownBlocks: 2,
   getBackerPoolBox: () => backerPoolBoxObj as BackerPoolBox,
@@ -220,8 +221,9 @@ describe('settlement leg order', () => {
     //
     //   emission successor → treasury successor → backer pool successor →
     //   karma pool successor →
-    //   invite grants → like payouts + carry → bond vested →
-    //   escrow returns → lapse escrows → decay replacements →
+    //   invite grants → carry successors (ascending author hex) →
+    //   lapse escrows → decay replacements →
+    //   income boxes per owner (ascending owner hex) →
     //   backer releases → coinbase credit
     const outs = tx.outputs;
 
@@ -241,26 +243,12 @@ describe('settlement leg order', () => {
     expect(outs[idx]!.boxType).toBe('karma');
     expect((outs[idx] as KarmaBox).owner).toEqual(newInvitee.userId);
     expect(outs[idx]!.value).toBe(15n);
-    idx++;
-
-    expect(outs[idx]!.boxType).toBe('karma');
-    expect((outs[idx] as KarmaBox).owner).toEqual(likeAuthor.userId);
-    expect(outs[idx]!.value).toBe(likePaid);
+    expect((outs[idx] as KarmaBox).income).toBeUndefined();
     idx++;
 
     expect(outs[idx]!.boxType).toBe('like_accrual');
     expect((outs[idx] as LikeAccrualBox).author).toEqual(likeAuthor.userId);
     expect(outs[idx]!.value).toBe(likeCarry);
-    idx++;
-
-    expect(outs[idx]!.boxType).toBe('karma');
-    expect((outs[idx] as KarmaBox).owner).toEqual(bondInviter.userId);
-    expect(outs[idx]!.value).toBe(bondVested);
-    idx++;
-
-    expect(outs[idx]!.boxType).toBe('karma');
-    expect((outs[idx] as KarmaBox).owner).toEqual(escrowOwner.userId);
-    expect(outs[idx]!.value).toBe(10n);
     idx++;
 
     expect(outs[idx]!.boxType).toBe('vouch_escrow');
@@ -272,10 +260,28 @@ describe('settlement leg order', () => {
     expect(outs[idx]!.boxType).toBe('karma');
     expect((outs[idx] as KarmaBox).owner).toEqual(decayOwner.userId);
     expect(outs[idx]!.value).toBe(8n);
+    expect((outs[idx] as KarmaBox).income).toBeUndefined();
     idx++;
 
+    // The income boxes — one marked karma box per owner the block pays,
+    // ascending owner hex: likeAuthor (payout 4), bondInviter (vested 3),
+    // escrowOwner (10). Expected ordering is read off the fixture's keys.
+    const incomePaid = new Map<string, bigint>([
+      [hex(likeAuthor.userId), likePaid],
+      [hex(bondInviter.userId), bondVested],
+      [hex(escrowOwner.userId), 10n],
+    ]);
+    const incomeOrder = [...incomePaid.keys()].sort();
+    for (const ownerHex of incomeOrder) {
+      expect(outs[idx]!.boxType).toBe('karma');
+      expect(hex((outs[idx] as KarmaBox).owner)).toBe(ownerHex);
+      expect(outs[idx]!.value).toBe(incomePaid.get(ownerHex));
+      expect((outs[idx] as KarmaBox).income).toBe(true);
+      idx++;
+    }
+
     // The backer release — one credit output per unstake marker whose
-    // release is positive, after decay replacements and before the coinbase.
+    // release is positive, after income boxes and before the coinbase.
     expect(outs[idx]!.boxType).toBe('credit');
     expect((outs[idx] as CreditBox).owner).toEqual(backerOwner.userId);
     expect(outs[idx]!.createdAtBlock).toBe(HEIGHT);

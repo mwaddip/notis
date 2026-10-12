@@ -633,7 +633,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
 
   const emission = computeBlockReward(height, ctx);
   const settlementCheck = checkSettlement(
-    settlementDepsWith(state, ctx, () => decayPlans, escrows, lapsedVouches, () => capturedBackerPool),
+    settlementDepsWith(state, ctx, () => decayPlans, escrows, lapsedVouches, () => capturedBackerPool, spentByBody),
     height,
     ctx.protocolVersionSchedule,
     emission,

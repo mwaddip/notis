@@ -122,7 +122,7 @@ describe('settlementDepsWith — the settlement\'s reads over a view', () => {
     const boxes = [accrualBox(author, 2n, 1), accrualBox(author, 1n, 2), accrualBox(author, 1n, 3)]
       .sort((a, b) => (a.id < b.id ? -1 : 1));
     for (const box of boxes) view.insertBox(box);
-    const deps = settlementDepsWith(view, ctx, () => [], [], [], () => null);
+    const deps = settlementDepsWith(view, ctx, () => [], [], [], () => null, new Set());
 
     expect(deps.getLikeCarryBox(author, new Set())).toBe(boxes[0]);
     expect(deps.getLikeCarryBox(author, new Set([boxes[0]!.id]))).toBe(boxes[1]);
@@ -138,7 +138,7 @@ describe('settlementDepsWith — the settlement\'s reads over a view', () => {
     const [bEarly, bLate] = [bondBox(inviter, early, 1), bondBox(inviter, late, 2)];
     view.insertBox(bEarly);
     view.insertBox(bLate);
-    const deps = settlementDepsWith(view, ctx, () => [], [], [], () => null);
+    const deps = settlementDepsWith(view, ctx, () => [], [], [], () => null, new Set());
     const P = ctx.inviteProbationBlocks;
 
     expect(deps.getBondsSettlingAt(P)).toEqual([]);
@@ -155,7 +155,7 @@ describe('settlementDepsWith — the settlement\'s reads over a view', () => {
     const lapsed = [vouchBox(stranger, invitee, 2)];
     const pool = protocolBox('backer_pool', 0n, 3);
     const plans = [{ owner: invitee, consumedBoxIds: [], newValue: 1n, burnAmount: 1n }];
-    const deps = settlementDepsWith(view, ctx, () => plans, escrows, lapsed, () => pool as never);
+    const deps = settlementDepsWith(view, ctx, () => plans, escrows, lapsed, () => pool as never, new Set());
 
     expect(deps.getLifetimeLikes(invitee)).toBe(9n);
     expect(deps.getLifetimeLikes(stranger)).toBe(0n);
@@ -185,7 +185,7 @@ describe('buildBlockSettlement — the producer\'s settlement over a view', () =
       createdAtBlock: height,
     });
     const verdict = checkSettlement(
-      settlementDepsWith(view, ctx, () => [], [], [], () => view.getBackerPoolBox()),
+      settlementDepsWith(view, ctx, () => [], [], [], () => view.getBackerPoolBox(), new Set()),
       height,
       ctx.protocolVersionSchedule,
       computeBlockReward(height, ctx),
@@ -264,7 +264,10 @@ describe('buildBlockSettlement — the producer\'s settlement over a view', () =
 
     expect(tx.inputs).toContain(held.id);
     expect(tx.inputs).not.toContain(unvouch.outputs[0]!.id);
-    expect(tx.outputs).toContainEqual({ boxType: 'karma', value: 1n, owner: voucher, createdAtBlock: height });
+    // The escrow return is a term of the voucher's income (NODE_INTERFACE →
+    // The settlement transaction → "The income leg pays each owner once"):
+    // the one marked karma output of the voucher carries the escrow's value.
+    expect(tx.outputs).toContainEqual({ boxType: 'karma', value: 1n, owner: voucher, income: true, createdAtBlock: height });
     // The unvouch's input resolves from the view and names its voucher: one karma-side actor.
     expect(tx.outputs.at(-1)!.value).toBe(splitCoinbase(computeBlockReward(height, ctx), 0n, 0n, 1).miner);
   });

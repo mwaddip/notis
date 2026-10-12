@@ -154,8 +154,12 @@ let nonce = 1000;
 const stored = <B extends AnyBox>(candidate: object): Stored<B> => seedProvenance<B>(candidate, 1, nonce++);
 
 const alpha = stored<UsernameBox>({ boxType: 'username', value: 0n, createdAtBlock: 2, owner: alice, name: ascii('Alpha') });
+// An identity holds at most two karma boxes (NODE_INTERFACE → Karma transition
+// rules → "An identity holds at most two karma boxes"): the own box and the
+// marked income box the settlement writes (TYPES_INTERFACE → KarmaBox).
+const aliceIncome = seedProvenance<KarmaBox>({ boxType: 'karma', value: 5n, createdAtBlock: 1, owner: alice, income: true }, 1, labelNonce('tree-view/alice-income'));
 const boxes: AnyBox[] = [
-  karmaBox(alice, 5n, 1), karmaBox(alice, 9n, 2), karmaBox(alice, 5n, 3), karmaBox(bob, 4n, 4),
+  karmaBox(alice, 9n, 2), aliceIncome, karmaBox(bob, 4n, 4),
   stored({ boxType: 'credit', value: 7n, createdAtBlock: 1, owner: bob }),
   stored({ boxType: 'credit', value: 8n, createdAtBlock: 1, owner: bob, lockedUntilBlock: 12 }),
   stored({ boxType: 'genesis_proof', value: 0n, createdAtBlock: 0, payload: Uint8Array.of(7, 7) }),
@@ -321,15 +325,34 @@ describe("treeStateView — lookupCount (CONSENSUS_INTERFACE → The block's cos
 
   it('counts each key a walk looks up: the range start, each next key it follows, and each box an entry names', () => {
     const owner = uid('tree-view/counted-owner');
-    const held = [karma(owner, 5n, 'counted-1'), karma(owner, 9n, 'counted-2'), karma(owner, 7n, 'counted-3')];
-    const session = mapSessionFrom(seedTreeWrites(held, [], { memberCount: 0 }));
+    // An owner holds at most two karma boxes — own and income
+    // (NODE_INTERFACE → Karma transition rules → "An identity holds at most
+    // two karma boxes").
+    const own = karma(owner, 9n, 'counted-own');
+    const incomeHeld = seedProvenance<KarmaBox>(
+      { boxType: 'karma', value: 5n, createdAtBlock: 0, owner, income: true },
+      0,
+      labelNonce('counted-income'),
+    );
+    const session = mapSessionFrom(seedTreeWrites([own, incomeHeld], [], { memberCount: 0 }));
     const view = treeStateView(session);
-    expect(view.getKarmaBoxes(owner)).toHaveLength(3);
-    // The range's start, absent; its three entries, the last naming the sentinel; the three boxes they name.
-    expect(view.lookupCount()).toBe(7);
-    expect(new Set(session.lookups.map(bytesToHex)).size).toBe(7);
+    expect(view.getKarmaBoxes(owner)).toHaveLength(2);
+    // The range's start, absent; its two entries, the last naming the sentinel; the two boxes they name.
+    expect(view.lookupCount()).toBe(5);
+    expect(new Set(session.lookups.map(bytesToHex)).size).toBe(5);
     view.getKarmaBoxes(owner);
-    expect(view.lookupCount()).toBe(7);
+    expect(view.lookupCount()).toBe(5);
+  });
+
+  it('throws TreeInconsistencyError on a third karma box for one owner — the invariant is two', () => {
+    const owner = uid('tree-view/third-karma');
+    const held = [
+      karma(owner, 5n, 'third-1'),
+      karma(owner, 9n, 'third-2'),
+      karma(owner, 7n, 'third-3'),
+    ];
+    const session = mapSessionFrom(seedTreeWrites(held, [], { memberCount: 0 }));
+    expect(() => treeStateView(session).getKarmaBoxes(owner)).toThrow(TreeInconsistencyError);
   });
 });
 

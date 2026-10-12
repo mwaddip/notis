@@ -422,9 +422,11 @@ function checkTransitions(
 
       // NODE_INTERFACE → Karma transition rules → "An identity holds at most
       // two karma boxes". Rule 3 — every unmarked karma box the owner holds is
-      // among the inputs. The reader answers over the overlay, so a second
-      // spend in one body names the first's change rather than the pre-body
-      // own box.
+      // among the inputs. The reader answers over the state its caller judges
+      // against (NODE_INTERFACE → "`getOwnKarmaBoxIds(owner)` answers rule 3"):
+      // block application reads over the overlay, so a second spend in one
+      // body names the first's change; admission reads over the pending view;
+      // the relay reads over the confirmed set.
       const ownIds = deps.getOwnKarmaBoxIds(inputKarma.owner);
       const inputIdSet = new Set<string>();
       for (const b of inputs) if (b.id !== undefined) inputIdSet.add(b.id);
@@ -1894,6 +1896,21 @@ function checkShapeAgainst(outputs: AnyBoxCandidate[], settlement: boolean): Utx
     const shape = OUTPUT_SHAPE[boxType];
     for (const key of Object.keys(box)) {
       if (key === 'id' || key === 'txId' || key === 'index') continue;
+      // The settlement's one admitted extra: the income mark on a karma
+      // output (TYPES_INTERFACE → KarmaBox; NODE_INTERFACE → The settlement
+      // transaction → "The income leg pays each owner once"). A user
+      // transaction's karma output is held to the base shape, so the mark
+      // is the settlement's alone to write.
+      if (settlement && boxType === 'karma' && key === 'income') {
+        if (box[key] !== true) {
+          return {
+            valid: false,
+            error:
+              `Invalid output shape at index ${i} (karma): field 'income' must be true, got ${describeValue(box[key])}`,
+          };
+        }
+        continue;
+      }
       if (!shape.allowed.has(key)) {
         return {
           valid: false,

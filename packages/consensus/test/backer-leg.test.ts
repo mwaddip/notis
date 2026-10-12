@@ -228,6 +228,7 @@ function makeDeps(opts: {
     getEscrowsReleasableAt: () => [],
     getLapsedVouches: () => [],
     getLifetimeLikes: () => 0n,
+    getIncomeBox: () => null,
     getDecayPlans: () => [],
     vouchCooldownBlocks: 2,
     getBackerPoolBox: () => opts.poolBox,
