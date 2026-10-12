@@ -491,16 +491,35 @@ export function makeKarmaBox(
   owner: Uint8Array,
   seedHeight: number,
   nonce = 0,
+  income?: true,
 ): KarmaBox {
   const candidate = {
     boxType: 'karma' as const,
     value,
     createdAtBlock: seedHeight,
     owner,
+    ...(income === true ? { income: true as const } : {}),
   };
   const box: KarmaBox = { ...candidate, ...fixtureProvenance(candidate, seedHeight, nonce) };
   box.id = computeBoxId(box);
   return box;
+}
+
+/**
+ * The ids of the owner's unmarked karma boxes in the committed set the test
+ * built — the shape a service test reads for `getOwnKarmaBoxIds` on an engine
+ * deps literal that drives `validateTx` over the real store
+ * (NODE_INTERFACE → Karma transition rules → "Engine inputs the rule needs";
+ * MEMPOOL_INTERFACE → getOwnKarmaBoxIdsWithPending).
+ */
+export function unmarkedKarmaBoxIdsFromStore(
+  getKarmaBoxes: (owner: Uint8Array) => KarmaBox[],
+): (owner: Uint8Array) => string[] {
+  return (owner) =>
+    getKarmaBoxes(owner)
+      .filter((b) => b.income !== true)
+      .map((b) => b.id!)
+      .filter((id): id is string => id !== undefined);
 }
 
 export function makeCreditBox(

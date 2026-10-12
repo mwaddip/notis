@@ -45,7 +45,7 @@ import {
 } from '../../src/store/index.js';
 import { applyOrderingBlock } from '../../src/services/block-apply.js';
 import { revertBlock } from '../../src/services/fork-resolution.js';
-import { validateTx, applyTx, isMember, isRoot } from '@dagsocial/consensus';
+import { validateTx, applyTx, isMember, isRoot, materializeOutput } from '@dagsocial/consensus';
 import type { UtxoEngineDeps, UtxoResult } from '@dagsocial/consensus';
 import { config } from '../../src/config.js';
 import { admissionOwed } from '../../src/services/karma-admission.js';
@@ -96,6 +96,8 @@ describe('membership arms', () => {
       getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+      getOwnKarmaBoxIds: (owner: Uint8Array) =>
+        getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
       inviteBondMin: config.inviteBondMin,
@@ -264,6 +266,9 @@ describe('membership arms', () => {
   describe('invite budget', () => {
     it('the k-th invite needs k·D(N_now) vouches', () => {
       // D(27, 1) = 3. Member with bar=3, 7 vouches → floor(7/3) = 2 available.
+      // Each invite spends the owner's own box and returns the change, which
+      // the next invite names (NODE_INTERFACE → Karma transition rules →
+      // "An identity holds at most two karma boxes").
       setNetworkMemberCount(27);
       seedMember(ownerPubKey, 1, 3, 7);
       const karma = createAndInsertKarma(ownerPubKey, 500n, 1);
@@ -277,11 +282,11 @@ describe('membership arms', () => {
       const rec1 = storeGetIdentityRecord(ownerPubKey)!;
       expect(rec1.invitesUsed).toBe(1);
 
-      // Second invite — need a new karma box (first was consumed).
-      const karma2 = createAndInsertKarma(ownerPubKey, 500n, 2);
+      // Second invite — chain through the first invite's own-box change.
+      const change1 = materializeOutput(tx1.outputs[0]!, computeTxId(tx1), 0) as KarmaBox;
       const invitee2 = new Uint8Array(32).fill(0xa2);
       const tx2 = makeInviteTx(
-        karma2.id!, ownerPubKey, ownerPrivKey, invitee2, 500n, FIXTURE_BOND_KARMA,
+        change1.id!, ownerPubKey, ownerPrivKey, invitee2, change1.value, FIXTURE_BOND_KARMA,
       );
       const r2 = validateAndApplyTx(deps, tx2, 10);
       expect(r2.valid).toBe(true);
@@ -289,10 +294,10 @@ describe('membership arms', () => {
 
       // N grows → D(64, 1) = 4. floor(7/4) = 1, 1 - 2 = -1 → refused.
       setNetworkMemberCount(64);
-      const karma3 = createAndInsertKarma(ownerPubKey, 500n, 3);
+      const change2 = materializeOutput(tx2.outputs[0]!, computeTxId(tx2), 0) as KarmaBox;
       const invitee3 = new Uint8Array(32).fill(0xa3);
       const tx3 = makeInviteTx(
-        karma3.id!, ownerPubKey, ownerPrivKey, invitee3, 500n, FIXTURE_BOND_KARMA,
+        change2.id!, ownerPubKey, ownerPrivKey, invitee3, change2.value, FIXTURE_BOND_KARMA,
       );
       const r3 = validateTx(deps, tx3, 10);
       expect(r3.valid).toBe(false);

@@ -5,6 +5,7 @@ import http from 'http';
 import { createPrivateKey, sign } from 'crypto';
 import { initDb, closeDb } from '../../src/store/db.js';
 import {
+  getKarmaBoxes,
   getKarmaBoxesPage,
   getKarmaValue,
   getKarmaTotal,
@@ -87,6 +88,8 @@ async function request(
         consumeBox,
         getKarmaOwed: admissionOwed(DECAY_CFG),
         getKarmaValue,
+        getOwnKarmaBoxIds: (owner: Uint8Array) =>
+          getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
         hasActiveVouchEscrow: () => false,
         vouchCooldownBlocks: 2,
         inviteBondMin: config.inviteBondMin,
@@ -234,6 +237,45 @@ describe('UTXO routes', () => {
     const boxValues = (body.boxes as unknown[]).map((b: unknown) => (b as Record<string, unknown>).value);
     expect(boxValues).toEqual(expect.arrayContaining(['42', '58']));
     expect(body.lifetimeLikesReceived).toBe('0');
+    // NODE_INTERFACE → UTXO queries: on the `GET /karma/:userId` row of the
+    // API table, a box carries `income: true` when it is the owner's income
+    // box and no such key when it is their own. The seeded boxes are own
+    // boxes, so neither carries the key.
+    for (const b of body.boxes as Record<string, unknown>[]) {
+      expect('income' in b).toBe(false);
+    }
+  });
+
+  it('GET /karma/:userId marks the owner\'s income box and leaves the own box unmarked', async () => {
+    const kp = generateKeyPair();
+    const hex = Buffer.from(kp.publicKey).toString('hex');
+    const own = seedProvenance<KarmaBox>({
+      boxType: 'karma',
+      value: 10n,
+      createdAtBlock: 0,
+      owner: kp.publicKey,
+    }, 1);
+    insertBox(own);
+    const income = seedProvenance<KarmaBox>({
+      boxType: 'karma',
+      value: 3n,
+      createdAtBlock: 0,
+      owner: kp.publicKey,
+      income: true,
+    }, 2);
+    insertBox(income);
+
+    const res = await request(`/karma/${hex}`);
+    expect(res.status).toBe(200);
+    const body = res.data as Record<string, unknown>;
+    expect(body.total).toBe('13');
+    const boxes = body.boxes as Record<string, unknown>[];
+    expect(boxes).toHaveLength(2);
+    // `value DESC, id` — own (10) ahead of income (3).
+    expect(boxes[0]!.value).toBe('10');
+    expect('income' in boxes[0]!).toBe(false);
+    expect(boxes[1]!.value).toBe('3');
+    expect(boxes[1]!.income).toBe(true);
   });
 
   it('GET /karma/:userId with effective < total for a stale identity', async () => {
@@ -695,6 +737,7 @@ describe('UTXO routes', () => {
           consumeBox: () => {},
           getKarmaOwed: () => 0n,
           getKarmaValue: () => 0n,
+          getOwnKarmaBoxIds: () => [],
           hasActiveVouchEscrow: () => false,
           vouchCooldownBlocks: 2,
           inviteBondMin: 0n,
@@ -802,6 +845,7 @@ describe('utxo routes — alias resolution', () => {
           consumeBox: () => {},
           getKarmaOwed: () => 0n,
           getKarmaValue: () => 0n,
+          getOwnKarmaBoxIds: () => [],
           hasActiveVouchEscrow: () => false,
           vouchCooldownBlocks: 2,
           inviteBondMin: config.inviteBondMin,

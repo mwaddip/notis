@@ -30,7 +30,7 @@ for a block's body (`VALIDATION_INTERFACE → Acceptance criterion`). The browse
 | `overlay` | — (`HolderRecord`, the shape its holder mutations carry) | this contract's `The overlay` | `StateView` |
 | `state-view` | — (`StateView`, `ApplyContext`) | this contract's `StateView` and `ApplyContext` | — |
 | `utxo-engine` | `validateTx` · `applyTx` · `checkTxEnvelope` · `checkOutputShape` · `checkSettlementOutputShape` · `materializeOutput` · `ceilingOf` · `isMember` · `isRoot` | `NODE_INTERFACE → validateTx` · `→ Legal box transitions` · `→ Transaction envelope shape` · `→ Output shape` · `→ Spend timing` · `→ Validity ceiling` | `UtxoEngineDeps` |
-| `settlement` | `buildBlockSettlement` · `buildSettlement` · `bondOutputOf` · `settlementMarginalBytes` | `NODE_INTERFACE → The settlement transaction` | `StateView` (the build) · `SettlementDeps` |
+| `settlement` | `buildBlockSettlement` · `buildSettlement` · `bondOutputOf` · `settlementMarginalBytes` · `decayLegMaxBytes` | `NODE_INTERFACE → The settlement transaction` | `StateView` (the build) · `SettlementDeps` |
 | `decay` | `deriveKarmaDecay` · `commitDecayClocks` · `karmaOwed` | `NODE_INTERFACE → Karma decay` · `→ Karma transition rules` | `DecayDeps` |
 | `coinbase-split` | `computeBlockReward` · `splitCoinbase` · `isCreditSideTx` | `MINING_INTERFACE → Emission Schedule` · `→ Coinbase Application` | none |
 | `block-posts` | `postsOf` · `postIdsOf` | `NODE_INTERFACE → Post transactions` · `→ Withdrawal transactions` | none |
@@ -144,7 +144,13 @@ block's proof and a light client's over a page's (→ The tree session), the sam
 
 **The lapses run voucher by voucher.** One global order over every lapsed vouch would need every lapsed voucher's
 whole range read at every block, which the leg's limit exists to prevent; voucher by voucher, the walk stops at the
-limit. An owner's karma boxes are read whole — the read has no limit — and sorted.
+limit. **An owner's karma boxes are two at most** — an own box and an income box
+(`NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes"`) — so the read walks the
+owner's range for three and answers what it finds, sorted. ⛔ **A third box is a broken invariant and the read
+throws**: a tripwire, never a verdict, as a limited query after a write is (→ The overlay). The throw guards the
+view's range. A projection over a body not yet judged can hold more — a body whose transaction makes two karma
+outputs — and that body is refused by verdict at the transaction. `StateView.getKarmaBoxes(owner)` takes no limit:
+the bound is the state's, so the overlay composes its answer with the block's writes as it composes any whole read.
 
 The members share their names with the node's store reads (`getBox`, `getKarmaBoxes`, `getBondsInvitedAt`, …), which
 answer the node's API. The shapes the rules share with the node's store — `NetworkRecord` and `UsernameRow` — live in
@@ -351,6 +357,13 @@ writes are derived and before they are performed — `checkBlockCost` answers `c
 caller's refusal names with the block's height — so each refuses the same blocks. The signatures' term alone is checked earlier, before the batch runs. **The budget bounds a
 replay's work**: the signatures it verifies and the operations the block's proof carries.
 
+**What a block reads before its verdict is bounded by its bytes.** The pre-body captures read the box behind every
+input the body names — at most `MAX_BLOCK_BODY_BYTES / 32` of them — and, for each owner the body touches, that
+owner's karma boxes and record. An owner's karma boxes are two at most (→ StateView), so no state an owner holds, and
+nothing another party sends them, raises what a transaction of theirs costs a block or the cost gate's
+single-transaction run (`MEMPOOL_INTERFACE → The cost gate`). Measured: the tree view answers an owner at two boxes
+in five lookups — the range's start, two index entries and two boxes (`tree-view.test.ts`).
+
 ## The overlay
 
 **`applyBlock` reads through a block-local layer of its own writes, and the view underneath is never written.** A box
@@ -422,6 +435,18 @@ among `spent` — the box ids the body's transactions name as inputs (`NODE_INTE
 "The lapse leg leaves out a vouch the body spends"`). It reads no state. `applyBlock` calls it at the capture, before
 the apply loop, and hands its answer to `checkSettlement` and to the membership pass's touched identities;
 `buildBlockSettlement` calls it over the body it decodes.
+
+**The income box is one wiring's answer on both sides.** `settlementDepsWith` answers the income leg's read — the
+owner's marked karma box, less a box whose id the body's transactions name as an input and less a box decay's plan
+for that owner consumes (`NODE_INTERFACE → The settlement transaction → "The income leg pays each owner once"`).
+`applyBlock` and `buildBlockSettlement` hand it the same `spent` set the lapse list takes, so over the overlay —
+where a box the body spent is gone — and over pre-body state the answer is one box or none, the same.
+
+**`decayLegMaxBytes(protocolVersion)` is what one squaring adds to a settlement at most** — two inputs and one karma
+output, the output priced at the widest value and height the codec writes for a karma box: 115 bytes at the current
+version, against a measured 100 to 111 (`settlement-bound.test.ts`). The node's fill and its settlement trim add it for an entry whose owner owes decay
+(`MEMPOOL_INTERFACE → The fill budget is bytes`); `settlementMarginalBytes(tx)` stays a function of the transaction
+alone and prices no state.
 
 ## Cost
 

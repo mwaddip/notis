@@ -593,3 +593,59 @@ describe('the send payload — round trip and malformed refusal', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// The view over own and income — WEB_INTERFACE → The wallet. The confirmed
+// side carries the mark on the income box; the predicted change of a
+// pending karma spend is always unmarked, by rule. A pending entry whose
+// inputs cover both the own and the income box leaves one unmarked box in
+// the view — its predicted change.
+// ---------------------------------------------------------------------------
+
+describe('PendingLedger — own and income in the spendable view', () => {
+  it('the view preserves the mark on each confirmed box', () => {
+    const ledger = new PendingLedger(KEY);
+    const confirmed = [
+      { boxId: 'own_box', value: 50n },
+      // income on the input survives into the view, since the view does
+      // not rewrite confirmed entries (WEB_INTERFACE → The wallet).
+      { boxId: 'income_box', value: 100n, income: true },
+    ];
+    expect(ledger.spendable(confirmed as never)).toEqual(confirmed);
+  });
+
+  it('a prior spend that took both own and income leaves one unmarked predicted change', () => {
+    const ledger = new PendingLedger(KEY);
+    ledger.add({
+      txId: 'tp', kind: 'post', postId: 'p', inputs: ['own_box', 'income_box'],
+      change: { boxId: 'chg', value: 148n, createdAtBlock: 5000 },
+      expiresAtHeight: 5720, submittedAtHeight: 5000,
+    });
+    const confirmed = [
+      { boxId: 'own_box', value: 50n },
+      { boxId: 'income_box', value: 100n, income: true },
+    ];
+    const view = ledger.spendable(confirmed as never);
+    expect(view.map((b) => b.boxId)).toEqual(['chg']);
+    expect((view[0] as { income?: unknown }).income).toBeUndefined();
+  });
+
+  it('a prior spend that took only the own box leaves the income box and the predicted change in the view', () => {
+    const ledger = new PendingLedger(KEY);
+    ledger.add({
+      txId: 'tp', kind: 'like', postId: 't', inputs: ['own_box'],
+      change: { boxId: 'chg', value: 49n, createdAtBlock: 5000 },
+      expiresAtHeight: 5720, submittedAtHeight: 5000,
+    });
+    const confirmed = [
+      { boxId: 'own_box', value: 50n },
+      { boxId: 'income_box', value: 100n, income: true },
+    ];
+    const view = ledger.spendable(confirmed as never);
+    // income still present, carrying its mark; chg beside it, unmarked.
+    expect(view).toEqual([
+      { boxId: 'income_box', value: 100n, income: true },
+      { boxId: 'chg', value: 49n },
+    ]);
+  });
+});

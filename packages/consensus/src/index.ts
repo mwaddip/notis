@@ -15,6 +15,7 @@ export {
   buildBlockSettlement,
   buildSettlement,
   bondOutputOf,
+  decayLegMaxBytes,
   settlementMarginalBytes,
 } from './settlement.js';
 export type { SettlementDeps, SettlementBody } from './settlement.js';

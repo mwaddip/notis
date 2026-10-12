@@ -372,7 +372,7 @@ describe('checkSettlement — the comparison refuses', () => {
     // The "wrong" settlement: deps whose `getLapsedVouches` returns the full
     // pre-body capture — the vouch the body also spends.
     const wrong = buildSettlement(
-      settlementDepsWith(view, ctx, () => [], [], [vouch], () => null),
+      settlementDepsWith(view, ctx, () => [], [], [vouch], () => null, new Set()),
       H,
       ctx.protocolVersionSchedule,
       computeBlockReward(H, ctx),
@@ -422,7 +422,7 @@ describe('checkSettlement — the comparison refuses', () => {
     // The "wrong" settlement: deps whose `getLapsedVouches` returns no element
     // — the vouch the view's capture holds is omitted.
     const wrong = buildSettlement(
-      settlementDepsWith(view, ctx, () => [], [], [], () => null),
+      settlementDepsWith(view, ctx, () => [], [], [], () => null, new Set()),
       H,
       ctx.protocolVersionSchedule,
       computeBlockReward(H, ctx),

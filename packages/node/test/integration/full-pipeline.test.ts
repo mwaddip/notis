@@ -190,6 +190,7 @@ interface EngineDeps {
   consumeBox: (id: string, atBlock: number) => void;
   getKarmaValue: (owner: Uint8Array) => bigint;
   getKarmaOwed: (owner: Uint8Array, height: number) => bigint;
+  getOwnKarmaBoxIds: (owner: Uint8Array) => string[];
   getIdentityRecord: (id: Uint8Array) => IdentityRecord | null;
   hasActiveVouchEscrow: (voucherId: Uint8Array) => boolean;
   vouchCooldownBlocks: number;
@@ -234,6 +235,14 @@ async function makeEngineDeps(
     getKarmaOwed: admissionOwed({ staleThresholdBlocks: config.karmaStaleThresholdBlocks, decayIntervalBlocks: config.karmaDecayIntervalBlocks, decayAmount: config.karmaDecayAmount, karmaMinimum: config.karmaMinimum }),
     getKarmaValue: (owner: Uint8Array) =>
       utxoModule.getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+    // NODE_INTERFACE → Karma transition rules → "`getOwnKarmaBoxIds(owner)`
+    // answers rule 3". The pipeline runs the real engine over the store, so
+    // the reader answers from the committed set.
+    getOwnKarmaBoxIds: (owner: Uint8Array) =>
+      utxoModule.getKarmaBoxes(owner)
+        .filter((b) => b.income !== true)
+        .map((b) => b.id!)
+        .filter((id) => id !== undefined),
     // The invite-create once-ever bar reads it (NODE_INTERFACE → "Bond
     // transition rules"), and this suite runs the real engine.
     getIdentityRecord: (id: Uint8Array) => recordsModule.getIdentityRecord(id),

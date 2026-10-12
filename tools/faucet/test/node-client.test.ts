@@ -33,6 +33,41 @@ describe('HttpNodeClient box queries', () => {
     expect(boxes).toEqual([{ boxId: 'bb'.repeat(32), value: 750n }]);
   });
 
+  // NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes":
+  // the node answers at most one marked and one unmarked karma box. The marked
+  // box carries `income: true`; the unmarked box carries no `income` key.
+  it('reads a marked and an unmarked box to one own and one income', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      json(200, {
+        boxes: [
+          { boxId: 'aa'.repeat(32), value: '100' },
+          { boxId: 'bb'.repeat(32), value: '500', income: true },
+        ],
+      }),
+    );
+    const boxes = await client.karmaBoxes(key);
+    expect(boxes).toHaveLength(2);
+    expect(boxes[0]!.boxId).toBe('aa'.repeat(32));
+    expect('income' in boxes[0]!).toBe(false);
+    expect(boxes[1]).toEqual({ boxId: 'bb'.repeat(32), value: 500n, income: true });
+  });
+
+  // NODE_INTERFACE → HTTP API: `income: true` on the owner's income box and no
+  // such key otherwise — any other value for `income` has no decoding.
+  it('refuses an income value that is not strictly true', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      json(200, { boxes: [{ boxId: 'bb'.repeat(32), value: '500', income: false }] }),
+    );
+    await expect(client.karmaBoxes(key)).rejects.toThrow(/income/i);
+  });
+
+  it('refuses a non-true, non-false value for income', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      json(200, { boxes: [{ boxId: 'bb'.repeat(32), value: '500', income: 'yes' }] }),
+    );
+    await expect(client.karmaBoxes(key)).rejects.toThrow(/income/i);
+  });
+
   it('a 404 is a failure, not an empty set', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       json(404, { error: 'not found' }),

@@ -67,7 +67,7 @@ import {
   getCurrentTemplate,
   submitMinedBlock,
 } from '../../src/services/block-creator.js';
-import { admissionHeld, admissionOwed } from '../../src/services/karma-admission.js';
+import { admissionHeld, admissionOwed, admissionGetOwnKarmaBoxIds } from '../../src/services/karma-admission.js';
 import { ClientError } from '../../src/services/client-error.js';
 import {
   makeTestConfig,
@@ -110,6 +110,7 @@ function admissionDeps(): UtxoEngineDeps {
     insertBox,
     consumeBox: storeConsumeBox,
     getKarmaValue: admissionHeld,
+    getOwnKarmaBoxIds: admissionGetOwnKarmaBoxIds,
     getKarmaOwed: admissionOwed(decayCfg),
     getIdentityRecord: storeGetIdentityRecord,
     hasActiveVouchEscrow: storeHasActiveVouchEscrow,
@@ -133,9 +134,9 @@ function admissionDeps(): UtxoEngineDeps {
 }
 
 /** A karma box owned by `owner` seeded in the committed set at height 0, nonce `seed`. */
-function seedKarma(owner: Uint8Array, value: bigint, seed: number): Stored<KarmaBox> {
+function seedKarma(owner: Uint8Array, value: bigint, seed: number, income?: true): Stored<KarmaBox> {
   const box = seedProvenance<KarmaBox>(
-    { boxType: 'karma', value, createdAtBlock: 0, owner },
+    { boxType: 'karma', value, createdAtBlock: 0, owner, ...(income === true ? { income: true as const } : {}) },
     0,
     seed,
   );
@@ -518,30 +519,35 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
 
   // -------- 12 karma spread over two 6-value boxes --------
 
-  it('two 6-karma boxes: a like from each is admitted, a third is refused', () => {
+  it('12 karma over own + income: two likes admitted, a third is refused', () => {
     // Two posts are needed because `(liker, post)` dedup refuses the same
-    // liker a second like on one post (NODE_INTERFACE → Likes).
+    // liker a second like on one post (NODE_INTERFACE → Likes). The own
+    // box carries the inputs through the chain of likes; the income box
+    // rides beside it, counted into `held` but outside the inputs rule 3
+    // asks for (NODE_INTERFACE → Karma transition rules → "An identity
+    // holds at most two karma boxes").
     const postIdA = postId;
-    const postIdB = insertNamedPost('two-boxes-second');
-    const postIdC = insertNamedPost('two-boxes-third');
+    const postIdB = insertNamedPost('own-income-second');
+    const postIdC = insertNamedPost('own-income-third');
     const first = seedKarma(liker.pub, 6n, 1);
-    seedKarma(liker.pub, 6n, 2);
+    seedKarma(liker.pub, 6n, 2, true);
     const deps = admissionDeps();
 
     // held = 12, pending 0, remaining - spend = 11.
     const like1 = buildLike(liker, first, postIdA);
     expect(() => castLike(deps, like1, 10)).not.toThrow();
 
-    // The second box's own id, not the pool's change. The sum is the owner's,
-    // not the box's: pending = 1, held = 11, remaining - spend = 10 ≥ floor.
-    const second = getKarmaBoxes(liker.pub).find((b) => b.id !== first.id)!;
-    const like2 = buildLike(liker, second as KarmaBox, postIdB);
+    // The pending change box of like1 is the owner's one unmarked karma box.
+    // held = 11, pending = 1, remaining - spend = 10 ≥ floor.
+    const change1 = pendingChangeBox(like1);
+    const like2 = buildLike(liker, change1, postIdB);
     expect(() => castLike(deps, like2, 10)).not.toThrow();
 
-    // held = 12 - 2 = 10. A like from the pending change box of like1 would
-    // leave 10 - 1 = 9 < floor; the engine refuses on `remaining − spend < floor`.
-    const change1 = pendingChangeBox(like1);
-    const like3 = buildLike(liker, change1, postIdC);
+    // held = 10, pending = 2. A like from the pending change box of like2
+    // would leave 10 - 1 = 9 < floor; the engine refuses on
+    // `remaining − spend < floor`.
+    const change2 = pendingChangeBox(like2);
+    const like3 = buildLike(liker, change2, postIdC);
     expect(() => castLike(deps, like3, 10)).toThrow(/below the floor of 10/);
   });
 

@@ -15,6 +15,7 @@ import {
 import {
   computeCandidateBoxId,
   computeBoxId,
+  computeContentHash,
   computeTxId,
   LIKE_KARMA_COST,
   POST_PRICE_THREAD,
@@ -142,6 +143,8 @@ describe('validateAndApplyTx', () => {
       getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+      getOwnKarmaBoxIds: (owner: Uint8Array) =>
+        getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
       // ⛔ **The like marker's author pin** (NODE_INTERFACE → Karma transition
@@ -228,6 +231,7 @@ describe('validateAndApplyTx', () => {
     owner: Uint8Array,
     value: bigint,
     seed: number,
+    income?: true,
   ): Stored<KarmaBox> {
     const box = seedProvenance<KarmaBox>(
       {
@@ -235,6 +239,7 @@ describe('validateAndApplyTx', () => {
         value,
         createdAtBlock: 0,
         owner,
+        ...(income === true ? { income: true as const } : {}),
       },
       seed,
     );
@@ -529,36 +534,46 @@ describe('validateAndApplyTx', () => {
   // 9. computeBoxId called for each output, IDs assigned
   // -------------------------------------------------------------------------
   it('computeBoxId called for each output, IDs assigned', () => {
-    const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+    const karma = createAndInsertKarma(ownerPubKey, POST_PRICE_THREAD + 100n, 1);
 
-    // A karma split — two same-owner outputs, so the per-output id derivation
-    // is exercised at more than one index.
-    const splitA: CandidateOf<KarmaBox> = {
+    // A thread shape — the karma change and the thread's price box — so the
+    // per-output id derivation runs at two indices (NODE_INTERFACE → Legal
+    // box transitions, Thread row).
+    const change: CandidateOf<KarmaBox> = {
       boxType: 'karma',
-      value: 60n,
+      value: 100n,
       createdAtBlock: 0,
       owner: ownerPubKey,
     };
-    const splitB: CandidateOf<KarmaBox> = {
-      boxType: 'karma',
-      value: 40n,
+    const price: CandidateOf<KarmaPriceBox> = {
+      boxType: 'karma_price',
+      value: POST_PRICE_THREAD,
       createdAtBlock: 0,
-      owner: ownerPubKey,
+    };
+    const commit: PostCommit = {
+      contentHash: computeContentHash('tx-id-asg'),
+      author: ownerPubKey,
+      parentRefs: [],
+      protocolVersion: 1,
+      type: 'regular',
     };
 
     const tx = buildSignedTx(
       [karma.id!],
-      [splitA, splitB],
+      [change, price],
       ownerPrivKey,
       ownerPubKey,
+      1,
+      undefined,
+      commit,
     );
     const result = validateAndApplyTx(deps, tx, 10);
 
-    expect(result.valid).toBe(true);
+    expect(result.valid, result.error).toBe(true);
 
     // All output boxes should exist with their computed IDs, derived from the
     // transaction's own id and each output's position.
-    const expectedIds = [splitA, splitB].map((c, i) =>
+    const expectedIds = [change, price].map((c, i) =>
       computeCandidateBoxId(c, result.txId!, i),
     );
     for (const expectedId of expectedIds) {
@@ -790,8 +805,13 @@ describe('validateAndApplyTx', () => {
   // only through such a fixture would be testing the fixture's absence, and the
   // rule would lose its coverage the moment the fixture went.
   // ---------------------------------------------------------------------------
-  describe('karma is transferable nowhere (NODE_INTERFACE → Karma transition rules)', () => {
-    it('refuses a two-output karma split to a different owner, whoever owns the input', () => {
+  // NODE_INTERFACE → Karma transition rules → "An identity holds at most two
+  // karma boxes". Rule 1: a karma spend returns its change in one box or in
+  // none, so a two-output karma split is refused by shape — whichever owner
+  // the second output names, and before the owner-change check that was the
+  // old rule's work.
+  describe('karma transition shape (NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes")', () => {
+    it('refuses a two-output karma split, whichever owner the second names', () => {
       const recipient = rawPublicKey(generateKeyPairSync('ed25519').publicKey);
       const karma = createAndInsertKarma(ownerPubKey, 1000n, 51);
 
@@ -807,14 +827,10 @@ describe('validateAndApplyTx', () => {
 
       const result = validateTx(deps, tx, 10);
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('Karma cannot be transferred');
+      expect(result.error).toMatch(/at most one karma output/i);
     });
 
-    // ⛔ **The control the case above needs.** It conserves, it is owner-signed
-    // and it has the same two-output shape — so without this, the rejection
-    // could be the engine refusing any two karma outputs at all rather than
-    // refusing the owner change.
-    it('control: the same two-output split to the SAME owner is accepted', () => {
+    it('refuses a two-output karma split even when both outputs name the same owner', () => {
       const karma = createAndInsertKarma(ownerPubKey, 1000n, 52);
 
       const tx = buildSignedTx(
@@ -828,7 +844,8 @@ describe('validateAndApplyTx', () => {
       );
 
       const result = validateTx(deps, tx, 10);
-      expect(result.valid, result.error).toBe(true);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/at most one karma output/i);
     });
   });
 
@@ -1937,8 +1954,10 @@ describe('validateAndApplyTx', () => {
     it('T1: karma(1n) control passes', () => {
       // Reserve box so the owner's remaining covers the floor; the subject is
       // the output's own 1n, not what else the owner holds (NODE_INTERFACE →
-      // Karma transition rules → "Only a post spends the floor").
-      createAndInsertKarma(ownerPubKey, KARMA_MINIMUM, 2);
+      // Karma transition rules → "Only a post spends the floor"). The reserve
+      // rides as the income box so the own box the like spends is the only
+      // unmarked box the inputs name.
+      createAndInsertKarma(ownerPubKey, KARMA_MINIMUM, 2, true);
       const karma = createAndInsertKarma(ownerPubKey, LIKE_KARMA_COST + 1n, 1);
       const tx = buildSignedTx(
         [karma.id!],
@@ -1953,8 +1972,10 @@ describe('validateAndApplyTx', () => {
 
     it('T2: a like whose inputs total exactly LIKE_KARMA_COST is accepted with one output', () => {
       // Reserve box so the floor stands; the subject is a like consuming one
-      // input entirely into the marker, not what else the owner holds.
-      createAndInsertKarma(ownerPubKey, KARMA_MINIMUM, 2);
+      // input entirely into the marker, not what else the owner holds. The
+      // reserve rides as the income box, which rule 3 does not require among
+      // the inputs.
+      createAndInsertKarma(ownerPubKey, KARMA_MINIMUM, 2, true);
       const karma = createAndInsertKarma(ownerPubKey, LIKE_KARMA_COST, 1);
       const tx = buildSignedTx(
         [karma.id!],
@@ -1994,7 +2015,9 @@ describe('validateAndApplyTx', () => {
       // Reserve box so the floor stands; the subject is an invite consuming
       // one input entirely into the bond, not what else the inviter holds
       // (NODE_INTERFACE → Karma transition rules → "A bond leaves the floor").
-      createAndInsertKarma(ownerPubKey, KARMA_MINIMUM, 2);
+      // The reserve rides as the income box, which rule 3 does not require
+      // among the inputs.
+      createAndInsertKarma(ownerPubKey, KARMA_MINIMUM, 2, true);
       const karma = createAndInsertKarma(ownerPubKey, FIXTURE_BOND_KARMA, 1);
       const bondBox: AnyBoxCandidate = {
         boxType: 'bond',
@@ -2027,8 +2050,10 @@ describe('validateAndApplyTx', () => {
     it('T3: an exact-spend vouch is accepted with vouch alone; voucherId pins through the input', () => {
       seedAsRoot(ownerPubKey);
       // The balance check reads getKarmaValue (all unspent boxes), so a second
-      // box clears VOUCH_MIN_BALANCE while the input is exactly the stake.
-      createAndInsertKarma(ownerPubKey, VOUCH_MIN_BALANCE, 2);
+      // box clears VOUCH_MIN_BALANCE while the input is exactly the stake. The
+      // reserve rides as the income box, which rule 3 does not require among
+      // the inputs.
+      createAndInsertKarma(ownerPubKey, VOUCH_MIN_BALANCE, 2, true);
       const karma = createAndInsertKarma(ownerPubKey, VOUCH_KARMA_AMOUNT, 1);
       const { publicKey: targetPub } = generateKeyPairSync('ed25519');
       const targetPubRaw = rawPublicKey(targetPub);
@@ -2536,7 +2561,7 @@ describe('validateAndApplyTx', () => {
       );
       const result = validateTx(deps, tx, 10);
       expect(result.valid).toBe(false);
-      expect(result.error).toMatch(/exactly one karma output/i);
+      expect(result.error).toMatch(/at most one karma output/i);
     });
 
     it('rejects a postWithdraw whose payload verifyPostWithdrawCommitDomains refuses (bad postId)', () => {

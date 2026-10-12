@@ -7,7 +7,7 @@ import express from 'express';
 import http from 'http';
 import { generateKeyPairSync } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
-import { insertBox, getBox as storeGetBox, getKarmaValue, getBoxProvenance, hasActiveVouchEscrow } from '../../src/store/utxo.js';
+import { insertBox, getBox as storeGetBox, getKarmaBoxes, getKarmaValue, getBoxProvenance, hasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getVouchBox } from '../../src/store/vouch-queries.js';
 import { getIdentityRecord, putIdentityRecord, getNetworkRecord } from '../../src/store/identity-records.js';
 import { getCurrentHeight } from '../../src/store/ordering.js';
@@ -73,6 +73,8 @@ function makeDeps(): UtxoEngineDeps {
     },
     getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
     getKarmaValue,
+    getOwnKarmaBoxIds: (owner: Uint8Array) =>
+      getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
     getIdentityRecord,
     hasActiveVouchEscrow,
     vouchCooldownBlocks: 2,
@@ -388,9 +390,11 @@ describe('username routes', () => {
   });
 
   it('POST /usernames — 409 while the same claimant has a pending claim', async () => {
+    // The claimant seeds one own karma box; the second claim chains
+    // through the first claim's own-box change (NODE_INTERFACE → Karma
+    // transition rules → "An identity holds at most two karma boxes").
     const c = makeKeys();
     const k1 = seedKarma(c.pub, 200n);
-    const k2 = seedKarma(c.pub, 200n);
     putIdentityRecord(c.pub, { lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     const tx1: UtxoTransaction = {
@@ -406,10 +410,13 @@ describe('username routes', () => {
     const r1 = await post(app, '/usernames', { tx: txToJson(tx1) });
     expect(r1.status).toBe(200);
 
+    const { materializeOutput } = await import('@dagsocial/consensus');
+    const { computeTxId } = await import('@dagsocial/types');
+    const change1 = materializeOutput(tx1.outputs[0]!, computeTxId(tx1), 0) as KarmaBox;
     const tx2: UtxoTransaction = {
-      inputs: [k2.id!],
+      inputs: [change1.id!],
       outputs: [
-        { boxType: 'karma', value: k2.value, createdAtBlock: 1, owner: c.pub } as any,
+        { boxType: 'karma', value: change1.value, createdAtBlock: 1, owner: c.pub } as any,
         { boxType: 'username', value: 0n as 0n, createdAtBlock: 1, owner: c.pub, name: Buffer.from('ClaimB409', 'utf8') } as any,
       ],
       signatures: {},

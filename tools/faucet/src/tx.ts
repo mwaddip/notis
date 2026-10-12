@@ -3,10 +3,16 @@ import { computeCandidateBoxId, computeTxId } from '@dagsocial/types';
 import type { AnyBoxCandidate, UtxoTransaction } from '@dagsocial/types';
 import type { FaucetConfig } from './config.js';
 
-/** A box the faucet may spend: the id the node reported, and its value. */
+/**
+ * A box the faucet may spend: the id the node reported, its value, and — on a
+ * karma read — the mark that tells the owner's income box from their own box
+ * (TYPES_INTERFACE → KarmaBox).
+ */
 export interface BoxRef {
   readonly boxId: string;
   readonly value: bigint;
+  // NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes"
+  readonly income?: true;
 }
 
 export interface BuiltTx {
@@ -34,6 +40,13 @@ export interface BuiltTx {
    * transaction twice.
    */
   readonly payment: BoxRef | null;
+  /**
+   * The karma boxes this transaction names as inputs, with the mark the node
+   * answered. The pending chain reads them to tell what remains of the owner's
+   * confirmed view after a submission — `[]` on a credit transfer, which spends
+   * no karma box.
+   */
+  readonly karmaInputs: readonly BoxRef[];
 }
 
 export const HEX64 = /^[0-9a-f]{64}$/;
@@ -54,6 +67,7 @@ export function signAndRender(
   tx: UtxoTransaction,
   changeIndex: number | null,
   paymentIndex: number | null = null,
+  karmaInputs: readonly BoxRef[] = [],
 ): BuiltTx {
   const txId = computeTxId(tx);
   const privKey = createPrivateKey({ key: cfg.secretKey, format: 'der', type: 'pkcs8' });
@@ -68,7 +82,7 @@ export function signAndRender(
   const change = refFromIndex(tx, txId, changeIndex);
   const payment = refFromIndex(tx, txId, paymentIndex);
 
-  return { txId, changeValue: change?.value ?? 0n, change, payment, tx: txToJson(signed) };
+  return { txId, changeValue: change?.value ?? 0n, change, payment, karmaInputs, tx: txToJson(signed) };
 }
 
 function refFromIndex(tx: UtxoTransaction, txId: string, index: number | null): BoxRef | null {

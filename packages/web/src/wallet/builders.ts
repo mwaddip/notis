@@ -14,6 +14,8 @@ import {
   USERNAME_BURN_PRICE,
   MIN_BOX_VALUE_PER_BYTE,
 } from '@dagsocial/types';
+// `selectBoxes` is kept for the credits side; the karma side tells the own
+// box from the income box, so it does not sort by value.
 import type {
   AnyBoxCandidate,
   BondBox,
@@ -37,17 +39,19 @@ import type { SpendableBox, ChangeRef } from './types';
 // frozen vectors in builders.test.ts — fixed inputs, fixed txIds — so a change
 // that moves one is a wire change.
 //
-// Builders exist for a post, a like, a vouch, an unvouch, an invite and a
-// withdrawal, and nothing else (WEB_INTERFACE → The wallet). A root post: change
-// and a `karma_price` of POST_PRICE_THREAD. A reply: change, a `karma_price` of
-// POST_PRICE_REPLY − REPLY_AUTHOR_SHARE, and a `like_accrual` of
-// REPLY_AUTHOR_SHARE to the parent's confirmedAuthor. A like: change and a
+// Builders exist for a post, a like, a vouch, an unvouch, an invite, a
+// withdrawal, a claim, a burn and a send (WEB_INTERFACE → The wallet). A root
+// post: change and a `karma_price` of POST_PRICE_THREAD. A reply: change, a
+// `karma_price` of POST_PRICE_REPLY − REPLY_AUTHOR_SHARE, and a `like_accrual`
+// of REPLY_AUTHOR_SHARE to the parent's confirmedAuthor. A like: change and a
 // `like_accrual` of LIKE_KARMA_COST to the target's confirmedAuthor. A vouch:
 // change and a `vouch` box of VOUCH_KARMA_AMOUNT. An unvouch: one `vouch` box in,
 // one `vouch_escrow` out, no karma input and no change. An invite: change and a
-// `bond` box of the chosen amount. A withdrawal: the smallest karma box in, one
-// karma output of its value back out, carrying `postWithdraw` — a conserving
-// self-transfer whose output is the entry's change.
+// `bond` box of the chosen amount. A withdrawal and a claim: the same one
+// karma box in — the own box, or the income box where the reader holds no
+// own box — one karma output of its value, carrying either `postWithdraw` or
+// a `username` box beside it, a conserving self-transfer whose karma output
+// is the entry's change.
 
 /** Not enough karma for the price — a typed refusal the composer maps to its
  *  copy, so it never sees selectBoxes' bare throw (WEB_INTERFACE → "Affordability
@@ -134,7 +138,7 @@ export interface ReplyParent {
 /** Build a root post or a reply. A parent makes it a reply. */
 export function buildPost(ctx: BuildContext, content: string, parent?: ReplyParent): BuiltTx {
   const price = parent ? POST_PRICE_REPLY : POST_PRICE_THREAD;
-  const { selected, change } = selectForPrice(ctx.spendable, price);
+  const { selected, change } = selectKarmaInputs(ctx.spendable, price);
 
   const outputs: AnyBoxCandidate[] = [];
   const changeBox = changeBoxOf(change, ctx);
@@ -171,7 +175,7 @@ export function buildPost(ctx: BuildContext, content: string, parent?: ReplyPare
  *  target's confirmedAuthor, `likeTarget` set. The node demands exactly one
  *  signature; this builder adds no output that would need a second. */
 export function buildLike(ctx: BuildContext, targetId: string, targetAuthorHex: string): BuiltTx {
-  const { selected, change } = selectForPrice(ctx.spendable, LIKE_KARMA_COST);
+  const { selected, change } = selectKarmaInputs(ctx.spendable, LIKE_KARMA_COST);
 
   const outputs: AnyBoxCandidate[] = [accrualBox(LIKE_KARMA_COST, targetAuthorHex, ctx.height)];
   const changeBox = changeBoxOf(change, ctx);
@@ -193,7 +197,7 @@ export function buildLike(ctx: BuildContext, targetId: string, targetAuthorHex: 
  *  the target. `voucherId` is the reader's own key, `targetId` the identity
  *  vouched for (WEB_INTERFACE → The wallet). */
 export function buildVouch(ctx: BuildContext, targetHex: string): BuiltTx {
-  const { selected, change } = selectForPrice(ctx.spendable, VOUCH_KARMA_AMOUNT);
+  const { selected, change } = selectKarmaInputs(ctx.spendable, VOUCH_KARMA_AMOUNT);
 
   const vouch: CandidateOf<VouchBox> = {
     boxType: 'vouch',
@@ -247,7 +251,7 @@ export function buildUnvouch(
  *  the invitee. `inviterId` is the reader's own key, `inviteePublicKey` the pasted
  *  key (WEB_INTERFACE → The wallet). InsufficientKarma names the bond. */
 export function buildInvite(ctx: BuildContext, inviteeHex: string, bond: bigint): BuiltTx {
-  const { selected, change } = selectForPrice(ctx.spendable, bond);
+  const { selected, change } = selectKarmaInputs(ctx.spendable, bond);
 
   const bondBox: CandidateOf<BondBox> = {
     boxType: 'bond',
@@ -271,14 +275,14 @@ export function buildInvite(ctx: BuildContext, inviteeHex: string, bond: bigint)
   return finish(tx, changeBox, change, ctx.height);
 }
 
-/** Build a withdrawal: the smallest karma box in, one karma output of its value
- *  back out to the reader's own key, `postWithdraw` naming the post — a
- *  conserving self-transfer whose single output is the entry's change
- *  (WEB_INTERFACE → The withdraw control). The smallest box ties up the least
- *  while the withdrawal is pending. An empty spendable view throws
- *  InsufficientKarma, because the transaction needs one box to spend. */
+/** Build a withdrawal: one karma box in — the reader's own box, or the income
+ *  box where they hold no own box — one karma output of its value back out to
+ *  the reader's own key, `postWithdraw` naming the post, a conserving self
+ *  transfer whose single output is the entry's change (WEB_INTERFACE → The
+ *  withdraw control). An empty spendable view throws InsufficientKarma, because
+ *  the transaction needs one box to spend. */
 export function buildWithdraw(ctx: BuildContext, postId: string): BuiltTx {
-  const spent = smallestBox(ctx.spendable);
+  const spent = singleKarmaInput(ctx.spendable);
   if (spent === null) throw new InsufficientKarma(1n, 0n);
 
   const output: CandidateOf<KarmaBox> = {
@@ -298,11 +302,12 @@ export function buildWithdraw(ctx: BuildContext, postId: string): BuiltTx {
   return finish(tx, output, spent.value, ctx.height);
 }
 
-/** Build a claim: the smallest spendable box in, one karma output of its value at
- *  index 0 — the entry's change — and one `username` box of `value: 0n` (WEB_INTERFACE →
+/** Build a claim: one karma box in — the reader's own box, or the income box
+ *  where they hold no own box — one karma output of its value at index 0,
+ *  the entry's change, and one `username` box of `value: 0n` (WEB_INTERFACE →
  *  The wallet). An empty view throws InsufficientKarma. */
 export function buildClaim(ctx: BuildContext, name: string): BuiltTx {
-  const spent = smallestBox(ctx.spendable);
+  const spent = singleKarmaInput(ctx.spendable);
   if (spent === null) throw new InsufficientKarma(1n, 0n);
 
   const karmaOut: CandidateOf<KarmaBox> = {
@@ -394,7 +399,7 @@ export function buildSend(ctx: BuildContext, toHex: string, amount: bigint): Bui
  *  karma change at index 0 when any, one `karma_price` of USERNAME_BURN_PRICE
  *  (WEB_INTERFACE → The wallet, NODE_INTERFACE → Username transition rules). */
 export function buildBurn(ctx: BuildContext, held: { boxId: string }): BuiltTx {
-  const { selected, change } = selectForPrice(ctx.spendable, USERNAME_BURN_PRICE);
+  const { selected, change } = selectKarmaInputs(ctx.spendable, USERNAME_BURN_PRICE);
 
   const outputs: AnyBoxCandidate[] = [];
   const changeBox = changeBoxOf(change, ctx);
@@ -432,28 +437,56 @@ export function txToJson(tx: UtxoTransaction): Record<string, unknown> {
 
 // ---------------------------------------------------------------------------
 
-function selectForPrice(
+/** The reader's own and income box from the view, each the first found
+ *  under its mark; WEB_INTERFACE → The wallet → "The rep view holds two boxes
+ *  at most, and every karma builder tells them apart". The own box is the
+ *  unmarked karma box, or the predicted change of the reader's latest pending
+ *  spend (`SpendableBox.income` is never carried by the ledger's own
+ *  constructed change). */
+function ownAndIncome(spendable: SpendableBox[]): { own: SpendableBox | null; income: SpendableBox | null } {
+  let own: SpendableBox | null = null;
+  let income: SpendableBox | null = null;
+  for (const b of spendable) {
+    if (b.income === true) {
+      if (income === null) income = b;
+    } else if (own === null) {
+      own = b;
+    }
+  }
+  return { own, income };
+}
+
+// WEB_INTERFACE → The wallet → "The rep view holds two boxes at most, and every karma builder tells them apart".
+// The own box is named, always; the income box rides with it only when the
+// own box does not cover the spend; with no own box, the income box is spent
+// alone. Below the sum of both, the refusal names the price and that sum.
+function selectKarmaInputs(
   spendable: SpendableBox[],
   price: bigint,
 ): { selected: SpendableBox[]; change: bigint } {
-  // selectBoxes assumes value-descending order and throws a bare Error when
-  // short; sort first, then refuse an unaffordable price as a typed error before
-  // the throw can happen (WEB_INTERFACE → The wallet).
-  const sorted = [...spendable].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
-  const total = sorted.reduce((sum, b) => sum + b.value, 0n);
-  if (total < price) throw new InsufficientKarma(price, total);
-  const selected = selectBoxes(sorted, price);
-  const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
-  return { selected, change: selectedTotal - price };
+  const { own, income } = ownAndIncome(spendable);
+  if (own !== null) {
+    if (own.value >= price) return { selected: [own], change: own.value - price };
+    if (income !== null) {
+      const sum = own.value + income.value;
+      if (sum >= price) return { selected: [own, income], change: sum - price };
+      throw new InsufficientKarma(price, sum);
+    }
+    throw new InsufficientKarma(price, own.value);
+  }
+  if (income !== null) {
+    if (income.value >= price) return { selected: [income], change: income.value - price };
+    throw new InsufficientKarma(price, income.value);
+  }
+  throw new InsufficientKarma(price, 0n);
 }
 
-/** The smallest-valued spendable box, or null on an empty view. A withdrawal
- *  spends one box and returns its value, so the smallest ties up the least
- *  (WEB_INTERFACE → The withdraw control). */
-function smallestBox(spendable: SpendableBox[]): SpendableBox | null {
-  let min: SpendableBox | null = null;
-  for (const b of spendable) if (min === null || b.value < min.value) min = b;
-  return min;
+/** The one box a withdrawal and a claim spend — the own box, or the income
+ *  box where there is no own box (WEB_INTERFACE → The wallet, → The withdraw
+ *  control). */
+function singleKarmaInput(spendable: SpendableBox[]): SpendableBox | null {
+  const { own, income } = ownAndIncome(spendable);
+  return own ?? income;
 }
 
 /** A change box, or null when the change is zero — a zero change is no box

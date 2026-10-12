@@ -22,7 +22,7 @@ import {
   getUsernameByOwner,
 } from '../store/index.js';
 import { admitTx } from './admit-tx.js';
-import { admissionHeld, admissionOwed } from './karma-admission.js';
+import { admissionHeld, admissionOwed, relayGetOwnKarmaBoxIds } from './karma-admission.js';
 import { ClientError } from './client-error.js';
 
 /**
@@ -57,6 +57,7 @@ export function handleRelayedTx(
     consumeBox: () => {},
     getKarmaValue: admissionHeld,
     getKarmaOwed: admissionOwed(decayCfg),
+    getOwnKarmaBoxIds: relayGetOwnKarmaBoxIds,
     // The vouch cast's cooldown gate (NODE_INTERFACE → "Vouch transition
     // rules") — same rule.
     hasActiveVouchEscrow,

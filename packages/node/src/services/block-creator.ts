@@ -53,6 +53,8 @@ import type { StateRootSpeculation } from './block-apply.js';
 import {
   bondOutputOf,
   buildBlockSettlement,
+  decayLegMaxBytes,
+  karmaOwed,
   materializeOutput,
   settlementMarginalBytes,
   treeStateView,
@@ -80,6 +82,8 @@ import {
   getCurrentHeight,
   getRentEligibleCreditBoxes,
   getInterlinks,
+  getKarmaValue,
+  getIdentityRecord,
 } from '../store/index.js';
 
 // ---------------------------------------------------------------------------
@@ -134,12 +138,20 @@ const PACKING_COST_MARGIN = 5;
  * transaction this node built, which has none — and its estimate, the marginal
  * cost the fill packed it by (MEMPOOL_INTERFACE → The cost gate), `null` for one
  * with no block alone to cost, which the fill counts as nothing.
+ *
+ * `squaringBytes` is `decayLegMaxBytes(era)` for an entry whose karma owner
+ * owes decay at the block's height, `0` otherwise — the one figure that
+ * reserves the squaring the settlement charges that owner (MEMPOOL_INTERFACE →
+ * The fill budget is bytes; getPendingEntries is a count → "An entry whose
+ * owner owes decay adds the squaring"). The accumulator reserves it and the
+ * covering sum takes it back under a pop, so one answer per entry.
  */
 interface SelectedEntry {
   txId: string;
   txBytes: Uint8Array;
   rowid: number | null;
   estimate: number | null;
+  squaringBytes: number;
 }
 
 /**
@@ -217,20 +229,24 @@ function coveringLength(selection: readonly SelectedEntry[], length: number, ove
 
 /**
  * The length the selection's first `length` entries keep once the tail whose
- * `settlementMarginalBytes` cover `overshoot` is dropped (MEMPOOL_INTERFACE →
- * The fill budget is bytes; getPendingEntries is a count → "The fill counts the
- * settlement's bytes"). Unlike `coveringLength`, dropping the whole selection
- * is a legal answer rather than a signal to escalate: an empty selection's
- * settlement is the state-driven legs alone, which consensus bounds below
- * `MAX_SETTLEMENT_BYTES` on their own (→ "The settlement is trimmed against
- * its own bound as well"), so `0` always covers.
+ * settlement bytes cover `overshoot` is dropped (MEMPOOL_INTERFACE →
+ * The fill budget is bytes; getPendingEntries is a count → "An entry whose
+ * owner owes decay adds the squaring"). The per-entry figure is
+ * `settlementMarginalBytes(tx) + squaringBytes` — the entry's marginal plus
+ * `decayLegMaxBytes(era)` where its karma owner owes decay, matching the
+ * accumulator the fill reserves against. Unlike `coveringLength`, dropping
+ * the whole selection is a legal answer rather than a signal to escalate:
+ * an empty selection's settlement is the state-driven legs alone, which
+ * consensus bounds below `MAX_SETTLEMENT_BYTES` on their own (→ "The
+ * settlement is trimmed against its own bound as well"), so `0` always covers.
  */
 function settlementCoveringLength(selection: readonly SelectedEntry[], length: number, overshoot: number): number {
   let kept = length;
   let covered = 0;
   while (kept > 0 && covered < overshoot) {
     kept--;
-    covered += settlementMarginalBytes(decodeTx(selection[kept]!.txBytes));
+    const entry = selection[kept]!;
+    covered += settlementMarginalBytes(decodeTx(entry.txBytes)) + entry.squaringBytes;
   }
   return kept;
 }
@@ -611,6 +627,25 @@ export function createOrderingBlock(): OrderingBlock | null {
     const costBudget = blockCostBudget();
     const packTo = Math.floor((costBudget * (100 - PACKING_COST_MARGIN)) / 100);
     const emptyCost = costedOrNothing('the empty block', () => emptyBlockCost('createOrderingBlock')) ?? 0;
+    const decayCfg = applyContextFrom(nodeConfig).decayCfg;
+    const squaringAtEra = decayLegMaxBytes(era);
+    // ⛔ **The predicate's answer for an entry is the same on every pass of
+    // one build** (MEMPOOL_INTERFACE → The fill budget is bytes;
+    // getPendingEntries is a count → "An entry whose owner owes decay adds
+    // the squaring"). Cached per owner hex over confirmed state, so a build
+    // reads `getKarmaValue` and `getIdentityRecord` once per distinct karma
+    // owner however many entries that owner holds in the pool.
+    const owesDecayBy: Map<string, boolean> = new Map();
+    const squaringBytesOf = (karmaOwner: string | null): number => {
+      if (karmaOwner === null) return 0;
+      let answer = owesDecayBy.get(karmaOwner);
+      if (answer === undefined) {
+        const owner = Buffer.from(karmaOwner, 'hex');
+        answer = karmaOwed(getKarmaValue(owner), getIdentityRecord(owner), newHeight, decayCfg) > 0n;
+        owesDecayBy.set(karmaOwner, answer);
+      }
+      return answer ? squaringAtEra : 0;
+    };
     let spent = seededSpent;
     let settlementSpent = seededSettlementSpent;
     let estimated = emptyCost;
@@ -633,13 +668,19 @@ export function createOrderingBlock(): OrderingBlock | null {
           if (invitedThisBlock.has(inviteeHex)) continue;
           invitedThisBlock.add(inviteeHex);
         }
-        const cost = entryByteCost(entry.utxoTxBytes);
+        // The entry's squaring, where its karma owner owes decay at the
+        // block's height — in the body-budget reservation and the
+        // settlement-bound reservation alike (MEMPOOL_INTERFACE → The fill
+        // budget is bytes; getPendingEntries is a count → "An entry whose
+        // owner owes decay adds the squaring"). Priced over confirmed state.
+        const squaringBytes = squaringBytesOf(entry.karmaOwner);
+        const cost = entryByteCost(entry.utxoTxBytes) + squaringBytes;
         if (spent + cost > budget) return;
         // MEMPOOL_INTERFACE → The fill budget is bytes; getPendingEntries is a
         // count → "The fill counts the settlement's bytes" — ends the class
         // here, as the body-budget check above does, at the entry that would
         // take the settlement over its own bound.
-        const settlementBytes = settlementMarginalBytes(tx);
+        const settlementBytes = settlementMarginalBytes(tx) + squaringBytes;
         if (settlementSpent + settlementBytes > MAX_SETTLEMENT_BYTES) return;
         let estimate = entry.costEstimate;
         if (estimate === null) {
@@ -654,7 +695,7 @@ export function createOrderingBlock(): OrderingBlock | null {
         spent += cost;
         settlementSpent += settlementBytes;
         estimated += scaled;
-        selection.push({ txId, txBytes: entry.utxoTxBytes, rowid: entry.rowid, estimate });
+        selection.push({ txId, txBytes: entry.utxoTxBytes, rowid: entry.rowid, estimate, squaringBytes });
       }
     };
 
@@ -663,7 +704,8 @@ export function createOrderingBlock(): OrderingBlock | null {
     // requiring no signature"). Selection is discretionary; a verifier checks
     // eligibility and the charge and nothing else. A rent transaction has no
     // row and so no estimate: each is costed alone, as a row without one is,
-    // and packed by that cost.
+    // and packed by that cost. A rent transaction spends a credit box — no
+    // karma inputs — so no owner's decay rides it.
     const offerRent = (scale: number): void => {
       const eligible = getRentEligibleCreditBoxes(
         newHeight, nodeConfig.storageRentPeriodBlocks, MAX_RENT_TXS_PER_BLOCK,
@@ -703,7 +745,7 @@ export function createOrderingBlock(): OrderingBlock | null {
         spent += cost;
         settlementSpent += settlementBytes;
         estimated += scaled;
-        selection.push({ txId: rentTxId, txBytes: encoded, rowid: null, estimate });
+        selection.push({ txId: rentTxId, txBytes: encoded, rowid: null, estimate, squaringBytes: 0 });
       }
     };
 

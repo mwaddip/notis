@@ -1,5 +1,5 @@
 import { getDb } from './db.js';
-import { getBox } from './utxo.js';
+import { getBox, getKarmaBoxes } from './utxo.js';
 import { deletePendingPost } from './posts.js';
 import { ClientError } from '../services/client-error.js';
 import { materializeOutput, ceilingOf } from '@dagsocial/consensus';
@@ -179,6 +179,15 @@ export interface PoolEntry {
   expiresAtHeight: number;
   createdAt: string;
   costEstimate: number | null;
+  /**
+   * The karma inputs' owner (hex) — the one key `validateTx` admits in a
+   * karma transaction's signatures map (MEMPOOL_INTERFACE → Gate metadata
+   * columns), the `karma_owner` column; `null` where the row has no karma
+   * spend and no owner to key on. The fill reads this to ask the decay
+   * predicate for one owner per entry (NODE_INTERFACE → Karma transition
+   * rules → "Engine inputs the rule needs").
+   */
+  karmaOwner: string | null;
 }
 
 interface MempoolRow {
@@ -188,6 +197,7 @@ interface MempoolRow {
   expires_at_height: number;
   created_at: string;
   cost_estimate: number | null;
+  karma_owner: string | null;
 }
 
 function rowToEntry(row: MempoolRow): PoolEntry {
@@ -198,6 +208,7 @@ function rowToEntry(row: MempoolRow): PoolEntry {
     expiresAtHeight: row.expires_at_height,
     createdAt: row.created_at,
     costEstimate: row.cost_estimate,
+    karmaOwner: row.karma_owner,
   };
 }
 
@@ -376,12 +387,22 @@ function gateMetadata(tx: UtxoTransaction): GateMetadata {
     meta.likeLiker = signers.length === 1 ? signers[0]! : null;
   }
 
-  // MEMPOOL_INTERFACE → Gate metadata columns: the karma spend row.
-  // `karma_spend` is the summed value of outputs that are a karma spend's exits
-  // (NODE_INTERFACE → Karma transition rules); `karma_owner` is the one signing
-  // key, mirroring `like_liker`'s rule so any other key count leaves the row
-  // unpaired and `pendingKarmaSpend` sums nothing from it.
+  // MEMPOOL_INTERFACE → Gate metadata columns: the karma spend row, and the
+  // `karma_owner` column that `getOwnKarmaBoxIdsWithPending` keys on
+  // (MEMPOOL_INTERFACE → getOwnKarmaBoxIdsWithPending). `karma_owner` is the
+  // one signing key — any other key count leaves the row unpaired, mirroring
+  // `like_liker`'s rule — and it is written for every karma transaction, not
+  // only the spending ones: a consolidation, a name claim and a withdrawal
+  // move the owner's own box without a karma_price / like_accrual / bond /
+  // vouch output, so a reader keyed on this column would miss them. The row
+  // is a karma transaction's whenever it carries one of {karma, karma_price,
+  // like_accrual, bond, vouch} as an output — the admitted karma-arm shapes
+  // (NODE_INTERFACE → Legal box transitions). `karma_spend` stays the summed
+  // value of the spend's exits alone: `pendingKarmaSpend` sums nothing from a
+  // row that spends none, and a non-spending karma transaction leaves `held`
+  // what the pool's spends ahead of it leave it.
   let karmaSpend = 0n;
+  let hasKarmaArmOutput = false;
   for (const output of tx.outputs ?? []) {
     if (
       output.boxType === 'karma_price' ||
@@ -390,13 +411,16 @@ function gateMetadata(tx: UtxoTransaction): GateMetadata {
       output.boxType === 'vouch'
     ) {
       karmaSpend += (output as { value: bigint }).value;
+      hasKarmaArmOutput = true;
+    } else if (output.boxType === 'karma') {
+      hasKarmaArmOutput = true;
     }
   }
-  if (karmaSpend > 0n) {
+  if (hasKarmaArmOutput) {
     const signers = Object.keys(tx.signatures ?? {});
     if (signers.length === 1) {
       meta.karmaOwner = signers[0]!;
-      meta.karmaSpend = karmaSpend;
+      meta.karmaSpend = karmaSpend > 0n ? karmaSpend : null;
     }
   }
 
@@ -674,6 +698,92 @@ export function getBoxWithPending(boxId: string): AnyBox | null {
 }
 
 /**
+ * Submission's answer to rule 3 of NODE_INTERFACE → Karma transition rules →
+ * "An identity holds at most two karma boxes": the ids of the owner's unmarked
+ * karma boxes under `getBoxWithPending`'s view
+ * (MEMPOOL_INTERFACE → getOwnKarmaBoxIdsWithPending).
+ *
+ * The pending view is the confirmed unmarked set, plus every unmarked karma
+ * output of a pooled transaction the owner signed, less every box any pooled
+ * transaction spends. The pooled rows are found by `karma_owner` — every
+ * karma transaction's row carries it (`gateMetadata`'s karma arm) — and only
+ * the matching rows are decoded, so the read is a few hashes rather than a
+ * walk of the pool. The by-owner rows cover every input that could remove one
+ * of the owner's unmarked karma boxes from the set: a karma box is spent only
+ * by a karma transaction signed by its owner, and such a transaction carries
+ * `karma_owner` through `gateMetadata` (TYPES_INTERFACE → KarmaBox;
+ * NODE_INTERFACE → Karma transition rules → "All karma inputs must share one
+ * owner"). The gather and the subtract run as two passes, so the answer is
+ * the same whatever order SQLite returns the rows in. Admission wires this
+ * as the engine's `getOwnKarmaBoxIds`; the relay's `getOwnKarmaBoxIds` reads
+ * the confirmed set alone.
+ */
+export function getOwnKarmaBoxIdsWithPending(ownerId: string): string[] {
+  const db = getDb();
+  const ownerBuf = Buffer.from(ownerId, 'hex');
+  const ownerBytes = new Uint8Array(ownerBuf);
+
+  // Confirmed unmarked karma box ids. `getKarmaBoxes` holds every karma box
+  // the owner has — own and income — in `(value DESC, id)` order, and the
+  // owner's range is at most two rows (NODE_INTERFACE → Karma transition
+  // rules), so the filter and the set it feeds walk the owner's slice alone.
+  const kept = new Set<string>();
+  for (const box of getKarmaBoxes(ownerBytes)) {
+    if (box.income === true) continue;
+    if (box.id !== undefined) kept.add(box.id);
+  }
+
+  // The owner's pooled rows, found by the single-key index on `karma_owner`.
+  // One decode per row, and the owner's active transactions in the pool are
+  // what the invariant leaves bounded: a spend reads two inputs and emits one
+  // karma output at most, so each decode adds one or none and takes one off.
+  const rows = db.prepare(
+    `SELECT utxo_tx_bytes, tx_inputs
+       FROM mempool
+      WHERE karma_owner = ?
+        AND utxo_tx_bytes IS NOT NULL`,
+  ).all(ownerId) as Array<{ utxo_tx_bytes: Buffer; tx_inputs: string | null }>;
+
+  // Pass one: gather every pooled karma output the owner signs for. Reading
+  // ahead of the subtraction keeps the answer order-free — a chain's child
+  // row ahead of its parent in the index would otherwise remove a parent box
+  // the parent row has not yet added.
+  for (const row of rows) {
+    const tx = decodeTx(new Uint8Array(row.utxo_tx_bytes));
+    const txId = computeTxId(tx);
+    for (let i = 0; i < tx.outputs.length; i++) {
+      const candidate = tx.outputs[i]!;
+      if (candidate.boxType !== 'karma') continue;
+      // TYPES_INTERFACE → KarmaBox. The mark is the one difference between
+      // the two shapes; the engine's rule 2 refuses a marked karma output on
+      // a user transaction, so a pooled karma output is unmarked by rule —
+      // the check here is defensive and does not reach a tree the engine
+      // admitted (NODE_INTERFACE → Karma transition rules → "No karma output
+      // carries the mark").
+      if ((candidate as { income?: true }).income === true) continue;
+      if (bytesToHexOwner(candidate.owner) !== ownerId) continue;
+      const box = materializeOutput(candidate, txId, i);
+      if (box.id !== undefined) kept.add(box.id);
+    }
+  }
+
+  // Pass two: remove every box the owner's pooled rows spend. Each of the
+  // owner's unmarked karma boxes a pooled transaction spends is removed
+  // whether its row stood ahead of or behind the one that would have added
+  // its predecessor.
+  for (const row of rows) {
+    if (row.tx_inputs === null) continue;
+    for (const spent of JSON.parse(row.tx_inputs) as string[]) kept.delete(spent);
+  }
+
+  return [...kept];
+}
+
+function bytesToHexOwner(owner: Uint8Array): string {
+  return Buffer.from(owner).toString('hex');
+}
+
+/**
  * The stored `utxo_tx_bytes` of the pool entry whose `tx_id` equals the
  * argument, or `null` when no such entry stands — the bytes a pending
  * `PostJson`'s `tx` field is read from (NODE_INTERFACE → Posts → "The creating
@@ -692,7 +802,7 @@ export function getPendingUtxoTxBytesByTxId(txId: string): Uint8Array | null {
 
 /** The columns a `PoolEntry` is read from — every reader of the pool selects these. */
 const ENTRY_COLUMNS = `rowid, entry_type, utxo_tx_bytes,
-                       expires_at_height, created_at, cost_estimate`;
+                       expires_at_height, created_at, cost_estimate, karma_owner`;
 
 /**
  * Pending entries in FIFO order, at most `limit` of them, starting after

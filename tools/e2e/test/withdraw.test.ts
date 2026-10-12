@@ -30,9 +30,13 @@ import { signAndRender } from '../src/tx/render.js';
 const FILE_INDEX = 2;
 
 function karmaBoxes(
-  karma: { boxes: { boxId: string; value: string }[] },
+  karma: { boxes: { boxId: string; value: string; income?: true }[] },
 ): BoxRef[] {
-  return karma.boxes.map((b) => ({ boxId: b.boxId, value: BigInt(b.value) }));
+  return karma.boxes.map((b) =>
+    b.income === true
+      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
+      : { boxId: b.boxId, value: BigInt(b.value) },
+  );
 }
 
 describe('withdraw', () => {

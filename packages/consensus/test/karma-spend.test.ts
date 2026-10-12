@@ -28,6 +28,7 @@ import {
   finish,
   hex,
   identityRecord,
+  incomeBox,
   inviteTx,
   karmaBox,
   likeTx,
@@ -569,29 +570,31 @@ describe('`owed` is read once, from pre-body state', () => {
 // ---------------------------------------------------------------------------
 
 describe('`held` is the summed value across karma boxes', () => {
-  // Owner holds two karma boxes [1, 10]. A like consumes the 1-karma box. Spend = 1.
-  // held = 1 + 10 = 11, owed = 0 (fresh), remaining = 11. 11 - 1 = 10 ≥ 10 → accepted.
-  it('a like spends a 1-karma box while a second box holds 10 — accepted', () => {
-    const s = seed('held-sum-ok', [1n, 10n], { lastActivityBlock: H - 1 });
+  // Owner holds an own box (1) and an income box (10). A like spends the own
+  // box. Spend = 1. held = 1 + 10 = 11, owed = 0 (fresh), remaining = 11.
+  // 11 - 1 = 10 ≥ 10 → accepted.
+  it('a like spends the own box while the income box holds 10 — accepted', () => {
+    const s = seed('held-sum-ok', [1n], { lastActivityBlock: H - 1 });
+    s.view.insertBox(incomeBox(s.actor.userId, 10n, 99, 0));
     const authorKey = seededIdentity('held-sum-ok/author').userId;
     s.view.putIdentityRecord(authorKey, identityRecord({ lastActivityBlock: H - 1 }));
     const postId = hex(uid('held-sum-ok/post'));
     putConfirmedPost(s.view, postId, authorKey);
-    // Pick the 1-karma box as the input.
-    const smaller = s.view.getKarmaBoxes(s.actor.userId).find((b) => b.value === 1n)!;
-    const like = likeTx(s.actor, smaller, postId, authorKey, H);
+    const own = s.view.getKarmaBoxes(s.actor.userId).find((b) => b.income !== true)!;
+    const like = likeTx(s.actor, own, postId, authorKey, H);
     expectAccepted(s, [like]);
   });
 
-  // Same shape but the second box holds 9: held = 1 + 9 = 10, 10 - 1 = 9 < 10 → refused.
-  it('a like spends a 1-karma box while a second box holds 9 — refused', () => {
-    const s = seed('held-sum-fail', [1n, 9n], { lastActivityBlock: H - 1 });
+  // Same shape but the income box holds 9: held = 1 + 9 = 10, 10 - 1 = 9 < 10 → refused.
+  it('a like spends the own box while the income box holds 9 — refused', () => {
+    const s = seed('held-sum-fail', [1n], { lastActivityBlock: H - 1 });
+    s.view.insertBox(incomeBox(s.actor.userId, 9n, 99, 0));
     const authorKey = seededIdentity('held-sum-fail/author').userId;
     s.view.putIdentityRecord(authorKey, identityRecord({ lastActivityBlock: H - 1 }));
     const postId = hex(uid('held-sum-fail/post'));
     putConfirmedPost(s.view, postId, authorKey);
-    const smaller = s.view.getKarmaBoxes(s.actor.userId).find((b) => b.value === 1n)!;
-    const like = likeTx(s.actor, smaller, postId, authorKey, H);
+    const own = s.view.getKarmaBoxes(s.actor.userId).find((b) => b.income !== true)!;
+    const like = likeTx(s.actor, own, postId, authorKey, H);
     expectRefusedAt(s, [like], like, FLOOR_RULE);
   });
 });
@@ -682,6 +685,10 @@ describe('validateTx answers from `getKarmaValue` and `getKarmaOwed`', () => {
       consumeBox: unread('consumeBox'),
       getKarmaValue: () => opts.held,
       getKarmaOwed: opts.getKarmaOwed ?? (() => opts.owed),
+      // Rule 3 reads the owner's unmarked karma box ids and refuses a karma
+      // spend that does not name every one; this stub answers the inputs' ids
+      // so no spend is refused for a box the test did not seed.
+      getOwnKarmaBoxIds: () => opts.boxes.filter((b) => b.boxType === 'karma').map((b) => b.id!),
       getIdentityRecord: unread('getIdentityRecord'),
       hasActiveVouchEscrow: unread('hasActiveVouchEscrow'),
       vouchCooldownBlocks: CTX.vouchCooldownBlocks,
@@ -842,41 +849,41 @@ describe('the spend rule is the arm\'s last word', () => {
 // ---------------------------------------------------------------------------
 
 describe('a body that leaves its owner no karma box', () => {
-  // Stale, three boxes of 5: face 15, effective 10, owed 5.
-  //  Thread 1 (spend 5): held=15, owed=5, remaining=10, 10 ≥ 5 ✓.
-  //  Thread 2 (spend 5): held=10, owed=5, remaining=5, 5 ≥ 5 ✓.
+  // Stale, one 15-karma box: face 15, effective 10, owed 5.
+  //  Thread 1 (spend 5): held=15, owed=5, remaining=10, 10 ≥ 5 ✓, change=10.
+  //  Thread 2 (spend 5): held=10, owed=5, remaining=5, 5 ≥ 5 ✓, change=5.
   //  Thread 3 (spend 5): held=5, owed=5, remaining=0, 0 < 5 → refused.
   it('a stale identity, face 15 effective 10 — the third thread is refused', () => {
-    const s = seed('empty-stale-3', [5n, 5n, 5n], { lastActivityBlock: 1 });
-    const boxes = s.view.getKarmaBoxes(s.actor.userId);
-    const t0 = threadTx(s.actor, boxes[0]!, 'one', H);
-    const t1 = threadTx(s.actor, boxes[1]!, 'two', H);
-    const t2 = threadTx(s.actor, boxes[2]!, 'three', H);
+    const s = seed('empty-stale-3', [15n], { lastActivityBlock: 1 });
+    const input = s.view.getKarmaBoxes(s.actor.userId)[0]!;
+    const t0 = threadTx(s.actor, input, 'one', H);
+    const t1 = threadTx(s.actor, changeOf(t0), 'two', H);
+    const t2 = threadTx(s.actor, changeOf(t1), 'three', H);
     expectRefusedAt(s, [t0, t1, t2], t2, POST_RULE);
   });
 
-  // Stale, three boxes of 5: face 15, effective 10, owed 5.
-  //  Thread 1 (spend 5): held=15, owed=5, remaining=10, 10 ≥ 5 ✓.
-  //  Thread 2 (spend 5): held=10, owed=5, remaining=5, 5 ≥ 5 ✓.
+  // Stale, one 15-karma box: face 15, effective 10, owed 5.
+  //  Thread 1 (spend 5): held=15, owed=5, remaining=10, 10 ≥ 5 ✓, change=10.
+  //  Thread 2 (spend 5): held=10, owed=5, remaining=5, 5 ≥ 5 ✓, change=5.
   it('a stale identity, face 15 effective 10 — the first two threads are accepted', () => {
-    const s = seed('empty-stale-2', [5n, 5n, 5n], { lastActivityBlock: 1 });
-    const boxes = s.view.getKarmaBoxes(s.actor.userId);
-    const t0 = threadTx(s.actor, boxes[0]!, 'one', H);
-    const t1 = threadTx(s.actor, boxes[1]!, 'two', H);
+    const s = seed('empty-stale-2', [15n], { lastActivityBlock: 1 });
+    const input = s.view.getKarmaBoxes(s.actor.userId)[0]!;
+    const t0 = threadTx(s.actor, input, 'one', H);
+    const t1 = threadTx(s.actor, changeOf(t0), 'two', H);
     expectAccepted(s, [t0, t1]);
   });
 
-  // Fresh, three boxes of 5: face 15, owed 0.
-  //  Thread 1 (spend 5): held=15, owed=0, remaining=15, 15 ≥ 5 ✓.
-  //  Thread 2 (spend 5): held=10, owed=0, remaining=10, 10 ≥ 5 ✓.
-  //  Thread 3 (spend 5): held=5, owed=0, remaining=5, 5 ≥ 5 ✓.
+  // Fresh, one 15-karma box: face 15, owed 0.
+  //  Thread 1 (spend 5): held=15, remaining=15, 15 ≥ 5 ✓, change=10.
+  //  Thread 2 (spend 5): held=10, remaining=10, 10 ≥ 5 ✓, change=5.
+  //  Thread 3 (spend 5): held=5, remaining=5, 5 ≥ 5 ✓, change=0 — no karma output.
   // After the body the owner holds no karma box.
   it('a fresh identity, face 15 — three threads accepted, the owner holds no karma box', () => {
-    const s = seed('empty-fresh-3', [5n, 5n, 5n], { lastActivityBlock: H - 1 });
-    const boxes = s.view.getKarmaBoxes(s.actor.userId);
-    const t0 = threadTx(s.actor, boxes[0]!, 'one', H);
-    const t1 = threadTx(s.actor, boxes[1]!, 'two', H);
-    const t2 = threadTx(s.actor, boxes[2]!, 'three', H);
+    const s = seed('empty-fresh-3', [15n], { lastActivityBlock: H - 1 });
+    const input = s.view.getKarmaBoxes(s.actor.userId)[0]!;
+    const t0 = threadTx(s.actor, input, 'one', H);
+    const t1 = threadTx(s.actor, changeOf(t0), 'two', H);
+    const t2 = threadTx(s.actor, changeOf(t1), 'three', H);
     expectAccepted(s, [t0, t1, t2]);
     expect(karmaFaceOf(s.view, s.actor.userId)).toBe(0n);
   });

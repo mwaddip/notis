@@ -8,10 +8,12 @@ import {
   MemoryStateView,
   applyContextFor,
   candidateBlock,
+  changeOf,
   consolidateTx,
   finish,
   hex,
   identityRecord,
+  incomeBox,
   karmaBox,
   protocolBox,
   seedProvenance,
@@ -55,13 +57,15 @@ const payerLow = payers[1]!;
 const outsider = seededIdentity('body-signatures/outsider');
 const BODY_REASON = `Rejected block height=${H}: a signature in the body does not verify`;
 
-function genesis(): { view: MemoryStateView; first: KarmaBox; second: KarmaBox; others: KarmaBox; credits: CreditBox[] } {
+function genesis(): { view: MemoryStateView; first: KarmaBox; income: KarmaBox; others: KarmaBox; credits: CreditBox[] } {
   const view = new MemoryStateView({ memberCount: 0 });
   let nonce = 1;
   const first = karmaBox(author.userId, 100n, nonce++, 0);
-  const second = karmaBox(author.userId, 90n, nonce++, 0);
+  // The author's one marked karma box, beside their own box (TYPES_INTERFACE →
+  // KarmaBox): a second two-input karma transaction one signer signs.
+  const income = incomeBox(author.userId, 90n, nonce++, 0);
   const others = karmaBox(other.userId, 100n, nonce++, 0);
-  for (const box of [first, second, others]) view.insertBox(box);
+  for (const box of [first, income, others]) view.insertBox(box);
   view.putIdentityRecord(author.userId, identityRecord());
   view.putIdentityRecord(other.userId, identityRecord());
   const credits = [payerHigh, payerLow].map((payer) => {
@@ -75,7 +79,7 @@ function genesis(): { view: MemoryStateView; first: KarmaBox; second: KarmaBox; 
   });
   view.insertBox(protocolBox('emission', profileFor('devnet').creditEmissionTotal, nonce++));
   view.insertBox(protocolBox('karma_pool', 1_000_000n, nonce++));
-  return { view, first, second, others, credits };
+  return { view, first, income, others, credits };
 }
 
 /** `who`'s signature over the transaction id. */
@@ -120,11 +124,13 @@ function batchedEntries(): string[][] {
 }
 
 describe('applyBlock checks every signature the body carries as one batch', () => {
-  const { view, first, second, others, credits } = genesis();
+  const { view, first, income, others, credits } = genesis();
+  const firstThread = threadTx(author, first, 'the first thread', H);
+  const authorsSecondThreadInput = changeOf(firstThread);
   const body = [
-    threadTx(author, first, 'the first thread', H),
+    firstThread,
     payment(credits),
-    threadTx(author, second, 'the second thread, by the same author', H),
+    threadTx(author, authorsSecondThreadInput, 'the second thread, by the same author', H),
     threadTx(other, others, 'the last thread', H),
   ];
   const valid = candidateBlock(view, H, body, miner.userId, ctx);
@@ -197,7 +203,7 @@ describe('applyBlock checks every signature the body carries as one batch', () =
       ok: false,
       reason:
         `Rejected block height=${H}: embedded UTXO tx ${body[2]!.txId} failed re-validation: ` +
-        `Missing or invalid owner signature for box ${second.id}`,
+        `Missing or invalid owner signature for box ${authorsSecondThreadInput.id}`,
     });
     expect(batchedEntries().map(([txId]) => txId)).not.toContain(body[2]!.txId);
     expect(verifyEd25519).not.toHaveBeenCalled();
@@ -225,7 +231,7 @@ describe('applyBlock checks every signature the body carries as one batch', () =
 
   it('a transaction carrying as many signatures as inputs reaches the batch: a key no input requires passes it and the pass refuses the key, or fails it', () => {
     // Two inputs and one signer, so the outsider's entry is the second of two.
-    const merged = consolidateTx(author, [first, second], H);
+    const merged = consolidateTx(author, [first, income], H);
     const block = candidateBlock(view, H, [merged], miner.userId, ctx);
     expect(apply(block).ok).toBe(true);
     const key = hex(outsider.userId);

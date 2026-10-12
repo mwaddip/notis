@@ -64,6 +64,7 @@
  */
 
 import {
+  BOX_VALUE_BOUND,
   INVITE_BOND_VEST_PER_LIKES,
   LIKES_PER_KARMA_PAYOUT,
   MAX_BOND_SETTLEMENTS_PER_BLOCK,
@@ -83,6 +84,7 @@ import type {
   BondBox,
   CreditBox,
   EmissionBox,
+  KarmaBox,
   KarmaPoolBox,
   LikeAccrualBox,
   TreasuryBox,
@@ -198,6 +200,17 @@ export interface SettlementDeps {
   getLapsedVouches: () => VouchBox[];
   /** `IdentityRecord.lifetimeLikesReceived` — the one field a bond settles against. */
   getLifetimeLikes: (invitee: Uint8Array) => bigint;
+  /**
+   * The owner's marked karma box in pre-body state — the one the income leg
+   * consumes — or null when the owner holds none, when a transaction of the
+   * body named it as an input, or when a decay plan's `consumedBoxIds` holds
+   * it (NODE_INTERFACE → The settlement transaction → "The income leg pays
+   * each owner once"). `excludeIds` carries the decayed ids the caller
+   * assembles from the pass's plans; the body's own inputs are the closure's
+   * (CONSENSUS_INTERFACE → The settlement build → "The income box is one
+   * wiring's answer on both sides").
+   */
+  getIncomeBox: (owner: Uint8Array, excludeIds: ReadonlySet<string>) => KarmaBox | null;
   vouchCooldownBlocks: number;
   /** What every stale identity owes, in the decay pass's stated owner order. */
   getDecayPlans: () => DecayPlan[];
@@ -491,9 +504,45 @@ function derive(
   // mechanism is untouched — the same eager per-identity pass, staleness
   // predicate and karma floor; only the destination is named.
   const decayPlans = deps.getDecayPlans();
+  const decayedBoxIds = new Set<string>();
   for (const plan of decayPlans) {
-    for (const id of plan.consumedBoxIds) inputs.push(id);
+    for (const id of plan.consumedBoxIds) {
+      inputs.push(id);
+      decayedBoxIds.add(id);
+    }
     poolSink += plan.burnAmount;
+  }
+
+  // 3f. The income leg (NODE_INTERFACE → The settlement transaction → "The
+  // income leg pays each owner once"). Three legs settle to an owner: the
+  // like payout, the vested part of every bond settling to them, and the
+  // value of every escrow returning to them. The settlement consumes the
+  // owner's pre-body income box when one stands, less a box the body spent
+  // or decay charges, and emits one marked karma box of the base value plus
+  // the sum. Inputs follow decay charges and precede the karma pool;
+  // outputs ride below, after decay's replacements.
+  const incomeByOwner = new Map<string, { owner: Uint8Array; amount: bigint }>();
+  const addIncome = (owner: Uint8Array, amount: bigint): void => {
+    if (amount <= 0n) return;
+    const key = hexOf(owner);
+    const entry = incomeByOwner.get(key);
+    if (entry) entry.amount += amount;
+    else incomeByOwner.set(key, { owner, amount });
+  };
+  for (const payout of likePayouts) addIncome(payout.author, payout.paid);
+  for (const settled of bondSettlements) addIncome(settled.inviter, settled.vested);
+  for (const ret of escrowReturns) addIncome(ret.owner, ret.value);
+  const incomeOwnersInOrder = [...incomeByOwner.keys()].sort();
+  const incomeBaseByOwner = new Map<string, bigint>();
+  for (const key of incomeOwnersInOrder) {
+    const { owner } = incomeByOwner.get(key)!;
+    const box = deps.getIncomeBox(owner, decayedBoxIds);
+    if (box !== null && box.id !== undefined) {
+      inputs.push(box.id);
+      incomeBaseByOwner.set(key, box.value);
+    } else {
+      incomeBaseByOwner.set(key, 0n);
+    }
   }
 
   // ---- 4. The karma pool, settled once ----
@@ -540,35 +589,22 @@ function derive(
 
   // ---- 6. The karma this block pays out ----
   //
-  // ⛔ **NO CONSOLIDATION.** A recipient ends the block holding one more karma
-  // box rather than one merged box.
-  // Consolidating would make this transaction's INPUT list depend on the
-  // recipient's unrelated holdings instead of on the block's content — and two
-  // legs crediting one owner would both want to consume the same boxes, which
-  // inside one transaction is a double spend. Nothing in the axiom counts boxes;
-  // `getKarmaValue` sums them.
-  // Settlement karma outputs are protocol effects, not user-initiated spends —
-  // the activity clock advances only in the user-transaction loop, so
-  // settlement outputs do not advance it (ARCHITECTURE → Karma decay).
+  // ⛔ **The income leg pays each owner once** (NODE_INTERFACE → The settlement
+  // transaction → "The income leg pays each owner once"). The like payout, the
+  // vested part of each bond and each returning escrow sum into one marked
+  // karma box per owner, which rides below after decay's replacements. The
+  // invite grant and decay's replacement stay unmarked: an invitee holds no
+  // karma box before the grant, and the squaring's output stands in for the
+  // boxes it consumed. Settlement karma outputs are protocol effects, not
+  // user-initiated spends — the activity clock advances only in the user
+  // loop, so settlement outputs do not advance it (ARCHITECTURE → Karma
+  // decay).
   for (const invite of body.invites) {
     outputs.push({ boxType: 'karma', value: invite.amount, owner: invite.invitee, createdAtBlock: height });
   }
   for (const payout of likePayouts) {
-    if (payout.paid > 0n) {
-      outputs.push({ boxType: 'karma', value: payout.paid, owner: payout.author, createdAtBlock: height });
-    }
     if (payout.carry > 0n) {
       outputs.push({ boxType: 'like_accrual', value: payout.carry, author: payout.author, createdAtBlock: height });
-    }
-  }
-  for (const settled of bondSettlements) {
-    if (settled.vested > 0n) {
-      outputs.push({ boxType: 'karma', value: settled.vested, owner: settled.inviter, createdAtBlock: height });
-    }
-  }
-  for (const ret of escrowReturns) {
-    if (ret.value > 0n) {
-      outputs.push({ boxType: 'karma', value: ret.value, owner: ret.owner, createdAtBlock: height });
     }
   }
   for (const lw of lapseWithdrawals) {
@@ -588,6 +624,20 @@ function derive(
         owner: plan.owner,
         createdAtBlock: height,
       });
+    }
+  }
+  // One marked karma box per owner the block pays, ascending owner hex —
+  // the sum of the like payout, every vested bond and every returning
+  // escrow, added to the pre-body income box's value when one was consumed.
+  // No zero-value output is created, so an owner's sum of 0 writes nothing;
+  // a positive sum admits an output since the input is at least 0 and the
+  // income is at least 1.
+  for (const key of incomeOwnersInOrder) {
+    const { owner, amount } = incomeByOwner.get(key)!;
+    const base = incomeBaseByOwner.get(key) ?? 0n;
+    const value = base + amount;
+    if (value > 0n) {
+      outputs.push({ boxType: 'karma', value, owner, income: true, createdAtBlock: height });
     }
   }
   // ---- 6′. Backer releases ----
@@ -965,6 +1015,61 @@ function grantBytes(amount: bigint, version: number): number {
   return encodeTx(probe(0, 1, amount, version)).length - probeBases(version).base;
 }
 
+// The widest `value` and `createdAtBlock` the codec writes for a karma box
+// — the first inside the accepted domain (TYPES_INTERFACE → Box value
+// domain), the second inside `writeVlqU`'s faithful range (TYPES_INTERFACE
+// → Totality). A karma output of any lesser width is never larger, so
+// pricing the probe at these widths makes the figure a ceiling at every
+// height and value.
+const WIDEST_KARMA_VALUE = BOX_VALUE_BOUND - 1n;
+const WIDEST_KARMA_CREATED_AT_BLOCK = Number.MAX_SAFE_INTEGER;
+
+const karmaOutputBytesByVersion = new Map<number, number>();
+function karmaOutputBytes(version: number): number {
+  let cached = karmaOutputBytesByVersion.get(version);
+  if (cached === undefined) {
+    const base = probeBases(version).base;
+    const withKarma = encodeTx({
+      inputs: [],
+      outputs: [{
+        boxType: 'karma' as const,
+        value: WIDEST_KARMA_VALUE,
+        createdAtBlock: WIDEST_KARMA_CREATED_AT_BLOCK,
+        owner: new Uint8Array(32),
+      }],
+      signatures: {},
+      protocolVersion: version,
+    }).length;
+    cached = withKarma - base;
+    karmaOutputBytesByVersion.set(version, cached);
+  }
+  return cached;
+}
+
+/**
+ * What one decay squaring adds to a settlement at most — two settlement
+ * inputs (the identity's own box and income box, both consumed) and one
+ * karma output of the effective value (the owner's own box, unmarked)
+ * (NODE_INTERFACE → Karma decay → "The leg is two inputs at most and one
+ * output"). ⛔ **The karma output is priced at the widest `value` and
+ * `createdAtBlock` the codec writes for a karma box**, so the figure is a
+ * ceiling at every height and value (CONSENSUS_INTERFACE → The settlement
+ * build → "`decayLegMaxBytes(protocolVersion)` is what one squaring adds to
+ * a settlement at most"). ⛔ **The byte probe stamps the era it prices**: a
+ * version wide enough to widen its VLQ moves the base, so a settlement of
+ * that era is measured at that era.
+ *
+ * Blind to the same two things `settlementMarginalBytes` is: the settlement's
+ * own array count prefixes widen with their counts rather than with any one
+ * decay charge, and a first charge turns an absent protocol-box input into
+ * a present one. Both are bounded by a few bytes across the whole body, and
+ * the sizer has the last word.
+ */
+export function decayLegMaxBytes(protocolVersion: number): number {
+  const { inputBytes } = probeBases(protocolVersion);
+  return 2 * inputBytes + karmaOutputBytes(protocolVersion);
+}
+
 const creditOutputBytesByVersion = new Map<number, number>();
 function creditOutputBytes(version: number): number {
   let cached = creditOutputBytesByVersion.get(version);
@@ -1119,6 +1224,13 @@ export function bondOutputOf(outputs: AnyBox[]): BondBox | null {
  * `escrows` and `lapsedVouches` are captured lists and the backer pool a captured
  * box: those legs read pre-body state, so both sides take them before the apply
  * loop and hand them in (NODE_INTERFACE → The settlement transaction).
+ *
+ * `spent` is the ids every body transaction names as an input, shared with
+ * `lapseLegOf` on both sides (CONSENSUS_INTERFACE → The settlement build →
+ * "The lapse list is one function's answer on both sides"). Over the overlay
+ * a box the body spent is already gone; over pre-body state `spent` takes it
+ * out — the lapse list and the income leg each read one box or none, the
+ * same.
  */
 export function settlementDepsWith(
   view: StateView,
@@ -1127,6 +1239,7 @@ export function settlementDepsWith(
   escrows: VouchEscrowBox[],
   lapsedVouches: VouchBox[],
   capturedBackerPoolBox: () => BackerPoolBox | null,
+  spent: ReadonlySet<string>,
 ): SettlementDeps {
   return {
     getEmissionBox: () => view.getEmissionBox(),
@@ -1153,6 +1266,22 @@ export function settlementDepsWith(
     getEscrowsReleasableAt: () => escrows,
     getLapsedVouches: () => lapsedVouches,
     getLifetimeLikes: (invitee) => view.getIdentityRecord(invitee)?.lifetimeLikesReceived ?? 0n,
+    // The owner's marked karma box in the state the settlement reads — the
+    // overlay's answer less body spends on the applier side, the pre-body
+    // view's answer less body spends on the producer's — then less a box in
+    // `excludeIds`, the decayed ids the pass's plans name. The owner's range
+    // holds two boxes at most (NODE_INTERFACE → Karma transition rules → "An
+    // identity holds at most two karma boxes"), so the loop iterates two.
+    getIncomeBox: (owner, excludeIds) => {
+      for (const box of view.getKarmaBoxes(owner)) {
+        if (box.income !== true) continue;
+        if (box.id === undefined) continue;
+        if (spent.has(box.id)) continue;
+        if (excludeIds.has(box.id)) continue;
+        return box;
+      }
+      return null;
+    },
     getDecayPlans: plans,
     vouchCooldownBlocks: ctx.vouchCooldownBlocks,
     getBackerPoolBox: capturedBackerPoolBox,
@@ -1257,6 +1386,7 @@ export function buildBlockSettlement(
       () => deriveKarmaDecay(decayDeps, postBody, height, ctx.decayCfg),
       escrows, lapsed,
       () => capturedPool,
+      spent,
     ),
     height,
     ctx.protocolVersionSchedule,

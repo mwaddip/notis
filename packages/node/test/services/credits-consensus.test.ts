@@ -209,6 +209,8 @@ describe('credit transfers ride consensus', () => {
       consumeBox: utxo.consumeBox,
       getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: utxo.getKarmaValue,
+      getOwnKarmaBoxIds: (owner: Uint8Array) =>
+        utxo.getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
       inviteBondMin: config.inviteBondMin,
@@ -335,6 +337,8 @@ describe('credit transfers ride consensus', () => {
       consumeBox: utxo.consumeBox,
       getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: utxo.getKarmaValue,
+      getOwnKarmaBoxIds: (owner: Uint8Array) =>
+        utxo.getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
       inviteBondMin: config.inviteBondMin,

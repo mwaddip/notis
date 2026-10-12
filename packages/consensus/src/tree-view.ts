@@ -387,9 +387,22 @@ class TreeView implements TreeStateView {
     return this.firstOfType('backer_pool');
   }
 
-  /** The owner's whole range, sorted `value DESC, id` — the read has no limit. */
+  /**
+   * The owner's karma range, sorted `value DESC, id`. ⛔ **The walk looks for
+   * a third box — an identity holds at most two karma boxes, their own and
+   * their income box (NODE_INTERFACE → Karma transition rules → "An identity
+   * holds at most two karma boxes") — and a third is a broken invariant: the
+   * view throws, a tripwire, never a verdict (CONSENSUS_INTERFACE → StateView
+   * → "A third box is a broken invariant and the read throws").
+   */
   getKarmaBoxes(owner: Uint8Array): KarmaBox[] {
-    return this.indexedBoxes(karmaOfRange(owner), OWNED_BOX_ID_AT, 'karma').sort(byValueDescThenId);
+    const boxes = this.indexedBoxes(karmaOfRange(owner), OWNED_BOX_ID_AT, 'karma', 3);
+    if (boxes.length >= 3) {
+      throw new TreeInconsistencyError(
+        `the tree holds three or more karma boxes for owner ${bytesToHex(owner)}, the invariant is two`,
+      );
+    }
+    return boxes.sort(byValueDescThenId);
   }
 
   getVouchEscrowsFor(voucherId: Uint8Array): VouchEscrowBox[] {

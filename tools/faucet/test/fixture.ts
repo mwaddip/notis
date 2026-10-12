@@ -1,6 +1,7 @@
 import { createPublicKey, generateKeyPairSync, verify } from 'crypto';
 import { ED25519_SPKI_PREFIX } from '@dagsocial/types';
 import type { FaucetConfig } from '../src/config.js';
+import type { BoxRef } from '../src/tx.js';
 
 // ⛔ Box ids are 64 hex characters. `computeTxId` writes inputs through
 // `writeHexNOrThrow`, so a short stand-in throws before any assertion runs.
@@ -8,6 +9,14 @@ export const B1 = '11'.repeat(32);
 export const B2 = '22'.repeat(32);
 export const C1 = '33'.repeat(32);
 export const K1 = '44'.repeat(32);
+export const OWN_ID = '55'.repeat(32);
+export const INCOME_ID = '66'.repeat(32);
+
+/** An unmarked karma box ref — the owner's own box (TYPES_INTERFACE → KarmaBox). */
+export const own = (boxId: string, value: bigint): BoxRef => ({ boxId, value });
+
+/** A marked karma box ref — the owner's income box (TYPES_INTERFACE → KarmaBox). */
+export const income = (boxId: string, value: bigint): BoxRef => ({ boxId, value, income: true });
 
 const kp = generateKeyPairSync('ed25519');
 export const pkcs8 = kp.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer;

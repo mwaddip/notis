@@ -63,11 +63,20 @@ export async function postLike(
   return data as { status: string; txId: string; expiresAtHeight: number };
 }
 
+// NODE_INTERFACE → UTXO queries — a karma box carries `income: true` when it is
+// the owner's income box and no such key when it is their own
+// (TYPES_INTERFACE → KarmaBox).
+export interface KarmaPageBox {
+  boxId: string;
+  value: string;
+  income?: true;
+}
+
 export interface KarmaPage {
   userId: string;
   total: string;
   effective: string;
-  boxes: { boxId: string; value: string }[];
+  boxes: KarmaPageBox[];
   boxCount: number;
   next: string | null;
   lastActivityBlock: number;
@@ -92,7 +101,14 @@ export async function getKarma(
   const res = await fetch(`${node.url}/karma/${userId}`);
   const data = await res.json();
   if (!res.ok) throw new NodeError(res.status, data as Record<string, unknown>);
-  return data as KarmaPage;
+  const page = data as KarmaPage;
+  // TYPES_INTERFACE → KarmaBox — `income` is `true` or absent, never `false`.
+  for (const b of page.boxes) {
+    if ('income' in b && b.income !== true) {
+      throw new Error(`karma box ${b.boxId} carries income=${JSON.stringify(b.income)}`);
+    }
+  }
+  return page;
 }
 
 export async function hasKarma(

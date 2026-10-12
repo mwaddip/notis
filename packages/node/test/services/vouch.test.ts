@@ -59,6 +59,7 @@ function createKarmaBox(
   owner: Uint8Array,
   value: bigint,
   seed: number,
+  income?: true,
 ): Stored<KarmaBox> {
   const box = seedProvenance<KarmaBox>(
     {
@@ -66,6 +67,7 @@ function createKarmaBox(
       value,
       createdAtBlock: 0,
       owner,
+      ...(income === true ? { income: true as const } : {}),
     },
     seed,
   );
@@ -169,6 +171,8 @@ describe('vouch service', () => {
       getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+      getOwnKarmaBoxIds: (owner: Uint8Array) =>
+        getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
       // ⛔ The real predicate, so a seeded `VouchEscrowBox` actually bars a
       // recast. A stub would leave the rule this suite fronts untested.
       hasActiveVouchEscrow: storeHasActiveVouchEscrow,
@@ -386,11 +390,14 @@ describe('vouch service', () => {
     });
 
     it('accepts a voucher whose balance clears the threshold across two boxes', () => {
-      // The threshold is a balance summed across the voucher's karma boxes
-      // (ARCHITECTURE → "Vouch boxes"): two 10-karma boxes cover 11 twice
-      // over, and which of them the cast spends does not enter the predicate.
+      // The threshold is a balance summed across the voucher's karma boxes —
+      // the own box the cast spends plus the income box beside it
+      // (ARCHITECTURE → "Vouch boxes"; NODE_INTERFACE → Karma transition
+      // rules → "An identity holds at most two karma boxes"). Two 10-karma
+      // boxes cover 11 twice over, and which of them the cast spends does
+      // not enter the predicate.
       const first = createKarmaBox(voucherPubKey, 10n, 1);
-      createKarmaBox(voucherPubKey, 10n, 2);
+      createKarmaBox(voucherPubKey, 10n, 2, true);
 
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
@@ -444,7 +451,10 @@ describe('vouch service', () => {
     });
 
     it('a second vouch aimed at a different target is allowed', () => {
-      createKarmaBox(voucherPubKey, 100n, 1);
+      // The reserve rides as the voucher's income box, so rule 3 names only
+      // the own box the cast spends (NODE_INTERFACE → Karma transition
+      // rules → "An identity holds at most two karma boxes").
+      createKarmaBox(voucherPubKey, 100n, 1, true);
       createVouchBox(voucherPubKey, targetPubKey, 5);
 
       const otherKeys = generateKeyPairSync('ed25519');

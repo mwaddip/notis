@@ -249,20 +249,22 @@ describe('positional serialization', () => {
       expect(computeTxId(decodeTx(encodeTx(signed)))).toBe(computeTxId(signed));
     });
 
-    it('no field name reaches the bytes, and the whole transaction is 43 bytes', () => {
-      // Hand-derived from the layout: arr(inputs)=1, arr(outputs)=1+36 for the
+    it('no field name reaches the bytes, and the whole transaction is 44 bytes', () => {
+      // Hand-derived from the layout: arr(inputs)=1, arr(outputs)=1+37 for the
       // karma candidate, vlqU(protocolVersion)=1, opt(likeTarget)=1,
       // opt(post)=1, opt(postWithdraw)=1, arr(signatures)=1.
       //
-      // 36: the shared prefix is three fields, and this candidate's
-      // `createdAtBlock` of 300 takes two VLQ groups.
+      // 37: the shared prefix is three fields and this candidate's
+      // `createdAtBlock` of 300 takes two VLQ groups; the trailing fields are
+      // the 32-byte owner and the own/income mark byte (TYPES_INTERFACE →
+      // KarmaBox).
       //
       // ⚠ **Every `opt` costs its tag byte whether or not the field is there**, so
-      // a seventh field would show up here as 44 even on a transaction that
+      // a seventh field would show up here as 45 even on a transaction that
       // carries none of it — which is why an optional field is inside every id,
       // not only the ids that use it.
       const bytes = encodeTx(makeTx());
-      expect(bytes.length).toBe(43);
+      expect(bytes.length).toBe(44);
       for (const name of ['inputs', 'outputs', 'signatures', 'protocolVersion', 'boxType', 'karma']) {
         expect(hex(bytes)).not.toContain(Buffer.from(name, 'utf8').toString('hex'));
       }
@@ -309,10 +311,10 @@ describe('positional serialization', () => {
       // 2 — trailing bytes are a rejection, not slack.
       expect(failureOf(() => decodeTx(withTrailingByte(bytes)))).toBe('trailing-bytes');
       // 3 — `protocolVersion` padded: same value, longer encoding. Its offset is
-      // **asserted rather than assumed** — arr(inputs)=1 and arr(outputs)=1+36 put
-      // it at 38 — so a field inserted ahead of it fails here as a wrong-offset
-      // error rather than by silently padding whatever now sits at 38.
-      const PROTOCOL_VERSION_OFFSET = 38;
+      // **asserted rather than assumed** — arr(inputs)=1 and arr(outputs)=1+37 put
+      // it at 39 — so a field inserted ahead of it fails here as a wrong-offset
+      // error rather than by silently padding whatever now sits at 39.
+      const PROTOCOL_VERSION_OFFSET = 39;
       expect(bytes[PROTOCOL_VERSION_OFFSET]).toBe(2);
       const padded = new Uint8Array(bytes.length + 1);
       padded.set(bytes.subarray(0, PROTOCOL_VERSION_OFFSET));
@@ -720,7 +722,7 @@ describe('positional serialization', () => {
       // them apart. The pins that decide are elsewhere: the BlockHeader pin above
       // for the header, and the frozen ids in `utxo.test.ts` for consensus. **Read
       // this one only as "the frame changed" — never as evidence about what.**
-      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('c4a85c46ad538de0652f025e6e48704910ad91173404830532166bc47b3bdcf5');
+      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('5fa018d47e996c9d8930414c2665902a2ff2a2c7291904450aceb45f39b919c7');
     });
 
     it('Post: the wire codec IS the payload preimage, with no tail at all', () => {

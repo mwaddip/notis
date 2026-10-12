@@ -20,6 +20,7 @@ import type Database from 'better-sqlite3';
 import type { Config } from '../../src/config.js';
 import type { TestIdentity } from '../helpers.js';
 import {
+  changeBoxOf,
   makeApplicableBlock,
   makeKarmaBox,
   makeLikeTx,
@@ -182,12 +183,11 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
   // -----------------------------------------------------------------------
   it('applies a withdrawal: content NULL, marker set, row and topology survive, subtree intact', async () => {
     const author = makeTestIdentity();
-    const { postId } = await postAndConfirm(author, 'hello world');
+    const { postId, tx: postTx } = await postAndConfirm(author, 'hello world');
 
-    // The post is confirmed — give the author karma for the withdrawal tx
-    const withdrawKarma = makeKarmaBox(10n, author.userId, 1, 99);
-    await seedBoxes([withdrawKarma]);
-    const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
+    // The post is confirmed; the author's own box after block 1 is the
+    // post's change box (NODE_INTERFACE → Karma transition rules).
+    const withdrawTx = makePostWithdrawTx(author, postId, changeBoxOf(postTx));
 
     const block2 = await makeApplicableBlock({
       miner,
@@ -216,7 +216,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     const replyAuthor = makeTestIdentity();
 
     // Block 1: root post by rootAuthor
-    const { postId: rootId } = await postAndConfirm(rootAuthor, 'root');
+    const { postId: rootId, tx: rootPostTx } = await postAndConfirm(rootAuthor, 'root');
 
     // Block 2: reply by replyAuthor
     const { tx: replyTx, postId: replyId } = await seedPostTx(replyAuthor, 'reply', {
@@ -229,14 +229,10 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     });
     expect(apply.applyOrderingBlock(block2)).toBe(true);
 
-    // Block 3: withdraw(reply) + withdraw(root)
-    const replyWithdrawKarma = makeKarmaBox(10n, replyAuthor.userId, 2, 77);
-    await seedBoxes([replyWithdrawKarma]);
-    const replyWithdrawTx = makePostWithdrawTx(replyAuthor, replyId, replyWithdrawKarma);
-
-    const rootWithdrawKarma = makeKarmaBox(10n, rootAuthor.userId, 2, 88);
-    await seedBoxes([rootWithdrawKarma]);
-    const rootWithdrawTx = makePostWithdrawTx(rootAuthor, rootId, rootWithdrawKarma);
+    // Block 3: withdraw(reply) + withdraw(root). Each author's own box after
+    // their post applied is that post's change box.
+    const replyWithdrawTx = makePostWithdrawTx(replyAuthor, replyId, changeBoxOf(replyTx));
+    const rootWithdrawTx = makePostWithdrawTx(rootAuthor, rootId, changeBoxOf(rootPostTx));
 
     const block3 = await makeApplicableBlock({
       miner,
@@ -263,15 +259,15 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
   // -----------------------------------------------------------------------
   it('rejects a block with two withdrawals of the same post', async () => {
     const author = makeTestIdentity();
-    const { postId } = await postAndConfirm(author, 'dup-withdraw');
+    const { postId, tx: postTx } = await postAndConfirm(author, 'dup-withdraw');
 
-    const karma1 = makeKarmaBox(10n, author.userId, 1, 51);
-    const karma2 = makeKarmaBox(10n, author.userId, 1, 52);
-    await seedBoxes([karma1]);
-    await seedBoxes([karma2]);
-
-    const tx1 = makePostWithdrawTx(author, postId, karma1);
-    const tx2 = makePostWithdrawTx(author, postId, karma2);
+    // Two withdrawals of the same post chained through the first's change
+    // box: the second's input is the first's output, which the owner holds
+    // after the first withdrawal applies (NODE_INTERFACE → Karma transition
+    // rules). The block is still rejected — a post is withdrawn once per
+    // chain.
+    const tx1 = makePostWithdrawTx(author, postId, changeBoxOf(postTx));
+    const tx2 = makePostWithdrawTx(author, postId, changeBoxOf(tx1));
 
     const block = await makeApplicableBlock({
       miner,
@@ -288,9 +284,11 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     const author = makeTestIdentity();
     const { tx: postTx, postId } = await seedPostTx(author, 'same-block');
 
-    const withdrawKarma = makeKarmaBox(10n, author.userId, 0, 55);
-    await seedBoxes([withdrawKarma]);
-    const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
+    // The author's own box after the post applies is the post's change box;
+    // chaining the withdrawal through it keeps the single-unmarked-box
+    // invariant and lets the maturity bind be the reason the block is
+    // refused.
+    const withdrawTx = makePostWithdrawTx(author, postId, changeBoxOf(postTx));
 
     const block = await makeApplicableBlock({
       miner,
@@ -305,7 +303,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
   // -----------------------------------------------------------------------
   it('journal round-trip: revert restores content and clears the marker', async () => {
     const author = makeTestIdentity();
-    const { postId } = await postAndConfirm(author, 'journal-test');
+    const { postId, tx: postTx } = await postAndConfirm(author, 'journal-test');
 
     // Verify content before withdrawal
     const before = posts.getPost(postId);
@@ -313,9 +311,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     expect(before!.content).toBe('journal-test');
     expect(before!.withdrawnAtHeight).toBeNull();
 
-    const withdrawKarma = makeKarmaBox(10n, author.userId, 1, 60);
-    await seedBoxes([withdrawKarma]);
-    const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
+    const withdrawTx = makePostWithdrawTx(author, postId, changeBoxOf(postTx));
 
     const block2 = await makeApplicableBlock({
       miner,
@@ -369,10 +365,9 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     expect(beforeW!.content).toBeNull();
     expect(beforeW!.withdrawnAtHeight).toBeNull();
 
-    // Withdraw the placeholder
-    const withdrawKarma = makeKarmaBox(10n, author.userId, 1, 61);
-    await seedBoxes([withdrawKarma]);
-    const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
+    // Withdraw the placeholder — the author's own box after block 1 is the
+    // post's change box.
+    const withdrawTx = makePostWithdrawTx(author, postId, changeBoxOf(postTx));
 
     const block2 = await makeApplicableBlock({
       miner,
@@ -403,12 +398,10 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
   it('rejects a like on an already-withdrawn post', async () => {
     const author = makeTestIdentity();
     const liker = makeTestIdentity();
-    const { postId } = await postAndConfirm(author, 'like-after-withdraw');
+    const { postId, tx: postTx } = await postAndConfirm(author, 'like-after-withdraw');
 
-    // Withdraw at height 2
-    const withdrawKarma = makeKarmaBox(10n, author.userId, 1, 70);
-    await seedBoxes([withdrawKarma]);
-    const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
+    // Withdraw at height 2 — the author's own box is the post's change box.
+    const withdrawTx = makePostWithdrawTx(author, postId, changeBoxOf(postTx));
     const block2 = await makeApplicableBlock({
       miner,
       utxoTxs: [withdrawTx],
@@ -499,10 +492,9 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     expect(apply.applyOrderingBlock(block3)).toBe(true);
     expect(getLikeRecordCount(replyId)).toBe(1);
 
-    // Block 4: B withdraws P
-    const withdrawKarma = makeKarmaBox(10n, B.userId, 2, 91);
-    await seedBoxes([withdrawKarma]);
-    const withdrawTx = makePostWithdrawTx(B, replyId, withdrawKarma);
+    // Block 4: B withdraws P. The reply's change box is B's own box after
+    // block 2 applied.
+    const withdrawTx = makePostWithdrawTx(B, replyId, changeBoxOf(replyTx));
     const block4 = await makeApplicableBlock({
       miner,
       utxoTxs: [withdrawTx],
@@ -518,11 +510,9 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
   // -----------------------------------------------------------------------
   it('creator and applier derive the same settlement for a body carrying a withdrawal', async () => {
     const author = makeTestIdentity();
-    const { postId } = await postAndConfirm(author, 'creator-match');
+    const { postId, tx: postTx } = await postAndConfirm(author, 'creator-match');
 
-    const withdrawKarma = makeKarmaBox(10n, author.userId, 1, 80);
-    await seedBoxes([withdrawKarma]);
-    const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
+    const withdrawTx = makePostWithdrawTx(author, postId, changeBoxOf(postTx));
 
     // The makeApplicableBlock helper builds the settlement the creator would
     // produce, and applyOrderingBlock verifies the settlement matches — so a

@@ -633,7 +633,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
 
   const emission = computeBlockReward(height, ctx);
   const settlementCheck = checkSettlement(
-    settlementDepsWith(state, ctx, () => decayPlans, escrows, lapsedVouches, () => capturedBackerPool),
+    settlementDepsWith(state, ctx, () => decayPlans, escrows, lapsedVouches, () => capturedBackerPool, spentByBody),
     height,
     ctx.protocolVersionSchedule,
     emission,
@@ -938,6 +938,14 @@ function utxoDepsOver(
     // rule needs"), the one definition the pool's check sums too
     // (NODE_INTERFACE → UTXO).
     getKarmaValue: (owner) => state.getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+    // Rule 3's reader (NODE_INTERFACE → Karma transition rules → "An identity
+    // holds at most two karma boxes") — the unmarked karma box ids the owner
+    // holds through the overlay, so a second spend in one body sees the first
+    // spend's change rather than the pre-body own box.
+    getOwnKarmaBoxIds: (owner) =>
+      state.getKarmaBoxes(owner)
+        .filter((b) => b.income !== true)
+        .map((b) => b.id!),
     getKarmaOwed: (owner, height) => {
       if (height !== blockHeight) {
         throw new Error(

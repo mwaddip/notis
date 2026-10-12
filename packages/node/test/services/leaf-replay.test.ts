@@ -515,8 +515,10 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
       node.utxo.insertBox(box);
       return box;
     };
+    // NODE_INTERFACE → Karma transition rules → "An identity holds at most
+    // two karma boxes". The author seeds one own box, carrying the thread into
+    // block 1 and its change into block 3's withdrawal.
     const threadBox = karma(author);
-    const withdrawBox = karma(author);
     const replyBox = karma(replier);
     const likeBox = karma(liker);
     const vouchBox = karma(voucher);
@@ -561,7 +563,7 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
     // 3: the thread withdrawn, the name burned; the settlement releases the
     // unvouch's escrow, due at the cast height plus the cooldown.
     tip = await produce(3, {
-      withdrawal: withdrawTx(author, withdrawBox, thread.postId, 2),
+      withdrawal: withdrawTx(author, outputOf<KarmaBox>(thread.tx, 0), thread.postId, 2),
       burn: burnTx(namer, outputOf<KarmaBox>(claim, 0), outputOf<UsernameBox>(claim, 1), 2),
     });
     expect(node.utxo.hasActiveVouchEscrow(voucher.userId)).toBe(false);

@@ -16,6 +16,7 @@ import {
   getBoxProvenance,
   insertBox,
   consumeBox,
+  getKarmaBoxes,
   getKarmaValue,
 } from '../../src/store/utxo.js';
 import { getIdentityRecord, putIdentityRecord, getNetworkRecord } from '../../src/store/identity-records.js';
@@ -40,6 +41,8 @@ const deps: UtxoEngineDeps = {
   consumeBox,
   getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
   getKarmaValue,
+  getOwnKarmaBoxIds: (owner: Uint8Array) =>
+    getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
   getIdentityRecord,
   hasActiveVouchEscrow: () => false,
   vouchCooldownBlocks: 2,

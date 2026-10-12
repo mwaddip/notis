@@ -172,6 +172,25 @@ describe('summarise — the derived summary matches the transaction shape', () =
     });
   });
 
+  it('a two-input karma spend (own and income) summarises as the one-input act — the kind is unchanged, the prompt path does not refuse the shape', () => {
+    // The view carries both the own and the income box; the own alone does
+    // not cover a thread, so both inputs ride (WEB_INTERFACE → The wallet).
+    // The derived summary is a thread, with the same `spendRep` as the one
+    // input case.
+    const twoInputCtx: BuildContext = {
+      spendable: [
+        { boxId: BOX, value: 3n },
+        { boxId: '55'.repeat(32), value: 100n, income: true },
+      ] as BuildContext['spendable'],
+      height: 6000,
+      era: 1,
+      author: SIGNER,
+    };
+    const { tx } = buildPost(twoInputCtx, 'a thread');
+    expect(tx.inputs).toHaveLength(2);
+    expect(summarise(roundtrip(tx), SIGNER)).toEqual({ kind: 'thread', spendRep: POST_PRICE_THREAD.toString() });
+  });
+
   it("buildSend's SEND_MAIN output summarises to one payment and a zero fee", () => {
     // 12.5 $NOTIS from a 100 box (WEB_INTERFACE → The wallet). Change to the
     // signer at index 0, payment at 1, no fee. Round-trip through the wire so

@@ -1315,6 +1315,16 @@ ids are provenance-derived. **There are two views over one ledger, split by the 
 entry's inputs and change are credit boxes and count in the credits view only, and every other kind's count
 in the rep view only — so a send's change is never offered to a post, nor a post's to a send.
 
+**The rep view holds two boxes at most, and every karma builder tells them apart.** The reader's **own
+box** is their unmarked karma box, or the predicted change of their latest pending spend; their **income
+box** is the one `GET /karma/:userId` answers with `income: true` — where the node pays what the reader
+earns (`NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes"`). **A
+builder names the own box, always** — the node refuses a karma spend that leaves it out — **and adds the
+income box only when the own box does not cover the spend.** A spend that names the income box is refused
+when a payout to the reader lands before it does, since the payout replaces that box; a spend of the own
+box alone is not. A reader who holds no own box spends the income box. So a reader's rep can stand in two
+boxes for as long as the own box covers what they do, and the total shown is the sum of both.
+
 **The pending ledger is persisted, per identity** —
 `notis.pending.<pubKeyHex>`, constructed for the loaded identity at start, so a key never sees another
 key's entries and cannot try to spend its predicted change; a reload that forgot the ledger would
@@ -1347,10 +1357,10 @@ never from a cached set, since a box can be spent between a render and a click �
 `createdAtBlock` plus `vouchCooldownBlocks` from `/status` (`NODE_INTERFACE → Vouch transition rules`:
 the cooldown runs from the cast); no karma input and no change. An invite: change and a `bond` box of
 the amount the reader chose inside `/status`'s `inviteBondMin`–`inviteBondMax`, `inviterId` the reader's
-key, `inviteePublicKey` the pasted key. A withdrawal: one karma input — the smallest spendable box, so a
-pending withdrawal ties up the least — and one karma output of its value to the reader's key,
+key, `inviteePublicKey` the pasted key. A withdrawal: one karma input — the reader's own box, or the income
+box where they hold no own box — and one karma output of its value to the reader's key,
 `postWithdraw` naming the post; the returned box is the entry's `change` (→ The withdraw control). A claim: the
-smallest spendable box in — it spends and returns one box, so the smallest ties up the least — one karma output
+same one box in — it spends and returns one box — one karma output
 of its value to the reader's key at index 0, the entry's `change`, and one `username` box of `value: 0n`, `owner`
 the reader's key, `name` the bytes as typed (`TYPES_INTERFACE → UsernameBox`); an empty view is a client refusal,
 since the transaction needs one box to spend. A burn: karma covering `USERNAME_BURN_PRICE` and the reader's

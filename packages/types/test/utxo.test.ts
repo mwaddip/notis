@@ -309,11 +309,11 @@ const GOLDEN_TX: UtxoTransaction = {
 };
 
 const GOLDEN_KARMA_BOX_ID =
-  'ab1d30192ff65a58f20c4cac226bf8c5ee58309829b277fa85e2a85ca8326da8';
+  '53f8be958f1b64c770b4e2873b634fa093d451e6f87f06bacc38c5db19cd0f70';
 const GOLDEN_CREDIT_BOX_ID =
-  'eaa89e587d34bfaea6cf617ad3bcc7b4140ffe667cf36e4f88fa73608f14defd';
+  'e8075155c1ea6aa989cc9fe3f4608212afefa2fe83488f90741fe4ee83a0f66e';
 const GOLDEN_TX_ID =
-  'b907fc923be1041b652434c8d277e350394e6889716e23327073b09c022ad623';
+  '7301a236cea28d09a9b6ea833d52ae2779f94421c4f1343f93779d512ddc4b1f';
 
 /** The two candidates as block application materializes them out of GOLDEN_TX. */
 const GOLDEN_KARMA_BOX: KarmaBox = { ...GOLDEN_KARMA_CANDIDATE, txId: GOLDEN_TX_ID, index: 0 };
@@ -334,7 +334,8 @@ const GOLDEN_KARMA_BOX_BYTES =
   '00' +                                                               // enum8 karma
   '64' +                                                               // vlqU64(100)
   'ac02' +                                                             // vlqU(300) createdAtBlock
-  '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f';  // b32 owner
+  '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 owner
+  '00';                                                                // u8(income) 0x00 — the own box's mark (TYPES_INTERFACE → KarmaBox)
 const GOLDEN_CREDIT_BOX_BYTES =
   '01' +                                                               // enum8 credit
   '80eae1eac58af715' +                                                 // vlqU64(12345678900000000)
@@ -384,10 +385,11 @@ describe('the shared prefix carries the creation height', () => {
       Buffer.from([0x01]),         // vlqU64 1n
       Buffer.from([0xac, 0x02]),   // vlqU 300
       Buffer.alloc(32, 0x11),      // b32 owner
+      Buffer.from([0x00]),         // u8(income) 0x00 — own box (TYPES_INTERFACE → KarmaBox)
     ]);
     expect(Buffer.from(canonicalBoxBytes(box))).toEqual(expected);
-    // 36: enum8(1) + vlqU64(1) + vlqU(300=2) + b32(32) = 36.
-    expect(canonicalBoxBytes(box).length).toBe(36);
+    // 37: enum8(1) + vlqU64(1) + vlqU(300=2) + b32(32) + u8(1) = 37.
+    expect(canonicalBoxBytes(box).length).toBe(37);
   });
 
   it('the height sits between value and the tail, not after it', () => {
@@ -435,8 +437,8 @@ describe('golden vectors (positional box encoding)', () => {
   it('golden vector: full canonical identity bytes are frozen', () => {
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_KARMA_BOX)).toString('hex')).toBe(GOLDEN_KARMA_BOX_BYTES);
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_CREDIT_BOX)).toString('hex')).toBe(GOLDEN_CREDIT_BOX_BYTES);
-    // 36: tag, one-byte value, two-byte height, the 32-byte owner.
-    expect(canonicalBoxBytes(GOLDEN_KARMA_BOX).length).toBe(36);
+    // 37: tag, one-byte value, two-byte height, the 32-byte owner, the own/income mark byte.
+    expect(canonicalBoxBytes(GOLDEN_KARMA_BOX).length).toBe(37);
   });
 
   it('an unknown boxType takes the reserved 0xff tag rather than throwing', () => {
@@ -533,9 +535,9 @@ const ALL_MINT_REASONS = Object.keys(MINT_REASON_GOLDENS) as MintReason[];
  * protocol-breaking and unversioned.
  */
 const GOLDEN_CANDIDATE_KARMA_ID =
-  'ab1d30192ff65a58f20c4cac226bf8c5ee58309829b277fa85e2a85ca8326da8';
+  '53f8be958f1b64c770b4e2873b634fa093d451e6f87f06bacc38c5db19cd0f70';
 const GOLDEN_CANDIDATE_CREDIT_ID =
-  'eaa89e587d34bfaea6cf617ad3bcc7b4140ffe667cf36e4f88fa73608f14defd';
+  'e8075155c1ea6aa989cc9fe3f4608212afefa2fe83488f90741fe4ee83a0f66e';
 const GOLDEN_MINT_GENESIS_ID =
   '9010dd1d6fe6029eb8e856fe38467836781ce43ddad1ce01c0af7afc0bc7b7b2';
 
@@ -747,9 +749,11 @@ describe('like_accrual and vouch_escrow', () => {
 
   it('a like accrual is tag, value and the author key — 36 bytes, no option tag', () => {
     expect(hexOf(canonicalBoxBytes(makeLikeAccrualBox()))).toBe(LIKE_ACCRUAL_BYTES);
-    // Both arms are a single b32 with nothing after it — equal at equal value.
+    // One shorter than a karma box at the same value: the karma tail carries
+    // its own/income mark after the owner, where the like_accrual tail is a
+    // single b32 and stops there (TYPES_INTERFACE → Layout — Boxes).
     expect(canonicalBoxBytes(makeLikeAccrualBox()).length).toBe(36);
-    expect(canonicalBoxBytes(makeKarmaBox()).length).toBe(36);
+    expect(canonicalBoxBytes(makeKarmaBox()).length).toBe(37);
   });
 
   it('a vouch escrow is tag, value, owner and the release height', () => {
@@ -1479,7 +1483,7 @@ describe('boxRecordBytes', () => {
     // them here — where the encoder lives — rather than only at the consumer.
     const frozen =
       GOLDEN_KARMA_BOX_BYTES +                                             // boxContentBytes
-      'b907fc923be1041b652434c8d277e350394e6889716e23327073b09c022ad623' + // b32 txId
+      '7301a236cea28d09a9b6ea833d52ae2779f94421c4f1343f93779d512ddc4b1f' + // b32 txId
       '00';                                                                // vlqU(0)
     expect(Buffer.from(boxRecordBytes(GOLDEN_KARMA_CANDIDATE, GOLDEN_TX_ID, 0)).toString('hex'))
       .toBe(frozen);
@@ -1903,7 +1907,7 @@ describe('transactions', () => {
       // than in a commit message (TYPES_INTERFACE → "Re-pinning a frozen vector
       // when a preimage changes").
       const SEVEN_FIELD_TX_ID =
-        '67b62967f5175f8c7728522122575557ea04338fc608921bc8f752309bb54724';
+        'b8c6141fc3a1bb3271636dc1b76dc4c5d977052204e6215fad31da04ce7fb406';
       const h = createHash('blake2b512');
       h.update(Buffer.from('dagsocial/tx-id/1'));
       h.update(Buffer.from([GOLDEN_TX.inputs.length]));
@@ -2497,5 +2501,134 @@ describe('computeTxId with postWithdraw', () => {
     expect(decoded.post?.contentHash).toEqual(new Uint8Array(32).fill(0xdd));
     expect(decoded.postWithdraw?.postId).toBe(WITHDRAW_POST_A);
     expect(computeTxId(decoded)).toBe(computeTxId(full));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The karma box carries an own/income mark
+// ---------------------------------------------------------------------------
+
+/**
+ * TYPES_INTERFACE → KarmaBox, "An owner holds at most two karma boxes: their
+ * own box and one income box", and TYPES_INTERFACE → Layout — Boxes, the
+ * `karma` row of the trailing-fields table:
+ *
+ *   enum8(karma) ‖ vlqU64(value) ‖ vlqU(createdAtBlock) ‖ b32(owner) ‖ u8(income)
+ *
+ * The mark is the one byte at the end of the content tail. `0x00` is an own
+ * box, `0x01` is an income box, every other byte has no decoding — a bare
+ * `u8`, not an `opt()` with a payload (TYPES_INTERFACE → Totality names `u8
+ * (bare)` as the throwing writer).
+ *
+ * An own box decodes with NO `income` key at all — not a key holding
+ * `undefined`, so two decodings of one box cannot differ by a key.
+ *
+ * Written with a local type so the test tree compiles under KarmaBox's
+ * current shape AND under the shape this block anchors.
+ */
+describe('the karma box carries an own/income mark', () => {
+  type KarmaWithMark = CandidateOf<KarmaBox> & { income?: true };
+
+  const makeOwn = (): KarmaWithMark => ({
+    boxType: 'karma',
+    value: 100n,
+    createdAtBlock: FIXTURE_HEIGHT,
+    owner,
+  });
+
+  const makeIncome = (): KarmaWithMark => ({
+    boxType: 'karma',
+    value: 100n,
+    createdAtBlock: FIXTURE_HEIGHT,
+    owner,
+    income: true,
+  });
+
+  it('an own karma box round-trips, decoding with no income key', () => {
+    // The present tree already gets this right — an unmarked karma box has
+    // nothing in the trailing byte and the reader has no key to emit.
+    const own = makeOwn();
+    const record = boxRecordFromBytes(boxRecordBytes(own, GOLDEN_TX_ID, 0));
+    expect(record.candidate).toEqual(own);
+    expect('income' in (record.candidate as object)).toBe(false);
+  });
+
+  it('an income karma box round-trips, decoding with income: true', () => {
+    const income = makeIncome();
+    const record = boxRecordFromBytes(boxRecordBytes(income, GOLDEN_TX_ID, 0));
+    expect(record.candidate).toEqual(income);
+    expect((record.candidate as KarmaWithMark).income).toBe(true);
+  });
+
+  it('an own box and an income box differ in exactly one byte, at the tail', () => {
+    const ownBytes = canonicalBoxBytes(makeOwn());
+    const incomeBytes = canonicalBoxBytes(makeIncome());
+    expect(ownBytes.length).toBe(incomeBytes.length);
+    let diffs = 0;
+    let diffPos = -1;
+    for (let i = 0; i < ownBytes.length; i++) {
+      if (ownBytes[i] !== incomeBytes[i]) { diffs++; diffPos = i; }
+    }
+    expect(diffs).toBe(1);
+    expect(diffPos).toBe(ownBytes.length - 1);
+    expect(ownBytes[ownBytes.length - 1]).toBe(0x00);
+    expect(incomeBytes[incomeBytes.length - 1]).toBe(0x01);
+  });
+
+  it('a karma box is one byte longer with the mark than without it', () => {
+    // The shared prefix at this height is `enum8(karma)` ‖ `vlqU64(100)` ‖
+    // `vlqU(300)` — 4 bytes — followed by `b32(owner)` 32 bytes and the mark
+    // `u8` 1 byte, 37 in total. Before the mark the tail stopped at the owner
+    // and the box was 36 bytes.
+    expect(canonicalBoxBytes(makeOwn()).length).toBe(37);
+  });
+
+  it('an own box and an income box have different ids', () => {
+    expect(computeCandidateBoxId(makeOwn(), GOLDEN_TX_ID, 0))
+      .not.toBe(computeCandidateBoxId(makeIncome(), GOLDEN_TX_ID, 0));
+  });
+
+  it('a mark byte of 0x02 has no decoding', () => {
+    // The mark sits at the last byte of `canonicalBoxBytes`, before the
+    // `b32(txId) ‖ vlqU(index)` tail `boxRecordBytes` appends.
+    const bytes = boxRecordBytes(makeOwn(), GOLDEN_TX_ID, 0);
+    const contentLen = canonicalBoxBytes(makeOwn()).length;
+    const bad = bytes.slice();
+    bad[contentLen - 1] = 0x02;
+    expect(() => boxRecordFromBytes(bad)).toThrow(ReaderError);
+  });
+
+  it('a mark byte of 0xff has no decoding', () => {
+    const bytes = boxRecordBytes(makeOwn(), GOLDEN_TX_ID, 0);
+    const contentLen = canonicalBoxBytes(makeOwn()).length;
+    const bad = bytes.slice();
+    bad[contentLen - 1] = 0xff;
+    expect(() => boxRecordFromBytes(bad)).toThrow(ReaderError);
+  });
+
+  it('a transaction with a marked karma output round-trips, keeping the mark', () => {
+    const tx: UtxoTransaction = {
+      inputs: [IN_1],
+      outputs: [makeIncome()],
+      signatures: {},
+      protocolVersion: 1,
+    };
+    const decoded = decodeTx(encodeTx(tx));
+    expect(decoded).toEqual(tx);
+    expect((decoded.outputs[0] as KarmaWithMark).income).toBe(true);
+  });
+
+  it('a transaction with an unmarked karma output round-trips, with no income key on the decoded output', () => {
+    // The present tree already gets this right — an unmarked karma output
+    // round-trips with no income key, which is the standing the mark preserves.
+    const tx: UtxoTransaction = {
+      inputs: [IN_1],
+      outputs: [makeOwn()],
+      signatures: {},
+      protocolVersion: 1,
+    };
+    const decoded = decodeTx(encodeTx(tx));
+    expect(decoded).toEqual(tx);
+    expect('income' in (decoded.outputs[0] as object)).toBe(false);
   });
 });

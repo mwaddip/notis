@@ -16,19 +16,18 @@ import {
   NodeError,
   isPost,
 } from '../src/http.js';
-import {
-  selectBoxes,
-  computeContentHash,
-  PROTOCOL_VERSION,
-  POST_PRICE_THREAD,
-} from '@dagsocial/types';
+import { POST_PRICE_THREAD, computeContentHash } from '@dagsocial/types';
 
 const FILE_INDEX = 14;
 
 function karmaBoxes(
-  karma: { boxes: { boxId: string; value: string }[] },
+  karma: { boxes: { boxId: string; value: string; income?: true }[] },
 ): BoxRef[] {
-  return karma.boxes.map((b) => ({ boxId: b.boxId, value: BigInt(b.value) }));
+  return karma.boxes.map((b) =>
+    b.income === true
+      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
+      : { boxId: b.boxId, value: BigInt(b.value) },
+  );
 }
 
 describe('zero-change', () => {
@@ -74,8 +73,49 @@ describe('zero-change', () => {
     const aliceK = await getKarma(miner, alice.publicKeyHex);
     expect(BigInt(aliceK.total)).toBe(bondAmount);
     expect(bondAmount).toBe(POST_PRICE_THREAD);
+    expect(aliceK.boxes.length).toBe(1);
+    const aliceBox = aliceK.boxes[0]!;
+
+    // ---- karma(0) is refused ----
+    // NODE_INTERFACE → Karma transition rules → "A karma output carries at
+    // least `1n`, and the change output is optional". A single-karma-output
+    // thread that would conserve — alice's own box in, a karma_price for the
+    // whole price, and one karma output valued `0n` — meets rule 1 and rule
+    // 3; the zero-value guard answers it.
+    const aliceOwner = Buffer.from(alice.publicKeyHex, 'hex');
+    const probeContent = 'karma zero probe';
+    const probeTx = signAndRender(alice, {
+      inputs: [aliceBox.boxId],
+      outputs: [
+        { boxType: 'karma', value: 0n, createdAtBlock: aliceK.height, owner: aliceOwner },
+        { boxType: 'karma_price', value: POST_PRICE_THREAD, createdAtBlock: aliceK.height },
+      ],
+      signatures: {},
+      protocolVersion: version,
+      post: {
+        contentHash: computeContentHash(probeContent),
+        author: aliceOwner,
+        parentRefs: [],
+        protocolVersion: version,
+        type: 'regular' as const,
+      },
+    });
+    try {
+      await postPost(miner, probeTx.json, probeContent);
+      expect.fail('a karma output of value 0n should have been refused');
+    } catch (e) {
+      expect(e).toBeInstanceOf(NodeError);
+      const err = e as NodeError;
+      expect(err.status).toBe(400);
+      expect(err.body['reason']).toBe(
+        'A zero-value karma output is not created; zero means no box',
+      );
+    }
 
     // ---- exact spend: thread price exhausts alice's karma ----
+    // NODE_INTERFACE → Karma transition rules — a karma output carries at
+    // least 1n and the change output is optional; an exact spend emits no
+    // karma output, so the thread body is the karma_price alone.
     const thread = buildThreadTx(
       alice,
       karmaBoxes(aliceK),
@@ -83,7 +123,6 @@ describe('zero-change', () => {
       aliceK.height,
       version,
     );
-    // TYPES_INTERFACE → Box value domain
     expect(thread.outputs.length).toBe(1);
 
     const postRes = await postPost(miner, thread.json, thread.content);
@@ -107,54 +146,5 @@ describe('zero-change', () => {
     expect(aliceAfter.boxCount).toBe(0);
     expect(aliceAfter.total).toBe('0');
     expect(aliceAfter.lastActivityBlock).toBe(postHeight);
-
-    // ---- karma(0) is refused ----
-    const faucetAfter = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
-    const faucetBoxes = karmaBoxes(faucetAfter);
-    const sorted = [...faucetBoxes].sort((a, b) =>
-      b.value > a.value ? 1 : b.value < a.value ? -1 : 0,
-    );
-    const selected = selectBoxes(sorted, POST_PRICE_THREAD);
-    const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
-
-    const faucetOwner = Buffer.from(DEVNET_FAUCET.publicKeyHex, 'hex');
-    const probeContent = 'karma zero probe';
-    // NODE_INTERFACE → Karma transition rules
-    const probeTx = signAndRender(DEVNET_FAUCET, {
-      inputs: selected.map((b) => b.boxId),
-      outputs: [
-        { boxType: 'karma', value: 0n, createdAtBlock: faucetAfter.height, owner: faucetOwner },
-        {
-          boxType: 'karma',
-          value: selectedTotal - POST_PRICE_THREAD,
-          createdAtBlock: faucetAfter.height,
-          owner: faucetOwner,
-        },
-        {
-          boxType: 'karma_price',
-          value: POST_PRICE_THREAD,
-          createdAtBlock: faucetAfter.height,
-        },
-      ],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-      post: {
-        contentHash: computeContentHash(probeContent),
-        author: faucetOwner,
-        parentRefs: [],
-        protocolVersion: PROTOCOL_VERSION,
-        type: 'regular' as const,
-      },
-    });
-
-    try {
-      await postPost(miner, probeTx.json, probeContent);
-      expect.fail('karma(0) should have been refused');
-    } catch (e) {
-      expect(e).toBeInstanceOf(NodeError);
-      const err = e as NodeError;
-      expect(err.status).toBe(400);
-      expect(err.body['reason']).toContain('zero');
-    }
   });
 });

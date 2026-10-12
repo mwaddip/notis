@@ -1,7 +1,7 @@
-import { selectBoxes } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { Identity } from '../identities.js';
 import { signAndRender, type BoxRef, type BuiltTx } from './render.js';
+import { selectKarmaInputs } from './karma.js';
 
 export function buildInviteTx(
   faucet: Identity,
@@ -11,8 +11,7 @@ export function buildInviteTx(
   height: number,
   protocolVersion: number,
 ): BuiltTx {
-  const sorted = [...boxes].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
-  const selected = selectBoxes(sorted, bondAmount);
+  const selected = selectKarmaInputs(boxes, bondAmount);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
   const changeValue = selectedTotal - bondAmount;
 
