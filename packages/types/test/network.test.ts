@@ -20,6 +20,9 @@ import {
 } from '../src/index.js';
 import type { NetworkType, NetworkProfile, ProtocolEra } from '../src/index.js';
 import { createHash, createPrivateKey, createPublicKey } from 'crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 
 // The full contract field set — TYPES_INTERFACE → Network profiles. Guards both
 // directions: a missing field and an added one (per-network creep is how a devnet
@@ -436,6 +439,69 @@ describe('NETWORK_PROFILES', () => {
     const { mainnet, testnet } = NETWORK_PROFILES;
     expect(testnet.genesisProofPayload).not.toBe(mainnet.genesisProofPayload);
     expect(testnet.genesisStateRoot).not.toBe(mainnet.genesisStateRoot);
+  });
+
+  // TYPES_INTERFACE → Network profiles, "Testnet's names its release line":
+  // testnet's payload is the UTF-8 bytes of
+  // `dagsocial/testnet/genesis-proof/<major>.<minor>`, the two numbers the root
+  // `package.json` version opens with. A reset moves the minor and the payload
+  // moves with it (ARCHITECTURE → Deploy gate, "A reset mints a new genesis
+  // proof payload"; "The release version counts resets and milestones") — so
+  // this suite stays red until the payload names the new release line, and
+  // the node refuses to start until its pinned genesis state root is the one
+  // seeded under the new payload.
+  describe('testnet payload names its release line', () => {
+    // The expected payload under a `<major>.<minor>[.<patch>]` version string.
+    // Built on a small helper so the derivation is explicit — a reader can
+    // check the formula against the contract, not against the only value the
+    // profile happens to carry.
+    function expectedTestnetPayload(version: string): string {
+      const parts = version.split('.');
+      const majorMinor = `${parts[0]}.${parts[1]}`;
+      return Buffer.from(`dagsocial/testnet/genesis-proof/${majorMinor}`, 'utf8').toString('hex');
+    }
+
+    // The root `package.json` version, read at test time rather than copied
+    // into a constant — the point of this suite is that the two agree, so
+    // reading each from its own source is what makes a divergence visible.
+    const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+    const ROOT_VERSION: string = JSON.parse(
+      readFileSync(resolve(REPO_ROOT, 'package.json'), 'utf8'),
+    ).version;
+
+    it('the root version is major.minor[.patch] with at least two numbers', () => {
+      // The helper reads two parts; the invariant says the file carries them.
+      expect(ROOT_VERSION).toMatch(/^\d+\.\d+(\.\d+)?/);
+    });
+
+    it('testnet payload is dagsocial/testnet/genesis-proof/<major>.<minor> under the root version', () => {
+      expect(NETWORK_PROFILES.testnet.genesisProofPayload)
+        .toBe(expectedTestnetPayload(ROOT_VERSION));
+    });
+
+    it('the case turns on the minor: 0.4.0 is NOT the profile\'s payload', () => {
+      // A hypothetical next-reset version. If the suite stayed green under it
+      // the case would be hollow — reading only what the file carries.
+      expect(NETWORK_PROFILES.testnet.genesisProofPayload)
+        .not.toBe(expectedTestnetPayload('0.4.0'));
+    });
+
+    it('a patch-only change leaves the payload equal: 0.3.9 is still the profile\'s payload', () => {
+      // The payload names major.minor, not the patch — a milestone release that
+      // owes no reset (ARCHITECTURE → Deploy gate, "The release version counts
+      // resets and milestones") moves the patch alone and leaves the payload
+      // unchanged.
+      expect(NETWORK_PROFILES.testnet.genesisProofPayload)
+        .toBe(expectedTestnetPayload('0.3.9'));
+    });
+
+    it('the payload is 35 bytes, inside the decode bound', () => {
+      // Hex, so bytes are half the characters. The bound is on the box's
+      // bytes, not on the string that spells them.
+      expect(NETWORK_PROFILES.testnet.genesisProofPayload.length / 2).toBe(35);
+      expect(NETWORK_PROFILES.testnet.genesisProofPayload.length / 2)
+        .toBeLessThanOrEqual(MAX_GENESIS_PROOF_PAYLOAD_BYTES);
+    });
   });
 
   // TYPES_INTERFACE → Network profiles: `genesisId` pins block 1, and is
