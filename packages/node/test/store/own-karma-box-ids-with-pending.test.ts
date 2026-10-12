@@ -269,7 +269,7 @@ describe('getOwnKarmaBoxIdsWithPending — confirmed ∪ pending outputs − pen
   it("a pooled spend that returned no change — the empty list", () => {
     // A karma box of exactly LIKE_KARMA_COST — the spend emits only the
     // like_accrual marker, no karma output (NODE_INTERFACE → Karma transition
-    // rules → "A karma output carries at least 1n").
+    // rules → "A karma output carries at least `1n`, and the change output is optional").
     const own = karmaBox(LIKE_KARMA_COST, OWNER, 1);
     utxo.insertBox(own);
     const tx = likeTx(OWNER, own.id!, 0n);

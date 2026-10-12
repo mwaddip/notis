@@ -8,8 +8,8 @@ import type { AnyBox, KarmaBox } from '@dagsocial/types';
 import type { Page, BoxKey, PageResult } from '../../src/store/index.js';
 import { fixtureProvenance } from '../helpers.js';
 
-// NODE_INTERFACE → "The store does not version its schema". Each case opens a
-// fresh in-memory database and imports the modules anew — the dynamic import
+// NODE_INTERFACE → No store schema version, and none is owed. Each case opens
+// a fresh in-memory database and imports the modules anew — the dynamic import
 // is what makes a reset safe.
 async function importDbFresh() {
   const mod = await import('../../src/store/db.js');

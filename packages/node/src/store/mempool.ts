@@ -182,10 +182,10 @@ export interface PoolEntry {
   /**
    * The karma inputs' owner (hex) — the one key `validateTx` admits in a
    * karma transaction's signatures map (MEMPOOL_INTERFACE → Gate metadata
-   * columns → `karma_owner`); `null` where the row has no karma spend and
-   * no owner to key on. The fill reads this to ask the decay predicate for
-   * one owner per entry (NODE_INTERFACE → Karma transition rules → "Engine
-   * inputs the rule needs").
+   * columns), the `karma_owner` column; `null` where the row has no karma
+   * spend and no owner to key on. The fill reads this to ask the decay
+   * predicate for one owner per entry (NODE_INTERFACE → Karma transition
+   * rules → "Engine inputs the rule needs").
    */
   karmaOwner: string | null;
 }

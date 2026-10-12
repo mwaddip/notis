@@ -237,10 +237,10 @@ describe('UTXO routes', () => {
     const boxValues = (body.boxes as unknown[]).map((b: unknown) => (b as Record<string, unknown>).value);
     expect(boxValues).toEqual(expect.arrayContaining(['42', '58']));
     expect(body.lifetimeLikesReceived).toBe('0');
-    // NODE_INTERFACE → UTXO queries → "the `/karma/:userId` row of the API
-    // table": a box carries `income: true` when it is the owner's income
-    // box and no such key when it is their own. The seeded boxes are
-    // own boxes, so neither carries the key.
+    // NODE_INTERFACE → UTXO queries: on the `GET /karma/:userId` row of the
+    // API table, a box carries `income: true` when it is the owner's income
+    // box and no such key when it is their own. The seeded boxes are own
+    // boxes, so neither carries the key.
     for (const b of body.boxes as Record<string, unknown>[]) {
       expect('income' in b).toBe(false);
     }
