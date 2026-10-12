@@ -103,4 +103,79 @@ describe('PendingChain', () => {
     const second = buildInviteTx(cfg, chain.view([incomeBox]), 'bb'.repeat(32), 0, ERA);
     expect(second.tx.inputs).toEqual([first.change!.boxId]);
   });
+
+  // The node confirmed the pending invite: the box the chain holds under its
+  // tip id is now the own box the confirmed list reports. The view must name
+  // that box once, not twice.
+  it.fails('answers one own box when the confirmed list catches up with the tip', () => {
+    const chain = new PendingChain();
+    const first = buildInviteTx(cfg, [own(K1, 1000n)], recipient, 0, ERA);
+    chain.advance(first);
+    const incomeBox = income(INCOME_ID, 500n);
+    const view = chain.view([own(first.change!.boxId, 750n), incomeBox]);
+    expect(view).toHaveLength(2);
+    expect(view.filter((b) => b.income !== true)).toHaveLength(1);
+    expect(view.filter((b) => b.income === true)).toHaveLength(1);
+    const next = buildInviteTx(cfg, view, second, 0, ERA);
+    expect(next.tx.inputs).toContain(first.change!.boxId);
+  });
+
+  // The whole round, through the builder: invite 1 from a confirmed own box,
+  // invite 2 while 1 is pending, then the confirmed list catches up with both
+  // and invite 3 names 2's change.
+  it.fails('names the latest change on a third invite after the confirmed list catches up with both', () => {
+    const chain = new PendingChain();
+    const start = [own(K1, 1000n)];
+    const first = buildInviteTx(cfg, start, recipient, 0, ERA);
+    chain.advance(first);
+    const secondTx = buildInviteTx(cfg, chain.view(start), second, 0, ERA);
+    expect(secondTx.tx.inputs).toEqual([first.change!.boxId]);
+    chain.advance(secondTx);
+    const confirmedBoth = [own(secondTx.change!.boxId, 500n)];
+    const thirdTx = buildInviteTx(cfg, chain.view(confirmedBoth), 'cc'.repeat(32), 0, ERA);
+    expect(thirdTx.tx.inputs).toEqual([secondTx.change!.boxId]);
+  });
+
+  // A zero-change invite consumes the own box exactly against the bond and
+  // leaves no change — the tip stays null, and the confirmed list still listing
+  // the spent box does not bring it back.
+  it('keeps the spent box out of the view on a zero-change invite until confirmed drops it', () => {
+    const chain = new PendingChain();
+    const own250 = own(OWN_ID, 250n);
+    const income10 = income(INCOME_ID, 10n);
+    const first = buildInviteTx(cfg, [own250, income10], recipient, 0, ERA);
+    expect(first.change).toBeNull();
+    chain.advance(first);
+    expect(chain.view([own250, income10])).toEqual([income10]);
+    expect(chain.view([income10])).toEqual([income10]);
+  });
+
+  // The chain consumed the income box; while the confirmed list still carries
+  // its old id, the view excludes it, and a new income under a new id — the
+  // node paid the faucet again — joins the view beside the tip.
+  it('keeps a consumed income out of the view and admits a new income under a new id', () => {
+    const chain = new PendingChain();
+    const own200 = own(OWN_ID, 200n);
+    const incomeOld = income(INCOME_ID, 500n);
+    const first = buildInviteTx(cfg, [own200, incomeOld], recipient, 0, ERA);
+    expect(first.changeValue).toBe(450n);
+    chain.advance(first);
+    expect(chain.view([own200, incomeOld])).toEqual([first.change]);
+    const incomeNew = income('77'.repeat(32), 300n);
+    expect(chain.view([incomeNew])).toEqual([first.change, incomeNew]);
+  });
+
+  // The chain remembers only what the node still holds: once the confirmed
+  // list no longer lists a consumed id, a later box reusing that id is not
+  // filtered out.
+  it.fails('forgets a consumed id once the confirmed list no longer lists it', () => {
+    const chain = new PendingChain();
+    const own250 = own(OWN_ID, 250n);
+    const income10 = income(INCOME_ID, 10n);
+    const first = buildInviteTx(cfg, [own250, income10], recipient, 0, ERA);
+    chain.advance(first);
+    chain.view([income10]);
+    const reused = own(OWN_ID, 999n);
+    expect(chain.view([reused, income10])).toEqual([reused, income10]);
+  });
 });
