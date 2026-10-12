@@ -424,8 +424,8 @@ export function resetForkResolutionMemo(): void {
 }
 
 /**
- * NODE_INTERFACE → "Re-scoring is memoised": "An entry leaves with its peer
- * — a disconnect deletes it". The runner's own disconnect hook calls this.
+ * NODE_INTERFACE → "Re-scoring is memoised": the memo entry a peer owns
+ * leaves with it on disconnect. The runner's own disconnect hook calls this.
  */
 export function dropForkResolutionMemoForPeer(peerId: string): void {
   forkResolutionMemo.delete(peerId);
@@ -436,8 +436,8 @@ export function dropForkResolutionMemoForPeer(peerId: string): void {
 // ---------------------------------------------------------------------------
 
 /**
- * NODE_INTERFACE → Fork choice decides on verified headers → "A resolution
- * that ends because the tip moved hands its own block back the same way".
+ * NODE_INTERFACE → Fork choice decides on verified headers →
+ * "A resolution that ends because the tip moved hands its own block back the same way".
  * The runner reads this to decide whether to hand the resolution's own block
  * back for a second judgment, so a `'tip-moved'` return names the two paths
  * the rule covers — step 7's between-pages re-read and step 9's — and `'done'`
@@ -458,10 +458,11 @@ export async function resolveFork(
   fromPeerId: string,
 ): Promise<ResolveForkOutcome> {
   const currentHeight = getCurrentHeight();
-  // NODE_INTERFACE → Fork choice decides on verified headers, step 9:
-  // "the tip a resolution read at its start is a height **and a hash**".
-  // At height 0 there is no block to hash, and extendsOurTip's path handles
-  // every height-0 case ahead of this function.
+  // NODE_INTERFACE → Fork choice decides on verified headers, step 9: the
+  // tip the resolution reads at its start is a height AND a hash, so a chain
+  // switched at the same height is a tip that moved exactly as a growth to a
+  // new height is. At height 0 there is no block to hash, and extendsOurTip's
+  // path handles every height-0 case ahead of this function.
   const currentHash = currentHeight > 0 ? getOrderingBlockHash(currentHeight) : null;
 
   console.log(
@@ -491,11 +492,11 @@ export async function resolveFork(
 
     // 3. The fork walk — page down from ourTip
     // (NODE_INTERFACE → Fork choice decides on verified headers, step 3).
-    // NODE_INTERFACE → "The walk reaches as deep as the journals do, and no
-    // deeper" — the walk bounded by `lowestJournal − 1` and the genesis
-    // fall-through gated on `lowestJournal ≤ 1`. `lowestJournal` is read once
-    // beside the tip; a null answer (no journal kept) is treated as
-    // `currentHeight + 1`, which collapses the bound to the depth cap alone.
+    // NODE_INTERFACE → "The walk reaches as deep as the journals do, and no deeper":
+    // the walk is bounded by `lowestJournal − 1` and the genesis fall-through
+    // is gated on `lowestJournal ≤ 1`. `lowestJournal` is read once beside the
+    // tip; a null answer (no journal kept) is treated as `currentHeight + 1`,
+    // which collapses the bound to the depth cap alone.
     const maxReorgDepth = config.maxReorgDepth;
     const lowestJournalRow = getLowestJournalHeight();
     const lowestJournal = lowestJournalRow ?? currentHeight + 1;
@@ -592,9 +593,10 @@ export async function resolveFork(
 
     if (forkHeight === null) {
       // NODE_INTERFACE → Fork choice decides on verified headers, step 3:
-      // "f = GENESIS_HEIGHT when ourTip ≤ maxReorgDepth and lowestJournal ≤ 1".
-      // The journals clause is why a tip that dropped below the horizon from
-      // above never reaches genesis — the walk stops at the lowest journal.
+      // the fork walk answers genesis only when the tip is at or below the
+      // horizon AND the journals still reach height 1. The journals clause is
+      // why a tip that dropped below the horizon from above never reaches
+      // genesis — the walk stops at the lowest journal.
       if (currentHeight <= maxReorgDepth && lowestJournal <= 1) {
         // NODE_INTERFACE → Fork resolution bottoms out at the genesis state.
         forkHeight = GENESIS_HEIGHT;

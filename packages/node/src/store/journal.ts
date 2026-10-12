@@ -129,9 +129,10 @@ export function purgeOldJournals(belowHeight: number): void {
 
 /**
  * NODE_INTERFACE → Block Journal: the lowest `block_height` a journal row is
- * kept for; `null` for an empty table. A point read on the table's primary key
- * — `block_height` is declared `INTEGER PRIMARY KEY`, so `MIN` resolves through
- * the `sqlite_autoindex`.
+ * kept for; `null` for an empty table. `block_height INTEGER PRIMARY KEY` is
+ * the table's row key — the rowid alias — so the row ordering IS the
+ * `block_height` ordering and `MIN(block_height)` is the first row, with no
+ * separate index.
  */
 export function getLowestJournalHeight(): number | null {
   const row = getDb()

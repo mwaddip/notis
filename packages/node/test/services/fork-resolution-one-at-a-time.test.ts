@@ -1393,6 +1393,375 @@ describe('a resolution that throws something else ends and the next is judged', 
   });
 });
 
+// ===========================================================================
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "One resolution at a time"
+// A delivery that lands between the drain and the hand-back must still be
+// judged. The runner's rule is that nothing waits between a resolution's end
+// and its first `handleOrderingBlock` call; the case lands a delivery in that
+// moment and asserts the block ran. The microtask budget below is the
+// deadline — a buggy runner leaves `pendingByPeer` holding a block and
+// nothing dispatches it, so `netB` is never asked for headers.
+// ===========================================================================
+describe('a block delivered as a resolution ends is judged', () => {
+  const ctx: Trackers = { caughtCorrupt: [] };
+
+  beforeEach(() => {
+    ctx.caughtCorrupt = [];
+    vi.resetModules();
+    installTrackers(ctx);
+  });
+  afterEach(teardownTrackers);
+
+  it('the pending block never strands between the drain and the hand-back', async () => {
+    await initChainStore();
+    await startCreator(testConfig);
+
+    const [shared1] = await buildAndApply([[1, T1]]);
+    const [a2] = await buildAndApply([[2, T1 + 1]]);
+    await revertChainTo(1);
+    const [b2] = await buildAndApply([[2, T1 + 2]]);
+    await revertChainTo(1);
+    await buildAndApply([[2, T1 + 60_000 + HL]]);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(2);
+
+    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
+
+    const netB = singleBranchNet('peer-A', [shared1!, b2!], { peerTipOverride: 11 });
+
+    // netA serves no headers. The resolution reaches `requestHeaders`, which
+    // schedules a chained-microtask delivery of b2 so the delivery lands
+    // after `runResolution`'s drain of the pending set. Any such moment is
+    // covered by the rule — the dispatch runs synchronously beside
+    // `running = null` — not this one alone.
+    let delivered = false;
+    const netA: ForkResolutionNet = {
+      getConnectedPeers: () => ['peer-A'],
+      peerTipHeight: () => 10,
+      penalizePeer: () => undefined,
+      requestBlocks: async () => [],
+      requestHeaders: async () => {
+        if (!delivered) {
+          delivered = true;
+          queueMicrotask(() =>
+            queueMicrotask(() =>
+              queueMicrotask(() => handleOrderingBlock(b2!, 'peer-A', netB)),
+            ),
+          );
+        }
+        return [];
+      },
+    };
+
+    handleOrderingBlock(a2!, 'peer-A', netA);
+
+    // The microtask budget is the deadline: a healthy run drains well inside
+    // 500 microtasks, and a buggy runner leaves `netB.headerCalls.count` at
+    // zero whatever budget stands here.
+    for (let i = 0; i < 500; i++) {
+      await Promise.resolve();
+    }
+
+    expect(netB.headerCalls.count).toBeGreaterThanOrEqual(1);
+    expect(ctx.caughtCorrupt).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "One resolution at a time"
+// Two blocks differing only in a header field a hand comparison on six of
+// eleven fields skips are two blocks to the runner — the identity is the
+// hash, which reads the whole header. The field this case differs in is
+// `adProofsRoot`.
+// ===========================================================================
+describe('two blocks differing only in adProofsRoot are two blocks', () => {
+  const ctx: Trackers = { caughtCorrupt: [] };
+
+  beforeEach(() => {
+    ctx.caughtCorrupt = [];
+    vi.resetModules();
+    installTrackers(ctx);
+  });
+  afterEach(teardownTrackers);
+
+  it('the second is kept as peer-A pending and ran after the first ends', async () => {
+    await initChainStore();
+    await startCreator(testConfig);
+
+    const [shared1] = await buildAndApply([[1, T1]]);
+    const [a2] = await buildAndApply([[2, T1 + 1]]);
+    await revertChainTo(1);
+    await buildAndApply([[2, T1 + 60_000 + HL]]);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(2);
+
+    // Clone a2 with a different `adProofsRoot`. The six fields a hand
+    // comparison looks at (height, prevBlockHash, utxoTxRoot, stateRoot,
+    // powNonce, createdAt) all match; the hash does not.
+    const b2: OrderingBlock = {
+      ...a2!,
+      header: { ...a2!.header, adProofsRoot: 'ff'.repeat(32) },
+    };
+    expect(blockHash(a2!.header)).not.toBe(blockHash(b2.header));
+
+    let open!: () => void;
+    const gateA = new Promise<void>((r) => { open = r; });
+
+    const netA_run = singleBranchNet('peer-A', [shared1!, a2!], {
+      headerGate: gateA,
+      peerTipOverride: 10,
+    });
+    const netA_second = singleBranchNet('peer-A', [shared1!, b2], { peerTipOverride: 11 });
+
+    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
+
+    handleOrderingBlock(a2!, 'peer-A', netA_run);
+    await vi.waitFor(() => {
+      expect(netA_run.headerCalls.count).toBeGreaterThanOrEqual(1);
+    }, { timeout: 5000 });
+
+    // b2 is NOT the running block (hashes differ). Kept as peer-A pending.
+    handleOrderingBlock(b2, 'peer-A', netA_second);
+
+    open();
+    await settleResolveForks(ctx);
+
+    expect(netA_run.headerCalls.count).toBeGreaterThanOrEqual(1);
+    expect(netA_second.headerCalls.count).toBeGreaterThanOrEqual(1);
+    expect(ctx.caughtCorrupt).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "One resolution at a time"
+// The same block from a second peer waits as that peer's pending block —
+// the node's second chance at the branch when the first counterparty serves
+// nothing.
+// ===========================================================================
+describe('the same block from a second peer waits and is judged', () => {
+  const ctx: Trackers = { caughtCorrupt: [] };
+
+  beforeEach(() => {
+    ctx.caughtCorrupt = [];
+    vi.resetModules();
+    installTrackers(ctx);
+  });
+  afterEach(teardownTrackers);
+
+  it("the second peer's net serves the branch and the chain switches", async () => {
+    await initChainStore();
+    await startCreator(testConfig);
+
+    const [shared1] = await buildAndApply([[1, T1]]);
+    const peer = await buildAndApply([[2, T1 + 1], [3, T1 + 2]]);
+    await revertChainTo(1);
+    await buildAndApply([[2, T1 + 60_000 + HL]]);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(2);
+
+    let open!: () => void;
+    const gateA = new Promise<void>((r) => { open = r; });
+
+    // peer-A answers one empty page under gateA.
+    const netA: StubNet = {
+      penalties: [],
+      headerCalls: { count: 0 },
+      blockCalls: { count: 0 },
+      getConnectedPeers: () => ['peer-A'],
+      peerTipHeight: () => 3,
+      penalizePeer: () => undefined,
+      requestBlocks: async () => [],
+      requestHeaders: async () => {
+        netA.headerCalls.count++;
+        await gateA;
+        return [];
+      },
+    };
+    const netB = singleBranchNet('peer-B', [shared1!, ...peer]);
+
+    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
+    const peerTip = peer[peer.length - 1]!;
+
+    handleOrderingBlock(peerTip, 'peer-A', netA);
+    await vi.waitFor(() => {
+      expect(netA.headerCalls.count).toBeGreaterThanOrEqual(1);
+    }, { timeout: 5000 });
+
+    // The same block delivered by peer-B is peer-B's pending block, not a
+    // repeat of what is running for peer-A.
+    handleOrderingBlock(peerTip, 'peer-B', netB);
+
+    open();
+    await settleResolveForks(ctx);
+
+    expect(ordering.getCurrentHeight()).toBe(3);
+    expect(ordering.getOrderingBlockHash(3)).toBe(blockHash(peerTip.header));
+    expect(netB.headerCalls.count).toBeGreaterThanOrEqual(1);
+    expect(ctx.caughtCorrupt).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "A resolution that ends because the tip moved hands its own block back the same way"
+// Unless its peer has a later block pending — then the earlier is not
+// re-judged, and the later alone goes through.
+// ===========================================================================
+describe('a tip-moved resolution with a later peer-A pending drops the earlier', () => {
+  const ctx: Trackers = { caughtCorrupt: [] };
+
+  beforeEach(() => {
+    ctx.caughtCorrupt = [];
+    vi.resetModules();
+    installTrackers(ctx);
+  });
+  afterEach(teardownTrackers);
+
+  it('the earlier block is not asked for a second time', async () => {
+    await initChainStore();
+    await startCreator(testConfig);
+
+    const [shared1] = await buildAndApply([[1, T1]]);
+    // Peer heavier branch, 4 blocks above the shared fork.
+    const peer = await buildAndApply([
+      [2, T1 + 1], [3, T1 + 2], [4, T1 + 3], [5, T1 + 4],
+    ]);
+    await revertChainTo(1);
+    // Our chain re-mines heights 2, 3 — lighter per block than peer's.
+    await buildAndApply([
+      [2, T1 + 60_000 + HL],
+      [3, T1 + 60_000 + HL + 1000],
+    ]);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    const earlierBlock = peer[2]!;  // height 4
+    const laterBlock = peer[peer.length - 1]!;  // height 5
+
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    const netA_earlier = singleBranchNet('peer-A', [shared1!, ...peer], {
+      blockGate: gate,
+      peerTipOverride: 15,
+    });
+    const netA_later = singleBranchNet('peer-A', [shared1!, ...peer], { peerTipOverride: 16 });
+
+    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
+
+    // Peer-A delivers the earlier block. Its resolution starts and holds on
+    // the block fetch at step 8.
+    handleOrderingBlock(earlierBlock, 'peer-A', netA_earlier);
+    await vi.waitFor(() => {
+      expect(netA_earlier.blockCalls.count).toBeGreaterThanOrEqual(1);
+    }, { timeout: 5000 });
+
+    // The node mines its own next block, moving the tip from 3 to 4.
+    await mineNextBlock(await importBlockCreator());
+    expect(ordering.getCurrentHeight()).toBe(4);
+
+    // Peer-A delivers a later block of the same branch — kept as peer-A's
+    // pending block.
+    handleOrderingBlock(laterBlock, 'peer-A', netA_later);
+
+    open();
+    await settleResolveForks(ctx);
+
+    // Rule: the earlier block's resolution ends 'tip-moved' and its peer has
+    // a later block pending, so it is not handed back; the pending block
+    // alone is judged. netA_earlier is asked exactly once (its original
+    // resolution's fork walk), netA_later is asked for its own resolution.
+    expect(netA_earlier.headerCalls.count).toBe(1);
+    expect(netA_later.headerCalls.count).toBeGreaterThanOrEqual(1);
+    expect(ctx.caughtCorrupt).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "One resolution at a time" + NODE_INTERFACE → "What the funnel's totality catch is FOR"
+// A resolution ending in the corrupt-state family leaves the runner holding
+// nothing — pending blocks are abandoned alongside the one that ran, and the
+// idle wait returns.
+// ===========================================================================
+describe('a resolution ending in a corrupt-state throw leaves the idle wait resting', () => {
+  const ctx: Trackers = { caughtCorrupt: [] };
+
+  beforeEach(() => {
+    ctx.caughtCorrupt = [];
+    vi.resetModules();
+    installTrackers(ctx);
+  });
+  afterEach(teardownTrackers);
+
+  it('pending is cleared and waitForForkResolutionIdle returns', async () => {
+    await initChainStore();
+    await startCreator(testConfig);
+
+    const [shared1] = await buildAndApply([[1, T1]]);
+    const [a2] = await buildAndApply([[2, T1 + 1]]);
+    await revertChainTo(1);
+    const [b2] = await buildAndApply([[2, T1 + 2]]);
+    await revertChainTo(1);
+    await buildAndApply([[2, T1 + 60_000 + HL]]);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(2);
+
+    const corrupt = (await import('../../src/services/corrupt-state.js')) as {
+      MissingStoredBlockError: new (site: string, height: number) => Error;
+    };
+
+    let open!: () => void;
+    const gateA = new Promise<void>((r) => { open = r; });
+    const netA: ForkResolutionNet = {
+      getConnectedPeers: () => ['peer-A'],
+      peerTipHeight: () => 10,
+      penalizePeer: () => undefined,
+      requestBlocks: async () => [],
+      requestHeaders: async () => {
+        await gateA;
+        throw new corrupt.MissingStoredBlockError('resolveFork fixture', 1);
+      },
+    };
+    const netB = singleBranchNet('peer-B', [shared1!, b2!], { peerTipOverride: 11 });
+
+    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
+    const { waitForForkResolutionIdle } = await import(
+      '../../src/services/fork-resolution-runner.js'
+    );
+
+    handleOrderingBlock(a2!, 'peer-A', netA);
+    await Promise.resolve();
+    await Promise.resolve();
+    handleOrderingBlock(b2!, 'peer-B', netB);
+
+    open();
+
+    // A microtask-budget flag detects whether the idle wait settles — the
+    // waiter spins microtasks forever if the runner holds pending after a
+    // corrupt-state throw.
+    let idle = false;
+    waitForForkResolutionIdle().then(() => { idle = true; });
+    for (let i = 0; i < 500; i++) {
+      await Promise.resolve();
+    }
+
+    expect(idle).toBe(true);
+    expect(ctx.caughtCorrupt.map((e) => (e as Error).constructor.name)).toEqual([
+      'MissingStoredBlockError',
+    ]);
+    // The pending block never ran — the runner held nothing past the throw.
+    expect(netB.headerCalls.count).toBe(0);
+  });
+});
+
 // Suppress an unused-variable warning for `BlockHeader` and `StubNetOptions`
 // — exports a type-level reference keeps TS happy under isolatedModules.
 export type _CaseFileTypeAnchors = BlockHeader | StubNetOptions;

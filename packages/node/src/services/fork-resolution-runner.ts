@@ -3,43 +3,42 @@
  * (NODE_INTERFACE → Fork choice decides on verified headers →
  * "One resolution at a time").
  *
- * Non-extending blocks reach the runner through `handOverForkResolution`,
- * which `handle-block.ts` calls after `handleOrderingBlock`'s own arms have
- * ruled a block out of apply and out of no-op. The runner runs at most one
- * resolution at a time: with none in flight, the delivered block starts one;
- * with one in flight, the block is kept as its peer's **pending** block (one
- * per peer, a later block replacing the earlier, and a block that is the one
- * running for that peer or already pending for it dropped). When a resolution
- * ends, each pending block is handed back to `handleOrderingBlock` — the real
- * function, not a copy of its arms — in the order it arrived, and judged on
- * the tip that then stands.
+ * `handleOrderingBlock` hands non-extending blocks here through
+ * `handOverForkResolution`. The runner runs at most one resolution at a time:
+ * with none in flight, the delivered block starts one; with one in flight,
+ * the block is kept as its delivering peer's pending block (one per peer id;
+ * a later block from the same peer replaces the earlier; a block whose hash
+ * matches the one running for THAT peer, or the one already pending for it,
+ * is dropped). When a resolution ends, the pending blocks are handed back to
+ * `handleOrderingBlock` in one synchronous run — nothing waits between the
+ * resolution's end and the first dispatch, so a delivery arriving during the
+ * drain cannot be stranded with `running === null` and a block pending.
  *
- * **Why the runner lives beside `fork-resolution.ts` rather than inside it.**
- * The runner reads `resolveFork`'s outcome and `handleOrderingBlock`'s call
- * surface — two seams no other caller of `resolveFork` reads — and the hand-
- * back path recurses through `handleOrderingBlock`, which imports the runner.
- * A top-level import of `handle-block.ts` from this module would complete the
- * cycle; the hand-back therefore reaches `handleOrderingBlock` through a
- * dynamic import, so the module graph stays acyclic at load time while the
- * runtime path is the one call every delivery takes.
+ * `handle-block.ts` is reached by static import both ways: neither module
+ * reads the other's bindings at load time, so the cycle resolves and the
+ * handler is in scope by the time the dispatch runs.
  */
 
 import type { OrderingBlock } from '@dagsocial/types';
+import { blockHash } from '@dagsocial/validation';
 import {
   resolveFork,
   dropForkResolutionMemoForPeer,
   type ForkResolutionNet,
 } from './fork-resolution.js';
+import { handleOrderingBlock } from './handle-block.js';
 import { failStopIfCorruptChain, CorruptChainStateError } from './corrupt-state.js';
 
 interface PendingEntry {
   block: OrderingBlock;
+  hash: string;
   net: ForkResolutionNet;
   peerId: string;
 }
 
 interface RunningEntry {
   block: OrderingBlock;
+  hash: string;
   net: ForkResolutionNet;
   peerId: string;
   settled: Promise<void>;
@@ -51,77 +50,79 @@ const pendingByPeer = new Map<string, PendingEntry>();
 /** FIFO order of peers with a pending entry. Rebuilt on hand-back. */
 const pendingOrder: string[] = [];
 
-function samePeerAs(a: OrderingBlock, b: OrderingBlock): boolean {
-  // The block's hash is produced by apply's validator before it reaches the
-  // runner, but a cheap identity check that never hashes is enough: a block
-  // delivered twice carries the same reference-shape payload, so a shallow
-  // comparison of header fields distinguishes "the same block again" from a
-  // later one by the same peer without pulling in `blockHash`.
-  if (a === b) return true;
-  if (a.header.height !== b.header.height) return false;
-  if (a.header.prevBlockHash !== b.header.prevBlockHash) return false;
-  if (a.header.utxoTxRoot !== b.header.utxoTxRoot) return false;
-  if (a.header.stateRoot !== b.header.stateRoot) return false;
-  if (a.header.powNonce !== b.header.powNonce) return false;
-  return a.header.createdAt === b.header.createdAt;
-}
-
 /**
  * NODE_INTERFACE → Fork choice decides on verified headers →
- * "One resolution at a time": `handleOrderingBlock` hands a non-extending
- * block here, and the runner answers whether it took the block (true for
- * started or pending; false for dropped). The caller still returns `false`
- * to the pull batch, as the contract requires.
+ * "One resolution at a time". `handleOrderingBlock` hands a non-extending
+ * block here. The runner records it (starts a resolution or stores it as the
+ * delivering peer's pending block) and returns nothing.
+ *
+ * A block whose header is outside the encodable domain has no hash to key
+ * identity by. The gossip layer refuses such a block at the PoW check before
+ * delivery, and `handleOrderingBlock`'s own already-held check reads
+ * `blockHash` without stopping at a null answer, so a null here is a
+ * delivery with no identity to compare — logged and dropped.
  */
 export function handOverForkResolution(
   block: OrderingBlock,
   net: ForkResolutionNet,
   peerId: string,
 ): void {
-  if (running === null) {
-    startRunning({ block, net, peerId });
+  const hash = blockHash(block.header);
+  if (hash === null) {
+    console.warn(
+      `Fork resolution: refusing a delivery whose header is outside the ` +
+      `encodable domain (peer ${peerId}, height ${block.header.height})`,
+    );
     return;
   }
-  if (samePeerAs(running.block, block)) {
-    // The block that is running for this peer is dropped (one in flight is
-    // enough; the running resolution scores the delivered branch already).
+  if (running === null) {
+    startRunning({ block, hash, net, peerId });
+    return;
+  }
+  if (running.peerId === peerId && running.hash === hash) {
+    // The block that is running for THIS peer is dropped. A match from a
+    // different peer is not: that is the second peer's pending block.
     return;
   }
   const pending = pendingByPeer.get(peerId);
-  if (pending && samePeerAs(pending.block, block)) {
-    // The block already pending for this peer is dropped (one pending
-    // per peer).
+  if (pending && pending.hash === hash) {
+    // The block already pending for this peer is dropped (one pending per peer).
     return;
   }
   if (pending) {
-    // Replace the earlier pending block from the same peer. The peer's
-    // place in the order is kept — a later block from the same peer
-    // succeeds the earlier, not the queue's tail.
-    pendingByPeer.set(peerId, { block, net, peerId });
+    // A later block from the same peer replaces the earlier. The peer's
+    // place in the arrival order is kept — a later block succeeds the
+    // earlier, not the queue's tail.
+    pendingByPeer.set(peerId, { block, hash, net, peerId });
     return;
   }
-  pendingByPeer.set(peerId, { block, net, peerId });
+  pendingByPeer.set(peerId, { block, hash, net, peerId });
   pendingOrder.push(peerId);
 }
 
 /**
  * NODE_INTERFACE → "One resolution at a time": a disconnected peer loses its
- * pending block and its re-score memo entry. `src/index.ts`'s
- * `net.onPeerDisconnected` registration calls this.
+ * pending block. NODE_INTERFACE → Re-scoring is memoised removes the memo
+ * entry at the same seam — an entry a peer leaves takes its memo with it.
+ * `src/index.ts`'s `net.onPeerDisconnected` registration calls this.
  */
 export function onPeerDisconnectedForForkResolution(peerId: string): void {
   if (pendingByPeer.delete(peerId)) {
     const idx = pendingOrder.indexOf(peerId);
     if (idx >= 0) pendingOrder.splice(idx, 1);
   }
-  // NODE_INTERFACE → "Re-scoring is memoised": the memo's entry for a peer
-  // leaves with its connection, read beside the pending block.
   dropForkResolutionMemoForPeer(peerId);
 }
 
 function startRunning(entry: PendingEntry): void {
   const settled = runResolution(entry);
-  running = { block: entry.block, net: entry.net, peerId: entry.peerId, settled };
+  running = {
+    block: entry.block,
+    hash: entry.hash,
+    net: entry.net,
+    peerId: entry.peerId,
+    settled,
+  };
 }
 
 async function runResolution(entry: PendingEntry): Promise<void> {
@@ -131,52 +132,47 @@ async function runResolution(entry: PendingEntry): Promise<void> {
     outcome = await resolveFork(entry.block, entry.net, entry.peerId);
   } catch (err) {
     if (err instanceof CorruptChainStateError) {
-      // NODE_INTERFACE → "The funnel is total" and →
+      // NODE_INTERFACE → "The funnel is total" and NODE_INTERFACE →
       // "An unhandled rejection is logged, and the node keeps running":
-      // fail-stop for the corrupt-state family. In production this exits,
-      // so pending state is moot; in a suite that stubs the boundary, the
-      // runner stops dispatching so the state the case asserts on is stable.
+      // fail-stop for the corrupt-state family. The runner holds nothing
+      // past this point — pending is cleared below.
       fatal = true;
       failStopIfCorruptChain(err);
     } else {
-      // NODE_INTERFACE → "An unhandled rejection is logged, and the node
-      // keeps running": the runner owns each resolution's promise, so a
-      // throw outside the corrupt-state family ends this resolution without
-      // reaching the process-level handler.
+      // NODE_INTERFACE → "An unhandled rejection is logged, and the node keeps running":
+      // the runner owns each resolution's promise, so a throw outside the
+      // corrupt-state family ends this resolution without reaching the
+      // process-level handler.
       const stack = err instanceof Error && err.stack ? err.stack : String(err);
       console.error(`Fork resolution ended with an unexpected error: ${stack}`);
     }
   }
-  // Collect the ordered hand-back list — a resolution that ended because
-  // the tip moved hands its own block back the same way (NODE_INTERFACE →
-  // Fork choice decides on verified headers → "A resolution that ends
-  // because the tip moved hands its own block back the same way"), unless
-  // its peer has a later one pending. `running` stays set to the finishing
-  // entry across the import so the idle predicate — `running === null &&
-  // pendingByPeer.size === 0` — never fires in the gap between the drain and
-  // the dispatch of the first hand-back.
+  // NODE_INTERFACE → Fork choice decides on verified headers →
+  // "A resolution that ends because the tip moved hands its own block back the same way".
+  // The check reads pending BEFORE the drain so the rule's "unless its peer
+  // has a later one pending" meets its subject.
+  const samePeerHasLater = !fatal && pendingByPeer.has(entry.peerId);
   const handBacks: PendingEntry[] = fatal ? [] : drainPending();
-  if (!fatal && outcome === 'tip-moved' && !pendingByPeer.has(entry.peerId)) {
+  if (fatal) {
+    // After a corrupt-state throw the runner holds nothing — pending blocks
+    // are abandoned alongside the one that ran, so the idle wait rests and
+    // the runner refuses no further dispatch beyond what the fail-stop
+    // boundary already covers.
+    pendingByPeer.clear();
+    pendingOrder.length = 0;
+  }
+  if (!fatal && outcome === 'tip-moved' && !samePeerHasLater) {
     handBacks.unshift(entry);
   }
-  await handOffAndRelease(handBacks);
-}
-
-async function handOffAndRelease(handBacks: PendingEntry[]): Promise<void> {
-  // The hand-back goes through `handleOrderingBlock` itself — the real
-  // function, not a copy of its arms — in the order the blocks arrived
-  // (NODE_INTERFACE → "One resolution at a time"). The dynamic import keeps
-  // the module graph acyclic at load time while the runtime path is the one
-  // every delivery takes.
-  const { handleOrderingBlock } = await import('./handle-block.js');
-  // Reset `running` here, synchronously, immediately before the first
-  // dispatch: a hand-back that starts a resolution assigns `running` back in
-  // the same tick, so an outside caller's idle predicate never observes the
-  // seam.
+  // Hand back synchronously beside `running = null`. Nothing waits between
+  // the drain and the first `handleOrderingBlock` call; the first dispatched
+  // non-extending block reassigns `running` through `startRunning`, so an
+  // outside observer resuming on this promise either sees a new resolution
+  // running or sees the resting state the rule allows.
   running = null;
-  for (const entry of handBacks) {
+  for (const handBack of handBacks) {
     try {
-      handleOrderingBlock(entry.block, entry.peerId, entry.net);
+      handleOrderingBlock(handBack.block, handBack.peerId, handBack.net);
     } catch (err) {
       failStopIfCorruptChain(err);
     }
@@ -195,24 +191,22 @@ function drainPending(): PendingEntry[] {
 }
 
 /**
- * NODE_INTERFACE → "One resolution at a time": a caller can wait for
- * every launched resolution to settle, including ones started by a hand-back.
- * Nothing running and nothing pending is the resting state.
+ * NODE_INTERFACE → "One resolution at a time": a caller waits here for every
+ * launched resolution to settle, including ones started by a hand-back.
+ * Nothing running is the resting state — a hand-back that chains into
+ * another resolution has already reassigned `running` before the previous
+ * one's promise resolves, so this loop never polls `pendingByPeer` with
+ * `running === null`.
  */
 export async function waitForForkResolutionIdle(): Promise<void> {
-  // Successive resolutions chain through `handOffAndRelease`, so one trip
-  // through the running promise does not suffice; loop until the state is
-  // truly resting.
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    if (running === null && pendingByPeer.size === 0) break;
-    if (running !== null) {
+  while (running !== null) {
+    try {
       await running.settled;
+    } catch {
+      // `runResolution` handles its own errors; a rejection here is a non-
+      // family rethrow out of `failStopIfCorruptChain` during the hand-back.
+      // The next iteration reads the state the throw left behind.
     }
-    // A hand-back promoted a pending entry to running inside the awaited
-    // frame; a microtask settles it visibly before the next check.
-    await Promise.resolve();
-    await Promise.resolve();
   }
 }
 

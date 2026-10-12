@@ -439,10 +439,10 @@ export function guardStoreRead<A extends unknown[], R>(
 
 /**
  * The process-level unhandled-rejection backstop
- * (NODE_INTERFACE → "An unhandled rejection is logged, and the node keeps
- * running"). A `CorruptChainStateError` is fail-stop as at every other
- * boundary; any other reason is logged with its stack and the function
- * returns, so the process keeps running.
+ * (NODE_INTERFACE → "An unhandled rejection is logged, and the node keeps running").
+ * A `CorruptChainStateError` is fail-stop as at every other boundary; any
+ * other reason is logged with its stack and the function returns, so the
+ * process keeps running.
  *
  * `index.ts` registers one call of this at startup, through
  * `process.on('unhandledRejection', …)`.
