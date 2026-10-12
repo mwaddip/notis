@@ -9,7 +9,7 @@ import {
 describe('buildInviteTx', () => {
   it('spends enough boxes and leaves the remainder as change', () => {
     const { tx, changeValue } = buildInviteTx(cfg, [
-      { boxId: B1, value: 200n }, { boxId: B2, value: 100n },
+      own(B1, 200n), income(B2, 100n),
     ], invitee, 512, ERA);
     expect(tx.inputs).toEqual([B1, B2]);
     expect(changeValue).toBe(50n);
@@ -26,7 +26,7 @@ describe('buildInviteTx', () => {
   // TYPES_INTERFACE → Box value domain: a karma output carries value ≥ 1.
   it('an exact spend builds the bond alone and change is null', () => {
     const { tx, changeValue, change } = buildInviteTx(cfg, [
-      { boxId: B1, value: 250n }, { boxId: B2, value: KARMA_MINIMUM },
+      own(B1, 250n), income(B2, KARMA_MINIMUM),
     ], invitee, 512, ERA);
     expect(tx.inputs).toEqual([B1]);
     expect(changeValue).toBe(0n);
@@ -155,7 +155,7 @@ describe('buildInviteTx', () => {
   // the own box covers the bond, so the invite names it alone — the income box
   // is left to the owner. Chosen so the income box is larger than the own box:
   // a value-biased selection would pick the income box over the own one.
-  it.fails('own 300 and income 500, bond 250 — the invite names the own box alone', () => {
+  it('own 300 and income 500, bond 250 — the invite names the own box alone', () => {
     const { tx, changeValue } = buildInviteTx(cfg, [
       own(OWN_ID, 300n), income(INCOME_ID, 500n),
     ], invitee, 512, ERA);
@@ -165,7 +165,7 @@ describe('buildInviteTx', () => {
 
   // NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes":
   // the own box is short, so the invite names the own box and the income box.
-  it.fails('own 100 and income 500 — the invite names both and returns the sum less the bond as change', () => {
+  it('own 100 and income 500 — the invite names both and returns the sum less the bond as change', () => {
     const { tx, changeValue } = buildInviteTx(cfg, [
       own(OWN_ID, 100n), income(INCOME_ID, 500n),
     ], invitee, 512, ERA);

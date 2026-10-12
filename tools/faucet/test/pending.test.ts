@@ -81,7 +81,7 @@ describe('PendingChain', () => {
   // NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes":
   // the invite consumed the own box and left the income box unspent, so the
   // next request sees the pending change beside that income.
-  it.fails('names the pending change and takes the income only when the change does not cover the bond', () => {
+  it('names the pending change and takes the income only when the change does not cover the bond', () => {
     const chain = new PendingChain();
     // The first invite spends an own box of 260 against a bond of 250 and
     // KARMA_MINIMUM of 10, leaving 10 as pending change (own, unmarked).

@@ -31,6 +31,8 @@ interface WireBox {
   boxId: string;
   value: string;
   lockedUntilBlock?: number;
+  // NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes"
+  income?: unknown;
 }
 
 export class HttpNodeClient implements NodeClient {
@@ -58,7 +60,7 @@ export class HttpNodeClient implements NodeClient {
 
   async karmaBoxes(pubKeyHex: string): Promise<BoxRef[]> {
     return (await this.boxes(`${this.base}/karma/${pubKeyHex}`))
-      .map(toRef);
+      .map(toKarmaRef);
   }
 
   /**
@@ -70,7 +72,7 @@ export class HttpNodeClient implements NodeClient {
   async creditBoxes(pubKeyHex: string): Promise<BoxRef[]> {
     return (await this.boxes(`${this.base}/credits/${pubKeyHex}`))
       .filter((b) => b.lockedUntilBlock === undefined)
-      .map(toRef);
+      .map(toCreditRef);
   }
 
   /**
@@ -125,7 +127,20 @@ export class HttpNodeClient implements NodeClient {
   }
 }
 
-const toRef = (b: WireBox): BoxRef => ({ boxId: b.boxId, value: BigInt(b.value) });
+const toCreditRef = (b: WireBox): BoxRef => ({ boxId: b.boxId, value: BigInt(b.value) });
+
+/**
+ * A karma box carries the mark that tells an owner's own box from their income
+ * box. `income` is `true` on the income box and absent otherwise
+ * (TYPES_INTERFACE → KarmaBox); any other value has no decoding and is refused
+ * rather than coerced — the mark leads selection on the invite path, and a
+ * silent coercion would reshape the selection without the node agreeing to it.
+ */
+const toKarmaRef = (b: WireBox): BoxRef => {
+  if (b.income === true) return { boxId: b.boxId, value: BigInt(b.value), income: true };
+  if (b.income === undefined) return { boxId: b.boxId, value: BigInt(b.value) };
+  throw new NodeError(502, `karma box income mark is ${String(b.income)}, expected true or absent`);
+};
 
 const isJson = (res: Response): boolean =>
   (res.headers.get('content-type') ?? '').includes('application/json');

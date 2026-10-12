@@ -1,7 +1,7 @@
-import { KARMA_MINIMUM, selectBoxes } from '@dagsocial/types';
+import { KARMA_MINIMUM } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { FaucetConfig } from './config.js';
-import { InsufficientFundsError, checkRecipient, signAndRender, valueDescending } from './tx.js';
+import { InsufficientFundsError, checkRecipient, signAndRender } from './tx.js';
 import type { BoxRef, BuiltTx } from './tx.js';
 
 /**
@@ -34,13 +34,16 @@ export function buildInviteTx(
     );
   }
 
-  const selected = selectBoxes(valueDescending(boxes), cfg.bondAmount);
+  const selected = selectKarmaInputs(boxes, cfg.bondAmount);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
   const changeValue = selectedTotal - cfg.bondAmount;
 
   // Candidates: no id and no provenance. `computeTxId` hashes outputs through
   // `canonicalBoxBytes`, which encodes neither, so attaching them would invent
   // fields the signature does not cover.
+  //
+  // The change output is unmarked — a user transaction may not write `income`
+  // (NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes").
   const owner = Buffer.from(cfg.publicKeyHex, 'hex');
   const outputs: UtxoTransaction['outputs'] = [];
   if (changeValue > 0n) {
@@ -62,5 +65,40 @@ export function buildInviteTx(
     protocolVersion,
   };
 
-  return signAndRender(cfg, tx, changeValue > 0n ? 0 : null);
+  return signAndRender(cfg, tx, changeValue > 0n ? 0 : null, null, selected);
+}
+
+/**
+ * The invite's karma inputs: the owner's own box, their own box beside their
+ * income box, or — when they hold no own box — the income box alone.
+ *
+ * NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes"
+ */
+function selectKarmaInputs(boxes: readonly BoxRef[], bond: bigint): readonly BoxRef[] {
+  const own = boxes.filter((b) => b.income !== true);
+  const incomeBoxes = boxes.filter((b) => b.income === true);
+  if (own.length > 1) {
+    throw new Error(`the owner holds ${own.length} own karma boxes, at most one is allowed`);
+  }
+  if (incomeBoxes.length > 1) {
+    throw new Error(`the owner holds ${incomeBoxes.length} income karma boxes, at most one is allowed`);
+  }
+  const ownBox = own[0];
+  const incomeBox = incomeBoxes[0];
+  if (ownBox !== undefined && ownBox.value >= bond) {
+    return [ownBox];
+  }
+  if (ownBox !== undefined && incomeBox !== undefined && ownBox.value + incomeBox.value >= bond) {
+    return [ownBox, incomeBox];
+  }
+  if (ownBox === undefined && incomeBox !== undefined && incomeBox.value >= bond) {
+    return [incomeBox];
+  }
+  // The pair cannot cover the bond. The outer drained check catches this, so
+  // the throw here guards selection from a boxes array that would smuggle a
+  // short spend past that gate — the owner's `held` as the pending view has
+  // left it is the single source of truth.
+  throw new InsufficientFundsError(
+    `insufficient karma: the owner's boxes total ${boxes.reduce((s, b) => s + b.value, 0n)} and cannot cover the bond ${bond}`,
+  );
 }

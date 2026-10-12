@@ -36,7 +36,7 @@ describe('HttpNodeClient box queries', () => {
   // NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes":
   // the node answers at most one marked and one unmarked karma box. The marked
   // box carries `income: true`; the unmarked box carries no `income` key.
-  it.fails('reads a marked and an unmarked box to one own and one income', async () => {
+  it('reads a marked and an unmarked box to one own and one income', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       json(200, {
         boxes: [
@@ -54,14 +54,14 @@ describe('HttpNodeClient box queries', () => {
 
   // NODE_INTERFACE → HTTP API: `income: true` on the owner's income box and no
   // such key otherwise — any other value for `income` has no decoding.
-  it.fails('refuses an income value that is not strictly true', async () => {
+  it('refuses an income value that is not strictly true', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       json(200, { boxes: [{ boxId: 'bb'.repeat(32), value: '500', income: false }] }),
     );
     await expect(client.karmaBoxes(key)).rejects.toThrow(/income/i);
   });
 
-  it.fails('refuses a non-true, non-false value for income', async () => {
+  it('refuses a non-true, non-false value for income', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       json(200, { boxes: [{ boxId: 'bb'.repeat(32), value: '500', income: 'yes' }] }),
     );
