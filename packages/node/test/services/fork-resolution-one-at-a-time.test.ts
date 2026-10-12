@@ -681,7 +681,7 @@ describe('a block delivered while a shortening switch runs is judged after it', 
   });
   afterEach(teardownTrackers);
 
-  it('no corrupt-state throw from the in-flight resolution', async () => {
+  it('the pending block is judged on the shortened tip without a corrupt-state throw', async () => {
     await initChainStore();
     const cfg = makeTestConfig({ maxReorgDepth: D });
     await startCreator(cfg);
@@ -694,63 +694,70 @@ describe('a block delivered while a shortening switch runs is judged after it', 
       applyOrderingBlock: (b: OrderingBlock) => boolean;
     };
 
-    // A: five slow blocks above base.
+    // A: five slow blocks above base — the lighter chain the shortening
+    // replaces.
     const t_top = base[BASE_TOP - 1]!.header.createdAt;
     const A: OrderingBlock[] = [];
     for (let i = 0; i < 5; i++) {
       A.push(...(await buildAndApply([[BASE_TOP + 1 + i, t_top + 3 * HL + i]])));
     }
-    // A2: a sibling slow branch (different stamps, different hashes), built
-    // over the same base so the slow peer serves it to the in-flight
-    // resolution without matching our chain's hashes above base
-    // (NODE_INTERFACE → Fork choice decides on verified headers, step 3).
     await revertChainTo(BASE_TOP);
-    const A2: OrderingBlock[] = [];
-    for (let i = 0; i < 5; i++) {
-      A2.push(...(await buildAndApply([[BASE_TOP + 1 + i, t_top + 3 * HL + 100 + i]])));
-    }
-    await revertChainTo(BASE_TOP);
+    // B: two fast blocks above base — the shortening.
     const B = await buildAndApply([
       [BASE_TOP + 1, t_top + 1],
       [BASE_TOP + 2, t_top + 2],
     ]);
     await revertChainTo(BASE_TOP);
+    // X: a sibling two-block branch above base, with its own stamps — the
+    // other block, delivered while the shortening runs. Non-extending from
+    // the shortened tip too.
+    const X: OrderingBlock[] = [];
+    for (let i = 0; i < 2; i++) {
+      X.push(...(await buildAndApply([[BASE_TOP + 1 + i, t_top + 500 + i]])));
+    }
+    await revertChainTo(BASE_TOP);
     for (const b of A) expect(applyOrderingBlock(b)).toBe(true);
 
     const ordering = await importOrdering();
+    // The pre-switch tip — one of the two tips that prove the shortening is
+    // one.
     expect(ordering.getCurrentHeight()).toBe(BASE_TOP + 5);
 
-    // In-flight resolution: a slow peer that serves the A2 sibling branch
-    // and holds at the fork-walk's first header request. The gate holds
-    // this resolution open while the shortening switch below runs.
-    const chainA2 = [...base, ...A2];
+    // The shortening switch's resolution is the one running, held at its
+    // block fetch under `gate`.
     let open!: () => void;
     const gate = new Promise<void>((r) => { open = r; });
-    const slow = singleBranchNet('peer-slow', chainA2, { headerGate: gate });
+    const netB = singleBranchNet('peer-B', [...base, ...B], { blockGate: gate });
+    const netX = singleBranchNet('peer-X', [...base, ...X]);
 
     const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
-    handleOrderingBlock(A2[A2.length - 1]!, 'peer-slow', slow);
+    handleOrderingBlock(B[1]!, 'peer-B', netB);
     await vi.waitFor(() => {
-      expect(slow.headerCalls.count).toBeGreaterThanOrEqual(1);
+      expect(netB.blockCalls.count).toBeGreaterThanOrEqual(1);
     }, { timeout: 5000 });
 
-    // The shortening switch via B runs to its switch.
-    const netB = singleBranchNet('peer-B', [...base, ...B]);
-    handleOrderingBlock(B[1]!, 'peer-B', netB);
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(ordering.getCurrentHeight()).toBe(BASE_TOP + 2);
+    // The other block, delivered while the shortening runs, is peer-X's
+    // pending block.
+    handleOrderingBlock(X[1]!, 'peer-X', netX);
 
     open();
     await settleResolveForks(ctx);
 
-    // The rule: nothing of the corrupt-state family
-    // reached the fail-stop boundary.
-    // NODE_INTERFACE →
-    // "What the funnel's totality catch is FOR"
-    expect(ctx.caughtCorrupt.map((e) => (e as Error).constructor.name)).toEqual([]);
+    // The post-switch tip — the second of the two tips. The lowest journal
+    // kept is `tip − maxReorgDepth` at the moment the shortening landed:
+    // at the pre-switch tip of 9, apply purged below 9 − 6 = 3, so the row
+    // at height 3 stands after the shortening to 6.
+    const journal = (await import('../../src/store/journal.js')) as {
+      getLowestJournalHeight: () => number | null;
+    };
+    expect(ordering.getCurrentHeight()).toBe(BASE_TOP + 2);
+    expect(journal.getLowestJournalHeight()).toBe(3);
+
+    // The rule: the pending block is judged on the shortened tip (so its
+    // net is asked for headers), and nothing of the corrupt-state family
+    // reaches the boundary.
+    expect(netX.headerCalls.count).toBeGreaterThanOrEqual(1);
+    expect(ctx.caughtCorrupt).toEqual([]);
   });
 });
 
