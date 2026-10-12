@@ -1893,7 +1893,7 @@ them. A third — a `networkType` field in the block header — was specified he
 
 | Layer | Mechanism | What a cross-network object does |
 |---|---|---|
-| **Transport** | Wire magic selected by the profile | Never assembles as a frame; peers do not connect |
+| **Transport** | Wire magic selected by the profile — on every frame, and in the name of both gossip topics (`NET_INTERFACE → Gossip Topics`) | Never assembles as a frame, and is published on a topic this network does not hear; peers do not connect |
 | **Chain** | Distinct genesis per network | Cannot link; its input boxes do not exist here |
 
 **The chain layer is what makes the networks genuinely separate**, and it is doing more work

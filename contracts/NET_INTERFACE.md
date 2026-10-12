@@ -175,7 +175,7 @@ to the envelope structure (not the message bodies).
 Codes 6–7, 10–11 and 12–13 are holes: a post is a transaction and a block
 carries its posts' commits in `utxoTxs`, so no post crosses the network as its own
 message — its **body** crosses only as the trailing field of the transaction's packet on
-`/dagsocial/tx/1` (→ Gossip Topics) and as a `MODIFIER_POST_BODY` modifier on codes 4/5
+the `tx` topic (→ Gossip Topics) and as a `MODIFIER_POST_BODY` modifier on codes 4/5
 (→ ModifierRequest), keyed by the post id and checkable against the commit the requester
 already holds; a post as an object in its own right (codes 10/11) is what cannot be verified
 (TYPES_INTERFACE → What "verify a post" means now). A new message takes the lowest free code.
@@ -207,8 +207,54 @@ the rule and the measurement behind it.
 
 | Topic | Payload | Priority | Description |
 |-------|---------|----------|-------------|
-| `/dagsocial/ordering-block/1` | OrderingBlock (positional) | Critical | Consensus anchors |
-| `/dagsocial/tx/1` | Transaction **packet** — `encodeTxPacket(tx, content?)`: `encodeTx(tx)` ‖ `opt(lpUtf8(content))` (TYPES_INTERFACE → Layout — UtxoTransaction, the packet codec) | High | Posts (with their body), likes, invites, vouches, credit transfers |
+| `/dagsocial/<magic>/ordering-block/1` | OrderingBlock (positional) | Critical | Consensus anchors |
+| `/dagsocial/<magic>/tx/1` | Transaction **packet** — `encodeTxPacket(tx, content?)`: `encodeTx(tx)` ‖ `opt(lpUtf8(content))` (TYPES_INTERFACE → Layout — UtxoTransaction, the packet codec) | High | Posts (with their body), likes, invites, vouches, credit transfers |
+
+> ⚠ **AHEAD OF CODE (2026-10-12).** The network in a topic's name, the two topics as the whole of what
+> the router hears, the unsigned envelope, the id over the topic and the data, `GOSSIP_SEEN_WINDOW_MS`
+> and the quiet duplicate publish lead `net/src/node.ts`' gossipsub options and `net/src/gossip.ts`'
+> topic table: the code signs every message, names it by its publisher and a sequence number, hears any
+> topic, and subscribes to `/dagsocial/ordering-block/1` and `/dagsocial/tx/1` on every network.
+
+**A topic is named for its network.** `<magic>` is the profile's wire magic (→ Magic Bytes) as eight
+lowercase hex digits — `4d444147` on mainnet, `54444147` on testnet, `44444147` on devnet. A node
+builds its two topic strings from `NetConfig.magic` at `start()` and they are the whole of what its
+router hears: it subscribes to both, and a subscription or a message on any other topic is passed over
+before the router names, caches or forwards anything (gossipsub's `allowedTopics`). A node of another
+network therefore shares no topic with this one. The name keeps apart nodes that follow the protocol
+and does no more than that: a peer may publish on any topic, and what it publishes on one of ours meets
+Stage 1 like any message (→ Validation Architecture).
+
+**A message is its topic and its data.** Gossip is unsigned (gossipsub's `StrictNoSign`): a published
+message carries no publisher, no sequence number, no signature and no key, so nothing in it names the
+node it came from, and the router refuses a message that carries a signature, a sequence number or a
+key before any topic validator runs. What authenticates a payload is the payload — an ordering block's
+proof of work at Stage 1, a transaction's signatures at Stage 2 — and the one peer a message is
+attributed to is the hop that sent it (→ Penalty Attribution).
+
+**A message is named by its bytes.** The message id is `hash32(lpUtf8(topic) ‖ data)` — the protocol
+hash (`TYPES_INTERFACE → The protocol hash`) over the topic string, length-prefixed, and the payload's
+bytes — for a message this node publishes as for one it receives. The same bytes on one topic are one
+message, whichever peer sends them and however often; the same bytes on the two topics are two. The
+topic is in the preimage because the router records an id before the topic's validator runs: under an
+id over the data alone, a block's bytes sent on the `tx` topic would be refused there and leave the
+block itself unheard for the seen window. The id is the router's alone — its seen set and its `IHAVE`
+and `IWANT` exchange — and enters no commitment, no store and no signature, so its preimage carries no
+domain tag.
+
+**A message is heard once in a seen window.** The router keeps every id it has named for
+`GOSSIP_SEEN_WINDOW_MS` — 120 000, two minutes — and records it before the topic's validator runs. A
+second copy inside the window, from any peer, is not validated, not delivered and not forwarded. That
+holds for a message Stage 1 refused as for one it accepted, so a refusal stands for the window. A
+publish of bytes this node has seen on the topic inside the window sends nothing and resolves
+(→ Gossip). Past the window the same bytes are a message again: the name bounds a replay to one hearing
+a window at each node, and Stage 1 does not ask whether the node already holds the object.
+
+**The envelope, the id and the topic names are one per network.** A node that signs and one that does
+not refuse each other's messages, two nodes that name a topic differently share none of it, and two
+that name a message differently cannot ask each other for one. A change to any of the three therefore
+reaches every node of a network in one restart; it moves no committed byte and owes no reset
+(`ARCHITECTURE → Deploy gate`).
 
 **The packet rule: `tx.post` present ⟺ `content` present.** The topic validator checks it
 in this order, and in the same order on every node: `decodeTxPacket` (undecodable →
@@ -221,10 +267,10 @@ never accepted apart. The body is outside every id, so a relay cannot re-point i
 failing the commitment check at the next hop.
 
 **Tracked reservation (remnant-bounded — TYPES_INTERFACE → Tracked reservations, condition 3): the
-topic string `/dagsocial/subblock/1`.** Held by its live guard — `gossip.test.ts` asserts
-the topic has no validator — and it leaves with that guard.
+topic name `subblock`.** Held by its live guard — `gossip.test.ts` asserts the node's
+`/dagsocial/<magic>/subblock/1` has no validator — and it leaves with that guard.
 
-`/dagsocial/stump/1` is retired (P2-F F1) and never reused: the topic is neither subscribed nor
+The topic name `stump` is retired (P2-F F1) and never reused: the topic is neither subscribed nor
 published. An author's withdrawal propagates as a transaction — on the `tx` topic and inside
 ordering blocks.
 
@@ -380,7 +426,7 @@ proven — after Noise, before the muxer, the earliest point that has an identit
 peer's inbound connection is aborted inside the upgrade: it never becomes a connection, holds no slot
 against `maxPeers`, raises no `peer:connect`, and never reaches the handshake handler. The handler's own
 check (above) is the same predicate one layer up and stays: a peer can be banned after its connection
-upgraded and before its handshake ran — a gossip topic validator penalises before the Active gate — and
+upgraded and before its handshake ran — a gossip topic validator penalises a carrier in any state — and
 the hang-up a ban raises (below) completes asynchronously. Outbound is not gated: the outbound hooks
 fire inside the dial, before the funnel sees the connection, and the gater sees the resolved address,
 never the spelling the funnel dialled, so gating there would refuse the dial every tick and never tie
@@ -394,10 +440,10 @@ connection to the peer is hung up and the sync machine is told as for a disconne
 peer leaves the retained-height table, so it is never again a pick candidate, and if it was the sync
 peer the machine rotates at once rather than after a stall window. The `peer:disconnect` event the
 hang-up raises repeats both idempotently, and `onPeerDisconnected` fires from it as for any close. Until
-the close completes the peer's gossip and sync frames are refused at their Active gates like any
-non-Active peer's. A ban that leaves the connection standing is one the sync machine cannot see — the
-banned peer stays a candidate, its requests go unanswered, and each pick of it costs a stall window
-before rotation.
+the close completes the peer's sync frames are refused at the Active gate like any non-Active peer's,
+and a gossip message it carries stands or falls by Stage 1 alone (→ Inbound Processing). A ban that
+leaves the connection standing is one the sync machine cannot see — the banned peer stays a candidate,
+its requests go unanswered, and each pick of it costs a stall window before rotation.
 
 **Ban policy** — two tiers, split by what a failure is evidence of:
 
@@ -1087,8 +1133,10 @@ There is no state after `Active`: a disconnect or a ban **removes the row** (`Pe
 removes (→ "Ban surfaces are unified"). A peer whose handshake does not complete stays `Connecting`
 while its connection stands.
 
-Invariant: No events leak from non-Active peers. Messages from peers not
-in `Active` state are rejected before reaching the router.
+Invariant: a peer that is not `Active` is asked nothing and answered nothing. A sync stream it opens
+is answered with an empty frame and left unread, and it is no entry of `getConnectedPeers()`, the set
+the sync machine picks from. A gossip message is not such an event: it is judged by Stage 1 and
+delivered whichever peer carried it (→ Inbound Processing).
 
 ## Stall Detection
 
@@ -1106,7 +1154,7 @@ clear and retry.
 | Transport | TCP (with optional QUIC, deferred) |
 | Stream multiplexing | yamux or mplex |
 | Encryption | Noise (with libp2p-noise) |
-| PubSub | Gossipsub 1.1 |
+| PubSub | Gossipsub 1.1 — unsigned messages named by their bytes, the node's two topics alone (→ Gossip Topics) |
 | Peer identity | libp2p peer ID (Ed25519 or secp256k1 keypair) |
 
 The libp2p peer identity is separate from DAGsocial account identity. A
@@ -1286,12 +1334,28 @@ structure, PoW, and signatures.
 | `broadcastOrderingBlock(b)` | `(OrderingBlock) => Promise<void>` | Gossip a newly created ordering block |
 | `broadcastTx(tx, content?)` | `(UtxoTransaction, string?) => Promise<void>` | Gossip a transaction **packet** — `encodeTxPacket(tx, content)`; a post's body travels in the same message (→ Gossip Topics). The caller passes `content` ⟺ `tx.post` is set. |
 
+**A broadcast that sends nothing still resolves.** Each publishes on the node's own topic for its
+payload. Before `start()`, with no peer on the topic, or with the bytes already seen on the topic inside
+the seen window (→ Gossip Topics → "A message is heard once in a seen window"), nothing is sent and the
+promise resolves as it does for a message that went out.
+
 ### Inbound Processing
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `onOrderingBlock(callback)` | `((OrderingBlock, fromPeerId: string) => void) => void` | Register handler for inbound ordering blocks. `fromPeerId` is the peer that **relayed** the block to us, or `''` — see below |
 | `onTx(callback)` | `((UtxoTransaction, content: string \| undefined, fromPeerId: string) => void) => void` | Register handler for inbound transaction packets. `content` is the verified body when the transaction carries a post (the validator has already checked it against `tx.post.contentHash`), `undefined` otherwise; `fromPeerId` carries the same relayed-peer semantics as `onOrderingBlock`'s. |
+
+> ⚠ **AHEAD OF CODE (2026-10-12).** Delivery with no gate leads `net/src/gossip.ts`' listener, which
+> drops a message whose publisher is not an `Active` peer.
+
+**A gossip message that passes Stage 1 is delivered, whichever peer carried it.** No gate stands
+between the topic validator's Accept and the handler. The router hands a message on once and never a
+second copy (→ Gossip Topics → "A message is heard once in a seen window"), so a delivery withheld for
+its first carrier's sake — a peer whose handshake has not completed, or one whose ban has not yet closed
+its connection — would be a valid block or transaction this node does not hear for the window, however
+many `Active` peers send it after. The carrier reaches the handler as `fromPeerId`, a hint and nothing
+more, and it need not be `Active`.
 
 ⚠ **`fromPeerId` is not guaranteed to be a peer id.** It is read defensively from the gossip event's
 `propagationSource`, which the gossipsub type declares required — and *required by the type* is not
@@ -1404,7 +1468,8 @@ interface NetConfig {
 
   // Network — REQUIRED, supplied by the node from its resolved profile.
   // No default; see §Magic Bytes and §Consensus parameters net enforces.
-  magic: number                    // mainnet 0x4D444147 · testnet 0x54444147 · devnet 0x44444147
+  magic: number                    // mainnet 0x4D444147 · testnet 0x54444147 · devnet 0x44444147 —
+                                   // every frame's magic and both gossip topics' names (→ Gossip Topics)
   protocolVersionSchedule: readonly ProtocolEra[]   // the profile's era table (TYPES_INTERFACE → Version):
                                    // the handshake, the tx validator and the boundary sweep read the
                                    // era at chainHeight() + 1 from it; the block validator each header's
@@ -1530,6 +1595,8 @@ Handler Registration). Net receives values; it does not resolve them, does not i
 - UTXO transactions are verified against the local UTXO view — conflicting
   transactions (double-spends) are rejected at gossip time
 - Peer identity (libp2p) is independent of account identity (Ed25519 keypair)
-- Topic names include protocol version — incompatible wire format changes
-  get a new topic
+- A topic name carries its network's magic and a format version — another network shares no
+  topic, and an incompatible wire format gets a new one
+- A gossip message carries no publisher and no signature, and its id is a function of its topic
+  and its bytes
 - Inbound messages are re-verified before forwarding and storing
