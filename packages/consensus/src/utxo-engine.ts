@@ -137,6 +137,17 @@ export interface UtxoEngineDeps {
    */
   getKarmaOwed: (owner: Uint8Array, height: number) => bigint;
   /**
+   * The ids of the unmarked karma boxes the owner holds in the state the
+   * transaction is judged against (NODE_INTERFACE → Karma transition rules →
+   * "An identity holds at most two karma boxes"). Rule 3 refuses a karma
+   * transaction whose inputs do not include every id this reader answers: the
+   * owner's own box, or none. Block application answers over the overlay — the
+   * body as applied so far — so a second spend in one body names the first's
+   * change rather than the pre-body own box. Admission answers over the
+   * pending view, the relay over the confirmed set.
+   */
+  getOwnKarmaBoxIds: (owner: Uint8Array) => string[];
+  /**
    * The committed per-identity record, or null when the identity has none.
    *
    * Consensus input: an invite rejects an `inviteePublicKey` that already has
@@ -384,6 +395,46 @@ function checkTransitions(
           return {
             valid: false,
             error: `Karma cannot be transferred (karma inputs have different owners)`,
+          };
+        }
+      }
+
+      // NODE_INTERFACE → Karma transition rules → "An identity holds at most
+      // two karma boxes". Rule 1 — a spend returns its change in one box or in
+      // none.
+      if (karmaOutputs.length > 1) {
+        return {
+          valid: false,
+          error: `A karma spend emits at most one karma output`,
+        };
+      }
+
+      // NODE_INTERFACE → Karma transition rules → "An identity holds at most
+      // two karma boxes". Rule 2 — the mark is the settlement's to write.
+      for (const ko of karmaOutputs) {
+        if ((ko as KarmaBox).income === true) {
+          return {
+            valid: false,
+            error: `A karma output of a user transaction never carries the income mark`,
+          };
+        }
+      }
+
+      // NODE_INTERFACE → Karma transition rules → "An identity holds at most
+      // two karma boxes". Rule 3 — every unmarked karma box the owner holds is
+      // among the inputs. The reader answers over the overlay, so a second
+      // spend in one body names the first's change rather than the pre-body
+      // own box.
+      const ownIds = deps.getOwnKarmaBoxIds(inputKarma.owner);
+      const inputIdSet = new Set<string>();
+      for (const b of inputs) if (b.id !== undefined) inputIdSet.add(b.id);
+      for (const ownId of ownIds) {
+        if (!inputIdSet.has(ownId)) {
+          return {
+            valid: false,
+            error:
+              `The owner's own karma box ${ownId} is not among the inputs; ` +
+              `a karma spend names every unmarked karma box the owner holds`,
           };
         }
       }

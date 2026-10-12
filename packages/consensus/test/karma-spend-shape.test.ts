@@ -98,7 +98,7 @@ const karmaOut = (owner: Uint8Array, value: bigint, h: number, income?: true): A
 // ---------------------------------------------------------------------------
 
 describe('rule 1 — at most one karma output on every karma arm', () => {
-  it.fails('the plain karma -> karma shape refuses two karma outputs', () => {
+  it('the plain karma -> karma shape refuses two karma outputs', () => {
     const s = seedView('r1/plain', (id) => [karmaBox(id, 20n, 1, 0)]);
     const input = s.view.getKarmaBoxes(s.actor.userId)[0]!;
     const tx = finish({
@@ -110,7 +110,7 @@ describe('rule 1 — at most one karma output on every karma arm', () => {
     expectRefused(s.view, [tx], tx);
   });
 
-  it.fails('the invite refuses two karma outputs', () => {
+  it('the invite refuses two karma outputs', () => {
     const s = seedView('r1/invite', (id) => [karmaBox(id, 50n, 1, 0)], { memberSinceBlock: 1, lastActivityBlock: H - 1 });
     const input = s.view.getKarmaBoxes(s.actor.userId)[0]!;
     const invitee = seededIdentity('r1/invite/invitee');
@@ -127,7 +127,7 @@ describe('rule 1 — at most one karma output on every karma arm', () => {
     expectRefused(s.view, [tx], tx);
   });
 
-  it.fails('the vouch cast refuses two karma outputs', () => {
+  it('the vouch cast refuses two karma outputs', () => {
     const s = seedView('r1/vouch', (id) => [karmaBox(id, 20n, 1, 0)], { memberSinceBlock: 1, memberVouches: 10, memberBar: 1, lastActivityBlock: H - 1 });
     const target = seededIdentity('r1/vouch/target');
     s.view.putIdentityRecord(target.userId, identityRecord({}));
@@ -307,7 +307,7 @@ describe('rule 2 — a user transaction never writes the income mark', () => {
 // ---------------------------------------------------------------------------
 
 describe('rule 3 — the own box is named', () => {
-  it.fails('M + P held: a spend naming P alone is refused', () => {
+  it('M + P held: a spend naming P alone is refused', () => {
     const s = seedView('r3/P-alone', (id) => [karmaBox(id, 3n, 1, 0), incomeBox(id, 5n, 2, 0)]);
     const P = s.view.getKarmaBoxes(s.actor.userId).find((b) => b.income === true)!;
     const tx = consolidateTx(s.actor, [P], H);
@@ -399,7 +399,7 @@ describe('rule 3 — the own box is named', () => {
     expectAccepted(s.view, [tx]);
   });
 
-  it.fails('a name burn beside an income box: naming P and the name box while M stands is refused', () => {
+  it('a name burn beside an income box: naming P and the name box while M stands is refused', () => {
     const s = seedView('r3/burn-P', (id) => [karmaBox(id, 20n, 1, 0), incomeBox(id, 20n, 2, 0)]);
     const P = s.view.getKarmaBoxes(s.actor.userId).find((b) => b.income === true)!;
     const name = seedProvenance<UsernameBox>({ boxType: 'username', value: 0n, createdAtBlock: 0, owner: s.actor.userId, name: new TextEncoder().encode('zoe') }, 0, 78);
@@ -431,7 +431,7 @@ describe('rule 3 — the own box is named', () => {
 
   // The wiring assertion: the overlay answers getOwnKarmaBoxIds, so the
   // second spend reads the change the first made rather than the pre-body M.
-  it.fails('the own box moves within a body: the first names M; a second naming P alone is refused', () => {
+  it('the own box moves within a body: the first names M; a second naming P alone is refused', () => {
     const s = seedView('r3/move/P-after', (id) => [karmaBox(id, 3n, 1, 0), incomeBox(id, 5n, 2, 0)]);
     const boxes = s.view.getKarmaBoxes(s.actor.userId);
     const M = boxes.find((b) => b.income !== true)!;
@@ -543,7 +543,7 @@ describe('rule 3 — validateTx reads the reader on every answered id', () => {
     return deps;
   }
 
-  it.fails('two own ids answered — a transaction naming only one is refused', () => {
+  it('two own ids answered — a transaction naming only one is refused', () => {
     const [b1, b2] = [makeBox(5n, 1), makeBox(7n, 2)];
     const consol = consolidateTx(actor, [b1], H);
     const deps = stubDeps({ boxes: [b1, b2], ownIds: [b1.id!, b2.id!] });

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { sign as cryptoSign } from 'crypto';
 import { MAX_TX_BYTES, PROTOCOL_VERSION, computeTxId, encodeTx, profileFor } from '@dagsocial/types';
-import type { AnyBox, AnyBoxCandidate, CreditBox, UtxoTransaction } from '@dagsocial/types';
+import { bytesToHex } from '@dagsocial/types';
+import type { AnyBox, AnyBoxCandidate, CreditBox, KarmaBox, UtxoTransaction } from '@dagsocial/types';
 import { verifyEd25519 } from '@dagsocial/validation';
 import { validateTx } from '@dagsocial/consensus';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
@@ -47,6 +48,17 @@ function depsOver(boxes: AnyBox[]): UtxoEngineDeps {
     consumeBox: unread('consumeBox'),
     getKarmaValue: unread('getKarmaValue'),
     getKarmaOwed: unread('getKarmaOwed'),
+    // Rule 3 reads the owner's unmarked karma box ids; the stub answers from
+    // the fixture boxes so a karma transaction naming every one of them is
+    // admitted.
+    getOwnKarmaBoxIds: (owner) =>
+      boxes
+        .filter((b): b is KarmaBox & { id: string } =>
+          b.boxType === 'karma' &&
+          bytesToHex((b as KarmaBox).owner) === bytesToHex(owner) &&
+          (b as KarmaBox).income !== true &&
+          b.id !== undefined)
+        .map((b) => b.id),
     getIdentityRecord: unread('getIdentityRecord'),
     hasActiveVouchEscrow: unread('hasActiveVouchEscrow'),
     vouchCooldownBlocks: ctx.vouchCooldownBlocks,
