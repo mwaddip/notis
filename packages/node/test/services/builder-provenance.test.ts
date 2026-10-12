@@ -117,6 +117,8 @@ describe('invite id prediction carries transaction provenance', () => {
     getKarmaOwed: admissionOwed({ staleThresholdBlocks: 40320, decayIntervalBlocks: 1440, decayAmount: 5n, karmaMinimum: 10n }),
     getKarmaValue: (owner: Uint8Array) =>
       getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+    getOwnKarmaBoxIds: (owner: Uint8Array) =>
+      getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
     getIdentityRecord: (id: Uint8Array) =>
       Buffer.from(id).equals(Buffer.from(inviterId)) ? ROOT_RECORD : null,
     hasActiveVouchEscrow: () => false,

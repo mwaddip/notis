@@ -59,6 +59,71 @@ import {
   coinbaseOf, withCoinbase,
   nodeRewardSchedule } from '../helpers.js';
 
+/**
+ * A thread post whose karma input is sized by the caller — the author's
+ * single own box, large enough to pay the thread's price and leave the next
+ * transaction a workable change.
+ */
+function makeThreadWithKarma(
+  author: TestIdentity,
+  content: string,
+  karmaValue: bigint,
+): { tx: UtxoTransaction; postId: string; commit: ReturnType<typeof makePostCommit>; content: string; karmaBox: KarmaBox } {
+  const karmaBox = makeKarmaBox(karmaValue, author.userId, 0, content.length);
+  const commit = makePostCommit(author.userId, content);
+  const changeValue = karmaValue - POST_PRICE_THREAD;
+  const outputs: UtxoTransaction['outputs'] = [];
+  if (changeValue > 0n) {
+    outputs.push({ boxType: 'karma', value: changeValue, createdAtBlock: 0, owner: author.userId } as never);
+  }
+  outputs.push({ boxType: 'karma_price', value: POST_PRICE_THREAD, createdAtBlock: 0 } as never);
+  const tx: UtxoTransaction = {
+    inputs: [karmaBox.id!],
+    outputs,
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+    post: commit,
+  };
+  signTransaction(tx, author.privateKey, hex(author.userId));
+  const postId = computePostId(computeTxId(tx), 0);
+  return { tx, postId, commit, content, karmaBox };
+}
+
+/**
+ * A reply built as a chained post: it consumes the author's own box left by
+ * `prior` (the author's previous post in the same block) and emits the
+ * reply's price box + its parent-author accrual (NODE_INTERFACE → Karma
+ * transition rules → "An identity holds at most two karma boxes").
+ */
+function makeReplyChaining(
+  author: TestIdentity,
+  prior: UtxoTransaction,
+  parentId: string,
+  content: string,
+): { tx: UtxoTransaction; postId: string; commit: ReturnType<typeof makePostCommit>; content: string } {
+  const inputKarma = changeBoxOf(prior);
+  const commit = makePostCommit(author.userId, content, { parentRefs: [parentId] });
+  const changeValue = inputKarma.value - POST_PRICE_REPLY;
+  const outputs: UtxoTransaction['outputs'] = [];
+  if (changeValue > 0n) {
+    outputs.push({ boxType: 'karma', value: changeValue, createdAtBlock: inputKarma.createdAtBlock, owner: author.userId } as never);
+  }
+  outputs.push(
+    { boxType: 'karma_price', value: POST_PRICE_REPLY - REPLY_AUTHOR_SHARE, createdAtBlock: inputKarma.createdAtBlock } as never,
+    { boxType: 'like_accrual', value: REPLY_AUTHOR_SHARE, createdAtBlock: inputKarma.createdAtBlock, author: author.userId } as never,
+  );
+  const tx: UtxoTransaction = {
+    inputs: [inputKarma.id!],
+    outputs,
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+    post: commit,
+  };
+  signTransaction(tx, author.privateKey, hex(author.userId));
+  const postId = computePostId(computeTxId(tx), 0);
+  return { tx, postId, commit, content };
+}
+
 // ---------------------------------------------------------------------------
 // Test config
 // ---------------------------------------------------------------------------
@@ -1277,21 +1342,18 @@ describe('block-apply embedded tx re-validation', () => {
     utxo.insertBox(bobBox);
 
     // N2b: likes need confirmed live targets — real posts, confirmed by this
-    // same block (topology at §8b precedes the tx loop at §11).
+    // same block (topology at §8b precedes the tx loop at §11). The author's
+    // one own box is NODE_INTERFACE → Karma transition rules → "An identity
+    // holds at most two karma boxes"; alice and bob each like the one post.
     const author = makeTestIdentity();
     const { commit: commitA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(author, 'valid-txs target a');
-    const { commit: commitB, tx: postBTx, postId: postBId, content: contentB } = await seedPostTx(author, 'valid-txs target b');
     posts.insertPost(postAId, computeTxId(postATx), commitA, contentA);
-    posts.insertPost(postBId, computeTxId(postBTx), commitB, contentB);
     mempool.insertUtxoTx(postATx, 1000);
-    mempool.insertUtxoTx(postBTx, 1000);
 
-    // ⛔ **The marker names the POST'S author, not the liker.** Both posts are
-    // `author`'s, so both markers name `author` — a marker naming the liker
-    // would earmark their own karma to themselves and is refused by the pin
-    // (NODE_INTERFACE → Karma transition rules).
+    // ⛔ **The marker names the POST'S author, not the liker** (NODE_INTERFACE
+    // → Karma transition rules).
     const aliceTx = makeLikeTx(alice, aliceBox, postAId, author.userId);
-    const bobTx = makeLikeTx(bob, bobBox, postBId, author.userId);
+    const bobTx = makeLikeTx(bob, bobBox, postAId, author.userId);
     mempool.insertUtxoTx(aliceTx, 1000);
     mempool.insertUtxoTx(bobTx, 1000);
 
@@ -1303,7 +1365,6 @@ describe('block-apply embedded tx re-validation', () => {
     expect(saved!.appliedUtxoTxs.map((t) => t.txId).sort()).toEqual(
       [
         computeTxId(postATx),
-        computeTxId(postBTx),
         computeTxId(aliceTx),
         computeTxId(bobTx),
       ].sort(),
@@ -1335,14 +1396,17 @@ describe('block-apply embedded tx re-validation', () => {
     const startBox = makeKarmaBox(100n, liker.userId, 0);
     utxo.insertBox(startBox);
 
-    const author = makeTestIdentity();
-    const { commit: commitA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(author, 'forward-ref target a');
-    const { commit: commitB, tx: postBTx, postId: postBId, content: contentB } = await seedPostTx(author, 'forward-ref target b');
+    // Two authors, one post each — NODE_INTERFACE → Karma transition rules →
+    // "An identity holds at most two karma boxes".
+    const authorA = makeTestIdentity();
+    const authorB = makeTestIdentity();
+    const { commit: commitA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(authorA, 'forward-ref target a');
+    const { commit: commitB, tx: postBTx, postId: postBId, content: contentB } = await seedPostTx(authorB, 'forward-ref target b');
     posts.insertPost(postAId, computeTxId(postATx), commitA, contentA);
     posts.insertPost(postBId, computeTxId(postBTx), commitB, contentB);
 
-    const txA = makeLikeTx(liker, startBox, postAId, author.userId);
-    const txB = makeLikeTx(liker, changeBoxOf(txA), postBId, author.userId);
+    const txA = makeLikeTx(liker, startBox, postAId, authorA.userId);
+    const txB = makeLikeTx(liker, changeBoxOf(txA), postBId, authorB.userId);
 
     // Body: [postA, postB, txB, txA] — txB's input is a forward reference.
     const block = await makeApplicableBlock({
@@ -1371,14 +1435,18 @@ describe('block-apply embedded tx re-validation', () => {
     const startBox = makeKarmaBox(100n, liker.userId, 0);
     utxo.insertBox(startBox);
 
-    const author = makeTestIdentity();
-    const { commit: commitA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(author, 'chain target a');
-    const { commit: commitB, tx: postBTx, postId: postBId, content: contentB } = await seedPostTx(author, 'chain target b');
+    // Two authors each post once — NODE_INTERFACE → Karma transition rules →
+    // "An identity holds at most two karma boxes" — and the dependency chain
+    // likes one of each.
+    const authorA = makeTestIdentity();
+    const authorB = makeTestIdentity();
+    const { commit: commitA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(authorA, 'chain target a');
+    const { commit: commitB, tx: postBTx, postId: postBId, content: contentB } = await seedPostTx(authorB, 'chain target b');
     posts.insertPost(postAId, computeTxId(postATx), commitA, contentA);
     posts.insertPost(postBId, computeTxId(postBTx), commitB, contentB);
 
-    const txA = makeLikeTx(liker, startBox, postAId, author.userId);
-    const txB = makeLikeTx(liker, changeBoxOf(txA), postBId, author.userId);
+    const txA = makeLikeTx(liker, startBox, postAId, authorA.userId);
+    const txB = makeLikeTx(liker, changeBoxOf(txA), postBId, authorB.userId);
 
     // Body: [postA, postB, txA, txB] — dependency order.
     const block = await makeApplicableBlock({
@@ -1611,9 +1679,12 @@ describe('block-apply embedded tx re-validation', () => {
 
     // 6 + 6 = 12 ≥ VOUCH_MIN_BALANCE (11), but neither box alone reaches it —
     // a single-box read sees 6 < 11 whichever row it lands on, and the cast is
-    // refused however the karma is partitioned.
+    // refused however the karma is partitioned. NODE_INTERFACE → Karma
+    // transition rules → "An identity holds at most two karma boxes": the
+    // partition is own + income.
     const splitA = makeKarmaBox(6n, voucher.userId, 0, 0);
-    const splitB = makeKarmaBox(6n, voucher.userId, 0, 1);
+    const splitB: KarmaBox = { ...makeKarmaBox(6n, voucher.userId, 0, 1), income: true };
+    splitB.id = (await import('@dagsocial/types')).computeBoxId(splitB);
     utxo.insertBox(splitA);
     utxo.insertBox(splitB);
 
@@ -2679,11 +2750,12 @@ describe('block-apply funnel totality', () => {
     const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
     expect(blockApply.applyOrderingBlock(block1)).toBe(true);
 
-    const withdrawKarma = makeKarmaBox(100n, author.userId, 0, 98);
-    await seedBoxes([withdrawKarma]);
+    // The author's own box after block 1 is the post's change box
+    // (NODE_INTERFACE → Karma transition rules).
+    const withdrawKarma = changeBoxOf(postTx);
     const withdrawTx: UtxoTransaction = {
       inputs: [withdrawKarma.id!],
-      outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: author.userId }],
+      outputs: [{ boxType: 'karma' as const, value: withdrawKarma.value, createdAtBlock: 1, owner: author.userId }],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
       postWithdraw: { postId },
@@ -2698,12 +2770,10 @@ describe('block-apply funnel totality', () => {
   // Both fixtures name the rejection they expect: a bare `toBe(false)` on this
   // cluster can pass for the wrong reason, as the H-3 note above records.
 
-  async function makePostWithdrawTx(author: TestIdentity, postId: string, nonce: number): Promise<UtxoTransaction> {
-    const karma = makeKarmaBox(100n, author.userId, 0, nonce);
-    await seedBoxes([karma]);
+  function makePostWithdrawTxForKarma(author: TestIdentity, postId: string, karma: KarmaBox, atHeight: number): UtxoTransaction {
     const tx: UtxoTransaction = {
       inputs: [karma.id!],
-      outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: author.userId }],
+      outputs: [{ boxType: 'karma' as const, value: karma.value, createdAtBlock: atHeight, owner: author.userId }],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
       postWithdraw: { postId },
@@ -2724,14 +2794,16 @@ describe('block-apply funnel totality', () => {
     posts.insertPost(postId, computeTxId(postTx), commit, content);
     expect(blockApply.applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [postTx] }))).toBe(true);
 
+    const firstWithdraw = makePostWithdrawTxForKarma(author, postId, changeBoxOf(postTx), 1);
     expect(blockApply.applyOrderingBlock(
-      await makeApplicableBlock({ height: 2, utxoTxs: [await makePostWithdrawTx(author, postId, 95)] }),
+      await makeApplicableBlock({ height: 2, utxoTxs: [firstWithdraw] }),
     )).toBe(true);
     expect(posts.isLivePost(posts.getPost(postId))).toBe(false);
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const secondWithdraw = makePostWithdrawTxForKarma(author, postId, changeBoxOf(firstWithdraw), 2);
     expect(blockApply.applyOrderingBlock(
-      await makeApplicableBlock({ height: 3, utxoTxs: [await makePostWithdrawTx(author, postId, 94)] }),
+      await makeApplicableBlock({ height: 3, utxoTxs: [secondWithdraw] }),
     )).toBe(false);
     expect(warn.mock.calls.some(([m]) => String(m).includes('already-withdrawn or unknown'))).toBe(true);
     warn.mockRestore();
@@ -3324,13 +3396,18 @@ describe('T4: activity clock in the user-transaction loop', () => {
     const blockApply = await importBlockApply();
     const utxo = await importUtxo();
 
-    const author = makeTestIdentity();
-    const threadResult = makePostTx(author, 'thread for body-order');
+    // Two authors — NODE_INTERFACE → Karma transition rules → "An identity
+    // holds at most two karma boxes": one own box per author. The thread's
+    // author posts a thread; the reply's author replies, paying the parent's
+    // author's accrual.
+    const threadAuthor = makeTestIdentity();
+    const replyAuthor = makeTestIdentity();
+    const threadResult = makePostTx(threadAuthor, 'thread for body-order');
     utxo.insertBox(threadResult.karmaBox);
     const replyResult = makePostTx(
-      author, 'reply for body-order',
+      replyAuthor, 'reply for body-order',
       { parentRefs: [threadResult.postId] },
-      author.userId,
+      threadAuthor.userId,
     );
     utxo.insertBox(replyResult.karmaBox);
 
@@ -3351,13 +3428,14 @@ describe('T4: activity clock in the user-transaction loop', () => {
     const blockApply = await importBlockApply();
     const utxo = await importUtxo();
 
-    const author = makeTestIdentity();
-    const threadResult = makePostTx(author, 'thread for reverse-order');
+    const threadAuthor = makeTestIdentity();
+    const replyAuthor = makeTestIdentity();
+    const threadResult = makePostTx(threadAuthor, 'thread for reverse-order');
     utxo.insertBox(threadResult.karmaBox);
     const replyResult = makePostTx(
-      author, 'reply for reverse-order',
+      replyAuthor, 'reply for reverse-order',
       { parentRefs: [threadResult.postId] },
-      author.userId,
+      threadAuthor.userId,
     );
     utxo.insertBox(replyResult.karmaBox);
 
