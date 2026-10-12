@@ -10,6 +10,7 @@ import type {
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 import {
+  changeBoxOf,
   hex,
   makeApplicableBlock,
   makeKarmaBox,
@@ -92,13 +93,15 @@ describe('phase-move: like(P) + postWithdraw(P) in one block', () => {
     const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
     expect(blockApply.applyOrderingBlock(block1)).toBe(true);
 
-    // Block 2: like(P) + postWithdraw(P)
+    // Block 2: like(P) + postWithdraw(P). The author's own box after block 1
+    // is the post's change box; a karma spend names every unmarked karma box
+    // the owner holds (NODE_INTERFACE → Karma transition rules), so the
+    // withdrawal names it as its input.
     const likerKarma = makeKarmaBox(100n, liker.userId, 0, 200);
     const likeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
 
-    const withdrawKarma = makeKarmaBox(100n, author.userId, 0, 201);
-    await seedBoxes([likerKarma, withdrawKarma]);
-    const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
+    await seedBoxes([likerKarma]);
+    const withdrawTx = makePostWithdrawTx(author, postId, changeBoxOf(postTx));
 
     const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [likeTx, withdrawTx] });
     expect(blockApply.applyOrderingBlock(block2)).toBe(true);
@@ -125,13 +128,13 @@ describe('phase-move: a withdrawal does not erase a same-block like', () => {
 
     // Block 2: like(P) + postWithdraw(P) — the like-record should survive
     // the withdrawal (NODE_INTERFACE → Withdrawal transactions; the withdrawal
-    // moves no value and empties no record but the post's own content).
+    // moves no value and empties no record but the post's own content). The
+    // author's own box after block 1 is the post's change box.
     const likerKarma = makeKarmaBox(100n, liker.userId, 0, 400);
     const likeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
 
-    const withdrawKarma = makeKarmaBox(100n, author.userId, 0, 401);
-    await seedBoxes([likerKarma, withdrawKarma]);
-    const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
+    await seedBoxes([likerKarma]);
+    const withdrawTx = makePostWithdrawTx(author, postId, changeBoxOf(postTx));
 
     const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [likeTx, withdrawTx] });
     expect(blockApply.applyOrderingBlock(block2)).toBe(true);
@@ -160,13 +163,13 @@ describe('phase-move: creator/applier settlement agreement', () => {
 
     // Block 2: like + postWithdraw — makeApplicableBlock uses the creator's
     // buildBlockSettlement, and applyOrderingBlock independently derives its
-    // own settlement. If the two disagree, the block is rejected.
+    // own settlement. If the two disagree, the block is rejected. The
+    // author's own box after block 1 is the post's change box.
     const likerKarma = makeKarmaBox(100n, liker.userId, 0, 500);
     const likeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
 
-    const withdrawKarma = makeKarmaBox(100n, author.userId, 0, 501);
-    await seedBoxes([likerKarma, withdrawKarma]);
-    const withdrawTx = makePostWithdrawTx(author, postId, withdrawKarma);
+    await seedBoxes([likerKarma]);
+    const withdrawTx = makePostWithdrawTx(author, postId, changeBoxOf(postTx));
 
     // The block's settlement is the creator's derivation. If the applier's
     // derivation diverges (§6.1), this apply fails — pinning the constraint.
