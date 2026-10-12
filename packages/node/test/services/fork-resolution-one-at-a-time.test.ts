@@ -853,7 +853,7 @@ describe('a stored interlinks row that will not decode is the corrupt-state fami
     vi.resetModules();
   });
 
-  it.fails('getInterlinks raises UnreadableStoredBlockError for garbage bytes', async () => {
+  it('getInterlinks raises UnreadableStoredBlockError for garbage bytes', async () => {
     await initChainStore();
     await startCreator(testConfig);
 
@@ -891,7 +891,7 @@ describe('a stored journal row that will not decode is the corrupt-state family'
     vi.resetModules();
   });
 
-  it.fails('getBlockJournal raises UnreadableStoredBlockError for garbage bytes', async () => {
+  it('getBlockJournal raises UnreadableStoredBlockError for garbage bytes', async () => {
     await initChainStore();
     await startCreator(testConfig);
 
@@ -918,6 +918,40 @@ describe('a stored journal row that will not decode is the corrupt-state family'
 
     // The rule.
     expect(() => journal.getBlockJournal(2)).toThrow(corrupt.UnreadableStoredBlockError);
+  });
+});
+
+// ===========================================================================
+// NODE_INTERFACE → Block Journal: `getLowestJournalHeight`.
+// ===========================================================================
+describe('getLowestJournalHeight answers the lowest row', () => {
+  afterEach(async () => {
+    (await importBlockCreator()).stopBlockCreator();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    setClock(null);
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('null on empty, lowest after applies, lowest after purge', async () => {
+    await initChainStore();
+    await startCreator(testConfig);
+
+    const journal = (await import('../../src/store/journal.js')) as {
+      getBlockJournal: (h: number) => unknown;
+      getLowestJournalHeight: () => number | null;
+      purgeOldJournals: (belowHeight: number) => void;
+    };
+
+    expect(journal.getLowestJournalHeight()).toBeNull();
+
+    await buildAndApply([[1, T1]]);
+    await buildAndApply([[2, T1 + 60_000]]);
+    await buildAndApply([[3, T1 + 60_000 * 2]]);
+    expect(journal.getLowestJournalHeight()).toBe(1);
+
+    journal.purgeOldJournals(3);
+    expect(journal.getLowestJournalHeight()).toBe(3);
   });
 });
 

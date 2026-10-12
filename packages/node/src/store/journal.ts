@@ -3,6 +3,7 @@ import { encode, decode } from 'cbor-x';
 import type { AnyBox, IdentityRecord, UserId } from '@dagsocial/types';
 import type { NetworkRecord } from './identity-records.js';
 import type { UsernameRow, HolderRecord } from './usernames.js';
+import { UnreadableStoredBlockError } from '../services/corrupt-state.js';
 
 // ---------------------------------------------------------------------------
 // Journal types (node-owned — NODE_INTERFACE → Block Journal)
@@ -100,13 +101,22 @@ export function insertBlockJournal(journal: BlockJournal): void {
 // Note for consumers: CBOR round-trips the bigint and byte fields, but the
 // side-record `voucherId`/`targetId`/`likerId` come back as plain Uint8Array
 // — never assume Buffer.
+//
+// NODE_INTERFACE → Block Journal: a row that will not decode raises
+// `UnreadableStoredBlockError`. The row holds this node's own CBOR encoding
+// written by `insertBlockJournal`, so bytes that will not decode are local
+// corruption, as `UnreadableStoredBlockError` carries whole.
 export function getBlockJournal(height: number): BlockJournal | null {
   const db = getDb();
   const row = db.prepare(
     'SELECT journal_cbor FROM block_journal WHERE block_height = ?',
   ).get(height) as { journal_cbor: Buffer } | undefined;
   if (!row) return null;
-  return decode(row.journal_cbor) as BlockJournal;
+  try {
+    return decode(row.journal_cbor) as BlockJournal;
+  } catch (err) {
+    throw new UnreadableStoredBlockError('getBlockJournal', height, err);
+  }
 }
 
 export function deleteBlockJournal(height: number): void {
@@ -115,4 +125,17 @@ export function deleteBlockJournal(height: number): void {
 
 export function purgeOldJournals(belowHeight: number): void {
   getDb().prepare('DELETE FROM block_journal WHERE block_height < ?').run(belowHeight);
+}
+
+/**
+ * NODE_INTERFACE → Block Journal: the lowest `block_height` a journal row is
+ * kept for; `null` for an empty table. A point read on the table's primary key
+ * — `block_height` is declared `INTEGER PRIMARY KEY`, so `MIN` resolves through
+ * the `sqlite_autoindex`.
+ */
+export function getLowestJournalHeight(): number | null {
+  const row = getDb()
+    .prepare('SELECT MIN(block_height) AS h FROM block_journal')
+    .get() as { h: number | null };
+  return row.h;
 }

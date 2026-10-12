@@ -218,13 +218,21 @@ export function getHeightByBlockHash(hash: string): number | null {
 /**
  * The stored interlink vector at a height, decoded; `null` for no row
  * (NODE_INTERFACE → Ordering blocks).
+ *
+ * The column holds `encodeInterlinks(vector)` of a vector this node derived
+ * for an applied block (`createOrderingBlock`), so bytes that will not decode
+ * are local corruption and raise `UnreadableStoredBlockError`.
  */
 export function getInterlinks(height: number): string[] | null {
   const row = getDb()
     .prepare('SELECT interlinks FROM ordering_blocks WHERE height = ?')
     .get(height) as { interlinks: Buffer } | undefined;
   if (!row) return null;
-  return decodeInterlinks(new Uint8Array(row.interlinks));
+  try {
+    return decodeInterlinks(new Uint8Array(row.interlinks));
+  } catch (err) {
+    throw new UnreadableStoredBlockError('getInterlinks', height, err);
+  }
 }
 
 // ---------------------------------------------------------------------------

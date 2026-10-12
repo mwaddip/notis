@@ -224,16 +224,22 @@ export class InconsistentStateTreeError extends CorruptChainStateError {
 }
 
 /**
- * A block journal inside retention is absent (NODE_INTERFACE → "Rollback").
+ * A block journal at or above the lowest one kept is absent
+ * (NODE_INTERFACE → "The walk reaches as deep as the journals do, and no deeper").
  *
- * `purgeOldJournals` deletes strictly below `tip − maxReorgDepth`.
- * The fork walk's lowest non-genesis answer is `tip − maxReorgDepth + 1`,
- * and `reorg` reverts starting one above the fork point, so every height
- * `revertBlock` can be asked for is ≥ `tip − maxReorgDepth + 2` — inside
- * retention. When the fork walk reaches genesis (`tip ≤ maxReorgDepth`),
- * the purge argument is ≤ 0 and nothing is deleted.
+ * The fork walk bounds its lowest examined height by `lowestJournal − 1` so
+ * every fork point it answers sits at `lowestJournal − 1` or above, and
+ * `reorg` reverts starting one above the fork point. Every height
+ * `revertBlock` can be asked for therefore lies at `lowestJournal` or above —
+ * where a journal row stands by definition. The fork walk's genesis fallback
+ * only fires while `lowestJournal ≤ 1`, so a revert reaching height 1 also
+ * reads a kept journal.
  *
- * A missing journal is therefore a row the store lost, not a retention gap.
+ * A missing journal is therefore a row the store lost, never a retention gap:
+ * a tip that only rose keeps every journal down to height 1 for as long as it
+ * stands at or below the horizon, and one that dropped below the horizon
+ * leaves the walk bounded by the journals and `MissingJournalError` out of
+ * reach.
  */
 export class MissingJournalError extends CorruptChainStateError {
   constructor(site: string, height: number) {
