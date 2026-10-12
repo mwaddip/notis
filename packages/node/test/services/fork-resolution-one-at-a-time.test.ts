@@ -1282,6 +1282,60 @@ describe('a tip switched at one height ends the resolution the same way a height
 
 // ===========================================================================
 // NODE_INTERFACE → "An unhandled rejection is logged, and the node keeps
+// running".
+// The handler is a pure function: a corrupt-state reason reaches the
+// fail-stop boundary, any other reason is logged and the function returns.
+// ===========================================================================
+describe('handleUnhandledRejection routes by class', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+  afterEach(async () => {
+    (await importBlockCreator()).stopBlockCreator();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    setClock(null);
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('a corrupt-state subclass fails stop; a plain Error is logged and the function returns', async () => {
+    await initChainStore();
+    const corrupt = await import('../../src/services/corrupt-state.js');
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // The internal call to `failStopIfCorruptChain` is a same-module
+    // reference, so a module-level mock does not intercept it. The exit is
+    // stubbed to a recorded no-op instead.
+    const exitCalls: number[] = [];
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((
+      code?: string | number | null | undefined,
+    ) => {
+      exitCalls.push(typeof code === 'number' ? code : 0);
+      return undefined as never;
+    }) as typeof process.exit);
+
+    const familyMember = new corrupt.MissingStoredBlockError('case', 42);
+    // `process.exit` is a stub, so `failStopIfCorruptChain`'s `throw err`
+    // reaches here. In production the exit lands before the throw.
+    expect(() => corrupt.handleUnhandledRejection(familyMember)).toThrow(
+      corrupt.MissingStoredBlockError,
+    );
+    expect(exitCalls).toEqual([1]);
+
+    const plain = new Error('a plain error');
+    corrupt.handleUnhandledRejection(plain);
+
+    // The handler returned (did not fail-stop) and the error landed in the
+    // log with its stack.
+    const stackMessages = errorSpy.mock.calls.map((c) => String(c[0]));
+    expect(stackMessages.some((m) => m.includes('a plain error'))).toBe(true);
+    expect(exitCalls).toEqual([1]);
+
+    exitSpy.mockRestore();
+  });
+});
+
+// ===========================================================================
+// NODE_INTERFACE → "An unhandled rejection is logged, and the node keeps
 // running": the runner owns each resolution's promise, so a non-family throw
 // ends that resolution and the next pending block is judged.
 // ===========================================================================

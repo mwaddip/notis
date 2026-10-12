@@ -436,3 +436,22 @@ export function guardStoreRead<A extends unknown[], R>(
     }
   };
 }
+
+/**
+ * The process-level unhandled-rejection backstop
+ * (NODE_INTERFACE → "An unhandled rejection is logged, and the node keeps
+ * running"). A `CorruptChainStateError` is fail-stop as at every other
+ * boundary; any other reason is logged with its stack and the function
+ * returns, so the process keeps running.
+ *
+ * `index.ts` registers one call of this at startup, through
+ * `process.on('unhandledRejection', …)`.
+ */
+export function handleUnhandledRejection(reason: unknown): void {
+  if (reason instanceof CorruptChainStateError) {
+    failStopIfCorruptChain(reason);
+    return;
+  }
+  const stack = reason instanceof Error && reason.stack ? reason.stack : String(reason);
+  console.error(`Unhandled promise rejection — the node keeps running: ${stack}`);
+}

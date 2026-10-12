@@ -27,7 +27,11 @@ import { createAvlProver } from './state/avl-prover.js';
 import { handleOrderingBlock, pullBlocksHandler } from './services/handle-block.js';
 import { onPeerDisconnectedForForkResolution } from './services/fork-resolution-runner.js';
 import { handleRelayedTx } from './services/handle-tx.js';
-import { failStopIfCorruptChain, guardStoreRead } from './services/corrupt-state.js';
+import {
+  failStopIfCorruptChain,
+  guardStoreRead,
+  handleUnhandledRejection,
+} from './services/corrupt-state.js';
 import { scheduledPowTargetBits } from './services/difficulty.js';
 import {
   getPost,
@@ -46,6 +50,13 @@ import { verifyPostBody } from '@dagsocial/validation';
 
 const config = loadConfig();
 const startTime = Date.now();
+
+// NODE_INTERFACE → "An unhandled rejection is logged, and the node keeps
+// running": one process-level handler receives every promise rejection
+// nothing else handled — the corrupt-state family is fail-stop, every other
+// reason is logged with its stack. An uncaught synchronous exception has no
+// handler here: Node's default stands and the process exits.
+process.on('unhandledRejection', handleUnhandledRejection);
 
 // 0. Journal
 initJournal();
