@@ -135,7 +135,7 @@ describe('decayLegMaxBytes — the ceiling at every (height, value) pair', () =>
   const HEIGHTS = [1, 200, 20_000, 5_000_000] as const;
   const VALUES = [1n, 200n, 20_000n, WIDEST_VALUE] as const;
 
-  it.fails('every (height, value) pair fits inside decayLegMaxBytes', () => {
+  it('every (height, value) pair fits inside decayLegMaxBytes', () => {
     const figure = decayLegMaxBytes(PROTOCOL_VERSION);
     for (const h of HEIGHTS) {
       for (const v of VALUES) {
@@ -144,7 +144,7 @@ describe('decayLegMaxBytes — the ceiling at every (height, value) pair', () =>
     }
   });
 
-  it.fails('at the widest height and value the growth equals decayLegMaxBytes modulo count prefixes and the first protocol-box input', () => {
+  it('at the widest height and value the growth equals decayLegMaxBytes modulo count prefixes and the first protocol-box input', () => {
     const figure = decayLegMaxBytes(PROTOCOL_VERSION);
     const delta = measure(WIDEST_HEIGHT, WIDEST_VALUE);
     expect(delta).toBeLessThanOrEqual(figure);

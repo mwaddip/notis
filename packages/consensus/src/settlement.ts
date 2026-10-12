@@ -64,6 +64,7 @@
  */
 
 import {
+  BOX_VALUE_BOUND,
   INVITE_BOND_VEST_PER_LIKES,
   LIKES_PER_KARMA_PAYOUT,
   MAX_BOND_SETTLEMENTS_PER_BLOCK,
@@ -1014,6 +1015,15 @@ function grantBytes(amount: bigint, version: number): number {
   return encodeTx(probe(0, 1, amount, version)).length - probeBases(version).base;
 }
 
+// The widest `value` and `createdAtBlock` the codec writes for a karma box
+// — the first inside the accepted domain (TYPES_INTERFACE → Box value
+// domain), the second inside `writeVlqU`'s faithful range (TYPES_INTERFACE
+// → Totality). A karma output of any lesser width is never larger, so
+// pricing the probe at these widths makes the figure a ceiling at every
+// height and value.
+const WIDEST_KARMA_VALUE = BOX_VALUE_BOUND - 1n;
+const WIDEST_KARMA_CREATED_AT_BLOCK = Number.MAX_SAFE_INTEGER;
+
 const karmaOutputBytesByVersion = new Map<number, number>();
 function karmaOutputBytes(version: number): number {
   let cached = karmaOutputBytesByVersion.get(version);
@@ -1023,8 +1033,8 @@ function karmaOutputBytes(version: number): number {
       inputs: [],
       outputs: [{
         boxType: 'karma' as const,
-        value: 1n,
-        createdAtBlock: 0,
+        value: WIDEST_KARMA_VALUE,
+        createdAtBlock: WIDEST_KARMA_CREATED_AT_BLOCK,
         owner: new Uint8Array(32),
       }],
       signatures: {},
@@ -1037,21 +1047,23 @@ function karmaOutputBytes(version: number): number {
 }
 
 /**
- * The largest a decay squaring adds to a settlement at this version's widths:
- * two settlement inputs (the identity's own box and income box, both consumed)
- * and one karma output (the owner's own box, unmarked, of the effective value)
- * — the ceiling an identity reaches when the body touches both of their karma
- * boxes (NODE_INTERFACE → Karma decay → "The leg is two inputs at most and
- * one output"). ⛔ **The byte probe stamps the era it prices**: a version wide
- * enough to widen its VLQ moves the base, so a settlement of that era is
- * measured at that era.
+ * What one decay squaring adds to a settlement at most — two settlement
+ * inputs (the identity's own box and income box, both consumed) and one
+ * karma output of the effective value (the owner's own box, unmarked)
+ * (NODE_INTERFACE → Karma decay → "The leg is two inputs at most and one
+ * output"). ⛔ **The karma output is priced at the widest `value` and
+ * `createdAtBlock` the codec writes for a karma box**, so the figure is a
+ * ceiling at every height and value (CONSENSUS_INTERFACE → The settlement
+ * build → "`decayLegMaxBytes(protocolVersion)` is what one squaring adds to
+ * a settlement at most"). ⛔ **The byte probe stamps the era it prices**: a
+ * version wide enough to widen its VLQ moves the base, so a settlement of
+ * that era is measured at that era.
  *
  * Blind to the same two things `settlementMarginalBytes` is: the settlement's
  * own array count prefixes widen with their counts rather than with any one
  * decay charge, and a first charge turns an absent protocol-box input into
  * a present one. Both are bounded by a few bytes across the whole body, and
- * the sizer has the last word (CONSENSUS_INTERFACE → The settlement build →
- * "`decayLegMaxBytes(protocolVersion)` is what one squaring adds").
+ * the sizer has the last word.
  */
 export function decayLegMaxBytes(protocolVersion: number): number {
   const { inputBytes } = probeBases(protocolVersion);
