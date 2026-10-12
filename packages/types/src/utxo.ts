@@ -631,9 +631,18 @@ const MINT_REASON = enum8<MintReason>('mintReason', {
 });
 
 /**
- * Synthetic transaction id for a mint event:
+ * Synthetic transaction id for a mint event — TYPES_INTERFACE → Mint identity:
  *
- *   blake2b512( MINT_ID_DOMAIN ‖ vlqU(height) ‖ enum8(reason) ‖ lp(subject) )[0:32]
+ *   blake2b512( MINT_ID_DOMAIN ‖ lp(genesisProof) ‖ vlqU(height) ‖ enum8(reason) ‖ lp(subject) )[0:32]
+ *
+ * **A mint id opens with its chain's genesis proof.** `genesisProof` is the
+ * chain's `GenesisProofBox` payload — the raw bytes `NetworkProfile.genesisProofPayload`
+ * decodes to — **passed by the caller as an argument**: this package reads no
+ * profile (TYPES_INTERFACE → "Domain tags are network-agnostic"). Every box of
+ * a chain descends from a genesis mint, so every box id and transaction id of
+ * a chain is bound to that chain's payload and a transaction signed on one
+ * chain names inputs that exist on no chain with another payload. `lp`
+ * delimits the payload, so its length never runs into the height.
  *
  * Feeding this to `computeCandidateBoxId` gives mints and user transactions one
  * derivation path rather than two id schemes.
@@ -648,10 +657,17 @@ const MINT_REASON = enum8<MintReason>('mintReason', {
  *
  * Total throughout: `vlqU` and `lp` sentinel rather than throw, and `enum8`
  * writes its reserved `0xff` for a tag outside the table. A malformed mint
- * context cannot panic id derivation.
+ * context cannot panic id derivation — a non-byte-view `genesisProof` or
+ * `subject` writes the sentinel as its length prefix and no payload.
  */
-export function computeMintTxId(height: number, reason: MintReason, subject: Uint8Array): TxId {
+export function computeMintTxId(
+  genesisProof: Uint8Array,
+  height: number,
+  reason: MintReason,
+  subject: Uint8Array,
+): TxId {
   const w = new ByteWriter();
+  writeLp(w, genesisProof);
   writeVlqU(w, height);
   MINT_REASON.write(w, reason);
   writeLp(w, subject);
