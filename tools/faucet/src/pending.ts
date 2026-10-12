@@ -21,7 +21,10 @@ import type { BoxRef, BuiltTx } from './tx.js';
  * The view keeps the owner's two karma boxes — the pending change replaces
  * their own box, and the income box is kept unless a pending transaction
  * consumed it (NODE_INTERFACE → Karma transition rules → "An identity holds at
- * most two karma boxes").
+ * most two karma boxes"). The view names one box per id: once the confirmed
+ * list holds a box under the tip id, the two are the same box and the tip is
+ * dropped. A consumed id is forgotten the first view after the confirmed list
+ * no longer lists it, so the chain remembers only what the node still holds.
  */
 export class PendingChain {
   private tip: BoxRef | null = null;
@@ -31,8 +34,21 @@ export class PendingChain {
    * Boxes to select from: the pending change (an unmarked own box) replacing
    * what it chained from, beside the confirmed boxes the pending transactions
    * have not consumed.
+   *
+   * ⛔ **One id, one box.** The confirmed list is authoritative under its ids:
+   * when it holds a box the chain tracks as the tip, that box is the tip, so
+   * the tip is dropped and the confirmed one stands. When it no longer holds a
+   * consumed id, the chain forgets it: what the node no longer serves does not
+   * need filtering, and the set does not grow without bound.
    */
   view(confirmed: readonly BoxRef[]): readonly BoxRef[] {
+    for (const id of [...this.consumedIds]) {
+      if (!confirmed.some((b) => b.boxId === id)) this.consumedIds.delete(id);
+    }
+    const tip = this.tip;
+    if (tip !== null && confirmed.some((b) => b.boxId === tip.boxId)) {
+      this.tip = null;
+    }
     const remaining = this.consumedIds.size === 0
       ? confirmed
       : confirmed.filter((b) => !this.consumedIds.has(b.boxId));

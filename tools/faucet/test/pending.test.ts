@@ -107,7 +107,7 @@ describe('PendingChain', () => {
   // The node confirmed the pending invite: the box the chain holds under its
   // tip id is now the own box the confirmed list reports. The view must name
   // that box once, not twice.
-  it.fails('answers one own box when the confirmed list catches up with the tip', () => {
+  it('answers one own box when the confirmed list catches up with the tip', () => {
     const chain = new PendingChain();
     const first = buildInviteTx(cfg, [own(K1, 1000n)], recipient, 0, ERA);
     chain.advance(first);
@@ -123,7 +123,7 @@ describe('PendingChain', () => {
   // The whole round, through the builder: invite 1 from a confirmed own box,
   // invite 2 while 1 is pending, then the confirmed list catches up with both
   // and invite 3 names 2's change.
-  it.fails('names the latest change on a third invite after the confirmed list catches up with both', () => {
+  it('names the latest change on a third invite after the confirmed list catches up with both', () => {
     const chain = new PendingChain();
     const start = [own(K1, 1000n)];
     const first = buildInviteTx(cfg, start, recipient, 0, ERA);
@@ -168,7 +168,7 @@ describe('PendingChain', () => {
   // The chain remembers only what the node still holds: once the confirmed
   // list no longer lists a consumed id, a later box reusing that id is not
   // filtered out.
-  it.fails('forgets a consumed id once the confirmed list no longer lists it', () => {
+  it('forgets a consumed id once the confirmed list no longer lists it', () => {
     const chain = new PendingChain();
     const own250 = own(OWN_ID, 250n);
     const income10 = income(INCOME_ID, 10n);
