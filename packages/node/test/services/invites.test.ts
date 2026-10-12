@@ -60,6 +60,7 @@ function createKarmaBox(
   owner: Uint8Array,
   value: bigint,
   seed: number,
+  income?: true,
 ): Stored<KarmaBox> {
   const box = seedProvenance<KarmaBox>(
     {
@@ -67,6 +68,7 @@ function createKarmaBox(
       value,
       createdAtBlock: 0,
       owner,
+      ...(income === true ? { income: true as const } : {}),
     },
     seed,
   );
@@ -102,7 +104,8 @@ describe('invites service', () => {
       getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-      getOwnKarmaBoxIds: () => [],
+      getOwnKarmaBoxIds: (owner: Uint8Array) =>
+        getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
       inviteBondMin: config.inviteBondMin,
@@ -340,12 +343,42 @@ describe('invites service', () => {
 
   it('createInvite accepts a bond at each endpoint, and the bond IS the grant', () => {
     // The endpoints are inclusive, and the two rejections above prove nothing
-    // without them — a rule that refused everything would pass both.
+    // without them — a rule that refused everything would pass both. A fresh
+    // inviter is seeded for each endpoint so the pool's own-box change from
+    // the first invite does not stand beside the second's input
+    // (NODE_INTERFACE → Karma transition rules → "An identity holds at most
+    // two karma boxes").
     for (const bondValue of [config.inviteBondMin, config.inviteBondMax]) {
-      const karma = createKarmaBox(inviterId, config.inviteBondMax + 100n, Number(bondValue));
-      const tx = buildCreateTx(karma, rawPublicKey(generateKeyPairSync('ed25519').publicKey), {
-        bondValue,
+      const freshKeys = generateKeyPairSync('ed25519');
+      const freshPub = rawPublicKey(freshKeys.publicKey);
+      const freshHex = Buffer.from(freshPub).toString('hex');
+      storePutIdentityRecord(freshPub, {
+        lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+        lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+        memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
       });
+      const karma = createKarmaBox(freshPub, config.inviteBondMax + 100n, Number(bondValue));
+      const invitee = rawPublicKey(generateKeyPairSync('ed25519').publicKey);
+      const karmaOut: CandidateOf<KarmaBox> = {
+        boxType: 'karma',
+        value: karma.value - bondValue,
+        createdAtBlock: 0,
+        owner: freshPub,
+      };
+      const bondOut: CandidateOf<BondBox> = {
+        boxType: 'bond',
+        value: bondValue,
+        createdAtBlock: 0,
+        inviterId: freshPub,
+        inviteePublicKey: invitee,
+      };
+      const tx: UtxoTransaction = {
+        inputs: [karma.id!],
+        outputs: [karmaOut, bondOut],
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+      };
+      signTransaction(tx, freshKeys.privateKey, freshHex);
       expect(createInvite(deps, tx, 5).status).toBe('pending');
       expect((tx.outputs[1] as CandidateOf<BondBox>).value).toBe(bondValue);
     }
@@ -415,9 +448,11 @@ describe('invites service', () => {
   it('createInvite accepts a bond alone when the inviter spends exactly, leaving the floor standing', () => {
     // The karma output is optional (NODE_INTERFACE → Karma transition rules →
     // "A karma output carries at least 1n, and the change output is
-    // optional"). The inviter needs KARMA_MINIMUM beside the bond, held in a
-    // reserve box the invite does not spend ("A bond leaves the floor").
-    const reserve = createKarmaBox(inviterId, KARMA_MINIMUM, 42);
+    // optional"). The inviter needs KARMA_MINIMUM beside the bond, held in
+    // the income box the settlement writes — the invite spends the own box
+    // alone, and the income box rides beside it unspent (→ Karma transition
+    // rules → "An identity holds at most two karma boxes").
+    const reserve = createKarmaBox(inviterId, KARMA_MINIMUM, 42, true);
     void reserve;
     const karma = createKarmaBox(inviterId, FIXTURE_BOND_KARMA, 1);
     const tx: UtxoTransaction = {
