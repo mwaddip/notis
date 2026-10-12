@@ -417,7 +417,7 @@ into the box an identity spends would replace it, and every transaction of their
 would name a box that no longer exists. Paid beside it, the own box stands until its owner spends it.
 
 Provenance is `txId`/`index`, not a field on the box. A mint's `txId` is
-`computeMintTxId(height, reason, subject)`, whose `reason` tag names why the karma
+`computeMintTxId(genesisProof, height, reason, subject)`, whose `reason` tag names why the karma
 was created; a user-path box carries the transaction that made it. Both are inside
 the id preimage, so provenance is committed rather than asserted.
 
@@ -1551,8 +1551,9 @@ chain or owed one:
 | **the karma spend rule** (2026-10-11) | the verdict of a karma transaction that spends — a thread, a reply, a like, an invite, a vouch cast, a name burn: refused where what remains of its owner's effective karma, as the body's transactions ahead of it have left it, does not cover the spend, and for every spend but a post where it would not leave `KARMA_MINIMUM` standing (NODE_INTERFACE → Karma transition rules). **Owes the reset**, and rides the tree layout's |
 | **the lapse leg and a spent vouch** (2026-10-11) | the verdict of a block whose body carries the unvouch of a vouch its settlement's lapse leg lists: the leg leaves that vouch out and the block applies (NODE_INTERFACE → The settlement transaction). **Owes the reset**, and rides the tree layout's |
 | **the two karma boxes** (2026-10-12) | a karma box's bytes — one mark byte after `owner` (TYPES_INTERFACE → KarmaBox) — so every karma box's id, every transaction id over a karma output, every `stateRoot`, and devnet's and testnet's `genesisStateRoot` pins (mainnet's genesis seeds no karma box); the verdict of a karma spend that makes two karma outputs, carries the mark, or leaves its owner's own box out of its inputs — each refused (NODE_INTERFACE → Karma transition rules); and the settlement, which pays each owner once into their marked karma box and consumes the one it replaces (NODE_INTERFACE → The settlement transaction). **Owes the reset**, and rides the tree layout's |
+| **the mint id's genesis proof** (2026-10-12) | the mint id's preimage, which opens with the chain's genesis proof payload (TYPES_INTERFACE → Mint identity) — so every genesis box's id, all three `genesisStateRoot` pins, and every box id and transaction id that descends from a genesis box; and testnet's `genesisProofPayload`, which names its release line (→ "A reset mints a new genesis proof payload"). **Owes the reset**, and rides the tree layout's |
 
-**Outstanding against the live node: the tree layout, the block proof, the rent rule, the karma spend rule, the lapse leg's spent vouch and the two karma boxes** (the six rows above). Testnet's live chain began at the
+**Outstanding against the live node: the tree layout, the block proof, the rent rule, the karma spend rule, the lapse leg's spent vouch, the two karma boxes and the mint id's genesis proof** (the seven rows above). Testnet's live chain began at the
 2026-09-15 reset; every row above is in it, and the usernames row owes none. The profile leaves testnet's `genesisId`
 empty (§What varies per network) until the reset the tree layout owes mines a new block 1.
 
@@ -1563,6 +1564,17 @@ validates every existing block as the old one did and a resync recomputes the sa
 row for such a change says so, and **the proof is a run, not an argument** — the new build started
 against a copy of the live store, opening it, holding the tip and applying the next block — before any
 package reaches the box.
+
+**A reset mints a new genesis proof payload.** Every id of a chain descends from mint ids that open with
+its payload (§How the network is committed), so a reset that kept the payload would let the retired
+chain's transactions resolve on the new one. The reset's first act on the profile is therefore a new
+payload, and then the `genesisStateRoot` measured under it. **Testnet's payload names its release line,
+and a `types` case holds the two together** (`TYPES_INTERFACE → Network profiles`): the minor a reset
+moves (→ "The release version counts resets and milestones") leaves `types`' suite red until the payload
+names it, and the node refuses to start until the pinned root is the one seeded under the new payload
+(`NODE_INTERFACE → The genesis state root is checked fail-stop`). What nothing checks is the first link —
+that a release shipping a reset moves the minor. Mainnet has not launched and its payload is mock
+content; devnet's is one value for every run, and a devnet chain holds nothing a replay could take.
 
 **The release version counts resets and milestones.** The repository carries one version, the root
 `package.json`'s, and every distributable of a release carries it — the node's packages, the web client's zip
@@ -1796,10 +1808,10 @@ not be independently readable.
 is a `constants.ts` export that a profile field reads; a `camelCase` name is a `NetworkProfile` field
 that no constant stands beside — **the case is the statement, so no count is kept here and none has to
 be maintained.** `genesisCommitteeKeys`, `genesisId` and `faucetPublicKey` are field-only because one constant
-serves one value and each network names its own; `genesisProofPayload` and `genesisStateRoot` are one
-fact stated twice, the sole per-network input to the genesis box set and the height-0 AVL+ root over
-it. Each belongs to the genesis axis this section already declares, so they add fields to a declared
-axis rather than opening a fourth.
+serves one value and each network names its own; `genesisProofPayload` and `genesisStateRoot` are the
+genesis proof every mint id of the chain opens with (§How the network is committed) and the height-0
+AVL+ root over the box set seeded under it. Each belongs to the genesis axis this section already
+declares, so they add fields to a declared axis rather than opening a fourth.
 
 > ⚠ **`CREDIT_EMISSION_TOTAL` is per-network because the curve it must sit under is.** It is the
 > `EmissionBox`'s genesis value, carried rather than derived (TYPES_INTERFACE → EmissionBox), and a
@@ -1885,10 +1897,21 @@ them. A third — a `networkType` field in the block header — was specified he
 | **Chain** | Distinct genesis per network | Cannot link; its input boxes do not exist here |
 
 **The chain layer is what makes the networks genuinely separate**, and it is doing more work
-than it appears to. A transaction's inputs are boxes whose id chains root at genesis, so a
-mainnet transaction replayed against testnet names inputs that **do not exist** — replay
+than it appears to. A transaction's inputs are boxes whose id chains root at genesis, and every
+genesis box's id opens with its chain's genesis proof payload (`TYPES_INTERFACE → Mint identity`) —
+so a transaction signed on one chain names inputs that **do not exist** on another, and replay
 fails on the UTXO graph, without any network check. The magic is the early rejection; genesis
 is the one that cannot be circumvented.
+
+> ⚠ **AHEAD OF CODE (2026-10-12).** The payload in the mint id leads `types`' `computeMintTxId` and the
+> node's seeder: until they carry it, a genesis box two profiles seed with the same content has one id
+> under both.
+
+**A chain is named by its payload, so a reset is a new chain only if it mints a new one.** A reset
+that kept its network's payload would seed the retired chain's genesis boxes again — every one whose
+content it left alone — and a transaction of the retired chain that spends one, or a box descending
+from one, would resolve on the new chain. The rule and what holds a reset to it are the deploy gate's
+(§Deploy gate → "A reset mints a new genesis proof payload").
 
 **The mechanism this row names is `genesisStateRoot`, and the node refuses to run without
 it.** Each profile pins the height-0 AVL+ root over its own genesis box set, cold-start
@@ -1898,7 +1921,7 @@ transaction so a divergent genesis is never committed. The per-network inputs ar
 `genesis_proof` box's payload, the emission box's value (`creditEmissionTotal`), the faucet identity
 (`faucetPublicKey`, which owns the faucet's karma and credit boxes and their index entries) and the backer table
 (a `BackerStakeBox` per row and the `BackerPoolBox`); the payload is the one input that differs between every pair
-of networks.
+of networks, and the one that reaches every genesis box's id.
 
 **When a profile pins `genesisId`, the chain layer commits to block 1's hash as well.** The height-1
 chain-link refuses any other block 1 (`NODE_INTERFACE` → Ordering block apply-time authorization,
@@ -1913,7 +1936,7 @@ the empty-tree digest and nothing pinned a root to compare against. The row is t
 date; statements resting on it that predate it were aspirational, and the `networkType`
 rejection note below is the instance worth naming.
 
-> **Id derivation is deliberately NOT network-scoped.** An earlier draft of this section
+> **The domain tags are deliberately NOT network-scoped.** An earlier draft of this section
 > scoped the five domain tags (`BOX_ID_DOMAIN`, `TX_ID_DOMAIN`, `MINT_ID_DOMAIN`,
 > `IDENTITY_KEY_DOMAIN`, `POST_ID_DOMAIN`) by network. **Dropped 2026-08-06**, for two
 > reasons.
@@ -1927,13 +1950,12 @@ rejection note below is the instance worth naming.
 > **The analogy that motivated it was wrong.** It was argued as the structural equivalent of
 > **Ergo's address prefix** (`0x00` mainnet, `0x10` testnet). It is not: an address prefix is
 > a *serialization* concern — how a pubkey is rendered and parsed by a wallet — and **Ergo's
-> own box ids and transaction ids are network-agnostic content hashes.** Scoping id
-> derivation would have gone beyond Ergo, not matched it.
+> own box ids and transaction ids are network-agnostic content hashes.**
 >
-> **What this concedes:** cross-network **post** replay. Posts are DAG objects, so a mainnet
-> post carries a valid signature and valid PoW onto devnet unchanged. Transaction replay is
-> already impossible via the chain layer above; the accompanying karma-lock transaction fails
-> regardless. This is a spam and confusion vector, not a value defect, and it is accepted.
+> **It concedes nothing.** One derivation takes its chain — the mint id, as an argument its
+> caller passes (`TYPES_INTERFACE → Domain tags are network-agnostic`) — and every box id,
+> transaction id and post id is bound to the chain through the boxes it descends from. A post is
+> its creating transaction's, so it is bound as every transaction is.
 
 > ⛔ **A `networkType` header field was proposed twice and is REJECTED — 2026-08-10,
 > reversing 2026-08-06.** It was never implemented, so nothing was removed from code. The
@@ -2303,11 +2325,13 @@ no object check compares against it and no producer stamps it.
   > values — so `vouchCooldownBlocks` and `inviteProbationBlocks` could never appear in it, and
   > nothing signalled the omission. Enumerating `NetworkProfile` **itself** found all five.
   > **Never enumerate a type's fields from prose that groups them by purpose.**
-- **Id derivation is network-agnostic.** No domain tag, box id, transaction id, post id or
-  identity record key carries the network. `@dagsocial/types` stays pure — no module-level
-  state, no network argument on a derivation function. Network separation is carried by
-  genesis and the wire magic instead — **not** a header field: `networkType` was proposed
-  2026-08-09 and rejected 2026-08-10 (PR #26), and `BlockHeader` has eleven fields.
+- **No id names a network, and every id is its chain's.** No domain tag, box id, transaction id,
+  post id or identity record key carries the network. A mint id opens with its chain's genesis proof
+  payload, passed as an argument (`TYPES_INTERFACE → Mint identity`), and every box id, transaction id
+  and post id is bound to the chain through the boxes it descends from. `@dagsocial/types` stays pure
+  — no module-level state. Network separation is carried by genesis and the wire magic — **not** a
+  header field: `networkType` was proposed 2026-08-09 and rejected 2026-08-10 (PR #26), and
+  `BlockHeader` has eleven fields.
 - **The per-network parameter set covers timescale, difficulty and genesis only.** Costs and
   format limits are universal across networks. Adding a parameter to the per-network set
   requires justifying why devnet may behave differently from mainnet in that respect.

@@ -391,8 +391,19 @@ Boxes created with no user transaction behind them (genesis seeding) derive a **
 transaction id**, so there is exactly one derivation path:
 
 ```
-mintTxId = blake2b512( MINT_ID_DOMAIN ‖ vlqU(height) ‖ enum8(reason) ‖ lp(subject) )[0:32]
+mintTxId = blake2b512( MINT_ID_DOMAIN ‖ lp(genesisProof) ‖ vlqU(height) ‖ enum8(reason) ‖ lp(subject) )[0:32]
 ```
+
+> ⚠ **AHEAD OF CODE (2026-10-12).** The `genesisProof` field leads `computeMintTxId` and the node's seeder
+> (`mintTxIdFor`), whose preimage opens at `vlqU(height)`; testnet's payload and the case that compares it with
+> the release line lead `network.ts` and `network.test.ts`.
+
+**A mint id opens with its chain's genesis proof.** `genesisProof` is the chain's genesis proof payload — the raw
+bytes `NetworkProfile.genesisProofPayload` decodes to, the ones the chain's `GenesisProofBox` holds
+(→ GenesisProofBox) — **passed by the caller as an argument**: this package reads no profile to find it.
+Every box of a chain descends from a genesis mint through the transactions that spend it, so every box id and
+transaction id of a chain is bound to that chain's payload with no other derivation naming it
+(→ Domain tags are network-agnostic). `lp` delimits the payload, so its length never runs into the height.
 
 `reason` is a tag from a closed set, written into the preimage as a single `enum8` byte; `subject`
 is a canonical byte encoding defined per reason. The discriminant is **semantic, never positional** —
@@ -408,7 +419,7 @@ for the AVL feed. Full reason/subject table in `NODE_INTERFACE.md`.
 >
 > ⚠ **Corrected 2026-08-16.** This read *"`subject` carries no length prefix"* and justified
 > across-reason uniqueness by ASCII prefix-freeness. `computeMintTxId` writes
-> `vlqU(height) ‖ enum8(reason) ‖ lp(subject)`; neither premise held.
+> `enum8(reason) ‖ lp(subject)`; neither premise held.
 
 #### Pinned byte forms
 
@@ -596,7 +607,7 @@ clock it nominally represented now lives in the committed per-identity record
 (`NODE_INTERFACE.md`), not on a box.
 
 **A karma box carries no provenance field.** Provenance is `txId`/`index`, both inside the id
-preimage. A mint's `txId` is `computeMintTxId(height, reason, subject)`, whose `reason` tag
+preimage. A mint's `txId` is `computeMintTxId(genesisProof, height, reason, subject)`, whose `reason` tag
 names why the karma was created; a user-path box carries the transaction that made it.
 
 **An owner holds at most two karma boxes: their own box and one income box**
@@ -870,12 +881,10 @@ GenesisProofBox extends BoxBase {
 One of the boxes seeded at cold start, beside system karma, faucet credits and the emission box.
 `NetworkProfile.genesisProofPayload` carries its per-network value as hex (§Network profiles).
 
-⚠ **It is NO LONGER the whole of network identity at height 0, and this line said it was.** The
-karma and credit boxes are byte-identical across networks, so the payload used to be the only thing
-separating testnet's genesis root from devnet's. The `EmissionBox` is now a **second** per-network
-difference: its value is that profile's carried emission total (§Network profiles), and devnet's is
-smaller. Two networks now differ in two boxes, not one. Corrected 2026-08-16, when unit 4b made it
-false.
+**The payload is this box's content and every genesis box's id.** A mint id opens with it (→ Mint identity), so
+two chains whose payloads differ share no genesis box, whatever else their profiles share — a box the two seed
+with the same content has two ids. In content, two networks differ where their profiles do: this box's payload,
+the `EmissionBox`'s value (§Network profiles), the faucet identity and the backer table.
 
 `value` is `0n` for the same reason `VouchBox.value` is `1n`: the type has exactly one legal value,
 so the literal makes any other unrepresentable rather than merely invalid.
@@ -1275,7 +1284,7 @@ recompute the hash and check the signature.
 | `computeBoxId(box)` | `(BoxBase) => BoxId` | Box id from `candidate ‖ txId ‖ index`. Total function of a stored box — no second argument, so `stored.id === computeBoxId(stored)` is checkable anywhere |
 | `computeCandidateBoxId(candidate, txId, index)` | `(BoxCandidate, TxId, number) => BoxId` | Same derivation, for a candidate not yet materialized. Used by creators and by clients predicting an id at signing time |
 | `computeTxId(tx)` | `(UtxoTransaction) => TxId` | Transaction id over candidates |
-| `computeMintTxId(height, reason, subject)` | `(number, MintReason, Uint8Array) => TxId` | Synthetic transaction id for boxes with no creating transaction — genesis seeding; everything else is a settlement output with an ordinary id. `subject` encoding is defined per reason — see `NODE_INTERFACE.md` |
+| `computeMintTxId(genesisProof, height, reason, subject)` | `(Uint8Array, number, MintReason, Uint8Array) => TxId` | Synthetic transaction id for boxes with no creating transaction — genesis seeding; everything else is a settlement output with an ordinary id. `genesisProof` is the chain's genesis proof payload (→ Mint identity); `subject` encoding is defined per reason — see `NODE_INTERFACE.md` |
 | `canonicalBoxBytes(candidate)` | `(BoxCandidate) => Uint8Array` | The single canonical identity encoding. Exported so tests and mirror implementations (a browser mirror, a light client) assert against the encoder that computes ids, not a lookalike |
 | `selectBoxes(boxes, requiredAmount)` | `(T[], bigint) => T[]` where `T extends { value: bigint }` | Largest-first UTXO selection — a greedy prefix of the **given** order until `requiredAmount` is covered; throws when the boxes' total falls short. **Precondition: the caller supplies boxes sorted by value descending** — the function imposes no order of its own, so its determinism is exactly its caller's. A transaction-builder helper (the faucet's invite and transfer builders are the consumers); no block-application path calls it |
 
@@ -2840,7 +2849,7 @@ export interface NetworkProfile {
   // Genesis
   readonly genesisCommitteeKeys: readonly string[];
   readonly genesisKarmaPerMember: bigint;
-  readonly genesisProofPayload: string;   // hex — the GenesisProofBox payload, distinct per network
+  readonly genesisProofPayload: string;   // hex — the GenesisProofBox payload and every mint id's first field; one per chain
   readonly genesisStateRoot: string;      // hex, 66 chars — the pinned height-0 AVL+ root
   readonly genesisId: string;             // hex(32) or '' — the pinned height-1 block hash; '' = unpinned
 
@@ -2922,12 +2931,19 @@ array's contents — a profile holding one would be mutable in exactly the field
 network. `genesisStateRoot` and `genesisCommitteeKeys` are hex for the same reason, so this follows
 the file rather than adding a convention.
 
-**What must hold is that the three payloads DIFFER; what is inside them need not be anything.**
-They are mock content (user, 2026-08-13). Substituting real no-premine evidence later is a value
-change on a network that has not launched, not a format change — and it is caught loudly either way,
-since the payload moves the genesis state root. This is a fourth entry in the per-network set, whose
-burden §Network Identity puts on the addition; it is discharged by genesis already being a declared
-per-network axis rather than a new one.
+**What must hold is that two chains meant to stand apart never share a payload; what is inside one need
+not be anything more.** The payload is what binds every id of a chain to that chain (→ Mint identity), so the
+three networks' payloads differ, and a reset mints a new one for the network it resets
+(`ARCHITECTURE → Deploy gate → "A reset mints a new genesis proof payload"`). **Testnet's names its release
+line**: the UTF-8 bytes of `dagsocial/testnet/genesis-proof/<major>.<minor>`, the two numbers the root
+`package.json`'s version opens with. `network.test.ts` compares the two, so the minor a reset moves
+(`ARCHITECTURE → Deploy gate → "The release version counts resets and milestones"`) leaves that suite red until
+the payload moves with it — and the payload moves the genesis state root, which the node refuses to start
+without. Mainnet's and devnet's are mock content (user, 2026-08-13). Mainnet has not launched, and real
+no-premine evidence there is a value change, not a format change. **Devnet's is one value for every run**: a
+devnet chain is a debugging run, a transaction of one resolves on another seeded the same way, and nothing rests
+on its not doing so. This is a fourth entry in the per-network set, whose burden §Network Identity puts on the
+addition; it is discharged by genesis already being a declared per-network axis rather than a new one.
 
 **`genesisStateRoot` is 66 hex characters, not 64.** The AVL+ digest is a 32-byte root label followed
 by a one-byte tree height — Ergo's 33-byte `genesisStateDigestHex` shape, and the same width
@@ -2935,11 +2951,11 @@ by a one-byte tree height — Ergo's 33-byte `genesisStateDigestHex` shape, and 
 three values, and truncating one to fit silently discards the height byte.
 
 **It is derived, not chosen.** The value is the digest a node computes after seeding its genesis box
-set, and `genesisProofPayload` is the only input to it that differs per network — the system karma
-and faucet credit boxes are byte-identical everywhere they are seeded at all. So the two fields are
-one fact stated twice, and a pin that disagrees with the seeding is a node running a chain that forks
-from every honest peer at height 1. `NODE_INTERFACE` owns the comparison; this package can only hold
-the constant, since neither the serializer nor the prover that produce it live here.
+set. `genesisProofPayload` is the one input to it that differs between every pair of networks, and it
+reaches every genesis box's id (→ Mint identity), so no two networks' sets share a box. A pin that
+disagrees with the seeding is a node running a chain that forks from every honest peer at height 1.
+`NODE_INTERFACE` owns the comparison; this package can only hold the constant, since neither the
+serializer nor the prover that produce it live here.
 
 ⚠ **Re-pin whenever anything a genesis box id derives from moves.** These are digests over box ids,
 so a change to the box encoding moves them with nothing here changing — the mismatch surfaces at
@@ -2986,11 +3002,28 @@ here because this is where it is cited from: `KARMA_STALE_THRESHOLD_BLOCKS`'s du
 ### Domain tags are network-agnostic — deliberately
 
 The derivation domain tags (→ Domain tags) and the tree's tags (→ The tree keys) **do not carry the network, and must
-not be changed to.** No derivation function takes a network argument, and this package holds no
-module-level network state.
+not be changed to.** This package holds no module-level network state, and no derivation reads one.
 
-This was proposed and **rejected on 2026-08-06**. Recorded here because the proposal is
-attractive and will recur:
+**One derivation takes its chain as an argument: the mint id** (→ Mint identity). A mint has no transaction
+behind it, so nothing in its preimage is the chain's own unless the chain's genesis proof is put there. Every
+other id is a content hash over boxes that descend from a mint, and is bound to the chain through them — box
+ids, transaction ids and post ids stay content hashes, and the binding is one field in one preimage.
+
+**That closes replay at the root.** Every user transaction spends at least one box
+(`NODE_INTERFACE → validateTx` step 1), every box descends from a genesis mint, and a mint id opens with its
+chain's genesis proof — so a transaction signed on one chain names inputs that exist on no chain with another
+payload: another network's, or the same network's after a reset
+(`ARCHITECTURE → Deploy gate → "A reset mints a new genesis proof payload"`). A post is its creating
+transaction's (→ Post identity), and is covered as that transaction is.
+
+**It goes past Ergo, on purpose.** Ergo builds each genesis box under an all-zero transaction id, so a genesis
+box's id is its content alone and a network is told apart only where that content differs. Here genesis seeds
+boxes a key spends outright — the faucet identity's karma and credits, a committee member's grant, a backer's
+stake — so a box seeded with the same content on two chains would be one box on both, and a signature made on
+one chain would spend it on the other.
+
+Scoping the **tags** by network was proposed and **rejected on 2026-08-06**. Recorded here because the proposal
+is attractive and will recur:
 
 - **It breaks this contract's own Postcondition** — *"All functions are pure — no side
   effects, no module-level state"* — and its `computeBoxId` one-argument invariant. Five
@@ -2999,12 +3032,9 @@ attractive and will recur:
   exists to remove.
 - **The motivating analogy was false.** It was argued as the equivalent of Ergo's address
   prefix. An address prefix is a *serialization* concern, and **Ergo's own box and
-  transaction ids are network-agnostic content hashes.** Scoping derivation would exceed
-  Ergo, not match it.
-- **It buys little.** Cross-network transaction replay is already impossible: input box id
-  chains root at a genesis that differs per network, so a foreign transaction names inputs
-  that do not exist. The only gap left open is cross-network **post** replay, accepted as a
-  spam vector rather than a value defect.
+  transaction ids are network-agnostic content hashes.**
+- **It buys nothing the mint id leaves open.** One field in the mint preimage binds every id that
+  descends from a mint; a network in each tag would state that binding again in every derivation.
 
 Network separation lives in **genesis and the wire magic** — two layers, not three. The proposed
 header `networkType` field was rejected 2026-08-10 (see the Block header section above). See
@@ -3421,10 +3451,11 @@ export const SYSTEM_KARMA_INITIAL = 1_000_000n;            // consensus — the 
 export const FAUCET_CREDITS_INITIAL = 100_000n * 10n ** 8n; // consensus — 100 000 credits in base units
 ```
 
-**The faucet identity's two seeds are universal constants, not profile fields.** The boxes are
-byte-identical everywhere they are seeded at all (→ Network profiles); whether they are seeded is
-`faucetPublicKey`'s presence (`NODE_INTERFACE → Faucet`). A per-network value would be a place devnet
-may behave unlike mainnet, with nothing to gain (`ARCHITECTURE → What varies per network`).
+**The faucet identity's two seeds are universal constants, not profile fields.** The two amounts are
+the same everywhere the boxes are seeded at all; whose they are and whether they are seeded is
+`faucetPublicKey` (`NODE_INTERFACE → Faucet`), and their ids are their chain's (→ Mint identity). A
+per-network value would be a place devnet may behave unlike mainnet, with nothing to gain
+(`ARCHITECTURE → What varies per network`).
 
 **The genesis committee is a `NetworkProfile` field and nothing else.** `genesisCommitteeKeys` is read
 by `services/genesis-state.ts`, which seeds one karma box per entry out of the pool and writes each
