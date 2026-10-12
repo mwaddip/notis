@@ -104,7 +104,8 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: (owner: Uint8Array): bigint =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-      getOwnKarmaBoxIds: () => [],
+      getOwnKarmaBoxIds: (owner: Uint8Array) =>
+        getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
       // Present from the before-leg on so both halves run the same fixture
       // code: HEAD ignores it, the tightened engine requires it. Backed by the
       // store's real predicate — the one implementation every path shares.
@@ -174,12 +175,13 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
   });
 
   /** Seed a karma box for `owner` with independent fixture provenance. */
-  function seedKarma(owner: Uint8Array, value: bigint, nonce = 0): KarmaBox {
+  function seedKarma(owner: Uint8Array, value: bigint, nonce = 0, income?: true): KarmaBox {
     const candidate = {
       boxType: 'karma' as const,
       value,
       createdAtBlock: 0,
       owner,
+      ...(income === true ? { income: true as const } : {}),
     };
     const box = seedProvenance<KarmaBox>(candidate, 1, nonce);
     storeInsertBox(box);
@@ -383,8 +385,11 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
   });
 
   it('V5: a balance spread over two boxes clears a threshold neither box alone covers', () => {
+    // Own box + income box: the sum clears the threshold while rule 3 asks
+    // only that the own box is named among the inputs (NODE_INTERFACE →
+    // Karma transition rules → "An identity holds at most two karma boxes").
     const first = seedKarma(voucher.pub, VOUCH_MIN_BALANCE - 1n, 0);
-    seedKarma(voucher.pub, VOUCH_MIN_BALANCE - 1n, 1);
+    seedKarma(voucher.pub, VOUCH_MIN_BALANCE - 1n, 1, true);
 
     const tx = buildVouchCast(first, voucher, { height: 10 });
     const result = validateTx(deps, tx, 10);

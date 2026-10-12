@@ -143,7 +143,8 @@ describe('validateAndApplyTx', () => {
       getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-      getOwnKarmaBoxIds: () => [],
+      getOwnKarmaBoxIds: (owner: Uint8Array) =>
+        getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
       // ⛔ **The like marker's author pin** (NODE_INTERFACE → Karma transition
@@ -230,6 +231,7 @@ describe('validateAndApplyTx', () => {
     owner: Uint8Array,
     value: bigint,
     seed: number,
+    income?: true,
   ): Stored<KarmaBox> {
     const box = seedProvenance<KarmaBox>(
       {
@@ -237,6 +239,7 @@ describe('validateAndApplyTx', () => {
         value,
         createdAtBlock: 0,
         owner,
+        ...(income === true ? { income: true as const } : {}),
       },
       seed,
     );
@@ -1951,8 +1954,10 @@ describe('validateAndApplyTx', () => {
     it('T1: karma(1n) control passes', () => {
       // Reserve box so the owner's remaining covers the floor; the subject is
       // the output's own 1n, not what else the owner holds (NODE_INTERFACE →
-      // Karma transition rules → "Only a post spends the floor").
-      createAndInsertKarma(ownerPubKey, KARMA_MINIMUM, 2);
+      // Karma transition rules → "Only a post spends the floor"). The reserve
+      // rides as the income box so the own box the like spends is the only
+      // unmarked box the inputs name.
+      createAndInsertKarma(ownerPubKey, KARMA_MINIMUM, 2, true);
       const karma = createAndInsertKarma(ownerPubKey, LIKE_KARMA_COST + 1n, 1);
       const tx = buildSignedTx(
         [karma.id!],
@@ -1967,8 +1972,10 @@ describe('validateAndApplyTx', () => {
 
     it('T2: a like whose inputs total exactly LIKE_KARMA_COST is accepted with one output', () => {
       // Reserve box so the floor stands; the subject is a like consuming one
-      // input entirely into the marker, not what else the owner holds.
-      createAndInsertKarma(ownerPubKey, KARMA_MINIMUM, 2);
+      // input entirely into the marker, not what else the owner holds. The
+      // reserve rides as the income box, which rule 3 does not require among
+      // the inputs.
+      createAndInsertKarma(ownerPubKey, KARMA_MINIMUM, 2, true);
       const karma = createAndInsertKarma(ownerPubKey, LIKE_KARMA_COST, 1);
       const tx = buildSignedTx(
         [karma.id!],
@@ -2008,7 +2015,9 @@ describe('validateAndApplyTx', () => {
       // Reserve box so the floor stands; the subject is an invite consuming
       // one input entirely into the bond, not what else the inviter holds
       // (NODE_INTERFACE → Karma transition rules → "A bond leaves the floor").
-      createAndInsertKarma(ownerPubKey, KARMA_MINIMUM, 2);
+      // The reserve rides as the income box, which rule 3 does not require
+      // among the inputs.
+      createAndInsertKarma(ownerPubKey, KARMA_MINIMUM, 2, true);
       const karma = createAndInsertKarma(ownerPubKey, FIXTURE_BOND_KARMA, 1);
       const bondBox: AnyBoxCandidate = {
         boxType: 'bond',
@@ -2041,8 +2050,10 @@ describe('validateAndApplyTx', () => {
     it('T3: an exact-spend vouch is accepted with vouch alone; voucherId pins through the input', () => {
       seedAsRoot(ownerPubKey);
       // The balance check reads getKarmaValue (all unspent boxes), so a second
-      // box clears VOUCH_MIN_BALANCE while the input is exactly the stake.
-      createAndInsertKarma(ownerPubKey, VOUCH_MIN_BALANCE, 2);
+      // box clears VOUCH_MIN_BALANCE while the input is exactly the stake. The
+      // reserve rides as the income box, which rule 3 does not require among
+      // the inputs.
+      createAndInsertKarma(ownerPubKey, VOUCH_MIN_BALANCE, 2, true);
       const karma = createAndInsertKarma(ownerPubKey, VOUCH_KARMA_AMOUNT, 1);
       const { publicKey: targetPub } = generateKeyPairSync('ed25519');
       const targetPubRaw = rawPublicKey(targetPub);
