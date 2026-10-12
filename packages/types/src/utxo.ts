@@ -638,7 +638,7 @@ const MINT_REASON = enum8<MintReason>('mintReason', {
  * **A mint id opens with its chain's genesis proof.** `genesisProof` is the
  * chain's `GenesisProofBox` payload — the raw bytes `NetworkProfile.genesisProofPayload`
  * decodes to — **passed by the caller as an argument**: this package reads no
- * profile (TYPES_INTERFACE → "Domain tags are network-agnostic"). Every box of
+ * profile (TYPES_INTERFACE → Domain tags are network-agnostic). Every box of
  * a chain descends from a genesis mint, so every box id and transaction id of
  * a chain is bound to that chain's payload and a transaction signed on one
  * chain names inputs that exist on no chain with another payload. `lp`
