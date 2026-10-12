@@ -18,12 +18,10 @@ import {
 // ---------------------------------------------------------------------------
 // NODE_INTERFACE → Fork choice decides on verified headers
 //
-// Nine cases, written against the rule the contract leads. The first is a
-// plain `it` that proves the mechanism of a reorg from a non-extending block;
-// the rest are `it.fails` — the predicates the rule holds the code to, each
-// pinning what the current tree does with the subject's own predicted value
-// (NODE_INTERFACE → Fork choice decides on verified headers → "One resolution
-// at a time").
+// The first case is a plain `it` that proves the mechanism of a reorg from a
+// non-extending block; the rest are `it.fails`, the predicates the rule holds
+// the code to — one resolution at a time, a block handed back on a moved tip,
+// the walk bounded by the journals kept, a stored row that will not decode.
 // ---------------------------------------------------------------------------
 
 interface Trackers {
@@ -32,8 +30,8 @@ interface Trackers {
 }
 
 /**
- * NODE_INTERFACE → Fork choice decides on verified headers → "Both entries
- * converge". The runner's launched resolution promise is not the caller's to
+ * NODE_INTERFACE → Fork choice decides on verified headers →
+ * "Both entries converge". The runner's launched resolution promise is not the caller's to
  * hold, so a case captures it through a thin wrapper around the real
  * `resolveFork` export and swaps the fail-stop boundary for one that records
  * rather than exits — the two moves give a case the awaitable settlement and
@@ -67,14 +65,10 @@ function installTrackers(ctx: Trackers, configOverride?: Partial<ReturnType<type
 }
 
 async function teardownTrackers(): Promise<void> {
-  try {
-    const bc = await importBlockCreator();
-    bc.stopBlockCreator();
-  } catch { /* not started */ }
-  try {
-    const { setClock } = await import('../../src/services/difficulty.js');
-    setClock(null);
-  } catch { /* not imported */ }
+  const bc = await importBlockCreator();
+  bc.stopBlockCreator();
+  const { setClock } = await import('../../src/services/difficulty.js');
+  setClock(null);
   vi.doUnmock('../../src/services/fork-resolution.js');
   vi.doUnmock('../../src/services/corrupt-state.js');
   vi.doUnmock('../../src/config.js');
@@ -84,9 +78,9 @@ async function teardownTrackers(): Promise<void> {
 
 /**
  * Wait for every launched resolution to settle, including ones that start
- * after an earlier one ends (NODE_INTERFACE → Fork choice decides on verified
- * headers → "A resolution that ends because the tip moved hands its own
- * block back the same way").
+ * after an earlier one ends. NODE_INTERFACE → Fork choice decides on verified
+ * headers →
+ * "A resolution that ends because the tip moved hands its own block back the same way"
  */
 async function settleResolveForks(ctx: Trackers): Promise<void> {
   while (true) {
@@ -150,10 +144,10 @@ interface StubNet extends ForkResolutionNet {
 }
 
 /**
- * The net surface fork resolution uses (NODE_INTERFACE → "The `net` surface
- * fork resolution uses"). Headers paged down from the request's start, blocks
- * drawn by the asked range, both optionally gated by a promise the case
- * releases — a scheduled order of events, not a sleep.
+ * A peer serving one branch through the pull calls of NET_INTERFACE → Pull
+ * Requests. Headers paged down from the request's start, blocks drawn by the
+ * asked range, both optionally gated by a promise the case releases — a
+ * scheduled order of events, not a sleep.
  */
 function singleBranchNet(
   peerId: string,
@@ -194,8 +188,8 @@ function singleBranchNet(
 }
 
 // ===========================================================================
-// Case 1 — control. A non-extending block of a heavier branch switches the
-// chain. Plain `it`: it proves the net, the branch builder and the counting
+// Control. A non-extending block of a heavier branch switches the chain. Plain
+// `it`: it proves the net, the branch builder and the counting
 // (NODE_INTERFACE → Fork choice decides on verified headers, steps 1–10).
 // ===========================================================================
 
@@ -234,9 +228,10 @@ describe('a non-extending block of a heavier branch switches the chain', () => {
 });
 
 // ===========================================================================
-// Case 2 — one walk at a time. NODE_INTERFACE → Fork choice decides on
-// verified headers → "One resolution at a time": the runner runs resolveFork
-// for one block at a time, so N deliveries never put N walks in flight.
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "One resolution at a time"
+// The runner runs resolveFork for one block at a time, so N deliveries never
+// put N walks in flight.
 // ===========================================================================
 
 describe('one resolution runs at a time, however many deliveries arrive', () => {
@@ -299,10 +294,10 @@ describe('one resolution runs at a time, however many deliveries arrive', () => 
 });
 
 // ===========================================================================
-// Case 3 — a block that arrives during a switch and extends the new tip is
-// applied. NODE_INTERFACE → Fork choice decides on verified headers → "One
-// resolution at a time": a block kept pending is handed back when the running
-// resolution ends, and judged on the tip that then stands.
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "One resolution at a time"
+// A block kept pending is handed back when the running resolution ends, and
+// judged on the tip that then stands.
 // ===========================================================================
 
 describe('a block that arrives during a switch and extends the new tip is applied', () => {
@@ -331,7 +326,6 @@ describe('a block that arrives during a switch and extends the new tip is applie
     await revertChainTo(1);
     // Our chain re-mines heights 2, 3 — heavier per block via a fast stamp.
     const [ourh2, ourh3] = await buildAndApply([[2, T1 + 1], [3, T1 + 2]]);
-    void ourh2; void ourh3;
 
     const ordering = await importOrdering();
     expect(ordering.getCurrentHeight()).toBe(3);
@@ -397,12 +391,11 @@ describe('a block that arrives during a switch and extends the new tip is applie
 });
 
 // ===========================================================================
-// Case 4 — two overlapping resolutions never end on the lighter chain.
-// NODE_INTERFACE → Fork choice decides on verified headers → "A resolution
-// that ends because the tip moved hands its own block back the same way":
-// step 9's re-read is a height AND a hash, so a resolution that scored
-// against our old tip cannot land on a chain lighter than the one that moved
-// us under it.
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "A resolution that ends because the tip moved hands its own block back the same way"
+// Step 9's re-read is a height AND a hash, so a resolution that scored against
+// our old tip cannot land on a chain lighter than the one that moved us under
+// it.
 // ===========================================================================
 
 describe('two overlapping resolutions never end on the lighter chain', () => {
@@ -423,7 +416,7 @@ describe('two overlapping resolutions never end on the lighter chain', () => {
     // Shared genesis block at height 1, slow A at 2-3, fast B at 2-3,
     // medium D at 2-3. Their work ordering is pinned below with
     // `cumulativeWork` — work(B) > work(D) > work(A), per
-    // VALIDATION_INTERFACE → cumulativeWork.
+    // VALIDATION_INTERFACE → blockWork / cumulativeWork.
     const [shared1] = await buildAndApply([[1, T1]]);
     const [A2, A3] = await buildAndApply([
       [2, T1 + 60_000 + HL],
@@ -451,7 +444,7 @@ describe('two overlapping resolutions never end on the lighter chain', () => {
     const workA = cumulativeWork([A2!.header, A3!.header]);
     const workB = cumulativeWork([B2!.header, B3!.header]);
     const workD = cumulativeWork([D2!.header, D3!.header]);
-    // Pre-checks: the three branches relate as the subject requires.
+    // Pre-checks: the three branches relate as the rule requires.
     expect(workD > workA).toBe(true);
     expect(workD < workB).toBe(true);
 
@@ -482,16 +475,16 @@ describe('two overlapping resolutions never end on the lighter chain', () => {
     open();
     await settleResolveForks(ctx);
 
-    // The record of what the branches were: work(B) > work(D), the subject's
+    // The record of what the branches were: work(B) > work(D), the rule's
     // predicate. The tip's hash is B3's, not D3's.
     expect(ordering.getOrderingBlockHash(3)).toBe(blockHash(B3!.header));
   });
 });
 
 // ===========================================================================
-// Case 5 — an overlap marks no valid block refused. NODE_INTERFACE → Fork
-// choice decides on verified headers → "What is remembered, and what is not":
-// a persisted mark is only as right as the node that wrote it, and a chain
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "What is remembered, and what is not"
+// A persisted mark is only as right as the node that wrote it, and a chain
 // scored against a tip that moved before its switch is not a verdict on the
 // chain served.
 // ===========================================================================
@@ -565,7 +558,7 @@ describe('an overlapping resolution marks no valid block refused', () => {
     };
     const c3Hash = blockHash(C3!.header)!;
 
-    // The one subject's prediction, kept whole: a valid chain is marked
+    // The rule, kept whole: a valid chain is marked
     // nowhere and its peer carries no penalty.
     expect({
       refused: refusedHeaders.anyRefusedHeader([c3Hash]),
@@ -575,11 +568,11 @@ describe('an overlapping resolution marks no valid block refused', () => {
 });
 
 // ===========================================================================
-// Case 6 — a fork below the journals kept is past the horizon.
-// NODE_INTERFACE → Fork choice decides on verified headers → "The walk reaches
-// as deep as the journals do, and no deeper": step 3 bounds the fork walk by
-// the lowest journal kept, so a branch that forks below it is past the
-// horizon — no decision, no penalty, nothing of the corrupt-state family.
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "The walk reaches as deep as the journals do, and no deeper"
+// Step 3 bounds the fork walk by the lowest journal kept, so a branch that
+// forks below it is past the horizon — no decision, no penalty, nothing of the
+// corrupt-state family.
 // ===========================================================================
 
 describe('a fork below the lowest journal kept is past the horizon', () => {
@@ -587,7 +580,7 @@ describe('a fork below the lowest journal kept is past the horizon', () => {
   // D=6, base_top=4, A=5 slow blocks (heights 5..9), B=2 fast (5..6),
   // F2=1. Pre-reorg tip 9 purges below 3; after shortening to 6 journals
   // 3..6 are kept, so revertBlock(2) under a C-branch reorg is missing
-  // (NODE_INTERFACE → Block Journal, "Rollback").
+  // (NODE_INTERFACE → Block Journal: a revert needs the block's journal).
   const D = 6;
   const BASE_TOP = 4;
   const F2 = 1;
@@ -612,8 +605,8 @@ describe('a fork below the lowest journal kept is past the horizon', () => {
 
     // C: 6 fast blocks above F2 (heights 2..7), heavy enough to outweigh
     // our chain above F2 after the shortening below. Kept short so no
-    // apply during the build triggers `purgeOldJournals` (NODE_INTERFACE
-    // → Block Journal, "Rollback").
+    // apply during the build triggers `purgeOldJournals` (NODE_INTERFACE →
+    // Block Journal: a revert needs the block's journal).
     await revertChainTo(F2);
     const C: OrderingBlock[] = [];
     for (let i = 0; i < 6; i++) {
@@ -665,22 +658,21 @@ describe('a fork below the lowest journal kept is past the horizon', () => {
     expect(lowestJournal).not.toBeNull();
     expect(F2 + 1 < lowestJournal!).toBe(true);
 
-    // Now the C-branch delivery.
+    // The C-branch delivery.
     const netC = singleBranchNet('peer-C', [base[0]!, ...C]);
     handleOrderingBlock(C[C.length - 1]!, 'peer-C', netC);
     await settleResolveForks(ctx);
 
-    // The one subject's prediction: nothing of the corrupt-state family
+    // The rule: nothing of the corrupt-state family
     // reached the fail-stop boundary.
     expect(ctx.caughtCorrupt.map((e) => (e as Error).constructor.name)).toEqual([]);
   });
 });
 
 // ===========================================================================
-// Case 7 — a block delivered while a shortening switch runs is judged after
-// it. NODE_INTERFACE → Fork choice decides on verified headers → "A resolution
-// that ends because the tip moved hands its own block back the same way": a
-// resolution in flight when the tip drops under it must not read a header
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "A resolution that ends because the tip moved hands its own block back the same way"
+// A resolution in flight when the tip drops under it must not read a header
 // row the switch deleted and raise a corrupt-state throw.
 // ===========================================================================
 
@@ -762,18 +754,18 @@ describe('a block delivered while a shortening switch runs is judged after it', 
     open();
     await settleResolveForks(ctx);
 
-    // The one subject's prediction: nothing of the corrupt-state family
-    // reached the fail-stop boundary (NODE_INTERFACE → "What the funnel's
-    // totality catch is FOR").
+    // The rule: nothing of the corrupt-state family
+    // reached the fail-stop boundary.
+    // NODE_INTERFACE →
+    // "What the funnel's totality catch is FOR"
     expect(ctx.caughtCorrupt.map((e) => (e as Error).constructor.name)).toEqual([]);
   });
 });
 
 // ===========================================================================
-// Case 8 — a resolution that ends because the tip moved judges its block
-// again. NODE_INTERFACE → Fork choice decides on verified headers →
-// "A resolution that ends because the tip moved hands its own block back
-// the same way": the block is handed back to the runner, not dropped.
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "A resolution that ends because the tip moved hands its own block back the same way"
+// The block is handed back to the runner, not dropped.
 // ===========================================================================
 
 describe('a resolution that ends because the tip moved judges its block again', () => {
@@ -820,16 +812,23 @@ describe('a resolution that ends because the tip moved judges its block again', 
       expect(net.blockCalls.count).toBeGreaterThanOrEqual(1);
     }, { timeout: 5000 });
 
-    // Our own next block applies — nothing serialises an apply against a
-    // paused resolution today.
+    // Our own next block applies while the resolution is paused.
     await mineNextBlock(await importBlockCreator());
     expect(ordering.getCurrentHeight()).toBe(4);
+
+    // The peer's branch is still the heavier above the fork point.
+    const store = (await import('../../src/store/ordering.js')) as {
+      getHeadersAbove: (height: number, n: number) => BlockHeader[];
+    };
+    const ourWork = cumulativeWork(store.getHeadersAbove(1, 3));
+    const peerWork = cumulativeWork(peer.map((b) => b.header));
+    expect(peerWork > ourWork).toBe(true);
 
     open();
     await settleResolveForks(ctx);
 
     // Rule: the aborted resolution hands the block back; the runner
-    // re-judges it on the tip that stands (now 4). The peer's branch is
+    // re-judges it on the tip that stands (4). The peer's branch is
     // still heavier, so the second judgment reorgs to it.
     expect(ordering.getOrderingBlockHash(peerTip.header.height)).toBe(
       blockHash(peerTip.header),
@@ -838,20 +837,18 @@ describe('a resolution that ends because the tip moved judges its block again', 
 });
 
 // ===========================================================================
-// Case 9 — a stored row that will not decode is the corrupt-state family's.
-// NODE_INTERFACE → Store Interface → Ordering blocks, `getInterlinks`:
-// "a row that will not decode is `UnreadableStoredBlockError`"; and
-// Block Journal, `getBlockJournal`: the same guard.
+// A stored row that will not decode is the corrupt-state family's:
+// NODE_INTERFACE → Ordering blocks answers `getInterlinks` with
+// `UnreadableStoredBlockError` for such a row, and NODE_INTERFACE → Block
+// Journal answers `getBlockJournal` the same way.
 // ===========================================================================
 
 describe('a stored interlinks row that will not decode is the corrupt-state family', () => {
   beforeEach(() => { vi.resetModules(); });
   afterEach(async () => {
-    try { (await importBlockCreator()).stopBlockCreator(); } catch { /* not started */ }
-    try {
-      const { setClock } = await import('../../src/services/difficulty.js');
-      setClock(null);
-    } catch { /* not imported */ }
+    (await importBlockCreator()).stopBlockCreator();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    setClock(null);
     vi.restoreAllMocks();
     vi.resetModules();
   });
@@ -879,7 +876,7 @@ describe('a stored interlinks row that will not decode is the corrupt-state fami
       .prepare('UPDATE ordering_blocks SET interlinks = ? WHERE height = ?')
       .run(Buffer.from([0xff]), 2);
 
-    // The one subject's prediction.
+    // The rule.
     expect(() => ordering.getInterlinks(2)).toThrow(corrupt.UnreadableStoredBlockError);
   });
 });
@@ -887,11 +884,9 @@ describe('a stored interlinks row that will not decode is the corrupt-state fami
 describe('a stored journal row that will not decode is the corrupt-state family', () => {
   beforeEach(() => { vi.resetModules(); });
   afterEach(async () => {
-    try { (await importBlockCreator()).stopBlockCreator(); } catch { /* not started */ }
-    try {
-      const { setClock } = await import('../../src/services/difficulty.js');
-      setClock(null);
-    } catch { /* not imported */ }
+    (await importBlockCreator()).stopBlockCreator();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    setClock(null);
     vi.restoreAllMocks();
     vi.resetModules();
   });
@@ -921,7 +916,7 @@ describe('a stored journal row that will not decode is the corrupt-state family'
       .prepare('UPDATE block_journal SET journal_cbor = ? WHERE block_height = ?')
       .run(Buffer.from([0x1b]), 2);
 
-    // The one subject's prediction.
+    // The rule.
     expect(() => journal.getBlockJournal(2)).toThrow(corrupt.UnreadableStoredBlockError);
   });
 });
