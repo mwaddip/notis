@@ -107,10 +107,24 @@ describe('leaf/node domain separation (L-9)', () => {
   });
 
   it('no leaf domain in use can begin with the node tag', () => {
-    // TYPES_INTERFACE → Merkle primitives: one live domain.
-    for (const d of ['utxotx']) {
+    // TYPES_INTERFACE → Merkle primitives: the two live domains are 'utxotx' and 'utxotx-bytes'.
+    for (const d of ['utxotx', 'utxotx-bytes']) {
       expect(new TextEncoder().encode(d + '\0')[0]).not.toBe(0x00);
     }
+  });
+
+  it('neither live domain\'s tagged prefix is a prefix of the other\'s', () => {
+    // TYPES_INTERFACE → Merkle primitives: 'utxotx\0' and 'utxotx-bytes\0' differ at their seventh byte.
+    const enc = new TextEncoder();
+    const a = enc.encode('utxotx\0');
+    const b = enc.encode('utxotx-bytes\0');
+    expect(b.subarray(0, a.length)).not.toEqual(a);
+    expect(a.subarray(0, b.length)).not.toEqual(b);
+    let first = 0;
+    while (a[first] === b[first]) first++;
+    expect(first).toBe(6);
+    expect(a[6]).toBe(0x00);
+    expect(b[6]).toBe(0x2d);
   });
 });
 
