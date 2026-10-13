@@ -1,19 +1,27 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { UtxoTxTree } from '@dagsocial/types';
+import type { OrderingBlock, UtxoTransaction, UtxoTxTree } from '@dagsocial/types';
 import {
   bytesToHex,
   buildMerkleRoot,
-  leafHash,
-  hexToBytes,
   computeUtxoTxRoot,
+  hexToBytes,
+  leafHash,
+  MAX_BLOCK_BODY_BYTES,
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
+import type { Config } from '../../src/config.js';
 import {
-  makeApplicableBlock,
   makeCreditBox,
   makeCreditTx,
+  makeTestConfig,
   makeTestIdentity,
+  mineNextBlock,
 } from '../helpers.js';
+
+const testConfig: Config = makeTestConfig({
+  nodeRole: 'miner',
+  blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES,
+});
 
 async function importDb() {
   return (await import('../../src/store/db.js')) as unknown as {
@@ -29,6 +37,24 @@ async function importUtxo() {
   };
 }
 
+async function importMempool() {
+  return (await import('../../src/store/mempool.js')) as {
+    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
+  };
+}
+
+type BlockCreatorModule = {
+  startBlockCreator: (cfg: Config) => void;
+  stopBlockCreator: () => void;
+  createOrderingBlock: () => OrderingBlock | null;
+  getCurrentTemplate: () => OrderingBlock | null;
+  submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;
+};
+
+async function importBlockCreator(): Promise<BlockCreatorModule> {
+  return (await import('../../src/services/block-creator.js')) as unknown as BlockCreatorModule;
+}
+
 // A fixture aligned under TYPES_INTERFACE → Ordering block: two ids and two
 // elements, each pair in body order.
 const alignedFixture: UtxoTxTree = {
@@ -38,7 +64,15 @@ const alignedFixture: UtxoTxTree = {
 
 describe('utxoTxRoot — the root over one body', () => {
   beforeEach(async () => { vi.resetModules(); });
-  afterEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try {
+      const bc = await importBlockCreator();
+      bc.stopBlockCreator();
+    } catch {
+      // The block-creator module may not have been imported in this case.
+    }
+    vi.resetModules();
+  });
 
   it('a mined block\'s utxoTxRoot is the root of its id leaves, then its bytes leaves, in body order', async () => {
     const db = await importDb();
@@ -50,18 +84,25 @@ describe('utxoTxRoot — the root over one body', () => {
     const box = makeCreditBox(100_000n, sender.userId, 0, 1);
     utxo.insertBox(box);
 
-    const block = await makeApplicableBlock({
-      utxoTxs: [makeCreditTx(sender, [box], 10_000n)],
-    });
+    const mempool = await importMempool();
+    mempool.insertUtxoTx(makeCreditTx(sender, [box], 10_000n), 1000);
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const block = await mineNextBlock(bc);
+    expect(block).not.toBeNull();
+    // The pool held one credit transaction; the mined body carries it beside
+    // the settlement.
+    expect(block!.utxoTxTree.utxoTxIds.length).toBe(2);
 
     // TYPES_INTERFACE → Ordering block: every utxoTxIds entry under 'utxotx',
     // then every utxoTxs element under 'utxotx-bytes'. Hand-built, so this
     // case names the leaf layout independently of the function it holds.
     const expected = bytesToHex(buildMerkleRoot([
-      ...block.utxoTxTree.utxoTxIds.map((id) => leafHash('utxotx', hexToBytes(id))),
-      ...block.utxoTxTree.utxoTxs.map((bytes) => leafHash('utxotx-bytes', bytes)),
+      ...block!.utxoTxTree.utxoTxIds.map((id) => leafHash('utxotx', hexToBytes(id))),
+      ...block!.utxoTxTree.utxoTxs.map((bytes) => leafHash('utxotx-bytes', bytes)),
     ]));
-    expect(block.header.utxoTxRoot).toBe(expected);
+    expect(block!.header.utxoTxRoot).toBe(expected);
   });
 
   it('the settlement is the last leaf of each class', async () => {
@@ -74,12 +115,17 @@ describe('utxoTxRoot — the root over one body', () => {
     const box = makeCreditBox(100_000n, sender.userId, 0, 1);
     utxo.insertBox(box);
 
-    const block = await makeApplicableBlock({
-      utxoTxs: [makeCreditTx(sender, [box], 10_000n)],
-    });
+    const mempool = await importMempool();
+    mempool.insertUtxoTx(makeCreditTx(sender, [box], 10_000n), 1000);
 
-    const ids = block.utxoTxTree.utxoTxIds;
-    const txs = block.utxoTxTree.utxoTxs;
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const block = await mineNextBlock(bc);
+    expect(block).not.toBeNull();
+    expect(block!.utxoTxTree.utxoTxIds.length).toBe(2);
+
+    const ids = block!.utxoTxTree.utxoTxIds;
+    const txs = block!.utxoTxTree.utxoTxs;
     const withSettlement = bytesToHex(buildMerkleRoot([
       ...ids.map((id) => leafHash('utxotx', hexToBytes(id))),
       ...txs.map((bytes) => leafHash('utxotx-bytes', bytes)),
@@ -88,8 +134,8 @@ describe('utxoTxRoot — the root over one body', () => {
       ...ids.slice(0, -1).map((id) => leafHash('utxotx', hexToBytes(id))),
       ...txs.slice(0, -1).map((bytes) => leafHash('utxotx-bytes', bytes)),
     ]));
-    expect(block.header.utxoTxRoot).not.toBe(withoutSettlement);
-    expect(block.header.utxoTxRoot).toBe(withSettlement);
+    expect(block!.header.utxoTxRoot).not.toBe(withoutSettlement);
+    expect(block!.header.utxoTxRoot).toBe(withSettlement);
   });
 
   it('leaf order is normative — exchanging two ids moves the root, exchanging two elements moves it', () => {
