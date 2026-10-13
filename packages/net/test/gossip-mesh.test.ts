@@ -24,6 +24,7 @@ import {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
   verifyPostBody,
 } from '@dagsocial/validation';
 import { TopicValidatorResult } from '@libp2p/interface';
@@ -74,6 +75,7 @@ const validators: NetValidators = {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
   verifyPostBody,
 };
 
@@ -1313,7 +1315,7 @@ describe('A worked header is forwarded with the body its root commits', () => {
     for (const n of nodes) open.push(n);
   };
 
-  it.fails(
+  it(
     'a worked header with another body goes no further than its first hop',
     async () => {
       const { nodeA, nodeB, nodeC } = await startLine();
@@ -1353,7 +1355,7 @@ describe('A worked header is forwarded with the body its root commits', () => {
     TIMEOUT,
   );
 
-  it.fails(
+  it(
     'the block that is its header\'s still arrives after its altered copy was refused',
     async () => {
       const { nodeA, nodeB, nodeC } = await startLine();

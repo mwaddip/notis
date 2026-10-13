@@ -9,6 +9,7 @@ import {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
   verifyPostBody,
 } from '@dagsocial/validation';
 import {
@@ -238,6 +239,7 @@ describe('peerDbCap default (contract: soft cap 1000)', () => {
     verifyParentRefsCount,
     verifyTxStructure,
     verifyOrderingBlockStructure,
+    verifyUtxoTxRoot,
     verifyPostBody,
   };
 

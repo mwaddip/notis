@@ -15,6 +15,7 @@ import {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
   verifyPostBody,
 } from '@dagsocial/validation';
 import { encodeServableOrderingBlock } from '../src/serve-encode.js';
@@ -48,6 +49,7 @@ const validators: NetValidators = {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
   verifyPostBody,
 };
 

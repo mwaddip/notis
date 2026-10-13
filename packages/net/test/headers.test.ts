@@ -19,6 +19,7 @@ import {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
   verifyPostBody,
 } from '@dagsocial/validation';
 import { SYNC_PROTOCOL } from '../src/sync.js';
@@ -818,6 +819,7 @@ const registrationValidators: NetValidators = {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
   verifyPostBody,
 };
 

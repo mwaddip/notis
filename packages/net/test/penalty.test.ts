@@ -120,6 +120,7 @@ const stubValidators: NetValidators = {
   verifyParentRefsCount: () => ({ valid: true }),
   verifyTxStructure: () => ({ valid: true }),
   verifyOrderingBlockStructure: () => ({ valid: true }),
+  verifyUtxoTxRoot: () => true,
   verifyPostBody: () => ({ valid: true }),
 };
 

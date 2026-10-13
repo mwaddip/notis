@@ -189,6 +189,20 @@ export function subscribeTopics(
         return TopicValidatorResult.Reject;
       }
       // NET_INTERFACE → Stage 1 →
+      // "A worked header is forwarded with the body its root commits".
+      // After the PoW check because this predicate hashes the whole body
+      // (VALIDATION_INTERFACE → verifyUtxoTxRoot, its cost): a header must
+      // have proven work before a node pays to hash its body.
+      if (!validators.verifyUtxoTxRoot(block)) {
+        peerMgr.recordPenalty(
+          'misbehavior',
+          _peer.toString(),
+          100,
+          'ordering block body is not the one the header\'s root commits',
+        );
+        return TopicValidatorResult.Reject;
+      }
+      // NET_INTERFACE → Stage 1 →
       // "A scheduled-target mismatch is refused, never forwarded, and never penalised"
       const expected = scheduledTargetBits(block.header);
       if (expected !== null && block.header.powTargetBits !== expected) {

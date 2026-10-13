@@ -155,6 +155,11 @@ export interface NetValidators {
   verifyParentRefsCount: (refs: string[]) => { valid: boolean; error?: string };
   verifyTxStructure: (tx: UtxoTransaction) => { valid: boolean; error?: string };
   verifyOrderingBlockStructure: (block: OrderingBlock) => { valid: boolean; error?: string };
+  // The body is the one the header's `utxoTxRoot` commits
+  // (VALIDATION_INTERFACE → verifyUtxoTxRoot). Called from the ordering-block
+  // topic validator after the PoW check (NET_INTERFACE → Stage 1 →
+  // "A worked header is forwarded with the body its root commits").
+  verifyUtxoTxRoot: (block: OrderingBlock) => boolean;
   verifyPostBody: (content: unknown, contentHash: Uint8Array) => { valid: boolean; error?: string };
 }
 
