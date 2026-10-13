@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { verifyUtxoTxRoot } from '../src/verify.js';
 import type { OrderingBlock, BlockHeader } from '@dagsocial/types';
-import { EMPTY_STATE_ROOT, ORDERING_BLOCK_POW_TARGET_FLOOR } from '@dagsocial/types';
+import {
+  EMPTY_STATE_ROOT,
+  ORDERING_BLOCK_POW_TARGET_FLOOR,
+  computeUtxoTxRoot,
+} from '@dagsocial/types';
 
 // VALIDATION_INTERFACE → verifyUtxoTxRoot.
 //
@@ -130,6 +134,33 @@ describe('verifyUtxoTxRoot', () => {
   it('rejects arrays of different length, both ways round', () => {
     expect(verifyUtxoTxRoot(makeBlock(ROOT_TWO, [ID_AB], txsTwo()))).toBe(false);
     expect(verifyUtxoTxRoot(makeBlock(ROOT_TWO, idsTwo, [new Uint8Array([0x01])]))).toBe(false);
+  });
+
+  it('rejects arrays of different length under the root computeUtxoTxRoot gives for them', () => {
+    const trees = [
+      { utxoTxIds: [ID_AB, ID_CD], utxoTxs: [new Uint8Array([0x01])] },
+      { utxoTxIds: [ID_AB], utxoTxs: [new Uint8Array([0x01]), new Uint8Array([0x02, 0x03])] },
+    ];
+    for (const tree of trees) {
+      const root = computeUtxoTxRoot(tree);
+      expect(root).toMatch(/^[0-9a-f]{64}$/);
+      expect(verifyUtxoTxRoot(makeBlock(root, tree.utxoTxIds, tree.utxoTxs))).toBe(false);
+    }
+  });
+
+  it('rejects an id of even-length lowercase hex that is not 32 bytes, under the root computeUtxoTxRoot gives for it', () => {
+    for (const length of [62, 66]) {
+      const tree = {
+        utxoTxIds: ['ab'.repeat(length / 2), ID_CD],
+        utxoTxs: txsTwo(),
+      };
+      let root = '';
+      expect(() => {
+        root = computeUtxoTxRoot(tree);
+      }).not.toThrow();
+      expect(root).toMatch(/^[0-9a-f]{64}$/);
+      expect(verifyUtxoTxRoot(makeBlock(root, tree.utxoTxIds, tree.utxoTxs))).toBe(false);
+    }
   });
 
   it('rejects an id that is a number, null, uppercase hex, or 63 characters', () => {
