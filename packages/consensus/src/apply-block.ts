@@ -149,12 +149,14 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // block producer is untrusted (permissionless PoW), so nothing about an
   // embedded tx is assumed verified.
 
-  // The proof obligation (NODE_INTERFACE → "Embedded transactions: a mismatch
-  // rejects the block"): every declared `utxoTxId` must be proven to be the id
-  // of the bytes carried beside it, and an arm that cannot complete that proof
-  // rejects the block. A body that does not match its committed ids would
-  // otherwise apply different state under one block hash. Stated as a property
-  // rather than as a list, so a guard added here later inherits the verdict.
+  // The proof obligation, NODE_INTERFACE →
+  // "Embedded transactions: a mismatch rejects the block": every declared
+  // `utxoTxId` must be proven to be the id of the bytes carried beside it, and
+  // an arm that cannot complete that proof rejects the block. The root commits
+  // the id and the bytes side by side, so an id leaf that is not the id of the
+  // bytes beside it is a transaction the block claims and does not carry.
+  // Stated as a property rather than as a list, so a guard added here later
+  // inherits the verdict.
   interface QueuedTx {
     txId: string;
     tx: UtxoTransaction;
