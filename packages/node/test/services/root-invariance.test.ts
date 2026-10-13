@@ -40,7 +40,7 @@ describe('utxoTxRoot — the root over one body', () => {
   beforeEach(async () => { vi.resetModules(); });
   afterEach(async () => { vi.resetModules(); });
 
-  it.fails('a mined block\'s utxoTxRoot is the root of its id leaves, then its bytes leaves, in body order', async () => {
+  it('a mined block\'s utxoTxRoot is the root of its id leaves, then its bytes leaves, in body order', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -64,7 +64,7 @@ describe('utxoTxRoot — the root over one body', () => {
     expect(block.header.utxoTxRoot).toBe(expected);
   });
 
-  it.fails('the settlement is the last leaf of each class', async () => {
+  it('the settlement is the last leaf of each class', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();

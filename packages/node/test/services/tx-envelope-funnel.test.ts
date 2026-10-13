@@ -5,20 +5,19 @@
 // The rule this file pins (NODE_INTERFACE → "Embedded transactions: a mismatch
 // rejects the block"): every declared `utxoTxId` must be proven to be the id of
 // the bytes carried beside it, and an arm that cannot complete that proof
-// rejects the BLOCK. A body that does not match its committed ids would
-// otherwise apply different state under one block hash.
+// rejects the BLOCK.
 //
 // It is a property, not a list of arms, so the cases below are organised by
 // *where the proof breaks down* rather than by arm: unreadable bytes, an
 // envelope the hasher cannot read, an output field outside the encoder's
-// domain, and a declared id the bytes do not produce. The last case is the
-// separate constraint that keeps the verdict attached to the bytes rather than
-// to the header hash.
+// domain, and a declared id the bytes do not produce
+// (NODE_INTERFACE → "Embedded transactions: a mismatch rejects the block").
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   computeTxId,
+  computeUtxoTxRoot,
   encodeTx,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
@@ -29,7 +28,9 @@ import type { TestIdentity } from '../helpers.js';
 import {
   makeTestIdentity,
   makeKarmaBox,
+  signHeader,
   signTransaction,
+  solveHeaderPow,
   makeApplicableBlock,
 } from '../helpers.js';
 // Pure and stateless, so one static instance is safe alongside this file's
@@ -240,9 +241,10 @@ describe('block funnel — the embedded-tx proof obligation', () => {
   });
 
   it('a declared id the bytes do not produce rejects the block', async () => {
-    // The arm the obligation is named for: the body decodes, the envelope is
-    // clean, the outputs are in domain — and the id beside it still belongs to
-    // different bytes.
+    // The body carries ids and bytes the root commits side by side
+    // (TYPES_INTERFACE → Ordering block). A body whose bytes are replaced
+    // under an unchanged header has a different root, and step 4 refuses it
+    // before the loop reads it.
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -259,8 +261,7 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     const block = await makeApplicableBlock({ utxoTxs: [declared] });
 
     // A wholly different, individually valid transaction under the declared
-    // id. Every gate ahead of the id check passes, so this reaches the
-    // comparison and nothing else refuses it.
+    // id.
     const substituted = karmaSelfSpend(bob, bobBox);
     expect(checkEnvelope(substituted)).toEqual({ valid: true });
     expect(computeTxId(substituted)).not.toBe(computeTxId(declared));
@@ -273,15 +274,9 @@ describe('block funnel — the embedded-tx proof obligation', () => {
 
     expect(applied).toBe(false);
     expect(
-      warnings.filter(
-        (w) =>
-          w.includes(
-            `embedded UTXO tx ${computeTxId(declared)} declares an id its bytes ` +
-            `do not produce`,
-          ) && w.includes(computeTxId(substituted)),
-      ),
-      `id-mismatch rejection missing; got ${JSON.stringify(warnings)}`,
-    ).toHaveLength(1);
+      warnings.some((w) => w.includes('utxoTxRoot mismatch')),
+      `utxoTxRoot-mismatch rejection missing; got ${JSON.stringify(warnings)}`,
+    ).toBe(true);
 
     const ordering = await importOrdering();
     expect(ordering.getOrderingBlock(1)).toBeNull();
@@ -291,15 +286,10 @@ describe('block funnel — the embedded-tx proof obligation', () => {
   });
 
   it('rejection is of the BYTES: a good body under the same header hash still applies', async () => {
-    // NODE_INTERFACE → "Rejection is of BYTES, not of the block hash". Nothing
-    // implements a hash-keyed negative cache today, which is precisely why this
-    // test exists: the constraint binds code not yet written, and the day
-    // someone caches "block H is invalid" this is what fails.
-    //
-    // The attack and the test are the same shape. `utxoTxRoot` commits
-    // `utxoTxIds` but NOT `utxoTxs`, so a good block and a body-corrupted block
-    // genuinely share one header hash — an attacker who races the honest
-    // producer needs no re-mine and no re-sign.
+    // NODE_INTERFACE → "Rejection is of BYTES, not of the block hash — for
+    // every byte the hash does not fix". The two blocks share one header
+    // because it is the same header; the second's body is not the one that
+    // header's root commits, and the refusal writes nothing keyed on the hash.
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -315,10 +305,10 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     expect(goodHash).not.toBeNull();
 
     // Same header object, corrupted body. Bytes that are not a transaction at
-    // all, so the decode arm is the one that fires.
+    // all.
     // ⚠ Only the FIRST body is replaced: the settlement rides `utxoTxs` as the
-    // last entry, and dropping it would fail the alignment check ahead of the
-    // decode arm this case is about.
+    // last entry, and dropping it would fail the alignment check ahead of this
+    // step.
     const corrupt = {
       ...good,
       utxoTxTree: {
@@ -333,14 +323,20 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     // indistinguishable at the header the node would key a cache on.
     expect(blockHash(corrupt.header)).toBe(goodHash);
 
+    // The block's shape is a block's and its body is not its header's
+    // (VALIDATION_INTERFACE → verifyUtxoTxRoot).
+    const { verifyOrderingBlockStructure, verifyUtxoTxRoot } = await import('@dagsocial/validation');
+    expect(verifyOrderingBlockStructure(corrupt).valid).toBe(true);
+    expect(verifyUtxoTxRoot(corrupt)).toBe(false);
+
     const blockApply = await importBlockApply();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(blockApply.applyOrderingBlock(corrupt)).toBe(false);
     const warnings = warn.mock.calls.map((c) => String(c[0]));
     warn.mockRestore();
     expect(
-      warnings.some((w) => w.includes('did not decode')),
-      `decode rejection missing; got ${JSON.stringify(warnings)}`,
+      warnings.some((w) => w.includes('utxoTxRoot mismatch')),
+      `utxoTxRoot-mismatch rejection missing; got ${JSON.stringify(warnings)}`,
     ).toBe(true);
 
     const ordering = await importOrdering();
@@ -360,6 +356,66 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     expect(journal.getBlockJournal(1)!.appliedUtxoTxs.map((t) => t.txId)).toEqual([
       computeTxId(tx),
     ]);
+  });
+
+  it('bytes that are not a transaction, under a root that commits them, reject the block at the decode arm', async () => {
+    // The header's `utxoTxRoot` is the body's root, so step 4 accepts the
+    // block and the decode arm is where it refuses — the arm the obligation is
+    // named for (NODE_INTERFACE → "Embedded transactions: a mismatch rejects
+    // the block").
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await importUtxo();
+
+    const miner = makeTestIdentity();
+    const alice = makeTestIdentity();
+    const aliceBox = makeKarmaBox(100n, alice.userId, 0, 0);
+    utxo.insertBox(aliceBox);
+    const tx = karmaSelfSpend(alice, aliceBox);
+
+    const honest = await makeApplicableBlock({ miner, utxoTxs: [tx] });
+
+    // The body carries one element that will not decode, under a `utxoTxRoot`
+    // that is this body's — the header mined and signed again over the new
+    // root.
+    const tree = {
+      utxoTxIds: honest.utxoTxTree.utxoTxIds,
+      utxoTxs: honest.utxoTxTree.utxoTxs.map(
+        (b, i) => (i === 0 ? new Uint8Array([0xff, 0xff, 0xff]) : b),
+      ),
+    };
+    const header = { ...honest.header, utxoTxRoot: computeUtxoTxRoot(tree) };
+    header.powNonce = solveHeaderPow(header);
+    const block: OrderingBlock = {
+      header,
+      utxoTxTree: tree,
+      validatorSignature: signHeader(header, miner.privateKey),
+    };
+
+    // Controls: the block's shape is a block's and its body is its header's
+    // (VALIDATION_INTERFACE → verifyUtxoTxRoot).
+    const { verifyOrderingBlockStructure, verifyUtxoTxRoot } = await import('@dagsocial/validation');
+    expect(verifyOrderingBlockStructure(block).valid).toBe(true);
+    expect(verifyUtxoTxRoot(block)).toBe(true);
+
+    const blockApply = await importBlockApply();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(blockApply.applyOrderingBlock(block)).toBe(false);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+    expect(
+      warnings.some((w) => w.includes('did not decode')),
+      `decode rejection missing; got ${JSON.stringify(warnings)}`,
+    ).toBe(true);
+
+    const ordering = await importOrdering();
+    expect(ordering.getOrderingBlock(1)).toBeNull();
+    expect(ordering.getCurrentHeight()).toBe(0);
+    expect(utxo.getBox(aliceBox.id!)).not.toBeNull();
+
+    const journal = await importJournalStore();
+    expect(journal.getBlockJournal(1)).toBeNull();
   });
 
   it('non-vacuity: the obligation is about PROOF, not about strictness', async () => {

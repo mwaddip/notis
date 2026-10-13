@@ -56,18 +56,6 @@ import {
 // ---------------------------------------------------------------------------
 
 
-/**
- * The block's Merkle helpers, from the graph the current test is driving. Same
- * module as `importBlockCreator`, separate only because that helper's type is
- * the timer-owning surface and widening it would offer `startBlockCreator` to
- * every caller that just wants to re-derive a root.
- */
-async function importBlockCreatorRoots() {
-  return (await import('../../src/services/block-creator.js')) as unknown as {
-    computeUtxoTxRoot: (tree: OrderingBlock['utxoTxTree']) => string;
-  };
-}
-
 async function importPosts() {
   return await import('../../src/store/posts.js');
 }
@@ -732,7 +720,7 @@ describe('a stored header that cannot be hashed', () => {
     const miner = makeTestIdentity();
     const block = await makeApplicableBlock({ miner });
 
-    const { computeUtxoTxRoot } = await importBlockCreatorRoots();
+    const { computeUtxoTxRoot } = await import('@dagsocial/types');
     block.utxoTxTree.utxoTxIds = ['00'.repeat(32)];
     block.utxoTxTree.utxoTxs = [new Uint8Array([0xff, 0xff, 0xff])];
     // The Merkle commitment covers the bytes, so it has to be re-derived — a

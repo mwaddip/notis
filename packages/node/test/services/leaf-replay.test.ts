@@ -16,6 +16,7 @@ import {
   computeContentHash,
   computePostId,
   computeTxId,
+  computeUtxoTxRoot,
   hash32,
   hexToBytes,
 } from '@dagsocial/types';
@@ -444,7 +445,7 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
     const stored = node.ordering.getOrderingBlock(height);
     if (stored === null) throw new Error(`fetchAsLeaf: this node stores no block at height ${height}`);
     const body: UtxoTxTree = { utxoTxIds: served.utxoTxTree.utxoTxIds, utxoTxs: stored.utxoTxTree.utxoTxs };
-    expect(node.creator.computeUtxoTxRoot(body)).toBe(header.utxoTxRoot);
+    expect(computeUtxoTxRoot(body)).toBe(header.utxoTxRoot);
     return { header, body, proof };
   }
 
