@@ -5452,7 +5452,9 @@ has exactly one INSERT writer. Bytes an attacker crafts are what the arm is for.
 > ⚠ **AHEAD OF CODE (2026-10-13).** The next paragraph, the funnel table's root step and
 > → Block creation's step 16 lead `services/block-apply.ts` and `services/block-creator.ts`: the
 > code compares a root of ids alone, built by the node's own `computeUtxoTxRoot`, so a body's bytes
-> reach this loop under no commitment but the id beside them.
+> reach this loop under no commitment but the id beside them. The blockquote "Rejection is of BYTES,
+> not of the block hash" below leads `services/fork-resolution.ts` with it: the code writes the mark
+> for a served block that is not its header's.
 
 **A body is not swappable under an unchanged header.** `utxoTxRoot` commits every id and every
 transaction's bytes, so a body altered after its producer hashed it has another root and is refused
@@ -5467,24 +5469,26 @@ a consensus rule"). Every node walks the same body once, in committed order, fro
 state, so every node reaches the same verdict. If input liveness ever stops being decidable from
 local state alone, this is what has to be re-derived.
 
-> ⚠ **Rejection is of BYTES, not of the block hash.** A node that rejects a malformed body MUST
-> remain willing to accept a well-formed body for the same block hash from another peer. Caching
-> "block `abc…` is invalid" would hand an attacker who races the honest producer a permanent
-> per-height censorship primitive against that node.
+> ⚠ **Rejection is of BYTES, not of the block hash — for every byte the hash does not fix.** A block
+> as it is delivered is a header, a body and a signature. The header's hash commits one body
+> (`TYPES_INTERFACE → Ordering block`) and says nothing of which body, or which `validatorSignature`,
+> arrived beside it. A node that refuses a delivered block because its body is not its header's
+> (`VALIDATION_INTERFACE → verifyUtxoTxRoot`), because its shape is not a block's, or because its
+> signature does not verify MUST remain willing to accept the header's own block under the same hash
+> from another peer: it writes nothing keyed on the hash. Caching "block `abc…` is invalid" for such
+> a refusal would hand an attacker who races the honest producer a permanent per-height censorship
+> primitive against that node.
 >
-> **Nothing implements this, and that is the point** — measured 2026-08-10, no negative cache keyed
-> on a block hash exists anywhere. The funnel has **three** call sites for four paths:
-> `handleOrderingBlock` (gossip and pull converge there; the boolean is the pull batch's continue
-> signal), `block-creator`, which assigns it, and `reorg`, which reads the classified verdict and
-> throws on it. **None memoizes by hash**, which is the property that matters — an
-> earlier draft of this paragraph said "both call sites discard its boolean", reaching the right
-> conclusion from a count that was short by two. Net's bans are keyed on peer id or address, and
+> **One record is keyed on a block hash, and it is written only for a block that is its header's** —
+> fork resolution's mark (→ Refused headers), behind step 8's three checks (→ Fork choice decides on
+> verified headers). The funnel itself keeps no verdict by hash: it has **three** call sites for four
+> paths — `handleOrderingBlock` (gossip and pull converge there; the boolean is the pull batch's
+> continue signal), `block-creator`, which assigns it, and `reorg`, which reads the classified
+> verdict and throws on it — and none memoizes. Net's bans are keyed on peer id or address, and
 > `sync-machine`'s `outstanding` is an in-flight request set: a rejected block is never stored, so it
-> stays absent from `blockIdIndex()` and is re-requestable. So this is a constraint on code not yet
-> written, and a constraint
-> with no test is a claim that decays silently. It carries a **regression test** instead: a corrupted
-> body under hash `H` rejects, and a well-formed body under that same `H` then applies. The day
-> someone adds a cache, that test is what fails.
+> stays absent from `blockIdIndex()` and is re-requestable. The rule carries a **regression test**: a
+> body that is not its header's is refused under hash `H`, and the header's own body under that same
+> `H` then applies.
 
 **The output domain check.** `computeTxId` runs in that same loop behind `checkTxEnvelope` only, and
 `checkTxEnvelope` deliberately does not type output entries, so an out-of-domain output field reaches
