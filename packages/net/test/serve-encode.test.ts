@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   PROTOCOL_VERSION,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
+  computeUtxoTxRoot,
   decodeOrderingBlock,
   encodeOrderingBlock,
 } from '@dagsocial/types';
@@ -74,18 +75,23 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
 }
 
 function makeOrderingBlock(header: BlockHeader = makeHeader()): OrderingBlock {
+  // Verdict-bearing like `powTargetBits` above, and for the same reason:
+  // `encodeServableOrderingBlock` gates on structure, and a body carrying no
+  // transaction is a clause of that verdict (VALIDATION_INTERFACE →
+  // verifyOrderingBlockStructure). Every block carries at least one, because
+  // the settlement is one (NODE_INTERFACE → It is the LAST entry in
+  // `utxoTxIds`). The header carries the root of its body
+  // (TYPES_INTERFACE → Ordering block). The id is drawn from the low byte of
+  // the height so the fixtures outside the header domain — a negative height,
+  // the `validatorId: 'short'` row — carry a valid 32-byte id all the same.
+  const idByte = (header.height & 0xff).toString(16).padStart(2, '0');
+  const utxoTxTree = {
+    utxoTxIds: [idByte.repeat(32)],
+    utxoTxs: [new Uint8Array(96).fill(header.height & 0xff)],
+  };
   return {
-    header,
-    // Verdict-bearing like `powTargetBits` above, and for the same reason:
-    // `encodeServableOrderingBlock` gates on structure, and a body carrying no
-    // transaction is a clause of that verdict (VALIDATION_INTERFACE →
-    // verifyOrderingBlockStructure). Every block carries at least one, because
-    // the settlement is one (NODE_INTERFACE → It is the LAST entry in
-    // `utxoTxIds`).
-    utxoTxTree: {
-      utxoTxIds: [header.height.toString(16).padStart(64, '0')],
-      utxoTxs: [new Uint8Array(96).fill(header.height & 0xff)],
-    },
+    header: { ...header, utxoTxRoot: computeUtxoTxRoot(utxoTxTree) },
+    utxoTxTree,
     validatorSignature: new Uint8Array(64),
   };
 }

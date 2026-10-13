@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   generateKeyPair,
   computeContentHash,
+  computeUtxoTxRoot,
   encodeOrderingBlock,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   MAGIC_DEVNET,
@@ -13,6 +14,7 @@ import type {
   UtxoTransaction,
   OrderingBlock,
   BlockHeader,
+  UtxoTxTree,
 } from '@dagsocial/types';
 import {
   verifyOrderingBlockPoW,
@@ -192,11 +194,18 @@ function mineHeader(base: BlockHeader): BlockHeader {
 }
 
 function makeBlockAt(height: number, protocolVersion: number): OrderingBlock {
+  // VALIDATION_INTERFACE → verifyOrderingBlockStructure requires at least one
+  // settlement tx id and payload. The body is built first because the header
+  // carries its root — TYPES_INTERFACE → Ordering block.
+  const utxoTxTree: UtxoTxTree = {
+    utxoTxIds: [height.toString(16).padStart(64, '0')],
+    utxoTxs: [new Uint8Array(96).fill(height & 0xff)],
+  };
   const base: BlockHeader = {
     protocolVersion,
     height,
     prevBlockHash: '00'.repeat(32),
-    utxoTxRoot: '00'.repeat(32),
+    utxoTxRoot: computeUtxoTxRoot(utxoTxTree),
     stateRoot: '00'.repeat(33),
     validatorId: new Uint8Array(32),
     powNonce: 0,
@@ -206,14 +215,9 @@ function makeBlockAt(height: number, protocolVersion: number): OrderingBlock {
     adProofsRoot: '00'.repeat(32),
   };
   const header = mineHeader(base);
-  // VALIDATION_INTERFACE → verifyOrderingBlockStructure requires at least one
-  // settlement tx id and payload.
   return {
     header,
-    utxoTxTree: {
-      utxoTxIds: [height.toString(16).padStart(64, '0')],
-      utxoTxs: [new Uint8Array(96).fill(height & 0xff)],
-    },
+    utxoTxTree,
     validatorSignature: new Uint8Array(64),
   };
 }
@@ -1267,4 +1271,129 @@ describe('The seen window carries the constant', () => {
     expect(router).toBeDefined();
     expect(router?.opts?.seenTTL).toBe(GOSSIP_SEEN_WINDOW_MS);
   });
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Stage 1 → "A worked header is forwarded with the body its
+// root commits".
+//
+// The control is the delivery case at line "one publish by A is delivered once
+// at C over two hops (ordering block)" above: it already asserts that a block
+// built by `makeBlockAt` — now one that is its header's — reaches both B's and
+// C's handler.
+// ---------------------------------------------------------------------------
+
+interface PeerMgrView {
+  getPeerMetadata(id: string): { penaltyCount: number } | undefined;
+}
+
+function alterBody(block: OrderingBlock): OrderingBlock {
+  const original = block.utxoTxTree.utxoTxs[0]!;
+  const bytes = new Uint8Array(original);
+  bytes[0] = (bytes[0]! ^ 0x01) & 0xff;
+  return {
+    header: block.header,
+    utxoTxTree: {
+      utxoTxIds: block.utxoTxTree.utxoTxIds,
+      utxoTxs: [bytes],
+    },
+    validatorSignature: block.validatorSignature,
+  };
+}
+
+describe('A worked header is forwarded with the body its root commits', () => {
+  const open: NetNode[] = [];
+  afterEach(async () => {
+    while (open.length > 0) {
+      const n = open.pop();
+      await n?.stop();
+    }
+  });
+  const track = (nodes: NetNode[]): void => {
+    for (const n of nodes) open.push(n);
+  };
+
+  it.fails(
+    'a worked header with another body goes no further than its first hop',
+    async () => {
+      const { nodeA, nodeB, nodeC } = await startLine();
+      track([nodeA, nodeB, nodeC]);
+      assertLineIntact(nodeA, nodeC);
+
+      const honest = makeBlockAt(1, PROTOCOL_VERSION);
+      const altered = alterBody(honest);
+
+      // Controls: nothing ahead of the root refuses the altered block.
+      expect(verifyOrderingBlockPoW(altered.header)).toBe(true);
+      expect(verifyOrderingBlockStructure(altered)).toEqual({ valid: true });
+
+      const bValidator = newCounter();
+      wrapValidator(nodeB, topicsOf(nodeB).orderingBlock, bValidator);
+
+      const bHandler = vi.fn<[OrderingBlock, string], void>();
+      nodeB.onOrderingBlock(bHandler);
+      const cHandler = vi.fn<[OrderingBlock, string], void>();
+      nodeC.onOrderingBlock(cHandler);
+
+      await nodeA.broadcastOrderingBlock(altered);
+
+      await vi.waitFor(() => expect(bValidator.count).toBe(1), {
+        timeout: 10_000,
+        interval: 100,
+      });
+      await new Promise((r) => setTimeout(r, SETTLE_MS));
+
+      const bPeerMgr = (nodeB as unknown as { peerMgr: PeerMgrView }).peerMgr;
+      expect({
+        bHandlerCalls: bHandler.mock.calls.length,
+        cHandlerCalls: cHandler.mock.calls.length,
+        penaltyCount: bPeerMgr.getPeerMetadata(nodeA.peerId())?.penaltyCount ?? 0,
+      }).toEqual({ bHandlerCalls: 0, cHandlerCalls: 0, penaltyCount: 1 });
+    },
+    TIMEOUT,
+  );
+
+  it.fails(
+    'the block that is its header\'s still arrives after its altered copy was refused',
+    async () => {
+      const { nodeA, nodeB, nodeC } = await startLine();
+      track([nodeA, nodeB, nodeC]);
+      assertLineIntact(nodeA, nodeC);
+
+      const honest = makeBlockAt(1, PROTOCOL_VERSION);
+      const altered = alterBody(honest);
+
+      const bHandler = vi.fn<[OrderingBlock, string], void>();
+      nodeB.onOrderingBlock(bHandler);
+
+      // A publishes the altered copy; B's router runs its validator on it.
+      const bValidator = newCounter();
+      wrapValidator(nodeB, topicsOf(nodeB).orderingBlock, bValidator);
+      await nodeA.broadcastOrderingBlock(altered);
+      await vi.waitFor(() => expect(bValidator.count).toBe(1), {
+        timeout: 10_000,
+        interval: 100,
+      });
+      await new Promise((r) => setTimeout(r, SETTLE_MS));
+
+      // Then C broadcasts the unaltered block of the same header. B's router
+      // sees new bytes (different msgId) and runs its validator a second time.
+      await nodeC.broadcastOrderingBlock(honest);
+      await vi.waitFor(() => expect(bValidator.count).toBe(2), {
+        timeout: 10_000,
+        interval: 100,
+      });
+      await new Promise((r) => setTimeout(r, SETTLE_MS));
+
+      const firstBytes = bHandler.mock.calls[0]?.[0].utxoTxTree.utxoTxs[0];
+      expect({
+        calls: bHandler.mock.calls.length,
+        firstBytes: firstBytes ? Array.from(firstBytes) : null,
+      }).toEqual({
+        calls: 1,
+        firstBytes: Array.from(honest.utxoTxTree.utxoTxs[0]!),
+      });
+    },
+    TIMEOUT,
+  );
 });

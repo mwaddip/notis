@@ -15,6 +15,7 @@ import {
   encodeTxPacket,
   decodeTxPacket,
   computeContentHash,
+  computeUtxoTxRoot,
   ReaderError,
   encodeOrderingBlock,
   decodeOrderingBlock,
@@ -123,13 +124,19 @@ function newPeer(peerMgr: PeerManager): { id: string; toString(): string } {
 //
 // Stage 1 never decodes an element: `utxoTxs` is `arr(utxoTxs, lp)`, opaque
 // length-prefixed bytes weighed as they arrived, so the payload here is a
-// plausible size and nothing more. The id is what `utxoTxRoot` would commit.
+// plausible size and nothing more. The id and the bytes are what `utxoTxRoot`
+// commits (TYPES_INTERFACE → Ordering block).
 function settlementBody(): UtxoTxTree {
   return {
     utxoTxIds: ['5e'.repeat(32)],
     utxoTxs: [new Uint8Array(96).fill(0x5e)],
   };
 }
+
+// The settlement body's root — the one a header carrying this body commits
+// (TYPES_INTERFACE → Ordering block). Computed once because the body is a
+// constant across the fixtures of this file.
+const SETTLEMENT_ROOT = computeUtxoTxRoot(settlementBody());
 
 // ---------------------------------------------------------------------------
 // Ordering-block topic validator — relay PoW gate (audit M-9, M-6)
@@ -140,7 +147,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
     protocolVersion: 1,
     height: 7,
     prevBlockHash: '11'.repeat(32),
-    utxoTxRoot: '33'.repeat(32),
+    utxoTxRoot: SETTLEMENT_ROOT,
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: new Uint8Array(32).fill(9),
     powNonce: 0,
@@ -572,7 +579,7 @@ describe('gossip dispatch listener', () => {
     protocolVersion: 1,
     height: 3,
     prevBlockHash: '44'.repeat(32),
-    utxoTxRoot: '66'.repeat(32),
+    utxoTxRoot: SETTLEMENT_ROOT,
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: new Uint8Array(32).fill(1),
     powNonce: 0,
@@ -752,7 +759,7 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
     protocolVersion,
     height,
     prevBlockHash: '11'.repeat(32),
-    utxoTxRoot: '33'.repeat(32),
+    utxoTxRoot: SETTLEMENT_ROOT,
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: new Uint8Array(32).fill(9),
     powNonce: 0,
@@ -888,7 +895,7 @@ describe('ordering-block topic validator — network floor and schedule', () => 
     protocolVersion: 1,
     height: 7,
     prevBlockHash: '11'.repeat(32),
-    utxoTxRoot: '33'.repeat(32),
+    utxoTxRoot: SETTLEMENT_ROOT,
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: new Uint8Array(32).fill(9),
     powNonce: 0,

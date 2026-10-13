@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import {
   PROTOCOL_VERSION,
+  computeUtxoTxRoot,
   encodeOrderingBlock,
 } from '@dagsocial/types';
 import {
@@ -36,13 +37,16 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
   };
 }
 
+// The header carries the root of its body (TYPES_INTERFACE → Ordering block);
+// `makeBlock` fixes it here so every fixture is its header's.
 function makeBlock(header: BlockHeader): OrderingBlock {
+  const utxoTxTree = {
+    utxoTxIds: [header.height.toString(16).padStart(64, '0')],
+    utxoTxs: [new Uint8Array(96).fill(header.height & 0xff)],
+  };
   return {
-    header,
-    utxoTxTree: {
-      utxoTxIds: [header.height.toString(16).padStart(64, '0')],
-      utxoTxs: [new Uint8Array(96).fill(header.height & 0xff)],
-    },
+    header: { ...header, utxoTxRoot: computeUtxoTxRoot(utxoTxTree) },
+    utxoTxTree,
     validatorSignature: new Uint8Array(64),
   };
 }

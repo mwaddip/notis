@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   generateKeyPair,
   computeContentHash,
+  computeUtxoTxRoot,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
@@ -73,10 +74,13 @@ function settlementBody(height: number): OrderingBlock['utxoTxTree'] {
   };
 }
 
+// The header carries the root of its body (TYPES_INTERFACE → Ordering block);
+// `makeBlock` fixes it here so every fixture is its header's.
 function makeBlock(header: BlockHeader): OrderingBlock {
+  const utxoTxTree = settlementBody(header.height);
   return {
-    header,
-    utxoTxTree: settlementBody(header.height),
+    header: { ...header, utxoTxRoot: computeUtxoTxRoot(utxoTxTree) },
+    utxoTxTree,
     validatorSignature: new Uint8Array(64),
   };
 }
@@ -184,12 +188,14 @@ describe('Two-node integration', () => {
     const validatorId = new Uint8Array(32);
     // Stage 1 now PoW-gates ordering-block relay (audit M-9) — an unmined
     // header dies at B's topic validator, so mine the real 12-bit nonce
-    // (~4K tries) with the same function the relay gate calls.
+    // (~4K tries) with the same function the relay gate calls. The header
+    // carries the root of its body (TYPES_INTERFACE → Ordering block).
+    const utxoTxTree = settlementBody(1);
     const headerBase: BlockHeader = {
       protocolVersion: 1,
       height: 1,
       prevBlockHash: '00'.repeat(32),
-      utxoTxRoot: '00'.repeat(32),
+      utxoTxRoot: computeUtxoTxRoot(utxoTxTree),
       stateRoot: '00'.repeat(33),
       validatorId,
       powNonce: 0,
@@ -205,7 +211,7 @@ describe('Two-node integration', () => {
     expect(blockNonce).toBeGreaterThanOrEqual(0);
     const block: OrderingBlock = {
       header: { ...headerBase, powNonce: blockNonce },
-      utxoTxTree: settlementBody(headerBase.height),
+      utxoTxTree,
       validatorSignature: new Uint8Array(64),
     };
 
