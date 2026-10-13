@@ -317,6 +317,7 @@ under → Size caps.
 | `MAX_ADVERTISED_HEIGHT` | `100_000_000` | ~190 years at one block a minute | format | a horizon no honest chain reaches | DERIVED | `NET_INTERFACE → Validation` |
 | `GET_PEERS_RESPONSE_LIMIT` | `8` | peers served per `GetPeers` | policy | none stated | CHOSEN | `NET_INTERFACE → Peers` |
 | `BACKFILL_BATCH_IDS` | `100` | post bodies requested per batch | policy | none stated | CHOSEN | `NET_INTERFACE → Sync State Machine` |
+| `GOSSIP_SEEN_WINDOW_MS` | `120_000` | two minutes a gossip message's id stays seen | policy | gossipsub's default, kept; above the five heartbeats — five seconds — a message stays in a peer's gossip cache; none stated for the number | CHOSEN | `NET_INTERFACE → Gossip Topics` |
 
 ## Producer policy
 

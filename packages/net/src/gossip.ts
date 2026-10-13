@@ -1,9 +1,12 @@
 import {
+  ByteWriter,
   decodeOrderingBlock,
   decodeTxPacket,
   encodeOrderingBlock,
   encodeTxPacket,
+  hash32,
   protocolVersionAt,
+  writeLpUtf8,
 } from '@dagsocial/types';
 import type { OrderingBlock, UtxoTransaction, BlockHeader, ProtocolEra } from '@dagsocial/types';
 import { TopicValidatorResult } from '@libp2p/interface';
@@ -28,14 +31,62 @@ export interface Libp2pGossip {
 }
 
 // ---------------------------------------------------------------------------
-// Topic constants
+// Topic strings and message id — NET_INTERFACE → Gossip Topics
 // ---------------------------------------------------------------------------
 
-// Tracked reservation: '/dagsocial/subblock/1' (NET_INTERFACE → Gossip Topics).
-export const TOPICS = {
-  orderingBlock: '/dagsocial/ordering-block/1',
-  tx: '/dagsocial/tx/1',
-} as const;
+export interface GossipTopics {
+  readonly orderingBlock: string;
+  readonly tx: string;
+}
+
+/**
+ * NET_INTERFACE → Gossip Topics → "A topic is named for its network".
+ *
+ * The pair a node of this magic hears: the ordering-block topic and the tx
+ * topic, each carrying the magic as eight lowercase hex digits. Throws when
+ * `magic` is not an unsigned 32-bit integer — a node with no network does not
+ * start on a topic of its own (`NET_INTERFACE → Config`).
+ */
+export function gossipTopics(magic: number): GossipTopics {
+  if (!Number.isInteger(magic) || magic < 0 || magic > 0xffffffff) {
+    throw new Error(`gossipTopics: magic must be an unsigned 32-bit integer, got ${magic}`);
+  }
+  const hex = magic.toString(16).padStart(8, '0');
+  return {
+    orderingBlock: `/dagsocial/${hex}/ordering-block/1`,
+    tx: `/dagsocial/${hex}/tx/1`,
+  };
+}
+
+// Tracked reservation (TYPES_INTERFACE → Tracked reservations, condition 3):
+// the topic name `subblock` (NET_INTERFACE → Gossip Topics).
+
+/**
+ * NET_INTERFACE → Gossip Topics → "A message is heard once in a seen window".
+ *
+ * The router keeps every id it has named for two minutes and records it before
+ * the topic validator runs; a second copy inside the window is not validated,
+ * not delivered and not forwarded (`CONSTANTS → net`).
+ */
+export const GOSSIP_SEEN_WINDOW_MS = 120_000;
+
+/**
+ * NET_INTERFACE → Gossip Topics → "A message is named by its bytes".
+ *
+ * `hash32(lpUtf8(topic) ‖ data)` — the protocol hash
+ * (`TYPES_INTERFACE → The protocol hash`) over the topic string,
+ * length-prefixed, and the payload. The router's id function, for a message this
+ * node publishes as for one it receives.
+ */
+export function gossipMessageId(topic: string, data: Uint8Array): Uint8Array {
+  const w = new ByteWriter();
+  writeLpUtf8(w, topic);
+  return hash32(w.toBytes(), data);
+}
+
+// ---------------------------------------------------------------------------
+// Relay-path membership gate (NODE_INTERFACE → Post transactions)
+// ---------------------------------------------------------------------------
 
 /**
  * The relay-path gate that replaces post PoW: **does this author hold karma at
@@ -65,7 +116,7 @@ export interface GossipHandlers {
    * `fromPeerId` is the peer that **relayed** this block to us
    * (`propagationSource`), not the peer that published it. Fork resolution asks
    * that peer for the competing chain, because it provably holds one — see the
-   * dispatch below for why `msg.from` is the wrong value.
+   * listener below for why `propagationSource` is the value handed on.
    */
   onOrderingBlock: (block: OrderingBlock, fromPeerId: string) => void;
   onTx: (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => void;
@@ -80,6 +131,7 @@ export function subscribeTopics(
   validators: NetValidators,
   peerMgr: PeerManager,
   handlers: GossipHandlers,
+  topics: GossipTopics,
   karmaMembers: KarmaMembers,
   // The profile's era table and the sync store's tip read. The block validator
   // keys the era on each header's own height; the tx validator on the next
@@ -97,7 +149,7 @@ export function subscribeTopics(
   // messages are rejected at this layer and never propagated further.
   // -------------------------------------------------------------------------
 
-  gs.topicValidators.set(TOPICS.orderingBlock, (_peer, msg) => {
+  gs.topicValidators.set(topics.orderingBlock, (_peer, msg) => {
     try {
       const raw = new Uint8Array(msg.data);
       const block = decodeOrderingBlock(raw);
@@ -136,8 +188,8 @@ export function subscribeTopics(
         peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'ordering block PoW invalid');
         return TopicValidatorResult.Reject;
       }
-      // NET_INTERFACE → Stage 1 → "A scheduled-target mismatch is refused,
-      // never forwarded, and never penalised"
+      // NET_INTERFACE → Stage 1 →
+      // "A scheduled-target mismatch is refused, never forwarded, and never penalised"
       const expected = scheduledTargetBits(block.header);
       if (expected !== null && block.header.powTargetBits !== expected) {
         console.log(
@@ -153,7 +205,7 @@ export function subscribeTopics(
     }
   });
 
-  gs.topicValidators.set(TOPICS.tx, (_peer, msg) => {
+  gs.topicValidators.set(topics.tx, (_peer, msg) => {
     try {
       const raw = new Uint8Array(msg.data);
       const packet = decodeTxPacket(raw);
@@ -222,35 +274,31 @@ export function subscribeTopics(
   });
 
   // -------------------------------------------------------------------------
-  // Event listener — dispatches accepted messages to app-layer handlers.
-  // Topic validators (above) guarantee only structurally-valid messages reach
-  // this point — PoW-verified for ordering blocks, membership-gated for posts.
+  // Event listener — delivers every message the router hands on
+  // (NET_INTERFACE → Inbound Processing →
+  // "A gossip message that passes Stage 1 is delivered, whichever peer carried it").
+  // Topic validators (above) are the only gate before this point.
   // -------------------------------------------------------------------------
 
   gs.addEventListener('gossipsub:message', (evt) => {
     const { detail } = evt;
     if (!detail?.msg) return;
 
-    // Drop messages from peers that are not in Active state
-    const sourcePeerId = (detail.msg as { from?: { toString(): string } }).from?.toString();
-    if (sourcePeerId && !peerMgr.isPeerActive(sourcePeerId)) {
-      return;
-    }
-
     const { topic } = detail.msg;
     const raw = new Uint8Array(detail.msg.data);
 
-    // The peer that sent this message to *us*, which is not the peer above:
-    // `msg.from` is the message's original publisher and need not be connected
-    // to us at all, while `propagationSource` is by construction the peer we
-    // received it from — so it is the one that provably holds the chain a
-    // competing block belongs to (NET_INTERFACE → Pull Requests).
+    // The peer that sent this message to *us* — the carrier — is handed on as
+    // the relay source (NET_INTERFACE → Pull Requests): `propagationSource` is by
+    // construction the peer we received it from, so it is the one that provably
+    // holds the chain a competing block belongs to.
     //
-    // Read the same defensive way `msg.from` is: the field is required by
-    // gossipsub's own type, so an event without it is a broken event rather than
-    // a peer's doing, and no method here panics on one. The empty string is not
-    // a peer id, so a consumer testing membership in its connected set falls
-    // back exactly as it does for a source that has since disconnected.
+    // Read defensively: the field is required by gossipsub's own type, so an
+    // event without it is a broken event rather than a peer's doing, and no
+    // method here panics on one. The empty string is not a peer id, so a
+    // consumer testing membership in its connected set falls back exactly as it
+    // does for a source that has since disconnected
+    // (NET_INTERFACE → Inbound Processing →
+    // "`fromPeerId` is not guaranteed to be a peer id").
     const relayPeerId =
       (detail as { propagationSource?: { toString(): string } }).propagationSource?.toString() ?? '';
 
@@ -285,29 +333,37 @@ export function subscribeTopics(
       }
     };
 
-    if (topic === TOPICS.orderingBlock) {
+    if (topic === topics.orderingBlock) {
       deliver(decodeOrderingBlock, (block) => handlers.onOrderingBlock(block, relayPeerId));
-    } else if (topic === TOPICS.tx) {
+    } else if (topic === topics.tx) {
       deliver(decodeTxPacket, (packet) => handlers.onTx(packet.tx, packet.content, relayPeerId));
     }
   });
 
   // Subscribe to both topics
-  gs.subscribe(TOPICS.orderingBlock);
-  gs.subscribe(TOPICS.tx);
+  gs.subscribe(topics.orderingBlock);
+  gs.subscribe(topics.tx);
 }
 
 // ---------------------------------------------------------------------------
 // Broadcast
 // ---------------------------------------------------------------------------
 
-export async function broadcastOrderingBlock(libp2p: Libp2pGossip, block: OrderingBlock): Promise<void> {
+export async function broadcastOrderingBlock(
+  libp2p: Libp2pGossip,
+  topics: GossipTopics,
+  block: OrderingBlock,
+): Promise<void> {
   const data = encodeOrderingBlock(block);
-  await libp2p.services.pubsub.publish(TOPICS.orderingBlock, data);
+  await libp2p.services.pubsub.publish(topics.orderingBlock, data);
 }
 
-export async function broadcastTx(libp2p: Libp2pGossip, tx: UtxoTransaction, content?: string): Promise<void> {
+export async function broadcastTx(
+  libp2p: Libp2pGossip,
+  topics: GossipTopics,
+  tx: UtxoTransaction,
+  content?: string,
+): Promise<void> {
   const data = encodeTxPacket(tx, content);
-  await libp2p.services.pubsub.publish(TOPICS.tx, data);
+  await libp2p.services.pubsub.publish(topics.tx, data);
 }
-

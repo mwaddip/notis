@@ -51,8 +51,8 @@ function isServableRecord(rec: unknown): rec is PeerRecord {
 
 /**
  * The most banned addresses to keep. Like the peer-id ban set, this is a bounded
- * hint, not a ledger (NET_INTERFACE → "Ban tracking is a bounded hint, not a
- * ledger"): a permanent ban whose address is never lifted otherwise grows without
+ * hint, not a ledger (NET_INTERFACE →
+ * "Ban tracking is a bounded hint, not a ledger"): a permanent ban whose address is never lifted otherwise grows without
  * bound. Past the cap the oldest lapse first.
  */
 export const MAX_BANNED_ADDRS = 10_000;
@@ -67,8 +67,8 @@ export class PeerDb {
     private cap: number,
     selfAddresses: string[],
   ) {
-    // NET_INTERFACE → Outbound Manager → "Addresses compare without their
-    // /p2p/ component": our own listen addresses come from getMultiaddrs()
+    // NET_INTERFACE → Outbound Manager →
+    // "Addresses compare without their `/p2p/` component": our own listen addresses come from getMultiaddrs()
     // and carry the suffix; a self-matching seed or PeerDb key may not.
     this.selfAddrs = new Set(selfAddresses.map(addressWithoutPeerId));
     // Load persisted entries on construction. An unservable row is dropped, not
@@ -91,8 +91,8 @@ export class PeerDb {
   }
 
   record(record: PeerRecord): void {
-    // NET_INTERFACE → Outbound Manager → "Addresses compare without their
-    // /p2p/ component" — the self filter uses the same comparison.
+    // NET_INTERFACE → Outbound Manager →
+    // "Addresses compare without their `/p2p/` component" — the self filter uses the same comparison.
     if (this.selfAddrs.has(addressWithoutPeerId(record.address))) return;
     if (this.bannedAddrs.has(addressWithoutPeerId(record.address))) return;
 

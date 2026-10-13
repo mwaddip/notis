@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
@@ -19,17 +20,29 @@ import {
   decodeOrderingBlock,
   EMPTY_STATE_ROOT,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
+  MAGIC_MAINNET,
+  MAGIC_TESTNET,
+  MAGIC_DEVNET,
 } from '@dagsocial/types';
 import type {
   PostCommit, UtxoTransaction, OrderingBlock, BlockHeader, UtxoTxTree, ProtocolEra,
 } from '@dagsocial/types';
 import { TopicValidatorResult } from '@libp2p/interface';
-import { subscribeTopics, TOPICS } from '../src/gossip.js';
+import {
+  subscribeTopics,
+  gossipTopics,
+  gossipMessageId,
+  GOSSIP_SEEN_WINDOW_MS,
+} from '../src/gossip.js';
 import type { Libp2pGossip } from '../src/gossip.js';
 import { PeerManager } from '../src/peer-mgr.js';
 import { PenaltyKind } from '../src/types.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
 import { makeConfig as makeBaseConfig } from './helpers.js';
+
+// The topics the harness runs under — the testnet pair `makeConfig()` carries
+// (NET_INTERFACE → Gossip Topics → "A topic is named for its network").
+const topics = gossipTopics(MAGIC_TESTNET);
 
 // These tests drive the REAL topic validators registered by subscribeTopics —
 // not an inline copy of their bodies. A copied harness would contain the fix
@@ -85,7 +98,7 @@ function makeHarness(
   subscribeTopics(stub, validators, peerMgr, {
     onOrderingBlock: () => {},
     onTx: () => {},
-  }, karmaMembers,
+  }, topics, karmaMembers,
     opts.schedule ?? [{ version: 1, fromHeight: 0 }],
     opts.chainHeight ?? (() => 0),
     opts.floorBits ?? ORDERING_BLOCK_POW_TARGET_FLOOR,
@@ -162,7 +175,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
 
   it('accepts a mined block with zero penalties (control anchor)', () => {
     const { topicValidators, peerMgr, penaltySpy } = makeHarness();
-    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
     const block = makeBlock({ ...baseHeader, powNonce: minedNonce });
@@ -175,7 +188,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
 
   it('rejects the same block with a wrong nonce and records one misbehavior penalty', () => {
     const { topicValidators, peerMgr, penaltySpy } = makeHarness();
-    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
     // Self-check: this nonce genuinely fails PoW (no 1-in-16 flake).
@@ -196,7 +209,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
     // The single-field-delta control that Accepts is the mined-nonce case
     // above.
     const { topicValidators, peerMgr, penaltySpy } = makeHarness();
-    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
     // `powNonce` is a `vlqU` field and `NaN` is outside its encodable domain,
@@ -231,7 +244,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
     ['1.5', 1.5],
   ])('rejects height %s at the structure gate, attributably', (_label, badHeight) => {
     const { topicValidators, peerMgr, penaltySpy } = makeHarness();
-    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
     // Single-field delta from the accepted anchor: only height changes.
@@ -314,7 +327,7 @@ describe('tx topic validator — the post membership gate', () => {
 
   const validatePacket = (tx: UtxoTransaction, content: string | undefined, members: Set<string>) => {
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(members);
-    const validate = topicValidators.get(TOPICS.tx)!;
+    const validate = topicValidators.get(topics.tx)!;
     const peer = newPeer(peerMgr);
     const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
     const result = validate(peer, { data: encodeTxPacket(tx, content) });
@@ -350,7 +363,7 @@ describe('tx topic validator — the post membership gate', () => {
   it('admits an author ADDED after the validator was registered', () => {
     const members = new Set<string>();
     const { topicValidators, peerMgr } = makeHarness(members);
-    const validate = topicValidators.get(TOPICS.tx)!;
+    const validate = topicValidators.get(topics.tx)!;
     const packetData = encodeTxPacket(postTx, postContent);
 
     expect(validate(newPeer(peerMgr), { data: packetData }))
@@ -365,7 +378,7 @@ describe('tx topic validator — the post membership gate', () => {
   it('drops an author REMOVED after the validator was registered', () => {
     const members = new Set<string>([authorHex]);
     const { topicValidators, peerMgr } = makeHarness(members);
-    const validate = topicValidators.get(TOPICS.tx)!;
+    const validate = topicValidators.get(topics.tx)!;
     const packetData = encodeTxPacket(postTx, postContent);
 
     expect(validate(newPeer(peerMgr), { data: packetData }))
@@ -417,9 +430,12 @@ describe('tx topic validator — the post membership gate', () => {
   });
 
   it('there is no sub-block topic to subscribe to', () => {
+    // NET_INTERFACE → Gossip Topics — the reservation guard: a topic named
+    // `subblock` under this node's magic has no validator registered.
     const { topicValidators } = makeHarness(new Set([authorHex]));
-    expect([...topicValidators.keys()].sort()).toEqual([TOPICS.orderingBlock, TOPICS.tx].sort());
-    expect(topicValidators.has('/dagsocial/subblock/1')).toBe(false);
+    expect([...topicValidators.keys()].sort()).toEqual([topics.orderingBlock, topics.tx].sort());
+    const subblock = `/dagsocial/${MAGIC_TESTNET.toString(16).padStart(8, '0')}/subblock/1`;
+    expect(topicValidators.has(subblock)).toBe(false);
   });
 
   // --- packet biconditional and body verification ---
@@ -452,7 +468,7 @@ describe('tx topic validator — the post membership gate', () => {
 
   it('a non-post packet delivers content === undefined', () => {
     const { topicValidators, peerMgr } = makeHarness(new Set());
-    const validate = topicValidators.get(TOPICS.tx)!;
+    const validate = topicValidators.get(topics.tx)!;
     const peer = newPeer(peerMgr);
     const result = validate(peer, { data: encodeTxPacket(plainTx) });
     expect(result).toBe(TopicValidatorResult.Accept);
@@ -524,6 +540,7 @@ function makeDispatchHarness(handlers: {
       onOrderingBlock: handlers.onOrderingBlock ?? (() => {}),
       onTx: handlers.onTx ?? (() => {}),
     },
+    topics,
     new Set<string>(),
     [{ version: 1, fromHeight: 0 }],
     () => 0,
@@ -531,11 +548,9 @@ function makeDispatchHarness(handlers: {
     () => null,
   );
 
-  // `from` is left undefined so the Active-peer filter is skipped — this suite
-  // is about what happens after a message is accepted for dispatch, and peer
-  // state has its own tests. `propagationSource` is the peer that relayed the
-  // message to us, which is the value the ordering-block handler receives; it is
-  // a separate field precisely because it is a different peer.
+  // `propagationSource` is the peer that relayed the message to us — the one
+  // value handed on as the handler's `fromPeerId` (NET_INTERFACE → Inbound
+  // Processing). The gossip event names the carrier and no publisher.
   // `null` is how a caller asks for an event with no source at all — an explicit
   // `undefined` would take the default, which is the opposite of the request.
   const deliver = (
@@ -549,7 +564,7 @@ function makeDispatchHarness(handlers: {
     });
   };
 
-  return { deliver };
+  return { deliver, peerMgr };
 }
 
 describe('gossip dispatch listener', () => {
@@ -579,7 +594,7 @@ describe('gossip dispatch listener', () => {
     const seen: OrderingBlock[] = [];
     const { deliver } = makeDispatchHarness({ onOrderingBlock: (b) => seen.push(b) });
 
-    deliver(TOPICS.orderingBlock, encodeOrderingBlock(dispatchBlock));
+    deliver(topics.orderingBlock, encodeOrderingBlock(dispatchBlock));
 
     expect(seen).toHaveLength(1);
     expect(seen[0]!.header.height).toBe(3);
@@ -593,7 +608,7 @@ describe('gossip dispatch listener', () => {
     const seen: string[] = [];
     const { deliver } = makeDispatchHarness({ onOrderingBlock: (_b, from) => seen.push(from) });
 
-    deliver(TOPICS.orderingBlock, encodeOrderingBlock(dispatchBlock));
+    deliver(topics.orderingBlock, encodeOrderingBlock(dispatchBlock));
 
     expect(seen).toEqual([RELAY_PEER]);
   });
@@ -606,7 +621,7 @@ describe('gossip dispatch listener', () => {
     const { deliver } = makeDispatchHarness({ onOrderingBlock: (_b, from) => seen.push(from) });
 
     expect(() =>
-      deliver(TOPICS.orderingBlock, encodeOrderingBlock(dispatchBlock), null),
+      deliver(topics.orderingBlock, encodeOrderingBlock(dispatchBlock), null),
     ).not.toThrow();
 
     expect(seen).toEqual(['']);
@@ -624,13 +639,13 @@ describe('gossip dispatch listener', () => {
 
     // Contained, not propagated — this is a gossipsub event listener, and one
     // bad message must degrade one message rather than the subsystem.
-    expect(() => deliver(TOPICS.orderingBlock, encodeOrderingBlock(dispatchBlock))).not.toThrow();
+    expect(() => deliver(topics.orderingBlock, encodeOrderingBlock(dispatchBlock))).not.toThrow();
 
     expect(errSpy).toHaveBeenCalledWith(
       expect.stringContaining('handler exploded'),
     );
     expect(errSpy).toHaveBeenCalledWith(
-      expect.stringContaining(`handler for '${TOPICS.orderingBlock}' threw`),
+      expect.stringContaining(`handler for '${topics.orderingBlock}' threw`),
     );
     errSpy.mockRestore();
   });
@@ -644,7 +659,7 @@ describe('gossip dispatch listener', () => {
     let handlerCalls = 0;
     const { deliver } = makeDispatchHarness({ onOrderingBlock: () => { handlerCalls++; } });
 
-    expect(() => deliver(TOPICS.orderingBlock, new Uint8Array([0xff, 0xff, 0xff]))).not.toThrow();
+    expect(() => deliver(topics.orderingBlock, new Uint8Array([0xff, 0xff, 0xff]))).not.toThrow();
 
     expect(handlerCalls).toBe(0);
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('BUG'));
@@ -664,7 +679,7 @@ describe('gossip dispatch listener', () => {
     const seen: string[] = [];
     const { deliver } = makeDispatchHarness({ onTx: (_tx, _content, from) => seen.push(from) });
 
-    deliver(TOPICS.tx, encodeTxPacket(plainTx));
+    deliver(topics.tx, encodeTxPacket(plainTx));
 
     expect(seen).toEqual([RELAY_PEER]);
   });
@@ -679,7 +694,7 @@ describe('gossip dispatch listener', () => {
     const seen: string[] = [];
     const { deliver } = makeDispatchHarness({ onTx: (_tx, _content, from) => seen.push(from) });
 
-    deliver(TOPICS.tx, encodeTxPacket(plainTx), null);
+    deliver(topics.tx, encodeTxPacket(plainTx), null);
 
     expect(seen).toEqual(['']);
   });
@@ -689,6 +704,30 @@ describe('gossip dispatch listener', () => {
       onOrderingBlock: () => { throw new Error('must not run'); },
     });
     expect(() => deliver('/dagsocial/not-a-topic/1', new Uint8Array([1, 2, 3]))).not.toThrow();
+  });
+
+  it('delivers although the carrier is not an Active peer', () => {
+    // NET_INTERFACE → Inbound Processing →
+    // "A gossip message that passes Stage 1 is delivered, whichever peer carried it"
+    // The handler fires with the carrier's id, and the membership of the
+    // Active set has no bearing on delivery.
+    const seen: string[] = [];
+    const { deliver, peerMgr } = makeDispatchHarness({
+      onOrderingBlock: (_b, from) => seen.push(from),
+    });
+    // A Connecting peer whose handshake has not completed — present in the
+    // manager's row, not Active.
+    peerMgr.addPeer({
+      id: RELAY_PEER,
+      multiaddrs: [],
+      protocols: [],
+      connectedAt: Date.now(),
+    });
+    expect(peerMgr.isPeerActive(RELAY_PEER)).toBe(false);
+
+    deliver(topics.orderingBlock, encodeOrderingBlock(dispatchBlock));
+
+    expect(seen).toEqual([RELAY_PEER]);
   });
 });
 
@@ -752,7 +791,7 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
 
   const runBlock = (block: OrderingBlock) => {
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), { schedule: twoEra });
-    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
     const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
     const result = validate(peer, { data: encodeOrderingBlock(block) });
@@ -763,7 +802,7 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
       schedule: twoEra,
       chainHeight: () => chainHeightVal,
     });
-    const validate = topicValidators.get(TOPICS.tx)!;
+    const validate = topicValidators.get(topics.tx)!;
     const peer = newPeer(peerMgr);
     const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
     const result = validate(peer, { data: encodeTxPacket(tx, content) });
@@ -808,7 +847,7 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
       schedule: twoEra,
       penaltyScoreThreshold: 75,
     });
-    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
     const data = encodeOrderingBlock(vBlock(H, 1));
 
@@ -824,7 +863,7 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
   it('a structurally invalid block is still misbehavior (100), not Transient', () => {
     // The tier split holds only for the version step: a bad body keeps its tier.
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), { schedule: twoEra });
-    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
     // An empty utxoTxTree is a structural failure ahead of the version step
     // (every block carries at least the settlement tx).
@@ -883,7 +922,7 @@ describe('ordering-block topic validator — network floor and schedule', () => 
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
       floorBits: NETWORK_FLOOR,
     });
-    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
     // bits above the constant floor (2304) so structure passes
@@ -900,7 +939,7 @@ describe('ordering-block topic validator — network floor and schedule', () => 
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
       floorBits: NETWORK_FLOOR,
     });
-    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
     const block = makeBlock({ ...baseHeader, powNonce: minedNonce });
@@ -915,7 +954,7 @@ describe('ordering-block topic validator — network floor and schedule', () => 
       floorBits: NETWORK_FLOOR,
       scheduledTargetBits: () => NETWORK_FLOOR + 100,
     });
-    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
     const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
 
@@ -932,7 +971,7 @@ describe('ordering-block topic validator — network floor and schedule', () => 
       floorBits: NETWORK_FLOOR,
       scheduledTargetBits: () => NETWORK_FLOOR,
     });
-    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
     const block = makeBlock({ ...baseHeader, powNonce: minedNonce });
@@ -947,7 +986,7 @@ describe('ordering-block topic validator — network floor and schedule', () => 
       floorBits: NETWORK_FLOOR,
       scheduledTargetBits: () => null,
     });
-    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
     const block = makeBlock({ ...baseHeader, powNonce: minedNonce });
@@ -961,7 +1000,7 @@ describe('ordering-block topic validator — network floor and schedule', () => 
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
       floorBits: NETWORK_FLOOR,
     });
-    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
     const block = makeBlock({ ...baseHeader, powNonce: 0, powTargetBits: NETWORK_FLOOR - 1 });
@@ -980,7 +1019,7 @@ describe('ordering-block topic validator — network floor and schedule', () => 
       floorBits: NETWORK_FLOOR,
       scheduledTargetBits: (h) => provider(h),
     });
-    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const validate = topicValidators.get(topics.orderingBlock)!;
 
     const block = makeBlock({ ...baseHeader, powNonce: minedNonce });
     const data = encodeOrderingBlock(block);
@@ -996,5 +1035,79 @@ describe('ordering-block topic validator — network floor and schedule', () => 
     // Set a provider that agrees → Accept
     provider = () => NETWORK_FLOOR;
     expect(validate(newPeer(peerMgr), { data })).toBe(TopicValidatorResult.Accept);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// gossipTopics — NET_INTERFACE → Gossip Topics →
+// "A topic is named for its network"
+//
+// The strings here are typed by hand from the contract: a case that built both
+// sides through `gossipTopics` would pass by its own definition.
+// ---------------------------------------------------------------------------
+
+describe('gossipTopics — the topic pair per network', () => {
+  it.each([
+    ['mainnet', MAGIC_MAINNET, '/dagsocial/4d444147/ordering-block/1', '/dagsocial/4d444147/tx/1'],
+    ['testnet', MAGIC_TESTNET, '/dagsocial/54444147/ordering-block/1', '/dagsocial/54444147/tx/1'],
+    ['devnet',  MAGIC_DEVNET,  '/dagsocial/44444147/ordering-block/1', '/dagsocial/44444147/tx/1'],
+  ])('%s pair carries the magic as eight lowercase hex digits', (_label, magic, expectedOrdering, expectedTx) => {
+    expect(gossipTopics(magic)).toEqual({
+      orderingBlock: expectedOrdering,
+      tx: expectedTx,
+    });
+  });
+
+  it.each([
+    ['NaN', Number.NaN],
+    ['-1', -1],
+    ['1.5', 1.5],
+    ['2 ** 32', 2 ** 32],
+  ])('throws for %s (not an unsigned 32-bit integer)', (_label, magic) => {
+    expect(() => gossipTopics(magic)).toThrow(/unsigned 32-bit integer/);
+  });
+
+  it('GOSSIP_SEEN_WINDOW_MS is two minutes', () => {
+    // NET_INTERFACE → Gossip Topics →
+    // "A message is heard once in a seen window"
+    // CONSTANTS → net.
+    expect(GOSSIP_SEEN_WINDOW_MS).toBe(120_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// gossipMessageId — NET_INTERFACE → Gossip Topics →
+// "A message is named by its bytes"
+//
+// `hash32(lpUtf8(topic) ‖ data)`: the preimage is built by hand from the
+// topic's bytes and a one-byte VLQ length, as the mesh file's id case does.
+// ---------------------------------------------------------------------------
+
+describe('gossipMessageId — hash32(lpUtf8(topic) ‖ data)', () => {
+  it('matches a hand-built preimage over the testnet ordering-block topic', () => {
+    const topic = topics.orderingBlock;
+    const data = new Uint8Array([0x01, 0x02, 0x03, 0x04]);
+    const topicBytes = Buffer.from(topic, 'utf-8');
+    expect(topicBytes.length).toBeLessThan(128);
+    const preimage = Buffer.concat([
+      Uint8Array.of(topicBytes.length),
+      topicBytes,
+      data,
+    ]);
+    const expected = createHash('blake2b512').update(preimage).digest().subarray(0, 32);
+    expect(Array.from(gossipMessageId(topic, data))).toEqual(Array.from(expected));
+  });
+
+  it('the same bytes on the two topics are two ids', () => {
+    const data = new Uint8Array([0xaa, 0xbb]);
+    const idBlock = gossipMessageId(topics.orderingBlock, data);
+    const idTx = gossipMessageId(topics.tx, data);
+    expect(Array.from(idBlock)).not.toEqual(Array.from(idTx));
+  });
+
+  it('answers a fresh 32-byte Uint8Array', () => {
+    const id = gossipMessageId(topics.orderingBlock, new Uint8Array([0]));
+    expect(id).toBeInstanceOf(Uint8Array);
+    expect(id.length).toBe(32);
   });
 });

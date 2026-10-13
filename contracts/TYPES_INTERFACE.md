@@ -2249,7 +2249,7 @@ existing behaviour there; for `signatures` it is new, because they were never ha
 **Wire codec** (`encodeTx`): `txIdBytes` ‖ `arr(signatures sorted, b32(pubkey) ‖ b64(sig))`.
 
 **Packet codec** (`encodeTxPacket(tx, content?)`): `encodeTx(tx)` ‖ `opt(lpUtf8(content))` —
-the gossip payload of `/dagsocial/tx/1` for **every** transaction (NET_INTERFACE → Gossip
+the gossip payload of the `tx` topic for **every** transaction (NET_INTERFACE → Gossip
 Topics). The body is outside `txIdBytes`, outside every id and every Merkle leaf; a
 transaction that carries no post pays the `opt` absence tag, one byte, on the wire only.
 `decodeTxPacket(bytes) → { tx, content? }`. **`tx.post` present ⟺ `content` present** — the

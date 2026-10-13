@@ -8,7 +8,12 @@ export type { HandshakePayload } from './node.js';
 export { PeerManager } from './peer-mgr.js';
 export type { PeerBanHooks } from './peer-mgr.js';
 export { SYNC_PROTOCOL } from './sync.js';
-export { TOPICS } from './gossip.js';
+export {
+  gossipTopics,
+  gossipMessageId,
+  GOSSIP_SEEN_WINDOW_MS,
+} from './gossip.js';
+export type { GossipTopics } from './gossip.js';
 export {
   encodeFrame,
   decodeFrame,

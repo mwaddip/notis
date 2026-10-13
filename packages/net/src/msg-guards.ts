@@ -35,7 +35,7 @@ export const MAX_CAPABILITY_CODE = 65_535;
 /**
  * Largest `ids` / `anchors` / `modifiers` array accepted from a peer.
  *
- * 400 is the send-side batch cap (NET_INTERFACE → Inv: "max 400 per batch"). The
+ * 400 is the send-side batch cap (NET_INTERFACE → Inv): at most 400 ids per batch. The
  * same number bounds what a peer may send *us* — the cap has to be enforced on
  * receipt, since an attacker has no reason to honour the one we apply to
  * ourselves. Over-cap arrays are dropped and the sender penalized.
@@ -45,8 +45,8 @@ export const MAX_INV_IDS = 400;
 /**
  * Largest `peers` array accepted in a Peers response.
  *
- * 64 is the contract cap (NET_INTERFACE → Peers: "Max 64 entries per
- * response"). We only ever serve 8, but the cap has to be enforced on receipt —
+ * 64 is the contract cap (NET_INTERFACE → Peers): at most 64 entries per
+ * response. We only ever serve 8, but the cap has to be enforced on receipt —
  * an attacker has no reason to honour the one we apply to ourselves. A body
  * declaring more is a permanent ban of the sender.
  */

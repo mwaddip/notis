@@ -2,8 +2,8 @@ import { multiaddr } from '@multiformats/multiaddr';
 import { MAGIC_MAINNET } from './frame.js';
 
 /**
- * Bogus-address classification for peer discovery (NET_INTERFACE → "Bogus
- * Address Classification").
+ * Bogus-address classification for peer discovery
+ * (NET_INTERFACE → Bogus Address Classification).
  *
  * Addresses arriving in `Peers` messages are hearsay from untrusted peers; the
  * ones that can never be a dialable public peer are dropped before they reach

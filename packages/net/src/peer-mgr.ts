@@ -32,8 +32,8 @@ interface BanEntry {
   banExpiresAt: number | null; // null = permanent
   /**
    * Every address this peer id's ban has propagated to PeerDb, in the order
-   * learned (NET_INTERFACE → "A ban carries every address its peer has been
-   * tied to"). Opens with the peer's declared address at ban time (captured
+   * learned (NET_INTERFACE →
+   * "A ban carries every address its peer has been tied to"). Opens with the peer's declared address at ban time (captured
    * before the ban path deletes the metadata) when there is one, else empty,
    * and grows by one each time `extendBan` ties another spelling to this
    * peer id. Expiry fires `onUnban` for each — by then the metadata may be
@@ -191,8 +191,8 @@ export class PeerManager {
   /**
    * Tie another address to an already-banned peer id — the outbound funnel
    * calls this when a dial resolves a banned peer under a spelling its ban
-   * has not named yet (NET_INTERFACE → "A ban carries every address its
-   * peer has been tied to"). Goes through `isBanned` first, so a lapsed
+   * has not named yet (NET_INTERFACE →
+   * "A ban carries every address its peer has been tied to"). Goes through `isBanned` first, so a lapsed
    * temporal ban lifts rather than being extended, and returns `false` for
    * a peer id that is not banned. Returns `true` without firing for an
    * address already in the list — the caller need not check first.
@@ -304,8 +304,8 @@ export class PeerManager {
     if (ban.banExpiresAt === null) return true; // permanent
     if (Date.now() >= ban.banExpiresAt) {
       // Ban expired, clean up and lift every address the address-surface
-      // ban grew to (NET_INTERFACE → "A ban carries every address its peer
-      // has been tied to").
+      // ban grew to (NET_INTERFACE →
+      // "A ban carries every address its peer has been tied to").
       this.bans.delete(peerId);
       for (const addr of ban.addresses) this.hooks.onUnban?.(addr);
       return false;
