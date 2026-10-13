@@ -207,7 +207,7 @@ describe('a served block whose embedded transaction signature was altered', () =
     expect(verifyValidatorSignature(altered.header, altered.validatorSignature)).toBe(true);
   });
 
-  it.fails('the altered block is refused with no mark, and the honest branch then switches the chain', async () => {
+  it('the altered block is refused with no mark, and the honest branch then switches the chain', async () => {
     const sc = await buildScenario();
     expect(sc.branchWork > sc.ourWork).toBe(true);
     const altered = alter(sc.branchFirst);
@@ -260,7 +260,7 @@ describe('a served block whose body element bytes were replaced at the same leng
     expect(verifyValidatorSignature(altered.header, altered.validatorSignature)).toBe(true);
   });
 
-  it.fails('the altered block is refused with no mark, and the honest branch then switches the chain', async () => {
+  it('the altered block is refused with no mark, and the honest branch then switches the chain', async () => {
     const sc = await buildScenario();
     expect(sc.branchWork > sc.ourWork).toBe(true);
     const altered = alter(sc.branchLast);
@@ -315,7 +315,7 @@ describe('a served block whose validator signature does not verify', () => {
     expect(verifyValidatorSignature(altered.header, altered.validatorSignature)).toBe(false);
   });
 
-  it.fails('the altered block is refused with no mark, and the honest branch then switches the chain', async () => {
+  it('the altered block is refused with no mark, and the honest branch then switches the chain', async () => {
     const sc = await buildScenario();
     expect(sc.branchWork > sc.ourWork).toBe(true);
     const altered = alter(sc.branchFirst);
@@ -361,7 +361,7 @@ describe('a served block whose utxoTxs array drops its last element', () => {
     expect(verifyOrderingBlockStructure(altered).valid).toBe(false);
   });
 
-  it.fails('the altered block is refused with no mark, and the honest branch then switches the chain', async () => {
+  it('the altered block is refused with no mark, and the honest branch then switches the chain', async () => {
     const sc = await buildScenario();
     expect(sc.branchWork > sc.ourWork).toBe(true);
     const altered = alter(sc.branchFirst);
@@ -503,7 +503,7 @@ describe('one peer serves an altered block then the branch whole', () => {
     return { ...block, validatorSignature: new Uint8Array(64).fill(0xff) };
   }
 
-  it.fails('the first serve leaves no mark on the altered block\'s hash, and the second serve switches the chain', async () => {
+  it('the first serve leaves no mark on the altered block\'s hash, and the second serve switches the chain', async () => {
     const sc = await buildScenario();
     expect(sc.branchWork > sc.ourWork).toBe(true);
     const altered = alter(sc.branchFirst);
