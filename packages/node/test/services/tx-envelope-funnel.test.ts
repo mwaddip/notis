@@ -241,15 +241,16 @@ describe('block funnel — the embedded-tx proof obligation', () => {
   });
 
   it('a declared id the bytes do not produce rejects the block', async () => {
-    // The body carries ids and bytes the root commits side by side
-    // (TYPES_INTERFACE → Ordering block). A body whose bytes are replaced
-    // under an unchanged header has a different root, and step 4 refuses it
-    // before the loop reads it.
+    // An id and the bytes beside it are committed side by side
+    // (TYPES_INTERFACE → Ordering block). A block whose id leaf is not the id
+    // of those bytes is refused at the mismatch arm (NODE_INTERFACE →
+    // "Embedded transactions: a mismatch rejects the block").
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
 
+    const miner = makeTestIdentity();
     const alice = makeTestIdentity();
     const bob = makeTestIdentity();
     const aliceBox = makeKarmaBox(100n, alice.userId, 0, 0);
@@ -258,14 +259,35 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     utxo.insertBox(bobBox);
 
     const declared = karmaSelfSpend(alice, aliceBox);
-    const block = await makeApplicableBlock({ utxoTxs: [declared] });
+    const honest = await makeApplicableBlock({ miner, utxoTxs: [declared] });
 
     // A wholly different, individually valid transaction under the declared
-    // id.
+    // id — committed by the body's root, so the funnel's root check accepts
+    // the block.
     const substituted = karmaSelfSpend(bob, bobBox);
     expect(checkEnvelope(substituted)).toEqual({ valid: true });
     expect(computeTxId(substituted)).not.toBe(computeTxId(declared));
-    block.utxoTxTree.utxoTxs[0] = encodeTx(substituted);
+
+    const tree = {
+      utxoTxIds: honest.utxoTxTree.utxoTxIds,
+      utxoTxs: honest.utxoTxTree.utxoTxs.map(
+        (b, i) => (i === 0 ? encodeTx(substituted) : b),
+      ),
+    };
+    const header = { ...honest.header, utxoTxRoot: computeUtxoTxRoot(tree) };
+    header.powNonce = solveHeaderPow(header);
+    const block: OrderingBlock = {
+      header,
+      utxoTxTree: tree,
+      validatorSignature: signHeader(header, miner.privateKey),
+    };
+
+    // Controls: the block's shape is a block's and its body is its header's
+    // (VALIDATION_INTERFACE → verifyUtxoTxRoot) — the root is not what refuses
+    // it.
+    const { verifyOrderingBlockStructure, verifyUtxoTxRoot } = await import('@dagsocial/validation');
+    expect(verifyOrderingBlockStructure(block).valid).toBe(true);
+    expect(verifyUtxoTxRoot(block)).toBe(true);
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const applied = (await importBlockApply()).applyOrderingBlock(block);
@@ -274,9 +296,15 @@ describe('block funnel — the embedded-tx proof obligation', () => {
 
     expect(applied).toBe(false);
     expect(
-      warnings.some((w) => w.includes('utxoTxRoot mismatch')),
-      `utxoTxRoot-mismatch rejection missing; got ${JSON.stringify(warnings)}`,
-    ).toBe(true);
+      warnings.filter(
+        (w) =>
+          w.includes(
+            `embedded UTXO tx ${computeTxId(declared)} declares an id its bytes ` +
+            `do not produce`,
+          ) && w.includes(computeTxId(substituted)),
+      ),
+      `id-mismatch rejection missing; got ${JSON.stringify(warnings)}`,
+    ).toHaveLength(1);
 
     const ordering = await importOrdering();
     expect(ordering.getOrderingBlock(1)).toBeNull();
@@ -307,8 +335,8 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     // Same header object, corrupted body. Bytes that are not a transaction at
     // all.
     // ⚠ Only the FIRST body is replaced: the settlement rides `utxoTxs` as the
-    // last entry, and dropping it would fail the alignment check ahead of this
-    // step.
+    // last entry, and dropping it would fail the alignment check ahead of the
+    // funnel's root check (VALIDATION_INTERFACE → verifyUtxoTxRoot).
     const corrupt = {
       ...good,
       utxoTxTree: {
@@ -359,10 +387,11 @@ describe('block funnel — the embedded-tx proof obligation', () => {
   });
 
   it('bytes that are not a transaction, under a root that commits them, reject the block at the decode arm', async () => {
-    // The header's `utxoTxRoot` is the body's root, so step 4 accepts the
-    // block and the decode arm is where it refuses — the arm the obligation is
-    // named for (NODE_INTERFACE → "Embedded transactions: a mismatch rejects
-    // the block").
+    // The header's `utxoTxRoot` is the body's root, so the funnel's root check
+    // (VALIDATION_INTERFACE → verifyUtxoTxRoot) accepts the block and the
+    // decode arm is where it refuses — the arm the obligation is named for
+    // (NODE_INTERFACE → "Embedded transactions: a mismatch rejects the
+    // block").
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
