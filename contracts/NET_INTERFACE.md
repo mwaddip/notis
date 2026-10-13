@@ -1267,7 +1267,7 @@ ban); well-formed but invalid → misbehavior penalty (100), except a version mi
 
 | Topic | Checks before Accept |
 |-------|----------------------|
-| ordering-block | `verifyOrderingBlockStructure`; protocol version — `verifyProtocolVersion(header.protocolVersion, header.height, schedule)`, a mismatch Rejected with `Transient`; `header.height` is a safe integer (NaN/float/±Infinity → Reject); **the network's floor** — `header.powTargetBits < NetConfig.orderingBlockPowTargetFloorBits` is Rejected with `misbehavior` (→ Consensus parameters net enforces); ordering-block PoW (`verifyOrderingBlockPoW`) — the solution must satisfy the header's own `powTargetBits` (bounded ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` by structure), and a non-safe-integer `powNonce`/`powTargetBits` never verifies (audit M-6, M-9); **the schedule, when this node holds the parent** — the scheduled-target provider's answer for the header, `null` when the parent is not held; a number that differs from `header.powTargetBits` is **Rejected with no penalty** (→ Stage 1 → "A scheduled-target mismatch is refused, never forwarded, and never penalised") |
+| ordering-block | `verifyOrderingBlockStructure`; protocol version — `verifyProtocolVersion(header.protocolVersion, header.height, schedule)`, a mismatch Rejected with `Transient`; `header.height` is a safe integer (NaN/float/±Infinity → Reject); **the network's floor** — `header.powTargetBits < NetConfig.orderingBlockPowTargetFloorBits` is Rejected with `misbehavior` (→ Consensus parameters net enforces); ordering-block PoW (`verifyOrderingBlockPoW`) — the solution must satisfy the header's own `powTargetBits` (bounded ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` by structure), and a non-safe-integer `powNonce`/`powTargetBits` never verifies (audit M-6, M-9); **the body's root** — `verifyUtxoTxRoot(block)`, after the PoW check and never ahead of it: a body that is not the one the header's `utxoTxRoot` commits is Rejected with `misbehavior` (→ Stage 1 → "A worked header is forwarded with the body its root commits"); **the schedule, when this node holds the parent** — the scheduled-target provider's answer for the header, `null` when the parent is not held; a number that differs from `header.powTargetBits` is **Rejected with no penalty** (→ Stage 1 → "A scheduled-target mismatch is refused, never forwarded, and never penalised") |
 | tx | `decodeTxPacket`; `verifyTxStructure`; protocol version — `verifyTxProtocolVersion(tx, chainHeight() + 1, schedule)`, the envelope's and the commit's against the next block's era, a mismatch Rejected with `Transient`; the packet rule (`tx.post` present ⟺ `content` present); `verifyPostBody(content, tx.post.contentHash)` for a post-bearing tx; then the cached karma-membership gate — the author holds karma at all (`NODE_INTERFACE` → Post transactions). Order as under Gossip Topics |
 
 Stage 1 is stateless but for one provider read. It does **not** check the header timestamp rules,
@@ -1279,6 +1279,22 @@ scheduled-target provider, for the one case it can answer without trusting anyth
 parent this node holds. The relay PoW gate exists to make mesh propagation cost-bearing: no
 zero-work ordering block may be re-gossiped (audit M-9), and the network's floor puts the price of a
 forwarded header at the network's own minimum rather than the resolution floor's nine bits.
+
+> ⚠ **AHEAD OF CODE (2026-10-13).** The body's root in the `ordering-block` row and the next
+> paragraph lead `net/src/gossip.ts`' topic validator and `NetValidators`, which hold no such
+> member: a header that passes the PoW check is forwarded with whatever body arrived under it.
+
+**A worked header is forwarded with the body its root commits.** `verifyUtxoTxRoot`
+(`VALIDATION_INTERFACE → verifyUtxoTxRoot`) holds a block's body to its header's `utxoTxRoot` — every
+transaction id and every transaction's bytes — so a block that passed the PoW check is forwarded
+with the body its producer hashed, or not at all. A message is named by its bytes (→ Gossip Topics →
+"A message is named by its bytes"), so each altered body under one worked header is a message the
+seen window has never named; this check is what ends it at the first hop. **The sender is
+penalised**: a node forwards only what passed its own Stage 1, so a body that is not its header's
+was altered or made by the peer that sent it. **It runs after the PoW check** because it hashes the
+whole body (`VALIDATION_INTERFACE → verifyUtxoTxRoot`, its cost), and nothing ahead of that check
+has proven work. Reaching net as a `NetValidators` member, it is `validation`'s function and no
+other.
 
 **A scheduled-target mismatch is refused, never forwarded, and never penalised.** The verdict is
 deterministic given the parent — ASERT over the parent's stamp and the anchor, no clock — so it is

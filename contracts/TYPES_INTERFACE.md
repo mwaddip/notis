@@ -234,11 +234,16 @@ because deriving it is the thing that cannot be done.
 
 ### Merkle primitives (`merkle.ts`)
 
+> ⚠ **AHEAD OF CODE (2026-10-13).** `computeUtxoTxRoot` as this package's export and the second live
+> leaf domain lead `types/src/merkle.ts` and `node/src/services/block-creator.ts`: the code defines
+> the root in the node, over `'utxotx'` leaves alone.
+
 | Export | Description |
 |--------|-------------|
 | `leafHash(domain, data)` | `blake2b512(utf8(domain ‖ "\0") ‖ data)[:32]` — domain-separated leaf so a leaf in one tree can't collide with a leaf in another. |
 | `nodeHash(left, right)` | `blake2b512(NODE_TAG ‖ left ‖ right)[:32]` — internal-node hash of two children. |
 | `buildMerkleRoot(leaves)` | Binary Merkle root over ordered leaf hashes. Empty → 32 zero bytes; single leaf → that leaf. **Odd levels PROMOTE the unpaired last node unchanged — they do NOT duplicate it** (see below). |
+| `computeUtxoTxRoot(tree)` | `(UtxoTxTree) => string` — the block's one committed root, 64 lowercase hex: `buildMerkleRoot` over every `leafHash('utxotx', id)`, then every `leafHash('utxotx-bytes', txBytes)` (→ Ordering block). It reads no transaction. It throws on an id `hexToBytes` refuses: a caller holds a tree whose ids are 64 lowercase hex, which `VALIDATION_INTERFACE → verifyUtxoTxRoot` establishes for a peer's block. |
 
 **Odd-level rule — NORMATIVE, and it is not the Bitcoin default.** When a level has an
 odd number of nodes the unpaired last node is **promoted to the next level unchanged**;
@@ -260,8 +265,10 @@ could be presented as `nodeHash(left,right)` for a forged inclusion proof
 
 > **Forward constraint — this is a consensus rule with no test behind it.** The scheme is
 > sound only while **every** leaf domain is a non-empty printable ASCII string, so that no
-> leaf preimage can ever begin with `0x00`. The **one** live domain is `utxotx` — printable, so
-> the NUL delimiter suffices. **Two retired domain strings are tracked reservations**
+> leaf preimage can ever begin with `0x00`. The **two** live domains are `utxotx` and
+> `utxotx-bytes` — both printable, so the NUL delimiter suffices, and neither's tagged prefix opens
+> the other's: `utxotx\0` and `utxotx-bytes\0` differ at their seventh byte. **Two retired domain
+> strings are tracked reservations**
 > (→ Tracked reservations, below the boxType tag table): `coinbase` and `prune` — each
 > remnant-bounded by the live concept that carries the word, so each holds while that concept does.
 > `subblock` and `stump` are retired and free: no live identifier carries the word.
@@ -1376,7 +1383,7 @@ BlockHeader {
   protocolVersion: number        // 1
   height: number                 // Monotonically increasing, starting from 1
   prevBlockHash: string          // hex(32) — hash of the previous block's header
-  utxoTxRoot: string             // hex(32) — Merkle root over the body's transactions (→ Ordering block)
+  utxoTxRoot: string             // hex(32) — Merkle root over the body's transaction ids and transaction bytes (→ Ordering block)
   stateRoot: string              // hex(33) — the AVL+ digest after this block is applied (NODE_INTERFACE → Post-block stateRoot)
   validatorId: UserId            // Block producer's 32-byte public key
   powNonce: number               // PoW solution
@@ -1449,9 +1456,11 @@ The header is what gets hashed. `blockHash(header) = blake2b512(encodeHeader(hea
 (hex) is both the block's canonical hash — the next block's `prevBlockHash` — and the
 message the validator signs. The PoW preimage is the same encoding with `powNonce`
 zeroed (`computePowHash`). Both functions live in `@dagsocial/validation`. The body is
-bound into the header transitively through `utxoTxRoot` / `stateRoot`, and the chain's
+bound into the header through `utxoTxRoot` — every transaction's id and every transaction's
+bytes (→ Ordering block) — its effect on state through `stateRoot`, and the chain's
 superblock structure through `interlinkRoot` (→ Interlink vector), so the header alone
-commits to the whole block.
+commits to the whole block but `validatorSignature`, which signs the header's hash and so
+cannot sit under it.
 
 ### Interlink vector
 
@@ -1533,10 +1542,41 @@ UtxoTxTree {
 }
 ```
 
-⛔ **ONE COMMITTED LIST, AND ONE LEAF CLASS.** Posts, likes, withdrawals and the settlement are all
-transactions, so they ride `utxoTxIds` together and the body has no second section.
-`computeUtxoTxRoot` therefore builds every leaf as `leafHash('utxotx', id)` — one domain, one
-preimage shape, and the only live one: `'prune'` and `'coinbase'` are tracked
+> ⚠ **AHEAD OF CODE (2026-10-13).** The bytes leaves lead the root's one implementation,
+> `node/src/services/block-creator.ts`' `computeUtxoTxRoot`, which builds a leaf per id and none per
+> element — so a transaction's signatures, and every byte of `utxoTxs` its id does not derive from,
+> are under no hash the header carries. The sentences that rest on this section lead with it:
+> → Block header's on what the header commits, → Layout — Merkle leaf preimages are the struct's own
+> wire bytes, and the wire-codec row of → Layout — UtxoTransaction.
+
+⛔ **ONE COMMITTED LIST, AND TWO LEAF CLASSES OVER IT.** Posts, likes, withdrawals and the settlement
+are all transactions, so they ride `utxoTxIds` / `utxoTxs` together and the body has no second
+section. `computeUtxoTxRoot(tree)` (→ Merkle primitives) builds the block's one root over **every
+transaction's id, then every transaction's bytes**:
+
+```
+utxoTxRoot = buildMerkleRoot( [ leafHash('utxotx',       utxoTxIds[i]) for i in 0 … n−1 ]
+                           ++ [ leafHash('utxotx-bytes', utxoTxs[i])   for i in 0 … n−1 ] )
+```
+
+**Leaf order is `UtxoTxTree`'s field order** — the id array, then the element array — so a body of
+`n` transactions is `2n` leaves, and the settlement is the last id leaf and the last bytes leaf. A
+bytes leaf hashes the element **as it stands in the body, undecoded**: computing the root reads no
+transaction, and an element that will not decode is committed like any other.
+
+**Every byte of the body is under the block hash.** The ids are committed, and each transaction's
+wire bytes are committed — its signatures among them, which `computeTxId` leaves out — so a body
+that is not the one its producer hashed gives another root, and a disagreement between an id and the
+bytes beside it is a fact about the block as its producer made it
+(`NODE_INTERFACE → "Embedded transactions: a mismatch rejects the block"`). `validatorSignature`
+alone lies outside: it signs `blockHash(header)`.
+
+**What a path proves.** A Merkle path proves an id leaf — that a transaction's id is in the block.
+Pairing an id leaf with its bytes leaf, position `i` with position `n + i`, needs the leaf count,
+which the header does not carry; a reader that holds a transaction's bytes derives the id and proves
+the id leaf.
+
+`'utxotx'` and `'utxotx-bytes'` are the live leaf domains; `'prune'` and `'coinbase'` are tracked
 reservations (→ Tracked reservations).
 
 Every block carries **one settlement transaction**, riding `utxoTxIds` / `utxoTxs` like any
@@ -2288,7 +2328,7 @@ biconditional is a check, not a property of the bytes.
 >
 > | Change | Breaks |
 > |---|---|
-> | `encodeTx` cbor-x → the layout above | **The wire only.** `computeTxId` is already positional and `computeUtxoTxRoot`'s leaves are **ids**, so every box id, transaction id, `utxoTxRoot` and `stateRoot` is byte-identical across it |
+> | `encodeTx` cbor-x → the layout above | **The wire, and `utxoTxRoot` with it.** `computeTxId` is already positional, so every box id, transaction id and `stateRoot` is byte-identical across it; the root's bytes leaves are the wire bytes (→ Ordering block) |
 > | dropping `preimages` from `txIdBytes` | **Consensus.** It is inside the id preimage, so **every `TxId` in existence changes** |
 >
 > ⚠ **The first is reversible against history and the second is not.** They land in one dispatch
@@ -2422,18 +2462,21 @@ reader of the payload cannot drift apart.
 > `test/golden/README.md` carries the same sentence, so the two cannot drift.
 
 **The rule the section states:** *an entry's wire form and its committed form must be the same
-bytes; two statements of one layout is the drift class this format exists to close.* A `'utxotx'`
-leaf's preimage is
-`leafHash('utxotx', id)` — **the id, never the transaction encoding**, the same 32 bytes the
-body's `utxoTxIds` entry carries — which is what keeps `utxoTxRoot` byte-identical across
-wire-codec changes (`serialization.ts` states the pair beside the codec). The alternative —
-`node` writing its own `ByteWriter` calls in `block-creator.ts` — puts a second statement of a
+bytes; two statements of one layout is the drift class this format exists to close.* Both of
+`utxoTxRoot`'s leaf classes hold it (→ Ordering block): a `'utxotx'` leaf's preimage is the 32
+bytes the body's `utxoTxIds` entry carries, and a `'utxotx-bytes'` leaf's preimage is the payload
+of the body's `utxoTxs` element — the `encodeTx` bytes, exactly as the `lp` element holds them.
+**So the wire codec decides the root**: a change to `encodeTx` moves every `utxoTxRoot` and every
+block hash, and moves no transaction id, box id or `stateRoot`, which read `txIdBytes` and
+`canonicalBoxBytes`. The alternative —
+`node` writing its own `ByteWriter` calls for a leaf — puts a second statement of a
 layout in a second package, with **no compiler signal on divergence and no round-trip able to see
 it**: a consistent transposition round-trips perfectly (measured), so only a golden
-comparing the two byte strings across the package boundary would ever catch it.
+comparing the two byte strings across the package boundary would ever catch it. The root's one
+definition is this package's for that reason (→ Merkle primitives).
 
-⚠ **The `leafHash` domain tag stays outside the preimage.** `leafHash('utxotx', bytes)`
-supplies the tag; the preimage is the entry's own bytes alone. That is what makes the leaf's
+⚠ **The `leafHash` domain tag stays outside the preimage.** `leafHash('utxotx', bytes)` and
+`leafHash('utxotx-bytes', bytes)` supply the tag; the preimage is the entry's own bytes alone. That is what makes the leaf's
 wire form and preimage byte-identical rather than merely parallel.
 
 ⚠ **No `...FromBytes` pair is added, and that does not breach the pairing rule under Layout —

@@ -422,9 +422,11 @@ Computes the preimage the PoW nonce hashes against: takes the header with
 `blake2b512(encoded).subarray(0, 32)`. The preimage is over the **header**, not a
 separate "block body" — it covers `protocolVersion`, `height`, `prevBlockHash`,
 `utxoTxRoot`, `stateRoot`, `validatorId`, `powTargetBits`, `createdAt` and
-`interlinkRoot`, with `powNonce` zeroed. The block *body* (the UTXO transactions) is committed **transitively**: `utxoTxRoot` is the
-Merkle root over it and `stateRoot` is the AVL+ digest, so any body change alters
-a root and therefore the preimage. `validatorSignature` is not a header field, so
+`interlinkRoot`, with `powNonce` zeroed. The block *body* (the UTXO transactions) is committed
+**through `utxoTxRoot`**, the Merkle root over every transaction's id and every transaction's bytes
+(`TYPES_INTERFACE → Ordering block`), so a change to any byte of the body alters the root and
+therefore the preimage; `stateRoot`, the AVL+ digest, commits what the body does to state.
+`validatorSignature` is not a header field, so
 it never enters the preimage. Exposed to external miners (hex) at
 `GET /mining/template` as `powPreimage`.
 
@@ -513,10 +515,11 @@ Postconditions).
 runtime's verifier on 2026-08-06 (Node 22.19.0 / OpenSSL 3.0.17) — a scalar raised by the group
 order (`S + L`) and the high-bit variant — refuse.
 
-**Why this section exists:** ✅ **signature bytes are excluded from every hash preimage in the
-system, with no exception.** `txIdBytes` omits them (`TYPES_INTERFACE → Layout —
-UtxoTransaction`), the header preimage omits `validatorSignature`, and every Merkle leaf is
-`leafHash('utxotx', id)` over an id. **That closes the id-malleability half and leaves the
+**Why this section exists:** ✅ **signature bytes are in no id's preimage.** `txIdBytes` omits them
+(`TYPES_INTERFACE → Layout — UtxoTransaction`) and the header preimage omits `validatorSignature`,
+so no signature can move a transaction's id or a block's hash; a block's root commits each
+transaction's wire bytes, its signatures among them, in a leaf of their own beside the id's
+(`TYPES_INTERFACE → Ordering block`). **That closes the id-malleability half and leaves the
 verify half**: a block carrying a transaction whose signature one implementation accepts and
 another refuses splits the network — which is why the accepted set is a rule with one
 implementation, not whatever a runtime ships.
@@ -1170,6 +1173,39 @@ block-level checks (`utxoTxIds`, `utxoTxs` alignment and weight,
 > grep-to-zero plus diff purity, mutation only where behaviour changes.
 
 
+### verifyUtxoTxRoot — the body's root is the header's
+
+> ⚠ **AHEAD OF CODE (2026-10-13).** This predicate leads `validation/src/verify.ts`, which exports
+> none: the one comparison of a body's root with its header's is
+> `node/src/services/block-apply.ts`', over a root of ids alone.
+
+`verifyUtxoTxRoot(block: OrderingBlock): boolean` — `true` exactly when
+`computeUtxoTxRoot(block.utxoTxTree)` (`TYPES_INTERFACE → Ordering block`) equals
+`block.header.utxoTxRoot`.
+
+**It is what binds a delivered body to its header.** A header's hash fixes `utxoTxRoot`, and the
+root fixes every transaction id and every byte of every transaction, so a block that passes holds
+the body its producer hashed. `validatorSignature` is outside the root (→ verifyValidatorSignature).
+
+**Total by itself.** `false`, never a throw, when `block` or its `utxoTxTree` is not an object, an
+id is not 64 lowercase hex, an element is not a byte view, the two arrays differ in length, or
+`header.utxoTxRoot` is not 64 lowercase hex — whatever ran before it. It decodes no transaction.
+
+**It is not part of `verifyOrderingBlockStructure`, and the reason is cost.** The structure check
+runs where no work has been proven — net's Stage 1 calls it ahead of the PoW check — and over every
+block a node serves; this predicate hashes the whole body. Each of its callers places it behind
+proof of work: Stage 1 after `verifyOrderingBlockPoW` (`NET_INTERFACE → Stage 1`), fork resolution
+on a block whose header chain it has verified (`NODE_INTERFACE → Fork choice decides on verified
+headers`), the apply funnel after its own PoW check (`NODE_INTERFACE → Ordering block apply-time
+authorization`).
+
+**Cost.** A body of `n` transactions is `2n` leaf hashes and `2n − 1` node hashes, and the bytes
+leaves read the body once. Measured 2026-10-13, one root computation over a 2 000 000-byte body, an
+i9 laptop under Node 22.19.0 with the testnet miner running beside it: **358 ms** at 9 519
+transactions of 176 bytes; **74 ms** at 199 transactions of 10 000 bytes; **1.8 s** at 60 606 empty
+elements — the most entries the body cap holds, and a body no producer of a valid block makes.
+
+
 ### `verifyPostWithdrawCommitDomains`
 
 ```ts
@@ -1320,16 +1356,18 @@ Stage 1 (@dagsocial/net — topic validators, before mesh forwarding)
   ├── tx topic     → decodeTxPacket → verifyTxStructure → the packet biconditional
   │                  (tx.post present ⟺ content present) → verifyPostBody(content, tx.post.contentHash)
   ├── body pull    → verifyPostBody over each returned body, against the row's commitment
-  └── block topic  → verifyOrderingBlockStructure (+ chain-link / PoW pre-filters)
+  └── block topic  → verifyOrderingBlockStructure → verifyProtocolVersion → verifyOrderingBlockPoW
+                     → verifyUtxoTxRoot (the whole row, in order: NET_INTERFACE → Stage 1)
 
 Stage 2 (@dagsocial/node — after receipt)
   ├── onTx         → validateTx (authorization, transitions, conservation — NODE_INTERFACE)
   ├── POST /posts  → verifyPostBody over `content`, then verifyPost over the commit
   │                  (field domains, refs, version, karma)
   ├── Fork resolution (resolveFork — a received block that extends nothing)
-  │     └── verifyHeaderChain over the peer's segment, before any work is
-  │           compared or any block fetched (NODE_INTERFACE → Fork choice
-  │           decides on verified headers)
+  │     ├── verifyHeaderChain over the peer's segment, before any work is compared
+  │     │     or any block fetched (NODE_INTERFACE → Fork choice decides on verified headers)
+  │     └── each served block, before it is kept: verifyOrderingBlockStructure,
+  │           verifyUtxoTxRoot, verifyValidatorSignature
   └── Block receipt (applyOrderingBlock — the funnel every apply path passes
         through: gossip, sync, reorg — so no path can skip it)
         ├── verifyOrderingBlockStructure
@@ -1337,6 +1375,7 @@ Stage 2 (@dagsocial/node — after receipt)
         │     blockHash(prev header) + height increment)
         ├── verifyOrderingBlockPoW
         ├── verifyValidatorSignature (blockHash(header) signed with validatorId's key)
+        ├── verifyUtxoTxRoot (the body is the one the header's root commits)
         └── State application (UTXO, post confirmation, mempool cleanup)
 ```
 
@@ -1403,5 +1442,6 @@ own.
 - Ordering-block hashing is over the **header**. The PoW preimage
   (`computePowHash`) is the encoded header with `powNonce` zeroed; the canonical
   `blockHash` is the encoded header with the solved `powNonce`. Neither includes
-  `validatorSignature` — it is not a header field. The body binds via the header's
-  `utxoTxRoot` / `stateRoot`.
+  `validatorSignature` — it is not a header field. The body binds through the header's
+  `utxoTxRoot`, which commits every transaction's id and bytes (→ verifyUtxoTxRoot); `stateRoot`
+  commits its effect on state.
