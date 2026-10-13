@@ -579,8 +579,8 @@ export class NetNode {
     this.config = config;
     this.validators = validators;
     this.syncStore = new LazySyncStore(validators);
-    // Omitted in tests/embedded use — PeerDb then runs ephemeral (contract:
-    // "Persistence seam"), which is the valid non-production configuration.
+    // Omitted in tests/embedded use — PeerDb then runs ephemeral (NET_INTERFACE →
+    // Persistence seam), which is the valid non-production configuration.
     this.peerStorage = peerStorage ?? null;
     // Ban hooks late-bind this.peerDb: it is created in start(), and the
     // closures read it at call time, so bans imposed before start (or after
@@ -748,9 +748,10 @@ export class NetNode {
 
     this.libp2p.addEventListener('peer:connect', (evt: any) => {
       const peerId = evt.detail?.toString() ?? 'unknown';
-      // NET_INTERFACE → "A connection whose remote peer id is this node's own
-      // is never a peer": never added, so peers() never lists it even between
-      // the upgrade and the funnel's close.
+      // NET_INTERFACE →
+      // "A connection whose remote peer id is this node's own is never a peer":
+      // never added, so peers() never lists it even
+      // between the upgrade and the funnel's close.
       if (peerId === libp2p.peerId.toString()) return;
       console.log(`[net] peer:connect ${peerId} (total=${this.peerMgr.getPeerCount() + 1})`);
       this.peerMgr.addPeer({
@@ -912,9 +913,10 @@ export class NetNode {
       const conn = await libp2p.dial(multiaddr(addr));
       this.pendingDials.delete(addr);
 
-      // NET_INTERFACE → "A connection whose remote peer id is this node's own
-      // is never a peer": closed the moment it resolves, before any handshake
-      // and before any record.
+      // NET_INTERFACE →
+      // "A connection whose remote peer id is this node's own is never a peer":
+      // closed the moment it resolves,
+      // before any handshake and before any record.
       if (conn.remotePeer.toString() === libp2p.peerId.toString()) {
         console.log(`[net] dial to ${addr} resolved to our own peer id — closing`);
         await conn.close().catch(() => { /* already gone */ });
@@ -926,8 +928,8 @@ export class NetNode {
       // NET_INTERFACE → "A banned peer's handshake is refused unread": the
       // funnel checks the peer id the dial resolved to next, before
       // recordSeedPeer and before the handshake stream opens — closed,
-      // unrecorded, and the dialled address joins the peer's ban (→ "A ban
-      // carries every address its peer has been tied to").
+      // unrecorded, and the dialled address joins the peer's ban (→
+      // "A ban carries every address its peer has been tied to").
       const remote = conn.remotePeer.toString();
       if (this.peerMgr.isBanned(remote)) {
         console.log(`[net] dial to ${addr} resolved to banned peer ${remote} — closing`);
@@ -1001,9 +1003,10 @@ export class NetNode {
         await stream.close().catch(() => { /* the peer is already gone */ });
         return;
       }
-      // NET_INTERFACE → "A connection whose remote peer id is this node's own
-      // is never a peer": refused the way any other handshake stream is — an
-      // empty frame — with no penalty, there being nobody to penalise.
+      // NET_INTERFACE →
+      // "A connection whose remote peer id is this node's own is never a peer":
+      // refused the way any other handshake stream is —
+      // an empty frame — with no penalty, there being nobody to penalise.
       if (peerId === libp2p.peerId.toString()) {
         console.log(`[net] inbound handshake from ${peerId}: this is our own peer id — refusing`);
         await stream.sink([new Uint8Array(0)]).catch(() => { /* the peer is already gone */ });

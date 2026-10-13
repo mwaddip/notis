@@ -422,8 +422,8 @@ function lpItemsCodec<T>(
 /**
  * Decode a positional body, converting every `ReaderError` into `null`.
  *
- * TYPES_INTERFACE → The boundary check, step 4 — "callers convert `ReaderError`
- * into a verdict" — discharged in the shape the rest of this file uses:
+ * TYPES_INTERFACE → The boundary check →
+ * "Callers convert `ReaderError` into a verdict" — discharged in the shape the rest of this file uses:
  * decoders at net's boundary never throw, they return `null`, and the caller
  * decides what a `null` means for the peer that sent it.
  */

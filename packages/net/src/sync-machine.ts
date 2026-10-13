@@ -75,7 +75,11 @@ const STALL_TIMEOUT_MS = 60_000;
 const MAX_OUTSTANDING_IDS = 4 * MAX_INV_IDS;
 /** Send SyncInfo to sync peer every 30 seconds while active. */
 const SYNCED_POLL_INTERVAL_MS = 30_000;
-/** NET_INTERFACE → Serve Side, "The reply is movement-gated": floor for no-movement replies. */
+/**
+ * NET_INTERFACE → Serve Side →
+ * "The reply is movement-gated, so replying to replies terminates":
+ * floor for no-movement replies.
+ */
 const MIN_SYNCINFO_INTERVAL_MS = 15_000;
 /** Maximum data events in the queue before dropping oldest. */
 const MAX_DATA_QUEUE = 64;
@@ -123,7 +127,8 @@ export class SyncMachine {
   private peerHeights = new Map<string, number>();
   private peerDirections = new Map<string, 'inbound' | 'outbound'>();
 
-  // NET_INTERFACE → Serve Side, "The reply is movement-gated"
+  // NET_INTERFACE → Serve Side →
+  // "The reply is movement-gated, so replying to replies terminates"
   private lastSentTip = new Map<string, number>();
   private lastReportedTip = new Map<string, number>();
   private lastSentMs = new Map<string, number>();
@@ -614,7 +619,8 @@ export class SyncMachine {
     if (this.state.syncPeerId === peerId) {
       this.state.stalledPeers.add(peerId);
       this.state.syncPeerId = null;
-      // NET_INTERFACE → Sync Integrity → "Response binding"
+      // NET_INTERFACE → Sync Integrity →
+      // "Response binding — sender and label, never content"
       this.outstanding.clear();
       if (this.state.phase === 'syncing' || this.state.phase === 'backfill' || this.state.phase === 'synced') {
         this.state.phase = 'idle';
@@ -936,7 +942,10 @@ export class SyncMachine {
   // Internal — reply and pick
   // -----------------------------------------------------------------------
 
-  /** NET_INTERFACE → Serve Side, "The reply is movement-gated". */
+  /**
+   * NET_INTERFACE → Serve Side →
+   * "The reply is movement-gated, so replying to replies terminates".
+   */
   private replySyncInfo(peerId: string, theirTip: number): void {
     const ourTip = this.store.chainHeight();
     const prevReported = this.lastReportedTip.get(peerId);

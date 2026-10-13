@@ -188,8 +188,8 @@ export function subscribeTopics(
         peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'ordering block PoW invalid');
         return TopicValidatorResult.Reject;
       }
-      // NET_INTERFACE → Stage 1 → "A scheduled-target mismatch is refused,
-      // never forwarded, and never penalised"
+      // NET_INTERFACE → Stage 1 →
+      // "A scheduled-target mismatch is refused, never forwarded, and never penalised"
       const expected = scheduledTargetBits(block.header);
       if (expected !== null && block.header.powTargetBits !== expected) {
         console.log(

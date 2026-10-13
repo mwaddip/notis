@@ -12,9 +12,12 @@ export interface ConnectionLike {
   remotePeer: { toString(): string };
 }
 
-/** What one outbound timer tick should do (contract: "Outbound Manager"). */
+/** What one outbound timer tick should do (NET_INTERFACE → Outbound Manager). */
 export interface OutboundTickPlan {
-  /** Floor phase: the bootstrap seeds to dial this tick (contract: "Floor phase"). */
+  /**
+   * Floor phase: the bootstrap seeds to dial this tick
+   * (NET_INTERFACE → Outbound Manager → "Floor phase").
+   */
   bootstrapDials: string[];
   /** Fill phase: the PeerDb candidate to dial this tick, or null. */
   candidate: string | null;
@@ -84,8 +87,8 @@ export class OutboundManager {
     const connectedPeerIds = new Set<string>();
     for (const conn of connections) {
       if (conn.direction === 'outbound') connectedOutbound++;
-      // NET_INTERFACE → Outbound Manager → "Addresses compare without their
-      // /p2p/ component": libp2p stamps the remote peer id onto remoteAddr
+      // NET_INTERFACE → Outbound Manager →
+      // "Addresses compare without their `/p2p/` component": libp2p stamps the remote peer id onto remoteAddr
       // once the upgrade identifies it, but a PeerDb key may be bare.
       connectedAddrs.add(addressWithoutPeerId(conn.remoteAddr.toString()));
       connectedPeerIds.add(conn.remotePeer.toString());
