@@ -1175,10 +1175,6 @@ block-level checks (`utxoTxIds`, `utxoTxs` alignment and weight,
 
 ### verifyUtxoTxRoot — the body's root is the header's
 
-> ⚠ **AHEAD OF CODE (2026-10-13).** This predicate leads `validation/src/verify.ts`, which exports
-> none: the one comparison of a body's root with its header's is
-> `node/src/services/block-apply.ts`', over a root of ids alone.
-
 `verifyUtxoTxRoot(block: OrderingBlock): boolean` — `true` exactly when
 `computeUtxoTxRoot(block.utxoTxTree)` (`TYPES_INTERFACE → Ordering block`) equals
 `block.header.utxoTxRoot`.

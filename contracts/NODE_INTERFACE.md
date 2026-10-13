@@ -4791,12 +4791,6 @@ and runs once per process, and an index there would tax every `insertBox` on the
 
 ### Fork choice decides on verified headers
 
-> ⚠ **AHEAD OF CODE (2026-10-13).** Step 8's three checks on a served block, and what steps 10 and
-> 11, "What is remembered, and what is not" and → Refused headers say a mark rests on, lead
-> `services/fork-resolution.ts`: the code keeps a served block on its header's hash alone, so a body
-> or a validator signature altered by the peer that served it is refused inside `reorg` and marks
-> the header.
-
 **Every rule that decides a reorg lives in `resolveFork`; `reorg` is the mechanism that carries
 out a decision already made.** The decision, in order — each step that ends the resolution ends it
 with the chain untouched:
@@ -4871,8 +4865,10 @@ with the chain untouched:
    order, `verifyOrderingBlockStructure`, `verifyUtxoTxRoot` and `verifyValidatorSignature`
    (`VALIDATION_INTERFACE → verifyUtxoTxRoot`). The first that fails ends the resolution: refuse,
    penalise `misbehavior`, nothing reverted, **nothing marked**. Every block a node applied passed
-   all three in the funnel, so a block that fails one is held by no node that applied this branch —
-   the failure is the server's, and says nothing of the header.
+   all three in the funnel, so a block that fails one is held by no node that applied this branch,
+   and the peer that served it is penalised. **Nothing here judges the header**: a body that is not
+   the header's and a signature that does not verify say nothing of it, and a block whose shape is
+   not a block's is refused the same way where the header's root commits that shape.
 9. **Tip re-read.** The tip a resolution read at its start is a height **and a hash**; either one
    differing is a tip that moved during the awaits → abort, no penalty, and the block is judged
    again on the tip that stands ("One resolution at a time", below).
@@ -5448,13 +5444,6 @@ multibyte `string`, explicit `false`) and empty `signatures`/`inputs`/`outputs`,
 that measurement covers the honest path only**, and it assumes a producer's bytes come from
 `encodeTx` — established by grepping the `utxo_tx_cbor` column (its name then; `utxo_tx_bytes` today) rather than the function name, which
 has exactly one INSERT writer. Bytes an attacker crafts are what the arm is for.
-
-> ⚠ **AHEAD OF CODE (2026-10-13).** The next paragraph, the funnel table's root step and
-> → Block creation's step 16 lead `services/block-apply.ts` and `services/block-creator.ts`: the
-> code compares a root of ids alone, built by the node's own `computeUtxoTxRoot`, so a body's bytes
-> reach this loop under no commitment but the id beside them. The blockquote "Rejection is of BYTES,
-> not of the block hash" below leads `services/fork-resolution.ts` with it: the code writes the mark
-> for a served block that is not its header's.
 
 **A body is not swappable under an unchanged header.** `utxoTxRoot` commits every id and every
 transaction's bytes, so a body altered after its producer hashed it has another root and is refused

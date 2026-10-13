@@ -1280,10 +1280,6 @@ parent this node holds. The relay PoW gate exists to make mesh propagation cost-
 zero-work ordering block may be re-gossiped (audit M-9), and the network's floor puts the price of a
 forwarded header at the network's own minimum rather than the resolution floor's nine bits.
 
-> ⚠ **AHEAD OF CODE (2026-10-13).** The body's root in the `ordering-block` row and the next
-> paragraph lead `net/src/gossip.ts`' topic validator and `NetValidators`, which hold no such
-> member: a header that passes the PoW check is forwarded with whatever body arrived under it.
-
 **A worked header is forwarded with the body its root commits.** `verifyUtxoTxRoot`
 (`VALIDATION_INTERFACE → verifyUtxoTxRoot`) holds a block's body to its header's `utxoTxRoot` — every
 transaction id and every transaction's bytes — so a block that passed the PoW check is forwarded

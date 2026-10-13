@@ -234,10 +234,6 @@ because deriving it is the thing that cannot be done.
 
 ### Merkle primitives (`merkle.ts`)
 
-> ⚠ **AHEAD OF CODE (2026-10-13).** `computeUtxoTxRoot` as this package's export and the second live
-> leaf domain lead `types/src/merkle.ts` and `node/src/services/block-creator.ts`: the code defines
-> the root in the node, over `'utxotx'` leaves alone.
-
 | Export | Description |
 |--------|-------------|
 | `leafHash(domain, data)` | `blake2b512(utf8(domain ‖ "\0") ‖ data)[:32]` — domain-separated leaf so a leaf in one tree can't collide with a leaf in another. |
@@ -1541,13 +1537,6 @@ UtxoTxTree {
   utxoTxs: Uint8Array[]              // encodeTx bytes (positional), aligned with utxoTxIds
 }
 ```
-
-> ⚠ **AHEAD OF CODE (2026-10-13).** The bytes leaves lead the root's one implementation,
-> `node/src/services/block-creator.ts`' `computeUtxoTxRoot`, which builds a leaf per id and none per
-> element — so a transaction's signatures, and every byte of `utxoTxs` its id does not derive from,
-> are under no hash the header carries. The sentences that rest on this section lead with it:
-> → Block header's on what the header commits, → Layout — Merkle leaf preimages are the struct's own
-> wire bytes, and the wire-codec row of → Layout — UtxoTransaction.
 
 ⛔ **ONE COMMITTED LIST, AND TWO LEAF CLASSES OVER IT.** Posts, likes, withdrawals and the settlement
 are all transactions, so they ride `utxoTxIds` / `utxoTxs` together and the body has no second
