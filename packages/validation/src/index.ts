@@ -22,6 +22,7 @@ export {
   verifyHeaderFieldDomains,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
   verifyBlockChainLink,
   verifyHeaderChain,
   verifyOrderingBlockPoW,

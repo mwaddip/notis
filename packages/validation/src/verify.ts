@@ -14,7 +14,7 @@ import {
   protocolVersionAt,
   isValidUsernameBytes,
 } from '@dagsocial/types';
-import { encodeHeader, encodeTx, utxoTxTreeByteLength, computeContentHash, hash32, bytesToHex, hexToBytes } from '@dagsocial/types';
+import { encodeHeader, encodeTx, utxoTxTreeByteLength, computeContentHash, hash32, bytesToHex, hexToBytes, computeUtxoTxRoot } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, ProtocolEra, UtxoTransaction } from '@dagsocial/types';
 import { isDisallowedContentCodepoint } from './content-charset.js';
 
@@ -899,14 +899,11 @@ export function verifyOrderingBlockStructure(
   // `failStopIfCorruptChain` → `process.exit(1)`, triggered automatically by
   // the next gossip block's `extendsOurTip` (measured on `672f5a5`).
   //
-  // No commitment makes that unreachable: `utxoTxRoot` commits `utxoTxIds` and
-  // **never `utxoTxs`**, and the validator signature covers the header only —
-  // so a *relaying* node can swap the payload on an honest block with no
-  // re-mine and no re-sign. All three peer paths decode
-  // through the positional codec (`decodeOrderingBlock` on gossip,
-  // `decodeBlocks` under `requestBlocks`, `decodeOrderingBlock` again under
-  // `appendBlocks`), so a swap is refused there; this pin is what keeps the
-  // store write safe independently of that.
+  // `utxoTxRoot` commits every `utxoTxIds` entry and every `utxoTxs` element
+  // (TYPES_INTERFACE → Ordering block), and `verifyUtxoTxRoot` holds a block
+  // to that root. This structure check runs ahead of that predicate, and on
+  // the paths that never reach it — a stored row a node serves — it types
+  // the elements itself (VALIDATION_INTERFACE → verifyUtxoTxRoot).
   //
   // Every element but the last is weighed against `MAX_TX_BYTES`; the last
   // against `MAX_SETTLEMENT_BYTES` — the settlement's size is derived from the
@@ -943,6 +940,40 @@ export function verifyOrderingBlockStructure(
     };
   }
   return { valid: true };
+}
+
+// ---------------------------------------------------------------------------
+// verifyUtxoTxRoot — the body's root is the header's
+// ---------------------------------------------------------------------------
+
+/**
+ * `true` exactly when `computeUtxoTxRoot(block.utxoTxTree)` equals
+ * `block.header.utxoTxRoot` (VALIDATION_INTERFACE → verifyUtxoTxRoot).
+ *
+ * Total by itself: `false`, never a throw, when `block`, its header or its
+ * `utxoTxTree` is not an object, `header.utxoTxRoot` is not 64 lowercase hex,
+ * either array is not an array, an id is not 64 lowercase hex, an element is
+ * not a byte view, or the two arrays differ in length — the predicates here
+ * establish `computeUtxoTxRoot`'s domain so the Merkle build cannot throw.
+ * It decodes no transaction, reads no other header field, and does not read
+ * `validatorSignature`.
+ */
+export function verifyUtxoTxRoot(block: OrderingBlock): boolean {
+  if (!isObject(block)) return false;
+  const header = (block as { header: unknown }).header;
+  if (!isObject(header)) return false;
+  const root = header.utxoTxRoot;
+  if (!isHex32(root)) return false;
+  const tree = (block as { utxoTxTree: unknown }).utxoTxTree;
+  if (!isObject(tree)) return false;
+  const ids = tree.utxoTxIds;
+  const txs = tree.utxoTxs;
+  if (!Array.isArray(ids)) return false;
+  if (!Array.isArray(txs)) return false;
+  if (ids.length !== txs.length) return false;
+  for (const id of ids) if (!isHex32(id)) return false;
+  for (const tx of txs) if (!isBytes(tx)) return false;
+  return computeUtxoTxRoot({ utxoTxIds: ids, utxoTxs: txs }) === root;
 }
 
 // ---------------------------------------------------------------------------
