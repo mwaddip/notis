@@ -13,7 +13,17 @@ import {
   importDb,
   importBlockCreator,
   importOrdering,
+  installTrackers,
+  teardownTrackers,
+  settleResolveForks,
+  T1,
+  HL,
+  initChainStore,
+  startCreator,
+  buildAndApply,
+  singleBranchNet,
 } from './fork-resolution-fixtures.js';
+import type { Trackers, StubNet, StubNetOptions } from './fork-resolution-fixtures.js';
 
 // ---------------------------------------------------------------------------
 // NODE_INTERFACE → Fork choice decides on verified headers
@@ -23,168 +33,6 @@ import {
 // time, a block handed back on a moved tip, the walk bounded by the journals
 // kept, a stored row that will not decode.
 // ---------------------------------------------------------------------------
-
-interface Trackers {
-  caughtCorrupt: Array<unknown>;
-}
-
-/**
- * NODE_INTERFACE → Fork choice decides on verified headers →
- * "One resolution at a time". The runner's launched resolution promise is
- * owned by the runner itself and reached through `waitForForkResolutionIdle`;
- * the fail-stop boundary is swapped for one that records rather than exits,
- * so a case can read what crossed it.
- */
-function installTrackers(ctx: Trackers, configOverride?: Partial<ReturnType<typeof makeTestConfig>>): void {
-  if (configOverride) {
-    const cfg = makeTestConfig(configOverride);
-    vi.doMock('../../src/config.js', () => ({ config: cfg, loadConfig: () => cfg }));
-  }
-  vi.doMock('../../src/services/corrupt-state.js', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('../../src/services/corrupt-state.js')>();
-    const wrapped: typeof actual.failStopIfCorruptChain = ((err: unknown): never => {
-      if (err instanceof actual.CorruptChainStateError) {
-        ctx.caughtCorrupt.push(err);
-        return undefined as never;
-      }
-      throw err;
-    }) as typeof actual.failStopIfCorruptChain;
-    return { ...actual, failStopIfCorruptChain: wrapped };
-  });
-}
-
-async function teardownTrackers(): Promise<void> {
-  const bc = await importBlockCreator();
-  bc.stopBlockCreator();
-  const { setClock } = await import('../../src/services/difficulty.js');
-  setClock(null);
-  const { resetForkResolutionRunner } = await import(
-    '../../src/services/fork-resolution-runner.js'
-  );
-  resetForkResolutionRunner();
-  const { resetForkResolutionMemo } = await import(
-    '../../src/services/fork-resolution.js'
-  );
-  resetForkResolutionMemo();
-  vi.doUnmock('../../src/services/corrupt-state.js');
-  vi.doUnmock('../../src/config.js');
-  vi.restoreAllMocks();
-  vi.resetModules();
-}
-
-/**
- * NODE_INTERFACE → "One resolution at a time": wait until the runner is at
- * rest — nothing in flight and nothing pending — including resolutions a
- * hand-back starts. The runner owns the promise, so a case reaches it through
- * the exported waiter rather than wrapping `resolveFork`.
- */
-async function settleResolveForks(_ctx: Trackers): Promise<void> {
-  const { waitForForkResolutionIdle } = await import(
-    '../../src/services/fork-resolution-runner.js'
-  );
-  await waitForForkResolutionIdle();
-  // Flush any synchronous post-settlement work from the handleOrderingBlock
-  // catch chain and the apply path triggered by a block handed back.
-  await Promise.resolve();
-  await Promise.resolve();
-}
-
-/** The devnet far-future stamp the whole file runs under, well inside drift. */
-const T1 = 1_700_000_000_000;
-const HL = 288 * 60_000;
-const FAR_FUTURE = T1 + 40 * 86_400_000;
-
-async function initChainStore(): Promise<void> {
-  const db = await importDb();
-  db.initDb(':memory:');
-  db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-  const { setClock } = await import('../../src/services/difficulty.js');
-  setClock(() => FAR_FUTURE);
-  vi.spyOn(console, 'warn').mockImplementation(() => {});
-  vi.spyOn(console, 'log').mockImplementation(() => {});
-  vi.spyOn(console, 'error').mockImplementation(() => {});
-}
-
-async function startCreator(cfg: ReturnType<typeof makeTestConfig>): Promise<void> {
-  const bc = await importBlockCreator();
-  bc.startBlockCreator(cfg);
-}
-
-async function buildAndApply(specs: Array<[number, number]>): Promise<OrderingBlock[]> {
-  const { applyOrderingBlock } = (await import('../../src/services/block-apply.js')) as {
-    applyOrderingBlock: (block: OrderingBlock) => boolean;
-  };
-  const out: OrderingBlock[] = [];
-  for (const [h, c] of specs) {
-    const b = await makeApplicableBlock({ height: h, createdAt: c });
-    expect(applyOrderingBlock(b)).toBe(true);
-    out.push(b);
-  }
-  return out;
-}
-
-interface StubNetOptions {
-  readonly headerGate?: Promise<void>;
-  readonly blockGate?: Promise<void>;
-  readonly onHeaderCall?: () => void;
-  readonly onBlockCall?: () => void;
-  /** NODE_INTERFACE → "Re-scoring is memoised": the memo is keyed on
-   *  `{atOurTip, theirTip}`. A case driving several resolutions off the same
-   *  peer under one tip reads this through distinct `peerTip` values so one
-   *  resolution's memo write does not short-circuit the next. */
-  readonly peerTipOverride?: number | null;
-}
-
-interface StubNet extends ForkResolutionNet {
-  readonly penalties: Array<{ peerId: string; kind: string; reason: string }>;
-  readonly headerCalls: { count: number };
-  readonly blockCalls: { count: number };
-}
-
-/**
- * A peer serving one branch through the pull calls of NET_INTERFACE → Pull
- * Requests. Headers paged down from the request's start, blocks drawn by the
- * asked range, both optionally gated by a promise the case releases — a
- * scheduled order of events, not a sleep.
- */
-function singleBranchNet(
-  peerId: string,
-  blocks: readonly OrderingBlock[],
-  opts: StubNetOptions = {},
-): StubNet {
-  const headers = blocks.map((b) => b.header);
-  const tip = headers.length > 0 ? Math.max(...headers.map((h) => h.height)) : 0;
-  const reportedTip = opts.peerTipOverride !== undefined ? opts.peerTipOverride : (tip === 0 ? null : tip);
-  const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
-  const headerCalls = { count: 0 };
-  const blockCalls = { count: 0 };
-  return {
-    penalties,
-    headerCalls,
-    blockCalls,
-    getConnectedPeers: () => [peerId],
-    requestHeaders: async (startHeight, maxCount) => {
-      headerCalls.count++;
-      opts.onHeaderCall?.();
-      if (opts.headerGate) await opts.headerGate;
-      const clamped = tip === 0 ? startHeight : Math.min(startHeight, tip);
-      return headers
-        .filter((h) => h.height <= clamped)
-        .sort((a, b) => b.height - a.height)
-        .slice(0, maxCount);
-    },
-    requestBlocks: async (startHeight, endHeight) => {
-      blockCalls.count++;
-      opts.onBlockCall?.();
-      if (opts.blockGate) await opts.blockGate;
-      return blocks.filter(
-        (b) => b.header.height >= startHeight && b.header.height <= endHeight,
-      );
-    },
-    penalizePeer: (p, k, r) => { penalties.push({ peerId: p, kind: k, reason: r }); },
-    peerTipHeight: () => reportedTip,
-  };
-}
 
 // ===========================================================================
 // Control. A non-extending block of a heavier branch switches the chain. Plain
