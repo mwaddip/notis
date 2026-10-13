@@ -5588,9 +5588,9 @@ funnel:
 - **`setBlocksHandler((block, fromPeerId) => boolean)`**: the sync machine's pull path into
   `handleOrderingBlock` — the same entry gossip uses (Relay handlers, above). The return is the
   batch's **continue** signal: `true` for a block applied or already held, `false` for a block
-  rejected or for a non-extending block, which launches `resolveFork` with `fromPeerId` as the
-  counterparty; `net` stops the batch at the first `false` (NET_INTERFACE → Sync Handler
-  Registration). The registration wraps the call in `failStopIfCorruptChain`, exactly as the
+  rejected or for a non-extending block, which is handed to the resolution runner with `fromPeerId`
+  as the counterparty (Fork choice decides on verified headers → "One resolution at a time"); `net`
+  stops the batch at the first `false` (NET_INTERFACE → Sync Handler Registration). The registration wraps the call in `failStopIfCorruptChain`, exactly as the
   gossip registration does — `net` contains a handler throw to one logged message, and that frame
   must never be the outer one for a corrupt-state error
 - **`setHeadersHandler(getBlock)`**: the provider `net` reads stored blocks through — headers for
