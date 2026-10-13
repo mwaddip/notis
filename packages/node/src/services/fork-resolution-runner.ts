@@ -25,6 +25,7 @@ import {
   resolveFork,
   dropForkResolutionMemoForPeer,
   type ForkResolutionNet,
+  type ResolveForkOutcome,
 } from './fork-resolution.js';
 import { handleOrderingBlock } from './handle-block.js';
 import { failStopIfCorruptChain, CorruptChainStateError } from './corrupt-state.js';
@@ -126,7 +127,7 @@ function startRunning(entry: PendingEntry): void {
 }
 
 async function runResolution(entry: PendingEntry): Promise<void> {
-  let outcome: 'done' | 'tip-moved' = 'done';
+  let outcome: ResolveForkOutcome = 'done';
   let fatal = false;
   try {
     outcome = await resolveFork(entry.block, entry.net, entry.peerId);
@@ -148,9 +149,12 @@ async function runResolution(entry: PendingEntry): Promise<void> {
     }
   }
   // NODE_INTERFACE → Fork choice decides on verified headers →
-  // "A resolution that ends because the tip moved hands its own block back the same way".
-  // The check reads pending BEFORE the drain so the rule's "unless its peer
-  // has a later one pending" meets its subject.
+  // "A resolution that ends because the tip moved hands its own block back the same way"
+  // and → "A resolution that ends in a switch hands its own block back too":
+  // the two rules share one hand-back seam — any outcome other than `'done'`
+  // puts the entry at the front, unless its peer has a later one pending.
+  // The pending check reads BEFORE the drain so the "unless its peer has a
+  // later one pending" clause meets its subject.
   const samePeerHasLater = !fatal && pendingByPeer.has(entry.peerId);
   const handBacks: PendingEntry[] = fatal ? [] : drainPending();
   if (fatal) {
@@ -158,7 +162,7 @@ async function runResolution(entry: PendingEntry): Promise<void> {
     pendingByPeer.clear();
     pendingOrder.length = 0;
   }
-  if (!fatal && outcome === 'tip-moved' && !samePeerHasLater) {
+  if (!fatal && outcome !== 'done' && !samePeerHasLater) {
     handBacks.unshift(entry);
   }
   // Hand back synchronously beside `running = null`. Nothing waits between

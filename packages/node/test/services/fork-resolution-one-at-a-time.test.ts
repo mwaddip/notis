@@ -835,6 +835,329 @@ describe('a resolution that ends because the tip moved judges its block again', 
 });
 
 // ===========================================================================
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "A resolution that ends in a switch hands its own block back too"
+// The switch lands on the shortest heavier prefix a page reaches, which can
+// end below the block the resolution started from. The block is handed back
+// and extends the new tip directly.
+// ===========================================================================
+
+describe('a resolution that switches below the delivered block hands it back', () => {
+  const ctx: Trackers = { caughtCorrupt: [] };
+
+  beforeEach(() => {
+    ctx.caughtCorrupt = [];
+    vi.resetModules();
+    installTrackers(ctx);
+  });
+  afterEach(teardownTrackers);
+
+  it('the delivered block extends the switched tip and is applied', async () => {
+    await initChainStore();
+    await startCreator(testConfig);
+
+    const [shared1] = await buildAndApply([[1, T1]]);
+    const peer = await buildAndApply([
+      [2, T1 + 1], [3, T1 + 2], [4, T1 + 3],
+    ]);
+    await revertChainTo(1);
+    const our = await buildAndApply([
+      [2, T1 + 60_000 + HL],
+      [3, T1 + 60_000 + HL + 1000],
+    ]);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    // Setup pre-check: peer2+peer3 outweighs our chain above the shared
+    // fork, so the shortest heavier prefix a page reaches is [peer2,peer3]
+    // and the switch lands at height 3 — one below the delivered block.
+    const ourWork = cumulativeWork(our.map((b) => b.header));
+    const peerPrefix = cumulativeWork([peer[0]!.header, peer[1]!.header]);
+    expect(peerPrefix > ourWork).toBe(true);
+
+    const deliveredBlock = peer[2]!;  // height 4
+    const net = singleBranchNet('peer-heavy', [shared1!, ...peer]);
+    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
+    handleOrderingBlock(deliveredBlock, 'peer-heavy', net);
+    await settleResolveForks(ctx);
+
+    // The rule: the switched tip is at height 3 (peer3); the delivered
+    // block (peer4) extends it and is applied, so the chain ends at the
+    // delivered block.
+    expect(ordering.getCurrentHeight()).toBe(deliveredBlock.header.height);
+    expect(ordering.getOrderingBlockHash(deliveredBlock.header.height)).toBe(
+      blockHash(deliveredBlock.header),
+    );
+    expect(ctx.caughtCorrupt).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "A resolution that ends in a switch hands its own block back too"
+// Handed back, the block starts a resolution that fetches the rest of its
+// branch — the net is asked for blocks twice, and the second ask starts above
+// the first switch's tip.
+// ===========================================================================
+
+describe('a resolution that switches two below the delivered block fetches the rest', () => {
+  const ctx: Trackers = { caughtCorrupt: [] };
+
+  beforeEach(() => {
+    ctx.caughtCorrupt = [];
+    vi.resetModules();
+    installTrackers(ctx);
+  });
+  afterEach(teardownTrackers);
+
+  it('a second block fetch runs above the first switch tip', async () => {
+    await initChainStore();
+    await startCreator(testConfig);
+
+    const [shared1] = await buildAndApply([[1, T1]]);
+    const peer = await buildAndApply([
+      [2, T1 + 1], [3, T1 + 2], [4, T1 + 3], [5, T1 + 4], [6, T1 + 5],
+    ]);
+    await revertChainTo(1);
+    const our = await buildAndApply([
+      [2, T1 + 60_000 + HL],
+      [3, T1 + 60_000 + HL + 1000],
+    ]);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    // Setup pre-check: peer2+peer3 outweighs our chain above the shared
+    // fork, so the first switch lands at height 3 — three below the
+    // delivered block at height 6.
+    const ourWork = cumulativeWork(our.map((b) => b.header));
+    const peerPrefix = cumulativeWork([peer[0]!.header, peer[1]!.header]);
+    expect(peerPrefix > ourWork).toBe(true);
+
+    const branch = [shared1!, ...peer];
+    const headers = branch.map((b) => b.header);
+    const peerTip = Math.max(...headers.map((h) => h.height));
+    const blockRanges: Array<{ start: number; end: number }> = [];
+    const net: ForkResolutionNet = {
+      getConnectedPeers: () => ['peer-heavy'],
+      peerTipHeight: () => peerTip,
+      penalizePeer: () => undefined,
+      requestHeaders: async (startHeight, maxCount) => {
+        const clamped = Math.min(startHeight, peerTip);
+        return headers
+          .filter((h) => h.height <= clamped)
+          .sort((a, b) => b.height - a.height)
+          .slice(0, maxCount);
+      },
+      requestBlocks: async (startHeight, endHeight) => {
+        blockRanges.push({ start: startHeight, end: endHeight });
+        return branch.filter(
+          (b) => b.header.height >= startHeight && b.header.height <= endHeight,
+        );
+      },
+    };
+
+    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
+    const deliveredBlock = peer[peer.length - 1]!;
+    handleOrderingBlock(deliveredBlock, 'peer-heavy', net);
+    await settleResolveForks(ctx);
+
+    // The rule: a second resolution ran above the first switch's tip, so
+    // the net was asked for blocks twice and the second ask starts above
+    // the first ask's end.
+    expect(blockRanges.length).toBe(2);
+    expect(blockRanges[1]!.start).toBeGreaterThan(blockRanges[0]!.end);
+    expect(ordering.getCurrentHeight()).toBe(deliveredBlock.header.height);
+    expect(ordering.getOrderingBlockHash(deliveredBlock.header.height)).toBe(
+      blockHash(deliveredBlock.header),
+    );
+    expect(ctx.caughtCorrupt).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "A resolution that ends in a switch hands its own block back too"
+// A block the switch already reached is held when handed back, so the net is
+// asked nothing further.
+// ===========================================================================
+
+describe('a resolution that switches to the delivered block hands back a no-op', () => {
+  const ctx: Trackers = { caughtCorrupt: [] };
+
+  beforeEach(() => {
+    ctx.caughtCorrupt = [];
+    vi.resetModules();
+    installTrackers(ctx);
+  });
+  afterEach(teardownTrackers);
+
+  it('the hand-back is already held, so the net is asked nothing further', async () => {
+    await initChainStore();
+    await startCreator(testConfig);
+
+    const [shared1] = await buildAndApply([[1, T1]]);
+    const [peer2, peer3] = await buildAndApply([[2, T1 + 1], [3, T1 + 2]]);
+    await revertChainTo(1);
+    await buildAndApply([
+      [2, T1 + 60_000 + HL],
+      [3, T1 + 60_000 + HL + 1000],
+    ]);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    const net = singleBranchNet('peer-heavy', [shared1!, peer2!, peer3!]);
+    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
+    handleOrderingBlock(peer3!, 'peer-heavy', net);
+    await settleResolveForks(ctx);
+
+    // The rule: the switch reached the delivered block, the hand-back saw
+    // it as already held, and the net was asked exactly once for headers
+    // and once for blocks — the first resolution's pages, nothing beyond.
+    expect(ordering.getCurrentHeight()).toBe(3);
+    expect(ordering.getOrderingBlockHash(3)).toBe(blockHash(peer3!.header));
+    expect(net.headerCalls.count).toBe(1);
+    expect(net.blockCalls.count).toBe(1);
+    expect(ctx.caughtCorrupt).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "A resolution that ends in a switch hands its own block back too"
+// Unless its peer has a later block pending — then the earlier is not
+// re-judged, and the later alone goes through.
+// ===========================================================================
+
+describe('a switching resolution with a later peer pending drops the earlier', () => {
+  const ctx: Trackers = { caughtCorrupt: [] };
+
+  beforeEach(() => {
+    ctx.caughtCorrupt = [];
+    vi.resetModules();
+    installTrackers(ctx);
+  });
+  afterEach(teardownTrackers);
+
+  it("the earlier block's net is asked exactly once", async () => {
+    await initChainStore();
+    await startCreator(testConfig);
+
+    const [shared1] = await buildAndApply([[1, T1]]);
+    const peer = await buildAndApply([
+      [2, T1 + 1], [3, T1 + 2], [4, T1 + 3], [5, T1 + 4],
+    ]);
+    await revertChainTo(1);
+    await buildAndApply([
+      [2, T1 + 60_000 + HL],
+      [3, T1 + 60_000 + HL + 1000],
+    ]);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    const earlierBlock = peer[2]!;  // height 4
+    const laterBlock = peer[peer.length - 1]!;  // height 5
+
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    const netEarlier = singleBranchNet('peer-A', [shared1!, ...peer], {
+      blockGate: gate,
+      peerTipOverride: 15,
+    });
+    const netLater = singleBranchNet('peer-A', [shared1!, ...peer], { peerTipOverride: 16 });
+
+    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
+
+    handleOrderingBlock(earlierBlock, 'peer-A', netEarlier);
+    await vi.waitFor(() => {
+      expect(netEarlier.blockCalls.count).toBeGreaterThanOrEqual(1);
+    }, { timeout: 5000 });
+
+    // The later block from the same peer waits as peer-A's pending block.
+    handleOrderingBlock(laterBlock, 'peer-A', netLater);
+
+    open();
+    await settleResolveForks(ctx);
+
+    // The rule: the first resolution switches, peer-A has a later block
+    // pending, so the earlier block is not handed back. netEarlier is
+    // asked exactly once (its own fork walk); netLater runs its own
+    // resolution.
+    expect(netEarlier.headerCalls.count).toBe(1);
+    expect(netLater.headerCalls.count).toBeGreaterThanOrEqual(1);
+    expect(ctx.caughtCorrupt).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "A resolution that ends in a switch hands its own block back too"
+// The hand-back is conditioned on a completed `reorg(…)`: a switch the funnel
+// refuses throws out of the transaction and the catch returns `'done'`, so no
+// block is handed back and the net is asked nothing further.
+// ===========================================================================
+
+describe('a reorg the funnel refuses hands nothing back', () => {
+  const ctx: Trackers = { caughtCorrupt: [] };
+
+  beforeEach(() => {
+    ctx.caughtCorrupt = [];
+    vi.resetModules();
+    installTrackers(ctx);
+  });
+  afterEach(teardownTrackers);
+
+  it('the forged branch is marked and the net is asked nothing further', async () => {
+    await initChainStore();
+    await startCreator(testConfig);
+
+    const [shared1] = await buildAndApply([[1, T1]]);
+    const [peer2] = await buildAndApply([[2, T1 + 1]]);
+    const { makeTestIdentity } = await import('../helpers.js');
+    const forger = makeTestIdentity();
+    const peer3Forged = await makeApplicableBlock({
+      height: 3,
+      createdAt: T1 + 2,
+      signWith: forger.privateKey,
+    });
+    await revertChainTo(1);
+    await buildAndApply([
+      [2, T1 + 60_000 + HL],
+      [3, T1 + 60_000 + HL + 1000],
+    ]);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(3);
+    const ourTipHash = ordering.getOrderingBlockHash(3);
+
+    const net = singleBranchNet('peer-forger', [shared1!, peer2!, peer3Forged]);
+    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
+    handleOrderingBlock(peer3Forged, 'peer-forger', net);
+    await settleResolveForks(ctx);
+
+    const refusedHeaders = (await import('../../src/store/refused-headers.js')) as {
+      anyRefusedHeader: (hashes: string[]) => boolean;
+    };
+    const forgedHash = blockHash(peer3Forged.header)!;
+
+    // The rule: the funnel refused the forged block, the mark is written,
+    // the chain stayed on our tip, the peer is penalised misbehavior, and
+    // the net was asked exactly once for headers and once for blocks —
+    // nothing after the refusal.
+    expect(refusedHeaders.anyRefusedHeader([forgedHash])).toBe(true);
+    expect(ordering.getCurrentHeight()).toBe(3);
+    expect(ordering.getOrderingBlockHash(3)).toBe(ourTipHash);
+    expect(net.headerCalls.count).toBe(1);
+    expect(net.blockCalls.count).toBe(1);
+    expect(net.penalties.map((p) => p.kind)).toEqual(['misbehavior']);
+    expect(ctx.caughtCorrupt).toEqual([]);
+  });
+});
+
+// ===========================================================================
 // A stored row that will not decode is the corrupt-state family's:
 // NODE_INTERFACE → Ordering blocks answers `getInterlinks` with
 // `UnreadableStoredBlockError` for such a row, and NODE_INTERFACE → Block

@@ -437,13 +437,14 @@ export function dropForkResolutionMemoForPeer(peerId: string): void {
 
 /**
  * NODE_INTERFACE → Fork choice decides on verified headers →
- * "A resolution that ends because the tip moved hands its own block back the same way".
- * The runner reads this to decide whether to hand the resolution's own block
- * back for a second judgment, so a `'tip-moved'` return names the two paths
- * the rule covers — step 7's between-pages re-read and step 9's — and `'done'`
- * names every other end.
+ * "A resolution that ends because the tip moved hands its own block back the same way"
+ * and → "A resolution that ends in a switch hands its own block back too". The
+ * runner reads this to decide whether to hand the resolution's own block back
+ * for a second judgment: `'tip-moved'` names step 7's between-pages re-read and
+ * step 9's, `'switched'` names the one path that completes `reorg(…)`, and
+ * `'done'` names every other end.
  */
-export type ResolveForkOutcome = 'done' | 'tip-moved';
+export type ResolveForkOutcome = 'done' | 'tip-moved' | 'switched';
 
 /**
  * Decide a fork against one peer and, if their chain wins, switch to it.
@@ -820,9 +821,14 @@ export async function resolveFork(
     }
 
     // 10. The switch — nothing awaits between the re-read and this call.
+    // NODE_INTERFACE → Fork choice decides on verified headers →
+    // "A resolution that ends in a switch hands its own block back too":
+    // the shortest heavier prefix can end below the block this resolution
+    // started from, so a completed `reorg(…)` answers `'switched'` and the
+    // runner hands the block back through the same seam a moved tip does.
     reorg(forkHeight, allBlocks);
     console.log(`Reorg complete: new tip at height=${forkHeight + n}`);
-    return 'done';
+    return 'switched';
   } catch (err) {
     // NODE_INTERFACE → Fork choice decides on verified headers, step 10–11.
     if (err instanceof ReorgAbortedError) {
