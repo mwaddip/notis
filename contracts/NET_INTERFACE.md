@@ -1359,7 +1359,9 @@ offer.
 
 **These four are what JOURNAL_EVENTS → Peer Events / Sync Events and NODE_INTERFACE → Admin Listener read** —
 `peer_connected` from `onPeerActive`, `peer_disconnected`, `peer_penalised`, `sync_complete` from `onSyncComplete`;
-`syncing` from `syncPhase()`.
+`syncing` from `syncPhase()`. The node reads `onPeerDisconnected` once more, for its fork resolution:
+a peer that has gone takes its pending block and its memo entry with it
+(NODE_INTERFACE → Fork choice decides on verified headers → "One resolution at a time").
 
 **Handler setters are order-independent.** Every setter above stores a delegate and has no libp2p side
 effect, so it is valid before or after `start()`, and a later call replaces the delegate. Registering a

@@ -2,8 +2,9 @@ import type { OrderingBlock } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import { getCurrentHeight, getOrderingBlockHash } from '../store/index.js';
 import { applyOrderingBlock } from './block-apply.js';
-import { extendsOurTip, resolveFork } from './fork-resolution.js';
+import { extendsOurTip } from './fork-resolution.js';
 import type { ForkResolutionNet } from './fork-resolution.js';
+import { handOverForkResolution } from './fork-resolution-runner.js';
 import { failStopIfCorruptChain } from './corrupt-state.js';
 import { onBlockApplied, registerPlaceholder } from './backfill.js';
 import { getPlaceholdersAt } from '../store/index.js';
@@ -16,8 +17,12 @@ import { getPlaceholdersAt } from '../store/index.js';
  * non-extending block that enters fork resolution. The synchronous path can
  * raise a `CorruptChainStateError` (`getOrderingBlock`, `extendsOurTip`,
  * `applyOrderingBlock`'s re-thrown class); each registration wraps the call
- * in `failStopIfCorruptChain`. The launched `resolveFork` promise carries
- * its own `.catch(failStopIfCorruptChain)`.
+ * in `failStopIfCorruptChain`.
+ *
+ * A non-extending block is handed to the single-flight runner (NODE_INTERFACE
+ * → Fork choice decides on verified headers → "One resolution at a time");
+ * the runner owns each resolution's promise, so no rejection escapes this
+ * frame.
  */
 export function handleOrderingBlock(
   block: OrderingBlock,
@@ -48,7 +53,7 @@ export function handleOrderingBlock(
     return applied;
   }
 
-  resolveFork(block, net, fromPeerId).catch(failStopIfCorruptChain);
+  handOverForkResolution(block, net, fromPeerId);
   return false;
 }
 

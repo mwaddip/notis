@@ -25,8 +25,13 @@ import { setNet } from './services/net-instance.js';
 import { enterDiscovery, notePeerMet } from './services/peer-readiness.js';
 import { createAvlProver } from './state/avl-prover.js';
 import { handleOrderingBlock, pullBlocksHandler } from './services/handle-block.js';
+import { onPeerDisconnectedForForkResolution } from './services/fork-resolution-runner.js';
 import { handleRelayedTx } from './services/handle-tx.js';
-import { failStopIfCorruptChain, guardStoreRead } from './services/corrupt-state.js';
+import {
+  failStopIfCorruptChain,
+  guardStoreRead,
+  handleUnhandledRejection,
+} from './services/corrupt-state.js';
 import { scheduledPowTargetBits } from './services/difficulty.js';
 import {
   getPost,
@@ -45,6 +50,13 @@ import { verifyPostBody } from '@dagsocial/validation';
 
 const config = loadConfig();
 const startTime = Date.now();
+
+// NODE_INTERFACE → "An unhandled rejection is logged, and the node keeps running":
+// one process-level handler receives every promise rejection nothing else
+// handled — the corrupt-state family is fail-stop, every other reason is
+// logged with its stack. An uncaught synchronous exception has no handler
+// here: Node's default stands and the process exits.
+process.on('unhandledRejection', handleUnhandledRejection);
 
 // 0. Journal
 initJournal();
@@ -149,8 +161,10 @@ net.setKarmaMembers(getKarmaOwners());
 
 // Both gossip and pull converge on `handleOrderingBlock` (NODE_INTERFACE →
 // Relay handlers / Sync handlers). Each registration wraps the call in
-// `failStopIfCorruptChain`; the launched `resolveFork` promise carries its
-// own `.catch(failStopIfCorruptChain)`.
+// `failStopIfCorruptChain`. A block that does not extend the tip goes to the
+// fork-resolution runner, which owns each resolution's promise and each
+// hand-back (NODE_INTERFACE → Fork choice decides on verified headers →
+// "One resolution at a time").
 net.onOrderingBlock((block, fromPeerId) => {
   try {
     handleOrderingBlock(block, fromPeerId, net);
@@ -251,6 +265,9 @@ net.onPeerActive((peerId: string, direction: 'inbound' | 'outbound') => {
   emitPeerConnected(peerId, direction);
 });
 net.onPeerDisconnected((peerId: string, reason: string) => {
+  // NODE_INTERFACE → "One resolution at a time": the runner's pending block
+  // and the re-score memo leave with the peer.
+  onPeerDisconnectedForForkResolution(peerId);
   emitPeerDisconnected(peerId, reason);
 });
 net.onPeerPenalised((peerId: string, kind: string, detail: string | null) => {

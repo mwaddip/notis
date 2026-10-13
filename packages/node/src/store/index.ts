@@ -89,6 +89,7 @@ export {
 export {
   insertBlockJournal,
   getBlockJournal,
+  getLowestJournalHeight,
   deleteBlockJournal,
   purgeOldJournals,
 } from './journal.js';

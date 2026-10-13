@@ -85,8 +85,9 @@ export class UnhashableStoredHeaderError extends CorruptChainStateError {
  *
  * The live reason, as opposed to that latent one, is reach. The store frame
  * names the fault so every reader raises one class, and every outer frame —
- * both registrations, the launched `resolveFork` promise, `finalizeBlock`,
- * the block creator, and the guarded provider and routes — is a boundary
+ * both registrations, the fork-resolution runner for each resolution and each
+ * hand-back, `finalizeBlock`, the block creator, and the guarded provider and
+ * routes — is a boundary
  * (NODE_INTERFACE → "Reach is the live argument, not the halt").
  */
 export class UnreadableStoredBlockError extends CorruptChainStateError {
@@ -224,24 +225,30 @@ export class InconsistentStateTreeError extends CorruptChainStateError {
 }
 
 /**
- * A block journal inside retention is absent (NODE_INTERFACE → "Rollback").
+ * A block journal at or above the lowest one kept is absent
+ * (NODE_INTERFACE → "The walk reaches as deep as the journals do, and no deeper").
  *
- * `purgeOldJournals` deletes strictly below `tip − maxReorgDepth`.
- * The fork walk's lowest non-genesis answer is `tip − maxReorgDepth + 1`,
- * and `reorg` reverts starting one above the fork point, so every height
- * `revertBlock` can be asked for is ≥ `tip − maxReorgDepth + 2` — inside
- * retention. When the fork walk reaches genesis (`tip ≤ maxReorgDepth`),
- * the purge argument is ≤ 0 and nothing is deleted.
+ * The fork walk bounds its lowest examined height by `lowestJournal − 1` so
+ * every fork point it answers sits at `lowestJournal − 1` or above, and
+ * `reorg` reverts starting one above the fork point. Every height
+ * `revertBlock` can be asked for therefore lies at `lowestJournal` or above —
+ * where a journal row stands by definition. The fork walk's genesis fallback
+ * only fires while `lowestJournal ≤ 1`, so a revert reaching height 1 also
+ * reads a kept journal.
  *
- * A missing journal is therefore a row the store lost, not a retention gap.
+ * A missing journal is therefore a row the store lost, never a retention gap:
+ * a tip that only rose keeps every journal down to height 1 for as long as it
+ * stands at or below the horizon, and one that dropped below the horizon
+ * leaves the walk bounded by the journals and `MissingJournalError` out of
+ * reach.
  */
 export class MissingJournalError extends CorruptChainStateError {
   constructor(site: string, height: number) {
     super(
       site,
       height,
-      `no block journal at height ${height} — inside retention ` +
-      `(purgeOldJournals deletes strictly below tip − maxReorgDepth)`,
+      `no block journal at height ${height} — a height at or above ` +
+      `the lowest journal kept`,
     );
   }
 }
@@ -388,9 +395,13 @@ export class ReorgAbortedError extends Error {
  * frame the runtime cannot quietly reinterpret. The contained frames that would
  * otherwise swallow a family member are `net`'s sync-machine dispatch catches
  * (NET_INTERFACE → Sync State Machine) and Express's default 500
- * handler. Where nothing swallows it, an uncaught throw ends the process
- * anyway — but by the runtime's default rather than by our decision, which is
- * the same right answer for a reason that could change under us without a word.
+ * handler. Where nothing swallows it, a synchronous throw nothing catches ends
+ * the process anyway — but by the runtime's default rather than by our
+ * decision, which is the same right answer for a reason that could change
+ * under us without a word. A promise rejection nothing handles reaches the
+ * process-level handler (`handleUnhandledRejection`), which is fail-stop for
+ * this family and logs any other reason while the node keeps running
+ * (NODE_INTERFACE → "An unhandled rejection is logged, and the node keeps running").
  *
  * Never returns: it exits, or it re-throws.
  */
@@ -429,4 +440,23 @@ export function guardStoreRead<A extends unknown[], R>(
       failStopIfCorruptChain(err);
     }
   };
+}
+
+/**
+ * The process-level unhandled-rejection backstop
+ * (NODE_INTERFACE → "An unhandled rejection is logged, and the node keeps running").
+ * A `CorruptChainStateError` is fail-stop as at every other boundary; any
+ * other reason is logged with its stack and the function returns, so the
+ * process keeps running.
+ *
+ * `index.ts` registers one call of this at startup, through
+ * `process.on('unhandledRejection', …)`.
+ */
+export function handleUnhandledRejection(reason: unknown): void {
+  if (reason instanceof CorruptChainStateError) {
+    failStopIfCorruptChain(reason);
+    return;
+  }
+  const stack = reason instanceof Error && reason.stack ? reason.stack : String(reason);
+  console.error(`Unhandled promise rejection — the node keeps running: ${stack}`);
 }
