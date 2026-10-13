@@ -161,8 +161,10 @@ net.setKarmaMembers(getKarmaOwners());
 
 // Both gossip and pull converge on `handleOrderingBlock` (NODE_INTERFACE →
 // Relay handlers / Sync handlers). Each registration wraps the call in
-// `failStopIfCorruptChain`; the launched `resolveFork` promise carries its
-// own `.catch(failStopIfCorruptChain)`.
+// `failStopIfCorruptChain`. A block that does not extend the tip goes to the
+// fork-resolution runner, which owns each resolution's promise and each
+// hand-back (NODE_INTERFACE → Fork choice decides on verified headers →
+// "One resolution at a time").
 net.onOrderingBlock((block, fromPeerId) => {
   try {
     handleOrderingBlock(block, fromPeerId, net);

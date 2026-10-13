@@ -207,10 +207,10 @@ export function applyOrderingBlock(block: OrderingBlock): boolean {
  * explicit rejection — transaction rolled back, prover restored, verdict
  * returned, detail logged. That is not defensive padding. The gossip callback
  * is `async` and the net layer discards its promise, so a propagated throw
- * becomes an unhandled rejection, which exits the process on Node ≥ 15; and
- * because a rejected block is never stored, the node re-fetches it on restart
- * and dies again. One cheaply-mined block would otherwise be a permanent,
- * self-reapplying kill for every node that receives it.
+ * becomes an unhandled rejection, which the process survives
+ * (NODE_INTERFACE → "An unhandled rejection is logged, and the node keeps running")
+ * with the prover's in-memory state wherever the throw left it — SQLite's
+ * rollback does not reach it — and every later block judged against that state.
  */
 export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
   // Structure first, before any field of `block` is read. Until this returns
@@ -569,9 +569,9 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
 
   // 14. Persist journal and purge old ones
   insertBlockJournal(journal);
-  // Retention is the real floor under revert depth — `revertBlock` throws
-  // without a journal — so it tracks the depth the fork walk can reach
-  // (NODE_INTERFACE → Fork choice decides on verified headers).
+  // The journals kept are the floor under revert depth — `revertBlock` throws
+  // without one — and the fork walk reaches as deep as they do, no deeper
+  // (NODE_INTERFACE → "The walk reaches as deep as the journals do, and no deeper").
   purgeOldJournals(height - config.maxReorgDepth);
   purgeRefusedHeaders(height - config.maxReorgDepth);
   // What a node serves, not what it applies: proofs are kept for

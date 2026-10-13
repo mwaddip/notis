@@ -85,8 +85,9 @@ export class UnhashableStoredHeaderError extends CorruptChainStateError {
  *
  * The live reason, as opposed to that latent one, is reach. The store frame
  * names the fault so every reader raises one class, and every outer frame —
- * both registrations, the launched `resolveFork` promise, `finalizeBlock`,
- * the block creator, and the guarded provider and routes — is a boundary
+ * both registrations, the fork-resolution runner for each resolution and each
+ * hand-back, `finalizeBlock`, the block creator, and the guarded provider and
+ * routes — is a boundary
  * (NODE_INTERFACE → "Reach is the live argument, not the halt").
  */
 export class UnreadableStoredBlockError extends CorruptChainStateError {
@@ -246,8 +247,8 @@ export class MissingJournalError extends CorruptChainStateError {
     super(
       site,
       height,
-      `no block journal at height ${height} — inside retention ` +
-      `(purgeOldJournals deletes strictly below tip − maxReorgDepth)`,
+      `no block journal at height ${height} — a height at or above ` +
+      `the lowest journal kept`,
     );
   }
 }
@@ -394,9 +395,13 @@ export class ReorgAbortedError extends Error {
  * frame the runtime cannot quietly reinterpret. The contained frames that would
  * otherwise swallow a family member are `net`'s sync-machine dispatch catches
  * (NET_INTERFACE → Sync State Machine) and Express's default 500
- * handler. Where nothing swallows it, an uncaught throw ends the process
- * anyway — but by the runtime's default rather than by our decision, which is
- * the same right answer for a reason that could change under us without a word.
+ * handler. Where nothing swallows it, a synchronous throw nothing catches ends
+ * the process anyway — but by the runtime's default rather than by our
+ * decision, which is the same right answer for a reason that could change
+ * under us without a word. A promise rejection nothing handles reaches the
+ * process-level handler (`handleUnhandledRejection`), which is fail-stop for
+ * this family and logs any other reason while the node keeps running
+ * (NODE_INTERFACE → "An unhandled rejection is logged, and the node keeps running").
  *
  * Never returns: it exits, or it re-throws.
  */
