@@ -740,8 +740,8 @@ describe('block-creator', () => {
     const author = makeTestIdentity();
     const other = makeTestIdentity();
 
-    // `makePostTx`, not `seedPostTx`: this measures the root over transaction
-    // ids and opens no database.
+    // `makePostTx`, not `seedPostTx`: this compares the roots of two bodies
+    // that differ in an id and opens no database.
     const a = makePostTx(author, 'same words');
     const b = makePostTx(other, 'same words');
     expect(Buffer.from(a.tx.post!.contentHash).toString('hex')).toBe(Buffer.from(b.tx.post!.contentHash).toString('hex'));   // only the author differs

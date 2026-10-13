@@ -6,7 +6,7 @@ import {
   verifyUtxoTxRoot,
   verifyValidatorSignature,
 } from '@dagsocial/validation';
-import { computeTxId, computeUtxoTxRoot, decodeTx, encodeTx } from '@dagsocial/types';
+import { MAX_TX_BYTES, computeTxId, computeUtxoTxRoot, decodeTx, encodeTx } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import {
   makeApplicableBlock,
@@ -478,6 +478,97 @@ describe('a served block that is its header\'s and whose body will not decode', 
     expect(ordering.getOrderingBlockHash(ourTip.header.height)).toBe(blockHash(ourTip.header));
     expect(net.penalties.length).toBe(1);
     expect(net.penalties[0]!.kind).toBe('misbehavior');
+  });
+});
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers →
+ * "A served block is bound to its header before it is kept".
+ *
+ * One peer serves a branch whose last block is its header's — the body's root
+ * matches the header's `utxoTxRoot`, the signature verifies — and whose body
+ * holds a first element over `MAX_TX_BYTES`. The root and the signature accept
+ * the block; only the structure check refuses it, before it is kept.
+ */
+describe('a served block that is its header\'s and whose shape is not a block\'s', () => {
+  const ctx: Trackers = { caughtCorrupt: [] };
+  beforeEach(() => {
+    ctx.caughtCorrupt = [];
+    vi.resetModules();
+    installTrackers(ctx);
+  });
+  afterEach(teardownTrackers);
+
+  it('is refused before it is kept and leaves no mark', async () => {
+    await initChainStore();
+    await startCreator(testConfig);
+    const [shared1] = await buildAndApply([[1, T1]]) as [OrderingBlock];
+
+    const spender = makeTestIdentity();
+    const box = makeCreditBox(10n ** 8n, spender.userId, 0, 7);
+    await seedBoxes([box]);
+    const creditTx = makeCreditTx(spender, [box], 10n ** 6n);
+
+    const { applyOrderingBlock } = (await import('../../src/services/block-apply.js')) as {
+      applyOrderingBlock: (b: OrderingBlock) => boolean;
+    };
+
+    const branchFirst = await makeApplicableBlock({
+      height: 2,
+      createdAt: T1 + 1,
+      utxoTxs: [creditTx],
+    });
+    expect(applyOrderingBlock(branchFirst)).toBe(true);
+    const branchMiner = makeTestIdentity();
+    const branchLastHonest = await makeApplicableBlock({
+      height: 3,
+      createdAt: T1 + 2,
+      miner: branchMiner,
+    });
+    expect(applyOrderingBlock(branchLastHonest)).toBe(true);
+
+    await revertChainTo(1);
+    const [ourTip] = await buildAndApply([[2, T1 + 60_000 + HL]]) as [OrderingBlock];
+
+    // The branch's last block, body replaced by two elements, the first one
+    // byte over `MAX_TX_BYTES`, header's `utxoTxRoot` recomputed over that
+    // body, re-mined, and re-signed by `branchMiner`.
+    const alteredTree = {
+      utxoTxIds: ['00'.repeat(32), '11'.repeat(32)],
+      utxoTxs: [new Uint8Array(MAX_TX_BYTES + 1), new Uint8Array([1, 2, 3])],
+    };
+    const alteredHeader: BlockHeader = {
+      ...branchLastHonest.header,
+      utxoTxRoot: computeUtxoTxRoot(alteredTree),
+    };
+    alteredHeader.powNonce = solveHeaderPow(alteredHeader);
+    const alteredSignature = signHeader(alteredHeader, branchMiner.privateKey);
+    const altered: OrderingBlock = {
+      header: alteredHeader,
+      utxoTxTree: alteredTree,
+      validatorSignature: alteredSignature,
+    };
+
+    // Controls: the root and the signature accept the block, its shape is
+    // refused, and the branch outweighs this node's chain.
+    expect(verifyOrderingBlockStructure(altered).valid).toBe(false);
+    expect(verifyUtxoTxRoot(altered)).toBe(true);
+    expect(verifyValidatorSignature(altered.header, altered.validatorSignature)).toBe(true);
+    expect(cumulativeWork([branchFirst.header, altered.header]) > cumulativeWork([ourTip.header])).toBe(true);
+
+    const alteredHash = blockHash(altered.header)!;
+    const net = singleBranchNet('peer-misshapen', [shared1, branchFirst, altered]);
+    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
+    expect(handleOrderingBlock(altered, 'peer-misshapen', net)).toBe(false);
+    await settleResolveForks(ctx);
+
+    const ordering = await importOrdering();
+    const { anyRefusedHeader } = await import('../../src/store/refused-headers.js');
+    expect(anyRefusedHeader([alteredHash])).toBe(false);
+    expect(net.penalties.length).toBe(1);
+    expect(net.penalties[0]!.kind).toBe('misbehavior');
+    expect(ordering.getCurrentHeight()).toBe(ourTip.header.height);
+    expect(ordering.getOrderingBlockHash(ourTip.header.height)).toBe(blockHash(ourTip.header));
   });
 });
 
