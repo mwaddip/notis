@@ -210,20 +210,15 @@ the rule and the measurement behind it.
 | `/dagsocial/<magic>/ordering-block/1` | OrderingBlock (positional) | Critical | Consensus anchors |
 | `/dagsocial/<magic>/tx/1` | Transaction **packet** — `encodeTxPacket(tx, content?)`: `encodeTx(tx)` ‖ `opt(lpUtf8(content))` (TYPES_INTERFACE → Layout — UtxoTransaction, the packet codec) | High | Posts (with their body), likes, invites, vouches, credit transfers |
 
-> ⚠ **AHEAD OF CODE (2026-10-12).** The network in a topic's name, the two topics as the whole of what
-> the router hears, the unsigned envelope, the id over the topic and the data, `GOSSIP_SEEN_WINDOW_MS`
-> and the quiet duplicate publish lead `net/src/node.ts`' gossipsub options and `net/src/gossip.ts`'
-> topic table: the code signs every message, names it by its publisher and a sequence number, hears any
-> topic, and subscribes to `/dagsocial/ordering-block/1` and `/dagsocial/tx/1` on every network.
-
 **A topic is named for its network.** `<magic>` is the profile's wire magic (→ Magic Bytes) as eight
-lowercase hex digits — `4d444147` on mainnet, `54444147` on testnet, `44444147` on devnet. A node
-builds its two topic strings from `NetConfig.magic` at `start()` and they are the whole of what its
-router hears: it subscribes to both, and a subscription or a message on any other topic is passed over
-before the router names, caches or forwards anything (gossipsub's `allowedTopics`). A node of another
-network therefore shares no topic with this one. The name keeps apart nodes that follow the protocol
-and does no more than that: a peer may publish on any topic, and what it publishes on one of ours meets
-Stage 1 like any message (→ Validation Architecture).
+lowercase hex digits — `4d444147` on mainnet, `54444147` on testnet, `44444147` on devnet. A node builds
+its two topic strings from `NetConfig.magic` at `start()` — a magic that is not an unsigned 32-bit
+integer refuses the start — and they are the whole of what its router hears: it subscribes to both, and
+a subscription or a message on any other topic is passed over before the router names, caches or
+forwards anything (gossipsub's `allowedTopics`). A node of another network therefore shares no topic
+with this one. The name keeps apart nodes that follow the protocol and does no more than that: a peer
+may publish on any topic, and what it publishes on one of ours meets Stage 1 like any message
+(→ Validation Architecture).
 
 **A message is its topic and its data.** Gossip is unsigned (gossipsub's `StrictNoSign`): a published
 message carries no publisher, no sequence number, no signature and no key, so nothing in it names the
@@ -1345,9 +1340,6 @@ promise resolves as it does for a message that went out.
 |----------|-----------|-------------|
 | `onOrderingBlock(callback)` | `((OrderingBlock, fromPeerId: string) => void) => void` | Register handler for inbound ordering blocks. `fromPeerId` is the peer that **relayed** the block to us, or `''` — see below |
 | `onTx(callback)` | `((UtxoTransaction, content: string \| undefined, fromPeerId: string) => void) => void` | Register handler for inbound transaction packets. `content` is the verified body when the transaction carries a post (the validator has already checked it against `tx.post.contentHash`), `undefined` otherwise; `fromPeerId` carries the same relayed-peer semantics as `onOrderingBlock`'s. |
-
-> ⚠ **AHEAD OF CODE (2026-10-12).** Delivery with no gate leads `net/src/gossip.ts`' listener, which
-> drops a message whose publisher is not an `Active` peer.
 
 **A gossip message that passes Stage 1 is delivered, whichever peer carried it.** No gate stands
 between the topic validator's Accept and the handler. The router hands a message on once and never a
