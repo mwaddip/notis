@@ -1397,8 +1397,9 @@ tree collapse into clean rejections:
 > point lookups the same way — only the blocks actually served decode. Only apply's read passes through a catch that could promote anything;
 > the store frame names the fault so that all of them raise one class — and **every outer frame is a
 > boundary**: the gossip and the pull registrations of `handleOrderingBlock` both wrap it in
-> `failStopIfCorruptChain` (Relay handlers; Sync handlers); the launched `resolveFork` promise carries
-> `.catch(failStopIfCorruptChain)`; `finalizeBlock` wraps the mined-block apply; `createOrderingBlock`
+> `failStopIfCorruptChain` (Relay handlers; Sync handlers); the resolution runner hands it a
+> corrupt-state error out of a resolution or out of a hand-back; `finalizeBlock` wraps the
+> mined-block apply; `createOrderingBlock`
 > calls the boundary directly; and the provider handed to `setHeadersHandler` and the
 > `getOrderingBlock` the blocks routes are given wrap the store read, so a corrupt row met while
 > serving stops the node instead of failing every `SyncInfo` and query as a peer's fault. A frame that
@@ -4101,13 +4102,8 @@ like every other.
 | `deleteBlockJournal(height)` | `(number) => void` |
 | `purgeOldJournals(belowHeight)` | `(number) => void` |
 
-> ⚠ **AHEAD OF CODE (2026-10-12).** `getLowestJournalHeight` and the two decode refusals —
-> `getBlockJournal`'s here, `getInterlinks`' under Ordering blocks — lead `store/journal.ts` and
-> `store/ordering.ts`, which answer a row that will not decode with a plain error and hold no
-> lowest-journal read; the two rows of the corrupt-state family's table that name them lead with it.
-
 **Rollback (`revertBlock`).** A
-journal absent for a height inside retention is `MissingJournalError` —
+journal absent for a height at or above the lowest one kept is `MissingJournalError` —
 fail-stop, never a refused reorg ("What the funnel's totality catch is FOR").
 Replays `mutations` in reverse order — `box`/`insert` → `deleteBox(boxId)`,
 `box`/`remove` → `unconsumeBox(boxId)`, `record` → `putIdentityRecord` with
@@ -4792,13 +4788,6 @@ and runs once per process, and an index there would tax every `insertBox` on the
 out a decision already made.** The decision, in order — each step that ends the resolution ends it
 with the chain untouched:
 
-> ⚠ **AHEAD OF CODE (2026-10-12).** One resolution at a time, the pending block per peer, the block
-> judged again after a tip that moved, the tip read as a height and a hash, the walk bounded by the
-> lowest journal kept, and the memo entry that leaves with its peer lead `services/handle-block.ts`
-> and `services/fork-resolution.ts`: the code launches a resolution per non-extending block, compares
-> the tip's height alone, walks to `ourTip − maxReorgDepth + 1` whatever journals are kept, drops a
-> block whose resolution aborts and keeps a memo entry for a peer that has gone.
-
 1. **Counterparty.** The peer that relayed or served the block, if it is Active; else the head of
    the Active list (NET_INTERFACE → Pull Requests).
 2. **The memo.** `net.peerTipHeight(peer)` equals the tip this peer's branch was last scored lighter
@@ -4807,7 +4796,7 @@ with the chain untouched:
    from the lowest height seen − 1 — each compared to our `block_hash` at its height, a point read;
    the highest match is `f`. Heights examined: `ourTip … max(ourTip − maxReorgDepth + 1,
    lowestJournal − 1, 1)`, `lowestJournal` the lowest height a block journal is kept for
-   (`getLowestJournalHeight()`), read once beside the tip
+   (`getLowestJournalHeight()`; `ourTip + 1` when none is kept), read once beside the tip
    ("The walk reaches as deep as the journals do", below). No match: `f = GENESIS_HEIGHT` when
    `ourTip ≤ maxReorgDepth` and `lowestJournal ≤ 1` (the chains share only the genesis state, and
    every block of ours can be reverted), else `null` → no decision, no penalty: a fork past the
@@ -4927,12 +4916,20 @@ tip + 1 cost the same walk.
 runner runs `resolveFork` for one block at a time. With none running, the block's resolution starts.
 With one running, the block is kept as **its delivering peer's pending block**: one per peer id, a
 later block from the same peer replacing the earlier in the earlier's place in the order, and a block
-that is the one running for that peer, or the one already pending for it, dropped. What waits is therefore bounded by the peers
-connected, never by what they send, and a peer's disconnect removes its pending block. When a
-resolution ends — at any step, with any outcome — each pending block is handed back to
-`handleOrderingBlock`, in the order it arrived, and judged on the tip that then stands: a block now
-held is a no-op, one that extends the tip is applied, and any other starts the next resolution while
-the rest go on waiting.
+that is the one running for that peer, or the one already pending for it, dropped. What waits is
+therefore bounded by the peers connected, never by what they send, and a peer's disconnect removes
+its pending block. When a resolution ends — at any step, with any outcome — each pending block is
+handed back to `handleOrderingBlock`, in the order it arrived, and judged on the tip that then stands:
+a block now held is a no-op, one that extends the tip is applied, and any other starts the next
+resolution while the rest go on waiting. Nothing awaits between a resolution's end and the hand-back, so a block
+delivered at that moment is judged like any other. A block whose header will not hash has no identity
+to be kept by: it is logged and dropped.
+
+**The runner owns what it launches.** A corrupt-state error out of a resolution, or out of a hand-back,
+goes to `failStopIfCorruptChain`, and the runner holds nothing after it. Any other error ends that
+resolution or that hand-back, logged with its stack, and the rest are still handed back: no
+resolution's promise reaches the process-level handler
+("An unhandled rejection is logged, and the node keeps running").
 
 **A resolution that ends because the tip moved hands its own block back the same way** (steps 7
 and 9), unless its peer has a later one pending. A tip that moved under a resolution says nothing
@@ -4941,10 +4938,6 @@ chain. Nothing switches the chain but `reorg`, and `reorg` runs inside a resolut
 the tip moves only by extension — a block applied, this node's own or a peer's — so no resolution
 reads a store another is switching, and a height at or below the tip a resolution read always holds
 a block.
-
-> ⚠ **AHEAD OF CODE (2026-10-13).** The hand-back after a switch leads
-> `services/fork-resolution-runner.ts`, which hands a resolution's own block back only when the tip
-> moved.
 
 **A resolution that ends in a switch hands its own block back too**, unless its peer has a later one
 pending. The switch lands on the shortest heavier prefix a page reaches (step 7), and that prefix can
@@ -5514,14 +5507,12 @@ ARCHITECTURE invariant "no method panics on untrusted input" applied at the
 consensus boundary, and it is load-bearing rather than
 defensive: the gossip callback is `async` and its promise is discarded by the
 net layer, so a propagated throw becomes an unhandled rejection, which the
-process survives ("An unhandled rejection is logged, and the node keeps
-running", below) with the prover's in-memory state wherever the throw left it —
+process survives
+("An unhandled rejection is logged, and the node keeps running", below)
+with the prover's in-memory state wherever the throw left it —
 SQLite's rollback does not reach it — and every later block judged against
 that state. Structure validation closes the known instance; totality bounds
 every future one.
-
-> ⚠ **AHEAD OF CODE (2026-10-12).** The process-level handler leads `index.ts`, which registers
-> none: an unhandled rejection ends the process.
 
 **An unhandled rejection is logged, and the node keeps running.** One process-level handler
 receives every promise rejection nothing else handled. A `CorruptChainStateError` — any subclass — is
