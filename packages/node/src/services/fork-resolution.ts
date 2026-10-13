@@ -815,9 +815,9 @@ export async function resolveFork(
         // nothing of what arrived with it: each block then passes, in
         // order, structure, the body's root against the header's root
         // and the validator's signature. The first failure ends the
-        // resolution — misbehavior, nothing reverted, nothing marked —
-        // because the failure is the server's and says nothing of the
-        // header.
+        // resolution — misbehavior, nothing reverted, nothing marked: the
+        // peer served a block no node applied, and nothing here judges
+        // the header.
         const structure = verifyOrderingBlockStructure(page[i]!);
         if (!structure.valid) {
           console.warn(
