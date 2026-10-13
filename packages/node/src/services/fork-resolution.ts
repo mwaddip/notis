@@ -1,4 +1,12 @@
-import { blockHash, cumulativeWork, level, verifyHeaderChain } from '@dagsocial/validation';
+import {
+  blockHash,
+  cumulativeWork,
+  level,
+  verifyHeaderChain,
+  verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
+  verifyValidatorSignature,
+} from '@dagsocial/validation';
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import {
   decodeTx,
@@ -801,6 +809,40 @@ export async function resolveFork(
           net.penalizePeer(peerId, 'misbehavior', `block identity mismatch at height ${expectedHeight}`);
           return 'done';
         }
+        // NODE_INTERFACE → Fork choice decides on verified headers →
+        // "A served block is bound to its header before it is kept".
+        // A hash that matches says the header is the verified one and
+        // nothing of what arrived with it: each block then passes, in
+        // order, structure, the body's root against the header's root
+        // and the validator's signature. The first failure ends the
+        // resolution — misbehavior, nothing reverted, nothing marked: the
+        // peer served a block no node applied, and nothing here judges
+        // the header.
+        const structure = verifyOrderingBlockStructure(page[i]!);
+        if (!structure.valid) {
+          console.warn(
+            `Fork resolution: served block at height ${expectedHeight} fails structure ` +
+            `(${structure.error}), penalising peer ${peerId} (misbehavior)`,
+          );
+          net.penalizePeer(peerId, 'misbehavior', `served block structure at height ${expectedHeight}: ${structure.error}`);
+          return 'done';
+        }
+        if (!verifyUtxoTxRoot(page[i]!)) {
+          console.warn(
+            `Fork resolution: served block at height ${expectedHeight} fails utxoTxRoot check, ` +
+            `penalising peer ${peerId} (misbehavior)`,
+          );
+          net.penalizePeer(peerId, 'misbehavior', `served block utxoTxRoot at height ${expectedHeight}`);
+          return 'done';
+        }
+        if (!verifyValidatorSignature(page[i]!.header, page[i]!.validatorSignature)) {
+          console.warn(
+            `Fork resolution: served block at height ${expectedHeight} fails validator signature check, ` +
+            `penalising peer ${peerId} (misbehavior)`,
+          );
+          net.penalizePeer(peerId, 'misbehavior', `served block validatorSignature at height ${expectedHeight}`);
+          return 'done';
+        }
       }
 
       allBlocks.push(...page);
@@ -826,6 +868,10 @@ export async function resolveFork(
     // the shortest heavier prefix can end below the block this resolution
     // started from, so a completed `reorg(…)` answers `'switched'` and the
     // runner hands the block back through the same seam a moved tip does.
+    // NODE_INTERFACE → Fork choice decides on verified headers →
+    // "A served block is bound to its header before it is kept": the
+    // page loop above held each block to its header, so what the funnel
+    // refuses here is bytes the header's hash commits.
     reorg(forkHeight, allBlocks);
     console.log(`Reorg complete: new tip at height=${forkHeight + n}`);
     return 'switched';
@@ -846,6 +892,11 @@ export async function resolveFork(
       return 'done';
     }
     // 11. The mark — after the rollback, in its own write.
+    // NODE_INTERFACE → Fork choice decides on verified headers →
+    // "A served block is bound to its header before it is kept": step 8
+    // kept only blocks that are their headers', so the consensus refusal
+    // the funnel raised is of bytes the header's hash commits, and the
+    // mark on the header is a verdict on those bytes.
     if (err instanceof ReorgBlockRejectedError) {
       insertRefusedHeader(err.hash, err.height, getCurrentHeight());
       net.penalizePeer(peerId, 'misbehavior', `reorg rejected block at height ${err.height}`);

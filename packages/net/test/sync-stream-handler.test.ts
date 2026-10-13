@@ -7,10 +7,12 @@ import {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
   verifyPostBody,
 } from '@dagsocial/validation';
 import {
   PROTOCOL_VERSION,
+  computeUtxoTxRoot,
   decodePostBody,
 } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
@@ -60,6 +62,7 @@ const validators: NetValidators = {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
   verifyPostBody,
 };
 
@@ -239,16 +242,18 @@ function makeQueryHeader(height: number): BlockHeader {
 }
 
 function makeQueryBlock(height: number): OrderingBlock {
+  // Every block carries at least one transaction, because the settlement is
+  // one (VALIDATION_INTERFACE → verifyOrderingBlockStructure;
+  // NODE_INTERFACE → It is the LAST entry in `utxoTxIds`). The serve arms
+  // gate on structure, so an empty body answers nothing. The header carries
+  // the root of its body (TYPES_INTERFACE → Ordering block).
+  const utxoTxTree = {
+    utxoTxIds: [height.toString(16).padStart(64, '0')],
+    utxoTxs: [new Uint8Array(96).fill(height & 0xff)],
+  };
   return {
-    header: makeQueryHeader(height),
-    // Every block carries at least one transaction, because the settlement is
-    // one (VALIDATION_INTERFACE → verifyOrderingBlockStructure;
-    // NODE_INTERFACE → It is the LAST entry in `utxoTxIds`). The serve arms
-    // gate on structure, so an empty body answers nothing.
-    utxoTxTree: {
-      utxoTxIds: [height.toString(16).padStart(64, '0')],
-      utxoTxs: [new Uint8Array(96).fill(height & 0xff)],
-    },
+    header: { ...makeQueryHeader(height), utxoTxRoot: computeUtxoTxRoot(utxoTxTree) },
+    utxoTxTree,
     validatorSignature: new Uint8Array(64),
   };
 }

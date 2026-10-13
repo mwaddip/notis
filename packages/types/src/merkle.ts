@@ -1,4 +1,6 @@
 import { hash32 } from './hash.js';
+import { bytesToHex, hexToBytes } from './codec.js';
+import type { UtxoTxTree } from './block.js';
 
 /**
  * Domain-separated leaf hash for Merkle trees.
@@ -14,10 +16,11 @@ export function leafHash(domain: string, data: Uint8Array): Uint8Array {
  * Domain tag prefixed to every internal Merkle node (L-9).
  *
  * `leafHash` prefixes its input with `utf8(domain + "\0")`, so every leaf
- * preimage begins with the first byte of a domain string. The **one** live
- * domain is printable ASCII — 'utxotx' — so NUL can never start a leaf
- * preimage, which makes 0x00 a safe reserved tag for internal nodes. Any
- * future leaf domain must likewise be a non-empty printable string.
+ * preimage begins with the first byte of a domain string. The **two** live
+ * domains are `utxotx` and `utxotx-bytes` — both non-empty printable ASCII,
+ * so NUL can never start a leaf preimage, which makes 0x00 a safe reserved
+ * tag for internal nodes. Any future leaf domain must likewise be a
+ * non-empty printable string.
  *
  * ⚠ **There is ONE list and it is TYPES_INTERFACE → Merkle primitives.** This
  * comment mirrors it and must be re-derived against it rather than edited from
@@ -66,4 +69,25 @@ export function buildMerkleRoot(leafHashes: Uint8Array[]): Uint8Array {
     level = nextLevel;
   }
   return level[0]!;
+}
+
+/**
+ * The block's one committed root — 64 lowercase hex (TYPES_INTERFACE →
+ * Merkle primitives, → Ordering block).
+ *
+ * The leaves are laid in `UtxoTxTree`'s field order: every `utxoTxIds` entry
+ * under `'utxotx'`, then every `utxoTxs` element under `'utxotx-bytes'`. An
+ * id leaf's preimage is the id's 32 bytes; a bytes leaf's preimage is the
+ * element as it stands in the body — this function decodes nothing. A body
+ * of `n` transactions is `2n` leaves, so a Merkle path proves one leaf and
+ * pairing an id with its bytes needs the leaf count.
+ *
+ * Throws where `hexToBytes` throws — an id that is not even-length lowercase
+ * hex. The domain is the caller's (VALIDATION_INTERFACE → verifyUtxoTxRoot).
+ */
+export function computeUtxoTxRoot(tree: UtxoTxTree): string {
+  const leaves: Uint8Array[] = [];
+  for (const id of tree.utxoTxIds) leaves.push(leafHash('utxotx', hexToBytes(id)));
+  for (const bytes of tree.utxoTxs) leaves.push(leafHash('utxotx-bytes', bytes));
+  return bytesToHex(buildMerkleRoot(leaves));
 }

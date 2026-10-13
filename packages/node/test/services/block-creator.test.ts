@@ -73,7 +73,6 @@ type BlockCreatorModule = {
   createOrderingBlock: () => OrderingBlock | null;
   getCurrentTemplate: () => OrderingBlock | null;
   submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;
-  computeUtxoTxRoot: (tree: OrderingBlock['utxoTxTree']) => string;
 };
 
 async function importDb(): Promise<DbModule> {
@@ -731,19 +730,18 @@ describe('block-creator', () => {
   // -----------------------------------------------------------------------
 
   it('computeUtxoTxRoot commits to the post author, via the transaction id', async () => {
-    // ⛔ The binding is TWO steps. The root commits `utxoTxIds`; a `TxId` covers
-    // `postFieldBytes` (TYPES_INTERFACE → Hashing functions), which contains the
-    // author. So flipping the author moves the transaction id and therefore the
-    // root, and a producer cannot rewrite authorship after mining without
-    // producing a different block entirely.
-    // Imported directly rather than through `importBlockCreator`, which seeds
-    // an emission box and therefore needs a store — this case opens none.
-    const { computeUtxoTxRoot } = await import('../../src/services/block-creator.js');
+    // ⛔ The binding is TWO steps. The root commits every id in `utxoTxIds` and
+    // every element of `utxoTxs` (TYPES_INTERFACE → Ordering block); a `TxId`
+    // covers `postFieldBytes` (TYPES_INTERFACE → Hashing functions), which
+    // contains the author. So flipping the author moves the transaction id and
+    // therefore the root, and a producer cannot rewrite authorship after mining
+    // without producing a different block entirely.
+    const { computeUtxoTxRoot } = await import('@dagsocial/types');
     const author = makeTestIdentity();
     const other = makeTestIdentity();
 
-    // `makePostTx`, not `seedPostTx`: this measures the root over transaction
-    // ids and opens no database.
+    // `makePostTx`, not `seedPostTx`: this compares the roots of two bodies
+    // that differ in an id and opens no database.
     const a = makePostTx(author, 'same words');
     const b = makePostTx(other, 'same words');
     expect(Buffer.from(a.tx.post!.contentHash).toString('hex')).toBe(Buffer.from(b.tx.post!.contentHash).toString('hex'));   // only the author differs

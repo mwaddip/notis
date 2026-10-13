@@ -40,12 +40,14 @@ export const EMPTY_STATE_ROOT = '00'.repeat(33);
  * and withdrawals are transactions, so they ride `utxoTxIds` with everything
  * else and there is no second section.
  *
- * ⛔ **ONE LEAF CLASS.** `computeUtxoTxRoot` builds its leaves from `utxoTxIds`
- * alone — `leafHash('utxotx', id)`. Every block carries one settlement
+ * ⛔ **ONE COMMITTED LIST, AND TWO LEAF CLASSES OVER IT.** `computeUtxoTxRoot`
+ * hashes every `utxoTxIds` entry under `'utxotx'`, then every `utxoTxs`
+ * element under `'utxotx-bytes'` — a body of `n` transactions is `2n` leaves
+ * (TYPES_INTERFACE → Ordering block). Every block carries one settlement
  * transaction, riding `utxoTxIds` / `utxoTxs` like any other, and coinbase
- * outputs are **its outputs** (`ARCHITECTURE` → Block architecture;
- * TYPES_INTERFACE → Ordering block). The leaf domain `'coinbase'` is a tracked
- * reservation (TYPES_INTERFACE → Tracked reservations).
+ * outputs are **its outputs** (`ARCHITECTURE` → Block architecture). The
+ * leaf domain `'coinbase'` is a tracked reservation (TYPES_INTERFACE →
+ * Tracked reservations).
  */
 export interface UtxoTxTree {
   utxoTxIds: TxId[];            // UTXO transactions — posts, likes, withdrawals and the settlement included

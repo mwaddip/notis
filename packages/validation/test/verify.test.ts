@@ -1210,8 +1210,9 @@ describe('ordering-block hex domains — the pin has teeth', () => {
    * signed header.
    *
    * `utxoTxRoot` is a producer-chosen 64-hex string here, not recomputed:
-   * `verifyOrderingBlockStructure` does not recompute it (that is apply-time, in
-   * `@dagsocial/node`), and the header commits only to the root string it
+   * `verifyOrderingBlockStructure` does not recompute it (`verifyUtxoTxRoot`,
+   * this package's own predicate, holds the root — VALIDATION_INTERFACE →
+   * verifyUtxoTxRoot), and the header commits only to the root string it
    * declares. So nothing about a poisoned entry is visible to PoW or to the
    * signature.
    */

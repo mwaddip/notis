@@ -2270,13 +2270,16 @@ describe('transactions', () => {
   });
 
   /**
-   * ⛔ **THE WIRE CODEC MOVES NO COMMITTED HASH, ASSERTED WHERE THE FROZEN IDS
-   * LIVE.**
+   * ⛔ **THE WIRE CODEC MOVES NO TRANSACTION ID, BOX ID OR `stateRoot`, ASSERTED
+   * WHERE THE FROZEN IDS LIVE.**
    *
-   * `computeTxId` does not read `encodeTx`. It walks `writeTxIdFields`, and
-   * `computeUtxoTxRoot`'s leaves are `leafHash('utxotx', id)` — the id, not the
-   * encoding. So a change confined to the wire codec cannot reach a box id, a
-   * transaction id, `utxoTxRoot` or `stateRoot`.
+   * `computeTxId` does not read `encodeTx`. It walks `writeTxIdFields`. A change
+   * confined to the wire codec cannot reach a box id, a transaction id or
+   * `stateRoot`. `utxoTxRoot` and the block hash DO move under such a change:
+   * `computeUtxoTxRoot` hashes each `utxoTxs` element as its wire bytes under
+   * `'utxotx-bytes'` beside every id under `'utxotx'` (TYPES_INTERFACE →
+   * Ordering block, → Layout — Merkle leaf preimages are the struct's own wire
+   * bytes).
    *
    * ⛔ **THESE CONSTANTS MUST NEVER BE RE-DERIVED FROM THE ENCODER.** They are the
    * load-bearing half of the claim, and a pin regenerated from the code it pins

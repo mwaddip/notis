@@ -4,6 +4,7 @@ import {
   PROTOCOL_VERSION,
   ByteWriter,
   writeVlqU,
+  computeUtxoTxRoot,
   encodeOrderingBlock,
   decodeStruct,
   ReaderError,
@@ -18,6 +19,7 @@ import {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
   verifyPostBody,
 } from '@dagsocial/validation';
 import { SYNC_PROTOCOL } from '../src/sync.js';
@@ -121,21 +123,24 @@ function makeMockOrderingBlock(
   height: number,
   prevBlockHash: string,
 ): OrderingBlock {
+  // Every block carries at least one transaction, because the settlement is
+  // one (VALIDATION_INTERFACE → verifyOrderingBlockStructure;
+  // NODE_INTERFACE → It is the LAST entry in `utxoTxIds`). An empty body is
+  // refused at Stage 1, so it is not a block this suite could ever receive.
+  //
+  // Both the id and the payload carry the height, which is what lets a
+  // round-trip assert that THIS block's body came back rather than merely
+  // that a well-formed one did. The bytes stay opaque to every layer that
+  // moves a block, so their content is a plausible weight and nothing more.
+  // The header carries the root of its body (TYPES_INTERFACE → Ordering
+  // block).
+  const utxoTxTree = {
+    utxoTxIds: [settlementId(height)],
+    utxoTxs: [new Uint8Array(96).fill(height & 0xff)],
+  };
   return {
-    header: makeMockHeader(height, prevBlockHash),
-    utxoTxTree: {
-      // Every block carries at least one transaction, because the settlement is
-      // one (VALIDATION_INTERFACE → verifyOrderingBlockStructure;
-      // NODE_INTERFACE → It is the LAST entry in `utxoTxIds`). An empty body is
-      // refused at Stage 1, so it is not a block this suite could ever receive.
-      //
-      // Both the id and the payload carry the height, which is what lets a
-      // round-trip assert that THIS block's body came back rather than merely
-      // that a well-formed one did. The bytes stay opaque to every layer that
-      // moves a block, so their content is a plausible weight and nothing more.
-      utxoTxIds: [settlementId(height)],
-      utxoTxs: [new Uint8Array(96).fill(height & 0xff)],
-    },
+    header: { ...makeMockHeader(height, prevBlockHash), utxoTxRoot: computeUtxoTxRoot(utxoTxTree) },
+    utxoTxTree,
     validatorSignature: new Uint8Array(64),
   };
 }
@@ -165,10 +170,18 @@ function makeHeavyBlock(
   prevBlockHash: string,
   payloadBytes: number,
 ): OrderingBlock {
-  const block = makeMockOrderingBlock(height, prevBlockHash);
-  block.utxoTxTree.utxoTxIds = ['ab'.repeat(32)];
-  block.utxoTxTree.utxoTxs = [new Uint8Array(payloadBytes)];
-  return block;
+  // The header carries the root of its body (TYPES_INTERFACE → Ordering
+  // block); fix it here, after the heavy payload replaces the settlement
+  // placeholder, so the fixture is its header's.
+  const utxoTxTree = {
+    utxoTxIds: ['ab'.repeat(32)],
+    utxoTxs: [new Uint8Array(payloadBytes)],
+  };
+  return {
+    header: { ...makeMockHeader(height, prevBlockHash), utxoTxRoot: computeUtxoTxRoot(utxoTxTree) },
+    utxoTxTree,
+    validatorSignature: new Uint8Array(64),
+  };
 }
 
 /** A chain 1..n whose blocks each carry `payloadBytes` of body. */
@@ -806,6 +819,7 @@ const registrationValidators: NetValidators = {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
   verifyPostBody,
 };
 

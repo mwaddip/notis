@@ -1200,8 +1200,10 @@ export interface UtxoTransaction {
    * reads it, or it is a consensus surface carrying no meaning — and a field in
    * this list is inside every `TxId`, so adding one moves every transaction id and
    * every box id derived from one. **A field that belongs on the wire alone goes in
-   * the wire codec, not in this list**: that costs the wire and no committed hash,
-   * which is a different kind of change from this one.
+   * the wire codec, not in this list**: that costs the wire and `utxoTxRoot` and
+   * the block hash, and no transaction id, box id or `stateRoot` — a different
+   * kind of change from this one (TYPES_INTERFACE → Layout — Merkle leaf
+   * preimages are the struct's own wire bytes).
    */
   protocolVersion: number;
   /**

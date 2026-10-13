@@ -363,10 +363,10 @@ export function decodeGetBlocks(body: Uint8Array): GetBlocksMsg | null {
 // store writes a row our own reader then refuses:
 // `UnreadableStoredBlockError` → `failStopIfCorruptChain` → `process.exit(1)`,
 // re-triggered by the next arriving gossip block and persistent across
-// restarts. The `utxoTxs` half costs no PoW at all — `utxoTxRoot` never commits
-// `utxoTxs`, so a *relaying* node can swap an honest block's payload. Under a
-// positional codec those sentinels are unrepresentable at this boundary rather
-// than merely unlikely to be sent, which is what keeps the door shut for the
+// restarts. `utxoTxRoot` commits every transaction's id and every
+// transaction's bytes (TYPES_INTERFACE → Ordering block). Under a positional
+// codec those sentinels are unrepresentable at this boundary rather than
+// merely unlikely to be sent, which is what keeps the door shut for the
 // *next* unpinned field.
 //
 // ⚠ Both sides of this framing live in this package and must move in one commit

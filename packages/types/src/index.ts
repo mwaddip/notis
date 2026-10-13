@@ -85,7 +85,7 @@ export type { KeyPair, UserId } from './identity.js';
 export { hash32 } from './hash.js';
 
 // Merkle tree
-export { leafHash, nodeHash, buildMerkleRoot } from './merkle.js';
+export { leafHash, nodeHash, buildMerkleRoot, computeUtxoTxRoot } from './merkle.js';
 
 // Posts
 //

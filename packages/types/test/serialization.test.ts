@@ -193,17 +193,20 @@ describe('positional serialization', () => {
   });
 
   // -------------------------------------------------------------------------
-  // The transaction codec — positional, and it moves no committed hash
+  // The transaction codec — positional, and no transaction id, box id or
+  // `stateRoot` moves under it
   // -------------------------------------------------------------------------
 
   /**
    * ⛔ **`encodeTx` IS the `TxId` preimage plus the signature array**, and that is
-   * what makes "the codec change moves no committed hash" true by construction
-   * rather than by a frozen hash happening not to move (TYPES_INTERFACE → Layout —
-   * UtxoTransaction, the wire-codec row). `computeTxId` walks the same
-   * `writeTxIdFields`, and `computeUtxoTxRoot`'s leaves are ids rather than
-   * encodings, so box ids, transaction ids, `utxoTxRoot` and `stateRoot` are
-   * byte-identical across it.
+   * what makes "the codec change moves no transaction id, box id or `stateRoot`"
+   * true by construction rather than by a frozen hash happening not to move
+   * (TYPES_INTERFACE → Layout — UtxoTransaction, the wire-codec row).
+   * `computeTxId` walks the same `writeTxIdFields`. `utxoTxRoot` and the block
+   * hash DO move under a codec change: `computeUtxoTxRoot` hashes each
+   * `utxoTxs` element as its wire bytes under `'utxotx-bytes'` beside every id
+   * under `'utxotx'` (TYPES_INTERFACE → Ordering block, → Layout — Merkle leaf
+   * preimages are the struct's own wire bytes).
    *
    * The frozen ids in `utxo.test.ts` are the other half of that claim: they were
    * pinned before this codec existed and they are unchanged after it. **Both
@@ -712,10 +715,11 @@ describe('positional serialization', () => {
       // box or a transaction moves this hash with no format change at all, and so
       // does a change to the body's section list.
       //
-      // Nothing committed follows it. `utxoTxRoot` is a Merkle root over
-      // `utxoTxIds` (node's `computeUtxoTxRoot`) and never reads `utxoTxs`;
-      // the id itself is `computeTxId`, positional and routed through
-      // `canonicalBoxBytes`.
+      // `utxoTxRoot` is `computeUtxoTxRoot` over every id under `'utxotx'`
+      // and every `utxoTxs` element under `'utxotx-bytes'` (TYPES_INTERFACE →
+      // Ordering block), so it moves with the body's bytes; the id itself is
+      // `computeTxId`, positional and routed through `canonicalBoxBytes`, and
+      // moves with no codec change.
       //
       // ⛔ **A MOVE HERE CARRIES NO VERDICT, AND NOTHING HERE SAYS WHICH KIND IT
       // WAS.** Several unrelated changes reach this one hash and it cannot tell

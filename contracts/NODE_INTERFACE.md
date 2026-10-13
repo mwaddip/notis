@@ -3058,7 +3058,9 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
     `body-rejected` speculation evicts the body's rows (step 13) and returns to
     step 1; a rejected body that carried no row is terminal, and the build ends
     holding no template (`MINING_INTERFACE → Template and submit`).
-16. Build block template (powNonce=0, empty signature)
+16. Build block template (powNonce=0, empty signature). Its `utxoTxRoot` is `computeUtxoTxRoot(tree)`
+    over the finished body — every transaction's id, then every transaction's bytes, the settlement
+    last in each (`TYPES_INTERFACE → Ordering block`)
 17. **Internal mode:** mine PoW, sign the header hash (`blockHash(header)`), finalize
 18. **External mode:** store template for `GET /mining/template`,
     return null (block finalized when miner submits via `submitMinedBlock`)
@@ -3969,6 +3971,11 @@ sits inside that segment at its own height — `anyRefusedHeader` over the verif
 for continuations without storing descendants. **The purge is safe for the same reason:** a refused
 height below `tip − maxReorgDepth` cannot appear in any segment the fork walk can anchor.
 
+**A mark names a header and is a verdict on its body, because the two are one.** The row is written
+only for a block fork resolution bound to its header before applying it (→ Fork choice decides on
+verified headers, step 8), and a header's hash commits every byte of its body
+(`TYPES_INTERFACE → Ordering block`).
+
 **The mark is written outside the reorg transaction**, after it has rolled back — a write inside it
 would roll back with it. It persists across restarts and is removed only by the purge; a deploy's
 database wipe removes it with everything else.
@@ -4847,10 +4854,21 @@ with the chain untouched:
    heavier by then, and a branch is bounded by its own length, which cost its author real PoW.
 8. **Their blocks.** `requestBlocks(f + 1, f + n)` in pages: each page is checked as it lands — one
    or more blocks, heights consecutive from the first still missing, every `blockHash(header)` equal
-   to the verified hash at its height — then the next page from the first height still missing. A page
+   to the verified hash at its height, and every block its header's (the next paragraph) — then the
+   next page from the first height still missing. A page
    adding nothing → refuse, penalise `transient` (non-delivery), chain untouched. A wrong hash or
    height → refuse, penalise `misbehavior`, nothing reverted. The range is the verified branch's,
    never a peer-claimed tip height.
+
+   **A served block is bound to its header before it is kept.** A hash that matches says the header
+   is the verified one and nothing of what arrived with it, so each block then passes, in this
+   order, `verifyOrderingBlockStructure`, `verifyUtxoTxRoot` and `verifyValidatorSignature`
+   (`VALIDATION_INTERFACE → verifyUtxoTxRoot`). The first that fails ends the resolution: refuse,
+   penalise `misbehavior`, nothing reverted, **nothing marked**. Every block a node applied passed
+   all three in the funnel, so a block that fails one is held by no node that applied this branch,
+   and the peer that served it is penalised. **Nothing here judges the header**: a body that is not
+   the header's and a signature that does not verify say nothing of it, and a block whose shape is
+   not a block's is refused the same way where the header's root commits that shape.
 9. **Tip re-read.** The tip a resolution read at its start is a height **and a hash**; either one
    differing is a tip that moved during the awaits → abort, no penalty, and the block is judged
    again on the tip that stands ("One resolution at a time", below).
@@ -4863,7 +4881,9 @@ with the chain untouched:
     our chain kept.
 11. **The mark.** `resolveFork` catches `ReorgBlockRejectedError` and, **after** the rollback, records
     the rejected block's hash in `refused_headers` in its own write, and penalises `misbehavior`. A
-    mark written inside the reorg transaction would roll back with it. **An abort marks nothing,
+    mark written inside the reorg transaction would roll back with it. **The mark is a verdict on
+    the header**: step 8 kept only blocks that are their headers', so what the funnel refused at
+    step 10 is bytes the hash commits. **An abort marks nothing,
     penalises nobody and writes no memo** — it is logged, and the sync path re-delivers the branch
     (`MINING_INTERFACE → Header timestamp rules`): a clock refusal is a verdict of this node's clock,
     a local fault is not attributable to the peer, and a mark is only as right as the node that wrote
@@ -4891,7 +4911,10 @@ re-check and are remembered nowhere — the peer is penalised and the pages are 
 refusal is not even penalised, being a verdict of this node's clock, and the paragraph's rule below is
 why it must never mark. A body-stage
 rejection (step 10) is the expensive case and the one remembered: verified headers over an invalid
-body. **The mark records a consensus rejection and nothing else** — a rejection that depends on
+body. **It is remembered against the header because the body is the header's**: step 8 let through
+no block whose body is not the one its header's root commits, so a rejection at step 10 is of bytes
+under the hash — a transaction that will not decode, an id its bytes do not produce, a failed
+signature batch, a refused settlement, a `stateRoot` mismatch. **The mark records a consensus rejection and nothing else** — a rejection that depends on
 local configuration or policy must not mark, because a persisted mark is only as right as the node
 that wrote it; the schedule is checked at step 5 precisely so that a wrong-profile node never
 reaches step 10. No check in the funnel is configuration-gated: the `stateRoot` comparison runs on
@@ -5405,9 +5428,10 @@ replayed on reorg as `unconfirmPost(id)`.
 
 The arms as of 2026-08-10 — missing CBOR, decode failure, envelope failure, **out-of-domain output**
 (the D6 check below, which is an arm of this loop and not a separate rule), and
-`computeTxId(tx) !== txId` — therefore no longer `continue`. Skipping was defensible when the
-alternative was an accidental throw, but the property it gives up is decisive: a body that does not
-match its committed ids **applies different state under the same block hash**.
+`computeTxId(tx) !== txId` — therefore no longer `continue`. Skipping is not an option: the root
+commits the id and the bytes side by side (`TYPES_INTERFACE → Ordering block`), and an id leaf that
+is not the id of the bytes beside it is **a transaction the block claims and does not carry** —
+which a Merkle path over that leaf would prove.
 
 The envelope arm reaches the same verdict by the obligation rather than by a separate argument: it
 runs before `computeTxId`, so a failure there means the proof was never attempted. Folding it in
@@ -5421,10 +5445,11 @@ that measurement covers the honest path only**, and it assumes a producer's byte
 `encodeTx` — established by grepping the `utxo_tx_cbor` column (its name then; `utxo_tx_bytes` today) rather than the function name, which
 has exactly one INSERT writer. Bytes an attacker crafts are what the arm is for.
 
-This also closes register row **C2** without touching any root preimage. `utxoTxRoot` commits the
-ids; once a mismatch kills the block rather than skipping the tx, the bytes are transitively
-committed through `computeTxId`, and "the body is swappable under an unchanged header" stops being
-true.
+**A body is not swappable under an unchanged header.** `utxoTxRoot` commits every id and every
+transaction's bytes, so a body altered after its producer hashed it has another root and is refused
+as not its header's before this loop reads it (`VALIDATION_INTERFACE → verifyUtxoTxRoot`). What
+reaches the loop is the body the producer committed, and an arm's rejection is a verdict on the
+block as produced.
 
 **Input liveness is covered by the ordering rule, not left open.** A transaction whose input does not
 resolve — in the confirmed set or to an earlier transaction of the block — rejects the block, the same
@@ -5433,24 +5458,26 @@ a consensus rule"). Every node walks the same body once, in committed order, fro
 state, so every node reaches the same verdict. If input liveness ever stops being decidable from
 local state alone, this is what has to be re-derived.
 
-> ⚠ **Rejection is of BYTES, not of the block hash.** A node that rejects a malformed body MUST
-> remain willing to accept a well-formed body for the same block hash from another peer. Caching
-> "block `abc…` is invalid" would hand an attacker who races the honest producer a permanent
-> per-height censorship primitive against that node.
+> ⚠ **Rejection is of BYTES, not of the block hash — for every byte the hash does not fix.** A block
+> as it is delivered is a header, a body and a signature. The header's hash commits one body
+> (`TYPES_INTERFACE → Ordering block`) and says nothing of which body, or which `validatorSignature`,
+> arrived beside it. A node that refuses a delivered block because its body is not its header's
+> (`VALIDATION_INTERFACE → verifyUtxoTxRoot`), because its shape is not a block's, or because its
+> signature does not verify MUST remain willing to accept the header's own block under the same hash
+> from another peer: it writes nothing keyed on the hash. Caching "block `abc…` is invalid" for such
+> a refusal would hand an attacker who races the honest producer a permanent per-height censorship
+> primitive against that node.
 >
-> **Nothing implements this, and that is the point** — measured 2026-08-10, no negative cache keyed
-> on a block hash exists anywhere. The funnel has **three** call sites for four paths:
-> `handleOrderingBlock` (gossip and pull converge there; the boolean is the pull batch's continue
-> signal), `block-creator`, which assigns it, and `reorg`, which reads the classified verdict and
-> throws on it. **None memoizes by hash**, which is the property that matters — an
-> earlier draft of this paragraph said "both call sites discard its boolean", reaching the right
-> conclusion from a count that was short by two. Net's bans are keyed on peer id or address, and
+> **One record is keyed on a block hash, and it is written only for a block that is its header's** —
+> fork resolution's mark (→ Refused headers), behind step 8's three checks (→ Fork choice decides on
+> verified headers). The funnel itself keeps no verdict by hash: it has **three** call sites for four
+> paths — `handleOrderingBlock` (gossip and pull converge there; the boolean is the pull batch's
+> continue signal), `block-creator`, which assigns it, and `reorg`, which reads the classified
+> verdict and throws on it — and none memoizes. Net's bans are keyed on peer id or address, and
 > `sync-machine`'s `outstanding` is an in-flight request set: a rejected block is never stored, so it
-> stays absent from `blockIdIndex()` and is re-requestable. So this is a constraint on code not yet
-> written, and a constraint
-> with no test is a claim that decays silently. It carries a **regression test** instead: a corrupted
-> body under hash `H` rejects, and a well-formed body under that same `H` then applies. The day
-> someone adds a cache, that test is what fails.
+> stays absent from `blockIdIndex()` and is re-requestable. The rule carries a **regression test**: a
+> body that is not its header's is refused under hash `H`, and the header's own body under that same
+> `H` then applies.
 
 **The output domain check.** `computeTxId` runs in that same loop behind `checkTxEnvelope` only, and
 `checkTxEnvelope` deliberately does not type output entries, so an out-of-domain output field reaches
@@ -5484,7 +5511,7 @@ is no "skip the checks" parameter on the apply path.
 
 | Phase | Contents | Runs in speculative computation? |
 |-------|----------|----------------------------------|
-| **Validation** | chain-link, interlink root, genesis pin, header timestamps, protocol version, PoW target + PoW, validator signature, Merkle root, block storage, `clearTemplate` | No — the header does not exist yet |
+| **Validation** | chain-link, interlink root, genesis pin, header timestamps, protocol version, PoW target + PoW, validator signature, the body's root (`VALIDATION_INTERFACE → verifyUtxoTxRoot`), block storage, `clearTemplate` | No — the header does not exist yet |
 | **Mutation** | `applyBlock` over the block's tree view (→ AVL+ State Root, "The rules read the tree, and nothing else"): post confirmation, topology, the body's signatures as one batch, the embedded transactions, the withdrawals, the settlement, the grants, the like counters, the membership pass, the decay clocks — answering the block's effects or a reason | Yes — the same call, over the same view, at the candidate's height |
 | **Commit** | the block's cost checked, `treeWritesOf`'s writes performed + `stateRoot` verification, then the effects written to the store, the journal built from them and persisted, the prover checkpointed — its proof `adProofsRoot`'s check — and the proof stored | No — the speculative run checks the cost, performs the writes, reads the digest and the proof's and restores the prover's root; it writes nothing to the store |
 

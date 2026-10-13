@@ -16,9 +16,7 @@ import {
   decodeTx,
   encodeTx,
   computeTxId,
-  leafHash,
-  buildMerkleRoot,
-  hexToBytes,
+  computeUtxoTxRoot,
   utxoTxTreeByteLength,
   interlinkRoot,
   updateInterlinks,
@@ -85,32 +83,6 @@ import {
   getKarmaValue,
   getIdentityRecord,
 } from '../store/index.js';
-
-// ---------------------------------------------------------------------------
-// Merkle root computation
-//
-// Every leaf preimage is a bare 32-byte id under the `'utxotx'` domain tag.
-// Node states no layout of its own here (TYPES_INTERFACE → Layout — Merkle
-// leaf preimages are the struct's own wire bytes): a second statement of a
-// layout in a second package drifts with no compiler signal.
-// ---------------------------------------------------------------------------
-
-/**
- * The block's one committed root.
- *
- * ⛔ **Leaf ORDER is normative and it is `UtxoTxTree`'s field order** — every
- * transaction id as a `'utxotx'` leaf (TYPES_INTERFACE → Ordering block).
- * The settlement is the last `utxoTxIds` entry, so it is the last leaf and its
- * position is committed here rather than stated anywhere else.
- *
- * The `'coinbase'` domain is a tracked reservation
- * (TYPES_INTERFACE → Tracked reservations).
- */
-export function computeUtxoTxRoot(tree: UtxoTxTree): string {
-  const leaves: Uint8Array[] = tree.utxoTxIds.map((id) =>
-    leafHash('utxotx', hexToBytes(id)));
-  return Buffer.from(buildMerkleRoot(leaves)).toString('hex');
-}
 
 // ---------------------------------------------------------------------------
 // Body sizing

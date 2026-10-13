@@ -144,8 +144,8 @@ Additions to the existing `OrderingBlock` type:
 ### Block hash and PoW preimage (header model)
 
 The block hash is `blockHash(header)` — the header alone commits to the whole
-block transitively (`utxoTxRoot` / `stateRoot`), see
-`TYPES_INTERFACE.md`. PoW is likewise header-only:
+block but its `validatorSignature`: the body through `utxoTxRoot`, every transaction's id and
+bytes, and its effect on state through `stateRoot` (`TYPES_INTERFACE → Block header`). PoW is likewise header-only:
 
 ```
 powPreimage = computePowHash(header)

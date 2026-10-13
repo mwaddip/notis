@@ -18,7 +18,6 @@ import {
 import { config } from '../config.js';
 import type { Config } from '../config.js';
 import {
-  computeUtxoTxRoot,
   clearTemplate,
   rebuildTemplate,
 } from './block-creator.js';
@@ -462,11 +461,11 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
   }
 
   // 4. Merkle root verification — one root over one body of transactions, each
-  //    kept apart by its `leafHash` domain. The settlement is the last
-  //    transaction leaf, so its position is committed here.
+  //    id and each element kept apart by its `leafHash` domain
+  //    (TYPES_INTERFACE → Ordering block). The settlement is the last leaf of
+  //    each class, so its position is committed here.
 
-  const computedUtxoRoot = computeUtxoTxRoot(block.utxoTxTree);
-  if (computedUtxoRoot !== block.header.utxoTxRoot) {
+  if (!validation.verifyUtxoTxRoot(block)) {
     console.warn(`Rejected block height=${block.header.height}: utxoTxRoot mismatch`);
     return null;
   }

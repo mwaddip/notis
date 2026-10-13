@@ -56,18 +56,6 @@ import {
 // ---------------------------------------------------------------------------
 
 
-/**
- * The block's Merkle helpers, from the graph the current test is driving. Same
- * module as `importBlockCreator`, separate only because that helper's type is
- * the timer-owning surface and widening it would offer `startBlockCreator` to
- * every caller that just wants to re-derive a root.
- */
-async function importBlockCreatorRoots() {
-  return (await import('../../src/services/block-creator.js')) as unknown as {
-    computeUtxoTxRoot: (tree: OrderingBlock['utxoTxTree']) => string;
-  };
-}
-
 async function importPosts() {
   return await import('../../src/store/posts.js');
 }
@@ -732,7 +720,7 @@ describe('a stored header that cannot be hashed', () => {
     const miner = makeTestIdentity();
     const block = await makeApplicableBlock({ miner });
 
-    const { computeUtxoTxRoot } = await importBlockCreatorRoots();
+    const { computeUtxoTxRoot } = await import('@dagsocial/types');
     block.utxoTxTree.utxoTxIds = ['00'.repeat(32)];
     block.utxoTxTree.utxoTxs = [new Uint8Array([0xff, 0xff, 0xff])];
     // The Merkle commitment covers the bytes, so it has to be re-derived — a
@@ -2983,18 +2971,17 @@ describe('resolveFork — body-stage refusal → mark → re-serve → continuat
     // Shared height 1
     await mineNextBlock(bc);
 
-    // Build the forged chain: valid headers (real PoW), forged validator
-    // signature on the last block. Apply the first two honestly, then build
-    // a third with forged signature.
-    const forger = makeTestIdentity();
+    // Build the branch: valid headers (real PoW), the last block committing
+    // to a proof its body does not make. Apply the first two honestly, then
+    // build a third with the altered commitment.
     const forgedBlocks: OrderingBlock[] = [];
     for (const h of [2, 3]) {
       const b = await makeApplicableBlock({ height: h });
       expect(applyOrderingBlock(b)).toBe(true);
       forgedBlocks.push(b);
     }
-    // Height 4: forged signature — validatorId is the miner's, signature is the forger's
-    const forgedB4 = await makeApplicableBlock({ height: 4, signWith: forger.privateKey });
+    // Height 4: adProofsRoot commits to a proof the body does not make.
+    const forgedB4 = await makeApplicableBlock({ height: 4, adProofsRoot: 'ab'.repeat(32) });
     forgedBlocks.push(forgedB4);
 
     // Revert the honest ones and rebuild our chain (height 2-3)

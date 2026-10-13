@@ -1179,7 +1179,7 @@ export async function makeApplicableBlock(
     protocolVersion?: number;
   } = {},
 ): Promise<OrderingBlock> {
-  const { computeUtxoTxRoot } = await import('../src/services/block-creator.js');
+  const { computeUtxoTxRoot } = await import('@dagsocial/types');
   const { applyContextFrom } = await import('../src/services/block-apply.js');
   const { proverSession } = await import('../src/state/prover-session.js');
   const { config: nodeConfig } = await import('../src/config.js');
