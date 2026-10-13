@@ -65,12 +65,8 @@ const alignedFixture: UtxoTxTree = {
 describe('utxoTxRoot — the root over one body', () => {
   beforeEach(async () => { vi.resetModules(); });
   afterEach(async () => {
-    try {
-      const bc = await importBlockCreator();
-      bc.stopBlockCreator();
-    } catch {
-      // The block-creator module may not have been imported in this case.
-    }
+    const bc = await importBlockCreator();
+    bc.stopBlockCreator();
     vi.resetModules();
   });
 

@@ -3,10 +3,11 @@ import {
   blockHash,
   cumulativeWork,
   verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
   verifyValidatorSignature,
 } from '@dagsocial/validation';
-import { decodeTx, encodeTx, computeTxId } from '@dagsocial/types';
-import type { OrderingBlock, UtxoTransaction } from '@dagsocial/types';
+import { computeTxId, computeUtxoTxRoot, decodeTx, encodeTx } from '@dagsocial/types';
+import type { BlockHeader, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import {
   makeApplicableBlock,
   makeCreditBox,
@@ -14,6 +15,8 @@ import {
   makeTestIdentity,
   revertChainTo,
   seedBoxes,
+  signHeader,
+  solveHeaderPow,
 } from '../helpers.js';
 import {
   testConfig,
@@ -365,6 +368,172 @@ describe('a served block whose utxoTxs array drops its last element', () => {
     const alteredHash = blockHash(altered.header)!;
 
     const observed = await serveAlteredThenHonest(sc, ctx, [sc.shared1, altered, sc.branchLast], alteredHash);
+
+    expect(observed).toEqual({
+      alteredMarked: false,
+      tipHeight: sc.branchLast.header.height,
+      tipHash: blockHash(sc.branchLast.header),
+      peerBPenalties: 0,
+      peerBAskedForBlocks: true,
+    });
+  });
+});
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers →
+ * "A served block is bound to its header before it is kept".
+ *
+ * One peer serves a branch whose last block is its header's — the body's root
+ * matches the header's `utxoTxRoot`, the signature verifies — and whose body
+ * holds one element that will not decode. The intake path keeps the block,
+ * `reorg` applies the honest first block and refuses the second at decode, and
+ * the mark lands on that block's hash: the header's own.
+ */
+describe('a served block that is its header\'s and whose body will not decode', () => {
+  const ctx: Trackers = { caughtCorrupt: [] };
+  beforeEach(() => {
+    ctx.caughtCorrupt = [];
+    vi.resetModules();
+    installTrackers(ctx);
+  });
+  afterEach(teardownTrackers);
+
+  it('the three checks accept the block, its hash lands in refused_headers, the peer carries one misbehavior penalty, the chain stands', async () => {
+    await initChainStore();
+    await startCreator(testConfig);
+    const [shared1] = await buildAndApply([[1, T1]]) as [OrderingBlock];
+
+    // A credit box both chains share: the branch's first block above the
+    // fork spends it in a signed transaction (as `buildScenario` does).
+    const spender = makeTestIdentity();
+    const box = makeCreditBox(10n ** 8n, spender.userId, 0, 7);
+    await seedBoxes([box]);
+    const creditTx = makeCreditTx(spender, [box], 10n ** 6n);
+
+    const { applyOrderingBlock } = (await import('../../src/services/block-apply.js')) as {
+      applyOrderingBlock: (b: OrderingBlock) => boolean;
+    };
+
+    // The branch's two blocks, built honestly over the shared state. The
+    // second's miner is held so the body-rewritten variant below re-signs
+    // with the same key — the signature verifies against the block's own
+    // `validatorId`.
+    const branchFirst = await makeApplicableBlock({
+      height: 2,
+      createdAt: T1 + 1,
+      utxoTxs: [creditTx],
+    });
+    expect(applyOrderingBlock(branchFirst)).toBe(true);
+    const branchMiner = makeTestIdentity();
+    const branchLastHonest = await makeApplicableBlock({
+      height: 3,
+      createdAt: T1 + 2,
+      miner: branchMiner,
+    });
+    expect(applyOrderingBlock(branchLastHonest)).toBe(true);
+
+    // Revert and build this node's lighter chain — one block above the fork.
+    await revertChainTo(1);
+    const [ourTip] = await buildAndApply([[2, T1 + 60_000 + HL]]) as [OrderingBlock];
+
+    // The branch's last block, body replaced by one element that will not
+    // decode, header's `utxoTxRoot` recomputed over that body, re-mined, and
+    // re-signed by `branchMiner`.
+    const alteredTree = {
+      utxoTxIds: ['00'.repeat(32)],
+      utxoTxs: [new Uint8Array([0xff, 0xff, 0xff])],
+    };
+    const alteredHeader: BlockHeader = {
+      ...branchLastHonest.header,
+      utxoTxRoot: computeUtxoTxRoot(alteredTree),
+    };
+    alteredHeader.powNonce = solveHeaderPow(alteredHeader);
+    const alteredSignature = signHeader(alteredHeader, branchMiner.privateKey);
+    const altered: OrderingBlock = {
+      header: alteredHeader,
+      utxoTxTree: alteredTree,
+      validatorSignature: alteredSignature,
+    };
+
+    // Controls: the block is its header's (structure accepts, root matches)
+    // and the signature outside the root is its validator's.
+    expect(verifyOrderingBlockStructure(altered).valid).toBe(true);
+    expect(verifyUtxoTxRoot(altered)).toBe(true);
+    expect(verifyValidatorSignature(altered.header, altered.validatorSignature)).toBe(true);
+
+    const branchWork = cumulativeWork([branchFirst.header, altered.header]);
+    const ourWork = cumulativeWork([ourTip.header]);
+    expect(branchWork > ourWork).toBe(true);
+
+    const alteredHash = blockHash(altered.header)!;
+    const net = singleBranchNet('peer-undecodable', [shared1, branchFirst, altered]);
+    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
+    expect(handleOrderingBlock(altered, 'peer-undecodable', net)).toBe(false);
+    await settleResolveForks(ctx);
+
+    const ordering = await importOrdering();
+    const { anyRefusedHeader } = await import('../../src/store/refused-headers.js');
+    expect(anyRefusedHeader([alteredHash])).toBe(true);
+    expect(ordering.getCurrentHeight()).toBe(ourTip.header.height);
+    expect(ordering.getOrderingBlockHash(ourTip.header.height)).toBe(blockHash(ourTip.header));
+    expect(net.penalties.length).toBe(1);
+    expect(net.penalties[0]!.kind).toBe('misbehavior');
+  });
+});
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers →
+ * "A served block is bound to its header before it is kept".
+ *
+ * The same peer id delivers the branch's first serve with a block whose
+ * `validatorSignature` does not verify, then its second serve with the branch
+ * whole. The last assertion is the same five values the file's other cases
+ * compare.
+ */
+describe('one peer serves an altered block then the branch whole', () => {
+  const ctx: Trackers = { caughtCorrupt: [] };
+  beforeEach(() => {
+    ctx.caughtCorrupt = [];
+    vi.resetModules();
+    installTrackers(ctx);
+  });
+  afterEach(teardownTrackers);
+
+  function alter(block: OrderingBlock): OrderingBlock {
+    return { ...block, validatorSignature: new Uint8Array(64).fill(0xff) };
+  }
+
+  it.fails('the first serve leaves no mark on the altered block\'s hash, and the second serve switches the chain', async () => {
+    const sc = await buildScenario();
+    expect(sc.branchWork > sc.ourWork).toBe(true);
+    const altered = alter(sc.branchFirst);
+    const alteredHash = blockHash(altered.header)!;
+
+    const peerId = 'peer-shared';
+    const peerFirst = singleBranchNet(peerId, [sc.shared1, altered, sc.branchLast]);
+    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
+    expect(handleOrderingBlock(sc.branchLast, peerId, peerFirst)).toBe(false);
+    await settleResolveForks(ctx);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(sc.ourTip.header.height);
+    expect(ordering.getOrderingBlockHash(sc.ourTip.header.height)).toBe(blockHash(sc.ourTip.header));
+    expect(peerFirst.penalties.length).toBe(1);
+    expect(peerFirst.penalties[0]!.kind).toBe('misbehavior');
+
+    // The same peer id serves the branch whole on its second round.
+    const peerSecond = singleBranchNet(peerId, [sc.shared1, sc.branchFirst, sc.branchLast]);
+    expect(handleOrderingBlock(sc.branchLast, peerId, peerSecond)).toBe(false);
+    await settleResolveForks(ctx);
+
+    const { anyRefusedHeader } = await import('../../src/store/refused-headers.js');
+    const observed = {
+      alteredMarked: anyRefusedHeader([alteredHash]),
+      tipHeight: ordering.getCurrentHeight(),
+      tipHash: ordering.getOrderingBlockHash(ordering.getCurrentHeight()),
+      peerBPenalties: peerSecond.penalties.length,
+      peerBAskedForBlocks: peerSecond.blockCalls.count > 0,
+    };
 
     expect(observed).toEqual({
       alteredMarked: false,

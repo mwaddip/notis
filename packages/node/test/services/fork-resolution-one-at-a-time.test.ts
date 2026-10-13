@@ -964,12 +964,10 @@ describe('a reorg the funnel refuses hands nothing back', () => {
 
     const [shared1] = await buildAndApply([[1, T1]]);
     const [peer2] = await buildAndApply([[2, T1 + 1]]);
-    const { makeTestIdentity } = await import('../helpers.js');
-    const forger = makeTestIdentity();
     const peer3Forged = await makeApplicableBlock({
       height: 3,
       createdAt: T1 + 2,
-      signWith: forger.privateKey,
+      adProofsRoot: 'ab'.repeat(32),
     });
     await revertChainTo(1);
     await buildAndApply([
