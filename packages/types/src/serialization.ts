@@ -471,11 +471,15 @@ export function decodeOrderingBlock(bytes: Uint8Array): OrderingBlock {
  * is that pair plus the signature array — so the wire form and the `TxId`
  * preimage share one writer rather than agreeing by inspection.
  *
- * ✅ **Box ids, tx ids, `utxoTxRoot` and `stateRoot` do not depend on this codec.**
- * `computeTxId` walks `writeTxIdFields` and `computeUtxoTxRoot` hashes
- * `leafHash('utxotx', id)` — the id, never the body encoding. What the codec
- * decides is the wire bytes peers must agree on and the `utxoTxTreeByteLength`
- * that gates `MAX_BLOCK_BODY_BYTES`.
+ * ✅ **Box ids, tx ids and `stateRoot` do not depend on this codec; `utxoTxRoot`
+ * and the block hash do.** `computeTxId` walks `writeTxIdFields`, which never
+ * reads a signature. `computeUtxoTxRoot` hashes every id under `'utxotx'` and
+ * every `utxoTxs` element — the `encodeTx` bytes, exactly as the body holds
+ * them — under `'utxotx-bytes'` (TYPES_INTERFACE → Layout — Merkle leaf
+ * preimages are the struct's own wire bytes), so a change to this codec moves
+ * every `utxoTxRoot` and every block hash and no transaction id, box id or
+ * `stateRoot`. What the codec decides is those bytes peers must agree on and
+ * the `utxoTxTreeByteLength` that gates `MAX_BLOCK_BODY_BYTES`.
  *
  * **Signatures are the only field this layout adds to the preimage**, and they
  * are correctly absent from it: they are Ed25519 *over* the `TxId`, so hashing
