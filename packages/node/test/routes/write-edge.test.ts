@@ -691,4 +691,98 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     expect(res.status).toBe(413);
   });
 
+  // -------------------------------------------------------------------------
+  // NODE_INTERFACE → Credits: a transfer's outputs are credit or fee boxes
+  // (→ Legal box transitions, the `CreditBox | CreditBox(s) and/or FeeBox` row).
+  // -------------------------------------------------------------------------
+
+  /** Build a signed transfer whose outputs are a credit to the receiver and one FeeBox. */
+  function buildCreditPlusFee(inputValue: bigint, feeValue: bigint): UtxoTransaction {
+    const inputBoxId = freshCreditInput(inputValue);
+    const change = inputValue - feeValue;
+    const tx: UtxoTransaction = {
+      inputs: [inputBoxId],
+      outputs: [
+        { boxType: 'credit', value: change, createdAtBlock: 0, owner: receiver.publicKey },
+        { boxType: 'fee', value: feeValue, createdAtBlock: 0 },
+      ] as CandidateOf<CreditBox>[],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    const sig = cryptoSign(null, Buffer.from(computeTxId(tx), 'hex'), senderPriv);
+    tx.signatures[senderHex] = new Uint8Array(sig);
+    return tx;
+  }
+
+  /** Build a signed transfer whose only output is one FeeBox taking the whole input. */
+  function buildFeeOnly(inputValue: bigint): UtxoTransaction {
+    const inputBoxId = freshCreditInput(inputValue);
+    const tx: UtxoTransaction = {
+      inputs: [inputBoxId],
+      outputs: [{ boxType: 'fee', value: inputValue, createdAtBlock: 0 }],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    const sig = cryptoSign(null, Buffer.from(computeTxId(tx), 'hex'), senderPriv);
+    tx.signatures[senderHex] = new Uint8Array(sig);
+    return tx;
+  }
+
+  it.fails('a transfer with a credit output and a fee output pools under a zero floor', async () => {
+    const tx = buildCreditPlusFee(1_000_000n, 100_000n);
+    const res = await request(baseUrl, '/credits/transfer', 'POST', { tx: txToJson(tx) });
+    expect(res.status, JSON.stringify(res.data)).toBe(200);
+  });
+
+  it.fails('a transfer whose one output is a fee box reaches validateTx and pools under a zero floor', async () => {
+    // NODE_INTERFACE → Legal box transitions: "A transaction whose only output
+    // is the FeeBox is legal". Conservation holds — the input and the fee are
+    // the same value — so `validateTx` admits and `admitTx` pools under floor 0.
+    const tx = buildFeeOnly(500_000n);
+    const res = await request(baseUrl, '/credits/transfer', 'POST', { tx: txToJson(tx) });
+    expect(res.status, JSON.stringify(res.data)).toBe(200);
+  });
+
+  it('a transfer of credit outputs only is pooled under a zero floor', async () => {
+    const tx = buildSignedTransferOverFresh(400_000n, 1_000_000n);
+    const res = await request(baseUrl, '/credits/transfer', 'POST', { tx: txToJson(tx) });
+    expect(res.status, JSON.stringify(res.data)).toBe(200);
+  });
+
+  it('a transfer with a karma output answers 400', async () => {
+    // NODE_INTERFACE → Legal box transitions: the `CreditBox` row's outputs are
+    // `CreditBox(s) and/or FeeBox`, nothing else. A karma output is neither.
+    const inputBoxId = freshCreditInput(500_000n);
+    const tx = {
+      inputs: [inputBoxId],
+      outputs: [{ boxType: 'karma', value: '500000', createdAtBlock: 0, owner: toHex(receiver.publicKey) }],
+      signatures: { [senderHex]: '00'.repeat(64) },
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    const res = await request(baseUrl, '/credits/transfer', 'POST', { tx });
+    expect(res.status).toBe(400);
+  });
+
+  // -------------------------------------------------------------------------
+  // NODE_INTERFACE → Withdrawal: an unknown post answers 404.
+  // -------------------------------------------------------------------------
+
+  it.fails('POST /posts/:id/withdraw of a post the node has never heard of answers 404', async () => {
+    // The transaction passes the JSON edge; the service reads the unknown
+    // postId's row — none — and the route carries the status its ClientError
+    // names.
+    const unknownId = '7f'.repeat(32);
+    const inviterHex = toHex(inviter.publicKey);
+    const tx = {
+      inputs: ['aa'.repeat(32)],
+      outputs: [{ boxType: 'karma', value: '1', createdAtBlock: 0, owner: inviterHex }],
+      signatures: { [inviterHex]: '00'.repeat(64) },
+      protocolVersion: PROTOCOL_VERSION,
+      postWithdraw: { postId: unknownId },
+    };
+    const res = await request(baseUrl, `/posts/${unknownId}/withdraw`, 'POST', { tx });
+    expect(res.status, JSON.stringify(res.data)).toBe(404);
+  });
+
 });
+

@@ -432,6 +432,24 @@ describe('vouch routes — the JSON edge', () => {
     expect(body['karmaReturnsAtBlock']).toBe(COOLDOWN);
   });
 
+  it.fails('DELETE /vouches/:targetId whose :targetId is not the spent VouchBox\'s targetId is refused 400', async () => {
+    // NODE_INTERFACE → Vouches, the `DELETE /vouches/:targetId` row:
+    // "400 where `:targetId` is not the target of the VouchBox the transaction
+    // spends". The vouch box is otherwise one the node would pool.
+    const vouchBox = seedVouchBox(voucher.pub, target.pub);
+    const tx: UtxoTransaction = {
+      inputs: [vouchBox.id!],
+      outputs: [unvouchEscrow(vouchBox.value, voucher.pub)],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, voucher.priv, voucher.hex);
+
+    const otherTargetHex = 'ee'.repeat(32);
+    const res = await request(`/${otherTargetHex}`, 'DELETE', { tx: txToJson(tx) });
+    expect(res.status, JSON.stringify(res.data)).toBe(400);
+  });
+
   // -------------------------------------------------------------------------
   // GET /vouches?target= — the endorsers list's own standing
   // NODE_INTERFACE → Vouches, "?target=X&limit=…" row
