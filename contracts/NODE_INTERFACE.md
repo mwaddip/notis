@@ -133,8 +133,9 @@ service reads it before every step has passed:
    of plain objects. Every binary field — each signature, the post commit's `contentHash` and `author`, each box field
    `jsonToTx` decodes as bytes (`BINARY_BOX_FIELDS`) — is a string of lowercase hex of even length; every amount is a
    safe integer or a decimal string of at most 19 digits, which spells every value of the domain
-   (`TYPES_INTERFACE → Box value domain`). The edge supplies one field, an absent `protocolVersion`, as the era at
-   `tip + 1` (→ Transaction envelope shape); every other key is the client's or absent.
+   (`TYPES_INTERFACE → Box value domain`). The edge supplies an absent `protocolVersion` — the transaction's, and a
+   post commit's — as the era at `tip + 1` (→ Transaction envelope shape); every other key is the client's or
+   absent.
 2. **The envelope and the outputs.** `checkTxEnvelope` at `tip + 1` (→ Transaction envelope shape), then
    `checkOutputShape` (→ Output shape).
 3. **Stage 1.** `verifyTxStructure` (`VALIDATION_INTERFACE → verifyTxStructure`), the check a relayed transaction
@@ -4750,8 +4751,8 @@ the handler.
 | `genesis-state.ts` | Cold-start seeding of the height-0 state, and the root check over it | Which boxes exist (`store/system.ts`) |
 
 > ⚠ **AHEAD OF CODE (2026-10-14).** The order and the one function below lead the services `likes.ts`, `credits.ts`,
-> `post-service.ts`, `post-withdraw.ts`, `vouch.ts`, `invites.ts` and `handle-tx.ts` and the routes `usernames.ts` and
-> `backers.ts`: each runs `validateTx`, the expiry and `admitTx` itself, and each service reads the transaction before
+> `post-withdraw.ts`, `vouch.ts` and `invites.ts` and the routes `usernames.ts` and `backers.ts`, each of which runs
+> `validateTx`, the expiry and `admitTx` itself; and every write route hands the transaction to its service before
 > the edge has checked it.
 
 **A write request runs in one order, cheapest first**, and a refusal at a step reaches no later one:
@@ -4763,9 +4764,11 @@ the handler.
    `applyBlock` (`MEMPOOL_INTERFACE → The cost gate`); then the pool.
 
 **One function admits.** `validateTx` at `tip + 1`, the pool entry's expiry at `tip + 1 + MEMPOOL_EXPIRY_BLOCKS` and
-`admitTx` run as one function, which every write route and the gossip relay call. Each caller passes its own engine
-dependencies and the words its refusal opens with, and gets the transaction's id and its expiry back; `admitTx` stays
-the seam above the store that the reorg path does not take (`MEMPOOL_INTERFACE → Fee floor`).
+`admitTx` run as one function, which every write route but `POST /posts` calls. Each caller passes its own engine
+dependencies and the words its refusal opens with, and gets the transaction's id and its expiry back. A post is pooled
+with its pending row in one store transaction (→ Post transactions), so `POST /posts` and the gossip relay, which
+carries posts, run the three around that transaction themselves. `admitTx` stays the seam above the store that the
+reorg path does not take (`MEMPOOL_INTERFACE → Fee floor`).
 
 Queries serve the DAG tip. There is no validated watermark and nothing gates a
 read behind one.
