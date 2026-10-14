@@ -307,11 +307,13 @@ describe('invites routes', () => {
     });
 
     it('keeps returning decode errors verbatim with 400', async () => {
-      const res = await request('/', 'POST', { tx: { outputs: [{ value: -1 }] } });
+      const res = await request('/', 'POST', {
+        tx: { inputs: [], outputs: [{ boxType: 'karma', value: -1 }], signatures: {}, protocolVersion: 1 },
+      });
 
       expect(res.status).toBe(400);
       expect(String((res.data as Record<string, unknown>).error)).toContain(
-        'box value must be a non-negative bigint',
+        'outputs[0].value must be a non-negative',
       );
     });
   });

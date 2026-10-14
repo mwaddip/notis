@@ -96,7 +96,7 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
   ] as const) {
     it(`rejects a ${label} value`, () => {
       expect(() => toTx(rawTx(badValue))).toThrow(
-        /box value must be a non-negative/,
+        /outputs\[\d+\]\.value must be/,
       );
     });
   }
@@ -109,7 +109,7 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
       owner: ownerHex,
     });
 
-    expect(() => toTx(raw)).toThrow(/box value must be a non-negative/);
+    expect(() => toTx(raw)).toThrow(/outputs\[\d+\]\.value must be/);
   });
 
   it('a JSON body carrying postWithdraw survives jsonToTx with the payload intact', () => {

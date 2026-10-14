@@ -314,7 +314,7 @@ describe('posts routes', () => {
         );
         r.write(JSON.stringify({
           tx: { inputs: ['11'.repeat(32)], outputs: [], signatures: {}, protocolVersion: 1,
-            post: { contentHash: Buffer.from(contentHash).toString('hex'), author: '11'.repeat(32), parentRefs: [] } },
+            post: { contentHash: Buffer.from(contentHash).toString('hex'), author: '11'.repeat(32), parentRefs: [], type: 'regular' } },
           content,
         }));
         r.end();

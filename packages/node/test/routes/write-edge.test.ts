@@ -45,6 +45,16 @@ function makeConfig(overrides?: Partial<Config>): Config {
 
 interface Response { status: number; data: unknown; }
 
+// NODE_INTERFACE → Route error policy: a route carries either a
+// `{ error: <message> }` body or `{ error: <status>, reason: <message> }`.
+// The field a test reads is "whichever carries the words" — the message in
+// the first, `reason` in the second.
+function message(data: unknown): string {
+  const d = data as Record<string, unknown>;
+  if (typeof d?.reason === 'string') return d.reason;
+  return String(d?.error);
+}
+
 async function request(
   baseUrl: string,
   path: string,
@@ -261,14 +271,14 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     expect(encodedLength).toBe(MAX_TX_BYTES);
     const res = await request(baseUrl, '/credits/transfer', 'POST', { tx: txToJson(tx) });
     expect(res.status).toBe(400);
-    expect(String((res.data as Record<string, unknown>).error)).toContain('Input box not found');
+    expect(message(res.data)).toContain('Input box not found');
   });
 
   // -------------------------------------------------------------------------
   // Hex that is not lowercase, or not even-length
   // -------------------------------------------------------------------------
 
-  it.fails('a signed transfer whose signature is spelled in uppercase answers 400 — the JSON form', async () => {
+  it('a signed transfer whose signature is spelled in uppercase answers 400 — the JSON form', async () => {
     const tx = buildSignedTransferOverFresh(50_000_000n, 100_000_000n);
     const json = txToJson(tx) as Record<string, unknown>;
     const sigs = { ...(json.signatures as Record<string, string>) };
@@ -278,7 +288,7 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     expect(res.status).toBe(400);
   });
 
-  it.fails('a signed transfer with "zz" appended to its signature answers 400 — the JSON form', async () => {
+  it('a signed transfer with "zz" appended to its signature answers 400 — the JSON form', async () => {
     const tx = buildSignedTransferOverFresh(50_000_000n, 100_000_000n);
     const json = txToJson(tx) as Record<string, unknown>;
     const sigs = { ...(json.signatures as Record<string, string>) };
@@ -288,7 +298,7 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     expect(res.status).toBe(400);
   });
 
-  it.fails('a signed transfer with an odd-length signature answers 400 — the JSON form', async () => {
+  it('a signed transfer with an odd-length signature answers 400 — the JSON form', async () => {
     const tx = buildSignedTransferOverFresh(50_000_000n, 100_000_000n);
     const json = txToJson(tx) as Record<string, unknown>;
     const sigs = { ...(json.signatures as Record<string, string>) };
@@ -308,14 +318,14 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     };
     const res = await request(baseUrl, `/vouches/${vouchTargetHex}`, 'DELETE', { tx });
     expect(res.status).toBe(400);
-    expect(String((res.data as Record<string, unknown>).error)).toContain('inputs');
+    expect(message(res.data)).toContain('inputs');
   });
 
   // -------------------------------------------------------------------------
   // Amount outside the decimal domain
   // -------------------------------------------------------------------------
 
-  it.fails('a signed transfer whose output value is zero-padded to 20 digits answers 400 — the JSON form, not the per-byte floor', async () => {
+  it('a signed transfer whose output value is zero-padded to 20 digits answers 400 — the JSON form, not the per-byte floor', async () => {
     const tx = buildSignedTransferOverFresh(50_000_000n, 100_000_000n);
     const json = txToJson(tx) as Record<string, unknown>;
     const outs = (json.outputs as Record<string, unknown>[]).map((o) => ({ ...o }));
@@ -326,14 +336,14 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     // Today the floor rule reads value = 5n (`BigInt` drops the padding) and
     // answers the per-byte minimum's words; the edge's own refusal names the
     // decimal domain instead.
-    expect(String((res.data as Record<string, unknown>).error)).not.toContain('per-byte minimum');
+    expect(message(res.data)).not.toContain('per-byte minimum');
   });
 
   // -------------------------------------------------------------------------
   // A binary box field that is not a string
   // -------------------------------------------------------------------------
 
-  it.fails('POST /usernames with owner `{length:5}` answers 400 naming owner', async () => {
+  it('POST /usernames with owner `{length:5}` answers 400 naming owner', async () => {
     const tx = {
       inputs: ['aa'.repeat(32)],
       outputs: [{
@@ -347,10 +357,10 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     };
     const res = await request(baseUrl, '/usernames', 'POST', { tx });
     expect(res.status).toBe(400);
-    expect(String((res.data as Record<string, unknown>).error)).toContain('owner');
+    expect(message(res.data)).toContain('owner');
   });
 
-  it.fails('POST /vouches with voucherId `{length:5}` answers 400 naming voucherId', async () => {
+  it('POST /vouches with voucherId `{length:5}` answers 400 naming voucherId', async () => {
     const tx = {
       inputs: ['aa'.repeat(32)],
       outputs: [{
@@ -364,10 +374,10 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     };
     const res = await request(baseUrl, '/vouches', 'POST', { tx });
     expect(res.status).toBe(400);
-    expect(String((res.data as Record<string, unknown>).error)).toContain('voucherId');
+    expect(message(res.data)).toContain('voucherId');
   });
 
-  it.fails('POST /invites with inviteePublicKey `{length:5}` answers 400 naming inviteePublicKey', async () => {
+  it('POST /invites with inviteePublicKey `{length:5}` answers 400 naming inviteePublicKey', async () => {
     const tx = {
       inputs: ['aa'.repeat(32)],
       outputs: [{
@@ -381,29 +391,29 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     };
     const res = await request(baseUrl, '/invites', 'POST', { tx });
     expect(res.status).toBe(400);
-    expect(String((res.data as Record<string, unknown>).error)).toContain('inviteePublicKey');
+    expect(message(res.data)).toContain('inviteePublicKey');
   });
 
   // -------------------------------------------------------------------------
   // An absent key is named
   // -------------------------------------------------------------------------
 
-  it.fails('POST /credits/transfer with no `signatures` key answers 400 naming signatures', async () => {
+  it('POST /credits/transfer with no `signatures` key answers 400 naming signatures', async () => {
     const tx = buildSignedTransferOverFresh(50_000_000n, 100_000_000n);
     const json = txToJson(tx) as Record<string, unknown>;
     delete json.signatures;
     const res = await request(baseUrl, '/credits/transfer', 'POST', { tx: json });
     expect(res.status).toBe(400);
-    expect(String((res.data as Record<string, unknown>).error)).toContain('signatures');
+    expect(message(res.data)).toContain('signatures');
   });
 
-  it.fails('POST /credits/transfer with no `outputs` key answers 400 naming the key, not the service\'s own words', async () => {
+  it('POST /credits/transfer with no `outputs` key answers 400 naming the key, not the service\'s own words', async () => {
     const tx = buildSignedTransferOverFresh(50_000_000n, 100_000_000n);
     const json = txToJson(tx) as Record<string, unknown>;
     delete json.outputs;
     const res = await request(baseUrl, '/credits/transfer', 'POST', { tx: json });
     expect(res.status).toBe(400);
-    const err = String((res.data as Record<string, unknown>).error);
+    const err = message(res.data);
     expect(err).toContain('outputs');
     // The service's own words name "credit transfer outputs must all be
     // CreditBoxes"; the edge's refusal names the absent key alone.
@@ -426,7 +436,7 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
       errorSpy.mockRestore();
     });
 
-    it.fails('POST /invites with `outputs: [null]` answers 400 and logs nothing', async () => {
+    it('POST /invites with `outputs: [null]` answers 400 and logs nothing', async () => {
       const tx = {
         inputs: ['aa'.repeat(32)],
         outputs: [null],
@@ -438,7 +448,7 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
       expect(errorSpy).not.toHaveBeenCalled();
     });
 
-    it.fails('POST /invites with `outputs: "x"` answers 400 and logs nothing', async () => {
+    it('POST /invites with `outputs: "x"` answers 400 and logs nothing', async () => {
       const tx = {
         inputs: ['aa'.repeat(32)],
         outputs: 'x',
@@ -467,23 +477,23 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
   // `tx` itself is not a plain object
   // -------------------------------------------------------------------------
 
-  it.fails('POST /credits/transfer with `tx: "x"` answers 400 naming tx', async () => {
+  it('POST /credits/transfer with `tx: "x"` answers 400 naming tx', async () => {
     const res = await request(baseUrl, '/credits/transfer', 'POST', { tx: 'x' });
     expect(res.status).toBe(400);
-    expect(String((res.data as Record<string, unknown>).error)).toContain('tx');
+    expect(message(res.data)).toContain('tx');
   });
 
-  it.fails('POST /credits/transfer with `tx: []` answers 400 naming tx', async () => {
+  it('POST /credits/transfer with `tx: []` answers 400 naming tx', async () => {
     const res = await request(baseUrl, '/credits/transfer', 'POST', { tx: [] });
     expect(res.status).toBe(400);
-    expect(String((res.data as Record<string, unknown>).error)).toContain('tx');
+    expect(message(res.data)).toContain('tx');
   });
 
   // -------------------------------------------------------------------------
   // A post commit with no `type`
   // -------------------------------------------------------------------------
 
-  it.fails('POST /posts with a commit carrying no `type` answers 400 naming type', async () => {
+  it('POST /posts with a commit carrying no `type` answers 400 naming type', async () => {
     const content = 'hi';
     const tx = {
       inputs: ['aa'.repeat(32)],
@@ -499,8 +509,7 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     };
     const res = await request(baseUrl, '/posts', 'POST', { tx, content });
     expect(res.status).toBe(400);
-    const data = res.data as Record<string, unknown>;
-    expect(String(data.reason ?? data.error)).toContain('type');
+    expect(message(res.data)).toContain('type');
   });
 
   // -------------------------------------------------------------------------
