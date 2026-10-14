@@ -114,10 +114,10 @@ class BlockRejected extends Error {}
 class BlockBeyondFutureBound extends Error {}
 
 /**
- * A post the block first stored (NODE_INTERFACE → "What follows the commit is
- * the commit's"; NODE_INTERFACE → Store Interface → Posts DAG → "Backfill after
- * sync"). Carried by the applied verdict so the post-commit `emitPostIndexed`
- * and the reorg's `registerPlaceholder` loop both read what the block inserted.
+ * A post the block first stored. Carried by the applied verdict so that
+ * `emitPostIndexed` reads it once the outermost transaction has committed —
+ * the funnel's for a block that extended the tip, or `reorg`'s for a nested
+ * apply (NODE_INTERFACE → "What follows the commit is the commit's").
  */
 export interface IndexedPost {
   postId: string;
@@ -608,10 +608,11 @@ export function announceAppliedBlock(block: OrderingBlock, indexed: readonly Ind
   for (const { postId, parentRefCount } of indexed) {
     emitPostIndexed(postId, parentRefCount);
   }
-  // The one site where an absence is simply printed. The block has committed;
-  // turning a log line into a throw would roll back nothing SQLite has already
-  // kept, and inventing a placeholder would print a hash that is not one. If
-  // the impossible happens the line says `hash=null`, which is true.
+  // Every block this announces passed the funnel's `verifyOrderingBlockStructure`,
+  // so its header is inside the domain and `blockHash` prints the hash. A throw
+  // here would leave the rest of the post-commit sequence unrun, the rebuild
+  // among it, for a block that has committed. If the impossible happens the
+  // line says `hash=null`, which is true.
   const appliedHash = validation.blockHash(block.header);
   console.log(`Applied ordering block height=${block.header.height} hash=${appliedHash} (${block.utxoTxTree.utxoTxIds.length} txs)`);
 }

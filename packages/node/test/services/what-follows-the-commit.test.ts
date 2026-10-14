@@ -483,7 +483,7 @@ describe('a reorg that rolls back leaves what the commit left', () => {
     expect(forbidden).toEqual([]);
   });
 
-  it('a reorg\'s post emits post_indexed with the switched tip as the chain\'s height — the commit\'s own', async () => {
+  it('a reorg that switches journals its post once its own transaction has committed', async () => {
     installStdoutCapture();
     const { initJournal } = await import('../../src/journal.js');
     initJournal();
@@ -495,8 +495,7 @@ describe('a reorg that rolls back leaves what the commit left', () => {
     // The chain's height at the moment the reorg's post emits `post_indexed`
     // (NODE_INTERFACE → "What follows the commit is the commit's"). The
     // post-commit loop runs with the switched tip in place, so this reads 4;
-    // a loop inside the transaction reads the savepoint's own committed
-    // height.
+    // a loop inside the transaction reads the height the nested apply left.
     let heightAtIndexed: number | null = null;
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
       const line = String(chunk);
