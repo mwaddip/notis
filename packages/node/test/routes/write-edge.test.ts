@@ -728,13 +728,13 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     return tx;
   }
 
-  it.fails('a transfer with a credit output and a fee output pools under a zero floor', async () => {
+  it('a transfer with a credit output and a fee output pools under a zero floor', async () => {
     const tx = buildCreditPlusFee(1_000_000n, 100_000n);
     const res = await request(baseUrl, '/credits/transfer', 'POST', { tx: txToJson(tx) });
     expect(res.status, JSON.stringify(res.data)).toBe(200);
   });
 
-  it.fails('a transfer whose one output is a fee box reaches validateTx and pools under a zero floor', async () => {
+  it('a transfer whose one output is a fee box reaches validateTx and pools under a zero floor', async () => {
     // NODE_INTERFACE → Legal box transitions: "A transaction whose only output
     // is the FeeBox is legal". Conservation holds — the input and the fee are
     // the same value — so `validateTx` admits and `admitTx` pools under floor 0.

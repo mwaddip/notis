@@ -142,7 +142,7 @@ describe('write edge — floor above zero', () => {
     vi.resetModules();
   });
 
-  it.fails('a transfer whose fee meets the floor pools', async () => {
+  it('a transfer whose fee meets the floor pools', async () => {
     // The floor is one base unit per in-block byte, so a fee at least equal to
     // the transaction's in-block byte count meets it. 100_000n far exceeds any
     // realistic entry byte count for a two-output transfer.
@@ -151,7 +151,7 @@ describe('write edge — floor above zero', () => {
     expect(res.status, JSON.stringify(res.data)).toBe(200);
   });
 
-  it.fails('a transfer whose fee is one base unit below the floor answers 402', async () => {
+  it('a transfer whose fee is one base unit below the floor answers 402', async () => {
     // A fee below `floor * bytes` is refused by the admission seam
     // (`FeeBelowFloorError`, 402). With `floor = 1n`, a `fee = bytes - 1` misses
     // by one base unit; the entry's byte cost is at least the encoding's own
