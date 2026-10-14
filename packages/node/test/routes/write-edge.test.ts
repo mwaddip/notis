@@ -430,9 +430,8 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     json.outputs = outs;
     const res = await request(baseUrl, '/credits/transfer', 'POST', { tx: json });
     expect(res.status).toBe(400);
-    // Today the floor rule reads value = 5n (`BigInt` drops the padding) and
-    // answers the per-byte minimum's words; the edge's own refusal names the
-    // decimal domain instead.
+    // A padded amount is refused by the JSON form at the edge, before the
+    // per-byte floor reads a value.
     expect(message(res.data)).not.toContain('per-byte minimum');
   });
 
