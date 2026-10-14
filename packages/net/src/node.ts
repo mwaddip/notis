@@ -314,8 +314,10 @@ export function serveHeadersResponse(
  *
  * The byte bound is `handleModifierRequestMsg`'s — accumulate, stop before
  * exceeding `MAX_SERVE_BODY_BYTES`, and **always include the first block**, so a
- * block too large to share a response with anything still moves on its own
- * instead of wedging sync behind it. A truncated response costs the requester
+ * request is never answered with nothing while the server holds what was asked
+ * (NET_INTERFACE → Validation →
+ * "Every arm that assembles more than one stored object into a response is bounded by BYTES, not by item count alone.").
+ * A truncated response costs the requester
  * one round trip; it re-asks for the remainder on the next `SyncInfo` round.
  */
 export function serveBlocksResponse(
