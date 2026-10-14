@@ -393,8 +393,10 @@ evidence of misbehaviour.
 ⛔ **Every arm that assembles more than one stored object into a response is bounded by BYTES, not by
 item count alone.** A count bounds an array's length and says nothing about its weight, and both
 `ModifierResponse` and `Blocks` assemble whole blocks. Each arm accumulates encoded bytes, stops
-before exceeding `MAX_SERVE_BODY_BYTES`, and always emits its first item so an oversized object moves
-rather than wedging sync.
+before exceeding `MAX_SERVE_BODY_BYTES`, and always emits its first item, so the serve loop never answers
+a request with nothing while it holds what was asked. No legal block reaches the budget alone (→ "Four
+limits stand in a fixed order, and the relation is the rule"); one over `MAX_ORDERING_BLOCK_BYTES` is
+served and its reader refuses it (→ "A peer's bytes are weighed before they are decoded").
 
 **Four limits stand in a fixed order, and the relation is the rule:**
 
@@ -1236,8 +1238,9 @@ the CBOR would have been the band-aid; the root cause was the second dialect, so
   are full and never before.
 
   The rule is `handleModifierRequestMsg`'s, applied here: accumulate encoded bytes, stop before
-  exceeding `MAX_SERVE_BODY_BYTES`, and **always include the first block** so an oversized one moves
-  rather than wedging sync. A truncated response costs the requester one round trip — it re-asks for
+  exceeding `MAX_SERVE_BODY_BYTES`, and **always include the first block**, so a request is never answered
+  with nothing while the server holds the block asked for — whatever its reader then does with one over
+  `MAX_ORDERING_BLOCK_BYTES` (→ Validation (and untrusted-input safety)). A truncated response costs the requester one round trip — it re-asks for
   what is still missing on the next `SyncInfo` round — and never costs it the chain.
 
   **Each block is encoded once.** The bytes the bound weighs are the bytes the response carries, so
