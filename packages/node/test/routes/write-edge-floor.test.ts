@@ -1,5 +1,4 @@
-// NODE_INTERFACE → Credits → "402 when its fee is below this node's floor";
-// MEMPOOL_INTERFACE → Fee floor.
+// NODE_INTERFACE → Credits; MEMPOOL_INTERFACE → Fee floor.
 //
 // A floor above zero prices a transfer and refuses one whose fee is beneath
 // it. The suite's default config pins the floor at zero; this file registers
