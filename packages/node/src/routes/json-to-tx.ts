@@ -10,9 +10,9 @@ import { TxTooLargeError } from '../store/mempool.js';
  * (TYPES_INTERFACE → Layout — Boxes). Every entry is a hex string this
  * edge decodes with `@dagsocial/types`' `hexToBytes`, the one spelling
  * the strict decoder accepts (NODE_INTERFACE → HTTP API → "Hex is
- * lowercase"). A box field missing from this set is read through
- * as the client's bytes and refused at the per-box schema
- * (NODE_INTERFACE → Output shape).
+ * lowercase"). A box field missing from this set passes through as
+ * the JSON value it is — a hex string — and the output shape refuses
+ * it at the edge (NODE_INTERFACE → Output shape).
  */
 export const BINARY_BOX_FIELDS = new Set([
   'owner',            // KarmaBox, CreditBox, VouchEscrowBox, UsernameBox
