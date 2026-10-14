@@ -7,12 +7,12 @@ import { TxTooLargeError } from '../store/mempool.js';
 
 /**
  * The HTTP JSON names of the box fields a transaction carries as bytes
- * (TYPES_INTERFACE → Layout — Boxes). Every entry is a hex string the edge
- * decodes with `@dagsocial/types`' `hexToBytes` — the one spelling the
- * strict decoder accepts (NODE_INTERFACE → HTTP API → "Hex is lowercase";
- * TYPES_INTERFACE → `hexToBytes`). A hex field missing from this set — a
- * type removed from the ledger, say — reaches `checkOutputShape` as a hex
- * string the per-box schema refuses at the edge.
+ * (TYPES_INTERFACE → Layout — Boxes). Every entry is a hex string this
+ * edge decodes with `@dagsocial/types`' `hexToBytes`, the one spelling
+ * the strict decoder accepts (NODE_INTERFACE → HTTP API → "Hex is
+ * lowercase"). A box field missing from this set is read through
+ * as the client's bytes and refused at the per-box schema
+ * (NODE_INTERFACE → Output shape).
  */
 export const BINARY_BOX_FIELDS = new Set([
   'owner',            // KarmaBox, CreditBox, VouchEscrowBox, UsernameBox
@@ -31,21 +31,21 @@ export const BINARY_BOX_FIELDS = new Set([
 const VALUE_BOX_FIELDS = new Set(['value', 'weight', 'staked', 'accrual']);
 
 /**
- * NODE_INTERFACE → HTTP API → "A write request's transaction is checked
- * whole before anything reads it", the edge's step 1 — the JSON form.
- * Refuses with `ClientError` (400) anything that is not the form: `tx`
- * not a plain object; `inputs`, `outputs` or `signatures` absent; `outputs`
- * not an array of plain objects; `signatures` not a plain object of
- * strings; a binary field — each signature, the commit's `contentHash`
- * and `author`, each `BINARY_BOX_FIELDS` box field — that is not a string
- * or a string `@dagsocial/types`' `hexToBytes` refuses; an amount that
- * is neither a safe integer nor a decimal string of 1 to 19 digits; a
- * post commit with no `parentRefs` or no `type`.
+ * The JSON form of the lead "A write request's transaction is checked
+ * whole before anything reads it" (NODE_INTERFACE → HTTP API). Throws
+ * `ClientError` (400) naming the field for a `tx` that is not a plain
+ * object; an absent `inputs`, `outputs` or `signatures`; an `outputs`
+ * that is not an array of plain objects; a `signatures` that is not a
+ * plain object of strings; a binary field — each signature, the commit's
+ * `contentHash` and `author`, each `BINARY_BOX_FIELDS` box field — that
+ * is not a string or a string `@dagsocial/types`' `hexToBytes` refuses;
+ * an amount that is neither a safe integer nor a decimal string of 1
+ * to 19 digits; a post commit with no `parentRefs` or no `type`.
  *
- * The edge supplies an absent `protocolVersion`, the transaction's and
- * the commit's, as the era it is handed; `inputs` is passed as given,
- * which `checkTxEnvelope` types at the next step
- * (NODE_INTERFACE → Transaction envelope shape).
+ * An absent `protocolVersion`, the transaction's or the commit's, is
+ * supplied as the era the caller hands in; `inputs` passes as given,
+ * which `checkTxEnvelope` types (NODE_INTERFACE → Transaction envelope
+ * shape).
  */
 export function jsonToTx(raw: unknown, defaultVersion: number): UtxoTransaction {
   if (!isPlainObject(raw)) {

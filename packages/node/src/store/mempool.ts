@@ -130,29 +130,13 @@ export class PendingSpendConflictError extends ClientError {
 }
 
 /**
- * Thrown by `insertUtxoTx` for a transaction above `MAX_TX_BYTES`.
- *
- * ⛔ **The bound is consensus and this node calls no function that checks it.**
- * `verifyTxStructure` is where the rule lives (VALIDATION_INTERFACE → The size
- * bound measures `encodeTx`), and node's only entry into that namespace is the
- * whole object it hands `NetNode` — so the live call site is net's gossip
- * validator, and a transaction submitted to this node's own HTTP API reaches no
- * such check. Without this one it is admitted, drawn into a block by the
- * creator, and refused by this node's own `applyOrderingBlock`: work mined and
- * then thrown away by the miner that mined it.
- *
- * Admission is the choke point rather than each route, so a route added later
- * inherits the rule instead of needing it added — the same reason the gate
- * metadata is lifted here (audit M-8).
- *
- * **`encodeTx(tx).length` is the measure**, because that is the encoding these
- * bytes will ride in a block under: `insertUtxoTx` stores this node's own
- * re-encoding, not the bytes a submitter sent, so measuring the re-encoding
- * measures exactly the future cost.
- *
- * A `ClientError`, so the refusal reaches the submitter as its own message: an
- * over-size transaction is an intentional rejection, not a fault. 413, because
- * the request is well formed and too large.
+ * Thrown by `insertUtxoTx` for a transaction above `MAX_TX_BYTES`
+ * (MEMPOOL_INTERFACE → insertUtxoTx → "It is the pool's own bound, not
+ * a restatement of validation's"): the pool's own bound, which every
+ * insert passes whichever way it came — the HTTP edge, the gossip
+ * relay, and the reorg's re-insertion. `encodeTx(tx).length` is the
+ * measure. A `ClientError`, so the message reaches the submitter;
+ * 413, the well-formed request too large.
  */
 export class TxTooLargeError extends ClientError {
   constructor(public readonly encodedBytes: number) {
