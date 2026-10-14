@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { blockHash, cumulativeWork } from '@dagsocial/validation';
 import type { OrderingBlock } from '@dagsocial/types';
+import type { NetNode } from '@dagsocial/net';
 import {
   makeApplicableBlock,
   makeTestIdentity,
@@ -557,5 +558,114 @@ describe('a reorg that rolls back leaves what the commit left', () => {
 
     expect(bc.getCurrentTemplate()).not.toBeNull();
     expect(bc.getCurrentTemplate()!.header.height).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A throw from net's relay gate between the commit and the rebuild.
+//
+// NODE_INTERFACE → Triggers → "The template is voided at the commit that moves
+// the tip, and nowhere else". The void runs before anything else that follows
+// the commit (NODE_INTERFACE → "What follows the commit is the commit's"), so a
+// throw after it leaves no template rather than one built on the tip the commit
+// replaced. The funnel calls `addKarmaMember`/`removeKarmaMember` once its
+// transaction committed; `reorg` calls `setKarmaMembers` once its transaction
+// committed.
+// ---------------------------------------------------------------------------
+
+function throwingRelayGateNet(message: string): NetNode {
+  return {
+    addKarmaMember(_authorHex: string): void { throw new Error(message); },
+    removeKarmaMember(_authorHex: string): void { throw new Error(message); },
+    setKarmaMembers(_members: Iterable<string>): void { throw new Error(message); },
+  } as unknown as NetNode;
+}
+
+describe('a throw after the commit leaves no template', () => {
+  const ctx: Trackers = { caughtCorrupt: [] };
+
+  beforeEach(() => {
+    ctx.caughtCorrupt = [];
+    vi.resetModules();
+    installTrackers(ctx);
+  });
+
+  afterEach(async () => {
+    const { setNet } = await import('../../src/services/net-instance.js');
+    setNet(null as unknown as NetNode);
+    await teardownTrackers();
+    const backfill = await import('../../src/services/backfill.js');
+    backfill.clearPending();
+  });
+
+  it('a block whose relay-gate call throws after it commits leaves the committed tip and no template', async () => {
+    installStdoutCapture();
+    await initChainStore();
+    await startCreator(testConfig);
+    const author = makeTestIdentity();
+    const { tx: postTx } = await seedPostTx(author, 'the commit\'s');
+    const bc = await importBlockCreator();
+    const ordering = await importOrdering();
+    await buildAndApply([[1, T1]]);
+
+    const tplBefore = bc.getCurrentTemplate();
+    expect(tplBefore).not.toBeNull();
+    expect(tplBefore!.header.height).toBe(2);
+
+    const block = await makeApplicableBlock({
+      height: 2,
+      createdAt: T1 + 60_000,
+      utxoTxs: [postTx],
+    });
+
+    const { setNet } = await import('../../src/services/net-instance.js');
+    setNet(throwingRelayGateNet('relay gate down'));
+
+    const net = singleBranchNet('peer-a', [block]);
+    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
+    expect(() => handleOrderingBlock(block, 'peer-a', net)).toThrow('relay gate down');
+
+    expect({
+      height: ordering.getCurrentHeight(),
+      hash: ordering.getOrderingBlockHash(ordering.getCurrentHeight()),
+      template: bc.getCurrentTemplate(),
+    }).toEqual({
+      height: 2,
+      hash: blockHash(block.header),
+      template: null,
+    });
+  });
+
+  it('a reorg whose relay-gate call throws after it commits leaves the switched tip and no template', async () => {
+    installStdoutCapture();
+    const { initJournal } = await import('../../src/journal.js');
+    initJournal();
+    const sc = await buildBranchSetting({ lyingAdProofsRoot: false });
+    const bc = await importBlockCreator();
+    const ordering = await importOrdering();
+
+    expect(sc.ourWork > 0n).toBe(true);
+    expect(sc.branchWork > sc.ourWork).toBe(true);
+    const tplBefore = bc.getCurrentTemplate();
+    expect(tplBefore).not.toBeNull();
+    expect(tplBefore!.header.height).toBe(4);
+
+    const { setNet } = await import('../../src/services/net-instance.js');
+    setNet(throwingRelayGateNet('relay gate down'));
+
+    const net = singleBranchNet('peer-a', [sc.shared1, sc.branch2, sc.branch3, sc.branch4]);
+    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
+    expect(handleOrderingBlock(sc.branch4, 'peer-a', net)).toBe(false);
+    await settleResolveForks(ctx);
+
+    expect({
+      height: ordering.getCurrentHeight(),
+      hash: ordering.getOrderingBlockHash(ordering.getCurrentHeight()),
+      template: bc.getCurrentTemplate(),
+    }).toEqual({
+      height: 4,
+      hash: blockHash(sc.branch4.header),
+      template: null,
+    });
   });
 });
