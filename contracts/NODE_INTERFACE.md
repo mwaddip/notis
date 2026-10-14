@@ -132,8 +132,8 @@ service reads it before every step has passed:
 1. **The JSON form.** `tx` is a plain object carrying `inputs`, `outputs` and `signatures`, and `outputs` is an array
    of plain objects. Every binary field — each signature, the post commit's `contentHash` and `author`, each box field
    `jsonToTx` decodes as bytes (`BINARY_BOX_FIELDS`) — is a string of lowercase hex of even length; every amount is a
-   safe integer or a decimal string of at most 19 digits, which spells every value of the domain
-   (`TYPES_INTERFACE → Box value domain`). The edge supplies an absent `protocolVersion` — the transaction's, and a
+   safe integer or a decimal string of 1 to 19 digits with no leading zero but `0` itself — one spelling for a value,
+   as hex has one, and enough digits for every value of the domain (`TYPES_INTERFACE → Box value domain`). The edge supplies an absent `protocolVersion` — the transaction's, and a
    post commit's — as the era at `tip + 1` (→ Transaction envelope shape); every other key is the client's or
    absent.
 2. **The envelope and the outputs.** `checkTxEnvelope` at `tip + 1` (→ Transaction envelope shape), then
