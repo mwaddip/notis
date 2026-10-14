@@ -3009,10 +3009,23 @@ template rather than scheduling anything, and there is no timer.
 - **The tip moved** — `rebuildTemplate()`, after this node's own block finalizes, after a peer's block
   applies, and once after a reorg commits.
 
-⚠ **The rebuild stands down while nested in a transaction** (`!getDb().inTransaction`). `reorg` calls
-`applyOrderingBlock` inside its own transaction, where the applied block is not the tip yet and a
-template built from it would describe a chain a failed reorg rolls back; `reorg` rebuilds once, after
-committing.
+> ⚠ **AHEAD OF CODE (2026-10-14).** The next two paragraphs lead `services/block-apply.ts` and
+> `services/fork-resolution.ts`: the funnel calls `clearTemplate()` inside its transaction, after the
+> block is stored and before the mutation phase, so a refused block leaves no template, and nothing
+> rebuilds one on a refusal or after a reorg that rolls back.
+
+**The template is voided at the commit that moves the tip, and nowhere else.** The first act once a
+block's transaction has committed — or, for the blocks a reorg applies, once the reorg's has — is
+`clearTemplate()`; the rest of what follows the commit runs after it, and `rebuildTemplate()` among
+it (→ "What follows the commit is the commit's"). A throw between the two leaves no template, never
+one built on the tip the commit replaced. **A refused block moves no tip and leaves the template as it
+stood** — a refusal of any class, and a reorg that rolls back: the store, the prover and the pool are
+back on the state the template was built from, so a solve under way stays submittable.
+
+⚠ **The void and the rebuild stand down while nested in a transaction** (`!getDb().inTransaction`).
+`reorg` calls `applyOrderingBlock` inside its own transaction, where the applied block is not the tip
+yet and a template built from it would describe a chain a failed reorg rolls back; `reorg` voids the
+template and rebuilds it once, after committing.
 
 ⚠ **`rebuildTemplate()` is miner-only, and the guard is `if (!config) return`.** `startBlockCreator` is
 the only assignment of the creator's module-level config and runs on a miner node alone, so an
@@ -3195,11 +3208,12 @@ only the culprit and rebuild — needs the mutation phase to report *which*
 transaction failed, and is not built.
 
 **External mining.** The template's `stateRoot` is computed at template-build
-time and the block is submitted later. This stays sound because any competing
-block that applies at the same height calls `clearTemplate()`, so a template
+time and the block is submitted later. This stays sound because any block that
+moves the tip voids the template at its commit (→ Triggers), so a template
 whose pre-state has moved can no longer be submitted. `submitMinedBlock`
 therefore depends on template invalidation for **state-root** correctness, not
-merely for height correctness.
+merely for height correctness. A block that is refused moves no pre-state, and
+the template it leaves standing is still the tip's.
 
 ### Coinbase emission (Ergo-style linear decay)
 
@@ -3405,8 +3419,11 @@ Machine, `requestPostBodies`): in the `backfill` phase net drives it from `getMi
 once `synced`, the node drives it from its block-applied hook for every placeholder it creates
 — the block's relaying peer first, then other connected peers — on a per-id schedule **in
 block height: the first request at creation, retries after 1, 2, 4, … blocks, capped at 256**,
-so an unserved body costs a bounded trickle and never a loop. A received body is verified and
-stored through `setPostBody`; `emitPostReceived(postId, peerId, via: 'pull')`.
+so an unserved body costs a bounded trickle and never a loop. A placeholder is registered with the
+driver once the transaction that created it has committed — its block's, or the reorg's that applied
+that block — so a reorg that rolls back registers none (→ "What follows the commit is the commit's").
+A received body is verified and stored through `setPostBody`; `emitPostReceived(postId, peerId, via:
+'pull')`.
 
 ### Like-records
 
@@ -5511,7 +5528,7 @@ is no "skip the checks" parameter on the apply path.
 
 | Phase | Contents | Runs in speculative computation? |
 |-------|----------|----------------------------------|
-| **Validation** | chain-link, interlink root, genesis pin, header timestamps, protocol version, PoW target + PoW, validator signature, the body's root (`VALIDATION_INTERFACE → verifyUtxoTxRoot`), block storage, `clearTemplate` | No — the header does not exist yet |
+| **Validation** | chain-link, interlink root, genesis pin, header timestamps, protocol version, PoW target + PoW, validator signature, the body's root (`VALIDATION_INTERFACE → verifyUtxoTxRoot`), block storage | No — the header does not exist yet |
 | **Mutation** | `applyBlock` over the block's tree view (→ AVL+ State Root, "The rules read the tree, and nothing else"): post confirmation, topology, the body's signatures as one batch, the embedded transactions, the withdrawals, the settlement, the grants, the like counters, the membership pass, the decay clocks — answering the block's effects or a reason | Yes — the same call, over the same view, at the candidate's height |
 | **Commit** | the block's cost checked, `treeWritesOf`'s writes performed + `stateRoot` verification, then the effects written to the store, the journal built from them and persisted, the prover checkpointed — its proof `adProofsRoot`'s check — and the proof stored | No — the speculative run checks the cost, performs the writes, reads the digest and the proof's and restores the prover's root; it writes nothing to the store |
 
@@ -5522,6 +5539,29 @@ effect is persisted, and the writes that follow are the effects in their order
 re-validation, the withdrawal phase's binds, the settlement) answers the same
 reason on both paths. Any check that depends on the finalized header belongs in
 the validation phase.
+
+> ⚠ **AHEAD OF CODE (2026-10-14).** The next paragraph, the applied verdict's `indexed` (→ "The
+> funnel answers with a class") and the registration sentence of → Store Interface → Posts DAG,
+> "Backfill after sync" lead `services/block-apply.ts` and `services/fork-resolution.ts`: the funnel
+> voids the template inside its transaction, before the mutation phase; `writeBlockEffects` emits
+> `post_indexed` inside it, before the `adProofsRoot` check; the applied log line prints inside it;
+> `reorg` registers its placeholders with the backfill driver inside its transaction; and the applied
+> verdict names no post.
+
+**What follows the commit is the commit's.** Once the funnel's transaction has committed, and was not
+nested in a reorg's, the funnel voids the template (→ Triggers), moves net's relay gate (→ Post
+transactions → "The set moves after a commit, never inside a transaction"), emits `post_indexed` for
+each post the block first stored, in body order (`JOURNAL_EVENTS → post_indexed`), logs the block as
+applied, rebuilds the template, and reports the tip (→ Admin Listener; `NET_INTERFACE → API`). Nested,
+it does none of these: its applied verdict names the posts, and once the reorg's transaction commits,
+`reorg` voids the template, re-seeds the relay gate, then for each block it applied, in order, emits
+`post_indexed` for the posts that verdict named, logs the block as applied and registers its
+placeholders with the backfill driver (→ Store Interface → Posts DAG, "Backfill after sync"), then
+reports the tip and rebuilds the template. **A block the funnel refuses, of any class, and a reorg that
+rolls back leave every one of these as it stood** — no event, no line logging a block as applied, no
+placeholder whose row rolled back, and the template not voided. The kept root is the one record made
+per applied block, nested or not, and a reorg that rolls back restores the ring (→ "A proof at an
+older height restores a kept root").
 
 **The funnel is total.** `applyOrderingBlock` MUST NOT propagate an exception
 for any input. A block that causes an unexpected throw is a block the node
@@ -5551,7 +5591,10 @@ promise ("One resolution at a time") — so a rejection that reaches it is a def
 came from.
 
 **The funnel answers with a class.** `applyOrderingBlockVerdict(block)` is the funnel's body: it
-answers `{ applied: true }` or `{ applied: false, class }`, `class` one of `'consensus'` (every
+answers `{ applied: true, indexed }` or `{ applied: false, class }`. `indexed` is the posts the block
+first stored, in body order, each `{ postId, parentRefCount }` — emitted by the funnel itself when its
+transaction was the outermost, and by `reorg` once its own commits when it was nested (→ "What follows
+the commit is the commit's"). `class` is one of `'consensus'` (every
 explicit rejection), `'acceptance'` (the future bound — `MINING_INTERFACE → Header timestamp rules`)
 or `'local'` (the catch above, with the error's text). `applyOrderingBlock(block)` is its boolean
 projection, `verdict.applied`, for the callers that need only the continue signal —
