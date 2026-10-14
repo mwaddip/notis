@@ -30,11 +30,11 @@ function refusedNaming(tx: unknown, name: string): void {
 }
 
 describe('checkTxEnvelope is total over a post that is not an object', () => {
-  it.fails('refuses post null under the era version, and does not throw', () => {
+  it('refuses post null under the era version, and does not throw', () => {
     refusedNaming(envelope({ post: null }), 'post');
   });
 
-  it.fails('refuses post null under a version that is not the era, naming protocolVersion', () => {
+  it('refuses post null under a version that is not the era, naming protocolVersion', () => {
     refusedNaming(envelope({ post: null, protocolVersion: 2 }), 'protocolVersion');
   });
 
