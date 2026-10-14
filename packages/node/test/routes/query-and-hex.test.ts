@@ -151,25 +151,25 @@ describe('a query parameter is one string, and hex is lowercase', () => {
   // An uppercase hex spelling in an identity parameter or an `after` cursor
   // ---------------------------------------------------------------------------
 
-  it.fails('GET /posts?author=<key in uppercase> answers 400', async () => {
+  it('GET /posts?author=<key in uppercase> answers 400', async () => {
     const res = await fetch(`${baseUrl}/posts?author=${UPPER_KEY}`);
     expect(errorSpy).not.toHaveBeenCalled();
     expect(res.status).toBe(400);
   });
 
-  it.fails('GET /karma/<key in uppercase> answers 400', async () => {
+  it('GET /karma/<key in uppercase> answers 400', async () => {
     const res = await fetch(`${baseUrl}/karma/${UPPER_KEY}`);
     expect(errorSpy).not.toHaveBeenCalled();
     expect(res.status).toBe(400);
   });
 
-  it.fails('GET /usernames?owner=<key in uppercase> answers 400', async () => {
+  it('GET /usernames?owner=<key in uppercase> answers 400', async () => {
     const res = await fetch(`${baseUrl}/usernames?owner=${UPPER_KEY}`);
     expect(errorSpy).not.toHaveBeenCalled();
     expect(res.status).toBe(400);
   });
 
-  it.fails(
+  it(
     'GET /karma/<key>?after=<value>:<box id in uppercase> answers 400',
     async () => {
       const res = await fetch(
@@ -184,7 +184,7 @@ describe('a query parameter is one string, and hex is lowercase', () => {
   // POST /posts/batch — an uppercase id
   // ---------------------------------------------------------------------------
 
-  it.fails(
+  it(
     'POST /posts/batch { ids: [<id in uppercase>] } answers 400 ids must be 64 lowercase hex characters',
     async () => {
       const res = await fetch(`${baseUrl}/posts/batch`, {
@@ -203,7 +203,7 @@ describe('a query parameter is one string, and hex is lowercase', () => {
   // GET /posts/:id and GET /posts/:id/thread — an uppercase or malformed id
   // ---------------------------------------------------------------------------
 
-  it.fails(
+  it(
     'GET /posts/<id in uppercase> answers 400 — the shape check runs ahead of the lookup',
     async () => {
       const res = await fetch(`${baseUrl}/posts/${UPPER_POST_ID}`);
@@ -212,7 +212,7 @@ describe('a query parameter is one string, and hex is lowercase', () => {
     },
   );
 
-  it.fails(
+  it(
     'GET /posts/<id in uppercase>/thread answers 400 — the shape check runs ahead of the lookup',
     async () => {
       const res = await fetch(`${baseUrl}/posts/${UPPER_POST_ID}/thread`);
@@ -221,7 +221,7 @@ describe('a query parameter is one string, and hex is lowercase', () => {
     },
   );
 
-  it.fails(
+  it(
     'GET /posts/<malformed id> answers 400 — the same shape check',
     async () => {
       const res = await fetch(`${baseUrl}/posts/xyz`);
@@ -230,7 +230,7 @@ describe('a query parameter is one string, and hex is lowercase', () => {
     },
   );
 
-  it.fails(
+  it(
     'GET /posts/<malformed id>/thread answers 400 — the same shape check',
     async () => {
       const res = await fetch(`${baseUrl}/posts/xyz/thread`);
@@ -243,7 +243,7 @@ describe('a query parameter is one string, and hex is lowercase', () => {
   // GET /api/v1/proof/:key and GET /api/v1/range/:kind/:owner — uppercase hex
   // ---------------------------------------------------------------------------
 
-  it.fails(
+  it(
     'GET /api/v1/proof/<130 hex in uppercase> answers 400',
     async () => {
       const res = await fetch(`${baseUrl}/api/v1/proof/${UPPER_TREE_KEY}`);
@@ -252,7 +252,7 @@ describe('a query parameter is one string, and hex is lowercase', () => {
     },
   );
 
-  it.fails(
+  it(
     'GET /api/v1/range/karma/<owner in uppercase> answers 400',
     async () => {
       const res = await fetch(`${baseUrl}/api/v1/range/karma/${UPPER_KEY}`);
@@ -261,7 +261,7 @@ describe('a query parameter is one string, and hex is lowercase', () => {
     },
   );
 
-  it.fails(
+  it(
     'GET /api/v1/range/karma/<owner>?from=<key in uppercase> answers 400',
     async () => {
       const res = await fetch(
@@ -276,7 +276,7 @@ describe('a query parameter is one string, and hex is lowercase', () => {
   // GET /shell/:id — an uppercase id
   // ---------------------------------------------------------------------------
 
-  it.fails(
+  it(
     'GET /shell/<id in uppercase> answers 400 — the shell\'s own regex refuses it',
     async () => {
       const res = await fetch(`${baseUrl}/shell/${UPPER_POST_ID}`);

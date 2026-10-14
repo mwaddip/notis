@@ -281,7 +281,7 @@ describe('GET /api/v1/proof/:key', () => {
     const res = await request(app)
       .get('/api/v1/proof/' + box.id)
       .expect(400);
-    expect(res.body.error).toMatch(/130 hex/);
+    expect(res.body.error).toMatch(/130 lowercase hex/);
   });
 
   it('returns 404 for unavailable height', async () => {

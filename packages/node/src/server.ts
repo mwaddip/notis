@@ -238,8 +238,9 @@ export function createApp(config: Config): express.Express {
     }
 
     const postId = req.params['id']!;
-    if (!/^[0-9a-fA-F]{64}$/.test(postId)) {
-      res.status(400).json({ error: 400, reason: 'id must be a 64-character hex string' });
+    // NODE_INTERFACE → HTTP API → "Hex is lowercase"
+    if (!/^[0-9a-f]{64}$/.test(postId)) {
+      res.status(400).json({ error: 400, reason: 'id must be 64 lowercase hex characters' });
       return;
     }
 

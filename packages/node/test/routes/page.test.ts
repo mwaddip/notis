@@ -175,11 +175,11 @@ describe('parseAfter (box)', () => {
     expect((r as { value: bigint }).value).toBe(0n);
   });
 
-  it('lower-cases upper-case hex', () => {
+  // NODE_INTERFACE → HTTP API → "Hex is lowercase"
+  it('refuses an upper-case boxId', () => {
     const upper = 'AB'.repeat(32);
     const r = parseAfter({ after: `50:${upper}` }, 'box');
-    expect(isAfterError(r)).toBe(false);
-    expect((r as { id: string }).id).toBe(upper.toLowerCase());
+    expect(isAfterError(r)).toBe(true);
   });
 
   it('rejects value past domain', () => {
@@ -228,11 +228,11 @@ describe('parseAfter (id)', () => {
     expect(r).toBe(hex);
   });
 
-  it('lower-cases upper-case hex', () => {
+  // NODE_INTERFACE → HTTP API → "Hex is lowercase"
+  it('refuses an upper-case id', () => {
     const upper = 'CD'.repeat(32);
     const r = parseAfter({ after: upper }, 'id');
-    expect(isAfterError(r)).toBe(false);
-    expect(r).toBe(upper.toLowerCase());
+    expect(isAfterError(r)).toBe(true);
   });
 
   it('rejects short hex', () => {
@@ -326,12 +326,21 @@ describe('parseBatchIds', () => {
     expect(bad.error).toBe('ids must hold 1 to 100 post ids');
   });
 
-  it('answers lower-cased ids in the order given', () => {
+  // NODE_INTERFACE → HTTP API → "Hex is lowercase": an upper-case id is 400.
+  it('refuses an upper-case id', () => {
     const upper = 'AB'.repeat(32);
-    const lower = 'cd'.repeat(32);
-    const r = parseBatchIds({ ids: [upper, lower] });
+    const r = parseBatchIds({ ids: [upper] });
+    expect(isBatchIdsError(r)).toBe(true);
+    if (!isBatchIdsError(r)) return;
+    expect(r.error).toBe('ids must be 64 lowercase hex characters');
+  });
+
+  it('answers the ids in the order given', () => {
+    const a = 'ab'.repeat(32);
+    const b = 'cd'.repeat(32);
+    const r = parseBatchIds({ ids: [b, a] });
     expect(isBatchIdsError(r)).toBe(false);
-    expect(r).toEqual([upper.toLowerCase(), lower]);
+    expect(r).toEqual([b, a]);
   });
 
   it('a body of undefined is 400 ids required (array)', () => {
@@ -394,25 +403,25 @@ describe('parseBatchIds', () => {
     expect(bad.error).toBe('ids must hold 1 to 100 post ids');
   });
 
-  it('a non-string entry is 400 ids must be 64-character hex strings', () => {
+  it('a non-string entry is 400 ids must be 64 lowercase hex characters', () => {
     const r = parseBatchIds({ ids: [42] });
     expect(isBatchIdsError(r)).toBe(true);
     if (!isBatchIdsError(r)) return;
-    expect(r.error).toBe('ids must be 64-character hex strings');
+    expect(r.error).toBe('ids must be 64 lowercase hex characters');
   });
 
-  it('a 63-char entry is 400 ids must be 64-character hex strings', () => {
+  it('a 63-char entry is 400 ids must be 64 lowercase hex characters', () => {
     const r = parseBatchIds({ ids: ['0'.repeat(63)] });
     expect(isBatchIdsError(r)).toBe(true);
     if (!isBatchIdsError(r)) return;
-    expect(r.error).toBe('ids must be 64-character hex strings');
+    expect(r.error).toBe('ids must be 64 lowercase hex characters');
   });
 
-  it('a 64-char non-hex entry is 400 ids must be 64-character hex strings', () => {
+  it('a 64-char non-hex entry is 400 ids must be 64 lowercase hex characters', () => {
     const r = parseBatchIds({ ids: ['z'.repeat(64)] });
     expect(isBatchIdsError(r)).toBe(true);
     if (!isBatchIdsError(r)) return;
-    expect(r.error).toBe('ids must be 64-character hex strings');
+    expect(r.error).toBe('ids must be 64 lowercase hex characters');
   });
 
   it('a repeated id is 400 ids must not repeat', () => {
@@ -423,12 +432,15 @@ describe('parseBatchIds', () => {
     expect(r.error).toBe('ids must not repeat');
   });
 
-  it('an id repeated in another case is 400 ids must not repeat', () => {
+  // NODE_INTERFACE → HTTP API → "Hex is lowercase": the second entry's
+  // upper-case spelling meets the shape check first; the dedup check never
+  // runs.
+  it('an id and its upper-case spelling: the shape check refuses the upper one', () => {
     const lower = 'ab'.repeat(32);
     const r = parseBatchIds({ ids: [lower, lower.toUpperCase()] });
     expect(isBatchIdsError(r)).toBe(true);
     if (!isBatchIdsError(r)) return;
-    expect(r.error).toBe('ids must not repeat');
+    expect(r.error).toBe('ids must be 64 lowercase hex characters');
   });
 });
 

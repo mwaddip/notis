@@ -277,8 +277,9 @@ function proofAnswer(
 export function registerProofEndpoint(app: Express, handle: AvlProverHandle): void {
   app.get('/api/v1/proof/:key', (req: Request, res: Response) => {
     const keyHex = req.params['key'];
-    if (!keyHex || keyHex.length !== TREE_KEY_LENGTH * 2 || !/^[0-9a-fA-F]+$/.test(keyHex)) {
-      res.status(400).json({ error: `key must be ${TREE_KEY_LENGTH * 2} hex characters` });
+    // NODE_INTERFACE → HTTP API → "Hex is lowercase"
+    if (!keyHex || keyHex.length !== TREE_KEY_LENGTH * 2 || !/^[0-9a-f]+$/.test(keyHex)) {
+      res.status(400).json({ error: `key must be ${TREE_KEY_LENGTH * 2} lowercase hex characters` });
       return;
     }
     const key = new Uint8Array(Buffer.from(keyHex, 'hex'));
@@ -339,8 +340,9 @@ export function registerRangeEndpoint(app: Express, handle: AvlProverHandle): vo
     const kind = kindRaw as HoldingKind;
 
     const ownerHex = req.params['owner'] ?? '';
-    if (ownerHex.length !== 64 || !/^[0-9a-fA-F]+$/.test(ownerHex)) {
-      res.status(400).json({ error: 'owner must be 64 hex characters' });
+    // NODE_INTERFACE → HTTP API → "Hex is lowercase"
+    if (ownerHex.length !== 64 || !/^[0-9a-f]+$/.test(ownerHex)) {
+      res.status(400).json({ error: 'owner must be 64 lowercase hex characters' });
       return;
     }
     const owner = hexToBytes(ownerHex);
@@ -349,8 +351,9 @@ export function registerRangeEndpoint(app: Express, handle: AvlProverHandle): vo
     let from: Uint8Array | null = null;
     let fromHex: string | null = null;
     if (fromRaw !== undefined) {
-      if (typeof fromRaw !== 'string' || fromRaw.length !== TREE_KEY_LENGTH * 2 || !/^[0-9a-fA-F]+$/.test(fromRaw)) {
-        res.status(400).json({ error: `from must be ${TREE_KEY_LENGTH * 2} hex characters` });
+      // NODE_INTERFACE → HTTP API → "Hex is lowercase"
+      if (typeof fromRaw !== 'string' || fromRaw.length !== TREE_KEY_LENGTH * 2 || !/^[0-9a-f]+$/.test(fromRaw)) {
+        res.status(400).json({ error: `from must be ${TREE_KEY_LENGTH * 2} lowercase hex characters` });
         return;
       }
       fromHex = fromRaw;
