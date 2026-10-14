@@ -138,7 +138,7 @@ describe('the block\'s cost', () => {
     expect(bytesToHex(handle.prover.digest())).toBe(digest);
 
     budget.set(cost);
-    expect(applyOrderingBlockVerdict(block)).toEqual({ applied: true });
+    expect(applyOrderingBlockVerdict(block)).toEqual({ applied: true, indexed: [] });
     expect(getCurrentHeight()).toBe(1);
   });
 

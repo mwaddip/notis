@@ -49,12 +49,13 @@ import { tryGetAvlProver } from '../state/avl-prover.js';
 import type { KeptRoot } from '../state/recent-roots.js';
 import { label } from '@dagsocial/avltree';
 import { GENESIS_HEIGHT } from './genesis-state.js';
-import { applyOrderingBlockVerdict } from './block-apply.js';
+import { announceAppliedBlock, applyOrderingBlockVerdict } from './block-apply.js';
+import type { IndexedPost } from './block-apply.js';
 import { registerPlaceholder } from './backfill.js';
 import { getPlaceholdersAt } from '../store/index.js';
 import { noteTip } from '../metrics.js';
 import { getNet } from './net-instance.js';
-import { rebuildTemplate } from './block-creator.js';
+import { clearTemplate, rebuildTemplate } from './block-creator.js';
 import {
   CorruptChainStateError,
   MissingStoredBlockError,
@@ -272,6 +273,11 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
     avlHandle.prover.prover.restoreRoot(saved.root, saved.height);
     if (ringSnapshot !== null) avlHandle.recentRoots.restore(ringSnapshot);
   };
+  // Phase 3 keeps each applied block with its verdict's `indexed` in this
+  // list; the post-commit sequence below iterates it. On abort the list is
+  // dropped with the catch, so a rolled-back reorg announces nothing
+  // (NODE_INTERFACE → "What follows the commit is the commit's").
+  const appliedWithIndexed: Array<{ block: OrderingBlock; indexed: readonly IndexedPost[] }> = [];
   try {
     getDb().transaction(() => {
   const currentHeight = getCurrentHeight();
@@ -352,7 +358,11 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
   }
 
   // Phase 3: apply new chain — through the classified entry
-  // (NODE_INTERFACE → Fork choice decides on verified headers, step 10).
+  // (NODE_INTERFACE → Fork choice decides on verified headers, step 10). Each
+  // applied block's verdict carries the posts it first stored, held with the
+  // block for the post-commit `announceAppliedBlock` and `registerPlaceholder`
+  // loop below (NODE_INTERFACE → "What follows the commit is the commit's";
+  // NODE_INTERFACE → Store Interface → Posts DAG → "Backfill after sync").
   for (const block of newBlocks) {
     const verdict = applyOrderingBlockVerdict(block);
     if (!verdict.applied) {
@@ -362,9 +372,7 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
       }
       throw new ReorgAbortedError(block.header.height, hash, verdict.class, verdict.detail);
     }
-    for (const p of getPlaceholdersAt(block.header.height)) {
-      registerPlaceholder(p.id, p.contentHash, block.header.height, '');
-    }
+    appliedWithIndexed.push({ block, indexed: verdict.indexed });
   }
     })();
   } catch (err) {
@@ -376,10 +384,27 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
     throw err;
   }
 
+  // NODE_INTERFACE → Triggers → "The template is voided at the commit that
+  // moves the tip, and nowhere else".
+  clearTemplate();
+
   // Net's relay gate, re-seeded from the store the reorg committed
   // (NODE_INTERFACE → Post transactions → "The set moves after a commit, never
   // inside a transaction").
   getNet()?.setKarmaMembers(getKarmaOwners());
+
+  // NODE_INTERFACE → "What follows the commit is the commit's": for each
+  // applied block, in order, `emitPostIndexed` and the applied log line
+  // (`announceAppliedBlock`), then the placeholder registrations the block
+  // produced (NODE_INTERFACE → Store Interface → Posts DAG → "Backfill after
+  // sync"). The query answers what the transaction committed, less what a
+  // later block of the same reorg withdrew.
+  for (const { block, indexed } of appliedWithIndexed) {
+    announceAppliedBlock(block, indexed);
+    for (const p of getPlaceholdersAt(block.header.height)) {
+      registerPlaceholder(p.id, p.contentHash, block.header.height, '');
+    }
+  }
 
   // NODE_INTERFACE → Admin Listener: the tip the reorg left.
   noteTip(forkHeight + newBlocks.length);

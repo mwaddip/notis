@@ -151,7 +151,7 @@ async function importBlockApply() {
   )) as unknown as {
     applyOrderingBlock: (block: OrderingBlock) => boolean;
     applyOrderingBlockVerdict: (block: OrderingBlock) => (
-      | { applied: true }
+      | { applied: true; indexed: Array<{ postId: string; parentRefCount: number }> }
       | { applied: false; class: string; detail?: string }
     );
   };
@@ -3598,7 +3598,7 @@ describe('applyOrderingBlockVerdict classes', () => {
     const ba = await importBlockApply();
     const verdict = ba.applyOrderingBlockVerdict(block);
 
-    expect(verdict).toEqual({ applied: true });
+    expect(verdict).toEqual({ applied: true, indexed: [] });
   });
 
   it('answers consensus for a header carrying a utxoTxRoot that is not its body\'s, and applies the same body under its own root', async () => {
@@ -3629,7 +3629,7 @@ describe('applyOrderingBlockVerdict classes', () => {
 
     // The same body under its own root applies — nothing else about the honest
     // block is wrong.
-    expect(ba.applyOrderingBlockVerdict(honest)).toEqual({ applied: true });
+    expect(ba.applyOrderingBlockVerdict(honest)).toEqual({ applied: true, indexed: [] });
   });
 });
 

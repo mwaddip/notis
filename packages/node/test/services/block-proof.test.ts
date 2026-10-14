@@ -278,7 +278,7 @@ describe('the block proof', () => {
 
     // The prover's proof cycle is where the refused block found it: the honest
     // block applies, and the proof it stores is the one its header names.
-    expect(applyOrderingBlockVerdict(honest)).toEqual({ applied: true });
+    expect(applyOrderingBlockVerdict(honest)).toEqual({ applied: true, indexed: [] });
     expect(bytesToHex(hash32((await storedProof(1))!))).toBe(honest.header.adProofsRoot);
   });
 

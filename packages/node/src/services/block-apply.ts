@@ -114,10 +114,21 @@ class BlockRejected extends Error {}
 class BlockBeyondFutureBound extends Error {}
 
 /**
+ * A post the block first stored. Carried by the applied verdict so that
+ * `emitPostIndexed` reads it once the outermost transaction has committed —
+ * the funnel's for a block that extended the tip, or `reorg`'s for a nested
+ * apply (NODE_INTERFACE → "What follows the commit is the commit's").
+ */
+export interface IndexedPost {
+  postId: string;
+  parentRefCount: number;
+}
+
+/**
  * NODE_INTERFACE → "The funnel answers with a class".
  */
 export type ApplyVerdict =
-  | { applied: true }
+  | { applied: true; indexed: IndexedPost[] }
   | { applied: false; class: 'consensus' | 'acceptance' | 'local'; detail?: string };
 
 /**
@@ -246,12 +257,12 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
   const restoreProver = (): void => {
     if (avlHandle && saved) avlHandle.prover.prover.restoreRoot(saved.root, saved.height);
   };
-  let karmaOwners: Set<string>;
+  let moved: { karmaOwners: Set<string>; indexed: IndexedPost[] };
   try {
-    karmaOwners = getDb().transaction(() => {
-      const moved = applyBlockBody(block);
-      if (moved === null) throw new BlockRejected();
-      return moved;
+    moved = getDb().transaction(() => {
+      const m = applyBlockBody(block);
+      if (m === null) throw new BlockRejected();
+      return m;
     })();
   } catch (err) {
     if (err instanceof BlockRejected) {
@@ -294,6 +305,16 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
     return { applied: false, class: 'local', detail };
   }
 
+  // NODE_INTERFACE → "What follows the commit is the commit's". The nested
+  // branch is `reorg`'s transaction, where this block is not the tip yet;
+  // `reorg` runs the post-commit sequence per applied block once its own
+  // transaction commits.
+  const nested = getDb().inTransaction;
+
+  // NODE_INTERFACE → Triggers → "The template is voided at the commit that
+  // moves the tip, and nowhere else".
+  if (!nested) clearTemplate();
+
   // The block applied — record the kept root (NODE_INTERFACE → "A proof at an
   // older height restores a kept root") with the store's count of nodes the
   // block's checkpoint orphaned (NODE_INTERFACE → "The count is the store's").
@@ -313,38 +334,33 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
     );
   }
 
-  // The tip moved, so a miner node's template moved with it — one template per
-  // height, rebuilt on tip movement alone (MINING_INTERFACE → Template and
-  // submit). Outside the try: a throw from here is not a verdict on this block,
-  // which is committed, and the catch arms above would answer for it as though
-  // it were — rolling the prover back off state SQLite has already kept.
-  //
-  // Only once the write is committed. Nested inside `reorg`'s transaction this
-  // block is not the tip yet, and a template derived there describes a chain a
-  // failed reorg rolls back; `reorg` rebuilds once, after its own commit, and
-  // the tip metric moves with it (NODE_INTERFACE → Admin Listener).
-  if (!getDb().inTransaction) {
+  if (!nested) {
     // Net's relay gate follows the committed state for the owners whose karma
-    // boxes this block moved; nested in a reorg, the reorg re-seeds it after its
-    // own commit (NODE_INTERFACE → Post transactions → "The set moves after a
-    // commit, never inside a transaction").
-    moveKarmaMembers(karmaOwners);
+    // boxes this block moved (NODE_INTERFACE → Post transactions → "The set
+    // moves after a commit, never inside a transaction").
+    moveKarmaMembers(moved.karmaOwners);
+    // NODE_INTERFACE → "What follows the commit is the commit's":
+    // `emitPostIndexed` for each post the block first stored, then the applied
+    // log line.
+    announceAppliedBlock(block, moved.indexed);
     rebuildTemplate();
     noteTip(block.header.height);
     // The applied tip reaches net at the same seam, so a version boundary can
     // sweep peers below the new era (NET_INTERFACE → API).
     getNet()?.tipApplied(block.header.height);
   }
-  return { applied: true };
+  return { applied: true, indexed: moved.indexed };
 }
 
 /**
  * The block's checks, its mutation phase and its writes, inside the funnel's
  * transaction: `null` when a check or a rule refuses the block, otherwise the
- * owners whose karma boxes it moved, for the move of net's relay gate once the
- * transaction has committed.
+ * owners whose karma boxes it moved — for the move of net's relay gate once
+ * the transaction has committed — and the posts it first stored, in body
+ * order, for the post-commit announcements (NODE_INTERFACE → "What follows the
+ * commit is the commit's").
  */
-function applyBlockBody(block: OrderingBlock): Set<string> | null {
+function applyBlockBody(block: OrderingBlock): { karmaOwners: Set<string>; indexed: IndexedPost[] } | null {
   // The rules read the tree and nothing else, so a node with no prover applies
   // nothing: the throw is the funnel's catch's, a refusal kept off the mark
   // (NODE_INTERFACE → Post-block stateRoot → "A node applies and produces over
@@ -478,12 +494,6 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
   // 6. Store the block — the vector the funnel verified is the one stored
   storeCreateOrderingBlock(block, expectedInterlinks);
 
-  // 6. Invalidate the local mining template (this height is taken). Only
-  // invalidation here: the replacement commits to the post-block stateRoot, and
-  // the mutation phase and AVL root update that produce it are still ahead. The
-  // rebuild is at the end of `applyOrderingBlock`, once the write is committed.
-  clearTemplate();
-
   // 7–13. The mutation phase (NODE_INTERFACE → "Apply funnel: validation and
   // mutation phases"): the rules over the block's tree view, answering the
   // block's effects or the reason a rule refused it, and writing nothing. The
@@ -546,7 +556,10 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
   }
 
   // The effects written to the store, and the block journal built from them.
-  const journal = writeBlockEffects(result.effects, height);
+  // `indexed` names the posts the block first stored, for the post-commit
+  // `emitPostIndexed` (NODE_INTERFACE → "What follows the commit is the
+  // commit's"; JOURNAL_EVENTS → post_indexed).
+  const { journal, indexed } = writeBlockEffects(result.effects, height);
 
   // Checkpoint prover state at this height. Its proof is the block's — its
   // reads, then its writes — and the header commits to its hash32 as
@@ -581,15 +594,27 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
   pruneBlockProofs(height - config.proofRetentionBlocks);
   pruneBlockProofsByBytes(config.proofRetentionBytes);
 
-  // The one site where an absence is simply printed. `applyOrderingBlock` ran
-  // `verifyOrderingBlockStructure` over this header before calling us, so it is
-  // inside the domain and this prints the hash. The block is applied and the
-  // transaction is about to commit; turning a log line into a throw would roll
-  // back a valid block, and inventing a placeholder would print a hash that is
-  // not one. If the impossible happens the line says `hash=null`, which is true.
+  return { karmaOwners, indexed };
+}
+
+/**
+ * The post-commit announcements for one applied block (NODE_INTERFACE → "What
+ * follows the commit is the commit's"): `emitPostIndexed` for each post the
+ * block first stored, in body order, then the applied log line. Run by the
+ * funnel once its transaction committed, and by `reorg` once the reorg's did,
+ * per applied block in order.
+ */
+export function announceAppliedBlock(block: OrderingBlock, indexed: readonly IndexedPost[]): void {
+  for (const { postId, parentRefCount } of indexed) {
+    emitPostIndexed(postId, parentRefCount);
+  }
+  // Every block this announces passed the funnel's `verifyOrderingBlockStructure`,
+  // so its header is inside the domain and `blockHash` prints the hash. A throw
+  // here would leave the rest of the post-commit sequence unrun, the rebuild
+  // among it, for a block that has committed. If the impossible happens the
+  // line says `hash=null`, which is true.
   const appliedHash = validation.blockHash(block.header);
-  console.log(`Applied ordering block height=${height} hash=${appliedHash} (${block.utxoTxTree.utxoTxIds.length} txs)`);
-  return karmaOwners;
+  console.log(`Applied ordering block height=${block.header.height} hash=${appliedHash} (${block.utxoTxTree.utxoTxIds.length} txs)`);
 }
 
 /**
@@ -599,16 +624,25 @@ function applyBlockBody(block: OrderingBlock): Set<string> | null {
  * replaces just before it writes, so a key written twice journals twice. Every
  * write runs inside the funnel's transaction and nothing here catches: a write
  * that fails fails the block (NODE_INTERFACE → "The funnel is total").
+ *
+ * Returns the journal and the `indexed` list — the posts the block first
+ * stored as placeholder rows, in body order, each with `post.parentRefs.length`
+ * — for the post-commit `emitPostIndexed` (NODE_INTERFACE → "What follows the
+ * commit is the commit's"; JOURNAL_EVENTS → post_indexed).
  */
-export function writeBlockEffects(effects: BlockEffects, height: number): BlockJournal {
+export function writeBlockEffects(
+  effects: BlockEffects,
+  height: number,
+): { journal: BlockJournal; indexed: IndexedPost[] } {
   // The block's posts, confirmed at their committed positions: a row this node
   // holds as it is, a placeholder from the commit for one it lacks
   // (NODE_INTERFACE → Post transactions → "A post applied without its packet
   // is a placeholder").
+  const indexed: IndexedPost[] = [];
   effects.posts.forEach(({ postId, txId, post }, index) => {
     if (getPost(postId) === null) {
       insertPost(postId, txId, post, null);
-      emitPostIndexed(postId, post.parentRefs.length);
+      indexed.push({ postId, parentRefCount: post.parentRefs.length });
     }
     confirmPost(postId, height, index);
   });
@@ -711,7 +745,7 @@ export function writeBlockEffects(effects: BlockEffects, height: number): BlockJ
   // cleanup reaches every row).
   for (const { txId } of effects.appliedTxs) removeUtxoTxEntry(txId);
 
-  return {
+  const journal: BlockJournal = {
     blockHeight: height,
     mutations,
     confirmedPostIds: effects.posts.map(({ postId }) => postId),
@@ -719,6 +753,7 @@ export function writeBlockEffects(effects: BlockEffects, height: number): BlockJ
     likeRecordInsertions,
     withdrawnPosts,
   };
+  return { journal, indexed };
 }
 
 /**

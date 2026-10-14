@@ -113,10 +113,15 @@ path, `validateTx` alone on the relay path — so the two paths' durations are
 not comparable.
 
 ### post_indexed
+
 **Level:** INFO
 **Fields:** `post_id` (string), `parent_ref_count` (number: 0 root, 1 reply)
-**Emitted:** After the post is stored — at local creation, or at block
-application for a post first stored there. Once per post. `parent_ref_count`
+**Emitted:** After the post is stored — at local creation, once its store
+transaction commits; for a post a block first stored, once that block's
+transaction commits, or for a block a reorg applied, once the reorg's does
+(NODE_INTERFACE → "What follows the commit is the commit's"). A block that is
+refused, or applied in a reorg that rolls back, stored nothing and emits
+nothing. Once per post. `parent_ref_count`
 is the post's own parent-ref count; DAG depth is a consumer's store walk, not
 a field.
 

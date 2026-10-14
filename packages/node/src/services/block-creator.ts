@@ -310,10 +310,10 @@ export function getCurrentTemplate(): OrderingBlock | null {
 }
 
 /**
- * Invalidate the current template. Called mid-apply, where the block being
- * applied has already taken this height: the template is void from that point
- * on, and the replacement cannot be derived until the mutation phase and the
- * AVL root update have run.
+ * Void the current template. Called at the commit that moves the tip, before
+ * `rebuildTemplate`, and by `stopBlockCreator` (NODE_INTERFACE → Triggers →
+ * "The template is voided at the commit that moves the tip, and nowhere
+ * else"). A refused block moves no tip and leaves the template as it stood.
  */
 export function clearTemplate(): void {
   currentTemplate = null;
@@ -1047,8 +1047,9 @@ export function createOrderingBlock(): OrderingBlock | null {
     // 21. Store the full block template (header + bodies) for the miner. Its
     // stateRoot is this height's post-block digest and its adProofsRoot the
     // digest of the proof over this height's pre-state, so the template stops
-    // being submittable once a competing block moves the pre-state — which is
-    // exactly what clearTemplate() on apply guarantees.
+    // being submittable once a competing block moves the pre-state — the void
+    // at the commit (NODE_INTERFACE → Triggers → "The template is voided at
+    // the commit that moves the tip, and nowhere else").
     //
     // This is where a produced block ends on this side: the nonce arrives from
     // `POST /mining/submit`, and `submitMinedBlock` is what finalizes.

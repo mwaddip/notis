@@ -114,7 +114,7 @@ describe('username journal round-trip', () => {
 
   it('revertBlock removes the row a claim wrote', () => {
     const row = { nameLower: 'frank', name: 'Frank', owner: hexId(), boxId: hexId(), claimedAtBlock: 4 };
-    insertBlockJournal(writeBlockEffects(nameEffects(row, false), 4));
+    insertBlockJournal(writeBlockEffects(nameEffects(row, false), 4).journal);
     expect(getUsername('frank')).toEqual(row);
 
     revertBlock(4);
@@ -124,7 +124,7 @@ describe('username journal round-trip', () => {
   it('revertBlock restores the row a burn removed', () => {
     const row = { nameLower: 'grace', name: 'Grace', owner: hexId(), boxId: hexId(), claimedAtBlock: 5 };
     putUsername(row);
-    insertBlockJournal(writeBlockEffects(nameEffects(row, true), 6));
+    insertBlockJournal(writeBlockEffects(nameEffects(row, true), 6).journal);
     expect(getUsername('grace')).toBeNull();
 
     revertBlock(6);
