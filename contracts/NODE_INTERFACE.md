@@ -609,7 +609,7 @@ five fields holds a second implementation of a consensus predicate, the mirror c
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/credits/transfer` | `{ tx: UtxoTransaction }` — client-built, client-signed; every output a credit box or a fee box, at least one a credit box | `{ status: "pending", txId, expiresAtHeight }` | 400 on an output of another type, an invalid tx or signature; 402 when its fee is below this node's floor (`MEMPOOL_INTERFACE → Fee floor`) |
+| `POST` | `/credits/transfer` | `{ tx: UtxoTransaction }` — client-built, client-signed; every output a credit box or a fee box — the outputs a credit spend may create (→ Legal box transitions) | `{ status: "pending", txId, expiresAtHeight }` | 400 on an output of another type, an invalid tx or signature; 402 when its fee is below this node's floor (`MEMPOOL_INTERFACE → Fee floor`) |
 
 > ⚠ **AHEAD OF CODE (2026-10-14).** The row's outputs and 402 lead `node/src/services/credits.ts`, which refuses
 > every output that is not a credit box — a fee box among them — so a floor above zero refuses every transfer.
