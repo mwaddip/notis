@@ -114,11 +114,6 @@ not comparable.
 
 ### post_indexed
 
-> ⚠ **AHEAD OF CODE (2026-10-14).** **Emitted** below leads the node's `services/block-apply.ts`:
-> `writeBlockEffects` emits the event inside the block's transaction, before the `adProofsRoot`
-> check, so a block refused there — or applied in a reorg that rolls back — emits it for a post the
-> store never kept.
-
 **Level:** INFO
 **Fields:** `post_id` (string), `parent_ref_count` (number: 0 root, 1 reply)
 **Emitted:** After the post is stored — at local creation, once its store

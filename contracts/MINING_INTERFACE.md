@@ -322,10 +322,6 @@ when one is produced are separate questions, and a rebuild mid-solve would void 
 in-flight work. **A block the node refuses does not touch it either** — a refusal moves no tip, so
 the template stands and a solve under way stays submittable (NODE_INTERFACE → Triggers).
 
-> ⚠ **AHEAD OF CODE (2026-10-14).** The last sentence above leads the node's
-> `services/block-apply.ts`: the apply funnel voids the template before the block's verdict, so a
-> refused block leaves the node with none until another block applies.
-
 **A build whose body the mutation phase rejects is repeated, not abandoned.** The creator evicts
 every pool row the rejected body carried — the cleanup a rejected
 finalize runs — and fills again from what the pool still holds, until it holds a template or a body

@@ -3009,11 +3009,6 @@ template rather than scheduling anything, and there is no timer.
 - **The tip moved** — `rebuildTemplate()`, after this node's own block finalizes, after a peer's block
   applies, and once after a reorg commits.
 
-> ⚠ **AHEAD OF CODE (2026-10-14).** The next two paragraphs lead `services/block-apply.ts` and
-> `services/fork-resolution.ts`: the funnel calls `clearTemplate()` inside its transaction, after the
-> block is stored and before the mutation phase, so a refused block leaves no template, and nothing
-> rebuilds one on a refusal or after a reorg that rolls back.
-
 **The template is voided at the commit that moves the tip, and nowhere else.** The first act once a
 block's transaction has committed — or, for the blocks a reorg applies, once the reorg's has — is
 `clearTemplate()`; the rest of what follows the commit runs after it, and `rebuildTemplate()` among
@@ -5539,14 +5534,6 @@ effect is persisted, and the writes that follow are the effects in their order
 re-validation, the withdrawal phase's binds, the settlement) answers the same
 reason on both paths. Any check that depends on the finalized header belongs in
 the validation phase.
-
-> ⚠ **AHEAD OF CODE (2026-10-14).** The next paragraph, the applied verdict's `indexed` (→ "The
-> funnel answers with a class") and the registration sentence of → Store Interface → Posts DAG,
-> "Backfill after sync" lead `services/block-apply.ts` and `services/fork-resolution.ts`: the funnel
-> voids the template inside its transaction, before the mutation phase; `writeBlockEffects` emits
-> `post_indexed` inside it, before the `adProofsRoot` check; the applied log line prints inside it;
-> `reorg` registers its placeholders with the backfill driver inside its transaction; and the applied
-> verdict names no post.
 
 **What follows the commit is the commit's.** Once the funnel's transaction has committed, and was not
 nested in a reorg's, the funnel voids the template (→ Triggers), moves net's relay gate (→ Post
