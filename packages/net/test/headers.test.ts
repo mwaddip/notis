@@ -729,19 +729,6 @@ describe('serve: GetBlocks byte bound', () => {
     expect(blocks!.map((b) => b.header.height)).toEqual([1, 2, 3]);
   });
 
-  it('always includes the first block, however heavy it is', () => {
-    // `MAX_BLOCK_BODY_BYTES` sits below `MAX_SERVE_BODY_BYTES`, so a legal block
-    // can never be this large and the clause is defensive. What it decides is
-    // whether an out-of-domain block still moves or wedges sync behind it: a
-    // loop that dropped it would re-serve the same truncated answer forever.
-    const store = new Map<number, OrderingBlock>();
-    const first = makeHeavyBlock(1, '00'.repeat(32), MAX_SERVE_BODY_BYTES + 1);
-    store.set(1, first);
-    store.set(2, makeMockOrderingBlock(2, mockBlockHash(first.header)));
-
-    const blocks = receiveBlocks(serveBlocks({ startHeight: 1, endHeight: 2 }, store), 1, 2);
-    expect(blocks!.map((b) => b.header.height)).toEqual([1]);
-  });
 });
 
 // ---------------------------------------------------------------------------

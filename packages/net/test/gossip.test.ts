@@ -1165,7 +1165,7 @@ describe('gossip topic validators weigh raw.length before decoding', () => {
     return encoded;
   }
 
-  it.fails('an ordering-block message one byte past MAX_ORDERING_BLOCK_BYTES is a ProtocolViolation', () => {
+  it('an ordering-block message one byte past MAX_ORDERING_BLOCK_BYTES is a ProtocolViolation', () => {
     const { topicValidators, peerMgr, penaltySpy } = makeHarness();
     const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
@@ -1182,7 +1182,7 @@ describe('gossip topic validators weigh raw.length before decoding', () => {
     );
   });
 
-  it.fails('a tx packet one byte past MAX_TX_PACKET_BYTES is a ProtocolViolation', () => {
+  it('a tx packet one byte past MAX_TX_PACKET_BYTES is a ProtocolViolation', () => {
     // A plain non-post transaction (no karma gate), content chosen so the
     // encoded packet is exactly MAX_TX_PACKET_BYTES + 1. The content byte count
     // is far past MAX_CONTENT_BYTES, so pre-rule the structural chain reaches

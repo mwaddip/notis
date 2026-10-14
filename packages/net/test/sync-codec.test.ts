@@ -212,7 +212,7 @@ function overBoundBlock(): OrderingBlock {
 }
 
 describe('chain response codecs weigh each item before decoding', () => {
-  it.fails('decodeBlocks refuses a response whose one block exceeds MAX_ORDERING_BLOCK_BYTES', () => {
+  it('decodeBlocks refuses a response whose one block exceeds MAX_ORDERING_BLOCK_BYTES', () => {
     const encoded = encodeOrderingBlock(overBoundBlock());
     expect(encoded.length).toBe(MAX_ORDERING_BLOCK_BYTES + 1);
     // The response body is `arr(blocks, lp)`: a hand-written one with one
@@ -224,7 +224,7 @@ describe('chain response codecs weigh each item before decoding', () => {
     expect(decodeBlocks(w.toBytes(), 1)).toBeNull();
   });
 
-  it.fails('decodeModifierResponse refuses a modifier whose data exceeds MAX_ORDERING_BLOCK_BYTES', () => {
+  it('decodeModifierResponse refuses a modifier whose data exceeds MAX_ORDERING_BLOCK_BYTES', () => {
     // The one modifier type served here is the ordering block, so the per-data
     // bound is the ordering-block bound.
     const encoded = encodeOrderingBlock(overBoundBlock());

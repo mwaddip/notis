@@ -13,7 +13,7 @@ import {
   MODIFIER_ORDERING_BLOCK,
 } from '../src/types.js';
 import type { NetConfig } from '../src/types.js';
-import { MAX_INV_IDS, MAX_SERVE_BODY_BYTES } from '../src/msg-guards.js';
+import { MAX_INV_IDS } from '../src/msg-guards.js';
 import { decodeFrame } from '../src/frame.js';
 import { decodeInv, decodeSyncInfo, decodeModifierRequest, decodeModifierResponse } from '../src/sync-codec.js';
 import type { SyncInfo, Inv, ModifierRequest } from '../src/sync-types.js';
@@ -1531,7 +1531,13 @@ describe('SyncMachine', () => {
     }
 
     it('truncates a response that would exceed MAX_SERVE_BODY_BYTES', () => {
-      const chunk = new Uint8Array(3 * 1024 * 1024);
+      // Each chunk is inside MAX_ORDERING_BLOCK_BYTES — the reader weighs each
+      // item against that bound (NET_INTERFACE → Validation (and untrusted-input
+      // safety) → "A peer's bytes are weighed before they are decoded"), so a
+      // chunk past it would be refused by the reader rather than by the serve
+      // loop under test. Three chunks of 1.5 MiB cross MAX_SERVE_BODY_BYTES on
+      // the third, so the serve loop stops at two.
+      const chunk = new Uint8Array(1_500_000);
       const { machine, sent } = makeReportingMachine({
         chainHeight: () => 3,
         heightByBlockId: () => 1,
@@ -1545,25 +1551,7 @@ describe('SyncMachine', () => {
       );
       machine.flush();
 
-      expect(servedModifierCount(sent)).toBe(1);
-    });
-
-    it('still serves a single block larger than the byte budget', () => {
-      const chunk = new Uint8Array(MAX_SERVE_BODY_BYTES + 1024);
-      const { machine, sent } = makeReportingMachine({
-        chainHeight: () => 1,
-        heightByBlockId: () => 1,
-        serializeOrderingBlock: () => chunk,
-      });
-
-      machine.handleMessage(
-        'peer1',
-        MSG_MODIFIER_REQUEST,
-        encodeStruct(modifierRequestCodec, { typeId: MODIFIER_ORDERING_BLOCK, ids: ids(1) }),
-      );
-      machine.flush();
-
-      expect(servedModifierCount(sent)).toBe(1);
+      expect(servedModifierCount(sent)).toBe(2);
     });
   });
 
