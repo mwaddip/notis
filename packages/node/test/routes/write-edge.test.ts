@@ -543,11 +543,8 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     delete json.outputs;
     const res = await request(baseUrl, '/credits/transfer', 'POST', { tx: json });
     expect(res.status).toBe(400);
-    const err = message(res.data);
-    expect(err).toContain('outputs');
-    // The edge's refusal names the absent key, ahead of any check the
-    // service makes on the outputs.
-    expect(err).not.toContain('CreditBoxes');
+    // The refusal is the JSON form's, ahead of the service.
+    expect(message(res.data)).toBe('outputs required');
   });
 
   // -------------------------------------------------------------------------
