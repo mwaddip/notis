@@ -1,6 +1,9 @@
-import { BOX_VALUE_BOUND, hexToBytes } from '@dagsocial/types';
-import type { AnyBox, PostCommit, PostType, PostWithdrawCommit, UtxoTransaction } from '@dagsocial/types';
+import { BOX_VALUE_BOUND, encodeTx, hexToBytes, MAX_TX_BYTES, protocolVersionAt } from '@dagsocial/types';
+import type { AnyBox, PostCommit, PostType, PostWithdrawCommit, ProtocolEra, UtxoTransaction } from '@dagsocial/types';
+import { checkOutputShape, checkTxEnvelope } from '@dagsocial/consensus';
+import { verifyTxStructure } from '@dagsocial/validation';
 import { ClientError } from '../services/client-error.js';
+import { TxTooLargeError } from '../store/mempool.js';
 
 /**
  * The HTTP JSON names of the box fields a transaction carries as bytes
@@ -97,6 +100,39 @@ export function jsonToTx(raw: unknown, defaultVersion: number): UtxoTransaction 
     ...(post !== undefined ? { post } : {}),
     ...(postWithdraw !== undefined ? { postWithdraw } : {}),
   };
+}
+
+/**
+ * NODE_INTERFACE → HTTP API → "A write request's transaction is checked
+ * whole before anything reads it". Reads the request's `tx` value whole
+ * before any service reads it: the JSON form (jsonToTx), then
+ * `checkTxEnvelope` at `height` and `checkOutputShape`
+ * (NODE_INTERFACE → Transaction envelope shape; → Output shape), then
+ * `verifyTxStructure` last (VALIDATION_INTERFACE → verifyTxStructure).
+ * Returns the transaction, or throws: a `ClientError` (400) for every
+ * refusal with the check's own error, except the structure refusal where
+ * `encodeTx(tx).length > MAX_TX_BYTES` — that one is `TxTooLargeError`
+ * (413), the pool's own bound
+ * (MEMPOOL_INTERFACE → insertUtxoTx → "It is the pool's own bound, not
+ * a restatement of validation's").
+ */
+export function checkRequestTx(
+  rawTx: unknown,
+  height: number,
+  schedule: readonly ProtocolEra[],
+): UtxoTransaction {
+  const tx = jsonToTx(rawTx, protocolVersionAt(schedule, height)!);
+  const envelope = checkTxEnvelope(tx, height, schedule);
+  if (!envelope.valid) throw new ClientError(envelope.error!);
+  const shape = checkOutputShape(tx.outputs);
+  if (!shape.valid) throw new ClientError(shape.error!);
+  const structure = verifyTxStructure(tx);
+  if (!structure.valid) {
+    const length = encodeTx(tx).length;
+    if (length > MAX_TX_BYTES) throw new TxTooLargeError(length);
+    throw new ClientError(structure.error!);
+  }
+  return tx;
 }
 
 function requireKey(obj: Record<string, unknown>, name: string): unknown {

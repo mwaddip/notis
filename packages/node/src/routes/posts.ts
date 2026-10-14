@@ -1,11 +1,10 @@
 import { Router } from 'express';
-import { protocolVersionAt } from '@dagsocial/types';
 import { createPost } from '../services/post-service.js';
 import type { PostServiceDeps } from '../services/post-service.js';
 import { FeedService } from '../services/feed-service.js';
 import type { FeedServiceDeps } from '../services/feed-service.js';
 import { getNet } from '../services/net-instance.js';
-import { jsonToTx } from './json-to-tx.js';
+import { checkRequestTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
 import { CorruptChainStateError, failStopIfCorruptChain } from '../services/corrupt-state.js';
 import type { PostKey } from '../store/index.js';
@@ -56,7 +55,7 @@ export function createRouter(deps: PostsDeps): Router {
 
     let tx;
     try {
-      tx = jsonToTx(rawTx, protocolVersionAt(deps.protocolVersionSchedule, deps.getCurrentHeight() + 1)!);
+      tx = checkRequestTx(rawTx, deps.getCurrentHeight() + 1, deps.protocolVersionSchedule);
     } catch (err) {
       respondError(res, err, 'POST /posts (tx decode)');
       return;

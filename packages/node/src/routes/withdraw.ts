@@ -1,9 +1,8 @@
 import { Router } from 'express';
 import type { UtxoTransaction } from '@dagsocial/types';
-import { protocolVersionAt } from '@dagsocial/types';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { getNet } from '../services/net-instance.js';
-import { jsonToTx } from './json-to-tx.js';
+import { checkRequestTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
 
 // ---------------------------------------------------------------------------
@@ -33,7 +32,7 @@ export function withdrawRoutes(deps: WithdrawDeps): Router {
 
     let tx: UtxoTransaction;
     try {
-      tx = jsonToTx(body.tx, protocolVersionAt(deps.protocolVersionSchedule, deps.getCurrentHeight() + 1)!);
+      tx = checkRequestTx(body.tx, deps.getCurrentHeight() + 1, deps.protocolVersionSchedule);
     } catch (err) {
       respondError(res, err, 'POST /posts/:id/withdraw (tx decode)', 'message');
       return;

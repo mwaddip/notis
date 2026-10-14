@@ -363,7 +363,7 @@ describe('vouch routes — the JSON edge', () => {
     const res = await new Promise<{ status: number; data: unknown }>((resolve) => {
       const server = app.listen(0, () => {
         const addr = server.address() as { port: number };
-        const payload = Buffer.from(JSON.stringify({ tx: { inputs: ['a'.repeat(64)], outputs: [], signatures: {}, protocolVersion: 1 } }));
+        const payload = Buffer.from(JSON.stringify({ tx: { inputs: ['a'.repeat(64)], outputs: [{ boxType: 'karma', value: '1', createdAtBlock: 0, owner: '00'.repeat(32) }], signatures: {}, protocolVersion: 1 } }));
         const req = http.request(
           { hostname: 'localhost', port: addr.port, path: '/', method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Content-Length': String(payload.length) } },
@@ -392,7 +392,7 @@ describe('vouch routes — the JSON edge', () => {
     const res = await new Promise<{ status: number; data: unknown }>((resolve) => {
       const server = app.listen(0, () => {
         const addr = server.address() as { port: number };
-        const payload = Buffer.from(JSON.stringify({ tx: { inputs: ['a'.repeat(64)], outputs: [], signatures: {}, protocolVersion: 1 } }));
+        const payload = Buffer.from(JSON.stringify({ tx: { inputs: ['a'.repeat(64)], outputs: [{ boxType: 'karma', value: '1', createdAtBlock: 0, owner: '00'.repeat(32) }], signatures: {}, protocolVersion: 1 } }));
         const req = http.request(
           { hostname: 'localhost', port: addr.port, path: `/${target.hex}`, method: 'DELETE',
             headers: { 'Content-Type': 'application/json', 'Content-Length': String(payload.length) } },

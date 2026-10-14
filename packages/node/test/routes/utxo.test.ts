@@ -774,7 +774,7 @@ describe('UTXO routes', () => {
             },
           );
           r.write(JSON.stringify({
-            tx: { inputs: ['cc'.repeat(32)], outputs: [{ boxType: 'credit', value: '10', owner: 'dd'.repeat(32) }], signatures: {}, protocolVersion: PROTOCOL_VERSION },
+            tx: { inputs: ['cc'.repeat(32)], outputs: [{ boxType: 'credit', value: '10', createdAtBlock: 0, owner: 'dd'.repeat(32) }], signatures: {}, protocolVersion: PROTOCOL_VERSION },
           }));
           r.end();
         });

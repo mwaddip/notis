@@ -308,7 +308,7 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     expect(res.status).toBe(400);
   });
 
-  it.fails('an uppercase input id on DELETE /vouches/:targetId answers 400 naming inputs', async () => {
+  it('an uppercase input id on DELETE /vouches/:targetId answers 400 naming inputs', async () => {
     const inputId = 'EF'.repeat(32);
     const tx = {
       inputs: [inputId],
@@ -460,7 +460,7 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
       expect(errorSpy).not.toHaveBeenCalled();
     });
 
-    it.fails('POST /invites with `inputs: "abc"` answers 400 and logs nothing', async () => {
+    it('POST /invites with `inputs: "abc"` answers 400 and logs nothing', async () => {
       const tx = {
         inputs: 'abc',
         outputs: [],
@@ -516,7 +516,7 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
   // Size — the pool's 413 is reachable before any store read
   // -------------------------------------------------------------------------
 
-  it.fails('POST /credits/transfer of 7 500 outputs with its one input nowhere answers 413 before any store read', async () => {
+  it('POST /credits/transfer of 7 500 outputs with its one input nowhere answers 413 before any store read', async () => {
     const missingInput = 'ab'.repeat(32);
     const outputs: Record<string, unknown>[] = [];
     for (let i = 0; i < 7_500; i++) {
@@ -532,7 +532,7 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     expect(res.status).toBe(413);
   });
 
-  it.fails('POST /invites with 15 000 distinct random 64-hex inputs answers 413 before any store read', async () => {
+  it('POST /invites with 15 000 distinct random 64-hex inputs answers 413 before any store read', async () => {
     const inputs: string[] = [];
     for (let i = 0; i < 15_000; i++) {
       const n = i.toString(16).padStart(10, '0');
@@ -554,7 +554,7 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     expect(res.status).toBe(413);
   });
 
-  it.fails('POST /credits/transfer one byte over MAX_TX_BYTES, input nowhere, answers 413', async () => {
+  it('POST /credits/transfer one byte over MAX_TX_BYTES, input nowhere, answers 413', async () => {
     const missingInput = 'cd'.repeat(32);
     const { tx, encodedLength } = buildTransferToSize(missingInput, MAX_TX_BYTES + 1);
     expect(encodedLength).toBe(MAX_TX_BYTES + 1);

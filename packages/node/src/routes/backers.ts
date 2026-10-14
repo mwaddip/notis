@@ -1,11 +1,11 @@
 // NODE_INTERFACE → Backers
 import { Router } from 'express';
 import type { BackerPoolBox, BackerStakeBox, UtxoTransaction } from '@dagsocial/types';
-import { protocolVersionAt, computeTxId, MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
+import { computeTxId, MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoEngineDeps, UtxoResult } from '@dagsocial/consensus';
 import { admitTx } from '../services/admit-tx.js';
 import { getNet } from '../services/net-instance.js';
-import { jsonToTx } from './json-to-tx.js';
+import { checkRequestTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
 import { resolveIdentityParam, isResolveError } from './page.js';
 
@@ -80,7 +80,7 @@ export function createRouter(deps: BackerRouteDeps): Router {
 
     let tx: UtxoTransaction;
     try {
-      tx = jsonToTx(body.tx, protocolVersionAt(deps.protocolVersionSchedule, deps.getCurrentHeight() + 1)!);
+      tx = checkRequestTx(body.tx, deps.getCurrentHeight() + 1, deps.protocolVersionSchedule);
     } catch (err) {
       respondError(res, err, 'POST /backers/unstake (tx decode)', 'message');
       return;

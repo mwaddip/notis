@@ -313,7 +313,7 @@ describe('posts routes', () => {
           },
         );
         r.write(JSON.stringify({
-          tx: { inputs: ['11'.repeat(32)], outputs: [], signatures: {}, protocolVersion: 1,
+          tx: { inputs: ['11'.repeat(32)], outputs: [{ boxType: 'karma', value: '1', createdAtBlock: 0, owner: '11'.repeat(32) }], signatures: {}, protocolVersion: 1,
             post: { contentHash: Buffer.from(contentHash).toString('hex'), author: '11'.repeat(32), parentRefs: [], type: 'regular' } },
           content,
         }));

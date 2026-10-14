@@ -1,9 +1,8 @@
 import { Router } from 'express';
 import type { UtxoTransaction } from '@dagsocial/types';
-import { protocolVersionAt } from '@dagsocial/types';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { getNet } from '../services/net-instance.js';
-import { jsonToTx } from './json-to-tx.js';
+import { checkRequestTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
 import {
   getVouchesForTargetPage,
@@ -46,7 +45,7 @@ export function createRouter(deps: VouchesDeps): Router {
     }
     let tx: UtxoTransaction;
     try {
-      tx = jsonToTx(body.tx, protocolVersionAt(deps.protocolVersionSchedule, deps.getCurrentHeight() + 1)!);
+      tx = checkRequestTx(body.tx, deps.getCurrentHeight() + 1, deps.protocolVersionSchedule);
     } catch (err) {
       respondError(res, err, 'POST /vouches (tx decode)');
       return;
@@ -79,7 +78,7 @@ export function createRouter(deps: VouchesDeps): Router {
     }
     let tx: UtxoTransaction;
     try {
-      tx = jsonToTx(body.tx, protocolVersionAt(deps.protocolVersionSchedule, deps.getCurrentHeight() + 1)!);
+      tx = checkRequestTx(body.tx, deps.getCurrentHeight() + 1, deps.protocolVersionSchedule);
     } catch (err) {
       respondError(res, err, 'DELETE /vouches/:targetId (tx decode)');
       return;
