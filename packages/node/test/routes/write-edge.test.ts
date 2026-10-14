@@ -308,6 +308,103 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     expect(res.status).toBe(400);
   });
 
+  it('a signed transfer whose output `owner` is spelled in uppercase answers 400 naming outputs[0].owner', async () => {
+    // The transaction is otherwise one the node would pool: the same bytes,
+    // the same id, the same valid signature — only the JSON spelling of its
+    // first output's `owner` is uppercase, and the strict `hexToBytes`
+    // refuses it at the JSON form.
+    const tx = buildSignedTransferOverFresh(50_000_000n, 100_000_000n);
+    const json = txToJson(tx) as Record<string, unknown>;
+    const outs = (json.outputs as Record<string, unknown>[]).map((o) => ({ ...o }));
+    outs[0]!.owner = (outs[0]!.owner as string).toUpperCase();
+    json.outputs = outs;
+    const res = await request(baseUrl, '/credits/transfer', 'POST', { tx: json });
+    expect(res.status).toBe(400);
+    expect(message(res.data)).toContain('outputs[0].owner');
+  });
+
+  it('POST /posts whose commit `author` is spelled in uppercase answers 400 naming post author', async () => {
+    // The post commit's domains hold under the uppercase decode's bytes, so
+    // the one refusal is the strict hex decoder at the JSON edge.
+    const content = 'hi';
+    const authorLower = 'ab'.repeat(32);
+    const tx = {
+      inputs: ['aa'.repeat(32)],
+      outputs: [{ boxType: 'karma', value: '1', createdAtBlock: 0, owner: authorLower }],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      post: {
+        contentHash: Buffer.from(computeContentHash(content)).toString('hex'),
+        author: authorLower.toUpperCase(),
+        parentRefs: [],
+        protocolVersion: PROTOCOL_VERSION,
+        type: 'regular',
+      },
+    };
+    const res = await request(baseUrl, '/posts', 'POST', { tx, content });
+    expect(res.status).toBe(400);
+    expect(message(res.data)).toContain('post author');
+  });
+
+  it('POST /posts whose commit `contentHash` is spelled in uppercase answers 400 naming post contentHash', async () => {
+    const content = 'hi';
+    const tx = {
+      inputs: ['aa'.repeat(32)],
+      outputs: [{ boxType: 'karma', value: '1', createdAtBlock: 0, owner: 'ab'.repeat(32) }],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      post: {
+        contentHash: Buffer.from(computeContentHash(content)).toString('hex').toUpperCase(),
+        author: 'ab'.repeat(32),
+        parentRefs: [],
+        protocolVersion: PROTOCOL_VERSION,
+        type: 'regular',
+      },
+    };
+    const res = await request(baseUrl, '/posts', 'POST', { tx, content });
+    expect(res.status).toBe(400);
+    expect(message(res.data)).toContain('post contentHash');
+  });
+
+  it('POST /vouches with a one-byte `targetId` answers 400 in the output shape\'s words, not castVouch\'s', async () => {
+    // The JSON form admits a `targetId` that decodes to one byte (even length,
+    // lowercase), so the refusal that holds the shape check is the schema's
+    // own words at the edge — not `castVouch`'s "Invalid vouch target", which
+    // is what the response reads when the shape check is removed.
+    const tx = {
+      inputs: ['aa'.repeat(32)],
+      outputs: [{
+        boxType: 'vouch',
+        value: '1',
+        createdAtBlock: 0,
+        voucherId: '00'.repeat(32),
+        targetId: '00',
+      }],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    const res = await request(baseUrl, '/vouches', 'POST', { tx });
+    expect(res.status).toBe(400);
+    const msg = message(res.data);
+    expect(msg).toContain('Invalid output shape');
+    expect(msg).toContain('targetId');
+    expect(msg).not.toContain('Invalid vouch target');
+  });
+
+  it('a signed transfer whose output value is spelled with one leading zero answers 400 naming outputs[0].value', async () => {
+    // The transaction is otherwise one the node would pool — the leading
+    // zero is a second spelling of a value the sender signed under exactly
+    // one spelling.
+    const tx = buildSignedTransferOverFresh(50_000_000n, 100_000_000n);
+    const json = txToJson(tx) as Record<string, unknown>;
+    const outs = (json.outputs as Record<string, unknown>[]).map((o) => ({ ...o }));
+    outs[0]!.value = '0' + (outs[0]!.value as string);
+    json.outputs = outs;
+    const res = await request(baseUrl, '/credits/transfer', 'POST', { tx: json });
+    expect(res.status).toBe(400);
+    expect(message(res.data)).toContain('outputs[0].value');
+  });
+
   it('an uppercase input id on DELETE /vouches/:targetId answers 400 naming inputs', async () => {
     const inputId = 'EF'.repeat(32);
     const tx = {
