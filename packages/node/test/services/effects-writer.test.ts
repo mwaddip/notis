@@ -110,6 +110,7 @@ describe('the effects writer', () => {
     const first = threadTx(poster, largest(poster), 'a first thread', 2);
     const second = threadTx(poster, outputsOf(first)[0]!, 'a second thread, paid from the first\'s change', 2);
     const firstId = computePostId(computeTxId(first), 0);
+    const secondId = computePostId(computeTxId(second), 0);
     const likeOpening = makeLikeTx(liker, largest(liker), openingId, author.userId);
     const likeFirst = makeLikeTx(liker, outputsOf(likeOpening)[0] as KarmaBox, firstId, poster.userId);
     const built = await makeApplicableBlock({ height: 2, utxoTxs: [first, second, likeOpening, likeFirst] });
@@ -117,7 +118,13 @@ describe('the effects writer', () => {
     // A decoded byte field is a plain `Uint8Array` whatever carried the input
     // (TYPES_INTERFACE → Primitives).
     expect(Buffer.isBuffer(block.utxoTxTree.utxoTxs[1])).toBe(false);
-    expect(blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true });
+    expect(blockApply.applyOrderingBlockVerdict(block)).toEqual({
+      applied: true,
+      indexed: [
+        { postId: firstId, parentRefCount: 0 },
+        { postId: secondId, parentRefCount: 0 },
+      ],
+    });
 
     const stored = db.getDb()
       .prepare('SELECT journal_cbor FROM block_journal WHERE block_height = 2')
@@ -221,7 +228,7 @@ describe('the effects writer — the entry each effect journals', () => {
     const who = uid('writer/record');
     const record: IdentityRecord = { ...NO_RECORD, lastActivityBlock: 4 };
 
-    const journal = s.writeBlockEffects(effectsOf({
+    const { journal } = s.writeBlockEffects(effectsOf({
       mutations: [
         { kind: 'box', op: 'insert', boxId: first.id!, box: first },
         { kind: 'box', op: 'remove', boxId: held.id! },
@@ -268,7 +275,7 @@ describe('the effects writer — the entry each effect journals', () => {
     const createdRecord: IdentityRecord = { ...NO_RECORD, lastActivityBlock: 6 };
     const keptRecord: IdentityRecord = { ...prior, lastActivityBlock: 6 };
 
-    const journal = s.writeBlockEffects(effectsOf({
+    const { journal } = s.writeBlockEffects(effectsOf({
       mutations: [
         { kind: 'record', identityId: created, record: createdRecord },
         { kind: 'record', identityId: kept, record: keptRecord },
@@ -293,7 +300,7 @@ describe('the effects writer — the entry each effect journals', () => {
     const bumped: IdentityRecord = { ...preBlock, lastActivityBlock: 40 };
     const decayed: IdentityRecord = { ...bumped, lastDecayBlock: 40 };
 
-    const journal = s.writeBlockEffects(effectsOf({
+    const { journal } = s.writeBlockEffects(effectsOf({
       mutations: [
         { kind: 'record', identityId: who, record: bumped },
         { kind: 'record', identityId: who, record: decayed },
@@ -310,7 +317,7 @@ describe('the effects writer — the entry each effect journals', () => {
 
   it('the network record journals the count written and the row it replaced', async () => {
     const s = await freshWriter();
-    const journal = s.writeBlockEffects(effectsOf({
+    const { journal } = s.writeBlockEffects(effectsOf({
       mutations: [
         { kind: 'network', record: { memberCount: 4 } },
         { kind: 'network', record: { memberCount: 5 } },
@@ -330,7 +337,7 @@ describe('the effects writer — the entry each effect journals', () => {
     const row = { nameLower: 'alpha', name: 'Alpha', owner: hexOf(owner), boxId: 'cd'.repeat(32), claimedAtBlock: 3 };
     const holder = { claimAvailable: false, boxId: row.boxId };
 
-    const claim = s.writeBlockEffects(effectsOf({
+    const { journal: claim } = s.writeBlockEffects(effectsOf({
       mutations: [
         { kind: 'username', nameLower: 'alpha', row, heldBefore: false },
         { kind: 'holder', owner, record: holder, heldBefore: false },
@@ -343,7 +350,7 @@ describe('the effects writer — the entry each effect journals', () => {
     expect(claim.mutations.every((m) => !('replaced' in m))).toBe(true);
     expect(s.usernames.getUsername('alpha')).toEqual(row);
 
-    const burn = s.writeBlockEffects(effectsOf({
+    const { journal: burn } = s.writeBlockEffects(effectsOf({
       mutations: [
         { kind: 'username', nameLower: 'alpha', row: null, heldBefore: true },
         { kind: 'holder', owner, record: null, heldBefore: true },
@@ -360,7 +367,7 @@ describe('the effects writer — the entry each effect journals', () => {
     const s = await freshWriter();
     const [a, b] = [uid('writer/liker-a'), uid('writer/liker-b')];
 
-    const journal = s.writeBlockEffects(effectsOf({
+    const { journal } = s.writeBlockEffects(effectsOf({
       likeRecords: [{ targetPostId: 'post-1', likerId: a }, { targetPostId: 'post-2', likerId: b }],
     }), 9);
 
@@ -381,7 +388,7 @@ describe('the effects writer — the entry each effect journals', () => {
     s.posts.insertPost(full, fixtureTxId(makePostCommit(author, 'a body this node holds')), makePostCommit(author, 'a body this node holds'), 'a body this node holds');
     s.posts.insertPost(placeholder, fixtureTxId(makePostCommit(author, 'a body this node lacks')), makePostCommit(author, 'a body this node lacks'), null);
 
-    const journal = s.writeBlockEffects(effectsOf({ withdrawals: [full, placeholder] }), 5);
+    const { journal } = s.writeBlockEffects(effectsOf({ withdrawals: [full, placeholder] }), 5);
 
     expect(journal.withdrawnPosts).toEqual([
       { id: full, content: 'a body this node holds' },
@@ -400,7 +407,7 @@ describe('the effects writer — the entry each effect journals', () => {
     s.posts.insertPost(held, fixtureTxId(heldCommit), heldCommit, 'a post this node holds');
     const applied = [{ txId: 'a0'.repeat(32), txBytes: Uint8Array.of(1, 2, 3) }];
 
-    const journal = s.writeBlockEffects(effectsOf({
+    const { journal } = s.writeBlockEffects(effectsOf({
       posts: [
         { postId: held, txId: 'b1'.repeat(32), post: heldCommit },
         { postId: lacked, txId: 'b2'.repeat(32), post: lackedCommit },

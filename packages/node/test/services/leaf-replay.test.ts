@@ -707,7 +707,7 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
 
       budget.set(cost);
       expect(replayOverTip(honest, proven.proof)).toEqual({ ok: true });
-      expect(node.blockApply.applyOrderingBlockVerdict(honest)).toEqual({ applied: true });
+      expect(node.blockApply.applyOrderingBlockVerdict(honest)).toEqual({ applied: true, indexed: [] });
     } finally {
       budget.set(MAX_BLOCK_COST);
     }

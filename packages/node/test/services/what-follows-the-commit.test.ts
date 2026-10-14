@@ -93,7 +93,7 @@ describe('a refused block at the next height leaves what the commit left', () =>
     backfill.clearPending();
   });
 
-  it.fails('a block refused at stateRoot leaves the template that stood', async () => {
+  it('a block refused at stateRoot leaves the template that stood', async () => {
     installStdoutCapture();
     await initChainStore();
     await startCreator(testConfig);
@@ -121,7 +121,7 @@ describe('a refused block at the next height leaves what the commit left', () =>
     expect(bc.getCurrentTemplate()).toBe(tplBefore);
   });
 
-  it.fails('a block refused at adProofsRoot leaves the template that stood', async () => {
+  it('a block refused at adProofsRoot leaves the template that stood', async () => {
     installStdoutCapture();
     await initChainStore();
     await startCreator(testConfig);
@@ -149,7 +149,7 @@ describe('a refused block at the next height leaves what the commit left', () =>
     expect(bc.getCurrentTemplate()).toBe(tplBefore);
   });
 
-  it.fails(
+  it(
     'a solve of the standing template submits after a refused block has arrived',
     async () => {
       installStdoutCapture();
@@ -191,7 +191,7 @@ describe('a refused block at the next height leaves what the commit left', () =>
     },
   );
 
-  it.fails(
+  it(
     'a post-carrying block refused at adProofsRoot journals no post as indexed',
     async () => {
       const stdoutLines = installStdoutCapture();
@@ -370,7 +370,7 @@ describe('a reorg that rolls back leaves what the commit left', () => {
     backfill.clearPending();
   });
 
-  it.fails('a reorg that rolls back leaves the template that stood', async () => {
+  it('a reorg that rolls back leaves the template that stood', async () => {
     installStdoutCapture();
     const sc = await buildBranchSetting({ lyingAdProofsRoot: true });
     const bc = await importBlockCreator();

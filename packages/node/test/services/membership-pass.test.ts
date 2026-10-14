@@ -366,7 +366,7 @@ describe('a root\'s invitee, for life', () => {
 
     // A block whose effects are the grant step conferring membership, written
     // and journalled by the effects writer.
-    const finishedJournal = writeBlockEffects({
+    const { journal: finishedJournal } = writeBlockEffects({
       mutations: [
         {
           kind: 'record',
@@ -468,7 +468,7 @@ describe('journal round-trip — membership records and the network record', () 
 
     // A block whose effects are the membership pass setting this identity,
     // written and journalled by the effects writer.
-    const finishedJournal = writeBlockEffects({
+    const { journal: finishedJournal } = writeBlockEffects({
       mutations: [
         { kind: 'record', identityId: identity.userId, record: { ...preBlockRecord, memberSinceBlock: 5, memberBar: 1 } },
         { kind: 'network', record: { memberCount: 2 } },

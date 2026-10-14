@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
 import type { NetNode } from '@dagsocial/net';
-import { POST_PRICE_THREAD, PROTOCOL_VERSION } from '@dagsocial/types';
+import { POST_PRICE_THREAD, PROTOCOL_VERSION, computePostId, computeTxId } from '@dagsocial/types';
 
 import type {
   AnyBox,
@@ -245,8 +245,12 @@ describe("net's karma membership moves after a commit", () => {
   it('a committed block moves each owner whose karma boxes it inserted or spent, present iff it holds one, and no other', async () => {
     const node = await openNode();
     const block = await makeApplicableBlock({ utxoTxs: node.txs });
+    const indexed = [
+      { postId: computePostId(computeTxId(node.txs[1]!), 0), parentRefCount: 0 },
+      { postId: computePostId(computeTxId(node.txs[2]!), 0), parentRefCount: 0 },
+    ];
 
-    expect(node.blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true });
+    expect(node.blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true, indexed });
     expect(sorted(node.net.members)).toEqual(
       sorted([hexOf(inviter), hexOf(invitee), hexOf(spareBoxPoster), SENTINEL]),
     );
@@ -263,7 +267,11 @@ describe("net's karma membership moves after a commit", () => {
     // Both over the pre-block state: the reorg reverts `block` and applies `rival`.
     const rival = await makeApplicableBlock({ utxoTxs: [node.txs[0]!] });
     const block = await makeApplicableBlock({ utxoTxs: node.txs });
-    expect(node.blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true });
+    const indexed = [
+      { postId: computePostId(computeTxId(node.txs[1]!), 0), parentRefCount: 0 },
+      { postId: computePostId(computeTxId(node.txs[2]!), 0), parentRefCount: 0 },
+    ];
+    expect(node.blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true, indexed });
     node.net.calls.length = 0;
 
     node.forks.reorg(0, [rival]);
@@ -316,7 +324,11 @@ describe("net's karma membership moves after a commit", () => {
     const node = await openNode();
     const liar = await makeApplicableBlock({ utxoTxs: node.txs, stateRoot: 'ff'.repeat(33) });
     const block = await makeApplicableBlock({ utxoTxs: node.txs });
-    expect(node.blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true });
+    const indexed = [
+      { postId: computePostId(computeTxId(node.txs[1]!), 0), parentRefCount: 0 },
+      { postId: computePostId(computeTxId(node.txs[2]!), 0), parentRefCount: 0 },
+    ];
+    expect(node.blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true, indexed });
     const after = sorted(node.net.members);
     node.net.calls.length = 0;
 

@@ -112,7 +112,7 @@ describe('like-records store (P2-D N2a)', () => {
       .all();
 
     // A block inserts one more record.
-    s.insertBlockJournal(s.writeBlockEffects(likesOnly([{ targetPostId: 'post-2', likerId: LIKER_A }]), 9));
+    s.insertBlockJournal(s.writeBlockEffects(likesOnly([{ targetPostId: 'post-2', likerId: LIKER_A }]), 9).journal);
     expect(s.hasLikeRecord('post-2', LIKER_A)).toBe(true);
 
     s.revertBlock(9);
@@ -129,7 +129,7 @@ describe('like-records store (P2-D N2a)', () => {
     const s = await importAll();
     s.initDb(':memory:');
 
-    s.insertBlockJournal(s.writeBlockEffects(likesOnly([{ targetPostId: 'post-1', likerId: LIKER_A }]), 11));
+    s.insertBlockJournal(s.writeBlockEffects(likesOnly([{ targetPostId: 'post-1', likerId: LIKER_A }]), 11).journal);
     const back = s.getBlockJournal(11);
     expect(back).not.toBeNull();
 
@@ -143,7 +143,7 @@ describe('like-records store (P2-D N2a)', () => {
     const s = await importAll();
     s.initDb(':memory:');
 
-    s.insertBlockJournal(s.writeBlockEffects(likesOnly([]), 12));
+    s.insertBlockJournal(s.writeBlockEffects(likesOnly([]), 12).journal);
 
     const back = s.getBlockJournal(12)!;
     expect(back.likeRecordInsertions).toEqual([]);

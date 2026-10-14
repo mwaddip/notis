@@ -46,7 +46,7 @@ async function freshStore() {
       appliedTxs: [],
       signatures: 0,
     };
-    const built = writeBlockEffects(effects, height);
+    const { journal: built } = writeBlockEffects(effects, height);
     journal.insertBlockJournal(built);
     return built;
   };

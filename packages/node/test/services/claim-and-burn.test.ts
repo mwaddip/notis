@@ -116,7 +116,7 @@ async function expectSecondNodeApplies(block: OrderingBlock, preDigest: string):
   vi.resetModules();
   const second = await openNode();
   expect(second.digest()).toBe(preDigest);
-  expect(second.blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true });
+  expect(second.blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true, indexed: [] });
   expect(second.digest()).toBe(block.header.stateRoot);
   return second;
 }
@@ -139,7 +139,7 @@ describe('a removable record the block creates and removes', () => {
 
     const block = await makeApplicableBlock({ utxoTxs: [claim, burn] });
     expectSpeculatesTo(node, block);
-    expect(node.blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true });
+    expect(node.blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true, indexed: [] });
     expect(node.digest()).toBe(block.header.stateRoot);
 
     // The tree holds neither record, nor the name box the block made and spent.
@@ -181,7 +181,7 @@ describe('a removable record the block creates and removes', () => {
 
     const block = await makeApplicableBlock({ utxoTxs: [claim, burn, reclaim] });
     expectSpeculatesTo(node, block);
-    expect(node.blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true });
+    expect(node.blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true, indexed: [] });
     expect(node.digest()).toBe(block.header.stateRoot);
 
     expect(node.lookup(node.holderKey(holder))).toBeNull();
