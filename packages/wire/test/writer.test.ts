@@ -73,7 +73,7 @@ describe('ByteWriter', () => {
 });
 
 describe('ByteWriter holds nothing it is handed', () => {
-  it.fails('a Buffer changed after writeBytes does not change toBytes()', () => {
+  it('a Buffer changed after writeBytes does not change toBytes()', () => {
     const w = new ByteWriter();
     const handed = Buffer.from([1, 2, 3, 4]);
     w.writeBytes(handed);

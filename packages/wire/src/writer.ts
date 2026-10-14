@@ -1,7 +1,9 @@
 import { encodeVlqBigInt, encodeVlqZigZagBigInt } from './vlq.js';
 
 export class ByteWriter {
-  private chunks: Uint8Array[] = [];
+  // One buffer, doubled when a write would overrun it:
+  // WIRE_INTERFACE → ByteWriter → "A write costs what its bytes cost".
+  private buffer = new Uint8Array(64);
   private _length = 0;
 
   get length(): number { return this._length; }
@@ -10,13 +12,23 @@ export class ByteWriter {
     if (!Number.isInteger(byte) || byte < 0 || byte > 0xff) {
       throw new Error(`writeU8: out of range: ${byte}`);
     }
-    this.chunks.push(new Uint8Array([byte]));
+    this.reserve(1);
+    this.buffer[this._length] = byte;
     this._length += 1;
   }
 
   writeBytes(bytes: Uint8Array): void {
-    this.chunks.push(bytes.slice()); // defensive copy
+    this.reserve(bytes.length);
+    this.buffer.set(bytes, this._length);
     this._length += bytes.length;
+  }
+
+  private reserve(extra: number): void {
+    const needed = this._length + extra;
+    if (needed <= this.buffer.length) return;
+    const grown = new Uint8Array(Math.max(this.buffer.length * 2, needed));
+    grown.set(this.buffer.subarray(0, this._length));
+    this.buffer = grown;
   }
 
   writeVlqU(value: number): void {
@@ -88,12 +100,6 @@ export class ByteWriter {
   }
 
   toBytes(): Uint8Array {
-    const out = new Uint8Array(this._length);
-    let offset = 0;
-    for (const chunk of this.chunks) {
-      out.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return out;
+    return this.buffer.slice(0, this._length);
   }
 }
