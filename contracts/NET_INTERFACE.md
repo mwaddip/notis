@@ -364,9 +364,9 @@ attacker-controlled stream). Per-request serve work is bounded: handling a reque
 > `net/src/sync.ts` and `net/src/node.ts`: every site below decodes a peer's bytes with no length check
 > ahead of it.
 
-**A peer's bytes are weighed before they are decoded.** Every decode of bytes a peer sent is preceded by
-a length check against the longest encoding of what may arrive there, and bytes over it are refused
-undecoded — as that site refuses bytes that do not decode:
+**A peer's bytes are weighed before they are decoded.** Every decode of an ordering block, a header or a
+transaction packet a peer sent is preceded by a length check against the longest encoding of what may
+arrive there, and bytes over it are refused undecoded — as that site refuses bytes that do not decode:
 
 | Where | Weighed against |
 |---|---|
