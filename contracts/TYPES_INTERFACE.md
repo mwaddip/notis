@@ -1579,10 +1579,6 @@ coinbase outputs are **its outputs**, so no block-body field carries the reward.
 gates `MAX_BLOCK_BODY_BYTES` — a body-layout change edits both computations or neither, and
 `serialization.ts` states the pairing at both sites.
 
-> ⚠ **AHEAD OF CODE (2026-10-14).** The next paragraph and the encoded bounds of → Size caps lead
-> `types/src/serialization.ts` and `types/src/constants.ts`: `UTXO_TX_TREE.read` reads the element array
-> whatever its count, and no bound on an encoded header, block or transaction packet is exported.
-
 **The decoder reads the element count before any element, and refuses one that is not the id
 count.** `UTXO_TX_TREE.read` reads `utxoTxIds`, then the `utxoTxs` count, and throws `ReaderError` with
 code `out-of-domain` (`WIRE_INTERFACE → ReaderError codes`) unless the two are equal — before it reads an

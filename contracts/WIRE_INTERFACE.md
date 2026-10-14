@@ -266,10 +266,6 @@ included).
 
 ## ByteWriter
 
-> ⚠ **AHEAD OF CODE (2026-10-14).** This section and the ByteWriter line of → Invariants lead
-> `wire/src/writer.ts`: the writer pushes one new `Uint8Array` per `writeU8` and copies `writeBytes` with
-> `.slice()`, which on a Node `Buffer` is a view of the caller's bytes rather than a copy.
-
 Writes into one buffer of its own and produces a single `Uint8Array` via `toBytes()`.
 
 **A write costs what its bytes cost.** The buffer doubles when a write would overrun it, and a write

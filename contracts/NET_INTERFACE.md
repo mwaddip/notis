@@ -359,11 +359,6 @@ Raw stream reads are bounded by `MAX_STREAM_BYTES` (never buffer an unbounded
 attacker-controlled stream). Per-request serve work is bounded: handling a request must not be
 `O(ids × chainHeight)` — an unbounded id list must not each trigger a full-chain scan.
 
-> ⚠ **AHEAD OF CODE (2026-10-14).** The next paragraph, Stage 1's weighing (→ Stage 1) and the header
-> ceiling under → `GetHeaders` / `GetBlocks` responses lead `net/src/gossip.ts`, `net/src/sync-codec.ts`,
-> `net/src/sync.ts` and `net/src/node.ts`: every site below decodes a peer's bytes with no length check
-> ahead of it.
-
 **A peer's bytes are weighed before they are decoded.** Every decode of an ordering block, a header or a
 transaction packet a peer sent is preceded by a length check against the longest encoding of what may
 arrive there, and bytes over it are refused undecoded — as that site refuses bytes that do not decode:
@@ -378,7 +373,11 @@ arrive there, and bytes over it are refused undecoded — as that site refuses b
 Each bound is `@dagsocial/types`' and the longest encoding of something Stage 1 accepts
 (`TYPES_INTERFACE → Size caps`), so the check refuses nothing an honest node sends. With it, and with the
 decoder refusing a body whose element count is not its id count (`TYPES_INTERFACE → Ordering block`), a
-decode costs what its bytes cost (`WIRE_INTERFACE → ByteWriter`).
+decode costs what its bytes cost (`WIRE_INTERFACE → ByteWriter`). Measured 2026-10-14 on the i9 laptop: a
+3.81 MiB block whose body is 4 000 000 empty elements beside no id is refused at the count in 2 ms; a block at
+the bound whose body is 60 605 aligned minimal elements decodes in about 0.2 s, and a `Blocks` response of four
+such blocks, 7.63 MiB, in about 1 s. Stage 1 decodes a gossiped block's body before it checks the header's work
+(→ Stage 1), so that 0.2 s is what a block no one worked costs its first hop.
 
 **A stream read is bounded in time as well as in bytes.** Every `readStreamBounded` carries a
 deadline — the `syncRequestTimeoutMs` its dial uses at that site (×5 for the block read, whose payload
