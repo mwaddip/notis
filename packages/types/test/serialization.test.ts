@@ -495,7 +495,7 @@ describe('positional serialization', () => {
   // -------------------------------------------------------------------------
 
   describe('a misaligned tree has no decoding', () => {
-    it.fails('a count of 3 elements beside no ids throws out-of-domain', () => {
+    it('a count of 3 elements beside no ids throws out-of-domain', () => {
       // Hand-assembled bytes: vlqU(0) for the id count, vlqU(3) for the
       // element count, three empty lp elements (vlqU(0) ‖ no payload each). The
       // encoder writes this tree without complaint; the pin is on the decoder.
@@ -506,7 +506,7 @@ describe('positional serialization', () => {
       expect((thrown as ReaderError).code).toBe('out-of-domain');
     });
 
-    it.fails('a count of 5 beside 1 id and no element bytes throws out-of-domain, not truncated', () => {
+    it('a count of 5 beside 1 id and no element bytes throws out-of-domain, not truncated', () => {
       // The count is refused before any element is read: a `truncated` code
       // would say the reader reached for the first element and found the
       // bytes gone — the comparison must sit ahead of that read.
@@ -520,7 +520,7 @@ describe('positional serialization', () => {
       expect((thrown as ReaderError).code).toBe('out-of-domain');
     });
 
-    it.fails('a block whose tree is misaligned throws out-of-domain', () => {
+    it('a block whose tree is misaligned throws out-of-domain', () => {
       const misaligned: UtxoTxTree = {
         utxoTxIds: ['f'.repeat(64), 'e'.repeat(64)],
         utxoTxs: [new Uint8Array(0)],

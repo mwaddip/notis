@@ -270,6 +270,16 @@ export function decodeHeader(bytes: Uint8Array): BlockHeader {
  * change — otherwise two ways of computing one length diverge with no compiler
  * signal.
  *
+ * The decoder reads `utxoTxIds`, then the `utxoTxs` count, and throws
+ * `ReaderError` with code `out-of-domain` unless it equals the id count,
+ * before any element is read. The write side writes whatever tree it is
+ * given, aligned or not, which is what `utxoTxTreeByteLength` measures above
+ * (TYPES_INTERFACE → Ordering block
+ * → "The decoder reads the element count before any element, and refuses one that is not the id count").
+ * The id count already met `MAX_ARRAY_LENGTH` through `readArr`, so a count
+ * equal to it does too — the comparison is the whole of the second array's
+ * admission check and no second `MAX_ARRAY_LENGTH` test sits beside it.
+ *
  * `utxoTxs` stays opaque: transactions cross as length-prefixed bytes, so this
  * tree does not depend on the transaction codec. `writeLp` is total — a
  * non-byte-view sentinels its *length prefix* and writes no payload — and
@@ -285,10 +295,17 @@ const UTXO_TX_TREE: StructCodec<UtxoTxTree> = {
     writeArr(w, t.utxoTxs, writeLp);
   },
   read(r) {
-    return {
-      utxoTxIds: readArr(r, (rr) => readHexN(rr, 32)),
-      utxoTxs: readArr(r, readLp),
-    };
+    const utxoTxIds = readArr(r, (rr) => readHexN(rr, 32));
+    const elemCount = readVlqU(r);
+    if (elemCount !== utxoTxIds.length) {
+      throw new ReaderError(
+        `utxoTxTree: ${elemCount} element(s) beside ${utxoTxIds.length} id(s)`,
+        'out-of-domain',
+      );
+    }
+    const utxoTxs: Uint8Array[] = new Array(elemCount);
+    for (let i = 0; i < elemCount; i++) utxoTxs[i] = readLp(r);
+    return { utxoTxIds, utxoTxs };
   },
 };
 
