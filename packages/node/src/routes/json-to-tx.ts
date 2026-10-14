@@ -231,11 +231,6 @@ function decodeHex(hex: string, field: string): Uint8Array {
  * exactly one of.
  */
 function coerceBoxValue(raw: unknown, field: string): bigint {
-  if (typeof raw === 'bigint') {
-    const v = raw;
-    assertValidBoxValue(v, field);
-    return v;
-  }
   if (typeof raw === 'number') {
     if (!Number.isSafeInteger(raw)) {
       throw new ClientError(`${field} must be a safe integer or a decimal string of 1 to 19 digits`);
