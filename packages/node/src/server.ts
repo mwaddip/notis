@@ -205,8 +205,7 @@ export function createApp(config: Config): express.Express {
 
   // NODE_INTERFACE → HTTP API → "A query parameter is one string": a request
   // whose query names one name twice answers 400 ahead of every route, with
-  // no log line. The mark is set by `parseStrictQuery` above; the one access
-  // of `req.query` here primes Express's own cache for the routes below.
+  // no log line. The mark is set by `parseStrictQuery` above.
   app.use((req, res, next) => {
     const dup = (req.query as Record<string | symbol, unknown>)[QUERY_DUP_NAME];
     if (typeof dup === 'string') {
