@@ -230,9 +230,9 @@ function decodeHex(hex: string, field: string): Uint8Array {
  * Coerce an incoming JSON amount to `bigint`. The accepted domain is a
  * safe-integer number or a decimal string of 1 to 19 digits — enough to
  * spell every value the ledger stores (TYPES_INTERFACE → Box value
- * domain). A leading zero is a client that cannot be read as it is: `5`
- * and `005` are two spellings of one value, which the sender signed over
- * exactly one of.
+ * domain) and one spelling per value (NODE_INTERFACE → HTTP API → "A
+ * write request's transaction is checked whole before anything reads
+ * it"): `0` alone, no other leading zero.
  */
 function coerceBoxValue(raw: unknown, field: string): bigint {
   if (typeof raw === 'number') {
