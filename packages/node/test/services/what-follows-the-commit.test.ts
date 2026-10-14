@@ -482,6 +482,41 @@ describe('a reorg that rolls back leaves what the commit left', () => {
     expect(forbidden).toEqual([]);
   });
 
+  it('a reorg\'s post emits post_indexed with the switched tip as the chain\'s height — the commit\'s own', async () => {
+    installStdoutCapture();
+    const { initJournal } = await import('../../src/journal.js');
+    initJournal();
+    const sc = await buildBranchSetting({ lyingAdProofsRoot: false });
+    const ordering = await importOrdering();
+
+    expect(sc.branchWork > sc.ourWork).toBe(true);
+
+    // The chain's height at the moment the reorg's post emits `post_indexed`
+    // (NODE_INTERFACE → "What follows the commit is the commit's"). The
+    // post-commit loop runs with the switched tip in place, so this reads 4;
+    // a loop inside the transaction reads the savepoint's own committed
+    // height.
+    let heightAtIndexed: number | null = null;
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+      const line = String(chunk);
+      try {
+        const parsed = JSON.parse(line) as JournalLine;
+        if (parsed.event === 'post_indexed' && parsed.post_id === sc.postId && heightAtIndexed === null) {
+          heightAtIndexed = ordering.getCurrentHeight();
+        }
+      } catch { /* a non-JSON stdout line */ }
+      return true;
+    });
+
+    const net = singleBranchNet('peer-a', [sc.shared1, sc.branch2, sc.branch3, sc.branch4]);
+    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
+    expect(handleOrderingBlock(sc.branch4, 'peer-a', net)).toBe(false);
+    await settleResolveForks(ctx);
+
+    expect(ordering.getCurrentHeight()).toBe(4);
+    expect(heightAtIndexed).toBe(4);
+  });
+
   it('the same branch with an honest last block switches the chain and records every effect', async () => {
     const stdoutLines = installStdoutCapture();
     const { initJournal } = await import('../../src/journal.js');
