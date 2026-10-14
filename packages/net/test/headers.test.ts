@@ -6,6 +6,7 @@ import {
   writeVlqU,
   computeUtxoTxRoot,
   encodeOrderingBlock,
+  ByteReader,
   decodeStruct,
   ReaderError,
   CodecError,
@@ -729,6 +730,28 @@ describe('serve: GetBlocks byte bound', () => {
     expect(blocks!.map((b) => b.header.height)).toEqual([1, 2, 3]);
   });
 
+  it('serves a first block heavier than the budget as the response\'s one item', () => {
+    // NET_INTERFACE → Validation (and untrusted-input safety) → "Every arm that assembles more than one stored object into a response is bounded by BYTES, not by item count alone"
+    // and NET_INTERFACE → `GetHeaders` / `GetBlocks` responses → "always include the first block":
+    // a request is never answered with nothing while the server holds the block
+    // asked for. No legal block reaches the budget alone, so only a block over
+    // MAX_ORDERING_BLOCK_BYTES gets here, and it is served: the serve loop reads
+    // the frame, the reader refuses the item. The first assertion therefore reads
+    // the served body with the wire primitives, not through `decodeBlocks`.
+    const store = new Map<number, OrderingBlock>();
+    const first = makeHeavyBlock(1, '00'.repeat(32), MAX_SERVE_BODY_BYTES + 1);
+    store.set(1, first);
+    store.set(2, makeMockOrderingBlock(2, mockBlockHash(first.header)));
+
+    const frame = serveBlocks({ startHeight: 1, endHeight: 2 }, store);
+
+    const r = new ByteReader(bodyOf(frame, MSG_BLOCKS));
+    expect(r.readVlqU()).toBe(1);
+    const item = r.readBytes(r.readVlqU());
+    expect(item).toEqual(encodeOrderingBlock(first));
+
+    expect(receiveBlocks(frame, 1, 2)).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

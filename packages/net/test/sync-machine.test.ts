@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { computeContentHash, encodeStruct } from '@dagsocial/types';
+import { ByteReader, computeContentHash, encodeStruct } from '@dagsocial/types';
 import {
   syncInfoCodec, invCodec, modifierRequestCodec, modifierResponseCodec,
 } from '../src/sync-codec.js';
@@ -13,7 +13,7 @@ import {
   MODIFIER_ORDERING_BLOCK,
 } from '../src/types.js';
 import type { NetConfig } from '../src/types.js';
-import { MAX_INV_IDS } from '../src/msg-guards.js';
+import { MAX_INV_IDS, MAX_SERVE_BODY_BYTES } from '../src/msg-guards.js';
 import { decodeFrame } from '../src/frame.js';
 import { decodeInv, decodeSyncInfo, decodeModifierRequest, decodeModifierResponse } from '../src/sync-codec.js';
 import type { SyncInfo, Inv, ModifierRequest } from '../src/sync-types.js';
@@ -1530,6 +1530,16 @@ describe('SyncMachine', () => {
       return decodeModifierResponse(body)!.modifiers.length;
     }
 
+    /** The count the served body declares, read off the wire without the weighing reader. */
+    function servedRawModifierCount(sent: SentMessage[]): number {
+      expect(sent).toHaveLength(1);
+      const { code, body } = decodeFrame(testConfig.magic!, sent[0]!.data);
+      expect(code).toBe(MSG_MODIFIER_RESPONSE);
+      const r = new ByteReader(body);
+      r.readU8();
+      return r.readVlqU();
+    }
+
     it('truncates a response that would exceed MAX_SERVE_BODY_BYTES', () => {
       // Each chunk is inside MAX_ORDERING_BLOCK_BYTES — the reader weighs each
       // item against that bound (NET_INTERFACE → Validation (and untrusted-input
@@ -1552,6 +1562,30 @@ describe('SyncMachine', () => {
       machine.flush();
 
       expect(servedModifierCount(sent)).toBe(2);
+    });
+
+    it('serves a first block heavier than the budget as the response\'s one modifier', () => {
+      // NET_INTERFACE → Validation (and untrusted-input safety) → "Every arm that assembles more than one stored object into a response is bounded by BYTES, not by item count alone":
+      // a request is never answered with nothing while the server holds what was
+      // asked. No legal block reaches the budget alone, so only a block over
+      // MAX_ORDERING_BLOCK_BYTES gets here, and it is served: the count is read
+      // off the wire, and the reader then refuses the item.
+      const chunk = new Uint8Array(MAX_SERVE_BODY_BYTES + 1024);
+      const { machine, sent } = makeReportingMachine({
+        chainHeight: () => 1,
+        heightByBlockId: () => 1,
+        serializeOrderingBlock: () => chunk,
+      });
+
+      machine.handleMessage(
+        'peer1',
+        MSG_MODIFIER_REQUEST,
+        encodeStruct(modifierRequestCodec, { typeId: MODIFIER_ORDERING_BLOCK, ids: ids(1) }),
+      );
+      machine.flush();
+
+      expect(servedRawModifierCount(sent)).toBe(1);
+      expect(decodeModifierResponse(decodeFrame(testConfig.magic!, sent[0]!.data).body)).toBeNull();
     });
   });
 
