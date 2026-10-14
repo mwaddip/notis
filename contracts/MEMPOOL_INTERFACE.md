@@ -120,9 +120,6 @@ the SQLite `rowid`. Throws `MempoolFullError` at the size cap, and
 pool through this function, and it already computes `encodeTx(tx)` — so one check covers them all
 and costs no extra encoding. A rule per route is a rule someone adds a route without.
 
-> ⚠ **AHEAD OF CODE (2026-10-14).** The HTTP edge below leads `node/src/routes/*`, which reach `insertUtxoTx` with
-> no size check ahead of `validateTx` and `admitTx`'s cost gate.
-
 **It is the pool's own bound, not a restatement of validation's.** `@dagsocial/validation`'s
 `verifyTxStructure` carries the same bound and runs where a stranger's transaction arrives — net's gossip validator,
 and node's HTTP edge, which answers an oversize request 413 before any check that costs (`NODE_INTERFACE → HTTP API →

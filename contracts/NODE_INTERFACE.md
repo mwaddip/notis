@@ -109,13 +109,6 @@ log a stranger can fill. A request with no JSON `Content-Type` has no body as fa
 and the route's own check answers it. **500 `{ error: 'internal' }` is a fault of the node's**, and it alone logs its
 stack.
 
-> ⚠ **AHEAD OF CODE (2026-10-14).** The three rules below lead `node/src/routes/json-to-tx.ts`, every route that
-> takes `{ tx }`, `node/src/routes/page.ts`, `node/src/state/avl-endpoint.ts` and `node/src/server.ts`: the JSON edge
-> decodes hex with `Buffer.from` and passes a binary box field that is not a string through as it stands, fills an
-> absent `inputs`, `outputs` or `signatures` in, and every route hands the transaction to its service before
-> `validateTx` runs; Express's `qs` parser hands a route arrays and objects; and `page.ts`, the proof and range routes
-> and `/shell/:id` read hex in either case.
-
 **Hex is lowercase.** Every hex value the node reads — in a body, a path or a query: a key, an id, a box field, a
 signature — is lowercase hex of the width its field states, and any other spelling, uppercase included, is a 400 on
 every route. It is the one spelling the node writes and the one `types`' `hexToBytes` decodes.
@@ -610,9 +603,6 @@ five fields holds a second implementation of a consensus predicate, the mirror c
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
 | `POST` | `/credits/transfer` | `{ tx: UtxoTransaction }` — client-built, client-signed; every output a credit box or a fee box — the outputs a credit spend may create (→ Legal box transitions) | `{ status: "pending", txId, expiresAtHeight }` | 400 on an output of another type, an invalid tx or signature; 402 when its fee is below this node's floor (`MEMPOOL_INTERFACE → Fee floor`) |
-
-> ⚠ **AHEAD OF CODE (2026-10-14).** The row's outputs and 402 lead `node/src/services/credits.ts`, which refuses
-> every output that is not a credit box — a fee box among them — so a floor above zero refuses every transfer.
 
 **A credit transfer is a transaction, and it settles when it is mined.**
 The client builds and signs it; the node reads it through the edge (→ HTTP API → "A write request's transaction is
@@ -1489,10 +1479,6 @@ during it: **`protocolVersion` was validated nowhere** in the transaction path
 `protocolVersion: "x"` validated, pooled and applied end-to-end with the string
 `String()`-coerced into its own id preimage; and an **unknown envelope key was
 free malleability**, invisible to `computeTxId`.
-
-> ⚠ **AHEAD OF CODE (2026-10-14).** "Total" leads `consensus/src/utxo-engine.ts`: where the declared version is not
-> the era and `post` is `null`, clause 7's message reads `post.protocolVersion` and throws. The JSON edge leads
-> `node/src/routes/*` — its call site is the list's third.
 
 `checkTxEnvelope(tx: unknown): UtxoResult` — **exported** from the engine.
 **Total**: returns `{valid: false}` and never throws for any decoded
@@ -4749,11 +4735,6 @@ the handler.
 | `@dagsocial/consensus` | The rules' implementation — `applyBlock` (the mutation phase, whole), the transaction engine, the settlement and its build, decay, the coinbase split and the reward, the block's post readers (`CONSENSUS_INTERFACE → What it holds`) | Persistence, I/O, the header checks |
 | `fork-resolution.ts` | Chain fork detection and reorg | Block creation |
 | `genesis-state.ts` | Cold-start seeding of the height-0 state, and the root check over it | Which boxes exist (`store/system.ts`) |
-
-> ⚠ **AHEAD OF CODE (2026-10-14).** The order and the one function below lead the services `likes.ts`, `credits.ts`,
-> `post-withdraw.ts`, `vouch.ts` and `invites.ts` and the routes `usernames.ts` and `backers.ts`, each of which runs
-> `validateTx`, the expiry and `admitTx` itself; and every write route hands the transaction to its service before
-> the edge has checked it.
 
 **A write request runs in one order, cheapest first**, and a refusal at a step reaches no later one:
 
