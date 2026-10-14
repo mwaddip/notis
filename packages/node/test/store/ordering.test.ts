@@ -54,7 +54,7 @@ function makeOrderingBlock(
     },
     utxoTxTree: {
       utxoTxIds: ['1a'.repeat(32)],
-      utxoTxs: [],
+      utxoTxs: [new Uint8Array([0x01])],
     },
     validatorSignature: new Uint8Array(64).fill(0xab),
     ...overrides,
