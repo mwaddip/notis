@@ -34,6 +34,11 @@ import {
   STORAGE_RENT_PER_BYTE,
   MAX_BLOCK_BODY_BYTES,
   MAX_SETTLEMENT_BYTES,
+  MAX_HEADER_BYTES,
+  MAX_ORDERING_BLOCK_BYTES,
+  MAX_TX_PACKET_BYTES,
+  MAX_TX_BYTES,
+  MAX_CONTENT_BYTES,
   W_SIG,
   W_OP,
   MAX_BLOCK_COST,
@@ -41,7 +46,14 @@ import {
   SYSTEM_KARMA_INITIAL,
   FAUCET_CREDITS_INITIAL,
   BACKER_UNSTAKE_MIN_PCT,
+  encodeHeader,
+  encodeOrderingBlock,
+  encodeTx,
+  encodeTxPacket,
+  utxoTxTreeByteLength,
 } from '../src/index.js';
+import type { BlockHeader, OrderingBlock, UtxoTxTree } from '../src/block.js';
+import type { UtxoTransaction } from '../src/utxo.js';
 
 describe('PoW difficulty constants', () => {
   // VALIDATION_INTERFACE → orderingPowTarget: ordering-block difficulty is an
@@ -420,5 +432,121 @@ describe('FAUCET_CREDITS_INITIAL', () => {
     for (const profile of Object.values(NETWORK_PROFILES)) {
       expect(Object.hasOwn(profile, 'faucetCreditsInitial')).toBe(false);
     }
+  });
+});
+
+/**
+ * TYPES_INTERFACE → Size caps. The three derived encoded bounds. The constant
+ * is the claim and the encoding is the measurement, so every case derives
+ * what it asserts from the encoder rather than from a second hand-written
+ * sum.
+ */
+describe('MAX_HEADER_BYTES', () => {
+  // The ceiling header: every vlqU field at Number.MAX_SAFE_INTEGER, every
+  // fixed field at its width. 193 fixed bytes and 5 × 8 vlqU bytes.
+  const ceilingHeader: BlockHeader = {
+    protocolVersion: Number.MAX_SAFE_INTEGER,
+    height: Number.MAX_SAFE_INTEGER,
+    prevBlockHash: 'ab'.repeat(32),
+    utxoTxRoot: 'cd'.repeat(32),
+    stateRoot: 'ef'.repeat(33),
+    validatorId: new Uint8Array(32).fill(0x7a),
+    powNonce: Number.MAX_SAFE_INTEGER,
+    powTargetBits: Number.MAX_SAFE_INTEGER,
+    createdAt: Number.MAX_SAFE_INTEGER,
+    interlinkRoot: '12'.repeat(32),
+    adProofsRoot: '34'.repeat(32),
+  };
+
+  it('encodes exactly to MAX_HEADER_BYTES', () => {
+    expect(encodeHeader(ceilingHeader).length).toBe(MAX_HEADER_BYTES);
+  });
+
+  it('a header with any one vlqU field one encoding-byte lower is shorter', () => {
+    // 2**49 - 1 is the largest value whose vlqU encoding is 7 bytes; the
+    // ceiling header's value is 8 bytes, so the header shortens by one.
+    const stepLower = 2 ** 49 - 1;
+    const fields: Array<keyof BlockHeader> = [
+      'protocolVersion', 'height', 'powNonce', 'powTargetBits', 'createdAt',
+    ];
+    for (const field of fields) {
+      const h = { ...ceilingHeader, [field]: stepLower };
+      expect(encodeHeader(h).length, field).toBe(MAX_HEADER_BYTES - 1);
+    }
+  });
+});
+
+describe('MAX_ORDERING_BLOCK_BYTES', () => {
+  it('is larger than MAX_BLOCK_BODY_BYTES', () => {
+    // The relation is the rule, not the number — a block always fits a legal
+    // body plus header plus signature.
+    expect(MAX_BLOCK_BODY_BYTES).toBeLessThan(MAX_ORDERING_BLOCK_BYTES);
+  });
+
+  it('a block of the ceiling header, a body at MAX_BLOCK_BODY_BYTES, and a 64-byte signature encodes to exactly MAX_ORDERING_BLOCK_BYTES', () => {
+    // One id and one element sized so utxoTxTreeByteLength is exactly
+    // MAX_BLOCK_BODY_BYTES. The tree's layout is
+    // vlqU(1) ‖ 32 id bytes ‖ vlqU(1) ‖ vlqU(elemLen) ‖ elemLen bytes
+    // = 34 + vlqU(elemLen) + elemLen = MAX_BLOCK_BODY_BYTES
+    // ⇒ vlqU(elemLen) + elemLen = MAX_BLOCK_BODY_BYTES − 34
+    // elemLen = 1_999_963 is 21 bits, vlqU takes 3 bytes, 3 + 1_999_963 = 1_999_966.
+    const elemLen = MAX_BLOCK_BODY_BYTES - 34 - 3;
+    const tree: UtxoTxTree = {
+      utxoTxIds: ['ab'.repeat(32)],
+      utxoTxs: [new Uint8Array(elemLen)],
+    };
+    expect(utxoTxTreeByteLength(tree)).toBe(MAX_BLOCK_BODY_BYTES);
+    const ceilingHeader: BlockHeader = {
+      protocolVersion: Number.MAX_SAFE_INTEGER,
+      height: Number.MAX_SAFE_INTEGER,
+      prevBlockHash: 'ab'.repeat(32),
+      utxoTxRoot: 'cd'.repeat(32),
+      stateRoot: 'ef'.repeat(33),
+      validatorId: new Uint8Array(32).fill(0x7a),
+      powNonce: Number.MAX_SAFE_INTEGER,
+      powTargetBits: Number.MAX_SAFE_INTEGER,
+      createdAt: Number.MAX_SAFE_INTEGER,
+      interlinkRoot: '12'.repeat(32),
+      adProofsRoot: '34'.repeat(32),
+    };
+    expect(encodeHeader(ceilingHeader).length).toBe(MAX_HEADER_BYTES);
+    const block: OrderingBlock = {
+      header: ceilingHeader,
+      utxoTxTree: tree,
+      validatorSignature: new Uint8Array(64),
+    };
+    expect(encodeOrderingBlock(block).length).toBe(MAX_ORDERING_BLOCK_BYTES);
+  });
+});
+
+describe('MAX_TX_PACKET_BYTES', () => {
+  // A minimal transaction — the packet overhead is a function of the content,
+  // not the transaction, so any encodable transaction suffices.
+  const simpleTx: UtxoTransaction = {
+    inputs: [],
+    outputs: [],
+    signatures: {},
+    protocolVersion: 1,
+  };
+
+  it('is MAX_TX_BYTES + 303', () => {
+    // opt-present (1) ‖ vlqU(300) (2) ‖ 300 content bytes = 303.
+    expect(MAX_TX_PACKET_BYTES).toBe(MAX_TX_BYTES + 303);
+  });
+
+  it('a packet with 300 ASCII content bytes adds exactly 303 to the transaction encoding', () => {
+    const asciiContent = 'a'.repeat(MAX_CONTENT_BYTES);
+    const packet = encodeTxPacket(simpleTx, asciiContent);
+    expect(packet.length - encodeTx(simpleTx).length).toBe(303);
+  });
+
+  it('a packet with MAX_CONTENT_BYTES of multi-byte UTF-8 adds the same 303', () => {
+    // 'é' is 2 UTF-8 bytes; 150 of them is 300 UTF-8 bytes — the packet
+    // overhead counts bytes, not characters, through verifyContentLimits'
+    // own measure.
+    const multiByte = 'é'.repeat(MAX_CONTENT_BYTES / 2);
+    expect(new TextEncoder().encode(multiByte).length).toBe(MAX_CONTENT_BYTES);
+    const packet = encodeTxPacket(simpleTx, multiByte);
+    expect(packet.length - encodeTx(simpleTx).length).toBe(303);
   });
 });
