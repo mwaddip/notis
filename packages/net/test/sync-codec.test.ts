@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+  decodeBlocks,
+  decodeHeaders,
   encodeSyncInfo, decodeSyncInfo,
   encodeInv, decodeInv,
   encodeModifierRequest, decodeModifierRequest,
@@ -8,7 +10,21 @@ import {
 } from '@dagsocial/net';
 import { MAGIC_TESTNET, decodeFrame, MAX_ADVERTISED_HEIGHT, MAX_INV_IDS } from '@dagsocial/net';
 import { MSG_SYNC_INFO, MSG_INV, MSG_MODIFIER_REQUEST, MSG_MODIFIER_RESPONSE } from '@dagsocial/net';
-import { encodeStruct } from '@dagsocial/types';
+import {
+  ByteWriter,
+  computeUtxoTxRoot,
+  encodeOrderingBlock,
+  encodeStruct,
+  EMPTY_STATE_ROOT,
+  ORDERING_BLOCK_POW_TARGET_FLOOR,
+  MAX_HEADER_BYTES,
+  MAX_ORDERING_BLOCK_BYTES,
+  writeHexNOrThrow,
+  writeLp,
+  writeU8OrThrow,
+  writeVlqU,
+} from '@dagsocial/types';
+import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 
 const H32 = '0'.repeat(64);
 const H32_A = 'a'.repeat(64);
@@ -161,6 +177,77 @@ describe('sync codec decode boundary', () => {
         encodeStruct(modifierResponseCodec, { typeId: 101, modifiers }),
       )).toBeNull();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Validation (and untrusted-input safety)
+// → "A peer's bytes are weighed before they are decoded"
+//
+// The chain-response arms weigh each item against the longest encoding of
+// what may arrive there before reading or decoding it, and anything larger
+// collapses the response to null.
+// ---------------------------------------------------------------------------
+
+/** An ordering block one byte past MAX_ORDERING_BLOCK_BYTES; the fixture's bound. */
+function overBoundBlock(): OrderingBlock {
+  const utxoTxTree = {
+    utxoTxIds: ['ab'.repeat(32)],
+    utxoTxs: [new Uint8Array(1_999_993)],
+  };
+  const header: BlockHeader = {
+    protocolVersion: 1,
+    height: 7,
+    prevBlockHash: '11'.repeat(32),
+    utxoTxRoot: computeUtxoTxRoot(utxoTxTree),
+    stateRoot: EMPTY_STATE_ROOT,
+    validatorId: new Uint8Array(32).fill(9),
+    powNonce: 0,
+    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+    createdAt: 1_722_470_400_000,
+    interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
+  };
+  return { header, utxoTxTree, validatorSignature: new Uint8Array(64) };
+}
+
+describe('chain response codecs weigh each item before decoding', () => {
+  it.fails('decodeBlocks refuses a response whose one block exceeds MAX_ORDERING_BLOCK_BYTES', () => {
+    const encoded = encodeOrderingBlock(overBoundBlock());
+    expect(encoded.length).toBe(MAX_ORDERING_BLOCK_BYTES + 1);
+    // The response body is `arr(blocks, lp)`: a hand-written one with one
+    // decodable but over-bound item.
+    const w = new ByteWriter();
+    writeVlqU(w, 1);
+    writeLp(w, encoded);
+
+    expect(decodeBlocks(w.toBytes(), 1)).toBeNull();
+  });
+
+  it.fails('decodeModifierResponse refuses a modifier whose data exceeds MAX_ORDERING_BLOCK_BYTES', () => {
+    // The one modifier type served here is the ordering block, so the per-data
+    // bound is the ordering-block bound.
+    const encoded = encodeOrderingBlock(overBoundBlock());
+    expect(encoded.length).toBe(MAX_ORDERING_BLOCK_BYTES + 1);
+    // u8(typeId) ‖ arr( hexN(id, 32) ‖ lp(data) )
+    const w = new ByteWriter();
+    writeU8OrThrow(w, 101);
+    writeVlqU(w, 1);
+    writeHexNOrThrow(w, 'ab'.repeat(32), 32);
+    writeLp(w, encoded);
+
+    expect(decodeModifierResponse(w.toBytes())).toBeNull();
+  });
+
+  it('decodeHeaders refuses a response whose one header exceeds MAX_HEADER_BYTES', () => {
+    // A header cannot encode past MAX_HEADER_BYTES, so a longer item does not
+    // decode on this tree either — the weigh and the decode agree on null.
+    const bogus = new Uint8Array(MAX_HEADER_BYTES + 1);
+    const w = new ByteWriter();
+    writeVlqU(w, 1);
+    writeLp(w, bogus);
+
+    expect(decodeHeaders(w.toBytes(), 1)).toBeNull();
   });
 });
 

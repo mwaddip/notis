@@ -25,6 +25,8 @@ import {
   MAGIC_MAINNET,
   MAGIC_TESTNET,
   MAGIC_DEVNET,
+  MAX_ORDERING_BLOCK_BYTES,
+  MAX_TX_PACKET_BYTES,
 } from '@dagsocial/types';
 import type {
   PostCommit, UtxoTransaction, OrderingBlock, BlockHeader, UtxoTxTree, ProtocolEra,
@@ -1118,5 +1120,145 @@ describe('gossipMessageId — hash32(lpUtf8(topic) ‖ data)', () => {
     const id = gossipMessageId(topics.orderingBlock, new Uint8Array([0]));
     expect(id).toBeInstanceOf(Uint8Array);
     expect(id.length).toBe(32);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Validation (and untrusted-input safety)
+// → "A peer's bytes are weighed before they are decoded"
+//
+// A gossip message over the longest encoding Stage 1 accepts is refused
+// undecoded, with ProtocolViolation whose reason names the bound; at the bound
+// the validator does not refuse for length and lands on whatever its other
+// checks answer.
+// ---------------------------------------------------------------------------
+
+describe('gossip topic validators weigh raw.length before decoding', () => {
+  // One id, one over-bound payload: a tree the decoder returns and
+  // verifyOrderingBlockStructure refuses as "body too large".
+  // 1 id (33 bytes) + 1 element (1 + vlqU_len(payload) + payload) + lp framing
+  // around header and body — see TYPES_INTERFACE → Size caps for the derivation.
+  function overBoundBlockBytes(): Uint8Array {
+    const utxoTxTree = {
+      utxoTxIds: ['ab'.repeat(32)],
+      utxoTxs: [new Uint8Array(1_999_993)],
+    };
+    const header: BlockHeader = {
+      protocolVersion: 1,
+      height: 7,
+      prevBlockHash: '11'.repeat(32),
+      utxoTxRoot: computeUtxoTxRoot(utxoTxTree),
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: new Uint8Array(32).fill(9),
+      powNonce: 0,
+      powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+      createdAt: 1_722_470_400_000,
+      interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
+    };
+    const block: OrderingBlock = { header, utxoTxTree, validatorSignature: new Uint8Array(64) };
+    const encoded = encodeOrderingBlock(block);
+    // The fixture is one byte past the bound by construction; the length check
+    // is the whole subject of the test, and it costs nothing to pin.
+    expect(encoded.length).toBe(MAX_ORDERING_BLOCK_BYTES + 1);
+    expect(() => decodeOrderingBlock(encoded)).not.toThrow();
+    return encoded;
+  }
+
+  it.fails('an ordering-block message one byte past MAX_ORDERING_BLOCK_BYTES is a ProtocolViolation', () => {
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness();
+    const validate = topicValidators.get(topics.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+
+    const result = validate(peer, { data: overBoundBlockBytes() });
+
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).toHaveBeenCalledWith(
+      PenaltyKind.ProtocolViolation,
+      peer.id,
+      expect.stringContaining(String(MAX_ORDERING_BLOCK_BYTES)),
+    );
+  });
+
+  it.fails('a tx packet one byte past MAX_TX_PACKET_BYTES is a ProtocolViolation', () => {
+    // A plain non-post transaction (no karma gate), content chosen so the
+    // encoded packet is exactly MAX_TX_PACKET_BYTES + 1. The content byte count
+    // is far past MAX_CONTENT_BYTES, so pre-rule the structural chain reaches
+    // verifyPostBody and the penalty is misbehavior; the length weigh is a
+    // ProtocolViolation that must land before the decode.
+    const keyPair = generateKeyPair();
+    const commit = {
+      contentHash: new Uint8Array(32), // the body check fires on size, not hash
+      author: keyPair.publicKey,
+      parentRefs: [],
+      protocolVersion: 1,
+      type: 'regular' as const,
+    };
+    const tx: UtxoTransaction = {
+      inputs: ['aa'.repeat(32)],
+      outputs: [{ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: new Uint8Array(32).fill(1) } as never],
+      signatures: {},
+      protocolVersion: 1,
+      post: commit,
+    };
+    // encodeTx(tx) is 142 bytes for this shape (one input, one karma output,
+    // no signatures, a commit). Packet = 142 + 1 (opt tag) +
+    // vlqU_len(contentLen) + contentLen. contentLen in [128, 16383] has
+    // vlqU_len = 2, so a contentLen of 10159 leaves the packet at 10304 =
+    // MAX_TX_PACKET_BYTES + 1.
+    const content = 'a'.repeat(10_159);
+    const encoded = encodeTxPacket(tx, content);
+    expect(encoded.length).toBe(MAX_TX_PACKET_BYTES + 1);
+    expect(() => decodeTxPacket(encoded)).not.toThrow();
+
+    const authorHex = Buffer.from(keyPair.publicKey).toString('hex');
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set([authorHex]));
+    const validate = topicValidators.get(topics.tx)!;
+    const peer = newPeer(peerMgr);
+    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+
+    const result = validate(peer, { data: encoded });
+
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).toHaveBeenCalledWith(
+      PenaltyKind.ProtocolViolation,
+      peer.id,
+      expect.stringContaining(String(MAX_TX_PACKET_BYTES)),
+    );
+  });
+
+  it('a message of exactly MAX_ORDERING_BLOCK_BYTES is not refused as over its bound', () => {
+    // Whatever the validator then answers, the ProtocolViolation it may fire is
+    // not the length-weigh one: the length check is `>` and equal passes.
+    const { topicValidators, peerMgr } = makeHarness();
+    const validate = topicValidators.get(topics.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+
+    validate(peer, { data: new Uint8Array(MAX_ORDERING_BLOCK_BYTES) });
+
+    for (const call of kindSpy.mock.calls) {
+      if (call[0] === PenaltyKind.ProtocolViolation) {
+        expect(String(call[2])).not.toContain(String(MAX_ORDERING_BLOCK_BYTES));
+      }
+    }
+  });
+
+  it('a message of exactly MAX_TX_PACKET_BYTES is not refused as over its bound', () => {
+    const { topicValidators, peerMgr } = makeHarness();
+    const validate = topicValidators.get(topics.tx)!;
+    const peer = newPeer(peerMgr);
+    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+
+    validate(peer, { data: new Uint8Array(MAX_TX_PACKET_BYTES) });
+
+    for (const call of kindSpy.mock.calls) {
+      if (call[0] === PenaltyKind.ProtocolViolation) {
+        expect(String(call[2])).not.toContain(String(MAX_TX_PACKET_BYTES));
+      }
+    }
   });
 });
