@@ -23,6 +23,7 @@ export interface VouchesDeps extends UtxoEngineDeps {
     deps: UtxoEngineDeps,
     tx: UtxoTransaction,
     currentBlockHeight: number,
+    expectedTargetHex: string,
   ): {
     status: 'pending';
     txId: string;
@@ -84,9 +85,11 @@ export function createRouter(deps: VouchesDeps): Router {
       return;
     }
     try {
-      // Admission judges at tip + 1 (NODE_INTERFACE → validateTx).
+      // Admission judges at tip + 1 (NODE_INTERFACE → validateTx). The
+      // service holds `:targetId` to the spent VouchBox's `targetId`
+      // (NODE_INTERFACE → Vouches, the `DELETE /vouches/:targetId` row).
       const currentHeight = deps.getCurrentHeight() + 1;
-      const result = deps.initiateUnvouch(deps, tx, currentHeight);
+      const result = deps.initiateUnvouch(deps, tx, currentHeight, req.params.targetId!);
       const net = getNet();
       if (net) {
         net.broadcastTx(result.tx).catch((err: Error) => {

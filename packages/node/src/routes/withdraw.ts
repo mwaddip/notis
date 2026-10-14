@@ -43,6 +43,15 @@ export function withdrawRoutes(deps: WithdrawDeps): Router {
       return;
     }
 
+    // NODE_INTERFACE → Withdrawal, the `POST /posts/:id/withdraw` row's
+    // "400 if the payload is absent or names a post other than `:id`": the
+    // route holds the payload's `postId` to `:id` after the edge and before
+    // the service.
+    if (tx.postWithdraw.postId !== req.params.id) {
+      res.status(400).json({ error: 'postWithdraw payload names a post other than :id' });
+      return;
+    }
+
     try {
       // Admission judges at tip + 1 (NODE_INTERFACE → validateTx).
       const currentHeight = deps.getCurrentHeight() + 1;

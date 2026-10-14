@@ -88,6 +88,7 @@ export function initiateUnvouch(
   deps: UtxoEngineDeps,
   tx: UtxoTransaction,
   currentBlockHeight: number,
+  expectedTargetHex: string,
 ): {
   status: 'pending';
   txId: string;
@@ -110,6 +111,15 @@ export function initiateUnvouch(
 
   if (!voucherId || !targetId) {
     throw new ClientError('Transaction does not consume a VouchBox');
+  }
+
+  // NODE_INTERFACE → Vouches, the `DELETE /vouches/:targetId` row's
+  // "400 where `:targetId` is not the target of the VouchBox the transaction
+  // spends": the service holds `:targetId` to the spent box's `targetId`
+  // before `validateTx`.
+  const targetHex = Buffer.from(targetId).toString('hex');
+  if (expectedTargetHex !== targetHex) {
+    throw new ClientError(':targetId does not match the spent VouchBox\'s targetId');
   }
 
   const signerHex = Object.keys(tx.signatures)[0];

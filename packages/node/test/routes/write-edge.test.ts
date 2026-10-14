@@ -767,7 +767,7 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
   // NODE_INTERFACE → Withdrawal: an unknown post answers 404.
   // -------------------------------------------------------------------------
 
-  it.fails('POST /posts/:id/withdraw of a post the node has never heard of answers 404', async () => {
+  it('POST /posts/:id/withdraw of a post the node has never heard of answers 404', async () => {
     // The transaction passes the JSON edge; the service reads the unknown
     // postId's row — none — and the route carries the status its ClientError
     // names.

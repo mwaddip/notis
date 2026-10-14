@@ -643,7 +643,7 @@ describe('vouch service', () => {
         protocolVersion: PROTOCOL_VERSION,
       };
 
-      expect(() => initiateUnvouch(deps, tx, 5)).toThrow(
+      expect(() => initiateUnvouch(deps, tx, 5, targetPubKeyHex)).toThrow(
         'Transaction does not consume a VouchBox',
       );
     });
@@ -678,7 +678,7 @@ describe('vouch service', () => {
 
       signTransaction(tx, targetPrivKey, wrongPubKeyHex);
 
-      expect(() => initiateUnvouch(deps, tx, 5)).toThrow(
+      expect(() => initiateUnvouch(deps, tx, 5, targetPubKeyHex)).toThrow(
         'VouchBox does not belong to signer',
       );
     });
@@ -706,7 +706,7 @@ describe('vouch service', () => {
 
       signTransaction(tx, voucherPrivKey, voucherPubKeyHex);
 
-      const result = initiateUnvouch(deps, tx, 5);
+      const result = initiateUnvouch(deps, tx, 5, targetPubKeyHex);
 
       expect(result.status).toBe('pending');
       expect(result.txId).toBeDefined();

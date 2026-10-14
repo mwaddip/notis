@@ -170,7 +170,7 @@ describe('withdraw route', () => {
     expect((res.data as Record<string, unknown>).postId).toBe(TEST_POST_HASH);
   });
 
-  it.fails('POST /posts/:id/withdraw whose payload names a different post is refused 400', async () => {
+  it('POST /posts/:id/withdraw whose payload names a different post is refused 400', async () => {
     // NODE_INTERFACE → Withdrawal, "the route holds the payload's `postId` to
     // `:id`": the stub would pool, but the rule's answer is 400 before the
     // service is called.

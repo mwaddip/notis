@@ -31,6 +31,14 @@ export function executePostWithdraw(
     throw new ClientError('Transaction carries no postWithdraw payload');
   }
 
+  // NODE_INTERFACE → Withdrawal, the `POST /posts/:id/withdraw` row's
+  // "404 if the post is unknown": an id the node has never heard of answers
+  // 404 before any topology read.
+  const post = getPost(pw.postId);
+  if (!post) {
+    throw new ClientError('Post not found', 404);
+  }
+
   // The maturity bind judges at the withdrawal's block — the same judged-for
   // height validateTx uses, one rule (NODE_INTERFACE → validateTx). The route
   // passes tip + 1.
@@ -39,9 +47,8 @@ export function executePostWithdraw(
     throw new ClientError('Post is not confirmed in an earlier block');
   }
 
-  const post = getPost(pw.postId);
   if (!isLivePost(post)) {
-    throw new ClientError('Post is already withdrawn or unknown');
+    throw new ClientError('Post is already withdrawn');
   }
 
   return admitWriteTx(

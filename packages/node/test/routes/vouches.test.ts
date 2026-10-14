@@ -432,7 +432,7 @@ describe('vouch routes — the JSON edge', () => {
     expect(body['karmaReturnsAtBlock']).toBe(COOLDOWN);
   });
 
-  it.fails('DELETE /vouches/:targetId whose :targetId is not the spent VouchBox\'s targetId is refused 400', async () => {
+  it('DELETE /vouches/:targetId whose :targetId is not the spent VouchBox\'s targetId is refused 400', async () => {
     // NODE_INTERFACE → Vouches, the `DELETE /vouches/:targetId` row:
     // "400 where `:targetId` is not the target of the VouchBox the transaction
     // spends". The vouch box is otherwise one the node would pool.
