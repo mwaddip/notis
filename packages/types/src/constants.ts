@@ -54,6 +54,9 @@ export const USERNAME_MAX_BYTES = 24;
 export const MAX_BLOCK_BODY_BYTES = 2_000_000;   // consensus — encoded UtxoTxTree
 export const MAX_TX_BYTES = 10_000;              // consensus — encoded UtxoTransaction; every body element but the last
 export const MAX_SETTLEMENT_BYTES = 100_000;     // consensus — the encoded settlement transaction, the body's last element
+export const MAX_HEADER_BYTES = 233;             // derived — the longest encoded BlockHeader
+export const MAX_ORDERING_BLOCK_BYTES = 2_000_302; // derived — the longest encoded OrderingBlock whose body is within MAX_BLOCK_BODY_BYTES
+export const MAX_TX_PACKET_BYTES = 10_303;       // derived — the longest encoded TxPacket whose transaction and content are within their bounds
 
 // Settlement caps — per-block ceilings on state-driven settlement legs.
 // TYPES_INTERFACE → Settlement caps

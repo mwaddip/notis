@@ -71,3 +71,73 @@ describe('ByteWriter', () => {
     expect(() => w.writeU8(-1)).toThrow();
   });
 });
+
+describe('ByteWriter holds nothing it is handed', () => {
+  it('a Buffer changed after writeBytes does not change toBytes()', () => {
+    const w = new ByteWriter();
+    const handed = Buffer.from([1, 2, 3, 4]);
+    w.writeBytes(handed);
+    handed[0] = 0xff;
+    expect(w.toBytes()).toEqual(new Uint8Array([1, 2, 3, 4]));
+  });
+
+  it('a Uint8Array changed after writeBytes does not change toBytes()', () => {
+    const w = new ByteWriter();
+    const handed = new Uint8Array([1, 2, 3, 4]);
+    w.writeBytes(handed);
+    handed[0] = 0xff;
+    expect(w.toBytes()).toEqual(new Uint8Array([1, 2, 3, 4]));
+  });
+
+  it('an array toBytes() returned, changed, does not change a second toBytes()', () => {
+    const w = new ByteWriter();
+    w.writeBytes(new Uint8Array([5, 6, 7]));
+    const first = w.toBytes();
+    first[0] = 0xff;
+    expect(w.toBytes()).toEqual(new Uint8Array([5, 6, 7]));
+  });
+
+  it('a write after toBytes() does not change the array it returned', () => {
+    const w = new ByteWriter();
+    w.writeBytes(new Uint8Array([5, 6, 7]));
+    const first = w.toBytes();
+    w.writeU8(8);
+    expect(first).toEqual(new Uint8Array([5, 6, 7]));
+    expect(w.toBytes()).toEqual(new Uint8Array([5, 6, 7, 8]));
+  });
+
+  it('length equals toBytes().length after a mix of writes', () => {
+    const w = new ByteWriter();
+    w.writeU8(1);
+    w.writeBytes(new Uint8Array(37));
+    w.writeVlqU(300);
+    w.writeVlqS(-70000);
+    w.writeVlqBigInt(2n ** 63n);
+    w.writeArray([1, 2, 3], (wr, v) => wr.writeU8(v));
+    w.writeOption(9, (wr, v) => wr.writeVlqU(v));
+    w.writeOption<number>(null, (wr, v) => wr.writeVlqU(v));
+    expect(w.length).toBe(w.toBytes().length);
+  });
+});
+
+describe('ByteWriter output over long sequences', () => {
+  it('equals the plain concatenation of what was written', () => {
+    const w = new ByteWriter();
+    const expected: number[] = [];
+    for (let i = 0; i < 100_000; i++) {
+      const b = (i * 31) & 0xff;
+      w.writeU8(b);
+      expected.push(b);
+      if (i % 9_973 === 0) {
+        w.writeBytes(new Uint8Array(0));
+        w.writeBytes(new Uint8Array([0xaa]));
+        expected.push(0xaa);
+        const block = new Uint8Array(70_000).map((_, j) => (j * 7 + i) & 0xff);
+        w.writeBytes(block);
+        for (const x of block) expected.push(x);
+      }
+    }
+    expect(w.length).toBe(expected.length);
+    expect(w.toBytes()).toEqual(new Uint8Array(expected));
+  });
+});

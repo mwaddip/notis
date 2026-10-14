@@ -266,7 +266,13 @@ included).
 
 ## ByteWriter
 
-Accumulates byte chunks and produces a single `Uint8Array` via `toBytes()`.
+Writes into one buffer of its own and produces a single `Uint8Array` via `toBytes()`.
+
+**A write costs what its bytes cost.** The buffer doubles when a write would overrun it, and a write
+copies its bytes in place — no allocation per write beyond that growth — so encoding `n` bytes is
+`O(n)` in time and in memory. Every decoder in the tree pays an encoding of what it decoded
+(`TYPES_INTERFACE → The boundary check`, step 3), so this is the cost of a decode as well as of an
+encode.
 
 ### Constructor
 
@@ -274,7 +280,7 @@ Accumulates byte chunks and produces a single `Uint8Array` via `toBytes()`.
 new ByteWriter()
 ```
 
-Initializes empty chunks and length = 0.
+Initializes an empty buffer and length = 0.
 
 ### Properties
 
@@ -292,7 +298,9 @@ Writes one byte.
 
 #### `writeBytes(bytes: Uint8Array): void`
 
-Writes a byte array. Makes a defensive copy via `.slice()`.
+Writes a byte array, copying it into the writer's buffer — a `Buffer` exactly as a plain
+`Uint8Array`. The writer keeps no reference to `bytes`, so a later change to them never reaches
+`toBytes()`.
 
 #### `writeVlqU(value: number): void`
 
@@ -322,7 +330,8 @@ Writes VLQ length, then calls `serializer(this, item)` for each item.
 
 #### `toBytes(): Uint8Array`
 
-Concatenates all accumulated chunks into a single `Uint8Array` and returns it.
+Returns a copy of the `length` bytes written so far. The writer keeps its own buffer and may be
+written to again; a later write never reaches an array `toBytes()` returned.
 
 ---
 
@@ -531,8 +540,9 @@ The network magics are **not** constants of this package — see §Exports.
 ## Invariants
 
 - ByteReader is read-only: never mutates the underlying `Uint8Array`
-- ByteWriter accumulates via defensive copies: callers retain ownership of
-  passed buffers
+- ByteWriter keeps no reference to a buffer it is passed, and hands out none of its own: every
+  write copies into its buffer and `toBytes()` returns a copy — callers retain ownership both ways
+- Encoding `n` bytes costs `O(n)`: one buffer, grown by doubling
 - VLQ values fit in `Number.MAX_SAFE_INTEGER` (2^53 - 1) — no silent
   truncation
 - Frame version is independent of application `protocolVersion` — they

@@ -729,8 +729,10 @@ export class SyncMachine {
    * heightByBlockId point lookup (NET_INTERFACE → Sync Handler Registration).
    * The assembled body is byte-bounded: a response is truncated at
    * MAX_SERVE_BODY_BYTES so it always fits inside the requester's stream cap.
-   * The first matching block is always included, so an oversized block still
-   * moves rather than wedging sync.
+   * The first matching block is always included, so a request is never answered
+   * with nothing while the server holds what was asked (NET_INTERFACE →
+   * Validation →
+   * "Every arm that assembles more than one stored object into a response is bounded by BYTES, not by item count alone.").
    */
   private handleModifierRequestMsg(peerId: string, req: ModifierRequest): void {
     if (req.typeId === MODIFIER_ORDERING_BLOCK) {

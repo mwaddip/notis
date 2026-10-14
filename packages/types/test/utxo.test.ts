@@ -992,7 +992,7 @@ describe('genesis_proof', () => {
     // shares. `utxoTxTree.utxoTxs` is `arr(lp)` and goes through the same
     // primitive on the same positional reader, so it is what a bound placed in
     // the primitive would have caught along with this box — and it must not be.
-    const tree = { utxoTxIds: [], utxoTxs: [overBound] };
+    const tree = { utxoTxIds: ['ab'.repeat(32)], utxoTxs: [overBound] };
     expect(decodeUtxoTxTree(encodeUtxoTxTree(tree)).utxoTxs[0]).toEqual(overBound);
   });
 });

@@ -359,6 +359,26 @@ Raw stream reads are bounded by `MAX_STREAM_BYTES` (never buffer an unbounded
 attacker-controlled stream). Per-request serve work is bounded: handling a request must not be
 `O(ids × chainHeight)` — an unbounded id list must not each trigger a full-chain scan.
 
+**A peer's bytes are weighed before they are decoded.** Every decode of an ordering block, a header or a
+transaction packet a peer sent is preceded by a length check against the longest encoding of what may
+arrive there, and bytes over it are refused undecoded — as that site refuses bytes that do not decode:
+
+| Where | Weighed against |
+|---|---|
+| a gossiped ordering block — Stage 1, before `decodeOrderingBlock` | `MAX_ORDERING_BLOCK_BYTES` |
+| a gossiped transaction packet — Stage 1, before `decodeTxPacket` | `MAX_TX_PACKET_BYTES` |
+| each block of a `Blocks` response, each block of a `ModifierResponse` | `MAX_ORDERING_BLOCK_BYTES` |
+| each header of a `Headers` response | `MAX_HEADER_BYTES` |
+
+Each bound is `@dagsocial/types`' and the longest encoding of something Stage 1 accepts
+(`TYPES_INTERFACE → Size caps`), so the check refuses nothing an honest node sends. With it, and with the
+decoder refusing a body whose element count is not its id count (`TYPES_INTERFACE → Ordering block`), a
+decode costs what its bytes cost (`WIRE_INTERFACE → ByteWriter`). Measured 2026-10-14 on the i9 laptop: a
+3.81 MiB block whose body is 4 000 000 empty elements beside no id is refused at the count in 2 ms; a block at
+the bound whose body is 60 605 aligned minimal elements decodes in about 0.2 s, and a `Blocks` response of four
+such blocks, 7.63 MiB, in about 1 s. Stage 1 decodes a gossiped block's body before it checks the header's work
+(→ Stage 1), so that 0.2 s is what a block no one worked costs its first hop.
+
 **A stream read is bounded in time as well as in bytes.** Every `readStreamBounded` carries a
 deadline — the `syncRequestTimeoutMs` its dial uses at that site (×5 for the block read, whose payload
 is larger) — because the byte cap bounds a read's *volume*, not its *duration*: a peer that opens the
@@ -372,17 +392,19 @@ evidence of misbehaviour.
 ⛔ **Every arm that assembles more than one stored object into a response is bounded by BYTES, not by
 item count alone.** A count bounds an array's length and says nothing about its weight, and both
 `ModifierResponse` and `Blocks` assemble whole blocks. Each arm accumulates encoded bytes, stops
-before exceeding `MAX_SERVE_BODY_BYTES`, and always emits its first item so an oversized object moves
-rather than wedging sync.
+before exceeding `MAX_SERVE_BODY_BYTES`, and always emits its first item, so the serve loop never answers
+a request with nothing while it holds what was asked. No legal block reaches the budget alone (→ "Four
+limits stand in a fixed order, and the relation is the rule"); one over `MAX_ORDERING_BLOCK_BYTES` is
+served and its reader refuses it (→ "A peer's bytes are weighed before they are decoded").
 
-**Three limits stand in a fixed order, and the relation is the rule:**
+**Four limits stand in a fixed order, and the relation is the rule:**
 
 ```
-MAX_BLOCK_BODY_BYTES (2,000,000)  <  MAX_SERVE_BODY_BYTES (4 MiB)  <  MAX_STREAM_BYTES (8 MiB)
+MAX_BLOCK_BODY_BYTES (2,000,000)  <  MAX_ORDERING_BLOCK_BYTES (2,000,302)  <  MAX_SERVE_BODY_BYTES (4 MiB)  <  MAX_STREAM_BYTES (8 MiB)
 ```
 
-The lowest is `@dagsocial/types`' consensus bound (`TYPES_INTERFACE` → Size caps); the upper two are
-this package's. A single legal block therefore always fits inside a response the requester will
+The lower two are `@dagsocial/types`' — the consensus bound and the block it encodes to
+(`TYPES_INTERFACE` → Size caps); the upper two are this package's. A single legal block therefore always fits inside a response the requester will
 accept, and a multi-block response truncates instead of overflowing. ⚠ **Raising the block bound above
 this package's serve limit makes a block valid and unservable** — it propagates by gossip and no peer
 syncing from history can ever fetch it, which is a consensus-visible split produced entirely by two
@@ -1215,8 +1237,9 @@ the CBOR would have been the band-aid; the root cause was the second dialect, so
   are full and never before.
 
   The rule is `handleModifierRequestMsg`'s, applied here: accumulate encoded bytes, stop before
-  exceeding `MAX_SERVE_BODY_BYTES`, and **always include the first block** so an oversized one moves
-  rather than wedging sync. A truncated response costs the requester one round trip — it re-asks for
+  exceeding `MAX_SERVE_BODY_BYTES`, and **always include the first block**, so a request is never answered
+  with nothing while the server holds the block asked for — whatever its reader then does with one over
+  `MAX_ORDERING_BLOCK_BYTES` (→ Validation (and untrusted-input safety)). A truncated response costs the requester one round trip — it re-asks for
   what is still missing on the next `SyncInfo` round — and never costs it the chain.
 
   **Each block is encoded once.** The bytes the bound weighs are the bytes the response carries, so
@@ -1224,12 +1247,14 @@ the CBOR would have been the band-aid; the root cause was the second dialect, so
   ⚠ **This package's `A9` means no gate here measures cost**, so a doubling on a serve path would
   pass the whole suite; it is a decision, not an optimisation.
 - **The `Headers` arm stays count-bounded, and that is a measurement rather than an oversight.** A
-  header encodes to **at most 169 B** — 129 fixed (three 32-byte hex roots, a 33-byte `stateRoot`
-  carrying the AVL height byte, a 32-byte `validatorId`) plus five `vlqU` fields at 8 bytes each when
-  every one sits at `Number.MAX_SAFE_INTEGER`. At the 400-item cap that is **~66.8 KiB, about 1.6 %**
-  of `MAX_SERVE_BODY_BYTES`. A byte bound there would be a rule with no subject.
+  header encodes to **at most `MAX_HEADER_BYTES`, 233 B** — 193 fixed (four 32-byte hex roots, a 33-byte
+  `stateRoot` carrying the AVL height byte, a 32-byte `validatorId`) plus five `vlqU` fields at 8 bytes
+  each when every one sits at `Number.MAX_SAFE_INTEGER` (`TYPES_INTERFACE → Size caps`). At the 400-item
+  cap that is **~91 KiB, about 2.2 %** of `MAX_SERVE_BODY_BYTES`. A byte bound there would be a rule with
+  no subject; each item is still weighed against `MAX_HEADER_BYTES` before it is decoded (→ Validation
+  (and untrusted-input safety) → "A peer's bytes are weighed before they are decoded").
 
-  ⚠ **169 B is the ceiling, not a typical header** — a realistic one measures 145 B. The distinction
+  ⚠ **233 B is the ceiling, not a typical header** — a realistic one measures 208 B. The distinction
   is the point: a bound must be argued from the ceiling, and an instance measured and reported as a
   ceiling is how a limit ends up justified by a number nothing enforces.
 - **A response that does not decode THROWS; it must never resolve to `[]`.** `requestBlocks`' result
@@ -1261,14 +1286,14 @@ Two-stage validation, modeled after Ergo's modifier processing:
 
 Runs inside the gossipsub topic validators — i.e. **before** a message is
 forwarded to mesh peers. A message that fails Stage 1 is Rejected (never
-forwarded) and penalized: undecodable → `ProtocolViolation` (permanent
-ban); well-formed but invalid → misbehavior penalty (100), except a version mismatch, which is
+forwarded) and penalized: over its bound or undecodable → `ProtocolViolation` (permanent
+ban — → Validation (and untrusted-input safety) → "A peer's bytes are weighed before they are decoded"); well-formed but invalid → misbehavior penalty (100), except a version mismatch, which is
 `Transient` (→ Peer Penalty System). Uses `@dagsocial/validation`. Per topic:
 
 | Topic | Checks before Accept |
 |-------|----------------------|
-| ordering-block | `verifyOrderingBlockStructure`; protocol version — `verifyProtocolVersion(header.protocolVersion, header.height, schedule)`, a mismatch Rejected with `Transient`; `header.height` is a safe integer (NaN/float/±Infinity → Reject); **the network's floor** — `header.powTargetBits < NetConfig.orderingBlockPowTargetFloorBits` is Rejected with `misbehavior` (→ Consensus parameters net enforces); ordering-block PoW (`verifyOrderingBlockPoW`) — the solution must satisfy the header's own `powTargetBits` (bounded ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` by structure), and a non-safe-integer `powNonce`/`powTargetBits` never verifies (audit M-6, M-9); **the body's root** — `verifyUtxoTxRoot(block)`, after the PoW check and never ahead of it: a body that is not the one the header's `utxoTxRoot` commits is Rejected with `misbehavior` (→ Stage 1 → "A worked header is forwarded with the body its root commits"); **the schedule, when this node holds the parent** — the scheduled-target provider's answer for the header, `null` when the parent is not held; a number that differs from `header.powTargetBits` is **Rejected with no penalty** (→ Stage 1 → "A scheduled-target mismatch is refused, never forwarded, and never penalised") |
-| tx | `decodeTxPacket`; `verifyTxStructure`; protocol version — `verifyTxProtocolVersion(tx, chainHeight() + 1, schedule)`, the envelope's and the commit's against the next block's era, a mismatch Rejected with `Transient`; the packet rule (`tx.post` present ⟺ `content` present); `verifyPostBody(content, tx.post.contentHash)` for a post-bearing tx; then the cached karma-membership gate — the author holds karma at all (`NODE_INTERFACE` → Post transactions). Order as under Gossip Topics |
+| ordering-block | the message's length, at most `MAX_ORDERING_BLOCK_BYTES`; `decodeOrderingBlock`; `verifyOrderingBlockStructure`; protocol version — `verifyProtocolVersion(header.protocolVersion, header.height, schedule)`, a mismatch Rejected with `Transient`; `header.height` is a safe integer (NaN/float/±Infinity → Reject); **the network's floor** — `header.powTargetBits < NetConfig.orderingBlockPowTargetFloorBits` is Rejected with `misbehavior` (→ Consensus parameters net enforces); ordering-block PoW (`verifyOrderingBlockPoW`) — the solution must satisfy the header's own `powTargetBits` (bounded ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` by structure), and a non-safe-integer `powNonce`/`powTargetBits` never verifies (audit M-6, M-9); **the body's root** — `verifyUtxoTxRoot(block)`, after the PoW check and never ahead of it: a body that is not the one the header's `utxoTxRoot` commits is Rejected with `misbehavior` (→ Stage 1 → "A worked header is forwarded with the body its root commits"); **the schedule, when this node holds the parent** — the scheduled-target provider's answer for the header, `null` when the parent is not held; a number that differs from `header.powTargetBits` is **Rejected with no penalty** (→ Stage 1 → "A scheduled-target mismatch is refused, never forwarded, and never penalised") |
+| tx | the message's length, at most `MAX_TX_PACKET_BYTES`; `decodeTxPacket`; `verifyTxStructure`; protocol version — `verifyTxProtocolVersion(tx, chainHeight() + 1, schedule)`, the envelope's and the commit's against the next block's era, a mismatch Rejected with `Transient`; the packet rule (`tx.post` present ⟺ `content` present); `verifyPostBody(content, tx.post.contentHash)` for a post-bearing tx; then the cached karma-membership gate — the author holds karma at all (`NODE_INTERFACE` → Post transactions). Order as under Gossip Topics |
 
 Stage 1 is stateless but for one provider read. It does **not** check the header timestamp rules,
 chain linkage, validator signatures, or state roots — those are apply-time checks in

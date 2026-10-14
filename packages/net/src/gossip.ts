@@ -5,6 +5,8 @@ import {
   encodeOrderingBlock,
   encodeTxPacket,
   hash32,
+  MAX_ORDERING_BLOCK_BYTES,
+  MAX_TX_PACKET_BYTES,
   protocolVersionAt,
   writeLpUtf8,
 } from '@dagsocial/types';
@@ -152,6 +154,16 @@ export function subscribeTopics(
   gs.topicValidators.set(topics.orderingBlock, (_peer, msg) => {
     try {
       const raw = new Uint8Array(msg.data);
+      // NET_INTERFACE → Validation (and untrusted-input safety) →
+      // "A peer's bytes are weighed before they are decoded"
+      if (raw.length > MAX_ORDERING_BLOCK_BYTES) {
+        peerMgr.recordPenaltyKind(
+          PenaltyKind.ProtocolViolation,
+          _peer.toString(),
+          `ordering block ${raw.length} bytes exceeds MAX_ORDERING_BLOCK_BYTES (${MAX_ORDERING_BLOCK_BYTES})`,
+        );
+        return TopicValidatorResult.Reject;
+      }
       const block = decodeOrderingBlock(raw);
       const vr = validators.verifyOrderingBlockStructure(block);
       if (!vr.valid) {
@@ -222,6 +234,16 @@ export function subscribeTopics(
   gs.topicValidators.set(topics.tx, (_peer, msg) => {
     try {
       const raw = new Uint8Array(msg.data);
+      // NET_INTERFACE → Validation (and untrusted-input safety) →
+      // "A peer's bytes are weighed before they are decoded"
+      if (raw.length > MAX_TX_PACKET_BYTES) {
+        peerMgr.recordPenaltyKind(
+          PenaltyKind.ProtocolViolation,
+          _peer.toString(),
+          `tx packet ${raw.length} bytes exceeds MAX_TX_PACKET_BYTES (${MAX_TX_PACKET_BYTES})`,
+        );
+        return TopicValidatorResult.Reject;
+      }
       const packet = decodeTxPacket(raw);
       const { tx, content } = packet;
       const vr = validators.verifyTxStructure(tx);

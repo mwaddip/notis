@@ -34,6 +34,7 @@ import {
   decodeOrderingBlock,
   encodeTx,
   decodeTx,
+  utxoTxTreeByteLength,
 } from '../src/serialization.js';
 import { postFieldBytes, computeContentHash, type PostCommit } from '../src/post.js';
 import { computeTxId } from '../src/utxo.js';
@@ -486,6 +487,76 @@ describe('positional serialization', () => {
       const withRoot = { ...makeBlockHeader(), extraJunk: 'de'.repeat(32) };
       expect(hex(encodeHeader(withRoot as BlockHeader)))
         .toBe(hex(encodeHeader(makeBlockHeader())));
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The two sections' counts must agree
+  // -------------------------------------------------------------------------
+
+  describe('a misaligned tree has no decoding', () => {
+    it('a count of 3 elements beside no ids throws out-of-domain', () => {
+      // Hand-assembled bytes: vlqU(0) for the id count, vlqU(3) for the
+      // element count, three empty lp elements (vlqU(0) ‖ no payload each). The
+      // encoder writes this tree without complaint; the pin is on the decoder.
+      const bytes = new Uint8Array([0x00, 0x03, 0x00, 0x00, 0x00]);
+      let thrown: unknown;
+      try { decodeUtxoTxTree(bytes); } catch (e) { thrown = e; }
+      expect(thrown).toBeInstanceOf(ReaderError);
+      expect((thrown as ReaderError).code).toBe('out-of-domain');
+    });
+
+    it('a count of 5 beside 1 id and no element bytes throws out-of-domain, not truncated', () => {
+      // The count is refused before any element is read: a `truncated` code
+      // would say the reader reached for the first element and found the
+      // bytes gone — the comparison must sit ahead of that read.
+      const parts: number[] = [0x01];
+      for (let i = 0; i < 32; i++) parts.push(0);
+      parts.push(0x05);
+      const bytes = new Uint8Array(parts);
+      let thrown: unknown;
+      try { decodeUtxoTxTree(bytes); } catch (e) { thrown = e; }
+      expect(thrown).toBeInstanceOf(ReaderError);
+      expect((thrown as ReaderError).code).toBe('out-of-domain');
+    });
+
+    it('a block whose tree is misaligned throws out-of-domain', () => {
+      const misaligned: UtxoTxTree = {
+        utxoTxIds: ['f'.repeat(64), 'e'.repeat(64)],
+        utxoTxs: [new Uint8Array(0)],
+      };
+      const block: OrderingBlock = { ...makeOrderingBlock(), utxoTxTree: misaligned };
+      const bytes = encodeOrderingBlock(block);
+      let thrown: unknown;
+      try { decodeOrderingBlock(bytes); } catch (e) { thrown = e; }
+      expect(thrown).toBeInstanceOf(ReaderError);
+      expect((thrown as ReaderError).code).toBe('out-of-domain');
+    });
+
+    it('aligned trees round-trip, the encoder still writes a misaligned one, and the sizer matches', () => {
+      // Aligned round-trips both ways — one id with one element, and the
+      // zero-ids/zero-elements shape every block's body degenerates to under
+      // its own structural check elsewhere.
+      const aligned: UtxoTxTree = {
+        utxoTxIds: ['f'.repeat(64)],
+        utxoTxs: [new Uint8Array(encodeTx(makeTx()))],
+      };
+      const alignedEmpty: UtxoTxTree = { utxoTxIds: [], utxoTxs: [] };
+      expect(decodeUtxoTxTree(encodeUtxoTxTree(aligned))).toEqual(aligned);
+      expect(decodeUtxoTxTree(encodeUtxoTxTree(alignedEmpty))).toEqual(alignedEmpty);
+      const block: OrderingBlock = { ...makeOrderingBlock(), utxoTxTree: aligned };
+      expect(decodeOrderingBlock(encodeOrderingBlock(block))).toEqual(block);
+      // The encoder writes a misaligned tree whatever its counts, and
+      // `utxoTxTreeByteLength` equals that encoding's length — the equivalence
+      // sits in `test/utxo-tx-tree-size.test.ts` and the pin here is only that
+      // the write side has not moved.
+      const misaligned: UtxoTxTree = {
+        utxoTxIds: ['a'.repeat(64), 'b'.repeat(64)],
+        utxoTxs: [new Uint8Array(0)],
+      };
+      const bytes = encodeUtxoTxTree(misaligned);
+      expect(bytes.length).toBeGreaterThan(0);
+      expect(utxoTxTreeByteLength(misaligned)).toBe(bytes.length);
     });
   });
 

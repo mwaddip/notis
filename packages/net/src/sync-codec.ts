@@ -18,7 +18,6 @@ import {
   encodeOrderingBlock,
   encodeStruct,
   readHexN,
-  readLp,
   readU8,
   readVlqU,
   writeArr,
@@ -29,6 +28,7 @@ import {
   writeVlqU,
 } from '@dagsocial/types';
 import type { ByteReader, BlockHeader, OrderingBlock, StructCodec } from '@dagsocial/types';
+import { MAX_HEADER_BYTES, MAX_ORDERING_BLOCK_BYTES } from '@dagsocial/types';
 import {
   isBoundedInt,
   isHeight,
@@ -192,7 +192,17 @@ export const modifierResponseCodec: StructCodec<ModifierResponse> = {
     }
     const modifiers: { id: string; data: Uint8Array }[] = [];
     for (let i = 0; i < count; i++) {
-      modifiers.push({ id: readHexN(r, 32), data: readLp(r) });
+      const id = readHexN(r, 32);
+      // NET_INTERFACE → Validation (and untrusted-input safety) →
+      // "A peer's bytes are weighed before they are decoded"
+      const dataLen = readVlqU(r);
+      if (dataLen > MAX_ORDERING_BLOCK_BYTES) {
+        throw new ReaderError(
+          `modifierResponse: data ${dataLen} bytes exceeds MAX_ORDERING_BLOCK_BYTES (${MAX_ORDERING_BLOCK_BYTES})`,
+          'out-of-domain',
+        );
+      }
+      modifiers.push({ id, data: new Uint8Array(r.readBytes(dataLen)) });
     }
     return { typeId, modifiers };
   },
@@ -398,6 +408,7 @@ function lpItemsCodec<T>(
   encodeItem: (item: T) => Uint8Array,
   decodeItem: (bytes: Uint8Array) => T,
   maxItems: number,
+  maxItemBytes: number,
 ): StructCodec<T[]> {
   return {
     name,
@@ -413,7 +424,18 @@ function lpItemsCodec<T>(
         );
       }
       const items: T[] = [];
-      for (let i = 0; i < count; i++) items.push(decodeItem(readLp(r)));
+      for (let i = 0; i < count; i++) {
+        // NET_INTERFACE → Validation (and untrusted-input safety) →
+        // "A peer's bytes are weighed before they are decoded"
+        const itemLen = readVlqU(r);
+        if (itemLen > maxItemBytes) {
+          throw new ReaderError(
+            `${name}: item ${itemLen} bytes exceeds ${maxItemBytes}`,
+            'out-of-domain',
+          );
+        }
+        items.push(decodeItem(new Uint8Array(r.readBytes(itemLen))));
+      }
       return items;
     },
   };
@@ -436,11 +458,23 @@ function tryDecodeStruct<T>(codec: StructCodec<T>, bytes: Uint8Array): T | null 
 }
 
 function blocksResponseCodec(maxBlocks: number): StructCodec<OrderingBlock[]> {
-  return lpItemsCodec('blocksResponse', encodeOrderingBlock, decodeOrderingBlock, maxBlocks);
+  return lpItemsCodec(
+    'blocksResponse',
+    encodeOrderingBlock,
+    decodeOrderingBlock,
+    maxBlocks,
+    MAX_ORDERING_BLOCK_BYTES,
+  );
 }
 
 function headersResponseCodec(maxHeaders: number): StructCodec<BlockHeader[]> {
-  return lpItemsCodec('headersResponse', encodeHeader, decodeHeader, maxHeaders);
+  return lpItemsCodec(
+    'headersResponse',
+    encodeHeader,
+    decodeHeader,
+    maxHeaders,
+    MAX_HEADER_BYTES,
+  );
 }
 
 /** An already-encoded item is its own encoding: `lpItemsCodec`'s identity pairing. */
@@ -456,7 +490,7 @@ const identityBytes = (bytes: Uint8Array): Uint8Array => bytes;
  * `Uint8Array[]` it wrote.
  */
 function encodedBlocksResponseCodec(maxBlocks: number): StructCodec<Uint8Array[]> {
-  return lpItemsCodec('blocksResponse', identityBytes, identityBytes, maxBlocks);
+  return lpItemsCodec('blocksResponse', identityBytes, identityBytes, maxBlocks, MAX_ORDERING_BLOCK_BYTES);
 }
 
 /**
