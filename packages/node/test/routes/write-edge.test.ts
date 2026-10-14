@@ -393,8 +393,9 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
 
   it('a signed transfer whose output value is spelled with one leading zero answers 400 naming outputs[0].value', async () => {
     // The transaction is otherwise one the node would pool — the leading
-    // zero is a second spelling of a value the sender signed under exactly
-    // one spelling.
+    // zero is a second spelling of the value, which the JSON form refuses
+    // (NODE_INTERFACE → HTTP API → "A write request's transaction is
+    // checked whole before anything reads it").
     const tx = buildSignedTransferOverFresh(50_000_000n, 100_000_000n);
     const json = txToJson(tx) as Record<string, unknown>;
     const outs = (json.outputs as Record<string, unknown>[]).map((o) => ({ ...o }));
@@ -544,8 +545,8 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     expect(res.status).toBe(400);
     const err = message(res.data);
     expect(err).toContain('outputs');
-    // The service's own words name "credit transfer outputs must all be
-    // CreditBoxes"; the edge's refusal names the absent key alone.
+    // The edge's refusal names the absent key, ahead of any check the
+    // service makes on the outputs.
     expect(err).not.toContain('CreditBoxes');
   });
 
