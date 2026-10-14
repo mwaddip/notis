@@ -76,10 +76,6 @@ function appliedLinesFrom(
 
 // ---------------------------------------------------------------------------
 // A refused block at the next height.
-//
-// NODE_INTERFACE → Triggers → "The template is voided at the commit that moves
-// the tip, and nowhere else"; NODE_INTERFACE → "What follows the commit is the
-// commit's"; JOURNAL_EVENTS → post_indexed.
 // ---------------------------------------------------------------------------
 
 describe('a refused block at the next height leaves what the commit left', () => {
@@ -290,10 +286,6 @@ describe('a refused block at the next height leaves what the commit left', () =>
 
 // ---------------------------------------------------------------------------
 // A heavier branch whose last block is refused — a reorg that rolls back.
-//
-// NODE_INTERFACE → "What follows the commit is the commit's" nested arm;
-// NODE_INTERFACE → Store Interface → Posts DAG → "Backfill after sync";
-// JOURNAL_EVENTS → post_indexed.
 // ---------------------------------------------------------------------------
 
 interface BranchSetting {
@@ -315,9 +307,9 @@ async function buildBranchSetting(opts: { lyingAdProofsRoot: boolean }): Promise
   const [shared1] = await buildAndApply([[1, T1]]);
 
   // Each chain paces one block per `idealMs` so the schedule leaves the target
-  // where it stood (MINING_INTERFACE → Difficulty Schedule → asertTargetBits);
-  // two branch blocks and two of this node's own carry equal work, and the
-  // branch is heavier only when its third block is in the sum.
+  // where it stood (MINING_INTERFACE → Difficulty Schedule); two branch blocks
+  // and two of this node's own carry equal work, and the branch is heavier
+  // only when its third block is in the sum.
   const spacing = 60_000;
   const { applyOrderingBlock } = (await import('../../src/services/block-apply.js')) as {
     applyOrderingBlock: (b: OrderingBlock) => boolean;
