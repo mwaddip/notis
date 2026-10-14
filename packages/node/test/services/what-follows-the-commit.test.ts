@@ -397,7 +397,7 @@ describe('a reorg that rolls back leaves what the commit left', () => {
     expect(bc.getCurrentTemplate()).toBe(tplBefore);
   });
 
-  it.fails('a reorg that rolls back journals no post as indexed', async () => {
+  it('a reorg that rolls back journals no post as indexed', async () => {
     const stdoutLines = installStdoutCapture();
     const { initJournal } = await import('../../src/journal.js');
     initJournal();
@@ -423,7 +423,7 @@ describe('a reorg that rolls back leaves what the commit left', () => {
     expect(postIndexedIdsFrom(stdoutLines.slice(startIdx))).toEqual([]);
   });
 
-  it.fails('a reorg that rolls back leaves the backfill driver as it was', async () => {
+  it('a reorg that rolls back leaves the backfill driver as it was', async () => {
     installStdoutCapture();
     const sc = await buildBranchSetting({ lyingAdProofsRoot: true });
     const ordering = await importOrdering();
@@ -448,7 +448,7 @@ describe('a reorg that rolls back leaves what the commit left', () => {
     expect(backfill.getPendingCount()).toBe(pendingBefore);
   });
 
-  it.fails('a reorg that rolls back logs no applied-block line for any of its blocks', async () => {
+  it('a reorg that rolls back logs no applied-block line for any of its blocks', async () => {
     installStdoutCapture();
     const sc = await buildBranchSetting({ lyingAdProofsRoot: true });
     const ordering = await importOrdering();

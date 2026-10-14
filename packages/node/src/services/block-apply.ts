@@ -334,15 +334,15 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
     );
   }
 
-  // NODE_INTERFACE → "What follows the commit is the commit's":
-  // `emitPostIndexed` for each post the block first stored, then the applied
-  // log line.
-  announceAppliedBlock(block, moved.indexed);
   if (!nested) {
     // Net's relay gate follows the committed state for the owners whose karma
     // boxes this block moved (NODE_INTERFACE → Post transactions → "The set
     // moves after a commit, never inside a transaction").
     moveKarmaMembers(moved.karmaOwners);
+    // NODE_INTERFACE → "What follows the commit is the commit's":
+    // `emitPostIndexed` for each post the block first stored, then the applied
+    // log line.
+    announceAppliedBlock(block, moved.indexed);
     rebuildTemplate();
     noteTip(block.header.height);
     // The applied tip reaches net at the same seam, so a version boundary can
