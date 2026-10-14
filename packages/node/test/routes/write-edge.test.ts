@@ -45,7 +45,7 @@ function makeConfig(overrides?: Partial<Config>): Config {
 
 interface Response { status: number; data: unknown; }
 
-// NODE_INTERFACE → Route error policy: a route carries either a
+// NODE_INTERFACE → "Route error policy": a route carries either a
 // `{ error: <message> }` body or `{ error: <status>, reason: <message> }`.
 // The field a test reads is "whichever carries the words" — the message in
 // the first, `reason` in the second.
