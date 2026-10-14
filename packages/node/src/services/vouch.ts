@@ -1,7 +1,5 @@
 import {
-  computeTxId,
   VOUCH_MIN_BALANCE,
-  MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
 import type { VouchBox, VouchEscrowBox, UtxoTransaction } from '@dagsocial/types';
 import {
@@ -9,7 +7,7 @@ import {
 } from '../store/index.js';
 import { isValidVouchTarget } from '@dagsocial/validation';
 import { isMember, validateTx } from '@dagsocial/consensus';
-import { admitTx } from './admit-tx.js';
+import { admitWriteTx } from './admit-tx.js';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { ClientError } from './client-error.js';
 
@@ -77,15 +75,12 @@ export function castVouch(
     throw new ClientError('Vouch cooldown active — cannot re-vouch yet');
   }
 
-  const result = validateTx(deps, tx, currentBlockHeight);
-  if (!result.valid) {
-    throw new ClientError(`Invalid vouch transaction: ${result.error}`);
-  }
-
-  const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  admitTx(tx, expiresAtHeight);
-
-  const txId = computeTxId(tx);
+  const { txId, expiresAtHeight } = admitWriteTx(
+    (t, h) => validateTx(deps, t, h),
+    tx,
+    currentBlockHeight,
+    'Invalid vouch transaction: ',
+  );
   return { status: 'pending', txId, expiresAtHeight, tx };
 }
 
@@ -122,15 +117,12 @@ export function initiateUnvouch(
     throw new ClientError('VouchBox does not belong to signer');
   }
 
-  const result = validateTx(deps, tx, currentBlockHeight);
-  if (!result.valid) {
-    throw new ClientError(`Invalid unvouch transaction: ${result.error}`);
-  }
-
-  const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  admitTx(tx, expiresAtHeight);
-
-  const txId = computeTxId(tx);
+  const { txId, expiresAtHeight } = admitWriteTx(
+    (t, h) => validateTx(deps, t, h),
+    tx,
+    currentBlockHeight,
+    'Invalid unvouch transaction: ',
+  );
   // ⛔ **Read off the escrow the transaction itself carries, never recomputed.**
   // The engine pins `releaseAtBlock` as an exact equality against
   // `vouch.createdAtBlock + vouchCooldownBlocks`, so the value on the output

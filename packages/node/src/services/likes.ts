@@ -1,4 +1,3 @@
-import { computeTxId, MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import {
   getPost,
@@ -7,7 +6,7 @@ import {
   hasPendingLike,
 } from '../store/index.js';
 import { validateTx } from '@dagsocial/consensus';
-import { admitTx } from './admit-tx.js';
+import { admitWriteTx } from './admit-tx.js';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { ClientError } from './client-error.js';
 
@@ -81,20 +80,19 @@ export function castLike(
     throw new ClientError('Already liked this post');
   }
 
-  // ---- 4. Validate transaction (conservation carve, authorization, transitions) ----
-  const result = validateTx(deps, tx, currentBlockHeight);
-  if (!result.valid) {
-    throw new ClientError(`Invalid like transaction: ${result.error}`);
-  }
+  // ---- 4. Admission: validate, set expiry, pool (NODE_INTERFACE → Service
+  //         Layer Architecture → "One function admits"). ----
+  const { txId, expiresAtHeight } = admitWriteTx(
+    (t, h) => validateTx(deps, t, h),
+    tx,
+    currentBlockHeight,
+    'Invalid like transaction: ',
+  );
 
-  // ---- 5. Insert into mempool ----
-  const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  admitTx(tx, expiresAtHeight);
-
-  // ---- 6. Return pending result ----
+  // ---- 5. Return pending result ----
   return {
     castLikeResult: 'pending',
-    txId: computeTxId(tx),
+    txId,
     expiresAtHeight,
     tx,
   };

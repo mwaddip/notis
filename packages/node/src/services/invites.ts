@@ -1,12 +1,10 @@
 import {
-  computeTxId,
-  MEMPOOL_EXPIRY_BLOCKS,
   membershipBar,
   KARMA_MINIMUM,
 } from '@dagsocial/types';
 import type { BondBox, KarmaBox, UtxoTransaction } from '@dagsocial/types';
 import { isMember, isRoot, materializeOutput, validateTx } from '@dagsocial/consensus';
-import { admitTx } from './admit-tx.js';
+import { admitWriteTx } from './admit-tx.js';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { ClientError } from './client-error.js';
 
@@ -124,28 +122,24 @@ export function createInvite(
     );
   }
 
-  // ---- 5. Validate transaction (shape, conservation, authorization, transitions) ----
-  const result = validateTx(deps, tx, currentBlockHeight);
-  if (!result.valid) {
-    throw new ClientError(`Invalid invite transaction: ${result.error}`);
-  }
+  // ---- 5. Admission (NODE_INTERFACE → Service Layer Architecture → "One
+  //         function admits"). `expiresAtHeight` is this MEMPOOL ENTRY's
+  //         expiry. The bond settles `INVITE_PROBATION_BLOCKS` after this
+  //         block, so nothing about the invite itself stays open.
+  const { txId, expiresAtHeight } = admitWriteTx(
+    (t, h) => validateTx(deps, t, h),
+    tx,
+    currentBlockHeight,
+    'Invalid invite transaction: ',
+  );
 
-  // ---- 6. Insert into mempool ----
+  // ---- 6. Return result ----
   //
-  // `expiresAtHeight` is this MEMPOOL ENTRY's expiry. The bond settles
-  // `INVITE_PROBATION_BLOCKS` after this block, so nothing about the invite
-  // itself stays open.
-  const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  admitTx(tx, expiresAtHeight);
-
-  // ---- 7. Return result ----
-  //
-  // `txId` is computed FIRST, before any provenance is attached: it hashes the
-  // output *candidates*, so attaching first would feed provenance into the very
-  // id it is derived from. `computeTxId` routes outputs through
-  // `canonicalBoxBytes` and so does not observe provenance — which makes getting
-  // this backwards silent rather than an error.
-  const txId = computeTxId(tx);
+  // `txId` from the admit seam is `validateTx`'s own — the hash of the output
+  // *candidates*, so attaching provenance first would feed provenance into
+  // the very id it is derived from. `computeTxId` routes outputs through
+  // `canonicalBoxBytes` and so does not observe provenance — which makes
+  // getting this backwards silent rather than an error.
 
   // The id must equal what block application will store, so it is materialized
   // exactly the way that path materializes it; `tx` here is client-supplied

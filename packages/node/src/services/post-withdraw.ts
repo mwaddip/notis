@@ -1,4 +1,3 @@
-import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import {
   getTopologyHeight,
@@ -8,7 +7,7 @@ import {
 import { ClientError } from './client-error.js';
 import { validateTx } from '@dagsocial/consensus';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
-import { admitTx } from './admit-tx.js';
+import { admitWriteTx } from './admit-tx.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -45,13 +44,10 @@ export function executePostWithdraw(
     throw new ClientError('Post is already withdrawn or unknown');
   }
 
-  const result = validateTx(deps, tx, currentBlockHeight);
-  if (!result.valid) {
-    throw new ClientError(`Invalid postWithdraw transaction: ${result.error}`);
-  }
-
-  const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  admitTx(tx, expiresAtHeight);
-
-  return { txId: result.txId!, expiresAtHeight };
+  return admitWriteTx(
+    (t, h) => validateTx(deps, t, h),
+    tx,
+    currentBlockHeight,
+    'Invalid postWithdraw transaction: ',
+  );
 }

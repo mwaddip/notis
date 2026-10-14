@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import type { UtxoTransaction, UsernameBox } from '@dagsocial/types';
-import { canonicalUsernameBytes, isValidUsernameBytes, computeTxId, MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
+import { canonicalUsernameBytes, isValidUsernameBytes } from '@dagsocial/types';
 import type { UtxoEngineDeps, UtxoResult } from '@dagsocial/consensus';
-import { admitTx } from '../services/admit-tx.js';
+import { admitWriteTx } from '../services/admit-tx.js';
 import { getNet } from '../services/net-instance.js';
 import { checkRequestTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
@@ -62,15 +62,12 @@ export function createRouter(deps: UsernameRouteDeps): Router {
 
     try {
       const currentHeight = deps.getCurrentHeight() + 1;
-      const result = deps.validateTx(tx, currentHeight);
-      if (!result.valid) {
-        res.status(400).json({ error: result.error });
-        return;
-      }
-
-      const txId = computeTxId(tx);
-      const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
-      admitTx(tx, expiresAtHeight);
+      const { txId, expiresAtHeight } = admitWriteTx(
+        deps.validateTx,
+        tx,
+        currentHeight,
+        '',
+      );
 
       const net = getNet();
       if (net) {
@@ -124,15 +121,12 @@ export function createRouter(deps: UsernameRouteDeps): Router {
 
     try {
       const currentHeight = deps.getCurrentHeight() + 1;
-      const result = deps.validateTx(tx, currentHeight);
-      if (!result.valid) {
-        res.status(400).json({ error: result.error });
-        return;
-      }
-
-      const txId = computeTxId(tx);
-      const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
-      admitTx(tx, expiresAtHeight);
+      const { txId, expiresAtHeight } = admitWriteTx(
+        deps.validateTx,
+        tx,
+        currentHeight,
+        '',
+      );
 
       const net = getNet();
       if (net) {

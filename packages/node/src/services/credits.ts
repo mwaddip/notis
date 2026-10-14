@@ -1,9 +1,8 @@
-import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 
 import { ClientError } from './client-error.js';
 import { validateTx } from '@dagsocial/consensus';
-import { admitTx } from './admit-tx.js';
+import { admitWriteTx } from './admit-tx.js';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 
 // ---------------------------------------------------------------------------
@@ -53,17 +52,16 @@ export function sendCredits(
     throw new ClientError('credit transfer outputs must all be CreditBoxes');
   }
 
-  const result = validateTx(deps, tx, currentBlockHeight);
-  if (!result.valid) {
-    throw new ClientError(`Invalid credit transfer: ${result.error}`);
-  }
-
-  const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  admitTx(tx, expiresAtHeight);
+  const { txId, expiresAtHeight } = admitWriteTx(
+    (t, h) => validateTx(deps, t, h),
+    tx,
+    currentBlockHeight,
+    'Invalid credit transfer: ',
+  );
 
   return {
     status: 'pending',
-    txId: result.txId!,
+    txId,
     expiresAtHeight,
     tx,
   };
