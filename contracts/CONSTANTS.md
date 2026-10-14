@@ -83,14 +83,19 @@ in their Kind cell and appear again under → Per-network values with all three 
 
 ### Size caps
 
-Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_BYTES < MAX_STREAM_BYTES`
-— and the order is the rule; the base number is a choice.
+Four limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_ORDERING_BLOCK_BYTES < MAX_SERVE_BODY_BYTES <
+MAX_STREAM_BYTES` — and the order is the rule; the base number is a choice. The three encoded bounds are derived
+from the layout and the consensus bounds, and a peer's bytes are weighed against them before a decode
+(`NET_INTERFACE → Validation (and untrusted-input safety)`).
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `MAX_BLOCK_BODY_BYTES` | `2_000_000` | 2 MB per block; 1.05 TB/yr at 60 s blocks | consensus | none stated for the number; the two net caps above it derive from it | CHOSEN | `TYPES_INTERFACE → Size caps` |
 | `MAX_TX_BYTES` | `10_000` | ~148 credit inputs | consensus | argued for *existence* — a transaction may not be valid, poolable and unminable at once — not for the number | CHOSEN | `TYPES_INTERFACE → Size caps` |
 | `MAX_SETTLEMENT_BYTES` | `100_000` | 5 % of the body; ≈ 2 700 like markers after the capped legs | consensus | two relations are the rule (fits a legal body; an empty-body settlement at every cap fits it — 17 395 bytes measured with the three capped legs at 64 and every paid owner a distinct identity holding an income box, `consensus`' `settlement-bound.test.ts`); the number is provisional | PROVISIONAL | `TYPES_INTERFACE → Size caps` |
+| `MAX_HEADER_BYTES` | `233` | the longest encoded header; a realistic one is 208 | policy | 193 fixed bytes and five `vlqU` fields at 8 bytes, the longest a reader accepts — held by encoding the ceiling header | DERIVED | `TYPES_INTERFACE → Size caps` |
+| `MAX_ORDERING_BLOCK_BYTES` | `2_000_302` | the longest encoded block whose body is within `MAX_BLOCK_BODY_BYTES` | policy | `lp(header)` + `lp(body)` + the 64-byte signature, each at its ceiling — held by encoding that block | DERIVED | `TYPES_INTERFACE → Size caps` |
+| `MAX_TX_PACKET_BYTES` | `10_303` | the longest gossiped transaction packet | policy | `MAX_TX_BYTES` + `opt(lpUtf8)` of `MAX_CONTENT_BYTES`, 303 — held by encoding that packet | DERIVED | `TYPES_INTERFACE → Size caps` |
 
 ### Settlement caps
 
@@ -307,7 +312,7 @@ under → Size caps.
 |---|---|---|---|---|---|---|
 | `MAX_INV_IDS` | `400` | ids per `Inv`, modifiers per response | format | the send-side batch cap, enforced on receipt as well; none stated for the number | CHOSEN | `NET_INTERFACE → Inv` |
 | `MAX_CHAIN_RESPONSE_ITEMS` | `400` | headers or blocks per response — the page of fork resolution's header walk, its branch scoring and its block fetch | format | the same batch cap as `MAX_INV_IDS`; none stated for the number | CHOSEN | `NET_INTERFACE → Pull Requests` |
-| `MAX_SERVE_BODY_BYTES` | `4_194_304` | 4 MiB per served response | policy | half of `MAX_STREAM_BYTES`, so a response fits the read cap at the other end; above `MAX_BLOCK_BODY_BYTES`, so one legal block always fits | DERIVED | `NET_INTERFACE → Validation` |
+| `MAX_SERVE_BODY_BYTES` | `4_194_304` | 4 MiB per served response | policy | half of `MAX_STREAM_BYTES`, so a response fits the read cap at the other end; above `MAX_ORDERING_BLOCK_BYTES`, so one legal block always fits | DERIVED | `NET_INTERFACE → Validation` |
 | `MAX_STREAM_BYTES` | `8_388_608` | 8 MiB buffered per inbound stream | format | twice the largest legitimate message; the base number is none stated | CHOSEN | `NET_INTERFACE → Validation` |
 | `MAX_PEERS_ENTRIES` | `64` | entries per `Peers` response | format | none stated; 8 are served | CHOSEN | `NET_INTERFACE → Peers` |
 | `MAX_CAPABILITY_ENTRIES` | `64` | capability codes per handshake or entry | format | against a 17-row code table | CHOSEN | `NET_INTERFACE → Handshake` |

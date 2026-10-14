@@ -1579,6 +1579,18 @@ coinbase outputs are **its outputs**, so no block-body field carries the reward.
 gates `MAX_BLOCK_BODY_BYTES` — a body-layout change edits both computations or neither, and
 `serialization.ts` states the pairing at both sites.
 
+> ⚠ **AHEAD OF CODE (2026-10-14).** The next paragraph and the encoded bounds of → Size caps lead
+> `types/src/serialization.ts` and `types/src/constants.ts`: `UTXO_TX_TREE.read` reads the element array
+> whatever its count, and no bound on an encoded header, block or transaction packet is exported.
+
+**The decoder reads the element count before any element, and refuses one that is not the id
+count.** `UTXO_TX_TREE.read` reads `utxoTxIds`, then the `utxoTxs` count, and throws `ReaderError` with
+code `out-of-domain` (`WIRE_INTERFACE → ReaderError codes`) unless the two are equal — before it reads an
+element. Every element a decode materialises then costs its sender at least 33 bytes, its id and a
+one-byte `lp` prefix, and every tree the decoder answers is aligned. It refuses only trees
+`verifyOrderingBlockStructure` refuses, so no block's verdict moves. The encoder writes whatever tree it
+is given, aligned or not (→ Sizing without encoding).
+
 **The H-3 property — withdrawal authorship checkable without DAG content — holds through the
 body itself.** A post transaction carries the **whole post** in `utxoTxs` plus the
 author's signature over the `TxId`, so a node syncing from ordering blocks alone holds
@@ -3151,6 +3163,9 @@ and the seeder that writes one deliberately does not measure it.
 export const MAX_BLOCK_BODY_BYTES = 2_000_000;   // consensus — encoded UtxoTxTree
 export const MAX_TX_BYTES = 10_000;              // consensus — encoded UtxoTransaction; every body element but the last
 export const MAX_SETTLEMENT_BYTES = 100_000;     // consensus — the encoded settlement transaction, the body's last element
+export const MAX_HEADER_BYTES = 233;             // derived — the longest encoded BlockHeader
+export const MAX_ORDERING_BLOCK_BYTES = 2_000_302; // derived — the longest encoded OrderingBlock whose body is within MAX_BLOCK_BODY_BYTES
+export const MAX_TX_PACKET_BYTES = 10_303;       // derived — the longest encoded TxPacket whose transaction and content are within their bounds
 ```
 
 Consensus bounds on **weight**, checked in `@dagsocial/validation` — the body by
@@ -3176,6 +3191,18 @@ capped legs full is 17 395 bytes when every paid owner is a distinct identity al
 across heights 1 to 5 000 000 and values 1 to 2⁶³ − 1; `decayLegMaxBytes` — 115 at the current version — is its
 ceiling (`CONSENSUS_INTERFACE → The settlement build`).
 
+**The three encoded bounds are derived, never chosen: each is the longest encoding of something Stage 1
+accepts.** They are what a peer's bytes are weighed against before a decode
+(`NET_INTERFACE → Validation (and untrusted-input safety)`), so a bound one byte short refuses an honest
+peer's message, and each is held by a test that encodes the object it bounds at its ceiling and finds
+exactly the constant:
+
+| Bound | Its derivation |
+|---|---|
+| `MAX_HEADER_BYTES` = 233 | 193 fixed bytes — four `b32` roots, the `b33` `stateRoot`, the `b32` `validatorId` — and five `vlqU` fields at 8 bytes each, the longest a reader accepts (`WIRE_INTERFACE → ByteReader`, values up to `Number.MAX_SAFE_INTEGER`). A realistic header measures 208 |
+| `MAX_ORDERING_BLOCK_BYTES` = 2 000 302 | `lp(header)` — 2 + 233 — ‖ `lp(utxoTxTree)` — 3 + `MAX_BLOCK_BODY_BYTES` — ‖ the 64-byte `validatorSignature` (→ Layout — Block) |
+| `MAX_TX_PACKET_BYTES` = 10 303 | the transaction, at most `MAX_TX_BYTES`, ‖ `opt(lpUtf8(content))` — 1 + 2 + `MAX_CONTENT_BYTES` |
+
 **Two relations are the rule; the numbers are provisional** (`CONSTANTS → Size caps`).
 
 | Relation | What it guarantees |
@@ -3189,14 +3216,15 @@ UtxoTransaction). The producer keeps every body-driven leg inside the bound by s
 (`MEMPOOL_INTERFACE` → The fill budget is bytes; `getPendingEntries` is a count); the caps keep the
 state-driven legs inside it whatever the producer selects.
 
-**The block bound is what makes validity and availability agree.** Three limits stand in a fixed
+**The block bound is what makes validity and availability agree.** Four limits stand in a fixed
 order, and the *relation* is the rule rather than any individual number:
 
 ```
-MAX_BLOCK_BODY_BYTES (2,000,000)  <  MAX_SERVE_BODY_BYTES (4 MiB)  <  MAX_STREAM_BYTES (8 MiB)
+MAX_BLOCK_BODY_BYTES (2,000,000)  <  MAX_ORDERING_BLOCK_BYTES (2,000,302)  <  MAX_SERVE_BODY_BYTES (4 MiB)  <  MAX_STREAM_BYTES (8 MiB)
 ```
 
-The upper two are net's (`NET_INTERFACE` → Validation (and untrusted-input safety)). A single legal
+The second is the first's encoded block; the upper two are net's (`NET_INTERFACE` → Validation (and
+untrusted-input safety)). A single legal
 block always fits in a
 response the requester will accept, and a multi-block response truncates rather than overflowing.
 Invert any pair and a block becomes valid but unservable — accepted by consensus, unreachable by a
