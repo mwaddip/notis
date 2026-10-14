@@ -81,7 +81,10 @@ export function jsonToTx(raw: unknown, defaultVersion: number): UtxoTransaction 
     return convertBox(entry, i);
   }) as unknown as AnyBox[];
 
-  const protocolVersion = r.protocolVersion ?? defaultVersion;
+  // An absent `protocolVersion` is supplied; a present one — `null`
+  // included — reaches `checkTxEnvelope`, which refuses it
+  // (NODE_INTERFACE → Transaction envelope shape).
+  const protocolVersion = Object.hasOwn(r, 'protocolVersion') ? r.protocolVersion : defaultVersion;
 
   const likeTarget = r.likeTarget;
   if (likeTarget !== undefined && typeof likeTarget !== 'string') {
@@ -175,11 +178,12 @@ function jsonToPostCommit(raw: unknown, defaultVersion: number): PostCommit {
   if (author.length !== 32) {
     throw new ClientError('post author must be 32 bytes (64 hex chars) — Ed25519 public key');
   }
+  const protocolVersion = Object.hasOwn(raw, 'protocolVersion') ? raw.protocolVersion : defaultVersion;
   return {
     contentHash,
     author,
     parentRefs: raw.parentRefs as string[],
-    protocolVersion: (raw.protocolVersion ?? defaultVersion) as number,
+    protocolVersion: protocolVersion as number,
     type: raw.type as PostType,
   };
 }

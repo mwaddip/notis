@@ -436,6 +436,39 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
   });
 
   // -------------------------------------------------------------------------
+  // A present `protocolVersion: null` reaches the envelope
+  // -------------------------------------------------------------------------
+
+  it('POST /credits/transfer with `protocolVersion: null` answers 400 naming protocolVersion', async () => {
+    const tx = buildSignedTransferOverFresh(50_000_000n, 100_000_000n);
+    const json = txToJson(tx) as Record<string, unknown>;
+    json.protocolVersion = null;
+    const res = await request(baseUrl, '/credits/transfer', 'POST', { tx: json });
+    expect(res.status).toBe(400);
+    expect(message(res.data)).toContain('protocolVersion');
+  });
+
+  it('POST /posts whose commit carries `protocolVersion: null` answers 400 naming protocolVersion', async () => {
+    const content = 'hi';
+    const tx = {
+      inputs: ['aa'.repeat(32)],
+      outputs: [{ boxType: 'karma', value: '1', createdAtBlock: 0, owner: 'ab'.repeat(32) }],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      post: {
+        contentHash: Buffer.from(computeContentHash(content)).toString('hex'),
+        author: 'ab'.repeat(32),
+        parentRefs: [],
+        protocolVersion: null,
+        type: 'regular',
+      },
+    };
+    const res = await request(baseUrl, '/posts', 'POST', { tx, content });
+    expect(res.status).toBe(400);
+    expect(message(res.data)).toContain('protocolVersion');
+  });
+
+  // -------------------------------------------------------------------------
   // A binary box field that is not a string
   // -------------------------------------------------------------------------
 
