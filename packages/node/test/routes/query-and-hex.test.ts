@@ -88,7 +88,7 @@ describe('a query parameter is one string, and hex is lowercase', () => {
   // Array- and object-shaped query names
   // ---------------------------------------------------------------------------
 
-  it.fails(
+  it(
     'GET /posts?after[]=1:0 answers 200 — after[] is no name a route reads',
     async () => {
       const res = await fetch(`${baseUrl}/posts?after%5B%5D=1:0`);
@@ -97,7 +97,7 @@ describe('a query parameter is one string, and hex is lowercase', () => {
     },
   );
 
-  it.fails(
+  it(
     'GET /karma/<key>?after[]=x answers 200 — after[] is no name a route reads',
     async () => {
       const res = await fetch(`${baseUrl}/karma/${LOWER_KEY}?after%5B%5D=x`);
@@ -106,7 +106,7 @@ describe('a query parameter is one string, and hex is lowercase', () => {
     },
   );
 
-  it.fails(
+  it(
     'GET /vouches?target[]=<key> answers the route\'s own 400 — no target was given',
     async () => {
       const res = await fetch(`${baseUrl}/vouches?target%5B%5D=${LOWER_KEY}`);
@@ -121,7 +121,7 @@ describe('a query parameter is one string, and hex is lowercase', () => {
   // A name given twice
   // ---------------------------------------------------------------------------
 
-  it.fails(
+  it(
     'GET /posts?limit=1&limit=2 answers 400 query parameter limit given twice',
     async () => {
       const res = await fetch(`${baseUrl}/posts?limit=1&limit=2`);
@@ -134,7 +134,7 @@ describe('a query parameter is one string, and hex is lowercase', () => {
     },
   );
 
-  it.fails(
+  it(
     'GET /posts?foo=1&foo=2 answers 400 naming foo — a name no route reads is refused the same',
     async () => {
       const res = await fetch(`${baseUrl}/posts?foo=1&foo=2`);
