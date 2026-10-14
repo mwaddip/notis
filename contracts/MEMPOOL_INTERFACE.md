@@ -120,12 +120,16 @@ the SQLite `rowid`. Throws `MempoolFullError` at the size cap, and
 pool through this function, and it already computes `encodeTx(tx)` — so one check covers them all
 and costs no extra encoding. A rule per route is a rule someone adds a route without.
 
-**It is node's own admission gate, not a restatement of validation's.**
-`@dagsocial/validation`'s `verifyTxStructure` carries the same bound but runs only on net's gossip
-path — **node calls it zero times** — so without this a transaction above `MAX_TX_BYTES` submitted to
-this node's HTTP API would be pooled, mined, and then refused by this node's *own*
-`verifyOrderingBlockStructure` at apply. A self-rejecting block, recovered at the cost of one block
-by `finalizeBlock`'s eviction.
+> ⚠ **AHEAD OF CODE (2026-10-14).** The HTTP edge below leads `node/src/routes/*`, which reach `insertUtxoTx` with
+> no size check ahead of `validateTx` and `admitTx`'s cost gate.
+
+**It is the pool's own bound, not a restatement of validation's.** `@dagsocial/validation`'s
+`verifyTxStructure` carries the same bound and runs where a stranger's transaction arrives — net's gossip validator,
+and node's HTTP edge, which answers an oversize request 413 before any check that costs (`NODE_INTERFACE → HTTP API →
+"A write request's transaction is checked whole before anything reads it"`). The reorg re-insertion arrives by
+neither, and this check is the one every insert passes whichever way it came: a transaction above `MAX_TX_BYTES` in
+the pool would be mined into a block this node's *own* `verifyOrderingBlockStructure` refuses at apply — a
+self-rejecting block, recovered at the cost of one block by `finalizeBlock`'s eviction.
 
 ⚠ **Reorg re-insertion must not let this throw escape.** `fork-resolution` re-inserts reverted
 transactions inside the chain-switch SQLite transaction, where an escaping error rolls back the
