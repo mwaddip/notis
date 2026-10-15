@@ -266,9 +266,8 @@ export class LazySyncStore implements SyncStore {
 //
 // Both are bounded by what the peer asked for and by
 // `MAX_CHAIN_RESPONSE_ITEMS`. `endHeight` and `maxCount` are peer-chosen and
-// each loop reads the store once per height into an in-memory array, so that
-// second bound is what keeps the *length* of that array off the peer's control
-// panel.
+// each loop reads what it needs for one height per step, so that second bound
+// is what keeps the length of the response off the peer's control panel.
 //
 // A count bounds a length and says nothing about a weight, so the blocks loop
 // carries a second, independent bound: it accumulates encoded bytes and stops
@@ -277,9 +276,12 @@ export class LazySyncStore implements SyncStore {
 // `MAX_BLOCK_BODY_BYTES`, and 400 of those is far past what any requester will
 // read off a stream.
 //
-// The headers loop is bounded by count alone, because a header cannot be heavy:
-// four fixed-width fields and five VLQs put its ceiling at 157 bytes, so 400 of
-// them reach ~61 KiB — 1.5% of `MAX_SERVE_BODY_BYTES`.
+// The headers loop reads headers directly through the header provider (one
+// height is one provider call) and is bounded by count alone: a header's
+// ceiling is `MAX_HEADER_BYTES`, so 400 of them stay well under the serve
+// byte cap — the argument the contract spells out at NET_INTERFACE → Stream
+// Protocols, the `Headers` arm bullet of `GetHeaders` / `GetBlocks`
+// responses.
 //
 // `ourHeight` clamps both loops to our own tip: we cannot serve what we do not
 // have, so this never truncates a legitimate request, and a peer asking for
@@ -704,144 +706,144 @@ export class NetNode {
     this.libp2p = libp2p;
 
     try {
-    // Create PeerDb with self-address filtering
-    const listenAddrs = this.libp2p.getMultiaddrs();
-    const selfAddrs = listenAddrs.map(a => a.toString());
-    this.peerDb = new PeerDb(this.peerStorage, this.config.peerDbCap ?? 1000, selfAddrs);
+      // Create PeerDb with self-address filtering
+      const listenAddrs = this.libp2p.getMultiaddrs();
+      const selfAddrs = listenAddrs.map(a => a.toString());
+      this.peerDb = new PeerDb(this.peerStorage, this.config.peerDbCap ?? 1000, selfAddrs);
 
-    // Create SyncMachine with lazy store bridge
-    this.syncMachine = new SyncMachine(
-      this.config,
-      this.syncStore,
-      (peerId: string, data: Uint8Array) => this.sendToPeer(peerId, data),
-      (peerId: string, reason: string) => {
-        this.peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, peerId, reason);
-      },
-    );
-    this.syncMachine.start();
+      // Create SyncMachine with lazy store bridge
+      this.syncMachine = new SyncMachine(
+        this.config,
+        this.syncStore,
+        (peerId: string, data: Uint8Array) => this.sendToPeer(peerId, data),
+        (peerId: string, reason: string) => {
+          this.peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, peerId, reason);
+        },
+      );
+      this.syncMachine.start();
 
-    // Wire sync-complete callback: when the sync machine reaches 'synced',
-    // fire all registered onSyncComplete handlers.
-    this.syncMachine.onSynced(() => {
-      for (const cb of this.syncCompleteHandlers) {
-        try { cb(); } catch (err) {
-          console.warn(`[net] syncComplete handler error: ${String(err)}`);
+      // Wire sync-complete callback: when the sync machine reaches 'synced',
+      // fire all registered onSyncComplete handlers.
+      this.syncMachine.onSynced(() => {
+        for (const cb of this.syncCompleteHandlers) {
+          try { cb(); } catch (err) {
+            console.warn(`[net] syncComplete handler error: ${String(err)}`);
+          }
         }
-      }
-    });
-
-    // Create OutboundManager
-    this.outboundMgr = new OutboundManager(this.config, this.peerDb);
-
-    // Register handshake stream handler
-    this.registerHandshakeHandler(libp2p);
-
-    // Register sync stream handler (framed protocol)
-    this.registerSyncStreamHandler(libp2p);
-
-    // Track peers on connect/disconnect.
-    // Listen for all four event types because the timing and payload differ:
-    //   connection:open  — fires first, has full Connection object (addr, direction)
-    //   peer:connect     — fires after, only has PeerId
-    //   connection:close — fires first, has full Connection object + timeline
-    //   peer:disconnect  — fires after, only has PeerId
-    this.libp2p.addEventListener('connection:open', (evt: any) => {
-      const conn = evt.detail;
-      const peerId = conn?.remotePeer?.toString() ?? 'unknown';
-      const direction = conn?.direction ?? '?';
-      console.log(`[net] connection:open peer=${peerId} dir=${direction}`);
-    });
-
-    this.libp2p.addEventListener('peer:connect', (evt: any) => {
-      const peerId = evt.detail?.toString() ?? 'unknown';
-      // NET_INTERFACE →
-      // "A connection whose remote peer id is this node's own is never a peer":
-      // never added, so peers() never lists it even
-      // between the upgrade and the funnel's close.
-      if (peerId === libp2p.peerId.toString()) return;
-      console.log(`[net] peer:connect ${peerId} (total=${this.peerMgr.getPeerCount() + 1})`);
-      this.peerMgr.addPeer({
-        id: peerId,
-        multiaddrs: [],
-        protocols: [],
-        connectedAt: Date.now(),
       });
-    });
 
-    this.libp2p.addEventListener('connection:close', (evt: any) => {
-      const conn = evt.detail;
-      const peerId = conn?.remotePeer?.toString() ?? 'unknown';
-      const remoteAddr = conn?.remoteAddr?.toString() ?? '?';
-      const direction = conn?.direction ?? '?';
-      const timeline = conn?.timeline;
-      const openTs = timeline?.open ? new Date(timeline.open).toISOString() : '?';
-      const closeTs = timeline?.close ? new Date(timeline.close).toISOString() : '?';
-      const durationMs = (timeline?.close && timeline?.open)
-        ? timeline.close - timeline.open
-        : '?';
-      console.log(`[net] connection:close peer=${peerId} addr=${remoteAddr} dir=${direction} durationMs=${durationMs} opened=${openTs} closed=${closeTs}`);
-    });
+      // Create OutboundManager
+      this.outboundMgr = new OutboundManager(this.config, this.peerDb);
 
-    this.libp2p.addEventListener('peer:disconnect', (evt: any) => {
-      const peerId = evt.detail?.toString() ?? 'unknown';
-      console.log(`[net] peer:disconnect ${peerId} (total=${Math.max(0, this.peerMgr.getPeerCount() - 1)})`);
-      this.peerMgr.removePeer(peerId);
-      this.lastGetPeersSentMs.delete(peerId);
-      // NET_INTERFACE → Stream Protocols → "A peer's sync streams are served one at a time":
-      // per-peer state goes when the peer does.
-      this.peerStreamQueues.delete(peerId);
-      this.syncMachine?.onPeerDisconnect(peerId);
-      for (const cb of this.peerDisconnectedHandlers) {
-        try { cb(peerId, ''); } catch (err) {
-          console.warn(`[net] peerDisconnected handler error: ${String(err)}`);
+      // Register handshake stream handler
+      this.registerHandshakeHandler(libp2p);
+
+      // Register sync stream handler (framed protocol)
+      this.registerSyncStreamHandler(libp2p);
+
+      // Track peers on connect/disconnect.
+      // Listen for all four event types because the timing and payload differ:
+      //   connection:open  — fires first, has full Connection object (addr, direction)
+      //   peer:connect     — fires after, only has PeerId
+      //   connection:close — fires first, has full Connection object + timeline
+      //   peer:disconnect  — fires after, only has PeerId
+      this.libp2p.addEventListener('connection:open', (evt: any) => {
+        const conn = evt.detail;
+        const peerId = conn?.remotePeer?.toString() ?? 'unknown';
+        const direction = conn?.direction ?? '?';
+        console.log(`[net] connection:open peer=${peerId} dir=${direction}`);
+      });
+
+      this.libp2p.addEventListener('peer:connect', (evt: any) => {
+        const peerId = evt.detail?.toString() ?? 'unknown';
+        // NET_INTERFACE →
+        // "A connection whose remote peer id is this node's own is never a peer":
+        // never added, so peers() never lists it even
+        // between the upgrade and the funnel's close.
+        if (peerId === libp2p.peerId.toString()) return;
+        console.log(`[net] peer:connect ${peerId} (total=${this.peerMgr.getPeerCount() + 1})`);
+        this.peerMgr.addPeer({
+          id: peerId,
+          multiaddrs: [],
+          protocols: [],
+          connectedAt: Date.now(),
+        });
+      });
+
+      this.libp2p.addEventListener('connection:close', (evt: any) => {
+        const conn = evt.detail;
+        const peerId = conn?.remotePeer?.toString() ?? 'unknown';
+        const remoteAddr = conn?.remoteAddr?.toString() ?? '?';
+        const direction = conn?.direction ?? '?';
+        const timeline = conn?.timeline;
+        const openTs = timeline?.open ? new Date(timeline.open).toISOString() : '?';
+        const closeTs = timeline?.close ? new Date(timeline.close).toISOString() : '?';
+        const durationMs = (timeline?.close && timeline?.open)
+          ? timeline.close - timeline.open
+          : '?';
+        console.log(`[net] connection:close peer=${peerId} addr=${remoteAddr} dir=${direction} durationMs=${durationMs} opened=${openTs} closed=${closeTs}`);
+      });
+
+      this.libp2p.addEventListener('peer:disconnect', (evt: any) => {
+        const peerId = evt.detail?.toString() ?? 'unknown';
+        console.log(`[net] peer:disconnect ${peerId} (total=${Math.max(0, this.peerMgr.getPeerCount() - 1)})`);
+        this.peerMgr.removePeer(peerId);
+        this.lastGetPeersSentMs.delete(peerId);
+        // NET_INTERFACE → Stream Protocols → "A peer's sync streams are served one at a time":
+        // per-peer state goes when the peer does.
+        this.peerStreamQueues.delete(peerId);
+        this.syncMachine?.onPeerDisconnect(peerId);
+        for (const cb of this.peerDisconnectedHandlers) {
+          try { cb(peerId, ''); } catch (err) {
+            console.warn(`[net] peerDisconnected handler error: ${String(err)}`);
+          }
         }
+      });
+
+      // Log identify completion — confirms the connection was fully upgraded
+      this.libp2p.addEventListener('peer:identify', (evt: any) => {
+        const result = evt.detail;
+        const peerId = result?.peerId?.toString() ?? '?';
+        console.log(`[net] peer:identify ${peerId}`);
+      });
+
+      // Subscribe to gossip topics
+      const handlers: GossipHandlers = {
+        onOrderingBlock: (block, fromPeerId) => {
+          for (const cb of this.orderingBlockHandlers) cb(block, fromPeerId);
+        },
+        onTx: (tx, content, fromPeerId) => { for (const cb of this.txHandlers) cb(tx, content, fromPeerId); },
+      };
+
+      await subscribeTopics(
+        asGossip(this.libp2p),
+        this.validators,
+        this.peerMgr,
+        handlers,
+        topics,
+        this.karmaMembers,
+        this.config.protocolVersionSchedule,
+        () => this.syncStore.chainHeight(),
+        this.config.orderingBlockPowTargetFloorBits,
+        (header) => this.scheduledTargetProvider?.(header) ?? null,
+      );
+
+      // Log listen addresses
+      console.log(`[net] listening on: ${listenAddrs.map(a => a.toString()).join(', ')}`);
+
+      // Connect to bootstrap peers (awaited — must complete before caller
+      // registers blocksHandler so the initial sync burst isn't dropped).
+      for (const addr of this.config.bootstrapPeers) {
+        await this.dialAndHandshake(addr, 'seed');
       }
-    });
 
-    // Log identify completion — confirms the connection was fully upgraded
-    this.libp2p.addEventListener('peer:identify', (evt: any) => {
-      const result = evt.detail;
-      const peerId = result?.peerId?.toString() ?? '?';
-      console.log(`[net] peer:identify ${peerId}`);
-    });
+      // Start periodic timer: outbound manager + peer discovery. The sync machine
+      // keeps its own tick cadence inside its event loop. A method, not an
+      // inline closure, so a test can drive one tick without waiting
+      // OUTBOUND_TICK_INTERVAL_MS.
+      this.syncTimer = setInterval(() => this.outboundTick(), OUTBOUND_TICK_INTERVAL_MS);
 
-    // Subscribe to gossip topics
-    const handlers: GossipHandlers = {
-      onOrderingBlock: (block, fromPeerId) => {
-        for (const cb of this.orderingBlockHandlers) cb(block, fromPeerId);
-      },
-      onTx: (tx, content, fromPeerId) => { for (const cb of this.txHandlers) cb(tx, content, fromPeerId); },
-    };
-
-    await subscribeTopics(
-      asGossip(this.libp2p),
-      this.validators,
-      this.peerMgr,
-      handlers,
-      topics,
-      this.karmaMembers,
-      this.config.protocolVersionSchedule,
-      () => this.syncStore.chainHeight(),
-      this.config.orderingBlockPowTargetFloorBits,
-      (header) => this.scheduledTargetProvider?.(header) ?? null,
-    );
-
-    // Log listen addresses
-    console.log(`[net] listening on: ${listenAddrs.map(a => a.toString()).join(', ')}`);
-
-    // Connect to bootstrap peers (awaited — must complete before caller
-    // registers blocksHandler so the initial sync burst isn't dropped).
-    for (const addr of this.config.bootstrapPeers) {
-      await this.dialAndHandshake(addr, 'seed');
-    }
-
-    // Start periodic timer: outbound manager + peer discovery. The sync machine
-    // keeps its own tick cadence inside its event loop. A method, not an
-    // inline closure, so a test can drive one tick without waiting
-    // OUTBOUND_TICK_INTERVAL_MS.
-    this.syncTimer = setInterval(() => this.outboundTick(), OUTBOUND_TICK_INTERVAL_MS);
-
-    this.started = true;
+      this.started = true;
     } catch (err) {
       // NET_INTERFACE → API → Node Lifecycle →
       // "A start that throws stops what it started". Everything after
