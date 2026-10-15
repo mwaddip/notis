@@ -100,7 +100,7 @@ describe("a peer's SyncInfo is acted on at most once per 100 ms", () => {
     vi.useRealTimers();
   });
 
-  it.fails('two SyncInfos 10 ms apart: the second is held, the tick acts on it', () => {
+  it('two SyncInfos 10 ms apart: the second is held, the tick acts on it', () => {
     const { machine } = makeMachine({ chainHeight: () => 0 });
 
     // The first SyncInfo stands at once — nothing is held before an interval.

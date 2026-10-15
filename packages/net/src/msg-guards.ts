@@ -113,6 +113,15 @@ export const MAX_STREAM_BYTES = 8 * 1024 * 1024;
 export const MAX_INBOUND_SYNC_STREAMS = 16;
 
 /**
+ * Shortest interval between two `SyncInfo`s from one peer that this node
+ * acts on (NET_INTERFACE → Serve Side → "A peer's `SyncInfo` is acted on at
+ * most once per `SYNC_INFO_MIN_INTERVAL_MS`"). A SyncInfo that arrives
+ * sooner is held as that peer's pending one; the first timer tick past the
+ * interval acts on it.
+ */
+export const SYNC_INFO_MIN_INTERVAL_MS = 100;
+
+/**
  * Largest response body we assemble when serving a peer.
  *
  * Kept at half of `MAX_STREAM_BYTES` so a response we produce always fits inside

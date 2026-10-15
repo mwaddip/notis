@@ -8,7 +8,7 @@ import {
   MODIFIER_ORDERING_BLOCK,
   BACKFILL_BATCH_IDS,
 } from './types.js';
-import { isHeight, MAX_INV_IDS, MAX_SERVE_BODY_BYTES } from './msg-guards.js';
+import { isHeight, MAX_INV_IDS, MAX_SERVE_BODY_BYTES, SYNC_INFO_MIN_INTERVAL_MS } from './msg-guards.js';
 import type { SyncInfo, Inv, ModifierRequest, ModifierResponse, SyncState } from './sync-types.js';
 import {
   encodeSyncInfo,
@@ -132,6 +132,13 @@ export class SyncMachine {
   private lastSentTip = new Map<string, number>();
   private lastReportedTip = new Map<string, number>();
   private lastSentMs = new Map<string, number>();
+
+  // NET_INTERFACE → Serve Side → "A peer's `SyncInfo` is acted on at most
+  // once per `SYNC_INFO_MIN_INTERVAL_MS`": the stamp of the last SyncInfo
+  // acted on from this peer, and that peer's pending one — a later report
+  // replaces it, and the first timer tick past the interval acts on it.
+  private lastActedOnSyncInfoMs = new Map<string, number>();
+  private pendingSyncInfo = new Map<string, SyncInfo>();
 
   /**
    * Outstanding requested modifier ids, keyed by the peer the request was sent
@@ -491,6 +498,16 @@ export class SyncMachine {
   onTimerTick(): void {
     const now = Date.now();
 
+    // NET_INTERFACE → Serve Side → "A peer's `SyncInfo` is acted on at
+    // most once per `SYNC_INFO_MIN_INTERVAL_MS`": the tick drains each
+    // pending report whose interval has passed.
+    for (const [peerId, info] of this.pendingSyncInfo) {
+      const last = this.lastActedOnSyncInfoMs.get(peerId) ?? 0;
+      if (now - last < SYNC_INFO_MIN_INTERVAL_MS) continue;
+      this.pendingSyncInfo.delete(peerId);
+      this.actOnSyncInfo(peerId, info, now);
+    }
+
     if (this.state.phase === 'syncing' || this.state.phase === 'backfill') {
       if (
         now - this.lastProgressMs > STALL_TIMEOUT_MS &&
@@ -615,6 +632,11 @@ export class SyncMachine {
     this.lastSentTip.delete(peerId);
     this.lastReportedTip.delete(peerId);
     this.lastSentMs.delete(peerId);
+    // NET_INTERFACE → Serve Side → "A peer's `SyncInfo` is acted on at
+    // most once per `SYNC_INFO_MIN_INTERVAL_MS`": a disconnect drops the
+    // pending report with the peer.
+    this.pendingSyncInfo.delete(peerId);
+    this.lastActedOnSyncInfoMs.delete(peerId);
 
     if (this.state.syncPeerId === peerId) {
       this.state.stalledPeers.add(peerId);
@@ -641,8 +663,29 @@ export class SyncMachine {
    * - Equal height + we were syncing → transition to synced.
    */
   private handleSyncInfoMsg(peerId: string, info: SyncInfo): void {
+    // NET_INTERFACE → Serve Side → "A peer's `SyncInfo` is acted on at
+    // most once per `SYNC_INFO_MIN_INTERVAL_MS`": a report arriving sooner
+    // is held as that peer's pending one — a later report replaces it —
+    // and the next tick past the interval acts on it. Nothing is
+    // penalised, and no report is lost but one a later report replaced.
+    const now = Date.now();
+    const lastActedOnMs = this.lastActedOnSyncInfoMs.get(peerId);
+    if (lastActedOnMs !== undefined && now - lastActedOnMs < SYNC_INFO_MIN_INTERVAL_MS) {
+      this.pendingSyncInfo.set(peerId, info);
+      return;
+    }
+    this.actOnSyncInfo(peerId, info, now);
+  }
+
+  /**
+   * Act on a `SyncInfo` from a peer: retain its height, reply, serve if the
+   * peer is behind, and consider a sync-peer transition. The one place the
+   * acted-on stamp is written.
+   */
+  private actOnSyncInfo(peerId: string, info: SyncInfo, nowMs: number): void {
     const ourHeight = this.store.chainHeight();
 
+    this.lastActedOnSyncInfoMs.set(peerId, nowMs);
     this.peerHeights.set(peerId, info.tipHeight);
 
     // NET_INTERFACE → Serve Side, rule 1: reply to the sender
