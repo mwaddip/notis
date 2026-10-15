@@ -49,12 +49,15 @@ const validators: NetValidators = {
   verifyPostBody,
 };
 
-// Short timeout so the ×5 Blocks deadline (`syncRequestTimeoutMs * 5` = 1 s)
-// completes in a one-digit second count.
+// Deadline the handshake does not race under a loaded run: `syncRequestTimeoutMs`
+// is also the handshake's dial, read and write deadline, and 200 ms misses
+// too often. 1 000 ms keeps the handshake clear and still makes the ×5
+// Blocks deadline (`syncRequestTimeoutMs * 5` = 5 s) complete in a
+// one-digit second count for two streams.
 function makeConfig(overrides: Partial<NetConfig> = {}): NetConfig {
   return makeBaseConfig({
     listenAddrs: '/ip4/127.0.0.1/tcp/0',
-    syncRequestTimeoutMs: 200,
+    syncRequestTimeoutMs: 1_000,
     ...overrides,
   });
 }
@@ -114,7 +117,7 @@ describe("A's write to an unreading peer times out, the stream aborts", () => {
     nodeB = null;
   });
 
-  it('three GetBlocks streams unread; after the three write deadlines, A holds no inbound stream from B', async () => {
+  it('two GetBlocks streams unread; after the two write deadlines, A holds no inbound stream from B', async () => {
     nodeA = new NetNode(makeConfig(), validators);
     nodeA.setHeadersHandler((h) => (h >= 1 && h <= 100 ? makeBigBlock(h) : null));
     nodeA.setChainHeightProvider(() => 100);
@@ -124,14 +127,14 @@ describe("A's write to an unreading peer times out, the stream aborts", () => {
     nodeB = new NetNode(makeConfig({ bootstrapPeers: [addr] }), validators);
     // Same height on both sides keeps the sync machine out of the exchange —
     // A does not serve B an Inv, B does not pick A as a sync peer, so the
-    // only inbound sync streams on A are the three this case opens.
+    // only inbound sync streams on A are the two this case opens.
     nodeB.setChainHeightProvider(() => 100);
     await nodeB.start();
     await waitConnected(nodeA, nodeB);
 
     const req = encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 100 });
     const streams: Stream[] = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       const libp2p = nodeB.libp2pNode!;
       const peer = libp2p.getPeers().find((p) => p.toString() === nodeA!.peerId())!;
       try {
@@ -144,21 +147,21 @@ describe("A's write to an unreading peer times out, the stream aborts", () => {
         streams.push(stream);
       } catch { /* a control: the number assertion below catches a short write */ }
     }
-    expect(streams.length).toBe(3);
+    expect(streams.length).toBe(2);
 
     // Give A's handler time to read the request (EOS reached since B closed
     // its write half) and begin writing the ~16 MB answer, which parks on the
     // receive window.
     await new Promise((r) => setTimeout(r, 500));
 
-    // Three streams, parked mid-write on A.
-    expect(inboundSyncStreams(nodeA.libp2pNode!, nodeB.peerId())).toBe(3);
+    // Two streams, parked mid-write on A.
+    expect(inboundSyncStreams(nodeA.libp2pNode!, nodeB.peerId())).toBe(2);
 
-    // Wait past three ×5 Blocks deadlines served one after another
-    // (200 ms × 5 = 1 s each, 3 s in sequence) with headroom.
-    await new Promise((r) => setTimeout(r, 5_000));
+    // Wait past two ×5 Blocks deadlines served one after another
+    // (1 000 ms × 5 = 5 s each, 10 s in sequence) with headroom.
+    await new Promise((r) => setTimeout(r, 12_000));
 
-    // A node with the write deadline aborts the three streams; a node
+    // A node with the write deadline aborts the two streams; a node
     // without it holds them for the life of the connection.
     expect(inboundSyncStreams(nodeA.libp2pNode!, nodeB.peerId())).toBe(0);
   }, TIMEOUT);

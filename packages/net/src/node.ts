@@ -1197,13 +1197,13 @@ export class NetNode {
       // Chain onto the peer's tail. The read, the serve and the close all
       // run inside `serveOneSyncStream`, so a stream's read deadline starts
       // when its turn arrives rather than when libp2p accepted it. The
-      // chain's own `.catch(() => {})` keeps a per-stream failure from
-      // poisoning the queue, and the awaited version is that same
-      // swallowing one — "A stream handler never rejects".
+      // stored tail swallows a rejection — one stream's fault never stalls
+      // the peer's next stream — but the handler awaits `next` itself, so
+      // a fault nobody foresaw surfaces as an unhandled rejection and the
+      // node's backstop logs it.
       const prev = this.peerStreamQueues.get(peerId) ?? Promise.resolve();
-      const next = prev.then(() => this.serveOneSyncStream(magic, peerId, stream, connection))
-        .catch(() => { /* every rejection on this chain is already its own log */ });
-      this.peerStreamQueues.set(peerId, next);
+      const next = prev.then(() => this.serveOneSyncStream(magic, peerId, stream, connection));
+      this.peerStreamQueues.set(peerId, next.catch(() => { /* a per-stream fault leaves the lane open */ }));
       await next;
     }, { maxInboundStreams: MAX_INBOUND_SYNC_STREAMS });
   }
