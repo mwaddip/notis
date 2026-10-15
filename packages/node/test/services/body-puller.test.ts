@@ -153,7 +153,7 @@ describe('the body puller', () => {
     backfill.clearPending();
   });
 
-  it.fails('a placeholder is asked once while its request is open', async () => {
+  it('a placeholder is asked once while its request is open', async () => {
     await initChainStore();
     await startCreator(testConfig);
     const author = makeTestIdentity();
@@ -185,7 +185,7 @@ describe('the body puller', () => {
     expect(fake.requestLog).toHaveLength(1);
   });
 
-  it.fails('a placeholder the store holds at start is asked', async () => {
+  it('a placeholder the store holds at start is asked', async () => {
     await initChainStore();
     await startCreator(testConfig);
     const author = makeTestIdentity();
@@ -212,7 +212,7 @@ describe('the body puller', () => {
     expect(fake.requestLog.flatMap((c) => c.wanted.map((w) => w.id))).toContain(postId);
   });
 
-  it.fails('a placeholder whose post is withdrawn leaves unasked', async () => {
+  it('a placeholder whose post is withdrawn leaves unasked', async () => {
     await initChainStore();
     await startCreator(testConfig);
     const author = makeTestIdentity();

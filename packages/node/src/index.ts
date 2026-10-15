@@ -36,6 +36,8 @@ import {
   getPost,
   isLivePost,
   setPostBody,
+  getMissingBodies,
+  getStillPlaceholderIds,
   getCurrentHeight,
   getOrderingBlock,
   getOrderingBlockHash,
@@ -213,6 +215,8 @@ initBackfill({
   requestPostBodies: (wanted, peerId) => net.requestPostBodies(wanted.map(w => ({ id: w.id, contentHash: Buffer.from(w.contentHash, 'hex') })), peerId),
   getConnectedPeers: () => net.getConnectedPeers(),
   setPostBody,
+  getMissingBodies,
+  getStillPlaceholderIds,
 });
 
 // 4. Start net

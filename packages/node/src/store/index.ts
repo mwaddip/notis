@@ -10,6 +10,7 @@ export {
   setPostBody,
   getPost,
   getMissingBodies,
+  getStillPlaceholderIds,
   queryPostsPage,
   confirmPost,
   unconfirmPost,

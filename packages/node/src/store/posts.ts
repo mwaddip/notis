@@ -121,16 +121,31 @@ export function getPost(id: string): StoredPost | null {
   return postRow ? rowToPost(postRow) : null;
 }
 
-export function getMissingBodies(limit: number): Array<{ id: string; contentHash: string }> {
+export function getMissingBodies(): Array<{ id: string; contentHash: string }> {
   const rows = getDb()
     .prepare(
       `SELECT id, content_hash FROM dag_posts
        WHERE content IS NULL AND withdrawn_at_height IS NULL
-       ORDER BY block_height DESC, block_index DESC
-       LIMIT ?`,
+       ORDER BY block_height DESC, block_index DESC`,
     )
-    .all(limit) as Array<{ id: string; content_hash: string }>;
+    .all() as Array<{ id: string; content_hash: string }>;
   return rows.map(r => ({ id: r.id, contentHash: r.content_hash }));
+}
+
+// NODE_INTERFACE → Store Interface → Posts DAG: a read answering which of a set
+// of ids are still placeholders — the same predicate `getMissingBodies` uses.
+// One query over the ids, as the puller passes a set in the order they were due.
+export function getStillPlaceholderIds(ids: readonly string[]): string[] {
+  if (ids.length === 0) return [];
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = getDb()
+    .prepare(
+      `SELECT id FROM dag_posts
+       WHERE id IN (${placeholders})
+       AND content IS NULL AND withdrawn_at_height IS NULL`,
+    )
+    .all(...ids) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
 }
 
 export function getPlaceholdersAt(height: number): Array<{ id: string; contentHash: string }> {

@@ -156,7 +156,7 @@ describe('posts store', () => {
     confirmPost(id2, 2, 0);
     confirmPost(id3, 3, 0);
 
-    const missing = getMissingBodies(10);
+    const missing = getMissingBodies();
     expect(missing).toHaveLength(2);
     // Newest first: id2 at height 2, id1 at height 1
     expect(missing[0]!.id).toBe(id2);
@@ -486,7 +486,7 @@ describe('posts store', () => {
     // Mark as withdrawn directly
     getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = ? WHERE id = ?').run(10, postId);
 
-    expect(getMissingBodies(100)).toEqual([]);
+    expect(getMissingBodies()).toEqual([]);
     expect(getPlaceholdersAt(5)).toEqual([]);
     expect(setPostBody(postId, 'resurrected')).toBe(false);
   });
@@ -515,7 +515,7 @@ describe('posts store', () => {
     expect(restored.content).toBe(content);
 
     // The restored row must NOT appear in getMissingBodies
-    expect(getMissingBodies(100)).toEqual([]);
+    expect(getMissingBodies()).toEqual([]);
   });
 
   it('getPost returns a withdrawn post as a StoredPost with withdrawnAtHeight set, not null', async () => {
