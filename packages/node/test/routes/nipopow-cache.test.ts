@@ -156,7 +156,7 @@ describe('nipopow route proof cache per tip', () => {
     rmSync(testDir, { recursive: true, force: true });
   });
 
-  it.fails('one tip, one (m, k): built once, bytes identical', async () => {
+  it('one tip, one (m, k): built once, bytes identical', async () => {
     const counted = wrapCounting(realReader);
     const app = makeApp(counted.reader);
     const r1 = await request(app, '/nipopow/proof/3/3');
@@ -167,7 +167,7 @@ describe('nipopow route proof cache per tip', () => {
     expect(counted.builds()).toBe(1);
   });
 
-  it.fails('one tip, four pairs then the first-asked again: four builds', async () => {
+  it('one tip, four pairs then the first-asked again: four builds', async () => {
     const counted = wrapCounting(realReader);
     const app = makeApp(counted.reader);
     for (const path of [
@@ -183,7 +183,7 @@ describe('nipopow route proof cache per tip', () => {
     expect(counted.builds()).toBe(4);
   });
 
-  it.fails(
+  it(
     'one tip, five pairs then the first-asked rebuilds; the fourth-asked still answers from cache',
     async () => {
       const counted = wrapCounting(realReader);
