@@ -219,6 +219,29 @@ export function suffixHeadForChain(chain: MinedChain, m: number, k: number): PoP
   return proof.suffixHead;
 }
 
+// A chain whose tip carries another `stateRoot`, PoW re-solved against the
+// header's own declared bits (VALIDATION_INTERFACE → verifyOrderingBlockPoW).
+// Heights 1..N−1 are the honest chain's — their interlinks and interlinkRoot
+// depend on heights below them (TYPES_INTERFACE → Interlink vector), so the
+// tip's `prevBlockHash`, `interlinkRoot` and `interlinks` are the honest's
+// too, and every connection and interlink rule holds under `verifyProof`.
+export function forgeTipStateRoot(honest: MinedChain, newStateRoot: string): MinedChain {
+  const n = honest.headers.length;
+  const honestTip = honest.headers[n - 1]!;
+  const forgedTip: BlockHeader = { ...honestTip, stateRoot: newStateRoot, powNonce: 0 };
+  forgedTip.powNonce = solveHeaderPow(forgedTip);
+  const forgedHeaders = [...honest.headers];
+  forgedHeaders[n - 1] = forgedTip;
+  const forgedPopow = [...honest.popowHeaders];
+  forgedPopow[n - 1] = { header: forgedTip, interlinks: honest.interlinksPerHeader[n - 1]! };
+  return {
+    headers: forgedHeaders,
+    interlinksPerHeader: honest.interlinksPerHeader,
+    popowHeaders: forgedPopow,
+    anchorStamp: honest.anchorStamp,
+  };
+}
+
 // TYPES_INTERFACE → The tree keys — the one place a test turns a box id (or
 // anything shaped like one: absent, gone, a fake key standing in for a real
 // box) into the key the endpoint now serves proofs under and `verifyAvlLookup`
