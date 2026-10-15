@@ -154,7 +154,7 @@ describe('every inbound sync stream ends — 40 SyncInfos leave none open', () =
       const body = encodeSyncInfo(MAGIC, { tipHeight: i });
       if (await pushOne(nodeA, nodeB.peerId(), body)) sent++;
     }
-    // Pre-flip control: a non-trivial number got through on A's side.
+    // A control: a non-trivial number got through on A's side.
     expect(sent).toBeGreaterThan(0);
 
     // Give B's registrar time to settle its stream list after each push.
@@ -211,12 +211,8 @@ describe('every inbound sync stream ends — 40 SyncInfos leave none open', () =
 describe('a peer refused above the stream cap — 16 unread streams, no 17th', () => {
   let nodeA: NetNode | null = null;
   let nodeB: NetNode | null = null;
-  const held: Array<{ release?: () => void }> = [];
 
   afterEach(async () => {
-    // Release the hung sinks so the stop can tear their streams down.
-    for (const h of held) h.release?.();
-    held.length = 0;
     await nodeA?.stop();
     await nodeB?.stop();
     nodeA = null;
@@ -224,12 +220,12 @@ describe('a peer refused above the stream cap — 16 unread streams, no 17th', (
   });
 
   /**
-   * Open a sync stream, send one chunk, and hold the write-half open — the
-   * sink awaits a generator that never completes. Returns the stream so the
-   * caller can tear it down, and a `release` that lets the generator return
-   * (so stop() can close).
+   * Open a sync stream, write the request and close B's write half, never
+   * touch `stream.source`. A's handler reads EOS, serves the ~4 MiB answer
+   * and parks on the unread receive window — the stream stays in A's
+   * inbound set with A's write half open.
    */
-  async function dialAndHold(from: NetNode, toPeerId: string, body: Uint8Array): Promise<{ stream: Stream; release: () => void } | null> {
+  async function dialAndSendRequest(from: NetNode, toPeerId: string, body: Uint8Array): Promise<Stream | null> {
     const libp2p = from.libp2pNode!;
     const peer = libp2p.getPeers().find((p) => p.toString() === toPeerId);
     if (!peer) return null;
@@ -237,14 +233,8 @@ describe('a peer refused above the stream cap — 16 unread streams, no 17th', (
       const stream = await libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
         signal: AbortSignal.timeout(2_000),
       });
-      let release!: () => void;
-      const hangForever = new Promise<void>((resolve) => { release = resolve; });
-      const gen = (async function* () {
-        yield body;
-        await hangForever;
-      })();
-      void stream.sink(gen).catch(() => { /* teardown — expected */ });
-      return { stream, release };
+      await stream.sink([body]);
+      return stream;
     } catch {
       return null;
     }
@@ -258,22 +248,21 @@ describe('a peer refused above the stream cap — 16 unread streams, no 17th', (
     const addr = nodeA.libp2pNode!.getMultiaddrs()[0]!.toString();
 
     nodeB = new NetNode(makeConfig({ bootstrapPeers: [addr] }), validators);
+    // Same height on both sides keeps the sync machine out of the exchange.
+    nodeB.setChainHeightProvider(() => 100);
     await nodeB.start();
     await waitConnected(nodeA, nodeB);
 
     const req = encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 100 });
-    let opened = 0;
+    const streams: Stream[] = [];
     for (let i = 0; i < 16; i++) {
-      const h = await dialAndHold(nodeB, nodeA.peerId(), req);
-      if (h) {
-        held.push(h);
-        opened++;
-      }
+      const s = await dialAndSendRequest(nodeB, nodeA.peerId(), req);
+      if (s) streams.push(s);
     }
-    // Pre-flip control: the 16 streams did go on the wire. 16 is the number
-    // the register states — kept as a literal here so a future bump of the
-    // export does not quietly change what this case asks.
-    expect(opened).toBe(16);
+    // A control: the sixteen streams reach the wire. 16 is the number the
+    // register states, kept as a literal so a future bump of the export does
+    // not quietly change what this case asks.
+    expect(streams.length).toBe(16);
 
     // Give A's handler time to begin writing — the ~16 MB response parks on
     // yamux's send window because B's dial never reads the stream.

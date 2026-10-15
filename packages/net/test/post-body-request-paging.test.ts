@@ -103,9 +103,9 @@ describe('A paged post-body request: 401 ids through B', () => {
 
     const result = await nodeA.requestPostBodies(wanted, nodeB.peerId())
       .catch((err: unknown) => err);
-    // Pre-flip control: today the request returns an empty array (B replies
-    // zero bytes after refusing the malformed body), so the call does not
-    // throw. The paged future also does not throw. Both pass this.
+    // A control: an unpaged request over the cap returns an empty array (B
+    // replies zero bytes after refusing the malformed body), so the call
+    // does not throw. A paged request also does not throw.
     expect(result instanceof Error).toBe(false);
     expect((result as Array<unknown>).length).toBe(401);
   }, TIMEOUT);

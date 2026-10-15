@@ -120,9 +120,9 @@ describe("a peer's SyncInfo is acted on at most once per 100 ms", () => {
     machine.flush();
     const afterTick = machine.peerHeight('B');
 
-    // The tick is what reads the held report; both verdicts hold today, but a
-    // held second brings `rightAfterSecond` back to 100 and the last line is
-    // what today's "acted on at once" fails.
+    // The tick is what reads the held report; both verdicts hold once the
+    // interval does, and the last line is the one the interval flips —
+    // right after the second, the retained height is still the first's.
     expect(afterTick).toBe(200);
     expect(rightAfterSecond).toBe(100);
   });
@@ -141,15 +141,26 @@ describe("a peer's SyncInfo is acted on at most once per 100 ms", () => {
 
 describe('a peer is served one block answer at a time', () => {
   it.fails('three block requests arrive and only one answer goes out', () => {
-    // A holds three contiguous blocks at heights 1..3; the ids are our hex
-    // encodings of the heights. B is a peer behind us at height 0.
+    // A holds three contiguous blocks at heights 1..3; the ids are the hex
+    // encodings of the heights. B is a peer behind us at height 0. The
+    // sendToPeer stub returns a promise that never settles — a machine that
+    // waits for a write to end sees the first in flight and holds the next
+    // two, so only the first answer reaches the stub.
     const ids = [hexId(0), hexId(1), hexId(2)];
     const heights = new Map<string, number>(ids.map((id, i) => [id, i + 1]));
-    const { machine, sent } = makeMachine({
-      chainHeight: () => 3,
-      heightByBlockId: (id) => heights.get(id) ?? null,
-      serializeOrderingBlock: (h) => new Uint8Array([h]),
-    });
+    const sent: Sent[] = [];
+    const machine = new SyncMachine(
+      testConfig,
+      stubStore({
+        chainHeight: () => 3,
+        heightByBlockId: (id) => heights.get(id) ?? null,
+        serializeOrderingBlock: (h) => new Uint8Array([h]),
+      }),
+      (peerId, data) => {
+        sent.push({ peerId, data });
+        return new Promise<void>(() => { /* held in flight */ });
+      },
+    );
 
     // Transition B to Active without consuming the initial reply.
     machine.onPeerActive('B', 0, 'outbound');
@@ -164,8 +175,9 @@ describe('a peer is served one block answer at a time', () => {
     machine.flush();
 
     const toB = countResponsesTo(sent, 'B');
-    // No answer at all would be a different failure — pin that it is a serve,
-    // not a drop. The second line is the rule the tree does not hold.
+    // A control: no answer at all would be a different failure, so pin that
+    // at least one went out. The second line is the rule the tree does not
+    // hold — one in flight, the rest wait.
     expect(toB).toBeGreaterThanOrEqual(1);
     expect(toB).toBeLessThanOrEqual(1);
   });
@@ -215,8 +227,8 @@ describe("a peer's flood never pushes out the sync peer's answer", () => {
       machine.handleMessage('F', MSG_INV, invBody);
     }
 
-    // Drain. The global queue drops its oldest once full — today S's response
-    // was the first in and goes with it; a per-peer queue leaves it alone.
+    // Drain. A global queue drops its oldest once full — S's response was
+    // the first in and goes with it; a per-peer queue leaves it alone.
     machine.flush();
 
     // The response reaches the store if and only if it was not pushed out.

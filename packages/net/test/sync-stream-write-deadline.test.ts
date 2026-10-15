@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import type { Stream } from '@libp2p/interface';
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
@@ -105,11 +106,8 @@ function inboundSyncStreams(libp2p: NonNullable<NetNode['libp2pNode']>, fromPeer
 describe("A's write to an unreading peer times out, the stream aborts", () => {
   let nodeA: NetNode | null = null;
   let nodeB: NetNode | null = null;
-  const held: Array<() => void> = [];
 
   afterEach(async () => {
-    for (const release of held) release();
-    held.length = 0;
     await nodeA?.stop();
     await nodeB?.stop();
     nodeA = null;
@@ -132,7 +130,7 @@ describe("A's write to an unreading peer times out, the stream aborts", () => {
     await waitConnected(nodeA, nodeB);
 
     const req = encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 100 });
-    let opened = 0;
+    const streams: Stream[] = [];
     for (let i = 0; i < 3; i++) {
       const libp2p = nodeB.libp2pNode!;
       const peer = libp2p.getPeers().find((p) => p.toString() === nodeA!.peerId())!;
@@ -140,29 +138,25 @@ describe("A's write to an unreading peer times out, the stream aborts", () => {
         const stream = await libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
           signal: AbortSignal.timeout(2_000),
         });
-        // Hold the write-half open: the sink awaits a generator that never
-        // completes. One-shot `release` lets the generator return at teardown.
-        let release!: () => void;
-        const hangForever = new Promise<void>((resolve) => { release = resolve; });
-        held.push(release);
-        void stream.sink((async function* () {
-          yield req;
-          await hangForever;
-        })()).catch(() => { /* teardown — expected */ });
-        opened++;
-      } catch { /* ignore — pre-flip assertion catches this */ }
+        // Write the request and close B's write half. Never touch
+        // `stream.source`, so A's answer parks on the unread window.
+        await stream.sink([req]);
+        streams.push(stream);
+      } catch { /* a control: the number assertion below catches a short write */ }
     }
-    expect(opened).toBe(3);
+    expect(streams.length).toBe(3);
 
-    // Give A's handler time to begin writing — the ~16 MB response parks on
-    // yamux's send window because the dial on B's side never reads.
+    // Give A's handler time to read the request (EOS reached since B closed
+    // its write half) and begin writing the ~16 MB answer, which parks on the
+    // receive window.
     await new Promise((r) => setTimeout(r, 500));
 
-    // Pre-flip: A has 3 inbound streams right now, parked on the write.
+    // Three streams, parked mid-write on A.
     expect(inboundSyncStreams(nodeA.libp2pNode!, nodeB.peerId())).toBe(3);
 
-    // Wait past the ×5 Blocks deadline (200 ms × 5 = 1 s), with headroom.
-    await new Promise((r) => setTimeout(r, 2_000));
+    // Wait past three ×5 Blocks deadlines served one after another
+    // (200 ms × 5 = 1 s each, 3 s in sequence) with headroom.
+    await new Promise((r) => setTimeout(r, 5_000));
 
     // A node with the write deadline aborts the three streams; a node
     // without it holds them for the life of the connection.
