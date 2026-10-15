@@ -21,7 +21,7 @@ import type { NetConfig, NetValidators } from '../src/types.js';
 import { makeConfig as makeBaseConfig } from './helpers.js';
 
 // ---------------------------------------------------------------------------
-// NET_INTERFACE → Sync Handler Registration → `setHeaderProvider`:
+// NET_INTERFACE → Sync Handler Registration:
 // `GetHeaders` reads the header-at-height provider and nothing else. One
 // height is one header read — a whole-block read there decodes up to 400
 // bodies of up to `MAX_BLOCK_BODY_BYTES` for a seven-byte request. Unset,

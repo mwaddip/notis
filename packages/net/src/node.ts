@@ -293,8 +293,7 @@ export class LazySyncStore implements SyncStore {
 /**
  * Frame a `Headers` (15) response: our chain walking down from
  * `startHeight`. Reads headers directly through the header provider — one
- * height is one provider call (NET_INTERFACE → Sync Handler Registration
- * → `setHeaderProvider`).
+ * height is one provider call (NET_INTERFACE → Sync Handler Registration).
  */
 export function serveHeadersResponse(
   magic: number,
@@ -574,7 +573,7 @@ export class NetNode {
    * The header-at-height provider for `GetHeaders` (14). One height is one
    * provider call — a whole-block read there decodes up to 400 bodies of
    * up to `MAX_BLOCK_BODY_BYTES` for a seven-byte request
-   * (NET_INTERFACE → Sync Handler Registration → `setHeaderProvider`).
+   * (NET_INTERFACE → Sync Handler Registration).
    */
   private headerProvider: ((height: number) => BlockHeader | null) | null = null;
   private syncCompleteHandlers: Array<() => void> = [];
@@ -1765,7 +1764,7 @@ export class NetNode {
 
   /**
    * Register the header-at-height provider for `GetHeaders` (NET_INTERFACE
-   * → Sync Handler Registration → `setHeaderProvider`). One height is one
+   * → Sync Handler Registration). One height is one
    * provider call; unset, `GetHeaders` is answered zero bytes.
    */
   setHeaderProvider(cb: (height: number) => BlockHeader | null): void {

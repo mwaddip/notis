@@ -127,7 +127,7 @@ function makeHandlerHarness(opts: {
     net.setHeadersHandler(opts.headersHandler);
     // Derive a header provider from the block provider so pre-existing
     // tests that only set the block provider still answer `GetHeaders`
-    // (NET_INTERFACE → Sync Handler Registration → `setHeaderProvider`).
+    // (NET_INTERFACE → Sync Handler Registration).
     const getBlock = opts.headersHandler;
     net.setHeaderProvider((h) => getBlock(h)?.header ?? null);
   }
