@@ -188,14 +188,6 @@ function makeReader(chain: MinedChain): PopowHeaderReader {
       const start = Math.max(0, chain.headers.length - n);
       return chain.headers.slice(start);
     },
-    headersAfter: (height: number, n: number) => {
-      const result: BlockHeader[] = [];
-      for (let h = height + 1; h <= Math.min(height + n, chain.headers.length); h++) {
-        const ph = byHeight.get(h);
-        if (ph) result.push(ph.header);
-      }
-      return result;
-    },
   };
 }
 
@@ -225,6 +217,29 @@ export function suffixHeadForChain(chain: MinedChain, m: number, k: number): PoP
   const reader = makeReader(chain);
   const proof = proveWithReader(reader, { m, k });
   return proof.suffixHead;
+}
+
+// A chain whose tip carries another `stateRoot`, PoW re-solved against the
+// header's own declared bits (VALIDATION_INTERFACE → verifyOrderingBlockPoW).
+// Heights 1..N−1 are the honest chain's — their interlinks and interlinkRoot
+// depend on heights below them (TYPES_INTERFACE → Interlink vector), so the
+// tip's `prevBlockHash`, `interlinkRoot` and `interlinks` are the honest's
+// too, and every connection and interlink rule holds under `verifyProof`.
+export function forgeTipStateRoot(honest: MinedChain, newStateRoot: string): MinedChain {
+  const n = honest.headers.length;
+  const honestTip = honest.headers[n - 1]!;
+  const forgedTip: BlockHeader = { ...honestTip, stateRoot: newStateRoot, powNonce: 0 };
+  forgedTip.powNonce = solveHeaderPow(forgedTip);
+  const forgedHeaders = [...honest.headers];
+  forgedHeaders[n - 1] = forgedTip;
+  const forgedPopow = [...honest.popowHeaders];
+  forgedPopow[n - 1] = { header: forgedTip, interlinks: honest.interlinksPerHeader[n - 1]! };
+  return {
+    headers: forgedHeaders,
+    interlinksPerHeader: honest.interlinksPerHeader,
+    popowHeaders: forgedPopow,
+    anchorStamp: honest.anchorStamp,
+  };
 }
 
 // TYPES_INTERFACE → The tree keys — the one place a test turns a box id (or

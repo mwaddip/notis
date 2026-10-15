@@ -6,8 +6,24 @@ import {
   makeReader,
   devnetProfile,
   devnetProfileWithGenesisId,
+  solveHeaderPow,
+  DEVNET_RETARGET,
 } from './helpers.js';
-import type { NipopowProof } from '../src/index.js';
+import type { NipopowProof, PoPowHeader } from '../src/index.js';
+import type { BlockHeader } from '@dagsocial/types';
+import {
+  EMPTY_STATE_ROOT,
+  NETWORK_PROFILES,
+  interlinkRoot,
+  protocolVersionAt,
+  updateInterlinks,
+} from '@dagsocial/types';
+import {
+  asertTargetBits,
+  blockHash,
+  level as headerLevel,
+  verifyOrderingBlockPoW,
+} from '@dagsocial/validation';
 
 function clone<T>(obj: T): T {
   return JSON.parse(JSON.stringify(obj, (_k, v) =>
@@ -26,7 +42,7 @@ describe('verifyProof', () => {
 
   it('accepts a valid proof from proveWithReader', () => {
     const proof = proveWithReader(reader, { m: 3, k: 5 });
-    const result = verifyProof(proof, profile);
+    const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.tipHeight).toBe(chain.headers.length);
@@ -37,18 +53,18 @@ describe('verifyProof', () => {
   it('accepts a valid proof from bytes', () => {
     const proof = proveWithReader(reader, { m: 3, k: 5 });
     const bytes = encodeNipopowProof(proof);
-    const result = verifyProof(bytes, profile);
+    const result = verifyProof(bytes, { m: proof.m, k: proof.k }, profile);
     expect(result.ok).toBe(true);
   });
 
   it('refuses garbage bytes as parse-failed', () => {
-    const result = verifyProof(new Uint8Array([0xff, 0x00, 0x01]), profile);
+    const result = verifyProof(new Uint8Array([0xff, 0x00, 0x01]), { m: 1, k: 1 }, profile);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('parse-failed');
   });
 
   it('refuses empty bytes as parse-failed', () => {
-    const result = verifyProof(new Uint8Array(0), profile);
+    const result = verifyProof(new Uint8Array(0), { m: 1, k: 1 }, profile);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('parse-failed');
   });
@@ -57,7 +73,7 @@ describe('verifyProof', () => {
     it('refuses m = 0', () => {
       const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
       proof.m = 0;
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('shape');
     });
@@ -65,7 +81,7 @@ describe('verifyProof', () => {
     it('refuses k = 0', () => {
       const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
       proof.k = 0;
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('shape');
     });
@@ -73,7 +89,7 @@ describe('verifyProof', () => {
     it('refuses empty prefix', () => {
       const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
       proof.prefix = [];
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('shape');
     });
@@ -82,7 +98,7 @@ describe('verifyProof', () => {
       const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
       // Add an extra tail header
       proof.suffixTail.push(proof.suffixTail[proof.suffixTail.length - 1]!);
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('shape');
     });
@@ -92,7 +108,7 @@ describe('verifyProof', () => {
     it('refuses prefix[0] not at height 1', () => {
       const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
       proof.prefix[0]!.header.height = 2;
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('anchor');
     });
@@ -100,7 +116,7 @@ describe('verifyProof', () => {
     it('refuses prefix[0] with non-empty interlinks', () => {
       const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
       proof.prefix[0]!.interlinks = ['00'.repeat(32)];
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('anchor');
     });
@@ -108,7 +124,7 @@ describe('verifyProof', () => {
     it('genesisId pinned-match accepts', () => {
       const pinnedProfile = devnetProfileWithGenesisId(chain);
       const proof = proveWithReader(reader, { m: 3, k: 5 });
-      const result = verifyProof(proof, pinnedProfile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, pinnedProfile);
       expect(result.ok).toBe(true);
     });
 
@@ -118,14 +134,14 @@ describe('verifyProof', () => {
         genesisId: 'ff'.repeat(32),
       };
       const proof = proveWithReader(reader, { m: 3, k: 5 });
-      const result = verifyProof(proof, pinnedProfile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, pinnedProfile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('anchor');
     });
 
     it('genesisId empty accepts any genesis', () => {
       const proof = proveWithReader(reader, { m: 3, k: 5 });
-      const result = verifyProof(proof, { ...devnetProfile(), genesisId: '' });
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, { ...devnetProfile(), genesisId: '' });
       expect(result.ok).toBe(true);
     });
   });
@@ -134,7 +150,7 @@ describe('verifyProof', () => {
     it('refuses a header with wrong protocolVersion as version', () => {
       const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
       proof.prefix[1]!.header.protocolVersion = 99;
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('version');
     });
@@ -142,7 +158,7 @@ describe('verifyProof', () => {
     it('refuses powTargetBits below the band floor as target', () => {
       const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
       proof.prefix[1]!.header.powTargetBits = 2000;
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('target');
     });
@@ -150,7 +166,7 @@ describe('verifyProof', () => {
     it('refuses a header with bad PoW as pow', () => {
       const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
       proof.prefix[1]!.header.powNonce = 0;
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) {
         // Could be pow, domain, or interlinks depending on nonce=0's effect
@@ -165,7 +181,7 @@ describe('verifyProof', () => {
       if (proof.prefix.length > 1 && proof.prefix[1]!.interlinks.length > 0) {
         proof.prefix[1]!.interlinks[0] = 'ab'.repeat(32);
       }
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toMatch(/interlinks|anchor/);
     });
@@ -179,7 +195,7 @@ describe('verifyProof', () => {
         proof.prefix[1] = proof.prefix[2]!;
         proof.prefix[2] = tmp;
       }
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('time');
     });
@@ -216,7 +232,7 @@ describe('verifyProof', () => {
       };
 
       const wideProfile = { ...profile, nowMs: 10_000_000_000 };
-      const result = verifyProof(stitched, wideProfile);
+      const result = verifyProof(stitched, { m: stitched.m, k: stitched.k }, wideProfile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('heights');
     });
@@ -229,7 +245,7 @@ describe('verifyProof', () => {
         proof.prefix[1]!.interlinks = [];
         proof.prefix[1]!.header.prevBlockHash = 'dd'.repeat(32);
       }
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toMatch(/connections|anchor|interlinks/);
     });
@@ -241,21 +257,21 @@ describe('verifyProof', () => {
       const h = proof.prefix[proof.prefix.length - 1]!.header;
       const orig = h.utxoTxRoot;
       h.utxoTxRoot = 'ff' + orig.slice(2);
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
     });
 
     it('refuses height +1 on a prefix element', () => {
       const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
       proof.prefix[1]!.header.height += 1;
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
     });
 
     it('refuses when genesis (prefix[0]) is dropped', () => {
       const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
       proof.prefix.shift();
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
     });
 
@@ -263,7 +279,7 @@ describe('verifyProof', () => {
       const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
       const h = proof.suffixHead.header;
       h.prevBlockHash = 'ee' + h.prevBlockHash.slice(2);
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
     });
 
@@ -272,7 +288,7 @@ describe('verifyProof', () => {
       if (proof.suffixTail.length > 0) {
         proof.suffixTail[0]!.prevBlockHash = 'aa' + proof.suffixTail[0]!.prevBlockHash.slice(2);
       }
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
     });
 
@@ -284,7 +300,7 @@ describe('verifyProof', () => {
         proof.prefix[1] = b;
         proof.prefix[2] = a;
       }
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
     });
 
@@ -296,7 +312,7 @@ describe('verifyProof', () => {
         suffixHead: { header: { height: 2 }, interlinks: ['00'.repeat(32)] },
         suffixTail: [],
       } as unknown as NipopowProof;
-      const result = verifyProof(malformed, profile);
+      const result = verifyProof(malformed, { m: 1, k: 1 }, profile);
       expect(result.ok).toBe(false);
     });
 
@@ -308,7 +324,7 @@ describe('verifyProof', () => {
         suffixHead: { header: { height: 2 }, interlinks: [] },
         suffixTail: [],
       } as unknown as NipopowProof;
-      const result = verifyProof(malformed, profile);
+      const result = verifyProof(malformed, { m: 1, k: 1 }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('shape');
     });
@@ -317,7 +333,7 @@ describe('verifyProof', () => {
       const chain = buildMinedChain({ count: 10 });
       const proof = proveWithReader(makeReader(chain), { m: 1, k: 2 });
       const malformed = { ...proof, suffixHead: null } as unknown as NipopowProof;
-      const result = verifyProof(malformed, profile);
+      const result = verifyProof(malformed, { m: 1, k: 1 }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('shape');
     });
@@ -326,7 +342,7 @@ describe('verifyProof', () => {
       const chain = buildMinedChain({ count: 10 });
       const proof = proveWithReader(makeReader(chain), { m: 1, k: 3 });
       const malformed = { ...proof, suffixTail: [null, proof.suffixTail[0]] } as unknown as NipopowProof;
-      const result = verifyProof(malformed, profile);
+      const result = verifyProof(malformed, { m: 1, k: 1 }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('shape');
     });
@@ -350,13 +366,13 @@ describe('verifyProof', () => {
 
     it('a proof spanning an era boundary verifies under the boundary schedule', () => {
       expect(boundaryProof.suffixHead.header.height).toBe(BOUNDARY);
-      const result = verifyProof(boundaryProof, twoEraProfile);
+      const result = verifyProof(boundaryProof, { m: boundaryProof.m, k: boundaryProof.k }, twoEraProfile);
       expect(result.ok).toBe(true);
     });
 
     it('the boundary proof under the one-era devnet schedule fails version at the boundary header', () => {
       expect(Math.max(...boundaryProof.prefix.map(p => p.header.height))).toBeLessThan(BOUNDARY);
-      const result = verifyProof(boundaryProof, devnetProfile());
+      const result = verifyProof(boundaryProof, { m: boundaryProof.m, k: boundaryProof.k }, devnetProfile());
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.reason).toBe('version');
@@ -368,7 +384,7 @@ describe('verifyProof', () => {
       const proof = proveWithReader(reader, { m: 3, k: 5 });
       expect(proof.suffixHead.header.height).toBe(BOUNDARY);
       expect(Math.max(...proof.prefix.map(p => p.header.height))).toBeLessThan(BOUNDARY);
-      const result = verifyProof(proof, twoEraProfile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, twoEraProfile);
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.reason).toBe('version');
@@ -384,7 +400,7 @@ describe('verifyProof', () => {
       const proof = proveWithReader(reader, { m: 3, k: 5 });
       const wrongRetarget = { ...profile.retarget, anchorBits: profile.retarget.anchorBits + 1 };
       const wrongProfile = { ...profile, retarget: wrongRetarget };
-      const result = verifyProof(proof, wrongProfile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, wrongProfile);
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.reason).toBe('target');
@@ -401,7 +417,7 @@ describe('verifyProof', () => {
       // relative to a profile with different anchorBits for band-only
       const proof = proveWithReader(reader, { m: 3, k: 1 });
       // k=1 means suffixTail is empty, suffixHead is the only suffix element
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(true);
     });
   });
@@ -412,7 +428,7 @@ describe('verifyProof', () => {
       if (proof.prefix.length > 1) {
         proof.prefix[1]!.header.powTargetBits = profile.retarget.floorBits - 1;
       }
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('target');
     });
@@ -422,7 +438,7 @@ describe('verifyProof', () => {
       if (proof.prefix.length > 1) {
         proof.prefix[1]!.header.powTargetBits = profile.retarget.ceilingBits + 1;
       }
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('target');
     });
@@ -443,7 +459,7 @@ describe('verifyProof', () => {
         ...profile,
         nowMs: 200_000_000,
       };
-      const result = verifyProof(proof, equalProfile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, equalProfile);
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.reason).toBe('time');
@@ -461,7 +477,7 @@ describe('verifyProof', () => {
         ...profile,
         nowMs: tipH.createdAt - profile.maxFutureDriftMs - 1,
       };
-      const result = verifyProof(proof, tightProfile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, tightProfile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('clock');
     });
@@ -475,7 +491,7 @@ describe('verifyProof', () => {
         ...profile,
         nowMs: tipH.createdAt - profile.maxFutureDriftMs,
       };
-      const result = verifyProof(proof, exactProfile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, exactProfile);
       expect(result.ok).toBe(true);
     });
 
@@ -488,7 +504,7 @@ describe('verifyProof', () => {
         ...profile,
         nowMs: tipH.createdAt - profile.maxFutureDriftMs - 1,
       };
-      const result1 = verifyProof(proof, tightProfile);
+      const result1 = verifyProof(proof, { m: proof.m, k: proof.k }, tightProfile);
       expect(result1.ok).toBe(false);
       if (!result1.ok) expect(result1.reason).toBe('clock');
 
@@ -496,8 +512,197 @@ describe('verifyProof', () => {
         ...tightProfile,
         nowMs: tightProfile.nowMs + 2,
       };
-      const result2 = verifyProof(proof, advancedProfile);
+      const result2 = verifyProof(proof, { m: proof.m, k: proof.k }, advancedProfile);
       expect(result2.ok).toBe(true);
     });
+  });
+});
+
+// NIPOPOW_INTERFACE → verifyProof — "Shape": `m` and `k` equal `params.m` and `params.k`,
+// each at least 1; `prefix` non-empty; `suffixTail.length === k − 1` (`shape`). Also:
+// NIPOPOW_INTERFACE → "A proof is held to the client's own parameters".
+describe('shape — tail length exactly k − 1', () => {
+  const chain = buildMinedChain({ count: 40 });
+  const reader = makeReader(chain);
+  const profile = devnetProfile();
+
+  it('a proof whose tail is shorter than k − 1 is refused shape as an object', () => {
+    const proof = proveWithReader(reader, { m: 3, k: 5 });
+    expect(proof.suffixTail.length).toBe(4);
+    const shortened: NipopowProof = { ...proof, suffixTail: proof.suffixTail.slice(0, 3) };
+    expect(shortened.suffixTail.length).toBe(3);
+    const result = verifyProof(shortened, { m: shortened.m, k: shortened.k }, profile);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('shape');
+  });
+
+  it('a proof whose tail is shorter than k − 1 is refused parse-failed by verifyProof on bytes', () => {
+    const proof = proveWithReader(reader, { m: 3, k: 5 });
+    const shortened: NipopowProof = { ...proof, suffixTail: proof.suffixTail.slice(0, 3) };
+    const bytes = encodeNipopowProof(shortened);
+    const result = verifyProof(bytes, { m: proof.m, k: proof.k }, profile);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('parse-failed');
+  });
+});
+
+// NIPOPOW_INTERFACE → verifyProof — "Shape": `m` and `k` equal `params.m` and `params.k`.
+describe('params rule 1 — verifyProof holds the proof to its own m and k', () => {
+  const chain = buildMinedChain({ count: 40 });
+  const reader = makeReader(chain);
+  const profile = devnetProfile();
+
+  it('a proof built with { m: 3, k: 5 } is accepted under { m: 3, k: 5 }', () => {
+    const proof = proveWithReader(reader, { m: 3, k: 5 });
+    const result = verifyProof(proof, { m: 3, k: 5 }, profile);
+    expect(result.ok).toBe(true);
+  });
+
+  it('a proof built with { m: 3, k: 5 } is refused shape under { m: 3, k: 6 }', () => {
+    const proof = proveWithReader(reader, { m: 3, k: 5 });
+    expect(proof.k).toBe(5);
+    const result = verifyProof(proof, { m: 3, k: 6 }, profile);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('shape');
+  });
+
+  it('a proof built with { m: 3, k: 5 } is refused shape under { m: 4, k: 5 }', () => {
+    const proof = proveWithReader(reader, { m: 3, k: 5 });
+    expect(proof.m).toBe(3);
+    const result = verifyProof(proof, { m: 4, k: 5 }, profile);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('shape');
+  });
+});
+
+// NIPOPOW_INTERFACE → verifyProof — "Heights": heights strictly increase across the
+// flattened sequence, and an element whose `prevBlockHash` is the `blockHash` of the
+// element before it sits exactly one height above it (`heights`).
+describe('heights rule 5 — parent-linked and exactly one above', () => {
+  const chain = buildMinedChain({ count: 40 });
+  const reader = makeReader(chain);
+  const profile = devnetProfile();
+  const schedule = NETWORK_PROFILES.devnet.protocolVersionSchedule;
+
+  it('a tail header one height above its parent is refused heights at its index', () => {
+    const proof = proveWithReader(reader, { m: 3, k: 5 });
+    expect(proof.suffixTail.length).toBe(4);
+    const prev = proof.suffixTail[proof.suffixTail.length - 2]!;
+    const prevHash = blockHash(prev);
+    expect(prevHash).not.toBeNull();
+
+    const t_a = chain.headers[0]!.createdAt;
+    const scheduledBits = asertTargetBits(DEVNET_RETARGET, t_a, {
+      height: prev.height,
+      createdAt: prev.createdAt,
+    });
+    const forgedHeight = prev.height + 2;
+    const forgedCreatedAt = prev.createdAt + DEVNET_RETARGET.idealMs;
+    const version = protocolVersionAt(schedule, forgedHeight);
+    expect(version).not.toBeNull();
+    const forged: BlockHeader = {
+      protocolVersion: version!,
+      height: forgedHeight,
+      prevBlockHash: prevHash!,
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: scheduledBits,
+      createdAt: forgedCreatedAt,
+      interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
+    };
+    forged.powNonce = solveHeaderPow(forged);
+    expect(verifyOrderingBlockPoW(forged)).toBe(true);
+    expect(forged.height).toBe(prev.height + 2);
+
+    const mutated: NipopowProof = {
+      ...proof,
+      suffixTail: [...proof.suffixTail.slice(0, -1), forged],
+    };
+    const faultIndex = mutated.prefix.length + 1 + (mutated.suffixTail.length - 1);
+    const result = verifyProof(mutated, { m: mutated.m, k: mutated.k }, profile);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('heights');
+      expect(result.index).toBe(faultIndex);
+    }
+  });
+
+  it('a prefix header one height above its parent in the level-0 span is refused heights at its index', () => {
+    const smallChain = buildMinedChain({ count: 10 });
+    const anchor = smallChain.popowHeaders[0]!;
+    const base = smallChain.popowHeaders[4]!;
+    const baseHash = blockHash(base.header);
+    expect(baseHash).not.toBeNull();
+
+    const anchorBits = DEVNET_RETARGET.anchorBits;
+    const baseLevel = headerLevel(base.header, anchorBits);
+
+    const forgedPrefixHeight = base.header.height + 2;
+    const forgedCreatedAt = base.header.createdAt + DEVNET_RETARGET.idealMs;
+    const forgedInterlinks = updateInterlinks(base.interlinks, baseHash!, baseLevel);
+    const forgedPrefixHeader: BlockHeader = {
+      protocolVersion: protocolVersionAt(schedule, forgedPrefixHeight)!,
+      height: forgedPrefixHeight,
+      prevBlockHash: baseHash!,
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: anchorBits,
+      createdAt: forgedCreatedAt,
+      interlinkRoot: interlinkRoot(forgedInterlinks),
+      adProofsRoot: '00'.repeat(32),
+    };
+    forgedPrefixHeader.powNonce = solveHeaderPow(forgedPrefixHeader);
+    expect(verifyOrderingBlockPoW(forgedPrefixHeader)).toBe(true);
+    const forgedPrefix: PoPowHeader = {
+      header: forgedPrefixHeader,
+      interlinks: forgedInterlinks,
+    };
+    const forgedPrefixHash = blockHash(forgedPrefixHeader);
+    expect(forgedPrefixHash).not.toBeNull();
+    const forgedPrefixLevel = headerLevel(forgedPrefixHeader, anchorBits);
+
+    const headHeight = forgedPrefixHeight + 1;
+    const headCreatedAt = forgedCreatedAt + DEVNET_RETARGET.idealMs;
+    const headInterlinks = updateInterlinks(
+      forgedInterlinks,
+      forgedPrefixHash!,
+      forgedPrefixLevel,
+    );
+    const headHeader: BlockHeader = {
+      protocolVersion: protocolVersionAt(schedule, headHeight)!,
+      height: headHeight,
+      prevBlockHash: forgedPrefixHash!,
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: anchorBits,
+      createdAt: headCreatedAt,
+      interlinkRoot: interlinkRoot(headInterlinks),
+      adProofsRoot: '00'.repeat(32),
+    };
+    headHeader.powNonce = solveHeaderPow(headHeader);
+    expect(verifyOrderingBlockPoW(headHeader)).toBe(true);
+    const suffixHead: PoPowHeader = { header: headHeader, interlinks: headInterlinks };
+
+    const stitched: NipopowProof = {
+      m: 1,
+      k: 1,
+      prefix: [anchor, base, forgedPrefix],
+      suffixHead,
+      suffixTail: [],
+    };
+    const faultIndex = 2;
+    const result = verifyProof(stitched, { m: stitched.m, k: stitched.k }, profile);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('heights');
+      expect(result.index).toBe(faultIndex);
+    }
   });
 });

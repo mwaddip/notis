@@ -672,11 +672,8 @@ export async function resolveFork(
       createdAt: anchorCreatedAt,
     };
 
-    // ourWork — once, through `getHeadersAbove` (NODE_INTERFACE → Fork choice
-    // decides on verified headers, step 4; NODE_INTERFACE → Store Interface →
-    // Ordering blocks). Not the NiPoPoW prover's `getHeadersAfter`, which is
-    // capped at `MAX_NIPOPOW_PARAM` (128) — the walk needs every header above
-    // the fork, up to `maxReorgDepth`.
+    // ourWork — once, through `getHeadersAbove`, which the caller bounds at
+    // `ourTip − f ≤ maxReorgDepth` (NODE_INTERFACE → Ordering blocks).
     const ourHeaders = getHeadersAbove(forkHeight, currentHeight - forkHeight);
     const ourWork = cumulativeWork(ourHeaders);
 

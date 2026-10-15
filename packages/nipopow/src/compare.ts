@@ -1,4 +1,5 @@
 import type { BlockHeader } from '@dagsocial/types';
+import { LEVEL_CAP } from '@dagsocial/types';
 import { blockHash, level } from '@dagsocial/validation';
 import { verifyProof } from './verify.js';
 import type { VerifyProfile } from './verify.js';
@@ -6,7 +7,7 @@ import type { NipopowProof, PoPowHeader } from './codec.js';
 
 export type CompareResult =
   | { verdict: 'a' | 'b' | 'tie'; scoreA: bigint; scoreB: bigint; lca: BlockHeader }
-  | { verdict: 'incomparable'; reason: 'no-common-ancestor' | 'm-mismatch' | 'invalid' };
+  | { verdict: 'incomparable'; reason: 'no-common-ancestor' | 'invalid' };
 
 function headersChain(proof: NipopowProof): BlockHeader[] {
   return [
@@ -31,21 +32,19 @@ function lowestCommonAncestor(left: BlockHeader[], right: BlockHeader[]): BlockH
   return lca;
 }
 
-// NIPOPOW_INTERFACE → compareProofs — bestArg: max over μ ≥ 0 of 2^μ · |{ h ∈ chain : level(h, anchorBits) ≥ μ }|,
-// counting μ ≥ 1 only while it holds at least m headers; μ = 0 counts headers that have a level
+// NIPOPOW_INTERFACE → compareProofs — bestArg: max over μ ∈ [0, LEVEL_CAP] of
+// 2^μ · |{ h ∈ chain : level(h, anchorBits) ≥ μ }|, counting μ ≥ 1 only while it
+// holds at least m headers; μ = 0 counts headers that have a level. The LEVEL_CAP
+// bound answers every input: a height-1 header (level ∞) counts at every level,
+// and m < 1 admits every level.
 export function bestArg(headers: BlockHeader[], m: number, anchorBits: number): bigint {
   const levels = headers.map(h => level(h, anchorBits));
   const registeredCount = levels.filter(lvl => lvl !== null).length;
   const acc: Array<[number, number]> = [[0, registeredCount]];
-  let mu = 1;
-  for (;;) {
+  for (let mu = 1; mu <= LEVEL_CAP; mu++) {
     const count = levels.filter(lvl => lvl !== null && lvl >= mu).length;
-    if (count >= m) {
-      acc.push([mu, count]);
-      mu++;
-    } else {
-      break;
-    }
+    if (count < m) break;
+    acc.push([mu, count]);
   }
   let best = 0n;
   for (const [lvl, cnt] of acc) {
@@ -55,21 +54,19 @@ export function bestArg(headers: BlockHeader[], m: number, anchorBits: number): 
   return best;
 }
 
-// NIPOPOW_INTERFACE → compareProofs
+// NIPOPOW_INTERFACE → compareProofs — `m` and `k` are the client's; a proof
+// declaring another `m` or `k` fails `verifyProof` rule 1 and so answers
+// `incomparable / invalid` here.
 export function compareProofs(
   a: NipopowProof,
   b: NipopowProof,
-  m: number,
+  params: { m: number; k: number },
   profile: VerifyProfile,
 ): CompareResult {
-  const aResult = verifyProof(a, profile);
-  const bResult = verifyProof(b, profile);
+  const aResult = verifyProof(a, params, profile);
+  const bResult = verifyProof(b, params, profile);
   if (!aResult.ok || !bResult.ok) {
     return { verdict: 'incomparable', reason: 'invalid' };
-  }
-
-  if (a.m !== m || b.m !== m) {
-    return { verdict: 'incomparable', reason: 'm-mismatch' };
   }
 
   const aChain = headersChain(a);
@@ -84,8 +81,8 @@ export function compareProofs(
   const aAbove = aChain.filter(h => h.height > lcaHeight);
   const bAbove = bChain.filter(h => h.height > lcaHeight);
 
-  const scoreA = bestArg(aAbove, m, profile.retarget.anchorBits);
-  const scoreB = bestArg(bAbove, m, profile.retarget.anchorBits);
+  const scoreA = bestArg(aAbove, params.m, profile.retarget.anchorBits);
+  const scoreB = bestArg(bAbove, params.m, profile.retarget.anchorBits);
 
   if (scoreA > scoreB) return { verdict: 'a', scoreA, scoreB, lca };
   if (scoreB > scoreA) return { verdict: 'b', scoreA, scoreB, lca };

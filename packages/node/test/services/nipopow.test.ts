@@ -6,7 +6,6 @@ import {
   getPopowHeaderByHash,
   getPopowHeaderAtHeight,
   getLastHeaders,
-  getHeadersAfter,
 } from '../../src/store/ordering.js';
 import { createPopowHeaderReader } from '../../src/services/nipopow.js';
 import { buildMinedHeaderChain } from '../helpers.js';
@@ -64,7 +63,6 @@ describe('PopowHeaderReader + proveWithReader', () => {
       getPopowHeaderByHash,
       getPopowHeaderAtHeight,
       getLastHeaders,
-      getHeadersAfter,
       getCurrentHeight,
     });
 
@@ -79,7 +77,7 @@ describe('PopowHeaderReader + proveWithReader', () => {
     expect(proof.suffixTail).toHaveLength(k - 1);
 
     // NIPOPOW_INTERFACE → verifyProof: devnet profile
-    const result = verifyProof(proof, {
+    const result = verifyProof(proof, { m, k }, {
       retarget: retargetParams(),
       maxFutureDriftMs: MAX_FUTURE_DRIFT_MS,
       nowMs: Date.now() + 86_400_000,
@@ -105,7 +103,6 @@ describe('PopowHeaderReader + proveWithReader', () => {
       },
       getPopowHeaderAtHeight,
       getLastHeaders,
-      getHeadersAfter,
       getCurrentHeight,
     });
 

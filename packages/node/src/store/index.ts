@@ -84,7 +84,6 @@ export {
   getPopowHeaderByHash,
   getPopowHeaderAtHeight,
   getLastHeaders,
-  getHeadersAfter,
   getHeadersAbove,
 } from './ordering.js';
 

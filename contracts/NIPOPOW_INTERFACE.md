@@ -2,7 +2,7 @@
 
 **Component:** `@dagsocial/nipopow`
 **Protocol version:** 1
-**Last updated:** 2026-08-27
+**Last updated:** 2026-10-15
 
 ## Scope
 
@@ -50,8 +50,7 @@ NipopowProof {
   k: number                      // the suffix length the prover was asked for
   prefix: PoPowHeader[]          // heights strictly ascending; prefix[0] is height 1
   suffixHead: PoPowHeader        // the k-th header from the tip
-  suffixTail: BlockHeader[]      // the k − 1 headers above it, ascending; may be shorter only in a
-                                 // hand-built object — the prover always emits k − 1
+  suffixTail: BlockHeader[]      // the k − 1 headers above it, ascending — exactly k − 1
 }
 ```
 
@@ -67,7 +66,7 @@ normalised. **Bounds live inside `read` and are each refused before the first el
 | `1 ≤ m ≤ MAX_NIPOPOW_PARAM` | 128 | `m` |
 | `1 ≤ k ≤ MAX_NIPOPOW_PARAM` | 128 | `k` |
 | `prefix.length ≤ MAX_NIPOPOW_PREFIX` | 16 384 | the prefix count |
-| `suffixTail.length ≤ k − 1` | — | the tail count, after `k` is known |
+| `suffixTail.length = k − 1` | — | the tail count, after `k` is known — any other count is refused |
 | `interlinks.length ≤ MAX_INTERLINKS` | 257 | every PoPowHeader (`TYPES_INTERFACE → Interlink vector`) |
 
 ### Constants
@@ -80,23 +79,26 @@ export const MAX_NIPOPOW_PREFIX = 16_384;  // prefix entries — provisional
 **The prefix bound's arithmetic, so it reproduces:** the prover keeps at most ~2m headers per
 level (the m-th-from-last anchoring at each level plus the level below's members above it) over
 ≈ log₂(work / W_a) levels — levels are measured against the anchor target, so a chain 2⁷ above its
-anchor and below 2³² blocks holds ≤ 39 of them: 9 984 at `m = 128`; the reader bound is 2¹⁴, above
-that with headroom, and `LEVEL_CAP` bounds the level count absolutely. Both numbers are provisional
-(`CONSTANTS → nipopow`).
+anchor and below 2³² blocks holds ≤ 39 of them: 9 984 at `m = 128`. Level 0 adds the sweep (→ proveWithReader):
+about `m / p₁` headers, `p₁ = min(1, T_a / (2 · T_b))` the chance that a header mined at target `T_b` reaches level 1
+against the anchor `T_a` — `m` on a chain at least twice as hard as its anchor, `2m` at the anchor, and at the floor
+`2m · 2^f`, `f` the bits between the floor and the anchor: 3 on devnet (`16m`), 3.375 on mainnet and testnet (about
+`21m`, 2 650 at `m = 128`, so 12 634 in all). The reader bound is 2¹⁴, above that with headroom, and `LEVEL_CAP`
+bounds the level count absolutely. Both numbers are provisional (`CONSTANTS → nipopow`).
 
-**What `m` costs**, measured 2026-09-30 with `packages/nipopow/scripts/bench-proof-m.mjs` on a 100 000-block chain at
-`k = 20` — the proof's decode, `verifyProof` and one `compareProofs` against a second copy, medians of nine runs pinned
-to performance cores of the i9-14900HX:
+**What `m` costs**, measured 2026-10-15 with `packages/nipopow/scripts/bench-proof-m.mjs` on a 100 000-block chain
+mined at its anchor's target, at `k = 20` — the proof's decode, `verifyProof` and one `compareProofs` against a second
+copy, medians of nine runs pinned to performance cores of the i9-14900HX:
 
 | `m` | PoPowHeaders | Proof | The route's JSON | Node 22 | Waterfox 140 |
 |---|---|---|---|---|---|
-| 6 | 95 | 60 KB | 121 KB | 27 ms | 45 ms |
-| 12 | 142 | 95 KB | 191 KB | 38 ms | 63 ms |
-| 24 | 280 | 199 KB | 397 KB | 73 ms | 121 ms |
-| 48 | 528 | 385 KB | 769 KB | 142 ms | 228 ms |
+| 6 | 101 | 65 KB | 130 KB | 30 ms | 52 ms |
+| 12 | 156 | 106 KB | 212 KB | 47 ms | 83 ms |
+| 24 | 307 | 219 KB | 438 KB | 97 ms | 162 ms |
+| 48 | 580 | 424 KB | 848 KB | 181 ms | 315 ms |
 
 The prover keeps about `m` headers a level — the bound above is the ceiling — so a proof grows with `m` and with the
-log of the chain's length: at 20 000 blocks the `m = 24` proof is 177 KB.
+log of the chain's length: at 20 000 blocks the `m = 24` proof is 183 KB.
 **`k` is a block count, and under a moving target a k-deep suffix is read in work** — the reference's
 own note; `k` is the client's own settlement depth, 20 by default, and not a full node's reorg horizon —
 `maxReorgDepth` is per network and larger (`TYPES_INTERFACE → Chain reorganisation`; `CONSTANTS → Client
@@ -133,6 +135,7 @@ codec layer's own errors (`TYPES_INTERFACE → Serialization`); `verifyProof` ca
 ```
 verifyProof(
   proof: Uint8Array | NipopowProof,
+  params: { m: number; k: number },  // the client's own — the m and k it asked every node for
   profile: {
     retarget: RetargetParams;        // VALIDATION_INTERFACE → asertTargetBits — the anchor's bits are the yardstick
     maxFutureDriftMs: number;        // MAX_FUTURE_DRIFT_MS
@@ -153,8 +156,10 @@ for the whole proof — refuse-whole, never skip.** `index` is the position in t
 sequence `prefix ++ [suffixHead] ++ suffixTail` of the element that failed, where one element is
 at fault.
 
-1. **Shape.** `m ≥ 1`, `k ≥ 1`, `prefix` non-empty, `suffixTail.length ≤ k − 1` (`shape`). Bytes
-   that do not decode are `parse-failed`.
+1. **Shape.** `m` and `k` equal `params.m` and `params.k`, each at least 1; `prefix` non-empty;
+   `suffixTail.length === k − 1` (`shape`). Bytes that do not decode are `parse-failed`. The parameters are the
+   verifier's, never the proof's: KMZ17's `Verify_{m,k}` requires a suffix of exactly its own `k` (→ The trust
+   model).
 2. **Anchor.** `prefix[0].header.height === 1` with an empty vector; when `profile.genesisId` is
    non-empty, `blockHash(prefix[0].header) === genesisId`; every other PoPowHeader's `interlinks[0]`
    equals `blockHash(prefix[0].header)` (`anchor`). The rule is one whether or not the profile pins
@@ -174,7 +179,10 @@ at fault.
    `createdAt ≤ profile.nowMs + profile.maxFutureDriftMs` (`clock`), the acceptance rule a full node
    applies, so a proof cannot claim more real time than exists.
 4. **Every PoPowHeader:** `interlinkRoot(interlinks) === header.interlinkRoot` (`interlinks`).
-5. **Heights** strictly increase across the flattened sequence (`heights`).
+5. **Heights** strictly increase across the flattened sequence, and an element whose `prevBlockHash` is the
+   `blockHash` of the element before it sits exactly one height above it (`heights`) — so the suffix, parent-linked
+   throughout (rule 6), and the prefix's level-0 sweep (→ proveWithReader) run contiguously, as the chain they are
+   drawn from does.
 6. **Connections, strict adjacency** (`connections`). Each element of `prefix ++ [suffixHead]` from
    the second onward either carries its immediate predecessor's `blockHash` in its vector or has
    it as `prevBlockHash`; the suffix is parent-linked from `suffixHead` through every tail header.
@@ -197,29 +205,32 @@ vector's shape is checked before it is hashed, as `verifyHeaderChain` checks its
 ## compareProofs
 
 ```
-compareProofs(a: NipopowProof, b: NipopowProof, m: number, profile): CompareResult
+compareProofs(a: NipopowProof, b: NipopowProof, params: { m: number; k: number }, profile): CompareResult
 CompareResult =
   | { verdict: 'a' | 'b' | 'tie'; scoreA: bigint; scoreB: bigint; lca: BlockHeader }
-  | { verdict: 'incomparable'; reason: 'no-common-ancestor' | 'm-mismatch' | 'invalid' }
+  | { verdict: 'incomparable'; reason: 'no-common-ancestor' | 'invalid' }
 ```
 
 KMZ17 §4.3, for two proofs the caller has **already verified** — the comparator runs `verifyProof`
-on each (with `profile`) and answers `incomparable / invalid` if either fails, so it can be called
+on each (with `params` and `profile`) and answers `incomparable / invalid` if either fails, so it can be called
 on bytes a client has not screened, but it re-derives nothing a passed verdict established.
 
-- **`m` is the client's.** Both proofs must carry `m` equal to the parameter — the client asked
-  every node for the same `(m, k)` — else `incomparable / m-mismatch`. This removes the asymmetry
-  of comparing under one proof's own `m`.
+- **`m` and `k` are the client's.** `verifyProof` holds each proof to `params` (rule 1) — the client asked every
+  node for the same `(m, k)` — so a proof that declares another `m` or `k` answers `incomparable / invalid`, and
+  both proofs are scored under the client's `m`, never under one proof's own.
 - **The LCA** is the highest header present in both flattened chains by `blockHash`. Chains with
   no common header are `incomparable / no-common-ancestor` — under a pinned `genesisId` every
   valid proof shares block 1, so this arm is reachable only on an unpinned network.
 - **Above the LCA:** `chainX = headers with height > lca.height`;
-  `bestArg(chain, m) = max over μ ≥ 0 of 2^μ · |{ h ∈ chain : level(h, anchorBits) ≥ μ }|`, counting a
+  `bestArg(chain, m) = max over μ ∈ [0, LEVEL_CAP] of 2^μ · |{ h ∈ chain : level(h, anchorBits) ≥ μ }|`, counting a
   level `μ ≥ 1` only while it holds at least `m` headers (`μ = 0` counts every header **that has a
-  level**; a header below the yardstick counts nowhere). In a proof, `chainX` is the suffix and, below it, only
-  headers of level 1 or above — the prover never walks level 0 (→ proveWithReader) — so its level-0 count is not the
-  chain's length. `scoreA > scoreB` → `'a'`; `<` → `'b'`; equal → `'tie'` (the client keeps the proof it already
-  holds).
+  level**; a header below the yardstick counts nowhere). An honest proof keeps, at every level μ, every level-μ
+  header from the level above's anchoring height up, down to level 0 (→ proveWithReader); so above any LCA, the
+  lowest level whose kept span reaches below it holds every one of the honest chain's headers of that level above it —
+  at level 0, the chain's own registered headers. A proof that left level 0 out would count only its level-1
+  headers among the blocks above an LCA near its suffix — about half of them at the anchor's target — and a fork
+  that carries all of its own headers would outscore it with fewer.
+  `scoreA > scoreB` → `'a'`; `<` → `'b'`; equal → `'tie'` (the client keeps the proof it already holds).
 - **The score is work, whatever the headers declare.** Levels are measured against the network's
   anchor target (`VALIDATION_INTERFACE → level`), so a header mined at its own target `T_b` reaches
   level ≥ μ with probability `T_a / (2^μ · T_b)` and a count at level μ estimates `work / (2^μ · W_a)`;
@@ -238,12 +249,13 @@ on bytes a client has not screened, but it re-derives nothing a passed verdict e
   runs where the model puts a re-mining's chance of flipping it far below one in a thousand. **How often a proof of
   less work wins at all is `m`'s to bound, not the yardstick's**: the deciding level holds `m` to about `2m`
   superblocks, so a score carries about `1/√m` relative noise, for a cheap chain and an honest one alike (measured
-  2026-09-30 over independent chains, `packages/nipopow/scripts/bench-proof-m.mjs`: three quarters of the honest work
-  wins about 18% of comparisons at `m = 6`, 8% at 12, 4% at 24 and 2% at 48; half about 5% at 6 and none of 120 pairs
-  from 12; a quarter about 0.2% at 6). The client's `m` is 24 (`CONSTANTS → Client defaults`). A lying pointer can skip honest blocks and lower a score, never raise one.
+  2026-10-15 over 120 pairs of independent chains a row, `packages/nipopow/scripts/bench-proof-m.mjs`: three quarters
+  of the honest work wins about 18% of comparisons at `m = 6`, 8% at 12, 4% at 24 and 2% at 48; half about 4% at 6
+  and none of 120 pairs from 12; a quarter none of 120 at any `m`). The client's `m` is 24 (`CONSTANTS → Client defaults`). A lying pointer can skip honest blocks and lower a score, never raise one.
 
 `bestArg(headers: BlockHeader[], m: number, anchorBits: number): bigint` is exported beside it — the
-anchor bits are the yardstick its levels are measured against.
+anchor bits are the yardstick its levels are measured against, and `μ` ranges over `[0, LEVEL_CAP]`, so it answers
+every input: a height-1 header, whose level is ∞, counts at every level, and `m < 1` admits every level.
 
 ---
 
@@ -255,7 +267,6 @@ interface PopowHeaderReader {
   popowHeaderByHash(hash: string): PoPowHeader | null;
   popowHeaderAtHeight(height: number): PoPowHeader | null;
   lastHeaders(n: number): BlockHeader[];                   // the n highest, ascending
-  headersAfter(height: number, n: number): BlockHeader[];   // heights height + 1 … height + n, ascending
 }
 
 proveWithReader(reader: PopowHeaderReader, params: { m: number; k: number }): NipopowProof
@@ -269,7 +280,8 @@ The one prover, and the one throwing surface: its input is the caller's, not the
 walk needs is answered — a `null` for a required hash or height is `missing-popow-header`, **never
 a partial proof**.
 
-**The walk** — Ergo's production prover (`NipopowProverWithDbAlgs`), on the ascending vector:
+**The walk** — KMZ17's prover (Algorithm 3), its levels `M … 1` walked as Ergo's production prover
+(`NipopowProverWithDbAlgs`) walks them, on the ascending vector:
 
 1. **Suffix.** `lastHeaders(k)`: `suffixHead = popowHeaderByHash(blockHash(first))`, the rest the
    tail.
@@ -277,17 +289,26 @@ a partial proof**.
    `anchoringHeight = 1`: for `i = M … 1`, follow `interlinks[i]` back — each hop
    `popowHeaderByHash`, stopping below `anchoringHeight` — collecting the level-`i` chain in
    ascending order; if the chain holds more than `m` headers, `anchoringHeight` becomes the height
-   of its `m`-th from last. Level 0 has no pointer and is never walked (Ergo's "paper" prover's
-   level-0 sweep is not built).
-3. **Seed genesis** — `popowHeaderAtHeight(1)` — dedupe by height, sort ascending.
+   of its `m`-th from last.
+3. **Level 0, the sweep.** Every height from `anchoringHeight` to `suffixHead.header.height − 1`, each read by
+   `popowHeaderAtHeight` — every header, whatever its level: one with no level against the anchor counts nowhere
+   (→ compareProofs) but carries the parent link the sweep runs on (→ verifyProof, rules 5 and 6). KMZ17's level
+   loop runs down to 0, and Ergo's paper prover (`NipopowAlgos.prove`) sweeps level 0; its production prover, whose
+   walk step 2 follows, does not, and a proof without the sweep counts only its level-1 headers among the blocks
+   above an LCA near the suffix (→ compareProofs).
+4. **Seed genesis** — `popowHeaderAtHeight(1)` — dedupe by height, sort ascending.
 
-**Cost:** O(m · M + k) reader calls, every one a point lookup; no walk is O(chain height).
+**Cost:** O(m · M + S + k) reader calls, every one a point lookup. `S` is the sweep: about `m / p₁` headers
+(→ Constants, the prefix bound's arithmetic), and longer only where level 1 holds `m` or fewer headers above the
+anchoring height the levels above it left, which the sweep then starts from — on a young chain, height 1. Only the
+sweep reads every height of a span.
 
 **Postconditions, pinned by tests:** `prefix[0]` is height 1; heights strictly ascending across
-the flattened sequence; `suffixHead.header.height === chainHeight − k + 1` and the tail is the
+the flattened sequence; every height from the anchoring height the level-1 walk leaves to `suffixHead`'s parent is in
+the prefix; `suffixHead.header.height === chainHeight − k + 1` and the tail is the
 `k − 1` headers above it; every proof built over a valid chain passes `verifyProof` with that
-chain's profile — including rule 6's strict adjacency — and the proof's bytes decode to an equal
-object.
+chain's profile and its own `m` and `k` — including rule 6's strict adjacency — and the proof's bytes decode to an
+equal object.
 
 ```typescript
 class ProofBuildError extends Error {
@@ -299,7 +320,7 @@ class ProofBuildError extends Error {
 
 ## The trust model — what a proof proves
 
-Three rules, stated once here and consumed by `NODE_INTERFACE → Nipopow prover` and by every
+Four rules, stated once here and consumed by `NODE_INTERFACE → Nipopow prover` and by every
 light client:
 
 1. **A proof carries headers and vectors.** Body validity — the validator signature, the
@@ -314,6 +335,12 @@ light client:
 3. **Chain choice is the best proof among the nodes asked.** A client that asks one node can be
    eclipsed by it; asking two or more independent nodes and comparing is the client's own
    mitigation — no proof carries evidence about the nodes that were not asked.
+4. **A proof is held to the client's own parameters.** `verifyProof` and `compareProofs` take the `m` and `k` the
+   client asked every node for, and refuse a proof that declares others or carries a suffix of another length
+   (→ verifyProof, rule 1) — KMZ17's verifier is `Verify_{m,k}`, its own `k` the length of the suffix it requires.
+   The suffix head, the header a client proves state against, is therefore the client's `k` deep: a `stateRoot` a
+   node chose stands there only beneath `k − 1` headers mined at the schedule's own targets (→ verifyProof,
+   rule 3), on a chain whose proof outscores the honest one.
 
 ---
 

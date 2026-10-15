@@ -112,4 +112,13 @@ describe('NipopowProof codec', () => {
     extended.set(bytes);
     expect(() => decodeNipopowProof(extended)).toThrow(ReaderError);
   });
+
+  // NIPOPOW_INTERFACE → NipopowProof: `suffixTail.length = k − 1` — "any other count is refused".
+  it('refuses a tail count below k − 1', () => {
+    const proof = proveWithReader(reader, { m: 3, k: 5 });
+    expect(proof.suffixTail.length).toBe(4);
+    const shortened = { ...proof, suffixTail: proof.suffixTail.slice(0, 3) };
+    const bytes = encodeNipopowProof(shortened);
+    expect(() => decodeNipopowProof(bytes)).toThrow(ReaderError);
+  });
 });

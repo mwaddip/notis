@@ -5,7 +5,6 @@ import {
   getPopowHeaderByHash,
   getPopowHeaderAtHeight,
   getLastHeaders,
-  getHeadersAfter,
 } from '../../src/store/ordering.js';
 import { buildMinedHeaderChain } from '../helpers.js';
 import { blockHash } from '@dagsocial/validation';
@@ -23,7 +22,7 @@ import { join } from 'path';
 // never write the same store file.
 let testDir: string;
 
-// NODE_INTERFACE → Nipopow reader: four reads over a stored chain with real
+// NODE_INTERFACE → Nipopow reader: three reads over a stored chain with real
 // PoW-solved headers carrying correct interlink vectors.
 
 describe('nipopow reader store reads', () => {
@@ -107,21 +106,6 @@ describe('nipopow reader store reads', () => {
     const hdrs = getLastHeaders(999);
     expect(hdrs.length).toBeLessThanOrEqual(128);
     expect(hdrs.length).toBe(CHAIN_LEN);
-  });
-
-  // ---- getHeadersAfter ----
-
-  it('returns ascending headers after a height', () => {
-    const hdrs = getHeadersAfter(3, 4);
-    expect(hdrs).toHaveLength(4);
-    expect(hdrs[0]!.height).toBe(4);
-    expect(hdrs[3]!.height).toBe(7);
-  });
-
-  it('returns fewer than n when the chain is shorter', () => {
-    const hdrs = getHeadersAfter(CHAIN_LEN - 1, 5);
-    expect(hdrs).toHaveLength(1);
-    expect(hdrs[0]!.height).toBe(CHAIN_LEN);
   });
 
   // ---- Corrupt data ----

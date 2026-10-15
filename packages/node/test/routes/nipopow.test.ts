@@ -8,7 +8,6 @@ import {
   getPopowHeaderByHash,
   getPopowHeaderAtHeight,
   getLastHeaders,
-  getHeadersAfter,
 } from '../../src/store/ordering.js';
 import { createRouter } from '../../src/routes/nipopow.js';
 import { createPopowHeaderReader } from '../../src/services/nipopow.js';
@@ -91,7 +90,6 @@ describe('nipopow route', () => {
       getPopowHeaderByHash,
       getPopowHeaderAtHeight,
       getLastHeaders,
-      getHeadersAfter,
       getCurrentHeight,
     });
 
@@ -174,7 +172,7 @@ describe('nipopow route', () => {
     expect(proof.m).toBe(3);
     expect(proof.k).toBe(3);
 
-    const result = verifyProof(proof, {
+    const result = verifyProof(proof, { m: 3, k: 3 }, {
       retarget: retargetParams(),
       maxFutureDriftMs: MAX_FUTURE_DRIFT_MS,
       nowMs: Date.now() + 86_400_000,

@@ -50,6 +50,7 @@ function isPoPowHeader(ph: unknown): ph is PoPowHeader {
 // NIPOPOW_INTERFACE → verifyProof
 export function verifyProof(
   proof: Uint8Array | NipopowProof,
+  params: { m: number; k: number },
   profile: VerifyProfile,
 ): VerifyResult {
   let p: NipopowProof;
@@ -63,17 +64,20 @@ export function verifyProof(
     p = proof;
   }
 
-  // Rule 1: shape — m ≥ 1, k ≥ 1, prefix non-empty, suffixTail.length ≤ k − 1
+  // Rule 1: shape — m and k equal params.m and params.k, each at least 1;
+  // prefix non-empty; suffixTail.length === k − 1 (NIPOPOW_INTERFACE → verifyProof)
   // Per-element shape checks so that null/non-object never throws (M-5)
   try {
-    if (typeof p.m !== 'number' || p.m < 1) return fail('shape');
-    if (typeof p.k !== 'number' || p.k < 1) return fail('shape');
+    if (!Number.isInteger(params.m) || params.m < 1) return fail('shape');
+    if (!Number.isInteger(params.k) || params.k < 1) return fail('shape');
+    if (typeof p.m !== 'number' || p.m !== params.m) return fail('shape');
+    if (typeof p.k !== 'number' || p.k !== params.k) return fail('shape');
     if (!Array.isArray(p.prefix) || p.prefix.length === 0) return fail('shape');
     for (let i = 0; i < p.prefix.length; i++) {
       if (!isPoPowHeader(p.prefix[i])) return fail('shape');
     }
     if (!isPoPowHeader(p.suffixHead)) return fail('shape');
-    if (!Array.isArray(p.suffixTail) || p.suffixTail.length > p.k - 1) return fail('shape');
+    if (!Array.isArray(p.suffixTail) || p.suffixTail.length !== p.k - 1) return fail('shape');
     for (let i = 0; i < p.suffixTail.length; i++) {
       if (!isHeader(p.suffixTail[i])) return fail('shape');
     }
@@ -163,9 +167,15 @@ export function verifyProof(
     }
   }
 
-  // Rule 5: heights strictly increasing
+  // Rule 5: heights strictly increase across the flattened sequence, and an element
+  // whose prevBlockHash is the blockHash of the element before it sits exactly one
+  // height above it (NIPOPOW_INTERFACE → verifyProof)
   for (let i = 1; i < allHeaders.length; i++) {
     if (allHeaders[i]!.height <= allHeaders[i - 1]!.height) return fail('heights', i);
+    const prevHash = blockHash(allHeaders[i - 1]!);
+    if (prevHash !== null && allHeaders[i]!.prevBlockHash === prevHash) {
+      if (allHeaders[i]!.height !== allHeaders[i - 1]!.height + 1) return fail('heights', i);
+    }
   }
 
   // Rule 6: connections, strict adjacency

@@ -34,7 +34,7 @@ describe('strict-adjacency property test', () => {
         const chain = buildMinedChain({ count: len });
         const reader = makeReader(chain);
         const proof = proveWithReader(reader, params);
-        const result = verifyProof(proof, profile);
+        const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
         if (!result.ok) {
           const levels = chain.headers.map(h => level(h, DEVNET_POW_TARGET_BITS));
           console.error('ADJACENCY FAILURE', {
@@ -64,7 +64,7 @@ describe('strict-adjacency property test', () => {
     for (const params of mkParams) {
       if (80 < params.m + params.k) continue;
       const proof = proveWithReader(reader, params);
-      const result = verifyProof(proof, profile);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(true);
       totalIterations++;
     }
@@ -75,7 +75,7 @@ describe('strict-adjacency property test', () => {
     const chain = buildMinedChain({ count: 200 });
     const reader = makeReader(chain);
     const proof = proveWithReader(reader, { m: 6, k: 10 });
-    const result = verifyProof(proof, profile);
+    const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
     expect(result.ok).toBe(true);
     totalIterations++;
   });
@@ -118,7 +118,7 @@ describe('strict-adjacency property test', () => {
     };
     const reader = makeReader(chain);
     const proof = proveWithReader(reader, { m: 3, k: 5 });
-    const result = verifyProof(proof, stretchProfile);
+    const result = verifyProof(proof, { m: proof.m, k: proof.k }, stretchProfile);
     expect(result.ok).toBe(true);
   });
 });

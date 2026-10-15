@@ -564,7 +564,6 @@ export function createApp(config: Config): express.Express {
         getPopowHeaderByHash: store.getPopowHeaderByHash,
         getPopowHeaderAtHeight: store.getPopowHeaderAtHeight,
         getLastHeaders: store.getLastHeaders,
-        getHeadersAfter: store.getHeadersAfter,
         getCurrentHeight: store.getCurrentHeight,
       }),
       getCurrentHeight: store.getCurrentHeight,

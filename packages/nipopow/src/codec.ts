@@ -87,11 +87,11 @@ const NIPOPOW_PROOF: StructCodec<NipopowProof> = {
 
     const suffixHead = POPOW_HEADER.read(r);
 
-    // NIPOPOW_INTERFACE → NipopowProof — suffixTail.length ≤ k − 1, refused before the first element
+    // NIPOPOW_INTERFACE → NipopowProof — suffixTail.length = k − 1, refused before the first element
     const tailCount = readVlqU(r);
-    if (tailCount > k - 1) {
+    if (tailCount !== k - 1) {
       throw new ReaderError(
-        `suffixTail count ${tailCount} exceeds k-1 (${k - 1})`,
+        `suffixTail count ${tailCount} is not k-1 (${k - 1})`,
         'out-of-domain',
       );
     }

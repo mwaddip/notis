@@ -469,7 +469,7 @@ function runRateTrials(indexer, H, ratio, trials) {
     for (const m of M_VALUES) {
       const otherProof = proveWithReader(otherReader, { m, k: K });
       const honestProof = proveWithReader(honestReader, { m, k: K });
-      const result = compareProofs(otherProof, honestProof, m, profile);
+      const result = compareProofs(otherProof, honestProof, { m, k: K }, profile);
       if (result.verdict === 'incomparable') {
         throw new Error(`trial ${t} at m=${m}, H=${H}, ratio=${ratio}: proofs incomparable (${result.reason})`);
       }
