@@ -188,14 +188,6 @@ function makeReader(chain: MinedChain): PopowHeaderReader {
       const start = Math.max(0, chain.headers.length - n);
       return chain.headers.slice(start);
     },
-    headersAfter: (height: number, n: number) => {
-      const result: BlockHeader[] = [];
-      for (let h = height + 1; h <= Math.min(height + n, chain.headers.length); h++) {
-        const ph = byHeight.get(h);
-        if (ph) result.push(ph.header);
-      }
-      return result;
-    },
   };
 }
 

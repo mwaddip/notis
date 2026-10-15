@@ -99,7 +99,7 @@ export async function resolveTip(
       continue;
     }
 
-    const vr = verifyProof(proof, verifierProfile(networkProfile, now()));
+    const vr = verifyProof(proof, { m, k }, verifierProfile(networkProfile, now()));
     if (!vr.ok) {
       nodes.push({
         url,
@@ -142,7 +142,7 @@ export async function resolveTip(
 
   for (let i = 1; i < verified.length; i++) {
     const next = verified[i]!;
-    const cr: CompareResult = compareProofs(best.proof!, next.proof!, m, verifierProfile(networkProfile, now()));
+    const cr: CompareResult = compareProofs(best.proof!, next.proof!, { m, k }, verifierProfile(networkProfile, now()));
 
     if (cr.verdict === 'b') {
       best = next;
