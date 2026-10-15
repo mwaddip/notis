@@ -140,7 +140,7 @@ describe('every inbound sync stream ends — 40 SyncInfos leave none open', () =
     nodeB = null;
   });
 
-  it.fails('after 40 SyncInfos from A, B holds no open inbound sync stream from A', async () => {
+  it('after 40 SyncInfos from A, B holds no open inbound sync stream from A', async () => {
     nodeA = new NetNode(makeConfig(), validators);
     await nodeA.start();
     const addr = nodeA.libp2pNode!.getMultiaddrs()[0]!.toString();
@@ -185,7 +185,7 @@ describe('every inbound sync stream ends — 40 SyncInfos leave none open', () =
     expect(result instanceof Error).toBe(false);
   }, TIMEOUT);
 
-  it.fails('after 40 SyncInfos from A, A.requestHeaders(B) answers rather than throwing', async () => {
+  it('after 40 SyncInfos from A, A.requestHeaders(B) answers rather than throwing', async () => {
     nodeA = new NetNode(makeConfig(), validators);
     await nodeA.start();
     const addr = nodeA.libp2pNode!.getMultiaddrs()[0]!.toString();
@@ -240,7 +240,7 @@ describe('a peer refused above the stream cap — 16 unread streams, no 17th', (
     }
   }
 
-  it.fails('16 unread GetBlocks streams held open on A, B.dialProtocol for the 17th is refused', async () => {
+  it('16 unread GetBlocks streams held open on A, B.dialProtocol for the 17th is refused', async () => {
     nodeA = new NetNode(makeConfig(), validators);
     nodeA.setHeadersHandler((h) => (h >= 1 && h <= 100 ? makeBigBlock(h) : null));
     nodeA.setChainHeightProvider(() => 100);

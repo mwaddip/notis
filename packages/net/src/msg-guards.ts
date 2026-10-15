@@ -103,6 +103,16 @@ export const MAX_CHAIN_RESPONSE_ITEMS = 400;
 export const MAX_STREAM_BYTES = 8 * 1024 * 1024;
 
 /**
+ * Largest number of inbound sync-protocol streams a single connection may hold
+ * open at once (NET_INTERFACE → Stream Protocols → "A peer's sync streams are
+ * served one at a time"). libp2p checks this against the connection's own
+ * inbound stream count and aborts a stream over it. A waiting stream is
+ * unread, so it costs at most the muxer's 256 KiB initial window; 16 cost
+ * 4 MiB per connection.
+ */
+export const MAX_INBOUND_SYNC_STREAMS = 16;
+
+/**
  * Largest response body we assemble when serving a peer.
  *
  * Kept at half of `MAX_STREAM_BYTES` so a response we produce always fits inside
