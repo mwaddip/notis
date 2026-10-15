@@ -12,7 +12,7 @@ import {
   protocolVersionAt,
   updateInterlinks,
 } from '@dagsocial/types';
-import type { CompareResult, VerifyProfile } from '../src/index.js';
+import type { VerifyProfile } from '../src/index.js';
 import {
   buildMinedChain,
   makeReader,
@@ -401,12 +401,7 @@ describe('comparator holds each proof to the client params', () => {
 
     const nowMs = bHeader.createdAt + 1_000;
     const vp: VerifyProfile = { ...profile, nowMs };
-    const result = (compareProofs as unknown as (
-      a: NipopowProof,
-      b: NipopowProof,
-      params: { m: number; k: number },
-      profile: VerifyProfile,
-    ) => CompareResult)(forged, honest, { m: 24, k: clientK }, vp);
+    const result = compareProofs(forged, honest, { m: 24, k: clientK }, vp);
     expect(result.verdict).toBe('incomparable');
     if (result.verdict === 'incomparable') expect(result.reason).toBe('invalid');
   });
@@ -417,20 +412,16 @@ describe('comparator holds each proof to the client params', () => {
     const proofA = proveWithReader(reader, { m: 3, k: 5 });
     const proofB = proveWithReader(reader, { m: 3, k: 5 });
     const mutated: NipopowProof = { ...proofA, m: 4 };
-    const result = (compareProofs as unknown as (
-      a: NipopowProof,
-      b: NipopowProof,
-      params: { m: number; k: number },
-      profile: VerifyProfile,
-    ) => CompareResult)(mutated, proofB, { m: 3, k: 5 }, profile);
+    const result = compareProofs(mutated, proofB, { m: 3, k: 5 }, profile);
     expect(result.verdict).toBe('incomparable');
     if (result.verdict === 'incomparable') expect(result.reason).toBe('invalid');
   });
 });
 
-// NIPOPOW_INTERFACE → proveWithReader step 3 (level-0 sweep) and compareProofs — a proof
-// built without the sweep carries only its level-1 headers among the blocks above an LCA
-// near the suffix; a fork of fewer blocks that carries every header outscores it.
+// NIPOPOW_INTERFACE → proveWithReader → "Level 0, the sweep."
+// NIPOPOW_INTERFACE → compareProofs — a proof built without the sweep carries only its
+// level-1 headers among the blocks above an LCA near the suffix; a fork of fewer blocks
+// that carries every header outscores it.
 describe('a padded fork of fewer headers above the LCA loses to an honest proof', () => {
   it('an honest proof outscores a padded fork across the LCA', () => {
     const FORK = 100;

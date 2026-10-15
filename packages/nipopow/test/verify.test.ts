@@ -9,7 +9,7 @@ import {
   solveHeaderPow,
   DEVNET_RETARGET,
 } from './helpers.js';
-import type { NipopowProof, PoPowHeader, VerifyProfile } from '../src/index.js';
+import type { NipopowProof, PoPowHeader } from '../src/index.js';
 import type { BlockHeader } from '@dagsocial/types';
 import {
   EMPTY_STATE_ROOT,
@@ -547,32 +547,21 @@ describe('shape — tail length exactly k − 1', () => {
 });
 
 // NIPOPOW_INTERFACE → verifyProof — "Shape": `m` and `k` equal `params.m` and `params.k`.
-// The third argument is the client's own params, refusing a proof that declares another `m`
-// or `k`. In this file the call reads the two-argument form while the params rule is
-// ahead of code; the body stays unchanged when the three-argument form lands.
 describe('params rule 1 — verifyProof holds the proof to its own m and k', () => {
   const chain = buildMinedChain({ count: 40 });
   const reader = makeReader(chain);
   const profile = devnetProfile();
 
-  type VerifyFn = (
-    p: Uint8Array | NipopowProof,
-    params: VerifyProfile & { m: number; k: number },
-    profile: VerifyProfile,
-  ) => ReturnType<typeof verifyProof>;
-
   it('a proof built with { m: 3, k: 5 } is accepted under { m: 3, k: 5 }', () => {
     const proof = proveWithReader(reader, { m: 3, k: 5 });
-    const paramsAndProfile: VerifyProfile & { m: number; k: number } = { ...profile, m: 3, k: 5 };
-    const result = (verifyProof as unknown as VerifyFn)(proof, paramsAndProfile, profile);
+    const result = verifyProof(proof, { m: 3, k: 5 }, profile);
     expect(result.ok).toBe(true);
   });
 
   it('a proof built with { m: 3, k: 5 } is refused shape under { m: 3, k: 6 }', () => {
     const proof = proveWithReader(reader, { m: 3, k: 5 });
     expect(proof.k).toBe(5);
-    const paramsAndProfile: VerifyProfile & { m: number; k: number } = { ...profile, m: 3, k: 6 };
-    const result = (verifyProof as unknown as VerifyFn)(proof, paramsAndProfile, profile);
+    const result = verifyProof(proof, { m: 3, k: 6 }, profile);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('shape');
   });
@@ -580,8 +569,7 @@ describe('params rule 1 — verifyProof holds the proof to its own m and k', () 
   it('a proof built with { m: 3, k: 5 } is refused shape under { m: 4, k: 5 }', () => {
     const proof = proveWithReader(reader, { m: 3, k: 5 });
     expect(proof.m).toBe(3);
-    const paramsAndProfile: VerifyProfile & { m: number; k: number } = { ...profile, m: 4, k: 5 };
-    const result = (verifyProof as unknown as VerifyFn)(proof, paramsAndProfile, profile);
+    const result = verifyProof(proof, { m: 4, k: 5 }, profile);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('shape');
   });
