@@ -50,7 +50,7 @@ import {
 import { encodeServableOrderingBlock } from './serve-encode.js';
 import { isBogusAddress, isLoopbackAddress } from './bogus-addr.js';
 import { readStreamBounded, sinkWithDeadline } from './util.js';
-import { MAX_CHAIN_RESPONSE_ITEMS, MAX_INBOUND_SYNC_STREAMS, MAX_SERVE_BODY_BYTES, MAX_STREAM_BYTES } from './msg-guards.js';
+import { MAX_CHAIN_RESPONSE_ITEMS, MAX_INBOUND_SYNC_STREAMS, MAX_INV_IDS, MAX_SERVE_BODY_BYTES, MAX_STREAM_BYTES } from './msg-guards.js';
 import { PeerDb, type PeerStorage } from './peerdb.js';
 import { SyncMachine } from './sync-machine.js';
 import type { SyncStore } from './sync-machine.js';
@@ -1768,37 +1768,44 @@ export class NetNode {
     const commitments = new Map<string, Uint8Array>();
     for (const entry of ids) commitments.set(entry.id, entry.contentHash);
 
-    const req: import('./sync-types.js').ModifierRequest = {
-      typeId: MODIFIER_POST_BODY,
-      ids: ids.map((e) => e.id),
-    };
     const magic = this.config.magic;
-    const raw = await oneRoundTrip(this.libp2p, peer, SYNC_PROTOCOL, encodeModifierRequest(magic, req), this.config);
-    if (raw === null || raw.length === 0) return [];
-    const frame = decodeFrame(magic, raw);
-    if (frame.code !== MSG_MODIFIER_RESPONSE) return [];
-    const resp = decodeModifierResponse(frame.body);
-    if (!resp || resp.typeId !== MODIFIER_POST_BODY) return [];
-
     const results: { id: string; content: string }[] = [];
-    for (const mod of resp.modifiers) {
-      const commitment = commitments.get(mod.id);
-      if (!commitment) continue;
-      let content: string;
-      try {
-        content = decodePostBody(mod.data);
-      } catch {
-        this.peerMgr.recordPenalty('misbehavior', peerId, 100,
-          `post body decode failed for ${mod.id}`);
-        continue;
+    // NET_INTERFACE → Pull Requests → requestPostBodies: "Any number of ids,
+    // asked in requests of at most MAX_INV_IDS, one after another, the
+    // answers merged; a request that fails fails the call, as one request
+    // does".
+    for (let i = 0; i < ids.length; i += MAX_INV_IDS) {
+      const chunk = ids.slice(i, i + MAX_INV_IDS);
+      const req: import('./sync-types.js').ModifierRequest = {
+        typeId: MODIFIER_POST_BODY,
+        ids: chunk.map((e) => e.id),
+      };
+      const raw = await oneRoundTrip(this.libp2p, peer, SYNC_PROTOCOL, encodeModifierRequest(magic, req), this.config);
+      if (raw === null || raw.length === 0) continue;
+      const frame = decodeFrame(magic, raw);
+      if (frame.code !== MSG_MODIFIER_RESPONSE) continue;
+      const resp = decodeModifierResponse(frame.body);
+      if (!resp || resp.typeId !== MODIFIER_POST_BODY) continue;
+
+      for (const mod of resp.modifiers) {
+        const commitment = commitments.get(mod.id);
+        if (!commitment) continue;
+        let content: string;
+        try {
+          content = decodePostBody(mod.data);
+        } catch {
+          this.peerMgr.recordPenalty('misbehavior', peerId, 100,
+            `post body decode failed for ${mod.id}`);
+          continue;
+        }
+        const vr = this.validators.verifyPostBody(content, commitment);
+        if (!vr.valid) {
+          this.peerMgr.recordPenalty('misbehavior', peerId, 100,
+            `post body commitment mismatch for ${mod.id}`);
+          continue;
+        }
+        results.push({ id: mod.id, content });
       }
-      const vr = this.validators.verifyPostBody(content, commitment);
-      if (!vr.valid) {
-        this.peerMgr.recordPenalty('misbehavior', peerId, 100,
-          `post body commitment mismatch for ${mod.id}`);
-        continue;
-      }
-      results.push({ id: mod.id, content });
     }
     return results;
   }

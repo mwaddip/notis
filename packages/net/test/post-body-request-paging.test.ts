@@ -75,7 +75,7 @@ describe('A paged post-body request: 401 ids through B', () => {
     nodeB = null;
   });
 
-  it.fails('A.requestPostBodies for 401 ids returns 401 bodies from B', async () => {
+  it('A.requestPostBodies for 401 ids returns 401 bodies from B', async () => {
     // Build 401 body entries. Each id is the hex of its content hash — any
     // 32-byte hex works for the modifier id, and sourcing it from the hash
     // keeps the fixture self-consistent.
