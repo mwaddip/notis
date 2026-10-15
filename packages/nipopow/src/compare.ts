@@ -1,4 +1,5 @@
 import type { BlockHeader } from '@dagsocial/types';
+import { LEVEL_CAP } from '@dagsocial/types';
 import { blockHash, level } from '@dagsocial/validation';
 import { verifyProof } from './verify.js';
 import type { VerifyProfile } from './verify.js';
@@ -31,21 +32,19 @@ function lowestCommonAncestor(left: BlockHeader[], right: BlockHeader[]): BlockH
   return lca;
 }
 
-// NIPOPOW_INTERFACE → compareProofs — bestArg: max over μ ≥ 0 of 2^μ · |{ h ∈ chain : level(h, anchorBits) ≥ μ }|,
-// counting μ ≥ 1 only while it holds at least m headers; μ = 0 counts headers that have a level
+// NIPOPOW_INTERFACE → compareProofs — bestArg: max over μ ∈ [0, LEVEL_CAP] of
+// 2^μ · |{ h ∈ chain : level(h, anchorBits) ≥ μ }|, counting μ ≥ 1 only while it
+// holds at least m headers; μ = 0 counts headers that have a level. The LEVEL_CAP
+// bound answers every input: a height-1 header (level ∞) counts at every level,
+// and m < 1 admits every level.
 export function bestArg(headers: BlockHeader[], m: number, anchorBits: number): bigint {
   const levels = headers.map(h => level(h, anchorBits));
   const registeredCount = levels.filter(lvl => lvl !== null).length;
   const acc: Array<[number, number]> = [[0, registeredCount]];
-  let mu = 1;
-  for (;;) {
+  for (let mu = 1; mu <= LEVEL_CAP; mu++) {
     const count = levels.filter(lvl => lvl !== null && lvl >= mu).length;
-    if (count >= m) {
-      acc.push([mu, count]);
-      mu++;
-    } else {
-      break;
-    }
+    if (count < m) break;
+    acc.push([mu, count]);
   }
   let best = 0n;
   for (const [lvl, cnt] of acc) {

@@ -5,6 +5,8 @@ import { proveWithReader } from '../src/prover.js';
 import { asertTargetBits, blockHash, blockWork, level, level as headerLevel, verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type { BlockHeader } from '@dagsocial/types';
 import {
+  EMPTY_STATE_ROOT,
+  LEVEL_CAP,
   NETWORK_PROFILES,
   interlinkRoot,
   protocolVersionAt,
@@ -292,6 +294,44 @@ describe('bestArg', () => {
 
     const score = bestArg(headers, 2, DEVNET_POW_TARGET_BITS);
     expect(score).toBeGreaterThanOrEqual(10n);
+  });
+
+  // NIPOPOW_INTERFACE → compareProofs — "`bestArg(headers, m, anchorBits)`":
+  // `μ` ranges over `[0, LEVEL_CAP]`, so it answers every input — a height-1 header
+  // (level ∞) and `m < 1` included. The formula's maximum at that input lands at
+  // `μ = LEVEL_CAP` with count 1, so the score is `2^LEVEL_CAP`.
+  it('a height-1 header with m = 1 answers 2^LEVEL_CAP', () => {
+    const genesis: BlockHeader = {
+      protocolVersion: 1,
+      height: 1,
+      prevBlockHash: '00'.repeat(32),
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: 3072,
+      createdAt: 1,
+      interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
+    };
+    expect(bestArg([genesis], 1, 3072)).toBe(2n ** BigInt(LEVEL_CAP));
+  });
+
+  it('a height-1 header with m = 0 answers 2^LEVEL_CAP', () => {
+    const genesis: BlockHeader = {
+      protocolVersion: 1,
+      height: 1,
+      prevBlockHash: '00'.repeat(32),
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: 3072,
+      createdAt: 1,
+      interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
+    };
+    expect(bestArg([genesis], 0, 3072)).toBe(2n ** BigInt(LEVEL_CAP));
   });
 });
 
