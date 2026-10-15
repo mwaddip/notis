@@ -199,18 +199,29 @@ describe('attack pins — NIPOPOW_INTERFACE → compareProofs', () => {
   // NIPOPOW_INTERFACE → compareProofs → "A cheap-target chain therefore buys no score beyond its
   // work": a lower-difficulty chain of more work wins. The honest side is the prover's shortest
   // chain at the client's m and k = 5 — 29 headers, 28 above the LCA and 28 anchor units of work —
-  // against the fixture cheap chain's 700 headers and about 89. The prover never walks level 0
-  // (NIPOPOW_INTERFACE → proveWithReader), so above block 1 a proof carries its five suffix headers
-  // and, below them, only headers of level 1 or above. The honest proof scores its level-0 count —
-  // five plus Binomial(23, 1/2), at most 28 — unless 24 of its 28 headers reach level 1, scoring 48
-  // or more with probability P(Binomial(28, 1/2) ≥ 24) = 9.0e-5. The cheap proof scores 48 or more
-  // while 24 of its headers reach level 1 — a count of mean 44.6 — and below that only its level-0
-  // count, at most 28; the likeliest way past it is 23 or fewer at level 1, probability 1.9e-4, with
-  // the honest level-0 count reaching the cheap one's in about one of those in 40. Modelled over
-  // 20 000 000 draws of this shape — honest levels geometric, a cheap header meeting the anchor with
-  // probability its work in anchor units, the prover's walk and bestArg as written — the verdict is
-  // not 'b' in 94, about 5e-6 per mining of these fixtures; at 600 cheap headers it is 1.5e-4, at
-  // 500 3e-3.
+  // against the fixture cheap chain's 700 headers and about 89 anchor units.
+  //
+  // The honest proof. Its above-LCA level-1 count is Binomial(28, 1/2) of mean 14, below m = 24,
+  // so the level-1 walk leaves anchoringHeight at 1 and the sweep
+  // (NIPOPOW_INTERFACE → proveWithReader → "Level 0, the sweep.") covers heights 1 to
+  // suffixHead.header.height − 1. Each above-LCA header is mined at the anchor's target, so each
+  // registers, and bestArg's μ = 0 term is 28. The proof's score is 28.
+  //
+  // The cheap proof. The cheapStampMs = 200 × idealMs stamps walk the bits (asertTargetBits) from
+  // 3072 at h = 2 down to the 2304 floor by h = 7: per-header 3072, 3072, 2896, 2719, 2542, 2365,
+  // then 2304 for h = 7..700. A header mined at scaledBits B registers against the anchor with
+  // probability 2^(−(3072 − B)/256) — per-header 1, 1, 0.621, 0.384, 0.238, 0.147, 0.125; and
+  // level ≥ 1 is half of that. Mean count_0 above the LCA is therefore 1 + 1 + 0.621 + 0.384 +
+  // 0.238 + 0.147 + 694 × 0.125 = 89.14, and mean count_1 is 44.57. When count_1 ≥ 24 the score
+  // is at least 2 × 24 = 48 and the cheap proof outscores the honest 28 outright; when count_1 < 24,
+  // bestArg counts only μ = 0 and the proof wins iff count_0 > 28.
+  //
+  // The flip. Level ≥ 1 is a subset of registered, so count_0 ≤ 28 forces count_1 ≤ 28 and the
+  // whole flip condition reduces to count_0 ≤ 28. Count_0 is one deterministic register at h = 2
+  // plus four small Bernoullis at h = 3..6 plus Binomial(694, 1/8) at h = 7..700; count_0 ≤ 28
+  // forces Binomial(694, 1/8) ≤ 27. Chernoff on that gives
+  // P ≤ exp(−694 × D(27/694 ‖ 1/8)) = exp(−694 × 0.0449) ≈ exp(−31) ≈ 3 × 10⁻¹⁴, so below 10⁻¹³
+  // per re-mining of these fixtures — far below the one-in-a-thousand bar the describe commits to.
   it('(b) cheap chain with strictly more work wins', () => {
     const honest = buildMinedChain({ count: clientM + k });
     const cheap = buildMinedChain({ count: 700, stampIntervalMs: cheapStampMs });
