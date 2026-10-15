@@ -3425,11 +3425,6 @@ against `content_hash`, so the column is the authority and nothing re-verifies i
 `getPostRaw`: a body is read through `getPost`, and no path deletes a row — a withdrawal empties one
 (→ Withdrawal transactions).
 
-> ⚠ **AHEAD OF CODE (2026-10-15).** The rule below leads `node/src/services/backfill.ts`, whose `onBlockApplied`
-> runs a pass for every applied block, overlapping any still in flight, advances an entry's schedule only after its
-> request is answered, keeps an entry until a pull stores its body, and starts empty; `node/src/index.ts` hands net
-> the `getMissingBodies` provider of a `backfill` phase; `getMissingBodies` takes a limit.
-
 **Backfill after sync.** A placeholder's body is pulled by id through `requestPostBodies` (NET_INTERFACE → Pull
 Requests) by the node's one body puller, whatever net's sync phase — net runs no pull of its own. A placeholder joins
 the puller's schedule once the transaction that created it has committed — its block's, or the reorg's that applied
@@ -3437,9 +3432,10 @@ that block — so a reorg that rolls back registers none (→ "What follows the 
 placeholder row the store holds joins it (`getMissingBodies`). The schedule is **in block height: the first request
 at joining, retries after 1, 2, 4, … blocks, capped at 256**, so an unserved body costs a bounded trickle and never a
 loop; the block's relaying peer is asked first, then the connected peers in turn. **One pass runs at a time**, from
-the block-applied hook: it takes every entry due at the tip, marks each asked before any request goes out, and asks
-each peer for its share in one call — net splits a call into requests of at most `MAX_INV_IDS`; a block applied while
-a pass runs is taken by the pass after it, never by a second pass beside it. **An entry whose row is no longer a
+the block-applied hook: it takes every entry due at the tip and asks each peer for its share in one call — net splits a
+call into requests of at most `MAX_INV_IDS`; a block applied while a pass runs is taken by the pass after it, never by
+a second pass beside it, so an entry is asked once at each of its due heights and never again while its request is
+open. **An entry whose row is no longer a
 placeholder leaves at its turn, unasked** — its body stored by any path, the post withdrawn, or the row deleted
 with the pending transaction that held it. A received body is verified and stored through `setPostBody`; `emitPostReceived(postId, peerId, via:
 'pull')`.
@@ -5093,9 +5089,6 @@ startup. It sends no CORS header on any answer (→ Cross-origin requests).
 reader of two things: the node's **metrics** (`node/src/metrics.ts` — one module, written at four seams,
 below) and two `NetNode` reads (`getConnectedPeers()`, `syncPhase()` — NET_INTERFACE → API).
 
-> ⚠ **AHEAD OF CODE (2026-10-15).** The `syncing` and `sync_phase` rows lead `node/src/routes/admin.ts`, which reads
-> a `'backfill'` phase as syncing.
-
 **Endpoints:**
 
 `GET /health` — always 200. Response shape:
@@ -5676,9 +5669,6 @@ funnel:
    karma input's owner is the author, so there is one authority and nothing to reconcile.
 
 ### Sync handlers (pull-path)
-
-> ⚠ **AHEAD OF CODE (2026-10-15).** The `setHeaderProvider` bullet and `getHeaderAt` lead `node/src/index.ts`, which
-> hands net no header provider, and `node/src/store/ordering.ts`, which has no single-height header read.
 
 - **`setBlocksHandler((block, fromPeerId) => boolean)`**: the sync machine's pull path into
   `handleOrderingBlock` — the same entry gossip uses (Relay handlers, above). The return is the

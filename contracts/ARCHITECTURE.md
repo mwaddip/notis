@@ -226,7 +226,7 @@ wait produces correct results, promptly, forever — and every gate stays green.
 So where idle behaviour, cadence, or an allocation ceiling is load-bearing, the
 contract states it as an obligation with a number, not as an implementation
 detail. `NET_INTERFACE → Biased Event Loop` clause 4 is the worked example, and
-`MAX_DATA_QUEUE` / `MAX_OUTSTANDING_IDS` are the shape to copy.
+`MAX_DATA_EVENTS_PER_PEER` / `MAX_OUTSTANDING_IDS` are the shape to copy.
 
 > ⚠ **Ported specifications drop exactly what the source runtime guaranteed.**
 > Several contracts here were templated from `ergo-node-rust`'s `facts/`. That

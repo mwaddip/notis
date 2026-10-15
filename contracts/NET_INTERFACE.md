@@ -389,9 +389,6 @@ aborts, the stream closes, and the caller treats it as an absent response — **
 or silent link is indistinguishable from a dead one (the frame tier's reasoning below) and is not
 evidence of misbehaviour.
 
-> ⚠ **AHEAD OF CODE (2026-10-15).** The rule below leads `net/src/node.ts`, whose handshake and sync handlers and
-> `sendToPeer` await `stream.sink` with no deadline, and `net/src/sync.ts`, whose two requests do the same.
-
 **A stream write is bounded in time as well.** Every frame this node writes on either protocol — an answer on a
 peer's stream, a one-way message on a stream it opens, a request — must be taken by the peer within the deadline the
 peer's read of it runs under: `syncRequestTimeoutMs`, ×5 for a `Blocks` answer, the one read that runs under ×5. A
@@ -639,10 +636,6 @@ one exchange and stay at one exchange per poll period — never an unbounded pin
 send on *entering* `syncing` and the progress send (Sync bullet below) are not replies and
 are bounded by their own triggers: one per phase transition, one per advancing batch.
 
-> ⚠ **AHEAD OF CODE (2026-10-15).** The two rules below lead `net/src/sync-machine.ts`: `handleMessage` queues
-> every `SyncInfo` a peer sends as a control event, and `serveOrderingBlocks` answers every `ModifierRequest` (101)
-> at once through `sendToPeer`.
-
 **A peer's `SyncInfo` is acted on at most once per `SYNC_INFO_MIN_INTERVAL_MS`.** One that arrives sooner from the
 same peer is held as that peer's pending `SyncInfo` — a later one replaces it — and acted on at the first timer tick
 after the interval has passed; nothing is penalised, and no report is lost but one a later report replaced.
@@ -664,10 +657,6 @@ A peer reporting height 0 gets a continuation from height 1. This bidirectional 
 nodes serve peers behind them, not just consume.
 
 ### Sync State Machine
-
-> ⚠ **AHEAD OF CODE (2026-10-15).** This section leads `net/src/sync-machine.ts`, whose machine runs a `backfill`
-> phase between `syncing` and `synced` (`enterBackfill`, `requestBackfillBatch`), fed by `setMissingBodiesProvider`
-> and delivering through `onPostBody`.
 
 ```
 pick_sync_peer() → sync_from_peer() → synced()
@@ -1104,9 +1093,6 @@ tracked as a follow-up.
 
 ## Biased Event Loop
 
-> ⚠ **AHEAD OF CODE (2026-10-15).** Clause 2 leads `net/src/sync-machine.ts`, whose data queue is one array of
-> `MAX_DATA_QUEUE` (64) events for every peer, a full queue dropping its oldest whoever sent it.
-
 The sync/gossip event loop MUST prioritize:
 1. Control events (peer active, peer disconnect, a `SyncInfo` acted on) —
    unbounded channel, never dropped
@@ -1220,11 +1206,6 @@ frame `code` byte disambiguates it. A second stream protocol for chain data is w
 avoid: it duplicates the framing, the caps and the serve loop, and — because protocol handlers are
 registered per protocol — it acquires its own admission policy by omission rather than by decision.
 
-> ⚠ **AHEAD OF CODE (2026-10-15).** The two rules below lead `net/src/node.ts`'s `registerSyncStreamHandler`, which
-> hands `SyncInfo`, `Inv`, `ModifierResponse` and a `ModifierRequest` for blocks to the sync machine and returns with
-> the stream open, serves a peer's streams as they arrive, and registers the protocol at libp2p's default of 32
-> inbound streams.
-
 **Every inbound stream ends.** A stream that carries a one-way message — `SyncInfo`, `Inv`, a `ModifierRequest` for
 blocks (101), a `ModifierResponse` — is closed once its message is read; one that carries a query is ended by its
 answer, zero bytes included; one whose frame does not decode, or whose code no arm serves, is closed unanswered. A
@@ -1239,10 +1220,6 @@ unread, so it costs at most the muxer's initial stream window (256 KiB). Through
 holds at most one read (`MAX_STREAM_BYTES`), one inline answer and one block answer (→ Serve Side → "A peer is served
 one block answer at a time", `MAX_SERVE_BODY_BYTES` each) and the windows of the streams waiting — about 20 MiB at
 the bound — of this node's memory, for no longer than the deadlines on those reads and writes.
-
-> ⚠ **AHEAD OF CODE (2026-10-15).** The rule below leads `net/src/node.ts`, whose sync handler rejects when a
-> failure path's empty answer cannot be written — `sinkWithDeadline` re-throws the write's error — and whose handshake
-> handler writes its own-peer refusal outside any `try`.
 
 **A stream handler never rejects.** libp2p does not catch the promise a protocol handler returns, so a rejection is an
 unhandled one — logged by the node's backstop as a fault of its own (NODE_INTERFACE → "An unhandled rejection is
@@ -1408,10 +1385,6 @@ structure, PoW, and signatures.
 
 ### Node Lifecycle
 
-> ⚠ **AHEAD OF CODE (2026-10-15).** The `start`, `stop` and `syncPhase` rows lead `net/src/node.ts`: the two
-> `…HandlerRegistered` flags outlive `stop()`, so a restarted node registers neither protocol; a `start()` that throws
-> after `createLibp2p` leaves the libp2p node and the sync machine running; `syncPhase()` answers `'backfill'`.
-
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `start(config)` | `(NetConfig) => Promise<void>` | Create libp2p node, register both stream protocols, connect to bootstrap peers, subscribe to topics. **A start that throws stops what it started** — the libp2p node and the sync machine — before the error leaves it, so a caller that continues without networking runs none of it |
@@ -1468,10 +1441,6 @@ membership test is the thing standing between a relayed hint and a counterparty 
 | `requestPostBodies(wanted, peerId)` | `({ id: string; contentHash: Uint8Array }[], string) => Promise<{ id: string; content: string }[]>` | Request post bodies by id from one peer (`ModifierRequest` type 103 on the sync stream, codes 4/5); the caller supplies each id's commitment. **Any number of ids, asked in requests of at most `MAX_INV_IDS`, one after another, the answers merged; a request that fails fails the call, as one request does** — a request over the cap is one the peer's decoder refuses as malformed, and bans the sender for (→ ModifierRequest). Answers carry only the ids the peer holds; each body is decoded and verified against its commitment before it is returned — a mismatch or an undecodable body is a misbehaviour penalty and is dropped — and **the verified bodies are returned to the caller, which stores them** (the node's body pulls) |
 | `peerTipHeight(peerId)` | `(string) => number \| null` | The height the sync machine retains for an Active peer — the handshake `chainHeight`, refreshed by every inbound `SyncInfo` (→ Sync State Machine, Pick); `null` for a peer it does not retain. Fork resolution's re-score memo reads it (NODE_INTERFACE → Fork choice decides on verified headers): a branch scored lighter is not walked again until this number moves. A read of retained state, no message |
 
-> ⚠ **AHEAD OF CODE (2026-10-15).** The row above and the rule below lead `net/src/node.ts` and `net/src/sync.ts`:
-> `requestPostBodies` sends every id it is given in one request, and the five requests each write their own round
-> trip, three of them closing the stream with a bare `await stream.close()` whose rejection replaces the answer.
-
 **A request is one round trip, and closing its stream never changes its answer.** Every request this node makes —
 the handshake, `GetHeaders`, `GetBlocks`, `GetPeers`, a body request — opens the protocol under
 `syncRequestTimeoutMs` (×5 for `GetBlocks`), writes one frame, reads one bounded answer (→ Validation (and
@@ -1506,10 +1475,6 @@ and asking one that does not is indistinguishable at the call site from a peer t
 offer.
 
 ### Sync Handler Registration
-
-> ⚠ **AHEAD OF CODE (2026-10-15).** The `setHeaderProvider` row leads `net/src/node.ts`, whose `GetHeaders` arm reads
-> each header through `setHeadersHandler`'s whole-block provider, and `node/src/index.ts`, which registers no header
-> provider. `setMissingBodiesProvider` and `onPostBody` stand in the code and in no row here.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
