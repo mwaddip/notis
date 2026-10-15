@@ -1081,7 +1081,7 @@ describe('posts store', () => {
   // The puller seeds every placeholder row at init, due at the next applied
   // block, so a sync of a body-less chain can hand `getStillPlaceholderIds`
   // a set larger than this build's SQLite bound-variable cap.
-  it.fails('getStillPlaceholderIds answers for 32 767 ids rather than throwing on SQLite\'s variable cap', async () => {
+  it('getStillPlaceholderIds answers for 32 767 ids rather than throwing on SQLite\'s variable cap', async () => {
     const { initDb } = await importDbFresh();
     const { getStillPlaceholderIds } = await importPostsFresh();
 

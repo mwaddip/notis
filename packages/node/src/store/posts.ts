@@ -134,17 +134,18 @@ export function getMissingBodies(): Array<{ id: string; contentHash: string }> {
 
 // NODE_INTERFACE → Store Interface → Posts DAG: a read answering which of a set
 // of ids are still placeholders — the same predicate `getMissingBodies` uses.
-// One query over the ids, as the puller passes a set in the order they were due.
+// The set rides as one JSON value through `json_each`, so the query binds one
+// variable: a sync of a body-less chain seeds the puller with every placeholder
+// row and SQLite's variable cap would refuse a per-id placeholder list.
 export function getStillPlaceholderIds(ids: readonly string[]): string[] {
   if (ids.length === 0) return [];
-  const placeholders = ids.map(() => '?').join(',');
   const rows = getDb()
     .prepare(
       `SELECT id FROM dag_posts
-       WHERE id IN (${placeholders})
+       WHERE id IN (SELECT value FROM json_each(?))
        AND content IS NULL AND withdrawn_at_height IS NULL`,
     )
-    .all(...ids) as Array<{ id: string }>;
+    .all(JSON.stringify(ids)) as Array<{ id: string }>;
   return rows.map((r) => r.id);
 }
 
