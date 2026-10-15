@@ -100,10 +100,17 @@ function makeHandlerHarness(opts: {
     syncMachine: unknown;
     registerSyncStreamHandler(libp2p: unknown): void;
   };
+  // The stub answers the handler and the two methods `disconnectPeer`
+  // reaches when `recordPenaltyKind(ProtocolViolation, …)` fires: a bare
+  // ban reaches `onBanned` → `disconnectPeer`, which reads `getConnections`
+  // and `hangUp` on the live libp2p (NET_INTERFACE → "A ban ends the
+  // connection").
   internals.libp2p = {
     handle: (_protocol: string, cb: StreamHandler) => {
       captured = cb;
     },
+    getConnections: () => [],
+    hangUp: async () => { /* nothing to hang up in a bare harness */ },
   };
 
   internals.peerMgr.addPeer({

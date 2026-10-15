@@ -79,9 +79,8 @@ export async function oneRoundTrip(
     );
     return data;
   } finally {
-    // A rejecting close must not replace the answer this function read
-    // (NET_INTERFACE → Pull Requests → "closing its stream never changes
-    // its answer").
+    // A rejecting close must not replace the answer this function read —
+    // NET_INTERFACE → Pull Requests → "A request is one round trip, and closing its stream never changes its answer".
     await stream.close().catch(() => { /* already gone */ });
   }
 }

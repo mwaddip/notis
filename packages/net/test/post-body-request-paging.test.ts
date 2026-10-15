@@ -16,9 +16,9 @@ import type { NetConfig, NetValidators } from '../src/types.js';
 import { makeConfig as makeBaseConfig } from './helpers.js';
 
 // ---------------------------------------------------------------------------
-// NET_INTERFACE → Pull Requests → requestPostBodies:
-// "Any number of ids, asked in requests of at most MAX_INV_IDS, one after
-//  another, the answers merged; a request that fails fails the call".
+// NET_INTERFACE → Pull Requests: any number of ids, asked in requests of at
+// most MAX_INV_IDS, one after another, the answers merged; a request that
+// fails fails the call.
 //
 // A caller asking for 401 ids in one go overshoots `MAX_INV_IDS` (400). The
 // server's decode gates on that bound, so a 401-id ModifierRequest is
