@@ -30,6 +30,8 @@ import {
   SYNC_PROTOCOL,
   requestHeaders,
   requestBlocks,
+  oneRoundTrip,
+  connectedPeer,
 } from './sync.js';
 import {
   encodeGetPeers,
@@ -47,7 +49,7 @@ import {
 } from './sync-codec.js';
 import { encodeServableOrderingBlock } from './serve-encode.js';
 import { isBogusAddress, isLoopbackAddress } from './bogus-addr.js';
-import { readStreamBounded } from './util.js';
+import { readStreamBounded, sinkWithDeadline } from './util.js';
 import { MAX_CHAIN_RESPONSE_ITEMS, MAX_INBOUND_SYNC_STREAMS, MAX_SERVE_BODY_BYTES, MAX_STREAM_BYTES } from './msg-guards.js';
 import { PeerDb, type PeerStorage } from './peerdb.js';
 import { SyncMachine } from './sync-machine.js';
@@ -1008,6 +1010,13 @@ export class NetNode {
 
     libp2p.handle('/dagsocial/handshake/1', async ({ stream, connection }) => {
       const peerId = connection.remotePeer.toString();
+      // NET_INTERFACE → Validation → "A stream write is bounded in time as
+      // well": every answer on this stream is raced against the deadline the
+      // reader on the other side holds (`syncRequestTimeoutMs`).
+      const deadlineMs = this.config.syncRequestTimeoutMs;
+      const sinkFrame = async (data: Uint8Array): Promise<void> =>
+        sinkWithDeadline(stream, data, deadlineMs);
+
       // NET_INTERFACE → "A banned peer's handshake is refused unread". The gater
       // refuses the same predicate one layer down, at the transport; this check
       // covers a peer banned between its connection's upgrade and its handshake,
@@ -1022,11 +1031,11 @@ export class NetNode {
       // an empty frame — with no penalty, there being nobody to penalise.
       if (peerId === libp2p.peerId.toString()) {
         console.log(`[net] inbound handshake from ${peerId}: this is our own peer id — refusing`);
-        await stream.sink([new Uint8Array(0)]).catch(() => { /* the peer is already gone */ });
+        await sinkFrame(new Uint8Array(0));
         return;
       }
       try {
-        const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
+        const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(deadlineMs));
         if (data === null) {
           console.warn(`[net] handshake stream from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
           this.peerMgr.recordPenaltyKind(
@@ -1034,11 +1043,11 @@ export class NetNode {
             peerId,
             'handshake stream exceeds byte cap',
           );
-          await stream.sink([new Uint8Array(0)]);
+          await sinkFrame(new Uint8Array(0));
           return;
         }
         if (data.length === 0) {
-          await stream.sink([new Uint8Array(0)]);
+          await sinkFrame(new Uint8Array(0));
           return;
         }
 
@@ -1046,7 +1055,7 @@ export class NetNode {
         if (decoded.kind === 'reject') {
           // NET_INTERFACE → "Ban policy": frame-tier reject — stream closed, no penalty.
           console.warn(`[net] inbound handshake frame from ${peerId} rejected: ${decoded.code}`);
-          await stream.sink([new Uint8Array(0)]);
+          await sinkFrame(new Uint8Array(0));
           return;
         }
         const body = decoded.body;
@@ -1059,7 +1068,7 @@ export class NetNode {
           era = this.currentEra();
         } catch (err) {
           console.error(`[net] cannot read our era for ${peerId}: ${String(err)}`);
-          await stream.sink([new Uint8Array(0)]);
+          await sinkFrame(new Uint8Array(0));
           return;
         }
 
@@ -1075,7 +1084,7 @@ export class NetNode {
             peerId,
             `handshake: ${result.error}`,
           );
-          await stream.sink([new Uint8Array(0)]);
+          await sinkFrame(new Uint8Array(0));
           return;
         }
 
@@ -1114,17 +1123,17 @@ export class NetNode {
           response = buildHandshakeFrame(magic, this.buildOurHandshake());
         } catch (err) {
           console.error(`[net] cannot build our handshake for ${peerId}: ${String(err)}`);
-          await stream.sink([new Uint8Array(0)]);
+          await sinkFrame(new Uint8Array(0));
           return;
         }
-        await stream.sink([response]);
+        await sinkFrame(response);
       } catch (err) {
         // The empty frame is all we can say to a peer whose handshake did not
         // complete; the log is what separates that from a peer that never
         // dialled. `warn`, not `error` — an ordinary dropped connection lands
         // here too.
         console.warn(`[net] inbound handshake handler failed for ${peerId}: ${String(err)}`);
-        try { await stream.sink([new Uint8Array(0)]); } catch { /* the peer is already gone */ }
+        try { await sinkFrame(new Uint8Array(0)); } catch { /* the peer is already gone */ }
       }
     });
 
@@ -1146,7 +1155,7 @@ export class NetNode {
       // one at a time". A not-Active peer's stream is refused at once and
       // holds no turn — it leaves the queue untouched.
       if (!this.peerMgr.isPeerActive(peerId)) {
-        try { await stream.sink([new Uint8Array(0)]); } catch { /* peer gone */ }
+        await sinkWithDeadline(stream, new Uint8Array(0), this.config.syncRequestTimeoutMs);
         await stream.close().catch(() => { /* already gone */ });
         return;
       }
@@ -1179,9 +1188,13 @@ export class NetNode {
     stream: import('@libp2p/interface').Stream,
     connection: { remoteAddr?: { toString(): string } },
   ): Promise<void> {
-    const replyEmpty = async (): Promise<void> => {
-      try { await stream.sink([new Uint8Array(0)]); } catch { /* peer gone */ }
-    };
+    // Default write deadline — the deadline the reader on the other side
+    // holds. A `Blocks` answer is ×5 (NET_INTERFACE → Validation →
+    // "A stream write is bounded in time as well").
+    const deadlineMs = this.config.syncRequestTimeoutMs;
+    const sinkDeadline = async (data: Uint8Array, mul = 1): Promise<void> =>
+      sinkWithDeadline(stream, data, deadlineMs * mul);
+    const replyEmpty = async (): Promise<void> => sinkDeadline(new Uint8Array(0));
     const closeNow = async (): Promise<void> => {
       await stream.close().catch(() => { /* already gone */ });
     };
@@ -1194,6 +1207,7 @@ export class NetNode {
         ourHeight: number,
         getBlock: (height: number) => OrderingBlock | null,
       ) => Uint8Array,
+      writeMultiplier: number,
     ): Promise<void> => {
       if (request === null) {
         console.warn(`[net] malformed chain query (code ${code}) from ${peerId}, dropping`);
@@ -1227,7 +1241,7 @@ export class NetNode {
         await replyEmpty();
         return;
       }
-      await stream.sink([response]);
+      await sinkDeadline(response, writeMultiplier);
     };
 
     try {
@@ -1273,20 +1287,20 @@ export class NetNode {
             ?? null,
           magic,
         });
-        if (response) await stream.sink([response]);
+        if (response) await sinkDeadline(response);
         else await replyEmpty();
         return;
       }
 
       if (code === MSG_GET_HEADERS) {
         await serveChainQuery(code, decodeGetHeaders(body), (request, ourHeight, getBlock) =>
-          serveHeadersResponse(magic, request, ourHeight, getBlock));
+          serveHeadersResponse(magic, request, ourHeight, getBlock), 1);
         return;
       }
 
       if (code === MSG_GET_BLOCKS) {
         await serveChainQuery(code, decodeGetBlocks(body), (request, ourHeight, getBlock) =>
-          serveBlocksResponse(magic, request, ourHeight, getBlock));
+          serveBlocksResponse(magic, request, ourHeight, getBlock), 5);
         return;
       }
 
@@ -1313,7 +1327,7 @@ export class NetNode {
             await replyEmpty();
             return;
           }
-          await stream.sink([response]);
+          await sinkDeadline(response);
           return;
         }
         // Type 101 is a block request. The sync machine serves it on a new
@@ -1383,74 +1397,64 @@ export class NetNode {
 
   private async runOutboundHandshake(peerId: string): Promise<HandshakeResult> {
     if (!this.libp2p) throw new Error('Not started');
-    const peer = this.libp2p.getPeers().find(p => p.toString() === peerId);
-    if (!peer) throw new Error(`Peer ${peerId} not connected`);
-
+    const peer = connectedPeer(this.libp2p, peerId);
     const magic = this.config.magic;
+    const ourMsg = this.buildOurHandshake();
 
-    let stream: import('@libp2p/interface').Stream | undefined;
-    try {
-      stream = await this.libp2p.dialProtocol(peer, '/dagsocial/handshake/1', {
-        signal: AbortSignal.timeout(this.config.syncRequestTimeoutMs),
-      });
+    const data = await oneRoundTrip(
+      this.libp2p,
+      peer,
+      '/dagsocial/handshake/1',
+      buildHandshakeFrame(magic, ourMsg),
+      this.config,
+    );
 
-      // Send our handshake
-      const ourMsg = this.buildOurHandshake();
-      await stream.sink([buildHandshakeFrame(magic, ourMsg)]);
-
-      // Read their response
-      const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
-      if (data === null) {
-        console.warn(`[net] handshake response from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
-        this.peerMgr.recordPenaltyKind(
-          PenaltyKind.ProtocolViolation,
-          peerId,
-          'handshake stream exceeds byte cap',
-        );
-        return {
-          ok: false,
-          error: 'handshake response exceeds byte cap',
-          rejection: 'malformed',
-          peerHeight: 0,
-          peerCapabilities: [],
-        };
-      }
-
-      if (data.length === 0) {
-        return { ok: false, error: 'empty handshake response', peerHeight: 0, peerCapabilities: [] };
-      }
-
-      const decoded = decodeHandshakePayload(magic, data);
-      if (decoded.kind === 'reject') {
-        // NET_INTERFACE → "Ban policy": frame-tier reject — no penalty.
-        console.warn(`[net] outbound handshake with ${peerId}: frame rejected (${decoded.code})`);
-        return {
-          ok: false,
-          error: `handshake frame rejected: ${decoded.code}`,
-          peerHeight: 0,
-          peerCapabilities: [],
-        };
-      }
-      const body = decoded.body;
-
-      const result = validateHandshake(parseHandshakeBody(body), this.currentEra());
-      if (!result.ok) {
-        console.warn(`[net] outbound handshake with ${peerId} rejected: ${result.error}`);
-        const outHsPenKind = handshakePenalty(result.rejection);
-        this.peerMgr.recordPenaltyKind(
-          outHsPenKind,
-          peerId,
-          `handshake: ${result.error}`,
-        );
-        return result;
-      }
-      console.log(`[net] outbound handshake with ${peerId}: ok=true height=${result.peerHeight} caps=${result.peerCapabilities.length}`);
-      return result;
-    } finally {
-      // A rejecting close must not replace what this function already
-      // determined — the caller logs the handshake's own outcome, not ours.
-      if (stream) await stream.close().catch(() => {});
+    if (data === null) {
+      console.warn(`[net] handshake response from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
+      this.peerMgr.recordPenaltyKind(
+        PenaltyKind.ProtocolViolation,
+        peerId,
+        'handshake stream exceeds byte cap',
+      );
+      return {
+        ok: false,
+        error: 'handshake response exceeds byte cap',
+        rejection: 'malformed',
+        peerHeight: 0,
+        peerCapabilities: [],
+      };
     }
+
+    if (data.length === 0) {
+      return { ok: false, error: 'empty handshake response', peerHeight: 0, peerCapabilities: [] };
+    }
+
+    const decoded = decodeHandshakePayload(magic, data);
+    if (decoded.kind === 'reject') {
+      // NET_INTERFACE → "Ban policy": frame-tier reject — no penalty.
+      console.warn(`[net] outbound handshake with ${peerId}: frame rejected (${decoded.code})`);
+      return {
+        ok: false,
+        error: `handshake frame rejected: ${decoded.code}`,
+        peerHeight: 0,
+        peerCapabilities: [],
+      };
+    }
+    const body = decoded.body;
+
+    const result = validateHandshake(parseHandshakeBody(body), this.currentEra());
+    if (!result.ok) {
+      console.warn(`[net] outbound handshake with ${peerId} rejected: ${result.error}`);
+      const outHsPenKind = handshakePenalty(result.rejection);
+      this.peerMgr.recordPenaltyKind(
+        outHsPenKind,
+        peerId,
+        `handshake: ${result.error}`,
+      );
+      return result;
+    }
+    console.log(`[net] outbound handshake with ${peerId}: ok=true height=${result.peerHeight} caps=${result.peerCapabilities.length}`);
+    return result;
   }
 
   // -----------------------------------------------------------------------
@@ -1459,23 +1463,25 @@ export class NetNode {
 
   private sendToPeer(peerId: string, data: Uint8Array): void {
     if (!this.libp2p) return;
-    const peer = this.libp2p.getPeers().find(p => p.toString() === peerId);
+    const peer = this.libp2p.getPeers().find((p) => p.toString() === peerId);
     if (!peer) {
       console.warn(`[net] sendToPeer: peer ${peerId} not found in libp2p.getPeers() (have ${this.libp2p.getPeers().length} peers)`);
       return;
     }
 
-    this.libp2p.dialProtocol(peer, SYNC_PROTOCOL).then(async (stream) => {
+    const deadlineMs = this.config.syncRequestTimeoutMs;
+    this.libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
+      signal: AbortSignal.timeout(deadlineMs),
+    }).then(async (stream) => {
       try {
-        await stream.sink([data]);
-      } catch {
-        // ignore write errors
-      } finally {
-        await stream.close().catch(() => {});
-      }
-    }).catch(() => {
-      // ignore dial errors
-    });
+        // The write is raced against the deadline the reader on the other
+        // side runs under — a push that outlasts it aborts the stream and
+        // never a penalty (NET_INTERFACE → Validation → "A stream write is
+        // bounded in time as well").
+        await sinkWithDeadline(stream, data, deadlineMs);
+      } catch { /* the write did not take — a dead connection, nothing to retry */ }
+      await stream.close().catch(() => { /* already gone */ });
+    }).catch(() => { /* a failed dial has no retry here; the pick path handles rotation */ });
   }
 
   // -----------------------------------------------------------------------
@@ -1616,27 +1622,22 @@ export class NetNode {
    */
   async requestPeers(peerId: string): Promise<void> {
     if (!this.libp2p) return;
-    const peer = this.libp2p.getPeers().find(p => p.toString() === peerId);
-    if (!peer) {
+    let peer;
+    try {
+      peer = connectedPeer(this.libp2p, peerId);
+    } catch {
       console.warn(`[net] requestPeers: peer ${peerId} not found`);
       return;
     }
     const magic = this.config.magic;
     const request = encodeGetPeers(magic);
-    let stream: import('@libp2p/interface').Stream | undefined;
     try {
-      stream = await this.libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
-        signal: AbortSignal.timeout(this.config.syncRequestTimeoutMs),
-      });
-      await stream.sink([request]);
-      const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
+      const data = await oneRoundTrip(this.libp2p, peer, SYNC_PROTOCOL, request, this.config);
       if (data === null) {
         console.warn(`[net] requestPeers: response from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
         return;
       }
-      if (data.length === 0) {
-        return;
-      }
+      if (data.length === 0) return;
       const frame = decodeFrame(magic, data);
       if (frame.code !== MSG_PEERS) {
         console.warn(`[net] requestPeers: unexpected response code ${frame.code}`);
@@ -1653,8 +1654,6 @@ export class NetNode {
       }
     } catch (err) {
       console.warn(`[net] requestPeers failed for peer ${peerId}: ${String(err)}`);
-    } finally {
-      if (stream) await stream.close().catch(() => {});
     }
   }
 
@@ -1764,54 +1763,44 @@ export class NetNode {
     peerId: string,
   ): Promise<{ id: string; content: string }[]> {
     if (!this.libp2p) throw new Error('NetNode not started');
-    const peer = this.libp2p.getPeers().find(p => p.toString() === peerId);
-    if (!peer) throw new Error(`Peer ${peerId} not connected`);
+    const peer = connectedPeer(this.libp2p, peerId);
 
     const commitments = new Map<string, Uint8Array>();
     for (const entry of ids) commitments.set(entry.id, entry.contentHash);
 
     const req: import('./sync-types.js').ModifierRequest = {
       typeId: MODIFIER_POST_BODY,
-      ids: ids.map(e => e.id),
+      ids: ids.map((e) => e.id),
     };
     const magic = this.config.magic;
-    let stream: import('@libp2p/interface').Stream | undefined;
-    try {
-      stream = await this.libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
-        signal: AbortSignal.timeout(this.config.syncRequestTimeoutMs),
-      });
-      await stream.sink([encodeModifierRequest(magic, req)]);
-      const raw = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
-      if (raw === null || raw.length === 0) return [];
-      const frame = decodeFrame(magic, raw);
-      if (frame.code !== MSG_MODIFIER_RESPONSE) return [];
-      const resp = decodeModifierResponse(frame.body);
-      if (!resp || resp.typeId !== MODIFIER_POST_BODY) return [];
+    const raw = await oneRoundTrip(this.libp2p, peer, SYNC_PROTOCOL, encodeModifierRequest(magic, req), this.config);
+    if (raw === null || raw.length === 0) return [];
+    const frame = decodeFrame(magic, raw);
+    if (frame.code !== MSG_MODIFIER_RESPONSE) return [];
+    const resp = decodeModifierResponse(frame.body);
+    if (!resp || resp.typeId !== MODIFIER_POST_BODY) return [];
 
-      const results: { id: string; content: string }[] = [];
-      for (const mod of resp.modifiers) {
-        const commitment = commitments.get(mod.id);
-        if (!commitment) continue;
-        let content: string;
-        try {
-          content = decodePostBody(mod.data);
-        } catch {
-          this.peerMgr.recordPenalty('misbehavior', peerId, 100,
-            `post body decode failed for ${mod.id}`);
-          continue;
-        }
-        const vr = this.validators.verifyPostBody(content, commitment);
-        if (!vr.valid) {
-          this.peerMgr.recordPenalty('misbehavior', peerId, 100,
-            `post body commitment mismatch for ${mod.id}`);
-          continue;
-        }
-        results.push({ id: mod.id, content });
+    const results: { id: string; content: string }[] = [];
+    for (const mod of resp.modifiers) {
+      const commitment = commitments.get(mod.id);
+      if (!commitment) continue;
+      let content: string;
+      try {
+        content = decodePostBody(mod.data);
+      } catch {
+        this.peerMgr.recordPenalty('misbehavior', peerId, 100,
+          `post body decode failed for ${mod.id}`);
+        continue;
       }
-      return results;
-    } finally {
-      if (stream) await stream.close();
+      const vr = this.validators.verifyPostBody(content, commitment);
+      if (!vr.valid) {
+        this.peerMgr.recordPenalty('misbehavior', peerId, 100,
+          `post body commitment mismatch for ${mod.id}`);
+        continue;
+      }
+      results.push({ id: mod.id, content });
     }
+    return results;
   }
 
   // Expose for node to register storage-backed handler

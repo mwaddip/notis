@@ -1,9 +1,9 @@
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import type { Libp2p } from 'libp2p';
-import type { Stream } from '@libp2p/interface';
+import type { PeerId } from '@libp2p/interface';
 import type { NetConfig } from './types.js';
 import { MSG_HEADERS, MSG_BLOCKS } from './types.js';
-import { readStreamBounded } from './util.js';
+import { readStreamBounded, sinkWithDeadline } from './util.js';
 import {
   decodeBlocks,
   decodeHeaders,
@@ -36,6 +36,57 @@ export const SYNC_PROTOCOL = '/dagsocial/sync/1';
 // ---------------------------------------------------------------------------
 
 /**
+ * The connected libp2p peer with this id. Throws if the id is not in
+ * `libp2p.getPeers()`. The six request paths that reach a peer by id read
+ * this one function rather than each lifting the same `find` call.
+ */
+export function connectedPeer(libp2p: Libp2p, peerId: string): PeerId {
+  const peer = libp2p.getPeers().find((p) => p.toString() === peerId);
+  if (!peer) throw new Error(`Peer ${peerId} not connected`);
+  return peer;
+}
+
+/**
+ * One round trip on any framed protocol: open under the deadline, write one
+ * frame under the write deadline, read one bounded answer under the read
+ * deadline, close with any rejection caught — the answer stands, and so
+ * does an error that ended the read (NET_INTERFACE → Pull Requests →
+ * "A request is one round trip, and closing its stream never changes its
+ * answer").
+ *
+ * The caller frames the request and decodes the answer; this function owns
+ * the dial, the write, the read and the close. `readMultiplier` is 1 for
+ * every arm but the `Blocks` read, which the contract bounds at ×5.
+ */
+export async function oneRoundTrip(
+  libp2p: Libp2p,
+  peer: PeerId,
+  protocol: string,
+  request: Uint8Array,
+  config: NetConfig,
+  readMultiplier: number = 1,
+): Promise<Uint8Array | null> {
+  const deadlineMs = config.syncRequestTimeoutMs * readMultiplier;
+  const stream = await libp2p.dialProtocol(peer, protocol, {
+    signal: AbortSignal.timeout(deadlineMs),
+  });
+  try {
+    await sinkWithDeadline(stream, request, deadlineMs);
+    const data = await readStreamBounded(
+      stream.source,
+      MAX_STREAM_BYTES,
+      AbortSignal.timeout(deadlineMs),
+    );
+    return data;
+  } finally {
+    // A rejecting close must not replace the answer this function read
+    // (NET_INTERFACE → Pull Requests → "closing its stream never changes
+    // its answer").
+    await stream.close().catch(() => { /* already gone */ });
+  }
+}
+
+/**
  * Request headers from a peer, starting at startHeight and going down.
  * Returns newest-first.
  */
@@ -46,41 +97,35 @@ export async function requestHeaders(
   peerId: string,
   config: NetConfig,
 ): Promise<BlockHeader[]> {
-  const peer = libp2p.getPeers().find(p => p.toString() === peerId);
-  if (!peer) throw new Error(`Peer ${peerId} not connected`);
-
+  const peer = connectedPeer(libp2p, peerId);
   const magic = config.magic;
-  let stream: Stream | undefined;
-  try {
-    stream = await libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
-      signal: AbortSignal.timeout(config.syncRequestTimeoutMs),
-    });
 
-    await stream.sink([encodeGetHeaders(magic, { startHeight, maxCount })]);
-
-    const response = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(config.syncRequestTimeoutMs));
-    if (response === null) {
-      throw new Error(`Headers response from peer ${peerId} exceeds ${MAX_STREAM_BYTES} bytes`);
-    }
-
-    // Zero bytes is the serve arm's "I cannot answer" signal (no provider, an
-    // undecodable request, or a local failure), and it is distinct from an empty
-    // answer — an empty header list is a frame whose body is `vlqU(0)`.
-    if (response.length === 0) return [];
-
-    const frame = decodeFrame(magic, response);
-    if (frame.code !== MSG_HEADERS) {
-      throw new Error(`Headers response from peer ${peerId} bears code ${frame.code}`);
-    }
-
-    const headers = decodeHeaders(frame.body, maxCount);
-    if (headers === null) {
-      throw new Error(`Headers response from peer ${peerId} is not a well-formed headers response`);
-    }
-    return headers;
-  } finally {
-    if (stream) await stream.close();
+  const response = await oneRoundTrip(
+    libp2p,
+    peer,
+    SYNC_PROTOCOL,
+    encodeGetHeaders(magic, { startHeight, maxCount }),
+    config,
+  );
+  if (response === null) {
+    throw new Error(`Headers response from peer ${peerId} exceeds ${MAX_STREAM_BYTES} bytes`);
   }
+
+  // Zero bytes is the serve arm's "I cannot answer" signal (no provider, an
+  // undecodable request, or a local failure), and it is distinct from an empty
+  // answer — an empty header list is a frame whose body is `vlqU(0)`.
+  if (response.length === 0) return [];
+
+  const frame = decodeFrame(magic, response);
+  if (frame.code !== MSG_HEADERS) {
+    throw new Error(`Headers response from peer ${peerId} bears code ${frame.code}`);
+  }
+
+  const headers = decodeHeaders(frame.body, maxCount);
+  if (headers === null) {
+    throw new Error(`Headers response from peer ${peerId} is not a well-formed headers response`);
+  }
+  return headers;
 }
 
 /**
@@ -93,37 +138,32 @@ export async function requestBlocks(
   peerId: string,
   config: NetConfig,
 ): Promise<OrderingBlock[]> {
-  const peer = libp2p.getPeers().find(p => p.toString() === peerId);
-  if (!peer) throw new Error(`Peer ${peerId} not connected`);
-
+  const peer = connectedPeer(libp2p, peerId);
   const magic = config.magic;
-  let stream: Stream | undefined;
-  try {
-    stream = await libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
-      signal: AbortSignal.timeout(config.syncRequestTimeoutMs * 5), // blocks are bigger
-    });
 
-    await stream.sink([encodeGetBlocks(magic, { startHeight, endHeight })]);
-
-    const raw = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(config.syncRequestTimeoutMs * 5));
-    if (raw === null) {
-      throw new Error(`Blocks response from peer ${peerId} exceeds ${MAX_STREAM_BYTES} bytes`);
-    }
-
-    // See `requestHeaders` — zero bytes is "no answer", `vlqU(0)` is "no blocks".
-    if (raw.length === 0) return [];
-
-    const frame = decodeFrame(magic, raw);
-    if (frame.code !== MSG_BLOCKS) {
-      throw new Error(`Blocks response from peer ${peerId} bears code ${frame.code}`);
-    }
-
-    const blocks = decodeBlocks(frame.body, endHeight - startHeight + 1);
-    if (blocks === null) {
-      throw new Error(`Blocks response from peer ${peerId} is not a well-formed blocks response`);
-    }
-    return blocks;
-  } finally {
-    if (stream) await stream.close();
+  const raw = await oneRoundTrip(
+    libp2p,
+    peer,
+    SYNC_PROTOCOL,
+    encodeGetBlocks(magic, { startHeight, endHeight }),
+    config,
+    5,
+  );
+  if (raw === null) {
+    throw new Error(`Blocks response from peer ${peerId} exceeds ${MAX_STREAM_BYTES} bytes`);
   }
+
+  // See `requestHeaders` — zero bytes is "no answer", `vlqU(0)` is "no blocks".
+  if (raw.length === 0) return [];
+
+  const frame = decodeFrame(magic, raw);
+  if (frame.code !== MSG_BLOCKS) {
+    throw new Error(`Blocks response from peer ${peerId} bears code ${frame.code}`);
+  }
+
+  const blocks = decodeBlocks(frame.body, endHeight - startHeight + 1);
+  if (blocks === null) {
+    throw new Error(`Blocks response from peer ${peerId} is not a well-formed blocks response`);
+  }
+  return blocks;
 }

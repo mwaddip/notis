@@ -31,6 +31,55 @@ export class StreamReadTimeout extends Error {
 }
 
 /**
+ * Race a stream write against a deadline — NET_INTERFACE → Validation (and
+ * untrusted-input safety) → "A stream write is bounded in time as well".
+ *
+ * A write to a peer that does not read parks on the muxer's send window and
+ * holds the stream for the life of the connection; the deadline here is the
+ * one the reader on the other side runs under (`syncRequestTimeoutMs`, ×5 for
+ * a `Blocks` answer), so a write that outlasts the read is aborted at the
+ * same instant the read ends. On expiry the stream is aborted — the
+ * caller's `close`/`finally` tears what remains down — with no penalty, for
+ * the reason the read deadline is unpenalised: a slow link is a slow link.
+ *
+ * A sink error that lands before the deadline (the peer went away mid-write)
+ * is re-thrown — the caller tells a slow link from a dropped one by the
+ * log it makes. A sink error that lands after the abort — the abort's own
+ * — is swallowed, since the caller already accepted the outcome.
+ */
+export async function sinkWithDeadline(
+  stream: { sink: (source: AsyncIterable<Uint8Array> | Uint8Array[]) => Promise<void>; abort: (err: Error) => void },
+  data: Uint8Array,
+  deadlineMs: number,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let deadlineFired = false;
+  // Capture the sink's outcome inside an IIFE so a sink that throws
+  // synchronously or rejects asynchronously is converted to a value and
+  // can never surface as unhandled.
+  const sinkCaught: Promise<{ kind: 'sunk' } | { kind: 'threw'; err: unknown }> = (async () => {
+    try {
+      await stream.sink([data]);
+      return { kind: 'sunk' as const };
+    } catch (err) {
+      return { kind: 'threw' as const, err };
+    }
+  })();
+  const deadline = new Promise<{ kind: 'deadline' }>((resolve) => {
+    timer = setTimeout(() => {
+      deadlineFired = true;
+      try { stream.abort(new Error('write deadline exceeded')); } catch { /* already gone */ }
+      resolve({ kind: 'deadline' });
+    }, deadlineMs);
+  });
+  const outcome = await Promise.race([sinkCaught, deadline]);
+  if (timer !== undefined) clearTimeout(timer);
+  if (outcome.kind === 'threw' && !deadlineFired) {
+    throw outcome.err instanceof Error ? outcome.err : new Error(String(outcome.err));
+  }
+}
+
+/**
  * Read a stream into a single buffer, refusing to hold more than `maxBytes` or
  * to wait past `signal`'s deadline.
  *

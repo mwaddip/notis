@@ -114,7 +114,7 @@ describe("A's write to an unreading peer times out, the stream aborts", () => {
     nodeB = null;
   });
 
-  it.fails('three GetBlocks streams unread; after the three write deadlines, A holds no inbound stream from B', async () => {
+  it('three GetBlocks streams unread; after the three write deadlines, A holds no inbound stream from B', async () => {
     nodeA = new NetNode(makeConfig(), validators);
     nodeA.setHeadersHandler((h) => (h >= 1 && h <= 100 ? makeBigBlock(h) : null));
     nodeA.setChainHeightProvider(() => 100);
