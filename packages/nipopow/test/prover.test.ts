@@ -1,11 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { proveWithReader, ProofBuildError } from '../src/prover.js';
 import { encodeNipopowProof, decodeNipopowProof } from '../src/index.js';
+import { level as headerLevel } from '@dagsocial/validation';
 import {
   buildMinedChain,
   makeReader,
+  DEVNET_RETARGET,
 } from './helpers.js';
+import type { MinedChain } from './helpers.js';
 import type { PopowHeaderReader } from '../src/prover.js';
+import type { PoPowHeader } from '../src/index.js';
 
 describe('proveWithReader', () => {
 
@@ -134,5 +138,62 @@ describe('proveWithReader', () => {
       expect(() => proveWithReader(sparseReader, { m: 3, k: 5 }))
         .toThrow(ProofBuildError);
     });
+  });
+
+  // NIPOPOW_INTERFACE → proveWithReader — "Postconditions, pinned by tests":
+  // every height from the anchoring height the level-1 walk leaves to `suffixHead`'s
+  // parent is in the prefix.
+  describe('level-0 span postcondition', () => {
+    // Mirrors the prover's level walk (NIPOPOW_INTERFACE → proveWithReader) over the
+    // chain's own levels, so the test does not read the prover's own anchoring state.
+    function computeLevel1AnchoringHeight(
+      chain: MinedChain,
+      suffixHead: PoPowHeader,
+      m: number,
+      anchorBits: number,
+    ): number {
+      const M = suffixHead.interlinks.length - 1;
+      let anchoringHeight = 1;
+      for (let i = M; i >= 1; i--) {
+        const levelChain = chain.popowHeaders.filter(ph => {
+          if (ph.header.height >= suffixHead.header.height) return false;
+          if (ph.header.height < anchoringHeight) return false;
+          const lvl = headerLevel(ph.header, anchorBits);
+          return lvl !== null && lvl >= i;
+        });
+        if (m < levelChain.length) {
+          anchoringHeight = levelChain[levelChain.length - m]!.header.height;
+        }
+      }
+      return anchoringHeight;
+    }
+
+    const cases: Array<{ count: number; m: number; k: number }> = [
+      { count: 100, m: 3, k: 5 },
+      { count: 100, m: 6, k: 10 },
+      { count: 150, m: 6, k: 10 },
+      { count: 200, m: 10, k: 10 },
+    ];
+    for (const { count, m, k } of cases) {
+      it.fails(`chain=${count}, m=${m}, k=${k}: every height from the level-1 anchoring to suffixHead's parent is in the prefix`, () => {
+        const chain = buildMinedChain({ count });
+        const reader = makeReader(chain);
+        const proof = proveWithReader(reader, { m, k });
+        const anchoringHeight = computeLevel1AnchoringHeight(
+          chain,
+          proof.suffixHead,
+          m,
+          DEVNET_RETARGET.anchorBits,
+        );
+        expect(anchoringHeight).toBeGreaterThanOrEqual(1);
+        expect(anchoringHeight).toBeLessThan(proof.suffixHead.header.height);
+        const prefixHeights = new Set(proof.prefix.map(ph => ph.header.height));
+        const missing: number[] = [];
+        for (let h = anchoringHeight; h < proof.suffixHead.header.height; h++) {
+          if (!prefixHeights.has(h)) missing.push(h);
+        }
+        expect(missing).toEqual([]);
+      });
+    }
   });
 });

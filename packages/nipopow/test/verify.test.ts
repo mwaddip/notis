@@ -6,8 +6,24 @@ import {
   makeReader,
   devnetProfile,
   devnetProfileWithGenesisId,
+  solveHeaderPow,
+  DEVNET_RETARGET,
 } from './helpers.js';
-import type { NipopowProof } from '../src/index.js';
+import type { NipopowProof, PoPowHeader, VerifyProfile } from '../src/index.js';
+import type { BlockHeader } from '@dagsocial/types';
+import {
+  EMPTY_STATE_ROOT,
+  NETWORK_PROFILES,
+  interlinkRoot,
+  protocolVersionAt,
+  updateInterlinks,
+} from '@dagsocial/types';
+import {
+  asertTargetBits,
+  blockHash,
+  level as headerLevel,
+  verifyOrderingBlockPoW,
+} from '@dagsocial/validation';
 
 function clone<T>(obj: T): T {
   return JSON.parse(JSON.stringify(obj, (_k, v) =>
@@ -499,5 +515,206 @@ describe('verifyProof', () => {
       const result2 = verifyProof(proof, advancedProfile);
       expect(result2.ok).toBe(true);
     });
+  });
+});
+
+// NIPOPOW_INTERFACE → verifyProof — "Shape": `m` and `k` equal `params.m` and `params.k`,
+// each at least 1; `prefix` non-empty; `suffixTail.length === k − 1` (`shape`). Also:
+// NIPOPOW_INTERFACE → "A proof is held to the client's own parameters".
+describe('shape — tail length exactly k − 1', () => {
+  const chain = buildMinedChain({ count: 40 });
+  const reader = makeReader(chain);
+  const profile = devnetProfile();
+
+  it.fails('a proof whose tail is shorter than k − 1 is refused shape as an object', () => {
+    const proof = proveWithReader(reader, { m: 3, k: 5 });
+    expect(proof.suffixTail.length).toBe(4);
+    const shortened: NipopowProof = { ...proof, suffixTail: proof.suffixTail.slice(0, 3) };
+    expect(shortened.suffixTail.length).toBe(3);
+    const result = verifyProof(shortened, profile);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('shape');
+  });
+
+  it.fails('a proof whose tail is shorter than k − 1 is refused parse-failed by verifyProof on bytes', () => {
+    const proof = proveWithReader(reader, { m: 3, k: 5 });
+    const shortened: NipopowProof = { ...proof, suffixTail: proof.suffixTail.slice(0, 3) };
+    const bytes = encodeNipopowProof(shortened);
+    const result = verifyProof(bytes, profile);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('parse-failed');
+  });
+});
+
+// NIPOPOW_INTERFACE → verifyProof — "Shape": `m` and `k` equal `params.m` and `params.k`.
+// The third argument is the client's own params, refusing a proof that declares another `m`
+// or `k`. In this file the call reads the two-argument form while the params rule is
+// ahead of code; the body stays unchanged when the three-argument form lands.
+describe('params rule 1 — verifyProof holds the proof to its own m and k', () => {
+  const chain = buildMinedChain({ count: 40 });
+  const reader = makeReader(chain);
+  const profile = devnetProfile();
+
+  type VerifyFn = (
+    p: Uint8Array | NipopowProof,
+    params: VerifyProfile & { m: number; k: number },
+    profile: VerifyProfile,
+  ) => ReturnType<typeof verifyProof>;
+
+  it('a proof built with { m: 3, k: 5 } is accepted under { m: 3, k: 5 }', () => {
+    const proof = proveWithReader(reader, { m: 3, k: 5 });
+    const paramsAndProfile: VerifyProfile & { m: number; k: number } = { ...profile, m: 3, k: 5 };
+    const result = (verifyProof as unknown as VerifyFn)(proof, paramsAndProfile, profile);
+    expect(result.ok).toBe(true);
+  });
+
+  it.fails('a proof built with { m: 3, k: 5 } is refused shape under { m: 3, k: 6 }', () => {
+    const proof = proveWithReader(reader, { m: 3, k: 5 });
+    expect(proof.k).toBe(5);
+    const paramsAndProfile: VerifyProfile & { m: number; k: number } = { ...profile, m: 3, k: 6 };
+    const result = (verifyProof as unknown as VerifyFn)(proof, paramsAndProfile, profile);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('shape');
+  });
+
+  it.fails('a proof built with { m: 3, k: 5 } is refused shape under { m: 4, k: 5 }', () => {
+    const proof = proveWithReader(reader, { m: 3, k: 5 });
+    expect(proof.m).toBe(3);
+    const paramsAndProfile: VerifyProfile & { m: number; k: number } = { ...profile, m: 4, k: 5 };
+    const result = (verifyProof as unknown as VerifyFn)(proof, paramsAndProfile, profile);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('shape');
+  });
+});
+
+// NIPOPOW_INTERFACE → verifyProof — "Heights": heights strictly increase across the
+// flattened sequence, and an element whose `prevBlockHash` is the `blockHash` of the
+// element before it sits exactly one height above it (`heights`).
+describe('heights rule 5 — parent-linked and exactly one above', () => {
+  const chain = buildMinedChain({ count: 40 });
+  const reader = makeReader(chain);
+  const profile = devnetProfile();
+  const schedule = NETWORK_PROFILES.devnet.protocolVersionSchedule;
+
+  it.fails('a tail header one height above its parent is refused heights at its index', () => {
+    const proof = proveWithReader(reader, { m: 3, k: 5 });
+    expect(proof.suffixTail.length).toBe(4);
+    const prev = proof.suffixTail[proof.suffixTail.length - 2]!;
+    const prevHash = blockHash(prev);
+    expect(prevHash).not.toBeNull();
+
+    const t_a = chain.headers[0]!.createdAt;
+    const scheduledBits = asertTargetBits(DEVNET_RETARGET, t_a, {
+      height: prev.height,
+      createdAt: prev.createdAt,
+    });
+    const forgedHeight = prev.height + 2;
+    const forgedCreatedAt = prev.createdAt + DEVNET_RETARGET.idealMs;
+    const version = protocolVersionAt(schedule, forgedHeight);
+    expect(version).not.toBeNull();
+    const forged: BlockHeader = {
+      protocolVersion: version!,
+      height: forgedHeight,
+      prevBlockHash: prevHash!,
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: scheduledBits,
+      createdAt: forgedCreatedAt,
+      interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
+    };
+    forged.powNonce = solveHeaderPow(forged);
+    expect(verifyOrderingBlockPoW(forged)).toBe(true);
+    expect(forged.height).toBe(prev.height + 2);
+
+    const mutated: NipopowProof = {
+      ...proof,
+      suffixTail: [...proof.suffixTail.slice(0, -1), forged],
+    };
+    const faultIndex = mutated.prefix.length + 1 + (mutated.suffixTail.length - 1);
+    const result = verifyProof(mutated, profile);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('heights');
+      expect(result.index).toBe(faultIndex);
+    }
+  });
+
+  it.fails('a prefix header one height above its parent in the level-0 span is refused heights at its index', () => {
+    const smallChain = buildMinedChain({ count: 10 });
+    const anchor = smallChain.popowHeaders[0]!;
+    const base = smallChain.popowHeaders[4]!;
+    const baseHash = blockHash(base.header);
+    expect(baseHash).not.toBeNull();
+
+    const anchorBits = DEVNET_RETARGET.anchorBits;
+    const baseLevel = headerLevel(base.header, anchorBits);
+
+    const forgedPrefixHeight = base.header.height + 2;
+    const forgedCreatedAt = base.header.createdAt + DEVNET_RETARGET.idealMs;
+    const forgedInterlinks = updateInterlinks(base.interlinks, baseHash!, baseLevel);
+    const forgedPrefixHeader: BlockHeader = {
+      protocolVersion: protocolVersionAt(schedule, forgedPrefixHeight)!,
+      height: forgedPrefixHeight,
+      prevBlockHash: baseHash!,
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: anchorBits,
+      createdAt: forgedCreatedAt,
+      interlinkRoot: interlinkRoot(forgedInterlinks),
+      adProofsRoot: '00'.repeat(32),
+    };
+    forgedPrefixHeader.powNonce = solveHeaderPow(forgedPrefixHeader);
+    expect(verifyOrderingBlockPoW(forgedPrefixHeader)).toBe(true);
+    const forgedPrefix: PoPowHeader = {
+      header: forgedPrefixHeader,
+      interlinks: forgedInterlinks,
+    };
+    const forgedPrefixHash = blockHash(forgedPrefixHeader);
+    expect(forgedPrefixHash).not.toBeNull();
+    const forgedPrefixLevel = headerLevel(forgedPrefixHeader, anchorBits);
+
+    const headHeight = forgedPrefixHeight + 1;
+    const headCreatedAt = forgedCreatedAt + DEVNET_RETARGET.idealMs;
+    const headInterlinks = updateInterlinks(
+      forgedInterlinks,
+      forgedPrefixHash!,
+      forgedPrefixLevel,
+    );
+    const headHeader: BlockHeader = {
+      protocolVersion: protocolVersionAt(schedule, headHeight)!,
+      height: headHeight,
+      prevBlockHash: forgedPrefixHash!,
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: anchorBits,
+      createdAt: headCreatedAt,
+      interlinkRoot: interlinkRoot(headInterlinks),
+      adProofsRoot: '00'.repeat(32),
+    };
+    headHeader.powNonce = solveHeaderPow(headHeader);
+    expect(verifyOrderingBlockPoW(headHeader)).toBe(true);
+    const suffixHead: PoPowHeader = { header: headHeader, interlinks: headInterlinks };
+
+    const stitched: NipopowProof = {
+      m: 1,
+      k: 1,
+      prefix: [anchor, base, forgedPrefix],
+      suffixHead,
+      suffixTail: [],
+    };
+    const faultIndex = 2;
+    const result = verifyProof(stitched, profile);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('heights');
+      expect(result.index).toBe(faultIndex);
+    }
   });
 });

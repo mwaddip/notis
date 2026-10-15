@@ -1,15 +1,25 @@
 import { describe, it, expect } from 'vitest';
 import { compareProofs, bestArg } from '../src/compare.js';
+import { encodeNipopowProof, verifyProof } from '../src/index.js';
 import { proveWithReader } from '../src/prover.js';
-import { blockHash, blockWork, level } from '@dagsocial/validation';
+import { asertTargetBits, blockHash, blockWork, level, level as headerLevel, verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type { BlockHeader } from '@dagsocial/types';
+import {
+  NETWORK_PROFILES,
+  interlinkRoot,
+  protocolVersionAt,
+  updateInterlinks,
+} from '@dagsocial/types';
+import type { CompareResult, VerifyProfile } from '../src/index.js';
 import {
   buildMinedChain,
   makeReader,
   devnetProfile,
+  solveHeaderPow,
   DEVNET_POW_TARGET_BITS,
   DEVNET_RETARGET,
 } from './helpers.js';
+import type { NipopowProof, PoPowHeader } from '../src/index.js';
 
 describe('compareProofs', () => {
   const profile = devnetProfile();
@@ -282,5 +292,165 @@ describe('bestArg', () => {
 
     const score = bestArg(headers, 2, DEVNET_POW_TARGET_BITS);
     expect(score).toBeGreaterThanOrEqual(10n);
+  });
+});
+
+// NIPOPOW_INTERFACE → compareProofs — "`m` and `k` are the client's":
+// a proof that declares another `m` or `k` answers `incomparable / invalid`.
+// NIPOPOW_INTERFACE → verifyProof — "Shape" rule 1 holds the proof to the client's params.
+describe('comparator holds each proof to the client params', () => {
+  const profile = devnetProfile();
+
+  it.fails('a short-suffix proof carrying a chosen stateRoot against an honest proof answers incomparable / invalid', () => {
+    const chain = buildMinedChain({ count: 60 });
+    const schedule = NETWORK_PROFILES.devnet.protocolVersionSchedule;
+    const anchorBits = DEVNET_RETARGET.anchorBits;
+    const clientK = 20;
+
+    const honestReader = makeReader(chain);
+    const honest = proveWithReader(honestReader, { m: 24, k: clientK });
+    expect(honest.suffixTail.length).toBe(clientK - 1);
+
+    const tip = chain.popowHeaders[chain.headers.length - 1]!;
+    const tipHash = blockHash(tip.header);
+    expect(tipHash).not.toBeNull();
+    const tipLevel = headerLevel(tip.header, anchorBits);
+    const bInterlinks = updateInterlinks(tip.interlinks, tipHash!, tipLevel);
+    const chosenRoot = 'ab'.repeat(33);
+    const bHeight = tip.header.height + 1;
+    const t_a = chain.headers[0]!.createdAt;
+    const bBits = asertTargetBits(DEVNET_RETARGET, t_a, {
+      height: tip.header.height,
+      createdAt: tip.header.createdAt,
+    });
+    const bHeader: BlockHeader = {
+      protocolVersion: protocolVersionAt(schedule, bHeight)!,
+      height: bHeight,
+      prevBlockHash: tipHash!,
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: chosenRoot,
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: bBits,
+      createdAt: tip.header.createdAt + DEVNET_RETARGET.idealMs,
+      interlinkRoot: interlinkRoot(bInterlinks),
+      adProofsRoot: '00'.repeat(32),
+    };
+    bHeader.powNonce = solveHeaderPow(bHeader);
+    expect(verifyOrderingBlockPoW(bHeader)).toBe(true);
+    const bPopow: PoPowHeader = { header: bHeader, interlinks: bInterlinks };
+
+    const augmented: PoPowHeader[] = [...chain.popowHeaders, bPopow];
+    const byHash = new Map<string, PoPowHeader>();
+    const byHeight = new Map<number, PoPowHeader>();
+    for (const ph of augmented) {
+      const h = blockHash(ph.header);
+      if (h !== null) byHash.set(h, ph);
+      byHeight.set(ph.header.height, ph);
+    }
+    const augmentedReader = {
+      chainHeight: () => augmented.length,
+      popowHeaderByHash: (h: string) => byHash.get(h) ?? null,
+      popowHeaderAtHeight: (h: number) => byHeight.get(h) ?? null,
+      lastHeaders: (n: number) => augmented.slice(-n).map(p => p.header),
+      headersAfter: (h: number, n: number): BlockHeader[] => {
+        const out: BlockHeader[] = [];
+        for (let k = h + 1; k <= Math.min(h + n, augmented.length); k++) {
+          const ph = byHeight.get(k);
+          if (ph) out.push(ph.header);
+        }
+        return out;
+      },
+    };
+    const forged = proveWithReader(augmentedReader, { m: 24, k: 1 });
+    expect(forged.suffixHead.header.height).toBe(bHeight);
+    expect(forged.suffixHead.header.stateRoot).toBe(chosenRoot);
+    forged.k = clientK;
+
+    const nowMs = bHeader.createdAt + 1_000;
+    const vp: VerifyProfile = { ...profile, nowMs };
+    const result = (compareProofs as unknown as (
+      a: NipopowProof,
+      b: NipopowProof,
+      params: { m: number; k: number },
+      profile: VerifyProfile,
+    ) => CompareResult)(forged, honest, { m: 24, k: clientK }, vp);
+    expect(result.verdict).toBe('incomparable');
+    if (result.verdict === 'incomparable') expect(result.reason).toBe('invalid');
+  });
+
+  it.fails('a proof declaring another m against an honest proof answers incomparable / invalid', () => {
+    const chain = buildMinedChain({ count: 30 });
+    const reader = makeReader(chain);
+    const proofA = proveWithReader(reader, { m: 3, k: 5 });
+    const proofB = proveWithReader(reader, { m: 3, k: 5 });
+    const mutated: NipopowProof = { ...proofA, m: 4 };
+    const result = (compareProofs as unknown as (
+      a: NipopowProof,
+      b: NipopowProof,
+      params: { m: number; k: number },
+      profile: VerifyProfile,
+    ) => CompareResult)(mutated, proofB, { m: 3, k: 5 }, profile);
+    expect(result.verdict).toBe('incomparable');
+    if (result.verdict === 'incomparable') expect(result.reason).toBe('invalid');
+  });
+});
+
+// NIPOPOW_INTERFACE → proveWithReader step 3 (level-0 sweep) and compareProofs — a proof
+// built without the sweep carries only its level-1 headers among the blocks above an LCA
+// near the suffix; a fork of fewer blocks that carries every header outscores it.
+describe('a padded fork of fewer headers above the LCA loses to an honest proof', () => {
+  it.fails('an honest proof outscores a padded fork across the LCA', () => {
+    const FORK = 100;
+    const D = 30;
+    const Dp = 24;
+    const m = 24;
+    const k = 20;
+    const forkPoint = FORK + 1;
+    const honest = buildMinedChain({ count: FORK + D });
+    const fork = buildMinedChain({
+      count: FORK + Dp,
+      forceLevels: new Map([[forkPoint, 1]]),
+    });
+    expect(blockHash(honest.headers[0]!)).toBe(blockHash(fork.headers[0]!));
+    expect(blockHash(honest.headers[FORK - 1]!)).toBe(blockHash(fork.headers[FORK - 1]!));
+    expect(blockHash(honest.headers[FORK]!)).not.toBe(blockHash(fork.headers[FORK]!));
+
+    const honestReader = makeReader(honest);
+    const forkReader = makeReader(fork);
+    const honestProof = proveWithReader(honestReader, { m, k });
+    const forkProof = proveWithReader(forkReader, { m, k });
+
+    const paddedPrefix: PoPowHeader[] = [...forkProof.prefix];
+    const haveHeights = new Set(paddedPrefix.map(p => p.header.height));
+    for (let h = 2; h < forkProof.suffixHead.header.height; h++) {
+      if (!haveHeights.has(h)) {
+        const ph = forkReader.popowHeaderAtHeight(h);
+        expect(ph).not.toBeNull();
+        paddedPrefix.push(ph!);
+      }
+    }
+    paddedPrefix.sort((a, b) => a.header.height - b.header.height);
+    const padded: NipopowProof = { ...forkProof, prefix: paddedPrefix };
+
+    const nowMs = Math.max(
+      honest.headers[honest.headers.length - 1]!.createdAt,
+      fork.headers[fork.headers.length - 1]!.createdAt,
+    ) + 1_000;
+    const vp = { ...devnetProfile(), nowMs };
+
+    const paddedVerdict = verifyProof(encodeNipopowProof(padded), vp);
+    expect(paddedVerdict.ok).toBe(true);
+
+    const forkLevel1Above = fork.popowHeaders.filter(ph => {
+      if (ph.header.height <= FORK) return false;
+      if (ph.header.height >= padded.suffixHead.header.height) return false;
+      const lvl = headerLevel(ph.header, DEVNET_RETARGET.anchorBits);
+      return lvl !== null && lvl >= 1;
+    }).length;
+    expect(forkLevel1Above).toBeLessThan(m);
+
+    const result = compareProofs(honestProof, padded, m, vp);
+    expect(result.verdict).toBe('a');
   });
 });
