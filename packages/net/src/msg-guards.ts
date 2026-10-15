@@ -103,6 +103,39 @@ export const MAX_CHAIN_RESPONSE_ITEMS = 400;
 export const MAX_STREAM_BYTES = 8 * 1024 * 1024;
 
 /**
+ * Largest number of inbound sync-protocol streams a single connection may hold
+ * open at once (NET_INTERFACE → Stream Protocols → "A peer's sync streams are
+ * served one at a time"). libp2p checks this against the connection's own
+ * inbound stream count and aborts a stream over it. A waiting stream is
+ * unread, so it costs at most the muxer's 256 KiB initial window; 16 cost
+ * 4 MiB per connection.
+ */
+export const MAX_INBOUND_SYNC_STREAMS = 16;
+
+/**
+ * Shortest interval between two `SyncInfo`s from one peer that this node
+ * acts on (NET_INTERFACE → Serve Side → "A peer's `SyncInfo` is acted on at
+ * most once per `SYNC_INFO_MIN_INTERVAL_MS`"). A SyncInfo that arrives
+ * sooner is held as that peer's pending one; the first timer tick past the
+ * interval acts on it.
+ */
+export const SYNC_INFO_MIN_INTERVAL_MS = 100;
+
+/**
+ * Block requests of one peer that may wait for this node to finish writing
+ * that peer's previous answer (NET_INTERFACE → Serve Side → "A peer is
+ * served one block answer at a time"). One more drops the oldest waiting.
+ */
+export const MAX_PENDING_BLOCK_REQUESTS = 4;
+
+/**
+ * Sync data events one peer holds in the per-peer queue (NET_INTERFACE →
+ * Biased Event Loop clause 2). One more drops this peer's oldest, never
+ * another's.
+ */
+export const MAX_DATA_EVENTS_PER_PEER = 8;
+
+/**
  * Largest response body we assemble when serving a peer.
  *
  * Kept at half of `MAX_STREAM_BYTES` so a response we produce always fits inside

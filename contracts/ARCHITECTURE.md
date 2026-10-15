@@ -226,7 +226,7 @@ wait produces correct results, promptly, forever — and every gate stays green.
 So where idle behaviour, cadence, or an allocation ceiling is load-bearing, the
 contract states it as an obligation with a number, not as an implementation
 detail. `NET_INTERFACE → Biased Event Loop` clause 4 is the worked example, and
-`MAX_DATA_QUEUE` / `MAX_OUTSTANDING_IDS` are the shape to copy.
+`MAX_DATA_EVENTS_PER_PEER` / `MAX_OUTSTANDING_IDS` are the shape to copy.
 
 > ⚠ **Ported specifications drop exactly what the source runtime guaranteed.**
 > Several contracts here were templated from `ergo-node-rust`'s `facts/`. That
@@ -296,7 +296,7 @@ commitment alone.
 
 **A block commits a post's structure and its content commitment, never its content.** The
 transaction carries the `PostCommit`; the body travels beside it as a packet on gossip and by
-id on pull (NET_INTERFACE → Gossip Topics, Sync State Machine), and lives only in the DAG. A
+id on pull (NET_INTERFACE → Gossip Topics, Block Body Download), and lives only in the DAG. A
 node that applies a post transaction without having seen its packet holds a **placeholder** —
 structure, no body — until backfill fills it (NODE_INTERFACE → Store Interface → Posts DAG).
 
@@ -1664,9 +1664,10 @@ before multi-node operation rather than after it.
    insert into mempool, a post's body into the DAG as a pending row — state
    applied at block application.
 11. **Backfill:** a node that applies a post transaction without having seen its
-   packet holds a placeholder — structure, no body — and pulls the body by id:
-   from its sync peer in the `backfill` phase, from the relaying peer afterwards
-   (NET_INTERFACE → Sync State Machine)
+   packet holds a placeholder — structure, no body — and pulls the body by id,
+   the block's relaying peer first, then its other peers, on a schedule in block
+   height (NODE_INTERFACE → Store Interface → Posts DAG, "Backfill after sync";
+   NET_INTERFACE → Block Body Download)
 
 ---
 

@@ -12,7 +12,6 @@ import {
   emitApiListening,
   emitShutdownSignalReceived,
   emitServerShuttingDown,
-  emitPostReceived,
   emitPeerConnected,
   emitPeerDisconnected,
   emitPeerPenalised,
@@ -38,15 +37,16 @@ import {
   isLivePost,
   setPostBody,
   getMissingBodies,
+  getStillPlaceholderIds,
   getCurrentHeight,
   getOrderingBlock,
   getOrderingBlockHash,
   getHeightByBlockHash,
+  getHeaderAt,
   peerStorage,
   getKarmaOwners,
 } from './store/index.js';
 import { initBackfill } from './services/backfill.js';
-import { verifyPostBody } from '@dagsocial/validation';
 
 const config = loadConfig();
 const startTime = Date.now();
@@ -186,6 +186,11 @@ net.setBlocksHandler(pullBlocksHandler(net));
 const guardedGetOrderingBlock = guardStoreRead(getOrderingBlock);
 net.setHeadersHandler(guardedGetOrderingBlock);
 
+// NODE_INTERFACE → Sync handlers: the header stored at a height, decoded and
+// no body read — what a served `GetHeaders` reads. Wrapped in
+// `guardStoreRead` like the block provider.
+net.setHeaderProvider(guardStoreRead(getHeaderAt));
+
 // NODE_INTERFACE → Sync handlers: the scheduled-target provider decodes a
 // stored header, so `guardStoreRead` promotes a corrupt row to a fail-stop.
 net.setScheduledTargetProvider(guardStoreRead(scheduledPowTargetBits));
@@ -199,34 +204,22 @@ net.setChainHeightProvider(getCurrentHeight);
 net.setBlockIdProvider(getOrderingBlockHash);
 net.setHeightByBlockIdProvider(getHeightByBlockHash);
 
-// NODE_INTERFACE → "Backfill after sync": four seams the net layer reads bodies through.
+// The seam the net layer serves a stored body through — what a served
+// `MODIFIER_POST_BODY` response carries (NET_INTERFACE → Sync Handler
+// Registration). The body a post's row holds, or `null` when the row has
+// none or is withdrawn.
 net.setPostBodyProvider((id: string) => {
   const result = getPost(id);
   if (!isLivePost(result)) return null;
   return result.content;
 });
 
-net.setMissingBodiesProvider((limit: number) =>
-  getMissingBodies(limit).map(r => ({ id: r.id, contentHash: Buffer.from(r.contentHash, 'hex') })),
-);
-
-net.onPostBody((id: string, content: string, peerId: string) => {
-  const result = getPost(id);
-  if (!isLivePost(result)) return false;
-  const contentHash = Buffer.from(result.contentHash, 'hex');
-  const check = verifyPostBody(content, contentHash);
-  if (!check.valid) return false;
-  const stored = setPostBody(id, content);
-  if (stored) {
-    emitPostReceived(id, peerId, 'pull');
-  }
-  return stored;
-});
-
 initBackfill({
   requestPostBodies: (wanted, peerId) => net.requestPostBodies(wanted.map(w => ({ id: w.id, contentHash: Buffer.from(w.contentHash, 'hex') })), peerId),
   getConnectedPeers: () => net.getConnectedPeers(),
   setPostBody,
+  getMissingBodies,
+  getStillPlaceholderIds,
 });
 
 // 4. Start net

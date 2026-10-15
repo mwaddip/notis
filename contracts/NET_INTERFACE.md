@@ -389,6 +389,15 @@ aborts, the stream closes, and the caller treats it as an absent response — **
 or silent link is indistinguishable from a dead one (the frame tier's reasoning below) and is not
 evidence of misbehaviour.
 
+**A stream write is bounded in time as well.** Every frame this node writes on either protocol — an answer on a
+peer's stream, a one-way message on a stream it opens, a request — must be taken by the peer within the deadline the
+peer's read of it runs under: `syncRequestTimeoutMs`, ×5 for a `Blocks` answer, the one read that runs under ×5. A
+write that does not finish in time is aborted — the stream reset — with **no penalty**, for the read deadline's
+reason: a peer that does not read is a slow link as far as this node can tell. Without the deadline a peer that asks
+and never reads holds the answer, up to `MAX_SERVE_BODY_BYTES`, for the life of the connection; with it, and with a
+peer's streams served one at a time (→ Stream Protocols → "A peer's sync streams are served one at a time"), what a
+peer holds is bounded in size and in time.
+
 ⛔ **Every arm that assembles more than one stored object into a response is bounded by BYTES, not by
 item count alone.** A count bounds an array's length and says nothing about its weight, and both
 `ModifierResponse` and `Blocks` assemble whole blocks. Each arm accumulates encoded bytes, stops
@@ -590,22 +599,21 @@ Late Node (height 0)                      Synced Peer (height 200)
      │ sends the next SyncInfo at once            │
      │── SyncInfo (height=200) ──────────────────►│
      │◄── SyncInfo (height=200) ─────────────────│
-     │ equal, inbound → backfill begins           │
+     │ equal, from the sync peer → synced         │
      │                                            │
-     │ at tip → backfill: rows with no body       │
-     │── ModifierRequest (type=103, ≤100 ids,     │
-     │    newest first) ─────────────────────────►│
+     │ the posts of each applied block arrive     │
+     │ with no body; the node pulls them by id,   │
+     │ one request at a time (→ Block Body        │
+     │ Download)                                  │
+     │── ModifierRequest (type=103, ≤400 ids) ───►│
      │◄── ModifierResponse (bodies, byte-bounded; │
      │    ids the peer lacks are omitted) ────────│
-     │ verify each against its commit, store,     │
-     │ repeat until no row lacks a body           │
-     │                                            │
-     │ now synced                                 │
+     │ verify each against its commit, store      │
 ```
 
 ### Serve Side (Peer Behind Us)
 
-When receiving a SyncInfo:
+When a SyncInfo is acted on (→ "A peer's `SyncInfo` is acted on at most once per `SYNC_INFO_MIN_INTERVAL_MS`"):
 1. **Reply with our own SyncInfo, addressed to the sender** — whether the sender is behind,
    equal or ahead, and whatever our own phase is: a node at tip that is not syncing from the
    requester still answers. The reply is the only caught-up signal a peer syncing from us
@@ -628,27 +636,44 @@ one exchange and stay at one exchange per poll period — never an unbounded pin
 send on *entering* `syncing` and the progress send (Sync bullet below) are not replies and
 are bounded by their own triggers: one per phase transition, one per advancing batch.
 
+**A peer's `SyncInfo` is acted on at most once per `SYNC_INFO_MIN_INTERVAL_MS`.** One that arrives sooner from the
+same peer is held as that peer's pending `SyncInfo` — a later one replaces it — and acted on at the first timer tick
+after the interval has passed; nothing is penalised, and no report is lost but one a later report replaced.
+Each `SyncInfo` acted on earns at most the reply above and an Inv that reads up to `MAX_INV_IDS` block ids, so the
+interval is what bounds the work one peer's reports buy. An honest peer sends one per advancing batch — a round trip
+and a block apply after the last — and one per poll, so the interval holds back almost none, and a held report is
+acted on within a tick rather than lost: a syncing peer whose progress report was held never waits a poll period
+for its next Inv.
+
+**A peer is served one block answer at a time.** A `ModifierRequest` for blocks (101) is answered on a stream this
+node opens to the requester (→ Sync Flow). One that arrives while this node is still writing that peer's previous
+answer waits; at most `MAX_PENDING_BLOCK_REQUESTS` wait per peer — as many full requests as the requester's own
+outstanding cap of `4 × MAX_INV_IDS` ids holds (→ Sync Integrity) — and one more drops the oldest waiting, without
+penalty. The next is served when the write ends, taken or aborted at its deadline (→ Validation (and untrusted-input
+safety) → "A stream write is bounded in time as well"). An answer is up to `MAX_SERVE_BODY_BYTES`, so without the
+rule a peer that sends requests and reads nothing holds one answer of this node's memory per request it sent.
+
 A peer reporting height 0 gets a continuation from height 1. This bidirectional pattern ensures
 nodes serve peers behind them, not just consume.
 
 ### Sync State Machine
 
 ```
-pick_sync_peer() → sync_from_peer() → backfill() → synced()
-       ↑                  │               │
-       └── stall/disconnect ──┴───────────────┘
+pick_sync_peer() → sync_from_peer() → synced()
+       ↑                  │
+       └ stall/disconnect ┘
 ```
 
 - **Pick:** the machine retains each Active peer's last advertised height — the handshake
   `chainHeight` at peer-active, refreshed by every inbound `SyncInfo.tipHeight`, dropped at
   disconnect or ban (→ Handshake, "A ban ends the connection") — and picks the retained-highest peer
   above our own height, stalled peers
-  excluded. The pick runs at peer-active, at every inbound SyncInfo, and at every entry into
-  `idle` or `synced` (stall rotation, sync-peer disconnect, backfill's exits), so a taller
+  excluded. The pick runs at peer-active, at every SyncInfo acted on, and at every entry into
+  `idle` or `synced` (stall rotation, sync-peer disconnect, catching up), so a taller
   peer learned mid-sync is adopted the moment the current conversation ends — a bridging node
   that syncs the shorter chain first takes the longer one when it finishes, with no new event.
-  While `syncing`, only the Switch rule below changes the sync peer; while `backfill`, only
-  backfill's own rotation does. Among candidates the pick prefers outbound peers, falling back
+  While `syncing`, only the Switch rule below changes the sync peer. Among candidates the pick prefers
+  outbound peers, falling back
   to inbound-only when no outbound candidate exists — eclipse resistance prefers the
   connections we chose; the fallback keeps a node nobody dials syncing. A candidate is only
   ever above our own height, switch targets included.
@@ -671,20 +696,14 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
 - **Switch:** while `syncing`, if the retained-highest peer's height exceeds the current sync
   peer's retained height by more than 1, the machine switches to it. A switch is a rotation
   without a stall: outstanding cleared, progress clock reset, the old peer not marked stalled
-- **Backfill:** entered by an inbound equal-height SyncInfo **from the current sync peer** —
+- **Caught up:** an inbound equal-height SyncInfo **from the current sync peer** → `synced` —
   equality reported by any other peer is not a caught-up signal for a conversation it is not
-  part of (the provenance stance Invs already have). Ask the node for the
-  post ids whose rows hold no body (`setMissingBodiesProvider`), **newest first**, and request
-  them from the sync peer in batches of **`BACKFILL_BATCH_IDS` = 100** (`ModifierRequest`,
-  type 103). Every returned body is verified against its commitment and handed to the node
-  (`onPostBody`); a stored body is **real progress**. Ids the peer omitted are re-asked of the
-  next peer on rotation. **The phase ends** when the provider answers empty, **or when the
-  remaining ids have been asked of every connected peer without a stored body** — those
-  placeholders are left to the synced-phase pulls (the node's block-height schedule), so a body
-  nobody serves never keeps a node out of `synced`. Either exit → `synced`.
+  part of (the provenance stance Invs already have). Post bodies play no part in the phases: a
+  block carries its posts' commitments, and the bodies are the node's to pull, whatever the
+  phase (→ Block Body Download)
 - **Stall:** 60s without **real progress** (see Sync Integrity below) →
   rotate to different peer, mark current as stalled. On progress, clear
-  stall set. The same rule, the same clock, in `backfill`.
+  stall set.
 - **Peer rotation:** `stalledPeers: Set<PeerId>` — peers that failed to
   produce progress. On stall the pick runs again with the stalled set excluded (the Pick
   bullet's preference applies). A stall mark clears when that peer completes a new handshake
@@ -694,14 +713,7 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
   is how new blocks are detected — a reply showing a taller tip re-enters `syncing` through
   the pick. An Inv is acted on only while syncing and only from the current sync peer (see
   Sync Integrity — request provenance); an Inv from any other peer, or
-  while not syncing, is dropped without penalty. Placeholder rows created
-  after `synced` — a gossiped block whose packet this node missed — are the
-  node's to pull: it calls `requestPostBodies(wanted, peerId)` — the ids with
-  their commitments — from its block-applied hook, the relaying peer first,
-  then other connected peers, on a per-id schedule in block height
-  (NODE_INTERFACE → Store Interface → Posts DAG, "Backfill after sync"); net
-  serves the request and returns the verified bodies to the caller, it runs no
-  timer of its own for it.
+  while not syncing, is dropped without penalty.
 
 ### Sync Integrity (audit M-10)
 
@@ -723,7 +735,7 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
   cause requests nor grow the outstanding set.
 - **Outstanding-set lifecycle.** Ids are added when a request is sent,
   removed as matching response modifiers are accepted, bounded by a fixed
-  cap (new requests must not grow the set past it), and cleared on peer
+  cap of `4 × MAX_INV_IDS` ids (new requests must not grow the set past it), and cleared on peer
   rotation, on a mid-sync switch, and on sync-peer disconnect. The framed sync path has no
   per-request timer — stall rotation IS the request timeout.
 - **Stall progress = chain height.** The stall clock advances only when
@@ -737,9 +749,11 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
 There is no separate body download: a block carries its whole body, and the
 modifier conversation moves whole serialized ordering blocks, byte-bounded at
 `MAX_SERVE_BODY_BYTES`. **Post bodies are the one thing a block does not carry** — it carries
-their commits — so they are the one thing fetched by id after the chain: `MODIFIER_POST_BODY`
-in the `backfill` phase and, once synced, for any placeholder row the node creates
-(→ Sync State Machine; NODE_INTERFACE → Store Interface → Posts DAG).
+their commits — so they are the one thing fetched by id after the chain: `MODIFIER_POST_BODY`,
+asked by the node for every placeholder row its store holds, one request at a time, on a schedule
+in block height (NODE_INTERFACE → Store Interface → Posts DAG, "Backfill after sync"). Net answers
+each `requestPostBodies` call with the verified bodies (→ Pull Requests) and runs no pull of its
+own, in any phase.
 
 ---
 
@@ -1080,10 +1094,11 @@ tracked as a follow-up.
 ## Biased Event Loop
 
 The sync/gossip event loop MUST prioritize:
-1. Control events (reorg notification, peer disconnect, new peer) —
+1. Control events (peer active, peer disconnect, a `SyncInfo` acted on) —
    unbounded channel, never dropped
-2. Data events (post received, post acknowledged) — bounded channel, lossy
-   above `MAX_DATA_QUEUE`
+2. Data events (`Inv`, `ModifierRequest`, `ModifierResponse`) — bounded **per peer**, lossy:
+   a peer holds at most `MAX_DATA_EVENTS_PER_PEER` queued, and one more drops that peer's
+   oldest, never another peer's — one peer's flood cannot push out the sync peer's answers
 3. Timer ticks — fallback
 4. **It MUST wait when all three are idle.** With both queues empty and no tick
    due, the loop blocks until an enqueue or the next tick. It does not re-poll.
@@ -1190,6 +1205,27 @@ node operator may choose to link them (same keypair) or keep them separate.
 frame `code` byte disambiguates it. A second stream protocol for chain data is what codes exist to
 avoid: it duplicates the framing, the caps and the serve loop, and — because protocol handlers are
 registered per protocol — it acquires its own admission policy by omission rather than by decision.
+
+**Every inbound stream ends.** A stream that carries a one-way message — `SyncInfo`, `Inv`, a `ModifierRequest` for
+blocks (101), a `ModifierResponse` — is closed once its message is read; one that carries a query is ended by its
+answer, zero bytes included; one whose frame does not decode, or whose code no arm serves, is closed unanswered. A
+stream left open holds one of libp2p's inbound streams for its protocol on that connection for the life of the
+connection, and once they are all held every query on the connection fails.
+
+**A peer's sync streams are served one at a time.** The sync handler reads and serves a peer's stream before it reads
+that peer's next; streams that arrive meanwhile wait unread, in order of arrival, and each one's read deadline runs
+from its turn. At most `MAX_INBOUND_SYNC_STREAMS` sync streams of one connection are open at once — the
+registration's `maxInboundStreams` — and libp2p refuses one more before the handler runs. A waiting stream is
+unread, so it costs at most the muxer's initial stream window (256 KiB). Through its sync streams a peer therefore
+holds at most one read (`MAX_STREAM_BYTES`), one inline answer and one block answer (→ Serve Side → "A peer is served
+one block answer at a time", `MAX_SERVE_BODY_BYTES` each) and the windows of the streams waiting — about 20 MiB at
+the bound — of this node's memory, for no longer than the deadlines on those reads and writes.
+
+**A stream handler never rejects.** libp2p does not catch the promise a protocol handler returns, so a rejection is an
+unhandled one — logged by the node's backstop as a fault of its own (NODE_INTERFACE → "An unhandled rejection is
+logged, and the node keeps running"). Every failure on a stream is the handler's to end: a write to a peer that has
+gone, the empty answer of a failure path included, ends the stream with nothing more to say and nothing to log beyond
+the failure that led there.
 
 ### `GetHeaders` / `GetBlocks` responses — positional, `arr(item, lp)`
 
@@ -1351,13 +1387,13 @@ structure, PoW, and signatures.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `start(config)` | `(NetConfig) => Promise<void>` | Create libp2p node, connect to bootstrap peers, subscribe to topics |
-| `stop()` | `() => Promise<void>` | Graceful shutdown |
+| `start(config)` | `(NetConfig) => Promise<void>` | Create libp2p node, register both stream protocols, connect to bootstrap peers, subscribe to topics. **A start that throws stops what it started** — the libp2p node and the sync machine — before the error leaves it, so a caller that continues without networking runs none of it |
+| `stop()` | `() => Promise<void>` | Graceful shutdown. **A stopped node starts again whole**: the next `start()` registers both protocols on the libp2p node it creates |
 | `peerId()` | `() => string` | This node's libp2p peer ID |
 | `peers()` | `() => Peer[]` | Connected peers with metadata, at any peer state; never this node itself (→ Handshake) |
 | `getConnectedPeers()` | `() => string[]` | Peer IDs of the Active peers — the DAGsocial handshake completed; never this node's own (→ Handshake) |
 | `tipApplied(height)` | `(number) => void` | The node reports each applied tip — every successful apply and the tip a reorg leaves, at the seam where it stamps `dag_tip_height`. When `protocolVersionAt(schedule, height + 1)` is above the era last in force, the boundary sweep runs (→ Post-Handshake Routing); inside an era it does nothing |
-| `syncPhase()` | `() => 'idle' \| 'syncing' \| 'backfill' \| 'synced'` | The sync machine's phase (Sync State Machine). `'idle'` means no sync has been needed: before `start()`, after `stop()`, and on a node that never met a peer ahead of it — a co-started mesh follows gossip at `'idle'` and never enters `'synced'`; only a node that fell behind passes through `'syncing'` → `'backfill'` → `'synced'`. A reader wanting "not behind" tests for `'syncing'`/`'backfill'` absent, not for `'synced'` present |
+| `syncPhase()` | `() => 'idle' \| 'syncing' \| 'synced'` | The sync machine's phase (Sync State Machine). `'idle'` means no sync has been needed: before `start()`, after `stop()`, and on a node that never met a peer ahead of it — a co-started mesh follows gossip at `'idle'` and never enters `'synced'`; only a node that fell behind passes through `'syncing'` → `'synced'`. A reader wanting "not behind" tests for `'syncing'` absent, not for `'synced'` present |
 
 ### Gossip
 
@@ -1402,8 +1438,14 @@ membership test is the thing standing between a relayed hint and a counterparty 
 |----------|-----------|-------------|
 | `requestHeaders(start, max, peerId)` | `(number, number, string) => Promise<BlockHeader[]>` | Request block headers for fork resolution (codes 14/15) |
 | `requestBlocks(start, end, peerId)` | `(number, number, string) => Promise<OrderingBlock[]>` | Request full blocks for reorg (codes 16/17) |
-| `requestPostBodies(wanted, peerId)` | `({ id: string; contentHash: Uint8Array }[], string) => Promise<{ id: string; content: string }[]>` | Request post bodies by id from one peer (`ModifierRequest` type 103 on the sync stream, codes 4/5); the caller supplies each id's commitment. Answers carry only the ids the peer holds; each body is decoded and verified against its commitment before it is returned — a mismatch or an undecodable body is a misbehaviour penalty and is dropped — and **the verified bodies are returned to the caller, which stores them** (the node's placeholder pulls after `synced`); `onPostBody` is the `backfill` phase's delivery path, not this call's |
+| `requestPostBodies(wanted, peerId)` | `({ id: string; contentHash: Uint8Array }[], string) => Promise<{ id: string; content: string }[]>` | Request post bodies by id from one peer (`ModifierRequest` type 103 on the sync stream, codes 4/5); the caller supplies each id's commitment. **Any number of ids, asked in requests of at most `MAX_INV_IDS`, one after another, the answers merged; a request that fails fails the call, as one request does** — a request over the cap is one the peer's decoder refuses as malformed, and bans the sender for (→ ModifierRequest). Answers carry only the ids the peer holds; each body is decoded and verified against its commitment before it is returned — a mismatch or an undecodable body is a misbehaviour penalty and is dropped — and **the verified bodies are returned to the caller, which stores them** (the node's body pulls) |
 | `peerTipHeight(peerId)` | `(string) => number \| null` | The height the sync machine retains for an Active peer — the handshake `chainHeight`, refreshed by every inbound `SyncInfo` (→ Sync State Machine, Pick); `null` for a peer it does not retain. Fork resolution's re-score memo reads it (NODE_INTERFACE → Fork choice decides on verified headers): a branch scored lighter is not walked again until this number moves. A read of retained state, no message |
+
+**A request is one round trip, and closing its stream never changes its answer.** Every request this node makes —
+the handshake, `GetHeaders`, `GetBlocks`, `GetPeers`, a body request — opens the protocol under
+`syncRequestTimeoutMs` (×5 for `GetBlocks`), writes one frame, reads one bounded answer (→ Validation (and
+untrusted-input safety)) and closes the stream. A close that fails is the stream already ending; the answer read
+stands, and so does the error that ended the read.
 
 ⚠ **Both chain queries THROW rather than return empty** on an unexpected frame
 code or a malformed body — a decoded-but-empty answer is a statement ("no blocks"),
@@ -1437,15 +1479,14 @@ offer.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `setBlocksHandler(cb)` | `((block: OrderingBlock, fromPeerId: string) => boolean) => void` | Handler for blocks received during sync. `fromPeerId` is the peer whose response carried the block. The return is the batch's **continue** signal — `true` for a block the handler applied or already held, `false` for one it rejected or one that extends nothing (node then resolves the fork with `fromPeerId` as counterparty) — and `appendBlocks` **stops the batch at the first `false`**: the blocks after it are chained to the one that did not apply. Progress is still measured by chain height (audit M-10), never by this return |
-| `setHeadersHandler(cb)` | `((height: number) => OrderingBlock \| null) => void` | Provider for `GetHeaders` / `GetBlocks` (codes 14, 16) and for the blocks a `ModifierResponse` serves (`serializeOrderingBlock` re-encodes the provider's block). Returns the whole block, not the header: one provider serves both query responses — `Headers` reads `.header`, `Blocks` returns the block. **Never the tip height, never a block id** — those are the rows below |
+| `setHeadersHandler(cb)` | `((height: number) => OrderingBlock \| null) => void` | Provider for `GetBlocks` (code 16) and for the blocks a `ModifierResponse` serves (`serializeOrderingBlock` re-encodes the provider's block). Returns the whole block. **Never a header for `GetHeaders`, never the tip height, never a block id** — those are the rows below |
+| `setHeaderProvider(cb)` | `((height: number) => BlockHeader \| null) => void` | Provider for `GetHeaders` (code 14): the header stored at a height, read without its block's body. **One height is one header read**: the arm serves up to `MAX_CHAIN_RESPONSE_ITEMS` headers, and a whole-block read there decodes up to 400 bodies of up to `MAX_BLOCK_BODY_BYTES` for a seven-byte request. Unset → `GetHeaders` is answered zero bytes |
 | `setChainHeightProvider(cb)` | `(() => number) => void` | Provider for the chain tip height — the one number behind the handshake `chainHeight`, `SyncInfo.tipHeight`, every `peerHeight > ourHeight` comparison, the stall-progress measure and the served chain query's tip. **One read is one provider call**: `SyncStore.chainHeight()` returns the provider's value and never walks the chain through the headers provider (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `0`, as a node with no chain. The node hands over its store's `MAX(height)` — the same tip its block creator and fork resolution read — so the height `net` advertises is the height the node mines on |
 | `setBlockIdProvider(cb)` | `((height: number) => string \| null) => void` | Provider for the block id at a height — behind the ids an Inv continuation announces to a peer behind us. The id is the store's own, written at block application; `net` never computes an id from a header. **One id is one provider call**, a point read that decodes no block (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `null` — nothing to announce |
 | `setHeightByBlockIdProvider(cb)` | `((id: string) => number \| null) => void` | Provider for the height holding a block id, or `null` for an id not on our chain — the read that filters an inbound `Inv` (an id we hold or already requested is not re-requested) and resolves a `ModifierRequest`'s ids to the heights it serves from. **One id is one provider call, never a chain walk**: a message of k ids costs k point lookups, and no message rebuilds an id index of the whole chain (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `null` — every id unknown, nothing served |
 | `setScheduledTargetProvider(cb)` | `((header: BlockHeader) => number \| null) => void` | Provider for the ordering-block topic validator's schedule check: the `powTargetBits` the schedule requires of `header`, or `null` when this node does not hold `header`'s parent — a header at height 1 answers the anchor's bits; otherwise the stored block at `header.height − 1` whose id is `header.prevBlockHash`, evaluated as the apply funnel evaluates it (`MINING_INTERFACE → Difficulty Schedule`). **One header is one provider call.** Unset → `null` — every header passes on the floor and its own PoW alone (→ Stage 1) |
 | `onSyncComplete(cb)` | `(() => void) => void` | Fired on every entry into the `synced` phase |
 | `setPostBodyProvider(cb)` | `((postId: string) => string \| null) => void` | Provider for the `MODIFIER_POST_BODY` serve arm: the body this node holds for the id, or `null` — served locally or omitted, never relayed (→ Local-Serve-Before-Relay). |
-| `setMissingBodiesProvider(cb)` | `((limit: number) => { id: string; contentHash: Uint8Array }[]) => void` | Provider the `backfill` phase reads: up to `limit` post ids whose rows hold no body, newest first, each with the commitment the body must hash to. An empty answer ends the phase. |
-| `onPostBody(cb)` | `((postId: string, content: string, fromPeerId: string) => boolean) => void` | Delivery of a pulled body that verified against its commitment. The handler stores it and returns `true` (real progress for the stall clock) or `false` (row gone or already filled — no progress, no penalty). |
 | `onPeerActive(cb)` | `((peerId: string, direction: 'inbound' \| 'outbound') => void) => void` | Fired when a peer completes the handshake and becomes Active; `direction` is the connection's. |
 | `onPeerDisconnected(cb)` | `((peerId: string, reason: string) => void) => void` | Fired after a peer's disconnect is processed (`PeerManager.removePeer`), the disconnect a ban's hang-up raises included (→ Handshake, "A ban ends the connection"). `reason` is always `''` — libp2p's `peer:disconnect` carries none; the parameter is the shape JOURNAL_EVENTS → peer_disconnected names. |
 | `onPeerPenalised(cb)` | `((peerId: string, kind: string, detail: string \| null) => void) => void` | Fired by `PeerManager` itself at its two penalty entries, `recordPenalty` and `recordPenaltyKind` — so every path that records a penalty reaches it, `gossip.ts`'s and `penalizePeer`'s included; `kind` is the `PenaltyType` / `PenaltyKind` string as recorded, `detail` the reason. |
@@ -1464,25 +1505,22 @@ has not created yet, the guard falls through, and every layer beneath keeps pass
 simply absent for the life of the process, which a peer sees as `protocol selection failed` and reads
 as the peer's fault rather than ours.
 
-**A node that has registered no headers provider answers zero bytes** to `GetHeaders` / `GetBlocks`,
-rather than leaving the stream unanswered. Zero bytes is "I cannot answer", and it is distinct from an
-empty header *list* — one byte, `vlqU(0)` — which means "I consulted my chain and have nothing at that
-height". A node holding no provider has no chain to consult, so it cannot honestly send the second. Both
-reach the caller as an empty array, and fork resolution treats that as "no reorg" like any other
+**A node that has registered no provider for a query answers it zero bytes** — `GetHeaders` with no header
+provider, `GetBlocks` with no headers provider — rather than leaving the stream unanswered. Zero bytes is "I cannot
+answer", and it is distinct from an empty header *list* — one byte, `vlqU(0)` — which means "I consulted my chain and
+have nothing at that height". A node holding no provider has no chain to consult, so it cannot honestly send the
+second. Both reach the caller as an empty array, and fork resolution treats that as "no reorg" like any other
 non-match, so nothing downstream needs a new case.
 
-**Silence is not equivalent to either, and it is now the failure mode to design against.** An
-unrecognized code falls through the serve arms to `SyncMachine.handleMessage`, which answers nothing —
-so a peer that speaks `/dagsocial/sync/1` but does not know code 14 leaves the requester blocked for its
-full timeout, and `requestBlocks` runs a **5× timeout** because blocks are bigger. Both serve arms must
-therefore answer on every path, including the ones that decline to serve.
+**A code no arm serves is closed unanswered, so it reads as "I cannot answer".** A peer that speaks
+`/dagsocial/sync/1` but does not know a query's code reads the frame and closes the stream (→ Stream Protocols →
+"Every inbound stream ends"): the requester's read ends at once with zero bytes, as from a node with no provider,
+never at its deadline — `requestBlocks`' runs ×5. Both serve arms answer on every path they own, declining included.
 
-⚠ **This is the one semantic the migration does not preserve.** A separate protocol failed *fast*: an
-unregistered `/dagsocial/headers/1` reached the caller as a rejected promise from libp2p's protocol
-selection, so "this peer has nothing to serve" and "this peer does not speak the query" were different
-events at the call site. On a shared stream the second becomes a timeout. The trade is deliberate — the
-gain is that a single registered protocol carries one admission policy (Active-only, penalty-bearing)
-instead of two, and a query on the shared stream is unreachable by a peer that never handshook.
+⚠ **On the shared stream, "this peer does not speak the query" and "this peer has nothing to serve" are one
+event.** A protocol of its own per query would tell them apart — an unregistered protocol fails at libp2p's protocol
+selection. The trade is deliberate: a single registered protocol carries one admission policy (Active-only,
+penalty-bearing) instead of two, and a query on the shared stream is unreachable by a peer that never handshook.
 
 ---
 
@@ -1593,8 +1631,8 @@ Handler Registration). Net receives values; it does not resolve them, does not i
 - Ordering blocks received from peers are validated and applied
 - Locally-produced ordering blocks and locally-submitted transactions are
   gossiped to peers — a post's transaction and its body as one packet
-- Post bodies are served by id from the local store to peers that ask, backfilled for every
-  placeholder row in the `backfill` phase, and delivered to the node only after verifying
+- Post bodies are served by id from the local store to peers that ask, pulled by id for the
+  node in requests of at most `MAX_INV_IDS`, and delivered to the node only after verifying
   against their commitment
 - PeerDb populated from handshakes and Peers gossip; outbound manager
   maintaining peer count between minPeers and maxPeers

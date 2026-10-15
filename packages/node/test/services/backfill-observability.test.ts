@@ -1,13 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type Database from 'better-sqlite3';
-
-async function importDbFresh() {
-  return (await import('../../src/store/db.js')) as {
-    initDb: (path: string) => void;
-    getDb: () => Database.Database;
-    closeDb: () => void;
-  };
-}
 
 describe('post_received via and post_bodies_pulled_total', () => {
   beforeEach(() => { vi.resetModules(); });
@@ -28,31 +19,6 @@ describe('post_received via and post_bodies_pulled_total', () => {
 describe('/health shape', () => {
   beforeEach(() => { vi.resetModules(); });
   afterEach(() => { vi.resetModules(); });
-
-  it('syncing is true when sync_phase is backfill', async () => {
-    const { createAdminRouter } = await import('../../src/routes/admin.js');
-    const express = await import('express');
-
-    const app = express.default();
-    const router = createAdminRouter({
-      getConnectedPeers: () => [],
-      syncPhase: () => 'backfill',
-      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
-    });
-    app.use(router);
-
-    const db = await importDbFresh();
-    db.initDb(':memory:');
-
-    const { initJournal } = await import('../../src/journal.js');
-    initJournal();
-
-    const request = (await import('supertest')).default;
-    const res = await request(app).get('/health');
-    expect(res.body.syncing).toBe(true);
-    expect(res.body.sync_phase).toBe('backfill');
-    db.closeDb();
-  });
 
   it('syncing is false when sync_phase is synced', async () => {
     const { createAdminRouter } = await import('../../src/routes/admin.js');

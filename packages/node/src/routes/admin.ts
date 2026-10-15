@@ -12,7 +12,7 @@ import {
 
 export interface AdminDeps {
   getConnectedPeers: () => string[];
-  syncPhase: () => 'idle' | 'syncing' | 'backfill' | 'synced';
+  syncPhase: () => 'idle' | 'syncing' | 'synced';
   /** The profile's era schedule (NODE_INTERFACE → Admin Listener). */
   protocolVersionSchedule: readonly ProtocolEra[];
 }
@@ -27,7 +27,7 @@ export function createAdminRouter(deps: AdminDeps): Router {
       dag_tip_height: getDagTipHeight(),
       peers_connected: deps.getConnectedPeers().length,
       last_post_received_ms_ago: getLastPostReceivedMsAgo(),
-      syncing: phase === 'syncing' || phase === 'backfill',
+      syncing: phase === 'syncing',
       sync_phase: phase,
       uptime_seconds: getUptimeSeconds(),
       // The era a client must sign at, off the metrics' tip — the same number

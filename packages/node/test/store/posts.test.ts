@@ -156,7 +156,7 @@ describe('posts store', () => {
     confirmPost(id2, 2, 0);
     confirmPost(id3, 3, 0);
 
-    const missing = getMissingBodies(10);
+    const missing = getMissingBodies();
     expect(missing).toHaveLength(2);
     // Newest first: id2 at height 2, id1 at height 1
     expect(missing[0]!.id).toBe(id2);
@@ -486,7 +486,7 @@ describe('posts store', () => {
     // Mark as withdrawn directly
     getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = ? WHERE id = ?').run(10, postId);
 
-    expect(getMissingBodies(100)).toEqual([]);
+    expect(getMissingBodies()).toEqual([]);
     expect(getPlaceholdersAt(5)).toEqual([]);
     expect(setPostBody(postId, 'resurrected')).toBe(false);
   });
@@ -515,7 +515,7 @@ describe('posts store', () => {
     expect(restored.content).toBe(content);
 
     // The restored row must NOT appear in getMissingBodies
-    expect(getMissingBodies(100)).toEqual([]);
+    expect(getMissingBodies()).toEqual([]);
   });
 
   it('getPost returns a withdrawn post as a StoredPost with withdrawnAtHeight set, not null', async () => {
@@ -1076,5 +1076,25 @@ describe('posts store', () => {
     const detail = plan.map(r => r.detail).join(' ');
     expect(detail).not.toContain('SCAN dp');
     expect(detail).not.toContain('AUTOMATIC COVERING INDEX');
+  });
+
+  // The puller seeds every placeholder row at init, due at the next applied
+  // block, so a sync of a body-less chain can hand `getStillPlaceholderIds`
+  // a set larger than this build's SQLite bound-variable cap.
+  it('getStillPlaceholderIds answers for 32 767 ids rather than throwing on SQLite\'s variable cap', async () => {
+    const { initDb } = await importDbFresh();
+    const { getStillPlaceholderIds } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const ids: string[] = [];
+    for (let i = 0; i < 32_767; i++) ids.push(i.toString(16).padStart(64, '0'));
+
+    let result: string[] | null = null;
+    try {
+      result = getStillPlaceholderIds(ids);
+    } catch { /* swallowed: the last assertion names the subject */ }
+
+    expect(result).toEqual([]);
   });
 });

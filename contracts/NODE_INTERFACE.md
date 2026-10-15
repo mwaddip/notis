@@ -1408,8 +1408,9 @@ tree collapse into clean rejections:
 > (`handleOrderingBlock`'s held check and `extendsOurTip`, then `applyOrderingBlock`'s chain-link
 > read), fork resolution (`revertBlock`, `resolveFork`'s anchor and its read of our headers above the fork), the
 > block creator's tip read, the two `/blocks` routes, and the provider handed to
-> `net.setHeadersHandler`, through which every served chain query and every block a
-> `ModifierResponse` serves decodes stored rows — a handshake decodes none: its `chainHeight` is the
+> `net.setHeadersHandler`, through which every served `GetBlocks` and every block a
+> `ModifierResponse` serves decodes stored rows — a served `GetHeaders` decodes headers alone, through
+> `setHeaderProvider`'s read of `header_bytes`; a handshake decodes none: its `chainHeight` is the
 > `setChainHeightProvider` read, `MAX(height)`; a `SyncInfo` decodes none: it carries the tip height
 > alone, the fork walk compares a peer's headers against the stored `block_hash` column by point read,
 > and an inbound `Inv` or `ModifierRequest` resolves its ids through `setHeightByBlockIdProvider`
@@ -1419,7 +1420,7 @@ tree collapse into clean rejections:
 > `failStopIfCorruptChain` (Relay handlers; Sync handlers); the resolution runner hands it a
 > corrupt-state error out of a resolution or out of a hand-back; `finalizeBlock` wraps the
 > mined-block apply; `createOrderingBlock`
-> calls the boundary directly; and the provider handed to `setHeadersHandler` and the
+> calls the boundary directly; and the providers handed to `setHeadersHandler` and `setHeaderProvider` and the
 > `getOrderingBlock` the blocks routes are given wrap the store read, so a corrupt row met while
 > serving stops the node instead of failing every `SyncInfo` and query as a peer's fault. A frame that
 > merely contains — net's dispatch catches, Express's default 500 — is never the outer frame of a
@@ -3368,7 +3369,7 @@ admission and the shadow run; where it is the store's answer to a rule's read, i
 | `insertPost(postId, txId, commit, content)` | `(PostId, TxId, PostCommit, string \| null) => void` — `txId` the creating transaction's, written to `tx_id` by all three writers (the submit route, a relayed packet, block application); status = pending when admitted with its packet, the body present; `null` when block application inserts a placeholder from the commit; the id comes from the creating transaction |
 | `setPostBody(postId, content)` | `(string, string) => boolean` — fills a placeholder's body after the caller verified it against the row's `content_hash` (`verifyPostBody`); `false` if no row or the body is already held (no-op) |
 | `getPost(id)` | `(string) => StoredPost \| null` — "Resolution order for a post id" |
-| `getMissingBodies(limit)` | `(number) => { id, contentHash }[]` — rows with `content IS NULL`, newest first (`block_height` desc, `block_index` desc); the backfill list |
+| `getMissingBodies()` | `() => { id, contentHash }[]` — every placeholder row (`content IS NULL`, not withdrawn), newest first (`block_height` desc, `block_index` desc); what the body puller takes up at start ("Backfill after sync") |
 | `queryPostsPage({ author?, roots?, limit, after? })` | `({ author?: Uint8Array, roots?: boolean } & Page<PostKey>) => { rows: StoredPost[], next: PostKey \| null, pending: StoredPost[], pendingCount: number }` — `rows` one page of the committed rows (placeholders and withdrawn rows included), newest first in committed order, strictly after `after`; `pending` the live pending rows, the author's when `author` is given, newest arrival first (`rowid` descending), cut to `limit`; `pendingCount` over all of them; with `roots`, `rows`, `pending` and `pendingCount` are over rows with no parent (`parentRefs: []`) alone, the keyset walking that set |
 | `confirmPost(postId, blockHeight, blockIndex)` | `(string, number, number) => void` — height and committed position |
 | `unconfirmPost(postId)` | `(string) => void` — for fork rollbacks; clears height and position, keeps the body |
@@ -3424,15 +3425,19 @@ against `content_hash`, so the column is the authority and nothing re-verifies i
 `getPostRaw`: a body is read through `getPost`, and no path deletes a row — a withdrawal empties one
 (→ Withdrawal transactions).
 
-**Backfill after sync.** A placeholder's body is pulled by id (NET_INTERFACE → Sync State
-Machine, `requestPostBodies`): in the `backfill` phase net drives it from `getMissingBodies`;
-once `synced`, the node drives it from its block-applied hook for every placeholder it creates
-— the block's relaying peer first, then other connected peers — on a per-id schedule **in
-block height: the first request at creation, retries after 1, 2, 4, … blocks, capped at 256**,
-so an unserved body costs a bounded trickle and never a loop. A placeholder is registered with the
-driver once the transaction that created it has committed — its block's, or the reorg's that applied
-that block — so a reorg that rolls back registers none (→ "What follows the commit is the commit's").
-A received body is verified and stored through `setPostBody`; `emitPostReceived(postId, peerId, via:
+**Backfill after sync.** A placeholder's body is pulled by id through `requestPostBodies` (NET_INTERFACE → Pull
+Requests) by the node's one body puller, whatever net's sync phase — net runs no pull of its own. A placeholder joins
+the puller's schedule once the transaction that created it has committed — its block's, or the reorg's that applied
+that block — so a reorg that rolls back registers none (→ "What follows the commit is the commit's"); at start, every
+placeholder row the store holds joins it (`getMissingBodies`). The schedule is **in block height: the first request
+at joining, retries after 1, 2, 4, … blocks, capped at 256**, so an unserved body costs a bounded trickle and never a
+loop; the block's relaying peer is asked first, then the connected peers in turn. **One pass runs at a time**, from
+the block-applied hook: it takes every entry due at the tip and asks each peer for its share in one call — net splits a
+call into requests of at most `MAX_INV_IDS`; a block applied while a pass runs is taken by the pass after it, never by
+a second pass beside it, so an entry is asked once at each of its due heights and never again while its request is
+open. **An entry whose row is no longer a
+placeholder leaves at its turn, unasked** — its body stored by any path, the post withdrawn, or the row deleted
+with the pending transaction that held it. A received body is verified and stored through `setPostBody`; `emitPostReceived(postId, peerId, via:
 'pull')`.
 
 ### Like-records
@@ -3953,6 +3958,7 @@ See `MEMPOOL_INTERFACE.md` for the full mempool contract.
 | `getOrderingBlockHash(height)` | `(number) => string \| null` — the stored `block_hash` column, no row decode |
 | `getHeightByBlockHash(hash)` | `(string) => number \| null` — indexed point lookup on the same column |
 | `getInterlinks(height)` | `(number) => string[] \| null` — the stored vector, decoded; `null` for no row; a row that will not decode is `UnreadableStoredBlockError` |
+| `getHeaderAt(height)` | `(number) => BlockHeader \| null` — the row's `header_bytes` decoded and nothing else; `null` for no row; a header that will not decode is `UnreadableStoredBlockError`. The `GetHeaders` serve arm's read (Sync handlers) |
 | `getHeadersAbove(height, n)` | `(number, number) => BlockHeader[]` — `WHERE height > ? ORDER BY height ASC LIMIT n`, `header_bytes` decoded and nothing else; **the caller bounds `n`** — fork choice passes `ourTip − f ≤ maxReorgDepth` (Fork choice decides on verified headers, step 4). Not the NiPoPoW reader: `getHeadersAfter` is capped at `MAX_NIPOPOW_PARAM` for the prover and answers at most 128 rows, which a work comparison over a horizon must never read through |
 | `deleteOrderingBlock(height)` | `(number) => void` — for fork rollback |
 
@@ -5107,8 +5113,8 @@ below) and two `NetNode` reads (`getConnectedPeers()`, `syncPhase()` — NET_INT
 | `dag_tip_height` | the applied chain tip — the height of the last block `applyOrderingBlock` applied, or the tip a reorg left | pushed at every successful apply and at the end of a reorg (`noteTip(height)`), and `net.tipApplied(height)` is called at the same seam (NET_INTERFACE → API); `0` before the first |
 | `peers_connected` | `net.getConnectedPeers().length` — Active peers | read at request time |
 | `last_post_received_ms_ago` | milliseconds since the last `post_received` journal event, any source; **`null`** until the first | the `emitPostReceived` wrapper stamps the time |
-| `syncing` | `net.syncPhase()` is `'syncing'` or `'backfill'` — the chain is not yet usable as current | read at request time |
-| `sync_phase` | `net.syncPhase()` verbatim — `'idle' \| 'syncing' \| 'backfill' \| 'synced'` (NET_INTERFACE → Sync State Machine). | read at request time |
+| `syncing` | `net.syncPhase()` is `'syncing'` — the chain is not yet usable as current | read at request time |
+| `sync_phase` | `net.syncPhase()` verbatim — `'idle' \| 'syncing' \| 'synced'` (NET_INTERFACE → Sync State Machine). | read at request time |
 | `uptime_seconds` | seconds since process start | — |
 | `protocol_version` | the era at `dag_tip_height + 1` — `protocolVersionAt(schedule, tip + 1)`, the version a client must sign (`ARCHITECTURE → Protocol Versioning`) | read at request time |
 | `protocol_version_schedule` | the profile's `protocolVersionSchedule`, each era as `{ version, from_height }` | static |
@@ -5282,7 +5288,7 @@ Stage 2 handlers for inbound gossip messages. Startup order:
 1. initDb()
 2. Create NetNode with config + validators
 3. Register Stage 2 handlers (onOrderingBlock, onTx)
-4. Register sync handlers (setBlocksHandler, setHeadersHandler, setChainHeightProvider, setBlockIdProvider, setHeightByBlockIdProvider) BEFORE net.start()
+4. Register sync handlers (setBlocksHandler, setHeadersHandler, setHeaderProvider, setChainHeightProvider, setBlockIdProvider, setHeightByBlockIdProvider) BEFORE net.start()
 5. await net.start()          // connect to bootstrap, subscribe to topics
 6. startHttpServer()          // begin accepting API requests
 7. startBlockCreator()         // begin producing ordering blocks
@@ -5565,7 +5571,7 @@ applied, rebuilds the template, and reports the tip (→ Admin Listener; `NET_IN
 it does none of these: its applied verdict names the posts, and once the reorg's transaction commits,
 `reorg` voids the template, re-seeds the relay gate, then for each block it applied, in order, emits
 `post_indexed` for the posts that verdict named, logs the block as applied and registers its
-placeholders with the backfill driver (→ Store Interface → Posts DAG, "Backfill after sync"), then
+placeholders with the body puller (→ Store Interface → Posts DAG, "Backfill after sync"), then
 reports the tip and rebuilds the template. **A block the funnel refuses, of any class, and a reorg that
 rolls back leave every one of these as it stood** — no event, no line logging a block as applied, no
 placeholder whose row rolled back, and the template not voided. The kept root is the one record made
@@ -5672,14 +5678,19 @@ funnel:
   stops the batch at the first `false` (NET_INTERFACE → Sync Handler Registration). The registration wraps the call in `failStopIfCorruptChain`, exactly as the
   gossip registration does — `net` contains a handler throw to one logged message, and that frame
   must never be the outer one for a corrupt-state error
-- **`setHeadersHandler(getBlock)`**: the provider `net` reads stored blocks through — headers for
-  fork resolution, bodies for served chain queries, the blocks a `ModifierResponse` serves. The
+- **`setHeadersHandler(getBlock)`**: the provider `net` reads stored blocks through — the blocks a
+  served `GetBlocks` and a `ModifierResponse` carry. The
   provider node hands over wraps the store read in `failStopIfCorruptChain`: a stored row that will
   not decode stops the node ("What the funnel's totality catch is FOR") rather than failing every
   served query and response as the peer's fault inside `net`'s contained catches. `GET /blocks/:height`
   is given the same wrapped read; `GET /blocks/current` reads the `block_hash` column instead and
   answers over a rotted row rather than halting ("Who reads the block_hash column, and who
   deliberately does not")
+- **`setHeaderProvider(getHeaderAt)`**: the header stored at a height, `header_bytes` decoded and no
+  body read — what a served `GetHeaders` reads, up to `MAX_CHAIN_RESPONSE_ITEMS` heights a request
+  (NET_INTERFACE → Sync Handler Registration). Wrapped in `failStopIfCorruptChain` like the block
+  provider: a stored header that will not decode stops the node rather than failing the query as the
+  peer's fault
 - **`setChainHeightProvider(getCurrentHeight)`**: the tip height `net` advertises and compares — the
   store's `MAX(height)`, the same read the block creator and fork resolution take, handed over
   unwrapped: it decodes no row, so there is nothing for `failStopIfCorruptChain` to promote. `net`

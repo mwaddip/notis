@@ -30,6 +30,8 @@ import {
   SYNC_PROTOCOL,
   requestHeaders,
   requestBlocks,
+  oneRoundTrip,
+  connectedPeer,
 } from './sync.js';
 import {
   encodeGetPeers,
@@ -47,8 +49,8 @@ import {
 } from './sync-codec.js';
 import { encodeServableOrderingBlock } from './serve-encode.js';
 import { isBogusAddress, isLoopbackAddress } from './bogus-addr.js';
-import { readStreamBounded } from './util.js';
-import { MAX_CHAIN_RESPONSE_ITEMS, MAX_SERVE_BODY_BYTES, MAX_STREAM_BYTES } from './msg-guards.js';
+import { readStreamBounded, sinkWithDeadline } from './util.js';
+import { MAX_CHAIN_RESPONSE_ITEMS, MAX_INBOUND_SYNC_STREAMS, MAX_INV_IDS, MAX_SERVE_BODY_BYTES, MAX_STREAM_BYTES } from './msg-guards.js';
 import { PeerDb, type PeerStorage } from './peerdb.js';
 import { SyncMachine } from './sync-machine.js';
 import type { SyncStore } from './sync-machine.js';
@@ -264,9 +266,8 @@ export class LazySyncStore implements SyncStore {
 //
 // Both are bounded by what the peer asked for and by
 // `MAX_CHAIN_RESPONSE_ITEMS`. `endHeight` and `maxCount` are peer-chosen and
-// each loop reads the store once per height into an in-memory array, so that
-// second bound is what keeps the *length* of that array off the peer's control
-// panel.
+// each loop reads what it needs for one height per step, so that second bound
+// is what keeps the length of the response off the peer's control panel.
 //
 // A count bounds a length and says nothing about a weight, so the blocks loop
 // carries a second, independent bound: it accumulates encoded bytes and stops
@@ -275,9 +276,12 @@ export class LazySyncStore implements SyncStore {
 // `MAX_BLOCK_BODY_BYTES`, and 400 of those is far past what any requester will
 // read off a stream.
 //
-// The headers loop is bounded by count alone, because a header cannot be heavy:
-// four fixed-width fields and five VLQs put its ceiling at 157 bytes, so 400 of
-// them reach ~61 KiB — 1.5% of `MAX_SERVE_BODY_BYTES`.
+// The headers loop reads headers directly through the header provider (one
+// height is one provider call) and is bounded by count alone: a header's
+// ceiling is `MAX_HEADER_BYTES`, so 400 of them stay well under the serve
+// byte cap — the argument the contract spells out at NET_INTERFACE → Stream
+// Protocols, the `Headers` arm bullet of `GetHeaders` / `GetBlocks`
+// responses.
 //
 // `ourHeight` clamps both loops to our own tip: we cannot serve what we do not
 // have, so this never truncates a legitimate request, and a peer asking for
@@ -288,18 +292,22 @@ export class LazySyncStore implements SyncStore {
 // for every other local failure.
 // ---------------------------------------------------------------------------
 
-/** Frame a `Headers` (15) response: our chain walking down from `startHeight`. */
+/**
+ * Frame a `Headers` (15) response: our chain walking down from
+ * `startHeight`. Reads headers directly through the header provider — one
+ * height is one provider call (NET_INTERFACE → Sync Handler Registration).
+ */
 export function serveHeadersResponse(
   magic: number,
   request: GetHeadersMsg,
   ourHeight: number,
-  getBlock: (height: number) => OrderingBlock | null,
+  getHeader: (height: number) => BlockHeader | null,
 ): Uint8Array {
   const headers: BlockHeader[] = [];
   const maxCount = Math.min(request.maxCount, MAX_CHAIN_RESPONSE_ITEMS);
   for (let h = Math.min(request.startHeight, ourHeight); h > 0 && headers.length < maxCount; h--) {
-    const block = getBlock(h);
-    if (block) headers.push(block.header);
+    const header = getHeader(h);
+    if (header) headers.push(header);
     else break; // gap — the chain below this height is not ours to serve
   }
   return encodeHeaders(magic, headers);
@@ -555,16 +563,21 @@ export class NetNode {
   private outboundMgr: OutboundManager | null = null;
   private syncStore: LazySyncStore;
   private syncTimer: ReturnType<typeof setInterval> | null = null;
-  private handshakeHandlerRegistered = false;
-  private syncHandlerRegistered = false;
   /**
-   * The block provider for `GetHeaders` (14) and `GetBlocks` (16), read at
-   * request time rather than closed over at registration. NET_INTERFACE → Sync
-   * Handler Registration: setters are order-independent, so the sync protocol is
-   * registered by start() whether or not a provider exists yet, and a query that
-   * arrives without one is answered with zero bytes.
+   * The whole-block provider for `GetBlocks` (16) and the blocks a
+   * `ModifierResponse` serves. NET_INTERFACE → Sync Handler Registration:
+   * setters are order-independent, so the sync protocol is registered by
+   * start() whether or not a provider exists yet, and a query that arrives
+   * without one is answered with zero bytes.
    */
   private headersProvider: ((height: number) => OrderingBlock | null) | null = null;
+  /**
+   * The header-at-height provider for `GetHeaders` (14). One height is one
+   * provider call — a whole-block read there decodes up to 400 bodies of
+   * up to `MAX_BLOCK_BODY_BYTES` for a seven-byte request
+   * (NET_INTERFACE → Sync Handler Registration).
+   */
+  private headerProvider: ((height: number) => BlockHeader | null) | null = null;
   private syncCompleteHandlers: Array<() => void> = [];
   private peerActiveHandlers: Array<(peerId: string, direction: 'inbound' | 'outbound') => void> = [];
   private peerDisconnectedHandlers: Array<(peerId: string, reason: string) => void> = [];
@@ -573,9 +586,16 @@ export class NetNode {
   private scheduledTargetProvider: ((header: BlockHeader) => number | null) | null = null;
   // NET_INTERFACE → Sync Handler Registration: post body seams
   private postBodyProvider: ((postId: string) => string | null) | null = null;
-  private postBodyHandlers: Array<(postId: string, content: string, fromPeerId: string) => boolean> = [];
   private pendingDials: Set<string> = new Set();
   private lastGetPeersSentMs: Map<string, number> = new Map();
+  /**
+   * Per-peer serve queue — NET_INTERFACE → Stream Protocols → "A peer's sync
+   * streams are served one at a time". Each incoming sync stream from a peer
+   * chains onto that peer's tail, so a stream is read only once its turn
+   * arrives and its read deadline starts there. The entry is dropped when the
+   * peer disconnects, so a disconnected peer's queue does not accrue.
+   */
+  private peerStreamQueues: Map<string, Promise<void>> = new Map();
 
   constructor(config: NetConfig, validators: NetValidators, peerStorage?: PeerStorage) {
     this.config = config;
@@ -685,156 +705,164 @@ export class NetNode {
     } as any);
     this.libp2p = libp2p;
 
-    // Create PeerDb with self-address filtering
-    const listenAddrs = this.libp2p.getMultiaddrs();
-    const selfAddrs = listenAddrs.map(a => a.toString());
-    this.peerDb = new PeerDb(this.peerStorage, this.config.peerDbCap ?? 1000, selfAddrs);
+    try {
+      // Create PeerDb with self-address filtering
+      const listenAddrs = this.libp2p.getMultiaddrs();
+      const selfAddrs = listenAddrs.map(a => a.toString());
+      this.peerDb = new PeerDb(this.peerStorage, this.config.peerDbCap ?? 1000, selfAddrs);
 
-    // Create SyncMachine with lazy store bridge
-    this.syncMachine = new SyncMachine(
-      this.config,
-      this.syncStore,
-      (peerId: string, data: Uint8Array) => this.sendToPeer(peerId, data),
-      (peerId: string, reason: string) => {
-        this.peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, peerId, reason);
-      },
-    );
-    this.syncMachine.start();
+      // Create SyncMachine with lazy store bridge
+      this.syncMachine = new SyncMachine(
+        this.config,
+        this.syncStore,
+        (peerId: string, data: Uint8Array) => this.sendToPeer(peerId, data),
+        (peerId: string, reason: string) => {
+          this.peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, peerId, reason);
+        },
+      );
+      this.syncMachine.start();
 
-    // Wire sync-complete callback: when the sync machine reaches 'synced',
-    // fire all registered onSyncComplete handlers.
-    this.syncMachine.onSynced(() => {
-      for (const cb of this.syncCompleteHandlers) {
-        try { cb(); } catch (err) {
-          console.warn(`[net] syncComplete handler error: ${String(err)}`);
+      // Wire sync-complete callback: when the sync machine reaches 'synced',
+      // fire all registered onSyncComplete handlers.
+      this.syncMachine.onSynced(() => {
+        for (const cb of this.syncCompleteHandlers) {
+          try { cb(); } catch (err) {
+            console.warn(`[net] syncComplete handler error: ${String(err)}`);
+          }
         }
-      }
-    });
-
-    // Wire post body seams — delegates read at call time, order-independent
-    this.syncMachine.setOnPostBody((postId, content, fromPeerId) => {
-      for (const cb of this.postBodyHandlers) {
-        try {
-          if (cb(postId, content, fromPeerId)) return true;
-        } catch (err) {
-          console.warn(`[net] onPostBody handler error: ${String(err)}`);
-        }
-      }
-      return false;
-    });
-    this.syncMachine.setPullPostBodies(
-      (entries, peerId) => this.requestPostBodies(entries, peerId));
-    this.syncMachine.setGetConnectedPeers(() => this.getConnectedPeers());
-
-    // Create OutboundManager
-    this.outboundMgr = new OutboundManager(this.config, this.peerDb);
-
-    // Register handshake stream handler
-    this.registerHandshakeHandler(libp2p);
-
-    // Register sync stream handler (framed protocol)
-    this.registerSyncStreamHandler(libp2p);
-
-    // Track peers on connect/disconnect.
-    // Listen for all four event types because the timing and payload differ:
-    //   connection:open  — fires first, has full Connection object (addr, direction)
-    //   peer:connect     — fires after, only has PeerId
-    //   connection:close — fires first, has full Connection object + timeline
-    //   peer:disconnect  — fires after, only has PeerId
-    this.libp2p.addEventListener('connection:open', (evt: any) => {
-      const conn = evt.detail;
-      const peerId = conn?.remotePeer?.toString() ?? 'unknown';
-      const direction = conn?.direction ?? '?';
-      console.log(`[net] connection:open peer=${peerId} dir=${direction}`);
-    });
-
-    this.libp2p.addEventListener('peer:connect', (evt: any) => {
-      const peerId = evt.detail?.toString() ?? 'unknown';
-      // NET_INTERFACE →
-      // "A connection whose remote peer id is this node's own is never a peer":
-      // never added, so peers() never lists it even
-      // between the upgrade and the funnel's close.
-      if (peerId === libp2p.peerId.toString()) return;
-      console.log(`[net] peer:connect ${peerId} (total=${this.peerMgr.getPeerCount() + 1})`);
-      this.peerMgr.addPeer({
-        id: peerId,
-        multiaddrs: [],
-        protocols: [],
-        connectedAt: Date.now(),
       });
-    });
 
-    this.libp2p.addEventListener('connection:close', (evt: any) => {
-      const conn = evt.detail;
-      const peerId = conn?.remotePeer?.toString() ?? 'unknown';
-      const remoteAddr = conn?.remoteAddr?.toString() ?? '?';
-      const direction = conn?.direction ?? '?';
-      const timeline = conn?.timeline;
-      const openTs = timeline?.open ? new Date(timeline.open).toISOString() : '?';
-      const closeTs = timeline?.close ? new Date(timeline.close).toISOString() : '?';
-      const durationMs = (timeline?.close && timeline?.open)
-        ? timeline.close - timeline.open
-        : '?';
-      console.log(`[net] connection:close peer=${peerId} addr=${remoteAddr} dir=${direction} durationMs=${durationMs} opened=${openTs} closed=${closeTs}`);
-    });
+      // Create OutboundManager
+      this.outboundMgr = new OutboundManager(this.config, this.peerDb);
 
-    this.libp2p.addEventListener('peer:disconnect', (evt: any) => {
-      const peerId = evt.detail?.toString() ?? 'unknown';
-      console.log(`[net] peer:disconnect ${peerId} (total=${Math.max(0, this.peerMgr.getPeerCount() - 1)})`);
-      this.peerMgr.removePeer(peerId);
-      this.lastGetPeersSentMs.delete(peerId);
-      this.syncMachine?.onPeerDisconnect(peerId);
-      for (const cb of this.peerDisconnectedHandlers) {
-        try { cb(peerId, ''); } catch (err) {
-          console.warn(`[net] peerDisconnected handler error: ${String(err)}`);
+      // Register handshake stream handler
+      this.registerHandshakeHandler(libp2p);
+
+      // Register sync stream handler (framed protocol)
+      this.registerSyncStreamHandler(libp2p);
+
+      // Track peers on connect/disconnect.
+      // Listen for all four event types because the timing and payload differ:
+      //   connection:open  — fires first, has full Connection object (addr, direction)
+      //   peer:connect     — fires after, only has PeerId
+      //   connection:close — fires first, has full Connection object + timeline
+      //   peer:disconnect  — fires after, only has PeerId
+      this.libp2p.addEventListener('connection:open', (evt: any) => {
+        const conn = evt.detail;
+        const peerId = conn?.remotePeer?.toString() ?? 'unknown';
+        const direction = conn?.direction ?? '?';
+        console.log(`[net] connection:open peer=${peerId} dir=${direction}`);
+      });
+
+      this.libp2p.addEventListener('peer:connect', (evt: any) => {
+        const peerId = evt.detail?.toString() ?? 'unknown';
+        // NET_INTERFACE →
+        // "A connection whose remote peer id is this node's own is never a peer":
+        // never added, so peers() never lists it even
+        // between the upgrade and the funnel's close.
+        if (peerId === libp2p.peerId.toString()) return;
+        console.log(`[net] peer:connect ${peerId} (total=${this.peerMgr.getPeerCount() + 1})`);
+        this.peerMgr.addPeer({
+          id: peerId,
+          multiaddrs: [],
+          protocols: [],
+          connectedAt: Date.now(),
+        });
+      });
+
+      this.libp2p.addEventListener('connection:close', (evt: any) => {
+        const conn = evt.detail;
+        const peerId = conn?.remotePeer?.toString() ?? 'unknown';
+        const remoteAddr = conn?.remoteAddr?.toString() ?? '?';
+        const direction = conn?.direction ?? '?';
+        const timeline = conn?.timeline;
+        const openTs = timeline?.open ? new Date(timeline.open).toISOString() : '?';
+        const closeTs = timeline?.close ? new Date(timeline.close).toISOString() : '?';
+        const durationMs = (timeline?.close && timeline?.open)
+          ? timeline.close - timeline.open
+          : '?';
+        console.log(`[net] connection:close peer=${peerId} addr=${remoteAddr} dir=${direction} durationMs=${durationMs} opened=${openTs} closed=${closeTs}`);
+      });
+
+      this.libp2p.addEventListener('peer:disconnect', (evt: any) => {
+        const peerId = evt.detail?.toString() ?? 'unknown';
+        console.log(`[net] peer:disconnect ${peerId} (total=${Math.max(0, this.peerMgr.getPeerCount() - 1)})`);
+        this.peerMgr.removePeer(peerId);
+        this.lastGetPeersSentMs.delete(peerId);
+        // NET_INTERFACE → Stream Protocols → "A peer's sync streams are served one at a time":
+        // per-peer state goes when the peer does.
+        this.peerStreamQueues.delete(peerId);
+        this.syncMachine?.onPeerDisconnect(peerId);
+        for (const cb of this.peerDisconnectedHandlers) {
+          try { cb(peerId, ''); } catch (err) {
+            console.warn(`[net] peerDisconnected handler error: ${String(err)}`);
+          }
         }
+      });
+
+      // Log identify completion — confirms the connection was fully upgraded
+      this.libp2p.addEventListener('peer:identify', (evt: any) => {
+        const result = evt.detail;
+        const peerId = result?.peerId?.toString() ?? '?';
+        console.log(`[net] peer:identify ${peerId}`);
+      });
+
+      // Subscribe to gossip topics
+      const handlers: GossipHandlers = {
+        onOrderingBlock: (block, fromPeerId) => {
+          for (const cb of this.orderingBlockHandlers) cb(block, fromPeerId);
+        },
+        onTx: (tx, content, fromPeerId) => { for (const cb of this.txHandlers) cb(tx, content, fromPeerId); },
+      };
+
+      await subscribeTopics(
+        asGossip(this.libp2p),
+        this.validators,
+        this.peerMgr,
+        handlers,
+        topics,
+        this.karmaMembers,
+        this.config.protocolVersionSchedule,
+        () => this.syncStore.chainHeight(),
+        this.config.orderingBlockPowTargetFloorBits,
+        (header) => this.scheduledTargetProvider?.(header) ?? null,
+      );
+
+      // Log listen addresses
+      console.log(`[net] listening on: ${listenAddrs.map(a => a.toString()).join(', ')}`);
+
+      // Connect to bootstrap peers (awaited — must complete before caller
+      // registers blocksHandler so the initial sync burst isn't dropped).
+      for (const addr of this.config.bootstrapPeers) {
+        await this.dialAndHandshake(addr, 'seed');
       }
-    });
 
-    // Log identify completion — confirms the connection was fully upgraded
-    this.libp2p.addEventListener('peer:identify', (evt: any) => {
-      const result = evt.detail;
-      const peerId = result?.peerId?.toString() ?? '?';
-      console.log(`[net] peer:identify ${peerId}`);
-    });
+      // Start periodic timer: outbound manager + peer discovery. The sync machine
+      // keeps its own tick cadence inside its event loop. A method, not an
+      // inline closure, so a test can drive one tick without waiting
+      // OUTBOUND_TICK_INTERVAL_MS.
+      this.syncTimer = setInterval(() => this.outboundTick(), OUTBOUND_TICK_INTERVAL_MS);
 
-    // Subscribe to gossip topics
-    const handlers: GossipHandlers = {
-      onOrderingBlock: (block, fromPeerId) => {
-        for (const cb of this.orderingBlockHandlers) cb(block, fromPeerId);
-      },
-      onTx: (tx, content, fromPeerId) => { for (const cb of this.txHandlers) cb(tx, content, fromPeerId); },
-    };
-
-    await subscribeTopics(
-      asGossip(this.libp2p),
-      this.validators,
-      this.peerMgr,
-      handlers,
-      topics,
-      this.karmaMembers,
-      this.config.protocolVersionSchedule,
-      () => this.syncStore.chainHeight(),
-      this.config.orderingBlockPowTargetFloorBits,
-      (header) => this.scheduledTargetProvider?.(header) ?? null,
-    );
-
-    // Log listen addresses
-    console.log(`[net] listening on: ${listenAddrs.map(a => a.toString()).join(', ')}`);
-
-    // Connect to bootstrap peers (awaited — must complete before caller
-    // registers blocksHandler so the initial sync burst isn't dropped).
-    for (const addr of this.config.bootstrapPeers) {
-      await this.dialAndHandshake(addr, 'seed');
+      this.started = true;
+    } catch (err) {
+      // NET_INTERFACE → API → Node Lifecycle →
+      // "A start that throws stops what it started". Everything after
+      // createLibp2p runs inside the try above; on a throw, the libp2p
+      // node and whatever startup reached is torn down before the error
+      // leaves start().
+      if (this.syncTimer) {
+        clearInterval(this.syncTimer);
+        this.syncTimer = null;
+      }
+      this.syncMachine?.stop();
+      this.syncMachine = null;
+      this.outboundMgr = null;
+      this.peerDb = null;
+      this.topics = null;
+      try { await libp2p.stop(); } catch { /* already down */ }
+      this.libp2p = null;
+      throw err;
     }
-
-    // Start periodic timer: outbound manager + peer discovery. The sync machine
-    // keeps its own tick cadence inside its event loop. A method, not an
-    // inline closure, so a test can drive one tick without waiting
-    // OUTBOUND_TICK_INTERVAL_MS.
-    this.syncTimer = setInterval(() => this.outboundTick(), OUTBOUND_TICK_INTERVAL_MS);
-
-    this.started = true;
   }
 
   /**
@@ -992,11 +1020,23 @@ export class NetNode {
   // -----------------------------------------------------------------------
 
   private registerHandshakeHandler(libp2p: Libp2p): void {
-    if (this.handshakeHandlerRegistered) return;
     const magic = this.config.magic;
 
     libp2p.handle('/dagsocial/handshake/1', async ({ stream, connection }) => {
       const peerId = connection.remotePeer.toString();
+      // NET_INTERFACE → Validation → "A stream write is bounded in time as
+      // well": every answer on this stream is raced against the deadline the
+      // reader on the other side holds (`syncRequestTimeoutMs`).
+      const deadlineMs = this.config.syncRequestTimeoutMs;
+      const sinkFrame = async (data: Uint8Array): Promise<void> =>
+        sinkWithDeadline(stream, data, deadlineMs);
+      // NET_INTERFACE → Stream Protocols → "A stream handler never rejects":
+      // the failure-path empty answer to a peer that has gone ends the
+      // stream with nothing more to say.
+      const replyEmpty = async (): Promise<void> => {
+        try { await sinkFrame(new Uint8Array(0)); } catch { /* peer gone */ }
+      };
+
       // NET_INTERFACE → "A banned peer's handshake is refused unread". The gater
       // refuses the same predicate one layer down, at the transport; this check
       // covers a peer banned between its connection's upgrade and its handshake,
@@ -1011,11 +1051,11 @@ export class NetNode {
       // an empty frame — with no penalty, there being nobody to penalise.
       if (peerId === libp2p.peerId.toString()) {
         console.log(`[net] inbound handshake from ${peerId}: this is our own peer id — refusing`);
-        await stream.sink([new Uint8Array(0)]).catch(() => { /* the peer is already gone */ });
+        await replyEmpty();
         return;
       }
       try {
-        const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
+        const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(deadlineMs));
         if (data === null) {
           console.warn(`[net] handshake stream from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
           this.peerMgr.recordPenaltyKind(
@@ -1023,11 +1063,11 @@ export class NetNode {
             peerId,
             'handshake stream exceeds byte cap',
           );
-          await stream.sink([new Uint8Array(0)]);
+          await replyEmpty();
           return;
         }
         if (data.length === 0) {
-          await stream.sink([new Uint8Array(0)]);
+          await replyEmpty();
           return;
         }
 
@@ -1035,7 +1075,7 @@ export class NetNode {
         if (decoded.kind === 'reject') {
           // NET_INTERFACE → "Ban policy": frame-tier reject — stream closed, no penalty.
           console.warn(`[net] inbound handshake frame from ${peerId} rejected: ${decoded.code}`);
-          await stream.sink([new Uint8Array(0)]);
+          await replyEmpty();
           return;
         }
         const body = decoded.body;
@@ -1048,7 +1088,7 @@ export class NetNode {
           era = this.currentEra();
         } catch (err) {
           console.error(`[net] cannot read our era for ${peerId}: ${String(err)}`);
-          await stream.sink([new Uint8Array(0)]);
+          await replyEmpty();
           return;
         }
 
@@ -1064,7 +1104,7 @@ export class NetNode {
             peerId,
             `handshake: ${result.error}`,
           );
-          await stream.sink([new Uint8Array(0)]);
+          await replyEmpty();
           return;
         }
 
@@ -1103,21 +1143,19 @@ export class NetNode {
           response = buildHandshakeFrame(magic, this.buildOurHandshake());
         } catch (err) {
           console.error(`[net] cannot build our handshake for ${peerId}: ${String(err)}`);
-          await stream.sink([new Uint8Array(0)]);
+          await replyEmpty();
           return;
         }
-        await stream.sink([response]);
+        await sinkFrame(response);
       } catch (err) {
         // The empty frame is all we can say to a peer whose handshake did not
         // complete; the log is what separates that from a peer that never
         // dialled. `warn`, not `error` — an ordinary dropped connection lands
         // here too.
         console.warn(`[net] inbound handshake handler failed for ${peerId}: ${String(err)}`);
-        try { await stream.sink([new Uint8Array(0)]); } catch { /* the peer is already gone */ }
+        await replyEmpty();
       }
     });
-
-    this.handshakeHandlerRegistered = true;
   }
 
   // -----------------------------------------------------------------------
@@ -1125,228 +1163,233 @@ export class NetNode {
   // -----------------------------------------------------------------------
 
   private registerSyncStreamHandler(libp2p: Libp2p): void {
-    if (this.syncHandlerRegistered) return;
     const magic = this.config.magic;
 
     libp2p.handle(SYNC_PROTOCOL, async ({ stream, connection }) => {
       const peerId = connection.remotePeer.toString();
 
-      /**
-       * "I have no answer for you" — the protocol courtesy that stops the peer
-       * hanging until its own timeout. Used only on paths that failed to
-       * produce a real response; the success paths sink their own frames.
-       *
-       * It answers the peer and nothing more: every path that reaches it after a
-       * *failure* logs first, so the empty frame is never the whole record of
-       * one. The silent callers are the paths where declining is routine policy
-       * — the not-Active drop just below, and a query for which we hold no
-       * provider or handler at all.
-       */
-      const replyEmpty = async (): Promise<void> => {
-        try {
-          await stream.sink([new Uint8Array(0)]);
-        } catch {
-          // The peer is already gone. Nothing left to say, and no way to say it.
-        }
-      };
-
-      // Drop messages from peers that are not in Active state
+      // NET_INTERFACE → Stream Protocols → "A peer's sync streams are served
+      // one at a time". A not-Active peer's stream is refused at once and
+      // holds no turn — it leaves the queue untouched. The write to a peer
+      // that may have gone swallows its own error (→ "A stream handler
+      // never rejects").
       if (!this.peerMgr.isPeerActive(peerId)) {
+        try { await sinkWithDeadline(stream, new Uint8Array(0), this.config.syncRequestTimeoutMs); }
+        catch { /* peer gone */ }
+        await stream.close().catch(() => { /* already gone */ });
+        return;
+      }
+
+      // Chain onto the peer's tail. The read, the serve and the close all
+      // run inside `serveOneSyncStream`, so a stream's read deadline starts
+      // when its turn arrives rather than when libp2p accepted it. The
+      // stored tail swallows a rejection — one stream's fault never stalls
+      // the peer's next stream — but the handler awaits `next` itself, so
+      // a fault nobody foresaw surfaces as an unhandled rejection and the
+      // node's backstop logs it.
+      const prev = this.peerStreamQueues.get(peerId) ?? Promise.resolve();
+      const next = prev.then(() => this.serveOneSyncStream(magic, peerId, stream, connection));
+      this.peerStreamQueues.set(peerId, next.catch(() => { /* a per-stream fault leaves the lane open */ }));
+      await next;
+    }, { maxInboundStreams: MAX_INBOUND_SYNC_STREAMS });
+  }
+
+  /**
+   * One sync stream, whole: read, decode, dispatch or serve, close.
+   *
+   * Every path ends the stream before returning (NET_INTERFACE → Stream
+   * Protocols → "Every inbound stream ends"). A one-way message's stream
+   * closes once its body is handed on; a query's closes after its answer
+   * (zero bytes included); an undecodable frame or an unserved code closes
+   * unanswered. Called under the per-peer serial queue in
+   * `registerSyncStreamHandler`.
+   */
+  private async serveOneSyncStream(
+    magic: number,
+    peerId: string,
+    stream: import('@libp2p/interface').Stream,
+    connection: { remoteAddr?: { toString(): string } },
+  ): Promise<void> {
+    // Default write deadline — the deadline the reader on the other side
+    // holds. A `Blocks` answer is ×5 (NET_INTERFACE → Validation →
+    // "A stream write is bounded in time as well").
+    const deadlineMs = this.config.syncRequestTimeoutMs;
+    const sinkDeadline = async (data: Uint8Array, mul = 1): Promise<void> =>
+      sinkWithDeadline(stream, data, deadlineMs * mul);
+    // NET_INTERFACE → Stream Protocols → "A stream handler never rejects":
+    // the failure-path empty answer to a peer that has gone ends the stream
+    // with nothing more to say.
+    const replyEmpty = async (): Promise<void> => {
+      try { await sinkDeadline(new Uint8Array(0)); } catch { /* peer gone */ }
+    };
+    const closeNow = async (): Promise<void> => {
+      await stream.close().catch(() => { /* already gone */ });
+    };
+
+    const serveChainQuery = async <T, P>(
+      code: number,
+      request: T | null,
+      provider: P | null,
+      serve: (
+        request: T,
+        ourHeight: number,
+        provider: P,
+      ) => Uint8Array,
+      writeMultiplier: number,
+    ): Promise<void> => {
+      if (request === null) {
+        console.warn(`[net] malformed chain query (code ${code}) from ${peerId}, dropping`);
+        this.peerMgr.recordPenaltyKind(
+          PenaltyKind.ProtocolViolation,
+          peerId,
+          `malformed chain query (code ${code})`,
+        );
         await replyEmpty();
         return;
       }
 
-      /**
-       * The decline paths `MSG_GET_HEADERS` and `MSG_GET_BLOCKS` share.
-       *
-       * Every one of them answers — see the arms below for why silence is the
-       * failure mode to design against on this stream. The two arms differ
-       * only in which decoder produced `request` and which serve loop turns it
-       * into a frame, so both live at the call site and everything around them
-       * lives here.
-       */
-      const serveChainQuery = async <T>(
-        code: number,
-        request: T | null,
-        serve: (
-          request: T,
-          ourHeight: number,
-          getBlock: (height: number) => OrderingBlock | null,
-        ) => Uint8Array,
-      ): Promise<void> => {
-        if (request === null) {
-          console.warn(`[net] malformed chain query (code ${code}) from ${peerId}, dropping`);
-          this.peerMgr.recordPenaltyKind(
-            PenaltyKind.ProtocolViolation,
-            peerId,
-            `malformed chain query (code ${code})`,
-          );
-          await replyEmpty();
-          return;
-        }
+      // NET_INTERFACE → Sync Handler Registration: a node that has
+      // registered no provider for a query answers it zero bytes.
+      if (!provider) {
+        await replyEmpty();
+        return;
+      }
 
-        const getBlock = this.headersProvider;
-        if (!getBlock) {
-          await replyEmpty();
-          return;
-        }
-
-        // The serve loops read our own store through node's provider, so a
-        // throw here is a row we hold and cannot encode — ours, not the peer's,
-        // and no reason to penalise the sender (NET_INTERFACE → Penalty
-        // Attribution). Its own span for the same reason the posts callback has
-        // one.
-        let response: Uint8Array;
-        try {
-          response = serve(request, this.syncStore.chainHeight(), getBlock);
-        } catch (err) {
-          console.error(
-            `[net] cannot serve chain query (code ${code}) for ${peerId}: ${String(err)}`,
-          );
-          await replyEmpty();
-          return;
-        }
-        await stream.sink([response]);
-      };
-
+      // The serve loops read our own store through node's provider, so a
+      // throw here is a row we hold and cannot encode — ours, not the peer's,
+      // and no reason to penalise the sender (NET_INTERFACE → Penalty
+      // Attribution). Its own span for the same reason the posts callback has
+      // one.
+      let response: Uint8Array;
       try {
-        const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
-        if (data === null) {
-          console.warn(`[net] sync stream from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
+        response = serve(request, this.syncStore.chainHeight(), provider);
+      } catch (err) {
+        console.error(
+          `[net] cannot serve chain query (code ${code}) for ${peerId}: ${String(err)}`,
+        );
+        await replyEmpty();
+        return;
+      }
+      await sinkDeadline(response, writeMultiplier);
+    };
+
+    try {
+      const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
+      if (data === null) {
+        console.warn(`[net] sync stream from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
+        this.peerMgr.recordPenaltyKind(
+          PenaltyKind.ProtocolViolation,
+          peerId,
+          'sync stream exceeds byte cap',
+        );
+        await replyEmpty();
+        return;
+      }
+      if (data.length === 0) {
+        await replyEmpty();
+        return;
+      }
+
+      let code: number;
+      let body: Uint8Array;
+      try {
+        const framed = decodeFrame(magic, data);
+        code = framed.code;
+        body = framed.body;
+      } catch {
+        // NET_INTERFACE → Sync Handler Registration: a code no arm serves
+        // is closed unanswered, and the same posture applies to an
+        // undecodable frame.
+        return;
+      }
+
+      if (code === MSG_GET_PEERS) {
+        // Prefer the requester's declared address: an inbound connection's
+        // remoteAddr carries an ephemeral source port, which would make the
+        // requester-exclusion in servePeersBody a no-op.
+        const response = servePeersBody(body, {
+          peerDb: this.peerDb,
+          peerMgr: this.peerMgr,
+          peerId,
+          requesterAddr: this.peerMgr.getPeerMetadata(peerId)?.address
+            ?? connection.remoteAddr?.toString()
+            ?? null,
+          magic,
+        });
+        if (response) await sinkDeadline(response);
+        else await replyEmpty();
+        return;
+      }
+
+      if (code === MSG_GET_HEADERS) {
+        await serveChainQuery(code, decodeGetHeaders(body), this.headerProvider,
+          (request, ourHeight, getHeader) => serveHeadersResponse(magic, request, ourHeight, getHeader), 1);
+        return;
+      }
+
+      if (code === MSG_GET_BLOCKS) {
+        await serveChainQuery(code, decodeGetBlocks(body), this.headersProvider,
+          (request, ourHeight, getBlock) => serveBlocksResponse(magic, request, ourHeight, getBlock), 5);
+        return;
+      }
+
+      if (code === MSG_MODIFIER_REQUEST) {
+        const req = decodeModifierRequest(body);
+        if (!req) {
+          console.warn(`[net] malformed ModifierRequest from ${peerId}, dropping`);
           this.peerMgr.recordPenaltyKind(
             PenaltyKind.ProtocolViolation,
             peerId,
-            'sync stream exceeds byte cap',
+            'malformed ModifierRequest',
           );
-          await stream.sink([new Uint8Array(0)]);
+          await replyEmpty();
           return;
         }
-        if (data.length === 0) {
-          await stream.sink([new Uint8Array(0)]);
-          return;
-        }
-
-        // Try framed decode first
-        let code: number;
-        let body: Uint8Array;
-        try {
-          const framed = decodeFrame(magic, data);
-          code = framed.code;
-          body = framed.body;
-        } catch {
-          // An undecodable request on this protocol. Answering zero bytes is
-          // the arm's "I cannot answer" signal (NET_INTERFACE → Pull Requests)
-          // and attributes nothing to the peer.
-          await stream.sink([new Uint8Array(0)]);
-          return;
-        }
-
-        // Handle peer discovery requests (MSG_GET_PEERS). No registered
-        // handler callback — PeerDb is internal to net. Served whatever our
-        // sync phase is; an empty PeerDb still answers { peers: [] }.
-        if (code === MSG_GET_PEERS) {
-          // Prefer the requester's declared address: an inbound connection's
-          // remoteAddr carries an ephemeral source port, which would make the
-          // requester-exclusion in servePeersBody a no-op.
-          const response = servePeersBody(body, {
-            peerDb: this.peerDb,
-            peerMgr: this.peerMgr,
-            peerId,
-            requesterAddr: this.peerMgr.getPeerMetadata(peerId)?.address
-              ?? connection.remoteAddr?.toString()
-              ?? null,
-            magic,
-          });
-          if (response) await stream.sink([response]);
-          return;
-        }
-
-        // Handle fork resolution's two chain queries (MSG_GET_HEADERS,
-        // MSG_GET_BLOCKS). Both read `this.headersProvider` at request time, so
-        // setter order does not matter (NET_INTERFACE → Sync Handler
-        // Registration).
-        //
-        // ⚠ **Every path in both arms answers, including the ones that
-        // decline.** An unrecognized code falls through to
-        // `syncMachine.handleMessage`, whose switch answers nothing, and an
-        // unanswered stream blocks the caller for its whole timeout — 5× for
-        // blocks. Zero bytes ("I cannot answer") stays distinct from a framed
-        // `vlqU(0)` ("I consulted my chain and have nothing"): a node holding no
-        // provider has no chain to consult, so it cannot honestly send the
-        // second.
-        //
-        // `serveChainQuery` owns the decline paths both arms share; each arm
-        // owns its own decoder, because the code pair is the discriminator.
-        if (code === MSG_GET_HEADERS) {
-          await serveChainQuery(code, decodeGetHeaders(body), (request, ourHeight, getBlock) =>
-            serveHeadersResponse(magic, request, ourHeight, getBlock));
-          return;
-        }
-
-        if (code === MSG_GET_BLOCKS) {
-          await serveChainQuery(code, decodeGetBlocks(body), (request, ourHeight, getBlock) =>
-            serveBlocksResponse(magic, request, ourHeight, getBlock));
-          return;
-        }
-
-        // ModifierRequest for post bodies (type 103) — served on this stream,
-        // never relayed (NET_INTERFACE → Local-Serve-Before-Relay). Type 101
-        // (ordering blocks) falls through to the sync machine.
-        if (code === MSG_MODIFIER_REQUEST) {
-          const req = decodeModifierRequest(body);
-          if (!req) {
-            console.warn(`[net] malformed ModifierRequest from ${peerId}, dropping`);
-            this.peerMgr.recordPenaltyKind(
-              PenaltyKind.ProtocolViolation,
-              peerId,
-              'malformed ModifierRequest',
-            );
+        if (req.typeId === MODIFIER_POST_BODY) {
+          const provider = this.postBodyProvider;
+          if (!provider) {
             await replyEmpty();
             return;
           }
-          if (req.typeId === MODIFIER_POST_BODY) {
-            const provider = this.postBodyProvider;
-            if (!provider) {
-              await replyEmpty();
-              return;
-            }
-            const response = servePostBodiesResponse(magic, req, provider);
-            if (response === null) {
-              await replyEmpty();
-              return;
-            }
-            await stream.sink([response]);
+          const response = servePostBodiesResponse(magic, req, provider);
+          if (response === null) {
+            await replyEmpty();
             return;
           }
-          // Type 101 and others → sync machine
-          this.syncMachine?.handleMessage(peerId, code, body);
+          await sinkDeadline(response);
           return;
         }
+        // Type 101 is a block request. The sync machine serves it on a new
+        // stream it opens through sendToPeer; this one carried the request
+        // and ends here — NET_INTERFACE → Stream Protocols → "Every inbound stream ends".
+        this.syncMachine?.handleMessage(peerId, code, body);
+        return;
+      }
 
-        // Dispatch to sync machine for all other message types
-        console.log(`[net] sync handler: received code=${code} body_len=${body.length} from ${peerId}`);
-        // Its own span, for the same reason. `handleMessage` decodes the body
-        // and applies the inbound caps, then enqueues — the queued work is
-        // isolated later by `dispatchDataEvent`. So a throw *here* is a bug in
-        // net's own decode/guard layer, which is exactly the thing that must
-        // not be answered with a silent empty frame.
-        try {
-          this.syncMachine?.handleMessage(peerId, code, body);
-        } catch (err) {
-          console.error(`[net] sync dispatch failed for code=${code} from ${peerId}: ${String(err)}`);
-          await replyEmpty();
-        }
+      // Dispatch to sync machine for all other one-way messages (SyncInfo,
+      // Inv, ModifierResponse). Each is a one-way: its stream carried the
+      // message and ends here.
+      //
+      // `handleMessage` decodes the body and applies the inbound caps, then
+      // enqueues — the queued work is isolated later by `dispatchDataEvent`.
+      // A throw here is a bug in net's own decode/guard layer, which is
+      // exactly the thing that must not be answered with a silent empty frame.
+      try {
+        this.syncMachine?.handleMessage(peerId, code, body);
       } catch (err) {
-        // What is left after the two narrow spans above: stream I/O, the frame
-        // decode fallback, and the chain-query / peer-exchange serve paths. A
-        // dropped connection mid-stream is ordinary and lands here, which is
-        // why this is `warn` rather than `error`.
-        console.warn(`[net] sync stream handler failed for ${peerId}: ${String(err)}`);
+        console.error(`[net] sync dispatch failed for code=${code} from ${peerId}: ${String(err)}`);
         await replyEmpty();
       }
-    });
-
-    this.syncHandlerRegistered = true;
+    } catch (err) {
+      // What is left after the two narrow spans above: stream I/O, the frame
+      // decode fallback, and the chain-query / peer-exchange serve paths. A
+      // dropped connection mid-stream is ordinary and lands here, which is
+      // why this is `warn` rather than `error`.
+      console.warn(`[net] sync stream handler failed for ${peerId}: ${String(err)}`);
+      await replyEmpty();
+    } finally {
+      await closeNow();
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -1382,99 +1425,95 @@ export class NetNode {
 
   private async runOutboundHandshake(peerId: string): Promise<HandshakeResult> {
     if (!this.libp2p) throw new Error('Not started');
-    const peer = this.libp2p.getPeers().find(p => p.toString() === peerId);
-    if (!peer) throw new Error(`Peer ${peerId} not connected`);
-
+    const peer = connectedPeer(this.libp2p, peerId);
     const magic = this.config.magic;
+    const ourMsg = this.buildOurHandshake();
 
-    let stream: import('@libp2p/interface').Stream | undefined;
-    try {
-      stream = await this.libp2p.dialProtocol(peer, '/dagsocial/handshake/1', {
-        signal: AbortSignal.timeout(this.config.syncRequestTimeoutMs),
-      });
+    const data = await oneRoundTrip(
+      this.libp2p,
+      peer,
+      '/dagsocial/handshake/1',
+      buildHandshakeFrame(magic, ourMsg),
+      this.config,
+    );
 
-      // Send our handshake
-      const ourMsg = this.buildOurHandshake();
-      await stream.sink([buildHandshakeFrame(magic, ourMsg)]);
-
-      // Read their response
-      const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
-      if (data === null) {
-        console.warn(`[net] handshake response from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
-        this.peerMgr.recordPenaltyKind(
-          PenaltyKind.ProtocolViolation,
-          peerId,
-          'handshake stream exceeds byte cap',
-        );
-        return {
-          ok: false,
-          error: 'handshake response exceeds byte cap',
-          rejection: 'malformed',
-          peerHeight: 0,
-          peerCapabilities: [],
-        };
-      }
-
-      if (data.length === 0) {
-        return { ok: false, error: 'empty handshake response', peerHeight: 0, peerCapabilities: [] };
-      }
-
-      const decoded = decodeHandshakePayload(magic, data);
-      if (decoded.kind === 'reject') {
-        // NET_INTERFACE → "Ban policy": frame-tier reject — no penalty.
-        console.warn(`[net] outbound handshake with ${peerId}: frame rejected (${decoded.code})`);
-        return {
-          ok: false,
-          error: `handshake frame rejected: ${decoded.code}`,
-          peerHeight: 0,
-          peerCapabilities: [],
-        };
-      }
-      const body = decoded.body;
-
-      const result = validateHandshake(parseHandshakeBody(body), this.currentEra());
-      if (!result.ok) {
-        console.warn(`[net] outbound handshake with ${peerId} rejected: ${result.error}`);
-        const outHsPenKind = handshakePenalty(result.rejection);
-        this.peerMgr.recordPenaltyKind(
-          outHsPenKind,
-          peerId,
-          `handshake: ${result.error}`,
-        );
-        return result;
-      }
-      console.log(`[net] outbound handshake with ${peerId}: ok=true height=${result.peerHeight} caps=${result.peerCapabilities.length}`);
-      return result;
-    } finally {
-      // A rejecting close must not replace what this function already
-      // determined — the caller logs the handshake's own outcome, not ours.
-      if (stream) await stream.close().catch(() => {});
+    if (data === null) {
+      console.warn(`[net] handshake response from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
+      this.peerMgr.recordPenaltyKind(
+        PenaltyKind.ProtocolViolation,
+        peerId,
+        'handshake stream exceeds byte cap',
+      );
+      return {
+        ok: false,
+        error: 'handshake response exceeds byte cap',
+        rejection: 'malformed',
+        peerHeight: 0,
+        peerCapabilities: [],
+      };
     }
+
+    if (data.length === 0) {
+      return { ok: false, error: 'empty handshake response', peerHeight: 0, peerCapabilities: [] };
+    }
+
+    const decoded = decodeHandshakePayload(magic, data);
+    if (decoded.kind === 'reject') {
+      // NET_INTERFACE → "Ban policy": frame-tier reject — no penalty.
+      console.warn(`[net] outbound handshake with ${peerId}: frame rejected (${decoded.code})`);
+      return {
+        ok: false,
+        error: `handshake frame rejected: ${decoded.code}`,
+        peerHeight: 0,
+        peerCapabilities: [],
+      };
+    }
+    const body = decoded.body;
+
+    const result = validateHandshake(parseHandshakeBody(body), this.currentEra());
+    if (!result.ok) {
+      console.warn(`[net] outbound handshake with ${peerId} rejected: ${result.error}`);
+      const outHsPenKind = handshakePenalty(result.rejection);
+      this.peerMgr.recordPenaltyKind(
+        outHsPenKind,
+        peerId,
+        `handshake: ${result.error}`,
+      );
+      return result;
+    }
+    console.log(`[net] outbound handshake with ${peerId}: ok=true height=${result.peerHeight} caps=${result.peerCapabilities.length}`);
+    return result;
   }
 
   // -----------------------------------------------------------------------
   // Sync helpers
   // -----------------------------------------------------------------------
 
-  private sendToPeer(peerId: string, data: Uint8Array): void {
-    if (!this.libp2p) return;
-    const peer = this.libp2p.getPeers().find(p => p.toString() === peerId);
+  private sendToPeer(peerId: string, data: Uint8Array): Promise<void> {
+    if (!this.libp2p) return Promise.resolve();
+    const peer = this.libp2p.getPeers().find((p) => p.toString() === peerId);
     if (!peer) {
       console.warn(`[net] sendToPeer: peer ${peerId} not found in libp2p.getPeers() (have ${this.libp2p.getPeers().length} peers)`);
-      return;
+      return Promise.resolve();
     }
 
-    this.libp2p.dialProtocol(peer, SYNC_PROTOCOL).then(async (stream) => {
+    // Return a promise that settles when the write ends (taken, failed or
+    // aborted). The sync machine awaits it to learn when the next block
+    // answer to the same peer may go out (NET_INTERFACE → Serve Side →
+    // "A peer is served one block answer at a time").
+    const deadlineMs = this.config.syncRequestTimeoutMs;
+    return this.libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
+      signal: AbortSignal.timeout(deadlineMs),
+    }).then(async (stream) => {
       try {
-        await stream.sink([data]);
-      } catch {
-        // ignore write errors
-      } finally {
-        await stream.close().catch(() => {});
-      }
-    }).catch(() => {
-      // ignore dial errors
-    });
+        // The write is raced against the deadline the reader on the other
+        // side runs under — a push that outlasts it aborts the stream and
+        // never a penalty (NET_INTERFACE → Validation → "A stream write is
+        // bounded in time as well").
+        await sinkWithDeadline(stream, data, deadlineMs);
+      } catch { /* the write did not take — a dead connection, nothing to retry */ }
+      await stream.close().catch(() => { /* already gone */ });
+    }).catch(() => { /* a failed dial has no retry here; the pick path handles rotation */ });
   }
 
   // -----------------------------------------------------------------------
@@ -1523,7 +1562,7 @@ export class NetNode {
    * idempotently.
    */
   private disconnectPeer(peerId: string): void {
-    const conn = this.libp2p?.getConnections().find(c => c.remotePeer.toString() === peerId);
+    const conn = this.libp2p?.getConnections().find((c) => c.remotePeer.toString() === peerId);
     if (conn) void Promise.resolve(this.libp2p!.hangUp(conn.remotePeer)).catch(() => {});
     this.peerMgr.removePeer(peerId);
   }
@@ -1563,7 +1602,7 @@ export class NetNode {
   }
 
   /** NET_INTERFACE → API → Node Lifecycle. */
-  syncPhase(): 'idle' | 'syncing' | 'backfill' | 'synced' {
+  syncPhase(): 'idle' | 'syncing' | 'synced' {
     return this.syncMachine?.getState().phase ?? 'idle';
   }
 
@@ -1609,27 +1648,22 @@ export class NetNode {
    */
   async requestPeers(peerId: string): Promise<void> {
     if (!this.libp2p) return;
-    const peer = this.libp2p.getPeers().find(p => p.toString() === peerId);
-    if (!peer) {
+    let peer;
+    try {
+      peer = connectedPeer(this.libp2p, peerId);
+    } catch {
       console.warn(`[net] requestPeers: peer ${peerId} not found`);
       return;
     }
     const magic = this.config.magic;
     const request = encodeGetPeers(magic);
-    let stream: import('@libp2p/interface').Stream | undefined;
     try {
-      stream = await this.libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
-        signal: AbortSignal.timeout(this.config.syncRequestTimeoutMs),
-      });
-      await stream.sink([request]);
-      const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
+      const data = await oneRoundTrip(this.libp2p, peer, SYNC_PROTOCOL, request, this.config);
       if (data === null) {
         console.warn(`[net] requestPeers: response from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
         return;
       }
-      if (data.length === 0) {
-        return;
-      }
+      if (data.length === 0) return;
       const frame = decodeFrame(magic, data);
       if (frame.code !== MSG_PEERS) {
         console.warn(`[net] requestPeers: unexpected response code ${frame.code}`);
@@ -1646,8 +1680,6 @@ export class NetNode {
       }
     } catch (err) {
       console.warn(`[net] requestPeers failed for peer ${peerId}: ${String(err)}`);
-    } finally {
-      if (stream) await stream.close().catch(() => {});
     }
   }
 
@@ -1705,15 +1737,24 @@ export class NetNode {
   }
 
   /**
-   * Register the block provider for header-first sync. Wires the sync machine's
-   * store adapter and the `GetHeaders` / `GetBlocks` serve arms, both of which
-   * read the provider when they need it — so this is valid before or after
+   * Register the whole-block provider for `GetBlocks` and the blocks a
+   * `ModifierResponse` serves. The provider reads at request time rather
+   * than closed over at registration — so this is valid before or after
    * `start()`, and a later call replaces the provider (NET_INTERFACE → Sync
    * Handler Registration).
    */
   setHeadersHandler(getBlock: (height: number) => OrderingBlock | null): void {
     this.syncStore.setOrderingBlockFn((h) => getBlock(h));
     this.headersProvider = getBlock;
+  }
+
+  /**
+   * Register the header-at-height provider for `GetHeaders` (NET_INTERFACE
+   * → Sync Handler Registration). One height is one
+   * provider call; unset, `GetHeaders` is answered zero bytes.
+   */
+  setHeaderProvider(cb: (height: number) => BlockHeader | null): void {
+    this.headerProvider = cb;
   }
 
   // NET_INTERFACE → Sync Handler Registration
@@ -1744,44 +1785,34 @@ export class NetNode {
     this.postBodyProvider = cb;
   }
 
-  setMissingBodiesProvider(cb: (limit: number) => { id: string; contentHash: Uint8Array }[]): void {
-    this.syncMachine?.setMissingBodiesProvider(cb);
-  }
-
-  onPostBody(cb: (postId: string, content: string, fromPeerId: string) => boolean): void {
-    this.postBodyHandlers.push(cb);
-  }
-
   async requestPostBodies(
     ids: { id: string; contentHash: Uint8Array }[],
     peerId: string,
   ): Promise<{ id: string; content: string }[]> {
     if (!this.libp2p) throw new Error('NetNode not started');
-    const peer = this.libp2p.getPeers().find(p => p.toString() === peerId);
-    if (!peer) throw new Error(`Peer ${peerId} not connected`);
+    const peer = connectedPeer(this.libp2p, peerId);
 
     const commitments = new Map<string, Uint8Array>();
     for (const entry of ids) commitments.set(entry.id, entry.contentHash);
 
-    const req: import('./sync-types.js').ModifierRequest = {
-      typeId: MODIFIER_POST_BODY,
-      ids: ids.map(e => e.id),
-    };
     const magic = this.config.magic;
-    let stream: import('@libp2p/interface').Stream | undefined;
-    try {
-      stream = await this.libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
-        signal: AbortSignal.timeout(this.config.syncRequestTimeoutMs),
-      });
-      await stream.sink([encodeModifierRequest(magic, req)]);
-      const raw = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
-      if (raw === null || raw.length === 0) return [];
+    const results: { id: string; content: string }[] = [];
+    // NET_INTERFACE → Pull Requests: any number of ids, asked in requests
+    // of at most MAX_INV_IDS, one after another, the answers merged; a
+    // request that fails fails the call, as one request does.
+    for (let i = 0; i < ids.length; i += MAX_INV_IDS) {
+      const chunk = ids.slice(i, i + MAX_INV_IDS);
+      const req: import('./sync-types.js').ModifierRequest = {
+        typeId: MODIFIER_POST_BODY,
+        ids: chunk.map((e) => e.id),
+      };
+      const raw = await oneRoundTrip(this.libp2p, peer, SYNC_PROTOCOL, encodeModifierRequest(magic, req), this.config);
+      if (raw === null || raw.length === 0) continue;
       const frame = decodeFrame(magic, raw);
-      if (frame.code !== MSG_MODIFIER_RESPONSE) return [];
+      if (frame.code !== MSG_MODIFIER_RESPONSE) continue;
       const resp = decodeModifierResponse(frame.body);
-      if (!resp || resp.typeId !== MODIFIER_POST_BODY) return [];
+      if (!resp || resp.typeId !== MODIFIER_POST_BODY) continue;
 
-      const results: { id: string; content: string }[] = [];
       for (const mod of resp.modifiers) {
         const commitment = commitments.get(mod.id);
         if (!commitment) continue;
@@ -1801,10 +1832,8 @@ export class NetNode {
         }
         results.push({ id: mod.id, content });
       }
-      return results;
-    } finally {
-      if (stream) await stream.close();
     }
+    return results;
   }
 
   // Expose for node to register storage-backed handler

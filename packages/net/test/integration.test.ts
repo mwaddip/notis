@@ -283,6 +283,7 @@ describe('Two-node integration', () => {
       expect(r.valid, `fixture block h=${block.header.height}: ${r.error}`).toBe(true);
     }
     nodeA.setHeadersHandler((h) => chain.get(h) ?? null);
+    nodeA.setHeaderProvider((h) => chain.get(h)?.header ?? null);
     nodeA.setChainHeightProvider(() => 3);
     await nodeA.start();
 

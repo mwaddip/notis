@@ -69,14 +69,14 @@ describe('posts store (integration)', () => {
 
     expect((getPost(id) as any).content).toBeNull();
 
-    const missing = getMissingBodies(10);
+    const missing = getMissingBodies();
     expect(missing.some(m => m.id === id)).toBe(true);
 
     const filled = setPostBody(id, content);
     expect(filled).toBe(true);
     expect((getPost(id) as any).content).toBe('backfill target');
 
-    const missing2 = getMissingBodies(10);
+    const missing2 = getMissingBodies();
     expect(missing2.some(m => m.id === id)).toBe(false);
   });
 

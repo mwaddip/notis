@@ -6,9 +6,15 @@ import {
   MSG_MODIFIER_REQUEST,
   MSG_MODIFIER_RESPONSE,
   MODIFIER_ORDERING_BLOCK,
-  BACKFILL_BATCH_IDS,
 } from './types.js';
-import { isHeight, MAX_INV_IDS, MAX_SERVE_BODY_BYTES } from './msg-guards.js';
+import {
+  isHeight,
+  MAX_INV_IDS,
+  MAX_SERVE_BODY_BYTES,
+  SYNC_INFO_MIN_INTERVAL_MS,
+  MAX_PENDING_BLOCK_REQUESTS,
+  MAX_DATA_EVENTS_PER_PEER,
+} from './msg-guards.js';
 import type { SyncInfo, Inv, ModifierRequest, ModifierResponse, SyncState } from './sync-types.js';
 import {
   encodeSyncInfo,
@@ -81,8 +87,6 @@ const SYNCED_POLL_INTERVAL_MS = 30_000;
  * floor for no-movement replies.
  */
 const MIN_SYNCINFO_INTERVAL_MS = 15_000;
-/** Maximum data events in the queue before dropping oldest. */
-const MAX_DATA_QUEUE = 64;
 /**
  * How often the loop runs its own timer tick.
  *
@@ -107,7 +111,8 @@ const TIMER_TICK_INTERVAL_MS = 1_000;
  *
  * **Biased event loop** (call `start()` to begin):
  * 1. Control events (peer connect/disconnect, sync-info) — unbounded, never dropped
- * 2. Data events (inv, modifier req/resp) — bounded, lossy above MAX_DATA_QUEUE
+ * 2. Data events (inv, modifier req/resp) — bounded per peer at `MAX_DATA_EVENTS_PER_PEER`,
+ *    one more dropping that peer's oldest, never another's (NET_INTERFACE → Biased Event Loop)
  * 3. Timer tick — fallback, lowest priority, every TIMER_TICK_INTERVAL_MS
  * 4. Idle — parks until an enqueue or the tick deadline; it does not re-poll
  *
@@ -133,6 +138,13 @@ export class SyncMachine {
   private lastReportedTip = new Map<string, number>();
   private lastSentMs = new Map<string, number>();
 
+  // NET_INTERFACE → Serve Side → "A peer's `SyncInfo` is acted on at most
+  // once per `SYNC_INFO_MIN_INTERVAL_MS`": the stamp of the last SyncInfo
+  // acted on from this peer, and that peer's pending one — a later report
+  // replaces it, and the first timer tick past the interval acts on it.
+  private lastActedOnSyncInfoMs = new Map<string, number>();
+  private pendingSyncInfo = new Map<string, SyncInfo>();
+
   /**
    * Outstanding requested modifier ids, keyed by the peer the request was sent
    * to (audit M-10). A response modifier is accepted only if its id is present
@@ -147,13 +159,6 @@ export class SyncMachine {
 
   private onSyncedCallbacks: Array<() => void> = [];
 
-  // NET_INTERFACE → Sync Handler Registration: post body seams
-  private onPostBodyCallback: ((postId: string, content: string, fromPeerId: string) => boolean) | null = null;
-  private missingBodiesProvider: ((limit: number) => { id: string; contentHash: Uint8Array }[]) | null = null;
-  private pullPostBodiesFn: ((entries: { id: string; contentHash: Uint8Array }[], peerId: string) => Promise<{ id: string; content: string }[]>) | null = null;
-  private getConnectedPeersFn: (() => string[]) | null = null;
-  private backfillAskedPeers = new Set<string>();
-
   // -----------------------------------------------------------------------
   // Biased event queues
   // -----------------------------------------------------------------------
@@ -161,8 +166,22 @@ export class SyncMachine {
   /** Control events: unbounded, never dropped. */
   private controlQueue: ControlEvent[] = [];
 
-  /** Data events: bounded, lossy. Oldest dropped when full. */
+  /**
+   * Data events: bounded per peer, lossy (NET_INTERFACE → Biased Event Loop
+   * clause 2). Each push appends; a peer holds at most
+   * `MAX_DATA_EVENTS_PER_PEER`, and one more drops that peer's oldest —
+   * never another peer's.
+   */
   private dataQueue: DataEvent[] = [];
+
+  /**
+   * Block answers being written out, per peer, and the pending block
+   * requests waiting their turn (NET_INTERFACE → Serve Side → "A peer is
+   * served one block answer at a time"). The machine learns a write has
+   * ended when the `sendToPeer` promise it awaited settles.
+   */
+  private blockAnswerInFlight = new Set<string>();
+  private pendingBlockRequests = new Map<string, ModifierRequest[]>();
 
   /** Whether the background event loop is running. */
   private running = false;
@@ -184,7 +203,16 @@ export class SyncMachine {
   constructor(
     config: NetConfig,
     private store: SyncStore,
-    private sendToPeer: (peerId: string, data: Uint8Array) => void,
+    /**
+     * `sendToPeer` writes one frame to a peer on a stream the node opens.
+     * The return is `unknown` so the net layer can hand back a Promise
+     * that settles when the write ends — taken, failed or aborted
+     * (NET_INTERFACE → Validation → "A stream write is bounded in time
+     * as well") — and the machine awaits it to learn when the write has
+     * ended. A caller that returns nothing is equivalent to a write that
+     * ends at once.
+     */
+    private sendToPeer: (peerId: string, data: Uint8Array) => unknown,
     private onProtocolViolation: (peerId: string, reason: string) => void = () => {},
   ) {
     this.magic = config.magic;
@@ -224,7 +252,7 @@ export class SyncMachine {
    *
    * Priority order:
    * 1. Drain ALL control events (unbounded, never dropped)
-   * 2. Process ONE data event (bounded, lossy)
+   * 2. Process ONE data event (per-peer bounded at `MAX_DATA_EVENTS_PER_PEER`)
    * 3. Timer tick, once TIMER_TICK_INTERVAL_MS is due (fallback, lowest priority)
    *
    * With work pending the loop yields between iterations, so one data event per
@@ -374,22 +402,6 @@ export class SyncMachine {
     this.onSyncedCallbacks.push(cb);
   }
 
-  setOnPostBody(cb: (postId: string, content: string, fromPeerId: string) => boolean): void {
-    this.onPostBodyCallback = cb;
-  }
-
-  setMissingBodiesProvider(cb: (limit: number) => { id: string; contentHash: Uint8Array }[]): void {
-    this.missingBodiesProvider = cb;
-  }
-
-  setPullPostBodies(cb: (entries: { id: string; contentHash: Uint8Array }[], peerId: string) => Promise<{ id: string; content: string }[]>): void {
-    this.pullPostBodiesFn = cb;
-  }
-
-  setGetConnectedPeers(cb: () => string[]): void {
-    this.getConnectedPeersFn = cb;
-  }
-
   // -----------------------------------------------------------------------
   // Public events (called by the node layer)
   // -----------------------------------------------------------------------
@@ -491,7 +503,17 @@ export class SyncMachine {
   onTimerTick(): void {
     const now = Date.now();
 
-    if (this.state.phase === 'syncing' || this.state.phase === 'backfill') {
+    // NET_INTERFACE → Serve Side → "A peer's `SyncInfo` is acted on at
+    // most once per `SYNC_INFO_MIN_INTERVAL_MS`": the tick drains each
+    // pending report whose interval has passed.
+    for (const [peerId, info] of this.pendingSyncInfo) {
+      const last = this.lastActedOnSyncInfoMs.get(peerId) ?? 0;
+      if (now - last < SYNC_INFO_MIN_INTERVAL_MS) continue;
+      this.pendingSyncInfo.delete(peerId);
+      this.actOnSyncInfo(peerId, info, now);
+    }
+
+    if (this.state.phase === 'syncing') {
       if (
         now - this.lastProgressMs > STALL_TIMEOUT_MS &&
         this.state.syncPeerId
@@ -570,13 +592,20 @@ export class SyncMachine {
   }
 
   /**
-   * Enqueue a data event. If the queue is at capacity, the oldest event is
-   * dropped to make room (lossy behavior).
+   * Enqueue a data event. Bound is per peer — NET_INTERFACE → Biased Event
+   * Loop clause 2: a peer holds at most `MAX_DATA_EVENTS_PER_PEER`, and one
+   * more drops that peer's oldest, never another's.
    */
   private pushData(event: DataEvent): void {
-    if (this.dataQueue.length >= MAX_DATA_QUEUE) {
-      // Drop the oldest event to make room
-      this.dataQueue.shift();
+    let count = 0;
+    for (const e of this.dataQueue) if (e.peerId === event.peerId) count++;
+    if (count >= MAX_DATA_EVENTS_PER_PEER) {
+      for (let i = 0; i < this.dataQueue.length; i++) {
+        if (this.dataQueue[i]!.peerId === event.peerId) {
+          this.dataQueue.splice(i, 1);
+          break;
+        }
+      }
     }
     this.dataQueue.push(event);
     this.wake();
@@ -615,6 +644,15 @@ export class SyncMachine {
     this.lastSentTip.delete(peerId);
     this.lastReportedTip.delete(peerId);
     this.lastSentMs.delete(peerId);
+    // NET_INTERFACE → Serve Side → "A peer's `SyncInfo` is acted on at
+    // most once per `SYNC_INFO_MIN_INTERVAL_MS`": a disconnect drops the
+    // pending report with the peer.
+    this.pendingSyncInfo.delete(peerId);
+    this.lastActedOnSyncInfoMs.delete(peerId);
+    // NET_INTERFACE → Serve Side → "A peer is served one block answer at
+    // a time": the pending answers die with the peer.
+    this.blockAnswerInFlight.delete(peerId);
+    this.pendingBlockRequests.delete(peerId);
 
     if (this.state.syncPeerId === peerId) {
       this.state.stalledPeers.add(peerId);
@@ -622,7 +660,7 @@ export class SyncMachine {
       // NET_INTERFACE → Sync Integrity →
       // "Response binding — sender and label, never content"
       this.outstanding.clear();
-      if (this.state.phase === 'syncing' || this.state.phase === 'backfill' || this.state.phase === 'synced') {
+      if (this.state.phase === 'syncing' || this.state.phase === 'synced') {
         this.state.phase = 'idle';
       }
       this.pickSyncPeer();
@@ -641,8 +679,29 @@ export class SyncMachine {
    * - Equal height + we were syncing → transition to synced.
    */
   private handleSyncInfoMsg(peerId: string, info: SyncInfo): void {
+    // NET_INTERFACE → Serve Side → "A peer's `SyncInfo` is acted on at
+    // most once per `SYNC_INFO_MIN_INTERVAL_MS`": a report arriving sooner
+    // is held as that peer's pending one — a later report replaces it —
+    // and the next tick past the interval acts on it. Nothing is
+    // penalised, and no report is lost but one a later report replaced.
+    const now = Date.now();
+    const lastActedOnMs = this.lastActedOnSyncInfoMs.get(peerId);
+    if (lastActedOnMs !== undefined && now - lastActedOnMs < SYNC_INFO_MIN_INTERVAL_MS) {
+      this.pendingSyncInfo.set(peerId, info);
+      return;
+    }
+    this.actOnSyncInfo(peerId, info, now);
+  }
+
+  /**
+   * Act on a `SyncInfo` from a peer: retain its height, reply, serve if the
+   * peer is behind, and consider a sync-peer transition. The one place the
+   * acted-on stamp is written.
+   */
+  private actOnSyncInfo(peerId: string, info: SyncInfo, nowMs: number): void {
     const ourHeight = this.store.chainHeight();
 
+    this.lastActedOnSyncInfoMs.set(peerId, nowMs);
     this.peerHeights.set(peerId, info.tipHeight);
 
     // NET_INTERFACE → Serve Side, rule 1: reply to the sender
@@ -653,10 +712,11 @@ export class SyncMachine {
       this.servePeer(peerId, info.tipHeight);
     }
 
-    // NET_INTERFACE → Sync State Machine: equal height from sync peer → backfill
+    // NET_INTERFACE → Sync State Machine: an equal-height SyncInfo from
+    // the sync peer is the caught-up signal — the machine enters `synced`.
     if (info.tipHeight === ourHeight && this.state.phase === 'syncing' &&
         this.state.syncPeerId === peerId) {
-      this.enterBackfill();
+      this.enterSynced();
       return;
     }
 
@@ -740,8 +800,28 @@ export class SyncMachine {
     }
   }
 
-  // NET_INTERFACE → ModifierRequest: ordering blocks served from the chain
+  // NET_INTERFACE → Serve Side → "A peer is served one block answer at a
+  // time". A request that arrives while this node is still writing that
+  // peer's previous answer waits (at most MAX_PENDING_BLOCK_REQUESTS), one
+  // more dropping the oldest.
   private serveOrderingBlocks(peerId: string, req: ModifierRequest): void {
+    if (this.blockAnswerInFlight.has(peerId)) {
+      let q = this.pendingBlockRequests.get(peerId);
+      if (!q) { q = []; this.pendingBlockRequests.set(peerId, q); }
+      if (q.length >= MAX_PENDING_BLOCK_REQUESTS) q.shift();
+      q.push(req);
+      return;
+    }
+    this.writeBlockAnswer(peerId, req);
+  }
+
+  /**
+   * Build and send one block answer, tracking the write in-flight so the
+   * peer's next request waits for this one to end — "A peer is served one
+   * block answer at a time". Awaits what `sendToPeer` returns to learn when
+   * the write ended (taken, failed or aborted).
+   */
+  private writeBlockAnswer(peerId: string, req: ModifierRequest): void {
     const modifiers: { id: string; data: Uint8Array }[] = [];
     let bodyBytes = 0;
 
@@ -755,10 +835,28 @@ export class SyncMachine {
       modifiers.push({ id, data });
     }
 
-    if (modifiers.length > 0) {
-      const resp: ModifierResponse = { typeId: req.typeId, modifiers };
-      this.sendToPeer(peerId, encodeModifierResponse(this.magic, resp));
+    if (modifiers.length === 0) {
+      // Nothing to serve — move on to the peer's next waiter if any.
+      this.advancePendingBlockAnswer(peerId);
+      return;
     }
+    const resp: ModifierResponse = { typeId: req.typeId, modifiers };
+    this.blockAnswerInFlight.add(peerId);
+    const sent = this.sendToPeer(peerId, encodeModifierResponse(this.magic, resp));
+    void Promise.resolve(sent as PromiseLike<void> | unknown)
+      .then(() => undefined, () => undefined)
+      .then(() => {
+        this.blockAnswerInFlight.delete(peerId);
+        this.advancePendingBlockAnswer(peerId);
+      });
+  }
+
+  private advancePendingBlockAnswer(peerId: string): void {
+    const q = this.pendingBlockRequests.get(peerId);
+    if (!q || q.length === 0) return;
+    const next = q.shift()!;
+    if (q.length === 0) this.pendingBlockRequests.delete(peerId);
+    this.writeBlockAnswer(peerId, next);
   }
 
   /**
@@ -850,84 +948,6 @@ export class SyncMachine {
     }
   }
 
-  // -----------------------------------------------------------------------
-  // Backfill — NET_INTERFACE → Sync State Machine
-  // -----------------------------------------------------------------------
-
-  private enterBackfill(): void {
-    this.state.phase = 'backfill';
-    this.backfillAskedPeers.clear();
-    this.lastProgressMs = Date.now();
-    this.requestBackfillBatch();
-  }
-
-  private requestBackfillBatch(): void {
-    const provider = this.missingBodiesProvider;
-    if (!provider) {
-      this.enterSynced();
-      return;
-    }
-    const entries = provider(BACKFILL_BATCH_IDS);
-    if (entries.length === 0) {
-      this.enterSynced();
-      return;
-    }
-
-    const peerId = this.state.syncPeerId;
-    if (!peerId) {
-      this.enterSynced();
-      return;
-    }
-
-    const pull = this.pullPostBodiesFn;
-    if (!pull) {
-      this.enterSynced();
-      return;
-    }
-
-    this.backfillAskedPeers.add(peerId);
-    const wantedIds = new Set(entries.map(e => e.id));
-
-    pull(entries, peerId).then(bodies => {
-      if (this.state.phase !== 'backfill') return;
-      if (this.state.syncPeerId !== peerId) return;
-
-      for (const { id, content } of bodies) {
-        if (!wantedIds.has(id)) continue;
-        wantedIds.delete(id);
-        const isProgress = this.onPostBodyCallback?.(id, content, peerId) ?? false;
-        if (isProgress) this.lastProgressMs = Date.now();
-      }
-
-      if (wantedIds.size > 0) {
-        this.backfillRotateToNextPeer();
-      } else {
-        this.requestBackfillBatch();
-      }
-    }).catch(err => {
-      console.warn(`[sync-machine] backfill pull failed for ${peerId}: ${String(err)}`);
-      if (this.state.phase === 'backfill') this.backfillRotateToNextPeer();
-    });
-  }
-
-  private backfillRotateToNextPeer(): void {
-    if (this.state.phase !== 'backfill') return;
-
-    const connected = this.getConnectedPeersFn?.() ?? [];
-    const next = connected.find(p =>
-      !this.backfillAskedPeers.has(p) && !this.state.stalledPeers.has(p));
-
-    if (!next) {
-      this.enterSynced();
-      return;
-    }
-
-    this.state.syncPeerId = next;
-    this.backfillAskedPeers.add(next);
-    this.lastProgressMs = Date.now();
-    this.requestBackfillBatch();
-  }
-
   private enterSynced(): void {
     this.state.phase = 'synced';
     this.state.stalledPeers.clear();
@@ -995,8 +1015,6 @@ export class SyncMachine {
       return;
     }
 
-    if (this.state.phase === 'backfill') return;
-
     const best = this.bestCandidate(ourHeight);
 
     if (best) {
@@ -1058,11 +1076,7 @@ export class SyncMachine {
     this.state.syncPeerId = null;
     this.outstanding.clear();
 
-    if (this.state.phase === 'backfill') {
-      this.backfillRotateToNextPeer();
-    } else {
-      this.state.phase = 'idle';
-      this.pickSyncPeer();
-    }
+    this.state.phase = 'idle';
+    this.pickSyncPeer();
   }
 }

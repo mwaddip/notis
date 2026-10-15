@@ -37,7 +37,6 @@ export {
   MSG_BLOCKS,
   MODIFIER_ORDERING_BLOCK,
   MODIFIER_POST_BODY,
-  BACKFILL_BATCH_IDS,
 } from './types.js';
 export {
   buildHandshakeFrame,
@@ -64,6 +63,10 @@ export {
   MAX_CAPABILITY_ENTRIES,
   MAX_NAME_BYTES,
   MAX_ADDRESS_BYTES,
+  MAX_INBOUND_SYNC_STREAMS,
+  SYNC_INFO_MIN_INTERVAL_MS,
+  MAX_PENDING_BLOCK_REQUESTS,
+  MAX_DATA_EVENTS_PER_PEER,
 } from './msg-guards.js';
 export { isBogusAddress } from './bogus-addr.js';
 export { PeerDb } from './peerdb.js';

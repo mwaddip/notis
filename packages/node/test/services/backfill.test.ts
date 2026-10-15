@@ -11,16 +11,21 @@ describe('backfill driver', () => {
   let requestLog: Array<{ wanted: Array<{ id: string; contentHash: string }>; peerId: string }>;
   let storedBodies: Map<string, string>;
   let connectedPeers: string[];
+  let gateRelease: () => void;
+  let gate: Promise<void>;
 
   beforeEach(() => {
     clearPending();
     requestLog = [];
     storedBodies = new Map();
     connectedPeers = ['peer-a', 'peer-b'];
+    gateRelease = () => {};
+    gate = Promise.resolve();
 
     initBackfill({
       requestPostBodies: async (wanted, peerId) => {
         requestLog.push({ wanted, peerId });
+        await gate;
         const results: Array<{ id: string; content: string }> = [];
         for (const w of wanted) {
           const body = storedBodies.get(w.id);
@@ -30,6 +35,10 @@ describe('backfill driver', () => {
       },
       getConnectedPeers: () => connectedPeers,
       setPostBody: (_id: string, _content: string) => true,
+      // The driver's two reads over the store. In this file every registered
+      // id is a placeholder, and no stored row exists for the init-time scan.
+      getMissingBodies: () => [],
+      getStillPlaceholderIds: (ids) => [...ids],
     });
   });
 
@@ -128,6 +137,8 @@ describe('backfill driver', () => {
         requestPostBodies: async () => { throw new Error('network down'); },
         getConnectedPeers: () => ['peer-a'],
         setPostBody: () => true,
+        getMissingBodies: () => [],
+        getStillPlaceholderIds: (ids) => [...ids],
       });
       registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
       await onBlockApplied(10);
@@ -135,5 +146,26 @@ describe('backfill driver', () => {
     } finally {
       console.warn = origWarn;
     }
+  });
+
+  // NODE_INTERFACE → "One pass runs at a time": the gate held open, a second
+  // call to onBlockApplied at the same height passes through without a
+  // request — the entry is already marked asked, its schedule advanced.
+  it('a second call at the same height during an open request fires no new request', async () => {
+    gate = new Promise((resolve) => { gateRelease = resolve; });
+    registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
+
+    const first = onBlockApplied(10);
+    // Flush microtasks so the pass reaches the gate.
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    expect(requestLog).toHaveLength(1);
+
+    // A second call while the first pass is open: no new request fires.
+    void onBlockApplied(10);
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    expect(requestLog).toHaveLength(1);
+
+    gateRelease();
+    await first;
   });
 });

@@ -50,6 +50,34 @@ function karmaBoxes(
   );
 }
 
+const CAUGHT_UP_WINDOW_MS = 5_000;
+
+// A follower's `syncing → synced` rides an equal-height SyncInfo from its sync peer, acted on at the next sync timer tick when one arrived inside the interval
+// NET_INTERFACE → "A peer's `SyncInfo` is acted on at most once per `SYNC_INFO_MIN_INTERVAL_MS`"
+// The signal is paced in time by the node, not by blocks; 5 s is the 1 s tick, the 100 ms interval, a round trip and headroom.
+async function waitSynced(nodes: Mesh['nodes'], windowMs = CAUGHT_UP_WINDOW_MS): Promise<void> {
+  const deadline = Date.now() + windowMs;
+  for (const node of nodes) {
+    let synced = false;
+    while (Date.now() < deadline) {
+      const h = await adminGet(node, '/health');
+      if (h['sync_phase'] === 'synced') {
+        synced = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    if (!synced) {
+      const tails = nodes
+        .map((n) => `--- :${n.httpPort} ---\n${n.logs.slice(-10).join('\n')}`)
+        .join('\n');
+      throw new Error(
+        `Node :${node.httpPort} did not report sync_phase synced within ${windowMs}ms\n${tails}`,
+      );
+    }
+  }
+}
+
 describe('health', () => {
   let mesh: Mesh;
 
@@ -72,6 +100,8 @@ describe('health', () => {
       expect(tip.height).toBe(1);
       expect(tip.hash).toBe(tips[0]!.hash);
     }
+
+    await waitSynced(mesh.nodes.filter((n) => n !== miner));
 
     // ---- /health before any post: shape, values, null last_post ----
     for (const node of mesh.nodes) {
