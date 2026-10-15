@@ -111,7 +111,8 @@ const TIMER_TICK_INTERVAL_MS = 1_000;
  *
  * **Biased event loop** (call `start()` to begin):
  * 1. Control events (peer connect/disconnect, sync-info) — unbounded, never dropped
- * 2. Data events (inv, modifier req/resp) — bounded, lossy above MAX_DATA_QUEUE
+ * 2. Data events (inv, modifier req/resp) — bounded per peer at `MAX_DATA_EVENTS_PER_PEER`,
+ *    one more dropping that peer's oldest, never another's (NET_INTERFACE → Biased Event Loop)
  * 3. Timer tick — fallback, lowest priority, every TIMER_TICK_INTERVAL_MS
  * 4. Idle — parks until an enqueue or the tick deadline; it does not re-poll
  *
@@ -251,7 +252,7 @@ export class SyncMachine {
    *
    * Priority order:
    * 1. Drain ALL control events (unbounded, never dropped)
-   * 2. Process ONE data event (bounded, lossy)
+   * 2. Process ONE data event (per-peer bounded at `MAX_DATA_EVENTS_PER_PEER`)
    * 3. Timer tick, once TIMER_TICK_INTERVAL_MS is due (fallback, lowest priority)
    *
    * With work pending the loop yields between iterations, so one data event per
