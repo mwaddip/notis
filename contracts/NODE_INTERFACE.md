@@ -4015,18 +4015,20 @@ database wipe removes it with everything else.
 
 ### Nipopow reader
 
-The four reads `@dagsocial/nipopow`'s `PopowHeaderReader` is implemented over
+> ⚠ **AHEAD OF CODE (2026-10-15).** The table below leads `node/src/store/ordering.ts` and
+> `node/src/services/nipopow.ts`, which keep and wire a fourth read, `getHeadersAfter`, that the prover never calls.
+
+The three reads `@dagsocial/nipopow`'s `PopowHeaderReader` is implemented over
 (`NIPOPOW_INTERFACE` → proveWithReader), all on the canonical chain — a proof is a function of it,
 and no header tree is involved:
 
 | Function | Signature |
 |----------|-----------|
 | `getPopowHeaderByHash(hash)` | `(string) => PoPowHeader \| null` — the `block_hash` point lookup, then the row's `header_bytes` and `interlinks` decoded |
-| `getPopowHeaderAtHeight(height)` | `(number) => PoPowHeader \| null` — the same row by height |
+| `getPopowHeaderAtHeight(height)` | `(number) => PoPowHeader \| null` — the same row by height; the level-0 sweep reads its span through it, one height at a time |
 | `getLastHeaders(n)` | `(number) => BlockHeader[]` — `ORDER BY height DESC LIMIT n`, returned ascending; `n ≤ MAX_NIPOPOW_PARAM` |
-| `getHeadersAfter(height, n)` | `(number, number) => BlockHeader[]` — `WHERE height > ? ORDER BY height ASC LIMIT n`; `n ≤ MAX_NIPOPOW_PARAM` |
 
-Every list read carries its `LIMIT`, and the limit is the caller's bounded `k`. Each read decodes
+The list read carries its `LIMIT`, and the limit is the caller's bounded `k`. Each read decodes
 through the guarded read the sync serve uses: a stored row that will not decode is local corruption
 and fail-stops (`failStopIfCorruptChain`), never a refusal the requester is blamed for.
 
@@ -4867,7 +4869,7 @@ with the chain untouched:
    stamp `t_a` (or `null` at `f = 0`, where the branch's own first header supplies it), and this
    node's clock. `ourWork = cumulativeWork(our headers f + 1 … ourTip)`, read once through
    `getHeadersAbove(f, ourTip − f)` (Store Interface → Ordering blocks) — a header-only read of at most
-   `maxReorgDepth` rows, never the NiPoPoW reader's capped `getHeadersAfter`.
+   `maxReorgDepth` rows.
 5. **The scoring walk.** Their branch above `f`, **upward in pages**: the fork walk's pages already
    hold `f + 1 … min(ourTip, theirTip)`; above that `requestHeaders(top + 400, 400)` trimmed to the
    heights not yet verified — the serve arm clamps to the peer's tip, so a page whose top sits below
@@ -5058,20 +5060,29 @@ the pinned root.
 
 ## Nipopow prover
 
+> ⚠ **AHEAD OF CODE (2026-10-15).** The cache and the cost below lead `node/src/routes/nipopow.ts`, which builds a
+> fresh proof on every call; the cost's figures measure the prover without the level-0 sweep and are measured again
+> with it.
+
 `GET /nipopow/proof/:m/:k` (HTTP API → Nipopow) answers `proveWithReader(reader, { m, k })`
-(`NIPOPOW_INTERFACE` → proveWithReader) with `reader` the four store reads above (Store Interface →
+(`NIPOPOW_INTERFACE` → proveWithReader) with `reader` the three store reads above (Store Interface →
 Nipopow reader). The route parses and bounds `m` and `k` (400), maps `chain-too-short` to 404, and
 serves the encoded proof; `missing-popow-header` cannot occur on a canonical chain the funnel wrote
 — it is a store that has lost a row the walk needs, and it reaches the fail-stop boundary like any
 other corrupt-chain read.
 
-**Cost, so the exposure is a number:** a proof is O(m · M + k) point reads, `M` the height of the
-tip's vector (~log₂ of the chain height): at `m = k = 6` on a million-block chain ~250 reads and a
-~200 KB response; at the caps (`m = k = 128`) ~8 500 reads and ~7 MB. No cache and no O(N) walk
-exist in the path. This is one of the node's three unauthenticated reads that do real work per call
-(the two proof routes are the others, → AVL+ State Root); the node has no rate limiting anywhere, and this route
+**Cost, so the exposure is a number:** a proof is O(m · M + S + k) point reads, `M` the height of the
+tip's vector (~log₂ of the chain height) and `S` the level-0 sweep (`NIPOPOW_INTERFACE` → proveWithReader): at
+`m = k = 6` on a million-block chain ~250 reads and a ~200 KB response; at the caps (`m = k = 128`) ~8 500 reads and
+~7 MB. No O(N) walk exists in the path. This is one of the node's three unauthenticated reads that do real work per
+call (the two proof routes are the others, → AVL+ State Root); the node has no rate limiting anywhere, and this route
 adds none — a single call is bounded by `MAX_NIPOPOW_PARAM`, and a limiter is a decision across
 every route, not this one's.
+
+**The route caches its answer.** It keeps the encoded proof for each of the last `NIPOPOW_PROOF_CACHE_ENTRIES`
+`(m, k)` pairs asked, keyed by the tip's block hash with `m` and `k` — a proof is a function of the canonical chain,
+and the tip's hash names that chain — and a request at a new tip empties it. Every client asking the client defaults
+(`CONSTANTS → Client defaults`) at one tip costs one build; a request that misses builds as an uncached one does.
 
 **What a served proof proves, and what the client trusts it for,** is `NIPOPOW_INTERFACE` → The
 trust model. The client checks the node's state proofs (`GET /api/v1/proof/:key?atHeight`, `GET
