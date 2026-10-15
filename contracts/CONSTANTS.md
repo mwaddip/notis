@@ -321,7 +321,10 @@ under → Size caps.
 | `MAX_ADDRESS_BYTES` | `255` | a multiaddr | format | none stated | CHOSEN | `NET_INTERFACE → Handshake` |
 | `MAX_ADVERTISED_HEIGHT` | `100_000_000` | ~190 years at one block a minute | format | a horizon no honest chain reaches | DERIVED | `NET_INTERFACE → Validation` |
 | `GET_PEERS_RESPONSE_LIMIT` | `8` | peers served per `GetPeers` | policy | none stated | CHOSEN | `NET_INTERFACE → Peers` |
-| `BACKFILL_BATCH_IDS` | `100` | post bodies requested per batch | policy | none stated | CHOSEN | `NET_INTERFACE → Sync State Machine` |
+| `SYNC_INFO_MIN_INTERVAL_MS` | `100` | 100 ms between the `SyncInfo`s acted on from one peer | policy | user ruling, 2026-10-15 — Ergo's `PerPeerSyncLockTime`; an honest peer sends one per advancing batch, a round trip and a block apply after the last, and one per poll | RULED | `NET_INTERFACE → Serve Side` |
+| `MAX_PENDING_BLOCK_REQUESTS` | `4` | block requests of one peer waiting for its answer | policy | the requester's outstanding cap, `4 × MAX_INV_IDS` ids, in full requests | DERIVED | `NET_INTERFACE → Serve Side` |
+| `MAX_DATA_EVENTS_PER_PEER` | `8` | sync data events one peer holds in the queue | policy | twice an honest peer's four outstanding requests: as this node's sync peer it queues an Inv and an answer for each, as a peer behind this node its requests | DERIVED | `NET_INTERFACE → Biased Event Loop` |
+| `MAX_INBOUND_SYNC_STREAMS` | `16` | sync streams of one connection open at once | policy | decided 2026-10-15 — over twice the seven an honest peer holds open toward this node — four one-way messages and three queries, each kind one at a time; a waiting stream is unread and costs at most the muxer's 256 KiB initial window, so 16 cost 4 MiB a connection | DECIDED | `NET_INTERFACE → Stream Protocols` |
 | `GOSSIP_SEEN_WINDOW_MS` | `120_000` | two minutes a gossip message's id stays seen | policy | gossipsub's default, kept; above the five heartbeats — five seconds — a message stays in a peer's gossip cache; none stated for the number | CHOSEN | `NET_INTERFACE → Gossip Topics` |
 
 ## Producer policy
