@@ -216,6 +216,26 @@ export function getHeightByBlockHash(hash: string): number | null {
 }
 
 /**
+ * The header stored at `height`, decoded from `header_bytes` and nothing else;
+ * `null` for no row at that height. The row's bytes are this node's own
+ * `encodeHeader` of a block the apply gate cleared, so a decode throw is local
+ * corruption and raises `UnreadableStoredBlockError` (`createOrderingBlock`'s
+ * provenance claim). The `GetHeaders` serve arm's read (NODE_INTERFACE → Sync
+ * handlers → "setHeaderProvider").
+ */
+export function getHeaderAt(height: number): BlockHeader | null {
+  const row = getDb()
+    .prepare('SELECT header_bytes FROM ordering_blocks WHERE height = ?')
+    .get(height) as { header_bytes: Buffer } | undefined;
+  if (!row) return null;
+  try {
+    return decodeHeader(new Uint8Array(row.header_bytes));
+  } catch (err) {
+    throw new UnreadableStoredBlockError('getHeaderAt', height, err);
+  }
+}
+
+/**
  * The stored interlink vector at a height, decoded; `null` for no row
  * (NODE_INTERFACE → Ordering blocks).
  *

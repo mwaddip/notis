@@ -40,6 +40,7 @@ import {
   getOrderingBlock,
   getOrderingBlockHash,
   getHeightByBlockHash,
+  getHeaderAt,
   peerStorage,
   getKarmaOwners,
 } from './store/index.js';
@@ -182,6 +183,11 @@ net.setBlocksHandler(pullBlocksHandler(net));
 // handshake and query as a peer's fault inside `net`'s contained catches.
 const guardedGetOrderingBlock = guardStoreRead(getOrderingBlock);
 net.setHeadersHandler(guardedGetOrderingBlock);
+
+// NODE_INTERFACE → Sync handlers: the header stored at a height, decoded and
+// no body read — what a served `GetHeaders` reads. Wrapped in
+// `guardStoreRead` like the block provider.
+net.setHeaderProvider(guardStoreRead(getHeaderAt));
 
 // NODE_INTERFACE → Sync handlers: the scheduled-target provider decodes a
 // stored header, so `guardStoreRead` promotes a corrupt row to a fail-stop.

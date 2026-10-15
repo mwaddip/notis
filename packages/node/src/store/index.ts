@@ -79,6 +79,7 @@ export {
   getOrderingBlockHash,
   getHeightByBlockHash,
   getInterlinks,
+  getHeaderAt,
   getPopowHeaderByHash,
   getPopowHeaderAtHeight,
   getLastHeaders,

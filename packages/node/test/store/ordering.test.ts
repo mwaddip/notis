@@ -27,6 +27,7 @@ async function importOrderingFresh() {
     getOrderingBlockHash: (height: number) => string | null;
     getHeightByBlockHash: (hash: string) => number | null;
     getInterlinks: (height: number) => string[] | null;
+    getHeaderAt: (height: number) => import('@dagsocial/types').BlockHeader | null;
     getHeadersAbove: (height: number, n: number) => import('@dagsocial/types').BlockHeader[];
   };
 }
@@ -380,5 +381,64 @@ describe('ordering store', () => {
     expect(caught).toBeDefined();
     expect((caught as Error).name).toBe('UnreadableStoredBlockError');
     expect(String(caught)).toContain('getHeadersAbove');
+  });
+
+  // NODE_INTERFACE → Store Interface → Ordering blocks: the `getHeaderAt(height)`
+  // row — the row's `header_bytes` decoded and no body read.
+  it('getHeaderAt returns the stored header, equal to getOrderingBlock(h).header', async () => {
+    const { initDb } = await importDbFresh();
+    const { createOrderingBlock, getOrderingBlock, getHeaderAt } =
+      await importOrderingFresh();
+
+    initDb(':memory:');
+
+    const block = makeOrderingBlock({
+      header: {
+        ...makeOrderingBlock().header,
+        prevBlockHash: 'aa'.repeat(32),
+        utxoTxRoot: 'cc'.repeat(32),
+        validatorId: uid('validator-h'),
+        powNonce: 7,
+        createdAt: 1234567890,
+      },
+    });
+    createOrderingBlock(block, ['ab'.repeat(32)]);
+
+    const header = getHeaderAt(1);
+    expect(header).not.toBeNull();
+    expect(header).toEqual(getOrderingBlock(1)!.header);
+  });
+
+  it('getHeaderAt returns null for a height with no row', async () => {
+    const { initDb } = await importDbFresh();
+    const { getHeaderAt } = await importOrderingFresh();
+
+    initDb(':memory:');
+
+    expect(getHeaderAt(999)).toBeNull();
+  });
+
+  it('getHeaderAt raises UnreadableStoredBlockError naming the function when header_bytes will not decode', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { createOrderingBlock, getHeaderAt } = await importOrderingFresh();
+
+    initDb(':memory:');
+
+    createOrderingBlock(makeOrderingBlock(), []);
+
+    getDb().prepare('UPDATE ordering_blocks SET header_bytes = ? WHERE height = 1').run(
+      Buffer.from([0xff, 0xff]),
+    );
+
+    let caught: unknown;
+    try {
+      getHeaderAt(1);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    expect((caught as Error).name).toBe('UnreadableStoredBlockError');
+    expect((caught as { site: string }).site).toBe('getHeaderAt');
+    expect((caught as { height: number }).height).toBe(1);
   });
 });
