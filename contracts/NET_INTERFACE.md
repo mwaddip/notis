@@ -1240,6 +1240,16 @@ holds at most one read (`MAX_STREAM_BYTES`), one inline answer and one block ans
 one block answer at a time", `MAX_SERVE_BODY_BYTES` each) and the windows of the streams waiting — about 20 MiB at
 the bound — of this node's memory, for no longer than the deadlines on those reads and writes.
 
+> ⚠ **AHEAD OF CODE (2026-10-15).** The rule below leads `net/src/node.ts`, whose sync handler rejects when a
+> failure path's empty answer cannot be written — `sinkWithDeadline` re-throws the write's error — and whose handshake
+> handler writes its own-peer refusal outside any `try`.
+
+**A stream handler never rejects.** libp2p does not catch the promise a protocol handler returns, so a rejection is an
+unhandled one — logged by the node's backstop as a fault of its own (NODE_INTERFACE → "An unhandled rejection is
+logged, and the node keeps running"). Every failure on a stream is the handler's to end: a write to a peer that has
+gone, the empty answer of a failure path included, ends the stream with nothing more to say and nothing to log beyond
+the failure that led there.
+
 ### `GetHeaders` / `GetBlocks` responses — positional, `arr(item, lp)`
 
 **Landed 2026-08-10.** Both arms previously answered in a **second wire format** — `encode({ blocks })`
