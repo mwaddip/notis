@@ -12,7 +12,6 @@ import {
   emitApiListening,
   emitShutdownSignalReceived,
   emitServerShuttingDown,
-  emitPostReceived,
   emitPeerConnected,
   emitPeerDisconnected,
   emitPeerPenalised,
@@ -37,7 +36,6 @@ import {
   getPost,
   isLivePost,
   setPostBody,
-  getMissingBodies,
   getCurrentHeight,
   getOrderingBlock,
   getOrderingBlockHash,
@@ -46,7 +44,6 @@ import {
   getKarmaOwners,
 } from './store/index.js';
 import { initBackfill } from './services/backfill.js';
-import { verifyPostBody } from '@dagsocial/validation';
 
 const config = loadConfig();
 const startTime = Date.now();
@@ -204,23 +201,6 @@ net.setPostBodyProvider((id: string) => {
   const result = getPost(id);
   if (!isLivePost(result)) return null;
   return result.content;
-});
-
-net.setMissingBodiesProvider((limit: number) =>
-  getMissingBodies(limit).map(r => ({ id: r.id, contentHash: Buffer.from(r.contentHash, 'hex') })),
-);
-
-net.onPostBody((id: string, content: string, peerId: string) => {
-  const result = getPost(id);
-  if (!isLivePost(result)) return false;
-  const contentHash = Buffer.from(result.contentHash, 'hex');
-  const check = verifyPostBody(content, contentHash);
-  if (!check.valid) return false;
-  const stored = setPostBody(id, content);
-  if (stored) {
-    emitPostReceived(id, peerId, 'pull');
-  }
-  return stored;
 });
 
 initBackfill({
