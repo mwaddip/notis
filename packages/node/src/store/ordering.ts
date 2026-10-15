@@ -221,7 +221,7 @@ export function getHeightByBlockHash(hash: string): number | null {
  * `encodeHeader` of a block the apply gate cleared, so a decode throw is local
  * corruption and raises `UnreadableStoredBlockError` (`createOrderingBlock`'s
  * provenance claim). The `GetHeaders` serve arm's read (NODE_INTERFACE → Sync
- * handlers → "setHeaderProvider").
+ * handlers → "`setHeaderProvider(getHeaderAt)`").
  */
 export function getHeaderAt(height: number): BlockHeader | null {
   const row = getDb()

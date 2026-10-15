@@ -122,9 +122,8 @@ async function runPass(height: number): Promise<void> {
     list.push(entry);
   }
 
-  // One call per peer, one after another. Net splits a call; the driver does
-  // not (NODE_INTERFACE → "net splits a call into requests of at most
-  // MAX_INV_IDS").
+  // One call per peer, one after another. Net splits a call into requests of
+  // at most `MAX_INV_IDS`; the driver does not (NET_INTERFACE → Pull Requests).
   for (const [peerId, entries] of byPeer) {
     const wanted = entries.map((e) => ({ id: e.id, contentHash: e.contentHash }));
     try {

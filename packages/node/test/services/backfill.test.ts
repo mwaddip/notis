@@ -148,10 +148,9 @@ describe('backfill driver', () => {
     }
   });
 
-  // NODE_INTERFACE → "mark each remaining entry asked — the next due height
-  // and the interval advanced — before any request goes out". The gate held
-  // open, a second call to onBlockApplied at the same height passes through
-  // without a request — the schedule has already advanced.
+  // NODE_INTERFACE → "One pass runs at a time": the gate held open, a second
+  // call to onBlockApplied at the same height passes through without a
+  // request — the entry is already marked asked, its schedule advanced.
   it('a second call at the same height during an open request fires no new request', async () => {
     gate = new Promise((resolve) => { gateRelease = resolve; });
     registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
