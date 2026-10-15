@@ -1077,4 +1077,24 @@ describe('posts store', () => {
     expect(detail).not.toContain('SCAN dp');
     expect(detail).not.toContain('AUTOMATIC COVERING INDEX');
   });
+
+  // The puller seeds every placeholder row at init, due at the next applied
+  // block, so a sync of a body-less chain can hand `getStillPlaceholderIds`
+  // a set larger than this build's SQLite bound-variable cap.
+  it.fails('getStillPlaceholderIds answers for 32 767 ids rather than throwing on SQLite\'s variable cap', async () => {
+    const { initDb } = await importDbFresh();
+    const { getStillPlaceholderIds } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const ids: string[] = [];
+    for (let i = 0; i < 32_767; i++) ids.push(i.toString(16).padStart(64, '0'));
+
+    let result: string[] | null = null;
+    try {
+      result = getStillPlaceholderIds(ids);
+    } catch { /* swallowed: the last assertion names the subject */ }
+
+    expect(result).toEqual([]);
+  });
 });
