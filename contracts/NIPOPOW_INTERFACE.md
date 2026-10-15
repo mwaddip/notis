@@ -44,9 +44,6 @@ vector is what a verifier needs in full anyway.
 
 ### NipopowProof
 
-> ⚠ **AHEAD OF CODE (2026-10-15).** The tail count below leads `nipopow/src/codec.ts`, whose `read` refuses a tail
-> count above `k − 1` and accepts a shorter one.
-
 ```
 NipopowProof {
   m: number                      // the security parameter the prover was asked for
@@ -79,10 +76,6 @@ export const MAX_NIPOPOW_PARAM = 128;      // m and k — provisional
 export const MAX_NIPOPOW_PREFIX = 16_384;  // prefix entries — provisional
 ```
 
-> ⚠ **AHEAD OF CODE (2026-10-15).** The level-0 term below and the table after it lead `nipopow/src/prover.ts`,
-> which walks levels `M … 1` and never level 0; the table and the figure under it measure that prover, and are
-> measured again with the sweep.
-
 **The prefix bound's arithmetic, so it reproduces:** the prover keeps at most ~2m headers per
 level (the m-th-from-last anchoring at each level plus the level below's members above it) over
 ≈ log₂(work / W_a) levels — levels are measured against the anchor target, so a chain 2⁷ above its
@@ -93,19 +86,19 @@ against the anchor `T_a` — `m` on a chain at least twice as hard as its anchor
 `21m`, 2 650 at `m = 128`, so 12 634 in all). The reader bound is 2¹⁴, above that with headroom, and `LEVEL_CAP`
 bounds the level count absolutely. Both numbers are provisional (`CONSTANTS → nipopow`).
 
-**What `m` costs**, measured 2026-09-30 with `packages/nipopow/scripts/bench-proof-m.mjs` on a 100 000-block chain at
-`k = 20` — the proof's decode, `verifyProof` and one `compareProofs` against a second copy, medians of nine runs pinned
-to performance cores of the i9-14900HX:
+**What `m` costs**, measured 2026-10-15 with `packages/nipopow/scripts/bench-proof-m.mjs` on a 100 000-block chain
+mined at its anchor's target, at `k = 20` — the proof's decode, `verifyProof` and one `compareProofs` against a second
+copy, medians of nine runs pinned to performance cores of the i9-14900HX:
 
 | `m` | PoPowHeaders | Proof | The route's JSON | Node 22 | Waterfox 140 |
 |---|---|---|---|---|---|
-| 6 | 95 | 60 KB | 121 KB | 27 ms | 45 ms |
-| 12 | 142 | 95 KB | 191 KB | 38 ms | 63 ms |
-| 24 | 280 | 199 KB | 397 KB | 73 ms | 121 ms |
-| 48 | 528 | 385 KB | 769 KB | 142 ms | 228 ms |
+| 6 | 101 | 65 KB | 130 KB | 30 ms | 52 ms |
+| 12 | 156 | 106 KB | 212 KB | 47 ms | 83 ms |
+| 24 | 307 | 219 KB | 438 KB | 97 ms | 162 ms |
+| 48 | 580 | 424 KB | 848 KB | 181 ms | 315 ms |
 
 The prover keeps about `m` headers a level — the bound above is the ceiling — so a proof grows with `m` and with the
-log of the chain's length: at 20 000 blocks the `m = 24` proof is 177 KB.
+log of the chain's length: at 20 000 blocks the `m = 24` proof is 183 KB.
 **`k` is a block count, and under a moving target a k-deep suffix is read in work** — the reference's
 own note; `k` is the client's own settlement depth, 20 by default, and not a full node's reorg horizon —
 `maxReorgDepth` is per network and larger (`TYPES_INTERFACE → Chain reorganisation`; `CONSTANTS → Client
@@ -138,10 +131,6 @@ codec layer's own errors (`TYPES_INTERFACE → Serialization`); `verifyProof` ca
 ---
 
 ## verifyProof
-
-> ⚠ **AHEAD OF CODE (2026-10-15).** The `params` argument and rules 1 and 5 below lead `nipopow/src/verify.ts`,
-> whose `verifyProof(proof, profile)` takes no parameters of the client's, accepts a tail of at most the proof's own
-> `k − 1`, and holds heights only to increase.
 
 ```
 verifyProof(
@@ -215,12 +204,6 @@ vector's shape is checked before it is hashed, as `verifyHeaderChain` checks its
 
 ## compareProofs
 
-> ⚠ **AHEAD OF CODE (2026-10-15).** The signature, the `m` and `k` bullet and `bestArg`'s range below lead
-> `nipopow/src/compare.ts`, whose `compareProofs(a, b, m, profile)` answers `incomparable / m-mismatch` and whose
-> `bestArg` climbs while a level holds `m` headers, without end at a height-1 header or at `m < 1`. The sentence on
-> what an honest proof keeps leads `nipopow/src/prover.ts` (→ proveWithReader), and the comparison rates in "The
-> score is work" measure that prover and are measured again with the sweep.
-
 ```
 compareProofs(a: NipopowProof, b: NipopowProof, params: { m: number; k: number }, profile): CompareResult
 CompareResult =
@@ -266,9 +249,9 @@ on bytes a client has not screened, but it re-derives nothing a passed verdict e
   runs where the model puts a re-mining's chance of flipping it far below one in a thousand. **How often a proof of
   less work wins at all is `m`'s to bound, not the yardstick's**: the deciding level holds `m` to about `2m`
   superblocks, so a score carries about `1/√m` relative noise, for a cheap chain and an honest one alike (measured
-  2026-09-30 over independent chains, `packages/nipopow/scripts/bench-proof-m.mjs`: three quarters of the honest work
-  wins about 18% of comparisons at `m = 6`, 8% at 12, 4% at 24 and 2% at 48; half about 5% at 6 and none of 120 pairs
-  from 12; a quarter about 0.2% at 6). The client's `m` is 24 (`CONSTANTS → Client defaults`). A lying pointer can skip honest blocks and lower a score, never raise one.
+  2026-10-15 over 120 pairs of independent chains a row, `packages/nipopow/scripts/bench-proof-m.mjs`: three quarters
+  of the honest work wins about 18% of comparisons at `m = 6`, 8% at 12, 4% at 24 and 2% at 48; half about 4% at 6
+  and none of 120 pairs from 12; a quarter none of 120 at any `m`). The client's `m` is 24 (`CONSTANTS → Client defaults`). A lying pointer can skip honest blocks and lower a score, never raise one.
 
 `bestArg(headers: BlockHeader[], m: number, anchorBits: number): bigint` is exported beside it — the
 anchor bits are the yardstick its levels are measured against, and `μ` ranges over `[0, LEVEL_CAP]`, so it answers
@@ -277,9 +260,6 @@ every input: a height-1 header, whose level is ∞, counts at every level, and `
 ---
 
 ## proveWithReader
-
-> ⚠ **AHEAD OF CODE (2026-10-15).** Step 3, the reader below and the cost lead `nipopow/src/prover.ts`, which walks
-> levels `M … 1`, never reads level 0, and declares a fifth read, `headersAfter`, that the walk never calls.
 
 ```
 interface PopowHeaderReader {
@@ -339,9 +319,6 @@ class ProofBuildError extends Error {
 ---
 
 ## The trust model — what a proof proves
-
-> ⚠ **AHEAD OF CODE (2026-10-15).** Rule 4 leads `nipopow/src/verify.ts` and `compare.ts` (→ verifyProof,
-> → compareProofs) and `tools/nipopow-client/src/tip.ts`, whose `resolveTip` holds no proof to the `k` it asked for.
 
 Four rules, stated once here and consumed by `NODE_INTERFACE → Nipopow prover` and by every
 light client:

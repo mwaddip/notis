@@ -286,7 +286,7 @@ devnet differ where a cell says so. The identity fields — `magic`, `genesisCom
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
-| `MAX_NIPOPOW_PARAM` | `128` | the largest `m` and the largest `k` a proof or a request may carry | format | provisional; at `m = k = 6` a million-block proof is ~240 PoPowHeaders, ~200 KB, and the prover's work per call grows with `m` | PROVISIONAL | `NIPOPOW_INTERFACE → Constants` |
+| `MAX_NIPOPOW_PARAM` | `128` | the largest `m` and the largest `k` a proof or a request may carry | format | provisional; at `m = k = 6` a million-block proof is 124 PoPowHeaders, 109 KB (219 KB as the route's answer), at the caps 1 718 and 1.5 MB (3.1 MB) — measured 2026-10-15 at the anchor's target — and the prover's work per call grows with `m` | PROVISIONAL | `NIPOPOW_INTERFACE → Constants` |
 | `MAX_NIPOPOW_PREFIX` | `16_384` | 2¹⁴ prefix entries | format | ~2m headers per level over ≤ 39 levels is 9 984 at the `m` cap, and the level-0 sweep adds about `21m` at testnet's floor, 2 650: 12 634; 2¹⁴ sits above it with headroom, and moves with `MAX_NIPOPOW_PARAM` | PROVISIONAL | `NIPOPOW_INTERFACE → Constants` |
 
 ### validation
@@ -343,16 +343,13 @@ the drift test's converse does not reach them and the rows are marked.
 returns is a page"`), and what the proof route keeps. Interface numbers a client depends on, not consensus;
 module-private, so the drift test's converse does not reach them and the rows are marked.
 
-> ⚠ **AHEAD OF CODE (2026-10-15).** The `NIPOPOW_PROOF_CACHE_ENTRIES` row below leads `node/src/routes/nipopow.ts`,
-> which keeps no proof.
-
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `PAGE_LIMIT_DEFAULT` (literal) | `50` | rows a view returns when no `limit` is named | policy | none stated. `node/src/routes/page.ts` | CHOSEN | `NODE_INTERFACE → "Every list a view returns is a page"` |
 | `PAGE_LIMIT_MAX` (literal) | `100` | the most rows one page carries, whatever `limit` names | policy | none stated. `node/src/routes/page.ts` | CHOSEN | `NODE_INTERFACE → "Every list a view returns is a page"` |
 | `BATCH_READ_MAX` (literal) | `100` | the most post ids one `POST /posts/batch` takes; the extension's resolver cuts its requests to the same number, its own literal | policy | ruled 2026-10-08: `PAGE_LIMIT_MAX`'s number, so a request reads at most what a page reads — 100 rows in 100 distinct full blocks, 142 ms with `tx=1` (`NODE_INTERFACE → Posts`). `node/src/routes/page.ts` | RULED | `NODE_INTERFACE → Posts → "The batch read answers posts by id"` |
 | `RANGE_PAGE_MAX` (literal) | `256` | the most entries one page of `GET /api/v1/range` carries, and the page served when no `limit` is named | policy | provisional: a page looks up at most `1 + 2 · 256` keys — about 110 KB of proof and 17–20 ms over a tree of 1.4·10⁶ leaves (`NODE_INTERFACE → AVL+ State Root`). `node/src/state/avl-endpoint.ts` | PROVISIONAL | `NODE_INTERFACE → AVL+ State Root` |
-| `NIPOPOW_PROOF_CACHE_ENTRIES` (literal) | `4` | the `(m, k)` proofs `GET /nipopow/proof` keeps at one tip | policy | provisional: one entry serves every client asking the client defaults at one tip, and the most the cache holds is four of the largest proof the route builds, at the caps (`NODE_INTERFACE → Nipopow prover`). `node/src/routes/nipopow.ts` | PROVISIONAL | `NODE_INTERFACE → Nipopow prover` |
+| `NIPOPOW_PROOF_CACHE_ENTRIES` (literal) | `4` | the `(m, k)` proofs `GET /nipopow/proof` keeps at one tip | policy | provisional: one entry serves every client asking the client defaults at one tip, and the most the cache holds is four of the largest proof the route builds, at the caps — about 7 MB on a million-block chain at testnet's floor, so about 28 MB (`NODE_INTERFACE → Nipopow prover`). `node/src/routes/nipopow.ts` | PROVISIONAL | `NODE_INTERFACE → Nipopow prover` |
 
 ## Client defaults
 
@@ -360,12 +357,9 @@ module-private, so the drift test's converse does not reach them and the rows ar
 `DEFAULT_M` and `DEFAULT_K`, and the extension's verifier asks the same pair, imported, never a copy
 (`WEB_INTERFACE → The extension → "The verified tip"`).
 
-> ⚠ **AHEAD OF CODE (2026-10-15).** The `m` row's figures measure `nipopow/src/prover.ts` without the level-0
-> sweep (`NIPOPOW_INTERFACE → proveWithReader`), and are measured again with it.
-
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
-| `m` (default) | `24` | the security parameter | policy | ruled 2026-09-30, to be tuned on testnet's behaviour, on `packages/nipopow/scripts/bench-proof-m.mjs`: at 24 a chain of three quarters of the honest work wins about 4% of comparisons (6: about 18%), and a 100 000-block chain's proof is 199 KB, 397 KB as the route's hex, which Waterfox 140 decodes, verifies and compares in 0.12 s | RULED | `NIPOPOW_INTERFACE → Constants` |
+| `m` (default) | `24` | the security parameter | policy | ruled 2026-09-30, to be tuned on testnet's behaviour, on `packages/nipopow/scripts/bench-proof-m.mjs`: at 24 a chain of three quarters of the honest work wins about 4% of comparisons (6: about 18%), and a 100 000-block chain's proof is 219 KB, 438 KB as the route's hex, which Waterfox 140 decodes, verifies and compares in 0.16 s (measured 2026-10-15) | RULED | `NIPOPOW_INTERFACE → Constants` |
 | `k` (default) | `20` | the suffix — the client's own settlement depth; a block count, read in work under a moving target | policy | provisional; not a full node's reorg horizon, which is per network and larger (`maxReorgDepth`) | PROVISIONAL | `NIPOPOW_INTERFACE → Constants` |
 
 `@dagsocial/web`, the extension build — pinned by the package's own suite, outside the drift test.
