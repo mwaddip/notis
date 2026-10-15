@@ -122,6 +122,20 @@ export const MAX_INBOUND_SYNC_STREAMS = 16;
 export const SYNC_INFO_MIN_INTERVAL_MS = 100;
 
 /**
+ * Block requests of one peer that may wait for this node to finish writing
+ * that peer's previous answer (NET_INTERFACE → Serve Side → "A peer is
+ * served one block answer at a time"). One more drops the oldest waiting.
+ */
+export const MAX_PENDING_BLOCK_REQUESTS = 4;
+
+/**
+ * Sync data events one peer holds in the per-peer queue (NET_INTERFACE →
+ * Biased Event Loop clause 2). One more drops this peer's oldest, never
+ * another's.
+ */
+export const MAX_DATA_EVENTS_PER_PEER = 8;
+
+/**
  * Largest response body we assemble when serving a peer.
  *
  * Kept at half of `MAX_STREAM_BYTES` so a response we produce always fits inside

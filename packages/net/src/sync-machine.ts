@@ -8,7 +8,14 @@ import {
   MODIFIER_ORDERING_BLOCK,
   BACKFILL_BATCH_IDS,
 } from './types.js';
-import { isHeight, MAX_INV_IDS, MAX_SERVE_BODY_BYTES, SYNC_INFO_MIN_INTERVAL_MS } from './msg-guards.js';
+import {
+  isHeight,
+  MAX_INV_IDS,
+  MAX_SERVE_BODY_BYTES,
+  SYNC_INFO_MIN_INTERVAL_MS,
+  MAX_PENDING_BLOCK_REQUESTS,
+  MAX_DATA_EVENTS_PER_PEER,
+} from './msg-guards.js';
 import type { SyncInfo, Inv, ModifierRequest, ModifierResponse, SyncState } from './sync-types.js';
 import {
   encodeSyncInfo,
@@ -81,8 +88,6 @@ const SYNCED_POLL_INTERVAL_MS = 30_000;
  * floor for no-movement replies.
  */
 const MIN_SYNCINFO_INTERVAL_MS = 15_000;
-/** Maximum data events in the queue before dropping oldest. */
-const MAX_DATA_QUEUE = 64;
 /**
  * How often the loop runs its own timer tick.
  *
@@ -168,8 +173,22 @@ export class SyncMachine {
   /** Control events: unbounded, never dropped. */
   private controlQueue: ControlEvent[] = [];
 
-  /** Data events: bounded, lossy. Oldest dropped when full. */
+  /**
+   * Data events: bounded per peer, lossy (NET_INTERFACE → Biased Event Loop
+   * clause 2). Each push appends; a peer holds at most
+   * `MAX_DATA_EVENTS_PER_PEER`, and one more drops that peer's oldest —
+   * never another peer's.
+   */
   private dataQueue: DataEvent[] = [];
+
+  /**
+   * Block answers being written out, per peer, and the pending block
+   * requests waiting their turn (NET_INTERFACE → Serve Side → "A peer is
+   * served one block answer at a time"). The machine learns a write has
+   * ended when the `sendToPeer` promise it awaited settles.
+   */
+  private blockAnswerInFlight = new Set<string>();
+  private pendingBlockRequests = new Map<string, ModifierRequest[]>();
 
   /** Whether the background event loop is running. */
   private running = false;
@@ -191,7 +210,16 @@ export class SyncMachine {
   constructor(
     config: NetConfig,
     private store: SyncStore,
-    private sendToPeer: (peerId: string, data: Uint8Array) => void,
+    /**
+     * `sendToPeer` writes one frame to a peer on a stream the node opens.
+     * The return is `unknown` so the net layer can hand back a Promise
+     * that settles when the write ends — taken, failed or aborted
+     * (NET_INTERFACE → Validation → "A stream write is bounded in time
+     * as well") — and the machine awaits it to learn when the write has
+     * ended. A caller that returns nothing is equivalent to a write that
+     * ends at once.
+     */
+    private sendToPeer: (peerId: string, data: Uint8Array) => unknown,
     private onProtocolViolation: (peerId: string, reason: string) => void = () => {},
   ) {
     this.magic = config.magic;
@@ -587,13 +615,20 @@ export class SyncMachine {
   }
 
   /**
-   * Enqueue a data event. If the queue is at capacity, the oldest event is
-   * dropped to make room (lossy behavior).
+   * Enqueue a data event. Bound is per peer — NET_INTERFACE → Biased Event
+   * Loop clause 2: a peer holds at most `MAX_DATA_EVENTS_PER_PEER`, and one
+   * more drops that peer's oldest, never another's.
    */
   private pushData(event: DataEvent): void {
-    if (this.dataQueue.length >= MAX_DATA_QUEUE) {
-      // Drop the oldest event to make room
-      this.dataQueue.shift();
+    let count = 0;
+    for (const e of this.dataQueue) if (e.peerId === event.peerId) count++;
+    if (count >= MAX_DATA_EVENTS_PER_PEER) {
+      for (let i = 0; i < this.dataQueue.length; i++) {
+        if (this.dataQueue[i]!.peerId === event.peerId) {
+          this.dataQueue.splice(i, 1);
+          break;
+        }
+      }
     }
     this.dataQueue.push(event);
     this.wake();
@@ -637,6 +672,10 @@ export class SyncMachine {
     // pending report with the peer.
     this.pendingSyncInfo.delete(peerId);
     this.lastActedOnSyncInfoMs.delete(peerId);
+    // NET_INTERFACE → Serve Side → "A peer is served one block answer at
+    // a time": the pending answers die with the peer.
+    this.blockAnswerInFlight.delete(peerId);
+    this.pendingBlockRequests.delete(peerId);
 
     if (this.state.syncPeerId === peerId) {
       this.state.stalledPeers.add(peerId);
@@ -783,8 +822,28 @@ export class SyncMachine {
     }
   }
 
-  // NET_INTERFACE → ModifierRequest: ordering blocks served from the chain
+  // NET_INTERFACE → Serve Side → "A peer is served one block answer at a
+  // time". A request that arrives while this node is still writing that
+  // peer's previous answer waits (at most MAX_PENDING_BLOCK_REQUESTS), one
+  // more dropping the oldest.
   private serveOrderingBlocks(peerId: string, req: ModifierRequest): void {
+    if (this.blockAnswerInFlight.has(peerId)) {
+      let q = this.pendingBlockRequests.get(peerId);
+      if (!q) { q = []; this.pendingBlockRequests.set(peerId, q); }
+      if (q.length >= MAX_PENDING_BLOCK_REQUESTS) q.shift();
+      q.push(req);
+      return;
+    }
+    this.writeBlockAnswer(peerId, req);
+  }
+
+  /**
+   * Build and send one block answer, tracking the write in-flight so the
+   * peer's next request waits for this one to end — "A peer is served one
+   * block answer at a time". Awaits what `sendToPeer` returns to learn when
+   * the write ended (taken, failed or aborted).
+   */
+  private writeBlockAnswer(peerId: string, req: ModifierRequest): void {
     const modifiers: { id: string; data: Uint8Array }[] = [];
     let bodyBytes = 0;
 
@@ -798,10 +857,28 @@ export class SyncMachine {
       modifiers.push({ id, data });
     }
 
-    if (modifiers.length > 0) {
-      const resp: ModifierResponse = { typeId: req.typeId, modifiers };
-      this.sendToPeer(peerId, encodeModifierResponse(this.magic, resp));
+    if (modifiers.length === 0) {
+      // Nothing to serve — move on to the peer's next waiter if any.
+      this.advancePendingBlockAnswer(peerId);
+      return;
     }
+    const resp: ModifierResponse = { typeId: req.typeId, modifiers };
+    this.blockAnswerInFlight.add(peerId);
+    const sent = this.sendToPeer(peerId, encodeModifierResponse(this.magic, resp));
+    void Promise.resolve(sent as PromiseLike<void> | unknown)
+      .then(() => undefined, () => undefined)
+      .then(() => {
+        this.blockAnswerInFlight.delete(peerId);
+        this.advancePendingBlockAnswer(peerId);
+      });
+  }
+
+  private advancePendingBlockAnswer(peerId: string): void {
+    const q = this.pendingBlockRequests.get(peerId);
+    if (!q || q.length === 0) return;
+    const next = q.shift()!;
+    if (q.length === 0) this.pendingBlockRequests.delete(peerId);
+    this.writeBlockAnswer(peerId, next);
   }
 
   /**

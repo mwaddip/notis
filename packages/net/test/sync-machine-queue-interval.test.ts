@@ -140,7 +140,7 @@ describe("a peer's SyncInfo is acted on at most once per 100 ms", () => {
 // ---------------------------------------------------------------------------
 
 describe('a peer is served one block answer at a time', () => {
-  it.fails('three block requests arrive and only one answer goes out', () => {
+  it('three block requests arrive and only one answer goes out', () => {
     // A holds three contiguous blocks at heights 1..3; the ids are the hex
     // encodings of the heights. B is a peer behind us at height 0. The
     // sendToPeer stub returns a promise that never settles — a machine that
@@ -190,7 +190,7 @@ describe('a peer is served one block answer at a time', () => {
 // ---------------------------------------------------------------------------
 
 describe("a peer's flood never pushes out the sync peer's answer", () => {
-  it.fails("the sync peer's ModifierResponse is applied despite a flooder's 65 Invs", () => {
+  it("the sync peer's ModifierResponse is applied despite a flooder's 65 Invs", () => {
     // The ids we have asked S for — one each. Tracking height via a mutable
     // variable lets `appendBlocks` move the chain, which is how progress is
     // measured.

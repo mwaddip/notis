@@ -1478,16 +1478,20 @@ export class NetNode {
   // Sync helpers
   // -----------------------------------------------------------------------
 
-  private sendToPeer(peerId: string, data: Uint8Array): void {
-    if (!this.libp2p) return;
+  private sendToPeer(peerId: string, data: Uint8Array): Promise<void> {
+    if (!this.libp2p) return Promise.resolve();
     const peer = this.libp2p.getPeers().find((p) => p.toString() === peerId);
     if (!peer) {
       console.warn(`[net] sendToPeer: peer ${peerId} not found in libp2p.getPeers() (have ${this.libp2p.getPeers().length} peers)`);
-      return;
+      return Promise.resolve();
     }
 
+    // Return a promise that settles when the write ends (taken, failed or
+    // aborted). The sync machine awaits it to learn when the next block
+    // answer to the same peer may go out (NET_INTERFACE → Serve Side →
+    // "A peer is served one block answer at a time").
     const deadlineMs = this.config.syncRequestTimeoutMs;
-    this.libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
+    return this.libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
       signal: AbortSignal.timeout(deadlineMs),
     }).then(async (stream) => {
       try {
