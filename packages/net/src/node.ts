@@ -562,8 +562,6 @@ export class NetNode {
   private outboundMgr: OutboundManager | null = null;
   private syncStore: LazySyncStore;
   private syncTimer: ReturnType<typeof setInterval> | null = null;
-  private handshakeHandlerRegistered = false;
-  private syncHandlerRegistered = false;
   /**
    * The whole-block provider for `GetBlocks` (16) and the blocks a
    * `ModifierResponse` serves. NET_INTERFACE → Sync Handler Registration:
@@ -707,6 +705,7 @@ export class NetNode {
     } as any);
     this.libp2p = libp2p;
 
+    try {
     // Create PeerDb with self-address filtering
     const listenAddrs = this.libp2p.getMultiaddrs();
     const selfAddrs = listenAddrs.map(a => a.toString());
@@ -860,6 +859,25 @@ export class NetNode {
     this.syncTimer = setInterval(() => this.outboundTick(), OUTBOUND_TICK_INTERVAL_MS);
 
     this.started = true;
+    } catch (err) {
+      // NET_INTERFACE → API → Node Lifecycle →
+      // "A start that throws stops what it started". Everything after
+      // createLibp2p runs inside the try above; on a throw, the libp2p
+      // node and whatever startup reached is torn down before the error
+      // leaves start().
+      if (this.syncTimer) {
+        clearInterval(this.syncTimer);
+        this.syncTimer = null;
+      }
+      this.syncMachine?.stop();
+      this.syncMachine = null;
+      this.outboundMgr = null;
+      this.peerDb = null;
+      this.topics = null;
+      try { await libp2p.stop(); } catch { /* already down */ }
+      this.libp2p = null;
+      throw err;
+    }
   }
 
   /**
@@ -1017,7 +1035,6 @@ export class NetNode {
   // -----------------------------------------------------------------------
 
   private registerHandshakeHandler(libp2p: Libp2p): void {
-    if (this.handshakeHandlerRegistered) return;
     const magic = this.config.magic;
 
     libp2p.handle('/dagsocial/handshake/1', async ({ stream, connection }) => {
@@ -1154,8 +1171,6 @@ export class NetNode {
         await replyEmpty();
       }
     });
-
-    this.handshakeHandlerRegistered = true;
   }
 
   // -----------------------------------------------------------------------
@@ -1163,7 +1178,6 @@ export class NetNode {
   // -----------------------------------------------------------------------
 
   private registerSyncStreamHandler(libp2p: Libp2p): void {
-    if (this.syncHandlerRegistered) return;
     const magic = this.config.magic;
 
     libp2p.handle(SYNC_PROTOCOL, async ({ stream, connection }) => {
@@ -1193,8 +1207,6 @@ export class NetNode {
       this.peerStreamQueues.set(peerId, next);
       await next;
     }, { maxInboundStreams: MAX_INBOUND_SYNC_STREAMS });
-
-    this.syncHandlerRegistered = true;
   }
 
   /**

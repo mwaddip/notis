@@ -61,7 +61,7 @@ describe('a stopped node starts again whole', () => {
     nodeB = null;
   });
 
-  it.fails('A stops and starts; B reads headers from A instead of throwing', async () => {
+  it('A stops and starts; B reads headers from A instead of throwing', async () => {
     nodeA = new NetNode(makeConfig(), validators);
     await nodeA.start();
     // The stop and the next start both have to complete without throwing.
@@ -87,7 +87,7 @@ describe('a stopped node starts again whole', () => {
 });
 
 describe('a start that throws leaves nothing listening', () => {
-  it.fails('a loadAll that throws leaves no libp2p node behind the error', async () => {
+  it('a loadAll that throws leaves no libp2p node behind the error', async () => {
     // PeerDb's constructor reads `storage.loadAll()` inside start(), after the
     // libp2p node has been created. A throw here reproduces the state the rule
     // is written against: the node is created, nothing after it tears it down.
