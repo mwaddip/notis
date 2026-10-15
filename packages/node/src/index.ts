@@ -206,8 +206,8 @@ net.setHeightByBlockIdProvider(getHeightByBlockHash);
 
 // The seam the net layer serves a stored body through — what a served
 // `MODIFIER_POST_BODY` response carries (NET_INTERFACE → Sync Handler
-// Registration). The body a placeholder's row holds, or `null` when the row
-// has none or is withdrawn.
+// Registration). The body a post's row holds, or `null` when the row has
+// none or is withdrawn.
 net.setPostBodyProvider((id: string) => {
   const result = getPost(id);
   if (!isLivePost(result)) return null;
