@@ -61,8 +61,11 @@ identical; the refusal is loud and the remedy is the build. A false-fresh is imp
 
 **2. It paces on block height, never wall clock.** `mine(node, n)` is the clock. `confirm(...)` mines
 one block at a time until the observing node reads the effect — **bounded in blocks** (the template is
-rebuilt on tip movement only, so a submission rides the block *after* next). The one time-bounded wait
-is `waitHeight(nodes, h, windowMs)` — gossip arrival — and it fails with every node's log tail.
+rebuilt on tip movement only, so a submission rides the block *after* next). Two waits are bounded in time,
+each because the node paces what it waits for in time rather than in blocks, and each fails with every node's log
+tail: `waitHeight(nodes, h, windowMs)` — gossip arrival — and the health chapter's `waitSynced` — a follower's
+caught-up signal, an equal-height `SyncInfo` the node acts on at most once per interval (`NET_INTERFACE → Serve Side
+(Peer Behind Us)`).
 Journal lines on stdout are evidence in failure reports, never wait conditions.
 
 **3. Assertions that fail.** A chapter that logs its headline claim is not coverage. Every assertion
@@ -98,8 +101,8 @@ and removes the dir — on failure too.
 
 ## Cost, measured
 
-The full suite — twenty-four chapter files, meshes of 1–4 spawned nodes each — runs in **about 61 s** on the
-machine it was written on (2026-10-02).
+The full suite — twenty-six test files, meshes of 1–4 spawned nodes each — runs in **about 100 s** on the
+machine it was written on (2026-10-15).
 A chapter that pushes the suite well past that needs a reason stated in its commit: this number is
 what every `pnpm -r test` in the gate pays.
 
