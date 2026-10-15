@@ -1469,9 +1469,8 @@ function checkHexKeyedByteMap(
  * Presence is decided with `Object.hasOwn`, never truthiness or `in` — see
  * `isPlainObject` for what that buys and what it does not.
  *
- * Exported for direct testing. Call sites are `validateTx` step 0 and the
- * block funnel in `block-apply.ts`; gossip and the HTTP routes inherit it
- * through `validateTx`.
+ * Exported for direct testing. Its call sites are listed at
+ * `NODE_INTERFACE → Transaction envelope shape`.
  */
 export function checkTxEnvelope(tx: unknown, height: number, schedule: readonly ProtocolEra[]): UtxoResult {
   // ---- 1. A plain, non-null, non-array object ----
@@ -1580,13 +1579,17 @@ export function checkTxEnvelope(tx: unknown, height: number, schedule: readonly 
   // version other than the transaction's would mint a second identity for one post.
   if (!verifyTxProtocolVersion(tx as unknown as UtxoTransaction, height, schedule)) {
     const era = protocolVersionAt(schedule, height);
-    const commit = tx.post as { protocolVersion?: unknown } | undefined;
+    const post = tx.post;
     return {
       valid: false,
       error:
         `Invalid tx envelope: protocolVersion must be the era ${era} at height ${height}, ` +
         `got ${describeValue(tx.protocolVersion)}` +
-        (commit !== undefined ? ` (commit ${describeValue(commit.protocolVersion)})` : ''),
+        (typeof post === 'object' && post !== null
+          ? ` (commit ${describeValue((post as { protocolVersion?: unknown }).protocolVersion)})`
+          : post !== undefined
+            ? ` (post ${describeValue(post)})`
+            : ''),
     };
   }
 

@@ -3165,8 +3165,8 @@ export const MAX_TX_PACKET_BYTES = 10_303;       // derived — the longest enco
 ```
 
 Consensus bounds on **weight**, checked in `@dagsocial/validation` — the body by
-`verifyOrderingBlockStructure`; a user transaction by `verifyTxStructure` on the relay path and
-again per body element; **the settlement transaction by `MAX_SETTLEMENT_BYTES`**, positional
+`verifyOrderingBlockStructure`; a user transaction by `verifyTxStructure` on the relay path and at
+node's HTTP edge, and again per body element; **the settlement transaction by `MAX_SETTLEMENT_BYTES`**, positional
 identity naming it as the last element — so an oversized object is refused before relay rather than
 after storage. Distinct in kind from `### Content limits` above, which are format bounds a codec
 enforces on one field; these bound whole structures and no codec consults them.

@@ -363,7 +363,7 @@ describe('vouch routes — the JSON edge', () => {
     const res = await new Promise<{ status: number; data: unknown }>((resolve) => {
       const server = app.listen(0, () => {
         const addr = server.address() as { port: number };
-        const payload = Buffer.from(JSON.stringify({ tx: { inputs: ['a'.repeat(64)], outputs: [], signatures: {}, protocolVersion: 1 } }));
+        const payload = Buffer.from(JSON.stringify({ tx: { inputs: ['a'.repeat(64)], outputs: [{ boxType: 'karma', value: '1', createdAtBlock: 0, owner: '00'.repeat(32) }], signatures: {}, protocolVersion: 1 } }));
         const req = http.request(
           { hostname: 'localhost', port: addr.port, path: '/', method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Content-Length': String(payload.length) } },
@@ -392,7 +392,7 @@ describe('vouch routes — the JSON edge', () => {
     const res = await new Promise<{ status: number; data: unknown }>((resolve) => {
       const server = app.listen(0, () => {
         const addr = server.address() as { port: number };
-        const payload = Buffer.from(JSON.stringify({ tx: { inputs: ['a'.repeat(64)], outputs: [], signatures: {}, protocolVersion: 1 } }));
+        const payload = Buffer.from(JSON.stringify({ tx: { inputs: ['a'.repeat(64)], outputs: [{ boxType: 'karma', value: '1', createdAtBlock: 0, owner: '00'.repeat(32) }], signatures: {}, protocolVersion: 1 } }));
         const req = http.request(
           { hostname: 'localhost', port: addr.port, path: `/${target.hex}`, method: 'DELETE',
             headers: { 'Content-Type': 'application/json', 'Content-Length': String(payload.length) } },
@@ -430,6 +430,24 @@ describe('vouch routes — the JSON edge', () => {
     expect(body['status']).toBe('pending');
     expect(body['txId']).toBe(computeTxId(tx));
     expect(body['karmaReturnsAtBlock']).toBe(COOLDOWN);
+  });
+
+  it('DELETE /vouches/:targetId whose :targetId is not the spent VouchBox\'s targetId is refused 400', async () => {
+    // NODE_INTERFACE → Vouches, the `DELETE /vouches/:targetId` row:
+    // "400 where `:targetId` is not the target of the VouchBox the transaction
+    // spends". The vouch box is otherwise one the node would pool.
+    const vouchBox = seedVouchBox(voucher.pub, target.pub);
+    const tx: UtxoTransaction = {
+      inputs: [vouchBox.id!],
+      outputs: [unvouchEscrow(vouchBox.value, voucher.pub)],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, voucher.priv, voucher.hex);
+
+    const otherTargetHex = 'ee'.repeat(32);
+    const res = await request(`/${otherTargetHex}`, 'DELETE', { tx: txToJson(tx) });
+    expect(res.status, JSON.stringify(res.data)).toBe(400);
   });
 
   // -------------------------------------------------------------------------

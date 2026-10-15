@@ -313,8 +313,8 @@ describe('posts routes', () => {
           },
         );
         r.write(JSON.stringify({
-          tx: { inputs: ['11'.repeat(32)], outputs: [], signatures: {}, protocolVersion: 1,
-            post: { contentHash: Buffer.from(contentHash).toString('hex'), author: '11'.repeat(32), parentRefs: [] } },
+          tx: { inputs: ['11'.repeat(32)], outputs: [{ boxType: 'karma', value: '1', createdAtBlock: 0, owner: '11'.repeat(32) }], signatures: {}, protocolVersion: 1,
+            post: { contentHash: Buffer.from(contentHash).toString('hex'), author: '11'.repeat(32), parentRefs: [], type: 'regular' } },
           content,
         }));
         r.end();
@@ -497,9 +497,16 @@ describe('posts routes', () => {
   // GET tests
   // -----------------------------------------------------------------------
 
-  it('GET /posts/:id returns 404 for unknown post', async () => {
-    const res = await request('/nonexistent-post-id', 'GET');
+  it('GET /posts/:id returns 404 for an unknown id', async () => {
+    const res = await request('/' + '00'.repeat(32), 'GET');
     expect(res.status).toBe(404);
+  });
+
+  // NODE_INTERFACE → HTTP API → "Hex is lowercase": the shape check runs
+  // ahead of the lookup.
+  it('GET /posts/<id in another shape> returns 400', async () => {
+    const res = await request('/nonexistent-post-id', 'GET');
+    expect(res.status).toBe(400);
   });
 
   it('GET /posts returns the paged shape', async () => {
@@ -1740,12 +1747,11 @@ describe('POST /posts/batch', () => {
     expect(row['tx']).toBe(Buffer.from(placeholderTxBytes).toString('hex'));
   });
 
-  it('an upper-case id answers its row', async () => {
+  // NODE_INTERFACE → HTTP API → "Hex is lowercase"
+  it('an upper-case id answers 400 ids must be 64 lowercase hex characters', async () => {
     const res = await batchPost('/batch', { ids: [aId.toUpperCase()] });
-    expect(res.status).toBe(200);
-    const posts = (res.data as { posts: Array<{ id: string }> }).posts;
-    expect(posts.length).toBe(1);
-    expect(posts[0]!.id).toBe(aId);
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('ids must be 64 lowercase hex characters');
   });
 
   it('an empty body is 400 ids required (array)', async () => {
@@ -1772,24 +1778,27 @@ describe('POST /posts/batch', () => {
     expect((res.data as { error: string }).error).toBe('ids must not repeat');
   });
 
-  it('an id repeated in the other case is 400 ids must not repeat', async () => {
+  // NODE_INTERFACE → HTTP API → "Hex is lowercase": the second entry's
+  // upper-case spelling meets the shape check first; the dedup check never
+  // runs.
+  it('an id and its upper-case spelling: the shape check refuses the upper one', async () => {
     const res = await batchPost('/batch', { ids: [aId, aId.toUpperCase()] });
     expect(res.status).toBe(400);
-    expect((res.data as { error: string }).error).toBe('ids must not repeat');
+    expect((res.data as { error: string }).error).toBe('ids must be 64 lowercase hex characters');
   });
 
-  it('a 63-char id is 400 ids must be 64-character hex strings', async () => {
+  it('a 63-char id is 400 ids must be 64 lowercase hex characters', async () => {
     const short = '0'.repeat(63);
     const res = await batchPost('/batch', { ids: [short] });
     expect(res.status).toBe(400);
-    expect((res.data as { error: string }).error).toBe('ids must be 64-character hex strings');
+    expect((res.data as { error: string }).error).toBe('ids must be 64 lowercase hex characters');
   });
 
-  it('a non-hex 64-char id is 400 ids must be 64-character hex strings', async () => {
+  it('a non-hex 64-char id is 400 ids must be 64 lowercase hex characters', async () => {
     const bad = 'z'.repeat(64);
     const res = await batchPost('/batch', { ids: [bad] });
     expect(res.status).toBe(400);
-    expect((res.data as { error: string }).error).toBe('ids must be 64-character hex strings');
+    expect((res.data as { error: string }).error).toBe('ids must be 64 lowercase hex characters');
   });
 
   it('viewer fills likedByViewer', async () => {

@@ -96,7 +96,7 @@ Base URL: `http://{host}:{port}` (default: `localhost:3000`)
 All responses are JSON. Binary fields (public keys, signatures)
 are hex-encoded.
 
-`userId` on the wire is hex-encoded (64 hex chars). Internally `UserId` is
+`userId` on the wire is hex-encoded (64 lowercase hex chars). Internally `UserId` is
 `Uint8Array` (32 raw bytes).
 
 **A body the parser refuses is the client's error.** Every route that reads a body reads JSON of at most 1 MB, parsed
@@ -108,6 +108,36 @@ reason: 'bad request body' }`. None reaches a route, and **none is logged**: a l
 log a stranger can fill. A request with no JSON `Content-Type` has no body as far as a route sees — an empty object —
 and the route's own check answers it. **500 `{ error: 'internal' }` is a fault of the node's**, and it alone logs its
 stack.
+
+**Hex is lowercase.** Every hex value the node reads — in a body, a path or a query: a key, an id, a box field, a
+signature — is lowercase hex of the width its field states, and any other spelling, uppercase included, is a 400 on
+every route. It is the one spelling the node writes and the one `types`' `hexToBytes` decodes.
+
+**A query parameter is one string.** A query string is read as names that each hold one string. A name given twice is
+a 400 on every route (`query parameter <name> given twice`); a name written with brackets — `after[]`, `author[x]` —
+is a name of its own, which no route reads. No route reads an array or an object out of a query.
+
+**A write request's transaction is checked whole before anything reads it.** Every route that takes `{ tx }` —
+`POST /posts`, `/likes`, `/vouches`, `/invites`, `/credits/transfer`, `/usernames`, `/usernames/:name/burn`,
+`/backers/unstake` and `/posts/:id/withdraw`, and `DELETE /vouches/:targetId` — reads it through one edge, and no
+service reads it before every step has passed:
+
+1. **The JSON form.** `tx` is a plain object carrying `inputs`, `outputs` and `signatures`, and `outputs` is an array
+   of plain objects. Every binary field — each signature, the post commit's `contentHash` and `author`, each box field
+   `jsonToTx` decodes as bytes (`BINARY_BOX_FIELDS`) — is a string of lowercase hex of even length; every amount is a
+   safe integer or a decimal string of 1 to 19 digits with no leading zero but `0` itself — one spelling for a value,
+   as hex has one, and enough digits for every value of the domain (`TYPES_INTERFACE → Box value domain`). The edge supplies an absent `protocolVersion` — the transaction's, and a
+   post commit's — as the era at `tip + 1` (→ Transaction envelope shape); every other key is the client's or
+   absent.
+2. **The envelope and the outputs.** `checkTxEnvelope` at `tip + 1` (→ Transaction envelope shape), then
+   `checkOutputShape` (→ Output shape).
+3. **Stage 1.** `verifyTxStructure` (`VALIDATION_INTERFACE → verifyTxStructure`), the check a relayed transaction
+   meets; its size bound, last, answers **413** with the pool's `TxTooLargeError` message.
+
+Any other refusal at the edge is a **400** in the route's own error body, and none is logged. Step 2 is
+`validateTx`'s own steps 0 and 5 and step 3 the relay's Stage 1, so the edge moves no verdict — what a block accepts is
+unchanged, and a transaction step 3 refuses is one no peer would relay from this node; what it decides is that a
+malformed request is answered before a store read, a signature or a cost estimate is spent on it.
 
 ### The node serves no client
 
@@ -151,18 +181,18 @@ its choosing.
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
 | `POST` | `/posts` | `{ tx: UtxoTransaction, content: string }` — client-built, client-signed post tx with `tx.post` (the `PostCommit`) set, and the body beside it ("Post transactions" below) | `{ postId, status: "pending", expiresAtHeight, txId }` (200) | 400 if `tx`, `tx.post` or `content` is missing or malformed, `content` fails `verifyPostBody` against `tx.post.contentHash` (reason named), the commit fails verification, the transaction fails `validateTx`, or the first input is not a karma box owned by `post.author` |
-| `GET` | `/posts/:id` | `?viewer=hex&tx=1` — both optional ("`viewer` names the identity a read is for" and "The creating transaction rides a post row" below) | `PostJson` or `WithdrawnJson` (both below), **plus `confirmedAuthor`** | 404 only for an id the node has never heard of ("Resolution order for a post id"); 400 if a present `viewer` is neither 64 hex chars nor an `@handle` or a present `tx` is not the string `1` (`tx must be 1`), 404 `unknown handle` (→ Identity parameters) |
-| `GET` | `/posts/:id/thread` | `?viewer=hex&tx=1&light=1&limit=50&after=<blockHeight>:<blockIndex>` — `viewer`, `tx` and `light` optional; `limit` and `after` page the descendants ("Every list a view returns is a page" below) | `{ post, ancestors, ancestorCount, descendants, descendantCount, next, pending, pendingCount }` — `post` is `PostJson` or `WithdrawnJson`, and under `light=1` every live row of the answer, `post` among them, is a `LightJson` ("A light row is a post's id and the node's word" below); `ancestors` the nearest `limit` ancestors, oldest first (`after` does not apply — the context above the topmost one is that post's own thread); `descendants` one page of the subtree's **committed** rows in committed order, `(blockHeight, blockIndex)` ascending, strictly after `after`, with `next` the key to continue from; `pending` the subtree's pending posts, newest arrival first, cut to `limit`, with `pendingCount` over all of them; `ancestorCount` and `descendantCount` are over the whole chain and the whole subtree, pending included — a `PostJson` `post` carries the same number as its own `descendantCount`. **A withdrawn subject answers its `ancestors`, `descendants`, `pending` and counts as a live subject does** — the row, its topology and every descendant's anchor survive the withdrawal (→ Withdrawal transactions), so its replies hang off it | 404 as above; 400 as `/posts` |
+| `GET` | `/posts/:id` | `?viewer=hex&tx=1` — both optional ("`viewer` names the identity a read is for" and "The creating transaction rides a post row" below) | `PostJson` or `WithdrawnJson` (both below), **plus `confirmedAuthor`** | 404 only for an id the node has never heard of ("Resolution order for a post id"); 400 if `:id` is not 64 lowercase hex, a present `viewer` is neither 64 hex chars nor an `@handle` or a present `tx` is not the string `1` (`tx must be 1`), 404 `unknown handle` (→ Identity parameters) |
+| `GET` | `/posts/:id/thread` | `?viewer=hex&tx=1&light=1&limit=50&after=<blockHeight>:<blockIndex>` — `viewer`, `tx` and `light` optional; `limit` and `after` page the descendants ("Every list a view returns is a page" below) | `{ post, ancestors, ancestorCount, descendants, descendantCount, next, pending, pendingCount }` — `post` is `PostJson` or `WithdrawnJson`, and under `light=1` every live row of the answer, `post` among them, is a `LightJson` ("A light row is a post's id and the node's word" below); `ancestors` the nearest `limit` ancestors, oldest first (`after` does not apply — the context above the topmost one is that post's own thread); `descendants` one page of the subtree's **committed** rows in committed order, `(blockHeight, blockIndex)` ascending, strictly after `after`, with `next` the key to continue from; `pending` the subtree's pending posts, newest arrival first, cut to `limit`, with `pendingCount` over all of them; `ancestorCount` and `descendantCount` are over the whole chain and the whole subtree, pending included — a `PostJson` `post` carries the same number as its own `descendantCount`. **A withdrawn subject answers its `ancestors`, `descendants`, `pending` and counts as a live subject does** — the row, its topology and every descendant's anchor survive the withdrawal (→ Withdrawal transactions), so its replies hang off it | 404 as above; 400 for an `:id` as `GET /posts/:id`, and as `/posts` |
 | `GET` | `/posts` | `?author=hex&roots=1&viewer=hex&tx=1&light=1&limit=50&after=<blockHeight>:<blockIndex>` — `author`, `roots`, `viewer`, `tx` and `light` optional; `roots=1` restricts every list in the answer to posts with no parent (`parentRefs: []`), absent the listing is unfiltered, and the two filters compose (`author` with `roots` is the author's roots); `limit` and `after` page the committed rows ("Every list a view returns is a page" below) | `{ posts: (PostJson \| WithdrawnJson)[], next, pending: PostJson[], pendingCount }`, every live row a `LightJson` under `light=1` — `posts` one page of the committed rows, live and withdrawn, newest first in committed order (placeholders included; ordering below), `next` the key to continue from; `pending` the live pending rows — the author's when `author` is present — newest arrival first, cut to `limit`, `pendingCount` over all of them; with `roots=1`, `posts`, `pending` and `pendingCount` are over the roots alone, the keyset walking the filtered set | 400 if a present `limit` or `after` does not parse ("Every list a view returns is a page"), a present `roots` is not the string `1` (`roots must be 1`), a present `tx` is not the string `1` (`tx must be 1`), a present `light` is not the string `1` (`light must be 1`), `tx` and `light` are both present (`tx and light cannot both be 1`), or a present `viewer` is neither 64 hex chars nor an `@handle`; 404 `unknown handle` (→ Identity parameters) |
-| `POST` | `/posts/batch` | `{ ids: postId[] }`, `?viewer=hex&tx=1` — both optional ("The batch read answers posts by id" below) | `{ posts: (PostJson \| WithdrawnJson)[] }` — a row for each id the node holds, in the order asked | 400 if `ids` is missing or not an array (`ids required (array)`), holds no id or more than `BATCH_READ_MAX` (`ids must hold 1 to 100 post ids`), holds an entry that is not 64 hex chars (`ids must be 64-character hex strings`) or one id twice (`ids must not repeat`); `viewer` and `tx` as `/posts` |
+| `POST` | `/posts/batch` | `{ ids: postId[] }`, `?viewer=hex&tx=1` — both optional ("The batch read answers posts by id" below) | `{ posts: (PostJson \| WithdrawnJson)[] }` — a row for each id the node holds, in the order asked | 400 if `ids` is missing or not an array (`ids required (array)`), holds no id or more than `BATCH_READ_MAX` (`ids must hold 1 to 100 post ids`), holds an entry that is not 64 lowercase hex chars (`ids must be 64 lowercase hex characters`) or one id twice (`ids must not repeat`); `viewer` and `tx` as `/posts` |
 
 **Every list a view returns is a page.** `limit` defaults to `PAGE_LIMIT_DEFAULT` (50) and clamps
 to `PAGE_LIMIT_MAX` (100); a present `limit` that does not parse as a positive safe integer is a
 400. `after` names the key of the last row the client holds, spelled as the list's stated total
 order in the API's own conventions — `<blockHeight>:<blockIndex>` for posts, `<value>:<boxId>` for
 karma and credit boxes (`value` a decimal integer in the box value domain, `TYPES_INTERFACE → Box
-value domain`), `<boxId>` for bonds and vouches; hex is accepted in either case and compared in
-lower case, and a present `after` that does not parse is a 400. One parser, `routes/page.ts`,
+value domain`), `<boxId>` for bonds and vouches; hex is lowercase (→ HTTP API → "Hex is lowercase"),
+and a present `after` that does not parse is a 400. One parser, `routes/page.ts`,
 serves every paged route in both directions — it reads `limit` and `after` and spells `next` — and
 the two numbers live there (`CONSTANTS → HTTP view bounds`). **A page is the first `limit` rows of
 a stated total order strictly after the key**, from the head when `after` is absent; the order is a
@@ -270,7 +300,7 @@ the same `next`, `pendingCount` and counts beside it. **`light` and `tx` do not 
 one asks for a row without its transaction and the other for the transaction. `GET /posts/:id` takes no `light`.
 
 **The batch read answers posts by id.** `POST /posts/batch` takes `{ ids }` — 1 to `BATCH_READ_MAX` (100,
-`CONSTANTS → HTTP view bounds`) post ids of 64 hex chars, hex accepted in either case and compared in lower case, none
+`CONSTANTS → HTTP view bounds`) post ids of 64 lowercase hex chars, none
 twice — and answers `{ posts }`: for each id the node holds, the row `GET /posts/:id` answers less `confirmedAuthor` —
 a `PostJson`, a placeholder among them, or a `WithdrawnJson` — **in the order asked, an id the node has never heard of
 left out** ("Resolution order for a post id" below). `viewer` and `tx=1` read as on the three post reads: with `tx=1`
@@ -463,7 +493,7 @@ creation, so nothing stays open. `expiresAtHeight` on the response is the
 | Method | Path | Handler | Description |
 |--------|------|---------|-------------|
 | `POST` | `/vouches` | `castVouch` | Signed UTXO tx (KarmaBox to KarmaBox + VouchBox) → `200 { status: 'pending', txId, expiresAtHeight }` |
-| `DELETE` | `/vouches/:targetId` | `initiateUnvouch` | Signed UTXO tx (VouchBox to none) → `200 { status: 'pending', txId, expiresAtHeight, karmaReturnsAtBlock }` — the escrow's `releaseAtBlock`, relayed |
+| `DELETE` | `/vouches/:targetId` | `initiateUnvouch` | Signed UTXO tx (VouchBox to none) → `200 { status: 'pending', txId, expiresAtHeight, karmaReturnsAtBlock }` — the escrow's `releaseAtBlock`, relayed; 400 where `:targetId` is not the target of the VouchBox the transaction spends |
 | `GET` | `/vouches?target=X&limit=50&after=<boxId>` | `getVouchesForTargetPage` | `{ vouches: [{ voucherId, voucherName, targetId, targetName }], count, next }` — one page of the identity's vouchers, each name the holder's username as typed or `null` (→ Usernames → "A list row carries its names"), ascending box id, strictly after `after`; `count` over the whole set, `next` the key to continue from (HTTP API → "Every list a view returns is a page") |
 | `GET` | `/vouches?voucher=X&limit=50&after=<boxId>` | `getVouchesForVoucherPage` | `{ vouches: [{ boxId, value, voucherId, voucherName, targetId, targetName, createdAtBlock }], count, next }` — one page of the identity's live vouches, the names as on the target arm, ascending box id strictly after `after`; `count` over the whole set, `next` the key to continue from. The one arm carrying `boxId`: the unvouch builder names the box it spends |
 | `GET` | `/vouches?voucher=X&cooldowns=1&limit=50&after=<boxId>` | `getVouchCooldownsPage` | `{ cooldowns: [{ boxId, value, releaseAtBlock }], count, next }` — one page of the identity's unspent escrows, ascending box id strictly after `after` |
@@ -483,8 +513,9 @@ member holds as many live vouches as they have karma to stake.
 > since a box can be spent between opening a window and pressing the word (`WEB_INTERFACE → The wallet`).
 
 **The JSON edge:** `jsonToTx`'s `BINARY_BOX_FIELDS` names `voucherId` and `targetId`, so a vouch
-transaction crosses HTTP JSON with both as bytes (a field missing from that set makes its box
-inexpressible over JSON — it arrives as a hex string and dies at the step-4 schema). Route tests drive
+transaction crosses HTTP JSON with both as bytes. A field missing from that set makes its box
+inexpressible over JSON: it arrives as a hex string, which the output shape refuses at the edge
+(→ HTTP API → "A write request's transaction is checked whole before anything reads it"). Route tests drive
 cast and unvouch through the JSON edge. `GET /vouches?voucher=X` carries a `boxId` per entry, which the
 unvouch builder names as the VouchBox it spends.
 
@@ -501,7 +532,7 @@ invites, vouches, credits, withdraw).
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/posts/:id/withdraw` | `{ tx }` — a withdrawal transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex, expiresAtHeight }` (201) | 400 if the payload is absent, the post is unconfirmed or confirmed at or above the block the withdrawal is judged for (`tip + 1` at admission, → validateTx), the signer is not its author, the post is already withdrawn, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
+| `POST` | `/posts/:id/withdraw` | `{ tx }` — a withdrawal transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex, expiresAtHeight }` (201) | 400 if the payload is absent or names a post other than `:id`, the post is unconfirmed or confirmed at or above the block the withdrawal is judged for (`tip + 1` at admission, → validateTx), the signer is not its author, the post is already withdrawn, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
 
 **Withdraw flow:**
 
@@ -511,9 +542,11 @@ invites, vouches, credits, withdraw).
 2. ⛔ **The route answers `submitted`, never `withdrawn` and never `deleted`.** It reports that the
    transaction entered the pool, which is what happened; the outcome it does **not** promise is that
    a block carries it.
-3. The route runs the withdrawal-specific checks — the post confirmed in an **earlier** block, read
-   from `block_topology`; the signer its consensus-recorded author; the row not already withdrawn —
-   then `validateTx`, then `admitTx`, then `net.broadcastTx`. **The same order every sibling route
+3. After the edge (→ HTTP API → "A write request's transaction is checked whole before anything reads
+   it"), the route holds the payload's `postId` to `:id` and runs the withdrawal-specific checks — the
+   post known, a 404 where it is not; confirmed in an **earlier** block, read from `block_topology`; the
+   signer its consensus-recorded author; the row not already withdrawn — then admission (→ Service Layer
+   Architecture → "One function admits"), then `net.broadcastTx`. **The same order every sibling route
    uses**, and the broadcast is what makes a withdrawal submitted to a non-mining node reach
    consensus.
    > ⚠ **The maturity bind reads topology, not the DAG.** A pending post has a `dag_posts` row and no
@@ -569,35 +602,20 @@ five fields holds a second implementation of a consensus predicate, the mirror c
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/credits/transfer` | `{ tx: UtxoTransaction }` — client-built, client-signed | `{ status: "pending", txId, expiresAtHeight }` | 400 on invalid tx or signature |
+| `POST` | `/credits/transfer` | `{ tx: UtxoTransaction }` — client-built, client-signed; every output a credit box or a fee box — the outputs a credit spend may create (→ Legal box transitions) | `{ status: "pending", txId, expiresAtHeight }` | 400 on an output of another type, an invalid tx or signature; 402 when its fee is below this node's floor (`MEMPOOL_INTERFACE → Fee floor`) |
 
 **A credit transfer is a transaction, and it settles when it is mined.**
-The client builds and signs it; the node decodes it with
-`jsonToTx`, validates it with `validateTx`, pools it with `insertUtxoTx` and
-relays it with `net.broadcastTx` — the same path invites, vouches and likes
-already take. Credits move at block application on every node, not when the
-HTTP call returns.
+The client builds and signs it; the node reads it through the edge (→ HTTP API → "A write request's transaction is
+checked whole before anything reads it"), holds its outputs to credit and fee boxes, admits it (→ Service Layer
+Architecture → "One function admits") and relays it with `net.broadcastTx` — the path every write takes. Credits move
+at block application on every node, not when the HTTP call returns. **A fee box is how a transfer bids**
+(`MEMPOOL_INTERFACE → Fee floor`), so a floor above zero prices a transfer and refuses none outright.
 
-This replaced a handler that took `{ from, to, amount, signature }` and
-**rebuilt the transaction server-side**, which was wrong twice over:
-
-- **It bypassed consensus entirely** (audit F-consensus-7). `sendCredits`
-  called `consumeBox`/`insertBox` directly with no block and no open journal,
-  so the transfer entered no block, produced no journal entries, and never
-  reached the AVL feed. The node's digest kept matching its peers while its
-  box table did not, and the divergence surfaced at the next restart — when
-  the prover re-bootstraps from `getUnspentBoxes()` and every later block
-  fails its `stateRoot` check. A permanent self-fork with a cause hours old.
-- **It duplicated transaction construction.** The demo UI already built the
-  complete transaction and signed its id, then discarded it and sent the
-  parts; the node rebuilt it. Box-selection order, output shape and field
-  order had to agree byte-for-byte across two implementations or the
-  signature stopped verifying, and nothing tested that. The client-built
-  form deletes the second implementation rather than documenting it.
-
-`expectedHeight` is gone. Since Spec G no output carries a height, so the
-transaction and its id are height-independent and the parameter pinned
-nothing.
+**The node never builds a transfer.** A transaction built and applied by the node itself enters no block and no
+journal and never reaches the tree, so the node's box table parts from its peers' with nothing to show it until a
+rebuild fails its `stateRoot` check; and a builder of the node's own would be a second implementation of the client's
+construction, which has to agree with it byte for byte for the signature to verify. The client's signed transaction is
+the only one.
 
 ### Usernames
 
@@ -645,8 +663,9 @@ legible 400, as the username routes mirror theirs.
 
 **A parameter typed *identity* is a 64-hex public key or an `@handle`.** A handle — `@` followed by a
 well-formed name — resolves through the name record at request time, on its canonical form, to the
-holder's key; an unknown handle answers **404 `unknown handle`**, and a value that is neither answers
-400 as a malformed key does. The identity-typed parameters are `author` and `viewer` on `GET /posts`,
+holder's key; an unknown handle answers **404 `unknown handle`**, and a value that is neither — a key in uppercase
+among them (→ HTTP API → "Hex is lowercase") — answers 400 as a malformed key does. The identity-typed parameters
+are `author` and `viewer` on `GET /posts`,
 `GET /posts/:id` and `GET /posts/:id/thread`; `target` and `voucher` on `GET /vouches`; `:userId` on
 `GET /karma/:userId`, `GET /credits/:userId`, `GET /invites/:userId` and `GET /backers/:userId`; `miner` on
 `GET /mining/template`; and `owner` on `GET /usernames`. **A signed transaction carries keys, never
@@ -902,7 +921,7 @@ defect. **It belongs to the supply set.**
 
 | Method | Path | Response |
 |--------|------|----------|
-| `GET` | `/shell/:id` | **The web client's shell with the post's preview tags injected** — the file at `WEB_SHELL_PATH` (→ Configuration), read on every request so a new bundle needs no restart, answered with `<title>`, `og:title`, `description`, `og:description`, `og:type` article, `og:site_name` Notis and `twitter:card` summary injected before `</head>`, every value HTML-escaped (`& < > "`); `og:url` is `<proto>://<host><path>` — the proto from `X-Forwarded-Proto`, else the request's own; the host from `X-Forwarded-Host`, else `Host`; the path the `X-Original-URI` header the host's proxy sets — omitted when that header is absent — the node never learns the client's public path. 404 plain when no shell is configured; 500 when the file cannot be read; 400 when `:id` is not 64 hex; **404 with the untagged shell** for an id the node has never heard of, so the client boots and says what it found and a crawler finds nothing to preview; 200 tagged for a live post with content, untagged for one whose content is not on this node yet, tagged as withdrawn (`withdrawn · Notis`, *withdrawn by its author*, no `og:url`) for a withdrawn post. The node reads no client convention: the description is the content's first 200 characters as they are, cut at a word with `...`, whitespace collapsed; the title `@name · Notis` when the author holds a name (→ Usernames), else the author's first 16 hex characters and `…`, then ` · Notis` (`WEB_INTERFACE → Links`). **A tagged answer replaces the shell's own preview tags**: before the post's tags go in, every `<meta property="og:…">`, every `<meta name="twitter:…">` and the `<meta name="description">` the shell carries are removed, so the page holds exactly one of each and the node's values only, and no `og:image` — the shell's site card (`WEB_INTERFACE → The client is served from the node's own origin`) is a page's own only where the answer is the file as it is: the 404 for an unknown id and the 200 for content not yet on this node |
+| `GET` | `/shell/:id` | **The web client's shell with the post's preview tags injected** — the file at `WEB_SHELL_PATH` (→ Configuration), read on every request so a new bundle needs no restart, answered with `<title>`, `og:title`, `description`, `og:description`, `og:type` article, `og:site_name` Notis and `twitter:card` summary injected before `</head>`, every value HTML-escaped (`& < > "`); `og:url` is `<proto>://<host><path>` — the proto from `X-Forwarded-Proto`, else the request's own; the host from `X-Forwarded-Host`, else `Host`; the path the `X-Original-URI` header the host's proxy sets — omitted when that header is absent — the node never learns the client's public path. 404 plain when no shell is configured; 500 when the file cannot be read; 400 when `:id` is not 64 lowercase hex; **404 with the untagged shell** for an id the node has never heard of, so the client boots and says what it found and a crawler finds nothing to preview; 200 tagged for a live post with content, untagged for one whose content is not on this node yet, tagged as withdrawn (`withdrawn · Notis`, *withdrawn by its author*, no `og:url`) for a withdrawn post. The node reads no client convention: the description is the content's first 200 characters as they are, cut at a word with `...`, whitespace collapsed; the title `@name · Notis` when the author holds a name (→ Usernames), else the author's first 16 hex characters and `…`, then ` · Notis` (`WEB_INTERFACE → Links`). **A tagged answer replaces the shell's own preview tags**: before the post's tags go in, every `<meta property="og:…">`, every `<meta name="twitter:…">` and the `<meta name="description">` the shell carries are removed, so the page holds exactly one of each and the node's values only, and no `og:image` — the shell's site card (`WEB_INTERFACE → The client is served from the node's own origin`) is a page's own only where the answer is the file as it is: the 404 for an unknown id and the 200 for content not yet on this node |
 
 ---
 
@@ -1556,15 +1575,11 @@ The checks:
   `validateTx` runs, so the gate is what keeps that hash total. Its verdict
   there is **block rejection**, under the proof obligation stated at
   "Embedded transactions" below; it is not a per-tx skip.
-- HTTP keeps `jsonToTx`'s friendlier per-field `ClientError` 400s; the gate
-  backstops the two fields that today pass through on bare type assertions
-  (`inputs`, `protocolVersion`) — the field-type pin's "HTTP ingress is
-  shielded" claim was overstated.
+- The JSON edge, at `tip + 1`, before any service reads the transaction
+  (→ HTTP API → "A write request's transaction is checked whole before anything
+  reads it").
 
-Gossip needs no separate call: its intake reaches `validateTx`. (Today a
-malformed gossiped tx throws into `gossip.ts`'s topic-dispatch catch and is
-silently swallowed under a comment attributing it to decode failure; with the
-gate it becomes a logged rejection like any other.) `fork-resolution`'s
+Gossip needs no separate call: its intake reaches `validateTx`. `fork-resolution`'s
 mempool reinsert decodes `encodeTx` bytes the node itself produced from
 once-valid txs — outside the gate's call list, deliberately.
 
@@ -4179,13 +4194,13 @@ the tree view read by read.
   application and included in block headers
 - **avl-prover:** Generates inclusion/exclusion proofs for any key
 - **avl-endpoint:** `GET /api/v1/proof/:key?atHeight=N` — serves proofs to light clients. `:key` is a tree key,
-  130 hex (`TYPES_INTERFACE → The tree keys`). It answers `{ key, atHeight, stateRoot, proof, kind, value }`:
+  130 lowercase hex (`TYPES_INTERFACE → The tree keys`). It answers `{ key, atHeight, stateRoot, proof, kind, value }`:
   `stateRoot` the digest of the version the proof is made against, hex; `proof` the lookup proof's bytes, base64;
   `kind` the entity kind the key resolves to — `box`, `record`, `network`, `username`, `holder`, `post`, `like` or
   `index` (the index marker, a vouch pair and a cast count) (→ Entity kinds) — and `value` the node's decoding of it,
   both `null` where the key is absent and the proof is one of exclusion. `atHeight` must name a height of the proof window the store holds a version of (→ "A height of the proof window
   with no kept root is served from the store"), else 404 `{ error: 'height not
-  available' }`; without it the proof is against the tip, which always answers; 400 for a key that is not 130 hex or
+  available' }`; without it the proof is against the tip, which always answers; 400 for a key that is not 130 lowercase hex or
   is one of the tree's two sentinels — all `00`, all `ff`, keys no entry has (`CONSENSUS_INTERFACE → The tree
   session`) — and for an `atHeight` that is not decimal digits; an `atHeight` of any length that names no height
   of the proof window is the 404. **`kind` and `value` are
@@ -4193,7 +4208,7 @@ the tree view read by read.
   proof carries (`WEB_INTERFACE → The extension → "The verified figures"`)
 - **avl-endpoint, the range route:** `GET /api/v1/range/:kind/:owner?atHeight=N&from=K&limit=L` — one page of what a
   key holds of one kind, with its proof. `:kind` is one of `CONSENSUS_INTERFACE → The holdings page`'s five; `:owner`
-  is 64 hex; `from`, where given, is a tree key of 130 hex inside that kind's range for the owner; `limit` is an
+  is 64 lowercase hex; `from`, where given, is a tree key of 130 lowercase hex inside that kind's range for the owner; `limit` is an
   integer from 1, served at `RANGE_PAGE_MAX` (256) where it is above it or absent. It answers `{ kind, owner, atHeight,
   stateRoot, from, limit, proof }` — `from` the key the page began at or `null`, `limit` the limit served, `stateRoot`
   and `proof` as the single-key route's — and **no decoded value: the proof is the answer.** The node performs
@@ -4721,13 +4736,20 @@ the handler.
 | `fork-resolution.ts` | Chain fork detection and reorg | Block creation |
 | `genesis-state.ts` | Cold-start seeding of the height-0 state, and the root check over it | Which boxes exist (`store/system.ts`) |
 
-**Validation pipeline (phased, increasing cost):**
-1. Signature verification (cheap — Ed25519 verify)
-2. PoW verification (cheap — blake2b + difficulty check)
-3. DAG linkage / parent-hash integrity (moderate)
-4. Content type/size/schema validation (variable, may be I/O-bound)
+**A write request runs in one order, cheapest first**, and a refusal at a step reaches no later one:
 
-A post failing Phase N is rejected before Phase N+1 runs.
+1. The edge (→ HTTP API → "A write request's transaction is checked whole before anything reads it") — linear in the
+   request, no store read.
+2. The service's own checks — the diagnosis a client reads, store reads over a transaction the edge has bounded.
+3. Admission (below) — `validateTx`, its signatures among it, then `admitTx`'s floor and cost gate, a speculative
+   `applyBlock` (`MEMPOOL_INTERFACE → The cost gate`); then the pool.
+
+**One function admits.** `validateTx` at `tip + 1`, the pool entry's expiry at `tip + 1 + MEMPOOL_EXPIRY_BLOCKS` and
+`admitTx` run as one function, which every write route but `POST /posts` calls. Each caller passes its own engine
+dependencies and the words its refusal opens with, and gets the transaction's id and its expiry back. A post is pooled
+with its pending row in one store transaction (→ Post transactions), so `POST /posts` and the gossip relay, which
+carries posts, run the three around that transaction themselves. `admitTx` stays the seam above the store that the
+reorg path does not take (`MEMPOOL_INTERFACE → Fee floor`).
 
 Queries serve the DAG tip. There is no validated watermark and nothing gates a
 read behind one.

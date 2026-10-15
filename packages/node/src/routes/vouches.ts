@@ -1,9 +1,8 @@
 import { Router } from 'express';
 import type { UtxoTransaction } from '@dagsocial/types';
-import { protocolVersionAt } from '@dagsocial/types';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { getNet } from '../services/net-instance.js';
-import { jsonToTx } from './json-to-tx.js';
+import { checkRequestTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
 import {
   getVouchesForTargetPage,
@@ -24,6 +23,7 @@ export interface VouchesDeps extends UtxoEngineDeps {
     deps: UtxoEngineDeps,
     tx: UtxoTransaction,
     currentBlockHeight: number,
+    expectedTargetHex: string,
   ): {
     status: 'pending';
     txId: string;
@@ -46,7 +46,7 @@ export function createRouter(deps: VouchesDeps): Router {
     }
     let tx: UtxoTransaction;
     try {
-      tx = jsonToTx(body.tx, protocolVersionAt(deps.protocolVersionSchedule, deps.getCurrentHeight() + 1)!);
+      tx = checkRequestTx(body.tx, deps.getCurrentHeight() + 1, deps.protocolVersionSchedule);
     } catch (err) {
       respondError(res, err, 'POST /vouches (tx decode)');
       return;
@@ -79,15 +79,17 @@ export function createRouter(deps: VouchesDeps): Router {
     }
     let tx: UtxoTransaction;
     try {
-      tx = jsonToTx(body.tx, protocolVersionAt(deps.protocolVersionSchedule, deps.getCurrentHeight() + 1)!);
+      tx = checkRequestTx(body.tx, deps.getCurrentHeight() + 1, deps.protocolVersionSchedule);
     } catch (err) {
       respondError(res, err, 'DELETE /vouches/:targetId (tx decode)');
       return;
     }
     try {
-      // Admission judges at tip + 1 (NODE_INTERFACE → validateTx).
+      // Admission judges at tip + 1 (NODE_INTERFACE → validateTx). The
+      // service holds `:targetId` to the spent VouchBox's `targetId`
+      // (NODE_INTERFACE → Vouches, the `DELETE /vouches/:targetId` row).
       const currentHeight = deps.getCurrentHeight() + 1;
-      const result = deps.initiateUnvouch(deps, tx, currentHeight);
+      const result = deps.initiateUnvouch(deps, tx, currentHeight, req.params.targetId!);
       const net = getNet();
       if (net) {
         net.broadcastTx(result.tx).catch((err: Error) => {

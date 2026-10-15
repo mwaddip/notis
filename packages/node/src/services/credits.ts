@@ -1,9 +1,8 @@
-import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 
 import { ClientError } from './client-error.js';
 import { validateTx } from '@dagsocial/consensus';
-import { admitTx } from './admit-tx.js';
+import { admitWriteTx } from './admit-tx.js';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 
 // ---------------------------------------------------------------------------
@@ -41,29 +40,25 @@ export function sendCredits(
   tx: UtxoTransaction,
   currentBlockHeight: number,
 ): CreditTransferResult {
-  // Shape gate for this route: every output is a CreditBox. The transition arms
-  // then pin the inputs to credit boxes too — `credit` sits outside
-  // `KARMA_TRANSITION_TYPES` so the karma arm refuses these outputs, the invite
-  // and vouch arms admit one karma output or none, and every remaining type is
-  // barred from user transactions by authorization (NODE_INTERFACE → "Legal box
-  // transitions"). Conservation pins no input type at all: it is one total per
-  // side. This routes other tx kinds to their own endpoints — it is not a
-  // consensus rule; those live in `validateTx` below.
-  if (tx.outputs.length === 0 || tx.outputs.some((o) => o.boxType !== 'credit')) {
-    throw new ClientError('credit transfer outputs must all be CreditBoxes');
+  // NODE_INTERFACE → Legal box transitions, the `CreditBox | CreditBox(s)
+  // and/or FeeBox` row: a credit spend's outputs are credit boxes and at most
+  // one fee box, nothing else. This routes other tx kinds to their own
+  // endpoints — it is not a consensus rule; those live in `validateTx` below,
+  // which refuses an empty output set and a second fee box among them.
+  if (tx.outputs.some((o) => o.boxType !== 'credit' && o.boxType !== 'fee')) {
+    throw new ClientError('credit transfer outputs must be credit or fee boxes');
   }
 
-  const result = validateTx(deps, tx, currentBlockHeight);
-  if (!result.valid) {
-    throw new ClientError(`Invalid credit transfer: ${result.error}`);
-  }
-
-  const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  admitTx(tx, expiresAtHeight);
+  const { txId, expiresAtHeight } = admitWriteTx(
+    (t, h) => validateTx(deps, t, h),
+    tx,
+    currentBlockHeight,
+    'Invalid credit transfer: ',
+  );
 
   return {
     status: 'pending',
-    txId: result.txId!,
+    txId,
     expiresAtHeight,
     tx,
   };

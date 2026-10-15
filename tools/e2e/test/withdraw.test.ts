@@ -21,7 +21,6 @@ import {
   getBlockCurrent,
   getPost,
   isPost,
-  NodeError,
 } from '../src/http.js';
 import type { BoxRef } from '../src/tx/render.js';
 import { PROTOCOL_VERSION } from '@dagsocial/types';
@@ -167,6 +166,46 @@ describe('withdraw', () => {
       expect(BigInt(cd.cooldowns[0]!.value)).toBe(1n);
     }
 
+    // ---- NODE_INTERFACE → Legal box transitions:
+    // no user transaction spends a VouchEscrowBox. The one output is a fee box of the
+    // escrow's value, which NODE_INTERFACE → Credits admits on a credit transfer, so
+    // the refusal is the authorization of a vouch_escrow input ----
+    const escrowBoxId = unvouch.outputs[0]!.boxId;
+    const escrowValue = BigInt(
+      (await getVouchCooldowns(miner, voucher.publicKeyHex)).cooldowns[0]!.value,
+    );
+    const probeTx = signAndRender(voucher, {
+      inputs: [escrowBoxId],
+      outputs: [
+        {
+          boxType: 'fee',
+          value: escrowValue,
+          createdAtBlock: (await getBlockCurrent(miner)).height,
+        },
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    });
+
+    for (const node of mesh.nodes) {
+      const res = await fetch(`${node.url}/credits/transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tx: probeTx.json }),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body['error']).toBe(
+        `Invalid credit transfer: No user transition consumes box ${escrowBoxId}: ` +
+          'a vouch_escrow box is consumed only by block application',
+      );
+    }
+
+    for (const node of mesh.nodes) {
+      const cd = await getVouchCooldowns(node, voucher.publicKeyHex);
+      expect(cd.cooldowns.map((c) => c.boxId)).toEqual([escrowBoxId]);
+    }
+
     // ---- NODE_INTERFACE → The settlement transaction:
     // the settlement consumes every escrow at or past releaseAtBlock ----
     await mine(miner, mesh.miningSecret, status.vouchCooldownBlocks + 1);
@@ -206,43 +245,6 @@ describe('withdraw', () => {
       const v = await getVouchesVoucher(node, voucher.publicKeyHex);
       expect(v.count).toBe(1);
       expect(v.vouches[0]!.voucherId).toBe(voucher.publicKeyHex);
-    }
-
-    // ---- NODE_INTERFACE → Legal box transitions:
-    // no user transaction spends a VouchEscrowBox ----
-    const escrowBoxId = unvouch.outputs[0]!.boxId;
-    const probeTx = signAndRender(voucher, {
-      inputs: [escrowBoxId],
-      outputs: [
-        {
-          boxType: 'karma',
-          value: 1n,
-          createdAtBlock: (await getBlockCurrent(miner)).height,
-          owner: Buffer.from(voucher.publicKeyHex, 'hex'),
-        },
-      ],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-    });
-
-    try {
-      await fetch(`${miner.url}/credits/transfer`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tx: probeTx.json }),
-      }).then(async (res) => {
-        if (!res.ok) {
-          const data = (await res.json()) as Record<string, unknown>;
-          throw new NodeError(res.status, data);
-        }
-      });
-      expect.fail('a user transaction spending an escrow should have been refused');
-    } catch (err) {
-      expect(err).toBeInstanceOf(NodeError);
-      expect((err as NodeError).status).toBe(400);
-      expect((err as NodeError).body['error']).toBe(
-        'credit transfer outputs must all be CreditBoxes',
-      );
     }
   });
 });

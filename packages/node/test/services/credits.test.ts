@@ -242,7 +242,7 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
     expect(pooledTxs()).toHaveLength(0);
   });
 
-  it('rejects non-credit outputs (route shape gate, before validation)', () => {
+  it('rejects a karma output (route shape gate, before validation)', () => {
     const seeded = seedCredits(500_000n);
     const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
@@ -259,11 +259,15 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
     tx.signatures[Buffer.from(alicePubKey).toString('hex')] = signTxId(tx, alice.privateKey);
 
     expect(() => sendCredits(engineDeps, tx, HEIGHT))
-      .toThrow('credit transfer outputs must all be CreditBoxes');
+      .toThrow('credit transfer outputs must be credit or fee boxes');
     expect(pooledTxs()).toHaveLength(0);
   });
 
-  it('rejects an empty-output transfer (shape gate)', () => {
+  it('rejects an empty-output transfer at validateTx', () => {
+    // NODE_INTERFACE → Legal box transitions, the `CreditBox` row's engine
+    // refusal: `CreditBox can only be spent to create CreditBox or FeeBox
+    // outputs`, reached under the admit seam's `Invalid credit transfer: `
+    // prefix.
     const seeded = seedCredits(500_000n);
     const tx: UtxoTransaction = {
       inputs: [seeded.id!],
@@ -274,7 +278,7 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
     tx.signatures[Buffer.from(alicePubKey).toString('hex')] = signTxId(tx, alice.privateKey);
 
     expect(() => sendCredits(engineDeps, tx, HEIGHT))
-      .toThrow('credit transfer outputs must all be CreditBoxes');
+      .toThrow(/Invalid credit transfer/);
   });
 
   it('a multi-box transfer pools with all selected inputs intact', () => {

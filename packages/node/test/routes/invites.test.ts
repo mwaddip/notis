@@ -234,7 +234,15 @@ describe('invites routes', () => {
 
   describe('error policy', () => {
     const SECRET = 'SQLITE_BUSY: database is locked at /srv/dagsocial.db';
-    const EMPTY_TX = { inputs: [], outputs: [], signatures: {}, protocolVersion: 1 };
+    // A shape the edge admits (NODE_INTERFACE → HTTP API → "A write request's
+    // transaction is checked whole before anything reads it") so the service's
+    // mocked throw is what the response reaches.
+    const EMPTY_TX = {
+      inputs: ['aa'.repeat(32)],
+      outputs: [{ boxType: 'karma', value: '1', createdAtBlock: 0, owner: '00'.repeat(32) }],
+      signatures: {},
+      protocolVersion: 1,
+    };
 
     it('returns a generic 500 and logs when the service throws an unexpected error', async () => {
       const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -307,11 +315,13 @@ describe('invites routes', () => {
     });
 
     it('keeps returning decode errors verbatim with 400', async () => {
-      const res = await request('/', 'POST', { tx: { outputs: [{ value: -1 }] } });
+      const res = await request('/', 'POST', {
+        tx: { inputs: [], outputs: [{ boxType: 'karma', value: -1 }], signatures: {}, protocolVersion: 1 },
+      });
 
       expect(res.status).toBe(400);
       expect(String((res.data as Record<string, unknown>).error)).toContain(
-        'box value must be a non-negative bigint',
+        'outputs[0].value must be a non-negative',
       );
     });
   });

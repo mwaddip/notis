@@ -126,11 +126,61 @@ function taggedShell(shellHtml: string, tags: ShellTags): string {
 }
 
 // ---------------------------------------------------------------------------
+// Query parser — NODE_INTERFACE → HTTP API → "A query parameter is one string"
+// ---------------------------------------------------------------------------
+
+/**
+ * The non-enumerable mark the parser attaches to its result when the query
+ * string names one name twice. The middleware below reads it and answers 400
+ * ahead of every route; no route sees it because it is a symbol property
+ * (NODE_INTERFACE → HTTP API → "A query parameter is one string").
+ */
+const QUERY_DUP_NAME = Symbol.for('dagsocial:query-dup-name');
+
+/**
+ * Parse a URL-encoded query string into a null-prototype object mapping each
+ * name to its one string value. A bracketed name — `after[]`, `author[x]` —
+ * is a name of its own, which no route reads. A name given twice is marked
+ * on the result with `QUERY_DUP_NAME`, which the middleware below answers
+ * 400 for before any route runs (NODE_INTERFACE → HTTP API → "A query
+ * parameter is one string").
+ */
+function parseStrictQuery(queryString: string | null | undefined): Record<string, string> {
+  const result: Record<string, string> = Object.create(null);
+  if (queryString === null || queryString === undefined || queryString.length === 0) return result;
+  const params = new URLSearchParams(queryString);
+  const seen = new Set<string>();
+  let dup: string | null = null;
+  for (const [name, value] of params) {
+    if (seen.has(name)) {
+      if (dup === null) dup = name;
+      continue;
+    }
+    seen.add(name);
+    result[name] = value;
+  }
+  if (dup !== null) {
+    Object.defineProperty(result, QUERY_DUP_NAME, {
+      value: dup,
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    });
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // createApp
 // ---------------------------------------------------------------------------
 
 export function createApp(config: Config): express.Express {
   const app = express();
+
+  // NODE_INTERFACE → HTTP API → "A query parameter is one string": the
+  // parser yields one string per name; the middleware below answers 400 for
+  // a name given twice before any route runs.
+  app.set('query parser', parseStrictQuery);
 
   // ---- Middleware ----
 
@@ -148,6 +198,18 @@ export function createApp(config: Config): express.Express {
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       res.setHeader('Access-Control-Max-Age', '86400');
       res.status(204).end();
+      return;
+    }
+    next();
+  });
+
+  // NODE_INTERFACE → HTTP API → "A query parameter is one string": a request
+  // whose query names one name twice answers 400 ahead of every route, with
+  // no log line. The mark is set by `parseStrictQuery` above.
+  app.use((req, res, next) => {
+    const dup = (req.query as Record<string | symbol, unknown>)[QUERY_DUP_NAME];
+    if (typeof dup === 'string') {
+      res.status(400).json({ error: 400, reason: `query parameter ${dup} given twice` });
       return;
     }
     next();
@@ -175,8 +237,9 @@ export function createApp(config: Config): express.Express {
     }
 
     const postId = req.params['id']!;
-    if (!/^[0-9a-fA-F]{64}$/.test(postId)) {
-      res.status(400).json({ error: 400, reason: 'id must be a 64-character hex string' });
+    // NODE_INTERFACE → HTTP API → "Hex is lowercase"
+    if (!/^[0-9a-f]{64}$/.test(postId)) {
+      res.status(400).json({ error: 400, reason: 'id must be 64 lowercase hex characters' });
       return;
     }
 

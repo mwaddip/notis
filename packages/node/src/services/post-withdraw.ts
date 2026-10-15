@@ -1,4 +1,3 @@
-import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import {
   getTopologyHeight,
@@ -8,7 +7,7 @@ import {
 import { ClientError } from './client-error.js';
 import { validateTx } from '@dagsocial/consensus';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
-import { admitTx } from './admit-tx.js';
+import { admitWriteTx } from './admit-tx.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -32,6 +31,14 @@ export function executePostWithdraw(
     throw new ClientError('Transaction carries no postWithdraw payload');
   }
 
+  // NODE_INTERFACE → Withdrawal, the `POST /posts/:id/withdraw` row's
+  // "404 if the post is unknown": an id the node has never heard of answers
+  // 404 before any topology read.
+  const post = getPost(pw.postId);
+  if (!post) {
+    throw new ClientError('Post not found', 404);
+  }
+
   // The maturity bind judges at the withdrawal's block — the same judged-for
   // height validateTx uses, one rule (NODE_INTERFACE → validateTx). The route
   // passes tip + 1.
@@ -40,18 +47,14 @@ export function executePostWithdraw(
     throw new ClientError('Post is not confirmed in an earlier block');
   }
 
-  const post = getPost(pw.postId);
   if (!isLivePost(post)) {
-    throw new ClientError('Post is already withdrawn or unknown');
+    throw new ClientError('Post is already withdrawn');
   }
 
-  const result = validateTx(deps, tx, currentBlockHeight);
-  if (!result.valid) {
-    throw new ClientError(`Invalid postWithdraw transaction: ${result.error}`);
-  }
-
-  const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  admitTx(tx, expiresAtHeight);
-
-  return { txId: result.txId!, expiresAtHeight };
+  return admitWriteTx(
+    (t, h) => validateTx(deps, t, h),
+    tx,
+    currentBlockHeight,
+    'Invalid postWithdraw transaction: ',
+  );
 }

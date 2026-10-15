@@ -1,97 +1,104 @@
-import { BOX_VALUE_BOUND } from '@dagsocial/types';
-import type { AnyBox, PostCommit, PostType, PostWithdrawCommit, UtxoTransaction } from '@dagsocial/types';
+import { BOX_VALUE_BOUND, encodeTx, hexToBytes, MAX_TX_BYTES, protocolVersionAt } from '@dagsocial/types';
+import type { AnyBox, PostCommit, PostType, PostWithdrawCommit, ProtocolEra, UtxoTransaction } from '@dagsocial/types';
+import { checkOutputShape, checkTxEnvelope } from '@dagsocial/consensus';
+import { verifyTxStructure } from '@dagsocial/validation';
 import { ClientError } from '../services/client-error.js';
+import { TxTooLargeError } from '../store/mempool.js';
 
 /**
- * Fields in box types whose runtime value is Uint8Array but arrive as hex
- * strings over the JSON HTTP API.  We convert them back during deserialisation.
- * A Uint8Array field missing from this set makes its box inexpressible over
- * HTTP JSON (TYPES_INTERFACE → Layout — Boxes).
+ * The HTTP JSON names of the box fields a transaction carries as bytes
+ * (TYPES_INTERFACE → Layout — Boxes). Every entry is a hex string this
+ * edge decodes with `@dagsocial/types`' `hexToBytes`, the one spelling
+ * the strict decoder accepts (NODE_INTERFACE → HTTP API → "Hex is
+ * lowercase"). A box field missing from this set passes through as
+ * the JSON value it is — a hex string — and the output shape refuses
+ * it at the edge (NODE_INTERFACE → Output shape).
  */
 export const BINARY_BOX_FIELDS = new Set([
-  'owner',            // KarmaBox, CreditBox, VouchEscrowBox
-  // ⚠ **`BondBox` alone.** These read `InviteBox, BondBox` until the invite
-  // collapsed into one transaction and the type was deleted; a list of holders
-  // has to be re-read every time one goes, so this names the survivor rather
-  // than carrying the set (TYPES_INTERFACE → A fourth).
+  'owner',            // KarmaBox, CreditBox, VouchEscrowBox, UsernameBox
   'inviterId',        // BondBox
   'inviteePublicKey', // BondBox
-  // VouchBox. A field missing from this list makes its box INEXPRESSIBLE over
-  // HTTP JSON — the value arrives as a hex string and dies at `validateTx`'s
-  // step-4 schema, which wants `bytes32`. Service-level tests cannot see it:
-  // they pass raw `Uint8Array` objects and never cross this edge.
   'voucherId',        // VouchBox
   'targetId',         // VouchBox
-  // ⛔ **`LikeAccrualBox`, and it is the field the warning above predicted.**
-  // Every like a client builds crosses this edge, so without it the whole like
-  // path is unreachable over HTTP while every service-level test stays green —
-  // exactly the blind spot named two lines up.
-  //
-  // ⚠ **Not the same `author` as a post's.** `Post.author` is decoded by
-  // `jsonToPost` below, which validates its length; this entry governs box
-  // outputs only, and the two never see each other's objects.
   'author',           // LikeAccrualBox
-  'name',             // UsernameBox — the claim's name bytes, hex at the JSON edge
+  'name',             // UsernameBox
 ]);
 
 /**
- * Convert a JSON tx object (as received over the HTTP API) into a
- * {@link UtxoTransaction}.  Hex-encoded Uint8Array fields in signatures and box
- * outputs are decoded to raw `Uint8Array`.
- *
- * ⛔ **A `preimages` key is not read and not carried through**, so
- * `checkTxEnvelope`'s closed key set never sees one: the name is reserved and
- * never to be reused (TYPES_INTERFACE → Layout — UtxoTransaction). Dropping it
- * silently is right here and only here — this edge builds the transaction, so a
- * key it does not build is a key that never existed.
+ * The HTTP JSON names of the box fields a transaction carries as
+ * `bigint` amounts.
  */
-export function jsonToTx(raw: Record<string, unknown>, defaultVersion: number): UtxoTransaction {
-  // ---- signatures ----
-  const rawSigs = (raw.signatures ?? {}) as Record<string, string>;
+const VALUE_BOX_FIELDS = new Set(['value', 'weight', 'staked', 'accrual']);
+
+/**
+ * The JSON form of the lead "A write request's transaction is checked
+ * whole before anything reads it" (NODE_INTERFACE → HTTP API). Throws
+ * `ClientError` (400) naming the field for a `tx` that is not a plain
+ * object; an absent `inputs`, `outputs` or `signatures`; an `outputs`
+ * that is not an array of plain objects; a `signatures` that is not a
+ * plain object of strings; a binary field — each signature, the commit's
+ * `contentHash` and `author`, each `BINARY_BOX_FIELDS` box field — that
+ * is not a string or a string `@dagsocial/types`' `hexToBytes` refuses;
+ * an amount that is neither a safe integer nor a decimal string of 1
+ * to 19 digits; a post commit with no `parentRefs` or no `type`.
+ *
+ * An absent `protocolVersion`, the transaction's or the commit's, is
+ * supplied as the era the caller hands in; `inputs` passes as given,
+ * which `checkTxEnvelope` types (NODE_INTERFACE → Transaction envelope
+ * shape).
+ */
+export function jsonToTx(raw: unknown, defaultVersion: number): UtxoTransaction {
+  if (!isPlainObject(raw)) {
+    throw new ClientError('tx must be a plain object');
+  }
+  const r = raw;
+  const inputs = requireKey(r, 'inputs');
+  const rawOutputs = requireKey(r, 'outputs');
+  const rawSigs = requireKey(r, 'signatures');
+
+  if (!isPlainObject(rawSigs)) {
+    throw new ClientError('signatures must be a plain object');
+  }
   const signatures: Record<string, Uint8Array> = {};
   for (const [key, val] of Object.entries(rawSigs)) {
     if (typeof val !== 'string') {
-      throw new ClientError(`signature for ${key} must be a hex string`);
+      throw new ClientError(`signature value for ${key} must be a hex string`);
     }
-    signatures[key] = hexToBytes(val);
+    try {
+      signatures[key] = hexToBytes(val);
+    } catch {
+      throw new ClientError(`signature value for ${key} must be lowercase hex of even length`);
+    }
   }
 
-  // ---- outputs ----
-  const rawOutputs = (raw.outputs ?? []) as Record<string, unknown>[];
-  const outputs = rawOutputs.map(convertBox) as unknown as AnyBox[];
+  if (!Array.isArray(rawOutputs)) {
+    throw new ClientError('outputs must be an array');
+  }
+  const outputs: AnyBox[] = rawOutputs.map((entry, i) => {
+    if (!isPlainObject(entry)) {
+      throw new ClientError(`outputs[${i}] must be a plain object`);
+    }
+    return convertBox(entry, i);
+  }) as unknown as AnyBox[];
 
-  // ---- protocolVersion ----
-  // The era the node reports at `tip + 1`, supplied by the route
-  // (NODE_INTERFACE → validateTx). Never a hard-coded constant: a client that
-  // omits the field gets the current era, the envelope owns the equality check,
-  // and a client-supplied value passes through unchanged.
-  const protocolVersion = (raw.protocolVersion as number) ?? defaultVersion;
+  // An absent `protocolVersion` is supplied; a present one — `null`
+  // included — reaches `checkTxEnvelope`, which refuses it
+  // (NODE_INTERFACE → Transaction envelope shape).
+  const protocolVersion = Object.hasOwn(r, 'protocolVersion') ? r.protocolVersion : defaultVersion;
 
-  // ---- likeTarget ----
-  // Carried through only when present — presence is `!== undefined`, matching
-  // the `computeTxId` tail rule. The JSON edge must neither drop nor invent
-  // the field: it sits inside the signed bytes, so dropping it breaks every
-  // like signature, and `castLike` owns the 64-hex shape check.
-  const likeTarget = raw.likeTarget;
+  const likeTarget = r.likeTarget;
   if (likeTarget !== undefined && typeof likeTarget !== 'string') {
     throw new ClientError('likeTarget must be a string post id');
   }
 
-  // ---- post ----
-  // Same rule as `likeTarget`: carried through only when present, because it sits
-  // inside the signed bytes. `author` is the one binary field — hex on the wire,
-  // raw bytes in the preimage — and `verifyTxStructure` owns its 32-byte shape
-  // check, as `castLike` owns `likeTarget`'s.
-  const post = raw.post === undefined ? undefined : jsonToPostCommit(raw.post, defaultVersion);
-
-  // ---- postWithdraw ----
-  const postWithdraw = raw.postWithdraw === undefined ? undefined : jsonToPostWithdrawCommit(raw.postWithdraw);
+  const post = r.post === undefined ? undefined : jsonToPostCommit(r.post, defaultVersion);
+  const postWithdraw = r.postWithdraw === undefined ? undefined : jsonToPostWithdrawCommit(r.postWithdraw);
 
   return {
-    inputs: (raw.inputs ?? []) as string[],
+    inputs: inputs as UtxoTransaction['inputs'],
     outputs,
     signatures,
-    protocolVersion,
+    protocolVersion: protocolVersion as number,
     ...(likeTarget !== undefined ? { likeTarget } : {}),
     ...(post !== undefined ? { post } : {}),
     ...(postWithdraw !== undefined ? { postWithdraw } : {}),
@@ -99,117 +106,156 @@ export function jsonToTx(raw: Record<string, unknown>, defaultVersion: number): 
 }
 
 /**
- * Convert the JSON post payload carried by a post transaction.
- *
- * ⚠ **No id is read and none may be.** A post's id comes from the transaction
- * that creates it (`computePostId(txId, index)`), so a client-supplied id would
- * be a claim with nothing behind it. The service derives it after the
- * transaction validates.
+ * NODE_INTERFACE → HTTP API → "A write request's transaction is checked
+ * whole before anything reads it". Reads the request's `tx` value whole
+ * before any service reads it: the JSON form (jsonToTx), then
+ * `checkTxEnvelope` at `height` and `checkOutputShape`
+ * (NODE_INTERFACE → Transaction envelope shape; → Output shape), then
+ * `verifyTxStructure` last (VALIDATION_INTERFACE → verifyTxStructure).
+ * Returns the transaction, or throws: a `ClientError` (400) for every
+ * refusal with the check's own error, except the structure refusal where
+ * `encodeTx(tx).length > MAX_TX_BYTES` — that one is `TxTooLargeError`
+ * (413), the pool's own bound
+ * (MEMPOOL_INTERFACE → insertUtxoTx → "It is the pool's own bound, not
+ * a restatement of validation's").
  */
-function jsonToPostCommit(raw: unknown, defaultVersion: number): PostCommit {
-  if (typeof raw !== 'object' || raw === null) {
-    throw new ClientError('post must be an object');
+export function checkRequestTx(
+  rawTx: unknown,
+  height: number,
+  schedule: readonly ProtocolEra[],
+): UtxoTransaction {
+  const tx = jsonToTx(rawTx, protocolVersionAt(schedule, height)!);
+  const envelope = checkTxEnvelope(tx, height, schedule);
+  if (!envelope.valid) throw new ClientError(envelope.error!);
+  const shape = checkOutputShape(tx.outputs);
+  if (!shape.valid) throw new ClientError(shape.error!);
+  const structure = verifyTxStructure(tx);
+  if (!structure.valid) {
+    const length = encodeTx(tx).length;
+    if (length > MAX_TX_BYTES) throw new TxTooLargeError(length);
+    throw new ClientError(structure.error!);
   }
-  const p = raw as Record<string, unknown>;
-  if (typeof p.contentHash !== 'string') {
+  return tx;
+}
+
+function requireKey(obj: Record<string, unknown>, name: string): unknown {
+  if (!Object.hasOwn(obj, name)) {
+    throw new ClientError(`${name} required`);
+  }
+  return obj[name];
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function jsonToPostCommit(raw: unknown, defaultVersion: number): PostCommit {
+  if (!isPlainObject(raw)) {
+    throw new ClientError('post must be a plain object');
+  }
+  if (!Object.hasOwn(raw, 'parentRefs')) {
+    throw new ClientError('post parentRefs required');
+  }
+  if (!Array.isArray(raw.parentRefs)) {
+    throw new ClientError('post parentRefs must be an array');
+  }
+  if (!Object.hasOwn(raw, 'type')) {
+    throw new ClientError('post type required');
+  }
+  if (typeof raw.contentHash !== 'string') {
     throw new ClientError('post contentHash must be a hex string');
   }
-  const contentHash = hexToBytes(p.contentHash);
+  const contentHash = decodeHex(raw.contentHash, 'post contentHash');
   if (contentHash.length !== 32) {
     throw new ClientError('post contentHash must be 32 bytes (64 hex chars)');
   }
-  if (typeof p.author !== 'string') {
+  if (typeof raw.author !== 'string') {
     throw new ClientError('post author must be a hex string');
   }
-  const author = hexToBytes(p.author);
+  const author = decodeHex(raw.author, 'post author');
   if (author.length !== 32) {
     throw new ClientError('post author must be 32 bytes (64 hex chars) — Ed25519 public key');
   }
+  const protocolVersion = Object.hasOwn(raw, 'protocolVersion') ? raw.protocolVersion : defaultVersion;
   return {
     contentHash,
     author,
-    parentRefs: (p.parentRefs ?? []) as string[],
-    protocolVersion: (p.protocolVersion as number) ?? defaultVersion,
-    type: ((p.type as string) ?? 'regular') as PostType,
+    parentRefs: raw.parentRefs as string[],
+    protocolVersion: protocolVersion as number,
+    type: raw.type as PostType,
   };
 }
 
 function jsonToPostWithdrawCommit(raw: unknown): PostWithdrawCommit {
-  if (typeof raw !== 'object' || raw === null) {
-    throw new ClientError('postWithdraw must be an object');
+  if (!isPlainObject(raw)) {
+    throw new ClientError('postWithdraw must be a plain object');
   }
-  const p = raw as Record<string, unknown>;
-  if (typeof p.postId !== 'string') {
+  if (typeof raw.postId !== 'string') {
     throw new ClientError('postWithdraw postId must be a string');
   }
-  return { postId: p.postId };
+  return { postId: raw.postId };
 }
 
-/**
- * Amount fields that are bigint at runtime but arrive as decimal strings (or
- * safe-integer numbers) over the JSON HTTP API: `value` on every box type.
- * Coerced before validation — leaving one as a number would change its
- * positional encoding and so the computed box id.
- */
-const VALUE_BOX_FIELDS = new Set(['value', 'weight', 'staked', 'accrual']);
-
-/**
- * Convert hex-encoded Uint8Array fields inside a single box object, coerce
- * amount fields to bigint, and reject a `value` the ledger cannot account for.
- */
-function convertBox(box: Record<string, unknown>): Record<string, unknown> {
+function convertBox(box: Record<string, unknown>, outputIndex: number): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, val] of Object.entries(box)) {
-    if (BINARY_BOX_FIELDS.has(key) && typeof val === 'string') {
-      out[key] = hexToBytes(val);
+    if (BINARY_BOX_FIELDS.has(key)) {
+      if (typeof val !== 'string') {
+        throw new ClientError(`outputs[${outputIndex}].${key} must be a hex string`);
+      }
+      out[key] = decodeHex(val, `outputs[${outputIndex}].${key}`);
     } else if (VALUE_BOX_FIELDS.has(key)) {
-      out[key] = coerceBoxValue(val, key);
+      out[key] = coerceBoxValue(val, `outputs[${outputIndex}].${key}`);
     } else {
       out[key] = val;
     }
   }
-  assertValidBoxValue(out.value);
+  if (Object.hasOwn(out, 'value')) {
+    assertValidBoxValue(out.value, `outputs[${outputIndex}].value`);
+  }
   return out;
 }
 
+function decodeHex(hex: string, field: string): Uint8Array {
+  try {
+    return hexToBytes(hex);
+  } catch {
+    throw new ClientError(`${field} must be lowercase hex of even length`);
+  }
+}
+
 /**
- * Coerce an incoming JSON amount (decimal string or safe-integer number) to
- * bigint, rejecting anything not cleanly convertible, then enforce the value
- * bound. This is the HTTP→consensus edge for box values.
+ * Coerce an incoming JSON amount to `bigint`. The accepted domain is a
+ * safe-integer number or a decimal string of 1 to 19 digits — enough to
+ * spell every value the ledger stores (TYPES_INTERFACE → Box value
+ * domain) and one spelling per value (NODE_INTERFACE → HTTP API → "A
+ * write request's transaction is checked whole before anything reads
+ * it"): `0` alone, no other leading zero.
  */
 function coerceBoxValue(raw: unknown, field: string): bigint {
-  let value: bigint;
-  if (typeof raw === 'bigint') {
-    value = raw;
-  } else if (typeof raw === 'number' && Number.isSafeInteger(raw)) {
-    value = BigInt(raw);
-  } else if (typeof raw === 'string' && /^[0-9]+$/.test(raw)) {
-    value = BigInt(raw);
-  } else {
-    throw new ClientError(
-      `box ${field} must be a non-negative integer (decimal string or number), got ${String(raw)}`,
-    );
+  if (typeof raw === 'number') {
+    if (!Number.isSafeInteger(raw)) {
+      throw new ClientError(`${field} must be a safe integer or a decimal string of 1 to 19 digits`);
+    }
+    const v = BigInt(raw);
+    assertValidBoxValue(v, field);
+    return v;
   }
-  assertValidBoxValue(value, field);
-  return value;
+  if (typeof raw === 'string') {
+    if (!/^(0|[1-9][0-9]{0,18})$/.test(raw)) {
+      throw new ClientError(`${field} must be a safe integer or a decimal string of 1 to 19 digits`);
+    }
+    const v = BigInt(raw);
+    assertValidBoxValue(v, field);
+    return v;
+  }
+  throw new ClientError(`${field} must be a safe integer or a decimal string of 1 to 19 digits`);
 }
 
-/**
- * A box `value` must lie in `[0, BOX_VALUE_BOUND)` — the accepted domain,
- * imported rather than restated (TYPES_INTERFACE → Box value domain). Negative
- * values break conservation arithmetic; a value at or above the bound encodes
- * cleanly and cannot be stored. Rejecting here gives the client a clear 400;
- * `validateTx`'s step-4 output schema (the `u64` field type) enforces the same
- * bound for txs arriving over gossip or inside a block.
- */
-function assertValidBoxValue(value: unknown, field = 'value'): void {
+function assertValidBoxValue(value: unknown, field: string): void {
   if (typeof value !== 'bigint' || value < 0n || value >= BOX_VALUE_BOUND) {
-    throw new ClientError(
-      `box ${field} must be a non-negative bigint < 2^63, got ${String(value)}`,
-    );
+    throw new ClientError(`${field} must be a non-negative bigint < 2^63, got ${String(value)}`);
   }
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  return new Uint8Array(Buffer.from(hex, 'hex'));
 }

@@ -52,20 +52,22 @@ export function parseAfter(
       if (!DECIMAL_INT.test(valStr)) {
         return { error: 'after must be <value>:<boxId> (value is a decimal integer)' };
       }
-      if (!/^[0-9a-fA-F]{64}$/.test(idStr)) {
-        return { error: 'after must be <value>:<boxId> (boxId is 64 hex chars)' };
+      // NODE_INTERFACE → HTTP API → "Hex is lowercase"
+      if (!/^[0-9a-f]{64}$/.test(idStr)) {
+        return { error: 'after must be <value>:<boxId> (boxId is 64 lowercase hex characters)' };
       }
       const value = BigInt(valStr);
       if (value >= BOX_VALUE_BOUND) {
         return { error: 'after value out of domain [0, 2^63)' };
       }
-      return { value, id: idStr.toLowerCase() } satisfies BoxKey;
+      return { value, id: idStr } satisfies BoxKey;
     }
     case 'id': {
-      if (!/^[0-9a-fA-F]{64}$/.test(raw)) {
-        return { error: 'after must be a 64-character hex string' };
+      // NODE_INTERFACE → HTTP API → "Hex is lowercase"
+      if (!/^[0-9a-f]{64}$/.test(raw)) {
+        return { error: 'after must be 64 lowercase hex characters' };
       }
-      return raw.toLowerCase();
+      return raw;
     }
   }
 }
@@ -95,13 +97,14 @@ export function isAfterError(
   return v !== null && typeof v === 'object' && 'error' in v && !('blockHeight' in v) && !('value' in v);
 }
 
-// NODE_INTERFACE → Identity parameters
+// NODE_INTERFACE → Identity parameters;
+// NODE_INTERFACE → HTTP API → "Hex is lowercase"
 export function resolveIdentityParam(
   value: string,
   getUsername: UsernameLookup,
 ): { hex: string } | { error: string; status: number } {
-  if (/^[0-9a-f]{64}$/i.test(value)) {
-    return { hex: value.toLowerCase() };
+  if (/^[0-9a-f]{64}$/.test(value)) {
+    return { hex: value };
   }
   if (value.startsWith('@')) {
     const rest = value.slice(1);
@@ -175,8 +178,8 @@ export function isLightError(v: boolean | { error: string }): v is { error: stri
 
 // NODE_INTERFACE → Posts → "The batch read answers posts by id": the body is
 // an object whose `ids` is an array of 1 to BATCH_READ_MAX strings, each 64
-// hex chars in either case, none twice once lower-cased. The ids are
-// answered lower-cased, in the order given.
+// lowercase hex characters, none twice (NODE_INTERFACE → HTTP API → "Hex is
+// lowercase"). The ids are answered in the order given.
 export function parseBatchIds(body: unknown): string[] | { error: string } {
   if (body === null || body === undefined || typeof body !== 'object' || Array.isArray(body)) {
     return { error: 'ids required (array)' };
@@ -189,13 +192,12 @@ export function parseBatchIds(body: unknown): string[] | { error: string } {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const raw of ids) {
-    if (typeof raw !== 'string' || !/^[0-9a-fA-F]{64}$/.test(raw)) {
-      return { error: 'ids must be 64-character hex strings' };
+    if (typeof raw !== 'string' || !/^[0-9a-f]{64}$/.test(raw)) {
+      return { error: 'ids must be 64 lowercase hex characters' };
     }
-    const lower = raw.toLowerCase();
-    if (seen.has(lower)) return { error: 'ids must not repeat' };
-    seen.add(lower);
-    out.push(lower);
+    if (seen.has(raw)) return { error: 'ids must not repeat' };
+    seen.add(raw);
+    out.push(raw);
   }
   return out;
 }

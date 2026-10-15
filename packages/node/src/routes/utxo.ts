@@ -7,14 +7,14 @@ import type {
   DecayCfg,
   IdentityRecord,
 } from '@dagsocial/types';
-import { effectiveKarma, membershipBar, protocolVersionAt } from '@dagsocial/types';
+import { effectiveKarma, membershipBar } from '@dagsocial/types';
 import { sendCredits } from '../services/credits.js';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { isMember, isRoot } from '@dagsocial/consensus';
 import type { NetworkRecord } from '../store/identity-records.js';
 import type { Page, PageResult, BoxKey } from '../store/index.js';
 import { getNet } from '../services/net-instance.js';
-import { jsonToTx } from './json-to-tx.js';
+import { checkRequestTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
 import { parseLimit, isLimitError, parseAfter, isAfterError, formatKey, resolveIdentityParam, isResolveError } from './page.js';
 import type { UsernameLookup } from './page.js';
@@ -146,7 +146,7 @@ export function createRouter(deps: UtxoDeps): Router {
   });
 
   // POST /credits/transfer — pool a client-built, client-signed credit
-  // transfer: jsonToTx → validateTx + admitTx in the service → broadcast
+  // transfer: checkRequestTx → validateTx + admitTx in the service → broadcast
   // → pending response, the path every other tx route takes. Credits move when
   // the transaction is mined.
   router.post('/credits/transfer', (req, res) => {
@@ -159,7 +159,7 @@ export function createRouter(deps: UtxoDeps): Router {
 
     let tx: UtxoTransaction;
     try {
-      tx = jsonToTx(body.tx, protocolVersionAt(deps.getUtxoEngineDeps().protocolVersionSchedule, deps.getCurrentHeight() + 1)!);
+      tx = checkRequestTx(body.tx, deps.getCurrentHeight() + 1, deps.getUtxoEngineDeps().protocolVersionSchedule);
     } catch (err) {
       respondError(res, err, 'POST /credits/transfer (tx decode)', 'message');
       return;

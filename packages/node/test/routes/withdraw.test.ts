@@ -161,6 +161,24 @@ describe('withdraw route', () => {
     expect(res.status).toBe(500);
   });
 
+  it('POST /posts/:id/withdraw whose matching postId is pooled is 201', async () => {
+    // The matching case holds on both sides of the parameter check
+    // (NODE_INTERFACE → Withdrawal, "the route holds the payload's `postId` to
+    // `:id`"): the stub pools and the route reports submitted.
+    const res = await request(TEST_POST_HASH, { tx: makeJsonPostWithdrawTxBody() });
+    expect(res.status).toBe(201);
+    expect((res.data as Record<string, unknown>).postId).toBe(TEST_POST_HASH);
+  });
+
+  it('POST /posts/:id/withdraw whose payload names a different post is refused 400', async () => {
+    // NODE_INTERFACE → Withdrawal, "the route holds the payload's `postId` to
+    // `:id`": the stub would pool, but the rule's answer is 400 before the
+    // service is called.
+    const otherId = 'e'.repeat(64);
+    const res = await request(otherId, { tx: makeJsonPostWithdrawTxBody() });
+    expect(res.status).toBe(400);
+  });
+
   it('broadcasts the pooled postWithdraw transaction to peers', async () => {
     const broadcastTx = vi.fn((_tx: UtxoTransaction) => Promise.resolve());
     setNet({ broadcastTx } as unknown as Parameters<typeof setNet>[0]);

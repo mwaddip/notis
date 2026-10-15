@@ -1,5 +1,6 @@
 import { checkBlockCost } from '@dagsocial/consensus';
-import { encodeTx } from '@dagsocial/types';
+import type { UtxoResult } from '@dagsocial/consensus';
+import { encodeTx, MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import { bidOf, entryByteCost, insertUtxoTx } from '../store/mempool.js';
 import { config } from '../config.js';
@@ -85,11 +86,14 @@ export class TxOverBlockBudgetError extends ClientError {
  * marginal cost — its block alone less the empty block at the same tip — the
  * estimate the creator packs by (MEMPOOL_INTERFACE → The cost gate).
  *
- * `validateTx` is deliberately **not** folded in here. Every caller already
- * runs it against its own dependency set and turns a failure into its own
- * error — the invite routes' differs from the like routes', which differ from
- * the gossip relay's — and collapsing those contracts into one would be a
- * change to satisfy a signature rather than a rule.
+ * `validateTx` is deliberately **not** folded in here. The seam above
+ * — `admitWriteTx` — folds `validateTx`, the expiry and this function into
+ * one call every write route but `POST /posts` takes
+ * (NODE_INTERFACE → Service Layer Architecture → "One function admits"), and
+ * `POST /posts` and the gossip relay pool the transaction alongside its
+ * pending row in one store transaction. This function stays the seam above
+ * the store that the reorg path does not take, so a floor an operator raises
+ * never drops confirmed history.
  */
 export function admitTx(tx: UtxoTransaction, expiresAtHeight: number): number {
   // MEMPOOL_INTERFACE → Storage rent is refused at admission.
@@ -130,4 +134,38 @@ export function admitTx(tx: UtxoTransaction, expiresAtHeight: number): number {
   if (overBudget !== null) throw new TxOverBlockBudgetError(overBudget);
 
   return insertUtxoTx(tx, expiresAtHeight, marginalCost(alone, 'admitTx'));
+}
+
+/**
+ * The one function every write route but `POST /posts` calls — the seam that
+ * folds `validateTx` at `tip + 1`, the pool entry's expiry at
+ * `tip + 1 + MEMPOOL_EXPIRY_BLOCKS` and `admitTx` into one call
+ * (NODE_INTERFACE → Service Layer Architecture → "One function admits").
+ *
+ * The caller passes its own validation — a service wraps `validateTx(deps, …)`
+ * so its engine dependencies ride the closure, a route hands `deps.validateTx`
+ * — and the words a refusal opens with: a non-empty `openingWords` prefixes
+ * the verdict's `error` (`Invalid like transaction: `, `Invalid credit
+ * transfer: `, and so on), and the two routes whose body is
+ * `{ error: <message> }` through `respondError`'s `message` shape pass `''`,
+ * so the message reaches that body unchanged.
+ *
+ * `POST /posts` and the gossip relay pool a transaction alongside its pending
+ * row in one store transaction (NODE_INTERFACE → Post transactions), so they
+ * run the three around that transaction themselves and this seam is not
+ * theirs.
+ */
+export function admitWriteTx(
+  validate: (tx: UtxoTransaction, currentBlockHeight: number) => UtxoResult,
+  tx: UtxoTransaction,
+  currentBlockHeight: number,
+  openingWords: string,
+): { txId: string; expiresAtHeight: number } {
+  const result = validate(tx, currentBlockHeight);
+  if (!result.valid) {
+    throw new ClientError(`${openingWords}${result.error ?? ''}`);
+  }
+  const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
+  admitTx(tx, expiresAtHeight);
+  return { txId: result.txId!, expiresAtHeight };
 }

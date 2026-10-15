@@ -1092,10 +1092,10 @@ own because its size is derived from the body and from chain state rather than c
 (`TYPES_INTERFACE` → Size caps).
 
 ⛔ **Without it, `MAX_TX_BYTES` would not be a consensus bound at all.** `verifyTxStructure` carries
-the same limit but has exactly one production caller — net's gossip `tx` validator — and
-`@dagsocial/node` calls it zero times. So that check alone bounds transactions arriving by gossip and
-nothing arriving inside a block: a miner could mine a transaction no peer could have relayed, and
-every node would accept the block. A bound that binds users and not miners is an asymmetry with no
+the same limit and runs where a transaction arrives on its own — net's gossip `tx` validator and node's
+HTTP edge (`NODE_INTERFACE → HTTP API → "A write request's transaction is checked whole before anything reads
+it"`) — and on no element of a block. So that check alone bounds nothing arriving inside a block: a miner
+could mine a transaction no peer could have relayed, and every node would accept the block. A bound that binds users and not miners is an asymmetry with no
 purpose.
 
 **The measure here is the as-arrived byte length**, matching how the body bound weighs the same

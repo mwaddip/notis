@@ -1,11 +1,10 @@
 import { Router } from 'express';
-import { protocolVersionAt } from '@dagsocial/types';
 import { createPost } from '../services/post-service.js';
 import type { PostServiceDeps } from '../services/post-service.js';
 import { FeedService } from '../services/feed-service.js';
 import type { FeedServiceDeps } from '../services/feed-service.js';
 import { getNet } from '../services/net-instance.js';
-import { jsonToTx } from './json-to-tx.js';
+import { checkRequestTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
 import { CorruptChainStateError, failStopIfCorruptChain } from '../services/corrupt-state.js';
 import type { PostKey } from '../store/index.js';
@@ -56,7 +55,7 @@ export function createRouter(deps: PostsDeps): Router {
 
     let tx;
     try {
-      tx = jsonToTx(rawTx, protocolVersionAt(deps.protocolVersionSchedule, deps.getCurrentHeight() + 1)!);
+      tx = checkRequestTx(rawTx, deps.getCurrentHeight() + 1, deps.protocolVersionSchedule);
     } catch (err) {
       respondError(res, err, 'POST /posts (tx decode)');
       return;
@@ -90,6 +89,13 @@ export function createRouter(deps: PostsDeps): Router {
 
   // GET /posts/:id/thread
   router.get('/:id/thread', (req, res) => {
+    // NODE_INTERFACE → HTTP API → "Hex is lowercase": the shape check runs
+    // ahead of the lookup.
+    const idRaw = req.params['id']!;
+    if (!/^[0-9a-f]{64}$/.test(idRaw)) {
+      res.status(400).json({ error: 'id must be 64 lowercase hex characters' });
+      return;
+    }
     const limit = parseLimit(req.query as Record<string, unknown>);
     if (isLimitError(limit)) { res.status(400).json({ error: limit.error }); return; }
     const after = parseAfter(req.query as Record<string, unknown>, 'post');
@@ -137,6 +143,12 @@ export function createRouter(deps: PostsDeps): Router {
   // GET /posts/:id
   router.get('/:id', (req, res) => {
     const id = req.params['id']!;
+    // NODE_INTERFACE → HTTP API → "Hex is lowercase": the shape check runs
+    // ahead of the lookup.
+    if (!/^[0-9a-f]{64}$/.test(id)) {
+      res.status(400).json({ error: 'id must be 64 lowercase hex characters' });
+      return;
+    }
     const tx = parseTx(req.query as Record<string, unknown>);
     if (isTxError(tx)) { res.status(400).json({ error: tx.error }); return; }
     const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);

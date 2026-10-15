@@ -1,9 +1,8 @@
 import { Router } from 'express';
 import type { UtxoTransaction } from '@dagsocial/types';
-import { protocolVersionAt } from '@dagsocial/types';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { getNet } from '../services/net-instance.js';
-import { jsonToTx } from './json-to-tx.js';
+import { checkRequestTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
 
 // ---------------------------------------------------------------------------
@@ -33,7 +32,7 @@ export function withdrawRoutes(deps: WithdrawDeps): Router {
 
     let tx: UtxoTransaction;
     try {
-      tx = jsonToTx(body.tx, protocolVersionAt(deps.protocolVersionSchedule, deps.getCurrentHeight() + 1)!);
+      tx = checkRequestTx(body.tx, deps.getCurrentHeight() + 1, deps.protocolVersionSchedule);
     } catch (err) {
       respondError(res, err, 'POST /posts/:id/withdraw (tx decode)', 'message');
       return;
@@ -41,6 +40,15 @@ export function withdrawRoutes(deps: WithdrawDeps): Router {
 
     if (!tx.postWithdraw) {
       res.status(400).json({ error: 'Request must carry a postWithdraw transaction' });
+      return;
+    }
+
+    // NODE_INTERFACE → Withdrawal, the `POST /posts/:id/withdraw` row's
+    // "400 if the payload is absent or names a post other than `:id`": the
+    // route holds the payload's `postId` to `:id` after the edge and before
+    // the service.
+    if (tx.postWithdraw.postId !== req.params.id) {
+      res.status(400).json({ error: 'postWithdraw payload names a post other than :id' });
       return;
     }
 
