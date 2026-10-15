@@ -208,13 +208,15 @@ describe('attack pins — NIPOPOW_INTERFACE → compareProofs', () => {
   // registers, and bestArg's μ = 0 term is 28. The proof's score is 28.
   //
   // The cheap proof. The cheapStampMs = 200 × idealMs stamps walk the bits (asertTargetBits) from
-  // 3072 at h = 2 down to the 2304 floor by h = 7: per-header 3072, 3072, 2896, 2719, 2542, 2365,
-  // then 2304 for h = 7..700. A header mined at scaledBits B registers against the anchor with
-  // probability 2^(−(3072 − B)/256) — per-header 1, 1, 0.621, 0.384, 0.238, 0.147, 0.125; and
-  // level ≥ 1 is half of that. Mean count_0 above the LCA is therefore 1 + 1 + 0.621 + 0.384 +
-  // 0.238 + 0.147 + 694 × 0.125 = 89.14, and mean count_1 is 44.57. When count_1 ≥ 24 the score
-  // is at least 2 × 24 = 48 and the cheap proof outscores the honest 28 outright; when count_1 < 24,
-  // bestArg counts only μ = 0 and the proof wins iff count_0 > 28.
+  // 3072 at h = 2 down to the 2304 floor by h = 7: per-header 3072 (h = 2), 2896, 2719, 2542,
+  // 2365, then 2304 for h = 7..700 — read off the fixture, with 694 headers at the floor. The LCA
+  // is genesis (h = 1), so only h = 2..700 count above it. A header mined at scaledBits B
+  // registers against the anchor with probability 2^(−(3072 − B)/256), so the above-LCA
+  // per-header chances are 1 (h = 2), 0.621 (h = 3), 0.384 (h = 4), 0.238 (h = 5), 0.147 (h = 6),
+  // then 0.125 for h = 7..700; level ≥ 1 is half of that. Mean count_0 above the LCA is
+  // 1 + 0.621 + 0.384 + 0.238 + 0.147 + 694 × 0.125 = 89.14, and mean count_1 is 44.57. When
+  // count_1 ≥ 24 the score is at least 2 × 24 = 48 and the cheap proof outscores the honest 28
+  // outright; when count_1 < 24, bestArg counts only μ = 0 and the proof wins iff count_0 > 28.
   //
   // The flip. Level ≥ 1 is a subset of registered, so count_0 ≤ 28 forces count_1 ≤ 28 and the
   // whole flip condition reduces to count_0 ≤ 28. Count_0 is one deterministic register at h = 2
