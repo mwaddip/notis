@@ -9,7 +9,6 @@ export interface PopowHeaderReader {
   popowHeaderByHash(hash: string): PoPowHeader | null;
   popowHeaderAtHeight(height: number): PoPowHeader | null;
   lastHeaders(n: number): BlockHeader[];
-  headersAfter(height: number, n: number): BlockHeader[];
 }
 
 export class ProofBuildError extends Error {
@@ -70,10 +69,9 @@ export function proveWithReader(
   const suffixHead = requirePopowByHash(reader, firstHash);
   const suffixTail = suffixHeaders.slice(1);
 
-  // 2. Prefix: walk from the top level down
-  // TYPES_INTERFACE → Interlink vector, NIPOPOW_INTERFACE → proveWithReader —
-  // interlinks[i] is the level-i pointer; interlinks[0] = genesis;
-  // level 0 has no pointer and is never walked
+  // 2. Prefix: walk from the top level down (NIPOPOW_INTERFACE → proveWithReader).
+  // TYPES_INTERFACE → Interlink vector — interlinks[i] is the level-i pointer;
+  // interlinks[0] = genesis.
   const M = suffixHead.interlinks.length - 1;
   const collected = new Map<number, PoPowHeader>();
   let anchoringHeight = 1;
@@ -95,7 +93,19 @@ export function proveWithReader(
     }
   }
 
-  // 3. Seed genesis
+  // 3. Level 0, the sweep (NIPOPOW_INTERFACE → proveWithReader).
+  for (let h = anchoringHeight; h < suffixHead.header.height; h++) {
+    const ph = reader.popowHeaderAtHeight(h);
+    if (ph === null) {
+      throw new ProofBuildError(
+        `reader returned null for popow header at height ${h}`,
+        'missing-popow-header',
+      );
+    }
+    collected.set(h, ph);
+  }
+
+  // 4. Seed genesis
   const genesis = reader.popowHeaderAtHeight(1);
   if (genesis === null) {
     throw new ProofBuildError(

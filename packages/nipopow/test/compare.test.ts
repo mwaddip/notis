@@ -393,14 +393,6 @@ describe('comparator holds each proof to the client params', () => {
       popowHeaderByHash: (h: string) => byHash.get(h) ?? null,
       popowHeaderAtHeight: (h: number) => byHeight.get(h) ?? null,
       lastHeaders: (n: number) => augmented.slice(-n).map(p => p.header),
-      headersAfter: (h: number, n: number): BlockHeader[] => {
-        const out: BlockHeader[] = [];
-        for (let k = h + 1; k <= Math.min(h + n, augmented.length); k++) {
-          const ph = byHeight.get(k);
-          if (ph) out.push(ph.header);
-        }
-        return out;
-      },
     };
     const forged = proveWithReader(augmentedReader, { m: 24, k: 1 });
     expect(forged.suffixHead.header.height).toBe(bHeight);
@@ -440,7 +432,7 @@ describe('comparator holds each proof to the client params', () => {
 // built without the sweep carries only its level-1 headers among the blocks above an LCA
 // near the suffix; a fork of fewer blocks that carries every header outscores it.
 describe('a padded fork of fewer headers above the LCA loses to an honest proof', () => {
-  it.fails('an honest proof outscores a padded fork across the LCA', () => {
+  it('an honest proof outscores a padded fork across the LCA', () => {
     const FORK = 100;
     const D = 30;
     const Dp = 24;

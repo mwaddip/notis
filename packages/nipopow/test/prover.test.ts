@@ -113,7 +113,6 @@ describe('proveWithReader', () => {
         },
         popowHeaderAtHeight: (h: number) => baseReader.popowHeaderAtHeight(h),
         lastHeaders: (n: number) => baseReader.lastHeaders(n),
-        headersAfter: (h: number, n: number) => baseReader.headersAfter(h, n),
       };
       // The walk might not need height 10 — this test verifies no TypeError
       // occurs regardless; either it throws ProofBuildError or succeeds
@@ -133,7 +132,6 @@ describe('proveWithReader', () => {
         popowHeaderByHash: () => null,
         popowHeaderAtHeight: (h: number) => baseReader.popowHeaderAtHeight(h),
         lastHeaders: (n: number) => baseReader.lastHeaders(n),
-        headersAfter: (h: number, n: number) => baseReader.headersAfter(h, n),
       };
       expect(() => proveWithReader(sparseReader, { m: 3, k: 5 }))
         .toThrow(ProofBuildError);
@@ -175,7 +173,7 @@ describe('proveWithReader', () => {
       { count: 200, m: 10, k: 10 },
     ];
     for (const { count, m, k } of cases) {
-      it.fails(`chain=${count}, m=${m}, k=${k}: every height from the level-1 anchoring to suffixHead's parent is in the prefix`, () => {
+      it(`chain=${count}, m=${m}, k=${k}: every height from the level-1 anchoring to suffixHead's parent is in the prefix`, () => {
         const chain = buildMinedChain({ count });
         const reader = makeReader(chain);
         const proof = proveWithReader(reader, { m, k });
