@@ -6,7 +6,7 @@ import type { NipopowProof, PoPowHeader } from './codec.js';
 
 export type CompareResult =
   | { verdict: 'a' | 'b' | 'tie'; scoreA: bigint; scoreB: bigint; lca: BlockHeader }
-  | { verdict: 'incomparable'; reason: 'no-common-ancestor' | 'm-mismatch' | 'invalid' };
+  | { verdict: 'incomparable'; reason: 'no-common-ancestor' | 'invalid' };
 
 function headersChain(proof: NipopowProof): BlockHeader[] {
   return [
@@ -55,21 +55,19 @@ export function bestArg(headers: BlockHeader[], m: number, anchorBits: number): 
   return best;
 }
 
-// NIPOPOW_INTERFACE → compareProofs
+// NIPOPOW_INTERFACE → compareProofs — `m` and `k` are the client's; a proof
+// declaring another `m` or `k` fails `verifyProof` rule 1 and so answers
+// `incomparable / invalid` here.
 export function compareProofs(
   a: NipopowProof,
   b: NipopowProof,
-  m: number,
+  params: { m: number; k: number },
   profile: VerifyProfile,
 ): CompareResult {
-  const aResult = verifyProof(a, profile);
-  const bResult = verifyProof(b, profile);
+  const aResult = verifyProof(a, params, profile);
+  const bResult = verifyProof(b, params, profile);
   if (!aResult.ok || !bResult.ok) {
     return { verdict: 'incomparable', reason: 'invalid' };
-  }
-
-  if (a.m !== m || b.m !== m) {
-    return { verdict: 'incomparable', reason: 'm-mismatch' };
   }
 
   const aChain = headersChain(a);
@@ -84,8 +82,8 @@ export function compareProofs(
   const aAbove = aChain.filter(h => h.height > lcaHeight);
   const bAbove = bChain.filter(h => h.height > lcaHeight);
 
-  const scoreA = bestArg(aAbove, m, profile.retarget.anchorBits);
-  const scoreB = bestArg(bAbove, m, profile.retarget.anchorBits);
+  const scoreA = bestArg(aAbove, params.m, profile.retarget.anchorBits);
+  const scoreB = bestArg(bAbove, params.m, profile.retarget.anchorBits);
 
   if (scoreA > scoreB) return { verdict: 'a', scoreA, scoreB, lca };
   if (scoreB > scoreA) return { verdict: 'b', scoreA, scoreB, lca };

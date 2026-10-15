@@ -42,13 +42,13 @@ describe('compareProofs', () => {
 
     if (gA === gB) {
       // Same genesis — comparable
-      const resultAB = compareProofs(proofA, proofB, m, profile);
+      const resultAB = compareProofs(proofA, proofB, { m, k }, profile);
       expect(resultAB.verdict).toBe('a');
-      const resultBA = compareProofs(proofB, proofA, m, profile);
+      const resultBA = compareProofs(proofB, proofA, { m, k }, profile);
       expect(resultBA.verdict).toBe('b');
     } else {
       // Different genesis — both proofs are valid but no common ancestor
-      const result = compareProofs(proofA, proofB, m, profile);
+      const result = compareProofs(proofA, proofB, { m, k }, profile);
       expect(result.verdict).toBe('incomparable');
     }
   });
@@ -66,7 +66,7 @@ describe('compareProofs', () => {
       const readerB = makeReader(chainB);
       const proofA = proveWithReader(readerA, { m, k });
       const proofB = proveWithReader(readerB, { m, k });
-      const result = compareProofs(proofA, proofB, m, profile);
+      const result = compareProofs(proofA, proofB, { m, k }, profile);
       expect(result.verdict).toBe('incomparable');
       if (result.verdict === 'incomparable') {
         expect(result.reason).toBe('no-common-ancestor');
@@ -74,15 +74,15 @@ describe('compareProofs', () => {
     }
   });
 
-  it('m mismatch is incomparable', () => {
+  it('a proof declaring another m is incomparable', () => {
     const chain = buildMinedChain({ count: 30 });
     const reader = makeReader(chain);
     const proofA = proveWithReader(reader, { m: 3, k: 5 });
     const proofB = proveWithReader(reader, { m: 6, k: 5 });
-    const result = compareProofs(proofA, proofB, 3, profile);
+    const result = compareProofs(proofA, proofB, { m: 3, k: 5 }, profile);
     expect(result.verdict).toBe('incomparable');
     if (result.verdict === 'incomparable') {
-      expect(result.reason).toBe('m-mismatch');
+      expect(result.reason).toBe('invalid');
     }
   });
 
@@ -92,7 +92,7 @@ describe('compareProofs', () => {
     const proofA = proveWithReader(reader, { m: 3, k: 5 });
     const proofB = { ...proveWithReader(reader, { m: 3, k: 5 }) };
     proofB.prefix = []; // make it invalid
-    const result = compareProofs(proofA, proofB, 3, profile);
+    const result = compareProofs(proofA, proofB, { m: 3, k: 5 }, profile);
     expect(result.verdict).toBe('incomparable');
     if (result.verdict === 'incomparable') {
       expect(result.reason).toBe('invalid');
@@ -229,7 +229,7 @@ describe('attack pins — NIPOPOW_INTERFACE → compareProofs', () => {
     const proofH = proveWithReader(hReader, { m: clientM, k });
     const proofC = proveWithReader(cReader, { m: clientM, k });
 
-    const result = compareProofs(proofH, proofC, clientM, profile);
+    const result = compareProofs(proofH, proofC, { m: clientM, k }, profile);
     expect(result.verdict).toBe('b');
   });
 
@@ -301,7 +301,7 @@ describe('bestArg', () => {
 describe('comparator holds each proof to the client params', () => {
   const profile = devnetProfile();
 
-  it.fails('a short-suffix proof carrying a chosen stateRoot against an honest proof answers incomparable / invalid', () => {
+  it('a short-suffix proof carrying a chosen stateRoot against an honest proof answers incomparable / invalid', () => {
     const chain = buildMinedChain({ count: 60 });
     const schedule = NETWORK_PROFILES.devnet.protocolVersionSchedule;
     const anchorBits = DEVNET_RETARGET.anchorBits;
@@ -379,7 +379,7 @@ describe('comparator holds each proof to the client params', () => {
     if (result.verdict === 'incomparable') expect(result.reason).toBe('invalid');
   });
 
-  it.fails('a proof declaring another m against an honest proof answers incomparable / invalid', () => {
+  it('a proof declaring another m against an honest proof answers incomparable / invalid', () => {
     const chain = buildMinedChain({ count: 30 });
     const reader = makeReader(chain);
     const proofA = proveWithReader(reader, { m: 3, k: 5 });
@@ -439,7 +439,7 @@ describe('a padded fork of fewer headers above the LCA loses to an honest proof'
     ) + 1_000;
     const vp = { ...devnetProfile(), nowMs };
 
-    const paddedVerdict = verifyProof(encodeNipopowProof(padded), vp);
+    const paddedVerdict = verifyProof(encodeNipopowProof(padded), { m: padded.m, k: padded.k }, vp);
     expect(paddedVerdict.ok).toBe(true);
 
     const forkLevel1Above = fork.popowHeaders.filter(ph => {
@@ -450,7 +450,7 @@ describe('a padded fork of fewer headers above the LCA loses to an honest proof'
     }).length;
     expect(forkLevel1Above).toBeLessThan(m);
 
-    const result = compareProofs(honestProof, padded, m, vp);
+    const result = compareProofs(honestProof, padded, { m, k }, vp);
     expect(result.verdict).toBe('a');
   });
 });

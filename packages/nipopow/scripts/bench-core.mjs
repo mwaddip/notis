@@ -20,7 +20,8 @@ export function timedRun(bytes, m, profile) {
   const t0 = performance.now();
   const decodedA = decodeNipopowProof(bytes);
   const t1 = performance.now();
-  const verified = verifyProof(decodedA, profile);
+  const params = { m: decodedA.m, k: decodedA.k };
+  const verified = verifyProof(decodedA, params, profile);
   const t2 = performance.now();
   if (!verified.ok) {
     const at = verified.index !== undefined ? ` at index ${verified.index}` : '';
@@ -28,7 +29,7 @@ export function timedRun(bytes, m, profile) {
   }
   const decodedB = decodeNipopowProof(bytes);
   const t3 = performance.now();
-  const compared = compareProofs(decodedA, decodedB, m, profile);
+  const compared = compareProofs(decodedA, decodedB, params, profile);
   const t4 = performance.now();
   if (compared.verdict !== 'tie') {
     throw new Error(`comparing a proof against its own second decode gave '${compared.verdict}', not 'tie'`);
