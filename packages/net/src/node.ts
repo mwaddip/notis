@@ -290,18 +290,23 @@ export class LazySyncStore implements SyncStore {
 // for every other local failure.
 // ---------------------------------------------------------------------------
 
-/** Frame a `Headers` (15) response: our chain walking down from `startHeight`. */
+/**
+ * Frame a `Headers` (15) response: our chain walking down from
+ * `startHeight`. Reads headers directly through the header provider — one
+ * height is one provider call (NET_INTERFACE → Sync Handler Registration
+ * → `setHeaderProvider`).
+ */
 export function serveHeadersResponse(
   magic: number,
   request: GetHeadersMsg,
   ourHeight: number,
-  getBlock: (height: number) => OrderingBlock | null,
+  getHeader: (height: number) => BlockHeader | null,
 ): Uint8Array {
   const headers: BlockHeader[] = [];
   const maxCount = Math.min(request.maxCount, MAX_CHAIN_RESPONSE_ITEMS);
   for (let h = Math.min(request.startHeight, ourHeight); h > 0 && headers.length < maxCount; h--) {
-    const block = getBlock(h);
-    if (block) headers.push(block.header);
+    const header = getHeader(h);
+    if (header) headers.push(header);
     else break; // gap — the chain below this height is not ours to serve
   }
   return encodeHeaders(magic, headers);
@@ -560,13 +565,20 @@ export class NetNode {
   private handshakeHandlerRegistered = false;
   private syncHandlerRegistered = false;
   /**
-   * The block provider for `GetHeaders` (14) and `GetBlocks` (16), read at
-   * request time rather than closed over at registration. NET_INTERFACE → Sync
-   * Handler Registration: setters are order-independent, so the sync protocol is
-   * registered by start() whether or not a provider exists yet, and a query that
-   * arrives without one is answered with zero bytes.
+   * The whole-block provider for `GetBlocks` (16) and the blocks a
+   * `ModifierResponse` serves. NET_INTERFACE → Sync Handler Registration:
+   * setters are order-independent, so the sync protocol is registered by
+   * start() whether or not a provider exists yet, and a query that arrives
+   * without one is answered with zero bytes.
    */
   private headersProvider: ((height: number) => OrderingBlock | null) | null = null;
+  /**
+   * The header-at-height provider for `GetHeaders` (14). One height is one
+   * provider call — a whole-block read there decodes up to 400 bodies of
+   * up to `MAX_BLOCK_BODY_BYTES` for a seven-byte request
+   * (NET_INTERFACE → Sync Handler Registration → `setHeaderProvider`).
+   */
+  private headerProvider: ((height: number) => BlockHeader | null) | null = null;
   private syncCompleteHandlers: Array<() => void> = [];
   private peerActiveHandlers: Array<(peerId: string, direction: 'inbound' | 'outbound') => void> = [];
   private peerDisconnectedHandlers: Array<(peerId: string, reason: string) => void> = [];
@@ -1217,13 +1229,14 @@ export class NetNode {
       await stream.close().catch(() => { /* already gone */ });
     };
 
-    const serveChainQuery = async <T>(
+    const serveChainQuery = async <T, P>(
       code: number,
       request: T | null,
+      provider: P | null,
       serve: (
         request: T,
         ourHeight: number,
-        getBlock: (height: number) => OrderingBlock | null,
+        provider: P,
       ) => Uint8Array,
       writeMultiplier: number,
     ): Promise<void> => {
@@ -1238,8 +1251,9 @@ export class NetNode {
         return;
       }
 
-      const getBlock = this.headersProvider;
-      if (!getBlock) {
+      // NET_INTERFACE → Sync Handler Registration: a node that has
+      // registered no provider for a query answers it zero bytes.
+      if (!provider) {
         await replyEmpty();
         return;
       }
@@ -1251,7 +1265,7 @@ export class NetNode {
       // one.
       let response: Uint8Array;
       try {
-        response = serve(request, this.syncStore.chainHeight(), getBlock);
+        response = serve(request, this.syncStore.chainHeight(), provider);
       } catch (err) {
         console.error(
           `[net] cannot serve chain query (code ${code}) for ${peerId}: ${String(err)}`,
@@ -1311,14 +1325,14 @@ export class NetNode {
       }
 
       if (code === MSG_GET_HEADERS) {
-        await serveChainQuery(code, decodeGetHeaders(body), (request, ourHeight, getBlock) =>
-          serveHeadersResponse(magic, request, ourHeight, getBlock), 1);
+        await serveChainQuery(code, decodeGetHeaders(body), this.headerProvider,
+          (request, ourHeight, getHeader) => serveHeadersResponse(magic, request, ourHeight, getHeader), 1);
         return;
       }
 
       if (code === MSG_GET_BLOCKS) {
-        await serveChainQuery(code, decodeGetBlocks(body), (request, ourHeight, getBlock) =>
-          serveBlocksResponse(magic, request, ourHeight, getBlock), 5);
+        await serveChainQuery(code, decodeGetBlocks(body), this.headersProvider,
+          (request, ourHeight, getBlock) => serveBlocksResponse(magic, request, ourHeight, getBlock), 5);
         return;
       }
 
@@ -1726,15 +1740,24 @@ export class NetNode {
   }
 
   /**
-   * Register the block provider for header-first sync. Wires the sync machine's
-   * store adapter and the `GetHeaders` / `GetBlocks` serve arms, both of which
-   * read the provider when they need it — so this is valid before or after
+   * Register the whole-block provider for `GetBlocks` and the blocks a
+   * `ModifierResponse` serves. The provider reads at request time rather
+   * than closed over at registration — so this is valid before or after
    * `start()`, and a later call replaces the provider (NET_INTERFACE → Sync
    * Handler Registration).
    */
   setHeadersHandler(getBlock: (height: number) => OrderingBlock | null): void {
     this.syncStore.setOrderingBlockFn((h) => getBlock(h));
     this.headersProvider = getBlock;
+  }
+
+  /**
+   * Register the header-at-height provider for `GetHeaders` (NET_INTERFACE
+   * → Sync Handler Registration → `setHeaderProvider`). One height is one
+   * provider call; unset, `GetHeaders` is answered zero bytes.
+   */
+  setHeaderProvider(cb: (height: number) => BlockHeader | null): void {
+    this.headerProvider = cb;
   }
 
   // NET_INTERFACE → Sync Handler Registration

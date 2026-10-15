@@ -123,7 +123,14 @@ function makeHandlerHarness(opts: {
     internals.peerMgr.setPeerState(peerId, PeerState.Active);
   }
 
-  if (opts.headersHandler) net.setHeadersHandler(opts.headersHandler);
+  if (opts.headersHandler) {
+    net.setHeadersHandler(opts.headersHandler);
+    // Derive a header provider from the block provider so pre-existing
+    // tests that only set the block provider still answer `GetHeaders`
+    // (NET_INTERFACE → Sync Handler Registration → `setHeaderProvider`).
+    const getBlock = opts.headersHandler;
+    net.setHeaderProvider((h) => getBlock(h)?.header ?? null);
+  }
   if (opts.chainHeight !== undefined) {
     const h = opts.chainHeight;
     net.setChainHeightProvider(() => h);

@@ -223,7 +223,7 @@ function tipOf(store: Map<number, OrderingBlock>): number {
 function serveHeaders(request: GetHeadersMsg, store: Map<number, OrderingBlock>): Uint8Array {
   const decoded = decodeGetHeaders(bodyOf(encodeGetHeaders(MAGIC, request), MSG_GET_HEADERS));
   if (!decoded) throw new Error('fixture request was rejected at the decode boundary');
-  return serveHeadersResponse(MAGIC, decoded, tipOf(store), (h) => store.get(h) ?? null);
+  return serveHeadersResponse(MAGIC, decoded, tipOf(store), (h) => store.get(h)?.header ?? null);
 }
 
 function serveBlocks(request: GetBlocksMsg, store: Map<number, OrderingBlock>): Uint8Array {
