@@ -208,6 +208,33 @@ describe('nipopow route proof cache per tip', () => {
     },
   );
 
+  it('one tip, a cache hit counts as the latest ask', async () => {
+    const counted = wrapCounting(realReader);
+    const app = makeApp(counted.reader);
+    for (const path of [
+      '/nipopow/proof/1/1',
+      '/nipopow/proof/2/2',
+      '/nipopow/proof/3/3',
+      '/nipopow/proof/4/4',
+    ]) {
+      const res = await request(app, path);
+      expect(res.status).toBe(200);
+    }
+    expect(counted.builds()).toBe(4);
+    // The hit on 1/1 makes it the latest ask.
+    const hit = await request(app, '/nipopow/proof/1/1');
+    expect(hit.status).toBe(200);
+    expect(counted.builds()).toBe(4);
+    // 5/5 misses and evicts the oldest ask — 2/2, not 1/1.
+    const fifth = await request(app, '/nipopow/proof/5/5');
+    expect(fifth.status).toBe(200);
+    expect(counted.builds()).toBe(5);
+    // 1/1 is still cached.
+    const stillHit = await request(app, '/nipopow/proof/1/1');
+    expect(stillHit.status).toBe(200);
+    expect(counted.builds()).toBe(5);
+  });
+
   it('one tip, a block appended, same request: the suffix ends at the new tip and builds twice', async () => {
     const counted = wrapCounting(realReader);
     const app = makeApp(counted.reader);
