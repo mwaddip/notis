@@ -6,7 +6,6 @@ import {
   getPopowHeaderByHash,
   getPopowHeaderAtHeight,
   getLastHeaders,
-  getHeadersAfter,
 } from '../../src/store/ordering.js';
 import { createPopowHeaderReader } from '../../src/services/nipopow.js';
 import { buildMinedHeaderChain } from '../helpers.js';
@@ -64,7 +63,6 @@ describe('PopowHeaderReader + proveWithReader', () => {
       getPopowHeaderByHash,
       getPopowHeaderAtHeight,
       getLastHeaders,
-      getHeadersAfter,
       getCurrentHeight,
     });
 
@@ -105,7 +103,6 @@ describe('PopowHeaderReader + proveWithReader', () => {
       },
       getPopowHeaderAtHeight,
       getLastHeaders,
-      getHeadersAfter,
       getCurrentHeight,
     });
 

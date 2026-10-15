@@ -7,7 +7,6 @@ export interface PopowReaderDeps {
   getPopowHeaderByHash(hash: string): PoPowHeader | null;
   getPopowHeaderAtHeight(height: number): PoPowHeader | null;
   getLastHeaders(n: number): BlockHeader[];
-  getHeadersAfter(height: number, n: number): BlockHeader[];
   getCurrentHeight(): number;
 }
 
@@ -17,6 +16,5 @@ export function createPopowHeaderReader(deps: PopowReaderDeps): PopowHeaderReade
     popowHeaderByHash: guardStoreRead(deps.getPopowHeaderByHash),
     popowHeaderAtHeight: guardStoreRead(deps.getPopowHeaderAtHeight),
     lastHeaders: guardStoreRead(deps.getLastHeaders),
-    headersAfter: guardStoreRead(deps.getHeadersAfter),
   };
 }

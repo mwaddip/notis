@@ -8,7 +8,6 @@ import {
   getPopowHeaderByHash,
   getPopowHeaderAtHeight,
   getLastHeaders,
-  getHeadersAfter,
 } from '../../src/store/ordering.js';
 import { createRouter } from '../../src/routes/nipopow.js';
 import { createPopowHeaderReader } from '../../src/services/nipopow.js';
@@ -91,7 +90,6 @@ describe('nipopow route', () => {
       getPopowHeaderByHash,
       getPopowHeaderAtHeight,
       getLastHeaders,
-      getHeadersAfter,
       getCurrentHeight,
     });
 
