@@ -268,17 +268,20 @@ describe('a peer refused above the stream cap — 16 unread streams, no 17th', (
     // yamux's send window because B's dial never reads the stream.
     await new Promise((r) => setTimeout(r, 1_000));
 
-    // The 17th stream. libp2p aborts the muxer stream when the receiver's
-    // registered limit is reached — `.catch` reads that back as a thrown dial.
-    let result17: Stream | Error;
+    // Dial a seventeenth. libp2p's registrar on A's side aborts a stream
+    // over its registered inbound limit after mss acceptance has already
+    // reached B, so B's dialProtocol resolves even when A refuses — the
+    // observable is A's own inbound stream count, which never rises past
+    // the limit when the limit holds.
     try {
       const peer = nodeB.libp2pNode!.getPeers().find((p) => p.toString() === nodeA!.peerId())!;
-      result17 = await nodeB.libp2pNode!.dialProtocol(peer, SYNC_PROTOCOL, {
+      await nodeB.libp2pNode!.dialProtocol(peer, SYNC_PROTOCOL, {
         signal: AbortSignal.timeout(2_000),
       });
-    } catch (err) {
-      result17 = err as Error;
-    }
-    expect(result17 instanceof Error).toBe(true);
+    } catch { /* either outcome resolves — the inbound count is the test */ }
+    // Let the RESET from A propagate.
+    await new Promise((r) => setTimeout(r, 500));
+    const inboundAfter = inboundSyncStreams(nodeA.libp2pNode!, nodeB.peerId());
+    expect(inboundAfter).toBeLessThanOrEqual(16);
   }, TIMEOUT);
 });
