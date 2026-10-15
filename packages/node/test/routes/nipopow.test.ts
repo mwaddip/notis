@@ -174,7 +174,7 @@ describe('nipopow route', () => {
     expect(proof.m).toBe(3);
     expect(proof.k).toBe(3);
 
-    const result = verifyProof(proof, {
+    const result = verifyProof(proof, { m: 3, k: 3 }, {
       retarget: retargetParams(),
       maxFutureDriftMs: MAX_FUTURE_DRIFT_MS,
       nowMs: Date.now() + 86_400_000,

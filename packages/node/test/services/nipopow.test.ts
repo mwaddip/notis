@@ -79,7 +79,7 @@ describe('PopowHeaderReader + proveWithReader', () => {
     expect(proof.suffixTail).toHaveLength(k - 1);
 
     // NIPOPOW_INTERFACE → verifyProof: devnet profile
-    const result = verifyProof(proof, {
+    const result = verifyProof(proof, { m, k }, {
       retarget: retargetParams(),
       maxFutureDriftMs: MAX_FUTURE_DRIFT_MS,
       nowMs: Date.now() + 86_400_000,
