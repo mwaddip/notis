@@ -6,7 +6,6 @@ import {
   MSG_MODIFIER_REQUEST,
   MSG_MODIFIER_RESPONSE,
   MODIFIER_ORDERING_BLOCK,
-  BACKFILL_BATCH_IDS,
 } from './types.js';
 import {
   isHeight,
@@ -158,13 +157,6 @@ export class SyncMachine {
   private readonly magic: number;
 
   private onSyncedCallbacks: Array<() => void> = [];
-
-  // NET_INTERFACE → Sync Handler Registration: post body seams
-  private onPostBodyCallback: ((postId: string, content: string, fromPeerId: string) => boolean) | null = null;
-  private missingBodiesProvider: ((limit: number) => { id: string; contentHash: Uint8Array }[]) | null = null;
-  private pullPostBodiesFn: ((entries: { id: string; contentHash: Uint8Array }[], peerId: string) => Promise<{ id: string; content: string }[]>) | null = null;
-  private getConnectedPeersFn: (() => string[]) | null = null;
-  private backfillAskedPeers = new Set<string>();
 
   // -----------------------------------------------------------------------
   // Biased event queues
@@ -409,22 +401,6 @@ export class SyncMachine {
     this.onSyncedCallbacks.push(cb);
   }
 
-  setOnPostBody(cb: (postId: string, content: string, fromPeerId: string) => boolean): void {
-    this.onPostBodyCallback = cb;
-  }
-
-  setMissingBodiesProvider(cb: (limit: number) => { id: string; contentHash: Uint8Array }[]): void {
-    this.missingBodiesProvider = cb;
-  }
-
-  setPullPostBodies(cb: (entries: { id: string; contentHash: Uint8Array }[], peerId: string) => Promise<{ id: string; content: string }[]>): void {
-    this.pullPostBodiesFn = cb;
-  }
-
-  setGetConnectedPeers(cb: () => string[]): void {
-    this.getConnectedPeersFn = cb;
-  }
-
   // -----------------------------------------------------------------------
   // Public events (called by the node layer)
   // -----------------------------------------------------------------------
@@ -536,7 +512,7 @@ export class SyncMachine {
       this.actOnSyncInfo(peerId, info, now);
     }
 
-    if (this.state.phase === 'syncing' || this.state.phase === 'backfill') {
+    if (this.state.phase === 'syncing') {
       if (
         now - this.lastProgressMs > STALL_TIMEOUT_MS &&
         this.state.syncPeerId
@@ -683,7 +659,7 @@ export class SyncMachine {
       // NET_INTERFACE → Sync Integrity →
       // "Response binding — sender and label, never content"
       this.outstanding.clear();
-      if (this.state.phase === 'syncing' || this.state.phase === 'backfill' || this.state.phase === 'synced') {
+      if (this.state.phase === 'syncing' || this.state.phase === 'synced') {
         this.state.phase = 'idle';
       }
       this.pickSyncPeer();
@@ -735,10 +711,11 @@ export class SyncMachine {
       this.servePeer(peerId, info.tipHeight);
     }
 
-    // NET_INTERFACE → Sync State Machine: equal height from sync peer → backfill
+    // NET_INTERFACE → Sync State Machine: an equal-height SyncInfo from
+    // the sync peer is the caught-up signal — the machine enters `synced`.
     if (info.tipHeight === ourHeight && this.state.phase === 'syncing' &&
         this.state.syncPeerId === peerId) {
-      this.enterBackfill();
+      this.enterSynced();
       return;
     }
 
@@ -970,84 +947,6 @@ export class SyncMachine {
     }
   }
 
-  // -----------------------------------------------------------------------
-  // Backfill — NET_INTERFACE → Sync State Machine
-  // -----------------------------------------------------------------------
-
-  private enterBackfill(): void {
-    this.state.phase = 'backfill';
-    this.backfillAskedPeers.clear();
-    this.lastProgressMs = Date.now();
-    this.requestBackfillBatch();
-  }
-
-  private requestBackfillBatch(): void {
-    const provider = this.missingBodiesProvider;
-    if (!provider) {
-      this.enterSynced();
-      return;
-    }
-    const entries = provider(BACKFILL_BATCH_IDS);
-    if (entries.length === 0) {
-      this.enterSynced();
-      return;
-    }
-
-    const peerId = this.state.syncPeerId;
-    if (!peerId) {
-      this.enterSynced();
-      return;
-    }
-
-    const pull = this.pullPostBodiesFn;
-    if (!pull) {
-      this.enterSynced();
-      return;
-    }
-
-    this.backfillAskedPeers.add(peerId);
-    const wantedIds = new Set(entries.map(e => e.id));
-
-    pull(entries, peerId).then(bodies => {
-      if (this.state.phase !== 'backfill') return;
-      if (this.state.syncPeerId !== peerId) return;
-
-      for (const { id, content } of bodies) {
-        if (!wantedIds.has(id)) continue;
-        wantedIds.delete(id);
-        const isProgress = this.onPostBodyCallback?.(id, content, peerId) ?? false;
-        if (isProgress) this.lastProgressMs = Date.now();
-      }
-
-      if (wantedIds.size > 0) {
-        this.backfillRotateToNextPeer();
-      } else {
-        this.requestBackfillBatch();
-      }
-    }).catch(err => {
-      console.warn(`[sync-machine] backfill pull failed for ${peerId}: ${String(err)}`);
-      if (this.state.phase === 'backfill') this.backfillRotateToNextPeer();
-    });
-  }
-
-  private backfillRotateToNextPeer(): void {
-    if (this.state.phase !== 'backfill') return;
-
-    const connected = this.getConnectedPeersFn?.() ?? [];
-    const next = connected.find(p =>
-      !this.backfillAskedPeers.has(p) && !this.state.stalledPeers.has(p));
-
-    if (!next) {
-      this.enterSynced();
-      return;
-    }
-
-    this.state.syncPeerId = next;
-    this.backfillAskedPeers.add(next);
-    this.lastProgressMs = Date.now();
-    this.requestBackfillBatch();
-  }
-
   private enterSynced(): void {
     this.state.phase = 'synced';
     this.state.stalledPeers.clear();
@@ -1115,8 +1014,6 @@ export class SyncMachine {
       return;
     }
 
-    if (this.state.phase === 'backfill') return;
-
     const best = this.bestCandidate(ourHeight);
 
     if (best) {
@@ -1178,11 +1075,7 @@ export class SyncMachine {
     this.state.syncPeerId = null;
     this.outstanding.clear();
 
-    if (this.state.phase === 'backfill') {
-      this.backfillRotateToNextPeer();
-    } else {
-      this.state.phase = 'idle';
-      this.pickSyncPeer();
-    }
+    this.state.phase = 'idle';
+    this.pickSyncPeer();
   }
 }

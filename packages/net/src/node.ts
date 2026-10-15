@@ -584,7 +584,6 @@ export class NetNode {
   private scheduledTargetProvider: ((header: BlockHeader) => number | null) | null = null;
   // NET_INTERFACE → Sync Handler Registration: post body seams
   private postBodyProvider: ((postId: string) => string | null) | null = null;
-  private postBodyHandlers: Array<(postId: string, content: string, fromPeerId: string) => boolean> = [];
   private pendingDials: Set<string> = new Set();
   private lastGetPeersSentMs: Map<string, number> = new Map();
   /**
@@ -730,21 +729,6 @@ export class NetNode {
         }
       }
     });
-
-    // Wire post body seams — delegates read at call time, order-independent
-    this.syncMachine.setOnPostBody((postId, content, fromPeerId) => {
-      for (const cb of this.postBodyHandlers) {
-        try {
-          if (cb(postId, content, fromPeerId)) return true;
-        } catch (err) {
-          console.warn(`[net] onPostBody handler error: ${String(err)}`);
-        }
-      }
-      return false;
-    });
-    this.syncMachine.setPullPostBodies(
-      (entries, peerId) => this.requestPostBodies(entries, peerId));
-    this.syncMachine.setGetConnectedPeers(() => this.getConnectedPeers());
 
     // Create OutboundManager
     this.outboundMgr = new OutboundManager(this.config, this.peerDb);
@@ -1616,7 +1600,7 @@ export class NetNode {
   }
 
   /** NET_INTERFACE → API → Node Lifecycle. */
-  syncPhase(): 'idle' | 'syncing' | 'backfill' | 'synced' {
+  syncPhase(): 'idle' | 'syncing' | 'synced' {
     return this.syncMachine?.getState().phase ?? 'idle';
   }
 
@@ -1797,14 +1781,6 @@ export class NetNode {
 
   setPostBodyProvider(cb: (postId: string) => string | null): void {
     this.postBodyProvider = cb;
-  }
-
-  setMissingBodiesProvider(cb: (limit: number) => { id: string; contentHash: Uint8Array }[]): void {
-    this.syncMachine?.setMissingBodiesProvider(cb);
-  }
-
-  onPostBody(cb: (postId: string, content: string, fromPeerId: string) => boolean): void {
-    this.postBodyHandlers.push(cb);
   }
 
   async requestPostBodies(

@@ -37,7 +37,6 @@ export {
   MSG_BLOCKS,
   MODIFIER_ORDERING_BLOCK,
   MODIFIER_POST_BODY,
-  BACKFILL_BATCH_IDS,
 } from './types.js';
 export {
   buildHandshakeFrame,
