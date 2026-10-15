@@ -85,8 +85,8 @@ describe('nipopow', () => {
     const proof2Bytes = await fetchProofBytes(node2, M, K);
 
     const profile = makeVerifyProfile();
-    const result1 = verifyProof(proof1Bytes, profile);
-    const result2 = verifyProof(proof2Bytes, profile);
+    const result1 = verifyProof(proof1Bytes, { m: M, k: K }, profile);
+    const result2 = verifyProof(proof2Bytes, { m: M, k: K }, profile);
     expect(result1.ok).toBe(true);
     expect(result2.ok).toBe(true);
     if (!result1.ok || !result2.ok) return;
@@ -101,7 +101,7 @@ describe('nipopow', () => {
     const parsed1 = decodeNipopowProof(proof1Bytes);
     const parsed2 = decodeNipopowProof(proof2Bytes);
 
-    const cmp = compareProofs(parsed1, parsed2, M, profile);
+    const cmp = compareProofs(parsed1, parsed2, { m: M, k: K }, profile);
     expect(cmp.verdict).toBe('tie');
 
     // ---- step 3: suffixHead stateRoot matches the block at that height ----

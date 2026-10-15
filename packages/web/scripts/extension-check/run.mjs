@@ -966,16 +966,17 @@ async function waitForHeightsClose(originA, originB, tolerance, ms = 300000) {
 // `TIP_M` and `TIP_K`, under devnet's profile. `outworked` is the verdict
 // table's row: C verified, A the winner, C's `behind` null. The scores are
 // `compareProofs`'s over the two proofs the result carries, in the fold's
-// order (C as `a`) and at the `m` the proofs were asked for — a proof of
-// another `m` is `incomparable` (NIPOPOW_INTERFACE → compareProofs) — and
-// absent where either side did not verify.
+// order (C as `a`) and at the `m` and `k` the proofs were asked for — a
+// proof of another `m` or `k` is refused by the verifier, so `compareProofs`
+// answers `incomparable / invalid` (NIPOPOW_INTERFACE → compareProofs) —
+// and absent where either side did not verify.
 async function readForkComparison() {
   const aOrigin = NODE.replace(/\/+$/, '');
   const result = await forkTools.resolveTip([C_ORIGIN, aOrigin], TIP_M, TIP_K, forkTools.profile, Date.now, fetch);
   const [c, a] = result.nodes;
   const tipOf = (n) => (n.verifyResult?.ok === true ? n.verifyResult.tip.height : null);
   const cmp = c.verified && a.verified
-    ? forkTools.compareProofs(c.proof, a.proof, TIP_M, forkTools.verifierProfile(forkTools.profile, Date.now()))
+    ? forkTools.compareProofs(c.proof, a.proof, { m: TIP_M, k: TIP_K }, forkTools.verifierProfile(forkTools.profile, Date.now()))
     : null;
   return {
     c: { verified: c.verified, refuseCode: c.refuseCode, tip: tipOf(c), behind: c.behind },
