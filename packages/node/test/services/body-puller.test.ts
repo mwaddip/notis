@@ -78,36 +78,17 @@ function makeFakeNet(opts: {
 async function wireBackfill(fake: FakeNet): Promise<void> {
   const backfill = await import('../../src/services/backfill.js');
   const posts = await import('../../src/store/posts.js');
-  const db = await import('../../src/store/db.js');
 
-  // The driver's two reads over the store — same predicate as `getMissingBodies`
-  // (NODE_INTERFACE → Store Interface → Posts DAG). Inline so the dep shape
-  // the driver sees does not reach back to the store function's signature.
-  const getMissingBodies = (): Array<{ id: string; contentHash: string }> => {
-    const rows = db.getDb()
-      .prepare(
-        `SELECT id, content_hash FROM dag_posts
-         WHERE content IS NULL AND withdrawn_at_height IS NULL
-         ORDER BY block_height DESC, block_index DESC`,
-      )
-      .all() as Array<{ id: string; content_hash: string }>;
-    return rows.map((r) => ({ id: r.id, contentHash: r.content_hash }));
-  };
-  const getStillPlaceholderIds = (ids: readonly string[]): string[] =>
-    ids.filter((id) => {
-      const row = posts.getPost(id);
-      return row !== null && row.content === null && row.withdrawnAtHeight === null;
-    });
-
+  // The driver's deps as `src/index.ts` wires them — the real store reads,
+  // not re-implementations, so the fix a store commit lands reaches each case.
   backfill.clearPending();
-  const deps = {
+  backfill.initBackfill({
     requestPostBodies: fake.deps.requestPostBodies,
     getConnectedPeers: fake.deps.getConnectedPeers,
     setPostBody: posts.setPostBody,
-    getMissingBodies,
-    getStillPlaceholderIds,
-  };
-  backfill.initBackfill(deps);
+    getMissingBodies: posts.getMissingBodies,
+    getStillPlaceholderIds: posts.getStillPlaceholderIds,
+  });
 }
 
 function makePostWithdrawTx(
