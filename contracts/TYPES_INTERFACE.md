@@ -2432,15 +2432,18 @@ the reason a panic-shaped search is not sufficient here.
 The ordering-block framing replaces `u32BE` length prefixes with `vlqU`. The boundary check runs at
 the outer level and at each nested `lp` section.
 
-> ⚠ **AHEAD OF CODE (2026-10-16).** The paragraph below leads `serialization.ts`' `readOrderingBlockSections`.
+> ⚠ **AHEAD OF CODE (2026-10-16).** The paragraph below leads `serialization.ts`' `decodeOrderingBlock`, which
+> reads its frame through `readOrderingBlockSections`.
 
-**`readOrderingBlockSections(bytes)` reads the framing and decodes the header alone.** It answers
+**`readOrderingBlockSections(bytes)` reads the framing and decodes the header alone, and
+`decodeOrderingBlock` is that read and `decodeUtxoTxTree` of the body's bytes.** It answers
 `{ header, utxoTxTreeBytes, validatorSignature }`: the `HEADER` codec over the first section, the second
-section's bytes undecoded, the 64-byte signature, and the frame exhausted — so
+section's bytes undecoded, the 64-byte signature, and the frame exhausted. **The outer level's boundary
+check is the frame exhausted and its two length prefixes minimal**: each section's canonicity is its own
+codec's and the signature has one width, so a re-encode of the whole frame refuses nothing more. So
 `decodeOrderingBlock(bytes)` answers `{ header, utxoTxTree: decodeUtxoTxTree(utxoTxTreeBytes),
-validatorSignature }` whenever both read, and refuses exactly when one of them refuses. A header
-section longer than `MAX_HEADER_BYTES` is refused before it is decoded, which moves no verdict: no
-header encodes longer. It is the read a node judges a gossiped block's header by before it pays for the
+validatorSignature }`, and refuses exactly when one of the two refuses. A header section longer than
+`MAX_HEADER_BYTES` is refused before it is decoded, which moves no verdict: no header encodes longer. It is the read a node judges a gossiped block's header by before it pays for the
 body (`NET_INTERFACE → Stage 1 → "A header is read before its body"`).
 
 ### Layout — Merkle leaf preimages are the struct's own wire bytes
