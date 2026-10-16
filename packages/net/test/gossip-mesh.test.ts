@@ -1537,3 +1537,231 @@ describe('a second valid signing of a header is Ignored at the first hop', () =>
     TIMEOUT,
   );
 });
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Forwarding Rule →
+//   "An ordering block is forwarded once Stage 1 passes; a transaction once this node admits it"
+// NET_INTERFACE → Inbound Processing →
+//   "A transaction is forwarded when a handler admits it"
+// NET_INTERFACE → Stage 2 → "A Stage 2 refusal records nothing"
+//
+// A tx forward past B is held unforwarded until a B handler admits it; a block
+// forward does not wait on a handler. The cases drive the line A — B — C and
+// read what reaches C's own handler.
+// ---------------------------------------------------------------------------
+
+describe('a transaction is forwarded when a handler admits it', () => {
+  const open: NetNode[] = [];
+  afterEach(async () => {
+    while (open.length > 0) {
+      const n = open.pop();
+      await n?.stop();
+    }
+  });
+  const track = (nodes: NetNode[]): void => {
+    for (const n of nodes) open.push(n);
+  };
+
+  it.fails(
+    "a tx B's handler answers false reaches B and never C",
+    async () => {
+      const { nodeA, nodeB, nodeC } = await startLine();
+      track([nodeA, nodeB, nodeC]);
+      assertLineIntact(nodeA, nodeC);
+
+      const kp = generateKeyPair();
+      const hex = Buffer.from(kp.publicKey).toString('hex');
+      nodeA.addKarmaMember(hex);
+      nodeB.addKarmaMember(hex);
+      nodeC.addKarmaMember(hex);
+
+      const bContent: Array<string | undefined> = [];
+      const cContent: Array<string | undefined> = [];
+      nodeB.onTx((_t, c) => {
+        bContent.push(c);
+        return false;
+      });
+      nodeC.onTx((_t, c) => {
+        cContent.push(c);
+        return true;
+      });
+      const cBlocks: OrderingBlock[] = [];
+      nodeC.onOrderingBlock((b) => {
+        cBlocks.push(b);
+      });
+
+      const subject = 'false-admits-nothing';
+      const { tx, content } = makePostTxPacket(kp.publicKey, subject);
+      await nodeA.broadcastTx(tx, content);
+      await vi.waitFor(() => expect(bContent).toContain(subject), {
+        timeout: 10_000,
+        interval: 100,
+      });
+
+      // A later control block reaches C — a block's forward does not wait on a
+      // handler. The non-forward of the tx is read as the absence of the
+      // subject at C after the block has itself landed there.
+      const block = makeBlockAt(1, PROTOCOL_VERSION);
+      await nodeA.broadcastOrderingBlock(block);
+      await vi.waitFor(() => expect(cBlocks.length).toBe(1), {
+        timeout: 10_000,
+        interval: 100,
+      });
+      await new Promise((r) => setTimeout(r, SETTLE_MS));
+
+      expect(cContent).not.toContain(subject);
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "a tx B's handler answers true reaches C",
+    async () => {
+      const { nodeA, nodeB, nodeC } = await startLine();
+      track([nodeA, nodeB, nodeC]);
+      assertLineIntact(nodeA, nodeC);
+
+      const kp = generateKeyPair();
+      const hex = Buffer.from(kp.publicKey).toString('hex');
+      nodeA.addKarmaMember(hex);
+      nodeB.addKarmaMember(hex);
+      nodeC.addKarmaMember(hex);
+
+      const cDeliveries: UtxoTransaction[] = [];
+      nodeB.onTx(() => true);
+      nodeC.onTx((t) => {
+        cDeliveries.push(t);
+        return true;
+      });
+
+      const { tx, content } = makePostTxPacket(kp.publicKey, 'true-admits-forward');
+      await nodeA.broadcastTx(tx, content);
+      await vi.waitFor(() => expect(cDeliveries.length).toBe(1), {
+        timeout: 10_000,
+        interval: 100,
+      });
+      expect(cDeliveries.length).toBe(1);
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "a block whose handler at B throws still reaches C",
+    async () => {
+      const { nodeA, nodeB, nodeC } = await startLine();
+      track([nodeA, nodeB, nodeC]);
+      assertLineIntact(nodeA, nodeC);
+
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const cDeliveries: OrderingBlock[] = [];
+        nodeB.onOrderingBlock(() => {
+          throw new Error('b block handler exploded');
+        });
+        nodeC.onOrderingBlock((b) => {
+          cDeliveries.push(b);
+        });
+
+        const block = makeBlockAt(1, PROTOCOL_VERSION);
+        await nodeA.broadcastOrderingBlock(block);
+        await vi.waitFor(() => expect(cDeliveries.length).toBe(1), {
+          timeout: 10_000,
+          interval: 100,
+        });
+      } finally {
+        errSpy.mockRestore();
+      }
+    },
+    TIMEOUT,
+  );
+
+  it(
+    'two handlers at B, one false and one true, forward to C',
+    async () => {
+      const { nodeA, nodeB, nodeC } = await startLine();
+      track([nodeA, nodeB, nodeC]);
+      assertLineIntact(nodeA, nodeC);
+
+      const kp = generateKeyPair();
+      const hex = Buffer.from(kp.publicKey).toString('hex');
+      nodeA.addKarmaMember(hex);
+      nodeB.addKarmaMember(hex);
+      nodeC.addKarmaMember(hex);
+
+      nodeB.onTx(() => false);
+      nodeB.onTx(() => true);
+      const cDeliveries: UtxoTransaction[] = [];
+      nodeC.onTx((t) => {
+        cDeliveries.push(t);
+        return true;
+      });
+
+      const { tx, content } = makePostTxPacket(kp.publicKey, 'two-handlers-or-true');
+      await nodeA.broadcastTx(tx, content);
+      await vi.waitFor(() => expect(cDeliveries.length).toBe(1), {
+        timeout: 10_000,
+        interval: 100,
+      });
+      expect(cDeliveries.length).toBe(1);
+    },
+    TIMEOUT,
+  );
+
+  it.fails(
+    'a single handler at B that throws is not forwarded, and the throw is logged',
+    async () => {
+      const { nodeA, nodeB, nodeC } = await startLine();
+      track([nodeA, nodeB, nodeC]);
+      assertLineIntact(nodeA, nodeC);
+
+      const kp = generateKeyPair();
+      const hex = Buffer.from(kp.publicKey).toString('hex');
+      nodeA.addKarmaMember(hex);
+      nodeB.addKarmaMember(hex);
+      nodeC.addKarmaMember(hex);
+
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const bContent: Array<string | undefined> = [];
+        nodeB.onTx((_t, c) => {
+          bContent.push(c);
+          throw new Error('b tx handler exploded');
+        });
+        const cContent: Array<string | undefined> = [];
+        nodeC.onTx((_t, c) => {
+          cContent.push(c);
+          return true;
+        });
+        const cBlocks: OrderingBlock[] = [];
+        nodeC.onOrderingBlock((b) => {
+          cBlocks.push(b);
+        });
+
+        const subject = 'throw-admits-nothing';
+        const { tx, content } = makePostTxPacket(kp.publicKey, subject);
+        await nodeA.broadcastTx(tx, content);
+        await vi.waitFor(() => expect(bContent).toContain(subject), {
+          timeout: 10_000,
+          interval: 100,
+        });
+
+        // A later control block reaches C — a block's forward does not wait on
+        // a handler. The non-forward of the tx is read as the absence of the
+        // subject at C after the block has itself landed there.
+        const block = makeBlockAt(1, PROTOCOL_VERSION);
+        await nodeA.broadcastOrderingBlock(block);
+        await vi.waitFor(() => expect(cBlocks.length).toBe(1), {
+          timeout: 10_000,
+          interval: 100,
+        });
+        await new Promise((r) => setTimeout(r, SETTLE_MS));
+
+        expect(cContent).not.toContain(subject);
+        expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('b tx handler exploded'));
+      } finally {
+        errSpy.mockRestore();
+      }
+    },
+    TIMEOUT,
+  );
+});

@@ -22,6 +22,7 @@ import {
   encodeTxPacket,
   decodeTxPacket,
   computeContentHash,
+  computeTxId,
   computeUtxoTxRoot,
   ReaderError,
   encodeHeader,
@@ -393,12 +394,16 @@ describe('tx topic validator — the post membership gate', () => {
 
   // --- cell 2: an unknown author is dropped ---------------------------------
 
-  it('rejects the SAME post when its author is not in the set', () => {
-    const { result, peer, penaltySpy } = validatePacket(postTx, postContent, new Set());
+  // NET_INTERFACE → Stage 1 → "A refusal that rests on this node's state records nothing":
+  // the karma-membership gate reads this node's cached set, which a node behind the
+  // one that forwarded the post may not yet carry; the sender could have reached
+  // Accept running the same rules, so the Reject records no penalty.
+  it.fails('rejects the SAME post when its author is not in the set, no penalty of any kind', () => {
+    const { result, peer, peerMgr, penaltySpy, kindSpy } = validatePacket(postTx, postContent, new Set());
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, 'post author holds no karma',
-    );
+    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).not.toHaveBeenCalled();
+    expect(peerMgr.getPeerMetadata(peer.id)!.penaltyCount).toBe(0);
   });
 
   it('rejects a post whose author is in the set under a DIFFERENT spelling', () => {
@@ -465,16 +470,16 @@ describe('tx topic validator — the post membership gate', () => {
     expect(decodeTxPacket(encodeTxPacket(postTx, postContent)).tx.post!.author.length).toBe(32);
   });
 
-  it('rejects an unsupported protocol version', () => {
-    // era at chainHeight()+1 = 0+1 = 1; the tx declares 99. A version mismatch is
-    // a compatibility signal — Transient (50), not misbehavior (100).
+  // NET_INTERFACE → Stage 1 → "A refusal that rests on this node's state records nothing":
+  // the era is `chainHeight() + 1`, which the sender behind this node reads differently;
+  // a declared-version mismatch Rejects with no penalty.
+  it.fails('rejects an unsupported protocol version with no penalty of any kind', () => {
     const tx = { ...txWith(baseCommit(keyPair.publicKey)), protocolVersion: 99 };
-    const { result, peer, penaltySpy, kindSpy } = validatePacket(tx, postContent, new Set([authorHex]));
+    const { result, peer, peerMgr, penaltySpy, kindSpy } = validatePacket(tx, postContent, new Set([authorHex]));
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(kindSpy).toHaveBeenCalledWith(
-      PenaltyKind.Transient, peer.id, expect.stringContaining('era 1'),
-    );
     expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).not.toHaveBeenCalled();
+    expect(peerMgr.getPeerMetadata(peer.id)!.penaltyCount).toBe(0);
   });
 
   it('there is no sub-block topic to subscribe to', () => {
@@ -538,6 +543,122 @@ describe('tx topic validator — the post membership gate', () => {
     expect(penaltySpy).toHaveBeenCalledWith(
       'misbehavior', peer.id, 100, expect.stringContaining('parent ref'),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Stage 1 → "A transaction's signatures are checked at Stage 1":
+// `verifyTxSignatures` is the last check and runs over the signature map; one
+// entry that does not verify Rejects with `misbehavior` 100.
+// ---------------------------------------------------------------------------
+
+describe("tx topic validator — a transaction's signatures are checked at Stage 1", () => {
+  const CONTENT = 'signature-check fixture';
+
+  const sigCommit = (author: Uint8Array): PostCommit => ({
+    contentHash: computeContentHash(CONTENT),
+    author,
+    parentRefs: [],
+    protocolVersion: 1,
+    type: 'regular' as const,
+  });
+
+  const sigTxTemplate = (author: Uint8Array): UtxoTransaction => ({
+    inputs: ['aa'.repeat(32)],
+    outputs: [{ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: new Uint8Array(32).fill(1) } as never],
+    signatures: {},
+    protocolVersion: 1,
+    post: sigCommit(author),
+  });
+
+  it.fails('rejects a tx with one signature byte flipped with misbehavior 100', () => {
+    const kp = generateKeyPair();
+    const authorHex = Buffer.from(kp.publicKey).toString('hex');
+    const seed = kp.secretKey.subarray(16);
+    const tx = sigTxTemplate(kp.publicKey);
+    const message = hexToBytes(computeTxId(tx));
+    const good = ed25519.sign(message, seed);
+    const bad = new Uint8Array(good);
+    bad[0]! ^= 0x01;
+    // Controls: the good signature verifies, the flipped one does not.
+    expect(ed25519.verify(good, message, kp.publicKey, { zip215: false })).toBe(true);
+    expect(ed25519.verify(bad, message, kp.publicKey, { zip215: false })).toBe(false);
+
+    const signed: UtxoTransaction = { ...tx, signatures: { [authorHex]: bad } };
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set([authorHex]));
+    const validate = topicValidators.get(topics.tx)!;
+    const peer = newPeer(peerMgr);
+    const result = validate(peer, { data: encodeTxPacket(signed, CONTENT) });
+
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).toHaveBeenCalledWith(
+      'misbehavior', peer.id, 100, expect.stringContaining('signature'),
+    );
+  });
+
+  it('accepts a post whose single signature verifies (control)', () => {
+    const kp = generateKeyPair();
+    const authorHex = Buffer.from(kp.publicKey).toString('hex');
+    const seed = kp.secretKey.subarray(16);
+    const tx = sigTxTemplate(kp.publicKey);
+    const message = hexToBytes(computeTxId(tx));
+    const good = ed25519.sign(message, seed);
+    expect(ed25519.verify(good, message, kp.publicKey, { zip215: false })).toBe(true);
+
+    const signed: UtxoTransaction = { ...tx, signatures: { [authorHex]: good } };
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set([authorHex]));
+    const validate = topicValidators.get(topics.tx)!;
+    const peer = newPeer(peerMgr);
+    const result = validate(peer, { data: encodeTxPacket(signed, CONTENT) });
+
+    expect(result).toBe(TopicValidatorResult.Accept);
+    expect(penaltySpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Stage 1 → "A fault of this node's is no peer's": a throw
+// outside the decode is this node's and is logged, the message Ignored, no
+// penalty.
+// ---------------------------------------------------------------------------
+
+describe("tx topic validator — a fault of this node's is no peer's", () => {
+  const CONTENT = 'chain-height fixture';
+
+  it.fails("a chainHeight() throw is Ignored with no penalty and one console.error line", () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const kp = generateKeyPair();
+      const authorHex = Buffer.from(kp.publicKey).toString('hex');
+      const commit: PostCommit = {
+        contentHash: computeContentHash(CONTENT),
+        author: kp.publicKey,
+        parentRefs: [],
+        protocolVersion: 1,
+        type: 'regular' as const,
+      };
+      const tx: UtxoTransaction = {
+        inputs: ['aa'.repeat(32)],
+        outputs: [{ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: new Uint8Array(32).fill(1) } as never],
+        signatures: {},
+        protocolVersion: 1,
+        post: commit,
+      };
+      const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set([authorHex]), {
+        chainHeight: () => { throw new Error('chain height explosion'); },
+      });
+      const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+      const validate = topicValidators.get(topics.tx)!;
+      const peer = newPeer(peerMgr);
+      const result = validate(peer, { data: encodeTxPacket(tx, CONTENT) });
+
+      expect(result).toBe(TopicValidatorResult.Ignore);
+      expect(penaltySpy).not.toHaveBeenCalled();
+      expect(kindSpy).not.toHaveBeenCalled();
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('chain height explosion'));
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 });
 
@@ -871,20 +992,24 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
     expect(penaltySpy).not.toHaveBeenCalled();
   });
 
-  it('rejects a tx declaring era 1 when chainHeight()+1 = H (era 2)', () => {
-    const { result, peer, penaltySpy, kindSpy } = runTx(plainTxV(1), undefined, H - 1);
+  // NET_INTERFACE → Stage 1 → "A refusal that rests on this node's state records nothing":
+  // a tx declared-version mismatch Rejects with no penalty.
+  it.fails('rejects a tx declaring era 1 when chainHeight()+1 = H (era 2), no penalty', () => {
+    const { result, peer, peerMgr, penaltySpy, kindSpy } = runTx(plainTxV(1), undefined, H - 1);
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(kindSpy).toHaveBeenCalledWith(PenaltyKind.Transient, peer.id, expect.stringContaining('era 2'));
     expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).not.toHaveBeenCalled();
+    expect(peerMgr.getPeerMetadata(peer.id)!.penaltyCount).toBe(0);
   });
 
-  it('rejects a tx whose commit declares a different era than its envelope', () => {
+  it.fails('rejects a tx whose commit declares a different era than its envelope, no penalty', () => {
     // The envelope declares era 2 (matches), the commit declares 1 — both must
     // equal the era, so the commit alone fails it.
-    const { result, peer, penaltySpy, kindSpy } = runTx(postTxV(2, 1), CONTENT, H - 1);
+    const { result, peer, peerMgr, penaltySpy, kindSpy } = runTx(postTxV(2, 1), CONTENT, H - 1);
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(kindSpy).toHaveBeenCalledWith(PenaltyKind.Transient, peer.id, expect.stringContaining('commit 1'));
     expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).not.toHaveBeenCalled();
+    expect(peerMgr.getPeerMetadata(peer.id)!.penaltyCount).toBe(0);
   });
 
   it('a mismatch accrues 50, not 100: one hit under threshold 75 does not ban, two do', () => {
