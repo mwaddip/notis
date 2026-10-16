@@ -143,6 +143,16 @@ export function subscribeTopics(
   // NET_INTERFACE → Consensus parameters net enforces
   floorBits: number,
   scheduledTargetBits: (header: BlockHeader) => number | null,
+  // NET_INTERFACE → Sync Handler Registration → setHeaderStandingProvider
+  // (NET_INTERFACE → Stage 1 → "A header this node knows is Ignored"). A
+  // provider that is not passed is read as `() => null`, every header judged
+  // as one this node does not know. The leading `_` marks it reserved by the
+  // signature pending the block validator's standing check.
+  _headerStanding: (hash: string, height: number) => 'held' | 'refused' | null = () => null,
+  // The clock the memory of accepted headers reads
+  // (NET_INTERFACE → Stage 1 → "A header this node knows is Ignored"). Tests
+  // drive it; production reads `Date.now()`. Reserved as `_headerStanding`.
+  _nowMs: () => number = Date.now,
 ): void {
   const gs = libp2p.services.pubsub;
 

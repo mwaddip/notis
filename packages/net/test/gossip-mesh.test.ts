@@ -1,10 +1,14 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createHash } from 'node:crypto';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { sha512 } from '@noble/hashes/sha2.js';
+import { bytesToNumberLE, numberToBytesLE } from '@noble/curves/utils.js';
 import {
   generateKeyPair,
   computeContentHash,
   computeUtxoTxRoot,
   encodeOrderingBlock,
+  hexToBytes,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   MAGIC_DEVNET,
   PROTOCOL_VERSION,
@@ -26,6 +30,8 @@ import {
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
   verifyPostBody,
+  verifyValidatorSignature,
+  blockHash,
 } from '@dagsocial/validation';
 import { TopicValidatorResult } from '@libp2p/interface';
 import type { PubSub } from '@libp2p/interface';
@@ -1395,6 +1401,122 @@ describe('A worked header is forwarded with the body its root commits', () => {
         calls: 1,
         firstBytes: Array.from(honest.utxoTxTree.utxoTxs[0]!),
       });
+    },
+    TIMEOUT,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Stage 1 → "A header this node knows is Ignored" — the
+// memory of accepted headers ends the forward of a second valid signing of
+// the same header at the first hop that already accepted the first.
+// ---------------------------------------------------------------------------
+
+const StagePoint = ed25519.Point;
+const StageFn = StagePoint.Fn;
+
+function altSignForMesh(seed: Uint8Array, publicKey: Uint8Array, message: Uint8Array, nonceSeed: Uint8Array): Uint8Array {
+  const h = sha512(seed);
+  const scalarBytes = new Uint8Array(h.subarray(0, 32));
+  scalarBytes[0]! &= 248;
+  scalarBytes[31]! &= 127;
+  scalarBytes[31]! |= 64;
+  const a = StageFn.create(bytesToNumberLE(scalarBytes));
+  const r = StageFn.create(bytesToNumberLE(sha512(nonceSeed)));
+  const R = StagePoint.BASE.multiply(r);
+  const REncoded = R.toBytes();
+  const chal = new Uint8Array(64 + message.length);
+  chal.set(REncoded, 0);
+  chal.set(publicKey, 32);
+  chal.set(message, 64);
+  const k = StageFn.create(bytesToNumberLE(sha512(chal)));
+  const S = StageFn.create(r + k * a);
+  const sig = new Uint8Array(64);
+  sig.set(REncoded, 0);
+  sig.set(numberToBytesLE(S, 32), 32);
+  return sig;
+}
+
+function makeSignedBlockAt(
+  height: number,
+  protocolVersion: number,
+  validatorKp: ReturnType<typeof generateKeyPair>,
+): { header: BlockHeader; utxoTxTree: UtxoTxTree } {
+  const utxoTxTree: UtxoTxTree = {
+    utxoTxIds: [height.toString(16).padStart(64, '0')],
+    utxoTxs: [new Uint8Array(96).fill(height & 0xff)],
+  };
+  const base: BlockHeader = {
+    protocolVersion,
+    height,
+    prevBlockHash: '00'.repeat(32),
+    utxoTxRoot: computeUtxoTxRoot(utxoTxTree),
+    stateRoot: '00'.repeat(33),
+    validatorId: validatorKp.publicKey,
+    powNonce: 0,
+    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+    createdAt: 1_000_000 + height,
+    interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
+  };
+  for (let n = 0; n < 1_000_000; n++) {
+    const h = { ...base, powNonce: n };
+    if (verifyOrderingBlockPoW(h)) return { header: h, utxoTxTree };
+  }
+  throw new Error('could not mine header under validator key within 1M nonces');
+}
+
+describe('a second valid signing of a header is Ignored at the first hop', () => {
+  const open: NetNode[] = [];
+  afterEach(async () => {
+    while (open.length > 0) {
+      const n = open.pop();
+      await n?.stop();
+    }
+  });
+  const track = (nodes: NetNode[]): void => {
+    for (const n of nodes) open.push(n);
+  };
+
+  it.fails(
+    'A publishes a second valid signing — C\'s handler fires once and B refuses to forward it',
+    async () => {
+      const { nodeA, nodeB, nodeC } = await startLine();
+      track([nodeA, nodeB, nodeC]);
+      assertLineIntact(nodeA, nodeC);
+
+      const kp = generateKeyPair();
+      const seed = kp.secretKey.subarray(16);
+      const { header, utxoTxTree } = makeSignedBlockAt(1, PROTOCOL_VERSION, kp);
+      const message = hexToBytes(blockHash(header)!);
+      const sigA = ed25519.sign(message, seed);
+      const sigB = altSignForMesh(seed, kp.publicKey, message, sha512(new Uint8Array([0x5a])));
+      // Both signings verify, under the same key, over the same header; the
+      // bytes they put on the wire differ.
+      expect(verifyValidatorSignature(header, sigA)).toBe(true);
+      expect(verifyValidatorSignature(header, sigB)).toBe(true);
+      expect(Array.from(sigA)).not.toEqual(Array.from(sigB));
+
+      const blockA: OrderingBlock = { header, utxoTxTree, validatorSignature: sigA };
+      const blockB: OrderingBlock = { header, utxoTxTree, validatorSignature: sigB };
+
+      const cHandler = vi.fn<[OrderingBlock, string], void>();
+      nodeC.onOrderingBlock(cHandler);
+      const bHandler = vi.fn<[OrderingBlock, string], void>();
+      nodeB.onOrderingBlock(bHandler);
+
+      await nodeA.broadcastOrderingBlock(blockA);
+      await vi.waitFor(() => expect(bHandler).toHaveBeenCalledTimes(1), {
+        timeout: 10_000,
+        interval: 100,
+      });
+
+      // Second signing on the wire — different msgId, so the gossipsub seen
+      // set does not drop it; the standing memory at B does.
+      await nodeA.broadcastOrderingBlock(blockB);
+      await new Promise((r) => setTimeout(r, SETTLE_MS));
+
+      expect(cHandler).toHaveBeenCalledTimes(1);
     },
     TIMEOUT,
   );
