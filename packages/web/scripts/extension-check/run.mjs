@@ -4472,15 +4472,18 @@ async function readAndDeclinePrompt(promptsBefore, what) {
 }
 
 // Step 29 — the honest send to a handle (WEB_INTERFACE → The wallet window →
-// "The `send` row", → The extension → "The verified names"). R types S's
-// handle and an amount in the wallet's `send` row and presses `send`: the row
-// reads *checking @<name>…* in the flight's place while the check runs — read
-// by an observer installed before the press, so a line that stands for
-// milliseconds is read as surely as one that stands for seconds — the key
-// beneath the field is S's, the prompt window opens naming S's key on its
-// `to:` line, and a decline sends nothing: no `/credits/transfer`, the flight
-// *send not sent.*. S's box is aged past `suffixHead` when the check proves
-// it there, young when it proves it at the tip alone.
+// "The `send` row", → The extension → "The verified names",
+// NIPOPOW_INTERFACE → The trust model, rule 4). R types S's handle and an
+// amount in the wallet's `send` row and presses `send`: the row reads
+// *checking @<name>…* in the flight's place while the check runs — read by an
+// observer installed before the press, so a line that stands for milliseconds
+// is read as surely as one that stands for seconds — the key beneath the
+// field is S's, the prompt window opens naming S's key on its `to:` line, and
+// a decline sends nothing: no `/credits/transfer`, the flight *send not
+// sent.*. A send goes only to a name proven `k` deep, so the press waits
+// until A is at least `sHeld.claimedAtBlock + TIP_K` and passes only when the
+// check proved S's box at `suffixHead` — one box proof, at that height; a
+// proof at the tip alone fails the step.
 async function runNamesStep29(cx, sHeld) {
   if (sHeld === null) {
     record(29, false, `S ${S_PUB.slice(0, 8)}… holds no name on A — claim-name.mjs claims one before the run`);
@@ -4489,6 +4492,17 @@ async function runNamesStep29(cx, sHeld) {
   const handle = '@' + sHeld.name;
   const sBox = sHeld.boxId.toLowerCase();
   try {
+    // S's box is k deep when A's height is at least claimedAtBlock + TIP_K;
+    // the deadline records the step failed with the heights the wait saw.
+    const kDeepTarget = sHeld.claimedAtBlock + TIP_K;
+    const kDeepStart = await currentHeight(NODE);
+    const kDeepReached = await waitForHeight(NODE, kDeepTarget, 10 * 60 * 1000);
+    if (kDeepReached === null) {
+      const kDeepNow = await currentHeight(NODE);
+      record(29, false,
+        `S's box is not k deep on A within 10 minutes — claimed at block ${sHeld.claimedAtBlock}, TIP_K=${TIP_K}, target=${kDeepTarget}, A started at ${JSON.stringify(kDeepStart)}, last seen ${JSON.stringify(kDeepNow)}; A's miner may be paced too slowly`);
+      return;
+    }
     await raiseWindow(cx, 'open wallet');
     await cx.waitFor(`!!document.querySelector('.credits-field form.credits-form')`, 'the send form 29', 60000);
     await recordFlightTexts(cx);
@@ -4555,11 +4569,16 @@ async function runNamesStep29(cx, sHeld) {
       ev.method === 'Network.requestWillBeSent' && ev.params.request.url.includes('/credits/transfer')).length;
     const reqs = nameRequestsSince(cx.events, pressIdx, { handle: sHeld.name, boxId: sBox, endIdx: answerIdx });
     const heights = reqs.boxProofs.map((p) => p.atHeight);
-    const age = heights.length === 1 && sHeld.claimedAtBlock <= heights[0]
-      ? `aged past suffixHead — claimed at block ${sHeld.claimedAtBlock}, proven at ${heights[0]}`
+    // A send goes only to a name proven k deep: the check proves S's box at
+    // `suffixHead` — one box proof, at that height — and a proof at the tip
+    // alone (two heights, excluded at `suffixHead`) is the refusal, not the
+    // flow.
+    const atSuffixHead = heights.length === 1 && sHeld.claimedAtBlock <= heights[0];
+    const age = atSuffixHead
+      ? `k deep at suffixHead — claimed at block ${sHeld.claimedAtBlock}, TIP_K=${TIP_K}, A reached ${kDeepReached} before the press, proven at ${heights[0]}`
       : heights.length === 2
-        ? `young at the tip — claimed at block ${sHeld.claimedAtBlock}, excluded at ${heights[0]}, proven at ${heights[1]}`
-        : `claimed at block ${sHeld.claimedAtBlock}, proofs at ${JSON.stringify(heights)}`;
+        ? `young at the tip — claimed at block ${sHeld.claimedAtBlock}, TIP_K=${TIP_K}, A reached ${kDeepReached} before the press, excluded at ${heights[0]}, proven at ${heights[1]}`
+        : `claimed at block ${sHeld.claimedAtBlock}, TIP_K=${TIP_K}, A reached ${kDeepReached} before the press, proofs at ${JSON.stringify(heights)}`;
 
     const checking = `checking ${handle}…`;
     const checkingOk = texts.includes(checking);
@@ -4569,12 +4588,12 @@ async function runNamesStep29(cx, sHeld) {
     const promptOk = lines !== null && lines[0]?.text === 'Notis transfer' && target !== null && target.label === 'to:' && promptKey === S_PUB;
     const declinedOk = declined && notSent && transfers === 0 && after.to === handle && after.amount === NAMES_SEND_AMOUNT;
     const logOk = reqs.handleLookups > 0 && reqs.boxProofs.length > 0;
-    record(29, checkingOk && keyOk && promptOk && declinedOk && logOk,
+    record(29, checkingOk && keyOk && promptOk && declinedOk && logOk && atSuffixHead,
       `typed ${JSON.stringify(handle)} and ${NAMES_SEND_AMOUNT} $NOTIS; the flight's texts in order ${JSON.stringify(texts)} — ${JSON.stringify(checking)} read=${checkingOk}; ` +
       `beneath the field: ${JSON.stringify(answer.key)}, refusal ${JSON.stringify(answer.refusal)}, unlock owed=${answer.unlock}, S's key=${answer.key === S_PUB}; ` +
       `prompt ${prompt === null ? 'none opened' : prompt.url.replace(/^.*\//, '')}: lines ${JSON.stringify((lines ?? []).map((l) => `${l.cls}:${l.text}`))}, to: key equals S's public key=${promptKey === S_PUB}; ` +
       `declined=${declined}, flight ${JSON.stringify(after.flight)}, /credits/transfer requests=${transfers}, form kept ${JSON.stringify(after.to)} / ${JSON.stringify(after.amount)}; ` +
-      `the check: /usernames/${sHeld.name} ×${reqs.handleLookups}, box ${sBox.slice(0, 12)}… proofs at ${JSON.stringify(heights)}, /blocks/current ×${reqs.blocksCurrent}, tip proofs ×${reqs.tipProofs}; S's box ${age}`);
+      `the check: /usernames/${sHeld.name} ×${reqs.handleLookups}, box ${sBox.slice(0, 12)}… proofs at ${JSON.stringify(heights)}, /blocks/current ×${reqs.blocksCurrent}, tip proofs ×${reqs.tipProofs}; S's box ${age}; proven at suffixHead=${atSuffixHead}`);
   } catch (e) {
     record(29, false, `error: ${e?.stack ?? String(e)}`);
   }
