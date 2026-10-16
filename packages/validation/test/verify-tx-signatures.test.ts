@@ -214,6 +214,20 @@ describe('verifyTxSignatures — totality', () => {
     expect(() => verifyTxSignatures(bad)).not.toThrow();
     expect(verifyTxSignatures(bad)).toBe(false);
   });
+
+  it('a tx whose id cannot be computed with an empty map answers false', () => {
+    // The empty map reaches `verifyEd25519Batch` after `computeTxId` runs
+    // (VALIDATION_INTERFACE → verifyTxSignatures → "Total"); the
+    // id-uncomputable half of the totality lead refuses this one before the
+    // batch's `n === 0 → true` branch can answer.
+    const bad: UtxoTransaction = {
+      ...baseTx(),
+      inputs: ['xx'.repeat(32)],
+      signatures: {},
+    };
+    expect(() => verifyTxSignatures(bad)).not.toThrow();
+    expect(verifyTxSignatures(bad)).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
