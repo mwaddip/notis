@@ -898,17 +898,22 @@ export async function resolveFork(
     console.log(`Reorg complete: new tip at height=${forkHeight + n}`);
     return 'switched';
   } catch (err) {
-    // NODE_INTERFACE → Fork choice decides on verified headers, step 10–11.
+    // NODE_INTERFACE → Fork choice decides on verified headers, step 10–11:
+    // `'acceptance'` reads this node's clock, `'local'` is an unexpected
+    // throw, and `'unbound'` is a block that is not its header's — which
+    // step 8 of this function leaves none of, so the arm exists for the
+    // funnel's totality rather than for a reachable peer-driven path. None
+    // of the three is a verdict on the chain: no mark, no penalty, no memo.
     if (err instanceof ReorgAbortedError) {
-      if (err.class_ === 'acceptance') {
-        console.warn(
-          `Fork resolution: reorg aborted at height ${err.height} (${err.hash}), ` +
-          `class=acceptance — no mark, no penalty`,
-        );
-      } else {
+      if (err.class_ === 'local') {
         console.error(
           `Fork resolution: reorg aborted at height ${err.height} (${err.hash}), ` +
-          `class=local: ${err.detail ?? '(no detail)'}`,
+          `class=${err.class_}: ${err.detail ?? '(no detail)'}`,
+        );
+      } else {
+        console.warn(
+          `Fork resolution: reorg aborted at height ${err.height} (${err.hash}), ` +
+          `class=${err.class_} — no mark, no penalty`,
         );
       }
       return 'done';

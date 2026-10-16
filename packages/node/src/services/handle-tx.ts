@@ -1,5 +1,5 @@
 import { validateTx } from '@dagsocial/consensus';
-import { MEMPOOL_EXPIRY_BLOCKS, computePostId } from '@dagsocial/types';
+import { MEMPOOL_EXPIRY_BLOCKS, bytesToHex, computePostId, computeTxId } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import { config } from '../config.js';
 import { emitPostReceived, emitPostValidated } from '../journal.js';
@@ -31,16 +31,19 @@ import { ClientError } from './client-error.js';
  * transaction read-only, then admits it — for a post transaction, with the
  * packet's body as the pending row in the same store transaction.
  *
- * Every refusal is an answer the handler logs and returns from: a transaction
- * the rules refuse, a full pool, an input a pending entry spends, and each
- * policy refusal admission throws as a `ClientError`. Any other throw reaches
- * net, which logs it as a handler defect.
+ * Answers whether it admitted the transaction: net forwards an admitted
+ * transaction and penalises nothing on a refusal (NET_INTERFACE → Stage 2 →
+ * "A Stage 2 refusal records nothing"). Every refusal is a `false` the
+ * handler logs and returns from: a transaction the rules refuse, a full
+ * pool, an input a pending entry spends, and each policy refusal admission
+ * throws as a `ClientError`. Any other throw reaches net, which logs it as
+ * a handler defect.
  */
 export function handleRelayedTx(
   tx: UtxoTransaction,
   content: string | undefined,
   fromPeerId: string,
-): void {
+): boolean {
   // Admission's `held` and `owed` are the spend rule's engine inputs
   // (NODE_INTERFACE → Karma transition rules → "Engine inputs the rule
   // needs"), the one implementation the HTTP routes' deps literal also wires
@@ -51,6 +54,27 @@ export function handleRelayedTx(
     decayAmount: config.karmaDecayAmount,
     karmaMinimum: config.karmaMinimum,
   };
+  // NET_INTERFACE → Stage 1 → "A transaction's signatures are checked at Stage 1":
+  // net verified every entry of the map over this transaction's id before the
+  // handler saw it, so admission answers each required signature from the
+  // map rather than calling `verifyEd25519` a second time (CONSENSUS_INTERFACE
+  // → The overlay). `true` exactly when the signature is the map's own entry
+  // for that key and the message is this transaction's id.
+  const txIdHex = computeTxId(tx);
+  const relayVerifySignature = (
+    signature: Uint8Array,
+    message: Uint8Array,
+    publicKey: Uint8Array,
+  ): boolean => {
+    if (bytesToHex(message) !== txIdHex) return false;
+    const mapEntry = tx.signatures[bytesToHex(publicKey)];
+    if (mapEntry === undefined) return false;
+    if (mapEntry.length !== signature.length) return false;
+    for (let i = 0; i < mapEntry.length; i++) {
+      if (mapEntry[i] !== signature[i]) return false;
+    }
+    return true;
+  };
   const deps = {
     getBox,
     insertBox: () => {},
@@ -58,6 +82,7 @@ export function handleRelayedTx(
     getKarmaValue: admissionHeld,
     getKarmaOwed: admissionOwed(decayCfg),
     getOwnKarmaBoxIds: relayGetOwnKarmaBoxIds,
+    verifySignature: relayVerifySignature,
     // The vouch cast's cooldown gate (NODE_INTERFACE → "Vouch transition
     // rules") — same rule.
     hasActiveVouchEscrow,
@@ -99,7 +124,7 @@ export function handleRelayedTx(
     } else {
       console.warn(`Relayed tx rejected: ${result.error}`);
     }
-    return;
+    return false;
   }
   const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
   try {
@@ -118,19 +143,20 @@ export function handleRelayedTx(
   } catch (err) {
     if (err instanceof MempoolFullError) {
       console.warn(`Relayed tx dropped, mempool full: ${result.txId}`);
-      return;
+      return false;
     }
     if (err instanceof PendingSpendConflictError) {
       console.warn(`Relayed tx dropped, input spent by a pending entry: ${result.txId}`);
-      return;
+      return false;
     }
     // Admission's policy refusals — the fee floor, rent, the cost gate — are
     // this node's answer to the transaction, not a defect in the handler.
     if (err instanceof ClientError) {
       console.warn(`Relayed tx refused: ${err.message}`);
-      return;
+      return false;
     }
     throw err;
   }
   console.log(`Relayed tx queued in mempool: ${result.txId}`);
+  return true;
 }

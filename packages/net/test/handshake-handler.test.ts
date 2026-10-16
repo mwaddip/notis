@@ -10,8 +10,11 @@ import {
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
+  verifyTxSignatures,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
+  verifyHeaderFieldDomains,
+  verifyValidatorSignature,
   verifyPostBody,
 } from '@dagsocial/validation';
 import { NetNode } from '../src/node.js';
@@ -45,8 +48,11 @@ const validators: NetValidators = {
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
+  verifyTxSignatures,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
+  verifyHeaderFieldDomains,
+  verifyValidatorSignature,
   verifyPostBody,
 };
 

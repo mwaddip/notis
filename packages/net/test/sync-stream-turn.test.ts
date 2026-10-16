@@ -6,8 +6,11 @@ import {
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
+  verifyTxSignatures,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
+  verifyHeaderFieldDomains,
+  verifyValidatorSignature,
   verifyPostBody,
 } from '@dagsocial/validation';
 import {
@@ -39,8 +42,11 @@ const validators: NetValidators = {
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
+  verifyTxSignatures,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
+  verifyHeaderFieldDomains,
+  verifyValidatorSignature,
   verifyPostBody,
 };
 

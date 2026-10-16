@@ -14,8 +14,10 @@ import {
   protocolVersionAt,
   isValidUsernameBytes,
 } from '@dagsocial/types';
-import { encodeHeader, encodeTx, utxoTxTreeByteLength, computeContentHash, hash32, bytesToHex, hexToBytes, computeUtxoTxRoot } from '@dagsocial/types';
+import { encodeHeader, encodeTx, utxoTxTreeByteLength, computeContentHash, hash32, bytesToHex, hexToBytes, computeUtxoTxRoot, computeTxId } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, ProtocolEra, UtxoTransaction } from '@dagsocial/types';
+import { verifyEd25519Batch } from './ed25519-batch.js';
+import type { Ed25519BatchEntry } from './ed25519-batch.js';
 import { isDisallowedContentCodepoint } from './content-charset.js';
 
 // ---------------------------------------------------------------------------
@@ -520,6 +522,56 @@ export function verifyEd25519(signature: Uint8Array, message: Uint8Array, public
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// verifyTxSignatures
+// ---------------------------------------------------------------------------
+
+/**
+ * One `verifyEd25519Batch` over the transaction's signature map in its decoded
+ * order: each entry carries the entry's signature, the 32 bytes of
+ * `computeTxId(tx)` and the entry's key, and the function answers what the
+ * batch answers (VALIDATION_INTERFACE → verifyTxSignatures). The empty map
+ * reaches the batch's `n === 0 → true` branch after `computeTxId` has run
+ * (VALIDATION_INTERFACE → verifyEd25519Batch).
+ *
+ * Stateless: no input box is read and no claim is made about who must sign —
+ * that is `validateTx`'s half of authorization
+ * (VALIDATION_INTERFACE → verifyTxSignatures → "Stateless, so not
+ * authorization").
+ *
+ * Total: a non-object `tx` or `tx.signatures`, an array as the map, a map key
+ * outside 64 lowercase hex, or a transaction whose id cannot be computed
+ * answers `false`, never a throw (VALIDATION_INTERFACE → verifyTxSignatures →
+ * "Total"). The key check stands because `hexToBytes` throws on anything but
+ * an even-length lowercase hex string; a map value that is not a 64-byte
+ * `Uint8Array` is `verifyEd25519Batch`'s own shape check to refuse
+ * (VALIDATION_INTERFACE → verifyEd25519Batch → "It is total"). The
+ * `try/catch` around `computeTxId` converts a types-writer throw into the
+ * same sentinel `false`, as `verifyEd25519` and `verifyTxStructure` convert
+ * theirs — not a swallowed error.
+ */
+export function verifyTxSignatures(tx: UtxoTransaction): boolean {
+  if (!isObject(tx)) return false;
+  const map = (tx as Record<string, unknown>).signatures;
+  if (!isObject(map) || Array.isArray(map)) return false;
+  const rawEntries = Object.entries(map);
+  for (const [key] of rawEntries) {
+    if (!isHex32(key)) return false;
+  }
+  let txId: string;
+  try {
+    txId = computeTxId(tx);
+  } catch {
+    return false;
+  }
+  const message = hexToBytes(txId);
+  const entries: Ed25519BatchEntry[] = [];
+  for (const [key, value] of rawEntries) {
+    entries.push({ signature: value as Uint8Array, message, publicKey: hexToBytes(key) });
+  }
+  return verifyEd25519Batch(entries);
 }
 
 // ---------------------------------------------------------------------------

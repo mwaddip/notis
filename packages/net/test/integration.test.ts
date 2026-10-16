@@ -1,8 +1,10 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import {
   generateKeyPair,
   computeContentHash,
   computeUtxoTxRoot,
+  hexToBytes,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
@@ -14,9 +16,13 @@ import {
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
+  verifyTxSignatures,
+  verifyHeaderFieldDomains,
   verifyOrderingBlockStructure,
+  verifyValidatorSignature,
   verifyUtxoTxRoot,
   verifyPostBody,
+  blockHash,
 } from '@dagsocial/validation';
 import { NetNode } from '../src/node.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
@@ -36,8 +42,11 @@ const validators: NetValidators = {
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
+  verifyTxSignatures,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
+  verifyHeaderFieldDomains,
+  verifyValidatorSignature,
   verifyPostBody,
 };
 
@@ -145,6 +154,7 @@ describe('Two-node integration', () => {
     nodeB.onTx((tx, content) => {
       receivedTx = tx;
       receivedContent = content;
+      return true;
     });
 
     const kp = generateKeyPair();
@@ -187,11 +197,11 @@ describe('Two-node integration', () => {
       receivedBlock = block;
     });
 
-    const validatorId = new Uint8Array(32);
-    // Stage 1 now PoW-gates ordering-block relay (audit M-9) — an unmined
-    // header dies at B's topic validator, so mine the real 12-bit nonce
-    // (~4K tries) with the same function the relay gate calls. The header
-    // carries the root of its body (TYPES_INTERFACE → Ordering block).
+    // Stage 1 reads every ordering-block gossip through verifyOrderingBlockPoW
+    // and verifyValidatorSignature at every hop (NET_INTERFACE → Stage 1);
+    // the block mines its own nonce and signs with the key its header's
+    // `validatorId` names.
+    const validatorKp = generateKeyPair();
     const utxoTxTree = settlementBody(1);
     const headerBase: BlockHeader = {
       protocolVersion: 1,
@@ -199,7 +209,7 @@ describe('Two-node integration', () => {
       prevBlockHash: '00'.repeat(32),
       utxoTxRoot: computeUtxoTxRoot(utxoTxTree),
       stateRoot: '00'.repeat(33),
-      validatorId,
+      validatorId: validatorKp.publicKey,
       powNonce: 0,
       powTargetBits: 12 * 256,
       createdAt: Date.now(),
@@ -211,10 +221,13 @@ describe('Two-node integration', () => {
       if (verifyOrderingBlockPoW({ ...headerBase, powNonce: n })) { blockNonce = n; break; }
     }
     expect(blockNonce).toBeGreaterThanOrEqual(0);
+    const minedHeader = { ...headerBase, powNonce: blockNonce };
+    const hashHex = blockHash(minedHeader);
+    expect(hashHex).not.toBeNull();
     const block: OrderingBlock = {
-      header: { ...headerBase, powNonce: blockNonce },
+      header: minedHeader,
       utxoTxTree,
-      validatorSignature: new Uint8Array(64),
+      validatorSignature: ed25519.sign(hexToBytes(hashHex!), validatorKp.secretKey.subarray(16)),
     };
 
     await nodeA.broadcastOrderingBlock(block);
@@ -237,6 +250,7 @@ describe('Two-node integration', () => {
     let received = false;
     nodeB.onTx(() => {
       received = true;
+      return true;
     });
 
     // Empty content fails verifyPostBody (ContentLimits). The author IS in

@@ -75,7 +75,7 @@ import {
 import type { ModifierRequest, ModifierResponse } from './sync-types.js';
 
 type OrderingBlockCallback = (block: OrderingBlock, fromPeerId: string) => void;
-type TxCallback = (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => void;
+type TxCallback = (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => boolean;
 type BlocksHandlerFn = (block: OrderingBlock, fromPeerId: string) => boolean;
 
 /**
@@ -191,8 +191,8 @@ export class LazySyncStore implements SyncStore {
     return encodeServableOrderingBlock(block, this.validators, `height ${height}`);
   }
 
-  // NET_INTERFACE → Sync Handler Registration: the id is the store's own,
-  // written at block application; net never computes an id from a header.
+  // NET_INTERFACE → Sync Handler Registration: the id this arm announces is
+  // the store's own, read through the provider.
   getOrderingBlockId(height: number): string | null {
     return this._blockIdProvider?.(height) ?? null;
   }
@@ -584,6 +584,9 @@ export class NetNode {
   private peerPenalisedHandlers: Array<(peerId: string, kind: string, detail: string | null) => void> = [];
   // NET_INTERFACE → Sync Handler Registration
   private scheduledTargetProvider: ((header: BlockHeader) => number | null) | null = null;
+  // The header-standing seam `setHeaderStandingProvider` carries
+  // (NET_INTERFACE → Sync Handler Registration).
+  private headerStandingProvider: ((hash: string, height: number) => 'held' | 'refused' | null) | null = null;
   // NET_INTERFACE → Sync Handler Registration: post body seams
   private postBodyProvider: ((postId: string) => string | null) | null = null;
   private pendingDials: Set<string> = new Set();
@@ -678,6 +681,11 @@ export class NetNode {
           // the router names, caches or forwards anything.
           allowedTopics: [topics.orderingBlock, topics.tx],
           allowPublishToZeroTopicPeers: true,
+          // NET_INTERFACE → Forwarding Rule → "An ordering block is forwarded
+          // once Stage 1 passes; a transaction once this node admits it":
+          // the router holds a message that passed its topic validator in the
+          // message cache until the listener reports Accept, Ignore or Reject.
+          asyncValidation: true,
         }),
         identify: identify(),
         ping: ping(),
@@ -812,7 +820,21 @@ export class NetNode {
         onOrderingBlock: (block, fromPeerId) => {
           for (const cb of this.orderingBlockHandlers) cb(block, fromPeerId);
         },
-        onTx: (tx, content, fromPeerId) => { for (const cb of this.txHandlers) cb(tx, content, fromPeerId); },
+        onTx: (tx, content, fromPeerId) => {
+          // NET_INTERFACE → Inbound Processing → "A transaction is forwarded
+          // when a handler admits it": Accept when any registered handler
+          // returned `true`; a handler that throws answers nothing for itself
+          // and is logged.
+          let admitted = false;
+          for (const cb of this.txHandlers) {
+            try {
+              if (cb(tx, content, fromPeerId) === true) admitted = true;
+            } catch (err) {
+              console.error(`[net] tx handler threw: ${String(err)}`);
+            }
+          }
+          return admitted;
+        },
       };
 
       await subscribeTopics(
@@ -826,6 +848,7 @@ export class NetNode {
         () => this.syncStore.chainHeight(),
         this.config.orderingBlockPowTargetFloorBits,
         (header) => this.scheduledTargetProvider?.(header) ?? null,
+        (hash, height) => this.headerStandingProvider?.(hash, height) ?? null,
       );
 
       // Log listen addresses
@@ -1779,6 +1802,18 @@ export class NetNode {
   // NET_INTERFACE → Sync Handler Registration
   setScheduledTargetProvider(cb: (header: BlockHeader) => number | null): void {
     this.scheduledTargetProvider = cb;
+  }
+
+  // NET_INTERFACE → Sync Handler Registration. The ordering-block topic
+  // validator reads this provider on each header, before the body is decoded
+  // (NET_INTERFACE → Stage 1 → "A header this node knows is Ignored"). Held
+  // like the scheduled-target provider — the validator closed over this
+  // NetNode at `subscribeTopics` time and reads the field at call time, so a
+  // late set takes effect without re-registering.
+  setHeaderStandingProvider(
+    cb: (hash: string, height: number) => 'held' | 'refused' | null,
+  ): void {
+    this.headerStandingProvider = cb;
   }
 
   setPostBodyProvider(cb: (postId: string) => string | null): void {

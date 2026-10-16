@@ -3601,7 +3601,7 @@ describe('applyOrderingBlockVerdict classes', () => {
     expect(verdict).toEqual({ applied: true, indexed: [] });
   });
 
-  it('answers consensus for a header carrying a utxoTxRoot that is not its body\'s, and applies the same body under its own root', async () => {
+  it('answers unbound for a header carrying a utxoTxRoot that is not its body\'s, and applies the same body under its own root', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -3612,7 +3612,9 @@ describe('applyOrderingBlockVerdict classes', () => {
 
     // The header carries a utxoTxRoot that is not its body's, with its PoW and
     // its validator signature re-done over the new header so that only the
-    // utxoTxRoot differs from a block that would otherwise apply.
+    // utxoTxRoot differs from a block that would otherwise apply. A body
+    // whose root is not the header's reads class 'unbound' from the funnel
+    // (NODE_INTERFACE → "The funnel answers with a class").
     const tamperedHeader: BlockHeader = { ...honest.header, utxoTxRoot: 'ff'.repeat(32) };
     tamperedHeader.powNonce = solveHeaderPow(tamperedHeader);
     const tampered: OrderingBlock = {
@@ -3625,7 +3627,7 @@ describe('applyOrderingBlockVerdict classes', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const refused = ba.applyOrderingBlockVerdict(tampered);
     warn.mockRestore();
-    expect(refused).toEqual({ applied: false, class: 'consensus' });
+    expect(refused).toEqual({ applied: false, class: 'unbound' });
 
     // The same body under its own root applies — nothing else about the honest
     // block is wrong.

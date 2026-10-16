@@ -243,7 +243,10 @@ second copy inside the window, from any peer, is not validated, not delivered an
 holds for a message Stage 1 refused as for one it accepted, so a refusal stands for the window. A
 publish of bytes this node has seen on the topic inside the window sends nothing and resolves
 (→ Gossip). Past the window the same bytes are a message again: the name bounds a replay to one hearing
-a window at each node, and Stage 1 does not ask whether the node already holds the object.
+a window at each node. What ends a replay at the first hop is what the node knows of the object: an
+ordering block whose header it holds, has refused, or accepted inside the window is Ignored at Stage 1
+(→ Stage 1 → "A header this node knows is Ignored"), and a transaction it already holds is not admitted,
+so not forwarded (→ Forwarding Rule).
 
 **The envelope, the id and the topic names are one per network.** A node that signs and one that does
 not refuse each other's messages, two nodes that name a topic differently share none of it, and two
@@ -253,10 +256,12 @@ reaches every node of a network in one restart; it moves no committed byte and o
 
 **The packet rule: `tx.post` present ⟺ `content` present.** The topic validator checks it
 in this order, and in the same order on every node: `decodeTxPacket` (undecodable →
-`ProtocolViolation`, permanent ban) → `verifyTxStructure` → protocol version → the
-biconditional (a post without a body, or a body without a post → misbehaviour penalty, Reject)
-→ `verifyPostBody(content, tx.post.contentHash)` (VALIDATION_INTERFACE → verifyPostBody; a
-failing body → misbehaviour penalty, Reject) → the karma-membership gate. A packet that passes
+`ProtocolViolation`, permanent ban) → `verifyTxStructure` → protocol version (a mismatch Rejected,
+no penalty) → the biconditional (a post without a body, or a body without a post → misbehaviour
+penalty, Reject) → `verifyPostBody(content, tx.post.contentHash)` (VALIDATION_INTERFACE →
+verifyPostBody; a failing body → misbehaviour penalty, Reject) → the karma-membership gate (a miss
+Rejected, no penalty) → `verifyTxSignatures(tx)` (VALIDATION_INTERFACE → verifyTxSignatures; a
+signature that does not verify → misbehaviour penalty, Reject). A packet that passes
 is delivered whole to `onTx(tx, content, fromPeerId)`; a post's transaction and its body are
 never accepted apart. The body is outside every id, so a relay cannot re-point it without
 failing the commitment check at the next hop.
@@ -1034,16 +1039,20 @@ Node start
 
 | Penalty | Trigger | Score |
 |---------|---------|-------|
-| `misbehavior` | Invalid message — fails Stage 1: structure, an ordering-block header below the network's floor, ordering-block PoW, the packet rule (a post without a body or a body without a post), a body that fails `verifyPostBody`, or the karma-membership gate (`gossip.ts` call sites); a pulled body that fails its commitment (the `MODIFIER_POST_BODY` receive arm) | 100 |
+| `misbehavior` | Invalid message — fails Stage 1: structure, an ordering-block header below the network's floor, ordering-block PoW, the packet rule (a post without a body or a body without a post), a body that fails `verifyPostBody`, an ordering block's validator signature, or a transaction signature that does not verify (`gossip.ts` call sites); a pulled body that fails its commitment (the `MODIFIER_POST_BODY` receive arm) | 100 |
 | `ProtocolViolation` | Undecodable/malformed frame or message; wrong-network handshake | permanent ban |
 | `Transient` | Transient handshake failure / timeout (`handshake.ts`) | 50 |
-| `Transient` | A version mismatch — a gossiped block or transaction whose declared version is not its era (`gossip.ts` call sites), or a header segment `verifyHeaderChain` refuses with reason `'version'` in fork resolution (via `NetNode.penalizePeer`): compatibility, never a violation | 50 |
+| `Transient` | A version mismatch — a gossiped block whose declared version is not the era at its own height (`gossip.ts`), or a header segment `verifyHeaderChain` refuses with reason `'version'` in fork resolution (via `NetNode.penalizePeer`): compatibility, never a violation | 50 |
 | `misbehavior` | Fork resolution, via `NetNode.penalizePeer` from node's `resolveFork` (NODE_INTERFACE → Fork choice decides on verified headers): a header segment that fails `verifyHeaderChain` other than the window-miss case and the `'version'` reason; a segment containing a refused header; a delivered block whose hash is not the verified header's; a verified-header chain rejected by the apply funnel; a header page that is not an answer to its request — a height above the start asked, a hole, a repeat or an ascent | 100 |
 | `Transient` | Fork resolution, via `NetNode.penalizePeer`: a block answer shorter than the verified segment, or a header page short of full that does not reach height 1 (non-delivery) | 50 |
 
-**One stage-1 refusal records nothing:** a scheduled-target mismatch over a parent this node holds is
-Rejected, never forwarded and not penalised — the previous hop may not hold the parent (→ Stage 1 →
-"A scheduled-target mismatch is refused, never forwarded, and never penalised"); `onPeerPenalised` does not fire for it.
+**Refusals that record nothing** (→ Penalty Attribution → "A penalty rests on what the sender could
+know"): at Stage 1, a scheduled-target mismatch, a transaction whose declared version is not the era of
+the block after this node's tip and a post whose author is outside this node's karma set (→ Stage 1 →
+"A refusal that rests on this node's state records nothing"), a header this node knows (→ Stage 1 → "A
+header this node knows is Ignored") and a fault of this node's own (→ Stage 1 → "A fault of this node's
+is no peer's"); and every Stage 2 refusal of a gossiped message (→ Stage 2 → "A Stage 2 refusal records
+nothing"). `onPeerPenalised` fires for none of them.
 
 **`NetNode.penalizePeer(peerId, kind: 'misbehavior' | 'transient', reason)`** is node's one call
 into this system: it records the named tier against the peer with the reason string and nothing
@@ -1156,6 +1165,14 @@ attributed to the sending peer. Three penalty tiers:
 - **Bogus addresses in valid gossip**: silently dropped, sender NOT
   penalized (NAT'd peers sending private addresses is normal)
 
+**A penalty rests on what the sender could know.** A node forwards only what passed its own checks, so
+a refusal the sender — running the same rules over the same bytes — must also have reached is the
+sender's doing: Stage 1's checks over the message alone — its weight and decode, its structure, a
+block's version, floor, work, validator signature and root, a packet's body, a transaction's
+signatures. A refusal that rests on this node's state — its tip, its stored parent, its karma set,
+what it holds, its pool — is one the sender may have answered otherwise, honestly, and records nothing
+(→ Peer Penalty System → "Refusals that record nothing").
+
 ## Peer State Machine
 
 States: `Connecting → Active`. A peer's row opens `Connecting` when its connection upgrades
@@ -1186,7 +1203,7 @@ clear and retry.
 | Transport | TCP (with optional QUIC, deferred) |
 | Stream multiplexing | yamux or mplex |
 | Encryption | Noise (with libp2p-noise) |
-| PubSub | Gossipsub 1.1 — unsigned messages named by their bytes, the node's two topics alone (→ Gossip Topics) |
+| PubSub | Gossipsub 1.1 — unsigned messages named by their bytes, the node's two topics alone (→ Gossip Topics), each message's forward reported by the node (`asyncValidation`, → Forwarding Rule) |
 | Peer identity | libp2p peer ID (Ed25519 or secp256k1 keypair) |
 
 The libp2p peer identity is separate from DAGsocial account identity. A
@@ -1323,23 +1340,28 @@ Two-stage validation, modeled after Ergo's modifier processing:
 Runs inside the gossipsub topic validators — i.e. **before** a message is
 forwarded to mesh peers. A message that fails Stage 1 is Rejected (never
 forwarded) and penalized: over its bound or undecodable → `ProtocolViolation` (permanent
-ban — → Validation (and untrusted-input safety) → "A peer's bytes are weighed before they are decoded"); well-formed but invalid → misbehavior penalty (100), except a version mismatch, which is
-`Transient` (→ Peer Penalty System). Uses `@dagsocial/validation`. Per topic:
+ban — → Validation (and untrusted-input safety) → "A peer's bytes are weighed before they are decoded"); well-formed but invalid → misbehavior penalty (100), except a block's version mismatch, which is
+`Transient` (→ Peer Penalty System), and a refusal that rests on this node's state, which records
+nothing (→ Stage 1 → "A refusal that rests on this node's state records nothing"). Uses
+`@dagsocial/validation`. Per topic:
 
 | Topic | Checks before Accept |
 |-------|----------------------|
-| ordering-block | the message's length, at most `MAX_ORDERING_BLOCK_BYTES`; `decodeOrderingBlock`; `verifyOrderingBlockStructure`; protocol version — `verifyProtocolVersion(header.protocolVersion, header.height, schedule)`, a mismatch Rejected with `Transient`; `header.height` is a safe integer (NaN/float/±Infinity → Reject); **the network's floor** — `header.powTargetBits < NetConfig.orderingBlockPowTargetFloorBits` is Rejected with `misbehavior` (→ Consensus parameters net enforces); ordering-block PoW (`verifyOrderingBlockPoW`) — the solution must satisfy the header's own `powTargetBits` (bounded ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` by structure), and a non-safe-integer `powNonce`/`powTargetBits` never verifies (audit M-6, M-9); **the body's root** — `verifyUtxoTxRoot(block)`, after the PoW check and never ahead of it: a body that is not the one the header's `utxoTxRoot` commits is Rejected with `misbehavior` (→ Stage 1 → "A worked header is forwarded with the body its root commits"); **the schedule, when this node holds the parent** — the scheduled-target provider's answer for the header, `null` when the parent is not held; a number that differs from `header.powTargetBits` is **Rejected with no penalty** (→ Stage 1 → "A scheduled-target mismatch is refused, never forwarded, and never penalised") |
-| tx | the message's length, at most `MAX_TX_PACKET_BYTES`; `decodeTxPacket`; `verifyTxStructure`; protocol version — `verifyTxProtocolVersion(tx, chainHeight() + 1, schedule)`, the envelope's and the commit's against the next block's era, a mismatch Rejected with `Transient`; the packet rule (`tx.post` present ⟺ `content` present); `verifyPostBody(content, tx.post.contentHash)` for a post-bearing tx; then the cached karma-membership gate — the author holds karma at all (`NODE_INTERFACE` → Post transactions). Order as under Gossip Topics |
+| ordering-block | the message's length, at most `MAX_ORDERING_BLOCK_BYTES`; **the header first** — `readOrderingBlockSections` (TYPES_INTERFACE → Layout — Block), the header decoded and the body's bytes and the validator signature taken as they stand, a block that does not read → `ProtocolViolation` (→ Stage 1 → "A header is read before its body"); `verifyHeaderFieldDomains(header)`; protocol version — `verifyProtocolVersion(header.protocolVersion, header.height, schedule)`, a mismatch Rejected with `Transient`; `header.height` is a safe integer (NaN/float/±Infinity → Reject); **the network's floor** — `header.powTargetBits < NetConfig.orderingBlockPowTargetFloorBits` is Rejected with `misbehavior` (→ Consensus parameters net enforces); ordering-block PoW (`verifyOrderingBlockPoW`) — the solution must satisfy the header's own `powTargetBits`, and a non-safe-integer `powNonce`/`powTargetBits` never verifies (audit M-6, M-9); **the schedule, when this node holds the parent** — the scheduled-target provider's answer for the header, `null` when the parent is not held; a number that differs from `header.powTargetBits` is **Rejected with no penalty** (→ Stage 1 → "A scheduled-target mismatch is refused, never forwarded, and never penalised"); **the header's standing** — a header this node holds, has refused, or accepted inside the seen window is **Ignored with no penalty** (→ Stage 1 → "A header this node knows is Ignored"); **the validator signature** — `verifyValidatorSignature(header, validatorSignature)`, one that does not verify Rejected with `misbehavior`; **the body** — `decodeUtxoTxTree` over the body's bytes (undecodable → `ProtocolViolation`) and `verifyOrderingBlockStructure` over the block; **the body's root** — `verifyUtxoTxRoot(block)`, last: a body that is not the one the header's `utxoTxRoot` commits is Rejected with `misbehavior` (→ Stage 1 → "A worked header is forwarded with the body its root commits") |
+| tx | the message's length, at most `MAX_TX_PACKET_BYTES`; `decodeTxPacket`; `verifyTxStructure`; protocol version — `verifyTxProtocolVersion(tx, chainHeight() + 1, schedule)`, the envelope's and the commit's against the next block's era, a mismatch **Rejected with no penalty** (→ Stage 1 → "A refusal that rests on this node's state records nothing"); the packet rule (`tx.post` present ⟺ `content` present); `verifyPostBody(content, tx.post.contentHash)` for a post-bearing tx; the cached karma-membership gate — the author holds karma at all (`NODE_INTERFACE` → Post transactions), a miss **Rejected with no penalty**; then `verifyTxSignatures(tx)` — every entry of the signature map over the transaction's id, one that does not verify Rejected with `misbehavior` (→ Stage 1 → "A transaction's signatures are checked at Stage 1"). Order as under Gossip Topics; the forward waits for Stage 2 (→ Forwarding Rule) |
 
-Stage 1 is stateless but for one provider read. It does **not** check the header timestamp rules,
-chain linkage, validator signatures, or state roots — those are apply-time checks in
+Stage 1 reads chain state through two providers and the karma set, and through nothing else. It does
+**not** check the header timestamp rules, chain linkage, or state roots — those are apply-time checks in
 `@dagsocial/node`, enforced for every entry path (gossip, sync, reorg) by the block-apply funnel.
 The difficulty schedule (`powTargetBits` against the schedule over the stored parent,
 `MINING_INTERFACE → Difficulty Schedule`) is apply-time too, and stage 1 asks it once, through the
 scheduled-target provider, for the one case it can answer without trusting anything: a header whose
-parent this node holds. The relay PoW gate exists to make mesh propagation cost-bearing: no
-zero-work ordering block may be re-gossiped (audit M-9), and the network's floor puts the price of a
-forwarded header at the network's own minimum rather than the resolution floor's nine bits.
+parent this node holds. The header-standing provider answers whether this node holds a header or has
+refused it (→ Sync Handler Registration). The validator signature is checked twice: at Stage 1 over the
+header and the signature alone, and in the funnel on every entry path. The relay PoW gate exists to
+make mesh propagation cost-bearing: no zero-work ordering block may be re-gossiped (audit M-9), and the
+network's floor puts the price of a forwarded header at the network's own minimum rather than the
+resolution floor's nine bits.
 
 **A worked header is forwarded with the body its root commits.** `verifyUtxoTxRoot`
 (`VALIDATION_INTERFACE → verifyUtxoTxRoot`) holds a block's body to its header's `utxoTxRoot` — every
@@ -1361,6 +1383,52 @@ syncing forwards on the floor and the PoW alone, honestly — and the refusal's 
 the first hop holding the parent stops the forward. The originator pays the hashes and nothing else;
 a direct flood is bounded by the floor's cost per message, and nothing it sends reaches the funnel.
 
+**A header is read before its body.** The block topic's validator reads the block's sections first
+(`readOrderingBlockSections`, TYPES_INTERFACE → Layout — Block): the header decoded, the body's bytes
+and the validator signature taken as they stand. Every check that needs only the header — its domains,
+version, floor, work, schedule and standing, and the validator signature — runs before the body is
+decoded, so a block no one worked, or one whose header this node knows, costs a receiver one header
+decode, under a millisecond, where decoding a body at `MAX_BLOCK_BODY_BYTES` takes up to ~0.2 s
+(measured 2026-10-14 on an i9). The body is decoded, its structure checked and its root recomputed only
+for a header that passed them all.
+
+**A header this node knows is Ignored.** After its work and its schedule, a header whose hash is the
+block this node holds at its height, one marked refused (`NODE_INTERFACE → Refused headers`), or one
+this validator accepted inside the seen window — `GOSSIP_SEEN_WINDOW_MS` from its acceptance — is
+Ignored: not delivered, not forwarded, no penalty. The first two are the header-standing provider's
+answer (→ Sync Handler Registration); the third is net's own memory of the headers it accepted. **The
+memory bounds a block's variants.** The validator signature lies outside the block hash, and the key's
+holder can sign one header again under another nonce as often as it likes (VALIDATION_INTERFACE →
+Acceptance criterion), so each signing is bytes the router has never named — without the memory, one
+block forwarded mesh-wide again and again; under it, a header is forwarded once a window, as one
+message's bytes are. The memory holds an entry only for a block message the router's seen set holds
+for the same window, so it never outgrows that set. **No penalty:** a peer that has not applied the
+block — behind this node, or syncing — forwards it honestly.
+
+**A transaction's signatures are checked at Stage 1.** `verifyTxSignatures` (VALIDATION_INTERFACE →
+verifyTxSignatures) holds every entry of the signature map to the transaction's id. A valid
+transaction's map carries no key its transitions do not require, and each required key's signature
+verifies (NODE_INTERFACE → Legal box transitions → "The signature map carries no key a transition does
+not require."), so an entry that does not verify makes the transaction invalid on every chain: a
+refusal the sender could have reached, penalised `misbehavior`. It runs last of the tx topic's checks,
+behind the karma gate, because it is the dearest — 1.1–1.7 ms a signature (NODE_INTERFACE → Post
+transactions, measured). Node's admission answers each required signature from this check rather than
+verifying it again (→ Inbound Processing).
+
+**A refusal that rests on this node's state records nothing.** A scheduled-target mismatch (above), a
+transaction whose declared version is not the era of the block after this node's tip, and a post whose
+author is outside this node's karma set are Rejected — not delivered, not forwarded — and penalise
+nobody. Each verdict reads this node's tip: a node behind holds neither a recently funded author nor
+the next era, a node ahead has applied the block that spent an author's last karma, and the hop that
+sent the message may stand on either side of it (→ Penalty Attribution → "A penalty rests on what the
+sender could know").
+
+**A fault of this node's is no peer's.** The decode is the one step whose throw is the sender's
+(`ProtocolViolation`). A throw anywhere else in a validator — a provider's read, the chain height — is
+this node's: it is logged, the message is Ignored, and no penalty is recorded. A corrupt chain never
+reaches net as a throw: node's providers stop the node on it themselves (NODE_INTERFACE → Sync
+handlers).
+
 ### Stage 2 (node package, stateful)
 
 Runs after Stage 1 passes, via registered `on*` callbacks:
@@ -1371,13 +1439,24 @@ Runs after Stage 1 passes, via registered `on*` callbacks:
 - A post packet that passes is admitted as one: the transaction into the mempool and the body
   into the DAG as a pending row, together or not at all (`NODE_INTERFACE` → Post transactions)
 
+**A Stage 2 refusal records nothing.** Stage 2 judges a message against this node's state — its UTXO
+view, its pool, its karma record — which the hop that forwarded it held at another moment or on another
+tip: a transaction it admitted may spend a box this node has not yet seen, or has seen spent. A
+transaction Stage 2 refuses is Ignored — never forwarded (→ Forwarding Rule) — and penalises nobody.
+
 ### Forwarding Rule
 
-Forward to mesh peers only after Stage 1 passes — for ordering blocks this
-includes PoW verification, so a bogus-PoW or NaN-nonce block is dropped at
-the first hop instead of amplified mesh-wide. If Stage 2 fails later,
-penalize the source peer. This keeps propagation fast while gatekeeping on
-structure, PoW, and signatures.
+**An ordering block is forwarded once Stage 1 passes; a transaction once this node admits it.** A
+block's forward is bought by its work: Stage 1 holds it to the floor and its own PoW, its validator
+signature and the body its root commits, so a bogus-PoW or NaN-nonce block is dropped at the first hop,
+and a valid one is forwarded before it is applied — its propagation costs a hop no apply time. Net
+reports the block's forward, then hands it on, so the apply runs behind the forward. A transaction
+carries no work, so its forward is bought by its admission: the router holds a transaction that passed
+Stage 1 unforwarded (gossipsub's `asyncValidation`), node's Stage 2 answers whether it admitted it
+(→ Inbound Processing), and only an admitted transaction is forwarded; a refused one is Ignored and
+penalises nobody (→ Stage 2 → "A Stage 2 refusal records nothing"). What no node admits — a transaction
+spending a box its signer does not own, one already spent, one the pool already holds — dies at the
+first hop.
 
 ---
 
@@ -1412,7 +1491,7 @@ promise resolves as it does for a message that went out.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `onOrderingBlock(callback)` | `((OrderingBlock, fromPeerId: string) => void) => void` | Register handler for inbound ordering blocks. `fromPeerId` is the peer that **relayed** the block to us, or `''` — see below |
-| `onTx(callback)` | `((UtxoTransaction, content: string \| undefined, fromPeerId: string) => void) => void` | Register handler for inbound transaction packets. `content` is the verified body when the transaction carries a post (the validator has already checked it against `tx.post.contentHash`), `undefined` otherwise; `fromPeerId` carries the same relayed-peer semantics as `onOrderingBlock`'s. |
+| `onTx(callback)` | `((UtxoTransaction, content: string \| undefined, fromPeerId: string) => boolean) => void` | Register handler for inbound transaction packets. `content` is the verified body when the transaction carries a post (the validator has already checked it against `tx.post.contentHash`), `undefined` otherwise; every entry of `tx.signatures` has verified over the transaction's id (→ Stage 1 → "A transaction's signatures are checked at Stage 1"); `fromPeerId` carries the same relayed-peer semantics as `onOrderingBlock`'s. The return is whether the handler admitted the transaction (→ Inbound Processing → "A transaction is forwarded when a handler admits it"). |
 
 **A gossip message that passes Stage 1 is delivered, whichever peer carried it.** No gate stands
 between the topic validator's Accept and the handler. The router hands a message on once and never a
@@ -1421,6 +1500,12 @@ its first carrier's sake — a peer whose handshake has not completed, or one wh
 its connection — would be a valid block or transaction this node does not hear for the window, however
 many `Active` peers send it after. The carrier reaches the handler as `fromPeerId`, a hint and nothing
 more, and it need not be `Active`.
+
+**A transaction is forwarded when a handler admits it.** Net reports the router's verdict on a
+transaction message once its handlers have answered: Accept — the message is forwarded — when any
+handler returned `true`, Ignore otherwise (→ Forwarding Rule). A handler that throws answers for itself
+nothing but the throw, which is logged. An ordering-block message is reported Accept before its
+handlers run.
 
 ⚠ **`fromPeerId` is not guaranteed to be a peer id.** It is read defensively from the gossip event's
 `propagationSource`, which the gossipsub type declares required — and *required by the type* is not
@@ -1482,9 +1567,10 @@ offer.
 | `setHeadersHandler(cb)` | `((height: number) => OrderingBlock \| null) => void` | Provider for `GetBlocks` (code 16) and for the blocks a `ModifierResponse` serves (`serializeOrderingBlock` re-encodes the provider's block). Returns the whole block. **Never a header for `GetHeaders`, never the tip height, never a block id** — those are the rows below |
 | `setHeaderProvider(cb)` | `((height: number) => BlockHeader \| null) => void` | Provider for `GetHeaders` (code 14): the header stored at a height, read without its block's body. **One height is one header read**: the arm serves up to `MAX_CHAIN_RESPONSE_ITEMS` headers, and a whole-block read there decodes up to 400 bodies of up to `MAX_BLOCK_BODY_BYTES` for a seven-byte request. Unset → `GetHeaders` is answered zero bytes |
 | `setChainHeightProvider(cb)` | `(() => number) => void` | Provider for the chain tip height — the one number behind the handshake `chainHeight`, `SyncInfo.tipHeight`, every `peerHeight > ourHeight` comparison, the stall-progress measure and the served chain query's tip. **One read is one provider call**: `SyncStore.chainHeight()` returns the provider's value and never walks the chain through the headers provider (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `0`, as a node with no chain. The node hands over its store's `MAX(height)` — the same tip its block creator and fork resolution read — so the height `net` advertises is the height the node mines on |
-| `setBlockIdProvider(cb)` | `((height: number) => string \| null) => void` | Provider for the block id at a height — behind the ids an Inv continuation announces to a peer behind us. The id is the store's own, written at block application; `net` never computes an id from a header. **One id is one provider call**, a point read that decodes no block (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `null` — nothing to announce |
+| `setBlockIdProvider(cb)` | `((height: number) => string \| null) => void` | Provider for the block id at a height — behind the ids an Inv continuation announces to a peer behind us. The id is the store's own, written at block application; `net` computes no id it announces from a header — the one id it computes, `blockHash` over a gossiped header for the standing check, it never sends (→ Stage 1 → "A header this node knows is Ignored"). **One id is one provider call**, a point read that decodes no block (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `null` — nothing to announce |
 | `setHeightByBlockIdProvider(cb)` | `((id: string) => number \| null) => void` | Provider for the height holding a block id, or `null` for an id not on our chain — the read that filters an inbound `Inv` (an id we hold or already requested is not re-requested) and resolves a `ModifierRequest`'s ids to the heights it serves from. **One id is one provider call, never a chain walk**: a message of k ids costs k point lookups, and no message rebuilds an id index of the whole chain (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `null` — every id unknown, nothing served |
 | `setScheduledTargetProvider(cb)` | `((header: BlockHeader) => number \| null) => void` | Provider for the ordering-block topic validator's schedule check: the `powTargetBits` the schedule requires of `header`, or `null` when this node does not hold `header`'s parent — a header at height 1 answers the anchor's bits; otherwise the stored block at `header.height − 1` whose id is `header.prevBlockHash`, evaluated as the apply funnel evaluates it (`MINING_INTERFACE → Difficulty Schedule`). **One header is one provider call.** Unset → `null` — every header passes on the floor and its own PoW alone (→ Stage 1) |
+| `setHeaderStandingProvider(cb)` | `((hash: string, height: number) => 'held' \| 'refused' \| null) => void` | Provider for the ordering-block topic validator's standing check: `'held'` when the block this node stores at `height` has the id `hash`, `'refused'` when `hash` is marked in `refused_headers` (NODE_INTERFACE → Refused headers), `null` otherwise. **One header is one provider call.** Unset → `null` — every header is judged as one this node does not know (→ Stage 1 → "A header this node knows is Ignored"); net's own memory of accepted headers stands either way |
 | `onSyncComplete(cb)` | `(() => void) => void` | Fired on every entry into the `synced` phase |
 | `setPostBodyProvider(cb)` | `((postId: string) => string \| null) => void` | Provider for the `MODIFIER_POST_BODY` serve arm: the body this node holds for the id, or `null` — served locally or omitted, never relayed (→ Local-Serve-Before-Relay). |
 | `onPeerActive(cb)` | `((peerId: string, direction: 'inbound' \| 'outbound') => void) => void` | Fired when a peer completes the handshake and becomes Active; `direction` is the connection's. |
@@ -1562,10 +1648,10 @@ interface NetConfig {
 ### Consensus parameters net enforces
 
 Stage-1 relay validation checks ordering-block proof-of-work before forwarding
-(`verifyOrderingBlockStructure` + `verifyOrderingBlockPoW`): a block is checked against its own
-header's `powTargetBits`, bounded by the `ORDERING_BLOCK_POW_TARGET_FLOOR` constant from
-`@dagsocial/types` inside the structure check **and by the network's own floor**,
-`orderingBlockPowTargetFloorBits`, which reaches the topic validator as a `NetConfig` value
+(`verifyHeaderFieldDomains` + `verifyOrderingBlockPoW`): a block is checked against its own
+header's `powTargetBits`, bounded **by the network's own floor**, `orderingBlockPowTargetFloorBits` —
+every profile's at or above the `ORDERING_BLOCK_POW_TARGET_FLOOR` constant from `@dagsocial/types`,
+which the structure check holds again in the funnel — which reaches the topic validator as a `NetConfig` value
 (→ Stage 1). The scheduled target reaches it as a **provider**, never a parameter: node answers
 `setScheduledTargetProvider` for a header whose parent it holds and `null` otherwise (→ Sync
 Handler Registration). Net receives values; it does not resolve them, does not import
@@ -1651,16 +1737,17 @@ Handler Registration). Net receives values; it does not resolve them, does not i
   handshake stream unread, the dial is closed outbound, and every address a dial ties to it leaves
   PeerDb; a ban ends the connection it lands on, and the sync machine drops the peer at once
 - Bogus addresses filtered silently; malformed Peers trigger permanent ban
-- Stage 1 reads no store — its one stateful input is the cached
-  karma-membership set (`NODE_INTERFACE` → Post transactions); the body check reads only
-  the packet's own transaction for its commitment
+- Stage 1 reads chain state through the cached karma-membership set (`NODE_INTERFACE` → Post
+  transactions) and two providers — the scheduled target and a header's standing — and a refusal
+  that rests on one penalises nobody; the body check reads only the packet's own transaction for its
+  commitment
 - A post body crosses the network only inside its transaction's packet or as a
   `MODIFIER_POST_BODY` answer — never as a message of its own, never hashed into an id
 - A body request is served locally or omitted — never relayed
 - Ordering blocks are verified before application — a block extending an
   unknown chain may be buffered but never applied
-- UTXO transactions are verified against the local UTXO view — conflicting
-  transactions (double-spends) are rejected at gossip time
+- A transaction is forwarded only once the local UTXO view admits it — a conflicting
+  transaction (a double-spend) is neither admitted nor forwarded
 - Peer identity (libp2p) is independent of account identity (Ed25519 keypair)
 - A topic name carries its network's magic and a format version — another network shares no
   topic, and an incompatible wire format gets a new one

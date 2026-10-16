@@ -1,4 +1,5 @@
 import { getDb } from './db.js';
+import { getOrderingBlockHash } from './ordering.js';
 
 /**
  * Idempotent insert — a second refusal of the same block is a no-op.
@@ -20,6 +21,22 @@ export function anyRefusedHeader(hashes: string[]): boolean {
     .prepare(`SELECT 1 FROM refused_headers WHERE hash IN (${placeholders}) LIMIT 1`)
     .get(...hashes) as { '1': number } | undefined;
   return row !== undefined;
+}
+
+/**
+ * The header-standing provider (NODE_INTERFACE → Sync handlers): `'held'`
+ * when the `block_hash` column at `height` equals `hash`, `'refused'` when
+ * `refused_headers` holds `hash`, `null` otherwise. Net reads this through
+ * the stage-1 ordering-block validator to Ignore a header this node knows
+ * (NET_INTERFACE → Stage 1 → "A header this node knows is Ignored"). Two
+ * point reads — one decodes no row — so there is nothing for
+ * `failStopIfCorruptChain` to promote, and the provider is handed over
+ * unwrapped.
+ */
+export function headerStanding(hash: string, height: number): 'held' | 'refused' | null {
+  if (getOrderingBlockHash(height) === hash) return 'held';
+  if (anyRefusedHeader([hash])) return 'refused';
+  return null;
 }
 
 /**

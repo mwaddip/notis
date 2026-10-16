@@ -328,6 +328,7 @@ export {
   utxoTxTreeByteLength,
   encodeOrderingBlock,
   decodeOrderingBlock,
+  readOrderingBlockSections,
   encodeTx,
   decodeTx,
 } from './serialization.js';

@@ -32,10 +32,13 @@ import {
   decodeUtxoTxTree,
   encodeOrderingBlock,
   decodeOrderingBlock,
+  readOrderingBlockSections,
   encodeTx,
   decodeTx,
   utxoTxTreeByteLength,
 } from '../src/serialization.js';
+import { MAX_HEADER_BYTES } from '../src/constants.js';
+import { loadVectors } from './golden/harness.js';
 import { postFieldBytes, computeContentHash, type PostCommit } from '../src/post.js';
 import { computeTxId } from '../src/utxo.js';
 import type {
@@ -715,10 +718,11 @@ describe('positional serialization', () => {
         .toBeInstanceOf(ReaderError);
 
       // (b) a section whose declared length overruns its parent. The header
-      // prefix is two bytes; raise it past what remains.
-      const overrun = bytes.slice();
-      overrun.set([0xff, 0x7f], 0);   // vlqU(16383) — far past the frame
-      expect(failureOf(() => decodeOrderingBlock(overrun))).toBeInstanceOf(ReaderError);
+      // prefix stays untouched — declaring 204 bytes, inside MAX_HEADER_BYTES
+      // — and the frame is truncated to 100 bytes, so `readBytes(204)` has
+      // only 98 remaining and refuses as `ReaderError('truncated')`.
+      expect(failureOf(() => decodeOrderingBlock(bytes.subarray(0, 100))))
+        .toBeInstanceOf(ReaderError);
 
       // (c) trailing bytes after the signature.
       expect(failureOf(() => decodeOrderingBlock(withTrailingByte(bytes)))).toBe('trailing-bytes');
@@ -915,6 +919,385 @@ describe('positional serialization', () => {
       // Round-trip produces the same content.
       const decoded = decodeTxPacket(postPkt);
       expect(decoded.content).toBe(content);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // readOrderingBlockSections — the framing reader
+  // -------------------------------------------------------------------------
+
+  describe('readOrderingBlockSections', () => {
+    // Three decode paths asked of one input, each catching whatever it throws
+    // and returning the verdict as data. The equivalence is a predicate on
+    // these three verdicts: the whole-block decoder accepts exactly when the
+    // sections reader and the body decoder both accept.
+    const tryDecode = <T>(fn: () => T): { ok: true; value: T } | { ok: false; err: unknown } => {
+      try {
+        return { ok: true, value: fn() };
+      } catch (err) {
+        return { ok: false, err };
+      }
+    };
+
+    const sameUint8 = (a: Uint8Array, b: Uint8Array): boolean =>
+      a.length === b.length && a.every((v, i) => v === b[i]);
+
+    // A valid frame built out of its three canonical parts. Lets a test shape
+    // one piece — say, replace the body bytes with garbage — without touching
+    // the framing arithmetic.
+    // Build a frame out of three parts, with minimal `lp` prefixes — same
+    // framing arithmetic the encoder uses, exposed for tests that shape the
+    // header or body independently (equivalence over refusals).
+    const frameFrom = (
+      headerBytes: Uint8Array,
+      bodyBytes: Uint8Array,
+      sig: Uint8Array,
+    ): Uint8Array => {
+      const writePrefix = (len: number): Uint8Array => {
+        if (len < 128) return new Uint8Array([len]);
+        if (len < 16384) return new Uint8Array([(len & 0x7f) | 0x80, len >> 7]);
+        if (len < 2097152) return new Uint8Array([(len & 0x7f) | 0x80, ((len >> 7) & 0x7f) | 0x80, len >> 14]);
+        throw new Error(`writePrefix: length ${len} too large for this helper`);
+      };
+      const pH = writePrefix(headerBytes.length);
+      const pB = writePrefix(bodyBytes.length);
+      const out = new Uint8Array(pH.length + headerBytes.length + pB.length + bodyBytes.length + 64);
+      let o = 0;
+      out.set(pH, o); o += pH.length;
+      out.set(headerBytes, o); o += headerBytes.length;
+      out.set(pB, o); o += pB.length;
+      out.set(bodyBytes, o); o += bodyBytes.length;
+      out.set(sig, o);
+      return out;
+    };
+
+    // === Equivalence over valid blocks ========================================
+
+    it('equivalence over valid blocks — empty body, several transactions, every golden ordering block', () => {
+      const emptyBody: OrderingBlock = {
+        ...makeOrderingBlock(),
+        utxoTxTree: { utxoTxIds: [], utxoTxs: [] },
+      };
+      const severalTxs: OrderingBlock = {
+        ...makeOrderingBlock(),
+        utxoTxTree: {
+          utxoTxIds: ['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)],
+          utxoTxs: [encodeTx(makeTx()), encodeTx(makeTx()), encodeTx(makeTx())],
+        },
+      };
+      const builtBlocks: Array<{ name: string; bytes: Uint8Array }> = [
+        { name: 'empty body', bytes: encodeOrderingBlock(emptyBody) },
+        { name: 'several transactions', bytes: encodeOrderingBlock(severalTxs) },
+      ];
+      // Every golden block in `test/golden/block.json` the package pins.
+      const golden = loadVectors('block.json')
+        .filter((v) => v.codec === 'orderingBlock')
+        .map((v) => ({ name: `golden/${v.name}`, bytes: Buffer.from(v.bytes, 'hex') as unknown as Uint8Array }));
+      expect(golden.length).toBeGreaterThan(0);
+      const cases: Array<{ name: string; bytes: Uint8Array }> = [...builtBlocks, ...golden];
+      for (const { name, bytes } of cases) {
+        const whole = decodeOrderingBlock(bytes);
+        const sections = readOrderingBlockSections(bytes);
+        const body = decodeUtxoTxTree(sections.utxoTxTreeBytes);
+        expect(sections.header, name).toEqual(whole.header);
+        expect(body, name).toEqual(whole.utxoTxTree);
+        // `sameUint8` not `toEqual` — a view into the input would fail here
+        // on golden bytes read as a Buffer, which `toEqual` compares as a
+        // subclass. The equality the function promises is byte equality.
+        expect(sameUint8(sections.validatorSignature, whole.validatorSignature), name).toBe(true);
+      }
+    });
+
+    // === Equivalence over refusals ============================================
+
+    it('both paths refuse a truncated frame', () => {
+      const bytes = encodeOrderingBlock(makeOrderingBlock());
+      const cut = bytes.subarray(0, bytes.length - 10);
+      expect(tryDecode(() => decodeOrderingBlock(cut)).ok).toBe(false);
+      expect(tryDecode(() => readOrderingBlockSections(cut)).ok).toBe(false);
+    });
+
+    it('both paths refuse a trailing byte — guards the exhausted check', () => {
+      const bytes = encodeOrderingBlock(makeOrderingBlock());
+      const padded = withTrailingByte(bytes);
+      const w = tryDecode(() => decodeOrderingBlock(padded));
+      const s = tryDecode(() => readOrderingBlockSections(padded));
+      expect(w.ok).toBe(false);
+      expect(s.ok).toBe(false);
+      // The last assertion is what the exhausted guard holds: the error is a
+      // CodecError with the trailing-bytes failure. Without the guard, the
+      // reader would return and this assertion falls over.
+      expect(s.ok === false && s.err instanceof CodecError && s.err.failure === 'trailing-bytes').toBe(true);
+    });
+
+    it('both paths refuse a header section whose declared length overruns the frame', () => {
+      // The encoder's header prefix declares 204 bytes, inside
+      // MAX_HEADER_BYTES, so the bound check passes; the frame is truncated
+      // to 100 bytes, so `readBytes(204)` has only 98 remaining and refuses
+      // as `ReaderError('truncated')`.
+      const bytes = encodeOrderingBlock(makeOrderingBlock()).subarray(0, 100);
+      expect(tryDecode(() => decodeOrderingBlock(bytes)).ok).toBe(false);
+      expect(tryDecode(() => readOrderingBlockSections(bytes)).ok).toBe(false);
+    });
+
+    it('both paths refuse a body section whose declared length overruns the frame', () => {
+      // Rebuild a frame whose body prefix declares a length past the remainder.
+      // The header fits normally; the body prefix is a hand-written vlqU(16383).
+      const headerBytes = encodeHeader(makeBlockHeader());
+      const bodyBytes = encodeUtxoTxTree(makeUtxoTxTree());
+      // Encode len=16383 — `0xff 0x7f` — overruns the actual bodyBytes that follow.
+      const pH = Uint8Array.from([(headerBytes.length & 0x7f) | 0x80, headerBytes.length >> 7]);
+      const pB = Uint8Array.from([0xff, 0x7f]);
+      const frame = new Uint8Array(pH.length + headerBytes.length + pB.length + bodyBytes.length + 64);
+      let o = 0;
+      frame.set(pH, o); o += pH.length;
+      frame.set(headerBytes, o); o += headerBytes.length;
+      frame.set(pB, o); o += pB.length;
+      frame.set(bodyBytes, o); o += bodyBytes.length;
+      frame.set(sig64, o);
+      expect(tryDecode(() => decodeOrderingBlock(frame)).ok).toBe(false);
+      expect(tryDecode(() => readOrderingBlockSections(frame)).ok).toBe(false);
+    });
+
+    it('both paths refuse a non-minimal lp prefix on the header section — guards the header prefix canonicity check', () => {
+      // The header's canonical prefix is `vlqU(len)` at its minimal width.
+      // A non-minimal `vlqU` encoding of the same length — `(low | 0x80) ‖
+      // (high | 0x80) ‖ 0x00` — decodes to the same value, and the outer
+      // boundary check (TYPES_INTERFACE → Layout — Block) refuses it on the
+      // prefix minimality rule.
+      const bytes = encodeOrderingBlock(makeOrderingBlock());
+      // Decode the two-byte minimal vlqU header prefix. Low 7 bits of the
+      // first byte plus bits 7-13 from the second byte, which has no
+      // continuation set.
+      const headerLen = (bytes[0]! & 0x7f) + ((bytes[1]! & 0x7f) << 7);
+      // vlqU(headerLen) non-minimal, 3 bytes: continuation on the previously
+      // last byte, then a zero continuation-closed byte.
+      const nonMinimal = Uint8Array.from([
+        (headerLen & 0x7f) | 0x80,
+        ((headerLen >> 7) & 0x7f) | 0x80,
+        0x00,
+      ]);
+      const rest = bytes.subarray(2);
+      const padded = new Uint8Array(nonMinimal.length + rest.length);
+      padded.set(nonMinimal, 0);
+      padded.set(rest, nonMinimal.length);
+      const w = tryDecode(() => decodeOrderingBlock(padded));
+      const s = tryDecode(() => readOrderingBlockSections(padded));
+      expect(w.ok).toBe(false);
+      expect(s.ok).toBe(false);
+      // The guard holds the non-canonical refusal: a CodecError whose failure
+      // names the compare step. Without the check, the reader would walk past
+      // the padded prefix and succeed.
+      expect(s.ok === false && s.err instanceof CodecError && s.err.failure === 'non-canonical').toBe(true);
+    });
+
+    it('both paths refuse a non-minimal lp prefix on the body section — guards the body prefix canonicity check', () => {
+      const headerBytes = encodeHeader(makeBlockHeader());
+      const bodyBytes = encodeUtxoTxTree(makeUtxoTxTree());
+      const pH = Uint8Array.from([(headerBytes.length & 0x7f) | 0x80, headerBytes.length >> 7]);
+      // A non-minimal body prefix: the minimal is one byte (bodyBytes.length < 128
+      // for the fixture); the non-minimal form is `(len | 0x80) ‖ 0x00`.
+      expect(bodyBytes.length).toBeLessThan(128);
+      const pB = Uint8Array.from([bodyBytes.length | 0x80, 0x00]);
+      const frame = new Uint8Array(pH.length + headerBytes.length + pB.length + bodyBytes.length + 64);
+      let o = 0;
+      frame.set(pH, o); o += pH.length;
+      frame.set(headerBytes, o); o += headerBytes.length;
+      frame.set(pB, o); o += pB.length;
+      frame.set(bodyBytes, o); o += bodyBytes.length;
+      frame.set(sig64, o);
+      const w = tryDecode(() => decodeOrderingBlock(frame));
+      const s = tryDecode(() => readOrderingBlockSections(frame));
+      expect(w.ok).toBe(false);
+      expect(s.ok).toBe(false);
+      expect(s.ok === false && s.err instanceof CodecError && s.err.failure === 'non-canonical').toBe(true);
+    });
+
+    it('both paths refuse a header section whose bytes are not a header — guards the header decode', () => {
+      const bodyBytes = encodeUtxoTxTree(makeUtxoTxTree());
+      // Headers of the right width whose bytes are all 0xff: `b32` fields are
+      // raw bytes so the width parses, but `protocolVersion` is `vlqU` and
+      // `0xff 0xff …` is a vlq-overflow for the reader well before the width is
+      // satisfied — so the inner decode refuses.
+      const garbage = new Uint8Array(encodeHeader(makeBlockHeader()).length).fill(0xff);
+      const frame = frameFrom(garbage, bodyBytes, sig64);
+      const w = tryDecode(() => decodeOrderingBlock(frame));
+      const s = tryDecode(() => readOrderingBlockSections(frame));
+      expect(w.ok).toBe(false);
+      expect(s.ok).toBe(false);
+      // Without the `decodeStruct(HEADER, …)` call the reader would skip past
+      // the header bytes and return — this assertion is what the guard holds.
+      expect(s.ok === false && s.err instanceof ReaderError).toBe(true);
+    });
+
+    it('both paths refuse a frame whose signature is short of 64 bytes — guards the signature read', () => {
+      // Build a frame missing some signature bytes. The outer frame's
+      // signature region is the last 64 bytes of a well-formed block, so
+      // truncate those.
+      const bytes = encodeOrderingBlock(makeOrderingBlock());
+      const shortSig = bytes.subarray(0, bytes.length - 1);
+      const w = tryDecode(() => decodeOrderingBlock(shortSig));
+      const s = tryDecode(() => readOrderingBlockSections(shortSig));
+      expect(w.ok).toBe(false);
+      expect(s.ok).toBe(false);
+      expect(s.ok === false && s.err instanceof ReaderError && (s.err as ReaderError).code === 'truncated').toBe(true);
+    });
+
+    it('a body whose bytes are not a body: the reader accepts, the body decoder refuses, the whole decoder refuses', () => {
+      // The one case where the two paths' first steps part — but the
+      // composition still agrees.
+      const headerBytes = encodeHeader(makeBlockHeader());
+      const bodyGarbage = new Uint8Array(50).fill(0xff); // ten-byte VLQ chain, vlq-overflow in the body
+      const frame = frameFrom(headerBytes, bodyGarbage, sig64);
+      const w = tryDecode(() => decodeOrderingBlock(frame));
+      expect(w.ok).toBe(false);
+      const s = tryDecode(() => readOrderingBlockSections(frame));
+      expect(s.ok).toBe(true);
+      if (s.ok) {
+        expect(sameUint8(s.value.utxoTxTreeBytes, bodyGarbage)).toBe(true);
+        const b = tryDecode(() => decodeUtxoTxTree(s.value.utxoTxTreeBytes));
+        expect(b.ok).toBe(false);
+      }
+    });
+
+    // === Equivalence under mutation ==========================================
+
+    it('equivalence under seeded mutation — flips at every offset, truncations, appends', () => {
+      // Deterministic: no `Math.random`. The input is the fixture block, and
+      // the mutations enumerate single-byte flips (three xors per offset),
+      // truncations by a sweep of lengths, and deterministic appends.
+      const bytes = encodeOrderingBlock(makeOrderingBlock());
+      let mutationCount = 0;
+
+      const check = (mutated: Uint8Array, label: string): void => {
+        const w = tryDecode(() => decodeOrderingBlock(mutated));
+        const s = tryDecode(() => readOrderingBlockSections(mutated));
+        let bOk = false;
+        let bValue: UtxoTxTree | undefined;
+        if (s.ok) {
+          const b = tryDecode(() => decodeUtxoTxTree(s.value.utxoTxTreeBytes));
+          bOk = b.ok;
+          if (b.ok) bValue = b.value;
+        }
+        expect(w.ok, label).toBe(s.ok && bOk);
+        if (w.ok && s.ok && bOk) {
+          expect(w.value.header, label).toEqual(s.value.header);
+          expect(w.value.utxoTxTree, label).toEqual(bValue);
+          expect(sameUint8(w.value.validatorSignature, s.value.validatorSignature), label).toBe(true);
+        }
+        mutationCount++;
+      };
+
+      // Flips at every offset, three xor values each — covers framing bytes
+      // and samples inside each section at the same offsets.
+      for (let i = 0; i < bytes.length; i++) {
+        for (const xor of [0x01, 0x80, 0xff]) {
+          const m = bytes.slice();
+          m[i] = m[i]! ^ xor;
+          check(m, `flip offset=${i} xor=0x${xor.toString(16)}`);
+        }
+      }
+
+      // Truncations: shorter by k.
+      for (const k of [1, 2, 5, 10, 32, 64, 100, 200, bytes.length - 1]) {
+        if (k >= bytes.length) continue;
+        check(bytes.subarray(0, bytes.length - k), `truncate k=${k}`);
+      }
+
+      // Appends: longer by k, deterministic fill. A seeded pseudo-random byte
+      // keyed off (i, k) rather than `Math.random`.
+      for (const k of [1, 2, 5, 10, 32, 64]) {
+        const m = new Uint8Array(bytes.length + k);
+        m.set(bytes);
+        for (let j = 0; j < k; j++) m[bytes.length + j] = ((j * 73 + k * 131) & 0xff);
+        check(m, `append k=${k}`);
+      }
+
+      // The count the final message must state.
+      expect(mutationCount).toBeGreaterThan(0);
+      // Pin a specific count so the test fails loudly if the pass is
+      // short-circuited by a change to the fixture or the loop bounds.
+      const EXPECTED_MUTATIONS = bytes.length * 3 + 9 + 6; // flips + truncations + appends
+      expect(mutationCount).toBe(EXPECTED_MUTATIONS);
+    });
+
+    // === The header bound ====================================================
+
+    it('a header section declared one byte past MAX_HEADER_BYTES is refused before it is decoded', () => {
+      // The declared length is MAX_HEADER_BYTES + 1 and the actual bytes
+      // following are a real header's bytes — enough to populate the overrun,
+      // or none, both go via the bound check first. We put a minimal header
+      // after and pad to the declared length so the frame does not fault for
+      // some other reason.
+      const declared = MAX_HEADER_BYTES + 1;
+      const headerBytes = new Uint8Array(declared).fill(0); // bytes immaterial — bound fires first
+      const bodyBytes = encodeUtxoTxTree(makeUtxoTxTree());
+      const frame = frameFrom(headerBytes, bodyBytes, sig64);
+      const s = tryDecode(() => readOrderingBlockSections(frame));
+      expect(s.ok).toBe(false);
+      // A plain ReaderError, NOT a CodecError — so the test shows the section
+      // was never decoded by the header codec.
+      expect(s.ok === false && s.err instanceof ReaderError && !(s.err instanceof CodecError)).toBe(true);
+      // The error names the bound.
+      expect(s.ok === false && (s.err as ReaderError).message.includes('MAX_HEADER_BYTES')).toBe(true);
+      expect(s.ok === false && (s.err as ReaderError).code).toBe('out-of-domain');
+    });
+
+    it('a header section declared megabytes long is refused before it is decoded', () => {
+      // vlqU(2^20) — far beyond MAX_HEADER_BYTES and beyond the frame.
+      const declared = 1 << 20;
+      // Build the bytes by hand: a vlqU(declared) prefix on no payload. We
+      // never read past the prefix.
+      const pH = Uint8Array.from([
+        (declared & 0x7f) | 0x80,
+        ((declared >> 7) & 0x7f) | 0x80,
+        ((declared >> 14) & 0x7f),
+      ]);
+      // The rest is just a few zero bytes so the frame has substance; the
+      // bound check fires before any header byte is read.
+      const rest = new Uint8Array(16);
+      const frame = new Uint8Array(pH.length + rest.length);
+      frame.set(pH, 0);
+      frame.set(rest, pH.length);
+      const s = tryDecode(() => readOrderingBlockSections(frame));
+      expect(s.ok).toBe(false);
+      expect(s.ok === false && s.err instanceof ReaderError && !(s.err instanceof CodecError)).toBe(true);
+      expect(s.ok === false && (s.err as ReaderError).message.includes('MAX_HEADER_BYTES')).toBe(true);
+    });
+
+    it('a header section at exactly MAX_HEADER_BYTES — the longest header the package encodes — reads', () => {
+      // The longest header: every `vlqU` field at Number.MAX_SAFE_INTEGER
+      // (8-byte vlqU), each `b32`/`b33`/`validatorId` row at its fixed width.
+      // Five vlqU × 8 + four b32 + one b33 + validatorId = 40 + 128 + 33 + 32
+      // = 233 = MAX_HEADER_BYTES.
+      const maxVlq = Number.MAX_SAFE_INTEGER;
+      const widest: BlockHeader = {
+        protocolVersion: maxVlq,
+        height: maxVlq,
+        prevBlockHash: '0'.repeat(64),
+        utxoTxRoot: '0'.repeat(64),
+        stateRoot: '0'.repeat(66),
+        validatorId: validatorKey,
+        powNonce: maxVlq,
+        powTargetBits: maxVlq,
+        createdAt: maxVlq,
+        interlinkRoot: '0'.repeat(64),
+        adProofsRoot: '0'.repeat(64),
+      };
+      const widestBytes = encodeHeader(widest);
+      expect(widestBytes.length).toBe(MAX_HEADER_BYTES);
+
+      // Build a frame around the widest header. Its body and signature are
+      // the fixture's.
+      const bodyBytes = encodeUtxoTxTree(makeUtxoTxTree());
+      const frame = frameFrom(widestBytes, bodyBytes, sig64);
+      const s = tryDecode(() => readOrderingBlockSections(frame));
+      expect(s.ok).toBe(true);
+      if (s.ok) {
+        expect(s.value.header).toEqual(widest);
+        expect(sameUint8(s.value.utxoTxTreeBytes, bodyBytes)).toBe(true);
+        expect(sameUint8(s.value.validatorSignature, sig64)).toBe(true);
+      }
     });
   });
 });

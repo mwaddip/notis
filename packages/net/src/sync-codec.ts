@@ -391,8 +391,7 @@ export function decodeGetBlocks(body: Uint8Array): GetBlocksMsg | null {
  * so `decodeItem` can run the whole boundary check over exactly that span —
  * exhaustion and the re-encode compare included — and a malformed block is
  * rejected at its own offset instead of as an outer mismatch somewhere in a
- * multi-kilobyte blob. It is the same nesting `ORDERING_BLOCK` uses for its own
- * three sections.
+ * multi-kilobyte blob.
  *
  * `maxItems` is checked **before the first element is read**, and that is what
  * `readArr` cannot express here: its bounds are `MAX_ARRAY_LENGTH` and the bytes

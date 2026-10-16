@@ -2,15 +2,18 @@ import {
   ByteWriter,
   decodeOrderingBlock,
   decodeTxPacket,
+  decodeUtxoTxTree,
   encodeOrderingBlock,
   encodeTxPacket,
   hash32,
   MAX_ORDERING_BLOCK_BYTES,
   MAX_TX_PACKET_BYTES,
   protocolVersionAt,
+  readOrderingBlockSections,
   writeLpUtf8,
 } from '@dagsocial/types';
-import type { OrderingBlock, UtxoTransaction, BlockHeader, ProtocolEra } from '@dagsocial/types';
+import { blockHash } from '@dagsocial/validation';
+import type { OrderingBlock, UtxoTransaction, BlockHeader, ProtocolEra, UtxoTxTree } from '@dagsocial/types';
 import { TopicValidatorResult } from '@libp2p/interface';
 import type { PubSub } from '@libp2p/interface';
 import type { GossipsubEvents } from '@chainsafe/libp2p-gossipsub';
@@ -26,9 +29,19 @@ import type { PeerManager } from './peer-mgr.js';
 // whose `services.pubsub` has been configured with gossipsub.
 // ---------------------------------------------------------------------------
 
+// NET_INTERFACE → Forwarding Rule → "An ordering block is forwarded once Stage 1
+// passes; a transaction once this node admits it". gossipsub's
+// `reportMessageValidationResult` is not in `PubSub<GossipsubEvents>`, so the
+// listener below reads it off the gossipsub router directly.
 export interface Libp2pGossip {
   services: {
-    pubsub: PubSub<GossipsubEvents>;
+    pubsub: PubSub<GossipsubEvents> & {
+      reportMessageValidationResult(
+        msgId: string,
+        propagationSource: string,
+        acceptance: TopicValidatorResult,
+      ): void;
+    };
   };
 }
 
@@ -121,7 +134,13 @@ export interface GossipHandlers {
    * listener below for why `propagationSource` is the value handed on.
    */
   onOrderingBlock: (block: OrderingBlock, fromPeerId: string) => void;
-  onTx: (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => void;
+  /**
+   * NET_INTERFACE → Inbound Processing →
+   * "A transaction is forwarded when a handler admits it":
+   * the return is whether this node admitted the transaction. The listener
+   * reports Accept to the router when it is true and Ignore otherwise.
+   */
+  onTx: (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +162,17 @@ export function subscribeTopics(
   // NET_INTERFACE → Consensus parameters net enforces
   floorBits: number,
   scheduledTargetBits: (header: BlockHeader) => number | null,
+  // The header-standing seam `setHeaderStandingProvider` carries
+  // (NET_INTERFACE → Sync Handler Registration;
+  // NET_INTERFACE → Stage 1 → "A header this node knows is Ignored"). A
+  // provider that is not passed is read as `() => null`, every header judged
+  // as one this node does not know; net's own memory of accepted headers
+  // stands either way.
+  headerStanding: (hash: string, height: number) => 'held' | 'refused' | null = () => null,
+  // The clock behind the memory of accepted headers
+  // (NET_INTERFACE → Stage 1 → "A header this node knows is Ignored"). Tests
+  // drive it; production reads `Date.now()`.
+  nowMs: () => number = Date.now,
 ): void {
   const gs = libp2p.services.pubsub;
 
@@ -151,138 +181,205 @@ export function subscribeTopics(
   // messages are rejected at this layer and never propagated further.
   // -------------------------------------------------------------------------
 
+  // NET_INTERFACE → Stage 1 → "A header this node knows is Ignored". The
+  // memory holds an accepted header's hash with its acceptance time; a stale
+  // entry is pruned at the next Accept so nothing survives past the window.
+  const seenAccepted = new Map<string, number>();
+
   gs.topicValidators.set(topics.orderingBlock, (_peer, msg) => {
+    const peerId = _peer.toString();
+    const raw = new Uint8Array(msg.data);
+    // NET_INTERFACE → Validation (and untrusted-input safety) →
+    // "A peer's bytes are weighed before they are decoded"
+    if (raw.length > MAX_ORDERING_BLOCK_BYTES) {
+      peerMgr.recordPenaltyKind(
+        PenaltyKind.ProtocolViolation,
+        peerId,
+        `ordering block ${raw.length} bytes exceeds MAX_ORDERING_BLOCK_BYTES (${MAX_ORDERING_BLOCK_BYTES})`,
+      );
+      return TopicValidatorResult.Reject;
+    }
+    // NET_INTERFACE → Stage 1 → "A header is read before its body".
+    // The sections read is the one throw ProtocolViolation covers at this
+    // boundary; the body section's own decode runs separately below.
+    let sections: ReturnType<typeof readOrderingBlockSections>;
     try {
-      const raw = new Uint8Array(msg.data);
-      // NET_INTERFACE → Validation (and untrusted-input safety) →
-      // "A peer's bytes are weighed before they are decoded"
-      if (raw.length > MAX_ORDERING_BLOCK_BYTES) {
-        peerMgr.recordPenaltyKind(
-          PenaltyKind.ProtocolViolation,
-          _peer.toString(),
-          `ordering block ${raw.length} bytes exceeds MAX_ORDERING_BLOCK_BYTES (${MAX_ORDERING_BLOCK_BYTES})`,
-        );
+      sections = readOrderingBlockSections(raw);
+    } catch (err) {
+      peerMgr.recordPenaltyKind(
+        PenaltyKind.ProtocolViolation,
+        peerId,
+        `malformed ordering block header: ${String(err)}`,
+      );
+      return TopicValidatorResult.Reject;
+    }
+    const { header, utxoTxTreeBytes, validatorSignature } = sections;
+
+    // NET_INTERFACE → Stage 1 → "A fault of this node's is no peer's".
+    // Everything below is header-only or body-decoded by this function; a
+    // throw here is a provider's or this node's chain, logged and Ignored.
+    try {
+      const domains = validators.verifyHeaderFieldDomains(header);
+      if (!domains.valid) {
+        peerMgr.recordPenalty('misbehavior', peerId, 100, domains.error ?? 'invalid ordering block header');
         return TopicValidatorResult.Reject;
       }
-      const block = decodeOrderingBlock(raw);
-      const vr = validators.verifyOrderingBlockStructure(block);
-      if (!vr.valid) {
-        // Bogus — well-formed message with invalid content.
-        peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, vr.error ?? 'invalid ordering block');
-        return TopicValidatorResult.Reject;
-      }
-      if (!validators.verifyProtocolVersion(block.header.protocolVersion, block.header.height, schedule)) {
-        // A declared version that is not the era at the header's height is a
-        // compatibility signal, never a violation (NET_INTERFACE → Peer Penalty
-        // System): Transient, not misbehavior.
-        const era = protocolVersionAt(schedule, block.header.height);
+      if (!validators.verifyProtocolVersion(header.protocolVersion, header.height, schedule)) {
+        // NET_INTERFACE → Peer Penalty System: a declared version that is not
+        // the era at the header's height is a compatibility signal, Transient.
+        const era = protocolVersionAt(schedule, header.height);
         peerMgr.recordPenaltyKind(
           PenaltyKind.Transient,
-          _peer.toString(),
-          `protocol version ${block.header.protocolVersion} != era ${era} at height ${block.header.height}`,
+          peerId,
+          `protocol version ${header.protocolVersion} != era ${era} at height ${header.height}`,
         );
         return TopicValidatorResult.Reject;
       }
-      // No explicit height guard here, and adding one would be dead code:
-      // `verifyOrderingBlockStructure` above covers the header's whole
-      // encodable domain, and its `height` rule is `isU64Safe` (audit M-6), so
-      // NaN and floats are already rejected one gate earlier — for every input,
-      // not merely the NaN/1.5 cases the test below pins.
-
       // NET_INTERFACE → Consensus parameters net enforces
-      if (block.header.powTargetBits < floorBits) {
-        peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'ordering block below the network floor');
+      if (header.powTargetBits < floorBits) {
+        peerMgr.recordPenalty('misbehavior', peerId, 100, 'ordering block below the network floor');
         return TopicValidatorResult.Reject;
       }
-      if (!validators.verifyOrderingBlockPoW(block.header)) {
-        // A zero-work block must die at the first hop, not be re-gossiped
-        // mesh-wide (NET_INTERFACE → Stage 1).
-        peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'ordering block PoW invalid');
-        return TopicValidatorResult.Reject;
-      }
-      // NET_INTERFACE → Stage 1 →
-      // "A worked header is forwarded with the body its root commits".
-      // After the PoW check because this predicate hashes the whole body
-      // (VALIDATION_INTERFACE → verifyUtxoTxRoot, its cost): a header must
-      // have proven work before a node pays to hash its body.
-      if (!validators.verifyUtxoTxRoot(block)) {
-        peerMgr.recordPenalty(
-          'misbehavior',
-          _peer.toString(),
-          100,
-          'ordering block body is not the one the header\'s root commits',
-        );
+      if (!validators.verifyOrderingBlockPoW(header)) {
+        // A zero-work block dies at the first hop, not re-gossiped mesh-wide
+        // (NET_INTERFACE → Stage 1).
+        peerMgr.recordPenalty('misbehavior', peerId, 100, 'ordering block PoW invalid');
         return TopicValidatorResult.Reject;
       }
       // NET_INTERFACE → Stage 1 →
       // "A scheduled-target mismatch is refused, never forwarded, and never penalised"
-      const expected = scheduledTargetBits(block.header);
-      if (expected !== null && block.header.powTargetBits !== expected) {
+      const expected = scheduledTargetBits(header);
+      if (expected !== null && header.powTargetBits !== expected) {
         console.log(
-          `[net] scheduled-target mismatch: height=${block.header.height} bits=${block.header.powTargetBits} expected=${expected}`,
+          `[net] scheduled-target mismatch: height=${header.height} bits=${header.powTargetBits} expected=${expected}`,
         );
         return TopicValidatorResult.Reject;
       }
+      // NET_INTERFACE → Stage 1 → "A header this node knows is Ignored"
+      const hash = blockHash(header);
+      if (hash === null) {
+        // `verifyHeaderFieldDomains` above answered valid, so this is this
+        // node's own invariant violated — logged, Ignored, no penalty.
+        console.error('[net] blockHash null on a header verifyHeaderFieldDomains accepted');
+        return TopicValidatorResult.Ignore;
+      }
+      const standing = headerStanding(hash, header.height);
+      if (standing === 'held' || standing === 'refused') {
+        return TopicValidatorResult.Ignore;
+      }
+      const now = nowMs();
+      const previous = seenAccepted.get(hash);
+      if (previous !== undefined && now - previous < GOSSIP_SEEN_WINDOW_MS) {
+        return TopicValidatorResult.Ignore;
+      }
+      // NET_INTERFACE → Peer Penalty System: an ordering block's validator
+      // signature that does not verify is a `misbehavior` row.
+      if (!validators.verifyValidatorSignature(header, validatorSignature)) {
+        peerMgr.recordPenalty('misbehavior', peerId, 100, 'ordering block validator signature invalid');
+        return TopicValidatorResult.Reject;
+      }
+      // The body — a second decode whose throw is ProtocolViolation.
+      let utxoTxTree: UtxoTxTree;
+      try {
+        utxoTxTree = decodeUtxoTxTree(utxoTxTreeBytes);
+      } catch (err) {
+        peerMgr.recordPenaltyKind(
+          PenaltyKind.ProtocolViolation,
+          peerId,
+          `malformed ordering block body: ${String(err)}`,
+        );
+        return TopicValidatorResult.Reject;
+      }
+      const block: OrderingBlock = { header, utxoTxTree, validatorSignature };
+      const vr = validators.verifyOrderingBlockStructure(block);
+      if (!vr.valid) {
+        peerMgr.recordPenalty('misbehavior', peerId, 100, vr.error ?? 'invalid ordering block');
+        return TopicValidatorResult.Reject;
+      }
+      // NET_INTERFACE → Stage 1 →
+      // "A worked header is forwarded with the body its root commits"
+      if (!validators.verifyUtxoTxRoot(block)) {
+        peerMgr.recordPenalty(
+          'misbehavior',
+          peerId,
+          100,
+          "ordering block body is not the one the header's root commits",
+        );
+        return TopicValidatorResult.Reject;
+      }
+      // Record the acceptance; prune stale entries so the memory keeps
+      // nothing past the seen window.
+      seenAccepted.set(hash, now);
+      for (const [k, t] of seenAccepted) {
+        if (now - t >= GOSSIP_SEEN_WINDOW_MS) seenAccepted.delete(k);
+      }
       return TopicValidatorResult.Accept;
     } catch (err) {
-      // Malformed — cannot even decode. Permanent ban.
-      peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, _peer.toString(), `malformed ordering block: ${String(err)}`);
-      return TopicValidatorResult.Reject;
+      console.error(`[net] block validator fault (ignored): ${String(err)}`);
+      return TopicValidatorResult.Ignore;
     }
   });
 
   gs.topicValidators.set(topics.tx, (_peer, msg) => {
+    const peerId = _peer.toString();
+    const raw = new Uint8Array(msg.data);
+    // NET_INTERFACE → Validation (and untrusted-input safety) →
+    // "A peer's bytes are weighed before they are decoded"
+    if (raw.length > MAX_TX_PACKET_BYTES) {
+      peerMgr.recordPenaltyKind(
+        PenaltyKind.ProtocolViolation,
+        peerId,
+        `tx packet ${raw.length} bytes exceeds MAX_TX_PACKET_BYTES (${MAX_TX_PACKET_BYTES})`,
+      );
+      return TopicValidatorResult.Reject;
+    }
+    // NET_INTERFACE → Stage 1 → "A fault of this node's is no peer's".
+    // The decode is the one step whose throw is the sender's; everything below
+    // reads this node's chain or runs validation's pure functions.
+    let packet: ReturnType<typeof decodeTxPacket>;
     try {
-      const raw = new Uint8Array(msg.data);
-      // NET_INTERFACE → Validation (and untrusted-input safety) →
-      // "A peer's bytes are weighed before they are decoded"
-      if (raw.length > MAX_TX_PACKET_BYTES) {
-        peerMgr.recordPenaltyKind(
-          PenaltyKind.ProtocolViolation,
-          _peer.toString(),
-          `tx packet ${raw.length} bytes exceeds MAX_TX_PACKET_BYTES (${MAX_TX_PACKET_BYTES})`,
-        );
-        return TopicValidatorResult.Reject;
-      }
-      const packet = decodeTxPacket(raw);
-      const { tx, content } = packet;
+      packet = decodeTxPacket(raw);
+    } catch (err) {
+      peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, peerId, `malformed tx: ${String(err)}`);
+      return TopicValidatorResult.Reject;
+    }
+    const { tx, content } = packet;
+
+    try {
       const vr = validators.verifyTxStructure(tx);
       if (!vr.valid) {
-        peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, vr.error ?? 'invalid tx');
+        peerMgr.recordPenalty('misbehavior', peerId, 100, vr.error ?? 'invalid tx');
         return TopicValidatorResult.Reject;
       }
+      // NET_INTERFACE → Stage 1 →
+      // "A refusal that rests on this node's state records nothing".
+      // The era is read from this node's tip, which the sender may hold
+      // differently; a declared-version mismatch is a Reject with no penalty.
       if (!validators.verifyTxProtocolVersion(tx, chainHeight() + 1, schedule)) {
-        // The envelope's and the commit's declared version each equal the era
-        // of the next block this node would apply; a mismatch is a compatibility
-        // signal, Transient not misbehavior (NET_INTERFACE → Peer Penalty System).
-        const era = protocolVersionAt(schedule, chainHeight() + 1);
-        const declared = tx.post !== undefined
-          ? `tx ${tx.protocolVersion}/commit ${tx.post.protocolVersion}`
-          : `tx ${tx.protocolVersion}`;
-        peerMgr.recordPenaltyKind(
-          PenaltyKind.Transient,
-          _peer.toString(),
-          `protocol version ${declared} != era ${era}`,
-        );
         return TopicValidatorResult.Reject;
       }
       // NET_INTERFACE → Gossip Topics: tx.post present ⟺ content present
       const hasPost = tx.post !== undefined;
       const hasContent = content !== undefined;
       if (hasPost !== hasContent) {
-        peerMgr.recordPenalty('misbehavior', _peer.toString(), 100,
+        peerMgr.recordPenalty('misbehavior', peerId, 100,
           hasPost ? 'post without body' : 'body without post');
         return TopicValidatorResult.Reject;
       }
       if (hasPost && hasContent) {
         const bv = validators.verifyPostBody(content, tx.post!.contentHash);
         if (!bv.valid) {
-          peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, bv.error ?? 'post body verification failed');
+          peerMgr.recordPenalty('misbehavior', peerId, 100, bv.error ?? 'post body verification failed');
           return TopicValidatorResult.Reject;
         }
       }
       // The post relay gate — see `KarmaMembers`. It runs only for a
       // post-bearing transaction and only after `verifyTxStructure`.
+      //
+      // NET_INTERFACE → Stage 1 →
+      // "A refusal that rests on this node's state records nothing":
+      // the karma set is this node's view, which a peer behind may not yet
+      // carry; a miss Rejects with no penalty.
       //
       // ⚠ What makes the hex-encode safe on THIS path is the decoder, not that
       // check. `author` is `b32`, read as `readBytesN(r, 32)`, so
@@ -291,29 +388,33 @@ export function subscribeTopics(
       // 32-byte pin is depth rather than enforcement here; it is left in place
       // because it is what a caller reaching this gate without a decode would
       // land on, and that failure would otherwise be silent.
-      //
-      // ⚠ **Before any store read, and before the signature check**, which is the
-      // whole reason it is a set: an unfunded flood costs one hash lookup, not
-      // 73 µs of Ed25519 per message.
       if (tx.post !== undefined) {
         const author = Buffer.from(tx.post.author).toString('hex');
         if (!karmaMembers.has(author)) {
-          peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'post author holds no karma');
           return TopicValidatorResult.Reject;
         }
       }
+      // NET_INTERFACE → Stage 1 →
+      // "A transaction's signatures are checked at Stage 1":
+      // last, because it is the dearest — 1.1–1.7 ms per signature.
+      if (!validators.verifyTxSignatures(tx)) {
+        peerMgr.recordPenalty('misbehavior', peerId, 100, 'tx signature invalid');
+        return TopicValidatorResult.Reject;
+      }
       return TopicValidatorResult.Accept;
     } catch (err) {
-      peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, _peer.toString(), `malformed tx: ${String(err)}`);
-      return TopicValidatorResult.Reject;
+      console.error(`[net] tx validator fault (ignored): ${String(err)}`);
+      return TopicValidatorResult.Ignore;
     }
   });
 
   // -------------------------------------------------------------------------
-  // Event listener — delivers every message the router hands on
-  // (NET_INTERFACE → Inbound Processing →
-  // "A gossip message that passes Stage 1 is delivered, whichever peer carried it").
-  // Topic validators (above) are the only gate before this point.
+  // Event listener — delivers every message the router hands on and reports
+  // each message's verdict (NET_INTERFACE → Forwarding Rule → "An ordering
+  // block is forwarded once Stage 1 passes; a transaction once this node
+  // admits it"). Topic validators (above) are the only gate before this point;
+  // gossipsub's `asyncValidation` holds a message that passed one until the
+  // report lands.
   // -------------------------------------------------------------------------
 
   gs.addEventListener('gossipsub:message', (evt) => {
@@ -337,23 +438,22 @@ export function subscribeTopics(
     // "`fromPeerId` is not guaranteed to be a peer id").
     const relayPeerId =
       (detail as { propagationSource?: { toString(): string } }).propagationSource?.toString() ?? '';
+    const msgId = (detail as { msgId?: string }).msgId;
 
-    // Decode and dispatch are separated because they fail for different
-    // reasons, and neither reason is the peer's.
-    //
-    // A single `try` spanning both would report neither: it would collapse a
-    // validator bug and an app-layer handler throw into one silent span.
-    //
-    // Both stay contained rather than propagating: this is a gossipsub event
-    // listener, and net's invariant is that one bad message degrades one
-    // message, not the subsystem. Contained is not the same as silent — both
-    // are `console.error`, because reaching either is a bug in our own code.
-    const deliver = <T>(decode: (b: Uint8Array) => T, handle: (v: T) => void): void => {
-      let value: T;
+    const report = (acceptance: TopicValidatorResult): void => {
+      if (msgId === undefined) return;
+      gs.reportMessageValidationResult(msgId, relayPeerId, acceptance);
+    };
+
+    if (topic === topics.orderingBlock) {
+      // NET_INTERFACE → Inbound Processing → "A transaction is forwarded when
+      // a handler admits it": the block's report runs before its handlers.
+      report(TopicValidatorResult.Accept);
+      let block: OrderingBlock;
       try {
-        value = decode(raw);
+        block = decodeOrderingBlock(raw);
       } catch (err) {
-        // Unreachable unless a topic validator is wrong: every message that
+        // Unreachable unless the topic validator is wrong: every message that
         // gets here was already decoded once, by the validator that accepted
         // it. So this is our bug and not the sender's — no penalty is
         // recorded, and it is logged loudly rather than absorbed.
@@ -363,16 +463,28 @@ export function subscribeTopics(
         return;
       }
       try {
-        handle(value);
+        handlers.onOrderingBlock(block, relayPeerId);
       } catch (err) {
         console.error(`[net] handler for '${topic}' threw: ${String(err)}`);
       }
-    };
-
-    if (topic === topics.orderingBlock) {
-      deliver(decodeOrderingBlock, (block) => handlers.onOrderingBlock(block, relayPeerId));
     } else if (topic === topics.tx) {
-      deliver(decodeTxPacket, (packet) => handlers.onTx(packet.tx, packet.content, relayPeerId));
+      let packet: ReturnType<typeof decodeTxPacket>;
+      try {
+        packet = decodeTxPacket(raw);
+      } catch (err) {
+        console.error(
+          `[net] BUG: '${topic}' message passed its topic validator and then failed to decode: ${String(err)}`,
+        );
+        report(TopicValidatorResult.Ignore);
+        return;
+      }
+      let admitted = false;
+      try {
+        admitted = handlers.onTx(packet.tx, packet.content, relayPeerId) === true;
+      } catch (err) {
+        console.error(`[net] handler for '${topic}' threw: ${String(err)}`);
+      }
+      report(admitted ? TopicValidatorResult.Accept : TopicValidatorResult.Ignore);
     }
   });
 

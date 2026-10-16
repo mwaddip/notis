@@ -1,10 +1,14 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createHash } from 'node:crypto';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { sha512 } from '@noble/hashes/sha2.js';
+import { bytesToNumberLE, numberToBytesLE } from '@noble/curves/utils.js';
 import {
   generateKeyPair,
   computeContentHash,
   computeUtxoTxRoot,
   encodeOrderingBlock,
+  hexToBytes,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   MAGIC_DEVNET,
   PROTOCOL_VERSION,
@@ -23,9 +27,13 @@ import {
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
+  verifyTxSignatures,
+  verifyHeaderFieldDomains,
   verifyOrderingBlockStructure,
+  verifyValidatorSignature,
   verifyUtxoTxRoot,
   verifyPostBody,
+  blockHash,
 } from '@dagsocial/validation';
 import { TopicValidatorResult } from '@libp2p/interface';
 import type { PubSub } from '@libp2p/interface';
@@ -74,8 +82,11 @@ const validators: NetValidators = {
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
+  verifyTxSignatures,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
+  verifyHeaderFieldDomains,
+  verifyValidatorSignature,
   verifyPostBody,
 };
 
@@ -195,6 +206,19 @@ function mineHeader(base: BlockHeader): BlockHeader {
   throw new Error('could not mine header at the network floor within 1M nonces');
 }
 
+// Mesh blocks ride through the real Stage 1 validator at every hop
+// (NET_INTERFACE → Stage 1 → "A header is read before its body"), so a
+// fixture that reaches Accept carries a header signed under the key the
+// header's `validatorId` names.
+const MESH_VALIDATOR_KP = generateKeyPair();
+const MESH_VALIDATOR_SEED = MESH_VALIDATOR_KP.secretKey.subarray(16);
+
+function signMeshHeader(header: BlockHeader): Uint8Array {
+  const hash = blockHash(header);
+  if (hash === null) throw new Error('signMeshHeader: header outside the encodable domain');
+  return ed25519.sign(hexToBytes(hash), MESH_VALIDATOR_SEED);
+}
+
 function makeBlockAt(height: number, protocolVersion: number): OrderingBlock {
   // VALIDATION_INTERFACE → verifyOrderingBlockStructure requires at least one
   // settlement tx id and payload. The body is built first because the header
@@ -209,7 +233,7 @@ function makeBlockAt(height: number, protocolVersion: number): OrderingBlock {
     prevBlockHash: '00'.repeat(32),
     utxoTxRoot: computeUtxoTxRoot(utxoTxTree),
     stateRoot: '00'.repeat(33),
-    validatorId: new Uint8Array(32),
+    validatorId: MESH_VALIDATOR_KP.publicKey,
     powNonce: 0,
     powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_000_000 + height,
@@ -220,7 +244,7 @@ function makeBlockAt(height: number, protocolVersion: number): OrderingBlock {
   return {
     header,
     utxoTxTree,
-    validatorSignature: new Uint8Array(64),
+    validatorSignature: signMeshHeader(header),
   };
 }
 
@@ -387,6 +411,7 @@ describe('Gossip on a line A — B — C', () => {
       const bDeliveries: UtxoTransaction[] = [];
       nodeB.onTx((t) => {
         bDeliveries.push(t);
+        return true;
       });
       const cValidator = newCounter();
       const topicsC = topicsOf(nodeC);
@@ -455,6 +480,7 @@ describe('Gossip on a line A — B — C', () => {
       const bDeliveries: UtxoTransaction[] = [];
       nodeB.onTx((t) => {
         bDeliveries.push(t);
+        return true;
       });
       const cValidator = newCounter();
       const topicsC = topicsOf(nodeC);
@@ -521,10 +547,12 @@ describe('Gossip on a line A — B — C', () => {
       const cDeliveries: UtxoTransaction[] = [];
       nodeC.onTx((t) => {
         cDeliveries.push(t);
+        return true;
       });
       const bDeliveries: UtxoTransaction[] = [];
       nodeB.onTx((t) => {
         bDeliveries.push(t);
+        return true;
       });
 
       const { tx, content } = makePostTxPacket(kp.publicKey, 'two-hop-tx');
@@ -1395,6 +1423,350 @@ describe('A worked header is forwarded with the body its root commits', () => {
         calls: 1,
         firstBytes: Array.from(honest.utxoTxTree.utxoTxs[0]!),
       });
+    },
+    TIMEOUT,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Stage 1 → "A header this node knows is Ignored" — the
+// memory of accepted headers ends the forward of a second valid signing of
+// the same header at the first hop that already accepted the first.
+// ---------------------------------------------------------------------------
+
+const StagePoint = ed25519.Point;
+const StageFn = StagePoint.Fn;
+
+function altSignForMesh(seed: Uint8Array, publicKey: Uint8Array, message: Uint8Array, nonceSeed: Uint8Array): Uint8Array {
+  const h = sha512(seed);
+  const scalarBytes = new Uint8Array(h.subarray(0, 32));
+  scalarBytes[0]! &= 248;
+  scalarBytes[31]! &= 127;
+  scalarBytes[31]! |= 64;
+  const a = StageFn.create(bytesToNumberLE(scalarBytes));
+  const r = StageFn.create(bytesToNumberLE(sha512(nonceSeed)));
+  const R = StagePoint.BASE.multiply(r);
+  const REncoded = R.toBytes();
+  const chal = new Uint8Array(64 + message.length);
+  chal.set(REncoded, 0);
+  chal.set(publicKey, 32);
+  chal.set(message, 64);
+  const k = StageFn.create(bytesToNumberLE(sha512(chal)));
+  const S = StageFn.create(r + k * a);
+  const sig = new Uint8Array(64);
+  sig.set(REncoded, 0);
+  sig.set(numberToBytesLE(S, 32), 32);
+  return sig;
+}
+
+function makeSignedBlockAt(
+  height: number,
+  protocolVersion: number,
+  validatorKp: ReturnType<typeof generateKeyPair>,
+): { header: BlockHeader; utxoTxTree: UtxoTxTree } {
+  const utxoTxTree: UtxoTxTree = {
+    utxoTxIds: [height.toString(16).padStart(64, '0')],
+    utxoTxs: [new Uint8Array(96).fill(height & 0xff)],
+  };
+  const base: BlockHeader = {
+    protocolVersion,
+    height,
+    prevBlockHash: '00'.repeat(32),
+    utxoTxRoot: computeUtxoTxRoot(utxoTxTree),
+    stateRoot: '00'.repeat(33),
+    validatorId: validatorKp.publicKey,
+    powNonce: 0,
+    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+    createdAt: 1_000_000 + height,
+    interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
+  };
+  for (let n = 0; n < 1_000_000; n++) {
+    const h = { ...base, powNonce: n };
+    if (verifyOrderingBlockPoW(h)) return { header: h, utxoTxTree };
+  }
+  throw new Error('could not mine header under validator key within 1M nonces');
+}
+
+describe('a second valid signing of a header is Ignored at the first hop', () => {
+  const open: NetNode[] = [];
+  afterEach(async () => {
+    while (open.length > 0) {
+      const n = open.pop();
+      await n?.stop();
+    }
+  });
+  const track = (nodes: NetNode[]): void => {
+    for (const n of nodes) open.push(n);
+  };
+
+  it(
+    'A publishes a second valid signing — C\'s handler fires once and B refuses to forward it',
+    async () => {
+      const { nodeA, nodeB, nodeC } = await startLine();
+      track([nodeA, nodeB, nodeC]);
+      assertLineIntact(nodeA, nodeC);
+
+      const kp = generateKeyPair();
+      const seed = kp.secretKey.subarray(16);
+      const { header, utxoTxTree } = makeSignedBlockAt(1, PROTOCOL_VERSION, kp);
+      const message = hexToBytes(blockHash(header)!);
+      const sigA = ed25519.sign(message, seed);
+      const sigB = altSignForMesh(seed, kp.publicKey, message, sha512(new Uint8Array([0x5a])));
+      // Both signings verify, under the same key, over the same header; the
+      // bytes they put on the wire differ.
+      expect(verifyValidatorSignature(header, sigA)).toBe(true);
+      expect(verifyValidatorSignature(header, sigB)).toBe(true);
+      expect(Array.from(sigA)).not.toEqual(Array.from(sigB));
+
+      const blockA: OrderingBlock = { header, utxoTxTree, validatorSignature: sigA };
+      const blockB: OrderingBlock = { header, utxoTxTree, validatorSignature: sigB };
+
+      const cHandler = vi.fn<[OrderingBlock, string], void>();
+      nodeC.onOrderingBlock(cHandler);
+      const bHandler = vi.fn<[OrderingBlock, string], void>();
+      nodeB.onOrderingBlock(bHandler);
+
+      await nodeA.broadcastOrderingBlock(blockA);
+      await vi.waitFor(() => expect(bHandler).toHaveBeenCalledTimes(1), {
+        timeout: 10_000,
+        interval: 100,
+      });
+
+      // Second signing on the wire — different msgId, so the gossipsub seen
+      // set does not drop it; the standing memory at B does.
+      await nodeA.broadcastOrderingBlock(blockB);
+      await new Promise((r) => setTimeout(r, SETTLE_MS));
+
+      expect(cHandler).toHaveBeenCalledTimes(1);
+    },
+    TIMEOUT,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Forwarding Rule →
+//   "An ordering block is forwarded once Stage 1 passes; a transaction once this node admits it"
+// NET_INTERFACE → Inbound Processing →
+//   "A transaction is forwarded when a handler admits it"
+// NET_INTERFACE → Stage 2 → "A Stage 2 refusal records nothing"
+//
+// A tx forward past B is held unforwarded until a B handler admits it; a block
+// forward does not wait on a handler. The cases drive the line A — B — C and
+// read what reaches C's own handler.
+// ---------------------------------------------------------------------------
+
+describe('a transaction is forwarded when a handler admits it', () => {
+  const open: NetNode[] = [];
+  afterEach(async () => {
+    while (open.length > 0) {
+      const n = open.pop();
+      await n?.stop();
+    }
+  });
+  const track = (nodes: NetNode[]): void => {
+    for (const n of nodes) open.push(n);
+  };
+
+  it(
+    "a tx B's handler answers false reaches B and never C",
+    async () => {
+      const { nodeA, nodeB, nodeC } = await startLine();
+      track([nodeA, nodeB, nodeC]);
+      assertLineIntact(nodeA, nodeC);
+
+      const kp = generateKeyPair();
+      const hex = Buffer.from(kp.publicKey).toString('hex');
+      nodeA.addKarmaMember(hex);
+      nodeB.addKarmaMember(hex);
+      nodeC.addKarmaMember(hex);
+
+      const bContent: Array<string | undefined> = [];
+      const cContent: Array<string | undefined> = [];
+      nodeB.onTx((_t, c) => {
+        bContent.push(c);
+        return false;
+      });
+      nodeC.onTx((_t, c) => {
+        cContent.push(c);
+        return true;
+      });
+      const cBlocks: OrderingBlock[] = [];
+      nodeC.onOrderingBlock((b) => {
+        cBlocks.push(b);
+      });
+
+      const subject = 'false-admits-nothing';
+      const { tx, content } = makePostTxPacket(kp.publicKey, subject);
+      await nodeA.broadcastTx(tx, content);
+      await vi.waitFor(() => expect(bContent).toContain(subject), {
+        timeout: 10_000,
+        interval: 100,
+      });
+
+      // A later control block reaches C — a block's forward does not wait on a
+      // handler. The non-forward of the tx is read as the absence of the
+      // subject at C after the block has itself landed there.
+      const block = makeBlockAt(1, PROTOCOL_VERSION);
+      await nodeA.broadcastOrderingBlock(block);
+      await vi.waitFor(() => expect(cBlocks.length).toBe(1), {
+        timeout: 10_000,
+        interval: 100,
+      });
+      await new Promise((r) => setTimeout(r, SETTLE_MS));
+
+      expect(cContent).not.toContain(subject);
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "a tx B's handler answers true reaches C",
+    async () => {
+      const { nodeA, nodeB, nodeC } = await startLine();
+      track([nodeA, nodeB, nodeC]);
+      assertLineIntact(nodeA, nodeC);
+
+      const kp = generateKeyPair();
+      const hex = Buffer.from(kp.publicKey).toString('hex');
+      nodeA.addKarmaMember(hex);
+      nodeB.addKarmaMember(hex);
+      nodeC.addKarmaMember(hex);
+
+      const cDeliveries: UtxoTransaction[] = [];
+      nodeB.onTx(() => true);
+      nodeC.onTx((t) => {
+        cDeliveries.push(t);
+        return true;
+      });
+
+      const { tx, content } = makePostTxPacket(kp.publicKey, 'true-admits-forward');
+      await nodeA.broadcastTx(tx, content);
+      await vi.waitFor(() => expect(cDeliveries.length).toBe(1), {
+        timeout: 10_000,
+        interval: 100,
+      });
+      expect(cDeliveries.length).toBe(1);
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "a block whose handler at B throws still reaches C",
+    async () => {
+      const { nodeA, nodeB, nodeC } = await startLine();
+      track([nodeA, nodeB, nodeC]);
+      assertLineIntact(nodeA, nodeC);
+
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const cDeliveries: OrderingBlock[] = [];
+        nodeB.onOrderingBlock(() => {
+          throw new Error('b block handler exploded');
+        });
+        nodeC.onOrderingBlock((b) => {
+          cDeliveries.push(b);
+        });
+
+        const block = makeBlockAt(1, PROTOCOL_VERSION);
+        await nodeA.broadcastOrderingBlock(block);
+        await vi.waitFor(() => expect(cDeliveries.length).toBe(1), {
+          timeout: 10_000,
+          interval: 100,
+        });
+      } finally {
+        errSpy.mockRestore();
+      }
+    },
+    TIMEOUT,
+  );
+
+  it(
+    'two handlers at B, one false and one true, forward to C',
+    async () => {
+      const { nodeA, nodeB, nodeC } = await startLine();
+      track([nodeA, nodeB, nodeC]);
+      assertLineIntact(nodeA, nodeC);
+
+      const kp = generateKeyPair();
+      const hex = Buffer.from(kp.publicKey).toString('hex');
+      nodeA.addKarmaMember(hex);
+      nodeB.addKarmaMember(hex);
+      nodeC.addKarmaMember(hex);
+
+      nodeB.onTx(() => false);
+      nodeB.onTx(() => true);
+      const cDeliveries: UtxoTransaction[] = [];
+      nodeC.onTx((t) => {
+        cDeliveries.push(t);
+        return true;
+      });
+
+      const { tx, content } = makePostTxPacket(kp.publicKey, 'two-handlers-or-true');
+      await nodeA.broadcastTx(tx, content);
+      await vi.waitFor(() => expect(cDeliveries.length).toBe(1), {
+        timeout: 10_000,
+        interval: 100,
+      });
+      expect(cDeliveries.length).toBe(1);
+    },
+    TIMEOUT,
+  );
+
+  it(
+    'a single handler at B that throws is not forwarded, and the throw is logged',
+    async () => {
+      const { nodeA, nodeB, nodeC } = await startLine();
+      track([nodeA, nodeB, nodeC]);
+      assertLineIntact(nodeA, nodeC);
+
+      const kp = generateKeyPair();
+      const hex = Buffer.from(kp.publicKey).toString('hex');
+      nodeA.addKarmaMember(hex);
+      nodeB.addKarmaMember(hex);
+      nodeC.addKarmaMember(hex);
+
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const bContent: Array<string | undefined> = [];
+        nodeB.onTx((_t, c) => {
+          bContent.push(c);
+          throw new Error('b tx handler exploded');
+        });
+        const cContent: Array<string | undefined> = [];
+        nodeC.onTx((_t, c) => {
+          cContent.push(c);
+          return true;
+        });
+        const cBlocks: OrderingBlock[] = [];
+        nodeC.onOrderingBlock((b) => {
+          cBlocks.push(b);
+        });
+
+        const subject = 'throw-admits-nothing';
+        const { tx, content } = makePostTxPacket(kp.publicKey, subject);
+        await nodeA.broadcastTx(tx, content);
+        await vi.waitFor(() => expect(bContent).toContain(subject), {
+          timeout: 10_000,
+          interval: 100,
+        });
+
+        // A later control block reaches C — a block's forward does not wait on
+        // a handler. The non-forward of the tx is read as the absence of the
+        // subject at C after the block has itself landed there.
+        const block = makeBlockAt(1, PROTOCOL_VERSION);
+        await nodeA.broadcastOrderingBlock(block);
+        await vi.waitFor(() => expect(cBlocks.length).toBe(1), {
+          timeout: 10_000,
+          interval: 100,
+        });
+        await new Promise((r) => setTimeout(r, SETTLE_MS));
+
+        expect(cContent).not.toContain(subject);
+        expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('b tx handler exploded'));
+      } finally {
+        errSpy.mockRestore();
+      }
     },
     TIMEOUT,
   );

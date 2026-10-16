@@ -10,6 +10,7 @@ export {
   levelOfHit,
   level,
   verifyEd25519,
+  verifyTxSignatures,
   verifyValidatorSignature,
   verifyProtocolVersion,
   verifyTxProtocolVersion,

@@ -8,7 +8,10 @@ import {
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
+  verifyTxSignatures,
+  verifyHeaderFieldDomains,
   verifyOrderingBlockStructure,
+  verifyValidatorSignature,
   verifyUtxoTxRoot,
   verifyPostBody,
 } from '@dagsocial/validation';
@@ -238,7 +241,10 @@ describe('peerDbCap default (contract: soft cap 1000)', () => {
     verifyContentLimits,
     verifyParentRefsCount,
     verifyTxStructure,
+    verifyTxSignatures,
+    verifyHeaderFieldDomains,
     verifyOrderingBlockStructure,
+    verifyValidatorSignature,
     verifyUtxoTxRoot,
     verifyPostBody,
   };

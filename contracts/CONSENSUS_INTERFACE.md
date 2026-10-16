@@ -392,8 +392,9 @@ commits to its height, so no transaction id — and no box id derived from one �
 overlay, so `validateTx`, `applyTx`, `checkSettlement`, `deriveKarmaDecay` and `commitDecayClocks` run unchanged; the
 node builds `UtxoEngineDeps` over its store for admission, where `validateTx` is the pool's check, and runs no
 `applyTx` of its own. **`UtxoEngineDeps.verifySignature` is the one parameter the two builds set apart:**
-`applyBlock`'s answers from the set its body check verified (→ Applying a block); admission's is absent, and
-`validateTx` then calls `verifyEd25519` for each signer. Who must sign, and the refusal of a map key no input
+`applyBlock`'s answers from the set its body check verified (→ Applying a block); admission's is absent on the
+node's HTTP routes, where `validateTx` then calls `verifyEd25519` for each signer, and on its relay answers from
+the map net's Stage 1 verified (`NODE_INTERFACE → Relay handlers`). Who must sign, and the refusal of a map key no input
 requires, are `validateTx`'s on both paths.
 
 ## BlockEffects

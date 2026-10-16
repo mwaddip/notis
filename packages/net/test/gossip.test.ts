@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { createHash } from 'node:crypto';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { sha512 } from '@noble/hashes/sha2.js';
+import { bytesToNumberLE, numberToBytesLE } from '@noble/curves/utils.js';
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
@@ -7,24 +10,36 @@ import {
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
+  verifyTxSignatures,
+  verifyHeaderFieldDomains,
   verifyOrderingBlockStructure,
+  verifyValidatorSignature,
   verifyUtxoTxRoot,
   verifyPostBody,
+  blockHash,
 } from '@dagsocial/validation';
 import {
   generateKeyPair,
   encodeTxPacket,
   decodeTxPacket,
   computeContentHash,
+  computeTxId,
   computeUtxoTxRoot,
   ReaderError,
+  encodeHeader,
   encodeOrderingBlock,
+  encodeUtxoTxTree,
   decodeOrderingBlock,
+  hexToBytes,
+  ByteWriter,
+  writeLp,
+  writeBytesNOrThrow,
   EMPTY_STATE_ROOT,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   MAGIC_MAINNET,
   MAGIC_TESTNET,
   MAGIC_DEVNET,
+  MAX_HEADER_BYTES,
   MAX_ORDERING_BLOCK_BYTES,
   MAX_TX_PACKET_BYTES,
 } from '@dagsocial/types';
@@ -61,8 +76,11 @@ const validators: NetValidators = {
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
+  verifyTxSignatures,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
+  verifyHeaderFieldDomains,
+  verifyValidatorSignature,
   verifyPostBody,
 };
 
@@ -83,6 +101,11 @@ function makeHarness(
     penaltyScoreThreshold?: number;
     floorBits?: number;
     scheduledTargetBits?: (header: BlockHeader) => number | null;
+    // The header-standing seam (NET_INTERFACE → Sync Handler Registration).
+    headerStanding?: (hash: string, height: number) => 'held' | 'refused' | null;
+    // The clock behind the memory of accepted headers
+    // (NET_INTERFACE → Stage 1 → "A header this node knows is Ignored").
+    nowMs?: () => number;
   } = {},
 ) {
   const topicValidators = new Map<string, CapturedValidator>();
@@ -102,12 +125,14 @@ function makeHarness(
   const peerMgr = new PeerManager(config);
   subscribeTopics(stub, validators, peerMgr, {
     onOrderingBlock: () => {},
-    onTx: () => {},
+    onTx: () => false,
   }, topics, karmaMembers,
     opts.schedule ?? [{ version: 1, fromHeight: 0 }],
     opts.chainHeight ?? (() => 0),
     opts.floorBits ?? ORDERING_BLOCK_POW_TARGET_FLOOR,
-    opts.scheduledTargetBits ?? (() => null));
+    opts.scheduledTargetBits ?? (() => null),
+    opts.headerStanding ?? (() => null),
+    opts.nowMs ?? Date.now);
 
   const penaltySpy = vi.spyOn(peerMgr, 'recordPenalty');
   return { topicValidators, peerMgr, penaltySpy, karmaMembers };
@@ -142,6 +167,22 @@ function settlementBody(): UtxoTxTree {
 // constant across the fixtures of this file.
 const SETTLEMENT_ROOT = computeUtxoTxRoot(settlementBody());
 
+// The module-level validator key the fixtures carry (NET_INTERFACE → Stage 1 →
+// "A header is read before its body"). Each fixture mines a header under
+// `MODULE_VALIDATOR_KP.publicKey` and signs it with `MODULE_VALIDATOR_SEED`,
+// so the signature verifies by `verifyValidatorSignature`.
+const MODULE_VALIDATOR_KP = generateKeyPair();
+const MODULE_VALIDATOR_SEED = MODULE_VALIDATOR_KP.secretKey.subarray(16);
+
+function signHeader(header: BlockHeader): Uint8Array {
+  const hash = blockHash(header);
+  // A header outside the encodable domain has no block hash to sign — the
+  // fixtures that pin that case (powNonce NaN, height 1.5) run before the
+  // signature check, so a 64-zero stand-in is what reaches the frame.
+  if (hash === null) return new Uint8Array(64);
+  return ed25519.sign(hexToBytes(hash), MODULE_VALIDATOR_SEED);
+}
+
 // ---------------------------------------------------------------------------
 // Ordering-block topic validator — relay PoW gate (audit M-9, M-6)
 // ---------------------------------------------------------------------------
@@ -153,7 +194,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
     prevBlockHash: '11'.repeat(32),
     utxoTxRoot: SETTLEMENT_ROOT,
     stateRoot: EMPTY_STATE_ROOT,
-    validatorId: new Uint8Array(32).fill(9),
+    validatorId: MODULE_VALIDATOR_KP.publicKey,
     powNonce: 0,
     powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR, // the structure floor
     createdAt: 1_722_470_400_000,
@@ -165,8 +206,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
     return {
       header,
       utxoTxTree: settlementBody(),
-      // 64-byte dummy — Stage 1 does not verify the validator signature.
-      validatorSignature: new Uint8Array(64),
+      validatorSignature: signHeader(header),
     };
   }
 
@@ -356,12 +396,16 @@ describe('tx topic validator — the post membership gate', () => {
 
   // --- cell 2: an unknown author is dropped ---------------------------------
 
-  it('rejects the SAME post when its author is not in the set', () => {
-    const { result, peer, penaltySpy } = validatePacket(postTx, postContent, new Set());
+  // NET_INTERFACE → Stage 1 → "A refusal that rests on this node's state records nothing":
+  // the karma-membership gate reads this node's cached set, which a node behind the
+  // one that forwarded the post may not yet carry; the sender could have reached
+  // Accept running the same rules, so the Reject records no penalty.
+  it('rejects the SAME post when its author is not in the set, no penalty of any kind', () => {
+    const { result, peer, peerMgr, penaltySpy, kindSpy } = validatePacket(postTx, postContent, new Set());
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, 'post author holds no karma',
-    );
+    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).not.toHaveBeenCalled();
+    expect(peerMgr.getPeerMetadata(peer.id)!.penaltyCount).toBe(0);
   });
 
   it('rejects a post whose author is in the set under a DIFFERENT spelling', () => {
@@ -428,16 +472,16 @@ describe('tx topic validator — the post membership gate', () => {
     expect(decodeTxPacket(encodeTxPacket(postTx, postContent)).tx.post!.author.length).toBe(32);
   });
 
-  it('rejects an unsupported protocol version', () => {
-    // era at chainHeight()+1 = 0+1 = 1; the tx declares 99. A version mismatch is
-    // a compatibility signal — Transient (50), not misbehavior (100).
+  // NET_INTERFACE → Stage 1 → "A refusal that rests on this node's state records nothing":
+  // the era is `chainHeight() + 1`, which the sender behind this node reads differently;
+  // a declared-version mismatch Rejects with no penalty.
+  it('rejects an unsupported protocol version with no penalty of any kind', () => {
     const tx = { ...txWith(baseCommit(keyPair.publicKey)), protocolVersion: 99 };
-    const { result, peer, penaltySpy, kindSpy } = validatePacket(tx, postContent, new Set([authorHex]));
+    const { result, peer, peerMgr, penaltySpy, kindSpy } = validatePacket(tx, postContent, new Set([authorHex]));
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(kindSpy).toHaveBeenCalledWith(
-      PenaltyKind.Transient, peer.id, expect.stringContaining('era 1'),
-    );
     expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).not.toHaveBeenCalled();
+    expect(peerMgr.getPeerMetadata(peer.id)!.penaltyCount).toBe(0);
   });
 
   it('there is no sub-block topic to subscribe to', () => {
@@ -505,6 +549,122 @@ describe('tx topic validator — the post membership gate', () => {
 });
 
 // ---------------------------------------------------------------------------
+// NET_INTERFACE → Stage 1 → "A transaction's signatures are checked at Stage 1":
+// `verifyTxSignatures` is the last check and runs over the signature map; one
+// entry that does not verify Rejects with `misbehavior` 100.
+// ---------------------------------------------------------------------------
+
+describe("tx topic validator — a transaction's signatures are checked at Stage 1", () => {
+  const CONTENT = 'signature-check fixture';
+
+  const sigCommit = (author: Uint8Array): PostCommit => ({
+    contentHash: computeContentHash(CONTENT),
+    author,
+    parentRefs: [],
+    protocolVersion: 1,
+    type: 'regular' as const,
+  });
+
+  const sigTxTemplate = (author: Uint8Array): UtxoTransaction => ({
+    inputs: ['aa'.repeat(32)],
+    outputs: [{ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: new Uint8Array(32).fill(1) } as never],
+    signatures: {},
+    protocolVersion: 1,
+    post: sigCommit(author),
+  });
+
+  it('rejects a tx with one signature byte flipped with misbehavior 100', () => {
+    const kp = generateKeyPair();
+    const authorHex = Buffer.from(kp.publicKey).toString('hex');
+    const seed = kp.secretKey.subarray(16);
+    const tx = sigTxTemplate(kp.publicKey);
+    const message = hexToBytes(computeTxId(tx));
+    const good = ed25519.sign(message, seed);
+    const bad = new Uint8Array(good);
+    bad[0]! ^= 0x01;
+    // Controls: the good signature verifies, the flipped one does not.
+    expect(ed25519.verify(good, message, kp.publicKey, { zip215: false })).toBe(true);
+    expect(ed25519.verify(bad, message, kp.publicKey, { zip215: false })).toBe(false);
+
+    const signed: UtxoTransaction = { ...tx, signatures: { [authorHex]: bad } };
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set([authorHex]));
+    const validate = topicValidators.get(topics.tx)!;
+    const peer = newPeer(peerMgr);
+    const result = validate(peer, { data: encodeTxPacket(signed, CONTENT) });
+
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).toHaveBeenCalledWith(
+      'misbehavior', peer.id, 100, expect.stringContaining('signature'),
+    );
+  });
+
+  it('accepts a post whose single signature verifies (control)', () => {
+    const kp = generateKeyPair();
+    const authorHex = Buffer.from(kp.publicKey).toString('hex');
+    const seed = kp.secretKey.subarray(16);
+    const tx = sigTxTemplate(kp.publicKey);
+    const message = hexToBytes(computeTxId(tx));
+    const good = ed25519.sign(message, seed);
+    expect(ed25519.verify(good, message, kp.publicKey, { zip215: false })).toBe(true);
+
+    const signed: UtxoTransaction = { ...tx, signatures: { [authorHex]: good } };
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set([authorHex]));
+    const validate = topicValidators.get(topics.tx)!;
+    const peer = newPeer(peerMgr);
+    const result = validate(peer, { data: encodeTxPacket(signed, CONTENT) });
+
+    expect(result).toBe(TopicValidatorResult.Accept);
+    expect(penaltySpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Stage 1 → "A fault of this node's is no peer's": a throw
+// outside the decode is this node's and is logged, the message Ignored, no
+// penalty.
+// ---------------------------------------------------------------------------
+
+describe("tx topic validator — a fault of this node's is no peer's", () => {
+  const CONTENT = 'chain-height fixture';
+
+  it("a chainHeight() throw is Ignored with no penalty and one console.error line", () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const kp = generateKeyPair();
+      const authorHex = Buffer.from(kp.publicKey).toString('hex');
+      const commit: PostCommit = {
+        contentHash: computeContentHash(CONTENT),
+        author: kp.publicKey,
+        parentRefs: [],
+        protocolVersion: 1,
+        type: 'regular' as const,
+      };
+      const tx: UtxoTransaction = {
+        inputs: ['aa'.repeat(32)],
+        outputs: [{ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: new Uint8Array(32).fill(1) } as never],
+        signatures: {},
+        protocolVersion: 1,
+        post: commit,
+      };
+      const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set([authorHex]), {
+        chainHeight: () => { throw new Error('chain height explosion'); },
+      });
+      const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+      const validate = topicValidators.get(topics.tx)!;
+      const peer = newPeer(peerMgr);
+      const result = validate(peer, { data: encodeTxPacket(tx, CONTENT) });
+
+      expect(result).toBe(TopicValidatorResult.Ignore);
+      expect(penaltySpy).not.toHaveBeenCalled();
+      expect(kindSpy).not.toHaveBeenCalled();
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('chain height explosion'));
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Dispatch listener — decode failure and handler throw, contained separately
 //
 // The `gossipsub:message` listener gives each its own span and logs both: a
@@ -527,7 +687,8 @@ const RELAY_PEER = 'peer-that-relayed-it';
 
 function makeDispatchHarness(handlers: {
   onOrderingBlock?: (block: OrderingBlock, fromPeerId: string) => void;
-  onTx?: (tx: unknown, content: string | undefined, fromPeerId: string) => void;
+  onTx?: (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => boolean;
+  reportMessageValidationResult?: (msgId: string, propagationSource: string, acceptance: TopicValidatorResult) => void;
 } = {}) {
   let listener: GossipListener | null = null;
   const stub = {
@@ -549,7 +710,7 @@ function makeDispatchHarness(handlers: {
     peerMgr,
     {
       onOrderingBlock: handlers.onOrderingBlock ?? (() => {}),
-      onTx: handlers.onTx ?? (() => {}),
+      onTx: handlers.onTx ?? (() => false),
     },
     topics,
     new Set<string>(),
@@ -688,7 +849,7 @@ describe('gossip dispatch listener', () => {
       protocolVersion: 1,
     };
     const seen: string[] = [];
-    const { deliver } = makeDispatchHarness({ onTx: (_tx, _content, from) => seen.push(from) });
+    const { deliver } = makeDispatchHarness({ onTx: (_tx, _content, from) => { seen.push(from); return true; } });
 
     deliver(topics.tx, encodeTxPacket(plainTx));
 
@@ -703,7 +864,7 @@ describe('gossip dispatch listener', () => {
       protocolVersion: 1,
     };
     const seen: string[] = [];
-    const { deliver } = makeDispatchHarness({ onTx: (_tx, _content, from) => seen.push(from) });
+    const { deliver } = makeDispatchHarness({ onTx: (_tx, _content, from) => { seen.push(from); return true; } });
 
     deliver(topics.tx, encodeTxPacket(plainTx), null);
 
@@ -834,20 +995,24 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
     expect(penaltySpy).not.toHaveBeenCalled();
   });
 
-  it('rejects a tx declaring era 1 when chainHeight()+1 = H (era 2)', () => {
-    const { result, peer, penaltySpy, kindSpy } = runTx(plainTxV(1), undefined, H - 1);
+  // NET_INTERFACE → Stage 1 → "A refusal that rests on this node's state records nothing":
+  // a tx declared-version mismatch Rejects with no penalty.
+  it('rejects a tx declaring era 1 when chainHeight()+1 = H (era 2), no penalty', () => {
+    const { result, peer, peerMgr, penaltySpy, kindSpy } = runTx(plainTxV(1), undefined, H - 1);
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(kindSpy).toHaveBeenCalledWith(PenaltyKind.Transient, peer.id, expect.stringContaining('era 2'));
     expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).not.toHaveBeenCalled();
+    expect(peerMgr.getPeerMetadata(peer.id)!.penaltyCount).toBe(0);
   });
 
-  it('rejects a tx whose commit declares a different era than its envelope', () => {
+  it('rejects a tx whose commit declares a different era than its envelope, no penalty', () => {
     // The envelope declares era 2 (matches), the commit declares 1 — both must
     // equal the era, so the commit alone fails it.
-    const { result, peer, penaltySpy, kindSpy } = runTx(postTxV(2, 1), CONTENT, H - 1);
+    const { result, peer, peerMgr, penaltySpy, kindSpy } = runTx(postTxV(2, 1), CONTENT, H - 1);
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(kindSpy).toHaveBeenCalledWith(PenaltyKind.Transient, peer.id, expect.stringContaining('commit 1'));
     expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).not.toHaveBeenCalled();
+    expect(peerMgr.getPeerMetadata(peer.id)!.penaltyCount).toBe(0);
   });
 
   it('a mismatch accrues 50, not 100: one hit under threshold 75 does not ban, two do', () => {
@@ -872,13 +1037,30 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
   });
 
   it('a structurally invalid block is still misbehavior (100), not Transient', () => {
-    // The tier split holds only for the version step: a bad body keeps its tier.
+    // The tier split holds only for the version check: a bad body keeps its
+    // tier. The input reaches the structure check only once version, floor,
+    // PoW and the validator signature stand (NET_INTERFACE → Stage 1); the
+    // header below carries a matching version, is mined and signed, and the
+    // empty body is what the structure check refuses.
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), { schedule: twoEra });
     const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
-    // An empty utxoTxTree is a structural failure ahead of the version step
-    // (every block carries at least the settlement tx).
-    const bad: OrderingBlock = { ...vBlock(7, 1), utxoTxTree: { utxoTxIds: [], utxoTxs: [] } };
+    const emptyTree: UtxoTxTree = { utxoTxIds: [], utxoTxs: [] };
+    const baseInvalid: BlockHeader = {
+      ...vHeader(1, 1),
+      utxoTxRoot: computeUtxoTxRoot(emptyTree),
+      validatorId: MODULE_VALIDATOR_KP.publicKey,
+    };
+    let minedHeader = baseInvalid;
+    for (let n = 0; n < 2_000_000; n++) {
+      const candidate = { ...baseInvalid, powNonce: n };
+      if (verifyOrderingBlockPoW(candidate)) { minedHeader = candidate; break; }
+    }
+    const bad: OrderingBlock = {
+      header: minedHeader,
+      utxoTxTree: emptyTree,
+      validatorSignature: signHeader(minedHeader),
+    };
 
     const result = validate(peer, { data: encodeOrderingBlock(bad) });
 
@@ -901,7 +1083,7 @@ describe('ordering-block topic validator — network floor and schedule', () => 
     prevBlockHash: '11'.repeat(32),
     utxoTxRoot: SETTLEMENT_ROOT,
     stateRoot: EMPTY_STATE_ROOT,
-    validatorId: new Uint8Array(32).fill(9),
+    validatorId: MODULE_VALIDATOR_KP.publicKey,
     powNonce: 0,
     powTargetBits: NETWORK_FLOOR,
     createdAt: 1_722_470_400_000,
@@ -913,7 +1095,7 @@ describe('ordering-block topic validator — network floor and schedule', () => 
     return {
       header,
       utxoTxTree: settlementBody(),
-      validatorSignature: new Uint8Array(64),
+      validatorSignature: signHeader(header),
     };
   }
 
@@ -1032,20 +1214,31 @@ describe('ordering-block topic validator — network floor and schedule', () => 
     });
     const validate = topicValidators.get(topics.orderingBlock)!;
 
-    const block = makeBlock({ ...baseHeader, powNonce: minedNonce });
-    const data = encodeOrderingBlock(block);
+    // Three distinct headers — one block per call so the seen-window memory
+    // (NET_INTERFACE → Stage 1 → "A header this node knows is Ignored") sees
+    // each hash afresh and the provider's reading is what the result reads.
+    const mineAt = (createdAt: number): OrderingBlock => {
+      for (let n = 0; n < 2_000_000; n++) {
+        const candidate = { ...baseHeader, createdAt, powNonce: n };
+        if (verifyOrderingBlockPoW(candidate)) return makeBlock(candidate);
+      }
+      throw new Error('late-bound closure fixture: PoW search exhausted');
+    };
+    const dataA = encodeOrderingBlock(mineAt(1_722_470_401_000));
+    const dataB = encodeOrderingBlock(mineAt(1_722_470_402_000));
+    const dataC = encodeOrderingBlock(mineAt(1_722_470_403_000));
 
     // No provider → Accept
-    expect(validate(newPeer(peerMgr), { data })).toBe(TopicValidatorResult.Accept);
+    expect(validate(newPeer(peerMgr), { data: dataA })).toBe(TopicValidatorResult.Accept);
 
     // Set a provider that disagrees → Reject, no penalty
     provider = () => NETWORK_FLOOR + 100;
-    expect(validate(newPeer(peerMgr), { data })).toBe(TopicValidatorResult.Reject);
+    expect(validate(newPeer(peerMgr), { data: dataB })).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).not.toHaveBeenCalled();
 
     // Set a provider that agrees → Accept
     provider = () => NETWORK_FLOOR;
-    expect(validate(newPeer(peerMgr), { data })).toBe(TopicValidatorResult.Accept);
+    expect(validate(newPeer(peerMgr), { data: dataC })).toBe(TopicValidatorResult.Accept);
   });
 });
 
@@ -1261,4 +1454,349 @@ describe('gossip topic validators weigh raw.length before decoding', () => {
       }
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Stage 1 — the header is read before the body, the standing
+// check Ignores a header this node knows, the validator signature is Rejected
+// with misbehavior when it does not verify, and a throw outside the decode is
+// this node's fault alone.
+// ---------------------------------------------------------------------------
+
+// NET_INTERFACE → Stage 1 → "A header this node knows is Ignored" —
+// `GOSSIP_SEEN_WINDOW_MS` from acceptance holds the memory of accepted
+// headers. The clock below is the one `makeHarness` injects as `nowMs`.
+const Point = ed25519.Point;
+const Fn = Point.Fn;
+
+// A second valid signing of the SAME message under a FRESH nonce — Ed25519
+// is deterministic only through its own nonce derivation, so `ed25519.sign`
+// cannot produce a second signing of one message by one key. Building it by
+// hand (R = r·B, S = r + k·a mod L; k = SHA-512(R ‖ A ‖ M) mod L) yields a
+// signature verifiable by `verifyValidatorSignature`.
+function altSign(seed: Uint8Array, publicKey: Uint8Array, message: Uint8Array, nonceSeed: Uint8Array): Uint8Array {
+  const h = sha512(seed);
+  // RFC 8032 clamping — the secret scalar is derived from SHA-512(seed)[0..32].
+  const scalarBytes = new Uint8Array(h.subarray(0, 32));
+  scalarBytes[0]! &= 248;
+  scalarBytes[31]! &= 127;
+  scalarBytes[31]! |= 64;
+  const a = Fn.create(bytesToNumberLE(scalarBytes));
+  const r = Fn.create(bytesToNumberLE(sha512(nonceSeed)));
+  const R = Point.BASE.multiply(r);
+  const REncoded = R.toBytes();
+  const chal = new Uint8Array(64 + message.length);
+  chal.set(REncoded, 0);
+  chal.set(publicKey, 32);
+  chal.set(message, 64);
+  const k = Fn.create(bytesToNumberLE(sha512(chal)));
+  const S = Fn.create(r + k * a);
+  const sig = new Uint8Array(64);
+  sig.set(REncoded, 0);
+  sig.set(numberToBytesLE(S, 32), 32);
+  return sig;
+}
+
+// The three sections together, with no body decode run — the writer
+// `encodeOrderingBlock` runs over an `OrderingBlock`, so bytes of a body that
+// does not decode cannot ride that path. The frame is the one
+// `readOrderingBlockSections` reads.
+function assembleFrame(header: BlockHeader, bodyBytes: Uint8Array, signature: Uint8Array): Uint8Array {
+  const w = new ByteWriter();
+  writeLp(w, encodeHeader(header));
+  writeLp(w, bodyBytes);
+  writeBytesNOrThrow(w, signature, 64);
+  return w.toBytes();
+}
+
+describe('ordering-block topic validator — Stage 1 reads the header first', () => {
+  let validatorSeed: Uint8Array;
+  let validatorKp: ReturnType<typeof generateKeyPair>;
+  let baseHeader: BlockHeader;
+  let bodyTree: UtxoTxTree;
+
+  // One mined block fixture per describe — the search is a one-off, so compute
+  // once in `beforeAll` and derive each case's variant from it.
+  let minedHeader: BlockHeader;
+  let minedBodyBytes: Uint8Array;
+  let minedSignature: Uint8Array;
+  let minedHash: string;
+
+  beforeAll(() => {
+    validatorKp = generateKeyPair();
+    validatorSeed = validatorKp.secretKey.subarray(16);  // PKCS8 prefix is 16 bytes
+    bodyTree = {
+      utxoTxIds: ['7a'.repeat(32)],
+      utxoTxs: [new Uint8Array(96).fill(0x7a)],
+    };
+    baseHeader = {
+      protocolVersion: 1,
+      height: 11,
+      prevBlockHash: '22'.repeat(32),
+      utxoTxRoot: computeUtxoTxRoot(bodyTree),
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: validatorKp.publicKey,
+      powNonce: 0,
+      powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+      createdAt: 1_722_470_400_000,
+      interlinkRoot: '00'.repeat(32),
+      adProofsRoot: '00'.repeat(32),
+    };
+    for (let n = 0; n < 2_000_000; n++) {
+      const candidate = { ...baseHeader, powNonce: n };
+      if (verifyOrderingBlockPoW(candidate)) {
+        minedHeader = candidate;
+        break;
+      }
+    }
+    if (minedHeader === undefined) throw new Error('PoW search exhausted');
+    const message = hexToBytes(blockHash(minedHeader)!);
+    minedSignature = ed25519.sign(message, validatorSeed);
+    // Control — the deterministic signing verifies by the same function the
+    // block validator reads.
+    expect(verifyValidatorSignature(minedHeader, minedSignature)).toBe(true);
+    minedBodyBytes = encodeOrderingBlock({
+      header: minedHeader,
+      utxoTxTree: bodyTree,
+      validatorSignature: minedSignature,
+    });  // round-trip control: the fixture does decode
+    expect(() => decodeOrderingBlock(minedBodyBytes)).not.toThrow();
+    minedHash = blockHash(minedHeader)!;
+  });
+
+  // Bytes that do not decode as a `UtxoTxTree`: an array count of 1 but zero
+  // bytes to read for its first element. Reach the body section through the
+  // frame assembly rather than `encodeOrderingBlock` — a struct writer refuses
+  // its own invalid inputs.
+  function undecodableBodyBytes(): Uint8Array {
+    return new Uint8Array([0x01]);
+  }
+
+  function minedTree(): UtxoTxTree {
+    return { utxoTxIds: bodyTree.utxoTxIds, utxoTxs: bodyTree.utxoTxs };
+  }
+
+  function mineUnderValidator(h: BlockHeader): BlockHeader {
+    for (let n = 0; n < 2_000_000; n++) {
+      const candidate = { ...h, powNonce: n };
+      if (verifyOrderingBlockPoW(candidate)) return candidate;
+    }
+    throw new Error('PoW search exhausted');
+  }
+
+  it('a header the standing provider answers held is Ignored, no penalty', () => {
+    const bodyBytes = undecodableBodyBytes();
+    const bytes = assembleFrame(minedHeader, bodyBytes, minedSignature);
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
+      headerStanding: () => 'held',
+    });
+    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const validate = topicValidators.get(topics.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+
+    const result = validate(peer, { data: bytes });
+
+    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).not.toHaveBeenCalled();
+    expect(result).toBe(TopicValidatorResult.Ignore);
+  });
+
+  it('a header the standing provider answers refused is Ignored, no penalty', () => {
+    const bodyBytes = undecodableBodyBytes();
+    const bytes = assembleFrame(minedHeader, bodyBytes, minedSignature);
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
+      headerStanding: () => 'refused',
+    });
+    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const validate = topicValidators.get(topics.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+
+    const result = validate(peer, { data: bytes });
+
+    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).not.toHaveBeenCalled();
+    expect(result).toBe(TopicValidatorResult.Ignore);
+  });
+
+  it('a second valid signing of one header is Ignored inside the window and Accepted past it', () => {
+    const message = hexToBytes(minedHash);
+    const sigA = altSign(validatorSeed, validatorKp.publicKey, message, sha512(new Uint8Array([0x01])));
+    const sigB = altSign(validatorSeed, validatorKp.publicKey, message, sha512(new Uint8Array([0x02])));
+    // Controls — both signings verify by the same `verifyValidatorSignature`
+    // the block validator reads, and they are distinct bytes.
+    expect(verifyValidatorSignature(minedHeader, sigA)).toBe(true);
+    expect(verifyValidatorSignature(minedHeader, sigB)).toBe(true);
+    expect(Array.from(sigA)).not.toEqual(Array.from(sigB));
+
+    let now = 1_000_000;
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
+      nowMs: () => now,
+    });
+    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const validate = topicValidators.get(topics.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+
+    const first = validate(peer, { data: assembleFrame(minedHeader, encodeFrameBody(minedTree()), sigA) });
+    expect(first).toBe(TopicValidatorResult.Accept);
+
+    // Half a window later — well inside the seen window.
+    now += Math.floor(GOSSIP_SEEN_WINDOW_MS / 2);
+    const second = validate(peer, { data: assembleFrame(minedHeader, encodeFrameBody(minedTree()), sigB) });
+    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).not.toHaveBeenCalled();
+    expect(second).toBe(TopicValidatorResult.Ignore);
+
+    // Past the window from the first acceptance — the memory is empty, so the
+    // second signing's bytes reach the Accept path.
+    now += GOSSIP_SEEN_WINDOW_MS;
+    const third = validate(peer, { data: assembleFrame(minedHeader, encodeFrameBody(minedTree()), sigB) });
+    expect(third).toBe(TopicValidatorResult.Accept);
+  });
+
+  it('a worked header whose validator signature does not verify is Rejected with misbehavior 100', () => {
+    const corrupted = new Uint8Array(minedSignature);
+    corrupted[0]! ^= 0x01;
+    expect(verifyValidatorSignature(minedHeader, corrupted)).toBe(false);
+
+    const bytes = assembleFrame(minedHeader, encodeFrameBody(minedTree()), corrupted);
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness();
+    const validate = topicValidators.get(topics.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+
+    const result = validate(peer, { data: bytes });
+
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).toHaveBeenCalledWith(
+      'misbehavior', peer.id, 100, expect.stringContaining('validator signature'),
+    );
+  });
+
+  it('a PoW-failing header carrying an undecodable body records the PoW reason, not a body decode one', () => {
+    const unmined: BlockHeader = { ...minedHeader, powNonce: minedHeader.powNonce + 1 };
+    // Rule out a lucky second nonce — the whole point of this case is the PoW
+    // failing before the body is read.
+    expect(verifyOrderingBlockPoW(unmined)).toBe(false);
+    const signature = ed25519.sign(hexToBytes(blockHash(unmined)!), validatorSeed);
+    const bytes = assembleFrame(unmined, undecodableBodyBytes(), signature);
+
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness();
+    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const validate = topicValidators.get(topics.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+
+    const result = validate(peer, { data: bytes });
+
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(kindSpy).not.toHaveBeenCalled();
+    expect(penaltySpy).toHaveBeenCalledWith(
+      'misbehavior', peer.id, 100, 'ordering block PoW invalid',
+    );
+  });
+
+  it('a header section that does not read records a header decode reason', () => {
+    // A header length prefix past MAX_HEADER_BYTES refuses before any header
+    // byte is read (TYPES_INTERFACE → Layout — Block).
+    const w = new ByteWriter();
+    // vlqU of MAX_HEADER_BYTES + 1 — one byte if the number fits in 7 bits,
+    // which 234 does not. 234 as vlqU is two bytes: 0xea 0x01.
+    const over = MAX_HEADER_BYTES + 1;
+    expect(over).toBeGreaterThan(127);
+    // Write a vlqU of `over` by hand so the fixture does not sneak through
+    // a struct writer.
+    const vlqBytes: number[] = [];
+    let value = over;
+    while (value >= 128) {
+      vlqBytes.push((value & 0x7f) | 0x80);
+      value >>>= 7;
+    }
+    vlqBytes.push(value);
+    // Followed by no bytes — the reader throws before any header byte reads.
+    for (const b of vlqBytes) w.writeU8(b);
+    const bytes = w.toBytes();
+
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness();
+    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const validate = topicValidators.get(topics.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+
+    const result = validate(peer, { data: bytes });
+
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).toHaveBeenCalledWith(
+      PenaltyKind.ProtocolViolation,
+      peer.id,
+      expect.stringContaining('ordering block header'),
+    );
+  });
+
+  it('a valid worked signed header with a body that does not decode records a body decode reason', () => {
+    const bytes = assembleFrame(minedHeader, undecodableBodyBytes(), minedSignature);
+
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness();
+    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const validate = topicValidators.get(topics.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+
+    const result = validate(peer, { data: bytes });
+
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).toHaveBeenCalledWith(
+      PenaltyKind.ProtocolViolation,
+      peer.id,
+      expect.stringContaining('ordering block body'),
+    );
+  });
+
+  it('a scheduled-target provider that throws records no penalty and logs', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const bytes = assembleFrame(minedHeader, encodeFrameBody(minedTree()), minedSignature);
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
+      scheduledTargetBits: () => {
+        throw new Error('provider explosion');
+      },
+    });
+    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const validate = topicValidators.get(topics.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+
+    const result = validate(peer, { data: bytes });
+
+    expect(result).toBe(TopicValidatorResult.Ignore);
+    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('provider explosion'));
+    errSpy.mockRestore();
+  });
+
+  it('a header-standing provider that throws records no penalty and logs', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const bytes = assembleFrame(minedHeader, encodeFrameBody(minedTree()), minedSignature);
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
+      headerStanding: () => {
+        throw new Error('standing provider explosion');
+      },
+    });
+    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const validate = topicValidators.get(topics.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+
+    const result = validate(peer, { data: bytes });
+
+    expect(result).toBe(TopicValidatorResult.Ignore);
+    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('standing provider explosion'));
+    errSpy.mockRestore();
+  });
+
+  // The honest body bytes written to the frame — the fixture's tree so the
+  // mined header's root agrees.
+  function encodeFrameBody(tree: UtxoTxTree): Uint8Array {
+    return encodeUtxoTxTree(tree);
+  }
+  // A non-dead reference so the surrounding helpers keep their intent visible
+  // even where only the mined fixture is reached.
+  void mineUnderValidator;
 });

@@ -215,7 +215,8 @@ reason `'target'`). **Relay asks the same question once, ahead of apply**, for a
 parent the receiving node holds: the ordering-block topic validator reads the scheduled target through
 node's provider and refuses to forward a header whose bits differ — no penalty, since the previous hop
 may lack the parent, and the block never reaches the funnel; a header whose parent the node lacks is
-forwarded on the network's floor and its own PoW alone (`NET_INTERFACE → Stage 1`).
+judged without it — on the network's floor, its own PoW and Stage 1's other checks (`NET_INTERFACE →
+Stage 1`).
 
 ### Header timestamp rules
 
