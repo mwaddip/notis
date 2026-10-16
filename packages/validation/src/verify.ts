@@ -534,7 +534,7 @@ export function verifyEd25519(signature: Uint8Array, message: Uint8Array, public
  * `computeTxId(tx)` and the entry's key, and the function answers what the
  * batch answers (VALIDATION_INTERFACE → verifyTxSignatures). The empty map
  * reaches the batch's `n === 0 → true` branch after `computeTxId` has run
- * (VALIDATION_INTERFACE → verifyEd25519Batch → "The empty batch is `true`").
+ * (VALIDATION_INTERFACE → verifyEd25519Batch).
  *
  * Stateless: no input box is read and no claim is made about who must sign —
  * that is `validateTx`'s half of authorization

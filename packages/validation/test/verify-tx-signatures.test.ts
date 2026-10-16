@@ -77,9 +77,10 @@ describe('verifyTxSignatures — passing maps', () => {
   });
 
   it('the empty map answers true', () => {
-    // VALIDATION_INTERFACE → verifyTxSignatures → "The empty map answers
-    // `true`" — matching VALIDATION_INTERFACE → verifyEd25519Batch → "The
-    // empty batch is `true`, and a batch of one is `verifyEd25519` itself".
+    // The behaviour comes from VALIDATION_INTERFACE → verifyEd25519Batch →
+    // "The empty batch is `true`, and a batch of one is `verifyEd25519`
+    // itself" — the function answers what the batch answers over the map
+    // (VALIDATION_INTERFACE → verifyTxSignatures).
     expect(verifyTxSignatures(baseTx())).toBe(true);
   });
 });
