@@ -164,6 +164,7 @@ export type { NetworkRecord } from './identity-records.js';
 export {
   insertRefusedHeader,
   anyRefusedHeader,
+  headerStanding,
   purgeRefusedHeaders,
 } from './refused-headers.js';
 

@@ -43,6 +43,7 @@ import {
   getOrderingBlockHash,
   getHeightByBlockHash,
   getHeaderAt,
+  headerStanding,
   peerStorage,
   getKarmaOwners,
 } from './store/index.js';
@@ -203,6 +204,10 @@ net.setChainHeightProvider(getCurrentHeight);
 // read decodes no row, so there is nothing for failStopIfCorruptChain to promote.
 net.setBlockIdProvider(getOrderingBlockHash);
 net.setHeightByBlockIdProvider(getHeightByBlockHash);
+
+// NODE_INTERFACE → Sync handlers → `setHeaderStandingProvider`: `'held'`,
+// `'refused'` or `null` — two point reads, handed over unwrapped.
+net.setHeaderStandingProvider(headerStanding);
 
 // The seam the net layer serves a stored body through — what a served
 // `MODIFIER_POST_BODY` response carries (NET_INTERFACE → Sync Handler

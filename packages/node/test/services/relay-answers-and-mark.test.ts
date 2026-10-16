@@ -349,7 +349,7 @@ describe('a consensus refusal marks the header, nothing else does', () => {
     vi.resetModules();
   });
 
-  it.fails(
+  it(
     'a bound-body consensus refusal marks the header, and a second delivery is a no-op',
     async () => {
       await initChainStore();
@@ -466,7 +466,7 @@ describe('headerStanding answers from the store', () => {
     vi.resetModules();
   });
 
-  it.fails(
+  it(
     'held for a stored block, refused for a marked hash, null otherwise',
     async () => {
       await initChainStore();
