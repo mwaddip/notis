@@ -119,7 +119,9 @@ const stubValidators: NetValidators = {
   verifyContentLimits: () => ({ valid: true }),
   verifyParentRefsCount: () => ({ valid: true }),
   verifyTxStructure: () => ({ valid: true }),
+  verifyHeaderFieldDomains: () => ({ valid: true }),
   verifyOrderingBlockStructure: () => ({ valid: true }),
+  verifyValidatorSignature: () => true,
   verifyUtxoTxRoot: () => true,
   verifyPostBody: () => ({ valid: true }),
 };

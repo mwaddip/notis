@@ -21,6 +21,8 @@ import {
   verifyTxStructure,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
+  verifyHeaderFieldDomains,
+  verifyValidatorSignature,
   verifyPostBody,
 } from '@dagsocial/validation';
 import { SYNC_PROTOCOL } from '../src/sync.js';
@@ -830,6 +832,8 @@ const registrationValidators: NetValidators = {
   verifyTxStructure,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
+  verifyHeaderFieldDomains,
+  verifyValidatorSignature,
   verifyPostBody,
 };
 

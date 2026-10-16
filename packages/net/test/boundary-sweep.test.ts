@@ -8,6 +8,8 @@ import {
   verifyTxStructure,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
+  verifyHeaderFieldDomains,
+  verifyValidatorSignature,
   verifyPostBody,
 } from '@dagsocial/validation';
 import type { ProtocolEra } from '@dagsocial/types';
@@ -39,6 +41,8 @@ const validators: NetValidators = {
   verifyTxStructure,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
+  verifyHeaderFieldDomains,
+  verifyValidatorSignature,
   verifyPostBody,
 };
 

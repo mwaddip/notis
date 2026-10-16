@@ -9,6 +9,8 @@ import {
   verifyTxStructure,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
+  verifyHeaderFieldDomains,
+  verifyValidatorSignature,
   verifyPostBody,
 } from '@dagsocial/validation';
 import {
@@ -46,6 +48,8 @@ const validators: NetValidators = {
   verifyTxStructure,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
+  verifyHeaderFieldDomains,
+  verifyValidatorSignature,
   verifyPostBody,
 };
 

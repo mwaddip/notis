@@ -584,6 +584,8 @@ export class NetNode {
   private peerPenalisedHandlers: Array<(peerId: string, kind: string, detail: string | null) => void> = [];
   // NET_INTERFACE → Sync Handler Registration
   private scheduledTargetProvider: ((header: BlockHeader) => number | null) | null = null;
+  // NET_INTERFACE → Sync Handler Registration → setHeaderStandingProvider
+  private headerStandingProvider: ((hash: string, height: number) => 'held' | 'refused' | null) | null = null;
   // NET_INTERFACE → Sync Handler Registration: post body seams
   private postBodyProvider: ((postId: string) => string | null) | null = null;
   private pendingDials: Set<string> = new Set();
@@ -826,6 +828,7 @@ export class NetNode {
         () => this.syncStore.chainHeight(),
         this.config.orderingBlockPowTargetFloorBits,
         (header) => this.scheduledTargetProvider?.(header) ?? null,
+        (hash, height) => this.headerStandingProvider?.(hash, height) ?? null,
       );
 
       // Log listen addresses
@@ -1779,6 +1782,18 @@ export class NetNode {
   // NET_INTERFACE → Sync Handler Registration
   setScheduledTargetProvider(cb: (header: BlockHeader) => number | null): void {
     this.scheduledTargetProvider = cb;
+  }
+
+  // NET_INTERFACE → Sync Handler Registration → setHeaderStandingProvider.
+  // The ordering-block topic validator reads it on each header, before the
+  // body is decoded (NET_INTERFACE → Stage 1 → "A header this node knows is
+  // Ignored"). Held like the scheduled-target provider — the validator closed
+  // over this NetNode at `subscribeTopics` time and reads the field at call
+  // time, so a late set takes effect without re-registering.
+  setHeaderStandingProvider(
+    cb: (hash: string, height: number) => 'held' | 'refused' | null,
+  ): void {
+    this.headerStandingProvider = cb;
   }
 
   setPostBodyProvider(cb: (postId: string) => string | null): void {

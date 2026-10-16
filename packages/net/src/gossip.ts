@@ -2,15 +2,18 @@ import {
   ByteWriter,
   decodeOrderingBlock,
   decodeTxPacket,
+  decodeUtxoTxTree,
   encodeOrderingBlock,
   encodeTxPacket,
   hash32,
   MAX_ORDERING_BLOCK_BYTES,
   MAX_TX_PACKET_BYTES,
   protocolVersionAt,
+  readOrderingBlockSections,
   writeLpUtf8,
 } from '@dagsocial/types';
-import type { OrderingBlock, UtxoTransaction, BlockHeader, ProtocolEra } from '@dagsocial/types';
+import { blockHash } from '@dagsocial/validation';
+import type { OrderingBlock, UtxoTransaction, BlockHeader, ProtocolEra, UtxoTxTree } from '@dagsocial/types';
 import { TopicValidatorResult } from '@libp2p/interface';
 import type { PubSub } from '@libp2p/interface';
 import type { GossipsubEvents } from '@chainsafe/libp2p-gossipsub';
@@ -146,13 +149,13 @@ export function subscribeTopics(
   // NET_INTERFACE → Sync Handler Registration → setHeaderStandingProvider
   // (NET_INTERFACE → Stage 1 → "A header this node knows is Ignored"). A
   // provider that is not passed is read as `() => null`, every header judged
-  // as one this node does not know. The leading `_` marks it reserved by the
-  // signature pending the block validator's standing check.
-  _headerStanding: (hash: string, height: number) => 'held' | 'refused' | null = () => null,
-  // The clock the memory of accepted headers reads
+  // as one this node does not know; net's own memory of accepted headers
+  // stands either way.
+  headerStanding: (hash: string, height: number) => 'held' | 'refused' | null = () => null,
+  // The clock behind the memory of accepted headers
   // (NET_INTERFACE → Stage 1 → "A header this node knows is Ignored"). Tests
-  // drive it; production reads `Date.now()`. Reserved as `_headerStanding`.
-  _nowMs: () => number = Date.now,
+  // drive it; production reads `Date.now()`.
+  nowMs: () => number = Date.now,
 ): void {
   const gs = libp2p.services.pubsub;
 
@@ -161,83 +164,142 @@ export function subscribeTopics(
   // messages are rejected at this layer and never propagated further.
   // -------------------------------------------------------------------------
 
+  // NET_INTERFACE → Stage 1 → "A header this node knows is Ignored". The
+  // memory holds an accepted header's hash with its acceptance time; a stale
+  // entry is pruned at the next Accept so nothing survives past the window.
+  const seenAccepted = new Map<string, number>();
+
   gs.topicValidators.set(topics.orderingBlock, (_peer, msg) => {
+    const peerId = _peer.toString();
+    const raw = new Uint8Array(msg.data);
+    // NET_INTERFACE → Validation (and untrusted-input safety) →
+    // "A peer's bytes are weighed before they are decoded"
+    if (raw.length > MAX_ORDERING_BLOCK_BYTES) {
+      peerMgr.recordPenaltyKind(
+        PenaltyKind.ProtocolViolation,
+        peerId,
+        `ordering block ${raw.length} bytes exceeds MAX_ORDERING_BLOCK_BYTES (${MAX_ORDERING_BLOCK_BYTES})`,
+      );
+      return TopicValidatorResult.Reject;
+    }
+    // NET_INTERFACE → Stage 1 → "A header is read before its body".
+    // The sections read is the one throw ProtocolViolation covers at this
+    // boundary; the body section's own decode runs separately below.
+    let sections: ReturnType<typeof readOrderingBlockSections>;
     try {
-      const raw = new Uint8Array(msg.data);
-      // NET_INTERFACE → Validation (and untrusted-input safety) →
-      // "A peer's bytes are weighed before they are decoded"
-      if (raw.length > MAX_ORDERING_BLOCK_BYTES) {
-        peerMgr.recordPenaltyKind(
-          PenaltyKind.ProtocolViolation,
-          _peer.toString(),
-          `ordering block ${raw.length} bytes exceeds MAX_ORDERING_BLOCK_BYTES (${MAX_ORDERING_BLOCK_BYTES})`,
-        );
+      sections = readOrderingBlockSections(raw);
+    } catch (err) {
+      peerMgr.recordPenaltyKind(
+        PenaltyKind.ProtocolViolation,
+        peerId,
+        `malformed ordering block header: ${String(err)}`,
+      );
+      return TopicValidatorResult.Reject;
+    }
+    const { header, utxoTxTreeBytes, validatorSignature } = sections;
+
+    // NET_INTERFACE → Stage 1 → "A fault of this node's is no peer's".
+    // Everything below is header-only or body-decoded by this function; a
+    // throw here is a provider's or this node's chain, logged and Ignored.
+    try {
+      const domains = validators.verifyHeaderFieldDomains(header);
+      if (!domains.valid) {
+        peerMgr.recordPenalty('misbehavior', peerId, 100, domains.error ?? 'invalid ordering block header');
         return TopicValidatorResult.Reject;
       }
-      const block = decodeOrderingBlock(raw);
-      const vr = validators.verifyOrderingBlockStructure(block);
-      if (!vr.valid) {
-        // Bogus — well-formed message with invalid content.
-        peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, vr.error ?? 'invalid ordering block');
-        return TopicValidatorResult.Reject;
-      }
-      if (!validators.verifyProtocolVersion(block.header.protocolVersion, block.header.height, schedule)) {
-        // A declared version that is not the era at the header's height is a
-        // compatibility signal, never a violation (NET_INTERFACE → Peer Penalty
-        // System): Transient, not misbehavior.
-        const era = protocolVersionAt(schedule, block.header.height);
+      if (!validators.verifyProtocolVersion(header.protocolVersion, header.height, schedule)) {
+        // NET_INTERFACE → Peer Penalty System: a declared version that is not
+        // the era at the header's height is a compatibility signal, Transient.
+        const era = protocolVersionAt(schedule, header.height);
         peerMgr.recordPenaltyKind(
           PenaltyKind.Transient,
-          _peer.toString(),
-          `protocol version ${block.header.protocolVersion} != era ${era} at height ${block.header.height}`,
+          peerId,
+          `protocol version ${header.protocolVersion} != era ${era} at height ${header.height}`,
         );
         return TopicValidatorResult.Reject;
       }
-      // No explicit height guard here, and adding one would be dead code:
-      // `verifyOrderingBlockStructure` above covers the header's whole
-      // encodable domain, and its `height` rule is `isU64Safe` (audit M-6), so
-      // NaN and floats are already rejected one gate earlier — for every input,
-      // not merely the NaN/1.5 cases the test below pins.
-
       // NET_INTERFACE → Consensus parameters net enforces
-      if (block.header.powTargetBits < floorBits) {
-        peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'ordering block below the network floor');
+      if (header.powTargetBits < floorBits) {
+        peerMgr.recordPenalty('misbehavior', peerId, 100, 'ordering block below the network floor');
         return TopicValidatorResult.Reject;
       }
-      if (!validators.verifyOrderingBlockPoW(block.header)) {
-        // A zero-work block must die at the first hop, not be re-gossiped
-        // mesh-wide (NET_INTERFACE → Stage 1).
-        peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'ordering block PoW invalid');
-        return TopicValidatorResult.Reject;
-      }
-      // NET_INTERFACE → Stage 1 →
-      // "A worked header is forwarded with the body its root commits".
-      // After the PoW check because this predicate hashes the whole body
-      // (VALIDATION_INTERFACE → verifyUtxoTxRoot, its cost): a header must
-      // have proven work before a node pays to hash its body.
-      if (!validators.verifyUtxoTxRoot(block)) {
-        peerMgr.recordPenalty(
-          'misbehavior',
-          _peer.toString(),
-          100,
-          'ordering block body is not the one the header\'s root commits',
-        );
+      if (!validators.verifyOrderingBlockPoW(header)) {
+        // A zero-work block dies at the first hop, not re-gossiped mesh-wide
+        // (NET_INTERFACE → Stage 1).
+        peerMgr.recordPenalty('misbehavior', peerId, 100, 'ordering block PoW invalid');
         return TopicValidatorResult.Reject;
       }
       // NET_INTERFACE → Stage 1 →
       // "A scheduled-target mismatch is refused, never forwarded, and never penalised"
-      const expected = scheduledTargetBits(block.header);
-      if (expected !== null && block.header.powTargetBits !== expected) {
+      const expected = scheduledTargetBits(header);
+      if (expected !== null && header.powTargetBits !== expected) {
         console.log(
-          `[net] scheduled-target mismatch: height=${block.header.height} bits=${block.header.powTargetBits} expected=${expected}`,
+          `[net] scheduled-target mismatch: height=${header.height} bits=${header.powTargetBits} expected=${expected}`,
         );
         return TopicValidatorResult.Reject;
       }
+      // NET_INTERFACE → Stage 1 → "A header this node knows is Ignored"
+      const hash = blockHash(header);
+      if (hash === null) {
+        // `verifyHeaderFieldDomains` above answered valid, so this is this
+        // node's own invariant violated — logged, Ignored, no penalty.
+        console.error('[net] blockHash null on a header verifyHeaderFieldDomains accepted');
+        return TopicValidatorResult.Ignore;
+      }
+      const standing = headerStanding(hash, header.height);
+      if (standing === 'held' || standing === 'refused') {
+        return TopicValidatorResult.Ignore;
+      }
+      const now = nowMs();
+      const previous = seenAccepted.get(hash);
+      if (previous !== undefined && now - previous < GOSSIP_SEEN_WINDOW_MS) {
+        return TopicValidatorResult.Ignore;
+      }
+      // NET_INTERFACE → Peer Penalty System: an ordering block's validator
+      // signature that does not verify is a `misbehavior` row.
+      if (!validators.verifyValidatorSignature(header, validatorSignature)) {
+        peerMgr.recordPenalty('misbehavior', peerId, 100, 'ordering block validator signature invalid');
+        return TopicValidatorResult.Reject;
+      }
+      // The body — a second decode whose throw is ProtocolViolation.
+      let utxoTxTree: UtxoTxTree;
+      try {
+        utxoTxTree = decodeUtxoTxTree(utxoTxTreeBytes);
+      } catch (err) {
+        peerMgr.recordPenaltyKind(
+          PenaltyKind.ProtocolViolation,
+          peerId,
+          `malformed ordering block body: ${String(err)}`,
+        );
+        return TopicValidatorResult.Reject;
+      }
+      const block: OrderingBlock = { header, utxoTxTree, validatorSignature };
+      const vr = validators.verifyOrderingBlockStructure(block);
+      if (!vr.valid) {
+        peerMgr.recordPenalty('misbehavior', peerId, 100, vr.error ?? 'invalid ordering block');
+        return TopicValidatorResult.Reject;
+      }
+      // NET_INTERFACE → Stage 1 →
+      // "A worked header is forwarded with the body its root commits"
+      if (!validators.verifyUtxoTxRoot(block)) {
+        peerMgr.recordPenalty(
+          'misbehavior',
+          peerId,
+          100,
+          "ordering block body is not the one the header's root commits",
+        );
+        return TopicValidatorResult.Reject;
+      }
+      // Record the acceptance; prune stale entries so the memory keeps
+      // nothing past the seen window.
+      seenAccepted.set(hash, now);
+      for (const [k, t] of seenAccepted) {
+        if (now - t >= GOSSIP_SEEN_WINDOW_MS) seenAccepted.delete(k);
+      }
       return TopicValidatorResult.Accept;
     } catch (err) {
-      // Malformed — cannot even decode. Permanent ban.
-      peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, _peer.toString(), `malformed ordering block: ${String(err)}`);
-      return TopicValidatorResult.Reject;
+      console.error(`[net] block validator fault (ignored): ${String(err)}`);
+      return TopicValidatorResult.Ignore;
     }
   });
 

@@ -27,10 +27,11 @@ import {
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
+  verifyHeaderFieldDomains,
   verifyOrderingBlockStructure,
+  verifyValidatorSignature,
   verifyUtxoTxRoot,
   verifyPostBody,
-  verifyValidatorSignature,
   blockHash,
 } from '@dagsocial/validation';
 import { TopicValidatorResult } from '@libp2p/interface';
@@ -82,6 +83,8 @@ const validators: NetValidators = {
   verifyTxStructure,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
+  verifyHeaderFieldDomains,
+  verifyValidatorSignature,
   verifyPostBody,
 };
 
@@ -201,6 +204,19 @@ function mineHeader(base: BlockHeader): BlockHeader {
   throw new Error('could not mine header at the network floor within 1M nonces');
 }
 
+// Mesh blocks ride through the real Stage 1 validator at every hop
+// (NET_INTERFACE → Stage 1 → "A header is read before its body"), so a
+// fixture that reaches Accept carries a header signed under the key the
+// header's `validatorId` names.
+const MESH_VALIDATOR_KP = generateKeyPair();
+const MESH_VALIDATOR_SEED = MESH_VALIDATOR_KP.secretKey.subarray(16);
+
+function signMeshHeader(header: BlockHeader): Uint8Array {
+  const hash = blockHash(header);
+  if (hash === null) throw new Error('signMeshHeader: header outside the encodable domain');
+  return ed25519.sign(hexToBytes(hash), MESH_VALIDATOR_SEED);
+}
+
 function makeBlockAt(height: number, protocolVersion: number): OrderingBlock {
   // VALIDATION_INTERFACE → verifyOrderingBlockStructure requires at least one
   // settlement tx id and payload. The body is built first because the header
@@ -215,7 +231,7 @@ function makeBlockAt(height: number, protocolVersion: number): OrderingBlock {
     prevBlockHash: '00'.repeat(32),
     utxoTxRoot: computeUtxoTxRoot(utxoTxTree),
     stateRoot: '00'.repeat(33),
-    validatorId: new Uint8Array(32),
+    validatorId: MESH_VALIDATOR_KP.publicKey,
     powNonce: 0,
     powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_000_000 + height,
@@ -226,7 +242,7 @@ function makeBlockAt(height: number, protocolVersion: number): OrderingBlock {
   return {
     header,
     utxoTxTree,
-    validatorSignature: new Uint8Array(64),
+    validatorSignature: signMeshHeader(header),
   };
 }
 
@@ -1478,7 +1494,7 @@ describe('a second valid signing of a header is Ignored at the first hop', () =>
     for (const n of nodes) open.push(n);
   };
 
-  it.fails(
+  it(
     'A publishes a second valid signing — C\'s handler fires once and B refuses to forward it',
     async () => {
       const { nodeA, nodeB, nodeC } = await startLine();

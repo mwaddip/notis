@@ -10,10 +10,11 @@ import {
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
+  verifyHeaderFieldDomains,
   verifyOrderingBlockStructure,
+  verifyValidatorSignature,
   verifyUtxoTxRoot,
   verifyPostBody,
-  verifyValidatorSignature,
   blockHash,
 } from '@dagsocial/validation';
 import {
@@ -75,6 +76,8 @@ const validators: NetValidators = {
   verifyTxStructure,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
+  verifyHeaderFieldDomains,
+  verifyValidatorSignature,
   verifyPostBody,
 };
 
@@ -161,6 +164,22 @@ function settlementBody(): UtxoTxTree {
 // constant across the fixtures of this file.
 const SETTLEMENT_ROOT = computeUtxoTxRoot(settlementBody());
 
+// The module-level validator key the fixtures carry (NET_INTERFACE → Stage 1 →
+// "A header is read before its body"). Each fixture mines a header under
+// `MODULE_VALIDATOR_KP.publicKey` and signs it with `MODULE_VALIDATOR_SEED`,
+// so the signature verifies by `verifyValidatorSignature`.
+const MODULE_VALIDATOR_KP = generateKeyPair();
+const MODULE_VALIDATOR_SEED = MODULE_VALIDATOR_KP.secretKey.subarray(16);
+
+function signHeader(header: BlockHeader): Uint8Array {
+  const hash = blockHash(header);
+  // A header outside the encodable domain has no block hash to sign — the
+  // fixtures that pin that case (powNonce NaN, height 1.5) run before the
+  // signature check, so a 64-zero stand-in is what reaches the frame.
+  if (hash === null) return new Uint8Array(64);
+  return ed25519.sign(hexToBytes(hash), MODULE_VALIDATOR_SEED);
+}
+
 // ---------------------------------------------------------------------------
 // Ordering-block topic validator — relay PoW gate (audit M-9, M-6)
 // ---------------------------------------------------------------------------
@@ -172,7 +191,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
     prevBlockHash: '11'.repeat(32),
     utxoTxRoot: SETTLEMENT_ROOT,
     stateRoot: EMPTY_STATE_ROOT,
-    validatorId: new Uint8Array(32).fill(9),
+    validatorId: MODULE_VALIDATOR_KP.publicKey,
     powNonce: 0,
     powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR, // the structure floor
     createdAt: 1_722_470_400_000,
@@ -184,8 +203,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
     return {
       header,
       utxoTxTree: settlementBody(),
-      // 64-byte dummy — Stage 1 does not verify the validator signature.
-      validatorSignature: new Uint8Array(64),
+      validatorSignature: signHeader(header),
     };
   }
 
@@ -891,13 +909,30 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
   });
 
   it('a structurally invalid block is still misbehavior (100), not Transient', () => {
-    // The tier split holds only for the version step: a bad body keeps its tier.
+    // The tier split holds only for the version check: a bad body keeps its
+    // tier. The input reaches the structure check only once version, floor,
+    // PoW and the validator signature stand (NET_INTERFACE → Stage 1); the
+    // header below carries a matching version, is mined and signed, and the
+    // empty body is what the structure check refuses.
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), { schedule: twoEra });
     const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
-    // An empty utxoTxTree is a structural failure ahead of the version step
-    // (every block carries at least the settlement tx).
-    const bad: OrderingBlock = { ...vBlock(7, 1), utxoTxTree: { utxoTxIds: [], utxoTxs: [] } };
+    const emptyTree: UtxoTxTree = { utxoTxIds: [], utxoTxs: [] };
+    const baseInvalid: BlockHeader = {
+      ...vHeader(1, 1),
+      utxoTxRoot: computeUtxoTxRoot(emptyTree),
+      validatorId: MODULE_VALIDATOR_KP.publicKey,
+    };
+    let minedHeader = baseInvalid;
+    for (let n = 0; n < 2_000_000; n++) {
+      const candidate = { ...baseInvalid, powNonce: n };
+      if (verifyOrderingBlockPoW(candidate)) { minedHeader = candidate; break; }
+    }
+    const bad: OrderingBlock = {
+      header: minedHeader,
+      utxoTxTree: emptyTree,
+      validatorSignature: signHeader(minedHeader),
+    };
 
     const result = validate(peer, { data: encodeOrderingBlock(bad) });
 
@@ -920,7 +955,7 @@ describe('ordering-block topic validator — network floor and schedule', () => 
     prevBlockHash: '11'.repeat(32),
     utxoTxRoot: SETTLEMENT_ROOT,
     stateRoot: EMPTY_STATE_ROOT,
-    validatorId: new Uint8Array(32).fill(9),
+    validatorId: MODULE_VALIDATOR_KP.publicKey,
     powNonce: 0,
     powTargetBits: NETWORK_FLOOR,
     createdAt: 1_722_470_400_000,
@@ -932,7 +967,7 @@ describe('ordering-block topic validator — network floor and schedule', () => 
     return {
       header,
       utxoTxTree: settlementBody(),
-      validatorSignature: new Uint8Array(64),
+      validatorSignature: signHeader(header),
     };
   }
 
@@ -1051,20 +1086,31 @@ describe('ordering-block topic validator — network floor and schedule', () => 
     });
     const validate = topicValidators.get(topics.orderingBlock)!;
 
-    const block = makeBlock({ ...baseHeader, powNonce: minedNonce });
-    const data = encodeOrderingBlock(block);
+    // Three distinct headers — one block per call so the seen-window memory
+    // (NET_INTERFACE → Stage 1 → "A header this node knows is Ignored") sees
+    // each hash afresh and the provider's reading is what the result reads.
+    const mineAt = (createdAt: number): OrderingBlock => {
+      for (let n = 0; n < 2_000_000; n++) {
+        const candidate = { ...baseHeader, createdAt, powNonce: n };
+        if (verifyOrderingBlockPoW(candidate)) return makeBlock(candidate);
+      }
+      throw new Error('late-bound closure fixture: PoW search exhausted');
+    };
+    const dataA = encodeOrderingBlock(mineAt(1_722_470_401_000));
+    const dataB = encodeOrderingBlock(mineAt(1_722_470_402_000));
+    const dataC = encodeOrderingBlock(mineAt(1_722_470_403_000));
 
     // No provider → Accept
-    expect(validate(newPeer(peerMgr), { data })).toBe(TopicValidatorResult.Accept);
+    expect(validate(newPeer(peerMgr), { data: dataA })).toBe(TopicValidatorResult.Accept);
 
     // Set a provider that disagrees → Reject, no penalty
     provider = () => NETWORK_FLOOR + 100;
-    expect(validate(newPeer(peerMgr), { data })).toBe(TopicValidatorResult.Reject);
+    expect(validate(newPeer(peerMgr), { data: dataB })).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).not.toHaveBeenCalled();
 
     // Set a provider that agrees → Accept
     provider = () => NETWORK_FLOOR;
-    expect(validate(newPeer(peerMgr), { data })).toBe(TopicValidatorResult.Accept);
+    expect(validate(newPeer(peerMgr), { data: dataC })).toBe(TopicValidatorResult.Accept);
   });
 });
 
@@ -1410,7 +1456,7 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
     throw new Error('PoW search exhausted');
   }
 
-  it.fails('a header the standing provider answers held is Ignored, no penalty', () => {
+  it('a header the standing provider answers held is Ignored, no penalty', () => {
     const bodyBytes = undecodableBodyBytes();
     const bytes = assembleFrame(minedHeader, bodyBytes, minedSignature);
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
@@ -1427,7 +1473,7 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
     expect(result).toBe(TopicValidatorResult.Ignore);
   });
 
-  it.fails('a header the standing provider answers refused is Ignored, no penalty', () => {
+  it('a header the standing provider answers refused is Ignored, no penalty', () => {
     const bodyBytes = undecodableBodyBytes();
     const bytes = assembleFrame(minedHeader, bodyBytes, minedSignature);
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
@@ -1444,7 +1490,7 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
     expect(result).toBe(TopicValidatorResult.Ignore);
   });
 
-  it.fails('a second valid signing of one header is Ignored inside the window and Accepted past it', () => {
+  it('a second valid signing of one header is Ignored inside the window and Accepted past it', () => {
     const message = hexToBytes(minedHash);
     const sigA = altSign(validatorSeed, validatorKp.publicKey, message, sha512(new Uint8Array([0x01])));
     const sigB = altSign(validatorSeed, validatorKp.publicKey, message, sha512(new Uint8Array([0x02])));
@@ -1479,7 +1525,7 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
     expect(third).toBe(TopicValidatorResult.Accept);
   });
 
-  it.fails('a worked header whose validator signature does not verify is Rejected with misbehavior 100', () => {
+  it('a worked header whose validator signature does not verify is Rejected with misbehavior 100', () => {
     const corrupted = new Uint8Array(minedSignature);
     corrupted[0]! ^= 0x01;
     expect(verifyValidatorSignature(minedHeader, corrupted)).toBe(false);
@@ -1497,7 +1543,7 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
     );
   });
 
-  it.fails('a PoW-failing header carrying an undecodable body records the PoW reason, not a body decode one', () => {
+  it('a PoW-failing header carrying an undecodable body records the PoW reason, not a body decode one', () => {
     const unmined: BlockHeader = { ...minedHeader, powNonce: minedHeader.powNonce + 1 };
     // Rule out a lucky second nonce — the whole point of this case is the PoW
     // failing before the body is read.
@@ -1519,7 +1565,7 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
     );
   });
 
-  it.fails('a header section that does not read records a header decode reason', () => {
+  it('a header section that does not read records a header decode reason', () => {
     // A header length prefix past MAX_HEADER_BYTES refuses before any header
     // byte is read (TYPES_INTERFACE → readOrderingBlockSections).
     const w = new ByteWriter();
@@ -1556,7 +1602,7 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
     );
   });
 
-  it.fails('a valid worked signed header with a body that does not decode records a body decode reason', () => {
+  it('a valid worked signed header with a body that does not decode records a body decode reason', () => {
     const bytes = assembleFrame(minedHeader, undecodableBodyBytes(), minedSignature);
 
     const { topicValidators, peerMgr, penaltySpy } = makeHarness();
@@ -1575,7 +1621,7 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
     );
   });
 
-  it.fails('a scheduled-target provider that throws records no penalty and logs', () => {
+  it('a scheduled-target provider that throws records no penalty and logs', () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const bytes = assembleFrame(minedHeader, encodeFrameBody(minedTree()), minedSignature);
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
@@ -1596,7 +1642,7 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
     errSpy.mockRestore();
   });
 
-  it.fails('a header-standing provider that throws records no penalty and logs', () => {
+  it('a header-standing provider that throws records no penalty and logs', () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const bytes = assembleFrame(minedHeader, encodeFrameBody(minedTree()), minedSignature);
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
