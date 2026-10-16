@@ -24,7 +24,10 @@ transactions. TypeScript, pnpm workspaces, Node ≥ 22.
 ## This package (`@dagsocial/net`)
 The **libp2p networking layer**: gossip (ordering blocks, UTXO txs), the framed
 stream sync protocol (SyncInfo/Inv/Modifier), peer management + PeerDb, and handshake. Two-stage validation:
-Stage 1 (stateless, via `@dagsocial/validation`) runs **before relay**; Stage 2 (stateful) runs in the node.
+Stage 1 (stateless, via `@dagsocial/validation`) runs **before relay**; Stage 2 (stateful) runs in the node. An
+ordering block is forwarded once Stage 1 passes, a transaction only once the node admits it, and a penalty rests
+on what the sender could know — Stage 1's checks over the message alone (`NET_INTERFACE → Forwarding Rule`,
+`NET_INTERFACE → Penalty Attribution`).
 
 - **Owns:** `src/*` (`node.ts`, `sync-machine.ts`, `sync.ts`, `gossip.ts`, `peer-mgr.ts`, `peerdb.ts`,
   `types.ts`).
@@ -44,7 +47,7 @@ Stage 1 (stateless, via `@dagsocial/validation`) runs **before relay**; Stage 2 
   (field presence, array-ness, `Number.isInteger` + non-negative bounds on heights/counts) at the decode
   boundary; wrap event-loop dispatch so one bad message degrades one message, not the subsystem.
 - **Stage-1 validation before relay** — never re-gossip an object that hasn't passed stateless validation
-  (structure, PoW, limits).
+  (structure, PoW, signatures, limits); a transaction also waits for the node's admission.
 - **Bounded resources** — enforce max message size, max inbound id counts, and sane height bounds; no
   unbounded stream buffering.
 - **On-chain time = block height**, never wall-clock.

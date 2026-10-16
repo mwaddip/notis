@@ -2432,9 +2432,6 @@ the reason a panic-shaped search is not sufficient here.
 The ordering-block framing replaces `u32BE` length prefixes with `vlqU`. The boundary check runs at
 the outer level and at each nested `lp` section.
 
-> ⚠ **AHEAD OF CODE (2026-10-16).** The paragraph below leads `serialization.ts`' `decodeOrderingBlock`, which
-> reads its frame through `readOrderingBlockSections`.
-
 **`readOrderingBlockSections(bytes)` reads the framing and decodes the header alone, and
 `decodeOrderingBlock` is that read and `decodeUtxoTxTree` of the body's bytes.** It answers
 `{ header, utxoTxTreeBytes, validatorSignature }`: the `HEADER` codec over the first section, the second

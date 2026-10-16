@@ -3985,9 +3985,6 @@ Declared in the base `CREATE TABLE`, not the ALTER pass — no store predates it
 
 ### Refused headers
 
-> ⚠ **AHEAD OF CODE (2026-10-16).** The second writer below and the header-standing read lead `services/handle-block.ts`
-> and `index.ts`' provider.
-
 The chain-selection memory (`Fork choice decides on verified headers`, step 12): one row per block
 that fork resolution applied under verified headers and the funnel rejected, and one per block that
 extended the tip and the funnel refused with a `'consensus'` verdict (→ Relay handlers). Net's block validator reads it through the header-standing provider and Ignores a marked
@@ -5324,9 +5321,6 @@ not fail the API request.
 
 ### Relay handlers (mempool-based)
 
-> ⚠ **AHEAD OF CODE (2026-10-16).** `onTx`'s answer and its signature build lead `services/handle-tx.ts`;
-> `onOrderingBlock`'s refused arm and the mark lead `services/handle-block.ts`.
-
 - **`onTx(tx, content, fromPeerId)`**: validates (read-only, `validateTx`) → inserts into
   mempool via `admitTx`; for a post transaction the packet's body — already verified against
   `tx.post.contentHash` by net's topic validator — is stored as the pending row in the same
@@ -5636,10 +5630,6 @@ that can reject is handled where it is launched, as the resolution runner owns e
 promise ("One resolution at a time") — so a rejection that reaches it is a defect of the path it
 came from.
 
-> ⚠ **AHEAD OF CODE (2026-10-16).** The `'unbound'` class below leads `services/block-apply.ts`' verdict,
-> `services/handle-block.ts`' mark on `'consensus'` alone, and `services/fork-resolution.ts`' step 10, which aborts
-> on `'unbound'` as on `'local'`.
-
 **The funnel answers with a class.** `applyOrderingBlockVerdict(block)` is the funnel's body: it
 answers `{ applied: true, indexed }` or `{ applied: false, class }`. `indexed` is the posts the block
 first stored, in body order, each `{ postId, parentRefCount }` — emitted by the funnel itself when its
@@ -5761,8 +5751,6 @@ funnel:
   Ignored"). Handed over unwrapped: two point reads decode no row, so there is nothing for
   `failStopIfCorruptChain` to promote, and any throw reaches net, which logs it and Ignores the
   message (NET_INTERFACE → Stage 1 → "A fault of this node's is no peer's").
-
-> ⚠ **AHEAD OF CODE (2026-10-16).** The `setHeaderStandingProvider` bullet above leads `index.ts` and the store's read.
 
 A block carries its posts whole in `utxoTxs`, so there is no content-sweep and
 no per-post serve path. `onPeerActive` is wired to peer-readiness

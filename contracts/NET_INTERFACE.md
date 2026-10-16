@@ -237,9 +237,6 @@ block itself unheard for the seen window. The id is the router's alone — its s
 and `IWANT` exchange — and enters no commitment, no store and no signature, so its preimage carries no
 domain tag.
 
-> ⚠ **AHEAD OF CODE (2026-10-16).** The next paragraph's last sentence leads `gossip.ts`' block validator — the
-> header-standing provider and its memory of accepted headers — and the transaction forward on admission.
-
 **A message is heard once in a seen window.** The router keeps every id it has named for
 `GOSSIP_SEEN_WINDOW_MS` — 120 000, two minutes — and records it before the topic's validator runs. A
 second copy inside the window, from any peer, is not validated, not delivered and not forwarded. That
@@ -256,9 +253,6 @@ not refuse each other's messages, two nodes that name a topic differently share 
 that name a message differently cannot ask each other for one. A change to any of the three therefore
 reaches every node of a network in one restart; it moves no committed byte and owes no reset
 (`ARCHITECTURE → Deploy gate`).
-
-> ⚠ **AHEAD OF CODE (2026-10-16).** The order below — the version and the karma gate refused with no penalty,
-> `verifyTxSignatures` last — leads `gossip.ts`' tx topic validator.
 
 **The packet rule: `tx.post` present ⟺ `content` present.** The topic validator checks it
 in this order, and in the same order on every node: `decodeTxPacket` (undecodable →
@@ -1043,9 +1037,6 @@ Node start
 
 ## Peer Penalty System
 
-> ⚠ **AHEAD OF CODE (2026-10-16).** The `misbehavior` row's two signatures, the version row's blocks alone and
-> "Refusals that record nothing" lead `gossip.ts`' two topic validators.
-
 | Penalty | Trigger | Score |
 |---------|---------|-------|
 | `misbehavior` | Invalid message — fails Stage 1: structure, an ordering-block header below the network's floor, ordering-block PoW, the packet rule (a post without a body or a body without a post), a body that fails `verifyPostBody`, an ordering block's validator signature, or a transaction signature that does not verify (`gossip.ts` call sites); a pulled body that fails its commitment (the `MODIFIER_POST_BODY` receive arm) | 100 |
@@ -1173,8 +1164,6 @@ attributed to the sending peer. Three penalty tiers:
   ban, peer removed from PeerDb
 - **Bogus addresses in valid gossip**: silently dropped, sender NOT
   penalized (NAT'd peers sending private addresses is normal)
-
-> ⚠ **AHEAD OF CODE (2026-10-16).** The lead below leads `gossip.ts`' two topic validators and node's relay handler.
 
 **A penalty rests on what the sender could know.** A node forwards only what passed its own checks, so
 a refusal the sender — running the same rules over the same bytes — must also have reached is the
@@ -1356,10 +1345,6 @@ ban — → Validation (and untrusted-input safety) → "A peer's bytes are weig
 nothing (→ Stage 1 → "A refusal that rests on this node's state records nothing"). Uses
 `@dagsocial/validation`. Per topic:
 
-> ⚠ **AHEAD OF CODE (2026-10-16).** Both rows below lead `gossip.ts`' topic validators: the block's header read and
-> judged before its body, the header's standing, the validator signature, the tx row's two refusals
-> with no penalty and `verifyTxSignatures`.
-
 | Topic | Checks before Accept |
 |-------|----------------------|
 | ordering-block | the message's length, at most `MAX_ORDERING_BLOCK_BYTES`; **the header first** — `readOrderingBlockSections` (TYPES_INTERFACE → Layout — Block), the header decoded and the body's bytes and the validator signature taken as they stand, a block that does not read → `ProtocolViolation` (→ Stage 1 → "A header is read before its body"); `verifyHeaderFieldDomains(header)`; protocol version — `verifyProtocolVersion(header.protocolVersion, header.height, schedule)`, a mismatch Rejected with `Transient`; `header.height` is a safe integer (NaN/float/±Infinity → Reject); **the network's floor** — `header.powTargetBits < NetConfig.orderingBlockPowTargetFloorBits` is Rejected with `misbehavior` (→ Consensus parameters net enforces); ordering-block PoW (`verifyOrderingBlockPoW`) — the solution must satisfy the header's own `powTargetBits`, and a non-safe-integer `powNonce`/`powTargetBits` never verifies (audit M-6, M-9); **the schedule, when this node holds the parent** — the scheduled-target provider's answer for the header, `null` when the parent is not held; a number that differs from `header.powTargetBits` is **Rejected with no penalty** (→ Stage 1 → "A scheduled-target mismatch is refused, never forwarded, and never penalised"); **the header's standing** — a header this node holds, has refused, or accepted inside the seen window is **Ignored with no penalty** (→ Stage 1 → "A header this node knows is Ignored"); **the validator signature** — `verifyValidatorSignature(header, validatorSignature)`, one that does not verify Rejected with `misbehavior`; **the body** — `decodeUtxoTxTree` over the body's bytes (undecodable → `ProtocolViolation`) and `verifyOrderingBlockStructure` over the block; **the body's root** — `verifyUtxoTxRoot(block)`, last: a body that is not the one the header's `utxoTxRoot` commits is Rejected with `misbehavior` (→ Stage 1 → "A worked header is forwarded with the body its root commits") |
@@ -1397,10 +1382,6 @@ that parent. The penalty is withheld because the previous hop may not hold the p
 syncing forwards on the floor and the PoW alone, honestly — and the refusal's whole value is that
 the first hop holding the parent stops the forward. The originator pays the hashes and nothing else;
 a direct flood is bounded by the floor's cost per message, and nothing it sends reaches the funnel.
-
-> ⚠ **AHEAD OF CODE (2026-10-16).** The five leads below lead `gossip.ts`' two topic validators — the sections read,
-> the header-standing provider and the memory of accepted headers, `verifyTxSignatures`, the refusals
-> with no penalty and the `try` around the decode alone.
 
 **A header is read before its body.** The block topic's validator reads the block's sections first
 (`readOrderingBlockSections`, TYPES_INTERFACE → Layout — Block): the header decoded, the body's bytes
@@ -1458,18 +1439,12 @@ Runs after Stage 1 passes, via registered `on*` callbacks:
 - A post packet that passes is admitted as one: the transaction into the mempool and the body
   into the DAG as a pending row, together or not at all (`NODE_INTERFACE` → Post transactions)
 
-> ⚠ **AHEAD OF CODE (2026-10-16).** The lead below leads `gossip.ts`' report of a transaction's verdict and node's
-> relay handler.
-
 **A Stage 2 refusal records nothing.** Stage 2 judges a message against this node's state — its UTXO
 view, its pool, its karma record — which the hop that forwarded it held at another moment or on another
 tip: a transaction it admitted may spend a box this node has not yet seen, or has seen spent. A
 transaction Stage 2 refuses is Ignored — never forwarded (→ Forwarding Rule) — and penalises nobody.
 
 ### Forwarding Rule
-
-> ⚠ **AHEAD OF CODE (2026-10-16).** The lead below leads `node.ts`' gossipsub settings (`asyncValidation`) and
-> `gossip.ts`' report of each message's verdict.
 
 **An ordering block is forwarded once Stage 1 passes; a transaction once this node admits it.** A
 block's forward is bought by its work: Stage 1 holds it to the floor and its own PoW, its validator
@@ -1525,8 +1500,6 @@ its first carrier's sake — a peer whose handshake has not completed, or one wh
 its connection — would be a valid block or transaction this node does not hear for the window, however
 many `Active` peers send it after. The carrier reaches the handler as `fromPeerId`, a hint and nothing
 more, and it need not be `Active`.
-
-> ⚠ **AHEAD OF CODE (2026-10-16).** The lead below leads `gossip.ts`' delivery listener and `onTx`'s answer.
 
 **A transaction is forwarded when a handler admits it.** Net reports the router's verdict on a
 transaction message once its handlers have answered: Accept — the message is forwarded — when any
@@ -1603,9 +1576,6 @@ offer.
 | `onPeerActive(cb)` | `((peerId: string, direction: 'inbound' \| 'outbound') => void) => void` | Fired when a peer completes the handshake and becomes Active; `direction` is the connection's. |
 | `onPeerDisconnected(cb)` | `((peerId: string, reason: string) => void) => void` | Fired after a peer's disconnect is processed (`PeerManager.removePeer`), the disconnect a ban's hang-up raises included (→ Handshake, "A ban ends the connection"). `reason` is always `''` — libp2p's `peer:disconnect` carries none; the parameter is the shape JOURNAL_EVENTS → peer_disconnected names. |
 | `onPeerPenalised(cb)` | `((peerId: string, kind: string, detail: string \| null) => void) => void` | Fired by `PeerManager` itself at its two penalty entries, `recordPenalty` and `recordPenaltyKind` — so every path that records a penalty reaches it, `gossip.ts`'s and `penalizePeer`'s included; `kind` is the `PenaltyType` / `PenaltyKind` string as recorded, `detail` the reason. |
-
-> ⚠ **AHEAD OF CODE (2026-10-16).** The `setHeaderStandingProvider` row above leads `node.ts`' setter and the
-> block validator's call.
 
 **These four are what JOURNAL_EVENTS → Peer Events / Sync Events and NODE_INTERFACE → Admin Listener read** —
 `peer_connected` from `onPeerActive`, `peer_disconnected`, `peer_penalised`, `sync_complete` from `onSyncComplete`;

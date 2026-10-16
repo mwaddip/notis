@@ -564,8 +564,6 @@ set and the speccheck cases, each alone and among honest signatures, answer exac
 `verifyEd25519` answers; a fixed batch's transcript and coefficients are pinned against values
 computed apart from the implementation.
 
-> ⚠ **AHEAD OF CODE (2026-10-16).** The section below leads `verify.ts`' `verifyTxSignatures` and its export.
-
 ### verifyTxSignatures
 
 ```

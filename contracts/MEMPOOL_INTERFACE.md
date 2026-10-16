@@ -551,8 +551,6 @@ like every other transaction.
 
 Inbound relay handlers insert into the mempool rather than applying state:
 
-> ⚠ **AHEAD OF CODE (2026-10-16).** `onTx`'s answer below leads `services/handle-tx.ts`.
-
 - **`onTx(tx)`**: `validateTx` (read-only) → `insertUtxoTx(tx, expiresAtHeight)`.
   There is no sub-block relay handler — a post arrives as a transaction through
   `onTx` (`NODE_INTERFACE` → Relay handlers). It answers whether it admitted the
