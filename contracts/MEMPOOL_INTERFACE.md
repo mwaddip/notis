@@ -551,9 +551,13 @@ like every other transaction.
 
 Inbound relay handlers insert into the mempool rather than applying state:
 
+> ⚠ **AHEAD OF CODE (2026-10-16).** `onTx`'s answer below leads `services/handle-tx.ts`.
+
 - **`onTx(tx)`**: `validateTx` (read-only) → `insertUtxoTx(tx, expiresAtHeight)`.
   There is no sub-block relay handler — a post arrives as a transaction through
-  `onTx` (`NODE_INTERFACE` → Relay handlers).
+  `onTx` (`NODE_INTERFACE` → Relay handlers). It answers whether it admitted the
+  transaction, and net forwards an admitted one and no other (`NET_INTERFACE` →
+  Forwarding Rule).
 
 State is applied later when an ordering block containing these entries is
 received and applied.
@@ -611,7 +615,7 @@ Three insert callers, three behaviors:
 | Caller | At the cap |
 |---|---|
 | HTTP routes | **503** with a generic body (`{ error: 'mempool full' }`) |
-| Gossip relay (`onTx`) | drop the entry, log, never throw |
+| Gossip relay (`onTx`) | drop the entry, log, answer `false` — never throw; the transaction is not forwarded |
 | **Reorg re-insertion** (`services/fork-resolution.ts`) | drop, log, continue |
 
 The reorg caller is not optional politeness: re-insertion of reverted

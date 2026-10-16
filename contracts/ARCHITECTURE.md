@@ -1660,7 +1660,9 @@ before multi-node operation rather than after it.
 10. **Net:** libp2p gossips ordering blocks and transaction packets (transaction +
    body). Stage 1 (stateless) validation via `@dagsocial/validation` runs before
    forwarding — for a post packet that includes the body against its commitment.
-   Stage 2 (stateful) validation runs in the node after receipt. Relay handlers
+   Stage 2 (stateful) validation runs in the node after receipt. A block is
+   forwarded once Stage 1 passes, a transaction once Stage 2 admits it
+   (`NET_INTERFACE → Forwarding Rule`). Relay handlers
    insert into mempool, a post's body into the DAG as a pending row — state
    applied at block application.
 11. **Backfill:** a node that applies a post transaction without having seen its
@@ -2115,7 +2117,7 @@ no object check compares against it and no producer stamps it.
   `validation`'s `verifyEd25519`, or `verifyEd25519Batch` for a block's body — strict RFC 8032 /
   FIPS 186-5 through `@noble/curves`, one implementation for every runtime
   (`VALIDATION_INTERFACE → Acceptance criterion`): `0 ≤ S < L`, canonical `A` and `R`, `A` not of
-  small order, the cofactored equation; one valid signature per message and key. **Every signature in the system is
+  small order, the cofactored equation; no signature for a message verifies but one its key's holder made. **Every signature in the system is
   excluded from every preimage** — `txIdBytes` omits them and every Merkle leaf is an id — so a
   malleated signature can never move a block hash; what remains is acceptance, and one stated rule
   with one implementation is what keeps two verifiers from disagreeing about a block's validity

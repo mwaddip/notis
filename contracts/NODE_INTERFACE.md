@@ -1800,6 +1800,10 @@ There is **no other legal bond or invite shape**. In particular:
   receives karma and when it falls to zero — it is not a decay or settlement
   concern, so it is not on any hot path.
 
+  **A miss penalises nobody** (NET_INTERFACE → Stage 1 → "A refusal that rests on this node's state
+  records nothing"): the set is this node's, and the relay that sent the post may hold a block this
+  node has not applied, or lack one it has.
+
   **The set moves after a commit, never inside a transaction.** Once a block's
   transaction commits, the node moves it for every owner whose karma boxes the
   block's effects inserted or spent — present iff the owner holds an unspent karma
@@ -3981,8 +3985,14 @@ Declared in the base `CREATE TABLE`, not the ALTER pass — no store predates it
 
 ### Refused headers
 
+> ⚠ **AHEAD OF CODE (2026-10-16).** The second writer below and the header-standing read lead `services/handle-block.ts`
+> and `index.ts`' provider.
+
 The chain-selection memory (`Fork choice decides on verified headers`, step 12): one row per block
-that fork resolution applied under verified headers and the funnel rejected.
+that fork resolution applied under verified headers and the funnel rejected, and one per block that
+extended the tip, held to its header, and the funnel refused with a consensus verdict (→ Relay
+handlers). Net's block validator reads it through the header-standing provider and Ignores a marked
+header (NET_INTERFACE → Stage 1 → "A header this node knows is Ignored").
 
 ```sql
 CREATE TABLE refused_headers (
@@ -4005,8 +4015,9 @@ for continuations without storing descendants. **The purge is safe for the same 
 height below `tip − maxReorgDepth` cannot appear in any segment the fork walk can anchor.
 
 **A mark names a header and is a verdict on its body, because the two are one.** The row is written
-only for a block fork resolution bound to its header before applying it (→ Fork choice decides on
-verified headers, step 8), and a header's hash commits every byte of its body
+only for a block bound to its header before it was applied — by fork resolution (→ Fork choice
+decides on verified headers, step 8) or by the extending path (→ Relay handlers) — and a header's hash
+commits every byte of its body
 (`TYPES_INTERFACE → Ordering block`).
 
 **The mark is written outside the reorg transaction**, after it has rolled back — a write inside it
@@ -5312,14 +5323,30 @@ not fail the API request.
 
 ### Relay handlers (mempool-based)
 
+> ⚠ **AHEAD OF CODE (2026-10-16).** `onTx`'s answer and its signature build lead `services/handle-tx.ts`;
+> `onOrderingBlock`'s refused arm, the binding and the mark lead `services/handle-block.ts`.
+
 - **`onTx(tx, content, fromPeerId)`**: validates (read-only, `validateTx`) → inserts into
   mempool via `admitTx`; for a post transaction the packet's body — already verified against
   `tx.post.contentHash` by net's topic validator — is stored as the pending row in the same
   store transaction as the admission (Post transactions → the packet is the unit), and
-  `emitPostReceived(postId, fromPeerId, via: 'packet')` fires.
-- **`onOrderingBlock(block, fromPeerId)`**: structure / PoW pre-filters (net) →
-  `handleOrderingBlock` — already held → no-op; extends our tip or height 0 →
-  `applyOrderingBlock` → confirms posts → removes confirmed entries from mempool;
+  `emitPostReceived(postId, fromPeerId, via: 'packet')` fires. **It answers whether it admitted
+  the transaction**, and net forwards it then and only then (NET_INTERFACE → Forwarding Rule): every
+  refusal — the rules', a full pool, an input a pending entry spends, a policy refusal — answers
+  `false` and penalises nobody (NET_INTERFACE → Stage 2 → "A Stage 2 refusal records nothing").
+  **Its `validateTx` answers each required signature from net's Stage 1**, which verified every
+  entry of the map over the transaction's id (NET_INTERFACE → Stage 1 → "A transaction's signatures
+  are checked at Stage 1"): a required signer's check is `true` exactly when the signature is the
+  map's own entry for that key and the message is the transaction's id (CONSENSUS_INTERFACE → The
+  overlay).
+- **`onOrderingBlock(block, fromPeerId)`**: Stage 1 (net) → `handleOrderingBlock` — already
+  held → no-op; **marked refused (→ Refused headers) → refused, nothing applied**; extends our tip
+  or height 0 → **held to its header** — `verifyOrderingBlockStructure`, `verifyUtxoTxRoot` and
+  `verifyValidatorSignature`, as fork resolution holds a served block (→ Fork choice decides on
+  verified headers, step 8), a block that fails one refused with nothing marked — →
+  `applyOrderingBlockVerdict` → confirms posts → removes confirmed entries from mempool; **a
+  consensus refusal marks the header** in `refused_headers`, after the rollback and in its own write,
+  and an acceptance or a local refusal marks nothing (→ "The funnel answers with a class");
   otherwise → `resolveFork` (AVL+ State Root → "Fork choice decides on verified
   headers"). The pull path reaches the **same** `handleOrderingBlock` through
   `setBlocksHandler`; `reorg` applies directly. The authoritative consensus checks
@@ -5723,6 +5750,14 @@ funnel:
   like `setHeadersHandler`'s: a stored row that will not decode stops the node rather than banning the
   relayer as "malformed" inside the validator's catch. `NetConfig` receives the profile's
   `orderingBlockPowTargetFloorBits` the way it receives `magic` and the era table
+- **`setHeaderStandingProvider(headerStanding)`**: `'held'` when the `block_hash` column at `height`
+  equals `hash`, `'refused'` when `refused_headers` holds `hash`, `null` otherwise — net's stage-1
+  check of a header this node knows (NET_INTERFACE → Stage 1 → "A header this node knows is
+  Ignored"). Handed over unwrapped: two point reads decode no row, so there is nothing for
+  `failStopIfCorruptChain` to promote, and any throw reaches net, which logs it and Ignores the
+  message (NET_INTERFACE → Stage 1 → "A fault of this node's is no peer's").
+
+> ⚠ **AHEAD OF CODE (2026-10-16).** The `setHeaderStandingProvider` bullet above leads `index.ts` and the store's read.
 
 A block carries its posts whole in `utxoTxs`, so there is no content-sweep and
 no per-post serve path. `onPeerActive` is wired to peer-readiness

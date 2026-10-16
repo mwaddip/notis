@@ -497,12 +497,14 @@ verifyEd25519(signature: Uint8Array, message: Uint8Array, publicKey: Uint8Array)
 `ed25519.verify(signature, message, publicKey, { zip215: false })`** — Ed25519 per RFC 8032 and
 FIPS 186-5 in their strict form: the scalar `S` below the group order `L`, the key `A` and the point
 `R` canonical encodings (`y < p`, and `x = 0` with the sign bit set refused), `A` not of small order,
-and the **cofactored** equation `[8][S]B = [8]R + [8][k]A`, `k = SHA-512(R ‖ A ‖ M) mod L` — so a
-message and a key have one valid signature. **`verifyEd25519Batch` is the same rule over many
+and the **cofactored** equation `[8][S]B = [8]R + [8][k]A`, `k = SHA-512(R ‖ A ‖ M) mod L` — so no one
+but the key's holder can make a second signature that verifies for a message; the holder can, under
+another nonce, as often as it likes. **`verifyEd25519Batch` is the same rule over many
 entries** (→ verifyEd25519Batch). The sites: `verifyValidatorSignature` below calls `verifyEd25519`;
 `validateTx`'s authorization check calls it, or answers from the set a caller's batch verified
 (`CONSENSUS_INTERFACE → The overlay`); `applyBlock` checks every signature a block's body carries
-with one `verifyEd25519Batch` (`CONSENSUS_INTERFACE → Applying a block`). No site builds a key object
+with one `verifyEd25519Batch` (`CONSENSUS_INTERFACE → Applying a block`); `verifyTxSignatures` checks one
+transaction's map with one (→ verifyTxSignatures). No site builds a key object
 or asks a runtime's verifier. **The rule is this repo's, stated here and implemented once**, so every
 runtime that runs it — a node, a browser — accepts the same set, and a change to it is a consensus
 change, never a dependency bump.
@@ -561,6 +563,30 @@ batch is `true`, and a batch of one is `verifyEd25519` itself.**
 set and the speccheck cases, each alone and among honest signatures, answer exactly what
 `verifyEd25519` answers; a fixed batch's transcript and coefficients are pinned against values
 computed apart from the implementation.
+
+> ⚠ **AHEAD OF CODE (2026-10-16).** The section below leads `verify.ts`' `verifyTxSignatures` and its export.
+
+### verifyTxSignatures
+
+```
+verifyTxSignatures(tx: UtxoTransaction): boolean
+```
+
+**Every entry of a transaction's signature map verifies over its id.** One `verifyEd25519Batch` over the
+map's entries in its decoded order — each the entry's signature, the 32 bytes of `computeTxId(tx)` and
+the entry's key — answering what the batch answers (→ verifyEd25519Batch). The empty map answers
+`true`.
+
+**Stateless, so not authorization.** It asks nothing of the inputs: who must sign is the boxes', which
+`validateTx` reads from state. What it holds is the half of authorization no state can change: a valid
+transaction's map carries no key its transitions do not require, and each required signature verifies
+(NODE_INTERFACE → Legal box transitions → "The signature map carries no key a transition does not
+require."), so a map with an entry that does not verify is invalid on every chain. Net's Stage 1 calls
+it, behind `verifyTxStructure` (`NET_INTERFACE → Stage 1 → "A transaction's signatures are checked at
+Stage 1"`).
+
+**Total.** `false`, never a throw, on a map key that is not 64 lowercase hex or a transaction whose id
+cannot be computed — whatever ran before it.
 
 ### verifyValidatorSignature
 
@@ -1188,7 +1214,7 @@ id is not 64 lowercase hex, an element is not a byte view, the two arrays differ
 `header.utxoTxRoot` is not 64 lowercase hex — whatever ran before it. It decodes no transaction.
 
 **It is not part of `verifyOrderingBlockStructure`, and the reason is cost.** The structure check
-runs where no work has been proven — net's Stage 1 calls it ahead of the PoW check — and over every
+runs where no work has been proven — the apply funnel calls it ahead of its PoW check — and over every
 block a node serves; this predicate hashes the whole body. Each of its callers places it behind
 proof of work: Stage 1 after `verifyOrderingBlockPoW` (`NET_INTERFACE → Stage 1`), fork resolution
 on a block whose header chain it has verified (`NODE_INTERFACE → Fork choice decides on verified
@@ -1349,11 +1375,14 @@ Queries serve the DAG tip. Phase completion gates nothing a reader can observe.
 
 ```
 Stage 1 (@dagsocial/net — topic validators, before mesh forwarding)
-  ├── tx topic     → decodeTxPacket → verifyTxStructure → the packet biconditional
-  │                  (tx.post present ⟺ content present) → verifyPostBody(content, tx.post.contentHash)
+  ├── tx topic     → decodeTxPacket → verifyTxStructure → verifyTxProtocolVersion → the packet
+  │                  biconditional (tx.post present ⟺ content present) → verifyPostBody(content,
+  │                  tx.post.contentHash) → verifyTxSignatures (the forward waits for Stage 2)
   ├── body pull    → verifyPostBody over each returned body, against the row's commitment
-  └── block topic  → verifyOrderingBlockStructure → verifyProtocolVersion → verifyOrderingBlockPoW
-                     → verifyUtxoTxRoot (the whole row, in order: NET_INTERFACE → Stage 1)
+  └── block topic  → the header alone: verifyHeaderFieldDomains → verifyProtocolVersion →
+                     verifyOrderingBlockPoW → verifyValidatorSignature; then the body:
+                     verifyOrderingBlockStructure → verifyUtxoTxRoot
+                     (the whole row, in order: NET_INTERFACE → Stage 1)
 
 Stage 2 (@dagsocial/node — after receipt)
   ├── onTx         → validateTx (authorization, transitions, conservation — NODE_INTERFACE)

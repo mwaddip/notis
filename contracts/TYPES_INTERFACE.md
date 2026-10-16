@@ -2432,6 +2432,17 @@ the reason a panic-shaped search is not sufficient here.
 The ordering-block framing replaces `u32BE` length prefixes with `vlqU`. The boundary check runs at
 the outer level and at each nested `lp` section.
 
+> ⚠ **AHEAD OF CODE (2026-10-16).** The paragraph below leads `serialization.ts`' `readOrderingBlockSections`.
+
+**`readOrderingBlockSections(bytes)` reads the framing and decodes the header alone.** It answers
+`{ header, utxoTxTreeBytes, validatorSignature }`: the `HEADER` codec over the first section, the second
+section's bytes undecoded, the 64-byte signature, and the frame exhausted — so
+`decodeOrderingBlock(bytes)` answers `{ header, utxoTxTree: decodeUtxoTxTree(utxoTxTreeBytes),
+validatorSignature }` whenever both read, and refuses exactly when one of them refuses. A header
+section longer than `MAX_HEADER_BYTES` is refused before it is decoded, which moves no verdict: no
+header encodes longer. It is the read a node judges a gossiped block's header by before it pays for the
+body (`NET_INTERFACE → Stage 1 → "A header is read before its body"`).
+
 ### Layout — Merkle leaf preimages are the struct's own wire bytes
 
 **Decided 2026-08-10.** `utxoTxRoot` commits leaves whose preimages are exactly
@@ -2650,6 +2661,7 @@ bytes with provenance appended — for its tree value (→ Canonical encoding); 
 | `utxoTxTreeByteLength(t)` | `(UtxoTxTree) => number` | The body's encoded length, computed from the structure without encoding it. Equal to `encodeUtxoTxTree(t).length` by pinned test — see Sizing without encoding |
 | `encodeOrderingBlock(b)` | `(OrderingBlock) => Uint8Array` | Positional wire framing: `lp(header)` ‖ `lp(utxoTxTree)` ‖ `b64(validatorSignature)` — see Layout — Block |
 | `decodeOrderingBlock(bytes)` | `(Uint8Array) => OrderingBlock` | Inverse of `encodeOrderingBlock` |
+| `readOrderingBlockSections(bytes)` | `(Uint8Array) => { header: BlockHeader; utxoTxTreeBytes: Uint8Array; validatorSignature: Uint8Array }` | The framing read and the header alone decoded — see Layout — Block |
 | `encodeTx(tx)` | `(UtxoTransaction) => Uint8Array` | **Positional** — `txIdBytes` ‖ `arr(signatures sorted)`. See Layout — UtxoTransaction |
 | `decodeTx(bytes)` | `(Uint8Array) => UtxoTransaction` | Inverse of `encodeTx` |
 | `identityRecordBytes(record)` | `(IdentityRecord) => Uint8Array` | Positional — the identity record's AVL value. See Layout — IdentityRecord |
