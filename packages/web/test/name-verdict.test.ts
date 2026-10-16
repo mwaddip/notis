@@ -85,6 +85,10 @@ describe('recipientVerdict', () => {
     expect(recipientVerdict(result('no-proof'), '@bob')).toEqual({ refusal: 'the node served no proof for @bob.' });
   });
 
+  it.fails('young — *@bob is too new to send to by name — send to a key instead.*', () => {
+    expect(recipientVerdict(held('young', REC, 'bob'), '@bob')).toEqual({ refusal: '@bob is too new to send to by name — send to a key instead.' });
+  });
+
   it('the refusal carries the handle it is given, as typed', () => {
     expect(recipientVerdict(result('no-proof'), '@BoB_1')).toEqual({ refusal: 'the node served no proof for @BoB_1.' });
   });
