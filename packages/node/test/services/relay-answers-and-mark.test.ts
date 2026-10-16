@@ -129,7 +129,7 @@ describe('the relay handler answers whether it admitted the transaction', () => 
     vi.resetModules();
   });
 
-  it.fails('an admitted transaction answers true', async () => {
+  it('an admitted transaction answers true', async () => {
     const { sender, box } = await storeWithCredit();
     const tx = makeCreditTx(sender, [box], 1n);
 
@@ -139,7 +139,7 @@ describe('the relay handler answers whether it admitted the transaction', () => 
     expect(run.returned).toBe(true);
   });
 
-  it.fails('a rules refusal answers false', async () => {
+  it('a rules refusal answers false', async () => {
     const { sender } = await storeWithCredit();
     // An input the store has never seen — the rules refuse admission.
     const absent = makeCreditBox(1n * 10n ** 8n, sender.userId, 0, 999);
@@ -151,7 +151,7 @@ describe('the relay handler answers whether it admitted the transaction', () => 
     expect(run.returned).toBe(false);
   });
 
-  it.fails('a full pool answers false', async () => {
+  it('a full pool answers false', async () => {
     vi.doMock('../../src/services/admit-tx.js', async (importOriginal) => {
       const actual =
         await importOriginal<typeof import('../../src/services/admit-tx.js')>();
@@ -159,7 +159,7 @@ describe('the relay handler answers whether it admitted the transaction', () => 
       return {
         ...actual,
         admitTx: () => {
-          throw new MempoolFullError('pool full');
+          throw new MempoolFullError(0);
         },
       };
     });
@@ -171,7 +171,7 @@ describe('the relay handler answers whether it admitted the transaction', () => 
     expect(run.returned).toBe(false);
   });
 
-  it.fails('a pending-spend conflict answers false', async () => {
+  it('a pending-spend conflict answers false', async () => {
     vi.doMock('../../src/services/admit-tx.js', async (importOriginal) => {
       const actual =
         await importOriginal<typeof import('../../src/services/admit-tx.js')>();
@@ -191,7 +191,7 @@ describe('the relay handler answers whether it admitted the transaction', () => 
     expect(run.returned).toBe(false);
   });
 
-  it.fails('a policy refusal answers false', async () => {
+  it('a policy refusal answers false', async () => {
     vi.doMock('../../src/config.js', async (importOriginal) => {
       const actual = await importOriginal<typeof import('../../src/config.js')>();
       return {
@@ -221,7 +221,7 @@ describe("the relay's signature check answers from the transaction's own map", (
     vi.resetModules();
   });
 
-  it.fails(
+  it(
     'a relayed transaction with a signature that would fail Ed25519 verification is admitted',
     async () => {
       // Net's Stage 1 verified every entry of the map before the handler sees
