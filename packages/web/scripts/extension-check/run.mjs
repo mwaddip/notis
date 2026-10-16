@@ -1397,20 +1397,48 @@ async function pressCorner(cx) {
 // The settings window: the input commits on `change`). Empty resets to the
 // build default. The changeNode handler drops the verdict to `null` (checking)
 // and starts a new run.
+//
+// The `change` dispatch ends the settings body synchronously (WEB_INTERFACE →
+// The workspace → "What ends a form in a window": a change of the node read
+// builds every body anew; a form that has ended is not drawn again and its
+// fields are emptied), so a read of the input the dispatch returned on is of
+// a form that has ended, value emptied. Mark the input before the dispatch,
+// then read the value of the input that stands once the new body has drawn
+// (bounded, the shape of the links-row read above).
 async function setNodeViaUi(cx, origin) {
   await cx.eval(`document.querySelector('[aria-label="open settings"]').click()`, true);
   await cx.waitFor(`!!document.querySelector('[aria-label="the node this client reads"]')`, 'settings node row', 10000);
-  const applied = await cx.eval(`(() => {
+  const mark = 'setnode-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  await cx.eval(`(() => {
     const input = document.querySelector('[aria-label="the node this client reads"]');
+    input.setAttribute('data-notis-mark', ${JSON.stringify(mark)});
     input.focus();
     input.value = ${JSON.stringify(origin)};
     input.dispatchEvent(new Event('change', { bubbles: true }));
-    return input.value;
-  })()`);
-  // Close the settings window so the corner and the App's other surfaces
-  // are visible again — a press on the settings header re-toggles it.
+  })()`, true);
+  const t0 = Date.now();
+  let applied = '';
+  let drew = false;
+  while (Date.now() - t0 < 5000) {
+    const next = await cx.eval(`(() => {
+      const input = document.querySelector('[aria-label="the node this client reads"]');
+      if (!input) return { present: false };
+      return {
+        present: true,
+        marked: input.getAttribute('data-notis-mark') === ${JSON.stringify(mark)},
+        value: input.value,
+      };
+    })()`);
+    if (next.present && !next.marked) {
+      applied = next.value ?? '';
+      drew = true;
+      break;
+    }
+    await sleep(50);
+  }
+  // Let the corner's render settle before the caller reads it.
   await sleep(200);
-  return applied;
+  return drew ? applied : applied + ' (the new settings body did not draw within 5 s)';
 }
 
 async function readPrefsNode(cx) {
