@@ -4480,8 +4480,9 @@ async function readAndDeclinePrompt(promptsBefore, what) {
 // is read as surely as one that stands for seconds — the key beneath the
 // field is S's, the prompt window opens naming S's key on its `to:` line, and
 // a decline sends nothing: no `/credits/transfer`, the flight *send not
-// sent.*. A send goes only to a name proven `k` deep, so the press waits
-// until A is at least `sHeld.claimedAtBlock + TIP_K` and passes only when the
+// sent.*. A send goes only to a name proven `k` deep: the press checks
+// against the anchor standing, so the step takes a fresh verified tip run
+// after A reaches `sHeld.claimedAtBlock + TIP_K`, and passes only when the
 // check proved S's box at `suffixHead` — one box proof, at that height; a
 // proof at the tip alone fails the step.
 async function runNamesStep29(cx, sHeld) {
@@ -4501,6 +4502,15 @@ async function runNamesStep29(cx, sHeld) {
       const kDeepNow = await currentHeight(NODE);
       record(29, false,
         `S's box is not k deep on A within 10 minutes — claimed at block ${sHeld.claimedAtBlock}, TIP_K=${TIP_K}, target=${kDeepTarget}, A started at ${JSON.stringify(kDeepStart)}, last seen ${JSON.stringify(kDeepNow)}; A's miner may be paced too slowly`);
+      return;
+    }
+    // A verified tip run through the corner writes a fresh anchor whose
+    // suffixHead is at least claimedAtBlock + 1 — the send's first check
+    // then proves S's box at suffixHead with one box proof.
+    const anchorRefresh = await pressAndReadVerdict(cx);
+    if (!cornerVerified(anchorRefresh.reading)) {
+      record(29, false,
+        `the fresh verified tip run after S's box reached k deep did not read verified — A reached ${kDeepReached} before the press, led=${anchorRefresh.reading.ledClass}, title=${JSON.stringify(anchorRefresh.reading.title)}, proof requests=${anchorRefresh.proofs?.length ?? 0}`);
       return;
     }
     await raiseWindow(cx, 'open wallet');
