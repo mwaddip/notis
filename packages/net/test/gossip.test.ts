@@ -10,6 +10,7 @@ import {
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
+  verifyTxSignatures,
   verifyHeaderFieldDomains,
   verifyOrderingBlockStructure,
   verifyValidatorSignature,
@@ -75,6 +76,7 @@ const validators: NetValidators = {
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
+  verifyTxSignatures,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
   verifyHeaderFieldDomains,
@@ -398,7 +400,7 @@ describe('tx topic validator — the post membership gate', () => {
   // the karma-membership gate reads this node's cached set, which a node behind the
   // one that forwarded the post may not yet carry; the sender could have reached
   // Accept running the same rules, so the Reject records no penalty.
-  it.fails('rejects the SAME post when its author is not in the set, no penalty of any kind', () => {
+  it('rejects the SAME post when its author is not in the set, no penalty of any kind', () => {
     const { result, peer, peerMgr, penaltySpy, kindSpy } = validatePacket(postTx, postContent, new Set());
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).not.toHaveBeenCalled();
@@ -473,7 +475,7 @@ describe('tx topic validator — the post membership gate', () => {
   // NET_INTERFACE → Stage 1 → "A refusal that rests on this node's state records nothing":
   // the era is `chainHeight() + 1`, which the sender behind this node reads differently;
   // a declared-version mismatch Rejects with no penalty.
-  it.fails('rejects an unsupported protocol version with no penalty of any kind', () => {
+  it('rejects an unsupported protocol version with no penalty of any kind', () => {
     const tx = { ...txWith(baseCommit(keyPair.publicKey)), protocolVersion: 99 };
     const { result, peer, peerMgr, penaltySpy, kindSpy } = validatePacket(tx, postContent, new Set([authorHex]));
     expect(result).toBe(TopicValidatorResult.Reject);
@@ -571,7 +573,7 @@ describe("tx topic validator — a transaction's signatures are checked at Stage
     post: sigCommit(author),
   });
 
-  it.fails('rejects a tx with one signature byte flipped with misbehavior 100', () => {
+  it('rejects a tx with one signature byte flipped with misbehavior 100', () => {
     const kp = generateKeyPair();
     const authorHex = Buffer.from(kp.publicKey).toString('hex');
     const seed = kp.secretKey.subarray(16);
@@ -625,7 +627,7 @@ describe("tx topic validator — a transaction's signatures are checked at Stage
 describe("tx topic validator — a fault of this node's is no peer's", () => {
   const CONTENT = 'chain-height fixture';
 
-  it.fails("a chainHeight() throw is Ignored with no penalty and one console.error line", () => {
+  it("a chainHeight() throw is Ignored with no penalty and one console.error line", () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const kp = generateKeyPair();
@@ -994,7 +996,7 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
 
   // NET_INTERFACE → Stage 1 → "A refusal that rests on this node's state records nothing":
   // a tx declared-version mismatch Rejects with no penalty.
-  it.fails('rejects a tx declaring era 1 when chainHeight()+1 = H (era 2), no penalty', () => {
+  it('rejects a tx declaring era 1 when chainHeight()+1 = H (era 2), no penalty', () => {
     const { result, peer, peerMgr, penaltySpy, kindSpy } = runTx(plainTxV(1), undefined, H - 1);
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).not.toHaveBeenCalled();
@@ -1002,7 +1004,7 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
     expect(peerMgr.getPeerMetadata(peer.id)!.penaltyCount).toBe(0);
   });
 
-  it.fails('rejects a tx whose commit declares a different era than its envelope, no penalty', () => {
+  it('rejects a tx whose commit declares a different era than its envelope, no penalty', () => {
     // The envelope declares era 2 (matches), the commit declares 1 — both must
     // equal the era, so the commit alone fails it.
     const { result, peer, peerMgr, penaltySpy, kindSpy } = runTx(postTxV(2, 1), CONTENT, H - 1);

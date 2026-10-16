@@ -148,6 +148,11 @@ export interface NetValidators {
   verifyContentLimits: (content: string) => { valid: boolean; error?: string };
   verifyParentRefsCount: (refs: string[]) => { valid: boolean; error?: string };
   verifyTxStructure: (tx: UtxoTransaction) => { valid: boolean; error?: string };
+  // Every entry of the signature map verifies over the transaction's id
+  // (VALIDATION_INTERFACE → verifyTxSignatures). The tx topic validator reads
+  // it last, behind the karma gate (NET_INTERFACE → Stage 1 → "A transaction's
+  // signatures are checked at Stage 1").
+  verifyTxSignatures: (tx: UtxoTransaction) => boolean;
   // The header is inside the encodable domain
   // (VALIDATION_INTERFACE → verifyHeaderFieldDomains). The ordering-block
   // topic validator reads it on the header alone, before the body is decoded

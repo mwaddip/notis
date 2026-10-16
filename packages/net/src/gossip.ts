@@ -305,57 +305,65 @@ export function subscribeTopics(
   });
 
   gs.topicValidators.set(topics.tx, (_peer, msg) => {
+    const peerId = _peer.toString();
+    const raw = new Uint8Array(msg.data);
+    // NET_INTERFACE → Validation (and untrusted-input safety) →
+    // "A peer's bytes are weighed before they are decoded"
+    if (raw.length > MAX_TX_PACKET_BYTES) {
+      peerMgr.recordPenaltyKind(
+        PenaltyKind.ProtocolViolation,
+        peerId,
+        `tx packet ${raw.length} bytes exceeds MAX_TX_PACKET_BYTES (${MAX_TX_PACKET_BYTES})`,
+      );
+      return TopicValidatorResult.Reject;
+    }
+    // NET_INTERFACE → Stage 1 → "A fault of this node's is no peer's".
+    // The decode is the one step whose throw is the sender's; everything below
+    // reads this node's chain or runs validation's pure functions.
+    let packet: ReturnType<typeof decodeTxPacket>;
     try {
-      const raw = new Uint8Array(msg.data);
-      // NET_INTERFACE → Validation (and untrusted-input safety) →
-      // "A peer's bytes are weighed before they are decoded"
-      if (raw.length > MAX_TX_PACKET_BYTES) {
-        peerMgr.recordPenaltyKind(
-          PenaltyKind.ProtocolViolation,
-          _peer.toString(),
-          `tx packet ${raw.length} bytes exceeds MAX_TX_PACKET_BYTES (${MAX_TX_PACKET_BYTES})`,
-        );
-        return TopicValidatorResult.Reject;
-      }
-      const packet = decodeTxPacket(raw);
-      const { tx, content } = packet;
+      packet = decodeTxPacket(raw);
+    } catch (err) {
+      peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, peerId, `malformed tx: ${String(err)}`);
+      return TopicValidatorResult.Reject;
+    }
+    const { tx, content } = packet;
+
+    try {
       const vr = validators.verifyTxStructure(tx);
       if (!vr.valid) {
-        peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, vr.error ?? 'invalid tx');
+        peerMgr.recordPenalty('misbehavior', peerId, 100, vr.error ?? 'invalid tx');
         return TopicValidatorResult.Reject;
       }
+      // NET_INTERFACE → Stage 1 →
+      // "A refusal that rests on this node's state records nothing".
+      // The era is read from this node's tip, which the sender may hold
+      // differently; a declared-version mismatch is a Reject with no penalty.
       if (!validators.verifyTxProtocolVersion(tx, chainHeight() + 1, schedule)) {
-        // The envelope's and the commit's declared version each equal the era
-        // of the next block this node would apply; a mismatch is a compatibility
-        // signal, Transient not misbehavior (NET_INTERFACE → Peer Penalty System).
-        const era = protocolVersionAt(schedule, chainHeight() + 1);
-        const declared = tx.post !== undefined
-          ? `tx ${tx.protocolVersion}/commit ${tx.post.protocolVersion}`
-          : `tx ${tx.protocolVersion}`;
-        peerMgr.recordPenaltyKind(
-          PenaltyKind.Transient,
-          _peer.toString(),
-          `protocol version ${declared} != era ${era}`,
-        );
         return TopicValidatorResult.Reject;
       }
       // NET_INTERFACE → Gossip Topics: tx.post present ⟺ content present
       const hasPost = tx.post !== undefined;
       const hasContent = content !== undefined;
       if (hasPost !== hasContent) {
-        peerMgr.recordPenalty('misbehavior', _peer.toString(), 100,
+        peerMgr.recordPenalty('misbehavior', peerId, 100,
           hasPost ? 'post without body' : 'body without post');
         return TopicValidatorResult.Reject;
       }
       if (hasPost && hasContent) {
         const bv = validators.verifyPostBody(content, tx.post!.contentHash);
         if (!bv.valid) {
-          peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, bv.error ?? 'post body verification failed');
+          peerMgr.recordPenalty('misbehavior', peerId, 100, bv.error ?? 'post body verification failed');
           return TopicValidatorResult.Reject;
         }
       }
       // The post relay gate — see `KarmaMembers`. It runs only for a
       // post-bearing transaction and only after `verifyTxStructure`.
+      //
+      // NET_INTERFACE → Stage 1 →
+      // "A refusal that rests on this node's state records nothing":
+      // the karma set is this node's view, which a peer behind may not yet
+      // carry; a miss Rejects with no penalty.
       //
       // ⚠ What makes the hex-encode safe on THIS path is the decoder, not that
       // check. `author` is `b32`, read as `readBytesN(r, 32)`, so
@@ -364,21 +372,23 @@ export function subscribeTopics(
       // 32-byte pin is depth rather than enforcement here; it is left in place
       // because it is what a caller reaching this gate without a decode would
       // land on, and that failure would otherwise be silent.
-      //
-      // ⚠ **Before any store read, and before the signature check**, which is the
-      // whole reason it is a set: an unfunded flood costs one hash lookup, not
-      // 73 µs of Ed25519 per message.
       if (tx.post !== undefined) {
         const author = Buffer.from(tx.post.author).toString('hex');
         if (!karmaMembers.has(author)) {
-          peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'post author holds no karma');
           return TopicValidatorResult.Reject;
         }
       }
+      // NET_INTERFACE → Stage 1 →
+      // "A transaction's signatures are checked at Stage 1":
+      // last, because it is the dearest — 1.1–1.7 ms per signature.
+      if (!validators.verifyTxSignatures(tx)) {
+        peerMgr.recordPenalty('misbehavior', peerId, 100, 'tx signature invalid');
+        return TopicValidatorResult.Reject;
+      }
       return TopicValidatorResult.Accept;
     } catch (err) {
-      peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, _peer.toString(), `malformed tx: ${String(err)}`);
-      return TopicValidatorResult.Reject;
+      console.error(`[net] tx validator fault (ignored): ${String(err)}`);
+      return TopicValidatorResult.Ignore;
     }
   });
 
