@@ -31,13 +31,13 @@ import { ClientError } from './client-error.js';
  * transaction read-only, then admits it — for a post transaction, with the
  * packet's body as the pending row in the same store transaction.
  *
- * Answers whether it admitted the transaction (NODE_INTERFACE → Relay handlers
- * → `onTx`): net forwards an admitted transaction and penalises nothing on a
- * refusal (NET_INTERFACE → Stage 2 → "A Stage 2 refusal records nothing").
- * Every refusal is a `false` the handler logs and returns from: a transaction
- * the rules refuse, a full pool, an input a pending entry spends, and each
- * policy refusal admission throws as a `ClientError`. Any other throw reaches
- * net, which logs it as a handler defect.
+ * Answers whether it admitted the transaction: net forwards an admitted
+ * transaction and penalises nothing on a refusal (NET_INTERFACE → Stage 2 →
+ * "A Stage 2 refusal records nothing"). Every refusal is a `false` the
+ * handler logs and returns from: a transaction the rules refuse, a full
+ * pool, an input a pending entry spends, and each policy refusal admission
+ * throws as a `ClientError`. Any other throw reaches net, which logs it as
+ * a handler defect.
  */
 export function handleRelayedTx(
   tx: UtxoTransaction,

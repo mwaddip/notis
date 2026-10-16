@@ -205,8 +205,8 @@ net.setChainHeightProvider(getCurrentHeight);
 net.setBlockIdProvider(getOrderingBlockHash);
 net.setHeightByBlockIdProvider(getHeightByBlockHash);
 
-// NODE_INTERFACE → Sync handlers → `setHeaderStandingProvider`: `'held'`,
-// `'refused'` or `null` — two point reads, handed over unwrapped.
+// NODE_INTERFACE → Sync handlers: the header-standing provider answers
+// `'held'`, `'refused'` or `null` — two point reads, handed over unwrapped.
 net.setHeaderStandingProvider(headerStanding);
 
 // The seam the net layer serves a stored body through — what a served

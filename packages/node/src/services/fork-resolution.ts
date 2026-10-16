@@ -899,13 +899,11 @@ export async function resolveFork(
     return 'switched';
   } catch (err) {
     // NODE_INTERFACE → Fork choice decides on verified headers, step 10–11:
-    // an `'unbound'` or `'acceptance'` abort is a refusal that reads this
-    // node's clock or an unexpected throw, not a verdict on the chain — no
-    // mark, no penalty, no memo. Step 8 of this function already bound every
-    // served block to its header before `reorg` runs, so an `'unbound'`
-    // abort here would be a defect of this node's code rather than a verdict,
-    // and the arm exists for the funnel's totality rather than for a reachable
-    // peer-driven path.
+    // `'acceptance'` reads this node's clock, `'local'` is an unexpected
+    // throw, and `'unbound'` is a block that is not its header's — which
+    // step 8 of this function leaves none of, so the arm exists for the
+    // funnel's totality rather than for a reachable peer-driven path. None
+    // of the three is a verdict on the chain: no mark, no penalty, no memo.
     if (err instanceof ReorgAbortedError) {
       if (err.class_ === 'local') {
         console.error(

@@ -48,8 +48,8 @@ export function handleOrderingBlock(
     return true;
   }
 
-  // NODE_INTERFACE → Relay handlers → `onOrderingBlock`: a header this node
-  // marked refused is refused with nothing applied.
+  // NODE_INTERFACE → Relay handlers: a header this node marked refused is
+  // refused with nothing applied.
   if (incomingHash !== null && anyRefusedHeader([incomingHash])) {
     return false;
   }

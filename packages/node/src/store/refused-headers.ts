@@ -24,8 +24,8 @@ export function anyRefusedHeader(hashes: string[]): boolean {
 }
 
 /**
- * NODE_INTERFACE → Sync handlers → `setHeaderStandingProvider`: `'held'` when
- * the `block_hash` column at `height` equals `hash`, `'refused'` when
+ * The header-standing provider (NODE_INTERFACE → Sync handlers): `'held'`
+ * when the `block_hash` column at `height` equals `hash`, `'refused'` when
  * `refused_headers` holds `hash`, `null` otherwise. Net reads this through
  * the stage-1 ordering-block validator to Ignore a header this node knows
  * (NET_INTERFACE → Stage 1 → "A header this node knows is Ignored"). Two
