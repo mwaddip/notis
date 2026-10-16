@@ -487,6 +487,10 @@ every proven box is real and the key's, and a node that withholds a box from its
 clay on a run it answers the anchor's own height to and proves the tip's range under, and muted on every other —
 *not checked yet*, or *the node served no proof for …* where it serves none.
 
+> ⚠ **AHEAD OF CODE (2026-10-16).** The send's `young` arm below leads `web/src/model/name-verdict.ts`, whose
+> `recipientVerdict` sends under `young` to the owner the tip proves, and `web/src/app.ts`, whose `checkRecipient`
+> takes its one tip run for `unchecked` alone.
+
 **The verified names.** The extension proves every handle it shows, and every handle it sends to, against the state the
 verified chain committed — the figures' anchor, their proofs and their order. **A check** is `proveName` of
 `@dagsocial/nipopow-client` over a claim: a **label** — a key and the name a row carries beside it — or a **typed
@@ -517,12 +521,19 @@ for the next run. A clay pair is checked again at every verified run. One batch 
 one more; a node change drops every result with the generation it bumps; a result under an older generation is
 dropped; a tip run that ends `thin` or `refused` keeps them — each is a fact about the verified anchor it was proven at,
 and dropping one would turn a lie's clay back to ink while a second node is gone. **A check is total**, as a run is
-(→ "The verified figures"). **A send to a handle is checked at the press** (→ The wallet window): `proven` and `young` go to the flow,
-to the key the proven box names; `none` is *no one holds that name.*; `unchecked` takes its one tip run first; every
-other status refuses and nothing is signed; with no anchor the press asks for a tip run and waits for its verdict, and
-`thin` or `refused` refuses. **What it means**: a handle in ink stands beside the key whose box the verified chain holds
-under that name, at `suffixHead` or, younger, at the tip. A node that shows a key bare, or answers *no one holds that
-name.* for a held one, is not caught — omission is what reading both nodes as a union is for — and a name burned in
+(→ "The verified figures"). **A send to a handle is checked at the press** (→ The wallet window): `proven` goes to the flow,
+to the key the proven box names; `none` is *no one holds that name.*; `unchecked` and `young` take one tip run first —
+the anchor standing may be minutes old — and the check against its anchor decides: `proven` to the flow, a second
+`unchecked` *@bob is too new to check yet.*, and a `young` **refused**, *@bob is too new to send to by name — send to a
+key instead.*, with no key beneath the field. The tip's `stateRoot` stands beneath its own header alone
+(`NIPOPOW_INTERFACE → The trust model`), a block the reading node can mine over the honest tip with a root that binds
+the name to a key of its own, so a name is sent to by key until it is `k` deep. Every other status refuses and nothing
+is signed; with no anchor the press asks for a tip run and waits for its verdict, and `thin` or `refused` refuses.
+**What it means**: a handle in ink is one no check has caught — under `proven` it stands beside the key whose box the
+verified chain holds under that name at `suffixHead`, `k` deep; under `young`, beside the key the tip's `stateRoot`
+binds it to, with the tip's own header the only work behind it — the reading node's word as much as the chain's, which
+is why a send refuses it; under `unchecked`, beside a box no anchor has reached yet. A node that shows a key bare, or
+answers *no one holds that name.* for a held one, is not caught — omission is what reading both nodes as a union is for — and a name burned in
 the last `k` blocks still proves for its old holder, as a box spent since `suffixHead` still proves there.
 
 **The light read.** The extension reads every list of posts as ids with the node's word: the feed, the author window's
@@ -1578,6 +1589,9 @@ no figure stands to turn clay. Gold still means credits: the figure
 gives up the colour only while the node's own proof of it fails, as the corner's height does on `refused`. The figure is
 the live spendable sum in every state; a balance every box of which proved reads exactly as it reads on the web.
 
+> ⚠ **AHEAD OF CODE (2026-10-16).** The `young` refusal below leads `web/src/model/name-verdict.ts`, whose
+> `recipientVerdict` sends under `young`, and `web/src/app.ts`, whose `checkRecipient` takes no tip run for it.
+
 **The `send` row** stands while a box is spendable, and while a send's own line stands — its flight, the pending
 line, *sent* — so a send of the whole balance still reads its ending. The
 send form, a real `<form>` in place: the recipient — a 64-hex key or a handle, the leading `@` optional — on a line
@@ -1590,7 +1604,7 @@ key it resolved to, in mono, the prefix the identity display renders — with `s
 keeps; **in the extension there is no confirm row**: the handle is checked against the verified chain first (→ The
 extension → "The verified names") — **the row reading *checking @bob…* in the flight's place while the check runs, and
 a press during it doing nothing**, so one press is one check and at most one prompt; a press takes away the ending the
-send before it left in the flight's place — and once it proves, `send` shows
+send before it left in the flight's place — and once it proves `k` deep (`proven`), `send` shows
 the key the proven box names beneath the field, in mono, and goes to the flow — the prompt is the confirmation (→ The
 extension) — the build told apart by the
 identity module implementing `policy`, the predicate the policy row reads. A locked identity unlocks in place
@@ -1604,9 +1618,10 @@ form keeps its values on every ending but an accepted submission, which clears i
 the reader's own key is *that is your own key.*; a payment or a change below the floor names it — *send at least
 N $NOTIS.*, *that leaves change under N $NOTIS — send a little more, or all of it.*; a shortfall is *not enough
 $NOTIS.*; a decline is *send not sent.*, a refusal *send not sent: <reason>.*, the lock race *your key is locked*
-(→ The wallet, `notSigned`); in the extension, a handle that does not prove is *this node's answer for @bob did not
-verify.* (`absent`, `unproven`), *the node served no proof for @bob.* (`no-proof`), *@bob is too new to check yet.* (a
-second `unchecked`), *@bob can't be checked — the chain is not verified.* (`thin`, `refused`), *@bob can't be
+(→ The wallet, `notSigned`); in the extension, a handle that does not prove `k` deep is *this node's answer for @bob
+did not verify.* (`absent`, `unproven`), *the node served no proof for @bob.* (`no-proof`), *@bob is too new to check yet.* (a
+second `unchecked`), *@bob is too new to send to by name — send to a key instead.* (`young` after the press's one
+tip run), *@bob can't be checked — the chain is not verified.* (`thin`, `refused`), *@bob can't be
 checked.* (a check that ends without an answer — a check is total, so only a defect reaches it) — the form keeping its
 values, nothing signed. **A press belongs to the node, the key and the window it was made under**: a change of the node or of the key, the
 wallet closed, or its form ended with nothing left to spend, ends it — its check, its answer and an unlock it owed —

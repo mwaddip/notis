@@ -449,7 +449,8 @@ the chain does not hold. A proven figure is a lower bound: a node that leaves on
 it. **It proves the names it shows, and the name you send to**: every `@handle` on screen is checked against the
 name's box in that chain — held by the key it stands beside, under that name exactly — and turns clay where the node's
 answer does not verify or the node cannot back a name it shows; a send to a typed `@handle` reads *checking @bob…*,
-then goes to the key the proven box names, or is refused and nothing is signed. A node that shows a key without its
+then goes to the key the name's box names once that box is 20 blocks deep — a newer name is sent to by its key —
+or is refused and nothing is signed. A node that shows a key without its
 name is not caught by it. **A Notis link lands in the extension**: a post's
 link stays a plain `https` link to the website, and one that opens a tab of its own is taken into the extension's
 workspace — the setting *a Notis link opens: on the site · here* turns that off — while a link followed inside a

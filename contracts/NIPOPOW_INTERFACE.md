@@ -320,6 +320,9 @@ class ProofBuildError extends Error {
 
 ## The trust model — what a proof proves
 
+> ⚠ **AHEAD OF CODE (2026-10-16).** Rule 4's last sentence leads `web/src/model/name-verdict.ts`, whose
+> `recipientVerdict` sends to the key a name's box binds at the tip alone.
+
 Four rules, stated once here and consumed by `NODE_INTERFACE → Nipopow prover` and by every
 light client:
 
@@ -340,7 +343,10 @@ light client:
    (→ verifyProof, rule 1) — KMZ17's verifier is `Verify_{m,k}`, its own `k` the length of the suffix it requires.
    The suffix head, the header a client proves state against, is therefore the client's `k` deep: a `stateRoot` a
    node chose stands there only beneath `k − 1` headers mined at the schedule's own targets (→ verifyProof,
-   rule 3), on a chain whose proof outscores the honest one.
+   rule 3), on a chain whose proof outscores the honest one. **The tip is one header deep**: its `stateRoot` stands
+   beneath no header but its own — one block at the schedule's target, which a node can mine over the honest tip with
+   a root of its choosing — so a client proves what it acts on at the suffix head, and reads the tip only for what has
+   landed since.
 
 ---
 
