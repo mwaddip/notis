@@ -1089,9 +1089,12 @@ async function startLyingRelay(upstream) {
 // extension → "The verified names", the lie arms 27a–d · 28a–b, every
 // /api/v1/proof/ answer passing verbatim as well:
 //   label-rename    — every row of a /posts answer — the feed's, a thread's
-//                     post, ancestors, descendants and pending, one post's —
-//                     whose `author` is R carries `relay.renameTo` as its
-//                     authorName;
+//                     post, ancestors, descendants and pending, one post's,
+//                     a light row (`WEB_INTERFACE → The extension → "The
+//                     light read"`: `authorName` and no `author`) — whose
+//                     `author` is R, or carrying no `author` whose
+//                     `authorName` is the name R holds, carries
+//                     `relay.renameTo` as its authorName;
 //   owner-404       — /usernames?owner=<R> answers 404 { error: 'Identity
 //                     holds no name' }, the node's own words for a key holding
 //                     none;
@@ -1118,6 +1121,7 @@ async function startFiguresRelay(upstream, port, names = null) {
       'label-rename': 0, 'owner-404': 0, 'owner-fakebox': 0, 'name-owner': 0, 'name-fakebox': 0,
     },
     renamed: 0,
+    renameFrom: null,
     renameTo: null,
     fakeBoxId: null,
     // The box the credits-side lie points at — the arm asserts the line names
@@ -1257,7 +1261,7 @@ async function startFiguresRelay(upstream, port, names = null) {
           }
         } else if (mode === 'label-rename' && (target.pathname === '/posts' || target.pathname.startsWith('/posts/'))) {
           const answer = JSON.parse(body.toString('utf8'));
-          const rows = renameRows(answer, rKey, relay.renameTo);
+          const rows = renameRows(answer, rKey, relay.renameFrom, relay.renameTo);
           if (rows > 0) {
             body = Buffer.from(JSON.stringify(answer));
             relay.edits['label-rename'] += 1;
@@ -1334,14 +1338,19 @@ function handleLookupName(pathname) {
   return name.startsWith('@') ? name.slice(1) : name;
 }
 
-// Rename R's rows in a /posts answer in place — every object whose `author` is
-// `rKey` and whose `authorName` is a name — and answer how many.
-function renameRows(value, rKey, to) {
+// Rename R's rows in a /posts answer in place — a full row whose `author` is
+// `rKey`, and a light row (no `author`, `WEB_INTERFACE → The extension →
+// "The light read"`) whose `authorName` is `rName` — and answer how many.
+function renameRows(value, rKey, rName, to) {
   let rows = 0;
   const walk = (v) => {
     if (Array.isArray(v)) { for (const x of v) walk(x); return; }
     if (v === null || typeof v !== 'object') return;
     if (typeof v.author === 'string' && v.author.toLowerCase() === rKey && typeof v.authorName === 'string') {
+      v.authorName = to;
+      rows += 1;
+    } else if (typeof v.author === 'undefined' && typeof v.authorName === 'string'
+      && rName !== null && v.authorName === rName) {
       v.authorName = to;
       rows += 1;
     }
@@ -3939,6 +3948,7 @@ async function runNameLabelArm(cx, relay, arm, ctx) {
     // (1) The mode — R's rows renamed to a name no identity holds, or a fresh
     // made-up box.
     relay.mode = arm.mode;
+    relay.renameFrom = ctx.rName;
     relay.renameTo = ctx.renameTo;
     if (arm.mode === 'owner-fakebox') relay.fakeBoxId = randomBytes(32).toString('hex');
 
