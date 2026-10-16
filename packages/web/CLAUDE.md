@@ -476,7 +476,8 @@ author window's clay line is drawn only by the window's render. Results drop on 
 change and an unverified run. **The send's press is the App's** (`pressSend`): *checking @bob…* in the flight's place
 while the check runs (`sendCheck`), a press during it doing nothing; the answer (`sendAnswer` — a refusal, or the key
 the proven box names, with the unlock a locked identity owes) held by the App and drawn on whichever form stands; the
-key the flow receives is `recipientVerdict`'s, the proven owner, never the node's word; a node or identity change
+key the flow receives is `recipientVerdict`'s, the owner proven at `suffixHead`, never the node's word — `unchecked` and
+`young` take one tip run (`checkRecipient`), and a second `young` is refused, *… send to a key instead.*; a node or identity change
 (`readerGen`) ends a press with nothing landing. The web build takes the node's answer at the press, with its confirm
 row.
 
@@ -597,7 +598,8 @@ once by the faucet, whose in-memory chain names a change `promote.mjs` spent out
 figures relay's five **name modes** (`label-rename`, `owner-404`, `owner-fakebox`, `name-owner`, `name-fakebox`, every
 proof passed through verbatim so the corner stays green): **26** R claims a name through the `username` row — the
 header, R's cards, a thread, R's author window and the row read it in ink, the checks in the log; **29** a send typed
-to S's handle — *checking @S…*, S's key beneath the field and on the prompt's `to:`, declined; **27a** a renamed label
+to S's handle once S's box is `k` deep, after a fresh tip run — *checking @S…*, one box proof at `suffixHead`, S's key
+beneath the field and on the prompt's `to:`, declined; **27a** a renamed label
 clay; **27b** a withheld name — R's cards clay, the header R's key prefix (the own-name read falls to the same 404: the
 omission the rule leaves uncaught); **27c** a made-up box clay, each check's heights and each tip run's cause in the
 relay's log; **27d** the author window's name row turning clay in place with no line and the rows unmoved, its `↻`

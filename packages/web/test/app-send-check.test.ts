@@ -352,14 +352,14 @@ afterEach(() => {
 });
 
 describe('the send check — the table, against the anchor standing', () => {
-  it.each<NameStatus>(['proven', 'young'])('%s — the key beneath the field and the key signed for are the proven owner; the node\'s own answer is never read', async (status) => {
+  it('proven — the key beneath the field and the key signed for are the proven owner; the node\'s own answer is never read', async () => {
     const h = harness();
     h.world.sign = 'held';
     await ready(h);
     const a1 = anchorFor(100);
     await endRun(h, 0, verified(a1), a1);
     const form = await press('@bob');
-    const call = await answer(h, result(status, REC, 'Bob'));
+    const call = await answer(h, result('proven', REC, 'Bob'));
     // The check: the typed name, at the reading node, against the anchor standing.
     expect(call.claim).toEqual({ name: 'bob' });
     expect(call.base).toBe(NODE_A);
@@ -479,7 +479,7 @@ describe('the send check — `unchecked` takes one tip run', () => {
     expect(h.nameCalls.filter((c) => !c.settled)).toHaveLength(0);
     const a2 = anchorFor(103);
     await endRun(h, 1, verified(a2), a2);
-    const second = await answer(h, result('young', EVE, 'bob'));
+    const second = await answer(h, result('proven', EVE, 'bob'));
     expect(second.claim).toEqual({ name: 'bob' });
     expect(second.anchor).toBe(a2);
     expect(keyLine(form).textContent).toBe(EVE);
@@ -531,6 +531,90 @@ describe('the send check — `unchecked` takes one tip run', () => {
     const second = await answer(h, result('none'));
     expect(second.anchor).toBe(a2);
     expectRefused(h, form, 'no one holds that name.', '@bob');
+  });
+});
+
+describe('the send check — `young` takes one tip run (WEB_INTERFACE → The extension → "The verified names")', () => {
+  const TOO_NEW_SEND = '@bob is too new to send to by name — send to a key instead.';
+
+  it('a first `young` takes one tip run — no second check before the run ends — and the second check carries { name: \'bob\' } and the new run\'s anchor', async () => {
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    await press('@bob');
+    await answer(h, result('young', REC, 'bob'));
+    // One tip run started; no second check until it ends.
+    expect(h.tipRuns).toHaveLength(2);
+    expect(h.nameCalls.filter((c) => !c.settled)).toHaveLength(0);
+    const a2 = anchorFor(103);
+    await endRun(h, 1, verified(a2), a2);
+    const second = await answer(h, result('young', REC, 'bob'));
+    expect(second.claim).toEqual({ name: 'bob' });
+    expect(second.anchor).toBe(a2);
+  });
+
+  it('a second `young` refuses — the refusal, no key beneath the field, nothing signed, no .pf-confirm, no pending entry, the form\'s values kept, and no third tip run', async () => {
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@bob');
+    await answer(h, result('young', REC, 'bob'));
+    const a2 = anchorFor(103);
+    await endRun(h, 1, verified(a2), a2);
+    await answer(h, result('young', REC, 'bob'));
+    expectRefused(h, form, TOO_NEW_SEND, '@bob');
+    expect(document.querySelector('.pf-confirm')).toBeNull();
+    expect(h.tipRuns).toHaveLength(2);
+    expect(h.nameCalls).toHaveLength(2);
+  });
+
+  it('a first `young` then a `proven` — the proven goes to the flow with the second result\'s key, beneath the field and to the signer', async () => {
+    const h = harness();
+    h.world.sign = 'held';
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@bob');
+    await answer(h, result('young', REC, 'bob'));
+    const a2 = anchorFor(103);
+    await endRun(h, 1, verified(a2), a2);
+    await answer(h, result('proven', EVE, 'bob'));
+    expect(keyLine(form).hidden).toBe(false);
+    expect(keyLine(form).textContent).toBe(EVE);
+    expect(h.world.signCalls).toHaveLength(1);
+  });
+
+  it('a first `unchecked` then a `young` refuses with the same sentence, after exactly one run', async () => {
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@bob');
+    await answer(h, result('unchecked'));
+    const a2 = anchorFor(103);
+    await endRun(h, 1, verified(a2), a2);
+    await answer(h, result('young', REC, 'bob'));
+    expectRefused(h, form, TOO_NEW_SEND, '@bob');
+    expect(h.tipRuns).toHaveLength(2);
+    expect(h.nameCalls).toHaveLength(2);
+  });
+
+  it('the flight line reads *checking @bob…* through the `young`\'s tip run and the second check, and is gone at the refusal', async () => {
+    const h = harness();
+    await ready(h);
+    const a1 = anchorFor(100);
+    await endRun(h, 0, verified(a1), a1);
+    const form = await press('@bob');
+    await answer(h, result('young', REC, 'bob'));
+    expect(flightLine()).toBe('checking @bob…');
+    const a2 = anchorFor(103);
+    await endRun(h, 1, verified(a2), a2);
+    expect(flightLine()).toBe('checking @bob…');
+    await answer(h, result('young', REC, 'bob'));
+    expect(flightLine()).toBe('');
+    expectRefused(h, form, TOO_NEW_SEND, '@bob');
   });
 });
 
@@ -816,7 +900,7 @@ describe('the send check — the row reads *checking @bob…* from the press to 
     const a2 = anchorFor(103);
     await endRun(h, 1, verified(a2), a2);
     expect(flightLine()).toBe('checking @bob…');
-    await answer(h, result('young', EVE, 'bob'));
+    await answer(h, result('proven', EVE, 'bob'));
     expect(flightLine()).toBe('submitting…');
   });
 

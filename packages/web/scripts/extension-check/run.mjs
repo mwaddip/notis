@@ -1089,9 +1089,12 @@ async function startLyingRelay(upstream) {
 // extension → "The verified names", the lie arms 27a–d · 28a–b, every
 // /api/v1/proof/ answer passing verbatim as well:
 //   label-rename    — every row of a /posts answer — the feed's, a thread's
-//                     post, ancestors, descendants and pending, one post's —
-//                     whose `author` is R carries `relay.renameTo` as its
-//                     authorName;
+//                     post, ancestors, descendants and pending, one post's,
+//                     a light row (`WEB_INTERFACE → The extension → "The
+//                     light read"`: `authorName` and no `author`) — whose
+//                     `author` is R, or carrying no `author` whose
+//                     `authorName` is the name R holds, carries
+//                     `relay.renameTo` as its authorName;
 //   owner-404       — /usernames?owner=<R> answers 404 { error: 'Identity
 //                     holds no name' }, the node's own words for a key holding
 //                     none;
@@ -1118,6 +1121,7 @@ async function startFiguresRelay(upstream, port, names = null) {
       'label-rename': 0, 'owner-404': 0, 'owner-fakebox': 0, 'name-owner': 0, 'name-fakebox': 0,
     },
     renamed: 0,
+    renameFrom: null,
     renameTo: null,
     fakeBoxId: null,
     // The box the credits-side lie points at — the arm asserts the line names
@@ -1257,7 +1261,7 @@ async function startFiguresRelay(upstream, port, names = null) {
           }
         } else if (mode === 'label-rename' && (target.pathname === '/posts' || target.pathname.startsWith('/posts/'))) {
           const answer = JSON.parse(body.toString('utf8'));
-          const rows = renameRows(answer, rKey, relay.renameTo);
+          const rows = renameRows(answer, rKey, relay.renameFrom, relay.renameTo);
           if (rows > 0) {
             body = Buffer.from(JSON.stringify(answer));
             relay.edits['label-rename'] += 1;
@@ -1334,14 +1338,19 @@ function handleLookupName(pathname) {
   return name.startsWith('@') ? name.slice(1) : name;
 }
 
-// Rename R's rows in a /posts answer in place — every object whose `author` is
-// `rKey` and whose `authorName` is a name — and answer how many.
-function renameRows(value, rKey, to) {
+// Rename R's rows in a /posts answer in place — a full row whose `author` is
+// `rKey`, and a light row (no `author`, `WEB_INTERFACE → The extension →
+// "The light read"`) whose `authorName` is `rName` — and answer how many.
+function renameRows(value, rKey, rName, to) {
   let rows = 0;
   const walk = (v) => {
     if (Array.isArray(v)) { for (const x of v) walk(x); return; }
     if (v === null || typeof v !== 'object') return;
     if (typeof v.author === 'string' && v.author.toLowerCase() === rKey && typeof v.authorName === 'string') {
+      v.authorName = to;
+      rows += 1;
+    } else if (typeof v.author === 'undefined' && typeof v.authorName === 'string'
+      && rName !== null && v.authorName === rName) {
       v.authorName = to;
       rows += 1;
     }
@@ -1397,20 +1406,48 @@ async function pressCorner(cx) {
 // The settings window: the input commits on `change`). Empty resets to the
 // build default. The changeNode handler drops the verdict to `null` (checking)
 // and starts a new run.
+//
+// The `change` dispatch ends the settings body synchronously (WEB_INTERFACE →
+// The workspace → "What ends a form in a window": a change of the node read
+// builds every body anew; a form that has ended is not drawn again and its
+// fields are emptied), so a read of the input the dispatch returned on is of
+// a form that has ended, value emptied. Mark the input before the dispatch,
+// then read the value of the input that stands once the new body has drawn
+// (bounded, the shape of the links-row read above).
 async function setNodeViaUi(cx, origin) {
   await cx.eval(`document.querySelector('[aria-label="open settings"]').click()`, true);
   await cx.waitFor(`!!document.querySelector('[aria-label="the node this client reads"]')`, 'settings node row', 10000);
-  const applied = await cx.eval(`(() => {
+  const mark = 'setnode-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  await cx.eval(`(() => {
     const input = document.querySelector('[aria-label="the node this client reads"]');
+    input.setAttribute('data-notis-mark', ${JSON.stringify(mark)});
     input.focus();
     input.value = ${JSON.stringify(origin)};
     input.dispatchEvent(new Event('change', { bubbles: true }));
-    return input.value;
-  })()`);
-  // Close the settings window so the corner and the App's other surfaces
-  // are visible again — a press on the settings header re-toggles it.
+  })()`, true);
+  const t0 = Date.now();
+  let applied = '';
+  let drew = false;
+  while (Date.now() - t0 < 5000) {
+    const next = await cx.eval(`(() => {
+      const input = document.querySelector('[aria-label="the node this client reads"]');
+      if (!input) return { present: false };
+      return {
+        present: true,
+        marked: input.getAttribute('data-notis-mark') === ${JSON.stringify(mark)},
+        value: input.value,
+      };
+    })()`);
+    if (next.present && !next.marked) {
+      applied = next.value ?? '';
+      drew = true;
+      break;
+    }
+    await sleep(50);
+  }
+  // Let the corner's render settle before the caller reads it.
   await sleep(200);
-  return applied;
+  return drew ? applied : applied + ' (the new settings body did not draw within 5 s)';
 }
 
 async function readPrefsNode(cx) {
@@ -3911,6 +3948,7 @@ async function runNameLabelArm(cx, relay, arm, ctx) {
     // (1) The mode — R's rows renamed to a name no identity holds, or a fresh
     // made-up box.
     relay.mode = arm.mode;
+    relay.renameFrom = ctx.rName;
     relay.renameTo = ctx.renameTo;
     if (arm.mode === 'owner-fakebox') relay.fakeBoxId = randomBytes(32).toString('hex');
 
@@ -4472,15 +4510,19 @@ async function readAndDeclinePrompt(promptsBefore, what) {
 }
 
 // Step 29 — the honest send to a handle (WEB_INTERFACE → The wallet window →
-// "The `send` row", → The extension → "The verified names"). R types S's
-// handle and an amount in the wallet's `send` row and presses `send`: the row
-// reads *checking @<name>…* in the flight's place while the check runs — read
-// by an observer installed before the press, so a line that stands for
-// milliseconds is read as surely as one that stands for seconds — the key
-// beneath the field is S's, the prompt window opens naming S's key on its
-// `to:` line, and a decline sends nothing: no `/credits/transfer`, the flight
-// *send not sent.*. S's box is aged past `suffixHead` when the check proves
-// it there, young when it proves it at the tip alone.
+// "The `send` row", → The extension → "The verified names",
+// NIPOPOW_INTERFACE → The trust model, rule 4). R types S's handle and an
+// amount in the wallet's `send` row and presses `send`: the row reads
+// *checking @<name>…* in the flight's place while the check runs — read by an
+// observer installed before the press, so a line that stands for milliseconds
+// is read as surely as one that stands for seconds — the key beneath the
+// field is S's, the prompt window opens naming S's key on its `to:` line, and
+// a decline sends nothing: no `/credits/transfer`, the flight *send not
+// sent.*. A send goes only to a name proven `k` deep: the press checks
+// against the anchor standing, so the step takes a fresh verified tip run
+// after A reaches `sHeld.claimedAtBlock + TIP_K`, and passes only when the
+// check proved S's box at `suffixHead` — one box proof, at that height; a
+// proof at the tip alone fails the step.
 async function runNamesStep29(cx, sHeld) {
   if (sHeld === null) {
     record(29, false, `S ${S_PUB.slice(0, 8)}… holds no name on A — claim-name.mjs claims one before the run`);
@@ -4489,6 +4531,26 @@ async function runNamesStep29(cx, sHeld) {
   const handle = '@' + sHeld.name;
   const sBox = sHeld.boxId.toLowerCase();
   try {
+    // S's box is k deep when A's height is at least claimedAtBlock + TIP_K;
+    // the deadline records the step failed with the heights the wait saw.
+    const kDeepTarget = sHeld.claimedAtBlock + TIP_K;
+    const kDeepStart = await currentHeight(NODE);
+    const kDeepReached = await waitForHeight(NODE, kDeepTarget, 10 * 60 * 1000);
+    if (kDeepReached === null) {
+      const kDeepNow = await currentHeight(NODE);
+      record(29, false,
+        `S's box is not k deep on A within 10 minutes — claimed at block ${sHeld.claimedAtBlock}, TIP_K=${TIP_K}, target=${kDeepTarget}, A started at ${JSON.stringify(kDeepStart)}, last seen ${JSON.stringify(kDeepNow)}; A's miner may be paced too slowly`);
+      return;
+    }
+    // A verified tip run through the corner writes a fresh anchor whose
+    // suffixHead is at least claimedAtBlock + 1 — the send's first check
+    // then proves S's box at suffixHead with one box proof.
+    const anchorRefresh = await pressAndReadVerdict(cx);
+    if (!cornerVerified(anchorRefresh.reading)) {
+      record(29, false,
+        `the fresh verified tip run after S's box reached k deep did not read verified — A reached ${kDeepReached} before the press, led=${anchorRefresh.reading.ledClass}, title=${JSON.stringify(anchorRefresh.reading.title)}, proof requests=${anchorRefresh.proofs?.length ?? 0}`);
+      return;
+    }
     await raiseWindow(cx, 'open wallet');
     await cx.waitFor(`!!document.querySelector('.credits-field form.credits-form')`, 'the send form 29', 60000);
     await recordFlightTexts(cx);
@@ -4555,11 +4617,16 @@ async function runNamesStep29(cx, sHeld) {
       ev.method === 'Network.requestWillBeSent' && ev.params.request.url.includes('/credits/transfer')).length;
     const reqs = nameRequestsSince(cx.events, pressIdx, { handle: sHeld.name, boxId: sBox, endIdx: answerIdx });
     const heights = reqs.boxProofs.map((p) => p.atHeight);
-    const age = heights.length === 1 && sHeld.claimedAtBlock <= heights[0]
-      ? `aged past suffixHead — claimed at block ${sHeld.claimedAtBlock}, proven at ${heights[0]}`
+    // A send goes only to a name proven k deep: the check proves S's box at
+    // `suffixHead` — one box proof, at that height — and a proof at the tip
+    // alone (two heights, excluded at `suffixHead`) is the refusal, not the
+    // flow.
+    const atSuffixHead = heights.length === 1 && sHeld.claimedAtBlock <= heights[0];
+    const age = atSuffixHead
+      ? `k deep at suffixHead — claimed at block ${sHeld.claimedAtBlock}, TIP_K=${TIP_K}, A reached ${kDeepReached} before the press, proven at ${heights[0]}`
       : heights.length === 2
-        ? `young at the tip — claimed at block ${sHeld.claimedAtBlock}, excluded at ${heights[0]}, proven at ${heights[1]}`
-        : `claimed at block ${sHeld.claimedAtBlock}, proofs at ${JSON.stringify(heights)}`;
+        ? `young at the tip — claimed at block ${sHeld.claimedAtBlock}, TIP_K=${TIP_K}, A reached ${kDeepReached} before the press, excluded at ${heights[0]}, proven at ${heights[1]}`
+        : `claimed at block ${sHeld.claimedAtBlock}, TIP_K=${TIP_K}, A reached ${kDeepReached} before the press, proofs at ${JSON.stringify(heights)}`;
 
     const checking = `checking ${handle}…`;
     const checkingOk = texts.includes(checking);
@@ -4569,12 +4636,12 @@ async function runNamesStep29(cx, sHeld) {
     const promptOk = lines !== null && lines[0]?.text === 'Notis transfer' && target !== null && target.label === 'to:' && promptKey === S_PUB;
     const declinedOk = declined && notSent && transfers === 0 && after.to === handle && after.amount === NAMES_SEND_AMOUNT;
     const logOk = reqs.handleLookups > 0 && reqs.boxProofs.length > 0;
-    record(29, checkingOk && keyOk && promptOk && declinedOk && logOk,
+    record(29, checkingOk && keyOk && promptOk && declinedOk && logOk && atSuffixHead,
       `typed ${JSON.stringify(handle)} and ${NAMES_SEND_AMOUNT} $NOTIS; the flight's texts in order ${JSON.stringify(texts)} — ${JSON.stringify(checking)} read=${checkingOk}; ` +
       `beneath the field: ${JSON.stringify(answer.key)}, refusal ${JSON.stringify(answer.refusal)}, unlock owed=${answer.unlock}, S's key=${answer.key === S_PUB}; ` +
       `prompt ${prompt === null ? 'none opened' : prompt.url.replace(/^.*\//, '')}: lines ${JSON.stringify((lines ?? []).map((l) => `${l.cls}:${l.text}`))}, to: key equals S's public key=${promptKey === S_PUB}; ` +
       `declined=${declined}, flight ${JSON.stringify(after.flight)}, /credits/transfer requests=${transfers}, form kept ${JSON.stringify(after.to)} / ${JSON.stringify(after.amount)}; ` +
-      `the check: /usernames/${sHeld.name} ×${reqs.handleLookups}, box ${sBox.slice(0, 12)}… proofs at ${JSON.stringify(heights)}, /blocks/current ×${reqs.blocksCurrent}, tip proofs ×${reqs.tipProofs}; S's box ${age}`);
+      `the check: /usernames/${sHeld.name} ×${reqs.handleLookups}, box ${sBox.slice(0, 12)}… proofs at ${JSON.stringify(heights)}, /blocks/current ×${reqs.blocksCurrent}, tip proofs ×${reqs.tipProofs}; S's box ${age}; proven at suffixHead=${atSuffixHead}`);
   } catch (e) {
     record(29, false, `error: ${e?.stack ?? String(e)}`);
   }

@@ -65,8 +65,8 @@ describe('recipientVerdict', () => {
   const held = (status: NameStatus, owner: unknown, name: unknown): NameResult =>
     ({ status, owner, name, boxId: null, heightAfter: null, verdict: status } as NameResult);
 
-  it.each<NameStatus>(['proven', 'young'])('%s — the proven owner and the name as committed, never the handle as typed', (status) => {
-    expect(recipientVerdict(held(status, REC, 'Bob'), '@bob')).toEqual({ key: REC, name: 'Bob' });
+  it('proven — the proven owner and the name as committed, never the handle as typed', () => {
+    expect(recipientVerdict(held('proven', REC, 'Bob'), '@bob')).toEqual({ key: REC, name: 'Bob' });
   });
 
   it('none — *no one holds that name.*', () => {
@@ -85,6 +85,10 @@ describe('recipientVerdict', () => {
     expect(recipientVerdict(result('no-proof'), '@bob')).toEqual({ refusal: 'the node served no proof for @bob.' });
   });
 
+  it('young — *@bob is too new to send to by name — send to a key instead.*', () => {
+    expect(recipientVerdict(held('young', REC, 'bob'), '@bob')).toEqual({ refusal: '@bob is too new to send to by name — send to a key instead.' });
+  });
+
   it('the refusal carries the handle it is given, as typed', () => {
     expect(recipientVerdict(result('no-proof'), '@BoB_1')).toEqual({ refusal: 'the node served no proof for @BoB_1.' });
   });
@@ -97,9 +101,7 @@ describe('recipientVerdict', () => {
     ['an owner that is not a string', 7, 'Bob'],
     ['a name that is not a string', REC, 7],
   ])('a proven result with %s sends nowhere — it did not verify', (_what, owner, name) => {
-    for (const status of ['proven', 'young'] as NameStatus[]) {
-      expect(recipientVerdict(held(status, owner, name), '@bob')).toEqual({ refusal: "this node's answer for @bob did not verify." });
-    }
+    expect(recipientVerdict(held('proven', owner, name), '@bob')).toEqual({ refusal: "this node's answer for @bob did not verify." });
   });
 
   it('a status outside the table sends nowhere — it did not verify, never a throw', () => {
