@@ -487,10 +487,6 @@ every proven box is real and the key's, and a node that withholds a box from its
 clay on a run it answers the anchor's own height to and proves the tip's range under, and muted on every other —
 *not checked yet*, or *the node served no proof for …* where it serves none.
 
-> ⚠ **AHEAD OF CODE (2026-10-16).** The send's `young` arm below leads `web/src/model/name-verdict.ts`, whose
-> `recipientVerdict` sends under `young` to the owner the tip proves, and `web/src/app.ts`, whose `checkRecipient`
-> takes its one tip run for `unchecked` alone.
-
 **The verified names.** The extension proves every handle it shows, and every handle it sends to, against the state the
 verified chain committed — the figures' anchor, their proofs and their order. **A check** is `proveName` of
 `@dagsocial/nipopow-client` over a claim: a **label** — a key and the name a row carries beside it — or a **typed
@@ -1588,9 +1584,6 @@ verified figures"). **A listing with no box reads its line too**, beneath the fa
 no figure stands to turn clay. Gold still means credits: the figure
 gives up the colour only while the node's own proof of it fails, as the corner's height does on `refused`. The figure is
 the live spendable sum in every state; a balance every box of which proved reads exactly as it reads on the web.
-
-> ⚠ **AHEAD OF CODE (2026-10-16).** The `young` refusal below leads `web/src/model/name-verdict.ts`, whose
-> `recipientVerdict` sends under `young`, and `web/src/app.ts`, whose `checkRecipient` takes no tip run for it.
 
 **The `send` row** stands while a box is spendable, and while a send's own line stands — its flight, the pending
 line, *sent* — so a send of the whole balance still reads its ending. The

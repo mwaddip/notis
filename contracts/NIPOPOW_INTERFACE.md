@@ -320,9 +320,6 @@ class ProofBuildError extends Error {
 
 ## The trust model — what a proof proves
 
-> ⚠ **AHEAD OF CODE (2026-10-16).** Rule 4's last sentence leads `web/src/model/name-verdict.ts`, whose
-> `recipientVerdict` sends to the key a name's box binds at the tip alone.
-
 Four rules, stated once here and consumed by `NODE_INTERFACE → Nipopow prover` and by every
 light client:
 
