@@ -257,7 +257,7 @@ describe('the funnel answers with a class', () => {
     vi.resetModules();
   });
 
-  it.fails('a block with an invalid structure gets class unbound', async () => {
+  it('a block with an invalid structure gets class unbound', async () => {
     await initChainStore();
     await liveProver();
     const blockApply = await importBlockApply();
@@ -279,7 +279,7 @@ describe('the funnel answers with a class', () => {
     expect((verdict as { class: string }).class).toBe('unbound');
   });
 
-  it.fails(
+  it(
     'a block whose validator signature does not verify gets class unbound',
     async () => {
       await initChainStore();
@@ -297,7 +297,7 @@ describe('the funnel answers with a class', () => {
     },
   );
 
-  it.fails('a block whose body is not its utxoTxRoot gets class unbound', async () => {
+  it('a block whose body is not its utxoTxRoot gets class unbound', async () => {
     await initChainStore();
     const blockApply = await importBlockApply();
     vi.spyOn(console, 'warn').mockImplementation(() => {});

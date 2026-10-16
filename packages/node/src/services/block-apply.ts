@@ -107,6 +107,15 @@ import type { AnyBox, OrderingBlock } from '@dagsocial/types';
 class BlockRejected extends Error {}
 
 /**
+ * Signals the block is not its header's — `verifyValidatorSignature` or
+ * `verifyUtxoTxRoot` refused it inside `applyBlockBody` (NODE_INTERFACE →
+ * "The funnel answers with a class"). Thrown rather than returned for the
+ * same better-sqlite3 reason as `BlockRejected`; the funnel's catch classifies
+ * it as `'unbound'`. Never escapes this module.
+ */
+class BlockUnbound extends Error {}
+
+/**
  * The future bound failed at apply (MINING_INTERFACE → Header timestamp rules).
  * A module-local marker: the funnel's catch classifies it as `'acceptance'`,
  * never letting it escape.
@@ -129,7 +138,7 @@ export interface IndexedPost {
  */
 export type ApplyVerdict =
   | { applied: true; indexed: IndexedPost[] }
-  | { applied: false; class: 'consensus' | 'acceptance' | 'local'; detail?: string };
+  | { applied: false; class: 'unbound' | 'consensus' | 'acceptance' | 'local'; detail?: string };
 
 /**
  * The store's answers to `StateView` — each the store's own query for its read,
@@ -235,7 +244,7 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
   const structure = validation.verifyOrderingBlockStructure(block);
   if (!structure.valid) {
     console.warn(`Rejected block: invalid structure: ${structure.error}`);
-    return { applied: false, class: 'consensus' };
+    return { applied: false, class: 'unbound' };
   }
   // SQLite rollback does not reach the AVL prover's in-memory state, so the
   // funnel saves the prover's root and height before the transaction and puts
@@ -265,6 +274,10 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
       return m;
     })();
   } catch (err) {
+    if (err instanceof BlockUnbound) {
+      restoreProver();
+      return { applied: false, class: 'unbound' };
+    }
     if (err instanceof BlockRejected) {
       restoreProver();
       return { applied: false, class: 'consensus' };
@@ -471,19 +484,24 @@ function applyBlockBody(block: OrderingBlock): { karmaOwners: Set<string>; index
   // PoW proves work was spent; it does not prove who spent it. Without this,
   // any miner forges a block under any validatorId. Runs in applyBlockBody — the
   // funnel every apply path (gossip, sync, reorg) passes through — so no path skips it.
+  // A signature over the header that does not verify says the block is not
+  // this header's — `BlockUnbound` is the funnel's `'unbound'` class
+  // (NODE_INTERFACE → "The funnel answers with a class").
   if (!validation.verifyValidatorSignature(block.header, block.validatorSignature)) {
     console.warn(`Rejected block height=${block.header.height}: validator signature invalid`);
-    return null;
+    throw new BlockUnbound();
   }
 
   // 4. Merkle root verification — one root over one body of transactions, each
   //    id and each element kept apart by its `leafHash` domain
   //    (TYPES_INTERFACE → Ordering block). The settlement is the last leaf of
-  //    each class, so its position is committed here.
+  //    each class, so its position is committed here. A body whose root is not
+  //    the header's `utxoTxRoot` says the block is not this header's —
+  //    `BlockUnbound` is the funnel's `'unbound'` class.
 
   if (!validation.verifyUtxoTxRoot(block)) {
     console.warn(`Rejected block height=${block.header.height}: utxoTxRoot mismatch`);
-    return null;
+    throw new BlockUnbound();
   }
 
   // 5. The coinbase's maturity lock is checked with the rest of the settlement,

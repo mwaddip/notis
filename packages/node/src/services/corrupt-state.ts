@@ -365,9 +365,11 @@ export class ReorgBlockRejectedError extends Error {
  * The reorg abandoned its switch on a refusal that is not a consensus verdict
  * (NODE_INTERFACE → Fork choice decides on verified headers, step 10).
  *
- * Two classes reach here: `'acceptance'` (the future bound, re-run against
- * this node's clock at apply — MINING_INTERFACE → Header timestamp rules)
- * and `'local'` (the funnel's catch of an unexpected throw). Neither is
+ * Three classes reach here: `'unbound'` (the block is not its header's — step
+ * 8 of fork resolution leaves none, so this arm exists for the funnel's
+ * promise, not for a real entry), `'acceptance'` (the future bound, re-run
+ * against this node's clock at apply — MINING_INTERFACE → Header timestamp
+ * rules) and `'local'` (the funnel's catch of an unexpected throw). None is
  * attributable to the peer, so the switch is abandoned with no mark, no
  * penalty and no memo.
  */
@@ -375,7 +377,7 @@ export class ReorgAbortedError extends Error {
   constructor(
     readonly height: number,
     readonly hash: string,
-    readonly class_: 'acceptance' | 'local',
+    readonly class_: 'unbound' | 'acceptance' | 'local',
     readonly detail?: string,
   ) {
     super(
