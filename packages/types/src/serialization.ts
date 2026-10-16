@@ -42,6 +42,7 @@ import {
   readLpUtf8,
   readOpt,
   readVlqU,
+  vlqUByteLength,
   writeArr,
   writeBytesNOrThrow,
   writeHexNOrThrow,
@@ -50,6 +51,7 @@ import {
   writeOpt,
   writeVlqU,
 } from './codec.js';
+import { MAX_HEADER_BYTES } from './constants.js';
 import { postFieldBytes, readPostCommitFields, type PostCommit } from './post.js';
 import { readTxIdFields, writeTxIdFields, type TxId, type UtxoTransaction } from './utxo.js';
 import type {
@@ -474,6 +476,91 @@ export function encodeOrderingBlock(block: OrderingBlock): Uint8Array {
 
 export function decodeOrderingBlock(bytes: Uint8Array): OrderingBlock {
   return decodeStruct(ORDERING_BLOCK, bytes);
+}
+
+/**
+ * Read the ordering block's framing and decode its header alone
+ * (TYPES_INTERFACE → Layout — Block).
+ *
+ * Walks the three outer pieces — `lp(header)` ‖ `lp(utxoTxTree)` ‖
+ * `b64(validatorSignature)` — decoding the header through its own
+ * `decodeStruct`, returning the body section's bytes verbatim and the fixed
+ * 64-byte signature. The frame must be exhausted after the signature.
+ *
+ * **The equivalence:** `decodeOrderingBlock(bytes)` answers `{ header,
+ * utxoTxTree: decodeUtxoTxTree(utxoTxTreeBytes), validatorSignature }` whenever
+ * both read, and refuses exactly when one of them refuses. The outer framing's
+ * only canonicity surface is the two `lp` prefixes' VLQ minimality — the
+ * signature is fixed-width and each section's own canonicity is its codec's
+ * — so this reader checks each prefix equals `vlqUByteLength(len)` to
+ * reproduce the refusal `decodeOrderingBlock`'s outer re-encode compare makes
+ * on a non-minimal prefix, without decoding the body.
+ *
+ * **The header bound** (`MAX_HEADER_BYTES`): a declared length past that bound
+ * refuses before any header byte is read. The error is a plain `ReaderError`
+ * with code `out-of-domain`, not a `CodecError`, because none of the
+ * `CodecFailure` kinds names a bound breach — the bytes may be a canonical
+ * encoding of something, their length is simply outside this field's domain,
+ * which matches `UTXO_TX_TREE`'s misalignment refusal above.
+ *
+ * `utxoTxTreeBytes` is a copy, matching `readLp`: the input bytes are an
+ * untrusted frame on the gossip path, so a view would alias them into the
+ * returned struct and leave the two coupled to each other's lifetime.
+ */
+export function readOrderingBlockSections(bytes: Uint8Array): {
+  header: BlockHeader;
+  utxoTxTreeBytes: Uint8Array;
+  validatorSignature: Uint8Array;
+} {
+  const r = new ByteReader(bytes);
+
+  // Section 1: header. The bound check runs before any header byte is read,
+  // naming `MAX_HEADER_BYTES` so the refusal is distinct from the header
+  // codec's own.
+  const posBeforeHeaderLen = r.position;
+  const headerLen = readVlqU(r);
+  if (headerLen > MAX_HEADER_BYTES) {
+    throw new ReaderError(
+      `orderingBlock: header section is ${headerLen} byte(s), exceeds MAX_HEADER_BYTES=${MAX_HEADER_BYTES}`,
+      'out-of-domain',
+    );
+  }
+  const headerPrefixBytes = r.position - posBeforeHeaderLen;
+  if (headerPrefixBytes !== vlqUByteLength(headerLen)) {
+    throw new CodecError(
+      `orderingBlock: header length prefix is non-minimal (${headerPrefixBytes} byte(s) for length ${headerLen})`,
+      'non-canonical',
+    );
+  }
+  const headerBytes = new Uint8Array(r.readBytes(headerLen));
+  const header = decodeStruct(HEADER, headerBytes);
+
+  // Section 2: utxoTxTree bytes, undecoded. The caller passes them to
+  // `decodeUtxoTxTree`.
+  const posBeforeBodyLen = r.position;
+  const bodyLen = readVlqU(r);
+  const bodyPrefixBytes = r.position - posBeforeBodyLen;
+  if (bodyPrefixBytes !== vlqUByteLength(bodyLen)) {
+    throw new CodecError(
+      `orderingBlock: utxoTxTree length prefix is non-minimal (${bodyPrefixBytes} byte(s) for length ${bodyLen})`,
+      'non-canonical',
+    );
+  }
+  const utxoTxTreeBytes = new Uint8Array(r.readBytes(bodyLen));
+
+  // Section 3: fixed 64-byte signature.
+  const validatorSignature = readBytesN(r, 64);
+
+  // Frame exhausted — the outer boundary check's trailing-bytes rejection
+  // restated here, since the walk is not routed through `decodeStruct`.
+  if (!r.isExhausted) {
+    throw new CodecError(
+      `orderingBlock: ${bytes.length - r.position} trailing byte(s) after ${r.position}`,
+      'trailing-bytes',
+    );
+  }
+
+  return { header, utxoTxTreeBytes, validatorSignature };
 }
 
 // ---------------------------------------------------------------------------
