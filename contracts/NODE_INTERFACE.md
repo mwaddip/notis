@@ -3990,8 +3990,7 @@ Declared in the base `CREATE TABLE`, not the ALTER pass — no store predates it
 
 The chain-selection memory (`Fork choice decides on verified headers`, step 12): one row per block
 that fork resolution applied under verified headers and the funnel rejected, and one per block that
-extended the tip, held to its header, and the funnel refused with a consensus verdict (→ Relay
-handlers). Net's block validator reads it through the header-standing provider and Ignores a marked
+extended the tip and the funnel refused with a `'consensus'` verdict (→ Relay handlers). Net's block validator reads it through the header-standing provider and Ignores a marked
 header (NET_INTERFACE → Stage 1 → "A header this node knows is Ignored").
 
 ```sql
@@ -4015,8 +4014,10 @@ for continuations without storing descendants. **The purge is safe for the same 
 height below `tip − maxReorgDepth` cannot appear in any segment the fork walk can anchor.
 
 **A mark names a header and is a verdict on its body, because the two are one.** The row is written
-only for a block bound to its header before it was applied — by fork resolution (→ Fork choice
-decides on verified headers, step 8) or by the extending path (→ Relay handlers) — and a header's hash
+only on a refusal that rests on bytes the header's hash commits — a block fork resolution bound to its
+header before applying it (→ Fork choice decides on verified headers, step 8), or a `'consensus'`
+refusal of a block that extended the tip, which the funnel answers only on a check of the header alone
+or a rule over a body its root has bound (→ "The funnel answers with a class") — and a header's hash
 commits every byte of its body
 (`TYPES_INTERFACE → Ordering block`).
 
@@ -4925,10 +4926,10 @@ with the chain untouched:
 10. **The switch.** `reorg(f, blocks)`, atomic, every block through the funnel's classified entry
     (`applyOrderingBlockVerdict`, → "The funnel answers with a class"): a **consensus** refusal throws
     `ReorgBlockRejectedError { height, hash }` after the transaction has rolled back and the prover is
-    restored; an **acceptance** refusal (the future bound, re-run against this node's clock at apply)
-    or a **local** one (the funnel's catch of an unexpected throw) throws
-    `ReorgAbortedError { height, hash, class }` after the same rollback — the switch is abandoned and
-    our chain kept.
+    restored; an **acceptance** refusal (the future bound, re-run against this node's clock at apply),
+    a **local** one (the funnel's catch of an unexpected throw) or an **unbound** one (a block that is
+    not its header's, which step 8 leaves none of) throws `ReorgAbortedError { height, hash, class }`
+    after the same rollback — the switch is abandoned and our chain kept.
 11. **The mark.** `resolveFork` catches `ReorgBlockRejectedError` and, **after** the rollback, records
     the rejected block's hash in `refused_headers` in its own write, and penalises `misbehavior`. A
     mark written inside the reorg transaction would roll back with it. **The mark is a verdict on
@@ -5324,7 +5325,7 @@ not fail the API request.
 ### Relay handlers (mempool-based)
 
 > ⚠ **AHEAD OF CODE (2026-10-16).** `onTx`'s answer and its signature build lead `services/handle-tx.ts`;
-> `onOrderingBlock`'s refused arm, the binding and the mark lead `services/handle-block.ts`.
+> `onOrderingBlock`'s refused arm and the mark lead `services/handle-block.ts`.
 
 - **`onTx(tx, content, fromPeerId)`**: validates (read-only, `validateTx`) → inserts into
   mempool via `admitTx`; for a post transaction the packet's body — already verified against
@@ -5341,13 +5342,10 @@ not fail the API request.
   overlay).
 - **`onOrderingBlock(block, fromPeerId)`**: Stage 1 (net) → `handleOrderingBlock` — already
   held → no-op; **marked refused (→ Refused headers) → refused, nothing applied**; extends our tip
-  or height 0 → **held to its header** — `verifyOrderingBlockStructure`, `verifyUtxoTxRoot` and
-  `verifyValidatorSignature`, as fork resolution holds a served block (→ Fork choice decides on
-  verified headers, step 8), a block that fails one refused with nothing marked — →
-  `applyOrderingBlockVerdict` → confirms posts → removes confirmed entries from mempool; **a
-  consensus refusal marks the header** in `refused_headers`, after the rollback and in its own write,
-  and an acceptance or a local refusal marks nothing (→ "The funnel answers with a class");
-  otherwise → `resolveFork` (AVL+ State Root → "Fork choice decides on verified
+  or height 0 → `applyOrderingBlockVerdict` → confirms posts → removes confirmed entries from
+  mempool; **a `'consensus'` refusal marks the header** in `refused_headers`, after the rollback and
+  in its own write, and an `'unbound'`, `'acceptance'` or `'local'` refusal marks nothing (→ "The
+  funnel answers with a class"); otherwise → `resolveFork` (AVL+ State Root → "Fork choice decides on verified
   headers"). The pull path reaches the **same** `handleOrderingBlock` through
   `setBlocksHandler`; `reorg` applies directly. The authoritative consensus checks
   — including **validator-signature verification (H-1)** — are enforced *inside*
@@ -5638,17 +5636,24 @@ that can reject is handled where it is launched, as the resolution runner owns e
 promise ("One resolution at a time") — so a rejection that reaches it is a defect of the path it
 came from.
 
+> ⚠ **AHEAD OF CODE (2026-10-16).** The `'unbound'` class below leads `services/block-apply.ts`' verdict,
+> `services/handle-block.ts`' mark on `'consensus'` alone, and `services/fork-resolution.ts`' step 10, which aborts
+> on `'unbound'` as on `'local'`.
+
 **The funnel answers with a class.** `applyOrderingBlockVerdict(block)` is the funnel's body: it
 answers `{ applied: true, indexed }` or `{ applied: false, class }`. `indexed` is the posts the block
 first stored, in body order, each `{ postId, parentRefCount }` — emitted by the funnel itself when its
 transaction was the outermost, and by `reorg` once its own commits when it was nested (→ "What follows
-the commit is the commit's"). `class` is one of `'consensus'` (every
-explicit rejection), `'acceptance'` (the future bound — `MINING_INTERFACE → Header timestamp rules`)
-or `'local'` (the catch above, with the error's text). `applyOrderingBlock(block)` is its boolean
-projection, `verdict.applied`, for the callers that need only the continue signal —
-`handleOrderingBlock` and the block creator; `reorg` reads the class (→ Fork choice decides on
-verified headers, step 10). Both entries are total, and the `CorruptChainStateError` re-throw is the
-one exception of both.
+the commit is the commit's"). `class` is one of `'unbound'` (the block is not its header's:
+`verifyOrderingBlockStructure`, `verifyValidatorSignature` or `verifyUtxoTxRoot` refused it, and no
+verdict on the bytes the header's hash commits was reached), `'consensus'` (every other explicit
+rejection — a check of the header alone, or a rule over a body its root has bound),
+`'acceptance'` (the future bound — `MINING_INTERFACE → Header timestamp rules`) or `'local'` (the
+catch above, with the error's text). `applyOrderingBlock(block)` is its boolean
+projection, `verdict.applied`, for the callers that need only the continue signal — the block
+creator; `reorg` reads the class (→ Fork choice decides on verified headers, step 10), and so does
+`handleOrderingBlock`, which marks a header on `'consensus'` alone (→ Relay handlers). Both entries are
+total, and the `CorruptChainStateError` re-throw is the one exception of both.
 
 **Validator signature (H-1).** Before applying any state, the block is rejected
 unless `verifyValidatorSignature(block.header, block.validatorSignature)` (from
