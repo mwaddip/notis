@@ -98,7 +98,7 @@ function makeHarness(
     penaltyScoreThreshold?: number;
     floorBits?: number;
     scheduledTargetBits?: (header: BlockHeader) => number | null;
-    // NET_INTERFACE → Sync Handler Registration → setHeaderStandingProvider.
+    // The header-standing seam (NET_INTERFACE → Sync Handler Registration).
     headerStanding?: (hash: string, height: number) => 'held' | 'refused' | null;
     // The clock behind the memory of accepted headers
     // (NET_INTERFACE → Stage 1 → "A header this node knows is Ignored").
@@ -1567,7 +1567,7 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
 
   it('a header section that does not read records a header decode reason', () => {
     // A header length prefix past MAX_HEADER_BYTES refuses before any header
-    // byte is read (TYPES_INTERFACE → readOrderingBlockSections).
+    // byte is read (TYPES_INTERFACE → Layout — Block).
     const w = new ByteWriter();
     // vlqU of MAX_HEADER_BYTES + 1 — one byte if the number fits in 7 bits,
     // which 234 does not. 234 as vlqU is two bytes: 0xea 0x01.

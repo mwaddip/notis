@@ -146,8 +146,9 @@ export function subscribeTopics(
   // NET_INTERFACE → Consensus parameters net enforces
   floorBits: number,
   scheduledTargetBits: (header: BlockHeader) => number | null,
-  // NET_INTERFACE → Sync Handler Registration → setHeaderStandingProvider
-  // (NET_INTERFACE → Stage 1 → "A header this node knows is Ignored"). A
+  // The header-standing seam `setHeaderStandingProvider` carries
+  // (NET_INTERFACE → Sync Handler Registration;
+  // NET_INTERFACE → Stage 1 → "A header this node knows is Ignored"). A
   // provider that is not passed is read as `() => null`, every header judged
   // as one this node does not know; net's own memory of accepted headers
   // stands either way.
