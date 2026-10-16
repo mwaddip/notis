@@ -75,7 +75,7 @@ import {
 import type { ModifierRequest, ModifierResponse } from './sync-types.js';
 
 type OrderingBlockCallback = (block: OrderingBlock, fromPeerId: string) => void;
-type TxCallback = (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => void;
+type TxCallback = (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => boolean;
 type BlocksHandlerFn = (block: OrderingBlock, fromPeerId: string) => boolean;
 
 /**
@@ -681,6 +681,11 @@ export class NetNode {
           // the router names, caches or forwards anything.
           allowedTopics: [topics.orderingBlock, topics.tx],
           allowPublishToZeroTopicPeers: true,
+          // NET_INTERFACE → Forwarding Rule → "An ordering block is forwarded
+          // once Stage 1 passes; a transaction once this node admits it":
+          // the router holds a message that passed its topic validator in the
+          // message cache until the listener reports Accept, Ignore or Reject.
+          asyncValidation: true,
         }),
         identify: identify(),
         ping: ping(),
@@ -815,7 +820,21 @@ export class NetNode {
         onOrderingBlock: (block, fromPeerId) => {
           for (const cb of this.orderingBlockHandlers) cb(block, fromPeerId);
         },
-        onTx: (tx, content, fromPeerId) => { for (const cb of this.txHandlers) cb(tx, content, fromPeerId); },
+        onTx: (tx, content, fromPeerId) => {
+          // NET_INTERFACE → Inbound Processing → "A transaction is forwarded
+          // when a handler admits it": Accept when any registered handler
+          // returned `true`; a handler that throws answers nothing for itself
+          // and is logged.
+          let admitted = false;
+          for (const cb of this.txHandlers) {
+            try {
+              if (cb(tx, content, fromPeerId) === true) admitted = true;
+            } catch (err) {
+              console.error(`[net] tx handler threw: ${String(err)}`);
+            }
+          }
+          return admitted;
+        },
       };
 
       await subscribeTopics(

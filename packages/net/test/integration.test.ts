@@ -154,6 +154,7 @@ describe('Two-node integration', () => {
     nodeB.onTx((tx, content) => {
       receivedTx = tx;
       receivedContent = content;
+      return true;
     });
 
     const kp = generateKeyPair();
@@ -249,6 +250,7 @@ describe('Two-node integration', () => {
     let received = false;
     nodeB.onTx(() => {
       received = true;
+      return true;
     });
 
     // Empty content fails verifyPostBody (ContentLimits). The author IS in

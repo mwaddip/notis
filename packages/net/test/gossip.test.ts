@@ -125,7 +125,7 @@ function makeHarness(
   const peerMgr = new PeerManager(config);
   subscribeTopics(stub, validators, peerMgr, {
     onOrderingBlock: () => {},
-    onTx: () => {},
+    onTx: () => false,
   }, topics, karmaMembers,
     opts.schedule ?? [{ version: 1, fromHeight: 0 }],
     opts.chainHeight ?? (() => 0),
@@ -687,7 +687,8 @@ const RELAY_PEER = 'peer-that-relayed-it';
 
 function makeDispatchHarness(handlers: {
   onOrderingBlock?: (block: OrderingBlock, fromPeerId: string) => void;
-  onTx?: (tx: unknown, content: string | undefined, fromPeerId: string) => void;
+  onTx?: (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => boolean;
+  reportMessageValidationResult?: (msgId: string, propagationSource: string, acceptance: TopicValidatorResult) => void;
 } = {}) {
   let listener: GossipListener | null = null;
   const stub = {
@@ -709,7 +710,7 @@ function makeDispatchHarness(handlers: {
     peerMgr,
     {
       onOrderingBlock: handlers.onOrderingBlock ?? (() => {}),
-      onTx: handlers.onTx ?? (() => {}),
+      onTx: handlers.onTx ?? (() => false),
     },
     topics,
     new Set<string>(),
@@ -848,7 +849,7 @@ describe('gossip dispatch listener', () => {
       protocolVersion: 1,
     };
     const seen: string[] = [];
-    const { deliver } = makeDispatchHarness({ onTx: (_tx, _content, from) => seen.push(from) });
+    const { deliver } = makeDispatchHarness({ onTx: (_tx, _content, from) => { seen.push(from); return true; } });
 
     deliver(topics.tx, encodeTxPacket(plainTx));
 
@@ -863,7 +864,7 @@ describe('gossip dispatch listener', () => {
       protocolVersion: 1,
     };
     const seen: string[] = [];
-    const { deliver } = makeDispatchHarness({ onTx: (_tx, _content, from) => seen.push(from) });
+    const { deliver } = makeDispatchHarness({ onTx: (_tx, _content, from) => { seen.push(from); return true; } });
 
     deliver(topics.tx, encodeTxPacket(plainTx), null);
 

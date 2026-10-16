@@ -411,6 +411,7 @@ describe('Gossip on a line A — B — C', () => {
       const bDeliveries: UtxoTransaction[] = [];
       nodeB.onTx((t) => {
         bDeliveries.push(t);
+        return true;
       });
       const cValidator = newCounter();
       const topicsC = topicsOf(nodeC);
@@ -479,6 +480,7 @@ describe('Gossip on a line A — B — C', () => {
       const bDeliveries: UtxoTransaction[] = [];
       nodeB.onTx((t) => {
         bDeliveries.push(t);
+        return true;
       });
       const cValidator = newCounter();
       const topicsC = topicsOf(nodeC);
@@ -545,10 +547,12 @@ describe('Gossip on a line A — B — C', () => {
       const cDeliveries: UtxoTransaction[] = [];
       nodeC.onTx((t) => {
         cDeliveries.push(t);
+        return true;
       });
       const bDeliveries: UtxoTransaction[] = [];
       nodeB.onTx((t) => {
         bDeliveries.push(t);
+        return true;
       });
 
       const { tx, content } = makePostTxPacket(kp.publicKey, 'two-hop-tx');
@@ -1564,7 +1568,7 @@ describe('a transaction is forwarded when a handler admits it', () => {
     for (const n of nodes) open.push(n);
   };
 
-  it.fails(
+  it(
     "a tx B's handler answers false reaches B and never C",
     async () => {
       const { nodeA, nodeB, nodeC } = await startLine();
@@ -1709,7 +1713,7 @@ describe('a transaction is forwarded when a handler admits it', () => {
     TIMEOUT,
   );
 
-  it.fails(
+  it(
     'a single handler at B that throws is not forwarded, and the throw is logged',
     async () => {
       const { nodeA, nodeB, nodeC } = await startLine();

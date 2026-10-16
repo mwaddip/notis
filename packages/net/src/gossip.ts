@@ -29,9 +29,19 @@ import type { PeerManager } from './peer-mgr.js';
 // whose `services.pubsub` has been configured with gossipsub.
 // ---------------------------------------------------------------------------
 
+// NET_INTERFACE → Forwarding Rule → "An ordering block is forwarded once Stage 1
+// passes; a transaction once this node admits it". gossipsub's
+// `reportMessageValidationResult` is not in `PubSub<GossipsubEvents>`, so the
+// listener below reads it off the gossipsub router directly.
 export interface Libp2pGossip {
   services: {
-    pubsub: PubSub<GossipsubEvents>;
+    pubsub: PubSub<GossipsubEvents> & {
+      reportMessageValidationResult(
+        msgId: string,
+        propagationSource: string,
+        acceptance: TopicValidatorResult,
+      ): void;
+    };
   };
 }
 
@@ -124,7 +134,13 @@ export interface GossipHandlers {
    * listener below for why `propagationSource` is the value handed on.
    */
   onOrderingBlock: (block: OrderingBlock, fromPeerId: string) => void;
-  onTx: (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => void;
+  /**
+   * NET_INTERFACE → Inbound Processing →
+   * "A transaction is forwarded when a handler admits it":
+   * the return is whether this node admitted the transaction. The listener
+   * reports Accept to the router when it is true and Ignore otherwise.
+   */
+  onTx: (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -393,10 +409,12 @@ export function subscribeTopics(
   });
 
   // -------------------------------------------------------------------------
-  // Event listener — delivers every message the router hands on
-  // (NET_INTERFACE → Inbound Processing →
-  // "A gossip message that passes Stage 1 is delivered, whichever peer carried it").
-  // Topic validators (above) are the only gate before this point.
+  // Event listener — delivers every message the router hands on and reports
+  // each message's verdict (NET_INTERFACE → Forwarding Rule → "An ordering
+  // block is forwarded once Stage 1 passes; a transaction once this node
+  // admits it"). Topic validators (above) are the only gate before this point;
+  // gossipsub's `asyncValidation` holds a message that passed one until the
+  // report lands.
   // -------------------------------------------------------------------------
 
   gs.addEventListener('gossipsub:message', (evt) => {
@@ -420,23 +438,22 @@ export function subscribeTopics(
     // "`fromPeerId` is not guaranteed to be a peer id").
     const relayPeerId =
       (detail as { propagationSource?: { toString(): string } }).propagationSource?.toString() ?? '';
+    const msgId = (detail as { msgId?: string }).msgId;
 
-    // Decode and dispatch are separated because they fail for different
-    // reasons, and neither reason is the peer's.
-    //
-    // A single `try` spanning both would report neither: it would collapse a
-    // validator bug and an app-layer handler throw into one silent span.
-    //
-    // Both stay contained rather than propagating: this is a gossipsub event
-    // listener, and net's invariant is that one bad message degrades one
-    // message, not the subsystem. Contained is not the same as silent — both
-    // are `console.error`, because reaching either is a bug in our own code.
-    const deliver = <T>(decode: (b: Uint8Array) => T, handle: (v: T) => void): void => {
-      let value: T;
+    const report = (acceptance: TopicValidatorResult): void => {
+      if (msgId === undefined) return;
+      gs.reportMessageValidationResult(msgId, relayPeerId, acceptance);
+    };
+
+    if (topic === topics.orderingBlock) {
+      // NET_INTERFACE → Inbound Processing → "A transaction is forwarded when
+      // a handler admits it": the block's report runs before its handlers.
+      report(TopicValidatorResult.Accept);
+      let block: OrderingBlock;
       try {
-        value = decode(raw);
+        block = decodeOrderingBlock(raw);
       } catch (err) {
-        // Unreachable unless a topic validator is wrong: every message that
+        // Unreachable unless the topic validator is wrong: every message that
         // gets here was already decoded once, by the validator that accepted
         // it. So this is our bug and not the sender's — no penalty is
         // recorded, and it is logged loudly rather than absorbed.
@@ -446,16 +463,28 @@ export function subscribeTopics(
         return;
       }
       try {
-        handle(value);
+        handlers.onOrderingBlock(block, relayPeerId);
       } catch (err) {
         console.error(`[net] handler for '${topic}' threw: ${String(err)}`);
       }
-    };
-
-    if (topic === topics.orderingBlock) {
-      deliver(decodeOrderingBlock, (block) => handlers.onOrderingBlock(block, relayPeerId));
     } else if (topic === topics.tx) {
-      deliver(decodeTxPacket, (packet) => handlers.onTx(packet.tx, packet.content, relayPeerId));
+      let packet: ReturnType<typeof decodeTxPacket>;
+      try {
+        packet = decodeTxPacket(raw);
+      } catch (err) {
+        console.error(
+          `[net] BUG: '${topic}' message passed its topic validator and then failed to decode: ${String(err)}`,
+        );
+        report(TopicValidatorResult.Ignore);
+        return;
+      }
+      let admitted = false;
+      try {
+        admitted = handlers.onTx(packet.tx, packet.content, relayPeerId) === true;
+      } catch (err) {
+        console.error(`[net] handler for '${topic}' threw: ${String(err)}`);
+      }
+      report(admitted ? TopicValidatorResult.Accept : TopicValidatorResult.Ignore);
     }
   });
 
