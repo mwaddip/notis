@@ -718,10 +718,11 @@ describe('positional serialization', () => {
         .toBeInstanceOf(ReaderError);
 
       // (b) a section whose declared length overruns its parent. The header
-      // prefix is two bytes; raise it past what remains.
-      const overrun = bytes.slice();
-      overrun.set([0xff, 0x7f], 0);   // vlqU(16383) — far past the frame
-      expect(failureOf(() => decodeOrderingBlock(overrun))).toBeInstanceOf(ReaderError);
+      // prefix stays untouched — declaring 204 bytes, inside MAX_HEADER_BYTES
+      // — and the frame is truncated to 100 bytes, so `readBytes(204)` has
+      // only 98 remaining and refuses as `ReaderError('truncated')`.
+      expect(failureOf(() => decodeOrderingBlock(bytes.subarray(0, 100))))
+        .toBeInstanceOf(ReaderError);
 
       // (c) trailing bytes after the signature.
       expect(failureOf(() => decodeOrderingBlock(withTrailingByte(bytes)))).toBe('trailing-bytes');
@@ -1030,11 +1031,11 @@ describe('positional serialization', () => {
     });
 
     it('both paths refuse a header section whose declared length overruns the frame', () => {
-      const bytes = encodeOrderingBlock(makeOrderingBlock()).slice();
-      // Overwrite the header's two-byte vlqU prefix with vlqU(16383) — far
-      // past the frame — exactly as the existing framing suite does.
-      bytes[0] = 0xff;
-      bytes[1] = 0x7f;
+      // The encoder's header prefix declares 204 bytes, inside
+      // MAX_HEADER_BYTES, so the bound check passes; the frame is truncated
+      // to 100 bytes, so `readBytes(204)` has only 98 remaining and refuses
+      // as `ReaderError('truncated')`.
+      const bytes = encodeOrderingBlock(makeOrderingBlock()).subarray(0, 100);
       expect(tryDecode(() => decodeOrderingBlock(bytes)).ok).toBe(false);
       expect(tryDecode(() => readOrderingBlockSections(bytes)).ok).toBe(false);
     });
