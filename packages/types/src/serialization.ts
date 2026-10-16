@@ -428,84 +428,57 @@ export function utxoTxBytesIn(treeBytes: Uint8Array, txId: TxId): Uint8Array | n
 // ---------------------------------------------------------------------------
 
 /**
- * `lp(header)` ‖ `lp(utxoTxTree)` ‖ `b64(validatorSignature)`.
+ * `lp(header)` ‖ `lp(utxoTxTree)` ‖ `b64(validatorSignature)` — written
+ * directly rather than through a `StructCodec`, because the frame has no
+ * read half to pair with: the paired reader is `decodeOrderingBlock`, which
+ * is `readOrderingBlockSections` and `decodeUtxoTxTree` of the body's bytes
+ * (TYPES_INTERFACE → Layout — Block).
  *
- * The length prefixes are `vlqU` — the same primitive as every other count and
- * length in the format, rather than a fourth integer convention living in one
+ * The length prefixes are `vlqU`, the same primitive as every other count and
+ * length in the format rather than a fourth integer convention living in one
  * function.
- *
- * **The boundary check runs at the outer level AND inside each `lp` section.**
- * Each section is decoded through its own `decodeStruct`, so a malformed header
- * is rejected as `blockHeader: …` at its own offset rather than as an outer
- * mismatch somewhere in a 1200-byte blob. The outer `decodeStruct` then re-runs
- * exhaustion and the compare over the whole frame, which is what makes the three
- * distinct rejections distinct: a truncated section, a section whose length
- * overruns its parent, and trailing bytes after the signature.
- *
- * **Two `lp` sections** — `header` (the `HEADER` codec) and `utxoTxTree` (the
- * `UTXO_TX_TREE` codec) — followed by the fixed 64-byte `validatorSignature`.
- *
- * A nested `CodecError` is a `ReaderError`, so it propagates through the outer
- * `decodeStruct`'s step-1 catch unchanged rather than being re-wrapped as a
- * `reader-fault` — the precise diagnosis survives the nesting.
  *
  * `validatorSignature` is `b64` from bytes and throws; its domain is
  * `verifyOrderingBlockStructure`'s `isBytes` plus an exact length of 64, which
  * that function's own comment explains is a type check and not a `.length` read
  * for exactly this reason.
  */
-const ORDERING_BLOCK: StructCodec<OrderingBlock> = {
-  name: 'orderingBlock',
-  write(w, b) {
-    writeLp(w, encodeStruct(HEADER, b.header));
-    writeLp(w, encodeStruct(UTXO_TX_TREE, b.utxoTxTree));
-    writeBytesNOrThrow(w, b.validatorSignature, 64);
-  },
-  read(r) {
-    return {
-      header: decodeStruct(HEADER, readLp(r)),
-      utxoTxTree: decodeStruct(UTXO_TX_TREE, readLp(r)),
-      validatorSignature: readBytesN(r, 64),
-    };
-  },
-};
-
 export function encodeOrderingBlock(block: OrderingBlock): Uint8Array {
-  return encodeStruct(ORDERING_BLOCK, block);
-}
-
-export function decodeOrderingBlock(bytes: Uint8Array): OrderingBlock {
-  return decodeStruct(ORDERING_BLOCK, bytes);
+  const w = new ByteWriter();
+  writeLp(w, encodeStruct(HEADER, block.header));
+  writeLp(w, encodeStruct(UTXO_TX_TREE, block.utxoTxTree));
+  writeBytesNOrThrow(w, block.validatorSignature, 64);
+  return w.toBytes();
 }
 
 /**
- * Read the ordering block's framing and decode its header alone
- * (TYPES_INTERFACE → Layout — Block).
+ * The paired reader for `encodeOrderingBlock`: the framing read, then
+ * `decodeUtxoTxTree` of the body section's bytes (TYPES_INTERFACE → Layout —
+ * Block). Refuses exactly when one of the two refuses.
+ */
+export function decodeOrderingBlock(bytes: Uint8Array): OrderingBlock {
+  const sections = readOrderingBlockSections(bytes);
+  return {
+    header: sections.header,
+    utxoTxTree: decodeUtxoTxTree(sections.utxoTxTreeBytes),
+    validatorSignature: sections.validatorSignature,
+  };
+}
+
+/**
+ * The framing read `decodeOrderingBlock` runs on
+ * (TYPES_INTERFACE → Layout — Block). Returns the header, the body section's
+ * bytes verbatim, and the fixed 64-byte signature.
  *
- * Walks the three outer pieces — `lp(header)` ‖ `lp(utxoTxTree)` ‖
- * `b64(validatorSignature)` — decoding the header through its own
- * `decodeStruct`, returning the body section's bytes verbatim and the fixed
- * 64-byte signature. The frame must be exhausted after the signature.
+ * **The outer level's boundary check is the frame exhausted and the two
+ * `lp` prefixes minimal**: each section's canonicity is its own codec's and
+ * the signature has one width, so a re-encode of the whole frame refuses
+ * nothing more. **A declared header length past `MAX_HEADER_BYTES`** refuses
+ * before any header byte is read, as a plain `ReaderError('out-of-domain')`
+ * so the refusal is distinct from the header codec's own.
  *
- * **The equivalence:** `decodeOrderingBlock(bytes)` answers `{ header,
- * utxoTxTree: decodeUtxoTxTree(utxoTxTreeBytes), validatorSignature }` whenever
- * both read, and refuses exactly when one of them refuses. The outer framing's
- * only canonicity surface is the two `lp` prefixes' VLQ minimality — the
- * signature is fixed-width and each section's own canonicity is its codec's
- * — so this reader checks each prefix equals `vlqUByteLength(len)` to
- * reproduce the refusal `decodeOrderingBlock`'s outer re-encode compare makes
- * on a non-minimal prefix, without decoding the body.
- *
- * **The header bound** (`MAX_HEADER_BYTES`): a declared length past that bound
- * refuses before any header byte is read. The error is a plain `ReaderError`
- * with code `out-of-domain`, not a `CodecError`, because none of the
- * `CodecFailure` kinds names a bound breach — the bytes may be a canonical
- * encoding of something, their length is simply outside this field's domain,
- * which matches `UTXO_TX_TREE`'s misalignment refusal above.
- *
- * `utxoTxTreeBytes` is a copy, matching `readLp`: the input bytes are an
- * untrusted frame on the gossip path, so a view would alias them into the
- * returned struct and leave the two coupled to each other's lifetime.
+ * `utxoTxTreeBytes` is a copy, matching `readLp`: the input is an untrusted
+ * frame on the gossip path.
  */
 export function readOrderingBlockSections(bytes: Uint8Array): {
   header: BlockHeader;
@@ -551,8 +524,8 @@ export function readOrderingBlockSections(bytes: Uint8Array): {
   // Section 3: fixed 64-byte signature.
   const validatorSignature = readBytesN(r, 64);
 
-  // Frame exhausted — the outer boundary check's trailing-bytes rejection
-  // restated here, since the walk is not routed through `decodeStruct`.
+  // Frame exhausted — the outer level's trailing-bytes rejection, since the
+  // walk is not routed through `decodeStruct`.
   if (!r.isExhausted) {
     throw new CodecError(
       `orderingBlock: ${bytes.length - r.position} trailing byte(s) after ${r.position}`,

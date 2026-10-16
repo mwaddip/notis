@@ -1061,9 +1061,9 @@ describe('positional serialization', () => {
     it('both paths refuse a non-minimal lp prefix on the header section — guards the header prefix canonicity check', () => {
       // The header's canonical prefix is `vlqU(len)` at its minimal width.
       // A non-minimal `vlqU` encoding of the same length — `(low | 0x80) ‖
-      // (high | 0x80) ‖ 0x00` — decodes to the same value, and the whole
-      // encoder's outer re-encode compare refuses it. The sections reader must
-      // too, so the equivalence stands.
+      // (high | 0x80) ‖ 0x00` — decodes to the same value, and the outer
+      // boundary check (TYPES_INTERFACE → Layout — Block) refuses it on the
+      // prefix minimality rule.
       const bytes = encodeOrderingBlock(makeOrderingBlock());
       // Decode the two-byte minimal vlqU header prefix. Low 7 bits of the
       // first byte plus bits 7-13 from the second byte, which has no
