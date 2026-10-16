@@ -4031,7 +4031,9 @@ export class App {
    *  *checking @bob…* in the flight's place, moved in place as the check
    *  begins, and a press does nothing; the answer's own render takes the line
    *  away. The answer is the proven result's (recipientVerdict), never the
-   *  node's word; a press left with no anchor to check against is *can't be
+   *  node's word — a send goes only to a name proven `k` deep, so `young` is
+   *  the refusal `send to a key instead` (NIPOPOW_INTERFACE → The trust model,
+   *  rule 4); a press left with no anchor to check against is *can't be
    *  checked — the chain is not verified.*, and one whose check throws *can't
    *  be checked.* A press that ends while the check runs takes the line with
    *  it (endSendPress). */
@@ -4049,12 +4051,14 @@ export class App {
   }
 
   /** The press's check: the typed handle against the anchor standing — with
-   *  none, the anchor a tip run writes — and a check that ends `unchecked` once
-   *  more against the anchor of one tip run. Answers the last check's result. */
+   *  none, the anchor a tip run writes — and a check that ends `unchecked` or
+   *  `young` once more against the anchor of one tip run (WEB_INTERFACE → The
+   *  extension → "The verified names"), the anchor standing being minutes old.
+   *  Answers the last check's result. */
   private async checkRecipient(verifier: NamesVerifier, name: string): Promise<NameResult | 'no-anchor' | 'threw'> {
     const anchor = this.tipAnchor ?? (await this.tipRunForPress())?.anchor ?? null;
     const first = await this.checkHandle(verifier, name, anchor);
-    if (typeof first !== 'object' || first.status !== 'unchecked') return first;
+    if (typeof first !== 'object' || (first.status !== 'unchecked' && first.status !== 'young')) return first;
     return this.checkHandle(verifier, name, (await this.tipRunForPress())?.anchor ?? null);
   }
 
