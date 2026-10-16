@@ -191,8 +191,8 @@ export class LazySyncStore implements SyncStore {
     return encodeServableOrderingBlock(block, this.validators, `height ${height}`);
   }
 
-  // NET_INTERFACE → Sync Handler Registration: the id is the store's own,
-  // written at block application; net never computes an id from a header.
+  // NET_INTERFACE → Sync Handler Registration: the id this arm announces is
+  // the store's own, read through the provider.
   getOrderingBlockId(height: number): string | null {
     return this._blockIdProvider?.(height) ?? null;
   }
