@@ -108,19 +108,19 @@ function inboundSyncStreams(libp2p: NonNullable<NetNode['libp2pNode']>, fromPeer
   const conn = libp2p.getConnections().find((c) => c.remotePeer.toString() === fromPeerId);
   if (!conn) return 0;
   return conn.streams.filter((s) => {
-    const anyS = s as unknown as {
-      protocol?: string;
-      direction?: string;
-      status?: string;
-      writeStatus?: string;
-      readStatus?: string;
-    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const anyS = s as any;
     if (anyS.protocol !== SYNC_PROTOCOL) return false;
     if (anyS.direction !== 'inbound') return false;
-    // The `SyncInfo` the scheduler opens at peer-active lingers in
-    // `conn.streams` under `status === 'closed'` for the connection's
-    // life — not an "unread stream parked mid-write".
-    if (anyS.status !== 'open' && anyS.status !== 'closing') return false;
+    // A stream whose status has moved off 'open' is not an unread
+    // parked stream. `stream.close()` steps 'open' → 'closing' → 'closed';
+    // 'aborted' / 'reset' are the muxer's abort paths.
+    if (anyS.status !== 'open') return false;
+    // Libp2p's `AbstractStream.closeWrite` sets `timeline.closeWrite`
+    // and `writeStatus = 'closed'` once the sink has ended, before the
+    // overall `status` moves to 'closed'. A `GetBlocks` answer parked
+    // on the receive window has no `timeline.closeWrite`.
+    if (anyS.timeline?.closeWrite !== undefined) return false;
     return true;
   }).length;
 }
@@ -150,12 +150,39 @@ describe("A's write to an unreading peer times out, the stream aborts", () => {
     const addr = nodeA.libp2pNode!.getMultiaddrs()[0]!.toString();
 
     nodeB = new NetNode(makeConfig({ bootstrapPeers: [addr] }), validators);
-    // Same height on both sides keeps the sync machine out of the exchange —
-    // A does not serve B an Inv, B does not pick A as a sync peer, so the
-    // only inbound sync streams on A are the two this case opens.
+    // Same height on both sides keeps the chain exchange trivial — A does
+    // not serve B a header or block page beyond the scheduler's
+    // `SyncInfo` at peer-active.
     nodeB.setChainHeightProvider(() => 100);
     await nodeB.start();
     await waitConnected(nodeA, nodeB);
+
+    // Wait until the scheduler's `SyncInfo` from B at peer-active has
+    // been processed and closed before counting. The filter under
+    // `inboundSyncStreams` drops streams in `closing` / `closed` /
+    // `aborted` / `reset`; libp2p transitions a handler-closed stream
+    // through those states. `waitConnected` returns once both peers
+    // are Active, but B's scheduler queues the SyncInfo dial on its
+    // event loop — the stream opens AFTER waitConnected returns.
+    //
+    // Poll until the count holds at 0 for 300 ms running, with a
+    // deadline that fails loudly rather than wrongly below.
+    const DEADLINE_MS = 10_000;
+    const QUIET_MS = 300;
+    const start = Date.now();
+    let quietSince = -1;
+    for (;;) {
+      const n = inboundSyncStreams(nodeA.libp2pNode!, nodeB.peerId());
+      if (n === 0) {
+        if (quietSince < 0) quietSince = Date.now();
+        if (Date.now() - quietSince >= QUIET_MS) break;
+      } else {
+        quietSince = -1;
+      }
+      if (Date.now() - start > DEADLINE_MS) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(inboundSyncStreams(nodeA.libp2pNode!, nodeB.peerId())).toBe(0);
 
     // Twenty block ids A's chain holds — enough weight to park A's writes
     // on the receive window until the ×5 Blocks write deadline fires.
@@ -183,10 +210,8 @@ describe("A's write to an unreading peer times out, the stream aborts", () => {
     // receive window.
     await new Promise((r) => setTimeout(r, 500));
 
-    // At least two streams, parked mid-write on A. (The scheduler's
-    // `SyncInfo` from B at peer-active may still be lingering as the
-    // third; the write-deadline assertion below is the load-bearing one.)
-    expect(inboundSyncStreams(nodeA.libp2pNode!, nodeB.peerId())).toBeGreaterThanOrEqual(2);
+    // Two streams, parked mid-write on A.
+    expect(inboundSyncStreams(nodeA.libp2pNode!, nodeB.peerId())).toBe(2);
 
     // Wait past two ×5 Blocks deadlines served one after another
     // (1 000 ms × 5 = 5 s each, 10 s in sequence) with headroom.
