@@ -40,13 +40,13 @@ import type {
 // assigned.
 import { config as nodeConfig } from '../config.js';
 import type { Config } from '../config.js';
-import { retargetParams, scheduledTargetBits, nowMs } from './difficulty.js';
+import { scheduledTargetBits, nowMs } from './difficulty.js';
 import { getNet } from './net-instance.js';
 import {
   applyContextFrom,
   computePostBlockStateRoot,
 } from './block-apply.js';
-import { deliverMinedBlock, initIntake, isIntakeInitialized } from './intake.js';
+import { deliverMinedBlock } from './intake.js';
 import type { StateRootSpeculation } from './block-apply.js';
 import {
   bondOutputOf,
@@ -78,13 +78,11 @@ import {
 import {
   getOrderingBlock,
   getCurrentHeight,
-  getLowestJournalHeight,
   getRentEligibleCreditBoxes,
   getInterlinks,
   getKarmaValue,
   getIdentityRecord,
 } from '../store/index.js';
-import { syncHeaderTreeFromApplied } from '../store/header-tree.js';
 
 // ---------------------------------------------------------------------------
 // Body sizing
@@ -256,43 +254,6 @@ export function startBlockCreator(cfg: Config): void {
   validatorPubKey = new Uint8Array(pubDer.subarray(pubDer.length - 32));
   validatorPrivKey = privateKey;
   validatorId = validatorPubKey;
-
-  // NODE_INTERFACE → Fork choice decides on verified headers → "One intake,
-  // one at a time": the intake is initialised at `wireNet` time in production,
-  // ahead of block creation. A fallback here keeps a miner node whose
-  // startup skipped wiring (test fixtures that drive the creator directly)
-  // from reaching the intake with a null context. Penalties and
-  // `needHeaders(peerId)` route to net when it exists, chainMoved refreshes
-  // the relay gate — the same seams `net-wiring.ts` installs.
-  if (!isIntakeInitialized()) {
-    initIntake(
-      {
-        penalize: (peerId, kind, reason) => {
-          getNet()?.penalizePeer(peerId, kind, reason);
-        },
-        chainMoved: () => { getNet()?.chainMoved(); },
-        needHeaders: (peerId) => { getNet()?.needHeaders(peerId); },
-      },
-      {
-        params: retargetParams(),
-        schedule: nodeConfig.protocolVersionSchedule,
-        nowMs,
-        maxReorgDepth: nodeConfig.maxReorgDepth,
-        genesisId: nodeConfig.profile.genesisId,
-        lowestJournalHeight: () => getLowestJournalHeight(),
-        appliedTipHeight: () => getCurrentHeight(),
-      },
-    );
-  }
-
-  // NODE_INTERFACE → Fork choice decides on verified headers → "The header
-  // tree is every stored header": a store whose applied chain was built
-  // outside the pipeline (test fixtures that drive the apply funnel directly)
-  // reaches the mined-block entry with no tree rows, and admission would
-  // refuse the mined header as parent-unknown. One sweep catches the tree up
-  // to the applied tip; in production the pipeline wrote every row ahead of
-  // this call, so the sweep is a no-op.
-  syncHeaderTreeFromApplied(cfg.orderingBlockPowTargetBits);
 
   // A miner node holds a template from the moment it starts, and one per height
   // thereafter: production is regulated by difficulty, not by an interval
@@ -488,14 +449,6 @@ export function emissionTotal(): bigint {
 // ---------------------------------------------------------------------------
 
 export function createOrderingBlock(): OrderingBlock | null {
-  // NODE_INTERFACE → Fork choice decides on verified headers → "The header
-  // tree is every stored header": catches a tree out of sync with the applied
-  // chain — a direct `revertBlock` call outside the pipeline leaves
-  // `best_chain` and `block_headers` pointing at reverted blocks, and
-  // admission would refuse the mined header's parent then. In production the
-  // pipeline is the one writer and this sweep is a no-op.
-  if (config) syncHeaderTreeFromApplied(config.orderingBlockPowTargetBits);
-
   const currentHeight = getCurrentHeight();
   const newHeight = currentHeight + 1;
 
