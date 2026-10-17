@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { closeDb, initDb } from '../../src/store/db.js';
 import {
+  getStagedBlock,
   insertHeader,
   getHeaderRow,
   getBestTip,
@@ -14,6 +15,7 @@ import { getDb } from '../../src/store/db.js';
 import { defaultParams, makeChain, makeHeader, type ParentHeaderInfo } from '../helpers/make-header.js';
 import { cumulativeWork } from '@dagsocial/validation';
 import { config } from '../../src/config.js';
+import { UnreadableStoredBlockError } from '../../src/services/corrupt-state.js';
 
 const PARAMS = defaultParams({
   anchorBits: 3072,
@@ -148,5 +150,61 @@ describe('header-tree store', () => {
     const big = (1n << 300n) + 42n;
     insertHeader(toRow(h1!, big));
     expect(getHeaderRow(h1!.hash)!.chainWork).toBe(big);
+  });
+
+  it('rewriteBestChain deletes the staged rows of the hashes that leave the index', () => {
+    const chain = makeChain({ parent: null, n: 3, params: PARAMS, schedule: SCHEDULE });
+    let w = 0n;
+    for (const h of chain) { w += cumulativeWork([h.header]); insertHeader(toRow(h, w)); }
+    rewriteBestChain(0, chain.map(h => h.hash));
+    // Stage a body for the hash that will leave the index on the next rewrite.
+    getDb().prepare('INSERT INTO staged_blocks (hash, height, block_bytes, from_peer) VALUES (?, ?, ?, ?)')
+      .run(chain[2]!.hash, 3, Buffer.from([1, 2, 3]), 'peer1');
+
+    // Rewrite from height 2: the top entry's hash leaves the index.
+    const altTip = makeHeader({ height: 3, parent: chain[1]!, params: PARAMS, schedule: SCHEDULE, createdAt: chain[1]!.header.createdAt + 1 });
+    insertHeader(toRow(altTip, w + 1n));
+    rewriteBestChain(2, [altTip.hash]);
+
+    // The last assertion names the rule: the staged row for a hash that leaves
+    // the index is removed in the same transaction (NODE_INTERFACE → Store
+    // Interface → Header tree → `rewriteBestChain`).
+    const staged = getDb().prepare('SELECT COUNT(*) AS c FROM staged_blocks WHERE hash = ?').get(chain[2]!.hash) as { c: number };
+    expect(staged.c).toBe(0);
+  });
+
+  it('rewriteBestChain keeps the staged row of a hash rewritten in place', () => {
+    const chain = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
+    let w = 0n;
+    for (const h of chain) { w += cumulativeWork([h.header]); insertHeader(toRow(h, w)); }
+    rewriteBestChain(0, chain.map(h => h.hash));
+    // Stage a body for the height-2 hash.
+    getDb().prepare('INSERT INTO staged_blocks (hash, height, block_bytes, from_peer) VALUES (?, ?, ?, ?)')
+      .run(chain[1]!.hash, 2, Buffer.from([9]), 'peer1');
+
+    // Rewrite the index with the same hash in the same slot.
+    rewriteBestChain(0, chain.map(h => h.hash));
+
+    // The last assertion names the rule: a hash rewritten in place keeps its
+    // staged row — the staged-row deletion only touches the hashes that
+    // leave the index.
+    const staged = getDb().prepare('SELECT COUNT(*) AS c FROM staged_blocks WHERE hash = ?').get(chain[1]!.hash) as { c: number };
+    expect(staged.c).toBe(1);
+  });
+
+  it('getStagedBlock raises UnreadableStoredBlockError when the staged bytes do not decode', () => {
+    const [h1] = makeChain({ parent: null, n: 1, params: PARAMS, schedule: SCHEDULE });
+    let w = 0n;
+    w += cumulativeWork([h1!.header]);
+    insertHeader(toRow(h1!, w));
+    // Install bytes under the staged row that `decodeOrderingBlock` refuses.
+    const garbage = Buffer.alloc(16).fill(0xff);
+    getDb().prepare('INSERT INTO staged_blocks (hash, height, block_bytes, from_peer) VALUES (?, ?, ?, ?)')
+      .run(h1!.hash, 1, garbage, 'peerCorrupt');
+
+    // The last assertion names the rule: a staged row whose bytes will not
+    // decode rises as `UnreadableStoredBlockError` for the fail-stop boundary
+    // (NODE_INTERFACE → "Reach is the live argument, not the halt").
+    expect(() => getStagedBlock(h1!.hash)).toThrow(UnreadableStoredBlockError);
   });
 });
