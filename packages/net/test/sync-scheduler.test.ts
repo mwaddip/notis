@@ -251,6 +251,22 @@ describe('an event for a peer not in the connected set plants nothing', () => {
 });
 
 // ---------------------------------------------------------------------------
+// A peer's direction is written at peer-active and read without a claim
+// (NET_INTERFACE → Sync State Machine → "A claim is the peer's applied
+// tip, height and hash" — direction travels with the peer id, not the
+// claim; the gate counts outbound peers).
+// ---------------------------------------------------------------------------
+
+describe('direction travels with the peer id', () => {
+  it("an inbound peer's peer-active then SyncInfo leaves it inbound", () => {
+    const sch = makeScheduler();
+    peerActive(sch, 'p', 1, 'inbound');
+    syncInfo(sch, 'p', 50, hexId(50));
+    expect(sch.machine.getDirectionForTest('p')).toBe('inbound');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Claims (NET_INTERFACE → Sync State Machine)
 // ---------------------------------------------------------------------------
 

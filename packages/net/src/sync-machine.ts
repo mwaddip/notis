@@ -68,7 +68,6 @@ const TIMER_TICK_INTERVAL_MS = 1_000;
 interface Claim {
   tipHeight: number;
   tipHash: string;
-  direction: 'inbound' | 'outbound';
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +96,11 @@ export class SyncMachine {
   /** Claims by peer id — the retained claim from the latest `SyncInfo` the
    * scheduler acted on. Dropped at disconnect. */
   private claims = new Map<string, Claim>();
+
+  /** The connection's direction, written at peer-active and dropped at
+   * disconnect. The gate counts outbound peers; the direction travels
+   * with the peer id, not with the claim. */
+  private directions = new Map<string, 'inbound' | 'outbound'>();
 
   /** NET_INTERFACE → Stall Detection — "A mark clears only when this node
    * enters `synced`, or `STALL_MARK_EXPIRY_MS` after it was set." Keyed by
@@ -283,6 +287,11 @@ export class SyncMachine {
     return this.claims;
   }
 
+  /** Test introspection — the direction recorded at peer-active. */
+  getDirectionForTest(peerId: string): 'inbound' | 'outbound' | null {
+    return this.directions.get(peerId) ?? null;
+  }
+
   // -------- Public events --------
 
   onPeerActive(peerId: string, peerHeight: number, direction: 'inbound' | 'outbound' = 'outbound'): void {
@@ -395,12 +404,8 @@ export class SyncMachine {
     // connected is ignored." The connected set is the funnel.
     if (!this.isConnected(peerId)) return;
 
-    // NET_INTERFACE → Sync State Machine → "A claim is the peer's applied
-    // tip, height and hash" — the handshake height alone is no claim.
-    // Record the direction for the claim this peer will send; the first
-    // `SyncInfo` writes it.
-    const existing = this.claims.get(peerId);
-    if (existing) existing.direction = direction;
+    // Record the connection's direction — the gate counts outbound peers.
+    this.directions.set(peerId, direction);
 
     // Send our own `SyncInfo` to this new Active peer.
     this.sendSyncInfo(peerId);
@@ -411,6 +416,7 @@ export class SyncMachine {
 
   private handlePeerDisconnect(peerId: string): void {
     this.claims.delete(peerId);
+    this.directions.delete(peerId);
     this.openHeaderRuns.delete(peerId);
     this.lastSentTip.delete(peerId);
     this.lastReportedTip.delete(peerId);
@@ -443,14 +449,9 @@ export class SyncMachine {
 
     this.lastActedOnSyncInfoMs.set(peerId, nowMs);
 
-    // Record / replace the claim. Direction follows whatever is known at
-    // handshake; a `SyncInfo` without a prior `peer-active` falls back to
-    // outbound.
-    const prev = this.claims.get(peerId);
     const claim: Claim = {
       tipHeight: info.tipHeight,
       tipHash: info.tipHash,
-      direction: prev?.direction ?? 'outbound',
     };
     this.claims.set(peerId, claim);
 
