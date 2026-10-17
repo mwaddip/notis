@@ -410,11 +410,13 @@ export function gateHeld(): void {
  * MINING_INTERFACE → The window gate: `appliedTip < S + maxReorgDepth`. The
  * template route reads this to withhold a template while the window holds
  * extension — a block the node could not apply is a block it does not ask a
- * miner for.
+ * miner for. A node whose intake has not been initialized has no `S` to
+ * compare and no window to hold; the gate answers open, because the
+ * absent-template 404 answers first in that state.
  */
 export function windowOpen(): boolean {
-  const c = ctxOrThrow();
-  return getCurrentHeight() < S + c.maxReorgDepth;
+  if (context === null) return true;
+  return getCurrentHeight() < S + context.maxReorgDepth;
 }
 
 /** NET_INTERFACE → Sync Handler Registration: `fullyApplied()`. */

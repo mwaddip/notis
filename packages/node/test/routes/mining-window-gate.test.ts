@@ -51,7 +51,7 @@ function makeApp(deps: MiningDeps): express.Express {
 }
 
 describe('mining — the template window gate', () => {
-  it.fails('withholds the template with 404 while the window holds extension', async () => {
+  it('withholds the template with 404 while the window holds extension', async () => {
     const res = await request(makeApp(makeDeps({ windowOpen: () => false })))
       .get('/template')
       .set('Authorization', `Bearer ${SECRET}`);
@@ -75,7 +75,7 @@ describe('mining — the template window gate', () => {
     expect(res.status).toBe(400);
   });
 
-  it.fails('the window gate withholds before setMinerPubkey writes the override', async () => {
+  it('the window gate withholds before setMinerPubkey writes the override', async () => {
     // The ordering is load-bearing: a 404 that still wrote the payout key
     // would let a refused request mutate the coinbase destination for every
     // block mined later.

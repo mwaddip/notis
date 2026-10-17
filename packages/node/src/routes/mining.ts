@@ -22,6 +22,13 @@ export interface MiningDeps {
    * testable without a net instance.
    */
   peerReady(): boolean;
+  /**
+   * MINING_INTERFACE → The window gate: `appliedTip < S + maxReorgDepth`. The
+   * intake answers; a `false` withholds the template with the same 404 the
+   * peer-readiness gate answers with, so `scripts/miner.mjs` polls through
+   * both.
+   */
+  windowOpen(): boolean;
   miningSecret: string;
   getUsername: UsernameLookup;
 }
@@ -87,27 +94,27 @@ export function createRouter(deps: MiningDeps): Router {
       minerHex = resolved.hex;
     }
 
-    // The peer-readiness gate (MINING_INTERFACE → "The peer-readiness gate").
-    //
-    // Withheld with the *same* 404 the absent-template case answers with, which
-    // is what lets `scripts/miner.mjs` treat them identically — it retries on
-    // that response and has no give-up count, so an unmet node polls until the
-    // gate opens.
+    // The peer-readiness gate (MINING_INTERFACE → "The peer-readiness gate")
+    // and the window gate (MINING_INTERFACE → "The window gate"): both withhold
+    // with the *same* 404 the absent-template case answers with — the shape
+    // `scripts/miner.mjs` polls through with no give-up count.
     //
     // Behind the `?miner=` validation on purpose: a malformed payout key is a
-    // client bug and must earn its 400 whatever this node's readiness is.
-    // Answering 404 there would tell a miner to retry a request that can never
-    // succeed.
+    // client bug and must earn its 400 whatever either gate's state is.
     //
-    // **Above `setMinerPubkey`, and that ordering is the point.** The gate
-    // guarantees a window in which every poll is refused, and `miner.mjs` polls
-    // through it with no give-up count — so a refusal that still wrote the
-    // payout key would let a request answering nothing mutate the coinbase
-    // destination of every block this node later mines.
+    // **Above `setMinerPubkey`, and that ordering is the point.** The gates
+    // withhold the template while a poll should see no block to mine, so a
+    // refusal that still wrote the payout key would let a request answering
+    // nothing mutate the coinbase destination of every block this node later
+    // mines.
     //
     // Gate at serve, never at creation — `startBlockCreator` keeps building
     // templates, so "a miner node always holds a template" stays literally true.
     if (!deps.peerReady()) {
+      res.status(404).json({ error: 'No block template available' });
+      return;
+    }
+    if (!deps.windowOpen()) {
       res.status(404).json({ error: 'No block template available' });
       return;
     }

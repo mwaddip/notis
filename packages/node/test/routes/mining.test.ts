@@ -59,6 +59,9 @@ function makeDeps(overrides: Partial<MiningDeps> = {}): MiningDeps {
     // Peer-ready by default: every case in this file that is not about the gate
     // is about a node that has met its peers.
     peerReady: () => true,
+    // Window open by default: every case in this file is about serve, auth or
+    // body — the window gate's own cases are `mining-window-gate.test.ts`.
+    windowOpen: () => true,
     miningSecret: SECRET,
     getUsername: () => null,
     ...overrides,

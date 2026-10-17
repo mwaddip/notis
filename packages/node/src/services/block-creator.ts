@@ -275,10 +275,10 @@ export function startBlockCreator(cfg: Config): void {
       },
       {
         params: retargetParams(),
-        schedule: cfg.protocolVersionSchedule,
+        schedule: nodeConfig.protocolVersionSchedule,
         nowMs,
-        maxReorgDepth: cfg.maxReorgDepth,
-        genesisId: cfg.profile.genesisId,
+        maxReorgDepth: nodeConfig.maxReorgDepth,
+        genesisId: nodeConfig.profile.genesisId,
         lowestJournalHeight: () => getLowestJournalHeight(),
         appliedTipHeight: () => getCurrentHeight(),
       },

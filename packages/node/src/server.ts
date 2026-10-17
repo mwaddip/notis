@@ -15,6 +15,7 @@ import * as store from './store/index.js';
 import { guardStoreRead } from './services/corrupt-state.js';
 import { verifyPost } from './services/verifier.js';
 import { getCurrentTemplate, submitMinedBlock, setMinerPubkey, decayConfig } from './services/block-creator.js';
+import { windowOpen as intakeWindowOpen } from './services/intake.js';
 import { isPeerReady } from './services/peer-readiness.js';
 import { castLike } from './services/likes.js';
 import { castVouch, initiateUnvouch } from './services/vouch.js';
@@ -462,6 +463,8 @@ export function createApp(config: Config): express.Express {
         // time a miner submits, the hashes are already spent, and the node it
         // solved against had met its peers when it handed out the preimage.
         peerReady: isPeerReady,
+        // MINING_INTERFACE → The window gate: the intake answers.
+        windowOpen: intakeWindowOpen,
         miningSecret: config.miningSecret,
         getUsername: store.getUsername,
       }),
