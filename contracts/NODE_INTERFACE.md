@@ -1339,7 +1339,7 @@ tree collapse into clean rejections:
 > **It is not a promise that no condition may halt the node**, and a whole *class* of conditions
 > deliberately does. **The allowlist keys on `CorruptChainStateError`, the base class — not on any
 > one subclass** — which is the property `corrupt-state.test.ts` pins as *"a third kind must not need
-> a boundary edit to be fatal"*. Twelve subclasses, and every boundary is fatal for all of them with no
+> a boundary edit to be fatal"*. Thirteen subclasses, and every boundary is fatal for all of them with no
 > boundary edit.
 >
 > | Subclass | Raised when | Raising site |
@@ -1353,6 +1353,7 @@ tree collapse into clean rejections:
 > | `MissingStateVersionError` | no AVL version at or before a fork height the reach floor admits. `MAX_PROOF_HISTORY < maxReorgDepth` is refused at load (Configuration), so a missing version is a row the store lost | `services/fork-resolution.ts` → `reorg` |
 > | `DuplicateStateVersionError` | a version row already stands at the height being checkpointed — the store's version history has run ahead of its chain. The write path keeps one row per height and `idx_avl_tree_versions_height` refuses a second (AVL+ State Root) | `state/avl-storage.ts` → `update` |
 > | `MissingStagedBlockError` | a switch reads a staged block its own synchronous item found staged a moment before — the row is gone, so the store lost it (Fork choice decides on verified headers → "The switch") | `services/fork-resolution.ts` → `reorg` |
+> | `InconsistentHeaderTreeError` | the header tree contradicts itself where the switch reads it — an applied header with no `block_headers` row, a gap in `best_chain` below its tip, a `best_chain` hash with no row: the pipeline is the tables' one writer and writes none of these (Store Interface → Header tree) | `services/intake.ts` → the switch |
 > | `UnreachableForkPointError` | the switch's fork-point walk reaches the reach floor with no match between the applied chain and the best chain — admission holds every stored header's parent at or above the floor, so the tree contradicts itself (Fork choice decides on verified headers → "The reach floor is the horizon, one rule for every fork point") | `services/intake.ts` → the switch |
 > | `InconsistentAvlNodeRowsError` | a label of the AVL+ store answers no row alive at a height it must, or two (AVL+ State Root → "A height of the proof window with no kept root is served from the store") | `state/avl-storage.ts` |
 > | `ConfirmedPostTxNotInBlockBodyError` | a confirmed post row names a transaction the stored body of its block does not list — the body and the row disagree (Posts → "The creating transaction rides a post row") | `services/feed-service.ts` |
@@ -4100,7 +4101,7 @@ it is kept"), and a staged row that will not decode is local corruption, fail-st
 | `getBestTip()` | `() => HeaderRow \| null` — the top `best_chain` entry's row; `null` before the first header |
 | `getBestHashAt(height)` | `(number) => string \| null` — point read on `best_chain` |
 | `rewriteBestChain(forkHeight, hashes)` | `(number, string[]) => void` — the switch of the index: entries above `forkHeight` replaced by `hashes`, and the `staged_blocks` rows of the hashes that leave the index deleted, in one transaction |
-| `heaviestHeaders()` | `() => Iterable<HeaderRow>` — rows in descending `chain_work` over `idx_block_headers_work`, read one at a time: the choice of the best chain after a mark (Fork choice decides on verified headers → "The best chain is the heaviest reachable branch.") |
+| `headersHeavierThan(work)` | `(bigint) => HeaderRow[]` — the rows whose `chain_work` exceeds `work`, heaviest first, over `idx_block_headers_work`: the choice of the best chain after a mark, asked with the work of what remains of the best chain, so it answers only side rows heavier than the incumbent (Fork choice decides on verified headers → "The best chain is the heaviest reachable branch.") |
 | `removeHeaderSubtree(hash)` | `(string) => void` — the mark's removal: the row, every descendant, their `best_chain` entries and `staged_blocks` rows, in one transaction |
 | `pruneHeadersBelow(height)` | `(number) => void` — rows off the best chain below `height`, with their staged blocks; called beside `purgeOldJournals` |
 | `stageBlock(hash, height, bytes, fromPeer)` | `(string, number, Uint8Array, string) => void` |
@@ -4999,7 +5000,8 @@ that outweighs the best is won and stored by the pass its peer's run drives.
 branch is reachable (→ "The reach floor is the horizon, one rule for every fork point"); a tie keeps the incumbent.
 Its index is `best_chain`, rewritten from the fork point up whenever it switches — and chosen again whenever a mark
 removes a header from under it (→ "A body-stage refusal marks the header."): the heaviest stored header whose branch
-is reachable, a read the `chain_work` index answers in order — and every move of it, and of the applied tip, is
+is reachable, among the rows heavier than what remains of the best chain — a read the `chain_work` index answers in
+order; none reachable keeps what remains — and every move of it, and of the applied tip, is
 reported to net (`net.chainMoved()`, NET_INTERFACE → Pipeline events). **No block is fetched along a
 best chain whose tip's `chain_work` is below the profile's `minimumChainWork`** (TYPES_INTERFACE → Network
 profiles): below it the pipeline names no block, and goes on admitting headers.
