@@ -7,11 +7,12 @@ import {
   locatorFor,
   pruneHeaderTree,
   onPeerDisconnected,
+  rechooseBestChain,
   resetPipelineForTests,
   type PipelineCallbacks,
   type PipelineContext,
 } from '../../src/services/header-pipeline.js';
-import { getBestTip, getBestHashAt, getHeaderRow, insertRefusedHeader } from '../../src/store/index.js';
+import { getBestTip, getBestHashAt, getHeaderRow, insertRefusedHeader, removeHeaderSubtree } from '../../src/store/index.js';
 import { getDb } from '../../src/store/db.js';
 import { config } from '../../src/config.js';
 import { GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
@@ -667,6 +668,164 @@ describe('header-pipeline', () => {
       // The last assertion names the rule: on a best-chain move the memo is
       // cleared.
       expect(knowsTip('peerC', lighter[0]!.hash)).toBe(false);
+    });
+  });
+
+  describe('continuation stays in pass 1', () => {
+    it('a pass-1 continuation whose base has become the best tip wins on its next page and is stored by pass 2', () => {
+      // Our chain: 3 anchor headers; best tip = ours[2] (3W).
+      const ours = makeChain({ parent: null, n: 3, params: PARAMS, schedule: SCHEDULE });
+      const { callbacks: cb0 } = recorder();
+      for (const h of ours) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb0);
+      // Peer branch forks at the virtual root, longer and heavier.
+      const theirs = makeChain({ parent: null, n: 5, params: PARAMS, schedule: SCHEDULE, startAt: ours[0]!.header.createdAt + 1 });
+
+      // Pass 1 page 1: theirs[0..1] (2 headers). Pass-1 cumulative = base
+      // chainWork (0) + 2W = 2W < bestWork (3W) → score, 'taken'. The
+      // running branch's base is the virtual root.
+      const page1 = pageHeaders(theirs.slice(0, 2));
+      const { callbacks: cb1 } = recorder();
+      admitPage('peerB', theirs[4]!.hash, page1, ctx(), cb1);
+
+      // A mark's re-choice moves the best chain down to the branch's base.
+      // The intake's `markRefused` does the same three store ops before it
+      // asks the pipeline to re-choose: refused-row insert, subtree
+      // removal, then `rechooseBestChain`. Here ours[0]'s subtree is
+      // removed, so what remains is empty and the branch's base — the
+      // virtual root — is the best.
+      insertRefusedHeader(ours[0]!.hash, 1, 0);
+      removeHeaderSubtree(ours[0]!.hash);
+      const { callbacks: cbRe } = recorder();
+      rechooseBestChain(ctx(), cbRe);
+      expect(getBestTip()).toBeNull();
+
+      // Pass 1 page 2: theirs[2..4] (3 headers), parent = theirs[1].hash =
+      // the running branch's `topHash` → continuation. Cumulative work
+      // 2W + 3W = 5W > bestWork (0W) → the branch wins on a later page.
+      // The continuation stays in its pass: pass 1 returns 'again' and the
+      // branch's rows wait for pass 2 to store them. A page that reached
+      // the extension arm here would write rows above theirs[1] — a
+      // header pass 1 only scored, not a tree row.
+      const page2 = pageHeaders(theirs.slice(2, 5));
+      const { callbacks: cb2 } = recorder();
+      let v2: ReturnType<typeof admitPage> | null = null;
+      try { v2 = admitPage('peerB', theirs[4]!.hash, page2, ctx(), cb2); } catch { /* v2 stays null */ }
+      // The last assertion names the rule: a continuation stays in its
+      // pass. Pass 1 returns 'again' (the branch is won on a later page);
+      // the extension arm never fires over an unstored last-scored header.
+      expect(v2?.outcome).toBe('again');
+    });
+  });
+
+  describe('pass 2 extends from the base once at the crossing', () => {
+    it('a pass 2 of several pages past the crossing leaves best_chain equal to the branch, each page extending by its own length', () => {
+      // Our chain: 6 anchor headers (bestWork = 6W).
+      const ours = makeChain({ parent: null, n: 6, params: PARAMS, schedule: SCHEDULE });
+      const { callbacks: cb0 } = recorder();
+      for (const h of ours) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb0);
+      // Peer chain: 12 anchor headers from the root; cumulative work beats
+      // ours only after the 7th header (7W > 6W).
+      const theirs = makeChain({ parent: null, n: 12, params: PARAMS, schedule: SCHEDULE, startAt: ours[0]!.header.createdAt + 1 });
+
+      // Pass 1 pages of 6 — page 1 ties (6W = 6W, not >), page 2 wins
+      // ('again') and records heights 6 and 12.
+      const p1a = pageHeaders(theirs.slice(0, 6));
+      const p1b = pageHeaders(theirs.slice(6, 12));
+      const { callbacks: cbS } = recorder();
+      expect(admitPage('peerB', theirs[11]!.hash, p1a, ctx(), cbS).outcome).toBe('taken');
+      expect(admitPage('peerB', theirs[11]!.hash, p1b, ctx(), cbS).outcome).toBe('again');
+
+      // A counter on best_chain inserts, through the store — a trigger
+      // increments one row of a side table per INSERT, so the count is a
+      // store-side observation of the rule.
+      const db = getDb();
+      db.exec(`
+        CREATE TABLE pass2_bc_count (c INTEGER);
+        INSERT INTO pass2_bc_count VALUES (0);
+        CREATE TRIGGER pass2_bc_insert AFTER INSERT ON best_chain BEGIN
+          UPDATE pass2_bc_count SET c = c + 1;
+        END;
+      `);
+      const countInserts = () => db.prepare('SELECT c FROM pass2_bc_count').pluck().get() as number;
+
+      // Pass 2 served in pages of 2 — the crossing lands early, so several
+      // pages follow it.
+      const pages: import('@dagsocial/types').BlockHeader[][] = [];
+      for (let i = 0; i < 12; i += 2) pages.push(pageHeaders(theirs.slice(i, i + 2)));
+      const { callbacks: cbP2 } = recorder();
+
+      // Pages 0..2 (heights 1..6, cumulative work 2W → 4W → 6W, none > 6W):
+      // no crossing, no best_chain writes.
+      for (let i = 0; i < 3; i++) {
+        const c0 = countInserts();
+        const v = admitPage('peerB', theirs[11]!.hash, pages[i]!, ctx(), cbP2);
+        expect(v.outcome).toBe('again');
+        expect(countInserts() - c0).toBe(0);
+      }
+
+      // Page 3 (heights 7..8, cumulative 7W > 6W at header[0]) — crossing.
+      // The branch's path from the base (virtual root) up to this page's
+      // last header is read back through `prev_hash` and written to
+      // best_chain in one call: 8 inserts, the branch's length so far.
+      const c3 = countInserts();
+      const v3 = admitPage('peerB', theirs[11]!.hash, pages[3]!, ctx(), cbP2);
+      expect(v3.outcome).toBe('again');
+      expect(countInserts() - c3).toBe(8);
+
+      // Page 4 (heights 9..10) and page 5 (heights 11..12): the branch is
+      // switched; each page extends best_chain from the last header stored,
+      // so the inserts per page equal the page's length.
+      const c4 = countInserts();
+      const v4 = admitPage('peerB', theirs[11]!.hash, pages[4]!, ctx(), cbP2);
+      expect(v4.outcome).toBe('again');
+      const inserts4 = countInserts() - c4;
+
+      const c5 = countInserts();
+      const v5 = admitPage('peerB', theirs[11]!.hash, pages[5]!, ctx(), cbP2);
+      expect(v5.outcome).toBe('taken');
+      const inserts5 = countInserts() - c5;
+
+      // best_chain equals the branch (12 rows, each the branch's hash at
+      // its height).
+      const bc = db.prepare('SELECT height, hash FROM best_chain ORDER BY height').all() as Array<{ height: number; hash: string }>;
+      expect(bc.length).toBe(12);
+      for (let i = 0; i < 12; i++) {
+        expect(bc[i]!.height).toBe(i + 1);
+        expect(bc[i]!.hash).toBe(theirs[i]!.hash);
+      }
+      // The last assertion names the rule: a page after the crossing
+      // extends best_chain by its own length — pass 2's writes stay linear
+      // in the branch's length.
+      expect([inserts4, inserts5]).toEqual([2, 2]);
+    });
+  });
+
+  describe('interlinks funnel', () => {
+    it('a page over a floor-priced parent stores a vector that admits the next page', () => {
+      // Pass 1 serves the branch over the virtual root, pages of 3; the
+      // branch is heavier than the empty tree's work, so it wins on the
+      // first page and is stored from the page in hand. Every stored row's
+      // interlinks is computed through `interlinksCommitFromParent` →
+      // `updateInterlinks` with the parent's `level`.
+      const chain = makeChain({ parent: null, n: 6, params: PARAMS, schedule: SCHEDULE });
+      const p1 = pageHeaders(chain.slice(0, 3));
+      const p2 = pageHeaders(chain.slice(3, 6));
+
+      const { callbacks: cb1 } = recorder();
+      const v1 = admitPage('peerA', chain[5]!.hash, p1, ctx(), cb1);
+      expect(v1.outcome).toBe('taken');
+      expect(getBestTip()!.hash).toBe(chain[2]!.hash);
+
+      // Page 2's first header's parent is chain[2], a floor-priced header
+      // (the suite's PARAMS has anchor = floor). The pipeline builds the
+      // page's verification anchor through `interlinksCommitFromParent`
+      // over that parent — one call that funnels every level, Infinity, a
+      // non-negative integer or null, into `updateInterlinks`.
+      const { callbacks: cb2 } = recorder();
+      const v2 = admitPage('peerA', chain[5]!.hash, p2, ctx(), cb2);
+      // The last assertion names the rule: the stored vector matches the
+      // next page's first header's `interlinkRoot`, so the page admits.
+      expect(v2.outcome).toBe('taken');
     });
   });
 
