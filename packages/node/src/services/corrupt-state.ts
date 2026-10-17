@@ -143,6 +143,30 @@ export class MissingStoredBlockError extends CorruptChainStateError {
 }
 
 /**
+ * A `staged_blocks` row the switch asked for and did not get.
+ *
+ * The switch names its branch by the heights whose `block_headers` row carries
+ * the matching `chain_work`, and the row set is checked staged inside the same
+ * synchronous item that calls `reorg`. A `null` read inside the transaction
+ * means the row changed between the check and the read, or the writer and the
+ * reader disagree — the same local-corruption class a stored block's missing
+ * row is in. Fail-stop under `reorg`'s catch, as a missing stored block is
+ * (NODE_INTERFACE → Fork choice decides on verified headers → "A bound block
+ * is staged, and applied from staging.").
+ */
+export class MissingStagedBlockError extends CorruptChainStateError {
+  constructor(site: string, height: number, hash: string) {
+    super(
+      site,
+      height,
+      `no staged block at height ${height} for hash ${hash} — the switch ` +
+      `checked the row staged in the same synchronous item ` +
+      `(store/header-tree.ts → stageBlock)`,
+    );
+  }
+}
+
+/**
  * The AVL+ tree refuses one of its writes (NODE_INTERFACE → AVL+ State Root →
  * "The rules read the tree, and nothing else").
  *
