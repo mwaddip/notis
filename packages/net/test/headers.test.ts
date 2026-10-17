@@ -625,6 +625,19 @@ describe('serve: GetHeaders', () => {
     expect(headers!.map((h) => h.height)).toEqual([4, 5]);
   });
 
+  it('takes the first held entry when a later entry is also held lower down', () => {
+    // NET_INTERFACE → `GetHeaders` / `GetBlocks` responses →
+    // "A `Headers` page has one shape, and a requester holds a page to it":
+    // the serve arm takes the FIRST entry it holds, running tip → root. Two
+    // held entries, the higher first — the answer is the heights above the
+    // higher one, not the lower one.
+    const store = makeChain(5);
+    const hashAt4 = mockBlockHash(store.get(4)!.header);
+    const hashAt2 = mockBlockHash(store.get(2)!.header);
+    const headers = receiveHeaders(serveHeaders({ locator: [hashAt4, hashAt2] }, store));
+    expect(headers!.map((h) => h.height)).toEqual([5]);
+  });
+
   it('ends at a gap above the locator match', () => {
     const store = makeChain(2);
     // Heights 4 and 5 exist above a gap at 3; the arm walks up from the
