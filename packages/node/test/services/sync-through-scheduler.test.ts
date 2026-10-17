@@ -208,8 +208,8 @@ async function runBlockPump(peers: Map<string, FakeServer>, cap: Captured): Prom
   for (let round = 0; round < 10_000; round++) {
     const wanted = cap.chainView.wantedBlocks!();
     if (wanted.length === 0) break;
+    const heightBefore = getCurrentHeight();
     const wantedIds = new Set(wanted.map((w) => w.id));
-    let roundMoved = false;
     for (const [peerId, server] of peers) {
       if (server.claimHash === '' || !cap.chainView.knowsTip!(peerId, server.claimHash)) continue;
       const ids: string[] = [];
@@ -223,9 +223,12 @@ async function runBlockPump(peers: Map<string, FakeServer>, cap: Captured): Prom
       const blocks = serveBlocks(server, ids);
       if (blocks.length === 0) continue;
       await cap.pipeline.deliverBlocks!(peerId, blocks);
-      roundMoved = true;
     }
-    if (!roundMoved) break;
+    // A round is progress only when the applied tip has moved — a staged
+    // row the funnel aborts leaves the id wanted again, and a round whose
+    // only effect is a re-stage would spin the pump forever.
+    const heightAfter = getCurrentHeight();
+    if (heightAfter <= heightBefore) break;
     moved = true;
   }
   return moved;
@@ -377,19 +380,51 @@ describe('a sync through the scheduler', () => {
   });
 
   it(
-    'a joiner from empty syncs a chain of more than two pages to its claim — every header stored, the applied tip at the claim, no penalty, no refute',
+    'a joiner from empty syncs a chain of more than two pages of headers to its claim — every header stored, the best tip at the claim, no penalty, no refute',
     async () => {
-      // The chain spans three pages at `MAX_CHAIN_RESPONSE_ITEMS = 400`:
-      // 801 real applicable blocks mined into this store, pulled back out as
-      // JS objects, the store wiped, and then handed back to the pipeline
-      // through the fake net's `deliverHeaders` / `deliverBlocks`.
+      // Three pages at `MAX_CHAIN_RESPONSE_ITEMS = 400`. The chain is built
+      // with `buildHeaderChain` — headers only, no bodies — and the loop
+      // runs with `driveBlocks: false` so the header half is what the case
+      // measures.
       const N = 2 * MAX_CHAIN_RESPONSE_ITEMS + 1;
+      const chain = buildHeaderChain({ parent: null, n: N });
+      const headers = chain.map((p) => p.header);
+      const claimHeight = N;
+      const claimHash = chain[N - 1]!.hash;
+
+      const cap = freshCap();
+      wireNet(makeFakeNet(cap) as never);
+
+      const server = newServer(headers, [], { hash: claimHash, height: claimHeight });
+      const peers = new Map<string, FakeServer>([['peerA', server]]);
+      const refutes = await runSyncLoop(peers, cap, { driveBlocks: false });
+
+      expect(cap.penalties).toEqual([]);
+      expect(refutes).toEqual([]);
+      for (let h = 1; h <= N; h++) {
+        expect(getBestHashAt(h)).toBe(chain[h - 1]!.hash);
+        expect(getHeaderRow(chain[h - 1]!.hash)).not.toBeNull();
+      }
+      // The last assertion names the rule: a joiner from empty syncs a chain
+      // of more than two pages of headers to its claim, every header stored,
+      // the best tip at the claim.
+      expect(getBestTip()!.hash).toBe(claimHash);
+    },
+    120_000,
+  );
+
+  it(
+    'a joiner syncs a short applied chain crossing the window through headers and blocks to its applied tip',
+    async () => {
+      // `maxReorgDepth + 2` real applicable blocks: enough to run past the
+      // window on the first drain. `gateHeld()` lifts `S` to the best tip
+      // once per outer iteration — the gate as the production path reports
+      // it — which raises the window to `S + maxReorgDepth` and lets
+      // extension keep applying past the first forty blocks.
+      const N = config.maxReorgDepth + 2;
       const headers: BlockHeader[] = [];
       const blocks: OrderingBlock[] = [];
-      // Wire the intake once with a stub net so applies land through the
-      // pipeline's intake; each `wireIntakeForTests` call resets the window
-      // hold, so the loop wires once and holds the gate per block.
-      const { wireIntakeForTests } = await import('../helpers.js');
+      const { wireIntakeForTests, activateProverOverStore } = await import('../helpers.js');
       await wireIntakeForTests();
       const intake = await import('../../src/services/intake.js');
       for (let h = 1; h <= N; h++) {
@@ -403,10 +438,15 @@ describe('a sync through the scheduler', () => {
       const claimHeight = N;
       const claimHash = hashOf(headers[N - 1]!);
 
-      // Wipe the store and the pipeline, wire the fake net.
+      // Wipe the store and the pipeline. The prover singleton binds to the
+      // open database — `isCurrentDb` reads that bind — so the fresh store
+      // needs a fresh prover before the sync's `applyBlockBody` reads one;
+      // `activateProverOverStore` seeds and bootstraps as `beforeEach`
+      // leaves the suite's other scenarios.
       closeDb();
       initDb(':memory:');
       getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+      await activateProverOverStore();
       resetPipelineForTests();
       resetIntakeForTests();
       const cap = freshCap();
@@ -418,17 +458,13 @@ describe('a sync through the scheduler', () => {
 
       expect(cap.penalties).toEqual([]);
       expect(refutes).toEqual([]);
-      for (let h = 1; h <= N; h++) {
-        expect(getBestHashAt(h)).toBe(hashOf(headers[h - 1]!));
-        expect(getHeaderRow(hashOf(headers[h - 1]!))).not.toBeNull();
-      }
       expect(getBestTip()!.hash).toBe(claimHash);
-      // The last assertion names the rule: a joiner from empty syncs a chain
-      // of more than two pages to its claim, every header stored, the applied
-      // tip at the claim.
+      // The last assertion names the rule: a joiner syncs a short applied
+      // chain crossing the window through headers and blocks to its applied
+      // tip as `gateHeld()` is reported.
       expect(getCurrentHeight()).toBe(claimHeight);
     },
-    30 * 60 * 1000,
+    120_000,
   );
 
   it('a peer at height 0 (claim: the root) — knowsTip answers true, no request goes to it', async () => {
@@ -647,6 +683,71 @@ describe('a sync through the scheduler', () => {
     expect(cap.chainView.knowsTip!('peerB', peerB.claimHash)).toBe(true);
   });
 
+  it('a peer on a lighter side branch longer than one page whose claim moves between its pages — the branch continues: no penalty, no refute, the memo answers knowsTip', async () => {
+    // Node holds an 80-anchor main. The peer's branch is 500 floor-priced
+    // headers from the virtual root — longer than one page, so pass 1
+    // records a running branch between page 1 and page 2. The server grows
+    // the chain by one floor-priced header between the two pages, moving
+    // the claim from height 500 to height 501, and the branch continues on
+    // the parent of its first not-held header — the running branch's last
+    // scored hash — not on a claim equality.
+    const cap = freshCap();
+    wireNet(makeFakeNet(cap) as never);
+
+    const mainN = 80;
+    const main = buildHeaderChain({ parent: null, n: mainN });
+    const peerA = newServer(
+      main.map((p) => p.header),
+      [],
+      { hash: main[main.length - 1]!.hash, height: mainN },
+    );
+    let refutes = await runSyncLoop(new Map([['peerA', peerA]]), cap, { driveBlocks: false });
+    expect(refutes).toEqual([]);
+    expect(getBestTip()!.height).toBe(mainN);
+    const mainWork = getBestTip()!.chainWork;
+
+    // Branch: 501 floor-priced headers from the virtual root. The server
+    // starts holding the first 500 and grows to 501 between the two pages.
+    const branchFirst = 500;
+    const branchGrownTo = 501;
+    const branch = buildFloorPricedBranch({ base: null, n: branchGrownTo, startAt: T_ANCHOR + 5 });
+
+    const branchWorkInitial = cumulativeWork(branch.slice(0, branchFirst).map((p) => p.header));
+    const branchWorkGrown = cumulativeWork(branch.slice(0, branchGrownTo).map((p) => p.header));
+    // Both snapshots stay below the best — the lighter stop is what fires at
+    // the end, not an outweighs.
+    expect(branchWorkInitial).toBeLessThan(mainWork);
+    expect(branchWorkGrown).toBeLessThan(mainWork);
+
+    const initialHeaders = branch.slice(0, branchFirst).map((p) => p.header);
+    const grownHeaders = branch.slice(0, branchGrownTo).map((p) => p.header);
+    const peerB = newServer(initialHeaders, [], {
+      hash: branch[branchFirst - 1]!.hash,
+      height: branchFirst,
+    });
+    let served = 0;
+    peerB.tipGrow = () => {
+      served += 1;
+      if (served === 1) {
+        peerB.headers = grownHeaders;
+        peerB.hashes = peerB.headers.map(hashOf);
+        peerB.claimHash = branch[branchGrownTo - 1]!.hash;
+        peerB.claimHeight = branchGrownTo;
+      }
+    };
+    refutes = await runSyncLoop(new Map([['peerB', peerB]]), cap, { driveBlocks: false });
+
+    expect(refutes).toEqual([]);
+    expect(getBestTip()!.hash).toBe(main[main.length - 1]!.hash);
+    expect(cap.chainView.knowsTip!('peerB', branch[branchGrownTo - 1]!.hash)).toBe(true);
+    // The last assertion names the rule: the branch is decided by its
+    // parent, so a claim that moves between pages leaves the running branch
+    // in place and no page draws a penalty — a continuation keyed on claim
+    // equality instead drops the running branch, and page 2's first-fresh
+    // header has no stored parent to resolve against.
+    expect(cap.penalties).toEqual([]);
+  });
+
   it('pass 2 served a different branch than pass 1 scored — transient, nothing further stored, best unchanged', async () => {
     // Node holds a 52-anchor main. Pass 1 scores an 801 floor-priced branch
     // X across two pages (won on page 2 → `again`). Pass 2's first page is
@@ -728,20 +829,82 @@ describe('a sync through the scheduler', () => {
     // chain alone, and the first fresh header's base is the virtual root.
     const foreign = buildHeaderChain({ parent: null, n: 10, startAt: T_ANCHOR + 3_000_000 });
     const claim = { hash: foreign[foreign.length - 1]!.hash, height: 10 };
-    const peerF = newServer(foreign.map((p) => p.header), [], claim);
-    const refutes = await runSyncLoop(new Map([['peerF', peerF]]), cap, { driveBlocks: false });
+    const page = foreign.map((p) => p.header);
+    const outcome = await cap.pipeline.deliverHeaders!('peerF', claim.hash, page);
 
-    expect(cap.penalties).toEqual([]);
-    expect(refutes).toEqual([]);
-    // The best chain stays on the applied chain's tip — nothing of the
-    // foreign chain was stored or scored.
-    expect(getBestTip()!.height).toBe(MIN_APPLIED);
+    // Preamble (`expect.soft`): a reverted age-rule-on-root admits the
+    // page, scores it as lighter, writes a memo at the claim and keeps the
+    // soft assertions below unmet — the soft form lets the last assertion
+    // run so the rule it names is the one the failure reports.
+    expect.soft(outcome).toBe('refused');
+    expect.soft(cap.penalties).toEqual([]);
+    expect.soft(getBestTip()!.height).toBe(MIN_APPLIED);
     for (const row of foreign) {
-      expect(getHeaderRow(row.hash)).toBeNull();
+      expect.soft(getHeaderRow(row.hash)).toBeNull();
     }
-    // The last assertion names the rule: an age-rule refusal of a page
-    // leaves no penalty.
-    const peerFPenalties = cap.penalties.filter((p) => p.peerId === 'peerF');
-    expect(peerFPenalties).toEqual([]);
+    // The last assertion names the rule: the age rule on the root refuses
+    // the page outright, so the memo is never written and `knowsTip` of the
+    // claim answers `false`.
+    expect(cap.chainView.knowsTip!('peerF', claim.hash)).toBe(false);
   }, 120_000);
+
+  it(
+    'chainMoved rises across a deliverBlocks that applies blocks with no header moving',
+    async () => {
+      // Three real applicable blocks: enough to fire a sequence of applies
+      // out of one `deliverBlocks`. The headers reach the tree through a
+      // header-only sync (`driveBlocks: false`), so the counter stands at
+      // the storage report when the block pump opens; every apply inside
+      // the pump then raises it further.
+      const BLOCKS = 3;
+      const headers: BlockHeader[] = [];
+      const blocks: OrderingBlock[] = [];
+      const { wireIntakeForTests, activateProverOverStore } = await import('../helpers.js');
+      await wireIntakeForTests();
+      const intake = await import('../../src/services/intake.js');
+      for (let h = 1; h <= BLOCKS; h++) {
+        intake.gateHeld();
+        const block = await makeApplicableBlock({ height: h });
+        const verdict = intake.deliverMinedBlock(block);
+        expect(verdict.applied).toBe(true);
+        headers.push(block.header);
+        blocks.push(block);
+      }
+      const claimHeight = BLOCKS;
+      const claimHash = hashOf(headers[BLOCKS - 1]!);
+
+      closeDb();
+      initDb(':memory:');
+      getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+      await activateProverOverStore();
+      resetPipelineForTests();
+      resetIntakeForTests();
+      const cap = freshCap();
+      wireNet(makeFakeNet(cap) as never);
+
+      const server = newServer(headers, blocks, { hash: claimHash, height: claimHeight });
+      const peers = new Map<string, FakeServer>([['peerA', server]]);
+      const refutesFromHeaders = await runSyncLoop(peers, cap, { driveBlocks: false });
+      expect(refutesFromHeaders).toEqual([]);
+      expect(cap.penalties).toEqual([]);
+      expect(getBestTip()!.hash).toBe(claimHash);
+      expect(getCurrentHeight()).toBe(0);
+
+      const before = cap.chainMoved;
+
+      // The gate reads the best tip's height into `S` so the window lets
+      // every staged block apply; `deliverBlocks` then stages and drains
+      // the three blocks.
+      cap.chainView.gateHeld!();
+      await cap.pipeline.deliverBlocks!('peerA', blocks);
+
+      expect(cap.penalties).toEqual([]);
+      expect(getCurrentHeight()).toBe(claimHeight);
+      // The last assertion names the rule: the applied tip moving fires
+      // `chainMoved` through the intake's callbacks, so the fake net's
+      // counter rises during a `deliverBlocks` where no new header moved.
+      expect(cap.chainMoved).toBeGreaterThan(before);
+    },
+    120_000,
+  );
 });
