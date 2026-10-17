@@ -1,14 +1,40 @@
 import { describe, it, afterAll, expect } from 'vitest';
 import { createMesh, type Mesh } from '../src/mesh.js';
 import { mine, waitHeight } from '../src/miner.js';
-import { getBlockCurrent } from '../src/http.js';
+import { getBlock, getBlockCurrent } from '../src/http.js';
+import { clockOffsetNodeOptions } from '../src/node-process.js';
+import type { NodeProcess } from '../src/node-process.js';
 import { NETWORK_PROFILES } from '@dagsocial/types';
+import { blockWork } from '@dagsocial/validation';
 
 const FILE_INDEX = 5;
+const FILE_INDEX_ROOT_FORK = 23;
 const HORIZON = NETWORK_PROFILES.devnet.maxReorgDepth;
 
 function p2pAddr(node: { p2pPort: number }): string {
   return `/ip4/127.0.0.1/tcp/${node.p2pPort}`;
+}
+
+async function chainWork(
+  node: NodeProcess,
+  from: number,
+  to: number,
+): Promise<bigint> {
+  let sum = 0n;
+  for (let h = from; h <= to; h++) {
+    const raw = await getBlock(node, h);
+    if (raw === null) {
+      throw new Error(`node :${node.httpPort} has no block at height ${h}`);
+    }
+    const hdr = raw['header'] as Record<string, unknown>;
+    const bits = hdr['powTargetBits'] as number;
+    const work = blockWork(bits);
+    if (work === null) {
+      throw new Error(`unreadable powTargetBits ${bits} at height ${h}`);
+    }
+    sum += work;
+  }
+  return sum;
 }
 
 describe('fork', () => {
@@ -139,4 +165,100 @@ describe('fork', () => {
     expect(tipAFinal.height).toBe(tipABeforeStrand.height);
     expect(tipAFinal.hash).toBe(tipABeforeStrand.hash);
   });
+});
+
+describe('fork root', () => {
+  let mesh: Mesh;
+
+  afterAll(async () => {
+    await mesh?.teardown();
+  });
+
+  it('joiner meeting a lighter-but-taller chain and a heavier one converges onto the heavier', async () => {
+    mesh = await createMesh({
+      fileIndex: FILE_INDEX_ROOT_FORK,
+      nodeCount: 0,
+    });
+
+    // ---- Node L: block 1 under a 16-hour past-stamp preload, then blocks
+    // 2..20 at real wall time. The schedule reads header stamps against
+    // t_a = createdAt(1), so block 1 placed 16 h back drives Δ positive at
+    // block 3's admission and onward, clamping the schedule at the floor
+    // (MINING_INTERFACE → Difficulty Schedule).
+    const SIXTEEN_HOURS_MS = 16 * 60 * 60 * 1000;
+    const L_FIRST = await mesh.addNode([], {
+      NODE_OPTIONS: clockOffsetNodeOptions(),
+      DAGSOCIAL_E2E_CLOCK_OFFSET_MS: String(-SIXTEEN_HOURS_MS),
+    });
+    await mine(L_FIRST, mesh.miningSecret, 1);
+    await waitHeight([L_FIRST], 1);
+
+    const nodeL = await mesh.restartNode(L_FIRST, {});
+    await mine(nodeL, mesh.miningSecret, 19);
+    await waitHeight([nodeL], 20);
+
+    // ---- Node H: isolated, mines 8 at the anchor target.
+    const nodeH = await mesh.addNode([]);
+    await mine(nodeH, mesh.miningSecret, 8);
+    await waitHeight([nodeH], 8);
+
+    // ---- Measure both chains' cumulative work from the headers each node
+    // serves (NODE_INTERFACE → Fork choice decides on verified headers →
+    // "The best chain is the heaviest reachable branch").
+    const [workL, workH] = await Promise.all([
+      chainWork(nodeL, 1, 20),
+      chainWork(nodeH, 1, 8),
+    ]);
+    const tipL = await getBlockCurrent(nodeL);
+    const tipH = await getBlockCurrent(nodeH);
+    expect(tipL.height).toBe(20);
+    expect(tipH.height).toBe(8);
+    expect(tipL.height).toBeGreaterThan(tipH.height);
+    expect(workL < workH).toBe(true);
+
+    // ---- Node J bootstraps to L alone and ends on L's chain.
+    const nodeJ = await mesh.addNode([p2pAddr(nodeL)]);
+    await waitHeight([nodeJ], 20, 30_000);
+    const tipJAfterL = await getBlockCurrent(nodeJ);
+    expect(tipJAfterL.hash).toBe(tipL.hash);
+
+    // ---- Restart H with J as its bootstrap peer; H's data dir keeps its
+    // 8-block chain. J's applied tip (20) is within devnet's maxReorgDepth
+    // (40) with every journal kept, so the fork at the root is reachable for
+    // J (NODE_INTERFACE → Fork choice decides on verified headers → "The
+    // reach floor is the horizon, one rule for every fork point"). The gate
+    // counts outbound peers; H's inbound side at J does not hold J's gate
+    // (NET_INTERFACE → Sync State Machine → "The gate bounds how far blocks
+    // apply").
+    const nodeH2 = await mesh.restartNode(nodeH, {}, [p2pAddr(nodeJ)]);
+
+    // ---- J switches to H's chain (NODE_INTERFACE → Fork choice decides on
+    // verified headers → "The switch.").
+    const deadline = Date.now() + 60_000;
+    let converged = false;
+    while (Date.now() < deadline) {
+      const t = await getBlockCurrent(nodeJ);
+      if (t.hash === tipH.hash && t.height === tipH.height) {
+        converged = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const tipJFinal = await getBlockCurrent(nodeJ);
+    const tipH2 = await getBlockCurrent(nodeH2);
+    if (!converged) {
+      const tails = [nodeL, nodeJ, nodeH2]
+        .map((n) => `--- :${n.httpPort} ---\n${n.logs.slice(-15).join('\n')}`)
+        .join('\n');
+      throw new Error(
+        `J did not converge onto H within 60s (J tip ${tipJFinal.height}/${tipJFinal.hash}, H tip ${tipH2.height}/${tipH2.hash}, L tip ${tipL.height}/${tipL.hash})\n${tails}`,
+      );
+    }
+    expect(tipJFinal.height).toBe(tipH.height);
+    expect(tipJFinal.hash).toBe(tipH.hash);
+
+    // H's own chain is heavier and stays its best.
+    expect(tipH2.height).toBe(tipH.height);
+    expect(tipH2.hash).toBe(tipH.hash);
+  }, 120_000);
 });
