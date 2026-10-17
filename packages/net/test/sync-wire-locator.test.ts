@@ -129,7 +129,7 @@ describe('SyncInfo carries the tip hash as well as the height', () => {
 
     const decoded = syncInfoSent(sent);
     expect(decoded.tipHeight).toBe(42);
-    expect((decoded as unknown as { tipHash: string }).tipHash).toBe(H32_A);
+    expect(decoded!.tipHash).toBe(H32_A);
   });
 
   it('a claim at height 0 with the id provider unset carries GENESIS_PREV_BLOCK_HASH', () => {
@@ -143,7 +143,7 @@ describe('SyncInfo carries the tip hash as well as the height', () => {
 
     const decoded = syncInfoSent(sent);
     expect(decoded.tipHeight).toBe(0);
-    expect((decoded as unknown as { tipHash: string }).tipHash).toBe(GENESIS_PREV_BLOCK_HASH);
+    expect(decoded!.tipHash).toBe(GENESIS_PREV_BLOCK_HASH);
   });
 
   it('the sent SyncInfo body is 33 bytes at height 0 — one vlqU plus the 32-byte hash', () => {
@@ -170,7 +170,7 @@ describe('SyncInfo carries the tip hash as well as the height', () => {
     const decoded = decodeSyncInfo(w.toBytes());
     expect(decoded).not.toBeNull();
     expect(decoded!.tipHeight).toBe(7);
-    expect((decoded as unknown as { tipHash: string }).tipHash).toBe(H32_B);
+    expect(decoded!.tipHash).toBe(H32_B);
   });
 
   it('an upper-case hex hash is refused at encode', () => {
@@ -181,7 +181,7 @@ describe('SyncInfo carries the tip hash as well as the height', () => {
       encodeStruct(syncInfoCodec, {
         tipHeight: 1,
         tipHash: 'A'.repeat(64),
-      } as unknown as SyncInfo),
+      }),
     ).toThrow();
   });
 });
@@ -195,14 +195,14 @@ describe('GetHeaders carries a locator', () => {
     const body = hashListBody([H32_A]);
     const decoded = decodeGetHeaders(body);
     expect(decoded).not.toBeNull();
-    expect((decoded as unknown as { locator: string[] }).locator).toEqual([H32_A]);
+    expect(decoded!.locator).toEqual([H32_A]);
   });
 
   it('a 3-entry locator decodes in order', () => {
     const body = hashListBody([H32_A, H32_B, H32_C]);
     const decoded = decodeGetHeaders(body);
     expect(decoded).not.toBeNull();
-    expect((decoded as unknown as { locator: string[] }).locator).toEqual([H32_A, H32_B, H32_C]);
+    expect(decoded!.locator).toEqual([H32_A, H32_B, H32_C]);
   });
 
   it('refuses an empty locator before the first element', () => {
@@ -231,7 +231,7 @@ describe('GetHeaders carries a locator', () => {
     const body = hashListBody(hashes);
     const decoded = decodeGetHeaders(body);
     expect(decoded).not.toBeNull();
-    expect((decoded as unknown as { locator: string[] }).locator).toHaveLength(28);
+    expect(decoded!.locator).toHaveLength(28);
   });
 });
 
@@ -244,14 +244,14 @@ describe('GetBlocks carries ids', () => {
     const body = hashListBody([H32_A]);
     const decoded = decodeGetBlocks(body);
     expect(decoded).not.toBeNull();
-    expect((decoded as unknown as { ids: string[] }).ids).toEqual([H32_A]);
+    expect(decoded!.ids).toEqual([H32_A]);
   });
 
   it('a 3-id body decodes in order', () => {
     const body = hashListBody([H32_A, H32_B, H32_C]);
     const decoded = decodeGetBlocks(body);
     expect(decoded).not.toBeNull();
-    expect((decoded as unknown as { ids: string[] }).ids).toEqual([H32_A, H32_B, H32_C]);
+    expect(decoded!.ids).toEqual([H32_A, H32_B, H32_C]);
   });
 
   it('refuses an empty id list before the first element', () => {
@@ -275,7 +275,7 @@ describe('GetBlocks carries ids', () => {
     const body = hashListBody(hashes);
     const decoded = decodeGetBlocks(body);
     expect(decoded).not.toBeNull();
-    expect((decoded as unknown as { ids: string[] }).ids).toHaveLength(400);
+    expect(decoded!.ids).toHaveLength(400);
   });
 });
 
@@ -291,8 +291,8 @@ describe('request bodies share one layout, the frame code discriminates', () => 
     const asBlocks = decodeGetBlocks(body);
     expect(asHeaders).not.toBeNull();
     expect(asBlocks).not.toBeNull();
-    expect((asHeaders as unknown as { locator: string[] }).locator)
-      .toEqual((asBlocks as unknown as { ids: string[] }).ids);
+    expect(asHeaders!.locator)
+      .toEqual(asBlocks!.ids);
   });
 
   it('a GetHeaders frame carries code 14 over a locator body', () => {
@@ -301,7 +301,7 @@ describe('request bodies share one layout, the frame code discriminates', () => 
     expect(decoded.code).toBe(MSG_GET_HEADERS);
     const req = decodeGetHeaders(decoded.body);
     expect(req).not.toBeNull();
-    expect((req as unknown as { locator: string[] }).locator).toEqual([H32_A]);
+    expect(req!.locator).toEqual([H32_A]);
   });
 
   it('a GetBlocks frame carries code 16 over an ids body', () => {
@@ -310,7 +310,7 @@ describe('request bodies share one layout, the frame code discriminates', () => 
     expect(decoded.code).toBe(MSG_GET_BLOCKS);
     const req = decodeGetBlocks(decoded.body);
     expect(req).not.toBeNull();
-    expect((req as unknown as { ids: string[] }).ids).toEqual([H32_A]);
+    expect(req!.ids).toEqual([H32_A]);
   });
 });
 
