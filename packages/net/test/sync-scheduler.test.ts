@@ -732,9 +732,14 @@ describe('entering synced clears every stall mark', () => {
     peerActive(sch, 'bad', 1);
     syncInfo(sch, 'bad', 100, hexId(100));
     await settle();
+    expect(sch.machine.getMarksForTest().has('bad')).toBe(true);
     syncInfo(sch, 'honest', 10, claimOk);
     await settle();
     expect(sch.machine.getState().phase).toBe('synced');
+    // Removing `stallMarks.clear()` on entering synced leaves the mark
+    // behind — the next bad claim would be ignored past its expiry.
+    expect(sch.machine.getMarksForTest().has('bad')).toBe(false);
+    expect(sch.machine.getMarksForTest().size).toBe(0);
   });
 });
 
