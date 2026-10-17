@@ -202,10 +202,6 @@ remit; its former home next to `BlockHeader` was proximity, not ownership.
 | `1n << BigInt(2³⁰)` | throws `RangeError` |
 | `(1n << BigInt(2³⁰−2)) + (1n << BigInt(2³⁰−2))` | throws — **the accumulator overflows independently of any single term** |
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** The paragraph's term-count sentence leads net's `Headers` decoder
-> (`sync-codec.ts`), which holds a page to `MAX_CHAIN_RESPONSE_ITEMS` once `GetHeaders` carries a locator and no
-> `maxCount`.
-
 The wall is exactly 2³⁰ and one integer wide. **A per-term bound is not sufficient on its own** — two
 terms each below the wall sum past it — which is why the bound is the digest width rather than anything
 near the arithmetic limit. **The term count is bounded at the decoder**: a `Headers` page is held to

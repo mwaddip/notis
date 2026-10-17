@@ -681,10 +681,10 @@ case that exists today, and it needs no reorg to arise.
 stays above the store because the store cannot tell a submitter from the reorg caller (Fee floor,
 below). A ceiling could be tested there safely — it is derived rather than chosen, so it reads the
 same for every caller — but it would be testing something that cannot arrive: every submission path
-runs `validateTx` first, so only fork resolution can offer a past-ceiling transaction, and the store
+runs `validateTx` first, so only a switch's re-insertion can offer a past-ceiling transaction, and the store
 does not hold the height to judge it against.
 
-⛔ **The reorg caller screens before the store.** Fork resolution knows the height its re-insertion is
+⛔ **The reorg caller screens before the store.** The switch's `reorg` knows the height its re-insertion is
 for — the tip the reorg is moving to, the same height its `mempoolExpiry` is derived from — and drops
 a transaction whose ceiling lies below it rather than offering it to the pool. **The screen is a skip,
 never a throw**: re-insertion runs inside the transaction that applies the new chain, and an error

@@ -305,14 +305,6 @@ holds byte-identical across the whole domain.
 
 ### net
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** The rows `MAX_LOCATOR_HASHES`, `STALL_MARK_EXPIRY_MS` and `MAX_STALL_MARKS`
-> lead net's exports (`msg-guards.ts`), and `MAX_PENDING_BLOCK_REQUESTS` and `MAX_DATA_EVENTS_PER_PEER` leave with
-> the asynchronous block answers and the data queue they bounded; the `MAX_INV_IDS`, `MAX_CHAIN_RESPONSE_ITEMS`,
-> `SYNC_INFO_MIN_INTERVAL_MS` and `MAX_INBOUND_SYNC_STREAMS` rows read the scheduler's counts
-> (`NET_INTERFACE → Sync State Machine`); `MSG_INV` and `MODIFIER_ORDERING_BLOCK` leave → Excluded with
-> their exports, and `minimumChainWork`'s row under → Per-network values leads the profile field. The drift test
-> reads these rows against net's barrel and the profiles.
-
 Relay and codec bounds a peer's messages must respect; a body over one is refused before its first
 element is read. `MAX_SERVE_BODY_BYTES` and `MAX_STREAM_BYTES` are the upper two of the size-cap order
 under → Size caps.
@@ -340,8 +332,6 @@ under → Size caps.
 ### node
 
 `packages/node` — the pipeline's literal, outside the drift test (→ The drift test).
-
-> ⚠ **AHEAD OF CODE (2026-10-17).** The row leads the pipeline's module in `node/src/services/`.
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|

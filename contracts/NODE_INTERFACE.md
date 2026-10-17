@@ -1408,9 +1408,6 @@ tree collapse into clean rejections:
 > narrowing to a class would leave a `TypeError` from a decoder bug misfiled as an arriving block's
 > rejection.
 >
-> ⚠ **AHEAD OF CODE (2026-10-17).** The paragraph below leads the pipeline's reads and frames in place of
-> `handleOrderingBlock`'s, `extendsOurTip`'s, `resolveFork`'s and the resolution runner's.
->
 > **Reach is the live argument, not the halt.** `rowToOrderingBlock` is the one decoder of
 > `ordering_blocks`, and its callers are every consumer of the chain: the pipeline (the funnel's
 > chain-link read, at extension and inside a switch), the
@@ -3102,9 +3099,6 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
 
 ### Block finalization
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** The sentence below leads `submitMinedBlock` and `finalizeBlock`: the mined
-> block enters the pipeline's intake (→ Fork choice decides on verified headers → "One intake, one at a time").
-
 **A mined block is applied through the pipeline's intake**, as every block is: its header is admitted, the block
 bound and applied by extension — one synchronous item, the node's own block raising neither a penalty nor the window's
 `S` — and `submitMinedBlock` answers the verdict the item returns, handing a corrupt-state error out of it to
@@ -3969,11 +3963,6 @@ See `MEMPOOL_INTERFACE.md` for the full mempool contract.
 
 ### Ordering blocks
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** The table drops `getHeadersAbove`, whose one reader was `resolveFork`'s work
-> above the fork point — the header tree's `chain_work` answers it (→ Fork choice decides on verified headers);
-> the `block_hash` readers' paragraph drops `handleOrderingBlock`'s held check, which the tree's point read
-> replaces; the `interlinks` paragraph leads the pipeline's anchor read from the tree.
-
 | Function | Signature |
 |----------|-----------|
 | `createOrderingBlock(block, interlinks)` | `(OrderingBlock, string[]) => void` — `interlinks` is the vector the header committed to, stored `encodeInterlinks`'d in the `interlinks` column |
@@ -4004,9 +3993,6 @@ header tree's own copy (→ Header tree); `deleteOrderingBlock` drops it with th
 Declared in the base `CREATE TABLE`, not the ALTER pass — no store predates it.
 
 ### Refused headers
-
-> ⚠ **AHEAD OF CODE (2026-10-17).** The section leads the pipeline's mark (in place of `resolveFork`'s and
-> `handleOrderingBlock`'s) and the removal of a marked header's subtree from the header tree.
 
 The chain-selection memory (`Fork choice decides on verified headers` → "A body-stage refusal marks the header"):
 one row per block the pipeline applied — by extension or inside a switch — and the funnel refused with a
@@ -4046,9 +4032,6 @@ would roll back with it. It persists across restarts and is removed only by the 
 database wipe removes it with everything else.
 
 ### Header tree
-
-> ⚠ **AHEAD OF CODE (2026-10-17).** This section leads three tables in `store/db.ts` and the store module the
-> pipeline writes them through (→ Fork choice decides on verified headers).
 
 The pipeline's three tables. **The pipeline is their one writer**, and each is additive — a new table moves
 no existing byte and no existing verdict (ARCHITECTURE → Deploy gate).
@@ -4923,12 +4906,6 @@ and runs once per process, and an index there would tax every `insertBox` on the
 
 ### Fork choice decides on verified headers
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** This section and the next lead the pipeline in place of `resolveFork`'s fork
-> walk and scoring walk, its memo, the resolution runner (`fork-resolution-runner.ts`), `extendsOurTip` and
-> `handleOrderingBlock`'s dispatch: the header tree and staging (Store Interface → Header tree), one intake,
-> admission, presync, the reach floor, the window and the switch. `reorg`, `revertBlock`, the funnel and the
-> refused mark stand.
-
 **Every header and every block a peer delivers enters one pipeline, and the pipeline is the one place that
 chooses a chain.** It admits headers into a tree of verified headers, keeps the best chain by verified work, binds
 each delivered block to its header, and applies blocks along the best chain — by extension, or by a switch through
@@ -5431,9 +5408,6 @@ not fail the API request.
 
 ### Relay handlers (mempool-based)
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** The `onOrderingBlock` bullet leads the gossip registration's hand-off to the
-> pipeline's intake, in place of `handleOrderingBlock`.
-
 - **`onTx(tx, content, fromPeerId)`**: validates (read-only, `validateTx`) → inserts into
   mempool via `admitTx`; for a post transaction the packet's body — already verified against
   `tx.post.contentHash` by net's topic validator — is stored as the pending row in the same
@@ -5647,9 +5621,6 @@ local state alone, this is what has to be re-derived.
 > a refusal would hand an attacker who races the honest producer a permanent per-height censorship
 > primitive against that node.
 >
-> ⚠ **AHEAD OF CODE (2026-10-17).** The paragraph below leads the pipeline's two call sites of the funnel,
-> in place of `handleOrderingBlock`'s, the block creator's and the sync machine's request set.
->
 > **One record is keyed on a block hash, and it is written only for a block that is its header's** —
 > the pipeline's mark (→ Refused headers), behind the binding's three checks (→ Fork choice decides on
 > verified headers → "A served block is bound to its header before it is kept"). The funnel itself keeps
@@ -5737,9 +5708,6 @@ SQLite's rollback does not reach it — and every later block judged against
 that state. Structure validation closes the known instance; totality bounds
 every future one.
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** The paragraph's example of a path that owns its promises names the
-> pipeline's intake in place of the resolution runner.
-
 **An unhandled rejection is logged, and the node keeps running.** One process-level handler
 receives every promise rejection nothing else handled. A `CorruptChainStateError` — any subclass — is
 fail-stop there as at every boundary ("What the funnel's totality catch is FOR"); any other reason is
@@ -5816,10 +5784,6 @@ funnel:
    karma input's owner is the author, so there is one authority and nothing to reconcile.
 
 ### Sync handlers (pull-path)
-
-> ⚠ **AHEAD OF CODE (2026-10-17).** The `setPipeline`, `setChainView`, `setHeadersHandler`, `setBlockIdProvider`,
-> `setHeightByBlockIdProvider` and `setScheduledTargetProvider` bullets lead `node/src/index.ts`'s registrations in
-> place of `setBlocksHandler` and `pullBlocksHandler`, with step 4 of the startup order under Net Integration.
 
 - **`setPipeline(intake)`**: the pipeline's intake, net's way in for every `Headers` page and `Blocks` answer
   (NET_INTERFACE → Sync Handler Registration; Fork choice decides on verified headers → "One intake, one at a

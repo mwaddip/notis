@@ -1838,9 +1838,6 @@ declares, so they add fields to a declared axis rather than opening a fourth.
 > leave the rent path unexercised; and a period below the suite's own ceiling lets a producer collect
 > the faucet's genesis credits underneath a running scenario. Devnet's **100** sits between the two.
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** The `maxReorgDepth` note's mechanic (the reach floor and the window) and the
-> `minimumChainWork` note lead node's pipeline and `types/src/network.ts`'s profile field.
-
 > ⚠ **`maxReorgDepth` is field-only and a duration: the reorg horizon.** How far below the tip a fork
 > may be followed prices journals, AVL versions and a reorg's memory against how long a partition may
 > last before it is permanent — a number on the timescale axis (`TYPES_INTERFACE → Chain
@@ -2765,8 +2762,6 @@ backfill — and a withdrawn post keeps its row with `content` `NULL` and its ma
   blocks along it — the reorg horizon binds applied blocks only, so a joiner compares chains on headers
   before it applies past it (NET_INTERFACE → Historical Sync; NODE_INTERFACE → Fork choice decides on
   verified headers)
-
-  > ⚠ **AHEAD OF CODE (2026-10-17).** This item leads net's scheduler and node's pipeline.
 
 - Peer discovery via GetPeers/Peers gossip + PeerDb
 

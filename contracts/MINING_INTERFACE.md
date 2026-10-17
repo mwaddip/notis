@@ -442,9 +442,6 @@ nonces that can never verify.
 
 #### The window gate
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** This section leads the template route's gate in node's
-> `routes/mining.ts` beside the peer-readiness gate.
-
 **A miner node withholds the template while its pipeline's window holds extension** — `appliedTip ≥ S +
 maxReorgDepth`, `S` the best chain's height at the last hold of net's gate (`NODE_INTERFACE → Fork choice decides
 on verified headers → "The window"`). A block the node could not apply is a block it does not ask a miner for.

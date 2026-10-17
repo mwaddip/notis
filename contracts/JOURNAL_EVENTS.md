@@ -154,8 +154,6 @@ Fires from `NetNode.onSyncComplete` (every entry into the `synced` phase) throug
 wrapper; `duration_ms` is measured since process start for the first and since the previous
 `sync_complete` after.
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** The sentence below leads the scheduler's `synced` entry (`sync-machine.ts`).
-
 ⚠ **The phase is entered when the best chain is fully applied and every unmarked Active peer's claim is
 settled (NET_INTERFACE → Sync State Machine → "The phases")** — a node with peers enters it at its first settled
 claims, a miner with followers included; under continuous fast block production (devnet) a new claim can open a

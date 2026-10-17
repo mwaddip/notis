@@ -186,10 +186,6 @@ already holds; a post as an object in its own right (codes 10/11) is what cannot
 `MSG_`-keyed search misses allocations. The sweep that finds them all is
 `grep -rn 'encodeFrame([A-Za-z_.]*, *[0-9]' packages/`, read together with this table.
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** The rows for codes 2–5 and 14–17 and the paragraph below lead
-> `net/src/types.ts` and `sync-codec.ts`: `SyncInfo` gains the tip hash, `Inv` (3) retires, codes 4/5 carry
-> post bodies alone, `GetHeaders` takes a locator and `GetBlocks` takes ids.
-
 Codes 14–17 carry the scheduler's two queries (→ Historical Sync): headers above a **locator** — this
 node's best chain named by hashes, so the server finds the fork point on its own applied chain in one round
 trip — and blocks by **id**, the ids the node's pipeline wants. Codes 4/5 carry post bodies by id
@@ -428,10 +424,6 @@ this package's serve limit makes a block valid and unservable** — it propagate
 syncing from history can ever fetch it, which is a consensus-visible split produced entirely by two
 constants moving independently.
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** The `chainHeight` bullet below and the paragraph "A ban ends the
-> connection" lead the scheduler that replaces the sync machine (`sync-machine.ts`): a claim's height bounds
-> where answers reach, the serve arms resolve hashes, and a ban drops the peer's claim and open requests.
-
 Handshake specifics:
 - `protocolVersion` must cover the receiver's era: `protocolVersion ≥ protocolVersionAt(schedule,
   chainHeight() + 1)`, the era of the next block this node would apply (`ARCHITECTURE → Protocol
@@ -508,9 +500,6 @@ body defects as deliberate:
 
 ### Post-Handshake Routing
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** The table leads the scheduler (`sync-machine.ts`): a peer-active sends
-> our `SyncInfo`, and a claim the header tree lacks opens a header request; no `Inv` is sent.
-
 | Condition | Action |
 |-----------|--------|
 | The peer becomes Active | Send it our `SyncInfo` (→ Sync State Machine) |
@@ -526,13 +515,6 @@ peer implements the era this node is applying. A tip move inside an era drops no
 ---
 
 ## Historical Sync
-
-> ⚠ **AHEAD OF CODE (2026-10-17).** This section, through Block Body Download, leads `sync-machine.ts`,
-> `sync.ts`, `sync-codec.ts`, `msg-guards.ts` and the sync arms of `node.ts`: a scheduler in place of the sync
-> machine's pick, Switch rule, 60 s stall clock and announcement-driven pull; `SyncInfo` carrying the tip hash;
-> `GetHeaders` by locator; `GetBlocks` by id; the retirement of `Inv` (code 3) and of `ModifierRequest` /
-> `ModifierResponse` for blocks (type 101), with `servePeer`, the outstanding-id set and
-> `MAX_PENDING_BLOCK_REQUESTS`.
 
 Sync is **headers first**. Net's **scheduler** asks peers for headers by locator and for blocks by id, and hands
 every header and every block an answer carries to the node's **pipeline**, which admits headers into its header
@@ -1045,9 +1027,6 @@ Node start
 
 ## Peer Penalty System
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** The pipeline's and the scheduler's rows lead node's pipeline (in place of
-> `resolveFork`'s call sites) and the scheduler's shape and claim checks (`sync-machine.ts`).
-
 | Penalty | Trigger | Score |
 |---------|---------|-------|
 | `misbehavior` | Invalid message — fails Stage 1: structure, an ordering-block header below the network's floor, ordering-block PoW, the packet rule (a post without a body or a body without a post), a body that fails `verifyPostBody`, an ordering block's validator signature, or a transaction signature that does not verify (`gossip.ts` call sites); a pulled body that fails its commitment (the `MODIFIER_POST_BODY` receive arm) | 100 |
@@ -1113,9 +1092,6 @@ tracked as a follow-up.
 ---
 
 ## Biased Event Loop
-
-> ⚠ **AHEAD OF CODE (2026-10-17).** Clauses 1, 2 and 4 lead the scheduler (`sync-machine.ts`): the pipeline's
-> events join the control queue, and the data queue leaves with the announcement-driven pull whose messages it held.
 
 The sync/gossip event loop MUST prioritize:
 1. Control events (peer active, peer disconnect, a `SyncInfo` acted on, the pipeline's `needHeaders` and
@@ -1206,10 +1182,6 @@ delivered whichever peer carried it (→ Inbound Processing).
 
 ## Stall Detection
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** This section leads the scheduler's stall marks (`sync-machine.ts`), in
-> place of the stalled set that a `SyncInfo` above our tip or a re-handshake cleared and that the Switch rule
-> returned to.
-
 **A peer is marked when a request to it ends without a well-formed answer, or when its answer refutes its claim**
 (→ Sync State Machine → "How a header sync ends"). **A marked peer is asked nothing** — no header request,
 no block request — and its claim opens no header sync, until its mark clears.
@@ -1238,10 +1210,6 @@ node operator may choose to link them (same keypair) or keep them separate.
 ---
 
 ## Stream Protocols
-
-> ⚠ **AHEAD OF CODE (2026-10-17).** The sync row, "Every inbound stream ends" and the memory figure under "A
-> peer's sync streams are served one at a time" lead `node.ts`'s sync handler with `Inv` and block modifiers
-> retired: one one-way message, every block answer on its request's stream.
 
 | Protocol | Framing | Purpose |
 |----------|---------|---------|
@@ -1275,11 +1243,6 @@ gone, the empty answer of a failure path included, ends the stream with nothing 
 the failure that led there.
 
 ### `GetHeaders` / `GetBlocks` responses — positional, `arr(item, lp)`
-
-> ⚠ **AHEAD OF CODE (2026-10-17).** The requests' layouts, the receive caps, the `Blocks` arm's id
-> resolution, "A response that does not decode THROWS" and "A `Headers` page has one shape" lead
-> `sync-codec.ts`, the serve arms in `node.ts` and the scheduler's page check: a locator in place of
-> `startHeight`/`maxCount`, ids in place of a height range, an ascending page above the locator's match.
 
 **Landed 2026-08-10.** Both arms previously answered in a **second wire format** — `encode({ blocks })`
 / `encode(headers)` out, `decode(raw) as {…}` back — bare `cbor-x` plus a TypeScript cast, while every
@@ -1517,8 +1480,6 @@ first hop.
 
 ### Node Lifecycle
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** The `syncPhase()` row leads the scheduler's phases (`sync-machine.ts`).
-
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `start(config)` | `(NetConfig) => Promise<void>` | Create libp2p node, register both stream protocols, connect to bootstrap peers, subscribe to topics. **A start that throws stops what it started** — the libp2p node and the scheduler — before the error leaves it, so a caller that continues without networking runs none of it |
@@ -1574,11 +1535,6 @@ membership test is the thing standing between a relayed hint and a counterparty 
 
 ### Pull Requests (Peer-to-Peer)
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** The `requestHeaders` and `requestBlocks` rows and every paragraph below but
-> the round-trip rule lead `sync.ts` and the scheduler (`sync-machine.ts`): both queries become the scheduler's
-> own, by locator and by id, and node calls neither; `peerTipHeight` retires with the memo it served, which the
-> pipeline keys on a peer's claimed hash.
-
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `requestHeaders(locator, peerId)` | `(string[], string) => Promise<BlockHeader[]>` | The scheduler's header query (codes 14/15): the headers above the highest locator hash the peer's applied chain holds, ascending (→ `GetHeaders` / `GetBlocks` responses) |
@@ -1612,9 +1568,6 @@ the block waits as its relayer's pending block (NODE_INTERFACE → Fork choice d
 
 ### Pipeline events
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** This section leads two `NetNode` methods the node calls and the scheduler
-> handles as control events (→ Biased Event Loop).
-
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `needHeaders(peerId)` | `(string) => void` | The pipeline lacks the headers below a block `peerId` relayed (→ Pull Requests → "A gossiped block's relayer is asked for the headers the tree lacks") |
@@ -1623,12 +1576,6 @@ the block waits as its relayer's pending block (NODE_INTERFACE → Fork choice d
 `tipApplied(height)` (→ Node Lifecycle) stays the era sweep's seam; `chainMoved()` is the scheduler's.
 
 ### Sync Handler Registration
-
-> ⚠ **AHEAD OF CODE (2026-10-17).** The `setPipeline` and `setChainView` rows lead `node.ts` and the scheduler in
-> place of `setBlocksHandler` and `LazySyncStore.appendBlocks`; the `setHeadersHandler`, `setBlockIdProvider`,
-> `setHeightByBlockIdProvider` and `setScheduledTargetProvider` rows lead their readers' new arms (the `GetBlocks`
-> arm by id, the claim's hash, the locator's match, the tree parent); the paragraphs after the table lead the
-> scheduler's reading of an empty answer and node's disconnect handling.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|

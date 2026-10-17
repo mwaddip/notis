@@ -2798,9 +2798,6 @@ values`, all PROVISIONAL) — because it prices storage and memory against how l
 before it is permanent: a duration in blocks, a number and not a mechanic (`ARCHITECTURE → What varies
 per network`). No constant stands beside it.
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** The consumers below lead node's pipeline: the reach floor and the window in
-> place of `resolveFork`'s fork walk, whose examined heights stopped one short of the horizon above genesis.
-
 Its load-bearing consumers are all in `@dagsocial/node`: **the reach floor** — a branch is reachable
 when its fork point `f` with the applied chain satisfies `f ≥ max(appliedTip − maxReorgDepth, lowestJournal −
 1)`, at most `maxReorgDepth` blocks reverted for every fork point, the root's included (NODE_INTERFACE → Fork
@@ -2950,9 +2947,6 @@ mainnet and testnet, 2304 on devnet; ceiling 65536 on mainnet and testnet, 4096 
 whose floor sits below `ORDERING_BLOCK_POW_TARGET_FLOOR`, whose anchor lies outside its band, whose
 ceiling exceeds 65536 or whose ideal is not positive is refused at load (`NODE_INTERFACE →
 Configuration`) — a refusal, never a clamp.
-
-> ⚠ **AHEAD OF CODE (2026-10-17).** The paragraph below and the `minimumChainWork` field in the interface above
-> lead `types/src/network.ts`: the field on `NetworkProfile` and `0n` on all three profiles.
 
 **The minimum chain work is per network, and set at each release.** `minimumChainWork` — `0n` on all three
 (`CONSTANTS → Per-network values`) — is the least `chain_work` a best chain's tip must carry before the node
