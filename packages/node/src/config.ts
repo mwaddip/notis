@@ -400,7 +400,7 @@ function assertReorgDepthValid(cfg: Config): void {
  * `MAX_PROOF_HISTORY` must cover every height a reorg can walk back to.
  *
  * `checkpointProver` prunes AVL versions below `height - maxProofHistory`,
- * while the fork walk pages back `maxReorgDepth` and can answer height 0.
+ * while a switch reverts up to `maxReorgDepth` blocks and its fork point can sit at height 0.
  * A `maxProofHistory` under that depth prunes inside the window the walk
  * still answers within: `reorg` then finds no version at or before its fork
  * height and throws, and the node keeps a chain it should have switched away

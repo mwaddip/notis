@@ -2611,7 +2611,7 @@ describe('block-apply funnel totality', () => {
     const deepRowid = mempool.insertUtxoTx(postTx, 5000);
     expect(deepRowid).toBeGreaterThan(1000);
 
-    // ⛔ The RECEIVED-block path, not `mineNextBlock`. `finalizeBlock` evicts by
+    // ⛔ The RECEIVED-block path, not `mineNextBlock`. `submitMinedBlock` evicts by
     // `minedRowids` regardless of position, so a locally produced block clears
     // this row whatever the cleanup does — a test that mined here would pass
     // without exercising anything.

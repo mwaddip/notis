@@ -1366,7 +1366,7 @@ describe('reorg', () => {
   });
 
   it('a fork point of 0 rolls the AVL prover back to the pinned genesis root', async () => {
-    // What the fork walk's genesis answer costs downstream. `reorg` walks
+    // What a fork point at the root costs downstream. `reorg` walks
     // journals from the fork height and rolls the prover to
     // `versionAtOrBeforeHeight(forkHeight)` — and at 0 that version is the
     // genesis one only because `seedGenesisState` deletes the empty tree's

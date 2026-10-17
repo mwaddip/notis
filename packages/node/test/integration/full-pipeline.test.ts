@@ -3,8 +3,8 @@
  *
  * These tests exercise the complete lifecycle of UTXO transactions (likes,
  * invites) through validation, mempool insertion, block mining, and state
- * confirmation.  The block creator applies UTXO transactions during
- * finalizeBlock, so no manual ingestion step is needed.
+ * confirmation.  The block creator applies UTXO transactions through
+ * `submitMinedBlock`, so no manual ingestion step is needed.
  */
 import {
   makeTestConfig,
@@ -386,7 +386,7 @@ describe('full-pipeline', () => {
     expect(result.castLikeResult).toBe('pending');
     expect(result.txId).toBeTruthy();
 
-    // ---- Step 2: Mine block (mempool entry removed during finalizeBlock) ----
+    // ---- Step 2: Mine block (mempool entry removed by `submitMinedBlock`) ----
     const block = (await mineNextBlock(bc)) as Record<string, unknown> | null;
     expect(block).not.toBeNull();
     const blockHeight = (block!.header as Record<string, unknown>).height as number;

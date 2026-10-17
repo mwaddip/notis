@@ -502,9 +502,9 @@ describe('config', () => {
   });
 
   // `checkpointProver` prunes AVL versions below `height - maxProofHistory`;
-  // the fork walk pages back `maxReorgDepth` and can answer height 0. A
-  // `MAX_PROOF_HISTORY` under that depth prunes inside the window the walk
-  // still answers within. Devnet's profile carries `maxReorgDepth: 40`.
+  // a switch reverts up to `maxReorgDepth` blocks and its fork point can sit at
+  // height 0. A `MAX_PROOF_HISTORY` under that depth prunes inside the window a
+  // switch still reverts within. Devnet's profile carries `maxReorgDepth: 40`.
   describe('11. proof history covers the reorg depth', () => {
     // devnet maxReorgDepth (vitest.config.ts pins NETWORK_TYPE=devnet)
     const devnetReorgDepth = NETWORK_PROFILES.devnet.maxReorgDepth;

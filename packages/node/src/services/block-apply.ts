@@ -600,7 +600,7 @@ function applyBlockBody(block: OrderingBlock): { karmaOwners: Set<string>; index
   // 14. Persist journal and purge old ones
   insertBlockJournal(journal);
   // The journals kept are the floor under revert depth — `revertBlock` throws
-  // without one — and the fork walk reaches as deep as they do, no deeper
+  // without one — and a switch reaches as deep as they do, no deeper
   // (NODE_INTERFACE → Fork choice decides on verified headers → "The reach floor is the horizon, one rule for every fork point").
   purgeOldJournals(height - config.maxReorgDepth);
   purgeRefusedHeaders(height - config.maxReorgDepth);
@@ -758,7 +758,7 @@ export function writeBlockEffects(
 
   // Remove each applied transaction from the local mempool if present. This is
   // the whole of the cleanup for a block that arrived from a peer — a block
-  // this node mined is cleaned by rowid in `finalizeBlock`, which reaches every
+  // this node mined is cleaned by rowid in `submitMinedBlock`, which reaches every
   // included entry wherever it sits (MEMPOOL_INTERFACE → Confirmed-entry
   // cleanup reaches every row).
   for (const { txId } of effects.appliedTxs) removeUtxoTxEntry(txId);

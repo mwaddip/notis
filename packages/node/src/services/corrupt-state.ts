@@ -85,8 +85,8 @@ export class UnhashableStoredHeaderError extends CorruptChainStateError {
  *
  * The live reason, as opposed to that latent one, is reach. The store frame
  * names the fault so every reader raises one class, and every outer frame —
- * both registrations, the fork-resolution runner for each resolution and each
- * hand-back, `finalizeBlock`, the block creator, and the guarded provider and
+ * the gossip registration and net's pipeline hookup, the intake for each item,
+ * `submitMinedBlock`, the block creator, and the guarded providers and
  * routes — is a boundary
  * (NODE_INTERFACE → "Reach is the live argument, not the halt").
  */
@@ -287,18 +287,17 @@ export class InconsistentStateTreeError extends CorruptChainStateError {
  * A block journal at or above the lowest one kept is absent
  * (NODE_INTERFACE → Fork choice decides on verified headers → "The reach floor is the horizon, one rule for every fork point").
  *
- * The fork walk bounds its lowest examined height by `lowestJournal − 1` so
- * every fork point it answers sits at `lowestJournal − 1` or above, and
- * `reorg` reverts starting one above the fork point. Every height
- * `revertBlock` can be asked for therefore lies at `lowestJournal` or above —
- * where a journal row stands by definition. The fork walk's genesis fallback
- * only fires while `lowestJournal ≤ 1`, so a revert reaching height 1 also
- * reads a kept journal.
+ * The reach floor admits no fork point below `lowestJournal − 1`, and `reorg`
+ * reverts starting one above the fork point. Every height `revertBlock` can be
+ * asked for therefore lies at `lowestJournal` or above — where a journal row
+ * stands by definition. A fork at the root is reachable only while
+ * `lowestJournal ≤ 1`, so a revert reaching height 1 also reads a kept
+ * journal.
  *
  * A missing journal is therefore a row the store lost, never a retention gap:
  * a tip that only rose keeps every journal down to height 1 for as long as it
  * stands at or below the horizon, and one that dropped below the horizon
- * leaves the walk bounded by the journals and `MissingJournalError` out of
+ * leaves the reach bounded by the journals and `MissingJournalError` out of
  * reach.
  */
 export class MissingJournalError extends CorruptChainStateError {
@@ -402,7 +401,8 @@ export class DuplicateStateVersionError extends CorruptChainStateError {
 
 /**
  * A block the apply funnel rejected during a reorg (NODE_INTERFACE → Fork
- * choice decides on verified headers, step 11). Distinct from
+ * choice decides on verified headers → "A body-stage refusal marks the
+ * header."). Distinct from
  * `CorruptChainStateError`: a rejected peer block is a peer's fault and does
  * not warrant fail-stop.
  */
@@ -422,10 +422,10 @@ export class ReorgBlockRejectedError extends Error {
 
 /**
  * The reorg abandoned its switch on a refusal that is not a consensus verdict
- * (NODE_INTERFACE → Fork choice decides on verified headers, step 10).
+ * (NODE_INTERFACE → Fork choice decides on verified headers → "The switch.").
  *
- * Three classes reach here: `'unbound'` (the block is not its header's — step
- * 8 of fork resolution leaves none, so this arm exists for the funnel's
+ * Three classes reach here: `'unbound'` (the block is not its header's — the
+ * binding leaves none, so this arm exists for the funnel's
  * promise, not for a real entry), `'acceptance'` (the future bound, re-run
  * against this node's clock at apply — MINING_INTERFACE → Header timestamp
  * rules) and `'local'` (the funnel's catch of an unexpected throw). None is

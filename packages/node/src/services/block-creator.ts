@@ -1054,7 +1054,7 @@ export function createOrderingBlock(): OrderingBlock | null {
     // (MINING_INTERFACE → Template and submit). Reachable with unmutated code:
     // a pooled tx whose validity reads third-party state (a bond settlement's
     // threshold leg) goes stale in the pool while its inputs stay live. Evict
-    // what the body included — the same cleanup a rejected finalize runs — or
+    // what the body included — the same cleanup a refused mined block runs — or
     // every later rebuild reassembles this exact body: purgeExpired cannot break
     // that loop, because it keys on a chain height that stops advancing. A
     // rejected body that carried no pool row is terminal: the chain state cannot
@@ -1085,7 +1085,7 @@ export function createOrderingBlock(): OrderingBlock | null {
       continue;
     }
 
-    // 12. Track confirmed rowids for finalizeBlock cleanup (MEMPOOL_INTERFACE →
+    // 12. Track confirmed rowids for `submitMinedBlock` cleanup (MEMPOOL_INTERFACE →
     //     Block Creator Integration step 4) — every row the template carries.
     confirmedRowids = rowids;
     const candidate = run.candidate;

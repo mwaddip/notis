@@ -314,7 +314,7 @@ export function reorg(forkHeight: number, newHashes: readonly string[]): void {
   }
 
   // Phase 3: apply new chain — through the classified entry
-  // (NODE_INTERFACE → Fork choice decides on verified headers, step 10). Each
+  // (NODE_INTERFACE → Fork choice decides on verified headers → "The switch."). Each
   // staged body is read out of `staged_blocks` one at a time and unstaged on
   // apply; one block body is in memory at a time
   // (NODE_INTERFACE → Fork choice decides on verified headers → "A bound
