@@ -166,16 +166,18 @@ export function rewriteBestChain(forkHeight: number, hashes: readonly string[]):
 }
 
 /**
- * NODE_INTERFACE → Header tree. `heaviestHeaders`: rows in descending
- * `chain_work` over `idx_block_headers_work`; the reader stops as soon as
- * its first reachable branch is found (Fork choice decides on verified
+ * NODE_INTERFACE → Header tree. `headersHeavierThan`: rows whose
+ * `chain_work` exceeds `work`, heaviest first, over
+ * `idx_block_headers_work`. The choice of the best chain after a mark asks
+ * with the work of what remains of the best chain, so the answer is only
+ * the rows heavier than the incumbent (Fork choice decides on verified
  * headers → "The best chain is the heaviest reachable branch.").
  */
-export function heaviestHeaders(): HeaderRow[] {
+export function headersHeavierThan(work: bigint): HeaderRow[] {
   const db = getDb();
   const rows = db
-    .prepare('SELECT * FROM block_headers ORDER BY chain_work DESC')
-    .all() as Row[];
+    .prepare('SELECT * FROM block_headers WHERE chain_work > ? ORDER BY chain_work DESC')
+    .all(workToBlob(work)) as Row[];
   return rows.map(rowToHeaderRow);
 }
 

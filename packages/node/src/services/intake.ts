@@ -35,7 +35,7 @@ import {
 import * as blockApply from './block-apply.js';
 import type { ApplyVerdict } from './block-apply.js';
 import { reorg as realReorg } from './fork-resolution.js';
-import { ReorgAbortedError, ReorgBlockRejectedError, UnreachableForkPointError } from './corrupt-state.js';
+import { InconsistentHeaderTreeError, ReorgAbortedError, ReorgBlockRejectedError, UnreachableForkPointError } from './corrupt-state.js';
 import { config } from '../config.js';
 
 /**
@@ -328,21 +328,19 @@ function trySwitch(): void {
   // store.
   const appliedTipRow = getHeaderRow(appliedHash);
   if (appliedTipRow === null) {
-    throw new UnreachableForkPointError('trySwitch(applied-tip-row)', applied, floor);
+    throw new InconsistentHeaderTreeError('trySwitch', applied, 'applied header has no block_headers row');
   }
   const targetWork = appliedTipRow.chainWork;
   const prefixHashes: string[] = [];
   for (let h = f + 1; h <= bestTip.height; h++) {
     const hAtBest = getBestHashAt(h);
-    // A null hash inside the best tip's height range contradicts the index
-    // (`best_chain` is contiguous from height 1 to its tip).
     if (hAtBest === null) {
-      throw new UnreachableForkPointError('trySwitch(best-hash-at)', h, floor);
+      throw new InconsistentHeaderTreeError('trySwitch', h, 'best_chain gap below its tip');
     }
     prefixHashes.push(hAtBest);
     const row = getHeaderRow(hAtBest);
     if (row === null) {
-      throw new UnreachableForkPointError('trySwitch(prefix-row)', h, floor);
+      throw new InconsistentHeaderTreeError('trySwitch', h, 'best_chain hash has no block_headers row');
     }
     if (row.chainWork > targetWork) break;
   }

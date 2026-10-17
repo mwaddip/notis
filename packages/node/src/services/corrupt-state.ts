@@ -176,6 +176,19 @@ export class MissingStagedBlockError extends CorruptChainStateError {
  * the stored rows the walk reads disagree with the applied chain —
  * corruption, never a peer's input.
  */
+/**
+ * The header tree contradicts itself where the switch reads it: an applied
+ * header with no `block_headers` row, a gap in `best_chain` below its tip,
+ * or a `best_chain` hash with no row — the pipeline is the tables' one
+ * writer and writes none of these (NODE_INTERFACE → Store Interface →
+ * Header tree).
+ */
+export class InconsistentHeaderTreeError extends CorruptChainStateError {
+  constructor(site: string, height: number, detail: string) {
+    super(site, height, `inconsistent header tree at height ${height}: ${detail}`);
+  }
+}
+
 export class UnreachableForkPointError extends CorruptChainStateError {
   constructor(site: string, appliedTip: number, floor: number) {
     super(

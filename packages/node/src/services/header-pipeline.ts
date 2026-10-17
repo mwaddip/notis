@@ -17,7 +17,7 @@ import {
   getBestTip,
   getHeaderRow,
   getOrderingBlockHash,
-  heaviestHeaders,
+  headersHeavierThan,
   insertHeader,
   pruneHeadersBelow,
   rewriteBestChain,
@@ -78,26 +78,31 @@ function reachFloor(ctx: PipelineContext): number {
 }
 
 /**
- * The fork point of a branch, read from the branch's base: walk `prev_hash`
- * down from the base to the first row on the applied chain
- * (`getOrderingBlockHash(h) === hash`), or on the best chain (`getBestHashAt(h)
- * === hash`); stop below the reach floor and answer `-Infinity` (unreachable
- * by construction). Height 0 is the virtual root — a common ancestor at
- * depth = our height — and resolves as `0`.
+ * The fork point of a branch, read from the branch's base.
+ *
+ * The invariant the result rests on (NODE_INTERFACE → Fork choice decides on
+ * verified headers → "The reach floor is the horizon, one rule for every
+ * fork point."): the best chain is chosen reachable, the applied tip moves
+ * only along the best chain, and the floor moves only with the applied tip,
+ * so a base on the best chain shares a fork point with the applied chain
+ * at or above the floor — and returning the base's own height on first match
+ * is correct. The applied-chain match is the direct one; the best-chain
+ * match rides the invariant.
+ *
+ * Walks `prev_hash` down from the base to the first row on the applied
+ * chain (`getOrderingBlockHash(h) === hash`), or on the best chain
+ * (`getBestHashAt(h) === hash`); stops below the reach floor and answers
+ * `-Infinity` (unreachable by construction). Height 0 is the virtual root,
+ * a common ancestor at depth = our height, and resolves as `0`.
  */
 function forkPointHeight(baseHash: string, baseHeight: number, floor: number): number {
-  // Height 0 is the virtual root: a common ancestor at depth 0.
   if (baseHeight === 0) return 0;
   let h = baseHash;
   let height = baseHeight;
   while (height >= 1 && height >= floor) {
     if (getOrderingBlockHash(height) === h) return height;
     const bestAtHeight = getBestHashAt(height);
-    if (bestAtHeight === h) {
-      // The base is on the best chain; the best chain's own fork with the
-      // applied chain is a walk `trySwitch` makes, bounded at the floor.
-      return height;
-    }
+    if (bestAtHeight === h) return height;
     const row = getHeaderRow(h);
     if (row === null) return -Infinity;
     h = row.prevHash;
@@ -395,6 +400,13 @@ export function admitPage(
       hash: GENESIS_PREV_BLOCK_HASH, height: 0, chainWork: 0n,
       interlinks: [], createdAt: null, pathTa: null,
     };
+    // Age rule: a parent below the reach floor refuses the page with no
+    // penalty — the root at height 0 included (NODE_INTERFACE → Fork choice
+    // decides on verified headers → "The reach floor is the horizon, one
+    // rule for every fork point.").
+    if (base.height < reachFloor(ctx)) {
+      return { outcome: 'refused', refusedAt: { index: startIdx, kind: 'none', reason: 'below-reach-floor' } };
+    }
   } else {
     const resolved = resolveBase(firstFreshParent, firstFresh.height - 1);
     if (resolved === null) {
@@ -402,8 +414,6 @@ export function admitPage(
       return { outcome: 'refused', refusedAt: { index: startIdx, kind: 'misbehavior', reason: 'first-parent-unknown' } };
     }
     base = resolved;
-    // Age rule on the base — a parent below the reach floor refuses the page
-    // with no penalty.
     if (base.height < reachFloor(ctx)) {
       return { outcome: 'refused', refusedAt: { index: startIdx, kind: 'none', reason: 'below-reach-floor' } };
     }
@@ -459,22 +469,18 @@ export function admitPage(
   const bestTip = getBestTip();
   const extendsBest = bestTip === null ? base.isVirtualRoot : base.hash === bestTip.hash;
   if (extendsBest) {
-    // Drop any running branch — this page is extension, not a pass.
     runningBranches.delete(peerId);
-    let parent: HeaderRow = base.isVirtualRoot
-      ? { hash: GENESIS_PREV_BLOCK_HASH, height: 0, prevHash: GENESIS_PREV_BLOCK_HASH, header: freshHeaders[0]!, interlinks: [], chainWork: 0n, pathTa: 0 }
-      : base.row!;
+    let currentParent: HeaderRow | null = base.isVirtualRoot ? null : base.row;
     const freshHashes: string[] = [];
     let cumulativeWork = base.chainWork;
     for (let i = 0; i < freshHeaders.length; i++) {
       const h = freshHeaders[i]!;
       const hash = verdict.hashes[i]!;
       cumulativeWork += workOrZero(h.powTargetBits);
-      const parentIsVirtual = parent.height === 0 && parent.hash === GENESIS_PREV_BLOCK_HASH;
-      const storedInterlinks = parentIsVirtual
+      const storedInterlinks = currentParent === null
         ? []
-        : interlinksCommitFromParent(parent, ctx.params.anchorBits);
-      const pathTa = h.height === 1 ? h.createdAt : parent.pathTa;
+        : interlinksCommitFromParent(currentParent, ctx.params.anchorBits);
+      const pathTa = h.height === 1 ? h.createdAt : (currentParent !== null ? currentParent.pathTa : h.createdAt);
       const row: HeaderRow = {
         hash,
         height: h.height,
@@ -486,7 +492,7 @@ export function admitPage(
       };
       insertHeader(row);
       freshHashes.push(hash);
-      parent = row;
+      currentParent = row;
     }
     rewriteBestChain(base.height, freshHashes);
     scoredLighter.clear();
@@ -548,8 +554,7 @@ export function admitPage(
     // Won on the first page the branch opens in: store from the page in hand.
     const isFirstPage = r.recordedHashes.length === 1;
     if (isFirstPage) {
-      // Store the whole page as pass 2 would, then switch if reachable.
-      return storeFirstWinningPage(r, verdict, freshHeaders, ctx, callbacks);
+      return storeFirstWinningPage(peerId, r, verdict, freshHeaders, ctx, callbacks);
     }
     // Won on a later page: re-fetch from the base — the locator's base is
     // first, every page continues from the last header stored.
@@ -557,8 +562,14 @@ export function admitPage(
     return { outcome: 'again' };
   }
 
-  // Lighter at the claim: write the memo, drop the branch.
-  if (claimHash !== '' && r.topHash === claimHash) {
+  // Lighter at the claim: the claim lies among this page's scored hashes
+  // with the branch not won (NODE_INTERFACE → Fork choice decides on
+  // verified headers → "A side branch is stored only once it is heavier." →
+  // "The stop rules"). A peer whose tip grew past its claim serves a page
+  // that passes the claimed hash without ending on it; the memo covers it,
+  // and the chain view answers `knowsTip(claim)` true so net's refute test
+  // marks no honest peer.
+  if (claimHash !== '' && verdict.hashes.includes(claimHash)) {
     scoredLighter.set(peerId, claimHash);
     runningBranches.delete(peerId);
     return { outcome: 'taken' };
@@ -577,62 +588,46 @@ export function admitPage(
 /**
  * Store the first winning pass-1 page as pass 2 would, and switch if the
  * branch is reachable. The branch is dropped after the page is stored (it
- * was won inside the page it started in) or kept in pass-2 storing mode when
- * the recorded range extends beyond this page — which here means never, since
- * this is the first page and `recordedHeights` has one entry.
+ * was won inside the page it started in).
  */
 function storeFirstWinningPage(
+  peerId: string,
   r: RunningBranch,
   verdict: Extract<ReturnType<typeof verifyHeaderChain>, { ok: true }>,
   freshHeaders: BlockHeader[],
   ctx: PipelineContext,
   callbacks: PipelineCallbacks,
 ): PageVerdict {
-  // Walk the branch's fork point with the applied chain from the base.
   const floor = reachFloor(ctx);
   const fork = forkPointHeight(r.baseHash, r.baseHeight, floor);
   if (fork < floor) {
-    runningBranches.delete(r.claimHash === '' ? '' : '');
-    // Clear this peer's running branch — unreachable.
-    for (const [pid, rb] of runningBranches) {
-      if (rb === r) { runningBranches.delete(pid); break; }
-    }
+    runningBranches.delete(peerId);
     return { outcome: 'refused', refusedAt: { index: 0, kind: 'none', reason: 'unreachable' } };
   }
-  let parent: HeaderRow = r.baseIsVirtualRoot
-    ? { hash: GENESIS_PREV_BLOCK_HASH, height: 0, prevHash: GENESIS_PREV_BLOCK_HASH, header: freshHeaders[0]!, interlinks: [], chainWork: 0n, pathTa: 0 }
-    : (getHeaderRow(r.baseHash) as HeaderRow);
+  const parentRow: HeaderRow | null = r.baseIsVirtualRoot ? null : getHeaderRow(r.baseHash);
   const freshHashes: string[] = [];
   let cumulativeWork = r.baseChainWork;
-  const best = getBestTip();
-  const bestWork = best ? best.chainWork : 0n;
-  let crossingIdx = -1;
+  let currentParent: HeaderRow | null = parentRow;
   for (let i = 0; i < freshHeaders.length; i++) {
     const h = freshHeaders[i]!;
     const hash = verdict.hashes[i]!;
     cumulativeWork += workOrZero(h.powTargetBits);
-    const parentIsVirtual = parent.height === 0 && parent.hash === GENESIS_PREV_BLOCK_HASH;
-    const storedInterlinks = parentIsVirtual
+    const storedInterlinks = currentParent === null
       ? []
-      : interlinksCommitFromParent(parent, ctx.params.anchorBits);
-    const pathTa = h.height === 1 ? h.createdAt : parent.pathTa;
+      : interlinksCommitFromParent(currentParent, ctx.params.anchorBits);
+    const pathTa = h.height === 1 ? h.createdAt : (currentParent !== null ? currentParent.pathTa : h.createdAt);
     const row: HeaderRow = {
       hash, height: h.height, prevHash: h.prevBlockHash, header: h,
       interlinks: storedInterlinks, chainWork: cumulativeWork, pathTa,
     };
     insertHeader(row);
     freshHashes.push(hash);
-    if (crossingIdx === -1 && cumulativeWork > bestWork) crossingIdx = i;
-    parent = row;
+    currentParent = row;
   }
-  // The switch fires at the crossing (always set for a winning page).
   rewriteBestChain(r.baseHeight, freshHashes);
   scoredLighter.clear();
   callbacks.chainMoved();
-  // Branch done — one page in hand, no more recorded heights to reach.
-  for (const [pid, rb] of runningBranches) {
-    if (rb === r) { runningBranches.delete(pid); break; }
-  }
+  runningBranches.delete(peerId);
   return { outcome: 'taken' };
 }
 
@@ -662,35 +657,34 @@ function handlePass2(
     }
   }
 
-  let parent: HeaderRow = r.baseIsVirtualRoot && r.storedUpTo === 0
-    ? { hash: GENESIS_PREV_BLOCK_HASH, height: 0, prevHash: GENESIS_PREV_BLOCK_HASH, header: freshHeaders[0]!, interlinks: [], chainWork: 0n, pathTa: 0 }
-    : (getHeaderRow(r.storedTopHash) as HeaderRow);
+  const storedTopIsVirtualRoot = r.baseIsVirtualRoot && r.storedUpTo === 0;
+  let currentParent: HeaderRow | null = storedTopIsVirtualRoot
+    ? null
+    : getHeaderRow(r.storedTopHash);
   const best = getBestTip();
   const bestWork = best ? best.chainWork : 0n;
   let cumulativeWork = r.storedWork;
   const freshHashes: string[] = [];
-  let crossingIdx = -1;
+  let crossedThisPage = false;
   for (let i = 0; i < freshHeaders.length; i++) {
     const h = freshHeaders[i]!;
     const hash = verdict.hashes[i]!;
     cumulativeWork += workOrZero(h.powTargetBits);
-    const parentIsVirtual = parent.height === 0 && parent.hash === GENESIS_PREV_BLOCK_HASH;
-    const storedInterlinks = parentIsVirtual
+    const storedInterlinks = currentParent === null
       ? []
-      : interlinksCommitFromParent(parent, ctx.params.anchorBits);
-    const pathTa = h.height === 1 ? h.createdAt : parent.pathTa;
+      : interlinksCommitFromParent(currentParent, ctx.params.anchorBits);
+    const pathTa = h.height === 1 ? h.createdAt : (currentParent !== null ? currentParent.pathTa : h.createdAt);
     const row: HeaderRow = {
       hash, height: h.height, prevHash: h.prevBlockHash, header: h,
       interlinks: storedInterlinks, chainWork: cumulativeWork, pathTa,
     };
     insertHeader(row);
     freshHashes.push(hash);
-    if (crossingIdx === -1 && !r.switched && cumulativeWork > bestWork) crossingIdx = i;
-    parent = row;
+    if (!crossedThisPage && !r.switched && cumulativeWork > bestWork) crossedThisPage = true;
+    currentParent = row;
   }
 
   const branchHashesAfterPage = r.storedHashes.concat(freshHashes);
-  const crossedThisPage = crossingIdx !== -1;
   if (crossedThisPage || r.switched) {
     if (crossedThisPage && !r.switched) {
       // Reachability: the branch's fork with the applied chain is the base's
@@ -781,13 +775,16 @@ export function locatorFor(peerId: string): string[] {
 /**
  * NODE_INTERFACE → Fork choice decides on verified headers → "The best chain
  * is the heaviest reachable branch.": after a mark removes a header from
- * under the best chain, read `heaviestHeaders()` in order; the first row
- * whose branch is reachable is the new tip, and `best_chain` is rewritten
- * from where its path meets the current index.
+ * under the best chain, read `headersHeavierThan(incumbentWork)` in order;
+ * the first row whose branch is reachable is the new tip, and `best_chain`
+ * is rewritten from where its path meets the current index. None reachable
+ * keeps what remains.
  */
 export function rechooseBestChain(ctx: PipelineContext, callbacks: PipelineCallbacks): void {
   const floor = reachFloor(ctx);
-  const candidates = heaviestHeaders();
+  const incumbent = getBestTip();
+  const incumbentWork = incumbent === null ? 0n : incumbent.chainWork;
+  const candidates = headersHeavierThan(incumbentWork);
   for (const row of candidates) {
     // Walk down the row's prev_hash to the fork point with what remains of
     // the best chain (an on-chain row the index still holds) or to the root.
@@ -810,8 +807,7 @@ export function rechooseBestChain(ctx: PipelineContext, callbacks: PipelineCallb
     callbacks.chainMoved();
     return;
   }
-  // No reachable header — leave `best_chain` as the mark left it (an empty
-  // index while nothing stands).
+  // No reachable header heavier than the incumbent — keep what remains.
   scoredLighter.clear();
   callbacks.chainMoved();
 }

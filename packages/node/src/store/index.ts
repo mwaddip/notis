@@ -172,7 +172,7 @@ export {
   getHeaderRow,
   getBestTip,
   getBestHashAt,
-  heaviestHeaders,
+  headersHeavierThan,
   rewriteBestChain,
   removeHeaderSubtree,
   pruneHeadersBelow,
