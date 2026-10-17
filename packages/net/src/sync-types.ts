@@ -22,9 +22,9 @@ export interface SyncState {
 /**
  * NET_INTERFACE → Sync Handler Registration — the `setPipeline` row: the
  * node's pipeline intake. `deliverHeaders` takes a page held to its shape
- * with the claim the page was asked under — the refute test reads the
- * claim the page was asked toward (NET_INTERFACE → Sync State Machine →
- * "How a header sync ends") — and resolves `'taken'` when the pipeline
+ * with the peer's claim as the page is delivered — the refute test reads
+ * the claim the page was asked under (NET_INTERFACE → Sync State Machine
+ * → "How a header sync ends") — and resolves `'taken'` when the pipeline
  * took the page whole, `'again'` when it took the page and is re-fetching
  * a branch it scored heavier (NET_INTERFACE → Sync State Machine → "One
  * header request per peer, every peer at once."), and `'refused'` when
