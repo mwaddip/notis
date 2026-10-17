@@ -307,6 +307,17 @@ describe('NETWORK_PROFILES', () => {
     expect(NETWORK_PROFILES.testnet.maxReorgDepth).toBe(largest);
   });
 
+  // TYPES_INTERFACE → Network profiles: the least work a best chain must carry before any block is
+  // fetched along it. 0n on all three networks. Read by index, so the case compiles with the field
+  // absent from the interface.
+  it.fails('every profile carries minimumChainWork, a bigint equal to 0n', () => {
+    for (const p of Object.values(NETWORK_PROFILES)) {
+      const value = (p as unknown as Record<string, unknown>)['minimumChainWork'];
+      expect(typeof value, `${p.networkType}.minimumChainWork`).toBe('bigint');
+      expect(value, `${p.networkType}.minimumChainWork`).toBe(0n);
+    }
+  });
+
   // ARCHITECTURE → What varies per network: the multiplier is a cap, field-only.
   // Each profile's own literal, since testnet differs from mainnet and inherits
   // by spread otherwise.
