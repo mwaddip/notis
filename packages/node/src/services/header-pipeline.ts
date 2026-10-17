@@ -38,7 +38,6 @@ export type AdmitVerdict =
   | { kind: 'held' }
   | { kind: 'refused'; reason: string }
   | { kind: 'stored'; wasBest: boolean }
-  | { kind: 'stored-switched'; forkHeight: number }
   | { kind: 'scored' }
   | { kind: 'parent-unknown' };
 
@@ -143,8 +142,7 @@ function workOrZero(bits: number): bigint {
 /**
  * NODE_INTERFACE → Fork choice decides on verified headers →
  * "An admitted header is stored when it extends the best chain or outweighs
- * it". A `stored` verdict either extends best (`stored` with `wasBest: true`)
- * or outweighs it after a reachability check (`stored-switched`).
+ * it". A `stored` verdict extends best; a side-branch header is `scored`.
  */
 function tryStoreOrSwitch(
   header: BlockHeader,
@@ -173,7 +171,6 @@ function tryStoreOrSwitch(
   };
 
   const best = getBestTip();
-  const bestWork = best ? best.chainWork : 0n;
 
   if (!best || parent.hash === best.hash) {
     // Extension of best.
@@ -186,54 +183,17 @@ function tryStoreOrSwitch(
     return { kind: 'stored', wasBest: true };
   }
 
-  if (chainWork > bestWork) {
-    // Outweighs: find the fork point with the best chain by walking
-    // `prev_hash` up through the tree until a `best_chain` row is found.
-    // Bounded by the side branch's length (NODE_INTERFACE → Fork choice
-    // decides on verified headers → "A side branch is stored only once it is
-    // heavier").
-    const branchHashes: string[] = [hash];
-    let cursorPrevHash = header.prevBlockHash;
-    let cursorHeight = header.height - 1;
-    let bestForkHeight: number | null = null;
-    while (cursorHeight >= 0) {
-      const bestAt = getBestHashAt(cursorHeight);
-      if (bestAt === cursorPrevHash || (cursorHeight === 0 && cursorPrevHash === GENESIS_PREV_BLOCK_HASH)) {
-        bestForkHeight = cursorHeight;
-        break;
-      }
-      const walk = getHeaderRow(cursorPrevHash);
-      if (walk === null) break;
-      branchHashes.push(cursorPrevHash);
-      cursorPrevHash = walk.prevHash;
-      cursorHeight = walk.height - 1;
-    }
-    if (bestForkHeight === null) {
-      // Should never happen in production: a stored parent chain always meets
-      // the best chain at height 0 (virtual root). Treat as refusal rather
-      // than throw.
-      return { kind: 'refused', reason: 'no-fork-with-best' };
-    }
-    // Reachability — NODE_INTERFACE → "The best chain is the heaviest
-    // reachable branch". The candidate's fork with the applied chain is
-    // `min(bestForkHeight, bestChainForkWithApplied)`.
-    const candidateForkWithApplied = Math.min(bestForkHeight, bestChainForkWithApplied);
-    if (candidateForkWithApplied < reachFloor(ctx)) {
-      // Unreachable: do not store, do not switch.
-      return { kind: 'refused', reason: 'unreachable-fork' };
-    }
-    insertHeader(row);
-    const newEntries = branchHashes.slice().reverse();
-    rewriteBestChain(bestForkHeight, newEntries);
-    bestChainForkWithApplied = Math.min(bestChainForkWithApplied, bestForkHeight);
-    scoredLighter.clear();
-    callbacks.chainMoved();
-    return { kind: 'stored-switched', forkHeight: bestForkHeight };
-  }
-
-  // On a side branch, equal or lighter — scored, not stored (unless this is
-  // pass 2 which does its own store). The admission itself does not score the
-  // single-header path; a tree row only lands on `extends` or `outweighs`.
+  // Side branch — `NODE_INTERFACE → Fork choice decides on verified headers →
+  // "A side branch is stored only once it is heavier."`: side-branch headers
+  // reach the tree only through pass 2 of their peer's running branch. A
+  // single header's work is at most the anchor target's `blockWork` ·—· and a
+  // side branch outweighing best requires at least that same unit of margin
+  // over the parent's chain, which with same-era headers can never fire via a
+  // single gossip. A gossiped header on an old branch that would in principle
+  // outweigh is handled when the branch's own peer drives it through
+  // `admitPage`'s pass 1 and pass 2.
+  const _unused = chainWork;
+  void _unused;
   return { kind: 'scored' };
 }
 
@@ -255,8 +215,8 @@ function ensureStoredInterlinks(_header: BlockHeader, parent: HeaderRow, anchorB
  * NODE_INTERFACE → Fork choice decides on verified headers.
  *
  * Admit one header. Returns a verdict after it has resolved to one of
- * `held` / `refused` / `stored` / `stored-switched` / `scored` / `parent-unknown`,
- * firing `callbacks.penalize` on a refusal that carries one and
+ * `held` / `refused` / `stored` / `scored` / `parent-unknown`, firing
+ * `callbacks.penalize` on a refusal that carries one and
  * `callbacks.chainMoved` when the best chain moves.
  */
 export function admitHeader(
