@@ -331,18 +331,13 @@ export function admitPage(
       return { accepted: false, outcome: 'refused', refusedAt: { index: 0, kind: 'misbehavior', reason: 'first-parent-unknown' } };
     }
     running = started;
-  } else {
-    // Continue: pass 1 extends from `topHash`, pass 2 extends from
-    // `storedTopHash` (= `baseAnchor.prevBlockHash` for the first pass-2 page).
-    const expectedPrev = running.mode === 'storing' ? running.storedTopHash : running.topHash;
-    if (headers[0]!.prevBlockHash !== expectedPrev) {
-      callbacks.penalize(peerId, 'misbehavior', 'page does not continue the running branch');
-      return { accepted: false, outcome: 'refused', refusedAt: { index: 0, kind: 'misbehavior', reason: 'not-continuation' } };
-    }
   }
 
   // Verify the page: pass 1 continues from `nextAnchor`, pass 2 from
-  // `storedAnchor` — each page builds on the anchor the previous page/base left.
+  // `storedAnchor` — each page builds on the anchor the previous page/base
+  // left. The anchor's `prevBlockHash` is the running branch's current top
+  // (pass 1) or last-stored (pass 2); `verifyHeaderChain`'s link step refuses
+  // a page whose first header does not continue it.
   const anchorForVerify = running.mode === 'storing' ? running.storedAnchor : running.nextAnchor;
   const taForVerify = running.mode === 'storing' ? running.storedTa : running.nextTa;
   const verdict = verifyHeaderChain(headers, anchorForVerify, ctx.params, taForVerify, ctx.nowMs(), ctx.schedule);
