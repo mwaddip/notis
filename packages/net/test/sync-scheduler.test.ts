@@ -654,6 +654,46 @@ describe("marks' bounds — MAX_STALL_MARKS + 1 drops the oldest", () => {
     expect(marks.size).toBe(1024);
   });
 
+  it('a peer marked during an open run is asked nothing more', async () => {
+    const sch = makeScheduler();
+    const asAny = sch.machine as unknown as {
+      setRequestHeaders?: (fn: (locator: string[], peerId: string) => Promise<BlockHeader[]>) => void;
+    };
+    let callNo = 0;
+    let release1!: (page: BlockHeader[]) => void;
+    const page1 = new Promise<BlockHeader[]>((r) => { release1 = r; });
+    asAny.setRequestHeaders?.(async (locator, peerId) => {
+      callNo++;
+      sch.requests.push({ peerId, locator });
+      if (callNo === 1) return page1;
+      return new Promise<BlockHeader[]>(() => { /* held */ });
+    });
+    peerActive(sch, 'p', 1);
+    syncInfo(sch, 'p', 100, hexId(100));
+    await settle();
+    expect(sch.requests.filter(r => r.peerId === 'p').length).toBe(1);
+
+    // Mark the peer from outside; the loop's next iteration reads it.
+    (sch.machine as unknown as { markPeerForTest(id: string): void }).markPeerForTest('p');
+
+    // Return a 400-header full page: the loop would ask again
+    // without the mark check.
+    const full: BlockHeader[] = [];
+    for (let i = 1; i <= 400; i++) {
+      full.push({
+        protocolVersion: 1, height: i,
+        prevBlockHash: i === 1 ? '00'.repeat(32) : hexId(i - 1),
+        utxoTxRoot: '00'.repeat(32), stateRoot: '00'.repeat(33),
+        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 2304,
+        createdAt: 0, interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32),
+      });
+    }
+    release1(full);
+    await settle();
+    await settle();
+    expect(sch.requests.filter(r => r.peerId === 'p').length).toBe(1);
+  });
+
   it('a mark expires after STALL_MARK_EXPIRY_MS and the next SyncInfo opens a run', async () => {
     vi.setSystemTime(0);
     const sch = makeScheduler({ nextPage: [] });

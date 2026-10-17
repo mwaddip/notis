@@ -293,6 +293,12 @@ export class SyncMachine {
     return this.pendingSyncInfo;
   }
 
+  /** Test hook — mark a peer; the run loop reads the mark at its next
+   * iteration. */
+  markPeerForTest(peerId: string): void {
+    this.markPeer(peerId);
+  }
+
   // -------- Public events --------
 
   onPeerActive(peerId: string, peerHeight: number, direction: 'inbound' | 'outbound' = 'outbound'): void {
