@@ -11,10 +11,10 @@
 /**
  * Largest chain height a peer may advertise.
  *
- * Advertised heights drive serve loops that walk the chain height by height, so
- * an unbounded — or negative — value turns a single packet into a multi-second
- * synchronous DB scan. 100M blocks is ~190 years at one block per minute: far
- * beyond any real chain, far below anything that costs us a loop.
+ * `isHeight()` reads this against every peer-chosen height — the handshake
+ * `chainHeight`, `SyncInfo.tipHeight` and the `peerHeight` the scheduler is
+ * handed at peer-active. 100M blocks is ~190 years at one block per minute:
+ * far beyond any real chain.
  */
 export const MAX_ADVERTISED_HEIGHT = 100_000_000;
 
@@ -95,11 +95,11 @@ export const MAX_LOCATOR_HASHES = 28;
  * a peer answering a 40-header request with 18,900 headers is not answering
  * the question, and the caller is the only party that knows the question.
  *
- * **Serve side.** The same number bounds what we build. Both serve loops read
- * the store once per height into an in-memory array, and `maxCount` /
- * `endHeight` are peer-chosen (bounded only by `MAX_ADVERTISED_HEIGHT` and our
- * own tip), so without this the response size is a peer-controlled knob over
- * our whole chain.
+ * **Serve side.** The same number bounds what we build. The headers loop
+ * walks heights above the locator match for at most this many entries,
+ * clamped to our tip; the blocks loop reads the request's ids, themselves
+ * capped at this count by the codec. Without the cap the response size is a
+ * peer-controlled knob over our whole chain.
  */
 export const MAX_CHAIN_RESPONSE_ITEMS = 400;
 

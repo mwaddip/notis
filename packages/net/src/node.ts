@@ -197,9 +197,10 @@ export class LazySyncStore implements SyncStore {
 // format, which is the one thing a protocol suite exists to notice.
 //
 // Both are bounded by what the peer asked for and by
-// `MAX_CHAIN_RESPONSE_ITEMS`. `endHeight` and `maxCount` are peer-chosen and
-// each loop reads what it needs for one height per step, so that second bound
-// is what keeps the length of the response off the peer's control panel.
+// `MAX_CHAIN_RESPONSE_ITEMS`. The locator (headers) and the ids (blocks) are
+// peer-chosen, each capped at the wire bound of its codec; the response reads
+// at most `MAX_CHAIN_RESPONSE_ITEMS` entries, which keeps the length of the
+// response off the peer's control panel.
 //
 // A count bounds a length and says nothing about a weight, so the blocks loop
 // carries a second, independent bound: it accumulates encoded bytes and stops
@@ -215,9 +216,10 @@ export class LazySyncStore implements SyncStore {
 // Protocols, the `Headers` arm bullet of `GetHeaders` / `GetBlocks`
 // responses.
 //
-// `ourHeight` clamps both loops to our own tip: we cannot serve what we do not
-// have, so this never truncates a legitimate request, and a peer asking for
-// height 1e15 costs us nothing.
+// `ourHeight` clamps the headers loop to our own tip (unread in the blocks
+// loop; see the arm's own doc): we cannot serve what we do not have, so this
+// never truncates a legitimate request, and a peer asking for height 1e15
+// costs us nothing.
 //
 // Both throw only if a block *we* hold has no encoding — a corrupt local store,
 // not a peer's doing. The caller's `catch` answers with zero bytes, as it does
@@ -528,11 +530,10 @@ export class NetNode {
   private bootstrapSettledAddrs = new Set<string>();
   private syncTimer: ReturnType<typeof setInterval> | null = null;
   /**
-   * The whole-block provider for `GetBlocks` (16) and the blocks a
-   * `ModifierResponse` serves. NET_INTERFACE → Sync Handler Registration:
-   * setters are order-independent, so the sync protocol is registered by
-   * start() whether or not a provider exists yet, and a query that arrives
-   * without one is answered with zero bytes.
+   * The whole-block provider for `GetBlocks` (16). NET_INTERFACE → Sync
+   * Handler Registration: setters are order-independent, so the sync protocol
+   * is registered by start() whether or not a provider exists yet, and a
+   * query that arrives without one is answered with zero bytes.
    */
   private headersProvider: ((height: number) => OrderingBlock | null) | null = null;
   /**
@@ -831,8 +832,10 @@ export class NetNode {
       // Log listen addresses
       console.log(`[net] listening on: ${listenAddrs.map(a => a.toString()).join(', ')}`);
 
-      // Connect to bootstrap peers (awaited — must complete before caller
-      // registers blocksHandler so the initial sync burst isn't dropped).
+      // Dial each configured bootstrap peer. Each dial reports settled
+      // (Active, failed or self) through `markBootstrapSettled`, which the
+      // scheduler reads under NET_INTERFACE → Sync State Machine → "The gate
+      // bounds how far blocks apply."
       for (const addr of this.config.bootstrapPeers) {
         await this.dialAndHandshake(addr, 'seed');
       }
@@ -1632,8 +1635,8 @@ export class NetNode {
   }
 
   /**
-   * Register a callback that fires when the sync machine transitions to
-   * the 'synced' phase (peer tip height matches our tip height).
+   * Register a callback that fires when the sync machine enters the 'synced'
+   * phase (NET_INTERFACE → Sync State Machine → "The phases.").
    */
   onSyncComplete(cb: () => void): void {
     this.syncCompleteHandlers.push(cb);
@@ -1759,11 +1762,10 @@ export class NetNode {
   }
 
   /**
-   * Register the whole-block provider for `GetBlocks` and the blocks a
-   * `ModifierResponse` serves. The provider reads at request time rather
-   * than closed over at registration — so this is valid before or after
-   * `start()`, and a later call replaces the provider (NET_INTERFACE → Sync
-   * Handler Registration).
+   * Register the whole-block provider for `GetBlocks` (16). The provider
+   * reads at request time rather than closed over at registration — so this
+   * is valid before or after `start()`, and a later call replaces the
+   * provider (NET_INTERFACE → Sync Handler Registration).
    */
   setHeadersHandler(getBlock: (height: number) => OrderingBlock | null): void {
     this.headersProvider = getBlock;

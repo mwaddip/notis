@@ -17,10 +17,11 @@ import { MAX_STREAM_BYTES } from './msg-guards.js';
 export const SYNC_PROTOCOL = '/dagsocial/sync/1';
 
 // ---------------------------------------------------------------------------
-// Fork resolution's two chain queries — GetHeaders (14) and GetBlocks (16)
+// The scheduler's two chain queries — GetHeaders (14) and GetBlocks (16)
 //
-// Both ride `SYNC_PROTOCOL` and both sides of the exchange are positional and
-// framed: `vlqU(startHeight) vlqU(maxCount)` out, `arr(item, lp)` back. See
+// Both ride `SYNC_PROTOCOL` and both sides are positional and framed:
+// `arr(hexN(32))` out — a locator for headers, ids for blocks — `arr(item, lp)`
+// back (NET_INTERFACE → `GetHeaders` / `GetBlocks` responses). See
 // `lpItemsCodec` in `sync-codec.ts` for what a positional response closes and
 // why a shape check over `cbor-x` is the wrong instrument here.
 //
@@ -29,11 +30,9 @@ export const SYNC_PROTOCOL = '/dagsocial/sync/1';
 // against the wrong codec.
 //
 // Both THROW on an unexpected frame code or a malformed body (NET_INTERFACE →
-// Pull Requests). Fork resolution feeds `requestBlocks`' result straight to
-// `reorg(forkHeight, newBlocks)`, so an empty array rolls our chain back to the
-// fork point and applies nothing — a peer sending junk would truncate our chain
-// instead of failing to extend it. The throw lands in that function's existing
-// catch and abandons the reorg.
+// Pull Requests). The throw lands at the scheduler, which marks the peer
+// (NET_INTERFACE → Sync State Machine → "A request ends without a well-formed
+// answer").
 // ---------------------------------------------------------------------------
 
 /**
