@@ -4,6 +4,7 @@ import {
   PROTOCOL_VERSION,
   ByteWriter,
   writeHexNOrThrow,
+  writeLp,
   writeVlqU,
   computeUtxoTxRoot,
   encodeOrderingBlock,
@@ -518,6 +519,18 @@ describe('response item caps', () => {
     expect(
       decodeHeaders(headersBody(over.slice(0, MAX_CHAIN_RESPONSE_ITEMS))),
     ).toHaveLength(MAX_CHAIN_RESPONSE_ITEMS);
+  });
+
+  it('refuses a Blocks body of 401 blocks even when the ids asked exceed 400', () => {
+    // The decode cap stands at MAX_CHAIN_RESPONSE_ITEMS whatever the caller
+    // asks for; a caller handing a nonsensical asked-count must not raise
+    // the cap. One encoded block reused 401 times is a well-formed body of
+    // the count: the array check fires before the first element is read.
+    const encoded = encodeOrderingBlock(makeMockOrderingBlock(1, '00'.repeat(32)));
+    const w = new ByteWriter();
+    writeVlqU(w, MAX_CHAIN_RESPONSE_ITEMS + 1);
+    for (let i = 0; i <= MAX_CHAIN_RESPONSE_ITEMS; i++) writeLp(w, encoded);
+    expect(decodeBlocks(w.toBytes(), MAX_CHAIN_RESPONSE_ITEMS * 2)).toBeNull();
   });
 
   it('refuses more blocks than the ids asked', () => {
