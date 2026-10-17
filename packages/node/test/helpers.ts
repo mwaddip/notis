@@ -824,6 +824,10 @@ export async function mineNextBlock(bc: {
   // here, built over what it holds — its emission box and karma pool included
   // (`activateProverOverStore`).
   await liveProver();
+  // The intake is the one entry a mined block runs through
+  // (NODE_INTERFACE → Fork choice decides on verified headers → "One intake,
+  // one at a time"). Idempotent: the setter replaces callbacks and context.
+  await wireIntakeForTests();
   bc.createOrderingBlock();
   const tpl = bc.getCurrentTemplate();
   if (tpl === null) return null;
@@ -1524,4 +1528,95 @@ export function buildMinedHeaderChain(opts: {
     prevLevel = lvl;
   }
   return { headers, interlinksPerHeader };
+}
+
+/**
+ * `wireNet` in production hands the intake its callbacks and context, so a
+ * node's own entries (`submitMinedBlock`'s intake delivery, the pipeline's
+ * runItem catch) have the state they read. A test that reaches
+ * `submitMinedBlock` or any `deliver*` entry calls this in `beforeEach`,
+ * after `initDb`, so the intake carries the same callbacks and context
+ * `wireNet` installs. Resets are the setter's: a prior test's intake state
+ * is replaced in place.
+ *
+ * The net the wiring reads is the one in `getNet()` — the test registers it
+ * through `setNet(...)` ahead of this call. Where a test registers no net
+ * (the chain's producers call `net.penalizePeer`, `net.chainMoved` or
+ * `net.needHeaders`), a stub net is wired here: its three callbacks are
+ * no-ops and its register-handler methods are swallowed, so a wire-time
+ * callback never raises against an unset net reference. Any `onPeerDisconnected`
+ * handler the production wiring installs is kept and reachable through
+ * `getRegisteredOnPeerDisconnected()`.
+ */
+let registeredOnPeerDisconnected:
+  | ((peerId: string, reason: string) => void)
+  | null = null;
+
+export async function wireIntakeForTests(): Promise<void> {
+  const { setNet, getNet } = await import('../src/services/net-instance.js');
+  let net: unknown = getNet();
+  if (net === null) {
+    net = {
+      penalizePeer: () => {},
+      chainMoved: () => {},
+      needHeaders: () => {},
+      broadcastOrderingBlock: async () => {},
+      broadcastTx: async () => {},
+      getConnectedPeers: () => [],
+      tipApplied: () => {},
+      setKarmaMembers: () => {},
+      addKarmaMember: () => {},
+      removeKarmaMember: () => {},
+      requestPostBodies: async () => [],
+    };
+    setNet(net as never);
+  }
+  const captured = net as { onPeerDisconnected?: (fn: (p: string, r: string) => void) => void };
+  const wireable = {
+    ...(net as object),
+    setPipeline: () => {},
+    setChainView: () => {},
+    onOrderingBlock: () => {},
+    onPeerActive: () => {},
+    onPeerDisconnected: (fn: (peerId: string, reason: string) => void) => {
+      registeredOnPeerDisconnected = fn;
+      if (typeof captured.onPeerDisconnected === 'function') {
+        captured.onPeerDisconnected(fn);
+      }
+    },
+    onPeerPenalised: () => {},
+    onSyncComplete: () => {},
+    setHeadersHandler: () => {},
+    setHeaderProvider: () => {},
+    setScheduledTargetProvider: () => {},
+    setChainHeightProvider: () => {},
+    setBlockIdProvider: () => {},
+    setHeightByBlockIdProvider: () => {},
+    setHeaderStandingProvider: () => {},
+    setPostBodyProvider: () => {},
+    setKarmaMembers: () => {},
+  };
+  const { wireNet } = await import('../src/services/net-wiring.js');
+  wireNet(wireable as never);
+}
+
+/** The `onPeerDisconnected` handler the production wiring last installed. */
+export function getRegisteredOnPeerDisconnected():
+  | ((peerId: string, reason: string) => void)
+  | null {
+  return registeredOnPeerDisconnected;
+}
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one
+ * at a time". `deliverMinedBlock` is the intake's mined-block entry: it
+ * admits, binds, stages and applies this node's block in one item. A test
+ * that builds its chain through this helper leaves a tree row behind every
+ * applied height — the pipeline is the three tables' one writer.
+ */
+export async function applyBlockThroughIntake(block: OrderingBlock): Promise<boolean> {
+  await wireIntakeForTests();
+  const intake = await import('../src/services/intake.js');
+  const verdict = intake.deliverMinedBlock(block);
+  return verdict.applied;
 }

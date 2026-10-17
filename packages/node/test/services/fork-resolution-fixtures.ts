@@ -5,7 +5,7 @@ import {
 import type {
   OrderingBlock,
 } from '@dagsocial/types';
-import { makeApplicableBlock, makeTestConfig } from '../helpers.js';
+import { applyBlockThroughIntake, makeApplicableBlock, makeTestConfig, wireIntakeForTests } from '../helpers.js';
 import type { Config } from '../../src/config.js';
 import type Database from 'better-sqlite3';
 
@@ -90,12 +90,14 @@ export async function initChainStore(): Promise<void> {
   db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
   const { setClock } = await import('../../src/services/difficulty.js');
   setClock(() => FAR_FUTURE);
-  const { default: vi } = await import('vitest') as unknown as { default: typeof import('vitest') };
-  void vi;
   const vitest = await import('vitest');
   vitest.vi.spyOn(console, 'warn').mockImplementation(() => {});
   vitest.vi.spyOn(console, 'log').mockImplementation(() => {});
   vitest.vi.spyOn(console, 'error').mockImplementation(() => {});
+  // The intake is the one entry a mined block runs through — the same wiring
+  // production installs in `wireNet` (NODE_INTERFACE → Fork choice decides on
+  // verified headers → "One intake, one at a time").
+  await wireIntakeForTests();
 }
 
 export async function startCreator(cfg: ReturnType<typeof makeTestConfig>): Promise<void> {
@@ -113,13 +115,10 @@ export async function importForkResolution() {
 }
 
 export async function buildAndApply(specs: Array<[number, number]>): Promise<OrderingBlock[]> {
-  const { applyOrderingBlock } = (await import('../../src/services/block-apply.js')) as {
-    applyOrderingBlock: (block: OrderingBlock) => boolean;
-  };
   const out: OrderingBlock[] = [];
   for (const [h, c] of specs) {
     const b = await makeApplicableBlock({ height: h, createdAt: c });
-    expect(applyOrderingBlock(b)).toBe(true);
+    expect(await applyBlockThroughIntake(b)).toBe(true);
     out.push(b);
   }
   return out;
