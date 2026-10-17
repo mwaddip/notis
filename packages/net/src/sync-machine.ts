@@ -335,6 +335,11 @@ export class SyncMachine {
     return this.openBlockRuns;
   }
 
+  /** Test introspection — the per-peer set of omitted ids. */
+  getOmittedByPeerForTest(): Map<string, Set<string>> {
+    return this.omittedByPeer;
+  }
+
   /** Test hook — mark a peer; the run loop reads the mark at its next
    * iteration. */
   markPeerForTest(peerId: string): void {
@@ -724,12 +729,11 @@ export class SyncMachine {
     }
 
     const sorted = [...wanted].sort((a, b) => a.height - b.height);
-    const connected = this.connectedPeersFn?.() ?? new Set<string>();
-    for (const peerId of connected) {
-      if (this.stallMarks.has(peerId)) continue;
-      if (this.openBlockRuns.has(peerId)) continue;
-      const claim = this.claims.get(peerId);
-      if (!claim) continue;
+    for (const [peerId, claim] of this.claims) {
+      // NET_INTERFACE → Sync State Machine — the peer's claim must be
+      // one the view knows (settled). An unsettled claim opens no
+      // block request.
+      if (!this.chainView.knowsTip(peerId, claim.tipHash)) continue;
       const omitted = this.omittedByPeer.get(peerId) ?? new Set<string>();
       const batch: string[] = [];
       for (const w of sorted) {

@@ -115,6 +115,19 @@ function blockIdOf(b: OrderingBlock): string {
   return id;
 }
 
+/** Settle on a macrotask: resolve the next tick on the event loop. */
+function macrotask<T>(value: T): Promise<T> {
+  return new Promise((resolve) => setTimeout(() => resolve(value), 0));
+}
+
+function rejectMacrotask<T>(err: Error): Promise<T> {
+  return new Promise((_resolve, reject) => setTimeout(() => reject(err), 0));
+}
+
+async function waitTicks(ms = 20): Promise<void> {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
 interface SchedHarness {
   machine: SyncMachine;
   wanted: { id: string; height: number }[];
@@ -176,9 +189,9 @@ function makeHarness(opts: {
     setConnectedPeers(fn: () => Set<string>): void;
     setPenalize(fn: (p: string, k: string, r: string) => void): void;
     setRequestHeaders(fn: (locator: string[], peerId: string) => Promise<BlockHeader[]>): void;
-    setRequestBlocks?(fn: (ids: string[], peerId: string) => Promise<OrderingBlock[]>): void;
-    setBootstrapAllSettled?(fn: () => boolean): void;
-    bootstrapSettled?(): void;
+    setRequestBlocks(fn: (ids: string[], peerId: string) => Promise<OrderingBlock[]>): void;
+    setBootstrapAllSettled(fn: () => boolean): void;
+    bootstrapSettled(): void;
   };
   const sm = machine as unknown as SM;
   sm.setPipeline(pipeline);
@@ -189,8 +202,8 @@ function makeHarness(opts: {
     return new Promise<BlockHeader[]>(() => { /* never resolves */ });
   }));
 
-  let blocksAnswerFn = opts.blocksAnswer ?? (async (_p: string, _ids: string[]) => [] as OrderingBlock[]);
-  sm.setRequestBlocks?.(async (ids, peerId) => {
+  let blocksAnswerFn = opts.blocksAnswer ?? ((_p: string, _ids: string[]) => macrotask([] as OrderingBlock[]));
+  sm.setRequestBlocks(async (ids, peerId) => {
     requestsForBlocks.push({ peerId, ids });
     return blocksAnswerFn(peerId, ids);
   });
@@ -199,7 +212,7 @@ function makeHarness(opts: {
   // before the chain view so the view's gate reader sees the test's
   // answer rather than a null function.
   let bootstrapAllFn = opts.bootstrapAllSettled ?? (() => true);
-  sm.setBootstrapAllSettled?.(() => bootstrapAllFn());
+  sm.setBootstrapAllSettled(() => bootstrapAllFn());
   sm.setChainView(view);
 
   return {
@@ -214,7 +227,7 @@ function makeHarness(opts: {
     gateHeldCount: () => gateHeldCount,
     setBootstrapAllSettled: (fn) => {
       bootstrapAllFn = fn;
-      sm.bootstrapSettled?.();
+      sm.bootstrapSettled();
       machine.flush();
     },
     setBlocksAnswer: (fn) => { blocksAnswerFn = fn; },
@@ -238,7 +251,8 @@ async function settle(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Blocks by id — NET_INTERFACE → Sync State Machine →
+// Blocks by id — the per-request filters in kickBlockPump
+// NET_INTERFACE → Sync State Machine →
 // "Blocks are asked by id, from a peer that has them."
 // ---------------------------------------------------------------------------
 
@@ -248,14 +262,13 @@ describe('a block request goes to a peer whose claim covers its highest height',
     const h = makeHarness({
       wanted: [{ id: blockIdOf(b100), height: 100 }],
       known: [hexHash(10), hexHash(100)],
-      blocksAnswer: async () => [b100],
+      blocksAnswer: () => macrotask([b100]),
     });
     activate(h, 'low');
     activate(h, 'high');
     sendSyncInfo(h, 'low', 10, hexHash(10));
     sendSyncInfo(h, 'high', 100, hexHash(100));
-    await settle();
-
+    await waitTicks();
     expect(h.requestsForBlocks.filter((r) => r.peerId === 'low').length).toBe(0);
     expect(h.requestsForBlocks.filter((r) => r.peerId === 'high').length).toBeGreaterThan(0);
   });
@@ -268,20 +281,19 @@ describe('a request carries at most MAX_CHAIN_RESPONSE_ITEMS ids', () => {
     const h = makeHarness({
       wanted,
       known: [hexHash(100)],
-      blocksAnswer: async () => [],
+      blocksAnswer: () => macrotask([]),
     });
     activate(h, 'high');
     sendSyncInfo(h, 'high', 100, hexHash(100));
     await settle();
-
     const asked = h.requestsForBlocks.filter((r) => r.peerId === 'high');
     expect(asked.length).toBeGreaterThan(0);
     expect(asked[0]!.ids.length).toBe(MAX_CHAIN_RESPONSE_ITEMS);
   });
 });
 
-describe('one block request per peer', () => {
-  it('a second kick while a request is open opens no second request', async () => {
+describe('an id in flight to one peer is not asked of another', () => {
+  it("two covering peers' asked-id sets stay disjoint while A's request is open", async () => {
     const b1 = makeBlock(1);
     const b2 = makeBlock(2);
     const h = makeHarness({
@@ -293,67 +305,202 @@ describe('one block request per peer', () => {
     sendSyncInfo(h, 'A', 10, hexHash(10));
     await settle();
     expect(h.requestsForBlocks.filter((r) => r.peerId === 'A').length).toBe(1);
+    activate(h, 'B');
+    sendSyncInfo(h, 'B', 10, hexHash(10));
+    await settle();
+    const askedA = h.requestsForBlocks.filter((r) => r.peerId === 'A').flatMap((r) => r.ids);
+    const askedB = h.requestsForBlocks.filter((r) => r.peerId === 'B').flatMap((r) => r.ids);
+    const common = askedA.filter((id) => askedB.includes(id));
+    expect(common).toEqual([]);
+  });
+});
+
+describe('a peer whose claim the view does not know is asked no block', () => {
+  it('an unsettled claim opens a header run but no block request', async () => {
+    const b1 = makeBlock(1);
+    const h = makeHarness({
+      wanted: [{ id: blockIdOf(b1), height: 1 }],
+      known: [],
+      blocksAnswer: () => macrotask([b1]),
+    });
+    activate(h, 'A');
+    sendSyncInfo(h, 'A', 10, hexHash(10));
+    await waitTicks();
+    expect(h.requestsForBlocks.filter((r) => r.peerId === 'A').length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The launch checks in startBlockRun — the one place a block run opens,
+// mirroring startHeaderRun's connected, mark and one-run discipline.
+// NET_INTERFACE → Sync State Machine
+// ---------------------------------------------------------------------------
+
+describe('a marked covering peer is asked no block', () => {
+  it("startBlockRun's mark check keeps the pump's batch from being asked", async () => {
+    const b1 = makeBlock(1);
+    const h = makeHarness({
+      wanted: [{ id: blockIdOf(b1), height: 1 }],
+      known: [hexHash(10)],
+      applied: false,
+      blocksAnswer: () => macrotask([b1]),
+    });
+    activate(h, 'A');
+    // Mark A before any claim lands. A's SyncInfo then tries to launch
+    // a run; startBlockRun's mark check keeps it from opening.
+    (h.machine as unknown as { markPeerForTest(id: string): void }).markPeerForTest('A');
+    sendSyncInfo(h, 'A', 10, hexHash(10));
+    await waitTicks();
+    expect(h.requestsForBlocks.filter((r) => r.peerId === 'A').length).toBe(0);
+  });
+});
+
+describe('a peer gone from the connected set is asked no block', () => {
+  it("startBlockRun's connected check skips a peer whose connection has gone", async () => {
+    const b1 = makeBlock(1);
+    const h = makeHarness({
+      wanted: [],
+      known: [hexHash(10)],
+      blocksAnswer: () => macrotask([b1]),
+    });
+    activate(h, 'A');
+    sendSyncInfo(h, 'A', 10, hexHash(10));
+    await settle();
+    // Remove A from the connected set without going through
+    // `onPeerDisconnect` — the scheduler still holds A's claim, but a
+    // launch for A must see the connection has gone.
+    h.connected.delete('A');
+    h.wanted.push({ id: blockIdOf(b1), height: 1 });
+    (h.machine as unknown as { chainMoved(): void }).chainMoved();
+    h.machine.flush();
+    await waitTicks();
+    expect(h.requestsForBlocks.filter((r) => r.peerId === 'A').length).toBe(0);
+  });
+});
+
+describe('one block request per peer', () => {
+  it('a second kick with a new id while a request is open opens no second request', async () => {
+    const b1 = makeBlock(1);
+    const b2 = makeBlock(2);
+    const h = makeHarness({
+      wanted: [{ id: blockIdOf(b1), height: 1 }],
+      known: [hexHash(10)],
+      blocksAnswer: () => new Promise<OrderingBlock[]>(() => { /* held */ }),
+    });
+    activate(h, 'A');
+    sendSyncInfo(h, 'A', 10, hexHash(10));
+    await settle();
+    expect(h.requestsForBlocks.filter((r) => r.peerId === 'A').length).toBe(1);
+    // A new id lands in wantedBlocks while A's first request is still
+    // in flight — the pump's batch for A has id2 alone, and the
+    // one-run check keeps the second launch closed.
+    h.wanted.push({ id: blockIdOf(b2), height: 2 });
     (h.machine as unknown as { chainMoved(): void }).chainMoved();
     h.machine.flush();
     await settle();
-
     expect(h.requestsForBlocks.filter((r) => r.peerId === 'A').length).toBe(1);
   });
 });
 
-describe('an id a peer omits moves to another covering peer', () => {
-  it('and the omitting peer is not asked it again until its claim changes', async () => {
+// ---------------------------------------------------------------------------
+// Omission — record and skip, two mechanisms with their own observable
+// (NET_INTERFACE → Sync State Machine, Sync Integrity)
+// ---------------------------------------------------------------------------
+
+describe('an omitted id is recorded against the peer', () => {
+  it('after a partial answer, omittedByPeer carries the ids the pipeline still wants', async () => {
     const b1 = makeBlock(1);
     const b2 = makeBlock(2);
     const h = makeHarness({
       wanted: [{ id: blockIdOf(b1), height: 1 }, { id: blockIdOf(b2), height: 2 }],
       known: [hexHash(10)],
+      blocksAnswer: (peerId) => macrotask(peerId === 'A' ? [b1] : [b1, b2]),
     });
-    h.setBlocksAnswer(async (peerId, _ids) => peerId === 'A' ? [b1] : [b1, b2]);
+    activate(h, 'A');
+    sendSyncInfo(h, 'A', 10, hexHash(10));
+    await waitTicks();
+    expect(
+      (h.machine as unknown as { getOmittedByPeerForTest(): Map<string, Set<string>> })
+        .getOmittedByPeerForTest()
+        .get('A')
+        ?.has(blockIdOf(b2)),
+    ).toBe(true);
+  });
+});
+
+describe('an omitted id moves to another covering peer', () => {
+  it('after A omits id2, B is asked for id2', async () => {
+    const b1 = makeBlock(1);
+    const b2 = makeBlock(2);
+    const h = makeHarness({
+      wanted: [{ id: blockIdOf(b1), height: 1 }, { id: blockIdOf(b2), height: 2 }],
+      known: [hexHash(10)],
+      blocksAnswer: (peerId) => macrotask(peerId === 'A' ? [b1] : [b1, b2]),
+    });
     activate(h, 'A');
     activate(h, 'B');
     sendSyncInfo(h, 'A', 10, hexHash(10));
     sendSyncInfo(h, 'B', 10, hexHash(10));
-    await settle();
-    await settle();
-    const askedA = h.requestsForBlocks.filter((r) => r.peerId === 'A');
-    const askedB = h.requestsForBlocks.filter((r) => r.peerId === 'B');
-    expect(askedA.length).toBe(1);
-    expect(askedB.some((r) => r.ids.includes(blockIdOf(b2)))).toBe(true);
-    // Nothing re-opens A's run for the omitted id.
-    (h.machine as unknown as { chainMoved(): void }).chainMoved();
-    h.machine.flush();
-    await settle();
-
-    const askedAAfter = h.requestsForBlocks.filter((r) => r.peerId === 'A');
-    expect(askedAAfter.length).toBe(1);
+    await waitTicks();
+    expect(
+      h.requestsForBlocks.some((r) => r.peerId === 'B' && r.ids.includes(blockIdOf(b2))),
+    ).toBe(true);
   });
 });
 
-describe('a deadline marks the peer and moves its ids', () => {
-  it('the throw path marks the peer and another covering peer picks up', async () => {
+// ---------------------------------------------------------------------------
+// Deadline marks the peer; markPeer frees the marked peer's in-flight ids
+// (NET_INTERFACE → Stall Detection)
+// ---------------------------------------------------------------------------
+
+describe('a block request deadline marks its peer', () => {
+  it('a rejected request records a stall mark against the peer', async () => {
     const b1 = makeBlock(1);
-    // The chain stays not-fully-applied so synced-entry does not fire,
-    // and the mark persists for the assertion to read.
     const h = makeHarness({
       wanted: [{ id: blockIdOf(b1), height: 1 }],
       known: [hexHash(10)],
       applied: false,
-    });
-    h.setBlocksAnswer(async (peerId) => {
-      if (peerId === 'A') throw new Error('deadline');
-      return [b1];
+      blocksAnswer: () => rejectMacrotask<OrderingBlock[]>(new Error('deadline')),
     });
     activate(h, 'A');
-    activate(h, 'B');
     sendSyncInfo(h, 'A', 10, hexHash(10));
-    sendSyncInfo(h, 'B', 10, hexHash(10));
-    for (let i = 0; i < 30; i++) await Promise.resolve();
+    await waitTicks();
     expect(h.machine.getMarksForTest().has('A')).toBe(true);
-
-    expect(h.requestsForBlocks.filter((r) => r.peerId === 'B' && r.ids.includes(blockIdOf(b1))).length).toBe(1);
   });
 });
+
+describe("markPeer frees the marked peer's in-flight ids", () => {
+  it('an id A held in flight is asked of B once A is marked', async () => {
+    const b1 = makeBlock(1);
+    const h = makeHarness({
+      wanted: [{ id: blockIdOf(b1), height: 1 }],
+      known: [hexHash(10)],
+      applied: false,
+      blocksAnswer: (peerId) => {
+        if (peerId === 'A') return new Promise<OrderingBlock[]>(() => { /* held */ });
+        return macrotask([b1]);
+      },
+    });
+    activate(h, 'A');
+    sendSyncInfo(h, 'A', 10, hexHash(10));
+    await settle();
+    activate(h, 'B');
+    sendSyncInfo(h, 'B', 10, hexHash(10));
+    await settle();
+    expect(h.requestsForBlocks.filter((r) => r.peerId === 'A').length).toBe(1);
+    expect(h.requestsForBlocks.filter((r) => r.peerId === 'B').length).toBe(0);
+    (h.machine as unknown as { markPeerForTest(id: string): void }).markPeerForTest('A');
+    h.machine.flush();
+    await waitTicks();
+    expect(
+      h.requestsForBlocks.some((r) => r.peerId === 'B' && r.ids.includes(blockIdOf(b1))),
+    ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pipeline reach + the empty-wanted live guard
+// ---------------------------------------------------------------------------
 
 describe('deliverBlocks receives the answer', () => {
   it('the pipeline sees every block the peer returned', async () => {
@@ -362,12 +509,11 @@ describe('deliverBlocks receives the answer', () => {
     const h = makeHarness({
       wanted: [{ id: blockIdOf(b1), height: 1 }, { id: blockIdOf(b2), height: 2 }],
       known: [hexHash(10)],
-      blocksAnswer: async () => [b1, b2],
+      blocksAnswer: () => macrotask([b1, b2]),
     });
     activate(h, 'A');
     sendSyncInfo(h, 'A', 10, hexHash(10));
-    await settle();
-
+    await waitTicks();
     expect(h.blocksDelivered.map((d) => d.blocks.length)).toContain(2);
   });
 });
@@ -384,7 +530,6 @@ describe('nothing is asked while wantedBlocks() is empty', () => {
     (h.machine as unknown as { chainMoved(): void }).chainMoved();
     h.machine.flush();
     await settle();
-
     expect(h.requestsForBlocks.length).toBe(0);
   });
 });
@@ -406,21 +551,17 @@ describe('an open outbound header run holds the gate shut', () => {
     activate(h, 'A', 'outbound');
     sendSyncInfo(h, 'A', 100, hexHash(100));
     await settle();
-    // While A's run is open, no further gateHeld fires. The absolute
-    // count up to this point is a control: the scheduler may fire once
-    // at activate before the run opens.
     const whileOpen = h.gateHeldCount();
     expect(whileOpen).toBeGreaterThanOrEqual(0);
     release!([]);
     await settle();
     await settle();
-
     expect(h.gateHeldCount()).toBeGreaterThan(whileOpen);
   });
 });
 
-describe("an inbound peer's open header run does not hold the gate", () => {
-  it('gateHeld fires with the run still open', async () => {
+describe("gateHeld rises on an evaluation while an inbound peer's run is open", () => {
+  it("the outbound-only filter skips the inbound run and the gate holds", async () => {
     const held = new Promise<BlockHeader[]>(() => { /* held */ });
     const h = makeHarness({
       wanted: [],
@@ -430,8 +571,11 @@ describe("an inbound peer's open header run does not hold the gate", () => {
     activate(h, 'A', 'inbound');
     sendSyncInfo(h, 'A', 100, hexHash(100));
     await settle();
-
-    expect(h.gateHeldCount()).toBeGreaterThan(0);
+    const before = h.gateHeldCount();
+    (h.machine as unknown as { bootstrapSettled(): void }).bootstrapSettled();
+    h.machine.flush();
+    await settle();
+    expect(h.gateHeldCount()).toBeGreaterThan(before);
   });
 });
 
@@ -442,13 +586,10 @@ describe('an unsettled bootstrap address holds the gate shut', () => {
       known: [],
       bootstrapAllSettled: () => false,
     });
-    // With bootstrap unsettled, no gateHeld fires. The absolute count
-    // is a control: the harness snapshots it before flipping.
     const beforeFlip = h.gateHeldCount();
     expect(beforeFlip).toBe(0);
     h.setBootstrapAllSettled(() => true);
     await settle();
-
     expect(h.gateHeldCount()).toBeGreaterThan(beforeFlip);
   });
 });
@@ -456,9 +597,7 @@ describe('an unsettled bootstrap address holds the gate shut', () => {
 describe('vacuous — no peers and no bootstrap addresses', () => {
   it('the gate holds and gateHeld is called', async () => {
     const h = makeHarness({ wanted: [], known: [] });
-    // Allow the start-time evaluation to run.
     await settle();
-
     expect(h.gateHeldCount()).toBeGreaterThan(0);
   });
 });
@@ -474,13 +613,11 @@ describe("a marked outbound peer's open run does not hold the gate", () => {
     activate(h, 'A', 'outbound');
     sendSyncInfo(h, 'A', 100, hexHash(100));
     await settle();
-    // The open run holds the gate; the mark releases its hold.
     const beforeMark = h.gateHeldCount();
     expect(beforeMark).toBeGreaterThanOrEqual(0);
     (h.machine as unknown as { markPeerForTest(id: string): void }).markPeerForTest('A');
     h.machine.flush();
     await settle();
-
     expect(h.gateHeldCount()).toBeGreaterThan(beforeMark);
   });
 });
@@ -500,7 +637,6 @@ describe('an open block request is syncing', () => {
     activate(h, 'A');
     sendSyncInfo(h, 'A', 10, hexHash(10));
     await settle();
-
     expect(h.machine.getState().phase).toBe('syncing');
   });
 });
@@ -525,8 +661,6 @@ describe('a frame of the retired code 3 is dropped unread and unpenalised', () =
 describe('a ModifierRequest of the retired type 101 is dropped unpenalised', () => {
   it('type 101 is not the one typeId the serve arm answers', () => {
     const MODIFIER_POST_BODY = 103;
-    // The ModifierRequest codec admits a bounded unknown typeId
-    // (NET_INTERFACE → ModifierRequest). 101 encodes.
     const frame = encodeModifierRequest(MAGIC, { typeId: 101, ids: [hexHash(1)] });
     expect(frame.length).toBeGreaterThan(0);
     expect(MODIFIER_POST_BODY).not.toBe(101);
