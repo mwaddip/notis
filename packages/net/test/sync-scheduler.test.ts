@@ -377,6 +377,7 @@ describe('claims drive one run at most per peer', () => {
   });
 
   it('a second claim from the same peer while a run is open opens no second request', async () => {
+    vi.setSystemTime(0);
     let release!: () => void;
     const held = new Promise<BlockHeader[]>((r) => { release = () => r([]); });
     const sch = makeScheduler();
@@ -390,11 +391,14 @@ describe('claims drive one run at most per peer', () => {
     peerActive(sch, 'p', 1);
     syncInfo(sch, 'p', 50, hexId(50));
     await settle();
+    // Past the per-peer interval so the second report is acted on
+    // rather than held as pending.
+    vi.advanceTimersByTime(200);
     syncInfo(sch, 'p', 60, hexId(60));
     await settle();
+    expect(sch.requests.length).toBe(1);
     release();
     await settle();
-    expect(sch.requests.length).toBe(1);
   });
 
   it('the handshake height alone keeps the phase idle', async () => {
