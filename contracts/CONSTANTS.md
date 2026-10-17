@@ -258,6 +258,7 @@ devnet differ where a cell says so. The identity fields — `magic`, `genesisCom
 | `vouchCooldownBlocks` | `60` | `60` | `3` | timescale | the shortest wait that still spans block boundaries | DERIVED | `TYPES_INTERFACE → Network profiles` |
 | `inviteProbationBlocks` | `43200` | `43200` | `540` | timescale | above `karmaStaleThresholdBlocks`, so decay fires during probation on devnet as it does on mainnet — the property, not a ratio | DERIVED | `TYPES_INTERFACE → Network profiles` |
 | `creditMinerRewardDelay` | `1440` | `1440` | `10` | timescale | small enough to spend, large enough to observe immaturity | CHOSEN | `TYPES_INTERFACE → Network profiles` |
+| `minimumChainWork` | `0n` | `0n` | `0n` | cap | the least work a best chain's tip carries before a block is fetched along it; a fresh chain carries none, and a release cut on a running chain sets it to the live tip's work (user, 2026-10-16) | RULED | `TYPES_INTERFACE → Network profiles` |
 | `maxReorgDepth` | `60` | `240` | `40` | timescale | the reorg horizon — how far below the tip a fork may be followed; it prices journals, AVL versions and a reorg's memory against how long a partition may last before it is permanent. Testnet's four hours is the user's "a few hours, not days" (2026-08-29); mainnet's is a placeholder until testnet argues one; devnet's lets the e2e fork chapter converge at ~30 deep and strand at ~45 | PROVISIONAL | `TYPES_INTERFACE → Chain reorganisation` |
 | `creditFixedRateBlocks` | `1_051_200` | `1_051_200` | `1000` | timescale | ~÷1000 so the fixed-rate → decay transition is reachable | CHOSEN | `TYPES_INTERFACE → Network profiles` |
 | `creditEpochBlocks` | `470_000` | `470_000` | `400` | timescale | fixed-rate ≈ 2.5 × epoch, preserving mainnet's ordering (epoch < fixed-rate period) | CHOSEN | `TYPES_INTERFACE → Network profiles` |
@@ -310,8 +311,9 @@ under → Size caps.
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
-| `MAX_INV_IDS` | `400` | ids per `Inv`, modifiers per response | format | the send-side batch cap, enforced on receipt as well; none stated for the number | CHOSEN | `NET_INTERFACE → Inv` |
-| `MAX_CHAIN_RESPONSE_ITEMS` | `400` | headers or blocks per response — the page of fork resolution's header walk, its branch scoring and its block fetch | format | the same batch cap as `MAX_INV_IDS`; none stated for the number | CHOSEN | `NET_INTERFACE → Pull Requests` |
+| `MAX_INV_IDS` | `400` | post-body ids per `ModifierRequest`, bodies per `ModifierResponse` | format | the send-side batch cap, enforced on receipt as well; none stated for the number | CHOSEN | `NET_INTERFACE → ModifierRequest` |
+| `MAX_CHAIN_RESPONSE_ITEMS` | `400` | headers per `Headers` page, ids per `GetBlocks` request and blocks per answer | format | the same batch cap as `MAX_INV_IDS`; none stated for the number | CHOSEN | `NET_INTERFACE → Pull Requests` |
+| `MAX_LOCATOR_HASHES` | `28` | hashes per `GetHeaders` locator | format | a locator is at most `⌊log₂ tip⌋ + 2` hashes, and a tip is below `MAX_ADVERTISED_HEIGHT` (10⁸ < 2²⁷): `26 + 2` | DERIVED | `NET_INTERFACE → GetHeaders / GetBlocks responses` |
 | `MAX_SERVE_BODY_BYTES` | `4_194_304` | 4 MiB per served response | policy | half of `MAX_STREAM_BYTES`, so a response fits the read cap at the other end; above `MAX_ORDERING_BLOCK_BYTES`, so one legal block always fits | DERIVED | `NET_INTERFACE → Validation` |
 | `MAX_STREAM_BYTES` | `8_388_608` | 8 MiB buffered per inbound stream | format | twice the largest legitimate message; the base number is none stated | CHOSEN | `NET_INTERFACE → Validation` |
 | `MAX_PEERS_ENTRIES` | `64` | entries per `Peers` response | format | none stated; 8 are served | CHOSEN | `NET_INTERFACE → Peers` |
@@ -321,11 +323,19 @@ under → Size caps.
 | `MAX_ADDRESS_BYTES` | `255` | a multiaddr | format | none stated | CHOSEN | `NET_INTERFACE → Handshake` |
 | `MAX_ADVERTISED_HEIGHT` | `100_000_000` | ~190 years at one block a minute | format | a horizon no honest chain reaches | DERIVED | `NET_INTERFACE → Validation` |
 | `GET_PEERS_RESPONSE_LIMIT` | `8` | peers served per `GetPeers` | policy | none stated | CHOSEN | `NET_INTERFACE → Peers` |
-| `SYNC_INFO_MIN_INTERVAL_MS` | `100` | 100 ms between the `SyncInfo`s acted on from one peer | policy | user ruling, 2026-10-15 — Ergo's `PerPeerSyncLockTime`; an honest peer sends one per advancing batch, a round trip and a block apply after the last, and one per poll | RULED | `NET_INTERFACE → Serve Side` |
-| `MAX_PENDING_BLOCK_REQUESTS` | `4` | block requests of one peer waiting for its answer | policy | the requester's outstanding cap, `4 × MAX_INV_IDS` ids, in full requests | DERIVED | `NET_INTERFACE → Serve Side` |
-| `MAX_DATA_EVENTS_PER_PEER` | `8` | sync data events one peer holds in the queue | policy | twice an honest peer's four outstanding requests: as this node's sync peer it queues an Inv and an answer for each, as a peer behind this node its requests | DERIVED | `NET_INTERFACE → Biased Event Loop` |
-| `MAX_INBOUND_SYNC_STREAMS` | `16` | sync streams of one connection open at once | policy | decided 2026-10-15 — over twice the seven an honest peer holds open toward this node — four one-way messages and three queries, each kind one at a time; a waiting stream is unread and costs at most the muxer's 256 KiB initial window, so 16 cost 4 MiB a connection | DECIDED | `NET_INTERFACE → Stream Protocols` |
+| `SYNC_INFO_MIN_INTERVAL_MS` | `100` | 100 ms between the `SyncInfo`s acted on from one peer | policy | user ruling, 2026-10-15 — Ergo's `PerPeerSyncLockTime`; an honest peer sends one at peer-active, one per poll and a reply to each of ours it acts on | RULED | `NET_INTERFACE → Serve Side` |
+| `MAX_INBOUND_SYNC_STREAMS` | `16` | sync streams of one connection open at once | policy | decided 2026-10-15 — over three times the five an honest peer holds open toward this node — a `SyncInfo` and four queries (headers, blocks, post bodies, peers), each kind one at a time; a waiting stream is unread and costs at most the muxer's 256 KiB initial window, so 16 cost 4 MiB a connection | DECIDED | `NET_INTERFACE → Stream Protocols` |
+| `STALL_MARK_EXPIRY_MS` | `1_800_000` | 30 minutes a stall mark stands | policy | decided 2026-10-17: with each of `maxPeers` (50) outbound peers returning as its mark expires, each return holds the gate at most one header deadline (`SYNC_REQUEST_TIMEOUT_MS`, 10 s) — 50 × 10 s = 500 s, under 1 800 s, so the gate still holds; a stream of fresh peer ids is bounded by the outbound manager's dial cadence | DECIDED | `NET_INTERFACE → Stall Detection` |
+| `MAX_STALL_MARKS` | `1_024` | stall marks kept by peer id | policy | decided 2026-10-17: about 100 B an entry, so about 100 KB; dropping the oldest lets a peer back early only behind 1 024 newer stallers | DECIDED | `NET_INTERFACE → Stall Detection` |
 | `GOSSIP_SEEN_WINDOW_MS` | `120_000` | two minutes a gossip message's id stays seen | policy | gossipsub's default, kept; above the five heartbeats — five seconds — a message stays in a peer's gossip cache; none stated for the number | CHOSEN | `NET_INTERFACE → Gossip Topics` |
+
+### node
+
+`packages/node` — the pipeline's literal, outside the drift test (→ The drift test).
+
+| Name | Value | Reads as | Kind | Argument | Status | Rule |
+|---|---|---|---|---|---|---|
+| `BLOCK_FETCH_WINDOW` (literal) | `400` | blocks the pipeline wants above the applied tip when extending | policy | decided 2026-10-17: one block request's ids (`MAX_CHAIN_RESPONSE_ITEMS`), so what extension stages is at most 400 × `MAX_ORDERING_BLOCK_BYTES` — about 800 MB at the cap, kilobytes a block in practice; a switch's prefix is bounded by work instead (`NODE_INTERFACE → Fork choice decides on verified headers`) | DECIDED | `NODE_INTERFACE → Fork choice decides on verified headers` |
 
 ## Producer policy
 
@@ -379,8 +389,8 @@ check can tell an omission from an exclusion.
 | `MAGIC_MAINNET`, `MAGIC_TESTNET`, `MAGIC_DEVNET`, `magic` | network identity, not a tunable — `ARCHITECTURE → Network Identity` |
 | `VLQ_SENTINEL` | the all-ones sentinel a total writer emits out of domain — `TYPES_INTERFACE → Serialization` |
 | `MAX_UINT32` | the domain bound of a `u32` field |
-| `MSG_HANDSHAKE`, `MSG_SYNC_INFO`, `MSG_INV`, `MSG_MODIFIER_REQUEST`, `MSG_MODIFIER_RESPONSE`, `MSG_GET_PEERS`, `MSG_PEERS`, `MSG_GET_HEADERS`, `MSG_HEADERS`, `MSG_GET_BLOCKS`, `MSG_BLOCKS` | message codes — `NET_INTERFACE → Frame Format` |
-| `MODIFIER_ORDERING_BLOCK`, `MODIFIER_POST_BODY` | modifier type ids — `NET_INTERFACE → ModifierRequest` |
+| `MSG_HANDSHAKE`, `MSG_SYNC_INFO`, `MSG_MODIFIER_REQUEST`, `MSG_MODIFIER_RESPONSE`, `MSG_GET_PEERS`, `MSG_PEERS`, `MSG_GET_HEADERS`, `MSG_HEADERS`, `MSG_GET_BLOCKS`, `MSG_BLOCKS` | message codes — `NET_INTERFACE → Frame Format` |
+| `MODIFIER_POST_BODY` | the modifier type id — `NET_INTERFACE → ModifierRequest` |
 | `IDENTITY_RECORD_TAG` | field 1 of the identity record's AVL value, `0x80` — a layout discriminator, not a tunable — `TYPES_INTERFACE → Layout — IdentityRecord`; the tree's key tags are `TREE_TAG`'s (`TYPES_INTERFACE → The tree keys`) |
 | `GET_PEERS_INTERVAL_MS`, `OUTBOUND_TICK_INTERVAL_MS` | local cadences — `NET_INTERFACE → Outbound Manager` |
 | `genesisCommitteeKeys`, `faucetPublicKey`, `genesisProofPayload`, `genesisStateRoot`, `genesisId`, `bootstrapPeers`, `backerTable` | identity fields — non-numeric, listed for completeness |

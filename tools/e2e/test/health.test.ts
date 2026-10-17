@@ -101,7 +101,7 @@ describe('health', () => {
       expect(tip.hash).toBe(tips[0]!.hash);
     }
 
-    await waitSynced(mesh.nodes.filter((n) => n !== miner));
+    await waitSynced(mesh.nodes);
 
     // ---- /health before any post: shape, values, null last_post ----
     for (const node of mesh.nodes) {
@@ -119,7 +119,10 @@ describe('health', () => {
       // H2: measure the mesh topology — bootstrap-first may be a star
       expect(peersConnected).toBeGreaterThanOrEqual(1);
 
-      expect(h['sync_phase']).toBe(node === miner ? 'idle' : 'synced');
+      // NET_INTERFACE → Sync State Machine → "`synced` — the best chain is
+      // fully applied and every unmarked Active peer's claim is settled."
+      // A miner with followers whose claims have settled reads `synced` too.
+      expect(h['sync_phase']).toBe('synced');
       expect(h['syncing']).toBe(false);
       expect(h['last_post_received_ms_ago']).toBeNull();
       expect(typeof h['uptime_seconds']).toBe('number');

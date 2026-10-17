@@ -84,7 +84,6 @@ export {
   getPopowHeaderByHash,
   getPopowHeaderAtHeight,
   getLastHeaders,
-  getHeadersAbove,
 } from './ordering.js';
 
 export {
@@ -167,6 +166,22 @@ export {
   headerStanding,
   purgeRefusedHeaders,
 } from './refused-headers.js';
+
+export {
+  insertHeader,
+  getHeaderRow,
+  getBestTip,
+  getBestHashAt,
+  headersHeavierThan,
+  rewriteBestChain,
+  removeHeaderSubtree,
+  pruneHeadersBelow,
+  stageBlock,
+  getStagedBlock,
+  hasStagedBlock,
+  unstageBlock,
+} from './header-tree.js';
+export type { HeaderRow } from './header-tree.js';
 
 export {
   getUsername,

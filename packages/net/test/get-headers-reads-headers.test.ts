@@ -129,7 +129,8 @@ describe('GetHeaders reads the header provider, not the block provider', () => {
     // startup have had their reads — the assertion is about the GetHeaders
     // arm in particular.
     const blockCallsBefore = blockCalls;
-    const headers = await nodeB.requestHeaders(1, 1, nodeA.peerId());
+    // A locator the chain holds no entry of — the arm answers from height 1.
+    const headers = await nodeB.requestHeaders(['ff'.repeat(32)], nodeA.peerId());
     const blockCallsForQuery = blockCalls - blockCallsBefore;
 
     // A control: the request answered rather than threw.
@@ -152,7 +153,7 @@ describe('GetHeaders reads the header provider, not the block provider', () => {
     await nodeB.start();
     await waitConnected(nodeA, nodeB);
 
-    const headers = await nodeB.requestHeaders(1, 1, nodeA.peerId());
+    const headers = await nodeB.requestHeaders(['ff'.repeat(32)], nodeA.peerId());
     // Zero bytes reaches the caller as an empty array (NET_INTERFACE →
     // Sync Handler Registration → "A node that has registered no provider
     // for a query answers it zero bytes").

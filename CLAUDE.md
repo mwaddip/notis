@@ -34,8 +34,9 @@ Run the last two **per package**: `pnpm -r test` fails fast and hides everything
 **The build step is load-bearing, not advisory:** `tools/e2e` spawns `packages/node/dist/index.js` and
 refuses to run against a missing or stale `dist`. See ARCHITECTURE → "Build and test resolution".
 
-**`pnpm -r test` leaves the node's slow tree out** — `pnpm --filter @dagsocial/node test:slow` runs the four deepest
-fork-walk cases (`packages/node/slow/`); run it when a change touches fork resolution or anything it reads. **Every
+**`pnpm -r test` leaves the node's slow tree out** — `pnpm --filter @dagsocial/node test:slow` runs the three deepest
+header-pipeline cases (`packages/node/slow/`); run it when a change touches the pipeline, `reorg`, or anything they
+read. **Every
 pull request runs the full gate, the slow tree included** — `.github/workflows/ci.yml`, one job per workspace member.
 
 ## Architecture
@@ -54,8 +55,10 @@ Nine packages, in dependency order:
   client both run the holdings page — one over the tree, the other over a proof. No client replays a block. No Node
   built-in or global, no I/O; state reaches it through a `StateView` its caller answers.
 - `@dagsocial/nipopow` — NiPoPoW proofs over ordering-block headers: the proof codecs, `verifyProof`, `compareProofs`, `proveWithReader`. **Pure functions only.**
-- `@dagsocial/net` — libp2p + Gossipsub relay, whole-block sync, peer management.
-- `@dagsocial/node` — Express server, PoW, verifier, SQLite store, AVL+ state root, block creator; it runs `consensus`'s rules over its store.
+- `@dagsocial/net` — libp2p + Gossipsub relay, the headers-first sync scheduler (whom to ask for what: headers by
+  locator, blocks by id), peer management.
+- `@dagsocial/node` — Express server, PoW, verifier, SQLite store, AVL+ state root, block creator, and the header
+  pipeline — the one place a chain is chosen, by verified work; it runs `consensus`'s rules over its store.
 - `@dagsocial/web` — the browser client, built with vite. The **read surface** — feed, threads, a
   tiling workspace, both themes — and the **write surface's first slice**: an identity held in the
   browser, the composer for a root and a reply, and like, on transactions the client builds and signs

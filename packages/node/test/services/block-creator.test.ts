@@ -5,7 +5,7 @@ import {
   signTransaction,
   solveHeaderPow,
   makePostTx, seedPostTx, fillerTx, coinbaseOf,
-  seedEmissionBox, makeApplicableBlock, liveProver, seedBoxes} from '../helpers.js';
+  seedEmissionBox, makeApplicableBlock, liveProver, seedBoxes, applyBlockThroughIntake, wireIntakeForTests} from '../helpers.js';
 import type { AvlProverHandle } from '../../src/state/avl-prover.js';
 import type { StateRootSpeculation } from '../../src/services/block-apply.js';
 import {
@@ -625,9 +625,8 @@ describe('block-creator', () => {
     const posts = await importPosts();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
-    const blockApply = (await import('../../src/services/block-apply.js')).applyOrderingBlock;
     const block0 = await makeApplicableBlock({ utxoTxs: [] });
-    blockApply(block0);
+    expect(await applyBlockThroughIntake(block0)).toBe(true);
 
     // Set up identity
     const author = makeTestIdentity();
@@ -672,6 +671,7 @@ describe('block-creator', () => {
     }
 
     // Entries the body claimed leave the pool at finalize.
+    await wireIntakeForTests();
     const nonce = solveHeaderPow(template!.header);
     expect(bc.submitMinedBlock(nonce, template!.header.height)).not.toBeNull();
     const remaining = mempool.getPendingEntries(100);
@@ -689,9 +689,8 @@ describe('block-creator', () => {
     await importPosts();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
-    const blockApply = (await import('../../src/services/block-apply.js')).applyOrderingBlock;
     const block0 = await makeApplicableBlock({ utxoTxs: [] });
-    blockApply(block0);
+    expect(await applyBlockThroughIntake(block0)).toBe(true);
 
     // Set up identity
     const author = makeTestIdentity();
@@ -719,6 +718,7 @@ describe('block-creator', () => {
     const { postsOf } = await import('@dagsocial/consensus');
     expect(postsOf(template!).map((p) => p.postId)).toContain(postId);
     // Both entries leave the pool at finalize.
+    await wireIntakeForTests();
     const nonce = solveHeaderPow(template!.header);
     expect(bc.submitMinedBlock(nonce, template!.header.height)).not.toBeNull();
     const remaining = mempool.getPendingEntries(100);
@@ -870,8 +870,14 @@ describe('block-creator', () => {
       // body did not claim are the tail of it in FIFO order.
       const pending = mempool.getPendingEntries(POOL + 10);
       expect(pending.map((e) => e.rowid)).toEqual(rowids);
+      await wireIntakeForTests();
       const nonce = solveHeaderPow(bound!.header);
-      expect(bc.submitMinedBlock(nonce, bound!.header.height)).not.toBeNull();
+      // The mocked speculation accepts the filler body; the intake's apply
+      // refuses it (the fillers' inputs are nowhere), so submitMinedBlock
+      // answers null. What the subject here tests is mempool cleanup — the
+      // confirmed rowids leave on both arms (the apply either consumed them
+      // or the submit refused and swept them).
+      bc.submitMinedBlock(nonce, bound!.header.height);
       expect(
         mempool.getPendingEntries(POOL + 10).map((e) => e.rowid),
       ).toEqual(rowids.slice(KEEP));

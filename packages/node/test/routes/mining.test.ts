@@ -13,7 +13,7 @@ import { createApp } from '../../src/server.js';
 import type { Config } from '../../src/config.js';
 import type { OrderingBlock } from '@dagsocial/types';
 import { profileFor } from '@dagsocial/types';
-import { liveProver } from '../helpers.js';
+import { liveProver, wireIntakeForTests } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -59,6 +59,9 @@ function makeDeps(overrides: Partial<MiningDeps> = {}): MiningDeps {
     // Peer-ready by default: every case in this file that is not about the gate
     // is about a node that has met its peers.
     peerReady: () => true,
+    // Window open by default: every case in this file is about serve, auth or
+    // body — the window gate's own cases are `mining-window-gate.test.ts`.
+    windowOpen: () => true,
     miningSecret: SECRET,
     getUsername: () => null,
     ...overrides,
@@ -482,6 +485,7 @@ describe('mining routes — mount policy', () => {
       bc.startBlockCreator(cfg);
       bc.createOrderingBlock();
       expect(bc.getCurrentTemplate()).not.toBeNull();
+      await wireIntakeForTests();
 
       markDiscoveryStarted(); // bootstrap addresses configured, no peer yet
       expect(isPeerReady()).toBe(false);
@@ -502,6 +506,7 @@ describe('mining routes — mount policy', () => {
       bc.createOrderingBlock();
       const tpl = bc.getCurrentTemplate();
       expect(tpl).not.toBeNull();
+      await wireIntakeForTests();
 
       markDiscoveryUnavailable();
       expect(isPeerReady()).toBe(true);
@@ -512,6 +517,37 @@ describe('mining routes — mount policy', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.header.height).toBe(tpl!.header.height);
+    });
+
+    it('withholds a template while the intake is uninitialised', async () => {
+      // The window gate reads the intake (NODE_INTERFACE → Fork choice decides
+      // on verified headers → "One intake, one at a time"). A node whose
+      // intake is not wired cannot apply a mined block, so the template
+      // route must withhold — in production the intake is wired in `wireNet`
+      // before the server serves (NODE_INTERFACE → Sync handlers (pull-path)).
+      const bc = await import('../../src/services/block-creator.js');
+      await liveProver();
+      const cfg = makeConfig({ miningSecret: SECRET });
+      bc.startBlockCreator(cfg);
+      bc.createOrderingBlock();
+      expect(bc.getCurrentTemplate()).not.toBeNull();
+
+      // Clear the intake deliberately — the state a node has before
+      // `wireNet` runs.
+      const intake = await import('../../src/services/intake.js');
+      intake.resetIntakeForTests();
+
+      markDiscoveryUnavailable();
+      expect(isPeerReady()).toBe(true);
+
+      const res = await request(createApp(cfg))
+        .get('/mining/template')
+        .set('Authorization', `Bearer ${SECRET}`);
+
+      // The last assertion names the rule: the gate holds, and the route
+      // answers the absent-template 404 at serve.
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('No block template available');
     });
   });
 

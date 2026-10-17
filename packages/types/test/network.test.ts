@@ -41,6 +41,7 @@ const REQUIRED_PROFILE_FIELDS = [
   'inviteProbationBlocks',
   'creditMinerRewardDelay',
   'maxReorgDepth',
+  'minimumChainWork',
   'protocolVersionSchedule',
   'creditFixedRateBlocks',
   'creditEpochBlocks',
@@ -305,6 +306,16 @@ describe('NETWORK_PROFILES', () => {
     }
     const largest = Math.max(...profiles.map(p => p.maxReorgDepth));
     expect(NETWORK_PROFILES.testnet.maxReorgDepth).toBe(largest);
+  });
+
+  // TYPES_INTERFACE → Network profiles: the least work a best chain must carry before any block is
+  // fetched along it. 0n on all three networks.
+  it('every profile carries minimumChainWork, a bigint equal to 0n', () => {
+    for (const p of Object.values(NETWORK_PROFILES)) {
+      const value = p.minimumChainWork;
+      expect(typeof value, `${p.networkType}.minimumChainWork`).toBe('bigint');
+      expect(value, `${p.networkType}.minimumChainWork`).toBe(0n);
+    }
   });
 
   // ARCHITECTURE → What varies per network: the multiplier is a cap, field-only.

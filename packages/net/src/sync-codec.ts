@@ -1,7 +1,7 @@
 import { encodeFrame } from './frame.js';
-import type { SyncInfo, Inv, ModifierRequest, ModifierResponse } from './sync-types.js';
+import type { SyncInfo, ModifierRequest, ModifierResponse } from './sync-types.js';
 import {
-  MSG_SYNC_INFO, MSG_INV, MSG_MODIFIER_REQUEST, MSG_MODIFIER_RESPONSE,
+  MSG_SYNC_INFO, MSG_MODIFIER_REQUEST, MSG_MODIFIER_RESPONSE,
   MSG_GET_PEERS, MSG_PEERS,
   MSG_GET_HEADERS, MSG_HEADERS, MSG_GET_BLOCKS, MSG_BLOCKS,
 } from './types.js';
@@ -34,6 +34,7 @@ import {
   isHeight,
   MAX_CAPABILITY_CODE,
   MAX_CHAIN_RESPONSE_ITEMS,
+  MAX_LOCATOR_HASHES,
   MAX_PEERS_ENTRIES,
   MAX_INV_IDS,
   MAX_NAME_BYTES,
@@ -77,22 +78,24 @@ export function readBoundedCapabilities(r: ByteReader, name: string): number[] {
 }
 
 // ---------------------------------------------------------------------------
-// SyncInfo (2) — NET_INTERFACE → SyncInfo
+// SyncInfo (2) — NET_INTERFACE → SyncInfo (code 2)
 //
-// vlqU(tipHeight)
+// vlqU(tipHeight) ‖ hexN(tipHash, 32)
 // ---------------------------------------------------------------------------
 
 export const syncInfoCodec: StructCodec<SyncInfo> = {
   name: 'syncInfo',
   write(w, msg) {
     writeVlqU(w, msg.tipHeight);
+    writeHexNOrThrow(w, msg.tipHash, 32);
   },
   read(r) {
     const tipHeight = readVlqU(r);
     if (!isHeight(tipHeight)) {
       throw new ReaderError(`syncInfo: tipHeight ${tipHeight} out of domain`, 'out-of-domain');
     }
-    return { tipHeight };
+    const tipHash = readHexN(r, 32);
+    return { tipHeight, tipHash };
   },
 };
 
@@ -105,52 +108,39 @@ export function decodeSyncInfo(body: Uint8Array): SyncInfo | null {
 }
 
 // ---------------------------------------------------------------------------
-// Inv (3) / ModifierRequest (4) — NET_INTERFACE → Inv / ModifierRequest
+// ModifierRequest (4) — NET_INTERFACE → ModifierRequest
 //
 // u8(typeId) ‖ arr( hexN(id, 32) )
 //
 // typeId is u8 — the byte is the domain; unknown values decode and are dropped
-// by the handler (the sync machine's typeId filter; node.ts filters
-// ModifierRequest by typeId before dispatch). 1–MAX_INV_IDS ids; empty is
-// malformed (nonEmpty — no honest sender announces or requests nothing).
+// by the handler (node.ts filters ModifierRequest by typeId before dispatch).
+// 1–MAX_INV_IDS ids; empty is malformed (nonEmpty — no honest sender requests
+// nothing).
 // ---------------------------------------------------------------------------
 
-function idListCodec(name: string): StructCodec<{ typeId: number; ids: string[] }> {
-  return {
-    name,
-    write(w, msg) {
-      writeU8OrThrow(w, msg.typeId);
-      writeArr(w, msg.ids, (iw, id) => writeHexNOrThrow(iw, id, 32));
-    },
-    read(r) {
-      const typeId = readU8(r);
-      const count = readVlqU(r);
-      if (count < 1) {
-        throw new ReaderError(`${name}: empty id list`, 'out-of-domain');
-      }
-      if (count > MAX_INV_IDS) {
-        throw new ReaderError(
-          `${name}: ${count} ids exceeds ${MAX_INV_IDS}`,
-          'array-too-large',
-        );
-      }
-      const ids: string[] = [];
-      for (let i = 0; i < count; i++) ids.push(readHexN(r, 32));
-      return { typeId, ids };
-    },
-  };
-}
-
-export const invCodec = idListCodec('inv');
-export const modifierRequestCodec = idListCodec('modifierRequest');
-
-export function encodeInv(magic: number, inv: Inv): Uint8Array {
-  return encodeFrame(magic, MSG_INV, encodeStruct(invCodec, inv));
-}
-
-export function decodeInv(body: Uint8Array): Inv | null {
-  return tryDecodeStruct(invCodec, body);
-}
+export const modifierRequestCodec: StructCodec<{ typeId: number; ids: string[] }> = {
+  name: 'modifierRequest',
+  write(w, msg) {
+    writeU8OrThrow(w, msg.typeId);
+    writeArr(w, msg.ids, (iw, id) => writeHexNOrThrow(iw, id, 32));
+  },
+  read(r) {
+    const typeId = readU8(r);
+    const count = readVlqU(r);
+    if (count < 1) {
+      throw new ReaderError('modifierRequest: empty id list', 'out-of-domain');
+    }
+    if (count > MAX_INV_IDS) {
+      throw new ReaderError(
+        `modifierRequest: ${count} ids exceeds ${MAX_INV_IDS}`,
+        'array-too-large',
+      );
+    }
+    const ids: string[] = [];
+    for (let i = 0; i < count; i++) ids.push(readHexN(r, 32));
+    return { typeId, ids };
+  },
+};
 
 export function encodeModifierRequest(magic: number, req: ModifierRequest): Uint8Array {
   return encodeFrame(magic, MSG_MODIFIER_REQUEST, encodeStruct(modifierRequestCodec, req));
@@ -288,55 +278,59 @@ export function decodePeers(body: Uint8Array): PeersMsg | null {
 // ---------------------------------------------------------------------------
 // GetHeaders (14) / GetBlocks (16) requests — positional
 //
-// Two `vlqU` fields each, in declared order, with no discriminator inside the
-// body: the frame's code is what says which query this is (NET_INTERFACE →
-// `GetHeaders` / `GetBlocks` responses). Both fields of both requests drive a
-// serve loop that reads the store once per height, so both are bounded here
-// exactly like an advertised chain height.
+// `arr( hexN(hash, 32) )` for both, with the frame's code the discriminator:
+// 14 carries the locator (1–`MAX_LOCATOR_HASHES`), 16 the ids (1–
+// `MAX_CHAIN_RESPONSE_ITEMS`); the count is read and refused before the first
+// element, and an empty list is malformed (NET_INTERFACE →
+// `GetHeaders` / `GetBlocks` responses).
 //
 // `decodeStruct` supplies the rest of the boundary check — exhaustion and the
 // re-encode compare, which is what refuses a non-minimal VLQ (TYPES_INTERFACE →
 // The boundary check).
 // ---------------------------------------------------------------------------
 
-/** A two-field positional request whose fields are both heights. */
-function heightPairCodec<T>(
+/** A nonEmpty hash list, bounded by `maxCount` and refused before the first element. */
+function hashListRequestCodec<T>(
   name: string,
-  fields: [keyof T & string, keyof T & string],
+  field: keyof T & string,
+  maxCount: number,
 ): StructCodec<T> {
-  const [first, second] = fields;
   return {
     name,
     write(w, value) {
-      writeVlqU(w, value[first] as number);
-      writeVlqU(w, value[second] as number);
+      const list = value[field] as unknown as string[];
+      writeVlqU(w, list.length);
+      for (const h of list) writeHexNOrThrow(w, h, 32);
     },
     read(r) {
-      const a = readVlqU(r);
-      const b = readVlqU(r);
-      if (!isHeight(a) || !isHeight(b)) {
-        // Well-formed VLQ heights outside the advertisable range —
-        // WIRE_INTERFACE → ReaderError codes, `out-of-domain`; the bound
-        // and its ban policy: NET_INTERFACE → Validation (and untrusted-input safety).
+      const count = readVlqU(r);
+      if (count < 1) {
+        throw new ReaderError(`${name}: empty hash list`, 'out-of-domain');
+      }
+      if (count > maxCount) {
         throw new ReaderError(
-          `${name}: ${a}/${b} is outside the advertisable height range`,
-          'out-of-domain',
+          `${name}: ${count} entries exceeds ${maxCount}`,
+          'array-too-large',
         );
       }
-      return { [first]: a, [second]: b } as T;
+      const list: string[] = [];
+      for (let i = 0; i < count; i++) list.push(readHexN(r, 32));
+      return { [field]: list } as T;
     },
   };
 }
 
-export const getHeadersCodec = heightPairCodec<GetHeadersMsg>('getHeaders', [
-  'startHeight',
-  'maxCount',
-]);
+export const getHeadersCodec = hashListRequestCodec<GetHeadersMsg>(
+  'getHeaders',
+  'locator',
+  MAX_LOCATOR_HASHES,
+);
 
-export const getBlocksCodec = heightPairCodec<GetBlocksMsg>('getBlocks', [
-  'startHeight',
-  'endHeight',
-]);
+export const getBlocksCodec = hashListRequestCodec<GetBlocksMsg>(
+  'getBlocks',
+  'ids',
+  MAX_CHAIN_RESPONSE_ITEMS,
+);
 
 export function encodeGetHeaders(magic: number, msg: GetHeadersMsg): Uint8Array {
   return encodeFrame(magic, MSG_GET_HEADERS, encodeStruct(getHeadersCodec, msg));
@@ -533,22 +527,21 @@ export function encodeHeaders(magic: number, headers: BlockHeader[]): Uint8Array
   );
 }
 
-/** Parse a `Headers` response body. See `decodeBlocks`. */
-export function decodeHeaders(
-  body: Uint8Array,
-  maxHeaders: number,
-): BlockHeader[] | null {
-  return tryDecodeStruct(headersResponseCodec(responseCap(maxHeaders)), body);
+/** Parse a `Headers` response body. Cap: `MAX_CHAIN_RESPONSE_ITEMS` (400),
+ *  the one shape and bound a `Headers` page has (NET_INTERFACE →
+ *  `GetHeaders` / `GetBlocks` responses). */
+export function decodeHeaders(body: Uint8Array): BlockHeader[] | null {
+  return tryDecodeStruct(headersResponseCodec(MAX_CHAIN_RESPONSE_ITEMS), body);
 }
 
 /**
  * How many items a response to a request of this size may carry.
  *
- * Clamped to `MAX_CHAIN_RESPONSE_ITEMS` because the requested size is derived
- * from peer-supplied heights (`requestBlocks` spans `forkHeight + 1` to a tip
- * height that came off the wire), so it is not by itself a bound. A nonsensical
- * request size accepts an empty response and nothing else, rather than
- * falling back to a permissive default.
+ * Clamped to `MAX_CHAIN_RESPONSE_ITEMS` because the requested size is the
+ * number of ids the caller asked for, and a caller's count is not by itself
+ * a bound (NET_INTERFACE → `GetHeaders` / `GetBlocks` responses). A
+ * nonsensical requested size accepts an empty response and nothing else,
+ * rather than falling back to a permissive default.
  */
 function responseCap(requested: number): number {
   if (!Number.isSafeInteger(requested) || requested < 0) return 0;

@@ -208,6 +208,32 @@ const MIGRATIONS = [
     height      INTEGER NOT NULL,
     refused_at  INTEGER NOT NULL
   )`,
+
+  // NODE_INTERFACE → Header tree.
+  `CREATE TABLE IF NOT EXISTS block_headers (
+    hash         TEXT PRIMARY KEY,
+    height       INTEGER NOT NULL,
+    prev_hash    TEXT NOT NULL,
+    header_bytes BLOB NOT NULL,
+    interlinks   BLOB NOT NULL,
+    chain_work   BLOB NOT NULL,
+    path_t_a     INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_block_headers_prev   ON block_headers(prev_hash)`,
+  `CREATE INDEX IF NOT EXISTS idx_block_headers_height ON block_headers(height)`,
+  `CREATE INDEX IF NOT EXISTS idx_block_headers_work   ON block_headers(chain_work)`,
+
+  `CREATE TABLE IF NOT EXISTS best_chain (
+    height  INTEGER PRIMARY KEY,
+    hash    TEXT NOT NULL
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS staged_blocks (
+    hash        TEXT PRIMARY KEY,
+    height      INTEGER NOT NULL,
+    block_bytes BLOB NOT NULL,
+    from_peer   TEXT NOT NULL
+  )`,
 ];
 
 // NODE_INTERFACE → AVL+ State Root → "AVL storage shares nodes across versions; a row is a node's lifetime"

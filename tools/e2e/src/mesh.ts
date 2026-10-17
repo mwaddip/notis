@@ -2,7 +2,7 @@ import { randomBytes } from 'crypto';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { spawnNode, waitForStatus, type NodeProcess } from './node-process.js';
+import { spawnNode, waitForStatus, awaitExit, type NodeProcess } from './node-process.js';
 import { p2pPort } from './ports.js';
 import { assertDistFresh, NODE_LOADS } from './dist-freshness.js';
 
@@ -15,7 +15,12 @@ export interface MeshOptions {
 export interface Mesh {
   nodes: NodeProcess[];
   miningSecret: string;
-  addNode(bootstrapPeers?: string[]): Promise<NodeProcess>;
+  addNode(bootstrapPeers?: string[], env?: Record<string, string>): Promise<NodeProcess>;
+  restartNode(
+    node: NodeProcess,
+    env?: Record<string, string>,
+    bootstrapPeers?: string[],
+  ): Promise<NodeProcess>;
   teardown(): Promise<void>;
 }
 
@@ -51,7 +56,10 @@ export async function createMesh(opts: MeshOptions): Promise<Mesh> {
     throw err;
   }
 
-  async function addNode(bootstrapPeers?: string[]): Promise<NodeProcess> {
+  async function addNode(
+    bootstrapPeers?: string[],
+    env?: Record<string, string>,
+  ): Promise<NodeProcess> {
     const idx = nextIndex++;
     const peers = bootstrapPeers ?? [bootstrapAddr];
     const node = spawnNode({
@@ -60,11 +68,37 @@ export async function createMesh(opts: MeshOptions): Promise<Mesh> {
       dbPath: join(runDir, `node-${idx}.db`),
       miningSecret,
       bootstrapPeers: peers.join(','),
-      env: opts.env,
+      env: { ...opts.env, ...env },
     });
     nodes.push(node);
     await waitForStatus(node);
     return node;
+  }
+
+  async function restartNode(
+    node: NodeProcess,
+    env?: Record<string, string>,
+    bootstrapPeers?: string[],
+  ): Promise<NodeProcess> {
+    node.kill();
+    await awaitExit(node);
+    const slot = nodes.indexOf(node);
+    if (slot < 0) {
+      throw new Error(`restartNode: node :${node.httpPort} is not in this mesh`);
+    }
+    const peers =
+      bootstrapPeers !== undefined ? bootstrapPeers.join(',') : node.bootstrapPeers;
+    const next = spawnNode({
+      fileIndex: node.fileIndex,
+      nodeIndex: node.nodeIndex,
+      dbPath: node.dbPath,
+      miningSecret,
+      bootstrapPeers: peers,
+      env: { ...opts.env, ...env },
+    });
+    nodes[slot] = next;
+    await waitForStatus(next);
+    return next;
   }
 
   async function teardown(): Promise<void> {
@@ -73,7 +107,7 @@ export async function createMesh(opts: MeshOptions): Promise<Mesh> {
     rmSync(runDir, { recursive: true, force: true });
   }
 
-  return { nodes, miningSecret, addNode, teardown };
+  return { nodes, miningSecret, addNode, restartNode, teardown };
 }
 
 async function awaitAllExits(nodes: NodeProcess[]): Promise<void> {

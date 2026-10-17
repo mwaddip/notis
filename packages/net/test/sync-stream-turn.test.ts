@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
+  blockHash,
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
   verifyTxProtocolVersion,
@@ -116,6 +117,12 @@ describe("a peer's sync streams are served one at a time", () => {
     nodeA.setHeadersHandler((h) => (h >= 1 && h <= 100 ? makeBigBlock(h) : null));
     nodeA.setHeaderProvider((h) => h === 1 ? makeHeader(1) : null);
     nodeA.setChainHeightProvider(() => 100);
+    nodeA.setHeightByBlockIdProvider((id) => {
+      for (let h = 1; h <= 100; h++) {
+        if (blockHash(makeBigBlock(h).header) === id) return h;
+      }
+      return null;
+    });
     await nodeA.start();
     const addr = nodeA.libp2pNode!.getMultiaddrs()[0]!.toString();
 
@@ -133,13 +140,17 @@ describe("a peer's sync streams are served one at a time", () => {
     const held = await nodeB.libp2pNode!.dialProtocol(peer, SYNC_PROTOCOL, {
       signal: AbortSignal.timeout(2_000),
     });
-    await held.sink([encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 100 })]);
+    // Twenty block ids that A's chain holds — enough to park A's write
+    // against the receive window.
+    const heavyIds: string[] = [];
+    for (let h = 1; h <= 20; h++) heavyIds.push(blockHash(makeBigBlock(h).header)!);
+    await held.sink([encodeGetBlocks(MAGIC, { ids: heavyIds })]);
 
     // Let A begin writing before the second stream arrives.
     await new Promise((r) => setTimeout(r, 300));
 
     const t0 = Date.now();
-    const result = await nodeB.requestHeaders(1, 1, nodeA.peerId())
+    const result = await nodeB.requestHeaders(['ff'.repeat(32)], nodeA.peerId())
       .catch((err: unknown) => err);
     const elapsed = Date.now() - t0;
 
@@ -156,6 +167,12 @@ describe("a peer's sync streams are served one at a time", () => {
     nodeA = new NetNode(makeConfig({ syncRequestTimeoutMs: 1_000 }), validators);
     nodeA.setHeadersHandler((h) => (h >= 1 && h <= 100 ? makeBigBlock(h) : null));
     nodeA.setChainHeightProvider(() => 100);
+    nodeA.setHeightByBlockIdProvider((id) => {
+      for (let h = 1; h <= 100; h++) {
+        if (blockHash(makeBigBlock(h).header) === id) return h;
+      }
+      return null;
+    });
     await nodeA.start();
     const addr = nodeA.libp2pNode!.getMultiaddrs()[0]!.toString();
 
@@ -175,7 +192,9 @@ describe("a peer's sync streams are served one at a time", () => {
     const held = await nodeB.libp2pNode!.dialProtocol(peer, SYNC_PROTOCOL, {
       signal: AbortSignal.timeout(2_000),
     });
-    await held.sink([encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 100 })]);
+    const heavyIds: string[] = [];
+    for (let h = 1; h <= 20; h++) heavyIds.push(blockHash(makeBigBlock(h).header)!);
+    await held.sink([encodeGetBlocks(MAGIC, { ids: heavyIds })]);
     await new Promise((r) => setTimeout(r, 300));
 
     // The second stream is a one-way `SyncInfo` push with a distinct
@@ -186,7 +205,7 @@ describe("a peer's sync streams are served one at a time", () => {
     const pushStream = await nodeB.libp2pNode!.dialProtocol(peer, SYNC_PROTOCOL, {
       signal: AbortSignal.timeout(2_000),
     });
-    await pushStream.sink([encodeSyncInfo(MAGIC, { tipHeight: pushedHeight })]);
+    await pushStream.sink([encodeSyncInfo(MAGIC, { tipHeight: pushedHeight, tipHash: '00'.repeat(32) })]);
     await pushStream.close().catch(() => { /* already gone */ });
 
     // Wait past A's ×5 Blocks write deadline (5 s) with headroom, so A has
@@ -196,6 +215,9 @@ describe("a peer's sync streams are served one at a time", () => {
     // The rule: the push's read ran under a deadline that started at its
     // turn, not when libp2p accepted it; the ~5 s wait is longer than A's
     // 1 s read deadline, and the push was still read.
-    expect(nodeA.peerTipHeight(nodeB.peerId())).toBe(pushedHeight);
+    const schA = (nodeA as unknown as {
+      syncMachine: { getClaimsForTest(): Map<string, { tipHeight: number; tipHash: string }> };
+    }).syncMachine;
+    expect(schA.getClaimsForTest().get(nodeB.peerId())?.tipHeight).toBe(pushedHeight);
   }, TIMEOUT);
 });

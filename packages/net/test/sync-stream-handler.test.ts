@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
+  blockHash,
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
   verifyTxProtocolVersion,
@@ -136,6 +137,16 @@ function makeHandlerHarness(opts: {
     // (NET_INTERFACE → Sync Handler Registration).
     const getBlock = opts.headersHandler;
     net.setHeaderProvider((h) => getBlock(h)?.header ?? null);
+    // The height-by-id provider is derived too — a locator or an id in a
+    // GetBlocks request resolves through this seam.
+    net.setHeightByBlockIdProvider((id) => {
+      for (let h = 1; h <= 1000; h++) {
+        const block = getBlock(h);
+        if (!block) return null;
+        if (blockHash(block.header) === id) return h;
+      }
+      return null;
+    });
   }
   if (opts.chainHeight !== undefined) {
     const h = opts.chainHeight;
@@ -287,18 +298,20 @@ describe('sync stream handler — the chain query arms', () => {
   it('serves GetHeaders as a framed Headers response', async () => {
     const { send } = makeHandlerHarness({ headersHandler: chainProvider(3), chainHeight: 3 });
 
-    const written = await send(encodeGetHeaders(MAGIC, { startHeight: 3, maxCount: 2 }));
+    // A locator the chain holds no entry of — the arm answers from height 1.
+    const written = await send(encodeGetHeaders(MAGIC, { locator: ['ff'.repeat(32)] }));
 
     expect(written).toHaveLength(1);
     const reply = decodeFrame(MAGIC, written[0]!);
     expect(reply.code).toBe(MSG_HEADERS);
-    expect(decodeHeaders(reply.body, 2)!.map((h) => h.height)).toEqual([3, 2]);
+    expect(decodeHeaders(reply.body)!.map((h) => h.height)).toEqual([1, 2, 3]);
   });
 
   it('serves GetBlocks as a framed Blocks response', async () => {
     const { send } = makeHandlerHarness({ headersHandler: chainProvider(3), chainHeight: 3 });
 
-    const written = await send(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 2 }));
+    const ids = [1, 2].map((h) => blockHash(makeQueryBlock(h).header)!);
+    const written = await send(encodeGetBlocks(MAGIC, { ids }));
 
     expect(written).toHaveLength(1);
     const reply = decodeFrame(MAGIC, written[0]!);
@@ -312,9 +325,9 @@ describe('sync stream handler — the chain query arms', () => {
     // consult, so it cannot honestly send the second. Silence would be a third
     // thing, and the only one the caller cannot tell from a hung peer.
     const headers = await makeHandlerHarness()
-      .send(encodeGetHeaders(MAGIC, { startHeight: 3, maxCount: 2 }));
+      .send(encodeGetHeaders(MAGIC, { locator: ['ff'.repeat(32)] }));
     const blocks = await makeHandlerHarness()
-      .send(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 2 }));
+      .send(encodeGetBlocks(MAGIC, { ids: ['aa'.repeat(32), 'bb'.repeat(32)] }));
 
     expect(isEmptyReply(headers)).toBe(true);
     expect(isEmptyReply(blocks)).toBe(true);
@@ -344,7 +357,7 @@ describe('sync stream handler — the chain query arms', () => {
     // malformed body's doing, not the code's.
     const { send, peerMgr, peerId } = makeHandlerHarness({ headersHandler: chainProvider(3), chainHeight: 3 });
 
-    await send(encodeGetHeaders(MAGIC, { startHeight: 3, maxCount: 2 }));
+    await send(encodeGetHeaders(MAGIC, { locator: ['ff'.repeat(32)] }));
 
     expect(peerMgr.isPeerActive(peerId)).toBe(true);
   });
@@ -360,9 +373,9 @@ describe('sync stream handler — the chain query arms', () => {
     };
 
     const headers = await makeHandlerHarness({ headersHandler: counting, active: false })
-      .send(encodeGetHeaders(MAGIC, { startHeight: 3, maxCount: 2 }));
+      .send(encodeGetHeaders(MAGIC, { locator: ['ff'.repeat(32)] }));
     const blocks = await makeHandlerHarness({ headersHandler: counting, active: false })
-      .send(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 2 }));
+      .send(encodeGetBlocks(MAGIC, { ids: ['aa'.repeat(32), 'bb'.repeat(32)] }));
 
     expect(isEmptyReply(headers)).toBe(true);
     expect(isEmptyReply(blocks)).toBe(true);
@@ -381,8 +394,8 @@ describe('sync stream handler — the chain query arms', () => {
       syncMachine: { handleMessage: (_p, code) => { dispatched.push(code); } },
     });
 
-    expect((await harness.send(encodeGetHeaders(MAGIC, { startHeight: 1, maxCount: 1 })))).toHaveLength(1);
-    expect((await harness.send(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 1 })))).toHaveLength(1);
+    expect((await harness.send(encodeGetHeaders(MAGIC, { locator: ['ff'.repeat(32)] })))).toHaveLength(1);
+    expect((await harness.send(encodeGetBlocks(MAGIC, { ids: ['aa'.repeat(32)] })))).toHaveLength(1);
     expect(dispatched).toEqual([]);
   });
 });
@@ -481,15 +494,57 @@ describe('sync stream handler — post body serve (code 103)', () => {
     expect(isEmptyReply(written)).toBe(true);
   });
 
-  it('passes type 101 through to the sync machine', async () => {
+  it('drops a type-101 ModifierRequest unpenalised, with an empty answer', async () => {
+    // NET_INTERFACE → ModifierRequest (code 4) — type id 101 is retired;
+    // the handler decodes the frame and drops it as an unknown type id,
+    // answering an empty frame and recording no penalty.
     const dispatched: number[] = [];
     const { send } = makeHandlerHarness({
       syncMachine: { handleMessage: (_p, code) => { dispatched.push(code); } },
     });
 
     const req = encodeModifierRequest(MAGIC, { typeId: 101, ids: [POST_ID] });
-    await send(req);
+    const written = await send(req);
 
-    expect(dispatched).toEqual([4]);
+    expect(dispatched).toEqual([]);
+    expect(isEmptyReply(written)).toBe(true);
   });
+
+  it('bans the sender on a truncated ModifierRequest body', async () => {
+    // NET_INTERFACE → ModifierRequest — the body's count is read before
+    // the first element; a truncated / malformed body is a permanent ban.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, peerMgr, peerId } = makeHandlerHarness({
+      postBodyProvider: () => null,
+    });
+    // `0xff` opens a VLQ that never closes — the decoder refuses the body.
+    const written = await send(encodeFrame(MAGIC, 4 /* MSG_MODIFIER_REQUEST */, new Uint8Array([0xff])));
+    expect(isEmptyReply(written)).toBe(true);
+    expect(peerMgr.getPeerMetadata(peerId)).toBeNull();
+    expect(peerMgr.isPeerActive(peerId)).toBe(false);
+    warnSpy.mockRestore();
+  });
+
+  it('bans the sender on a ModifierRequest whose id count exceeds the cap', async () => {
+    // NET_INTERFACE → ModifierRequest — "1–MAX_INV_IDS (400) ids, the
+    // count read and refused BEFORE the first element": an over-cap body
+    // is malformed and the sender is permanently banned.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, peerMgr, peerId } = makeHandlerHarness({
+      postBodyProvider: () => null,
+    });
+    // Build a body declaring 401 ids — the codec will refuse the count.
+    // Using encodeModifierRequest with 401 ids would already throw on the
+    // send side; build the body by hand.
+    const body = new Uint8Array(1 + 2);
+    body[0] = MODIFIER_POST_BODY;
+    // vlqU(401) = [0x91, 0x03]
+    body[1] = 0x91;
+    body[2] = 0x03;
+    const written = await send(encodeFrame(MAGIC, 4 /* MSG_MODIFIER_REQUEST */, body));
+    expect(isEmptyReply(written)).toBe(true);
+    expect(peerMgr.getPeerMetadata(peerId)).toBeNull();
+    warnSpy.mockRestore();
+  });
+
 });

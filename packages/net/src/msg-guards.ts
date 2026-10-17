@@ -11,10 +11,10 @@
 /**
  * Largest chain height a peer may advertise.
  *
- * Advertised heights drive serve loops that walk the chain height by height, so
- * an unbounded — or negative — value turns a single packet into a multi-second
- * synchronous DB scan. 100M blocks is ~190 years at one block per minute: far
- * beyond any real chain, far below anything that costs us a loop.
+ * `isHeight()` reads this against every peer-chosen height — the handshake
+ * `chainHeight`, `SyncInfo.tipHeight` and the `peerHeight` the scheduler is
+ * handed at peer-active. 100M blocks is ~190 years at one block per minute:
+ * far beyond any real chain.
  */
 export const MAX_ADVERTISED_HEIGHT = 100_000_000;
 
@@ -33,12 +33,13 @@ export const MAX_CAPABILITY_CODE = 65_535;
 // ---------------------------------------------------------------------------
 
 /**
- * Largest `ids` / `anchors` / `modifiers` array accepted from a peer.
+ * Largest `ids` / `modifiers` array accepted from a peer.
  *
- * 400 is the send-side batch cap (NET_INTERFACE → Inv): at most 400 ids per batch. The
- * same number bounds what a peer may send *us* — the cap has to be enforced on
- * receipt, since an attacker has no reason to honour the one we apply to
- * ourselves. Over-cap arrays are dropped and the sender penalized.
+ * 400 is the send-side batch cap (NET_INTERFACE → ModifierRequest): at
+ * most 400 ids per batch. The same number bounds what a peer may send
+ * *us* — the cap has to be enforced on receipt, since a hostile sender
+ * has no reason to honour the one we apply to ourselves. Over-cap
+ * arrays are dropped and the sender penalized.
  */
 export const MAX_INV_IDS = 400;
 
@@ -67,14 +68,25 @@ export const MAX_NAME_BYTES = 255;
 export const MAX_ADDRESS_BYTES = 255;
 
 /**
+ * Largest number of hashes a `GetHeaders` (14) locator carries
+ * (NET_INTERFACE → `GetHeaders` / `GetBlocks` responses).
+ *
+ * The locator is `h₀ = tip, hᵢ₊₁ = hᵢ − 2ⁱ` for as long as `hᵢ₊₁ ≥ 1`,
+ * plus height 1 when the sequence did not land on it, so at most
+ * `⌊log₂ tip⌋ + 2` entries. A tip below `MAX_ADVERTISED_HEIGHT` (10⁸ < 2²⁷)
+ * reaches `26 + 2 = 28`.
+ */
+export const MAX_LOCATOR_HASHES = 28;
+
+/**
  * Largest number of items in a `Headers` (15) or `Blocks` (17) response —
  * enforced on BOTH sides.
  *
- * 400 is the same batch cap `MAX_INV_IDS` carries for the inventory messages
- * (NET_INTERFACE → Inv), and the two responses these codes serve are the same
- * kind of thing: a bounded continuation of the chain. Fork resolution pages
- * both its header walks and its block fetch at exactly this cap
- * (NET_INTERFACE → Pull Requests).
+ * 400 is the same batch cap `MAX_INV_IDS` carries for the modifier
+ * messages (NET_INTERFACE → ModifierRequest), and the two responses
+ * these codes serve are the same kind of thing: a bounded continuation
+ * of the chain. The scheduler pages both its header walks and its
+ * block fetch at exactly this cap (NET_INTERFACE → Pull Requests).
  *
  * **Receive side.** The count is a `vlqU` the peer chooses, and the decoder
  * allocates per item, so it is checked before the first element is read — a
@@ -83,11 +95,11 @@ export const MAX_ADDRESS_BYTES = 255;
  * a peer answering a 40-header request with 18,900 headers is not answering
  * the question, and the caller is the only party that knows the question.
  *
- * **Serve side.** The same number bounds what we build. Both serve loops read
- * the store once per height into an in-memory array, and `maxCount` /
- * `endHeight` are peer-chosen (bounded only by `MAX_ADVERTISED_HEIGHT` and our
- * own tip), so without this the response size is a peer-controlled knob over
- * our whole chain.
+ * **Serve side.** The same number bounds what we build. The headers loop
+ * walks heights above the locator match for at most this many entries,
+ * clamped to our tip; the blocks loop reads the request's ids, themselves
+ * capped at this count by the codec. Without the cap the response size is a
+ * peer-controlled knob over our whole chain.
  */
 export const MAX_CHAIN_RESPONSE_ITEMS = 400;
 
@@ -122,18 +134,16 @@ export const MAX_INBOUND_SYNC_STREAMS = 16;
 export const SYNC_INFO_MIN_INTERVAL_MS = 100;
 
 /**
- * Block requests of one peer that may wait for this node to finish writing
- * that peer's previous answer (NET_INTERFACE → Serve Side → "A peer is
- * served one block answer at a time"). One more drops the oldest waiting.
+ * NET_INTERFACE → Stall Detection — "A mark clears only when this node
+ * enters `synced`, or `STALL_MARK_EXPIRY_MS` after it was set." 30 minutes.
  */
-export const MAX_PENDING_BLOCK_REQUESTS = 4;
+export const STALL_MARK_EXPIRY_MS = 1_800_000;
 
 /**
- * Sync data events one peer holds in the per-peer queue (NET_INTERFACE →
- * Biased Event Loop clause 2). One more drops this peer's oldest, never
- * another's.
+ * NET_INTERFACE → Stall Detection — stall marks kept by peer id, in a map
+ * of at most `MAX_STALL_MARKS` entries, the oldest dropped first.
  */
-export const MAX_DATA_EVENTS_PER_PEER = 8;
+export const MAX_STALL_MARKS = 1_024;
 
 /**
  * Largest response body we assemble when serving a peer.

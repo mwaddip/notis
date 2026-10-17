@@ -7,7 +7,7 @@
 ## Scope
 
 libp2p-based peer-to-peer networking for DAGsocial. Owns: wire framing,
-handshake, historical sync of whole ordering blocks (fork choice scores header pages), peer discovery,
+handshake, headers-first sync scheduled for the node's pipeline (headers by locator, blocks by id), peer discovery,
 ordering block gossip, UTXO transaction relay, and peer penalty management.
 
 Depends on `@dagsocial/wire` for ByteReader/ByteWriter/VLQ/frame encode-decode
@@ -155,10 +155,10 @@ to the envelope structure (not the message bodies).
 | Code | Name | Direction | Description |
 |------|------|-----------|-------------|
 | 1 | `Handshake` | both | Exchange after libp2p identify |
-| 2 | `SyncInfo` | both | Chain tip height |
-| 3 | `Inv` | both | "I have these objects" — type + ID list |
-| 4 | `ModifierRequest` | → | "Send me these objects" |
-| 5 | `ModifierResponse` | ← | Serialized objects |
+| 2 | `SyncInfo` | both | The sender's claim — its applied tip's height and hash |
+| 3 | — | | **Retired** (was `Inv`) — never reuse |
+| 4 | `ModifierRequest` | → | "Send me these post bodies" — type 103, ids |
+| 5 | `ModifierResponse` | ← | Serialized post bodies |
 | 6 | — | | **Retired** (was `GetSubBlock`) — never reuse |
 | 7 | — | | **Retired** (was `SubBlockResponse`) — never reuse |
 | 8 | `GetPeers` | → | Request peer list |
@@ -167,9 +167,9 @@ to the envelope structure (not the message bodies).
 | 11 | — | | **Retired** (was `Posts`) — never reuse |
 | 12 | — | | **Retired** (was `GetStumps`; P2-F F1) — never reuse |
 | 13 | — | | **Retired** (was `Stumps`; P2-F F1) — never reuse |
-| 14 | `GetHeaders` | → | Request headers by height range (fork resolution) |
-| 15 | `Headers` | ← | Header list response |
-| 16 | `GetBlocks` | → | Request whole ordering blocks by height range (reorg) |
+| 14 | `GetHeaders` | → | Request headers above a locator |
+| 15 | `Headers` | ← | Header list response, ascending |
+| 16 | `GetBlocks` | → | Request whole ordering blocks by id |
 | 17 | `Blocks` | ← | Ordering block list response |
 
 Codes 6–7, 10–11 and 12–13 are holes: a post is a transaction and a block
@@ -186,11 +186,10 @@ already holds; a post as an object in its own right (codes 10/11) is what cannot
 `MSG_`-keyed search misses allocations. The sweep that finds them all is
 `grep -rn 'encodeFrame([A-Za-z_.]*, *[0-9]' packages/`, read together with this table.
 
-Codes 14–17 carry fork resolution's two queries and `/dagsocial/headers/1` is deleted. Those queries
-have **no expression in codes 2–5**: 2–5 are an id-addressed inventory conversation, offering ids
-forward from a peer's height along the server's own best chain, while fork resolution asks for a
-**height range on a chain the requester does not hold** so it can find a common ancestor and compare
-cumulative work.
+Codes 14–17 carry the scheduler's two queries (→ Historical Sync): headers above a **locator** — this
+node's best chain named by hashes, so the server finds the fork point on its own applied chain in one round
+trip — and blocks by **id**, the ids the node's pipeline wants. Codes 4/5 carry post bodies by id
+(→ ModifierRequest), and code 2 a peer's claim.
 
 Every code in this table is carried by `/dagsocial/sync/1`. There is no second stream protocol for
 chain data.
@@ -346,8 +345,8 @@ validates both sides agree on network.
 
 ### Validation (and untrusted-input safety)
 
-Every stream message body — the handshake and all sync messages (`SyncInfo`, `Inv`,
-`ModifierRequest`, `ModifierResponse`, …) — decodes through its positional codec, and **the codec
+Every stream message body — the handshake and all sync messages (`SyncInfo`, `GetHeaders`, `Headers`,
+`GetBlocks`, `Blocks`, `ModifierRequest`, `ModifierResponse`, …) — decodes through its positional codec, and **the codec
 is the whole structural boundary**: `decodeStruct` runs the four-part boundary check
 (`TYPES_INTERFACE` → The boundary check), and every domain rule — heights, counts, byte caps —
 throws inside `read` before any value escapes. A malformed or out-of-bounds message collapses to
@@ -356,8 +355,9 @@ handler**, and the sync event loop isolates a per-message failure so one bad mes
 that message only, never the loop.
 
 **Resource limits (untrusted counts and sizes).** Inbound array counts are capped **inside the
-codecs, before the first element is read**: `ids` / `modifiers` at `MAX_INV_IDS` — and at least 1,
-an empty `Inv`, `ModifierRequest` or `ModifierResponse` being malformed (no honest sender emits
+codecs, before the first element is read**: a `ModifierRequest`'s `ids` and a `ModifierResponse`'s
+`modifiers` at `MAX_INV_IDS`, a `GetHeaders` locator at `MAX_LOCATOR_HASHES`, a `GetBlocks` id list at
+`MAX_CHAIN_RESPONSE_ITEMS` — each at least 1, an empty one being malformed (no honest sender emits
 one) — `peers` at `MAX_PEERS_ENTRIES`, `capabilities` at
 `MAX_CAPABILITY_ENTRIES`. The cap applies to what a peer *sends us*, not only to what we send.
 Raw stream reads are bounded by `MAX_STREAM_BYTES` (never buffer an unbounded
@@ -372,7 +372,7 @@ arrive there, and bytes over it are refused undecoded — as that site refuses b
 |---|---|
 | a gossiped ordering block — Stage 1, before `decodeOrderingBlock` | `MAX_ORDERING_BLOCK_BYTES` |
 | a gossiped transaction packet — Stage 1, before `decodeTxPacket` | `MAX_TX_PACKET_BYTES` |
-| each block of a `Blocks` response, each block of a `ModifierResponse` | `MAX_ORDERING_BLOCK_BYTES` |
+| each block of a `Blocks` response | `MAX_ORDERING_BLOCK_BYTES` |
 | each header of a `Headers` response | `MAX_HEADER_BYTES` |
 
 Each bound is `@dagsocial/types`' and the longest encoding of something Stage 1 accepts
@@ -404,8 +404,8 @@ peer's streams served one at a time (→ Stream Protocols → "A peer's sync str
 peer holds is bounded in size and in time.
 
 ⛔ **Every arm that assembles more than one stored object into a response is bounded by BYTES, not by
-item count alone.** A count bounds an array's length and says nothing about its weight, and both
-`ModifierResponse` and `Blocks` assemble whole blocks. Each arm accumulates encoded bytes, stops
+item count alone.** A count bounds an array's length and says nothing about its weight: `Blocks`
+assembles whole blocks and `ModifierResponse` post bodies. Each arm accumulates encoded bytes, stops
 before exceeding `MAX_SERVE_BODY_BYTES`, and always emits its first item, so the serve loop never answers
 a request with nothing while it holds what was asked. No legal block reaches the budget alone (→ "Four
 limits stand in a fixed order, and the relation is the rule"); one over `MAX_ORDERING_BLOCK_BYTES` is
@@ -431,12 +431,13 @@ Handshake specifics:
   our era is refused. Evaluated at handshake time, in both directions, and held for live connections
   by the boundary sweep (→ Post-Handshake Routing)
 - `chainHeight` (and `SyncInfo.tipHeight`) must be a non-negative integer `<=
-  MAX_ADVERTISED_HEIGHT` (= 100,000,000, ~190 years at 1 block/min) — they drive
-  `servePeer`, so an unbounded or negative value must never reach the serve loop (it
-  would otherwise scan ~10⁹ heights). The same bound applies to the `GetHeaders` / `GetBlocks`
-  request range (codes 14, 16), which must clamp its serve loop to the local tip. That range
-  arrives over `/dagsocial/sync/1`, so it reaches the serve loop only from a peer in **Active**
-  state and a malformed body is attributable to a peer that can be penalized.
+  MAX_ADVERTISED_HEIGHT` (= 100,000,000, ~190 years at 1 block/min) — a claim's height says where a
+  peer's answers must reach (→ Sync State Machine → "How a header sync ends"), so an out-of-domain value
+  must never reach the scheduler. The `GetHeaders` locator and the `GetBlocks` ids carry no height: each
+  serve arm resolves a hash by point lookup and walks only its own applied chain from there
+  (→ `GetHeaders` / `GetBlocks` responses). Both arrive over `/dagsocial/sync/1`, so they reach a serve
+  arm only from a peer in **Active** state and a malformed body is attributable to a peer that can be
+  penalized.
 - `agentName` / `nodeName` / `declaredAddress` are byte-capped strings (`MAX_NAME_BYTES` /
   `MAX_ADDRESS_BYTES`); `capabilities` is a count-capped list of bounded codes (unknown
   capabilities preserved, not rejected — forward compat)
@@ -467,14 +468,14 @@ consulted only for a dial that names a peer id, which seeds and PeerDb records d
 **A ban ends the connection.** When `PeerManager` imposes a ban — permanent or temporal, from whichever
 entry recorded the penalty — it fires `onBanned(peerId)` after its own bookkeeping (the row and the
 metadata removed, the addresses propagated), and `NetNode` binds it to the close it already owns: every
-connection to the peer is hung up and the sync machine is told as for a disconnect, synchronously — the
-peer leaves the retained-height table, so it is never again a pick candidate, and if it was the sync
-peer the machine rotates at once rather than after a stall window. The `peer:disconnect` event the
+connection to the peer is hung up and the scheduler is told as for a disconnect, synchronously — the
+peer's claim and its open requests leave with it, so it is asked nothing more, and a block request it held
+moves to another peer at once rather than at its deadline. The `peer:disconnect` event the
 hang-up raises repeats both idempotently, and `onPeerDisconnected` fires from it as for any close. Until
 the close completes the peer's sync frames are refused at the Active gate like any non-Active peer's,
 and a gossip message it carries stands or falls by Stage 1 alone (→ Inbound Processing). A ban that
-leaves the connection standing is one the sync machine cannot see — the banned peer stays a candidate,
-its requests go unanswered, and each pick of it costs a stall window before rotation.
+leaves the connection standing is one the scheduler cannot see — the banned peer stays a request target,
+its requests go unanswered, and each costs a deadline.
 
 **Ban policy** — two tiers, split by what a failure is evidence of:
 
@@ -501,9 +502,9 @@ body defects as deliberate:
 
 | Condition | Action |
 |-----------|--------|
-| `theirHeight > ourHeight` | Initiate sync from that peer |
-| `theirHeight < ourHeight` | Offer them headers (serve mode — send Inv) |
-| `theirHeight == ourHeight` | Idle — only gossip flows |
+| The peer becomes Active | Send it our `SyncInfo` (→ Sync State Machine) |
+| Its claim is a hash our header tree lacks | Ask it for headers (→ Sync State Machine → "A claim the tree lacks is a header request") |
+| Its claim is one we hold | Nothing — the claim is settled; gossip flows, and the peer asks us for what it lacks |
 
 **At an era boundary, every Active peer below the new era is dropped.** When `tipApplied(height)`
 (→ API) reports a tip whose `protocolVersionAt(schedule, height + 1)` is above the era last in force,
@@ -515,40 +516,36 @@ peer implements the era this node is applying. A tip move inside an era drops no
 
 ## Historical Sync
 
-Sync moves **whole ordering blocks**: four framed messages multiplexed over `/dagsocial/sync/1` — a
-peer's tip height, an announcement of the block ids it holds above ours, a request for those ids, and
-the blocks themselves, byte-bounded. Every block a peer serves passes the node's apply funnel exactly
-as a gossiped one does (→ Sync Integrity). **Headers are read on one path only — fork choice**, which
-pages a competing peer's headers to find the fork point and to score the branch by verified work
-before a single block of it is fetched (NODE_INTERFACE → Fork choice decides on verified headers;
-→ Pull Requests). There is no header store and no headers-first download: a node holds headers for
-the blocks it applied and for nothing else.
+Sync is **headers first**. Net's **scheduler** asks peers for headers by locator and for blocks by id, and hands
+every header and every block an answer carries to the node's **pipeline**, which admits headers into its header
+tree, keeps the best chain by verified work, and applies blocks along it (NODE_INTERFACE → Fork choice decides
+on verified headers). **The scheduler decides whom to ask for what and when, and nothing else**: it keeps no
+view of the chain beyond what the node's chain view answers (→ Sync Handler Registration), and it never
+chooses a chain. A peer's claim — the tip of the chain it applied — is a reason to ask that peer, never a
+measure of a chain.
+
+Four messages carry it over `/dagsocial/sync/1`: a peer's claim (`SyncInfo`), a header query and its answer
+(`GetHeaders` / `Headers`, codes 14/15), and a block query and its answer (`GetBlocks` / `Blocks`, codes
+16/17). Post bodies ride `ModifierRequest` / `ModifierResponse` (codes 4/5, type 103) — the one modifier the
+protocol carries (→ Block Body Download). **A node serves its applied chain only**, headers and blocks alike —
+never a header it holds ahead of its blocks — so what it claims and what it serves describe one chain.
 
 All messages are positional bodies wrapped in frames; layouts below.
 
 ### SyncInfo (code 2)
 
 ```
-vlqU(tipHeight)
+vlqU(tipHeight) ‖ hexN(tipHash, 32)
 ```
 
-`tipHeight` is ≤ `MAX_ADVERTISED_HEIGHT`. A node with no blocks at all sends `0`.
+`tipHeight` is ≤ `MAX_ADVERTISED_HEIGHT`; `tipHash` is the id of the block the sender applied at `tipHeight`.
+A node with no blocks sends `0` and `GENESIS_PREV_BLOCK_HASH` — the virtual root every header tree holds
+(NODE_INTERFACE → Fork choice decides on verified headers), so a height-0 claim is settled on arrival.
 
-The receiver reads `tipHeight` — the whole of the message and the whole of the sync decision. No
-cumulative-work field is carried and no block id: the sync decision is `tipHeight`'s alone, and fork
-choice compares work over the header pages it verifies itself (`NODE_INTERFACE → Fork choice decides
-on verified headers`), never over a peer's claim about its own chain.
-
-### Inv (code 3)
-
-```
-u8(typeId) ‖ arr( hexN(id, 32) )
-```
-
-`typeId` 101 = ordering block header; 102 (sub-block) is retired, never reused. The byte is the
-type id's whole domain: unknown values decode and are dropped by the handler — unknown codes
-preserved, not rejected. 1–`MAX_INV_IDS` (400) ids: the count is read and refused **before the
-first element**, and an empty list is malformed — no honest sender announces nothing.
+The pair is the sender's **claim**. The receiver acts on the hash: one its header tree does not hold is a
+reason to ask that peer for headers (→ Sync State Machine). The height says where the answers must reach
+(→ Sync State Machine → "How a header sync ends"). No cumulative work is carried: work is the pipeline's to
+verify over headers, never a peer's to claim.
 
 ### ModifierRequest (code 4)
 
@@ -556,9 +553,10 @@ first element**, and an empty list is malformed — no honest sender announces n
 u8(typeId) ‖ arr( hexN(id, 32) )
 ```
 
-Same layout and bounds as `Inv` — 1–`MAX_INV_IDS` ids, count refused before the first element,
-empty malformed. `typeId` 101 = ordering block, 103 = post body (`MODIFIER_POST_BODY`); 102
-retired, never reused. Ids are block hashes for 101, post ids for 103 — 32 bytes either way.
+1–`MAX_INV_IDS` (400) ids, the count read and refused **before the first element**; an empty list is
+malformed — no honest sender asks for nothing. `typeId` 103 = post body (`MODIFIER_POST_BODY`), its ids post
+ids. 101 (ordering block) and 102 (sub-block) are retired type ids, never reused: blocks move by `GetBlocks`
+(→ `GetHeaders` / `GetBlocks` responses).
 
 ### ModifierResponse (code 5)
 
@@ -566,45 +564,43 @@ retired, never reused. Ids are block hashes for 101, post ids for 103 — 32 byt
 u8(typeId) ‖ arr( hexN(id, 32) ‖ lp(data) )
 ```
 
-1–`MAX_INV_IDS` modifiers, count refused before the first element, empty malformed — a peer with
-none of the requested modifiers answers **zero bytes** (the stream's "cannot answer"), never an
-empty list. `data` is `encodeOrderingBlock` bytes for 101, `encodePostBody` — `lpUtf8(content)` —
-for 103.
+1–`MAX_INV_IDS` modifiers, count refused before the first element, empty malformed — a peer with none of the
+requested bodies answers **zero bytes** (the stream's "cannot answer"), never an empty list. `data` is
+`encodePostBody` — `lpUtf8(content)`.
 
 **`MODIFIER_POST_BODY` (103) is answered from the local store only — never relayed.** A peer
-that lacks a body omits the id from its response and the requester rotates peers. No modifier
-request is relayed in the tree (`handleModifierRequestMsg` serves blocks from the local store and
-omits what it lacks); the rule is stated for bodies because a relay, should one ever be added for
-blocks, must not extend to them — it would fan a request for a withdrawn or withheld body across the
-network with nothing to stop it (→ Local-Serve-Before-Relay). Responses are byte-bounded by the same
-accumulate-and-stop rule as blocks (`MAX_SERVE_BODY_BYTES`). Each returned body is verified
-by the requester against the commitment of the transaction it already holds
-(`verifyPostBody`) before it is stored; a mismatch is a misbehaviour penalty.
+that lacks a body omits the id from its response and the requester asks another peer. No request is relayed
+in the tree; the rule is stated for bodies because a relay, should one ever be added for any query, must not
+extend to them — it would fan a request for a withdrawn or withheld body across the network with nothing to
+stop it (→ Local-Serve-Before-Relay). Responses are byte-bounded by the same accumulate-and-stop rule as
+blocks (`MAX_SERVE_BODY_BYTES`). Each returned body is verified by the requester against the commitment of
+the transaction it already holds (`verifyPostBody`) before it is stored; a mismatch is a misbehaviour
+penalty.
 
 ### Sync Flow
 
 ```
-Late Node (height 0)                      Synced Peer (height 200)
+Joiner (applied 0)                            Peer (applied 200)
      │                                            │
      │── Handshake ──────────────────────────────►│
-     │◄── Handshake (height=200) ─────────────────│
+     │◄── Handshake ──────────────────────────────│
+     │── SyncInfo (0, root) ─────────────────────►│
+     │◄── SyncInfo (200, H200) ───────────────────│
      │                                            │
-     │ peer ahead → pick as sync peer             │
-     │── SyncInfo (height=0) ────────────────────►│
+     │ H200 not in the tree → ask for headers     │
+     │── GetHeaders (locator: root) ─────────────►│
+     │◄── Headers (1 … 200, ascending) ───────────│
+     │ the pipeline admits them: best chain 1…200 │
      │                                            │
-     │ peer replies, then serves continuation     │
-     │◄── SyncInfo (height=200) ─────────────────│
-     │◄── Inv (type=101, headers from h=1) ──────│
+     │ every claim settled → the gate holds;      │
+     │ the pipeline names the blocks it wants     │
+     │── GetBlocks (ids of 1 … 200) ─────────────►│
+     │◄── Blocks (byte-bounded, in order asked) ──│
+     │ bound to their headers, staged, applied;   │
+     │ the ids still wanted are asked again       │
      │                                            │
-     │── ModifierRequest (those ids) ────────────►│
-     │◄── ModifierResponse (whole ordering       │
-     │    blocks 1-200, byte-bounded) ───────────│
-     │                                            │
-     │ validate + apply; each advancing batch     │
-     │ sends the next SyncInfo at once            │
-     │── SyncInfo (height=200) ──────────────────►│
-     │◄── SyncInfo (height=200) ─────────────────│
-     │ equal, from the sync peer → synced         │
+     │ best chain applied, every claim settled    │
+     │   → synced                                 │
      │                                            │
      │ the posts of each applied block arrive     │
      │ with no body; the node pulls them by id,   │
@@ -618,142 +614,136 @@ Late Node (height 0)                      Synced Peer (height 200)
 
 ### Serve Side (Peer Behind Us)
 
-When a SyncInfo is acted on (→ "A peer's `SyncInfo` is acted on at most once per `SYNC_INFO_MIN_INTERVAL_MS`"):
-1. **Reply with our own SyncInfo, addressed to the sender** — whether the sender is behind,
-   equal or ahead, and whatever our own phase is: a node at tip that is not syncing from the
-   requester still answers. The reply is the only caught-up signal a peer syncing from us
-   receives — when it holds our whole chain the continuation below is empty and no Inv is
-   sent, so its `syncing → backfill` transition rides entirely on an inbound SyncInfo showing
-   equal height. ⛔ **Addressed to the sender, never to our own sync peer** — misaddressed,
-   the requester sits at our tip until its stall clock fires.
-2. If the sender is behind: compute continuation headers from their best known height + 1,
-   cap at 400 headers, send Inv.
+A node answers three queries from its applied chain, each on the stream it arrives on — `GetHeaders`,
+`GetBlocks` (→ `GetHeaders` / `GetBlocks` responses) and `ModifierRequest` for post bodies (→ ModifierRequest)
+— and replies to every `SyncInfo` it acts on.
 
-**The reply is movement-gated, so replying to replies terminates.** Beside each retained
-peer height the machine keeps the tip it last sent that peer and the tip that peer last
-reported. An inbound SyncInfo that shows movement — the sender's reported tip differs from
-their previous report, or our tip differs from what we last sent them — earns its reply
-immediately: this is what lets a two-second sync take its equal-height reply at once instead
-of waiting out a poll period. An inbound that shows **no** movement earns a reply at most
-once per `MIN_SYNCINFO_INTERVAL_MS` (= 15 000 ms, half the synced-phase poll); the suppressed
-reply is dropped, not queued. Two equal-height peers echoing each other therefore settle after
-one exchange and stay at one exchange per poll period — never an unbounded ping-pong. The
-send on *entering* `syncing` and the progress send (Sync bullet below) are not replies and
-are bounded by their own triggers: one per phase transition, one per advancing batch.
+When a SyncInfo is acted on (→ "A peer's `SyncInfo` is acted on at most once per `SYNC_INFO_MIN_INTERVAL_MS`"),
+the node **replies with its own SyncInfo, addressed to the sender** — whether the sender is behind, equal or
+ahead, and whatever this node is doing. The reply is how the sender learns our claim, and with it whether it
+has anything to ask us for (→ Sync State Machine). ⛔ **Addressed to the sender, never to a peer this node is
+asking** — misaddressed, the requester never learns our claim and never asks.
+
+**The reply is movement-gated, so replying to replies terminates.** Beside each peer the machine keeps the
+tip it last sent that peer and the tip that peer last reported. An inbound SyncInfo that shows movement — the
+sender's reported tip differs from their previous report, or our tip differs from what we last sent them —
+earns its reply immediately. An inbound that shows **no** movement earns a reply at most once per
+`MIN_SYNCINFO_INTERVAL_MS` (= 15 000 ms, half the poll); the suppressed reply is dropped, not queued. Two
+equal-height peers echoing each other therefore settle after one exchange and stay at one exchange per poll
+period — never an unbounded ping-pong. The sends at peer-active and on the poll (→ Sync State Machine → "A
+claim is the peer's applied tip, height and hash") are not replies and are bounded by their own triggers.
 
 **A peer's `SyncInfo` is acted on at most once per `SYNC_INFO_MIN_INTERVAL_MS`.** One that arrives sooner from the
 same peer is held as that peer's pending `SyncInfo` — a later one replaces it — and acted on at the first timer tick
 after the interval has passed; nothing is penalised, and no report is lost but one a later report replaced.
-Each `SyncInfo` acted on earns at most the reply above and an Inv that reads up to `MAX_INV_IDS` block ids, so the
-interval is what bounds the work one peer's reports buy. An honest peer sends one per advancing batch — a round trip
-and a block apply after the last — and one per poll, so the interval holds back almost none, and a held report is
-acted on within a tick rather than lost: a syncing peer whose progress report was held never waits a poll period
-for its next Inv.
+Each `SyncInfo` acted on earns at most the reply above and, when its hash is one the header tree lacks, one header
+request (→ Sync State Machine), so the interval is what bounds the work one peer's reports buy. An honest peer
+sends one at peer-active, one per poll and a reply to each of ours it acts on, so the interval holds back almost
+none, and a held report is acted on within a tick rather than lost.
 
-**A peer is served one block answer at a time.** A `ModifierRequest` for blocks (101) is answered on a stream this
-node opens to the requester (→ Sync Flow). One that arrives while this node is still writing that peer's previous
-answer waits; at most `MAX_PENDING_BLOCK_REQUESTS` wait per peer — as many full requests as the requester's own
-outstanding cap of `4 × MAX_INV_IDS` ids holds (→ Sync Integrity) — and one more drops the oldest waiting, without
-penalty. The next is served when the write ends, taken or aborted at its deadline (→ Validation (and untrusted-input
-safety) → "A stream write is bounded in time as well"). An answer is up to `MAX_SERVE_BODY_BYTES`, so without the
-rule a peer that sends requests and reads nothing holds one answer of this node's memory per request it sent.
+**A peer is served one block answer at a time.** A `GetBlocks` answer is written on the request's own stream, and
+a peer's sync streams are served one at a time (→ Stream Protocols → "A peer's sync streams are served one at a
+time"), so at most one block answer of this node's memory — up to `MAX_SERVE_BODY_BYTES` — is held for a peer, for
+no longer than the write's deadline (→ Validation (and untrusted-input safety) → "A stream write is bounded in time
+as well"). Without the rule a peer that sends requests and reads nothing would hold one answer of this node's memory
+per request it sent.
 
-A peer reporting height 0 gets a continuation from height 1. This bidirectional pattern ensures
-nodes serve peers behind them, not just consume.
+A locator that matches nothing on the server's applied chain is answered from height 1 — a joiner's, or a peer's on a
+fork from the root. This bidirectional pattern ensures nodes serve peers behind them, not just consume.
 
 ### Sync State Machine
 
-```
-pick_sync_peer() → sync_from_peer() → synced()
-       ↑                  │
-       └ stall/disconnect ┘
-```
+**The scheduler holds peers' claims, this node's open requests and its stall marks — nothing about the chain.**
+Every question about the chain goes to the node's chain view (→ Sync Handler Registration), and every answer goes
+to the node's pipeline whole.
 
-- **Pick:** the machine retains each Active peer's last advertised height — the handshake
-  `chainHeight` at peer-active, refreshed by every inbound `SyncInfo.tipHeight`, dropped at
-  disconnect or ban (→ Handshake, "A ban ends the connection") — and picks the retained-highest peer
-  above our own height, stalled peers
-  excluded. The pick runs at peer-active, at every SyncInfo acted on, and at every entry into
-  `idle` or `synced` (stall rotation, sync-peer disconnect, catching up), so a taller
-  peer learned mid-sync is adopted the moment the current conversation ends — a bridging node
-  that syncs the shorter chain first takes the longer one when it finishes, with no new event.
-  While `syncing`, only the Switch rule below changes the sync peer. Among candidates the pick prefers
-  outbound peers, falling back
-  to inbound-only when no outbound candidate exists — eclipse resistance prefers the
-  connections we chose; the fallback keeps a node nobody dials syncing. A candidate is only
-  ever above our own height, switch targets included.
-  ⚠ **Height is the pick's measure, and it is a liveness heuristic, not chain choice.** Under the
-  absolute schedule (`MINING_INTERFACE → Difficulty Schedule`) a branch's height at time *t* is
-  `schedule(t) + RETARGET_HALFLIFE_BLOCKS · log₂(h / H_a)` — its lag is fixed by its hashrate `h`
-  against the anchor's — so of two branches sharing an anchor the taller is the heavier in steady
-  state; height and work disagree only in a transient (a chain resuming after a pause mines its owed
-  blocks at the floor and is taller hours before it is heavier). **A pick is never final inside the
-  horizon**: whichever chain a joiner syncs first, the first non-extending block it is handed from the
-  other opens fork choice, which scores that branch to its tip and reorgs to it when it is heavier
-  (`NODE_INTERFACE → Fork choice decides on verified headers`), down to `maxReorgDepth` below the tip
-  (`TYPES_INTERFACE → Chain reorganisation`). Past the horizon a wrong pick is permanent, and the
-  operator remedy is a fresh database and a bootstrap to a known-good peer
-- **Sync:** send SyncInfo, process Inv → request headers, validate, append
-  to chain, repeat. A batch that strictly advanced the chain sends the next SyncInfo to the
-  sync peer immediately (it bypasses the per-peer floor; its bound is the advance itself), so
-  a chain longer than one Inv (`MAX_INV_IDS` = 400) syncs batch-on-batch instead of one batch
-  per poll interval
-- **Switch:** while `syncing`, if the retained-highest peer's height exceeds the current sync
-  peer's retained height by more than 1, the machine switches to it. A switch is a rotation
-  without a stall: outstanding cleared, progress clock reset, the old peer not marked stalled
-- **Caught up:** an inbound equal-height SyncInfo **from the current sync peer** → `synced` —
-  equality reported by any other peer is not a caught-up signal for a conversation it is not
-  part of (the provenance stance Invs already have). Post bodies play no part in the phases: a
-  block carries its posts' commitments, and the bodies are the node's to pull, whatever the
-  phase (→ Block Body Download)
-- **Stall:** 60s without **real progress** (see Sync Integrity below) →
-  rotate to different peer, mark current as stalled. On progress, clear
-  stall set.
-- **Peer rotation:** `stalledPeers: Set<PeerId>` — peers that failed to
-  produce progress. On stall the pick runs again with the stalled set excluded (the Pick
-  bullet's preference applies). A stall mark clears when that peer completes a new handshake
-  or reports a tip above ours, and the whole set clears at every entry into `synced`; with
-  every candidate stalled the machine sits `idle` until one of those clears fires.
-- **Synced:** periodic SyncInfo (30s) to the sync peer; the reply it earns (Serve Side, rule 1)
-  is how new blocks are detected — a reply showing a taller tip re-enters `syncing` through
-  the pick. An Inv is acted on only while syncing and only from the current sync peer (see
-  Sync Integrity — request provenance); an Inv from any other peer, or
-  while not syncing, is dropped without penalty.
+**A claim is the peer's applied tip, height and hash.** It is retained per Active peer from the latest `SyncInfo`
+acted on (→ Serve Side) and dropped at disconnect or ban (→ Handshake, "A ban ends the connection"); the handshake's
+`chainHeight` alone is no claim. This node sends its own `SyncInfo` to every Active peer at peer-active and every
+`SYNCED_POLL_INTERVAL_MS` (30 s), each carrying its applied tip as it stands; a moving tip sends nothing of its
+own — a new block reaches peers by gossip, and a peer that missed it reads the tip in the next poll.
+
+**An event for a peer no longer connected is ignored.** A `SyncInfo`, a peer-active or an answer whose peer is not
+in the connected set when the scheduler processes it plants nothing — no claim, no request, no per-peer entry — and
+is dropped.
+
+**A claim the tree lacks is a header request.** A claimed hash for which the chain view's `knowsTip(peerId, hash)`
+answers `false` — the tree does not hold it, and the pipeline has not scored that peer lighter at it — opens that
+peer's **header sync**; any other claim is **settled** on arrival. A marked peer's claim opens nothing (→ Stall
+Detection).
+
+**One header request per peer, every peer at once.** A header sync is a run of `GetHeaders` requests to one peer,
+each carrying the chain view's `locatorFor(peerId)` (→ `GetHeaders` / `GetBlocks` responses), one open at a time;
+every peer's runs at once. Each `Headers` page, held to its shape, goes to the pipeline (`deliverHeaders`), whose
+answer is one of three: **`'refused'`** ends the run (below); **`'again'`** — the pipeline is re-fetching a branch it
+scored heavier (NODE_INTERFACE → Fork choice decides on verified headers → "A side branch is stored only once it is
+heavier.") — sends the next request at once, whatever the page's length, and refutes nothing; **`'taken'`** leaves the
+run to the claim: the next request follows a full page while the claim is still unsettled.
+
+**How a header sync ends.** One of three ways:
+1. **Its claim is reached** — `knowsTip(peerId, hash)` answers `true`: the pipeline admitted the claimed header, or
+   scored the peer's branch lighter at it. The claim is settled.
+2. **An answer refutes its claim** — a page of fewer than `MAX_CHAIN_RESPONSE_ITEMS` headers ending below the claimed
+   height, or a page whose header at the claimed height is not the claimed hash. The peer is **marked** and
+   penalised `transient`: an honest tip can drop, or move to another branch, under a reorg between claim and answer.
+   A tip that rose meanwhile refutes nothing — the claimed hash still stands at its height.
+3. **A request ends without a well-formed answer** — its deadline passes (`syncRequestTimeoutMs`, the read's, →
+   Validation (and untrusted-input safety) → "A stream read is bounded in time as well as in bytes"), its stream fails,
+   or what it reads is not an answer (another frame code, a body that does not decode, a read past
+   `MAX_STREAM_BYTES`). The peer is **marked**.
+
+A page the pipeline refuses (`'refused'`) ends the run as well, and the peer is not marked: the pipeline has penalised
+the peer where the refusal is the peer's, and left it unpenalised where it is not — a verdict of this node's clock, a
+branch past the reach floor (NODE_INTERFACE → Fork choice decides on verified headers). Every answer either moves a full page or reaches the
+peer's tip, so a claim of 10⁸ without the headers to back it is refuted on its first answer.
+
+**Blocks are asked by id, from a peer that has them.** The chain view's `wantedBlocks()` names the blocks the
+pipeline wants next, each id with its height; the scheduler asks them in `GetBlocks` requests of at most
+`MAX_CHAIN_RESPONSE_ITEMS` ids, one block request open per peer, of an unmarked Active peer whose settled claim's
+height is at or above the request's highest — and hands every block of the answer to the pipeline
+(`deliverBlocks`). **An id a peer's answer omits is not asked of that peer again until its claim changes** — and an
+id it answered with a block the pipeline did not take (still wanted once the delivery is taken) counts as omitted; it, a
+deadline (`syncRequestTimeoutMs × 5`, the `Blocks` read's), or a mark moves the id to another such peer, and an id no
+such peer is left to ask waits for the next claim. Nothing is asked that the chain view has not named: the
+scheduler never asks for a height range, or for a block a peer claimed.
+
+**The gate bounds how far blocks apply.** The gate **holds** when no unmarked, Active **outbound** peer has a header
+sync open and every configured **bootstrap** peer's dial has settled — Active, or failed. The scheduler reports each
+hold to the chain view (`gateHeld()`); the pipeline applies blocks by extension only while `appliedTip < S +
+maxReorgDepth`, `S` the best chain's height at the last hold (NODE_INTERFACE → Fork choice decides on verified
+headers → "The window"). With no outbound peer and no bootstrap peer the gate holds vacuously — a lone node. **The
+gate counts the connections this node chose**: an inbound peer's headers enter the tree and compete for the best
+chain like any other, but its open header sync never holds the gate, so no peer that dialled in — sybils
+included — can stall a node by keeping a header sync open. This is the eclipse stance the outbound manager takes
+(→ Outbound Manager).
+
+**A stall mark keeps a peer out of every request** (→ Stall Detection).
+
+**The phases.** `syncing` — a header sync or a block request is open, or the chain view's `fullyApplied()` answers
+`false`. Otherwise `idle` — no claim settled yet: before `start()`, after `stop()`, and on a node that has met no peer.
+**`synced` — the best chain is fully applied and every unmarked Active peer's claim is settled.** Entering `synced`
+clears every stall mark and fires `onSyncComplete`.
 
 ### Sync Integrity (audit M-10)
 
-- **Response binding — sender and label, never content.** A `ModifierResponse` is
-  processed only if it answers an outstanding `ModifierRequest` this node previously
-  sent **to that same peer**: the machine tracks the requested modifier ids per
-  request target; a response modifier whose id was not requested from its sender is
-  dropped — dropped, not penalized, because a response can legitimately cross a peer
-  rotation in flight. Requests are only ever sent to the current sync peer, so no
-  *other* peer can feed this path. **The id is a label: `data` is never hashed and
-  never compared against `id`**, so the sync peer itself can answer a request for
-  block X with any bytes whatsoever. What protects the store is the node's apply
-  funnel — structure gate, chain linkage, PoW — which every sync-delivered block
-  passes through exactly as a gossiped one does; a mislabelled response costs this
-  node one outstanding slot until the block is re-announced, never a stored block.
-  Net owns the sender-and-label check; the funnel owns content validity.
-- **Request provenance.** While syncing, only an Inv from the current sync
-  peer may trigger a `ModifierRequest`. A third party's Inv must neither
-  cause requests nor grow the outstanding set.
-- **Outstanding-set lifecycle.** Ids are added when a request is sent,
-  removed as matching response modifiers are accepted, bounded by a fixed
-  cap of `4 × MAX_INV_IDS` ids (new requests must not grow the set past it), and cleared on peer
-  rotation, on a mid-sync switch, and on sync-peer disconnect. The framed sync path has no
-  per-request timer — stall rotation IS the request timeout.
-- **Stall progress = chain height.** The stall clock advances only when
-  applying a response strictly increases `chainHeight` — never on mere
-  receipt of bytes or non-advancing modifiers. A peer feeding junk
-  therefore stalls out and is rotated away within one stall window; it
-  cannot pin sync indefinitely.
+- **An answer is bound to its request by its stream.** Every header and block this node receives on the sync
+  protocol arrives as the answer on a stream this node opened for the request — one round trip (→ Pull Requests →
+  "A request is one round trip, and closing its stream never changes its answer"). No answer arrives unasked, so
+  the stream is the whole binding: what a stream carries back answers what was written on it.
+- **Net owns the shape; the pipeline owns the content.** Net holds a `Headers` page to its one shape (→ `GetHeaders`
+  / `GetBlocks` responses → "A `Headers` page has one shape, and a requester holds a page to it") and a `Blocks`
+  answer to its count and its bytes. It hashes nothing against an id it asked for: the pipeline binds each delivered
+  block to the header its tree holds — the header's hash, then the block's structure, root and validator signature
+  — before it is staged (NODE_INTERFACE → Fork choice decides on verified headers → "A served block is bound to its
+  header before it is kept").
+- **A request ends by its answer, or without one, and nothing else judges a peer.** A request that ends without a
+  well-formed answer marks its peer (→ Stall Detection); a well-formed answer whose content the pipeline refuses is
+  penalised by the pipeline where the refusal is the peer's.
 
 ### Block Body Download
 
-There is no separate body download: a block carries its whole body, and the
-modifier conversation moves whole serialized ordering blocks, byte-bounded at
-`MAX_SERVE_BODY_BYTES`. **Post bodies are the one thing a block does not carry** — it carries
+There is no separate body download: a block carries its whole body, and `GetBlocks` moves whole serialized ordering
+blocks, byte-bounded at `MAX_SERVE_BODY_BYTES`. **Post bodies are the one thing a block does not carry** — it carries
 their commits — so they are the one thing fetched by id after the chain: `MODIFIER_POST_BODY`,
 asked by the node for every placeholder row its store holds, one request at a time, on a schedule
 in block height (NODE_INTERFACE → Store Interface → Posts DAG, "Backfill after sync"). Net answers
@@ -1042,9 +1032,10 @@ Node start
 | `misbehavior` | Invalid message — fails Stage 1: structure, an ordering-block header below the network's floor, ordering-block PoW, the packet rule (a post without a body or a body without a post), a body that fails `verifyPostBody`, an ordering block's validator signature, or a transaction signature that does not verify (`gossip.ts` call sites); a pulled body that fails its commitment (the `MODIFIER_POST_BODY` receive arm) | 100 |
 | `ProtocolViolation` | Undecodable/malformed frame or message; wrong-network handshake | permanent ban |
 | `Transient` | Transient handshake failure / timeout (`handshake.ts`) | 50 |
-| `Transient` | A version mismatch — a gossiped block whose declared version is not the era at its own height (`gossip.ts`), or a header segment `verifyHeaderChain` refuses with reason `'version'` in fork resolution (via `NetNode.penalizePeer`): compatibility, never a violation | 50 |
-| `misbehavior` | Fork resolution, via `NetNode.penalizePeer` from node's `resolveFork` (NODE_INTERFACE → Fork choice decides on verified headers): a header segment that fails `verifyHeaderChain` other than the window-miss case and the `'version'` reason; a segment containing a refused header; a delivered block whose hash is not the verified header's; a verified-header chain rejected by the apply funnel; a header page that is not an answer to its request — a height above the start asked, a hole, a repeat or an ascent | 100 |
-| `Transient` | Fork resolution, via `NetNode.penalizePeer`: a block answer shorter than the verified segment, or a header page short of full that does not reach height 1 (non-delivery) | 50 |
+| `Transient` | A version mismatch — a gossiped block whose declared version is not the era at its own height (`gossip.ts`), or a header `verifyHeaderChain` refuses with reason `'version'` at the pipeline's admission (via `NetNode.penalizePeer`): compatibility, never a violation | 50 |
+| `misbehavior` | The pipeline, via `NetNode.penalizePeer` from node (NODE_INTERFACE → Fork choice decides on verified headers): a header admission refuses other than for the clock, the version or the age rule — an unhashable header, a marked hash, a `Headers` page whose first header's parent the tree does not hold, a `verifyHeaderChain` refusal; a delivered block that is not its header's (its structure, its root, its validator signature) or whose header the tree does not hold; a block the funnel refuses on bytes its header's hash commits | 100 |
+| `misbehavior` | The scheduler: a `Headers` page that is not an answer to its locator — heights not consecutive and ascending, or a first header whose parent is neither a locator hash nor, at height 1, the root (→ `GetHeaders` / `GetBlocks` responses) | 100 |
+| `Transient` | The scheduler: an answer that refutes its peer's claim (→ Sync State Machine → "How a header sync ends"); the pipeline, via `NetNode.penalizePeer`: a presync's second pass that ends off a hash its first recorded (NODE_INTERFACE → Fork choice decides on verified headers) | 50 |
 
 **Refusals that record nothing** (→ Penalty Attribution → "A penalty rests on what the sender could
 know"): at Stage 1, a scheduled-target mismatch, a transaction whose declared version is not the era of
@@ -1057,8 +1048,8 @@ nothing"). `onPeerPenalised` fires for none of them.
 **`NetNode.penalizePeer(peerId, kind: 'misbehavior' | 'transient', reason)`** is node's one call
 into this system: it records the named tier against the peer with the reason string and nothing
 else — accrual, decay and the ban threshold below apply unchanged, and a peer the manager does not
-know is a no-op (the counterparty comes off the Active list; an unknown one is a disconnect race,
-not a target). It is the producing call site of the two fork-resolution rows.
+know is a no-op (the deliverer comes off the Active list; an unknown one is a disconnect race,
+not a target). It is the producing call site of the pipeline's rows.
 
 The table is the whole system: every `PenaltyType` and `PenaltyKind` member has
 a producing call site.
@@ -1103,14 +1094,16 @@ tracked as a follow-up.
 ## Biased Event Loop
 
 The sync/gossip event loop MUST prioritize:
-1. Control events (peer active, peer disconnect, a `SyncInfo` acted on) —
-   unbounded channel, never dropped
-2. Data events (`Inv`, `ModifierRequest`, `ModifierResponse`) — bounded **per peer**, lossy:
-   a peer holds at most `MAX_DATA_EVENTS_PER_PEER` queued, and one more drops that peer's
-   oldest, never another peer's — one peer's flood cannot push out the sync peer's answers
+1. Control events (peer active, peer disconnect, a `SyncInfo` acted on, the pipeline's `needHeaders` and
+   `chainMoved`, a bootstrap dial settling) — unbounded channel, never dropped
+2. **Answers are awaited by the request that asked them, and queued nowhere.** Every header and block this node
+   receives on the sync protocol is the answer to one of its own round trips (→ Sync Integrity), and the
+   scheduler keeps at most one header request and one block request open per peer (→ Sync State Machine) — so
+   what one peer's answers hold of this node is bounded by the requests this node made, and no peer's answer can
+   push out another's
 3. Timer ticks — fallback
-4. **It MUST wait when all three are idle.** With both queues empty and no tick
-   due, the loop blocks until an enqueue or the next tick. It does not re-poll.
+4. **It MUST wait when the queue is empty and no tick is due.** The loop blocks until an enqueue or the next
+   tick. It does not re-poll.
 
 **Yielding is not waiting.** `await new Promise(r => setImmediate(r))` returns to
 the event loop and comes straight back, so a loop that "yields" every iteration
@@ -1143,10 +1136,10 @@ Incoming content requests MUST check local storage before relaying to
 other peers. Serve and relay are mutually exclusive per request ID —
 never both.
 
-> ⚠ **QUALIFIED — verified 2026-08-22.** The tree relays no request at all:
-> `handleModifierRequestMsg` (`sync-machine.ts`) serves blocks from the local store and omits the
-> ids it lacks, and no serve-or-relay helper exists in the package. The rule binds any relay that
-> is ever added; until one is, the serve half is the whole of it.
+> ⚠ **QUALIFIED — verified 2026-10-17.** The tree relays no request at all: the sync stream's serve arms
+> (`node.ts` — `serveHeadersResponse`, `serveBlocksResponse`, `servePostBodiesResponse`) answer from the
+> local store and omit what it lacks, and no serve-or-relay helper exists in the package. The rule binds
+> any relay that is ever added; until one is, the serve half is the whole of it.
 
 **One modifier type never relays: `MODIFIER_POST_BODY` (103) is served locally or omitted.**
 A body request names a post id; a peer that holds the body answers, a peer that does not
@@ -1184,15 +1177,20 @@ while its connection stands.
 
 Invariant: a peer that is not `Active` is asked nothing and answered nothing. A sync stream it opens
 is answered with an empty frame and left unread, and it is no entry of `getConnectedPeers()`, the set
-the sync machine picks from. A gossip message is not such an event: it is judged by Stage 1 and
+the scheduler asks. A gossip message is not such an event: it is judged by Stage 1 and
 delivered whichever peer carried it (→ Inbound Processing).
 
 ## Stall Detection
 
-Track peers that fail to deliver requested content within a timeout. On
-stall: mark peer, rotate to next outbound peer not in stalled set. On
-successful receipt from any peer: clear the stalled set. All peers stalled:
-clear and retry.
+**A peer is marked when a request to it ends without a well-formed answer, or when its answer refutes its claim**
+(→ Sync State Machine → "How a header sync ends"). **A marked peer is asked nothing** — no header request,
+no block request — and its claim opens no header sync, until its mark clears.
+
+**A mark clears only when this node enters `synced`, or `STALL_MARK_EXPIRY_MS` after it was set.** A `SyncInfo`,
+a re-handshake and a reconnect clear nothing: marks are kept by peer id and survive a reconnect, in a map of at
+most `MAX_STALL_MARKS` entries, the oldest dropped first. A peer that claims a tip it cannot serve is therefore
+asked once an expiry, and the expiry is argued against the most peers that can do it together
+(`CONSTANTS → net`).
 
 ---
 
@@ -1216,15 +1214,15 @@ node operator may choose to link them (same keypair) or keep them separate.
 | Protocol | Framing | Purpose |
 |----------|---------|---------|
 | `/dagsocial/handshake/1` | Frame | Post-identify peer handshake |
-| `/dagsocial/sync/1` | Frame | Historical sync, peer discovery, content sweep, fork resolution (codes 2–11, 14–17) |
+| `/dagsocial/sync/1` | Frame | Headers-first sync, post bodies, peer discovery (codes 2, 4, 5, 8, 9, 14–17) |
 
 **These two are the whole set.** Every chain-data query multiplexes over the sync stream and the
 frame `code` byte disambiguates it. A second stream protocol for chain data is what codes exist to
 avoid: it duplicates the framing, the caps and the serve loop, and — because protocol handlers are
 registered per protocol — it acquires its own admission policy by omission rather than by decision.
 
-**Every inbound stream ends.** A stream that carries a one-way message — `SyncInfo`, `Inv`, a `ModifierRequest` for
-blocks (101), a `ModifierResponse` — is closed once its message is read; one that carries a query is ended by its
+**Every inbound stream ends.** A stream that carries a one-way message — a `SyncInfo` — is closed once its message
+is read; one that carries a query is ended by its
 answer, zero bytes included; one whose frame does not decode, or whose code no arm serves, is closed unanswered. A
 stream left open holds one of libp2p's inbound streams for its protocol on that connection for the life of the
 connection, and once they are all held every query on the connection fails.
@@ -1234,9 +1232,9 @@ that peer's next; streams that arrive meanwhile wait unread, in order of arrival
 from its turn. At most `MAX_INBOUND_SYNC_STREAMS` sync streams of one connection are open at once — the
 registration's `maxInboundStreams` — and libp2p refuses one more before the handler runs. A waiting stream is
 unread, so it costs at most the muxer's initial stream window (256 KiB). Through its sync streams a peer therefore
-holds at most one read (`MAX_STREAM_BYTES`), one inline answer and one block answer (→ Serve Side → "A peer is served
-one block answer at a time", `MAX_SERVE_BODY_BYTES` each) and the windows of the streams waiting — about 20 MiB at
-the bound — of this node's memory, for no longer than the deadlines on those reads and writes.
+holds at most one read (`MAX_STREAM_BYTES`), one answer (→ Serve Side → "A peer is served one block answer at a
+time", up to `MAX_SERVE_BODY_BYTES`) and the windows of the streams waiting — about 16 MiB at the bound — of this
+node's memory, for no longer than the deadlines on those reads and writes.
 
 **A stream handler never rejects.** libp2p does not catch the promise a protocol handler returns, so a rejection is an
 unhandled one — logged by the node's backstop as a fault of its own (NODE_INTERFACE → "An unhandled rejection is
@@ -1260,18 +1258,30 @@ the CBOR would have been the band-aid; the root cause was the second dialect, so
   discriminator:
 
   ```
-  GetHeaders (14):  vlqU(startHeight) vlqU(maxCount)
-  GetBlocks  (16):  vlqU(startHeight) vlqU(endHeight)
+  GetHeaders (14):  arr( hexN(hash, 32) )   // the locator — 1–MAX_LOCATOR_HASHES entries
+  GetBlocks  (16):  arr( hexN(id, 32) )     // block ids — 1–MAX_CHAIN_RESPONSE_ITEMS entries
   ```
+
+  Each count is read and refused **before the first element**, and an empty list is malformed.
+  **The locator is the requester's best chain named by hashes** — the chain view's (→ Sync Handler
+  Registration): the hashes at heights `h₀ = tip`, `hᵢ₊₁ = hᵢ − 2ⁱ` for as long as `hᵢ₊₁ ≥ 1`, and height 1
+  when the sequence did not end on it; at most `⌊log₂ tip⌋ + 2` entries, 28 for any tip below
+  `MAX_ADVERTISED_HEIGHT` (< 2²⁷). A node with no chain sends `GENESIS_PREV_BLOCK_HASH` alone. The highest
+  common entry lies under twice a fork's depth, so a fork `d` deep costs the requester at most `d` headers
+  it already holds, which its pipeline takes as no-ops. A requester continuing a branch it is scoring puts
+  that branch's last scored hash first, and one re-fetching a branch it scored heavier puts that branch's last
+  stored header first — its base, before any is stored (NODE_INTERFACE → Fork choice decides on verified headers);
+  past `MAX_LOCATOR_HASHES` the lowest entry is dropped. The root, `GENESIS_PREV_BLOCK_HASH`, names no block a
+  server holds, so a locator led by it is answered from its next entry the server holds.
 
   A response is identified by its own frame code, so a caller checks `MSG_HEADERS` / `MSG_BLOCKS`
   rather than trusting that the answer matches the question it asked.
 - ⚠ **Zero bytes and `vlqU(0)` are DISTINCT and consumers depend on it.** Zero bytes is the handler's
   *"I cannot answer"*; `vlqU(0)` is *"no items"*. Collapsing them is a live defect — see below.
-- **`MAX_CHAIN_RESPONSE_ITEMS = 400`, enforced on BOTH sides**, and the receive cap is
-  `min(requested, 400)` **checked before the first element is read**. A peer answering a 400-header
-  request with 18,900 headers is not answering the question, and the count is a `vlqU` the peer
-  chooses. ⚠ **`readArr` is the wrong primitive here** — it bounds only at `MAX_ARRAY_LENGTH` (2²⁴),
+- **`MAX_CHAIN_RESPONSE_ITEMS = 400`, enforced on BOTH sides**, and the receive cap — 400 headers for a
+  `Headers` answer, the ids asked for a `Blocks` answer — is **checked before the first element is read**.
+  A peer answering a header request with 18,900 headers is not answering the question, and the count is a
+  `vlqU` the peer chooses. ⚠ **`readArr` is the wrong primitive here** — it bounds only at `MAX_ARRAY_LENGTH` (2²⁴),
   three orders of magnitude above the 400 this path allows, and it cannot enforce a caller's cap
   *before* the first element is read.
 
@@ -1289,11 +1299,16 @@ the CBOR would have been the band-aid; the root cause was the second dialect, so
   count-only bound produces a response no peer can read — a stall that appears exactly when blocks
   are full and never before.
 
-  The rule is `handleModifierRequestMsg`'s, applied here: accumulate encoded bytes, stop before
+  The rule: accumulate encoded bytes, stop before
   exceeding `MAX_SERVE_BODY_BYTES`, and **always include the first block**, so a request is never answered
   with nothing while the server holds the block asked for — whatever its reader then does with one over
-  `MAX_ORDERING_BLOCK_BYTES` (→ Validation (and untrusted-input safety)). A truncated response costs the requester one round trip — it re-asks for
-  what is still missing on the next `SyncInfo` round — and never costs it the chain.
+  `MAX_ORDERING_BLOCK_BYTES` (→ Validation (and untrusted-input safety)). A truncated response costs the requester one round trip — it asks for
+  the ids still missing in its next request — and never costs it the chain.
+
+  **The `Blocks` arm answers the ids asked that its applied chain holds**, in the order asked, each id
+  resolved by point lookup (`setHeightByBlockIdProvider`) and its block read once; an id it does not hold
+  is omitted — "not held", never a refusal. **An id asked twice is answered twice**, in its places: the arm
+  keeps no state across ids, and the byte bound caps the answer whatever the ids repeat.
 
   **Each block is encoded once.** The bytes the bound weighs are the bytes the response carries, so
   blocks reach the framing already encoded rather than being encoded to measure and again to send.
@@ -1310,24 +1325,25 @@ the CBOR would have been the band-aid; the root cause was the second dialect, so
   ⚠ **233 B is the ceiling, not a typical header** — a realistic one measures 208 B. The distinction
   is the point: a bound must be argued from the ceiling, and an instance measured and reported as a
   ceiling is how a limit ends up justified by a number nothing enforces.
-- **A response that does not decode THROWS; it must never resolve to `[]`.** `requestBlocks`' result
-  goes straight to `reorg(forkHeight, newBlocks)`, which reverts above the fork point and applies what
-  it is given — so an empty array *truncates our own chain* instead of failing to extend it.
-- **A `Headers` page has one shape, and a requester holds a page to it.** The serve arm walks our
-  chain down from `min(startHeight, ourTip)` for `min(maxCount, MAX_CHAIN_RESPONSE_ITEMS)` headers or
-  until height 1: heights consecutive and descending, none above the start asked, the page full
-  unless it reaches the bottom. Nothing else is an answer — a height above the start, a hole, a
-  repeat or an ascent is a served chain that is not one (`misbehavior`); a short page that does not
-  reach height 1 is under-delivery (`transient`); an empty page is "has nothing". Fork resolution's
-  walk is the requester that enforces it (NODE_INTERFACE → Fork choice decides on verified headers,
-  step 3).
+- **A response that does not decode THROWS; it must never resolve to `[]`.** An empty list is a statement —
+  "nothing above your locator", "none of these held" — and the scheduler acts on it: an empty `Headers` page
+  below a claim refutes the claim (→ Sync State Machine → "How a header sync ends"). A throw is not a
+  statement, and must never be read as one.
+- **A `Headers` page has one shape, and a requester holds a page to it.** The serve arm takes the first
+  locator entry its applied chain holds — the highest, the locator running from the tip down — and answers
+  the headers above it, ascending, for `MAX_CHAIN_RESPONSE_ITEMS` headers or up to its tip; a locator it
+  holds no entry of is answered from height 1, and one whose highest held entry is its tip with an empty
+  list. Nothing else is an answer: heights consecutive and ascending, the first header's parent a locator
+  hash or — at height 1 — `GENESIS_PREV_BLOCK_HASH`. A page of any other shape is a served chain that is not
+  one (`misbehavior`, → Peer Penalty System). A page shorter than `MAX_CHAIN_RESPONSE_ITEMS` ends at the
+  server's tip, and one that ends below the server's claim refutes the claim (→ Sync State Machine → "How a
+  header sync ends"). The scheduler is the requester that enforces it.
 
 Removed protocols:
 - The old text-based `/dagsocial/sync/1` (individual sub-block request/response) —
   its framed successors, codes 6–7, are themselves retired with sub-blocks
-- `/dagsocial/headers/1` — replaced by GetHeaders/Headers and GetBlocks/Blocks (codes 14–17).
-  Its two queries kept their signatures; what changed is the stream they ride, the encoding of the
-  request, and the admission policy that reaches them.
+- `/dagsocial/headers/1` — its two queries ride codes 14–17 on the sync stream, under that stream's
+  admission policy.
 
 ---
 
@@ -1355,8 +1371,8 @@ Stage 1 reads chain state through two providers and the karma set, and through n
 `@dagsocial/node`, enforced for every entry path (gossip, sync, reorg) by the block-apply funnel.
 The difficulty schedule (`powTargetBits` against the schedule over the stored parent,
 `MINING_INTERFACE → Difficulty Schedule`) is apply-time too, and stage 1 asks it once, through the
-scheduled-target provider, for the one case it can answer without trusting anything: a header whose
-parent this node holds. The header-standing provider answers whether this node holds a header or has
+scheduled-target provider, for the one case it can answer without trusting anything: a header whose parent this node's header tree
+holds. The header-standing provider answers whether this node holds a header or has
 refused it (→ Sync Handler Registration). The validator signature is checked twice: at Stage 1 over the
 header and the signature alone, and in the funnel on every entry path. The relay PoW gate exists to
 make mesh propagation cost-bearing: no zero-work ordering block may be re-gossiped (audit M-9), and the
@@ -1466,13 +1482,13 @@ first hop.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `start(config)` | `(NetConfig) => Promise<void>` | Create libp2p node, register both stream protocols, connect to bootstrap peers, subscribe to topics. **A start that throws stops what it started** — the libp2p node and the sync machine — before the error leaves it, so a caller that continues without networking runs none of it |
+| `start(config)` | `(NetConfig) => Promise<void>` | Create libp2p node, register both stream protocols, connect to bootstrap peers, subscribe to topics. **A start that throws stops what it started** — the libp2p node and the scheduler — before the error leaves it, so a caller that continues without networking runs none of it |
 | `stop()` | `() => Promise<void>` | Graceful shutdown. **A stopped node starts again whole**: the next `start()` registers both protocols on the libp2p node it creates |
 | `peerId()` | `() => string` | This node's libp2p peer ID |
 | `peers()` | `() => Peer[]` | Connected peers with metadata, at any peer state; never this node itself (→ Handshake) |
 | `getConnectedPeers()` | `() => string[]` | Peer IDs of the Active peers — the DAGsocial handshake completed; never this node's own (→ Handshake) |
 | `tipApplied(height)` | `(number) => void` | The node reports each applied tip — every successful apply and the tip a reorg leaves, at the seam where it stamps `dag_tip_height`. When `protocolVersionAt(schedule, height + 1)` is above the era last in force, the boundary sweep runs (→ Post-Handshake Routing); inside an era it does nothing |
-| `syncPhase()` | `() => 'idle' \| 'syncing' \| 'synced'` | The sync machine's phase (Sync State Machine). `'idle'` means no sync has been needed: before `start()`, after `stop()`, and on a node that never met a peer ahead of it — a co-started mesh follows gossip at `'idle'` and never enters `'synced'`; only a node that fell behind passes through `'syncing'` → `'synced'`. A reader wanting "not behind" tests for `'syncing'` absent, not for `'synced'` present |
+| `syncPhase()` | `() => 'idle' \| 'syncing' \| 'synced'` | The scheduler's phase (Sync State Machine → "The phases"): `'idle'` before the first claim this node settles — before `start()`, after `stop()`, and on a node that has met no peer; `'syncing'` while a header sync or a block request is open or the best chain is not fully applied; `'synced'` once the best chain is fully applied and every unmarked Active peer's claim is settled — a co-started mesh enters it at its first settled claims, a miner with followers included. A reader wanting "not behind" tests for `'syncing'` absent |
 
 ### Gossip
 
@@ -1521,10 +1537,9 @@ membership test is the thing standing between a relayed hint and a counterparty 
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `requestHeaders(start, max, peerId)` | `(number, number, string) => Promise<BlockHeader[]>` | Request block headers for fork resolution (codes 14/15) |
-| `requestBlocks(start, end, peerId)` | `(number, number, string) => Promise<OrderingBlock[]>` | Request full blocks for reorg (codes 16/17) |
+| `requestHeaders(locator, peerId)` | `(string[], string) => Promise<BlockHeader[]>` | The scheduler's header query (codes 14/15): the headers above the highest locator hash the peer's applied chain holds, ascending (→ `GetHeaders` / `GetBlocks` responses) |
+| `requestBlocks(ids, peerId)` | `(string[], string) => Promise<OrderingBlock[]>` | The scheduler's block query (codes 16/17): the blocks among `ids` the peer's applied chain holds, in the order asked |
 | `requestPostBodies(wanted, peerId)` | `({ id: string; contentHash: Uint8Array }[], string) => Promise<{ id: string; content: string }[]>` | Request post bodies by id from one peer (`ModifierRequest` type 103 on the sync stream, codes 4/5); the caller supplies each id's commitment. **Any number of ids, asked in requests of at most `MAX_INV_IDS`, one after another, the answers merged; a request that fails fails the call, as one request does** — a request over the cap is one the peer's decoder refuses as malformed, and bans the sender for (→ ModifierRequest). Answers carry only the ids the peer holds; each body is decoded and verified against its commitment before it is returned — a mismatch or an undecodable body is a misbehaviour penalty and is dropped — and **the verified bodies are returned to the caller, which stores them** (the node's body pulls) |
-| `peerTipHeight(peerId)` | `(string) => number \| null` | The height the sync machine retains for an Active peer — the handshake `chainHeight`, refreshed by every inbound `SyncInfo` (→ Sync State Machine, Pick); `null` for a peer it does not retain. Fork resolution's re-score memo reads it (NODE_INTERFACE → Fork choice decides on verified headers): a branch scored lighter is not walked again until this number moves. A read of retained state, no message |
 
 **A request is one round trip, and closing its stream never changes its answer.** Every request this node makes —
 the handshake, `GetHeaders`, `GetBlocks`, `GetPeers`, a body request — opens the protocol under
@@ -1533,43 +1548,45 @@ untrusted-input safety)) and closes the stream. A close that fails is the stream
 stands, and so does the error that ended the read.
 
 ⚠ **Both chain queries THROW rather than return empty** on an unexpected frame
-code or a malformed body — a decoded-but-empty answer is a statement ("no blocks"),
-a throw is not, and the caller must be able to tell them apart. `requestBlocks`'
-result reaches `reorg(forkHeight, newBlocks)` only after node has checked every page of it
-against the verified hashes — heights consecutive from the first still missing, each block
-hashing to the verified hash at its height (NODE_INTERFACE → Fork choice decides on verified
-headers); a page adding nothing or a substituted block is refused there and penalised through
-`penalizePeer` (Peer Penalty System).
+code or a malformed body — a decoded-but-empty answer is a statement ("nothing above your locator",
+"none of these held"), a throw is not, and the caller must be able to tell them apart. Whatever either
+query returns reaches the node only through the pipeline (→ Sync Handler Registration), which binds every
+block to the header its tree holds before staging it (NODE_INTERFACE → Fork choice decides on verified
+headers → "A served block is bound to its header before it is kept").
 
-**Fork resolution pages, and asks for nothing it has not verified.** The fork point is found by
-paging the peer's headers **down from our own tip** — `requestHeaders(ourTip, MAX_CHAIN_RESPONSE_ITEMS)`,
-then from the lowest height seen − 1 — each page held to the one shape the serve arm produces
-(→ `GetHeaders` / `GetBlocks` responses), over at most `⌈maxReorgDepth / 400⌉` pages; the competing
-branch is then scored **upward** in pages of the same query, each verified against the anchor the
-previous page returned, until it is heavier than ours above the fork or it ends (NODE_INTERFACE → Fork
-choice decides on verified headers). The block range then requested is `forkHeight + 1 … forkHeight +
-n` for the `n` headers verified, fetched in pages of `requestBlocks`, each page checked for identity as
-it lands — never a height the peer claimed. The descending serve arm and its clamp to the peer's tip
-(→ `GetHeaders` / `GetBlocks` responses) are what the upward walk relies on: a request above the tip
-answers from the tip down, so the trimmed page is the next 400 or the remainder.
+**The scheduler asks for nothing the pipeline has not named.** A header request carries the chain view's
+locator for that peer; a block request carries ids the chain view names (`wantedBlocks`), never a height
+range and never a block a peer claimed (→ Sync State Machine). Node calls neither query: the pipeline says
+what it lacks, and the scheduler decides whom to ask.
 
-**The gossip source is what fork resolution asks.** `resolveFork` takes the peer that relayed the
-competing block and uses it as the counterparty when it is still in `getConnectedPeers()`, falling back
-to that list otherwise. That peer provably holds the fork chain; an arbitrary connected peer does not,
-and asking one that does not is indistinguishable at the call site from a peer that has no reorg to
-offer.
+**A gossiped block's relayer is asked for the headers the tree lacks.** The pipeline's `needHeaders(peerId)`
+(→ Pipeline events) names the peer that relayed a block whose parent the header tree does not hold; the
+scheduler opens that peer's header sync when it is Active and unmarked — that peer provably holds the
+chain, an arbitrary one does not. A relayer that is neither, or a `fromPeerId` of `''`, is asked nothing:
+the block waits as its relayer's pending block (NODE_INTERFACE → Fork choice decides on verified headers →
+"One intake, one at a time"), and the headers it lacks arrive with the claims of the peers that hold them.
+
+### Pipeline events
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `needHeaders(peerId)` | `(string) => void` | The pipeline lacks the headers below a block `peerId` relayed (→ Pull Requests → "A gossiped block's relayer is asked for the headers the tree lacks") |
+| `chainMoved()` | `() => void` | The best chain or the applied tip moved: the scheduler asks the chain view again for the blocks wanted and for its claims' standing |
+
+`tipApplied(height)` (→ Node Lifecycle) stays the era sweep's seam; `chainMoved()` is the scheduler's.
 
 ### Sync Handler Registration
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `setBlocksHandler(cb)` | `((block: OrderingBlock, fromPeerId: string) => boolean) => void` | Handler for blocks received during sync. `fromPeerId` is the peer whose response carried the block. The return is the batch's **continue** signal — `true` for a block the handler applied or already held, `false` for one it rejected or one that extends nothing (node then resolves the fork with `fromPeerId` as counterparty) — and `appendBlocks` **stops the batch at the first `false`**: the blocks after it are chained to the one that did not apply. Progress is still measured by chain height (audit M-10), never by this return |
-| `setHeadersHandler(cb)` | `((height: number) => OrderingBlock \| null) => void` | Provider for `GetBlocks` (code 16) and for the blocks a `ModifierResponse` serves (`serializeOrderingBlock` re-encodes the provider's block). Returns the whole block. **Never a header for `GetHeaders`, never the tip height, never a block id** — those are the rows below |
-| `setHeaderProvider(cb)` | `((height: number) => BlockHeader \| null) => void` | Provider for `GetHeaders` (code 14): the header stored at a height, read without its block's body. **One height is one header read**: the arm serves up to `MAX_CHAIN_RESPONSE_ITEMS` headers, and a whole-block read there decodes up to 400 bodies of up to `MAX_BLOCK_BODY_BYTES` for a seven-byte request. Unset → `GetHeaders` is answered zero bytes |
-| `setChainHeightProvider(cb)` | `(() => number) => void` | Provider for the chain tip height — the one number behind the handshake `chainHeight`, `SyncInfo.tipHeight`, every `peerHeight > ourHeight` comparison, the stall-progress measure and the served chain query's tip. **One read is one provider call**: `SyncStore.chainHeight()` returns the provider's value and never walks the chain through the headers provider (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `0`, as a node with no chain. The node hands over its store's `MAX(height)` — the same tip its block creator and fork resolution read — so the height `net` advertises is the height the node mines on |
-| `setBlockIdProvider(cb)` | `((height: number) => string \| null) => void` | Provider for the block id at a height — behind the ids an Inv continuation announces to a peer behind us. The id is the store's own, written at block application; `net` computes no id it announces from a header — the one id it computes, `blockHash` over a gossiped header for the standing check, it never sends (→ Stage 1 → "A header this node knows is Ignored"). **One id is one provider call**, a point read that decodes no block (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `null` — nothing to announce |
-| `setHeightByBlockIdProvider(cb)` | `((id: string) => number \| null) => void` | Provider for the height holding a block id, or `null` for an id not on our chain — the read that filters an inbound `Inv` (an id we hold or already requested is not re-requested) and resolves a `ModifierRequest`'s ids to the heights it serves from. **One id is one provider call, never a chain walk**: a message of k ids costs k point lookups, and no message rebuilds an id index of the whole chain (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `null` — every id unknown, nothing served |
-| `setScheduledTargetProvider(cb)` | `((header: BlockHeader) => number \| null) => void` | Provider for the ordering-block topic validator's schedule check: the `powTargetBits` the schedule requires of `header`, or `null` when this node does not hold `header`'s parent — a header at height 1 answers the anchor's bits; otherwise the stored block at `header.height − 1` whose id is `header.prevBlockHash`, evaluated as the apply funnel evaluates it (`MINING_INTERFACE → Difficulty Schedule`). **One header is one provider call.** Unset → `null` — every header passes on the floor and its own PoW alone (→ Stage 1) |
+| `setPipeline(intake)` | `(PipelineIntake) => void` | The node's pipeline intake — every answer's way in (NODE_INTERFACE → Fork choice decides on verified headers). `deliverHeaders(peerId, claimHash, headers): Promise<'taken' \| 'again' \| 'refused'>` hands it a `Headers` page held to its shape, with the peer's claim as the page is delivered — the refute test reads the claim the page was asked under (→ Sync State Machine → "How a header sync ends") — `''` for a run `needHeaders` opened on a peer with no claim, whose branch ends at the peer's tip, the first page shorter than `MAX_CHAIN_RESPONSE_ITEMS`; it resolves `'taken'` when the pipeline took the page whole — stored, scored, or held already — `'again'` when it took the page and is re-fetching a branch it scored heavier, so the peer is asked again at once, and `'refused'` when it took none of it (penalised where the refusal is the peer's), which ends that peer's header sync unmarked (→ Sync State Machine → "One header request per peer, every peer at once."). `deliverBlocks(peerId, blocks): Promise<void>` hands it a `Blocks` answer's blocks. Both resolve once the intake has taken the delivery; neither throws for a peer's bytes |
+| `setChainView(view)` | `(ChainView) => void` | The node's header tree as the scheduler reads it, and the one place it learns anything about the chain: `locatorFor(peerId): string[]` — the locator a header request to that peer carries (→ `GetHeaders` / `GetBlocks` responses); `knowsTip(peerId, hash): boolean` — the tree holds `hash`, or the pipeline scored that peer's branch lighter at it; `wantedBlocks(): { id: string; height: number }[]` — the blocks the pipeline wants next, each id with its height, in height order (NODE_INTERFACE → Fork choice decides on verified headers → "The pipeline names the blocks it wants"); `fullyApplied(): boolean` — the best chain's tip is applied; `gateHeld(): void` — the scheduler's report that the gate holds now (→ Sync State Machine → "The gate bounds how far blocks apply"). **One question is one call**, a point read or an in-memory answer — no call walks the chain (ARCHITECTURE → Correct and cheap are separate obligations). Unset → the scheduler asks no peer anything |
+| `setHeadersHandler(cb)` | `((height: number) => OrderingBlock \| null) => void` | Provider for the `GetBlocks` (code 16) serve arm: the block stored at a height, read for each requested id the height-by-id provider places on the applied chain. Returns the whole block. **Never a header for `GetHeaders`, never the tip height, never a block id** — those are the rows below |
+| `setHeaderProvider(cb)` | `((height: number) => BlockHeader \| null) => void` | Provider for `GetHeaders` (code 14): the header stored at a height of the applied chain, read without its block's body. **One height is one header read**: the arm serves up to `MAX_CHAIN_RESPONSE_ITEMS` headers, and a whole-block read there decodes up to 400 bodies of up to `MAX_BLOCK_BODY_BYTES` for a request of a few hashes. Unset → `GetHeaders` is answered zero bytes |
+| `setChainHeightProvider(cb)` | `(() => number) => void` | Provider for the chain tip height — the one number behind the handshake `chainHeight`, `SyncInfo.tipHeight` and the serve arms' tip. **One read is one provider call**: `SyncStore.chainHeight()` returns the provider's value and never walks the chain through the headers provider (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `0`, as a node with no chain. The node hands over its store's `MAX(height)` — the same tip its block creator and its pipeline read — so the height `net` claims is the height the node mines on |
+| `setBlockIdProvider(cb)` | `((height: number) => string \| null) => void` | Provider for the block id at a height — behind `SyncInfo.tipHash`, the id at our tip height. The id is the store's own, written at block application; `net` computes no id it claims from a header — the one id it computes, `blockHash` over a gossiped header for the standing check, it never claims (→ Stage 1 → "A header this node knows is Ignored"). **One id is one provider call**, a point read that decodes no block (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `null` — the tip hash of a node with no chain, `GENESIS_PREV_BLOCK_HASH`, is claimed in its place |
+| `setHeightByBlockIdProvider(cb)` | `((id: string) => number \| null) => void` | Provider for the height holding a block id, or `null` for an id not on our chain — the read that finds a `GetHeaders` locator's highest entry on our chain and resolves a `GetBlocks` request's ids to the heights it serves from. **One id is one provider call, never a chain walk**: a message of k ids costs k point lookups, and no message rebuilds an id index of the whole chain (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `null` — every id unknown, nothing served |
+| `setScheduledTargetProvider(cb)` | `((header: BlockHeader) => number \| null) => void` | Provider for the ordering-block topic validator's schedule check: the `powTargetBits` the schedule requires of `header`, or `null` when this node's header tree does not hold `header`'s parent — a header at height 1 answers the anchor's bits; otherwise the tree's header `header.prevBlockHash` at `header.height − 1`, evaluated as the apply funnel evaluates it over its own path's anchor stamp (`MINING_INTERFACE → Difficulty Schedule`). **One header is one provider call.** Unset → `null` — every header passes on the floor and its own PoW alone (→ Stage 1) |
 | `setHeaderStandingProvider(cb)` | `((hash: string, height: number) => 'held' \| 'refused' \| null) => void` | Provider for the ordering-block topic validator's standing check: `'held'` when the block this node stores at `height` has the id `hash`, `'refused'` when `hash` is marked in `refused_headers` (NODE_INTERFACE → Refused headers), `null` otherwise. **One header is one provider call.** Unset → `null` — every header is judged as one this node does not know (→ Stage 1 → "A header this node knows is Ignored"); net's own memory of accepted headers stands either way |
 | `onSyncComplete(cb)` | `(() => void) => void` | Fired on every entry into the `synced` phase |
 | `setPostBodyProvider(cb)` | `((postId: string) => string \| null) => void` | Provider for the `MODIFIER_POST_BODY` serve arm: the body this node holds for the id, or `null` — served locally or omitted, never relayed (→ Local-Serve-Before-Relay). |
@@ -1579,9 +1596,9 @@ offer.
 
 **These four are what JOURNAL_EVENTS → Peer Events / Sync Events and NODE_INTERFACE → Admin Listener read** —
 `peer_connected` from `onPeerActive`, `peer_disconnected`, `peer_penalised`, `sync_complete` from `onSyncComplete`;
-`syncing` from `syncPhase()`. The node reads `onPeerDisconnected` once more, for its fork resolution:
-a peer that has gone takes its pending block and its memo entry with it
-(NODE_INTERFACE → Fork choice decides on verified headers → "One resolution at a time").
+`syncing` from `syncPhase()`. The node reads `onPeerDisconnected` once more, for its pipeline:
+a peer that has gone takes its pending block, its presync and its memo entry with it
+(NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one at a time").
 
 **Handler setters are order-independent.** Every setter above stores a delegate and has no libp2p side
 effect, so it is valid before or after `start()`, and a later call replaces the delegate. Registering a
@@ -1594,9 +1611,9 @@ as the peer's fault rather than ours.
 **A node that has registered no provider for a query answers it zero bytes** — `GetHeaders` with no header
 provider, `GetBlocks` with no headers provider — rather than leaving the stream unanswered. Zero bytes is "I cannot
 answer", and it is distinct from an empty header *list* — one byte, `vlqU(0)` — which means "I consulted my chain and
-have nothing at that height". A node holding no provider has no chain to consult, so it cannot honestly send the
-second. Both reach the caller as an empty array, and fork resolution treats that as "no reorg" like any other
-non-match, so nothing downstream needs a new case.
+have nothing above your locator". A node holding no provider has no chain to consult, so it cannot honestly send the
+second. Both reach the caller as an empty array, and the scheduler reads it as an answer that holds nothing: a
+header sync it leaves short of its claim ends refuted (→ Sync State Machine → "How a header sync ends").
 
 **A code no arm serves is closed unanswered, so it reads as "I cannot answer".** A peer that speaks
 `/dagsocial/sync/1` but does not know a query's code reads the frame and closes the stream (→ Stream Protocols →
@@ -1711,7 +1728,8 @@ Handler Registration). Net receives values; it does not resolve them, does not i
 - Connected to bootstrap peers, handshake exchanged, and meshed on all
   subscribed gossip topics
 - Handshake validated — wrong-network peers rejected at magic byte level
-- Sync initiated with peers ahead of us; sync served to peers behind us
+- Headers asked of every peer whose claim the node's header tree lacks, blocks fetched along the node's best
+  chain, and the applied chain served to every peer that asks
 - UTXO transactions received from peers are validated and forwarded to the
   local node's mempool
 - Ordering blocks received from peers are validated and applied
@@ -1730,12 +1748,14 @@ Handler Registration). Net receives values; it does not resolve them, does not i
 - Stream protocols carry framed messages; Gossipsub topics carry the object's
   own positional wire encoding, unframed
 - Sync is bidirectional — nodes serve peers behind them, not just consume
+- A peer's claim is a reason to ask it, never a measure of a chain: the chain is chosen by the node's
+  pipeline over verified headers, and net's scheduler chooses only whom to ask (→ Historical Sync)
 - Unknown message codes and peer capabilities are preserved, not rejected
 - A node is never its own peer: a connection to its own peer id is closed at the dial and refused
   at the handshake, and the PeerDb self-address filter keeps its own addresses out of the fill phase
 - A banned peer is never handshaken: its inbound connection is refused at the transport and its
   handshake stream unread, the dial is closed outbound, and every address a dial ties to it leaves
-  PeerDb; a ban ends the connection it lands on, and the sync machine drops the peer at once
+  PeerDb; a ban ends the connection it lands on, and the scheduler drops the peer at once
 - Bogus addresses filtered silently; malformed Peers trigger permanent ban
 - Stage 1 reads chain state through the cached karma-membership set (`NODE_INTERFACE` → Post
   transactions) and two providers — the scheduled target and a header's standing — and a refusal

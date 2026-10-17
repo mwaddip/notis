@@ -87,7 +87,7 @@ describe('a stopped node starts again whole', () => {
     // the new libp2p answers; one that did not fails multistream selection
     // and throws. `.catch(err => err)` captures either, so the last line is
     // the one the rule flips.
-    const result = await nodeB.requestHeaders(0, 1, nodeA.peerId()).catch((err: unknown) => err);
+    const result = await nodeB.requestHeaders(['ff'.repeat(32)], nodeA.peerId()).catch((err: unknown) => err);
     expect(result instanceof Error).toBe(false);
   }, TIMEOUT);
 });

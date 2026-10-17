@@ -573,5 +573,5 @@ an unvisited node written in full.
 ## Does NOT own
 
 Persistence (the store, the journal, the AVL prover) · the header checks that need the chain (link, PoW, difficulty,
-interlinks) · mempool admission policy (it calls `validateTx`) · block production and fork resolution (they call the
+interlinks) · mempool admission policy (it calls `validateTx`) · block production and the switch's `reorg` (they call the
 package — the creator `buildBlockSettlement` and `applyBlock`) · networking, routes, configuration.

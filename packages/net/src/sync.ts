@@ -1,4 +1,5 @@
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
+import { GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
 import type { Libp2p } from 'libp2p';
 import type { PeerId } from '@libp2p/interface';
 import type { NetConfig } from './types.js';
@@ -16,10 +17,11 @@ import { MAX_STREAM_BYTES } from './msg-guards.js';
 export const SYNC_PROTOCOL = '/dagsocial/sync/1';
 
 // ---------------------------------------------------------------------------
-// Fork resolution's two chain queries — GetHeaders (14) and GetBlocks (16)
+// The scheduler's two chain queries — GetHeaders (14) and GetBlocks (16)
 //
-// Both ride `SYNC_PROTOCOL` and both sides of the exchange are positional and
-// framed: `vlqU(startHeight) vlqU(maxCount)` out, `arr(item, lp)` back. See
+// Both ride `SYNC_PROTOCOL` and both sides are positional and framed:
+// `arr(hexN(32))` out — a locator for headers, ids for blocks — `arr(item, lp)`
+// back (NET_INTERFACE → `GetHeaders` / `GetBlocks` responses). See
 // `lpItemsCodec` in `sync-codec.ts` for what a positional response closes and
 // why a shape check over `cbor-x` is the wrong instrument here.
 //
@@ -28,11 +30,9 @@ export const SYNC_PROTOCOL = '/dagsocial/sync/1';
 // against the wrong codec.
 //
 // Both THROW on an unexpected frame code or a malformed body (NET_INTERFACE →
-// Pull Requests). Fork resolution feeds `requestBlocks`' result straight to
-// `reorg(forkHeight, newBlocks)`, so an empty array rolls our chain back to the
-// fork point and applies nothing — a peer sending junk would truncate our chain
-// instead of failing to extend it. The throw lands in that function's existing
-// catch and abandons the reorg.
+// Pull Requests). The throw lands at the scheduler, which marks the peer
+// (NET_INTERFACE → Sync State Machine → "A request ends without a well-formed
+// answer").
 // ---------------------------------------------------------------------------
 
 /**
@@ -86,13 +86,15 @@ export async function oneRoundTrip(
 }
 
 /**
- * Request headers from a peer, starting at startHeight and going down.
- * Returns newest-first.
+ * Request headers from a peer, by locator.
+ *
+ * NET_INTERFACE → Pull Requests: the scheduler's header query (codes 14/15).
+ * The reply is the headers above the highest locator hash the peer's applied
+ * chain holds, ascending.
  */
 export async function requestHeaders(
   libp2p: Libp2p,
-  startHeight: number,
-  maxCount: number,
+  locator: string[],
   peerId: string,
   config: NetConfig,
 ): Promise<BlockHeader[]> {
@@ -103,7 +105,7 @@ export async function requestHeaders(
     libp2p,
     peer,
     SYNC_PROTOCOL,
-    encodeGetHeaders(magic, { startHeight, maxCount }),
+    encodeGetHeaders(magic, { locator }),
     config,
   );
   if (response === null) {
@@ -120,7 +122,7 @@ export async function requestHeaders(
     throw new Error(`Headers response from peer ${peerId} bears code ${frame.code}`);
   }
 
-  const headers = decodeHeaders(frame.body, maxCount);
+  const headers = decodeHeaders(frame.body);
   if (headers === null) {
     throw new Error(`Headers response from peer ${peerId} is not a well-formed headers response`);
   }
@@ -128,12 +130,37 @@ export async function requestHeaders(
 }
 
 /**
- * Request full ordering blocks from startHeight to endHeight (inclusive).
+ * Hold a `Headers` page to its shape — NET_INTERFACE → `GetHeaders` /
+ * `GetBlocks` responses → "A `Headers` page has one shape, and a requester
+ * holds a page to it": heights consecutive and ascending; the first
+ * header's parent a locator hash or, at height 1, `GENESIS_PREV_BLOCK_HASH`.
+ * The empty page satisfies the shape by having no first header.
+ */
+export function holdsPageShape(page: BlockHeader[], locator: string[]): boolean {
+  if (page.length === 0) return true;
+  for (let i = 1; i < page.length; i++) {
+    if (page[i]!.height !== page[i - 1]!.height + 1) return false;
+  }
+  const first = page[0]!;
+  if (first.height === 1) {
+    return first.prevBlockHash === GENESIS_PREV_BLOCK_HASH;
+  }
+  for (const hash of locator) {
+    if (first.prevBlockHash === hash) return true;
+  }
+  return false;
+}
+
+/**
+ * Request ordering blocks from a peer, by id.
+ *
+ * NET_INTERFACE → Pull Requests: the scheduler's block query (codes 16/17).
+ * The answer carries the blocks among `ids` the peer's applied chain holds,
+ * in the order asked.
  */
 export async function requestBlocks(
   libp2p: Libp2p,
-  startHeight: number,
-  endHeight: number,
+  ids: string[],
   peerId: string,
   config: NetConfig,
 ): Promise<OrderingBlock[]> {
@@ -144,7 +171,7 @@ export async function requestBlocks(
     libp2p,
     peer,
     SYNC_PROTOCOL,
-    encodeGetBlocks(magic, { startHeight, endHeight }),
+    encodeGetBlocks(magic, { ids }),
     config,
     5,
   );
@@ -160,7 +187,7 @@ export async function requestBlocks(
     throw new Error(`Blocks response from peer ${peerId} bears code ${frame.code}`);
   }
 
-  const blocks = decodeBlocks(frame.body, endHeight - startHeight + 1);
+  const blocks = decodeBlocks(frame.body, ids.length);
   if (blocks === null) {
     throw new Error(`Blocks response from peer ${peerId} is not a well-formed blocks response`);
   }

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'child_process';
+import { pathToFileURL } from 'url';
 import { resolve } from 'path';
 import { httpPort, adminPort, p2pPort } from './ports.js';
 
@@ -12,6 +13,18 @@ const NODE_ENTRY = resolve(
   'dist',
   'index.js',
 );
+
+// MINING_INTERFACE → Difficulty Schedule — the preload a caller passes to shift
+// `Date.now()` on this process, so the block creator's `createdAt` stamp sits
+// where the caller places it. Lives in `src/`; built dists do not read it.
+export const CLOCK_OFFSET_PRELOAD = resolve(
+  import.meta.dirname,
+  'clock-offset-preload.mjs',
+);
+
+export function clockOffsetNodeOptions(): string {
+  return `--import=${pathToFileURL(CLOCK_OFFSET_PRELOAD).href}`;
+}
 
 export interface NodeProcessOptions {
   fileIndex: number;
@@ -28,6 +41,10 @@ export interface NodeProcess {
   adminPort: number;
   p2pPort: number;
   url: string;
+  dbPath: string;
+  bootstrapPeers: string;
+  fileIndex: number;
+  nodeIndex: number;
   logs: string[];
   linesSeen: number;
   linesSince(n: number): string[];
@@ -88,6 +105,10 @@ export function spawnNode(opts: NodeProcessOptions): NodeProcess {
     adminPort: admin,
     p2pPort: p2p,
     url: `http://127.0.0.1:${http}`,
+    dbPath: opts.dbPath,
+    bootstrapPeers: opts.bootstrapPeers,
+    fileIndex: opts.fileIndex,
+    nodeIndex: opts.nodeIndex,
     logs,
     get linesSeen() {
       return linesSeen;
@@ -97,6 +118,11 @@ export function spawnNode(opts: NodeProcessOptions): NodeProcess {
       child.kill('SIGTERM');
     },
   };
+}
+
+export async function awaitExit(node: NodeProcess): Promise<void> {
+  if (node.child.exitCode !== null) return;
+  await new Promise<void>((r) => node.child.on('exit', () => r()));
 }
 
 export async function waitForStatus(node: NodeProcess, timeoutMs = 30_000): Promise<void> {

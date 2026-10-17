@@ -6,7 +6,7 @@ import type { OrderingBlock, UtxoTransaction, BlockHeader, ProtocolEra } from '@
 
 export const MSG_HANDSHAKE = 1;
 export const MSG_SYNC_INFO = 2;
-export const MSG_INV = 3;
+// code 3 retired (was Inv) — never reuse
 export const MSG_MODIFIER_REQUEST = 4;
 export const MSG_MODIFIER_RESPONSE = 5;
 export const MSG_GET_PEERS = 8;
@@ -20,7 +20,7 @@ export const MSG_BLOCKS = 17;
 // Modifier type IDs
 // ---------------------------------------------------------------------------
 
-export const MODIFIER_ORDERING_BLOCK = 101;
+// 101 retired (was ordering block), never reuse
 // 102 retired (was sub-block), never reuse
 export const MODIFIER_POST_BODY = 103;
 
@@ -204,19 +204,15 @@ export interface PeersMsg {
 // ---------------------------------------------------------------------------
 // GetHeaders / GetBlocks request types
 //
-// Positional bodies, not CBOR maps: `vlqU(startHeight) vlqU(maxCount)` for code
-// 14 and `vlqU(startHeight) vlqU(endHeight)` for code 16 (NET_INTERFACE →
-// `GetHeaders` / `GetBlocks` responses). Neither field is optional — the code
-// pair is what discriminates the two queries, so there is no shared shape for a
-// missing field to select within.
+// Positional `arr(hexN(32))` for both (NET_INTERFACE → `GetHeaders` /
+// `GetBlocks` responses). The two bodies share the layout; the frame's code
+// pair is what tells them apart.
 // ---------------------------------------------------------------------------
 
 export interface GetHeadersMsg {
-  startHeight: number;
-  maxCount: number;
+  locator: string[];
 }
 
 export interface GetBlocksMsg {
-  startHeight: number;
-  endHeight: number;
+  ids: string[];
 }

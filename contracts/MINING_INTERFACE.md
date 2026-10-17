@@ -226,7 +226,7 @@ Stage 1`).
 | Rule | Statement | Class |
 |---|---|---|
 | **Order** | `createdAt(N) > createdAt(N−1)` for N ≥ 2 — strict, Ergo's header rule 205 | **consensus** — a violation is a bad chain: refuse; in a fork segment refuse-whole and penalise `misbehavior` (reason `'time'`) |
-| **Future bound** | `createdAt(N) ≤ now + MAX_FUTURE_DRIFT_MS`, `now` the receiving node's clock | **acceptance**, not consensus — the block may be valid a minute later: refuse, **no penalty, no `refused_headers` mark** (`NODE_INTERFACE → Fork choice decides on verified headers`, what is remembered); in a fork segment reason `'clock'`, the one refusal that is not a verdict on the chain; inside a reorg the funnel's refusal aborts the switch — no mark, no penalty, no memo (`NODE_INTERFACE → Fork choice decides on verified headers`, step 10) |
+| **Future bound** | `createdAt(N) ≤ now + MAX_FUTURE_DRIFT_MS`, `now` the receiving node's clock | **acceptance**, not consensus — the block may be valid a minute later: refuse, **no penalty, no `refused_headers` mark** (`NODE_INTERFACE → Fork choice decides on verified headers → "What is remembered, and what is not"`); at a header's admission reason `'clock'`, the one refusal that is not a verdict on the chain; inside a reorg the funnel's refusal aborts the switch — no mark, no penalty, no memo (`NODE_INTERFACE → Fork choice decides on verified headers → "The switch"`) |
 
 Block 1 has no parent and no order check; the future bound applies to it as to every block.
 
@@ -235,13 +235,12 @@ accepts a block *now* depends on its clock, and two honest nodes can disagree no
 later. No hashrate-tracking retarget avoids the touchpoint: a chain-only rule bounding each stamp's
 increment over its parent limits how *fast* chain time can run ahead of real time, not how *far*, and
 an attacker who keeps pushing walks difficulty to the floor. A future-refused block is recovered by the
-sync path — the producer's next `SyncInfo` shows a taller tip, the receiver's `heightByBlockId` lacks
-the id, and the `Inv → ModifierRequest` round re-delivers it inside the bound (`NET_INTERFACE → Sync
-State Machine`). Replay never trips it: a stored block is in the past by the time it is re-applied on
-restart. A reorg applies the peer's blocks, each inside the bound at the header walk (reason
+sync path — the producer's next `SyncInfo` claims a tip the receiver's header tree lacks, the receiver asks
+it for headers and then for the block by id, inside the bound (`NET_INTERFACE → Sync State Machine`). Replay never trips it: a stored block is in the past by the time it is re-applied on
+restart. A switch applies a branch's staged blocks, each inside the bound at its header's admission (reason
 `'clock'` there); the funnel's re-check fails only if this node's clock stepped backward in
 between, and then the switch aborts with no mark (`NODE_INTERFACE → Fork choice decides on
-verified headers`, step 10).
+verified headers → "The switch"`).
 
 **What the bound buys an attacker, and no more.** Every honest receiver holds chain time at
 `real + skew`, and under an absolute schedule the chain can be at most `skew / ideal` = 10 blocks ahead
@@ -371,9 +370,9 @@ as nothing, and the speculation of the body carrying it answers for it as the ap
 state stops the node (`NODE_INTERFACE → "What the funnel's totality catch is FOR"`).
 
 **Holding one and serving one are separate**, and 404 is routine again for the second: a node that has
-not yet met its peers withholds the template it holds. See *The peer-readiness gate* below. **A 404
-from a miner node is one of two things** — that gate, or a terminal decline, which is on the node's
-log. Any other 404 is a defect.
+not yet met its peers withholds the template it holds. See *The peer-readiness gate* and *The window gate*
+below. **A 404 from a miner node is one of three things** — either gate, or a terminal decline, which is on
+the node's log. Any other 404 is a defect.
 
 ⚠ **The template is stable for a height, and that is a load-bearing property, not an implementation
 detail.** `POST /mining/submit` reconstructs the header from *the node's current template* plus the
@@ -440,6 +439,14 @@ retry, which is routine. 500 says a template exists and is malformed, which is n
 retried a 404 forever against a broken creator would never learn anything — and silently omitting
 `powPreimage` would be worse still, because the miner would mine against `undefined` and submit
 nonces that can never verify.
+
+#### The window gate
+
+**A miner node withholds the template while its pipeline's window holds extension** — `appliedTip ≥ S +
+maxReorgDepth`, `S` the best chain's height at the last hold of net's gate (`NODE_INTERFACE → Fork choice decides
+on verified headers → "The window"`). A block the node could not apply is a block it does not ask a miner for.
+The answer is the same `404 { error: 'No block template available' }`, so `scripts/miner.mjs` polls until the
+next hold opens the window, and the gate sits behind the `?miner=` validation as the peer-readiness gate does.
 
 ### POST /mining/submit
 

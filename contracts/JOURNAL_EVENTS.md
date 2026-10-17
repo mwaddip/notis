@@ -152,10 +152,12 @@ carries none). `peer_penalised` fires for every penalty path, `gossip.ts`'s incl
 
 Fires from `NetNode.onSyncComplete` (every entry into the `synced` phase) through the `emitSyncComplete`
 wrapper; `duration_ms` is measured since process start for the first and since the previous
-`sync_complete` after. ⚠ **The phase is entered only when a peer's `SyncInfo` reports `tipHeight ===
-ourHeight` while the machine is `syncing` (NET_INTERFACE → Sync State Machine)** — under continuous fast
-block production (devnet) the two may never coincide at an exchange, and the event then never fires; the
-wiring is not what decides it.
+`sync_complete` after.
+
+⚠ **The phase is entered when the best chain is fully applied and every unmarked Active peer's claim is
+settled (NET_INTERFACE → Sync State Machine → "The phases")** — a node with peers enters it at its first settled
+claims, a miner with followers included; under continuous fast block production (devnet) a new claim can open a
+header sync at every exchange, and the event then fires late or not at all; the wiring is not what decides it.
 
 ### sync_complete
 **Level:** INFO

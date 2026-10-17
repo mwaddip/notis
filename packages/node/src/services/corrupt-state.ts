@@ -85,8 +85,8 @@ export class UnhashableStoredHeaderError extends CorruptChainStateError {
  *
  * The live reason, as opposed to that latent one, is reach. The store frame
  * names the fault so every reader raises one class, and every outer frame —
- * both registrations, the fork-resolution runner for each resolution and each
- * hand-back, `finalizeBlock`, the block creator, and the guarded provider and
+ * the gossip registration and net's pipeline hookup, the intake for each item,
+ * `submitMinedBlock`, the block creator, and the guarded providers and
  * routes — is a boundary
  * (NODE_INTERFACE → "Reach is the live argument, not the halt").
  */
@@ -138,6 +138,65 @@ export class MissingStoredBlockError extends CorruptChainStateError {
       height,
       `no block at height ${height}, below a tip we do hold — the ordering ` +
       `store is not contiguous (store/ordering.ts → createOrderingBlock)`,
+    );
+  }
+}
+
+/**
+ * A `staged_blocks` row the switch asked for and did not get.
+ *
+ * The switch names its branch by the heights whose `block_headers` row carries
+ * the matching `chain_work`, and the row set is checked staged inside the same
+ * synchronous item that calls `reorg`. A `null` read inside the transaction
+ * means the row changed between the check and the read, or the writer and the
+ * reader disagree — the same local-corruption class a stored block's missing
+ * row is in. Fail-stop under `reorg`'s catch, as a missing stored block is
+ * (NODE_INTERFACE → Fork choice decides on verified headers → "A bound block
+ * is staged, and applied from staging.").
+ */
+export class MissingStagedBlockError extends CorruptChainStateError {
+  constructor(site: string, height: number, hash: string) {
+    super(
+      site,
+      height,
+      `no staged block at height ${height} for hash ${hash} — the switch ` +
+      `checked the row staged in the same synchronous item ` +
+      `(store/header-tree.ts → stageBlock)`,
+    );
+  }
+}
+
+/**
+ * The header tree contradicts itself where the switch reads it: an applied
+ * header with no `block_headers` row, a gap in `best_chain` below its tip,
+ * or a `best_chain` hash with no row — the pipeline is the tables' one
+ * writer and writes none of these (NODE_INTERFACE → Store Interface →
+ * Header tree).
+ */
+export class InconsistentHeaderTreeError extends CorruptChainStateError {
+  constructor(site: string, height: number, detail: string) {
+    super(site, height, `inconsistent header tree at height ${height}: ${detail}`);
+  }
+}
+
+/**
+ * The switch's fork-point walk reached the reach floor without finding a
+ * matching hash. Admission's age rule holds every stored header's parent at
+ * or above the floor (NODE_INTERFACE → Fork choice decides on verified
+ * headers → "The reach floor is the horizon, one rule for every fork point."),
+ * so the best chain's fork with the applied chain is reachable; a walk that
+ * reaches the floor without a match says a header below it was stored, or
+ * the stored rows the walk reads disagree with the applied chain —
+ * corruption, never a peer's input.
+ */
+export class UnreachableForkPointError extends CorruptChainStateError {
+  constructor(site: string, appliedTip: number, floor: number) {
+    super(
+      site,
+      appliedTip,
+      `no fork point between the applied chain and the best chain at or ` +
+      `above the reach floor (floor=${floor}, applied tip=${appliedTip}) — ` +
+      `admission holds every stored header's parent at or above the floor`,
     );
   }
 }
@@ -226,20 +285,19 @@ export class InconsistentStateTreeError extends CorruptChainStateError {
 
 /**
  * A block journal at or above the lowest one kept is absent
- * (NODE_INTERFACE → "The walk reaches as deep as the journals do, and no deeper").
+ * (NODE_INTERFACE → Fork choice decides on verified headers → "The reach floor is the horizon, one rule for every fork point").
  *
- * The fork walk bounds its lowest examined height by `lowestJournal − 1` so
- * every fork point it answers sits at `lowestJournal − 1` or above, and
- * `reorg` reverts starting one above the fork point. Every height
- * `revertBlock` can be asked for therefore lies at `lowestJournal` or above —
- * where a journal row stands by definition. The fork walk's genesis fallback
- * only fires while `lowestJournal ≤ 1`, so a revert reaching height 1 also
- * reads a kept journal.
+ * The reach floor admits no fork point below `lowestJournal − 1`, and `reorg`
+ * reverts starting one above the fork point. Every height `revertBlock` can be
+ * asked for therefore lies at `lowestJournal` or above — where a journal row
+ * stands by definition. A fork at the root is reachable only while
+ * `lowestJournal ≤ 1`, so a revert reaching height 1 also reads a kept
+ * journal.
  *
  * A missing journal is therefore a row the store lost, never a retention gap:
  * a tip that only rose keeps every journal down to height 1 for as long as it
  * stands at or below the horizon, and one that dropped below the horizon
- * leaves the walk bounded by the journals and `MissingJournalError` out of
+ * leaves the reach bounded by the journals and `MissingJournalError` out of
  * reach.
  */
 export class MissingJournalError extends CorruptChainStateError {
@@ -343,7 +401,8 @@ export class DuplicateStateVersionError extends CorruptChainStateError {
 
 /**
  * A block the apply funnel rejected during a reorg (NODE_INTERFACE → Fork
- * choice decides on verified headers, step 11). Distinct from
+ * choice decides on verified headers → "A body-stage refusal marks the
+ * header."). Distinct from
  * `CorruptChainStateError`: a rejected peer block is a peer's fault and does
  * not warrant fail-stop.
  */
@@ -363,10 +422,10 @@ export class ReorgBlockRejectedError extends Error {
 
 /**
  * The reorg abandoned its switch on a refusal that is not a consensus verdict
- * (NODE_INTERFACE → Fork choice decides on verified headers, step 10).
+ * (NODE_INTERFACE → Fork choice decides on verified headers → "The switch.").
  *
- * Three classes reach here: `'unbound'` (the block is not its header's — step
- * 8 of fork resolution leaves none, so this arm exists for the funnel's
+ * Three classes reach here: `'unbound'` (the block is not its header's — the
+ * binding leaves none, so this arm exists for the funnel's
  * promise, not for a real entry), `'acceptance'` (the future bound, re-run
  * against this node's clock at apply — MINING_INTERFACE → Header timestamp
  * rules) and `'local'` (the funnel's catch of an unexpected throw). None is
@@ -374,16 +433,24 @@ export class ReorgBlockRejectedError extends Error {
  * penalty and no memo.
  */
 export class ReorgAbortedError extends Error {
+  readonly height: number;
+  readonly hash: string;
+  readonly class: 'unbound' | 'acceptance' | 'local';
+  readonly detail?: string;
   constructor(
-    readonly height: number,
-    readonly hash: string,
-    readonly class_: 'unbound' | 'acceptance' | 'local',
-    readonly detail?: string,
+    height: number,
+    hash: string,
+    cls: 'unbound' | 'acceptance' | 'local',
+    detail?: string,
   ) {
     super(
-      `reorg aborted at height ${height} (${hash}): class=${class_}` +
+      `reorg aborted at height ${height} (${hash}): class=${cls}` +
       (detail ? `: ${detail}` : ''),
     );
+    this.height = height;
+    this.hash = hash;
+    this.class = cls;
+    this.detail = detail;
     this.name = 'ReorgAbortedError';
   }
 }

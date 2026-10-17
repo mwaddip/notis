@@ -108,10 +108,13 @@ async function waitConnected(nodeA: NetNode, nodeB: NetNode, timeoutMs = 10_000)
 function inboundSyncStreams(libp2p: NonNullable<NetNode['libp2pNode']>, fromPeerId: string): number {
   const conn = libp2p.getConnections().find((c) => c.remotePeer.toString() === fromPeerId);
   if (!conn) return 0;
-  return conn.streams.filter((s) =>
-    (s as unknown as { protocol?: string }).protocol === SYNC_PROTOCOL
-    && (s as unknown as { direction?: string }).direction === 'inbound',
-  ).length;
+  return conn.streams.filter((s) => {
+    const anyS = s as unknown as { protocol?: string; direction?: string; status?: string };
+    if (anyS.protocol !== SYNC_PROTOCOL) return false;
+    if (anyS.direction !== 'inbound') return false;
+    if (anyS.status === 'closed' || anyS.status === 'aborted') return false;
+    return true;
+  }).length;
 }
 
 /**
@@ -157,7 +160,7 @@ describe('every inbound sync stream ends — 40 SyncInfos leave none open', () =
 
     let sent = 0;
     for (let i = 0; i < 40; i++) {
-      const body = encodeSyncInfo(MAGIC, { tipHeight: i });
+      const body = encodeSyncInfo(MAGIC, { tipHeight: i, tipHash: '00'.repeat(32) });
       if (await pushOne(nodeA, nodeB.peerId(), body)) sent++;
     }
     // A control: a non-trivial number got through on A's side.
@@ -180,13 +183,13 @@ describe('every inbound sync stream ends — 40 SyncInfos leave none open', () =
     await waitConnected(nodeA, nodeB);
 
     for (let i = 0; i < 10; i++) {
-      const body = encodeSyncInfo(MAGIC, { tipHeight: i });
+      const body = encodeSyncInfo(MAGIC, { tipHeight: i, tipHash: '00'.repeat(32) });
       expect(await pushOne(nodeA, nodeB.peerId(), body)).toBe(true);
     }
 
     // No chain on either side — a GetHeaders without a provider answers zero
     // bytes, and requestHeaders returns []. That is an answer, not a throw.
-    const result = await nodeA.requestHeaders(0, 1, nodeB.peerId())
+    const result = await nodeA.requestHeaders(['ff'.repeat(32)], nodeB.peerId())
       .catch((err: unknown) => err);
     expect(result instanceof Error).toBe(false);
   }, TIMEOUT);
@@ -201,14 +204,14 @@ describe('every inbound sync stream ends — 40 SyncInfos leave none open', () =
     await waitConnected(nodeA, nodeB);
 
     for (let i = 0; i < 40; i++) {
-      const body = encodeSyncInfo(MAGIC, { tipHeight: i });
+      const body = encodeSyncInfo(MAGIC, { tipHeight: i, tipHash: '00'.repeat(32) });
       await pushOne(nodeA, nodeB.peerId(), body);
     }
 
     // Give B's registrar time to settle.
     await new Promise((r) => setTimeout(r, 500));
 
-    const result = await nodeA.requestHeaders(0, 1, nodeB.peerId())
+    const result = await nodeA.requestHeaders(['ff'.repeat(32)], nodeB.peerId())
       .catch((err: unknown) => err);
     expect(result instanceof Error).toBe(false);
   }, TIMEOUT);
@@ -259,7 +262,7 @@ describe('a peer refused above the stream cap — 16 unread streams, no 17th', (
     await nodeB.start();
     await waitConnected(nodeA, nodeB);
 
-    const req = encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 100 });
+    const req = encodeGetBlocks(MAGIC, { ids: ['aa'.repeat(32), 'bb'.repeat(32), 'cc'.repeat(32)] });
     const streams: Stream[] = [];
     for (let i = 0; i < 16; i++) {
       const s = await dialAndSendRequest(nodeB, nodeA.peerId(), req);

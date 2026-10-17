@@ -129,9 +129,12 @@ export type KarmaMembers = ReadonlySet<string>;
 export interface GossipHandlers {
   /**
    * `fromPeerId` is the peer that **relayed** this block to us
-   * (`propagationSource`), not the peer that published it. Fork resolution asks
-   * that peer for the competing chain, because it provably holds one — see the
-   * listener below for why `propagationSource` is the value handed on.
+   * (`propagationSource`), not the peer that published it. The relayer
+   * provably holds the chain this block is on, so the pipeline asks it for
+   * the headers the tree lacks below the block (NET_INTERFACE → Pull
+   * Requests → "A gossiped block's relayer is asked for the headers the tree
+   * lacks") — see the listener below for why `propagationSource` is the
+   * value handed on.
    */
   onOrderingBlock: (block: OrderingBlock, fromPeerId: string) => void;
   /**

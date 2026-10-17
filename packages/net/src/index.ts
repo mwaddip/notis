@@ -26,7 +26,6 @@ export {
 export {
   MSG_HANDSHAKE,
   MSG_SYNC_INFO,
-  MSG_INV,
   MSG_MODIFIER_REQUEST,
   MSG_MODIFIER_RESPONSE,
   MSG_GET_PEERS,
@@ -35,7 +34,6 @@ export {
   MSG_HEADERS,
   MSG_GET_BLOCKS,
   MSG_BLOCKS,
-  MODIFIER_ORDERING_BLOCK,
   MODIFIER_POST_BODY,
 } from './types.js';
 export {
@@ -57,6 +55,7 @@ export {
   MAX_CAPABILITY_CODE,
   MAX_INV_IDS,
   MAX_CHAIN_RESPONSE_ITEMS,
+  MAX_LOCATOR_HASHES,
   MAX_PEERS_ENTRIES,
   MAX_STREAM_BYTES,
   MAX_SERVE_BODY_BYTES,
@@ -65,8 +64,8 @@ export {
   MAX_ADDRESS_BYTES,
   MAX_INBOUND_SYNC_STREAMS,
   SYNC_INFO_MIN_INTERVAL_MS,
-  MAX_PENDING_BLOCK_REQUESTS,
-  MAX_DATA_EVENTS_PER_PEER,
+  STALL_MARK_EXPIRY_MS,
+  MAX_STALL_MARKS,
 } from './msg-guards.js';
 export { isBogusAddress } from './bogus-addr.js';
 export { PeerDb } from './peerdb.js';
@@ -90,11 +89,13 @@ export type {
   GetHeadersMsg,
   GetBlocksMsg,
 } from './types.js';
-export type { SyncInfo, Inv, ModifierRequest, ModifierResponse, SyncState } from './sync-types.js';
+export type {
+  SyncInfo, ModifierRequest, ModifierResponse, SyncState,
+  PipelineIntake, ChainView,
+} from './sync-types.js';
 export {
   syncInfoCodec, encodeSyncInfo, decodeSyncInfo,
-  invCodec, modifierRequestCodec,
-  encodeInv, decodeInv,
+  modifierRequestCodec,
   encodeModifierRequest, decodeModifierRequest,
   modifierResponseCodec, encodeModifierResponse, decodeModifierResponse,
   encodeGetPeers, decodeGetPeers,

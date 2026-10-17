@@ -39,9 +39,10 @@ interface OrderingBlockRow {
  * Downstream that fact is gone: `applyOrderingBlock`'s totality catch sees a
  * `ReaderError` and cannot tell it from the one `decodeTx` raises over the
  * block's own `utxoTxs`, which is peer-chosen and an ordinary rejection. And
- * apply is only one of six callers — `extendsOurTip`, `findForkPoint`,
- * `revertBlock`, the block creator and two routes read through here too, none
- * of them through a catch that could promote anything.
+ * apply is only one of this reader's callers — the pipeline's extension
+ * through `applyOrderingBlock`, `revertBlock`, the block creator and two
+ * routes read through here too, none of them through a catch that could
+ * promote anything.
  *
  * `CorruptChainStateError` is what that catch already re-throws and what
  * `failStopIfCorruptChain` already stops for, so this needs no boundary edit:
@@ -313,14 +314,3 @@ export function getLastHeaders(n: number): BlockHeader[] {
   return decodeHeaderRows(rows, 'getLastHeaders');
 }
 
-/**
- * Headers above `height`, ascending, at most `n`. The caller bounds `n`:
- * fork resolution needs every header above the fork for `ourWork`, which can
- * be up to `maxReorgDepth` (NODE_INTERFACE → Ordering blocks).
- */
-export function getHeadersAbove(height: number, n: number): BlockHeader[] {
-  const rows = getDb()
-    .prepare('SELECT header_bytes, height FROM ordering_blocks WHERE height > ? ORDER BY height ASC LIMIT ?')
-    .all(height, n) as Array<{ header_bytes: Buffer; height: number }>;
-  return decodeHeaderRows(rows, 'getHeadersAbove');
-}

@@ -39,7 +39,7 @@ import {
   mineNextBlock,
   rawPublicKey,
   seedProvenance,
-  type Stored, seedPostTx, activateProverOverStore } from '../helpers.js';
+  type Stored, seedPostTx, activateProverOverStore, applyBlockThroughIntake, wireIntakeForTests } from '../helpers.js';
 
 /** A box's tree value — its record bytes (TYPES_INTERFACE → Layout — Boxes). */
 const recordBytesOf = (box: AnyBox): Uint8Array => boxRecordBytes(box, box.txId, box.index);
@@ -81,10 +81,6 @@ async function importCredits() {
 
 async function importAvl() {
   return await import('../../src/state/avl-prover.js');
-}
-
-async function importBlockApply() {
-  return await import('../../src/services/block-apply.js');
 }
 
 async function importBlockCreator() {
@@ -309,7 +305,6 @@ describe('credit transfers ride consensus', () => {
     await importPosts();
     const bc = await importBlockCreator();
     await importAvl();
-    const blockApply = await importBlockApply();
     let ordering = await importOrdering();
 
     const alice = generateKeyPairSync('ed25519');
@@ -325,9 +320,11 @@ describe('credit transfers ride consensus', () => {
     // src/index.ts wiring: singleton prover bootstrapped from unspent boxes.
     const handle = await activateProverOverStore();
 
-    // A block or two of honest history.
-    expect(blockApply.applyOrderingBlock(await makeApplicableBlock())).toBe(true);
-    expect(blockApply.applyOrderingBlock(await makeApplicableBlock({ height: 2 }))).toBe(true);
+    // A block or two of honest history, through the intake — the three
+    // tables' one writer (NODE_INTERFACE → Store Interface → "Header tree").
+    await wireIntakeForTests();
+    expect(await applyBlockThroughIntake(await makeApplicableBlock())).toBe(true);
+    expect(await applyBlockThroughIntake(await makeApplicableBlock({ height: 2 }))).toBe(true);
 
     // Pool the transfer, then mine it — the consensus path.
     const engineDeps = {

@@ -16,6 +16,7 @@ import {
   signTransaction,
   solveHeaderPow,
   toHex,
+  wireIntakeForTests,
 } from '../helpers.js';
 import type { TestIdentity } from '../helpers.js';
 
@@ -978,6 +979,7 @@ describe('a returned vouch grows the settlement in a second rebuild', () => {
 
     // The template applies — through the mined-submit path, which signs the
     // header and runs `applyOrderingBlock` (NODE_INTERFACE → Block finalization).
+    await wireIntakeForTests();
     const nonce = solveHeaderPow(template!.header);
     expect(bc.submitMinedBlock(nonce, template!.header.height)).not.toBeNull();
   });

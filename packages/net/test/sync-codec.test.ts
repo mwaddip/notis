@@ -3,13 +3,12 @@ import {
   decodeBlocks,
   decodeHeaders,
   encodeSyncInfo, decodeSyncInfo,
-  encodeInv, decodeInv,
   encodeModifierRequest, decodeModifierRequest,
   encodeModifierResponse, decodeModifierResponse,
-  syncInfoCodec, invCodec, modifierRequestCodec, modifierResponseCodec,
+  syncInfoCodec, modifierRequestCodec, modifierResponseCodec,
 } from '@dagsocial/net';
 import { MAGIC_TESTNET, decodeFrame, MAX_ADVERTISED_HEIGHT, MAX_INV_IDS } from '@dagsocial/net';
-import { MSG_SYNC_INFO, MSG_INV, MSG_MODIFIER_REQUEST, MSG_MODIFIER_RESPONSE } from '@dagsocial/net';
+import { MSG_SYNC_INFO, MSG_MODIFIER_REQUEST, MSG_MODIFIER_RESPONSE } from '@dagsocial/net';
 import {
   ByteWriter,
   computeUtxoTxRoot,
@@ -28,11 +27,10 @@ import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 
 const H32 = '0'.repeat(64);
 const H32_A = 'a'.repeat(64);
-const H32_B = 'b'.repeat(64);
 
 describe('sync codec', () => {
   it('round-trips SyncInfo', () => {
-    const info = { tipHeight: 42 };
+    const info = { tipHeight: 42, tipHash: H32_A };
     const frame = encodeSyncInfo(MAGIC_TESTNET, info);
     const { code, body: b } = decodeFrame(MAGIC_TESTNET, frame);
     expect(code).toBe(MSG_SYNC_INFO);
@@ -40,18 +38,10 @@ describe('sync codec', () => {
   });
 
   it('round-trips SyncInfo at height 0 (genesis)', () => {
-    const info = { tipHeight: 0 };
+    const info = { tipHeight: 0, tipHash: H32 };
     const frame = encodeSyncInfo(MAGIC_TESTNET, info);
     const decoded = decodeSyncInfo(decodeFrame(MAGIC_TESTNET, frame).body);
     expect(decoded).toEqual(info);
-  });
-
-  it('round-trips Inv', () => {
-    const inv = { typeId: 101, ids: [H32, H32_A, H32_B] };
-    const frame = encodeInv(MAGIC_TESTNET, inv);
-    const { code, body: b } = decodeFrame(MAGIC_TESTNET, frame);
-    expect(code).toBe(MSG_INV);
-    expect(decodeInv(b)).toEqual(inv);
   });
 
   it('round-trips ModifierRequest at MAX_INV_IDS', () => {
@@ -84,7 +74,6 @@ describe('sync codec', () => {
 describe('sync codec decode boundary', () => {
   const decoders = {
     decodeSyncInfo,
-    decodeInv,
     decodeModifierRequest,
     decodeModifierResponse,
   };
@@ -92,10 +81,9 @@ describe('sync codec decode boundary', () => {
   for (const [name, decodeFn] of Object.entries(decoders)) {
     it(`${name} returns null on truncated bytes`, () => {
       expect(decodeFn(new Uint8Array([]))).toBeNull();
-      // SyncInfo is one vlqU — [0x01] is vlqU(1), a valid height-1 body, not truncated.
-      if (name !== 'decodeSyncInfo') {
-        expect(decodeFn(new Uint8Array([0x01]))).toBeNull();
-      }
+      // One byte is the vlqU count or tipHeight — the hash or the array
+      // elements that follow are missing.
+      expect(decodeFn(new Uint8Array([0x01]))).toBeNull();
     });
 
     it(`${name} returns null on trailing bytes`, () => {
@@ -108,7 +96,7 @@ describe('sync codec decode boundary', () => {
 
     it(`${name} returns null on non-minimal VLQ (re-encode compare)`, () => {
       const valid = validBodyFor(name);
-      // SyncInfo starts with vlqU; Inv/ModReq/ModResp start with u8 + vlqU(count).
+      // SyncInfo starts with vlqU; ModReq/ModResp start with u8 + vlqU(count).
       // Expand the first VLQ field to a non-minimal 2-byte encoding (LEB128: add 0x80 continuation).
       const firstVlqOffset = name === 'decodeSyncInfo' ? 0 : 1; // skip u8(typeId)
       const nonMinimal = new Uint8Array(valid.length + 1);
@@ -122,18 +110,19 @@ describe('sync codec decode boundary', () => {
 
   describe('SyncInfo', () => {
     it('accepts a well-formed body', () => {
-      const info = { tipHeight: 10 };
+      const info = { tipHeight: 10, tipHash: H32_A };
       expect(decodeSyncInfo(encodeStruct(syncInfoCodec, info))).toEqual(info);
     });
 
     it('rejects tipHeight above MAX_ADVERTISED_HEIGHT', () => {
       expect(decodeSyncInfo(encodeStruct(syncInfoCodec, {
         tipHeight: MAX_ADVERTISED_HEIGHT + 1,
+        tipHash: H32,
       }))).toBeNull();
     });
 
-    it('rejects trailing bytes after the one field', () => {
-      const valid = encodeStruct(syncInfoCodec, { tipHeight: 10 });
+    it('rejects trailing bytes after the hash field', () => {
+      const valid = encodeStruct(syncInfoCodec, { tipHeight: 10, tipHash: H32 });
       const withTrailing = new Uint8Array(valid.length + 1);
       withTrailing.set(valid);
       withTrailing[valid.length] = 0x00;
@@ -141,24 +130,23 @@ describe('sync codec decode boundary', () => {
     });
   });
 
-  describe('Inv / ModifierRequest', () => {
+  describe('ModifierRequest', () => {
     it('rejects empty id list (nonEmpty)', () => {
-      expect(decodeInv(encodeStruct(invCodec, { typeId: 101, ids: [] }))).toBeNull();
-      expect(decodeModifierRequest(encodeStruct(modifierRequestCodec, { typeId: 101, ids: [] }))).toBeNull();
+      expect(decodeModifierRequest(encodeStruct(modifierRequestCodec, { typeId: 103, ids: [] }))).toBeNull();
     });
 
     it('rejects over-cap id list', () => {
       const ids = Array.from({length: MAX_INV_IDS + 1}, () => H32);
-      expect(decodeInv(encodeStruct(invCodec, { typeId: 101, ids }))).toBeNull();
+      expect(decodeModifierRequest(encodeStruct(modifierRequestCodec, { typeId: 103, ids }))).toBeNull();
     });
 
     it('accepts typeId 0 and 255 (u8 domain)', () => {
-      expect(decodeInv(encodeStruct(invCodec, { typeId: 0, ids: [H32] }))).toEqual({ typeId: 0, ids: [H32] });
-      expect(decodeInv(encodeStruct(invCodec, { typeId: 255, ids: [H32] }))).toEqual({ typeId: 255, ids: [H32] });
+      expect(decodeModifierRequest(encodeStruct(modifierRequestCodec, { typeId: 0, ids: [H32] }))).toEqual({ typeId: 0, ids: [H32] });
+      expect(decodeModifierRequest(encodeStruct(modifierRequestCodec, { typeId: 255, ids: [H32] }))).toEqual({ typeId: 255, ids: [H32] });
     });
 
     it('accepts an unknown but bounded typeId', () => {
-      const decoded = decodeInv(encodeStruct(invCodec, { typeId: 200, ids: [H32] }));
+      const decoded = decodeModifierRequest(encodeStruct(modifierRequestCodec, { typeId: 200, ids: [H32] }));
       expect(decoded).toEqual({ typeId: 200, ids: [H32] });
     });
   });
@@ -247,21 +235,19 @@ describe('chain response codecs weigh each item before decoding', () => {
     writeVlqU(w, 1);
     writeLp(w, bogus);
 
-    expect(decodeHeaders(w.toBytes(), 1)).toBeNull();
+    expect(decodeHeaders(w.toBytes())).toBeNull();
   });
 });
 
 function validBodyFor(decoderName: string): Uint8Array {
   switch (decoderName) {
     case 'decodeSyncInfo':
-      return encodeStruct(syncInfoCodec, { tipHeight: 10 });
-    case 'decodeInv':
-      return encodeStruct(invCodec, { typeId: 101, ids: [H32] });
+      return encodeStruct(syncInfoCodec, { tipHeight: 10, tipHash: H32 });
     case 'decodeModifierRequest':
-      return encodeStruct(modifierRequestCodec, { typeId: 101, ids: [H32] });
+      return encodeStruct(modifierRequestCodec, { typeId: 103, ids: [H32] });
     case 'decodeModifierResponse':
       return encodeStruct(modifierResponseCodec, {
-        typeId: 101, modifiers: [{ id: H32, data: new Uint8Array([1]) }],
+        typeId: 103, modifiers: [{ id: H32, data: new Uint8Array([1]) }],
       });
     default: throw new Error(`unknown decoder: ${decoderName}`);
   }

@@ -9,7 +9,7 @@ import { multiaddr } from '@multiformats/multiaddr';
 
 import type { Libp2p } from 'libp2p';
 import type { OrderingBlock, UtxoTransaction, BlockHeader } from '@dagsocial/types';
-import { PROTOCOL_VERSION, protocolVersionAt, decodeOrderingBlock, encodeOrderingBlock, decodePostBody, encodePostBody } from '@dagsocial/types';
+import { PROTOCOL_VERSION, protocolVersionAt, encodeOrderingBlock, decodePostBody, encodePostBody } from '@dagsocial/types';
 import { ReaderError } from '@dagsocial/wire';
 import type {
   NetConfig, NetValidators, Peer, PeerEntryMsg,
@@ -47,7 +47,6 @@ import {
   encodeModifierResponse,
   decodeModifierResponse,
 } from './sync-codec.js';
-import { encodeServableOrderingBlock } from './serve-encode.js';
 import { isBogusAddress, isLoopbackAddress } from './bogus-addr.js';
 import { readStreamBounded, sinkWithDeadline } from './util.js';
 import { MAX_CHAIN_RESPONSE_ITEMS, MAX_INBOUND_SYNC_STREAMS, MAX_INV_IDS, MAX_SERVE_BODY_BYTES, MAX_STREAM_BYTES } from './msg-guards.js';
@@ -66,6 +65,7 @@ import type { HandshakeResult } from './handshake.js';
 import {
   MSG_GET_PEERS,
   MSG_PEERS,
+  MSG_SYNC_INFO,
   MSG_GET_HEADERS,
   MSG_GET_BLOCKS,
   MSG_MODIFIER_REQUEST,
@@ -76,7 +76,6 @@ import type { ModifierRequest, ModifierResponse } from './sync-types.js';
 
 type OrderingBlockCallback = (block: OrderingBlock, fromPeerId: string) => void;
 type TxCallback = (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => boolean;
-type BlocksHandlerFn = (block: OrderingBlock, fromPeerId: string) => boolean;
 
 /**
  * Return the libp2p node cast to the Libp2pGossip interface expected by the
@@ -137,7 +136,7 @@ export function decodeHandshakePayload(magic: number, data: Uint8Array): Handsha
 
 /**
  * Lazy adapter implementing SyncStore by delegating to functions that are set
- * after construction (via setBlocksHandler / setHeadersHandler).
+ * after construction.
  *
  * Exported for the same reason `servePeersBody` and `decodeHandshakePayload`
  * are: so tests drive **this** code rather than a copy of it. It is not part of
@@ -147,22 +146,11 @@ export function decodeHandshakePayload(magic: number, data: Uint8Array): Handsha
  * `dist/index.d.ts` is asserted free of it by `sync-store.test.ts`.
  */
 export class LazySyncStore implements SyncStore {
-  private _getOrderingBlock: ((height: number) => unknown | null) | null = null;
-  private _blocksHandler: BlocksHandlerFn | null = null;
   private _chainHeightProvider: (() => number) | null = null;
   private _blockIdProvider: ((height: number) => string | null) | null = null;
   private _heightByBlockIdProvider: ((id: string) => number | null) | null = null;
 
-  /** Validators reach this class for one reason: `serializeOrderingBlock` serves a stored row. */
-  constructor(private readonly validators: NetValidators) {}
-
-  setOrderingBlockFn(fn: (height: number) => unknown | null): void {
-    this._getOrderingBlock = fn;
-  }
-
-  setBlocksHandler(fn: BlocksHandlerFn): void {
-    this._blocksHandler = fn;
-  }
+  constructor(_validators: NetValidators) {}
 
   setChainHeightProvider(fn: () => number): void {
     this._chainHeightProvider = fn;
@@ -176,19 +164,6 @@ export class LazySyncStore implements SyncStore {
   // NET_INTERFACE → Sync Handler Registration
   setHeightByBlockIdProvider(fn: (id: string) => number | null): void {
     this._heightByBlockIdProvider = fn;
-  }
-
-  getOrderingBlock(height: number): unknown | null {
-    return this._getOrderingBlock?.(height) ?? null;
-  }
-
-  serializeOrderingBlock(height: number): Uint8Array | null {
-    const block = this._getOrderingBlock?.(height);
-    if (!block) return null;
-    // A row we cannot encode is skipped from the ModifierResponse exactly as an
-    // absent one is (`sync-machine.handleModifierRequestMsg`) — the rest of the
-    // batch still serves.
-    return encodeServableOrderingBlock(block, this.validators, `height ${height}`);
   }
 
   // NET_INTERFACE → Sync Handler Registration: the id this arm announces is
@@ -205,49 +180,6 @@ export class LazySyncStore implements SyncStore {
   chainHeight(): number {
     return this._chainHeightProvider?.() ?? 0;
   }
-
-  appendBlocks(_blocks: unknown[], peerId: string): void {
-    if (!this._blocksHandler) return;
-    for (const raw of _blocks) {
-      if (!(raw instanceof Uint8Array)) continue;
-
-      // The `try` covers the decode and nothing else. Widening it over the
-      // handler call would report every throw out of `applyOrderingBlock` —
-      // node's block-apply funnel — as "failed to decode block". Malformed peer
-      // bytes and a failure inside consensus apply are different events with
-      // different owners; one label for both is a misattribution that sends the
-      // reader to the wrong package.
-      let block: OrderingBlock;
-      try {
-        block = decodeOrderingBlock(raw);
-      } catch (err) {
-        // This one really is the sender's fault, and it is per-modifier: the
-        // other blocks in the batch decode independently, so skipping this
-        // entry costs nothing and loses nothing.
-        console.warn(`[net] appendBlocks: failed to decode block: ${String(err)}`);
-        continue;
-      }
-
-      // A handler throw is deliberately NOT caught here.
-      //
-      // `applyOrderingBlock` is contractually total: it returns `false` for a
-      // block it rejects and reserves throwing for conditions that are not
-      // about this block's validity — corrupt local state, or a bug. Catching
-      // those here would hide exactly the class of failure that must not be
-      // hidden, and — this being inside the loop — would carry on and apply the
-      // *following* blocks, which are chain-linked to the one that just failed.
-      //
-      // Propagating lands in `SyncMachine.dispatchDataEvent`, which logs the
-      // event type and the peer and contains the failure to one message. That
-      // is net's "one bad message degrades one message, not the subsystem"
-      // invariant, already built there and covering both drain paths (the
-      // background loop and `flush()`). Stopping the rest of the batch is then
-      // a consequence of a stated design rather than of where a brace sits.
-      const ok = this._blocksHandler(block, peerId);
-      if (!ok) break;
-    }
-  }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -265,9 +197,10 @@ export class LazySyncStore implements SyncStore {
 // format, which is the one thing a protocol suite exists to notice.
 //
 // Both are bounded by what the peer asked for and by
-// `MAX_CHAIN_RESPONSE_ITEMS`. `endHeight` and `maxCount` are peer-chosen and
-// each loop reads what it needs for one height per step, so that second bound
-// is what keeps the length of the response off the peer's control panel.
+// `MAX_CHAIN_RESPONSE_ITEMS`. The locator (headers) and the ids (blocks) are
+// peer-chosen, each capped at the wire bound of its codec; the response reads
+// at most `MAX_CHAIN_RESPONSE_ITEMS` entries, which keeps the length of the
+// response off the peer's control panel.
 //
 // A count bounds a length and says nothing about a weight, so the blocks loop
 // carries a second, independent bound: it accumulates encoded bytes and stops
@@ -283,9 +216,10 @@ export class LazySyncStore implements SyncStore {
 // Protocols, the `Headers` arm bullet of `GetHeaders` / `GetBlocks`
 // responses.
 //
-// `ourHeight` clamps both loops to our own tip: we cannot serve what we do not
-// have, so this never truncates a legitimate request, and a peer asking for
-// height 1e15 costs us nothing.
+// `ourHeight` clamps the headers loop to our own tip (unread in the blocks
+// loop; see the arm's own doc): we cannot serve what we do not have, so this
+// never truncates a legitimate request, and a peer asking for height 1e15
+// costs us nothing.
 //
 // Both throw only if a block *we* hold has no encoding — a corrupt local store,
 // not a peer's doing. The caller's `catch` answers with zero bytes, as it does
@@ -293,56 +227,80 @@ export class LazySyncStore implements SyncStore {
 // ---------------------------------------------------------------------------
 
 /**
- * Frame a `Headers` (15) response: our chain walking down from
- * `startHeight`. Reads headers directly through the header provider — one
- * height is one provider call (NET_INTERFACE → Sync Handler Registration).
+ * Frame a `Headers` (15) response.
+ *
+ * NET_INTERFACE → `GetHeaders` / `GetBlocks` responses →
+ * "A `Headers` page has one shape, and a requester holds a page to it":
+ * the serve arm takes the first locator entry its applied chain holds —
+ * the highest, the locator running from the tip down — and answers the
+ * headers above it, ascending, for `MAX_CHAIN_RESPONSE_ITEMS` headers or
+ * up to its tip; a locator it holds no entry of is answered from
+ * height 1, and one whose highest held entry is its tip with an empty
+ * list.
  */
 export function serveHeadersResponse(
   magic: number,
   request: GetHeadersMsg,
   ourHeight: number,
+  heightByBlockId: (id: string) => number | null,
   getHeader: (height: number) => BlockHeader | null,
 ): Uint8Array {
+  let aboveHeight = 0;
+  for (const hash of request.locator) {
+    const matched = heightByBlockId(hash);
+    if (matched !== null) {
+      aboveHeight = matched;
+      break;
+    }
+  }
   const headers: BlockHeader[] = [];
-  const maxCount = Math.min(request.maxCount, MAX_CHAIN_RESPONSE_ITEMS);
-  for (let h = Math.min(request.startHeight, ourHeight); h > 0 && headers.length < maxCount; h--) {
+  const first = aboveHeight + 1;
+  const last = Math.min(ourHeight, aboveHeight + MAX_CHAIN_RESPONSE_ITEMS);
+  for (let h = first; h <= last; h++) {
     const header = getHeader(h);
-    if (header) headers.push(header);
-    else break; // gap — the chain below this height is not ours to serve
+    if (!header) break; // gap — the chain above the locator match is not ours to serve
+    headers.push(header);
   }
   return encodeHeaders(magic, headers);
 }
 
 /**
- * Frame a `Blocks` (17) response: our chain across an inclusive height range.
+ * Frame a `Blocks` (17) response.
+ *
+ * NET_INTERFACE → `GetHeaders` / `GetBlocks` responses →
+ * "The `Blocks` arm answers the ids asked that its applied chain holds":
+ * each id is resolved by point lookup (`heightByBlockId`) and its block
+ * read once through the headers handler, in the order asked; an id this
+ * chain does not hold is omitted — "not held", never a refusal.
  *
  * Each block is encoded once, here: the encoding is both what the response
- * carries and what the byte bound weighs, and `encodeBlocks` frames the result
- * rather than re-deriving it.
+ * carries and what the byte bound weighs. The byte bound accumulates and
+ * stops before exceeding `MAX_SERVE_BODY_BYTES`, and **always includes the
+ * first block**, so a request is never answered with nothing while the
+ * server holds what was asked (NET_INTERFACE → `GetHeaders` / `GetBlocks`
+ * responses → "always include the first block"). NET_INTERFACE →
+ * `GetHeaders` / `GetBlocks` responses → "An id asked twice is answered
+ * twice": the arm reads the ids in order and keeps no cross-id state.
  *
- * The byte bound is `handleModifierRequestMsg`'s — accumulate, stop before
- * exceeding `MAX_SERVE_BODY_BYTES`, and **always include the first block**, so a
- * request is never answered with nothing while the server holds what was asked
- * (NET_INTERFACE → Validation →
- * "Every arm that assembles more than one stored object into a response is bounded by BYTES, not by item count alone.").
- * A truncated response costs the requester
- * one round trip; it re-asks for the remainder on the next `SyncInfo` round.
+ * `ourHeight` is unread here: `heightByBlockId` answers only heights of
+ * the applied chain, in the same synchronous call as the one `chainHeight()`
+ * reads, so a height above the tip is unreachable through this seam. The
+ * parameter stands for the shared `serveChainQuery` signature the arm's
+ * caller passes it under.
  */
 export function serveBlocksResponse(
   magic: number,
   request: GetBlocksMsg,
-  ourHeight: number,
+  _ourHeight: number,
+  heightByBlockId: (id: string) => number | null,
   getBlock: (height: number) => OrderingBlock | null,
 ): Uint8Array {
   const blocks: Uint8Array[] = [];
   let bodyBytes = 0;
-  const endHeight = Math.min(request.endHeight, ourHeight);
-  for (
-    let h = request.startHeight;
-    h <= endHeight && blocks.length < MAX_CHAIN_RESPONSE_ITEMS;
-    h++
-  ) {
-    const block = getBlock(h);
+  for (const id of request.ids) {
+    const height = heightByBlockId(id);
+    if (height === null) continue;
+    const block = getBlock(height);
     if (!block) continue;
     const data = encodeOrderingBlock(block);
     if (blocks.length > 0 && bodyBytes + data.length > MAX_SERVE_BODY_BYTES) break;
@@ -562,13 +520,20 @@ export class NetNode {
   private syncMachine: SyncMachine | null = null;
   private outboundMgr: OutboundManager | null = null;
   private syncStore: LazySyncStore;
+  /**
+   * The set of configured bootstrap addresses whose first dial has
+   * ended — Active, failed, or retired as this node's own
+   * (NET_INTERFACE → Sync State Machine → "The gate bounds how far
+   * blocks apply."). Settled stays settled; redials never reopen the
+   * pending state.
+   */
+  private bootstrapSettledAddrs = new Set<string>();
   private syncTimer: ReturnType<typeof setInterval> | null = null;
   /**
-   * The whole-block provider for `GetBlocks` (16) and the blocks a
-   * `ModifierResponse` serves. NET_INTERFACE → Sync Handler Registration:
-   * setters are order-independent, so the sync protocol is registered by
-   * start() whether or not a provider exists yet, and a query that arrives
-   * without one is answered with zero bytes.
+   * The whole-block provider for `GetBlocks` (16). NET_INTERFACE → Sync
+   * Handler Registration: setters are order-independent, so the sync protocol
+   * is registered by start() whether or not a provider exists yet, and a
+   * query that arrives without one is answered with zero bytes.
    */
   private headersProvider: ((height: number) => OrderingBlock | null) | null = null;
   /**
@@ -589,6 +554,11 @@ export class NetNode {
   private headerStandingProvider: ((hash: string, height: number) => 'held' | 'refused' | null) | null = null;
   // NET_INTERFACE → Sync Handler Registration: post body seams
   private postBodyProvider: ((postId: string) => string | null) | null = null;
+  // NET_INTERFACE → Sync Handler Registration: setPipeline / setChainView —
+  // held at construction, handed to the scheduler at start() (handler
+  // setters are order-independent).
+  private pipeline: import('./sync-types.js').PipelineIntake | null = null;
+  private chainViewRegistered: import('./sync-types.js').ChainView | null = null;
   private pendingDials: Set<string> = new Set();
   private lastGetPeersSentMs: Map<string, number> = new Map();
   /**
@@ -719,7 +689,8 @@ export class NetNode {
       const selfAddrs = listenAddrs.map(a => a.toString());
       this.peerDb = new PeerDb(this.peerStorage, this.config.peerDbCap ?? 1000, selfAddrs);
 
-      // Create SyncMachine with lazy store bridge
+      // Create SyncMachine with lazy store bridge and wire the scheduler's
+      // injected shape (NET_INTERFACE → Sync Handler Registration).
       this.syncMachine = new SyncMachine(
         this.config,
         this.syncStore,
@@ -728,6 +699,13 @@ export class NetNode {
           this.peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, peerId, reason);
         },
       );
+      this.syncMachine.setConnectedPeers(() => new Set(this.getConnectedPeers()));
+      this.syncMachine.setPenalize((peerId, kind, reason) => this.penalizePeer(peerId, kind, reason));
+      this.syncMachine.setRequestHeaders((locator, peerId) => this.requestHeaders(locator, peerId));
+      this.syncMachine.setRequestBlocks((ids, peerId) => this.requestBlocks(ids, peerId));
+      this.syncMachine.setBootstrapAllSettled(() => this.allBootstrapSettled());
+      if (this.pipeline) this.syncMachine.setPipeline(this.pipeline);
+      if (this.chainViewRegistered) this.syncMachine.setChainView(this.chainViewRegistered);
       this.syncMachine.start();
 
       // Wire sync-complete callback: when the sync machine reaches 'synced',
@@ -854,8 +832,10 @@ export class NetNode {
       // Log listen addresses
       console.log(`[net] listening on: ${listenAddrs.map(a => a.toString()).join(', ')}`);
 
-      // Connect to bootstrap peers (awaited — must complete before caller
-      // registers blocksHandler so the initial sync burst isn't dropped).
+      // Dial each configured bootstrap peer. Each dial reports settled
+      // (Active, failed or self) through `markBootstrapSettled`, which the
+      // scheduler reads under NET_INTERFACE → Sync State Machine → "The gate
+      // bounds how far blocks apply."
       for (const addr of this.config.bootstrapPeers) {
         await this.dialAndHandshake(addr, 'seed');
       }
@@ -882,6 +862,7 @@ export class NetNode {
       this.outboundMgr = null;
       this.peerDb = null;
       this.topics = null;
+      this.bootstrapSettledAddrs.clear();
       try { await libp2p.stop(); } catch { /* already down */ }
       this.libp2p = null;
       throw err;
@@ -933,6 +914,7 @@ export class NetNode {
     }
     this.pendingDials.clear();
     this.lastGetPeersSentMs.clear();
+    this.bootstrapSettledAddrs.clear();
     await this.libp2p.stop();
     this.libp2p = null;
     this.topics = null;
@@ -973,7 +955,10 @@ export class NetNode {
       if (conn.remotePeer.toString() === libp2p.peerId.toString()) {
         console.log(`[net] dial to ${addr} resolved to our own peer id — closing`);
         await conn.close().catch(() => { /* already gone */ });
-        if (source === 'seed') this.outboundMgr?.recordSeedSelf(addr);
+        if (source === 'seed') {
+          this.outboundMgr?.recordSeedSelf(addr);
+          this.markBootstrapSettled(addr);
+        }
         else this.peerDb?.forgetSelf(addr);
         return false;
       }
@@ -988,6 +973,7 @@ export class NetNode {
         console.log(`[net] dial to ${addr} resolved to banned peer ${remote} — closing`);
         await conn.close().catch(() => { /* already gone */ });
         this.peerMgr.extendBan(remote, addr);
+        if (source === 'seed') this.markBootstrapSettled(addr);
         return false;
       }
 
@@ -1023,19 +1009,49 @@ export class NetNode {
               console.warn(`[net] peerActive handler error: ${String(err)}`);
             }
           }
+          if (source === 'seed') this.markBootstrapSettled(addr);
           return true;
         }
+        if (source === 'seed') this.markBootstrapSettled(addr);
         return false;
       } catch (handshakeErr: any) {
         console.warn(`[net] handshake with ${addr} failed: ${handshakeErr?.message ?? handshakeErr}`);
+        if (source === 'seed') this.markBootstrapSettled(addr);
         return false;
       }
     } catch (err: any) {
       this.pendingDials.delete(addr);
       console.warn(`[net] dial FAILED: ${addr} — ${err?.message ?? err}`);
       this.outboundMgr?.recordDialResult(addr, false);
+      if (source === 'seed') this.markBootstrapSettled(addr);
       return false;
     }
+  }
+
+  /**
+   * NET_INTERFACE → Sync State Machine → "The gate bounds how far
+   * blocks apply." A configured bootstrap address is settled once its
+   * first dial has ended; settled stays settled, and the scheduler is
+   * told so it can re-evaluate the gate on the next loop pass.
+   */
+  private markBootstrapSettled(addr: string): void {
+    if (!this.config.bootstrapPeers.includes(addr)) return;
+    if (this.bootstrapSettledAddrs.has(addr)) return;
+    this.bootstrapSettledAddrs.add(addr);
+    this.syncMachine?.bootstrapSettled();
+  }
+
+  /**
+   * True once every configured bootstrap address has settled, deduped
+   * across any that appear twice in `bootstrapPeers` (NET_INTERFACE →
+   * Sync State Machine → "The gate bounds how far blocks apply.").
+   * With no bootstrap addresses the gate holds vacuously.
+   */
+  private allBootstrapSettled(): boolean {
+    for (const addr of this.config.bootstrapPeers) {
+      if (!this.bootstrapSettledAddrs.has(addr)) return false;
+    }
+    return true;
   }
 
   // -----------------------------------------------------------------------
@@ -1346,13 +1362,19 @@ export class NetNode {
 
       if (code === MSG_GET_HEADERS) {
         await serveChainQuery(code, decodeGetHeaders(body), this.headerProvider,
-          (request, ourHeight, getHeader) => serveHeadersResponse(magic, request, ourHeight, getHeader), 1);
+          (request, ourHeight, getHeader) => serveHeadersResponse(
+            magic, request, ourHeight,
+            (id) => this.syncStore.heightByBlockId(id), getHeader,
+          ), 1);
         return;
       }
 
       if (code === MSG_GET_BLOCKS) {
         await serveChainQuery(code, decodeGetBlocks(body), this.headersProvider,
-          (request, ourHeight, getBlock) => serveBlocksResponse(magic, request, ourHeight, getBlock), 5);
+          (request, ourHeight, getBlock) => serveBlocksResponse(
+            magic, request, ourHeight,
+            (id) => this.syncStore.heightByBlockId(id), getBlock,
+          ), 5);
         return;
       }
 
@@ -1382,26 +1404,22 @@ export class NetNode {
           await sinkDeadline(response);
           return;
         }
-        // Type 101 is a block request. The sync machine serves it on a new
-        // stream it opens through sendToPeer; this one carried the request
-        // and ends here — NET_INTERFACE → Stream Protocols → "Every inbound stream ends".
-        this.syncMachine?.handleMessage(peerId, code, body);
+        // NET_INTERFACE → ModifierRequest (code 4): type 101 is retired, so
+        // an unknown type id — decoded and dropped, unpenalised.
+        await replyEmpty();
         return;
       }
 
-      // Dispatch to sync machine for all other one-way messages (SyncInfo,
-      // Inv, ModifierResponse). Each is a one-way: its stream carried the
-      // message and ends here.
-      //
-      // `handleMessage` decodes the body and applies the inbound caps, then
-      // enqueues — the queued work is isolated later by `dispatchDataEvent`.
-      // A throw here is a bug in net's own decode/guard layer, which is
-      // exactly the thing that must not be answered with a silent empty frame.
-      try {
-        this.syncMachine?.handleMessage(peerId, code, body);
-      } catch (err) {
-        console.error(`[net] sync dispatch failed for code=${code} from ${peerId}: ${String(err)}`);
-        await replyEmpty();
+      // NET_INTERFACE → Sync Handler Registration. The scheduler reads
+      // only `SyncInfo` through `handleMessage`; any other code reaching
+      // this fallthrough is dropped as unknown.
+      if (code === MSG_SYNC_INFO) {
+        try {
+          this.syncMachine?.handleMessage(peerId, code, body);
+        } catch (err) {
+          console.error(`[net] sync dispatch failed for code=${code} from ${peerId}: ${String(err)}`);
+          await replyEmpty();
+        }
       }
     } catch (err) {
       // What is left after the two narrow spans above: stream I/O, the frame
@@ -1617,8 +1635,8 @@ export class NetNode {
   }
 
   /**
-   * Register a callback that fires when the sync machine transitions to
-   * the 'synced' phase (peer tip height matches our tip height).
+   * Register a callback that fires when the sync machine enters the 'synced'
+   * phase (NET_INTERFACE → Sync State Machine → "The phases.").
    */
   onSyncComplete(cb: () => void): void {
     this.syncCompleteHandlers.push(cb);
@@ -1627,11 +1645,6 @@ export class NetNode {
   /** NET_INTERFACE → API → Node Lifecycle. */
   syncPhase(): 'idle' | 'syncing' | 'synced' {
     return this.syncMachine?.getState().phase ?? 'idle';
-  }
-
-  /** NET_INTERFACE → Pull Requests. */
-  peerTipHeight(peerId: string): number | null {
-    return this.syncMachine?.peerHeight(peerId) ?? null;
   }
 
   /** NET_INTERFACE → Sync Handler Registration. */
@@ -1653,14 +1666,14 @@ export class NetNode {
   // Sync — outbound requests
   // -----------------------------------------------------------------------
 
-  async requestHeaders(startHeight: number, maxCount: number, peerId: string): Promise<BlockHeader[]> {
+  async requestHeaders(locator: string[], peerId: string): Promise<BlockHeader[]> {
     if (!this.libp2p) throw new Error('NetNode not started');
-    return requestHeaders(this.libp2p, startHeight, maxCount, peerId, this.config);
+    return requestHeaders(this.libp2p, locator, peerId, this.config);
   }
 
-  async requestBlocks(startHeight: number, endHeight: number, peerId: string): Promise<OrderingBlock[]> {
+  async requestBlocks(ids: string[], peerId: string): Promise<OrderingBlock[]> {
     if (!this.libp2p) throw new Error('NetNode not started');
-    return requestBlocks(this.libp2p, startHeight, endHeight, peerId, this.config);
+    return requestBlocks(this.libp2p, ids, peerId, this.config);
   }
 
   /**
@@ -1749,25 +1762,12 @@ export class NetNode {
   }
 
   /**
-   * Register a handler for blocks received via the sync machine's pull path
-   * (ModifierResponse during sync). The handler's return is the
-   * batch's continue signal: `true` for a block the handler applied or already
-   * held, `false` for one it rejected. `appendBlocks` stops the batch at the
-   * first `false` (NET_INTERFACE → Sync Handler Registration).
-   */
-  setBlocksHandler(handler: BlocksHandlerFn): void {
-    this.syncStore.setBlocksHandler(handler);
-  }
-
-  /**
-   * Register the whole-block provider for `GetBlocks` and the blocks a
-   * `ModifierResponse` serves. The provider reads at request time rather
-   * than closed over at registration — so this is valid before or after
-   * `start()`, and a later call replaces the provider (NET_INTERFACE → Sync
-   * Handler Registration).
+   * Register the whole-block provider for `GetBlocks` (16). The provider
+   * reads at request time rather than closed over at registration — so this
+   * is valid before or after `start()`, and a later call replaces the
+   * provider (NET_INTERFACE → Sync Handler Registration).
    */
   setHeadersHandler(getBlock: (height: number) => OrderingBlock | null): void {
-    this.syncStore.setOrderingBlockFn((h) => getBlock(h));
     this.headersProvider = getBlock;
   }
 
@@ -1818,6 +1818,28 @@ export class NetNode {
 
   setPostBodyProvider(cb: (postId: string) => string | null): void {
     this.postBodyProvider = cb;
+  }
+
+  /** NET_INTERFACE → Sync Handler Registration — the `setPipeline` row. */
+  setPipeline(intake: import('./sync-types.js').PipelineIntake): void {
+    this.pipeline = intake;
+    this.syncMachine?.setPipeline(intake);
+  }
+
+  /** NET_INTERFACE → Sync Handler Registration — the `setChainView` row. */
+  setChainView(view: import('./sync-types.js').ChainView): void {
+    this.chainViewRegistered = view;
+    this.syncMachine?.setChainView(view);
+  }
+
+  /** NET_INTERFACE → Pipeline events — `needHeaders(peerId)`. */
+  needHeaders(peerId: string): void {
+    this.syncMachine?.needHeaders(peerId);
+  }
+
+  /** NET_INTERFACE → Pipeline events — `chainMoved()`. */
+  chainMoved(): void {
+    this.syncMachine?.chainMoved();
   }
 
   async requestPostBodies(

@@ -310,21 +310,22 @@ describe('Two-node integration', () => {
 
     await new Promise((r) => setTimeout(r, 3000));
 
-    // Headers mode walks downward from startHeight, so this is newest-first —
-    // the order findForkPoint expects.
-    const headers = await nodeB.requestHeaders(3, 3, nodeA.peerId());
+    // A locator the chain holds no entry of — the arm answers ascending from
+    // height 1 (NET_INTERFACE → `GetHeaders` / `GetBlocks` responses).
+    const headers = await nodeB.requestHeaders(['ff'.repeat(32)], nodeA.peerId());
 
-    expect(headers.map((h) => h.height)).toEqual([3, 2, 1]);
+    expect(headers.map((h) => h.height)).toEqual([1, 2, 3]);
 
     // Late binding: replacing the provider takes effect without re-registering
     // anything (NET_INTERFACE → Sync Handler Registration → "Handler setters
     // are order-independent"). The fixture keeps them consistent as a node's
     // store does by construction.
     nodeA.setHeadersHandler((h) => (h <= 2 ? chain.get(h) ?? null : null));
+    nodeA.setHeaderProvider((h) => (h <= 2 ? chain.get(h)?.header ?? null : null));
     nodeA.setChainHeightProvider(() => 2);
-    const afterSwap = await nodeB.requestHeaders(3, 3, nodeA.peerId());
+    const afterSwap = await nodeB.requestHeaders(['ff'.repeat(32)], nodeA.peerId());
 
-    expect(afterSwap.map((h) => h.height)).toEqual([2, 1]);
+    expect(afterSwap.map((h) => h.height)).toEqual([1, 2]);
   }, TIMEOUT);
 });
 
