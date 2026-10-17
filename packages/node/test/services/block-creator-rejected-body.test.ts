@@ -27,6 +27,7 @@ import {
   signTransaction,
   solveHeaderPow,
   activateProverOverStore,
+  wireIntakeForTests,
 } from '../helpers.js';
 import { config } from '../../src/config.js';
 
@@ -312,6 +313,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     expect(ordering.getCurrentHeight()).toBe(0);
 
     // The held template mines through submitMinedBlock to height 1.
+    await wireIntakeForTests();
     const nonce = solveHeaderPow(tpl!.header);
     expect(bc.submitMinedBlock(nonce, tpl!.header.height)).not.toBeNull();
     expect(ordering.getCurrentHeight()).toBe(1);

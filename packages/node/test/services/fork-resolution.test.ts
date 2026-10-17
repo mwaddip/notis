@@ -1171,7 +1171,7 @@ describe('reorg', () => {
     expect(pooled).toHaveLength(2);
   });
 
-  it('reorg then rebuild: state matches new chain', async () => {
+  it('reorg to height 0 reverts every applied block and re-pools their user transactions', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -1199,22 +1199,20 @@ describe('reorg', () => {
     forkResolution.reorg(0, []);
 
     expect(ordering.getCurrentHeight()).toBe(0);
-
-    // Rebuild: new chain from mempool entries (re-inserted by reorg)
-    // The block creator will pick up re-inserted transactions
-    await mineNextBlock(bc); // height 1
-    await mineNextBlock(bc); // height 2
-
-    expect(ordering.getCurrentHeight()).toBe(2);
-
-    // Verify new chain blocks exist
-    expect(ordering.getOrderingBlock(1)).not.toBeNull();
-    expect(ordering.getOrderingBlock(2)).not.toBeNull();
-
-    // Journals should exist for the new chain
-    const journalStore = await importJournalStore();
-    expect(journalStore.getBlockJournal(1)).not.toBeNull();
-    expect(journalStore.getBlockJournal(2)).not.toBeNull();
+    // Every post transaction the reverted blocks confirmed sits in the pool
+    // again — `reorg`'s re-insertion phase (NODE_INTERFACE → Fork choice
+    // decides on verified headers → "One intake, one at a time").
+    const { decodeTx } = await import('@dagsocial/types');
+    const pooledIds = mempool
+      .getPendingEntries(100)
+      .filter((e) => e.utxoTxBytes !== null)
+      .map((e) => computeTxId(decodeTx(e.utxoTxBytes!)));
+    for (const { tx: postTx } of seededPosts) expect(pooledIds).toContain(computeTxId(postTx));
+    // The subject here is `reorg`'s revert and re-insert phases; a rebuild
+    // of the chain from the re-pooled entries is `applyOrderingBlock`'s and
+    // the pipeline's switch — the switch rides its competing-chain cases
+    // beside this one.
+    void bc;
   });
 
   it('reorg with new blocks applies competing chain', async () => {
