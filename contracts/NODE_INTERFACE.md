@@ -5040,7 +5040,8 @@ deleted at each apply, beside `purgeOldJournals`, with any `staged_blocks` row u
 base falls below the floor is dropped. Best-chain headers are kept — they are the applied chain or ahead of it.
 
 **The pipeline names the blocks it wants.** The chain view's `wantedBlocks()` (NET_INTERFACE → Sync Handler
-Registration): the best chain's ids above the applied tip that are neither applied nor staged, in height order —
+Registration): the best chain's ids above the applied tip that are neither applied nor staged, each with its height,
+in height order —
 when extending, those below `appliedTip + BLOCK_FETCH_WINDOW` and below the window's edge (→ "The window"); for a
 switch, the branch's whole shortest heavier prefix, which neither bound cuts. None while the best tip's
 `chain_work` is below `minimumChainWork`.
