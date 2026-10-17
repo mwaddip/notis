@@ -251,6 +251,36 @@ describe('an event for a peer not in the connected set plants nothing', () => {
 });
 
 // ---------------------------------------------------------------------------
+// A header run that throws degrades one run, not the subsystem
+// (NET_INTERFACE → Stream Protocols — "A stream handler never rejects";
+//  NODE_INTERFACE → "An unhandled rejection is logged, and the node
+//  keeps running"). A `locatorFor` or `knowsTip` throw lands inside the
+// run's launcher.
+// ---------------------------------------------------------------------------
+
+describe('a header run that throws leaves the scheduler serving the next event', () => {
+  it("a throwing locatorFor ends one run and logs it", async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const view = makeChainView();
+    view.locatorFor = () => { throw new Error('view faulted'); };
+    const sch = makeScheduler({ view });
+    peerActive(sch, 'p', 1);
+    syncInfo(sch, 'p', 50, hexId(50));
+    await settle();
+    // The run's throw is logged with the peer id, not reflected to the
+    // sender, and the scheduler goes on to the next event.
+    expect(warnSpy.mock.calls.some((args) => args.join(' ').includes('header run for p threw'))).toBe(true);
+    // The next event — another SyncInfo from another peer — still
+    // reaches `actOnSyncInfo` and writes its claim.
+    peerActive(sch, 'q', 1);
+    syncInfo(sch, 'q', 10, hexId(10));
+    await settle();
+    expect(sch.machine.peerHeight('q')).toBe(10);
+    warnSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A peer's direction is written at peer-active and read without a claim
 // (NET_INTERFACE → Sync State Machine → "A claim is the peer's applied
 // tip, height and hash" — direction travels with the peer id, not the

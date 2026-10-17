@@ -500,6 +500,10 @@ export class SyncMachine {
     this.openHeaderRuns.add(peerId);
     try {
       await this.runHeaders(peerId);
+    } catch (err) {
+      // A throw from `locatorFor` or `knowsTip` reaches here; one bad
+      // run degrades that one run, not the subsystem.
+      console.warn(`[sync-machine] header run for ${peerId} threw: ${String(err)}`);
     } finally {
       this.openHeaderRuns.delete(peerId);
       this.recomputePhase();
