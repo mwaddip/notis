@@ -465,13 +465,14 @@ describe('a header sync ends in one of three ways, with two unmarked side exits'
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it('the claim is reached — a delivery lands and the peer stays unmarked', async () => {
+  it('the claim is reached — a short-page delivery that makes knowsTip true settles the run', async () => {
     const claimHash = hexId(50);
     const known = new Set<string>();
-    const view = makeChainView({ known });
+    const view = makeChainView({ known, applied: true });
     const pipeline = makePipeline(true);
     const originalDeliver = pipeline.deliverHeaders;
     pipeline.deliverHeaders = async (peerId, hash, p) => {
+      // The pipeline admits the headers; the view now holds the claim.
       known.add(hash);
       return originalDeliver(peerId, hash, p);
     };
@@ -479,7 +480,14 @@ describe('a header sync ends in one of three ways, with two unmarked side exits'
     peerActive(sch, 'p', 1);
     syncInfo(sch, 'p', 50, claimHash);
     await settle();
-    expect(pipeline.calls.length).toBeGreaterThan(0);
+    // Removing the reached-settles return in `runHeaders` lets the loop
+    // fall through to the refute branch on this short page: a mark and
+    // a transient the scheduler must not record. The claim settled, so
+    // the phase can reach synced.
+    expect(sch.machine.getMarksForTest().has('p')).toBe(false);
+    expect(sch.penalties.filter(x => x.peerId === 'p').length).toBe(0);
+    expect(sch.requests.filter(r => r.peerId === 'p').length).toBe(1);
+    expect(sch.machine.getState().phase).toBe('synced');
   });
 
   it('a short page below the claimed height marks the peer', async () => {
