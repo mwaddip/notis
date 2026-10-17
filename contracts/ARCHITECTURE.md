@@ -226,7 +226,7 @@ wait produces correct results, promptly, forever — and every gate stays green.
 So where idle behaviour, cadence, or an allocation ceiling is load-bearing, the
 contract states it as an obligation with a number, not as an implementation
 detail. `NET_INTERFACE → Biased Event Loop` clause 4 is the worked example, and
-`MAX_DATA_EVENTS_PER_PEER` / `MAX_OUTSTANDING_IDS` are the shape to copy.
+`MAX_DATA_EVENTS_PER_PEER` / `MAX_INBOUND_SYNC_STREAMS` are the shape to copy.
 
 > ⚠ **Ported specifications drop exactly what the source runtime guaranteed.**
 > Several contracts here were templated from `ergo-node-rust`'s `facts/`. That
@@ -1553,8 +1553,9 @@ chain or owed one:
 | **the two karma boxes** (2026-10-12) | a karma box's bytes — one mark byte after `owner` (TYPES_INTERFACE → KarmaBox) — so every karma box's id, every transaction id over a karma output, every `stateRoot`, and devnet's and testnet's `genesisStateRoot` pins (mainnet's genesis seeds no karma box); the verdict of a karma spend that makes two karma outputs, carries the mark, or leaves its owner's own box out of its inputs — each refused (NODE_INTERFACE → Karma transition rules); and the settlement, which pays each owner once into their marked karma box and consumes the one it replaces (NODE_INTERFACE → The settlement transaction). **Owes the reset**, and rides the tree layout's |
 | **the mint id's genesis proof** (2026-10-12) | the mint id's preimage, which opens with the chain's genesis proof payload (TYPES_INTERFACE → Mint identity) — so every genesis box's id, all three `genesisStateRoot` pins, and every box id and transaction id that descends from a genesis box; and testnet's `genesisProofPayload`, which names its release line (→ "A reset mints a new genesis proof payload"). **Owes the reset**, and rides the tree layout's |
 | **the transactions root** (2026-10-13) | `utxoTxRoot`'s preimage — every transaction's id, then every transaction's bytes (TYPES_INTERFACE → Ordering block) — so every block hash; and the verdict of a block whose `utxoTxs` are not the bytes its header's root commits, one signature byte among them: refused as not its header's (VALIDATION_INTERFACE → verifyUtxoTxRoot). **Owes the reset**, and rides the tree layout's |
+| **headers-first sync** (2026-10-17) | **no committed byte and no consensus verdict** — the sync wire: `SyncInfo` carries the tip hash, `GetHeaders` a locator, `GetBlocks` ids, and `Inv` (code 3) and block modifiers (type 101) retire (NET_INTERFACE → Historical Sync), so a node on it shares no sync with a node on 0.3.1; three store tables, additive (NODE_INTERFACE → Header tree); the reach floor, which reverts up to `maxReorgDepth` blocks above genesis where the fork walk it replaces stopped one short — a local fork-choice bound. **Rides the 0.4.0 reset**, with no era row |
 
-**Outstanding against the live node: the tree layout, the block proof, the rent rule, the karma spend rule, the lapse leg's spent vouch, the two karma boxes, the mint id's genesis proof and the transactions root** (the eight rows above). Testnet's live chain began at the
+**Outstanding against the live node: the tree layout, the block proof, the rent rule, the karma spend rule, the lapse leg's spent vouch, the two karma boxes, the mint id's genesis proof, the transactions root and headers-first sync** (the nine rows above). Testnet's live chain began at the
 2026-09-15 reset; every row above is in it, and the usernames row owes none. The profile leaves testnet's `genesisId`
 empty (§What varies per network) until the reset the tree layout owes mines a new block 1.
 
@@ -1806,7 +1807,7 @@ not be independently readable.
 `CREDIT_MINER_REWARD_DELAY` · `CREDIT_FIXED_RATE_BLOCKS` ·
 `CREDIT_EPOCH_BLOCKS` · `CREDIT_EMISSION_TOTAL` · `GENESIS_KARMA_PER_MEMBER` · `INVITE_BOND_MIN` · `INVITE_BOND_MAX` ·
 `genesisCommitteeKeys` · `genesisProofPayload` · `genesisStateRoot` · `genesisId` · `faucetPublicKey` ·
-`storageRentPeriodBlocks` · `membershipBarMultiplier` · `maxReorgDepth` · `backerSupply` · `backerTable`
+`storageRentPeriodBlocks` · `membershipBarMultiplier` · `maxReorgDepth` · `minimumChainWork` · `backerSupply` · `backerTable`
 
 **Every name is spelled by its definition site, and the case says which one.** A `SCREAMING_CASE` name
 is a `constants.ts` export that a profile field reads; a `camelCase` name is a `NetworkProfile` field
@@ -1837,11 +1838,20 @@ declares, so they add fields to a declared axis rather than opening a fourth.
 > leave the rent path unexercised; and a period below the suite's own ceiling lets a producer collect
 > the faucet's genesis credits underneath a running scenario. Devnet's **100** sits between the two.
 
+> ⚠ **AHEAD OF CODE (2026-10-17).** The `maxReorgDepth` note's mechanic (the reach floor and the window) and the
+> `minimumChainWork` note lead node's pipeline and `types/src/network.ts`'s profile field.
+
 > ⚠ **`maxReorgDepth` is field-only and a duration: the reorg horizon.** How far below the tip a fork
 > may be followed prices journals, AVL versions and a reorg's memory against how long a partition may
 > last before it is permanent — a number on the timescale axis (`TYPES_INTERFACE → Chain
-> reorganisation`). The fork walk, the branch scoring and the purges are the mechanic and universal;
+> reorganisation`). The reach floor, the window and the purges are the mechanic and universal;
 > mainnet's **60**, testnet's **240** and devnet's **40** are numbers on the same mechanic.
+
+> ⚠ **`minimumChainWork` is field-only and a release fact.** The least work a best chain must carry before
+> a node fetches a block along it (`TYPES_INTERFACE → Network profiles`) is the work of the live tip when a
+> release is cut — a number no constant can stand beside, because each network's chain has its own. A fresh
+> chain's is `0n`, all three today; a release cut on a running chain sets it, so a joiner whose every peer
+> offers less waits rather than applying.
 
 > ⚠ **`membershipBarMultiplier` is field-only and a cap.** `k` scales the membership bar
 > `D(N) = max(1, icbrt(k · N))` (§Membership); the formula is the mechanic and universal, the
@@ -2750,8 +2760,14 @@ backfill — and a withdrawn post keeps its row with `content` `NULL` and its ma
 - Framed p2p stream protocol with magic bytes, VLQ length prefixing, and a **4-byte**
   checksum (the first 4 bytes of a blake2b digest — the frame layout at the top of this
   document says `[checksum:4]`, and `WIRE_INTERFACE.md` agrees; "32-byte" here was wrong)
-- Historical sync of whole ordering blocks over the SyncInfo/Inv/Modifier protocol; fork choice
-  scores a competing branch to its tip by paged, verified headers, up to the network's reorg horizon
+- Headers-first sync: net's scheduler asks peers for headers by locator and blocks by id; the node's
+  pipeline keeps a tree of verified headers from every peer, the best chain by verified work, and applies
+  blocks along it — the reorg horizon binds applied blocks only, so a joiner compares chains on headers
+  before it applies past it (NET_INTERFACE → Historical Sync; NODE_INTERFACE → Fork choice decides on
+  verified headers)
+
+  > ⚠ **AHEAD OF CODE (2026-10-17).** This item leads net's scheduler and node's pipeline.
+
 - Peer discovery via GetPeers/Peers gossip + PeerDb
 
 ## Deferred to future protocol versions

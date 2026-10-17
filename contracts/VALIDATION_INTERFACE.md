@@ -202,12 +202,16 @@ remit; its former home next to `BlockHeader` was proximity, not ownership.
 | `1n << BigInt(2³⁰)` | throws `RangeError` |
 | `(1n << BigInt(2³⁰−2)) + (1n << BigInt(2³⁰−2))` | throws — **the accumulator overflows independently of any single term** |
 
+> ⚠ **AHEAD OF CODE (2026-10-17).** The paragraph's term-count sentence leads net's `Headers` decoder
+> (`sync-codec.ts`), which holds a page to `MAX_CHAIN_RESPONSE_ITEMS` once `GetHeaders` carries a locator and no
+> `maxCount`.
+
 The wall is exactly 2³⁰ and one integer wide. **A per-term bound is not sufficient on its own** — two
 terms each below the wall sum past it — which is why the bound is the digest width rather than anything
-near the arithmetic limit. **The term count is bounded by the caller's own request**: `requestHeaders`
-passes its `maxCount` to `decodeHeaders`, and `lpItemsCodec` checks
-`min(maxCount, MAX_CHAIN_RESPONSE_ITEMS)` — 400 — **before the first element is read**, so a peer
-answering a 400-header page request with 18,900 headers is refused rather than summed. The bound
+near the arithmetic limit. **The term count is bounded at the decoder**: a `Headers` page is held to
+`MAX_CHAIN_RESPONSE_ITEMS` — 400 — **before the first element is read** (NET_INTERFACE → GetHeaders /
+GetBlocks responses), so a peer answering a header request with 18,900 headers is refused rather than
+summed. The bound
 here is still the digest width and not that count: a per-term bound never was the thing holding, and
 tying this argument to a response cap in another package would make it decay on that package's
 schedule.
@@ -240,7 +244,7 @@ returns `null`, so no digest can satisfy such a target and no work can have been
 zero *is* its expected-hash count. Nothing rejects a block for exceeding the bound; the consensus
 minimum is `ORDERING_BLOCK_POW_TARGET_FLOOR`, checked at apply.
 
-**Totality is required, not convenient.** The headers reach fork choice from `net`'s `requestHeaders`
+**Totality is required, not convenient.** The headers reach the pipeline's admission from `net`'s `requestHeaders`
 through the positional codec, which checks each element's byte span — **and that is a shape check, not
 a domain check.** The encodable domain is `isU64Safe`, so `powTargetBits` still arrives anywhere in
 `[0, 2^53)`: a value in range for the codec and far outside anything this function can shift. A header
@@ -451,8 +455,8 @@ returned `string` and performed **no input check at all**, handing `header` stra
 > unenforced precondition and 13 `src` call sites, each independently responsible for remembering it.
 > `isEncodableHeader` was that precondition written down — and applied at three of them. The
 > enumeration of its callers found one that reaches this function with peer-supplied
-> data that has passed **no domain check**: `net`'s `requestHeaders` hands its result to node's fork
-> resolution, which passes those bare headers straight here. The positional codec those headers now
+> data that has passed **no domain check**: `net`'s `requestHeaders` hands its result to node's
+> pipeline, which passes those bare headers straight here. The positional codec those headers now
 > decode through checks each element's byte span and refuses a malformed one — **it does not check a
 > field's range**, so `powTargetBits` still arrives anywhere `isU64Safe` allows. Shape and domain are
 > different questions, and only one of them was ever answered on this path.
@@ -1386,10 +1390,10 @@ Stage 2 (@dagsocial/node — after receipt)
   ├── onTx         → validateTx (authorization, transitions, conservation — NODE_INTERFACE)
   ├── POST /posts  → verifyPostBody over `content`, then verifyPost over the commit
   │                  (field domains, refs, version, karma)
-  ├── Fork resolution (resolveFork — a received block that extends nothing)
-  │     ├── verifyHeaderChain over the peer's segment, before any work is compared
-  │     │     or any block fetched (NODE_INTERFACE → Fork choice decides on verified headers)
-  │     └── each served block, before it is kept: verifyOrderingBlockStructure,
+  ├── The pipeline (every delivered header and block)
+  │     ├── verifyHeaderChain over each header against its tree parent, before its work
+  │     │     counts or any block is fetched (NODE_INTERFACE → Fork choice decides on verified headers)
+  │     └── each delivered block, before it is staged: verifyOrderingBlockStructure,
   │           verifyUtxoTxRoot, verifyValidatorSignature
   └── Block receipt (applyOrderingBlock — the funnel every apply path passes
         through: gossip, sync, reorg — so no path can skip it)

@@ -2798,18 +2798,25 @@ values`, all PROVISIONAL) — because it prices storage and memory against how l
 before it is permanent: a duration in blocks, a number and not a mechanic (`ARCHITECTURE → What varies
 per network`). No constant stands beside it.
 
-Its load-bearing consumers are all in `@dagsocial/node`: the fork walk's reach (`resolveFork` pages a
-peer's headers down from our tip over `ourTip … ourTip − maxReorgDepth + 1`, NODE_INTERFACE → Fork
-choice decides on verified headers), the block-journal retention window (`purgeOldJournals`), the
-refused-headers purge bound (`purgeRefusedHeaders`, NODE_INTERFACE → Store Interface → Refused headers),
-and the load-time refusal of a `MAX_PROOF_HISTORY` beneath it (`config.ts`). **Journal retention is the
-hard bound on how deep a reorg can physically go; the fork walk is policy**, and nothing requires the
-two to stay equal.
+> ⚠ **AHEAD OF CODE (2026-10-17).** The consumers below lead node's pipeline: the reach floor and the window in
+> place of `resolveFork`'s fork walk, whose examined heights stopped one short of the horizon above genesis.
 
-⚠ **`net` reads it nowhere.** Fork resolution's header and block requests are paged at
-`MAX_CHAIN_RESPONSE_ITEMS = 400` whatever the horizon; the horizon decides how many pages the fork walk
-may take (`NET_INTERFACE → Pull Requests`), and the light client's `k` is its own number
-(`CONSTANTS → Client defaults`).
+Its load-bearing consumers are all in `@dagsocial/node`: **the reach floor** — a branch is reachable
+when its fork point `f` with the applied chain satisfies `f ≥ max(appliedTip − maxReorgDepth, lowestJournal −
+1)`, at most `maxReorgDepth` blocks reverted for every fork point, the root's included (NODE_INTERFACE → Fork
+choice decides on verified headers → "The reach floor is the horizon, one rule for every fork point"); the
+header tree's prune below the floor and the window extension applies within (`appliedTip < S +
+maxReorgDepth`, NODE_INTERFACE → Fork choice decides on verified headers → "The window"); the block-journal
+retention window (`purgeOldJournals`); the refused-headers purge bound (`purgeRefusedHeaders`,
+NODE_INTERFACE → Store Interface → Refused headers); and the load-time refusal of a `MAX_PROOF_HISTORY`
+beneath it (`config.ts`). **Journal retention is the hard bound on how deep a switch can physically go; the
+reach floor is policy, and it never asks for more than the journals hold** — `purgeOldJournals` keeps
+`block_height ≥ tip − maxReorgDepth`.
+
+⚠ **`net` reads it nowhere.** The scheduler's header and block requests are paged at
+`MAX_CHAIN_RESPONSE_ITEMS = 400` whatever the horizon (`NET_INTERFACE → Pull Requests`); the gate it
+reports to the node is a moment, and the node holds the window against the horizon. The light client's
+`k` is its own number (`CONSTANTS → Client defaults`).
 
 ### Genesis parent hash
 
@@ -2877,6 +2884,10 @@ export interface NetworkProfile {
   // (→ Chain reorganisation). A duration in blocks; the mechanic is universal, the number per network.
   readonly maxReorgDepth: number;
 
+  // Sync — the least work a best chain must carry before any block is fetched along it
+  // (NODE_INTERFACE → Fork choice decides on verified headers). 0n until a release is cut on a running chain.
+  readonly minimumChainWork: bigint;
+
   // Protocol versioning — the eras this network's version runs through; the version in force at a
   // height is the last era's whose fromHeight is at or below it (→ Version).
   readonly protocolVersionSchedule: readonly ProtocolEra[];
@@ -2940,9 +2951,21 @@ whose floor sits below `ORDERING_BLOCK_POW_TARGET_FLOOR`, whose anchor lies outs
 ceiling exceeds 65536 or whose ideal is not positive is refused at load (`NODE_INTERFACE →
 Configuration`) — a refusal, never a clamp.
 
-**The reorg horizon is per network; the walk is not.** `maxReorgDepth` — 60 on mainnet, 240 on testnet,
-40 on devnet (`CONSTANTS → Per-network values`) — bounds the fork walk, the journal retention window, the
-refused-header purge and the AVL history floor (→ Chain reorganisation). A profile whose horizon is not
+> ⚠ **AHEAD OF CODE (2026-10-17).** The paragraph below and the `minimumChainWork` field in the interface above
+> lead `types/src/network.ts`: the field on `NetworkProfile` and `0n` on all three profiles.
+
+**The minimum chain work is per network, and set at each release.** `minimumChainWork` — `0n` on all three
+(`CONSTANTS → Per-network values`) — is the least `chain_work` a best chain's tip must carry before the node
+fetches any block along it (NODE_INTERFACE → Fork choice decides on verified headers → "The best chain is the
+heaviest reachable branch"): below it the node goes on admitting headers and applies nothing, so a joiner whose
+every peer offers a lighter chain waits rather than applying it. It is a fact about the chain at a release — the
+work of the live tip when the release is cut — so a fresh chain's is `0n`, and every release cut on a running
+chain sets it with a `CONSTANTS` row. It decides no consensus verdict: a block below it is never fetched, never
+judged.
+
+**The reorg horizon is per network; the reach floor is not.** `maxReorgDepth` — 60 on mainnet, 240 on testnet,
+40 on devnet (`CONSTANTS → Per-network values`) — bounds the reach floor and the window, the journal retention
+window, the refused-header purge and the AVL history floor (→ Chain reorganisation). A profile whose horizon is not
 a positive safe integer is refused at load (`NODE_INTERFACE → Configuration`).
 
 **The version schedule is per network; the rules are not.** `protocolVersionSchedule` —
