@@ -828,6 +828,13 @@ export async function mineNextBlock(bc: {
   // (NODE_INTERFACE → Fork choice decides on verified headers → "One intake,
   // one at a time"). Idempotent: the setter replaces callbacks and context.
   await wireIntakeForTests();
+  // A test that mines without net stands in for the scheduler and holds the
+  // window itself (NODE_INTERFACE → Block finalization → "A mined block is
+  // applied through the pipeline's intake"): without the gate's hold the
+  // window closes above `maxReorgDepth` and the apply the next solve would
+  // reach does not fire.
+  const intake = await import('../src/services/intake.js');
+  intake.gateHeld();
   bc.createOrderingBlock();
   const tpl = bc.getCurrentTemplate();
   if (tpl === null) return null;
