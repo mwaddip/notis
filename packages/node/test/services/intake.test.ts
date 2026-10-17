@@ -57,6 +57,7 @@ const UTXO_TX_ROOT_WITH_SETTLEMENT = computeUtxoTxRoot({
   utxoTxIds: [SETTLEMENT_ID],
   utxoTxs: [new Uint8Array(0)],
 });
+const UTXO_TX_ROOT_EMPTY = computeUtxoTxRoot({ utxoTxIds: [], utxoTxs: [] });
 
 /**
  * One Ed25519 validator for the suite — the chain's mined headers carry its
@@ -70,15 +71,16 @@ function makeValidator(): { pub: Uint8Array; priv: KeyObject } {
 }
 
 /**
- * Mine a header whose `validatorId = pub` and `utxoTxRoot` names a body with
- * one entry — the settlement transaction `verifyOrderingBlockStructure`
- * requires.
+ * Mine a header whose `validatorId = pub` and `utxoTxRoot` is as the opts
+ * ask — a body with one entry (the settlement) by default, or the empty
+ * tree's root when `utxoTxRoot: 'empty'`.
  */
 function mineWithEmptyRoot(opts: {
   height: number;
   parent?: ParentHeaderInfo | null;
   pub: Uint8Array;
   createdAt?: number;
+  utxoTxRoot?: 'with-settlement' | 'empty';
 }): ParentHeaderInfo {
   const parent = opts.parent ?? null;
   const built = makeHeader({
@@ -89,7 +91,9 @@ function mineWithEmptyRoot(opts: {
     schedule: SCHEDULE,
     validatorId: opts.pub,
   });
-  built.header.utxoTxRoot = UTXO_TX_ROOT_WITH_SETTLEMENT;
+  built.header.utxoTxRoot = opts.utxoTxRoot === 'empty'
+    ? UTXO_TX_ROOT_EMPTY
+    : UTXO_TX_ROOT_WITH_SETTLEMENT;
   const target = orderingPowTarget(built.header.powTargetBits);
   if (target === null) throw new Error('mineWithEmptyRoot: target outside domain');
   let found = false;
@@ -302,6 +306,33 @@ describe('intake', () => {
       // The last assertion names the rule: the staged row observed at apply
       // time carries the deliverer `'peerB'`.
       expect(capturedFromPeer).toBe('peerB');
+    });
+
+    it('a block whose structure refuses before utxoTxRoot and signature run refuses with misbehavior', async () => {
+      const v = makeValidator();
+      // Header commits to the EMPTY tree root; verifyUtxoTxRoot would MATCH
+      // over an empty body — only `verifyOrderingBlockStructure` refuses it
+      // (empty `utxoTxIds` carries no settlement transaction).
+      const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub, utxoTxRoot: 'empty' });
+      applyBehaviour = () => ({ applied: false, verdict: { applied: false, class: 'local', detail: 'test' } });
+      const { cap, callbacks } = recorder();
+      initIntake(callbacks, ctx());
+      await admitChain('peerH', [h1]);
+
+      // The body matches the header's empty root; the signature is valid.
+      // Only the structure check refuses this block.
+      const forged: OrderingBlock = {
+        header: h1.header,
+        utxoTxTree: { utxoTxIds: [], utxoTxs: [] },
+        validatorSignature: new Uint8Array(cryptoSign(null, Buffer.from(h1.hash, 'hex'), v.priv)),
+      };
+      await deliverBlocks('peerStruct', [forged]);
+
+      expect(cap.penalties.some(p => p.peerId === 'peerStruct' && p.kind === 'misbehavior')).toBe(true);
+      expect(getStagedBlock(h1.hash)).toBeNull();
+      // The last assertion names the rule: the structure refusal is named
+      // "no settlement transaction".
+      expect(cap.penalties.find(p => p.peerId === 'peerStruct')?.reason).toContain('no settlement transaction');
     });
 
     it('a bound block whose header is stored off best is dropped with no penalty, no stage row', async () => {
@@ -562,20 +593,56 @@ describe('intake', () => {
       expect(wanted.every(w => w.height <= Math.min(5, 0 + BLOCK_FETCH_WINDOW, getSForTests() + config.maxReorgDepth))).toBe(true);
     });
 
-    it.fails('wantedBlocks is empty while the best tip chain_work is below minimumChainWork', async () => {
-      // `config.profile` is frozen and `minimumChainWork` on it is
-      // non-configurable; the harness here cannot override it. The rule
-      // itself — `wantedBlocks` reads `config.profile.minimumChainWork` and
-      // answers `[]` when `bestTip.chainWork` is below it — is in the module;
-      // asserting it under an override belongs to a follow-up that mocks the
-      // config module through a dynamic re-import.
+  });
+
+  describe('wantedBlocks under a mocked profile', () => {
+    afterEach(() => {
+      vi.doUnmock('../../src/config.js');
+      vi.resetModules();
+    });
+
+    it('wantedBlocks is empty while the best tip chain_work is below minimumChainWork', async () => {
+      // Register a mock of `src/config.js` that answers a config whose
+      // profile holds a `minimumChainWork` well above the single-header
+      // tip's work. Every module the case uses is re-imported after the
+      // mock so the fresh graph picks up the mocked config.
+      const { NETWORK_PROFILES } = await import('@dagsocial/types');
+      const high = (1n << 300n);
+      const highProfile = { ...NETWORK_PROFILES.devnet, minimumChainWork: high };
+      vi.resetModules();
+      vi.doMock('../../src/config.js', async () => {
+        const actual = await vi.importActual<typeof import('../../src/config.js')>('../../src/config.js');
+        return {
+          ...actual,
+          config: { ...actual.config, profile: highProfile },
+        };
+      });
+
+      const dbMod = await import('../../src/store/db.js');
+      dbMod.initDb(':memory:');
+      dbMod.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+      const intake = await import('../../src/services/intake.js');
+      const pipeline = await import('../../src/services/header-pipeline.js');
+      const store = await import('../../src/store/index.js');
+      pipeline.resetPipelineForTests();
+      intake.resetIntakeForTests();
+      intake.setIntakeSeamsForTests({
+        apply: (b) => applyBehaviour(b).verdict,
+        reorg: (f, b) => reorgBehaviour(f, b),
+      });
+
       const v = makeValidator();
       const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
       const { callbacks } = recorder();
-      initIntake(callbacks, ctx());
-      await admitChain('peerH', [h1]);
-      // The last assertion stands as the rule the follow-up will cover.
-      expect(wantedBlocks()).toEqual([]);
+      intake.initIntake(callbacks, ctx());
+      await intake.deliverHeaders('peerH', h1.hash, [h1.header]);
+      await intake.deliverHeaders('peerH', h1.hash, [h1.header]);
+
+      expect(store.getHeaderRow(h1.hash)).not.toBeNull();
+      // The last assertion names the rule: wantedBlocks is empty while the
+      // best tip's `chain_work` is below `minimumChainWork`.
+      expect(intake.wantedBlocks()).toEqual([]);
     });
   });
 
