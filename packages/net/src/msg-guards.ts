@@ -33,12 +33,13 @@ export const MAX_CAPABILITY_CODE = 65_535;
 // ---------------------------------------------------------------------------
 
 /**
- * Largest `ids` / `anchors` / `modifiers` array accepted from a peer.
+ * Largest `ids` / `modifiers` array accepted from a peer.
  *
- * 400 is the send-side batch cap (NET_INTERFACE → Inv): at most 400 ids per batch. The
- * same number bounds what a peer may send *us* — the cap has to be enforced on
- * receipt, since an attacker has no reason to honour the one we apply to
- * ourselves. Over-cap arrays are dropped and the sender penalized.
+ * 400 is the send-side batch cap (NET_INTERFACE → ModifierRequest): at
+ * most 400 ids per batch. The same number bounds what a peer may send
+ * *us* — the cap has to be enforced on receipt, since a hostile sender
+ * has no reason to honour the one we apply to ourselves. Over-cap
+ * arrays are dropped and the sender penalized.
  */
 export const MAX_INV_IDS = 400;
 
@@ -81,11 +82,11 @@ export const MAX_LOCATOR_HASHES = 28;
  * Largest number of items in a `Headers` (15) or `Blocks` (17) response —
  * enforced on BOTH sides.
  *
- * 400 is the same batch cap `MAX_INV_IDS` carries for the inventory messages
- * (NET_INTERFACE → Inv), and the two responses these codes serve are the same
- * kind of thing: a bounded continuation of the chain. Fork resolution pages
- * both its header walks and its block fetch at exactly this cap
- * (NET_INTERFACE → Pull Requests).
+ * 400 is the same batch cap `MAX_INV_IDS` carries for the modifier
+ * messages (NET_INTERFACE → ModifierRequest), and the two responses
+ * these codes serve are the same kind of thing: a bounded continuation
+ * of the chain. The scheduler pages both its header walks and its
+ * block fetch at exactly this cap (NET_INTERFACE → Pull Requests).
  *
  * **Receive side.** The count is a `vlqU` the peer chooses, and the decoder
  * allocates per item, so it is checked before the first element is read — a

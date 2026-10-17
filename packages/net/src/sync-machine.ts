@@ -764,10 +764,7 @@ export class SyncMachine {
       try {
         blocks = await this.requestBlocksFn(ids, peerId);
       } catch {
-        // NET_INTERFACE → Sync State Machine → "An id a peer's answer
-        // omits is not asked of that peer again until its claim changes;
-        // it, a deadline (…), or a mark moves the id to another such
-        // peer." The deadline is this throw.
+        // NET_INTERFACE → Stall Detection — the deadline marks the peer.
         this.markPeer(peerId);
         return;
       }
@@ -778,12 +775,10 @@ export class SyncMachine {
         console.warn(`[sync-machine] deliverBlocks(${peerId}) threw: ${String(err)}`);
         return;
       }
-      // NET_INTERFACE → Sync Integrity → "Net owns the shape; the
-      // pipeline owns the content." An id still in `wantedBlocks()` the
-      // peer owed us but we did not take is one the peer does not get
-      // asked again until its claim changes — the pipeline's refusal of
-      // a bound mismatch also lands here (NET_INTERFACE → Sync Integrity
-      // → "A request ends by its answer or its deadline").
+      // NET_INTERFACE → Sync Integrity. An id still in `wantedBlocks()`
+      // the peer owed us but we did not take is one the peer does not
+      // get asked again until its claim changes — the pipeline's
+      // refusal of a bound mismatch also lands there.
       const stillWanted = new Set<string>();
       if (this.chainView) {
         for (const w of this.chainView.wantedBlocks()) stillWanted.add(w.id);
