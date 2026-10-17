@@ -13,10 +13,10 @@ import {
   decodeGetBlocks,
   decodeGetHeaders,
   decodeSyncInfo,
-  holdsPageShape,
   syncInfoCodec,
   SyncMachine,
 } from '@dagsocial/net';
+import { holdsPageShape } from '../src/sync.js';
 import {
   MSG_GET_BLOCKS,
   MSG_GET_HEADERS,

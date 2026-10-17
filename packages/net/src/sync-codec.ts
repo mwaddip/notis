@@ -550,11 +550,11 @@ export function decodeHeaders(body: Uint8Array): BlockHeader[] | null {
 /**
  * How many items a response to a request of this size may carry.
  *
- * Clamped to `MAX_CHAIN_RESPONSE_ITEMS` because the requested size is derived
- * from peer-supplied heights (`requestBlocks` spans `forkHeight + 1` to a tip
- * height that came off the wire), so it is not by itself a bound. A nonsensical
- * request size accepts an empty response and nothing else, rather than
- * falling back to a permissive default.
+ * Clamped to `MAX_CHAIN_RESPONSE_ITEMS` because the requested size is the
+ * number of ids the caller asked for, and a caller's count is not by itself
+ * a bound (NET_INTERFACE → `GetHeaders` / `GetBlocks` responses). A
+ * nonsensical requested size accepts an empty response and nothing else,
+ * rather than falling back to a permissive default.
  */
 function responseCap(requested: number): number {
   if (!Number.isSafeInteger(requested) || requested < 0) return 0;
