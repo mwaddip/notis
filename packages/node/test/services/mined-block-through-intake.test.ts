@@ -121,4 +121,45 @@ describe('a mined block applies through the pipeline\'s intake', () => {
     expect(spy.broadcast).toEqual([]);
     intake.clearIntakeSeamsForTests();
   });
+
+  it('submitMinedBlock hands a corrupt-state error to failStopIfCorruptChain', async () => {
+    // The outer frame of the mined-block item routes a `CorruptChainStateError`
+    // through `failStopIfCorruptChain` instead of letting it reach the HTTP
+    // 500 handler (NODE_INTERFACE → "Reach is the live argument, not the
+    // halt").
+    const exited: number[] = [];
+    vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      exited.push(code ?? 0);
+      throw new Error('process.exit');
+    }) as never);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const spy: NetSpy = { broadcast: [] };
+    const { setNet } = await import('../../src/services/net-instance.js');
+    const net = makeSpyNet(spy);
+    setNet(net as never);
+    const { wireNet } = await import('../../src/services/net-wiring.js');
+    wireNet(makeFakeWireableNet(net) as never);
+
+    await startCreator(testConfig);
+    const bc = await importBlockCreator();
+
+    // The apply seam throws a `CorruptChainStateError` member when
+    // `drainExtension` reads the mined block's staged row — the one place a
+    // mined-block item can touch a corrupt row the pipeline writes under its
+    // own writer invariant.
+    const intake = await import('../../src/services/intake.js');
+    const { MissingStoredBlockError } = await import('../../src/services/corrupt-state.js');
+    intake.setIntakeSeamsForTests({
+      apply: () => { throw new MissingStoredBlockError('submitMinedBlock', 1); },
+    });
+
+    await mineNextBlock(bc).catch(() => null);
+
+    // The last assertion names the rule: `submitMinedBlock` hands a
+    // corrupt-state error to `failStopIfCorruptChain`, which exits with
+    // code 1.
+    expect(exited).toEqual([1]);
+    intake.clearIntakeSeamsForTests();
+  });
 });
