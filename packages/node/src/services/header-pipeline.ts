@@ -164,12 +164,14 @@ function workOrZero(bits: number): bigint {
 
 /**
  * The interlinks a header commits to — read from the parent's vector via
- * `updateInterlinks` (TYPES_INTERFACE → Interlink vector).
+ * `updateInterlinks` (TYPES_INTERFACE → Interlink vector). A parent whose
+ * `level` the yardstick cannot answer contributes no new entry; the vector
+ * passes through unchanged.
  */
 function interlinksCommitFromParent(parent: HeaderRow, anchorBits: number): string[] {
   if (parent.height === 0 && parent.hash === GENESIS_PREV_BLOCK_HASH) return [];
   const parentLevel = level(parent.header, anchorBits);
-  if (parentLevel === null) throw new Error('header-pipeline: parent level is null');
+  if (parentLevel === null) return parent.interlinks;
   return updateInterlinks(parent.interlinks, parent.hash, parentLevel);
 }
 

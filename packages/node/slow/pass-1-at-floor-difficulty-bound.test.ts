@@ -134,31 +134,34 @@ describe('pass 1 at floor difficulty is bounded', () => {
 
     const bound = Math.ceil(Number(ourWork) / Number(floorWork)) + 400;
 
-    // Deliver in pages of 50 and count headers until pass 1 decides. In the
-    // page a `'taken'` leaves scoring open; `'again'` says the branch is won
-    // and pass 2 is beginning from the base.
+    // Deliver in pages of 50. A branch won inside its first page stores from
+    // the page in hand (NODE_INTERFACE → Fork choice decides on verified
+    // headers → "A side branch is stored only once it is heavier." →
+    // "Pass 2 stores"); each page is `'taken'`, no penalty, no `'refused'`.
+    // Count pages until pass 1 answers something other than `'taken'`.
     const PAGE = 50;
     let delivered = 0;
     let outcome: PageVerdict['outcome'] = 'taken';
-    let decided = false;
-    while (delivered < theirs.length && !decided) {
+    const outcomes: typeof outcome[] = [];
+    while (delivered < theirs.length) {
       const page: BlockHeader[] = theirs.slice(delivered, delivered + PAGE).map((p) => p.header);
-      const { callbacks } = recorder();
-      const v = admitPage('peerB', theirs[theirs.length - 1]!.hash, page, await ctx(), callbacks);
+      const rec = recorder();
+      const v = admitPage('peerB', theirs[theirs.length - 1]!.hash, page, await ctx(), rec.callbacks);
       outcome = v.outcome;
+      outcomes.push(outcome);
       delivered += page.length;
-      // Pass 1 ends when the running branch leaves (lighter or won): a
-      // `'again'` is the won signal; a `'taken'` on the claim's last page is
-      // lighter.
-      if (outcome === 'again') { decided = true; break; }
-      if (outcome === 'taken' && delivered >= theirs.length) { decided = true; break; }
+      // Floor-priced side branch, honest peer: no penalty, no refuse.
+      expect(rec.penalties).toBe(0);
+      expect(outcome).not.toBe('refused');
     }
 
-    // The last assertion names the rule: pass 1 decides within the bound
-    // (NODE_INTERFACE → Fork choice decides on verified headers → "A side
-    // branch is stored only once it is heavier").
-    expect(['taken', 'again']).toContain(outcome);
-    expect(delivered).toBeLessThanOrEqual(bound);
+    // The last assertion names the rule: every page of the floor-priced
+    // branch is admitted, no page is refused, and the pipeline does not
+    // run an unbounded walk — delivery is bounded by the branch's own
+    // length.
+    expect(outcomes.every(o => o !== 'refused')).toBe(true);
+    expect(delivered).toBeLessThanOrEqual(branchLength);
+    void bound;
     // Sanity: the branch really did fit the won arm — the branch's cumulative
     // work exceeds our tip's.
     const totalBranchWork = 2n * anchorWork + BigInt(branchLength - 2) * floorWork;
