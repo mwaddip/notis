@@ -126,7 +126,7 @@ and node's HTTP edge, which answers an oversize request 413 before any check tha
 "A write request's transaction is checked whole before anything reads it"`). The reorg re-insertion arrives by
 neither, and this check is the one every insert passes whichever way it came: a transaction above `MAX_TX_BYTES` in
 the pool would be mined into a block this node's *own* `verifyOrderingBlockStructure` refuses at apply — a
-self-rejecting block, recovered at the cost of one block by `finalizeBlock`'s eviction.
+self-rejecting block, recovered at the cost of one block by `submitMinedBlock`'s eviction.
 
 ⚠ **Reorg re-insertion must not let this throw escape.** `fork-resolution` re-inserts reverted
 transactions inside the chain-switch SQLite transaction, where an escaping error rolls back the
@@ -347,13 +347,14 @@ leaves the bound unchanged.
                  │    per rowid, back to 1   │
                  │ 5. mine / sign            │
                  └─────────────┬─────────────┘
-                               │ finalizeBlock()
+                               │ submitMinedBlock()
                                ▼
                  ┌───────────────────────────┐
-                 │ 1. store block            │
-                 │ 2. apply (embedded txs,   │
+                 │ 1. the intake's item:     │
+                 │    admit, bind, stage,    │
+                 │    apply (embedded txs,   │
                  │    posts confirmed)       │
-                 │ 3. removeEntry per rowid  │
+                 │ 2. removeEntry per rowid  │
                  └───────────────────────────┘
 ```
 
@@ -516,7 +517,7 @@ insert.
 
 **The rule is that cleanup reaches every row**, whatever its depth. An entry left behind holds a
 slot, and the creator later rebuilds it into a block that apply refuses as inapplicable; the chain
-recovers, because `finalizeBlock` evicts the row even on rejection, so the cost is one wasted block
+recovers, because `submitMinedBlock` evicts the row even on rejection, so the cost is one wasted block
 rather than a stall — and it is invisible until the pool is deeper than whatever bound was missed.
 
 ⛔ **A scan cannot satisfy that rule at any bound, and the numbers are why.** Cleanup by scanning
@@ -580,7 +581,7 @@ authorization, transitions and conservation must not be assumed of anything a bl
 **Four mechanisms, and none of them re-checks a pooled entry's validity on a timer.**
 
 1. **Confirmation.** A transaction a block applies leaves by `tx_id`; a block this node mined is
-   swept by rowid in `finalizeBlock`, which reaches every included entry wherever it sits.
+   swept by rowid in `submitMinedBlock`, which reaches every included entry wherever it sits.
 2. **Expiry.** Every insert carries `expiresAtHeight = <insert height> + MEMPOOL_EXPIRY_BLOCKS`, and
    the block build purges past it before selecting.
 3. **The cap.** The credit class evicts its lowest fee-rate row; the karma class rejects at the cap

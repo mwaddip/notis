@@ -1339,19 +1339,23 @@ tree collapse into clean rejections:
 > **It is not a promise that no condition may halt the node**, and a whole *class* of conditions
 > deliberately does. **The allowlist keys on `CorruptChainStateError`, the base class — not on any
 > one subclass** — which is the property `corrupt-state.test.ts` pins as *"a third kind must not need
-> a boundary edit to be fatal"*. Eight subclasses, and every boundary is fatal for all of them with no
+> a boundary edit to be fatal"*. Twelve subclasses, and every boundary is fatal for all of them with no
 > boundary edit.
 >
 > | Subclass | Raised when | Raising site |
 > |---|---|---|
 > | `UnhashableStoredHeaderError` | a header already in our store cannot be hashed | ⚠ **now dead `src`** — see below |
 > | `MissingStoredBlockError` | a block the chain refers to is absent from the store | `services/block-apply.ts`, `services/fork-resolution.ts`, `services/block-creator.ts` |
-> | `UnreadableStoredBlockError` | a stored block's bytes, its interlinks vector or its journal will not decode | `store/ordering.ts` → `rowToOrderingBlock`, `getInterlinks`; `store/journal.ts` → `getBlockJournal` |
+> | `UnreadableStoredBlockError` | a stored block's bytes, its interlinks vector or its journal will not decode — or a header-tree row's header or interlinks, or a staged block's bytes | `store/ordering.ts` → `rowToOrderingBlock`, `getInterlinks`; `store/journal.ts` → `getBlockJournal`; `store/header-tree.ts` → `getHeaderRow`, `getStagedBlock` |
 > | `DivergedStateTreeError` | the AVL+ tree refuses one of a block's writes or of genesis's — writes derived from the tree's own state, so the tree contradicts itself | `state/avl-prover.ts` |
 > | `InconsistentStateTreeError` | a read of this node's own tree contradicts itself — `consensus`'s `TreeInconsistencyError` over the node's prover session (`CONSENSUS_INTERFACE → The tree view`), in block application, the speculative run or the settlement's build | `services/block-apply.ts`, `services/block-creator.ts` |
 > | `MissingJournalError` | a block journal at or above the lowest one kept is absent. Every height `revertBlock` can be asked for lies there: the reach floor admits no fork point below `lowestJournal − 1`, the revert starts one above it, and a fork at the root is reachable only while `lowestJournal ≤ 1` (Fork choice decides on verified headers → "The reach floor is the horizon, one rule for every fork point") | `services/fork-resolution.ts` → `revertBlock` |
 > | `MissingStateVersionError` | no AVL version at or before a fork height the reach floor admits. `MAX_PROOF_HISTORY < maxReorgDepth` is refused at load (Configuration), so a missing version is a row the store lost | `services/fork-resolution.ts` → `reorg` |
 > | `DuplicateStateVersionError` | a version row already stands at the height being checkpointed — the store's version history has run ahead of its chain. The write path keeps one row per height and `idx_avl_tree_versions_height` refuses a second (AVL+ State Root) | `state/avl-storage.ts` → `update` |
+> | `MissingStagedBlockError` | a switch reads a staged block its own synchronous item found staged a moment before — the row is gone, so the store lost it (Fork choice decides on verified headers → "The switch") | `services/fork-resolution.ts` → `reorg` |
+> | `UnreachableForkPointError` | the switch's fork-point walk reaches the reach floor with no match between the applied chain and the best chain — admission holds every stored header's parent at or above the floor, so the tree contradicts itself (Fork choice decides on verified headers → "The reach floor is the horizon, one rule for every fork point") | `services/intake.ts` → the switch |
+> | `InconsistentAvlNodeRowsError` | a label of the AVL+ store answers no row alive at a height it must, or two (AVL+ State Root → "A height of the proof window with no kept root is served from the store") | `state/avl-storage.ts` |
+> | `ConfirmedPostTxNotInBlockBodyError` | a confirmed post row names a transaction the stored body of its block does not list — the body and the row disagree (Posts → "The creating transaction rides a post row") | `services/feed-service.ts` |
 >
 > The class is outside the totality property's scope by construction, and the argument is about
 > **provenance, not validation** — but it takes two shapes, and only the first is about bytes.
@@ -1407,8 +1411,8 @@ tree collapse into clean rejections:
 > `handleOrderingBlock`'s, `extendsOurTip`'s, `resolveFork`'s and the resolution runner's.
 >
 > **Reach is the live argument, not the halt.** `rowToOrderingBlock` is the one decoder of
-> `ordering_blocks`, and its callers are every consumer of the chain: the pipeline (extension's
-> `applyOrderingBlock` chain-link read, and `revertBlock` inside a switch), the
+> `ordering_blocks`, and its callers are every consumer of the chain: the pipeline (the funnel's
+> chain-link read, at extension and inside a switch), the
 > block creator's tip read, the two `/blocks` routes, and the provider handed to
 > `net.setHeadersHandler`, through which every served `GetBlocks` decodes stored rows — a served
 > `GetHeaders` decodes headers alone, through `setHeaderProvider`'s read of `header_bytes`; a handshake
@@ -1420,8 +1424,8 @@ tree collapse into clean rejections:
 > boundary**: the gossip registration and net's `setPipeline` hand the intake's corrupt-state errors to
 > `failStopIfCorruptChain` (Relay handlers; Sync handlers); the intake hands it a
 > corrupt-state error out of an item (Fork choice decides on verified headers → "The intake owns what it
-> runs"); `finalizeBlock` wraps the
-> mined-block apply; `createOrderingBlock`
+> runs"); `submitMinedBlock` hands the intake's corrupt-state error out of the mined block's item to it
+> (Block finalization → "A mined block is applied through the pipeline's intake"); `createOrderingBlock`
 > calls the boundary directly; and the providers handed to `setHeadersHandler` and `setHeaderProvider` and the
 > `getOrderingBlock` the blocks routes are given wrap the store read, so a corrupt row met while
 > serving stops the node instead of failing every `SyncInfo` and query as a peer's fault. A frame that
@@ -3101,7 +3105,9 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
 > block enters the pipeline's intake (→ Fork choice decides on verified headers → "One intake, one at a time").
 
 **A mined block is applied through the pipeline's intake**, as every block is: its header is admitted, the block
-bound and applied by extension, and `submitMinedBlock` answers the verdict the intake returns.
+bound and applied by extension — one synchronous item, the node's own block raising neither a penalty nor the window's
+`S` — and `submitMinedBlock` answers the verdict the item returns, handing a corrupt-state error out of it to
+`failStopIfCorruptChain`.
 
 1. Store block in `block_ordering` table
 2. Broadcast ordering block to peers
@@ -3980,7 +3986,8 @@ See `MEMPOOL_INTERFACE.md` for the full mempool contract.
 
 **Who reads the `block_hash` column, and who deliberately does not.**
 `getOrderingBlockHash` is the read behind net's providers — the claim's tip hash and the header-standing
-check — and serving (`GET /blocks/current`): each
+check — serving (`GET /blocks/current`), and the pipeline's comparison of the applied chain with the best chain
+(Fork choice decides on verified headers → "The switch."): each
 wants the insert-time hash and none needs the row decoded. The apply path's
 chain-link check and the block creator's previous-block hash **recompute from
 the decoded header instead, and must keep doing so**: the recompute is the
@@ -4057,6 +4064,7 @@ CREATE TABLE block_headers (
 );
 CREATE INDEX idx_block_headers_prev   ON block_headers(prev_hash);
 CREATE INDEX idx_block_headers_height ON block_headers(height);
+CREATE INDEX idx_block_headers_work   ON block_headers(chain_work);
 
 CREATE TABLE best_chain (
     height  INTEGER PRIMARY KEY,
@@ -4071,7 +4079,7 @@ CREATE TABLE staged_blocks (
 );
 ```
 
-**`chain_work` is fixed-width so the column orders.** Forty bytes, big-endian: a header's height is a safe
+**`chain_work` is fixed-width so the column orders**, and its index reads the heaviest rows first. Forty bytes, big-endian: a header's height is a safe
 integer (below 2⁵³) and one header's work is at most 2²⁵⁶ (`VALIDATION_INTERFACE → blockWork / cumulativeWork`),
 so a path's sum stays below 2³⁰⁹.
 
@@ -4091,11 +4099,13 @@ it is kept"), and a staged row that will not decode is local corruption, fail-st
 | `getHeaderRow(hash)` | `(string) => HeaderRow \| null` — point read on `hash`, `header_bytes` and `interlinks` decoded |
 | `getBestTip()` | `() => HeaderRow \| null` — the top `best_chain` entry's row; `null` before the first header |
 | `getBestHashAt(height)` | `(number) => string \| null` — point read on `best_chain` |
-| `rewriteBestChain(forkHeight, hashes)` | `(number, string[]) => void` — the switch of the index: entries above `forkHeight` replaced by `hashes`, in one transaction |
+| `rewriteBestChain(forkHeight, hashes)` | `(number, string[]) => void` — the switch of the index: entries above `forkHeight` replaced by `hashes`, and the `staged_blocks` rows of the hashes that leave the index deleted, in one transaction |
+| `heaviestHeaders()` | `() => Iterable<HeaderRow>` — rows in descending `chain_work` over `idx_block_headers_work`, read one at a time: the choice of the best chain after a mark (Fork choice decides on verified headers → "The best chain is the heaviest reachable branch.") |
 | `removeHeaderSubtree(hash)` | `(string) => void` — the mark's removal: the row, every descendant, their `best_chain` entries and `staged_blocks` rows, in one transaction |
 | `pruneHeadersBelow(height)` | `(number) => void` — rows off the best chain below `height`, with their staged blocks; called beside `purgeOldJournals` |
 | `stageBlock(hash, height, bytes, fromPeer)` | `(string, number, Uint8Array, string) => void` |
-| `getStagedBlock(hash)` | `(string) => { block: OrderingBlock; fromPeer: string } \| null` |
+| `getStagedBlock(hash)` | `(string) => { block: OrderingBlock; fromPeer: string } \| null` — the row decoded; a row that will not decode is `UnreadableStoredBlockError` |
+| `hasStagedBlock(hash)` | `(string) => boolean` — point read, no decode: whether an id is staged, for `wantedBlocks` and the switch's wait |
 | `unstageBlock(hash)` | `(string) => void` |
 
 ### Nipopow reader
@@ -4420,14 +4430,11 @@ the tree view read by read.
   rolls the DB (including AVL storage rows) back wholesale, and the reorg's
   catch puts the root and the kept roots back (→ "A proof at an older height restores a kept root") — the per-block
   funnel restore only covers the failing block, not the applied prefix
-- **A reorg applies exactly the verified chain it scored, or nothing.** `reorg()` reverts above
-  `forkHeight` and applies exactly what it is handed, so the caller — the only site that knows what
-  the reorg was *for* and which peer to name — admits nothing to it that was not scored: the block
-  answer must hold one block per verified header and every block's header must hash to the verified
-  hash at its height (`Fork choice decides on verified headers`, below). `net` bounds the response
-  count but never *requires* one, and a short or substituted answer is not malformed bytes — nothing
-  upstream can tell it from a peer that legitimately has nothing — so the check is the caller's.
-  The criterion is **work**, compared over headers that have passed the header-level rules; no height
+- **A reorg applies exactly the branch it is handed, or nothing.** `reorg(forkHeight, hashes)` reverts above
+  `forkHeight` and applies, in order, the staged block of each hash — the shortest heavier prefix the pipeline
+  chose (`Fork choice decides on verified headers` → "The switch.", below). Every staged block was bound to its
+  header before it was kept, so each block applied is the one its stored header commits to; a hash with no staged
+  row at its read is `MissingStagedBlockError`. The criterion is **work**, compared over headers that have passed the header-level rules; no height
   comparison stands in for it, so a retarget changes the schedule the verifier is handed and nothing
   about this rule.
 
@@ -4927,15 +4934,17 @@ each delivered block to its header, and applies blocks along the best chain — 
 `reorg`. Net's scheduler decides only whom to ask for what (NET_INTERFACE → Sync State Machine); `reorg` carries
 out a decision the pipeline has made.
 
-**One intake, one at a time.** Everything that can move the chain enters one serial queue: `Headers` pages and
-`Blocks` answers the scheduler hands over (NET_INTERFACE → Sync Handler Registration), gossiped blocks past Stage 1
-(→ Relay handlers), and this node's own mined block — `submitMinedBlock` waits on the intake for its verdict
-(→ Block finalization). Nothing else applies a block, so while an item runs the tip moves by nothing else. What
+**One intake, one at a time.** Everything that can move the chain enters the intake as one item: a `Headers` page
+or a `Blocks` answer the scheduler hands over (NET_INTERFACE → Sync Handler Registration), a gossiped block past
+Stage 1 (→ Relay handlers), and this node's own mined block (→ Block finalization). An item runs to its end with
+nothing awaited — admission, binding, staging, the funnel and `reorg` are synchronous — so no two items interleave,
+and nothing else applies a block: while an item runs the tip moves by nothing else. What
 waits is bounded by the peers connected, never by what they send: the scheduler keeps one header request and its
 block requests open per peer, and a gossiped block waits as **its relayer's pending block** — one per peer id, a
 later block from the same peer replacing the earlier in the earlier's place in the order, a block already pending
 for that peer dropped. A peer's disconnect removes its pending block, its presync and its memo entry. A block whose
-header will not hash has no identity to be kept by: it is logged and dropped.
+header will not hash has no identity to be kept by: it is logged and dropped, with no penalty — net's Stage 1 refuses
+such a header before it is delivered.
 
 **The intake owns what it runs.** A corrupt-state error out of an item goes to `failStopIfCorruptChain`, and the
 intake holds nothing after it. Any other error ends that item, logged with its stack, and the next item runs: no
@@ -4945,7 +4954,9 @@ item's promise reaches the process-level handler ("An unhandled rejection is log
 header with its parent's hash, the interlinks vector it commits to, its cumulative work (`chain_work`) and the stamp
 of block 1 on its path (`path_t_a`); the applied chain's headers are rows of it. **Height 0 is a virtual root, no
 row**: hash `GENESIS_PREV_BLOCK_HASH`, work 0, interlinks `[]`, `createdAt` and `t_a` null — the anchor
-`verifyHeaderChain` takes at a fork from genesis (→ Fork resolution bottoms out at the genesis state).
+`verifyHeaderChain` takes at a fork from genesis (→ Fork resolution bottoms out at the genesis state). The chain view
+knows the root (`knowsTip` answers `true` for its hash), so a peer with no chain, claiming height 0 and the root, is
+settled on arrival (NET_INTERFACE → SyncInfo (code 2)).
 
 **A header is admitted in four checks, each ending the header's admission where it refuses:**
 
@@ -4970,20 +4981,26 @@ row**: hash `GENESIS_PREV_BLOCK_HASH`, work 0, interlinks `[]`, `createdAt` and 
    (NET_INTERFACE → Peer Penalty System); **every other reason** — `'time'`, `'link'`, `'target'`, `'pow'`,
    `'interlinks'` among them → refused, `misbehavior`.
 
-A page runs the checks header by header, in order; a refusal at one header keeps the headers before it and refuses
-the rest of the page.
+A page runs the checks header by header, in order — its first header's parent held to the age rule and a header at
+height 1 to `genesisId`, as a single header is — and is **taken whole or refused whole**: a refusal at any header
+refuses the page, and a later request asks for its headers again. A header the tree holds already is a no-op; the
+page's branch starts at the first header it does not hold, whose parent is the branch's base.
 
 **An admitted header is stored when it extends the best chain.** Its `chain_work` is its parent's plus
 `blockWork(powTargetBits)`. It is stored — a `block_headers` row — when its parent is the best chain's tip; any other
-admitted header belongs to a side branch, and **a side branch reaches the tree through its second pass alone** (→ "A
-side branch is stored only once it is heavier"), whatever its work. A gossiped header on a side branch is scored, not
+admitted header belongs to a side branch, and **a side branch reaches the tree through its passes alone** (→ "A
+side branch is stored only once it is heavier"), whatever its work. A page whose first header's parent is the best
+tip — every page a joiner is answered from the root, every continuation of the best chain — is stored as it is
+admitted. A gossiped header on a side branch is scored, not
 stored, and its relayer is asked for the headers above the branch's base (→ "One intake, one at a time"), so a branch
 that outweighs the best is won and stored by the pass its peer's run drives.
 
 **The best chain is the heaviest reachable branch.** It ends at the stored header with the most `chain_work` whose
 branch is reachable (→ "The reach floor is the horizon, one rule for every fork point"); a tie keeps the incumbent.
-Its index is `best_chain`, rewritten from the fork point up whenever it switches, and every move of it — and of the
-applied tip — is reported to net (`net.chainMoved()`, NET_INTERFACE → Pipeline events). **No block is fetched along a
+Its index is `best_chain`, rewritten from the fork point up whenever it switches — and chosen again whenever a mark
+removes a header from under it (→ "A body-stage refusal marks the header."): the heaviest stored header whose branch
+is reachable, a read the `chain_work` index answers in order — and every move of it, and of the applied tip, is
+reported to net (`net.chainMoved()`, NET_INTERFACE → Pipeline events). **No block is fetched along a
 best chain whose tip's `chain_work` is below the profile's `minimumChainWork`** (TYPES_INTERFACE → Network
 profiles): below it the pipeline names no block, and goes on admitting headers.
 
@@ -5011,23 +5028,28 @@ forking deeper drops to the floor — and a joiner's reach floor admits it. Stor
 floor-priced headers fill a joiner's tree, so a branch is scored first and stored once it wins:
 
 - **Pass 1 scores.** The branch's headers are admitted (checks 1–4) against the anchor the previous header left and
-  stored nowhere. Kept per peer: the branch's base — the stored header it forks from, `f` — its running work, its
-  continuation anchor, and **the hash at every height `f + 400k`** (k ≥ 1) and at the last height scored: 32 bytes
-  per 400 headers, each a commitment to everything below it, since every header commits to its parent's hash. The
-  scheduler continues the branch by putting its last scored hash first in that peer's locator (NET_INTERFACE →
-  `GetHeaders` / `GetBlocks` responses).
+  stored nowhere. Kept per peer: the branch's base `f` — the stored header, or the root, its first header names as
+  parent — its running work, its continuation anchor, and **the hash at the last height of every page scored**:
+  32 bytes per page of up to 400 headers, each a commitment to everything below it, since every header commits to its
+  parent's hash. The scheduler continues the branch by putting its last scored hash first in that peer's locator
+  (NET_INTERFACE → `GetHeaders` / `GetBlocks` responses).
 - **The stop rules.** The branch's work exceeds the best tip's `chain_work` (strictly greater; a tie keeps the
   incumbent) → **won**. The peer's claimed tip reached with work not greater → **lighter**: the memo is written
   (below). A refusal → as at admission. **The walk needs no cap**: every scored header passed `'target'`, so it
   carries at least the floor's work and the branch's sum passes any finite best within
   `⌈bestWorkAbove_f / floorWork⌉ + 1` headers — and a branch is bounded by its own length, which cost its author
   real PoW. Memory per branch: 32 bytes per 400 headers and the anchor.
-- **Pass 2 stores.** A won branch is fetched again by locator from `f` for the heights pass 1 no longer holds —
-  one that wins inside the page in hand is stored from it — and each header at a recorded height must hash to what
-  pass 1 recorded there; a page is stored only once every recorded height it reaches matches. A mismatch refuses
-  the branch, penalises the peer `transient` — an honest peer can reorg between the passes — and stores nothing
-  further.
-- **One branch per peer** at a time; a page toward a newer claim of the same peer replaces its running branch.
+- **Pass 2 stores.** A branch that wins inside the page it started in is stored from the page in hand. A branch that
+  wins later is fetched again from `f`: the intake answers the winning page `'again'` (NET_INTERFACE → Sync State
+  Machine → "One header request per peer, every peer at once."), the peer's locator names `f` — then the last header
+  stored — first, and each page continues from the last header stored, every recorded height it reaches hashing to
+  what pass 1 recorded there, before it is stored; each page short of the last recorded height is answered `'again'`.
+  The best chain switches at the header whose cumulative work exceeds the best tip's; pages before it store rows
+  that are not best. A mismatch refuses the branch, penalises the peer `transient` — an honest peer can reorg between
+  the passes — and stores nothing further.
+- **One branch per peer** at a time. A page whose first header's parent is the branch's last scored header — or, in
+  pass 2, its last stored one — continues it, toward the claim that page was asked toward; any other page from that
+  peer starts its own branch in the running one's place.
 
 **Re-scoring is memoised.** A branch scored lighter is remembered against its peer's claim: the memo keeps `{ peer → the claimed hash its
 branch was scored lighter at }`, written only by pass 1's lighter stop rule — never by a `'clock'` refusal or an
@@ -5042,8 +5064,8 @@ base falls below the floor is dropped. Best-chain headers are kept — they are 
 **The pipeline names the blocks it wants.** The chain view's `wantedBlocks()` (NET_INTERFACE → Sync Handler
 Registration): the best chain's ids above the applied tip that are neither applied nor staged, each with its height,
 in height order —
-when extending, those below `appliedTip + BLOCK_FETCH_WINDOW` and below the window's edge (→ "The window"); for a
-switch, the branch's whole shortest heavier prefix, which neither bound cuts. None while the best tip's
+when extending, those at most `BLOCK_FETCH_WINDOW` above the applied tip and at most the window's edge, `S +
+maxReorgDepth` (→ "The window"); for a switch, the branch's whole shortest heavier prefix, which neither bound cuts. None while the best tip's
 `chain_work` is below `minimumChainWork`.
 
 **A served block is bound to its header before it is kept.** A delivered block — pulled or gossiped — is kept only
@@ -5396,8 +5418,9 @@ Stage 2 handlers for inbound gossip messages. Startup order:
 
 Net starts before HTTP — the network layer is ready before the API accepts
 requests. If bootstrap peers are unreachable, the node still starts (gossip
-will connect as peers become available). Sync handlers must be registered
-before `net.start()` — otherwise the initial sync burst is silently dropped.
+will connect as peers become available). Sync handlers are registered
+before `net.start()`: until `setChainView` is called the scheduler asks no peer anything, and a serve arm with no
+provider answers zero bytes (NET_INTERFACE → Sync Handler Registration).
 
 Route handlers call `net.broadcastTx()` — and the block creator
 `net.broadcastOrderingBlock()` — after local processing to propagate new objects
@@ -5798,15 +5821,19 @@ funnel:
 
 - **`setPipeline(intake)`**: the pipeline's intake, net's way in for every `Headers` page and `Blocks` answer
   (NET_INTERFACE → Sync Handler Registration; Fork choice decides on verified headers → "One intake, one at a
-  time") — the same intake gossip uses (Relay handlers, above). `deliverHeaders` resolves `true` for a page the
-  pipeline took whole and `false` for one it refused, having penalised the peer through `net.penalizePeer`. The
+  time") — the same intake gossip uses (Relay handlers, above). `deliverHeaders` resolves `'taken'` for a page the
+  pipeline took whole, `'again'` for one it took while re-fetching a branch it scored heavier (Fork choice decides
+  on verified headers → "A side branch is stored only once it is heavier."), and `'refused'` for one it refused,
+  having penalised the peer through `net.penalizePeer` where the refusal is the peer's. The
   registration hands the intake's `CorruptChainStateError` to `failStopIfCorruptChain`, exactly as the gossip
   registration does — `net` contains a handler throw to one logged message, and that frame must never be the
   outer one for a corrupt-state error
 - **`setChainView(view)`**: the header tree as net's scheduler reads it — `locatorFor`, `knowsTip`,
   `wantedBlocks`, `fullyApplied`, `gateHeld` (NET_INTERFACE → Sync Handler Registration). Each answer is a point
   read of `block_headers` / `best_chain` / `staged_blocks` or the pipeline's in-memory state — a locator is at
-  most `MAX_LOCATOR_HASHES` point reads, `wantedBlocks` at most `BLOCK_FETCH_WINDOW` — and the reads that
+  most `MAX_LOCATOR_HASHES` point reads; `wantedBlocks` at most `BLOCK_FETCH_WINDOW` heights when extending, and
+  for a switch the walk to the fork point, bounded by the reach floor, and the shortest heavier prefix, bounded by
+  work (Fork choice decides on verified headers → "The switch.") — and the reads that
   decode a stored row are handed over wrapped in `failStopIfCorruptChain`. `gateHeld()` sets the window's `S`
   (Fork choice decides on verified headers → "The window")
 - **`setHeadersHandler(getBlock)`**: the provider `net` reads stored blocks through — the blocks a

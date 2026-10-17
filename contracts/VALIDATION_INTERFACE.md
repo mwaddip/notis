@@ -1218,8 +1218,8 @@ id is not 64 lowercase hex, an element is not a byte view, the two arrays differ
 **It is not part of `verifyOrderingBlockStructure`, and the reason is cost.** The structure check
 runs where no work has been proven — the apply funnel calls it ahead of its PoW check — and over every
 block a node serves; this predicate hashes the whole body. Each of its callers places it behind
-proof of work: Stage 1 after `verifyOrderingBlockPoW` (`NET_INTERFACE → Stage 1`), fork resolution
-on a block whose header chain it has verified (`NODE_INTERFACE → Fork choice decides on verified
+proof of work: Stage 1 after `verifyOrderingBlockPoW` (`NET_INTERFACE → Stage 1`), the header pipeline's binding
+of a block whose header it has admitted (`NODE_INTERFACE → Fork choice decides on verified
 headers`), the apply funnel after its own PoW check (`NODE_INTERFACE → Ordering block apply-time
 authorization`).
 

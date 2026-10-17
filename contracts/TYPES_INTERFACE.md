@@ -2827,7 +2827,7 @@ export const GENESIS_PREV_BLOCK_HASH = '00'.repeat(32);
 The `prevBlockHash` a height-1 block carries: 32 zero bytes as 64 hex characters. Three consumers,
 one meaning — the apply funnel's genesis branch compares a height-1 block's `prevBlockHash` against
 it (NODE_INTERFACE → Ordering block apply-time authorization), the block creator writes it into a
-height-1 template (MINING_INTERFACE → GET /mining/template), and fork resolution hands it to
+height-1 template (MINING_INTERFACE → GET /mining/template), and the header pipeline hands it to
 `verifyHeaderChain` as the anchor for a fork at `GENESIS_HEIGHT` (NODE_INTERFACE → Fork choice
 decides on verified headers). Heights start at 1, so no header is ever hashed to this value; it is a
 sentinel by construction, not a digest. When the profile pins `genesisId` (→ Network profiles), a
