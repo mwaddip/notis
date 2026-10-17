@@ -39,11 +39,11 @@ async function importDb(): Promise<DbModule> {
 }
 
 /**
- * Deliver a block as a gossiped block through the intake, then answer the
- * old `handleOrderingBlock` shape — `true` iff the apply moved the tip.
- * The intake admits the header, binds, stages and applies by extension; the
- * verdict reaches the deliverer through the intake's log and the applied-tip
- * read (NODE_INTERFACE → Fork choice decides on verified headers).
+ * Deliver a block as a gossiped block through the intake and answer `true`
+ * iff the apply moved the tip. The intake admits the header, binds, stages
+ * and applies by extension; the verdict reaches the deliverer through the
+ * intake's log and the applied-tip read (NODE_INTERFACE → Fork choice
+ * decides on verified headers).
  */
 async function deliverRelay(
   block: OrderingBlock,

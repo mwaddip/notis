@@ -39,9 +39,10 @@ interface OrderingBlockRow {
  * Downstream that fact is gone: `applyOrderingBlock`'s totality catch sees a
  * `ReaderError` and cannot tell it from the one `decodeTx` raises over the
  * block's own `utxoTxs`, which is peer-chosen and an ordinary rejection. And
- * apply is only one of six callers — `extendsOurTip`, `findForkPoint`,
- * `revertBlock`, the block creator and two routes read through here too, none
- * of them through a catch that could promote anything.
+ * apply is only one of this reader's callers — the pipeline's extension
+ * through `applyOrderingBlock`, `revertBlock`, the block creator and two
+ * routes read through here too, none of them through a catch that could
+ * promote anything.
  *
  * `CorruptChainStateError` is what that catch already re-throws and what
  * `failStopIfCorruptChain` already stops for, so this needs no boundary edit:

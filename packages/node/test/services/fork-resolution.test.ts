@@ -215,7 +215,7 @@ describe('cumulativeWork', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests — extendsOurTip
+// Tests — the ordering store disagreeing with the apply gate
 // ---------------------------------------------------------------------------
 
 describe('a stored header that cannot be hashed', () => {
@@ -424,9 +424,9 @@ describe('a stored header that cannot be hashed', () => {
   //
   // The load-bearing difference is **reach**: the store frame names the fault
   // so every reader raises one class, and every outer frame — both
-  // registrations, the launched `resolveFork` promise, `finalizeBlock`, the
-  // block creator, and the guarded provider and routes — is a boundary
-  // (NODE_INTERFACE → "Reach is the live argument, not the halt").
+  // registrations, the intake's items, the block creator, and the guarded
+  // provider and routes — is a boundary (NODE_INTERFACE → "Reach is the live
+  // argument, not the halt").
   //
   // Reachability, stated so the severity is not overread: a header can only
   // reach the store outside the domain if it bypassed `verifyHeaderFieldDomains`
@@ -539,9 +539,9 @@ describe('a stored header that cannot be hashed', () => {
     // makes funnel totality depend on every present and future decode of
     // block-carried bytes being locally caught, with a remote node-kill as the
     // failure mode and nothing that would notice the day one is added. The test
-    // that *does* discriminate is `extendsOurTip`'s, at the top of this
-    // describe — that path never enters the funnel, so only a fix at the store
-    // read reaches it.
+    // that *does* discriminate is the stored-row direct-read case at the top
+    // of this describe — that path never enters the funnel, so only a fix at
+    // the store read reaches it.
     //
     // Kept anyway, because the arm it pins is otherwise covered only for its
     // verdict: `tx-envelope-funnel.test.ts` measures what the decode arm
