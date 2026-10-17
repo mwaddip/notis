@@ -7,6 +7,7 @@ import {
   encodeInterlinks,
 } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
+import { UnreadableStoredBlockError } from '../services/corrupt-state.js';
 
 /**
  * One row of `block_headers`, decoded for a reader.
@@ -61,12 +62,29 @@ interface Row {
 }
 
 function rowToHeaderRow(row: Row): HeaderRow {
+  // NODE_INTERFACE → "Reach is the live argument, not the halt": a stored row
+  // whose header or interlinks will not decode is local corruption — one INSERT
+  // under one caller, this node's own re-encoding — so decode faults rise as
+  // `UnreadableStoredBlockError` for the fail-stop boundary rather than as a
+  // bare `ReaderError` filed by a contained catch as the peer's.
+  let header: BlockHeader;
+  let interlinks: string[];
+  try {
+    header = decodeHeader(new Uint8Array(row.header_bytes));
+  } catch (err) {
+    throw new UnreadableStoredBlockError('getHeaderRow', row.height, err);
+  }
+  try {
+    interlinks = decodeInterlinks(new Uint8Array(row.interlinks));
+  } catch (err) {
+    throw new UnreadableStoredBlockError('getHeaderRow', row.height, err);
+  }
   return {
     hash: row.hash,
     height: row.height,
     prevHash: row.prev_hash,
-    header: decodeHeader(new Uint8Array(row.header_bytes)),
-    interlinks: decodeInterlinks(new Uint8Array(row.interlinks)),
+    header,
+    interlinks,
     chainWork: workFromBlob(row.chain_work),
     pathTa: row.path_t_a,
   };

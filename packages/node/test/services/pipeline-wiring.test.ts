@@ -1,11 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { closeDb, initDb, getDb } from '../../src/store/db.js';
-import {
-  resetPipelineForTests,
-} from '../../src/services/header-pipeline.js';
-import {
-  resetIntakeForTests,
-} from '../../src/services/intake.js';
+// `db.ts`, `header-pipeline.ts` and `intake.ts` are imported dynamically in
+// each case so a `vi.resetModules()` keeps the whole graph aligned.
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 
 // NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one
@@ -79,21 +74,25 @@ function freshCap(): Captured {
 }
 
 describe('pipeline wired to net — registrations', () => {
-  beforeEach(() => {
-    initDb(':memory:');
-    getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    resetIntakeForTests();
-    resetPipelineForTests();
+  beforeEach(async () => {
     vi.resetModules();
+    const db = await import('../../src/store/db.js');
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const pipeline = await import('../../src/services/header-pipeline.js');
+    const intake = await import('../../src/services/intake.js');
+    intake.resetIntakeForTests();
+    pipeline.resetPipelineForTests();
   });
 
-  afterEach(() => {
-    closeDb();
+  afterEach(async () => {
+    const db = await import('../../src/store/db.js');
+    db.closeDb();
     vi.restoreAllMocks();
     vi.resetModules();
   });
 
-  it.fails('wireNet calls setPipeline with the intake deliverHeaders / deliverBlocks', async () => {
+  it('wireNet calls setPipeline with the intake deliverHeaders / deliverBlocks', async () => {
     const cap = freshCap();
     const { wireNet } = await import('../../src/services/net-wiring.js');
     wireNet(makeFakeNet(cap) as never);
@@ -101,7 +100,7 @@ describe('pipeline wired to net — registrations', () => {
     expect(typeof cap.pipeline.deliverBlocks).toBe('function');
   });
 
-  it.fails('wireNet calls setChainView with locatorFor / knowsTip / wantedBlocks / fullyApplied / gateHeld', async () => {
+  it('wireNet calls setChainView with locatorFor / knowsTip / wantedBlocks / fullyApplied / gateHeld', async () => {
     const cap = freshCap();
     const { wireNet } = await import('../../src/services/net-wiring.js');
     wireNet(makeFakeNet(cap) as never);
@@ -112,7 +111,7 @@ describe('pipeline wired to net — registrations', () => {
     expect(typeof cap.chainView.gateHeld).toBe('function');
   });
 
-  it.fails('wireNet registers an onOrderingBlock handler that routes a gossiped block to the intake', async () => {
+  it('wireNet registers an onOrderingBlock handler that routes a gossiped block to the intake', async () => {
     const cap = freshCap();
     const { wireNet } = await import('../../src/services/net-wiring.js');
     wireNet(makeFakeNet(cap) as never);
@@ -145,7 +144,7 @@ describe('pipeline wired to net — registrations', () => {
     expect(cap.penalizePeerCalls.length + cap.needHeadersCalls.length).toBeGreaterThan(0);
   });
 
-  it.fails('wireNet registers an onPeerDisconnected handler that routes to the intake', async () => {
+  it('wireNet registers an onPeerDisconnected handler that routes to the intake', async () => {
     const cap = freshCap();
     const { wireNet } = await import('../../src/services/net-wiring.js');
     wireNet(makeFakeNet(cap) as never);
@@ -155,7 +154,7 @@ describe('pipeline wired to net — registrations', () => {
     expect(() => cap.onPeerDisconnected!('peerX', '')).not.toThrow();
   });
 
-  it.fails('a chain view read over a poisoned block_headers row reaches the fail-stop seam', async () => {
+  it('a chain view read over a poisoned block_headers row reaches the fail-stop seam', async () => {
     // The row's `header_bytes` is bytes a decoder refuses — a stored row that
     // will not decode is local corruption, and the chain view's wrapper hands
     // it to the fail-stop seam (NODE_INTERFACE → Sync handlers (pull-path)).
@@ -166,6 +165,7 @@ describe('pipeline wired to net — registrations', () => {
     // Write a block_headers row whose header_bytes are nonsense, and point
     // best_chain at it. `wantedBlocks` traverses `best_chain` and reads a
     // header row through `getHeaderRow` to compare chain_work.
+    const { getDb } = await import('../../src/store/db.js');
     const db = getDb();
     const hashHex = 'aa'.repeat(32);
     const prevHex = '00'.repeat(32);

@@ -23,11 +23,9 @@ import { countedVerifyOrderingBlockPoW } from './metrics.js';
 import { setNet } from './services/net-instance.js';
 import { enterDiscovery, notePeerMet } from './services/peer-readiness.js';
 import { createAvlProver } from './state/avl-prover.js';
-import { handleOrderingBlock, pullBlocksHandler } from './services/handle-block.js';
-import { onPeerDisconnectedForForkResolution } from './services/fork-resolution-runner.js';
+import { wireNet } from './services/net-wiring.js';
 import { handleRelayedTx } from './services/handle-tx.js';
 import {
-  failStopIfCorruptChain,
   guardStoreRead,
   handleUnhandledRejection,
 } from './services/corrupt-state.js';
@@ -159,26 +157,17 @@ setNet(net);
 net.setKarmaMembers(getKarmaOwners());
 
 // 3. Register Stage 2 handlers
-
-// Both gossip and pull converge on `handleOrderingBlock` (NODE_INTERFACE →
-// Relay handlers / Sync handlers). Each registration wraps the call in
-// `failStopIfCorruptChain`. A block that does not extend the tip goes to the
-// fork-resolution runner, which owns each resolution's promise and each
-// hand-back (NODE_INTERFACE → Fork choice decides on verified headers →
-// "One resolution at a time").
-net.onOrderingBlock((block, fromPeerId) => {
-  try {
-    handleOrderingBlock(block, fromPeerId, net);
-  } catch (err) {
-    failStopIfCorruptChain(err);
-  }
-});
+//
+// The pipeline's intake (NODE_INTERFACE → Fork choice decides on verified
+// headers → "One intake, one at a time") is the one way a header, block or
+// gossiped block reaches apply: `wireNet` registers the gossip entry, the
+// `setPipeline` seam and the `setChainView` surface net's scheduler reads,
+// and the disconnect hook that drops a peer's pending block, presync and memo.
+wireNet(net);
 
 // Relayed transactions are validated and admitted by `handleRelayedTx`
 // (NODE_INTERFACE → Relay handlers).
 net.onTx(handleRelayedTx);
-
-net.setBlocksHandler(pullBlocksHandler(net));
 
 // The provider `net` reads stored blocks through (NODE_INTERFACE → Sync
 // handlers). `guardStoreRead` wraps the read in `failStopIfCorruptChain`: a
@@ -263,9 +252,6 @@ net.onPeerActive((peerId: string, direction: 'inbound' | 'outbound') => {
   emitPeerConnected(peerId, direction);
 });
 net.onPeerDisconnected((peerId: string, reason: string) => {
-  // NODE_INTERFACE → "One resolution at a time": the runner's pending block
-  // and the re-score memo leave with the peer.
-  onPeerDisconnectedForForkResolution(peerId);
   emitPeerDisconnected(peerId, reason);
 });
 net.onPeerPenalised((peerId: string, kind: string, detail: string | null) => {

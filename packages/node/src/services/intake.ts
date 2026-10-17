@@ -393,6 +393,17 @@ export function gateHeld(): void {
   S = best?.height ?? 0;
 }
 
+/**
+ * MINING_INTERFACE → The window gate: `appliedTip < S + maxReorgDepth`. The
+ * template route reads this to withhold a template while the window holds
+ * extension — a block the node could not apply is a block it does not ask a
+ * miner for.
+ */
+export function windowOpen(): boolean {
+  const c = ctxOrThrow();
+  return getCurrentHeight() < S + c.maxReorgDepth;
+}
+
 /** NET_INTERFACE → Sync Handler Registration: `fullyApplied()`. */
 export function fullyApplied(): boolean {
   const best = getBestTip();
