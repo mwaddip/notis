@@ -77,22 +77,24 @@ export function readBoundedCapabilities(r: ByteReader, name: string): number[] {
 }
 
 // ---------------------------------------------------------------------------
-// SyncInfo (2) — NET_INTERFACE → SyncInfo
+// SyncInfo (2) — NET_INTERFACE → SyncInfo (code 2)
 //
-// vlqU(tipHeight)
+// vlqU(tipHeight) ‖ hexN(tipHash, 32)
 // ---------------------------------------------------------------------------
 
 export const syncInfoCodec: StructCodec<SyncInfo> = {
   name: 'syncInfo',
   write(w, msg) {
     writeVlqU(w, msg.tipHeight);
+    writeHexNOrThrow(w, msg.tipHash, 32);
   },
   read(r) {
     const tipHeight = readVlqU(r);
     if (!isHeight(tipHeight)) {
       throw new ReaderError(`syncInfo: tipHeight ${tipHeight} out of domain`, 'out-of-domain');
     }
-    return { tipHeight };
+    const tipHash = readHexN(r, 32);
+    return { tipHeight, tipHash };
   },
 };
 

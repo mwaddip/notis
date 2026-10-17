@@ -1,5 +1,6 @@
 export interface SyncInfo {
   tipHeight: number;
+  tipHash: string;
 }
 
 export interface Inv {

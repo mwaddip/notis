@@ -186,7 +186,7 @@ describe("a peer's sync streams are served one at a time", () => {
     const pushStream = await nodeB.libp2pNode!.dialProtocol(peer, SYNC_PROTOCOL, {
       signal: AbortSignal.timeout(2_000),
     });
-    await pushStream.sink([encodeSyncInfo(MAGIC, { tipHeight: pushedHeight })]);
+    await pushStream.sink([encodeSyncInfo(MAGIC, { tipHeight: pushedHeight, tipHash: '00'.repeat(32) })]);
     await pushStream.close().catch(() => { /* already gone */ });
 
     // Wait past A's ×5 Blocks write deadline (5 s) with headroom, so A has

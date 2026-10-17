@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { ByteReader, encodeStruct } from '@dagsocial/types';
+import { ByteReader, encodeStruct, GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
 import {
   syncInfoCodec, invCodec, modifierRequestCodec, modifierResponseCodec,
 } from '../src/sync-codec.js';
@@ -16,7 +16,7 @@ import type { NetConfig } from '../src/types.js';
 import { MAX_INV_IDS, MAX_SERVE_BODY_BYTES } from '../src/msg-guards.js';
 import { decodeFrame } from '../src/frame.js';
 import { decodeInv, decodeSyncInfo, decodeModifierRequest, decodeModifierResponse } from '../src/sync-codec.js';
-import type { SyncInfo, Inv, ModifierRequest } from '../src/sync-types.js';
+import type { Inv, ModifierRequest } from '../src/sync-types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -76,8 +76,18 @@ function hexId(n: number): string {
   return (n + 1).toString(16).padStart(64, '0');
 }
 
-function sendSyncInfo(machine: SyncMachine, peerId: string, info: SyncInfo): void {
-  const body = encodeStruct(syncInfoCodec, info);
+/** `tipHash` fills in from the hex id of the sender's tip height — a hash a
+ *  caller passing only `tipHeight` need not supply (NET_INTERFACE → SyncInfo
+ *  (code 2)). */
+function sendSyncInfo(
+  machine: SyncMachine,
+  peerId: string,
+  info: { tipHeight: number; tipHash?: string },
+): void {
+  const body = encodeStruct(syncInfoCodec, {
+    tipHeight: info.tipHeight,
+    tipHash: info.tipHash ?? hexId(info.tipHeight),
+  });
   machine.handleMessage(peerId, MSG_SYNC_INFO, body);
   machine.flush();
 }
@@ -758,9 +768,12 @@ describe('SyncMachine', () => {
   // -----------------------------------------------------------------------
 
   describe('sendSyncInfo content', () => {
-    it('sends the tip height alone', () => {
+    it('carries its tip height and the id at that height', () => {
       const { machine, sent } = makeMachine({
-        store: { chainHeight: () => 42 },
+        store: {
+          chainHeight: () => 42,
+          getOrderingBlockId: (h) => (h === 42 ? hexId(42) : null),
+        },
       });
 
       peerActive(machine, 'peer1', 100);
@@ -769,7 +782,7 @@ describe('SyncMachine', () => {
       expect(sent[0]!.peerId).toBe('peer1');
       const { body } = decodeFrame(testConfig.magic!, sent[0]!.data);
       const decoded = decodeSyncInfo(body);
-      expect(decoded).toEqual({ tipHeight: 42 });
+      expect(decoded).toEqual({ tipHeight: 42, tipHash: hexId(42) });
     });
   });
 
@@ -957,11 +970,13 @@ describe('SyncMachine', () => {
 
       machine.handleMessage('peer1', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, {
         tipHeight: 5,
+        tipHash: hexId(5),
       }));
       machine.flush();
 
-      // servePeer reads 6..10; SyncInfo reply reads no block id
-      expect(reads).toEqual([6, 7, 8, 9, 10]);
+      // The SyncInfo reply reads the id at our tip once; servePeer then reads
+      // 6..10 to send its Inv.
+      expect(reads).toEqual([10, 6, 7, 8, 9, 10]);
       // NET_INTERFACE → Serve Side: reply then Inv
       expect(sent).toHaveLength(2);
       expect(violations).toHaveLength(0);
@@ -1330,7 +1345,7 @@ describe('SyncMachine', () => {
   // -----------------------------------------------------------------------
 
   describe('unset-provider semantics', () => {
-    it('SyncInfo tip id is empty when id provider is unset', () => {
+    it('SyncInfo tip hash is GENESIS_PREV_BLOCK_HASH when id provider is unset', () => {
       const { machine, sent } = makeMachine({
         store: { chainHeight: () => 5, getOrderingBlockId: () => null },
       });
@@ -1345,6 +1360,7 @@ describe('SyncMachine', () => {
       const decoded = decodeSyncInfo(body);
       expect(decoded).not.toBeNull();
       expect(decoded!.tipHeight).toBe(5);
+      expect(decoded!.tipHash).toBe(GENESIS_PREV_BLOCK_HASH);
     });
 
     it('Inv ids are all unknown when heightByBlockId provider is unset', () => {

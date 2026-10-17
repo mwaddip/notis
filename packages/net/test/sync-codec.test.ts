@@ -32,7 +32,7 @@ const H32_B = 'b'.repeat(64);
 
 describe('sync codec', () => {
   it('round-trips SyncInfo', () => {
-    const info = { tipHeight: 42 };
+    const info = { tipHeight: 42, tipHash: H32_A };
     const frame = encodeSyncInfo(MAGIC_TESTNET, info);
     const { code, body: b } = decodeFrame(MAGIC_TESTNET, frame);
     expect(code).toBe(MSG_SYNC_INFO);
@@ -40,7 +40,7 @@ describe('sync codec', () => {
   });
 
   it('round-trips SyncInfo at height 0 (genesis)', () => {
-    const info = { tipHeight: 0 };
+    const info = { tipHeight: 0, tipHash: H32 };
     const frame = encodeSyncInfo(MAGIC_TESTNET, info);
     const decoded = decodeSyncInfo(decodeFrame(MAGIC_TESTNET, frame).body);
     expect(decoded).toEqual(info);
@@ -92,10 +92,9 @@ describe('sync codec decode boundary', () => {
   for (const [name, decodeFn] of Object.entries(decoders)) {
     it(`${name} returns null on truncated bytes`, () => {
       expect(decodeFn(new Uint8Array([]))).toBeNull();
-      // SyncInfo is one vlqU — [0x01] is vlqU(1), a valid height-1 body, not truncated.
-      if (name !== 'decodeSyncInfo') {
-        expect(decodeFn(new Uint8Array([0x01]))).toBeNull();
-      }
+      // One byte is the vlqU count or tipHeight — the hash or the array
+      // elements that follow are missing.
+      expect(decodeFn(new Uint8Array([0x01]))).toBeNull();
     });
 
     it(`${name} returns null on trailing bytes`, () => {
@@ -122,18 +121,19 @@ describe('sync codec decode boundary', () => {
 
   describe('SyncInfo', () => {
     it('accepts a well-formed body', () => {
-      const info = { tipHeight: 10 };
+      const info = { tipHeight: 10, tipHash: H32_A };
       expect(decodeSyncInfo(encodeStruct(syncInfoCodec, info))).toEqual(info);
     });
 
     it('rejects tipHeight above MAX_ADVERTISED_HEIGHT', () => {
       expect(decodeSyncInfo(encodeStruct(syncInfoCodec, {
         tipHeight: MAX_ADVERTISED_HEIGHT + 1,
+        tipHash: H32,
       }))).toBeNull();
     });
 
-    it('rejects trailing bytes after the one field', () => {
-      const valid = encodeStruct(syncInfoCodec, { tipHeight: 10 });
+    it('rejects trailing bytes after the hash field', () => {
+      const valid = encodeStruct(syncInfoCodec, { tipHeight: 10, tipHash: H32 });
       const withTrailing = new Uint8Array(valid.length + 1);
       withTrailing.set(valid);
       withTrailing[valid.length] = 0x00;
@@ -254,7 +254,7 @@ describe('chain response codecs weigh each item before decoding', () => {
 function validBodyFor(decoderName: string): Uint8Array {
   switch (decoderName) {
     case 'decodeSyncInfo':
-      return encodeStruct(syncInfoCodec, { tipHeight: 10 });
+      return encodeStruct(syncInfoCodec, { tipHeight: 10, tipHash: H32 });
     case 'decodeInv':
       return encodeStruct(invCodec, { typeId: 101, ids: [H32] });
     case 'decodeModifierRequest':

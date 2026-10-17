@@ -7,6 +7,7 @@ import {
   MSG_MODIFIER_RESPONSE,
   MODIFIER_ORDERING_BLOCK,
 } from './types.js';
+import { GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
 import {
   isHeight,
   MAX_INV_IDS,
@@ -1052,10 +1053,14 @@ export class SyncMachine {
   // Internal — helpers
   // -----------------------------------------------------------------------
 
-  /** NET_INTERFACE → SyncInfo. */
+  /** NET_INTERFACE → SyncInfo (code 2). */
   private sendSyncInfo(peerId: string): void {
     const tipHeight = this.store.chainHeight();
-    this.sendToPeer(peerId, encodeSyncInfo(this.magic, { tipHeight }));
+    // NET_INTERFACE → SyncInfo (code 2) — "A node with no blocks sends `0`
+    // and `GENESIS_PREV_BLOCK_HASH`" — and the same posture when a node
+    // reports a tip whose id its store cannot answer.
+    const tipHash = this.store.getOrderingBlockId(tipHeight) ?? GENESIS_PREV_BLOCK_HASH;
+    this.sendToPeer(peerId, encodeSyncInfo(this.magic, { tipHeight, tipHash }));
     const now = Date.now();
     this.lastSyncInfoMs = now;
     this.lastSentTip.set(peerId, tipHeight);

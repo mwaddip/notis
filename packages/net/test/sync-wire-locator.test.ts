@@ -116,7 +116,7 @@ function hashListBody(hashes: string[]): Uint8Array {
 // ---------------------------------------------------------------------------
 
 describe('SyncInfo carries the tip hash as well as the height', () => {
-  it.fails('a claim at height h carries the id provider\'s hash', () => {
+  it('a claim at height h carries the id provider\'s hash', () => {
     const { machine, sent } = makeMachine({
       chainHeight: () => 42,
       getOrderingBlockId: (h) => (h === 42 ? H32_A : null),
@@ -130,7 +130,7 @@ describe('SyncInfo carries the tip hash as well as the height', () => {
     expect((decoded as unknown as { tipHash: string }).tipHash).toBe(H32_A);
   });
 
-  it.fails('a claim at height 0 with the id provider unset carries GENESIS_PREV_BLOCK_HASH', () => {
+  it('a claim at height 0 with the id provider unset carries GENESIS_PREV_BLOCK_HASH', () => {
     const { machine, sent } = makeMachine({
       chainHeight: () => 0,
       getOrderingBlockId: () => null,
@@ -144,7 +144,7 @@ describe('SyncInfo carries the tip hash as well as the height', () => {
     expect((decoded as unknown as { tipHash: string }).tipHash).toBe(GENESIS_PREV_BLOCK_HASH);
   });
 
-  it.fails('the sent SyncInfo body is 33 bytes at height 0 — one vlqU plus the 32-byte hash', () => {
+  it('the sent SyncInfo body is 33 bytes at height 0 — one vlqU plus the 32-byte hash', () => {
     const { machine, sent } = makeMachine({
       chainHeight: () => 0,
       getOrderingBlockId: () => null,
@@ -160,7 +160,7 @@ describe('SyncInfo carries the tip hash as well as the height', () => {
     expect(body).toEqual(expected);
   });
 
-  it.fails('a well-formed body (vlqU(h) ‖ 32 bytes) decodes to a tipHeight and a tipHash', () => {
+  it('a well-formed body (vlqU(h) ‖ 32 bytes) decodes to a tipHeight and a tipHash', () => {
     const w = new ByteWriter();
     writeVlqU(w, 7);
     writeHexNOrThrow(w, H32_B, 32);
@@ -171,7 +171,7 @@ describe('SyncInfo carries the tip hash as well as the height', () => {
     expect((decoded as unknown as { tipHash: string }).tipHash).toBe(H32_B);
   });
 
-  it.fails('an upper-case hex hash is refused at encode', () => {
+  it('an upper-case hex hash is refused at encode', () => {
     // The write-side rule — `writeHexNOrThrow`'s `hexToBytesExact` reads only
     // `[0-9a-f]`. A caller handing uppercase hex to the encoder throws rather
     // than writing a second spelling of one id onto the wire.

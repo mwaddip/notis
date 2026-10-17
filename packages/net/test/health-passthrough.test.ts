@@ -364,7 +364,7 @@ describe('onSyncComplete fires on every entry into synced', () => {
 
     height = 100;
     machine.handleMessage('peer1', MSG_SYNC_INFO, encodeStruct(syncInfoCodec,
-      { tipHeight: 100 },
+      { tipHeight: 100, tipHash: '00'.repeat(32) },
     ));
     machine.flush();
     expect(machine.getState().phase).toBe('synced');
@@ -376,7 +376,7 @@ describe('onSyncComplete fires on every entry into synced', () => {
 
     height = 200;
     machine.handleMessage('peer2', MSG_SYNC_INFO, encodeStruct(syncInfoCodec,
-      { tipHeight: 200 },
+      { tipHeight: 200, tipHash: '00'.repeat(32) },
     ));
     machine.flush();
     expect(machine.getState().phase).toBe('synced');

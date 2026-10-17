@@ -157,7 +157,7 @@ describe('every inbound sync stream ends — 40 SyncInfos leave none open', () =
 
     let sent = 0;
     for (let i = 0; i < 40; i++) {
-      const body = encodeSyncInfo(MAGIC, { tipHeight: i });
+      const body = encodeSyncInfo(MAGIC, { tipHeight: i, tipHash: '00'.repeat(32) });
       if (await pushOne(nodeA, nodeB.peerId(), body)) sent++;
     }
     // A control: a non-trivial number got through on A's side.
@@ -180,7 +180,7 @@ describe('every inbound sync stream ends — 40 SyncInfos leave none open', () =
     await waitConnected(nodeA, nodeB);
 
     for (let i = 0; i < 10; i++) {
-      const body = encodeSyncInfo(MAGIC, { tipHeight: i });
+      const body = encodeSyncInfo(MAGIC, { tipHeight: i, tipHash: '00'.repeat(32) });
       expect(await pushOne(nodeA, nodeB.peerId(), body)).toBe(true);
     }
 
@@ -201,7 +201,7 @@ describe('every inbound sync stream ends — 40 SyncInfos leave none open', () =
     await waitConnected(nodeA, nodeB);
 
     for (let i = 0; i < 40; i++) {
-      const body = encodeSyncInfo(MAGIC, { tipHeight: i });
+      const body = encodeSyncInfo(MAGIC, { tipHeight: i, tipHash: '00'.repeat(32) });
       await pushOne(nodeA, nodeB.peerId(), body);
     }
 

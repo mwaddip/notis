@@ -104,13 +104,13 @@ describe("a peer's SyncInfo is acted on at most once per 100 ms", () => {
     const { machine } = makeMachine({ chainHeight: () => 0 });
 
     // The first SyncInfo stands at once — nothing is held before an interval.
-    machine.handleMessage('B', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100 }));
+    machine.handleMessage('B', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipHash: '00'.repeat(32) }));
     machine.flush();
     expect(machine.peerHeight('B')).toBe(100);
 
     // Advance 10 ms — well inside the 100 ms interval — and send the second.
     vi.advanceTimersByTime(10);
-    machine.handleMessage('B', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 200 }));
+    machine.handleMessage('B', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 200, tipHash: '00'.repeat(32) }));
     machine.flush();
     const rightAfterSecond = machine.peerHeight('B');
 
@@ -129,7 +129,7 @@ describe("a peer's SyncInfo is acted on at most once per 100 ms", () => {
 
   it('a single SyncInfo stands at once — the interval holds nothing of the first', () => {
     const { machine } = makeMachine({ chainHeight: () => 0 });
-    machine.handleMessage('B', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 42 }));
+    machine.handleMessage('B', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 42, tipHash: '00'.repeat(32) }));
     machine.flush();
     expect(machine.peerHeight('B')).toBe(42);
   });
