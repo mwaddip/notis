@@ -21,6 +21,7 @@ import {
   rewriteBestChain,
   type HeaderRow,
 } from '../store/index.js';
+import { MAX_CHAIN_RESPONSE_ITEMS } from '@dagsocial/net';
 
 /**
  * NODE_INTERFACE → Fork choice decides on verified headers → "The intake owns
@@ -94,9 +95,15 @@ let bestChainForkWithApplied: number = 0;
  */
 interface RunningBranch {
   claimHash: string;
+  mode: 'scoring' | 'storing';
   baseHash: string;
   baseHeight: number;
-  basePathTa: number;
+  basePathTa: number | null;
+  baseIsVirtualRoot: boolean;
+  /** The anchor at the branch's base — the stored parent of the first header. */
+  baseAnchor: { prevBlockHash: string; height: number; interlinks: string[]; createdAt: number | null };
+  baseTa: number | null;
+  /** Pass 1's running anchor as it advances page by page. */
   nextAnchor: { prevBlockHash: string; height: number; interlinks: string[]; createdAt: number | null };
   nextTa: number | null;
   runningWork: bigint;
@@ -327,23 +334,255 @@ export function admitPage(
   callbacks: PipelineCallbacks,
 ): PageVerdict {
   if (headers.length === 0) return { accepted: true, outcome: 'held' };
-  // Follow-up commit lands the pass-1/pass-2 logic.
-  void peerId; void claimHash; void runningBranches; void ctx; void callbacks;
-  return { accepted: false, outcome: 'refused', refusedAt: { index: 0, kind: 'none', reason: 'not-implemented' } };
+
+  let running = runningBranches.get(peerId);
+
+  // One branch per peer: a page toward a newer non-empty claim replaces its
+  // running branch (NODE_INTERFACE → Fork choice decides on verified headers
+  // → "One branch per peer").
+  if (running !== undefined && running.claimHash !== claimHash && claimHash !== '') {
+    runningBranches.delete(peerId);
+    running = undefined;
+  }
+
+  if (running === undefined) {
+    // Start a new running branch at the first header's parent.
+    const first = headers[0]!;
+    const started = startRunningBranch(peerId, claimHash, first, ctx);
+    if (started === null) {
+      callbacks.penalize(peerId, 'misbehavior', 'page first header has no tree parent');
+      return { accepted: false, outcome: 'refused', refusedAt: { index: 0, kind: 'misbehavior', reason: 'first-parent-unknown' } };
+    }
+    running = started;
+  } else {
+    // Continue: in pass 1, the page's first header extends the running
+    // branch's top; in pass 2, the page re-fetches the branch from the base.
+    if (running.mode === 'scoring' && headers[0]!.prevBlockHash !== running.topHash) {
+      callbacks.penalize(peerId, 'misbehavior', 'page does not continue the running branch');
+      return { accepted: false, outcome: 'refused', refusedAt: { index: 0, kind: 'misbehavior', reason: 'not-continuation' } };
+    }
+    if (running.mode === 'storing' && headers[0]!.prevBlockHash !== running.baseAnchor.prevBlockHash) {
+      callbacks.penalize(peerId, 'misbehavior', 'pass-2 page does not start at the branch base');
+      return { accepted: false, outcome: 'refused', refusedAt: { index: 0, kind: 'misbehavior', reason: 'pass-2-not-from-base' } };
+    }
+  }
+
+  // Reach floor: the running branch's base must still be at or above the
+  // floor; a sunken base is a dropped branch (NODE_INTERFACE → "Pruning" and
+  // "The reach floor is the horizon, one rule for every fork point").
+  if (running.baseHeight < reachFloor(ctx)) {
+    runningBranches.delete(peerId);
+    return { accepted: false, outcome: 'refused', refusedAt: { index: 0, kind: 'none', reason: 'base-sunk' } };
+  }
+
+  // Verify the page: pass 1 continues from `nextAnchor`, pass 2 re-fetches
+  // from `baseAnchor`.
+  const anchorForVerify = running.mode === 'storing' ? running.baseAnchor : running.nextAnchor;
+  const taForVerify = running.mode === 'storing' ? running.baseTa : running.nextTa;
+  const verdict = verifyHeaderChain(headers, anchorForVerify, ctx.params, taForVerify, ctx.nowMs(), ctx.schedule);
+  if (!verdict.ok) {
+    if (verdict.reason === 'clock') {
+      // No memo, no penalty.
+      return { accepted: false, outcome: 'refused', refusedAt: { index: verdict.index, kind: 'none', reason: 'clock' } };
+    }
+    const kind: 'misbehavior' | 'transient' = verdict.reason === 'version' ? 'transient' : 'misbehavior';
+    callbacks.penalize(peerId, kind, `page verify: ${verdict.reason}`);
+    return { accepted: false, outcome: 'refused', refusedAt: { index: verdict.index, kind, reason: verdict.reason } };
+  }
+
+  // Any header in the page marked as refused?
+  if (anyRefusedHeader(verdict.hashes)) {
+    runningBranches.delete(peerId);
+    callbacks.penalize(peerId, 'misbehavior', 'page contains a refused header');
+    return { accepted: false, outcome: 'refused', refusedAt: { index: 0, kind: 'misbehavior', reason: 'contains-refused' } };
+  }
+
+  // Mode: scoring (pass 1) or storing (pass 2).
+  if (running.mode === 'storing') {
+    // Pass 2: the page's final hash must match a recorded hash at the final
+    // page's height (NODE_INTERFACE → Fork choice decides on verified
+    // headers → "Pass 2 stores").
+    const finalHeight = headers[headers.length - 1]!.height;
+    const finalHash = verdict.hashes[verdict.hashes.length - 1]!;
+    const idx = running.recordedHeights.indexOf(finalHeight);
+    if (idx === -1 || running.recordedHashes[idx] !== finalHash) {
+      callbacks.penalize(peerId, 'transient', 'pass-2 header off a recorded hash');
+      return { accepted: false, outcome: 'refused', refusedAt: { index: verdict.hashes.length - 1, kind: 'transient', reason: 'recorded-mismatch' } };
+    }
+
+    // Reachability (precision 1): the candidate's fork with the applied
+    // chain is `min(fork with best = baseHeight, bestChainForkWithApplied)`.
+    const candidateForkWithApplied = Math.min(running.baseHeight, bestChainForkWithApplied);
+    if (candidateForkWithApplied < reachFloor(ctx)) {
+      runningBranches.delete(peerId);
+      return { accepted: false, outcome: 'refused', refusedAt: { index: 0, kind: 'none', reason: 'unreachable' } };
+    }
+
+    // Store each header through the tree, build up `parentRow` as we go.
+    let parent: HeaderRow;
+    if (running.baseIsVirtualRoot) {
+      parent = { hash: GENESIS_PREV_BLOCK_HASH, height: 0, prevHash: GENESIS_PREV_BLOCK_HASH, header: headers[0]!, interlinks: [], chainWork: 0n, pathTa: 0 };
+    } else {
+      const row = getHeaderRow(running.baseHash);
+      if (row === null) {
+        runningBranches.delete(peerId);
+        return { accepted: false, outcome: 'refused', refusedAt: { index: 0, kind: 'none', reason: 'base-missing' } };
+      }
+      parent = row;
+    }
+    let cumulativeWork = parent.chainWork;
+    const storedHashes: string[] = [];
+    for (let i = 0; i < headers.length; i++) {
+      const h = headers[i]!;
+      const hash = verdict.hashes[i]!;
+      cumulativeWork += workOrZero(h.powTargetBits);
+      const parentLevel = running.baseIsVirtualRoot && i === 0 ? null : level(parent.header, ctx.params.anchorBits);
+      const storedInterlinks = h.height === 1
+        ? []
+        : (parentLevel === null ? [] : updateInterlinks(parent.interlinks, parent.hash, parentLevel));
+      const pathTa = h.height === 1 ? h.createdAt : parent.pathTa;
+      const row: HeaderRow = {
+        hash,
+        height: h.height,
+        prevHash: h.prevBlockHash,
+        header: h,
+        interlinks: storedInterlinks,
+        chainWork: cumulativeWork,
+        pathTa,
+      };
+      insertHeader(row);
+      storedHashes.push(hash);
+      parent = row;
+    }
+
+    rewriteBestChain(running.baseHeight, storedHashes);
+    bestChainForkWithApplied = Math.min(bestChainForkWithApplied, running.baseHeight);
+    scoredLighter.clear();
+    callbacks.chainMoved();
+    runningBranches.delete(peerId);
+    return { accepted: true, outcome: 'stored-from-pass-2' };
+  }
+
+  // Pass 1: update running state.
+  running.topHeight = headers[headers.length - 1]!.height;
+  running.topHash = verdict.hashes[verdict.hashes.length - 1]!;
+  running.runningWork += verdict.work;
+  running.nextAnchor = {
+    prevBlockHash: verdict.next.prevBlockHash,
+    height: verdict.next.height,
+    interlinks: verdict.next.interlinks,
+    createdAt: verdict.next.createdAt,
+  };
+  running.nextTa = verdict.next.t_a;
+  // Record the last hash of this page (NODE_INTERFACE → Fork choice decides
+  // on verified headers → "A side branch is stored only once it is heavier"):
+  // when pages are 400 long these coincide with `f + 400k`.
+  running.recordedHashes.push(running.topHash);
+  running.recordedHeights.push(running.topHeight);
+
+  const best = getBestTip();
+  const bestWork = best ? best.chainWork : 0n;
+
+  // Won: the branch's work exceeds the best tip's `chain_work`.
+  if (running.runningWork > bestWork) {
+    running.mode = 'storing';
+    return { accepted: true, outcome: 'won' };
+  }
+
+  // Lighter at the claim: write memo, drop the running branch.
+  if (claimHash !== '' && running.topHash === claimHash) {
+    scoredLighter.set(peerId, claimHash);
+    runningBranches.delete(peerId);
+    return { accepted: true, outcome: 'lighter' };
+  }
+
+  // No-claim run (NET_INTERFACE → Sync Handler Registration): branch ends at
+  // the peer's tip, the first page shorter than `MAX_CHAIN_RESPONSE_ITEMS`.
+  if (claimHash === '' && headers.length < MAX_CHAIN_RESPONSE_ITEMS) {
+    runningBranches.delete(peerId);
+    return { accepted: true, outcome: 'lighter' };
+  }
+
+  return { accepted: true, outcome: 'scored-partial' };
 }
 
-/** NODE_INTERFACE → Sync Handler Registration → `setChainView` row. */
+/**
+ * Start a new running branch at `first.prevBlockHash` — either the virtual
+ * root at height 0 or a tree row's hash. Returns `null` when the base is not
+ * discoverable.
+ */
+function startRunningBranch(
+  peerId: string,
+  claimHash: string,
+  first: BlockHeader,
+  ctx: PipelineContext,
+): RunningBranch | null {
+  if (first.height === 1) {
+    if (first.prevBlockHash !== GENESIS_PREV_BLOCK_HASH) return null;
+    const anchor = { prevBlockHash: GENESIS_PREV_BLOCK_HASH, height: 0, interlinks: [] as string[], createdAt: null as number | null };
+    const r: RunningBranch = {
+      claimHash,
+      mode: 'scoring',
+      baseHash: GENESIS_PREV_BLOCK_HASH,
+      baseHeight: 0,
+      basePathTa: null,
+      baseIsVirtualRoot: true,
+      baseAnchor: anchor,
+      baseTa: null,
+      nextAnchor: { ...anchor },
+      nextTa: null,
+      runningWork: 0n,
+      recordedHashes: [],
+      recordedHeights: [],
+      topHeight: 0,
+      topHash: GENESIS_PREV_BLOCK_HASH,
+    };
+    runningBranches.set(peerId, r);
+    return r;
+  }
+  const parent = getHeaderRow(first.prevBlockHash);
+  if (parent === null) return null;
+  const parentLevel = level(parent.header, ctx.params.anchorBits);
+  if (parentLevel === null) return null;
+  const anchor = {
+    prevBlockHash: parent.hash,
+    height: parent.height,
+    interlinks: updateInterlinks(parent.interlinks, parent.hash, parentLevel),
+    createdAt: parent.header.createdAt as number | null,
+  };
+  const r: RunningBranch = {
+    claimHash,
+    mode: 'scoring',
+    baseHash: parent.hash,
+    baseHeight: parent.height,
+    basePathTa: parent.pathTa,
+    baseIsVirtualRoot: false,
+    baseAnchor: anchor,
+    baseTa: parent.pathTa,
+    nextAnchor: { ...anchor },
+    nextTa: parent.pathTa,
+    runningWork: parent.chainWork,
+    recordedHashes: [],
+    recordedHeights: [],
+    topHeight: parent.height,
+    topHash: parent.hash,
+  };
+  runningBranches.set(peerId, r);
+  return r;
+}
+
+/** NET_INTERFACE → Sync Handler Registration. */
 export function knowsTip(peerId: string, hash: string): boolean {
   if (getHeaderRow(hash) !== null) return true;
   return scoredLighter.get(peerId) === hash;
 }
 
 /**
- * NODE_INTERFACE → Sync Handler Registration → `setChainView` row:
- * `GetHeaders` / `GetBlocks` responses: `h₀ = tip`, `hᵢ₊₁ = hᵢ − 2ⁱ` while
- * `≥ 1`, then height 1; at most `MAX_LOCATOR_HASHES` entries; a node with no
- * chain sends the root alone; a requester continuing a branch it is scoring
- * puts that branch's last scored hash first.
+ * NET_INTERFACE → Sync Handler Registration. The locator follows
+ * NET_INTERFACE → `GetHeaders` / `GetBlocks` responses: `h₀ = tip`,
+ * `hᵢ₊₁ = hᵢ − 2ⁱ` while `≥ 1`, then height 1; at most `MAX_LOCATOR_HASHES`
+ * entries; a node with no chain sends the root alone; a requester continuing
+ * a branch it is scoring puts that branch's last scored hash first.
  */
 export function locatorFor(peerId: string): string[] {
   const tip = getBestTip();

@@ -114,7 +114,7 @@ export function getBestHashAt(height: number): string | null {
 }
 
 /**
- * NODE_INTERFACE → Header tree → `rewriteBestChain`: entries above `forkHeight`
+ * NODE_INTERFACE → Header tree. `rewriteBestChain`: entries above `forkHeight`
  * replaced by `hashes`, in one transaction. `hashes[i]` lands at height
  * `forkHeight + 1 + i`.
  */
@@ -130,7 +130,7 @@ export function rewriteBestChain(forkHeight: number, hashes: readonly string[]):
 }
 
 /**
- * NODE_INTERFACE → Header tree → `removeHeaderSubtree`: the row, every
+ * NODE_INTERFACE → Header tree. `removeHeaderSubtree`: the row, every
  * descendant, their `best_chain` entries and their `staged_blocks` rows, in one
  * transaction. The subtree is reached through `idx_block_headers_prev` by a
  * recursive CTE.
@@ -158,7 +158,7 @@ export function removeHeaderSubtree(hash: string): void {
 }
 
 /**
- * NODE_INTERFACE → Header tree → `pruneHeadersBelow`: rows off the best chain
+ * NODE_INTERFACE → Header tree. `pruneHeadersBelow`: rows off the best chain
  * below `height`, with their staged blocks. Best-chain rows are kept — they are
  * the applied chain or ahead of it (NODE_INTERFACE → Fork choice decides on
  * verified headers → "Pruning").

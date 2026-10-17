@@ -252,7 +252,7 @@ describe('header-pipeline', () => {
       expect(cap.chainMoves).toBe(0);
     });
 
-    it.fails('a header outweighing the best from a stored parent is stored and switches best', () => {
+    it('a header outweighing the best from a stored parent is stored and switches best', () => {
       // Main: two headers. Alt: three headers forked from root — strictly heavier.
       const main = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb } = recorder();
@@ -287,7 +287,7 @@ describe('header-pipeline', () => {
       expect(cap.chainMoves).toBe(0);
     });
 
-    it.fails('a candidate that outweighs best but whose fork with the applied chain is below the floor is unreachable, best unmoved', () => {
+    it('a candidate that outweighs best but whose fork with the applied chain is below the floor is unreachable, best unmoved', () => {
       // Main: 2 headers; admit them.
       const main = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb } = recorder();
@@ -433,7 +433,7 @@ describe('header-pipeline', () => {
   });
 
   describe('presync — pass 1 and pass 2', () => {
-    it.fails('a page of a running branch scores and does not store', () => {
+    it('a page of a running branch scores and does not store', () => {
       // Peer claims a chain of 5 headers; our tree is empty. The page is
       // scored off a running branch.
       const chain = makeChain({ parent: null, n: 5, params: PARAMS, schedule: SCHEDULE });
@@ -447,7 +447,7 @@ describe('header-pipeline', () => {
       expect(v.outcome).toBe('won');
     });
 
-    it.fails('a page past our tip and heavier scores won, then pass 2 stores', () => {
+    it('a page past our tip and heavier scores won, then pass 2 stores', () => {
       // Our chain: 2 headers. Peer's: 4 heavier headers from root. First page
       // of 4 scores won, pass 2 fetches the same hashes and stores them.
       const ours = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
@@ -466,7 +466,7 @@ describe('header-pipeline', () => {
       expect(cap.chainMoves).toBeGreaterThan(0);
     });
 
-    it.fails('a pass-2 header off a recorded hash refuses with transient, stores nothing further', () => {
+    it('a pass-2 header off a recorded hash refuses with transient, stores nothing further', () => {
       const ours = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb0 } = recorder();
       for (const h of ours) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb0);
@@ -485,7 +485,7 @@ describe('header-pipeline', () => {
       expect(getHeaderRow(forged.hash)).toBeNull();
     });
 
-    it.fails('one branch per peer: a page toward a newer claim replaces the running branch', () => {
+    it('one branch per peer: a page toward a newer claim replaces the running branch', () => {
       const chain1 = makeChain({ parent: null, n: 3, params: PARAMS, schedule: SCHEDULE });
       const chain2 = makeChain({ parent: null, n: 4, params: PARAMS, schedule: SCHEDULE, startAt: chain1[0]!.header.createdAt + 1 });
       const { callbacks } = recorder();
@@ -497,7 +497,7 @@ describe('header-pipeline', () => {
       expect(stored.outcome).toBe('stored-from-pass-2');
     });
 
-    it.fails('onPeerDisconnected clears the peer branch and memo', () => {
+    it('onPeerDisconnected clears the peer branch and memo', () => {
       const ours = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb0 } = recorder();
       for (const h of ours) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb0);
@@ -512,7 +512,7 @@ describe('header-pipeline', () => {
       expect(knowsTip('peerB', lighter[0]!.hash)).toBe(false);
     });
 
-    it.fails('a Headers page with claim=\"\" ends short, pass 1 stops lighter', () => {
+    it('a Headers page with claim=\"\" ends short, pass 1 stops lighter', () => {
       const ours = makeChain({ parent: null, n: 3, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb0 } = recorder();
       for (const h of ours) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb0);
@@ -525,7 +525,7 @@ describe('header-pipeline', () => {
       expect(v.outcome).toBe('lighter');
     });
 
-    it.fails('a clock refusal in pass 1 writes no memo', () => {
+    it('a clock refusal in pass 1 writes no memo', () => {
       const ours = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb0 } = recorder();
       for (const h of ours) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb0);
@@ -544,7 +544,7 @@ describe('header-pipeline', () => {
   });
 
   describe('memo', () => {
-    it.fails('a branch scored lighter at the claim writes memo, knowsTip answers true', () => {
+    it('a branch scored lighter at the claim writes memo, knowsTip answers true', () => {
       const ours = makeChain({ parent: null, n: 3, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb0 } = recorder();
       for (const h of ours) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb0);
@@ -556,7 +556,7 @@ describe('header-pipeline', () => {
       expect(knowsTip('peerB', theirs[0]!.hash)).toBe(true);
     });
 
-    it.fails('a best-chain move clears every memo entry', () => {
+    it('a best-chain move clears every memo entry', () => {
       const ours = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb0 } = recorder();
       for (const h of ours) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb0);
@@ -574,7 +574,7 @@ describe('header-pipeline', () => {
   });
 
   describe('the trap, at the header level', () => {
-    it.fails('an honest chain beats a floor-priced long branch, both orders', () => {
+    it('an honest chain beats a floor-priced long branch, both orders', () => {
       const D = config.maxReorgDepth;
       // Honest: 12 headers at anchor.
       const honest = makeChain({ parent: null, n: 12, params: PARAMS, schedule: SCHEDULE });
