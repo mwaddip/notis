@@ -12,6 +12,7 @@ import {
   onPeerDisconnected as intakeOnPeerDisconnected,
   wantedBlocks,
   type IntakeCallbacks,
+  type PageOutcome,
 } from './intake.js';
 import {
   knowsTip,
@@ -104,9 +105,9 @@ export function wireNet(net: NetNode): void {
   // NODE_INTERFACE → Sync handlers (pull-path) → "setPipeline(intake)" /
   // "setChainView(view)".
   const pipelineIntake = {
-    deliverHeaders: (peerId: string, claimHash: string, headers: BlockHeader[]) =>
+    deliverHeaders: (peerId: string, claimHash: string, headers: BlockHeader[]): Promise<PageOutcome> =>
       runItem(() => deliverHeaders(peerId, claimHash, headers)),
-    deliverBlocks: (peerId: string, blocks: OrderingBlock[]) =>
+    deliverBlocks: (peerId: string, blocks: OrderingBlock[]): Promise<void> =>
       runItem(() => deliverBlocks(peerId, blocks)),
   };
   net.setPipeline(pipelineIntake);

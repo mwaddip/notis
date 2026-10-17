@@ -14,8 +14,8 @@ import {
   getOrderingBlockHash,
   getPlaceholdersAt,
   getStagedBlock,
+  hasStagedBlock,
   insertRefusedHeader,
-  pruneHeadersBelow,
   removeHeaderSubtree,
   stageBlock,
   unstageBlock,
@@ -26,7 +26,9 @@ import {
   admitPage,
   onPeerDisconnected as pipelineOnPeerDisconnected,
   pruneHeaderTree,
+  rechooseBestChain,
   type AdmitVerdict,
+  type PageOutcome,
   type PageVerdict,
   type PipelineContext,
 } from './header-pipeline.js';
@@ -195,14 +197,22 @@ function bindBlock(
  * NODE_INTERFACE → Fork choice decides on verified headers → "A body-stage
  * refusal marks the header.": after the funnel's `'consensus'` rejection, the
  * mark is written in its own write, the deliverer is penalised, and the
- * header leaves the tree with every descendant.
+ * header leaves the tree with every descendant. The best chain is then
+ * chosen again — the heaviest stored header whose branch is reachable
+ * (NODE_INTERFACE → Fork choice decides on verified headers → "The best
+ * chain is the heaviest reachable branch.") — and the memo is cleared on
+ * that move.
  */
 function markRefused(hash: string, height: number, fromPeer: string, reason: string): void {
   penalize(fromPeer, 'misbehavior', reason);
   insertRefusedHeader(hash, height, getCurrentHeight());
   removeHeaderSubtree(hash);
-  // The best chain is chosen again — the callback announces the move.
-  cb().chainMoved();
+  const c = ctxOrThrow();
+  const pipelineCb = {
+    penalize: (p: string, k: 'misbehavior' | 'transient', r: string) => penalize(p, k, r),
+    chainMoved: () => cb().chainMoved(),
+  };
+  rechooseBestChain(c, pipelineCb);
 }
 
 /**
@@ -235,11 +245,14 @@ function drainExtension(): void {
     const nextH = applied + 1;
     const nextHash = getBestHashAt(nextH);
     if (nextHash === null) return;
+    if (!hasStagedBlock(nextHash)) return;
     const staged = getStagedBlock(nextHash);
     if (staged === null) return;
     const verdict = applyFn(staged.block);
     if (verdict.applied) {
       unstageBlock(nextHash);
+      // The applied tip moved; the chain view answers that.
+      cb().chainMoved();
       // NODE_INTERFACE → Posts → "Backfill after sync": placeholders this
       // block's commit left are handed to the body puller, naming the peer
       // the block came through.
@@ -309,24 +322,37 @@ function trySwitch(): void {
   }
   // Shortest heavier prefix: walk the best chain above f collecting hashes
   // until the cumulative chainWork at that height exceeds the applied tip's.
-  const appliedTipHash = appliedHash;
-  const appliedTipRow = getHeaderRow(appliedTipHash);
-  if (appliedTipRow === null) return;
+  // The applied tip's row is a `block_headers` entry by construction —
+  // every applied header is a tree row (NODE_INTERFACE → Header tree → "The
+  // applied chain's headers are rows too") — so a missing row contradicts the
+  // store.
+  const appliedTipRow = getHeaderRow(appliedHash);
+  if (appliedTipRow === null) {
+    throw new UnreachableForkPointError('trySwitch(applied-tip-row)', applied, floor);
+  }
   const targetWork = appliedTipRow.chainWork;
   const prefixHashes: string[] = [];
   for (let h = f + 1; h <= bestTip.height; h++) {
     const hAtBest = getBestHashAt(h);
-    if (hAtBest === null) return;
+    // A null hash inside the best tip's height range contradicts the index
+    // (`best_chain` is contiguous from height 1 to its tip).
+    if (hAtBest === null) {
+      throw new UnreachableForkPointError('trySwitch(best-hash-at)', h, floor);
+    }
     prefixHashes.push(hAtBest);
     const row = getHeaderRow(hAtBest);
-    if (row === null) return;
+    if (row === null) {
+      throw new UnreachableForkPointError('trySwitch(prefix-row)', h, floor);
+    }
     if (row.chainWork > targetWork) break;
   }
   // Every hash of the prefix must be staged before we fire reorg; `reorg`
   // itself reads each body out of `staged_blocks` one at a time inside its
-  // transaction, so one body is in memory at a time.
+  // transaction, so one body is in memory at a time. A missing staged row
+  // for an id this node did not ask for is reachable state — the switch
+  // waits.
   for (const h of prefixHashes) {
-    if (getStagedBlock(h) === null) return;
+    if (!hasStagedBlock(h)) return;
   }
 
   try {
@@ -355,7 +381,7 @@ function trySwitch(): void {
  * names the blocks it wants".
  */
 export function wantedBlocks(): { id: string; height: number }[] {
-  const c = ctxOrThrow();
+  ctxOrThrow();
   const bestTip = getBestTip();
   if (bestTip === null) return [];
   if (bestTip.chainWork < config.profile.minimumChainWork) return [];
@@ -387,13 +413,11 @@ export function wantedBlocks(): { id: string; height: number }[] {
   for (let h = f + 1; h <= bestTip.height; h++) {
     const hashAt = getBestHashAt(h);
     if (hashAt === null) break;
-    if (getStagedBlock(hashAt) === null) out.push({ id: hashAt, height: h });
+    if (!hasStagedBlock(hashAt)) out.push({ id: hashAt, height: h });
     const row = getHeaderRow(hashAt);
     if (row === null) break;
     if (row.chainWork > targetWork) break;
   }
-  // Scope-mark the var so lint stays quiet; `c` carries no bound here.
-  void c;
   return out;
 }
 
@@ -406,7 +430,7 @@ function wantedForExtension(applied: number, bestHeight: number): { id: string; 
   for (let h = applied + 1; h <= upper; h++) {
     const hashAt = getBestHashAt(h);
     if (hashAt === null) break;
-    if (getStagedBlock(hashAt) === null) out.push({ id: hashAt, height: h });
+    if (!hasStagedBlock(hashAt)) out.push({ id: hashAt, height: h });
   }
   return out;
 }
@@ -445,7 +469,7 @@ export async function deliverHeaders(
   peerId: string,
   claimHash: string,
   headers: BlockHeader[],
-): Promise<boolean> {
+): Promise<PageOutcome> {
   const c = ctxOrThrow();
   const pipelineCb = {
     penalize: (p: string, k: 'misbehavior' | 'transient', r: string) => penalize(p, k, r),
@@ -456,7 +480,7 @@ export async function deliverHeaders(
   processPendingAfterAdmit();
   drainExtension();
   trySwitch();
-  return verdict.accepted && verdict.outcome !== 'refused';
+  return verdict.outcome;
 }
 
 /**
@@ -482,7 +506,11 @@ export async function deliverGossipedBlock(peerId: string, block: OrderingBlock)
   const c = ctxOrThrow();
   const hash = blockHash(block.header);
   if (hash === null) {
-    penalize(peerId, 'misbehavior', 'unhashable gossiped block header');
+    // Net's Stage 1 refuses an unhashable header before delivery; a block
+    // whose header will not hash has no identity to be kept by, logged and
+    // dropped with no penalty (NODE_INTERFACE → Fork choice decides on
+    // verified headers → "One intake, one at a time").
+    console.warn(`intake: gossiped block from ${peerId} has an unhashable header; dropped`);
     return;
   }
   const pipelineCb = {
@@ -540,15 +568,12 @@ export function deliverMinedBlock(block: OrderingBlock): ApplyVerdict {
     return { applied: false, class: 'local', detail: 'mined block did not bind' };
   }
   stageBlock(bindRow.hash, bindRow.height, encodeOrderingBlock(block), '');
-  // NODE_INTERFACE → Fork choice decides on verified headers → "The window.":
-  // S is net's gate. For a mined block the node trusts the chain by
-  // construction — the window is a bound on applying peer-delivered blocks,
-  // not on applying one this node mined. Lift S to the new best tip's height
-  // so the extension drains this height.
-  gateHeld();
+  // The node's own block raises neither a penalty nor the window's `S`
+  // (NODE_INTERFACE → Block finalization → "A mined block is applied through
+  // the pipeline's intake"); `S` moves only by net's gate report.
   drainExtension();
   // Answer the verdict the apply left: the staged row leaves on apply.
-  if (getStagedBlock(hash) === null && getOrderingBlockHash(bindRow.height) === hash) {
+  if (!hasStagedBlock(hash) && getOrderingBlockHash(bindRow.height) === hash) {
     return { applied: true, indexed: [] };
   }
   return { applied: false, class: 'local', detail: 'mined block did not apply through extension' };
@@ -599,6 +624,4 @@ export function getSForTests(): number {
   return S;
 }
 
-// Imports kept live.
-void pruneHeadersBelow;
-export type { AdmitVerdict, PageVerdict, PipelineContext };
+export type { AdmitVerdict, PageOutcome, PageVerdict, PipelineContext };
