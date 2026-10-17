@@ -239,7 +239,23 @@ function serveHeaders(request: GetHeadersMsg, store: Map<number, OrderingBlock>)
 function serveBlocks(request: GetBlocksMsg, store: Map<number, OrderingBlock>): Uint8Array {
   const decoded = decodeGetBlocks(bodyOf(encodeGetBlocks(MAGIC, request), MSG_GET_BLOCKS));
   if (!decoded) throw new Error('fixture request was rejected at the decode boundary');
-  return serveBlocksResponse(MAGIC, decoded, tipOf(store), (h) => store.get(h) ?? null);
+  const byHash = new Map<string, number>();
+  for (const [h, block] of store) byHash.set(mockBlockHash(block.header), h);
+  return serveBlocksResponse(
+    MAGIC, decoded, tipOf(store),
+    (id) => byHash.get(id) ?? null,
+    (h) => store.get(h) ?? null,
+  );
+}
+
+/** The ids of a chain `startH..endH` of blocks, in the order asked. */
+function idsOfRange(store: Map<number, OrderingBlock>, startH: number, endH: number): string[] {
+  const ids: string[] = [];
+  for (let h = startH; h <= endH; h++) {
+    const block = store.get(h);
+    if (block) ids.push(mockBlockHash(block.header));
+  }
+  return ids;
 }
 
 /** What `requestHeaders` does with a served frame — cap at MAX_CHAIN_RESPONSE_ITEMS. */
@@ -247,13 +263,9 @@ function receiveHeaders(frame: Uint8Array): BlockHeader[] | null {
   return decodeHeaders(bodyOf(frame, MSG_HEADERS));
 }
 
-/** What `requestBlocks` does with a served frame: cap = the range it asked for. */
-function receiveBlocks(
-  frame: Uint8Array,
-  startHeight: number,
-  endHeight: number,
-): OrderingBlock[] | null {
-  return decodeBlocks(bodyOf(frame, MSG_BLOCKS), endHeight - startHeight + 1);
+/** What `requestBlocks` does with a served frame: cap = the ids it asked for. */
+function receiveBlocks(frame: Uint8Array, idsAsked: number): OrderingBlock[] | null {
+  return decodeBlocks(bodyOf(frame, MSG_BLOCKS), idsAsked);
 }
 
 // ---------------------------------------------------------------------------
@@ -269,9 +281,10 @@ describe('chain query request encode/decode', () => {
   });
 
   it('round-trips a GetBlocks request under its own code', () => {
-    const frame = encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 3 });
+    const ids = ['aa'.repeat(32), 'bb'.repeat(32), 'cc'.repeat(32)];
+    const frame = encodeGetBlocks(MAGIC, { ids });
     expect(decodeGetBlocks(bodyOf(frame, MSG_GET_BLOCKS)))
-      .toEqual({ startHeight: 1, endHeight: 3 });
+      .toEqual({ ids });
   });
 
   it('rejects an empty locator and one past MAX_LOCATOR_HASHES', () => {
@@ -294,13 +307,19 @@ describe('chain query request encode/decode', () => {
     expect((caught as ReaderError).code).toBe('out-of-domain');
   });
 
-  it('GetBlocks rejects heights outside the advertisable range', () => {
-    const w = new ByteWriter();
-    writeVlqU(w, 1);
-    writeVlqU(w, 200_000_000); // > MAX_ADVERTISED_HEIGHT
-    expect(decodeGetBlocks(w.toBytes())).toBeNull();
+  it('GetBlocks rejects an empty id list and one past MAX_CHAIN_RESPONSE_ITEMS', () => {
+    const w0 = new ByteWriter();
+    writeVlqU(w0, 0);
+    expect(decodeGetBlocks(w0.toBytes())).toBeNull();
 
-    const bytes = w.toBytes();
+    const wOver = new ByteWriter();
+    writeVlqU(wOver, MAX_CHAIN_RESPONSE_ITEMS + 1);
+    for (let i = 0; i < MAX_CHAIN_RESPONSE_ITEMS + 1; i++) {
+      writeHexNOrThrow(wOver, '00'.repeat(32), 32);
+    }
+    expect(decodeGetBlocks(wOver.toBytes())).toBeNull();
+
+    const bytes = w0.toBytes();
     let caught: unknown;
     try { decodeStruct(getBlocksCodec, bytes); } catch (e) { caught = e; }
     expect(caught).toBeInstanceOf(ReaderError);
@@ -309,13 +328,15 @@ describe('chain query request encode/decode', () => {
   });
 
   it('rejects a truncated, over-long or non-minimal GetBlocks body', () => {
-    const body = bodyOf(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 3 }), MSG_GET_BLOCKS);
+    const body = bodyOf(encodeGetBlocks(MAGIC, { ids: ['aa'.repeat(32)] }), MSG_GET_BLOCKS);
 
     expect(decodeGetBlocks(body.subarray(0, body.length - 1))).toBeNull();
     expect(decodeGetBlocks(mergeUint8Arrays([body, new Uint8Array([0x00])]))).toBeNull();
     // `0x81 0x00` decodes to 1 exactly as `0x01` does; the re-encode compare is
     // what refuses it (TYPES_INTERFACE → The boundary check, step 3).
-    expect(decodeGetBlocks(new Uint8Array([0x81, 0x00, 0x03]))).toBeNull();
+    expect(decodeGetBlocks(
+      mergeUint8Arrays([new Uint8Array([0x81, 0x00]), body.subarray(1)]),
+    )).toBeNull();
   });
 
   it('rejects arbitrary non-positional bytes', () => {
@@ -499,13 +520,13 @@ describe('response item caps', () => {
     ).toHaveLength(MAX_CHAIN_RESPONSE_ITEMS);
   });
 
-  it('refuses more blocks than the requested range', () => {
+  it('refuses more blocks than the ids asked', () => {
     const store = makeChain(5);
     const blocks = [1, 2, 3, 4, 5].map((h) => store.get(h)!);
     const frame = blocksFrame(blocks);
 
-    expect(receiveBlocks(frame, 1, 3)).toBeNull();
-    expect(receiveBlocks(frame, 1, 5)).toHaveLength(5);
+    expect(receiveBlocks(frame, 3)).toBeNull();
+    expect(receiveBlocks(frame, 5)).toHaveLength(5);
   });
 
   it('accepts nothing but an empty response for a nonsensical request size', () => {
@@ -630,37 +651,43 @@ describe('serve: GetHeaders', () => {
 // ---------------------------------------------------------------------------
 
 describe('serve: GetBlocks', () => {
-  it('returns full blocks for a height range', () => {
-    const frame = serveBlocks({ startHeight: 2, endHeight: 4 }, makeChain(5));
-    const blocks = receiveBlocks(frame, 2, 4);
+  it('returns the blocks of the ids asked, in the order asked', () => {
+    const store = makeChain(5);
+    const ids = idsOfRange(store, 2, 4);
+    const frame = serveBlocks({ ids }, store);
+    const blocks = receiveBlocks(frame, ids.length);
 
     expect(blocks).not.toBeNull();
     expect(blocks!.map((b) => b.header.height)).toEqual([2, 3, 4]);
   });
 
-  it('skips missing blocks in the range', () => {
+  it('omits ids this chain does not hold', () => {
     const store = makeChain(1);
     store.set(3, makeMockOrderingBlock(3, 'ff'.repeat(32)));
     store.set(5, makeMockOrderingBlock(5, 'ff'.repeat(32)));
 
-    // Tip is MAX(height)=5; the serve loop skips absent heights (continue).
-    const blocks = receiveBlocks(serveBlocks({ startHeight: 1, endHeight: 5 }, store), 1, 5);
+    const ids = [
+      mockBlockHash(store.get(1)!.header),
+      'ab'.repeat(32), // not on chain
+      mockBlockHash(store.get(3)!.header),
+      'cd'.repeat(32), // not on chain
+      mockBlockHash(store.get(5)!.header),
+    ];
+    const blocks = receiveBlocks(serveBlocks({ ids }, store), ids.length);
     expect(blocks!.map((b) => b.header.height)).toEqual([1, 3, 5]);
   });
 
-  it('returns an empty list when no blocks are in range', () => {
-    const frame = serveBlocks({ startHeight: 10, endHeight: 20 }, new Map());
+  it('returns an empty list when no asked id is on this chain', () => {
+    const ids = ['aa'.repeat(32), 'bb'.repeat(32)];
+    const frame = serveBlocks({ ids }, new Map());
     expect(bodyOf(frame, MSG_BLOCKS)).toEqual(new Uint8Array([0]));
-    expect(receiveBlocks(frame, 10, 20)).toEqual([]);
+    expect(receiveBlocks(frame, ids.length)).toEqual([]);
   });
 
   it('returns blocks with their bodies intact', () => {
     const store = makeChain(1);
-    const blocks = receiveBlocks(
-      serveBlocks({ startHeight: 1, endHeight: 1 }, store),
-      1,
-      1,
-    );
+    const ids = [mockBlockHash(store.get(1)!.header)];
+    const blocks = receiveBlocks(serveBlocks({ ids }, store), ids.length);
 
     expect(blocks).toHaveLength(1);
     const returned = blocks![0]!;
@@ -675,16 +702,12 @@ describe('serve: GetBlocks', () => {
     expect(encodeOrderingBlock(returned)).toEqual(encodeOrderingBlock(store.get(1)!));
   });
 
-  it('serves no more than MAX_CHAIN_RESPONSE_ITEMS blocks', () => {
-    const store = makeChain(MAX_CHAIN_RESPONSE_ITEMS + 5);
-    const frame = serveBlocks(
-      { startHeight: 1, endHeight: MAX_CHAIN_RESPONSE_ITEMS + 5 },
-      store,
-    );
-
-    expect(receiveBlocks(frame, 1, MAX_CHAIN_RESPONSE_ITEMS)).toHaveLength(
-      MAX_CHAIN_RESPONSE_ITEMS,
-    );
+  it('serves an id asked twice twice, in the order asked', () => {
+    const store = makeChain(1);
+    const id = mockBlockHash(store.get(1)!.header);
+    const ids = [id, id];
+    const blocks = receiveBlocks(serveBlocks({ ids }, store), ids.length);
+    expect(blocks!.map((b) => b.header.height)).toEqual([1, 1]);
   });
 });
 
@@ -704,9 +727,10 @@ describe('serve: GetBlocks byte bound', () => {
     // Three of these fit in the store and two in a response: the third would
     // carry the total past 4 MiB, so the loop stops before adding it.
     const store = makeHeavyChain(3, 1_500_000);
+    const ids = idsOfRange(store, 1, 3);
 
-    const frame = serveBlocks({ startHeight: 1, endHeight: 3 }, store);
-    const blocks = receiveBlocks(frame, 1, 3);
+    const frame = serveBlocks({ ids }, store);
+    const blocks = receiveBlocks(frame, ids.length);
 
     expect(blocks!.map((b) => b.header.height)).toEqual([1, 2]);
     expect(bodyOf(frame, MSG_BLOCKS).length).toBeLessThan(MAX_SERVE_BODY_BYTES);
@@ -717,32 +741,34 @@ describe('serve: GetBlocks byte bound', () => {
     // nothing else. Same fixture shape, same block count, weight below the line:
     // if some other limit were doing the work, this would truncate too.
     const store = makeHeavyChain(3, 1_000_000);
+    const ids = idsOfRange(store, 1, 3);
 
-    const blocks = receiveBlocks(serveBlocks({ startHeight: 1, endHeight: 3 }, store), 1, 3);
+    const blocks = receiveBlocks(serveBlocks({ ids }, store), ids.length);
     expect(blocks!.map((b) => b.header.height)).toEqual([1, 2, 3]);
   });
 
   it('serves a first block heavier than the budget as the response\'s one item', () => {
-    // NET_INTERFACE → Validation (and untrusted-input safety) → "Every arm that assembles more than one stored object into a response is bounded by BYTES, not by item count alone"
-    // and NET_INTERFACE → `GetHeaders` / `GetBlocks` responses → "always include the first block":
-    // a request is never answered with nothing while the server holds the block
-    // asked for. No legal block reaches the budget alone, so only a block over
-    // MAX_ORDERING_BLOCK_BYTES gets here, and it is served: the serve loop reads
-    // the frame, the reader refuses the item. The first assertion therefore reads
-    // the served body with the wire primitives, not through `decodeBlocks`.
+    // NET_INTERFACE → `GetHeaders` / `GetBlocks` responses →
+    // "always include the first block": a request is never answered with
+    // nothing while the server holds the block asked for. No legal block
+    // reaches the budget alone, so only a block over MAX_ORDERING_BLOCK_BYTES
+    // gets here, and it is served: the serve loop reads the frame, the
+    // reader refuses the item. The first assertion therefore reads the served
+    // body with the wire primitives, not through `decodeBlocks`.
     const store = new Map<number, OrderingBlock>();
     const first = makeHeavyBlock(1, '00'.repeat(32), MAX_SERVE_BODY_BYTES + 1);
     store.set(1, first);
     store.set(2, makeMockOrderingBlock(2, mockBlockHash(first.header)));
 
-    const frame = serveBlocks({ startHeight: 1, endHeight: 2 }, store);
+    const ids = [mockBlockHash(first.header), mockBlockHash(store.get(2)!.header)];
+    const frame = serveBlocks({ ids }, store);
 
     const r = new ByteReader(bodyOf(frame, MSG_BLOCKS));
     expect(r.readVlqU()).toBe(1);
     const item = r.readBytes(r.readVlqU());
     expect(item).toEqual(encodeOrderingBlock(first));
 
-    expect(receiveBlocks(frame, 1, 2)).toBeNull();
+    expect(receiveBlocks(frame, ids.length)).toBeNull();
   });
 });
 
@@ -763,11 +789,9 @@ describe('chain query round-trip', () => {
   });
 
   it('blocks: request, serve, receive, full bodies', () => {
-    const blocks = receiveBlocks(
-      serveBlocks({ startHeight: 1, endHeight: 2 }, makeChain(2)),
-      1,
-      2,
-    );
+    const chain = makeChain(2);
+    const ids = idsOfRange(chain, 1, 2);
+    const blocks = receiveBlocks(serveBlocks({ ids }, chain), ids.length);
 
     expect(blocks!.map((b) => b.header.height)).toEqual([1, 2]);
     expect(blocks![0]!.validatorSignature.length).toBe(64);

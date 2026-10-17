@@ -204,9 +204,9 @@ export interface PeersMsg {
 // ---------------------------------------------------------------------------
 // GetHeaders / GetBlocks request types
 //
-// Positional `arr(hexN(32))` for `GetHeaders` (NET_INTERFACE → `GetHeaders` /
-// `GetBlocks` responses); two `vlqU` fields for `GetBlocks`. The frame's code
-// pair is what tells the two queries apart.
+// Positional `arr(hexN(32))` for both (NET_INTERFACE → `GetHeaders` /
+// `GetBlocks` responses). The two bodies share the layout; the frame's code
+// pair is what tells them apart.
 // ---------------------------------------------------------------------------
 
 export interface GetHeadersMsg {
@@ -214,6 +214,5 @@ export interface GetHeadersMsg {
 }
 
 export interface GetBlocksMsg {
-  startHeight: number;
-  endHeight: number;
+  ids: string[];
 }

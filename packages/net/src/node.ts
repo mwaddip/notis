@@ -331,35 +331,38 @@ export function serveHeadersResponse(
 }
 
 /**
- * Frame a `Blocks` (17) response: our chain across an inclusive height range.
+ * Frame a `Blocks` (17) response.
+ *
+ * NET_INTERFACE → `GetHeaders` / `GetBlocks` responses →
+ * "The `Blocks` arm answers the ids asked that its applied chain holds":
+ * each id is resolved by point lookup (`heightByBlockId`) and its block
+ * read once through the headers handler, in the order asked; an id this
+ * chain does not hold is omitted — "not held", never a refusal.
  *
  * Each block is encoded once, here: the encoding is both what the response
- * carries and what the byte bound weighs, and `encodeBlocks` frames the result
- * rather than re-deriving it.
- *
- * The byte bound is `handleModifierRequestMsg`'s — accumulate, stop before
- * exceeding `MAX_SERVE_BODY_BYTES`, and **always include the first block**, so a
- * request is never answered with nothing while the server holds what was asked
- * (NET_INTERFACE → Validation →
- * "Every arm that assembles more than one stored object into a response is bounded by BYTES, not by item count alone.").
- * A truncated response costs the requester
- * one round trip; it re-asks for the remainder on the next `SyncInfo` round.
+ * carries and what the byte bound weighs. The byte bound accumulates and
+ * stops before exceeding `MAX_SERVE_BODY_BYTES`, and **always includes the
+ * first block**, so a request is never answered with nothing while the
+ * server holds what was asked (NET_INTERFACE → `GetHeaders` / `GetBlocks`
+ * responses → "always include the first block"). An id asked twice is
+ * served twice: the arm reads the ids in order, keeps no cross-id state,
+ * and the byte bound stops the response long before the duplication
+ * matters; the contract is silent on dedup and the requester paid for
+ * both.
  */
 export function serveBlocksResponse(
   magic: number,
   request: GetBlocksMsg,
   ourHeight: number,
+  heightByBlockId: (id: string) => number | null,
   getBlock: (height: number) => OrderingBlock | null,
 ): Uint8Array {
   const blocks: Uint8Array[] = [];
   let bodyBytes = 0;
-  const endHeight = Math.min(request.endHeight, ourHeight);
-  for (
-    let h = request.startHeight;
-    h <= endHeight && blocks.length < MAX_CHAIN_RESPONSE_ITEMS;
-    h++
-  ) {
-    const block = getBlock(h);
+  for (const id of request.ids) {
+    const height = heightByBlockId(id);
+    if (height === null || height > ourHeight) continue;
+    const block = getBlock(height);
     if (!block) continue;
     const data = encodeOrderingBlock(block);
     if (blocks.length > 0 && bodyBytes + data.length > MAX_SERVE_BODY_BYTES) break;
@@ -1372,7 +1375,10 @@ export class NetNode {
 
       if (code === MSG_GET_BLOCKS) {
         await serveChainQuery(code, decodeGetBlocks(body), this.headersProvider,
-          (request, ourHeight, getBlock) => serveBlocksResponse(magic, request, ourHeight, getBlock), 5);
+          (request, ourHeight, getBlock) => serveBlocksResponse(
+            magic, request, ourHeight,
+            (id) => this.syncStore.heightByBlockId(id), getBlock,
+          ), 5);
         return;
       }
 
@@ -1678,9 +1684,9 @@ export class NetNode {
     return requestHeaders(this.libp2p, locator, peerId, this.config);
   }
 
-  async requestBlocks(startHeight: number, endHeight: number, peerId: string): Promise<OrderingBlock[]> {
+  async requestBlocks(ids: string[], peerId: string): Promise<OrderingBlock[]> {
     if (!this.libp2p) throw new Error('NetNode not started');
-    return requestBlocks(this.libp2p, startHeight, endHeight, peerId, this.config);
+    return requestBlocks(this.libp2p, ids, peerId, this.config);
   }
 
   /**

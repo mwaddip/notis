@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import type { Stream } from '@libp2p/interface';
 import {
+  blockHash,
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
   verifyTxProtocolVersion,
@@ -127,6 +128,12 @@ describe("A's write to an unreading peer times out, the stream aborts", () => {
     nodeA = new NetNode(makeConfig(), validators);
     nodeA.setHeadersHandler((h) => (h >= 1 && h <= 100 ? makeBigBlock(h) : null));
     nodeA.setChainHeightProvider(() => 100);
+    nodeA.setHeightByBlockIdProvider((id) => {
+      for (let h = 1; h <= 100; h++) {
+        if (blockHash(makeBigBlock(h).header) === id) return h;
+      }
+      return null;
+    });
     await nodeA.start();
     const addr = nodeA.libp2pNode!.getMultiaddrs()[0]!.toString();
 
@@ -138,7 +145,11 @@ describe("A's write to an unreading peer times out, the stream aborts", () => {
     await nodeB.start();
     await waitConnected(nodeA, nodeB);
 
-    const req = encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 100 });
+    // Twenty block ids A's chain holds — enough weight to park A's writes
+    // on the receive window until the ×5 Blocks write deadline fires.
+    const ids: string[] = [];
+    for (let h = 1; h <= 20; h++) ids.push(blockHash(makeBigBlock(h).header)!);
+    const req = encodeGetBlocks(MAGIC, { ids });
     const streams: Stream[] = [];
     for (let i = 0; i < 2; i++) {
       const libp2p = nodeB.libp2pNode!;

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
+  blockHash,
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
   verifyTxProtocolVersion,
@@ -136,6 +137,16 @@ function makeHandlerHarness(opts: {
     // (NET_INTERFACE → Sync Handler Registration).
     const getBlock = opts.headersHandler;
     net.setHeaderProvider((h) => getBlock(h)?.header ?? null);
+    // The height-by-id provider is derived too — a locator or an id in a
+    // GetBlocks request resolves through this seam.
+    net.setHeightByBlockIdProvider((id) => {
+      for (let h = 1; h <= 1000; h++) {
+        const block = getBlock(h);
+        if (!block) return null;
+        if (blockHash(block.header) === id) return h;
+      }
+      return null;
+    });
   }
   if (opts.chainHeight !== undefined) {
     const h = opts.chainHeight;
@@ -299,7 +310,8 @@ describe('sync stream handler — the chain query arms', () => {
   it('serves GetBlocks as a framed Blocks response', async () => {
     const { send } = makeHandlerHarness({ headersHandler: chainProvider(3), chainHeight: 3 });
 
-    const written = await send(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 2 }));
+    const ids = [1, 2].map((h) => blockHash(makeQueryBlock(h).header)!);
+    const written = await send(encodeGetBlocks(MAGIC, { ids }));
 
     expect(written).toHaveLength(1);
     const reply = decodeFrame(MAGIC, written[0]!);
@@ -315,7 +327,7 @@ describe('sync stream handler — the chain query arms', () => {
     const headers = await makeHandlerHarness()
       .send(encodeGetHeaders(MAGIC, { locator: ['ff'.repeat(32)] }));
     const blocks = await makeHandlerHarness()
-      .send(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 2 }));
+      .send(encodeGetBlocks(MAGIC, { ids: ['aa'.repeat(32), 'bb'.repeat(32)] }));
 
     expect(isEmptyReply(headers)).toBe(true);
     expect(isEmptyReply(blocks)).toBe(true);
@@ -363,7 +375,7 @@ describe('sync stream handler — the chain query arms', () => {
     const headers = await makeHandlerHarness({ headersHandler: counting, active: false })
       .send(encodeGetHeaders(MAGIC, { locator: ['ff'.repeat(32)] }));
     const blocks = await makeHandlerHarness({ headersHandler: counting, active: false })
-      .send(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 2 }));
+      .send(encodeGetBlocks(MAGIC, { ids: ['aa'.repeat(32), 'bb'.repeat(32)] }));
 
     expect(isEmptyReply(headers)).toBe(true);
     expect(isEmptyReply(blocks)).toBe(true);
@@ -383,7 +395,7 @@ describe('sync stream handler — the chain query arms', () => {
     });
 
     expect((await harness.send(encodeGetHeaders(MAGIC, { locator: ['ff'.repeat(32)] })))).toHaveLength(1);
-    expect((await harness.send(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 1 })))).toHaveLength(1);
+    expect((await harness.send(encodeGetBlocks(MAGIC, { ids: ['aa'.repeat(32)] })))).toHaveLength(1);
     expect(dispatched).toEqual([]);
   });
 });

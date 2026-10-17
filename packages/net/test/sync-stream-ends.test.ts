@@ -259,7 +259,7 @@ describe('a peer refused above the stream cap — 16 unread streams, no 17th', (
     await nodeB.start();
     await waitConnected(nodeA, nodeB);
 
-    const req = encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 100 });
+    const req = encodeGetBlocks(MAGIC, { ids: ['aa'.repeat(32), 'bb'.repeat(32), 'cc'.repeat(32)] });
     const streams: Stream[] = [];
     for (let i = 0; i < 16; i++) {
       const s = await dialAndSendRequest(nodeB, nodeA.peerId(), req);

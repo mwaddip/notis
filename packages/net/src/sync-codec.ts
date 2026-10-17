@@ -339,25 +339,11 @@ export const getHeadersCodec = hashListRequestCodec<GetHeadersMsg>(
   MAX_LOCATOR_HASHES,
 );
 
-/** The two-field `GetBlocks` codec. */
-export const getBlocksCodec: StructCodec<GetBlocksMsg> = {
-  name: 'getBlocks',
-  write(w, value) {
-    writeVlqU(w, value.startHeight);
-    writeVlqU(w, value.endHeight);
-  },
-  read(r) {
-    const startHeight = readVlqU(r);
-    const endHeight = readVlqU(r);
-    if (!isHeight(startHeight) || !isHeight(endHeight)) {
-      throw new ReaderError(
-        `getBlocks: ${startHeight}/${endHeight} is outside the advertisable height range`,
-        'out-of-domain',
-      );
-    }
-    return { startHeight, endHeight };
-  },
-};
+export const getBlocksCodec = hashListRequestCodec<GetBlocksMsg>(
+  'getBlocks',
+  'ids',
+  MAX_CHAIN_RESPONSE_ITEMS,
+);
 
 export function encodeGetHeaders(magic: number, msg: GetHeadersMsg): Uint8Array {
   return encodeFrame(magic, MSG_GET_HEADERS, encodeStruct(getHeadersCodec, msg));

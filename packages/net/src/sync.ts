@@ -153,12 +153,15 @@ export function holdsPageShape(page: BlockHeader[], locator: string[]): boolean 
 }
 
 /**
- * Request full ordering blocks from startHeight to endHeight (inclusive).
+ * Request ordering blocks from a peer, by id.
+ *
+ * NET_INTERFACE → Pull Requests: the scheduler's block query (codes 16/17).
+ * The answer carries the blocks among `ids` the peer's applied chain holds,
+ * in the order asked.
  */
 export async function requestBlocks(
   libp2p: Libp2p,
-  startHeight: number,
-  endHeight: number,
+  ids: string[],
   peerId: string,
   config: NetConfig,
 ): Promise<OrderingBlock[]> {
@@ -169,7 +172,7 @@ export async function requestBlocks(
     libp2p,
     peer,
     SYNC_PROTOCOL,
-    encodeGetBlocks(magic, { startHeight, endHeight }),
+    encodeGetBlocks(magic, { ids }),
     config,
     5,
   );
@@ -185,7 +188,7 @@ export async function requestBlocks(
     throw new Error(`Blocks response from peer ${peerId} bears code ${frame.code}`);
   }
 
-  const blocks = decodeBlocks(frame.body, endHeight - startHeight + 1);
+  const blocks = decodeBlocks(frame.body, ids.length);
   if (blocks === null) {
     throw new Error(`Blocks response from peer ${peerId} is not a well-formed blocks response`);
   }

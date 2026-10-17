@@ -49,7 +49,7 @@ describe('sync protocol', () => {
     expect(headers.dialled).toEqual([SYNC_PROTOCOL]);
 
     const blocks = makeDialStub(encodeFrame(MAGIC, MSG_BLOCKS, new Uint8Array([0])));
-    await requestBlocks(blocks.libp2p, 1, 2, PEER, makeConfig());
+    await requestBlocks(blocks.libp2p, ['aa'.repeat(32), 'bb'.repeat(32)], PEER, makeConfig());
     expect(blocks.dialled).toEqual([SYNC_PROTOCOL]);
   });
 });
@@ -72,7 +72,7 @@ describe('chain queries reject a frame bearing another code', () => {
 
     await expect(requestHeaders(wrongCode(), ['aa'.repeat(32)], PEER, makeConfig()))
       .rejects.toThrow(/bears code/);
-    await expect(requestBlocks(wrongCode(), 1, 2, PEER, makeConfig()))
+    await expect(requestBlocks(wrongCode(), ['aa'.repeat(32)], PEER, makeConfig()))
       .rejects.toThrow(/bears code/);
   });
 
@@ -83,7 +83,7 @@ describe('chain queries reject a frame bearing another code', () => {
       requestHeaders(makeDialStub(encodeFrame(MAGIC, MSG_HEADERS, junk)).libp2p, ['aa'.repeat(32)], PEER, makeConfig()),
     ).rejects.toThrow(/well-formed/);
     await expect(
-      requestBlocks(makeDialStub(encodeFrame(MAGIC, MSG_BLOCKS, junk)).libp2p, 1, 2, PEER, makeConfig()),
+      requestBlocks(makeDialStub(encodeFrame(MAGIC, MSG_BLOCKS, junk)).libp2p, ['aa'.repeat(32)], PEER, makeConfig()),
     ).rejects.toThrow(/well-formed/);
   });
 
@@ -91,7 +91,7 @@ describe('chain queries reject a frame bearing another code', () => {
     const notAFrame = () => makeDialStub(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])).libp2p;
 
     await expect(requestHeaders(notAFrame(), ['aa'.repeat(32)], PEER, makeConfig())).rejects.toThrow();
-    await expect(requestBlocks(notAFrame(), 1, 2, PEER, makeConfig())).rejects.toThrow();
+    await expect(requestBlocks(notAFrame(), ['aa'.repeat(32)], PEER, makeConfig())).rejects.toThrow();
   });
 
   it('returns empty for zero bytes — the one answer that is not a rejection', async () => {
@@ -100,7 +100,7 @@ describe('chain queries reject a frame bearing another code', () => {
     // deliberately rather than the one a broken peer produces.
     await expect(requestHeaders(makeDialStub(new Uint8Array(0)).libp2p, ['aa'.repeat(32)], PEER, makeConfig()))
       .resolves.toEqual([]);
-    await expect(requestBlocks(makeDialStub(new Uint8Array(0)).libp2p, 1, 2, PEER, makeConfig()))
+    await expect(requestBlocks(makeDialStub(new Uint8Array(0)).libp2p, ['aa'.repeat(32)], PEER, makeConfig()))
       .resolves.toEqual([]);
   });
 });

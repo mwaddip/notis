@@ -240,14 +240,14 @@ describe('GetHeaders carries a locator', () => {
 // ---------------------------------------------------------------------------
 
 describe('GetBlocks carries ids', () => {
-  it.fails('a 1-id body decodes to an ids array', () => {
+  it('a 1-id body decodes to an ids array', () => {
     const body = hashListBody([H32_A]);
     const decoded = decodeGetBlocks(body);
     expect(decoded).not.toBeNull();
     expect((decoded as unknown as { ids: string[] }).ids).toEqual([H32_A]);
   });
 
-  it.fails('a 3-id body decodes in order', () => {
+  it('a 3-id body decodes in order', () => {
     const body = hashListBody([H32_A, H32_B, H32_C]);
     const decoded = decodeGetBlocks(body);
     expect(decoded).not.toBeNull();
@@ -269,7 +269,7 @@ describe('GetBlocks carries ids', () => {
     expect(decodeGetBlocks(body)).toBeNull();
   });
 
-  it.fails('a 400-id body decodes', () => {
+  it('a 400-id body decodes', () => {
     const hashes: string[] = [];
     for (let i = 0; i < 400; i++) hashes.push(H32_ZERO);
     const body = hashListBody(hashes);
@@ -285,7 +285,7 @@ describe('GetBlocks carries ids', () => {
 // ---------------------------------------------------------------------------
 
 describe('request bodies share one layout, the frame code discriminates', () => {
-  it.fails('a GetHeaders body decodes under decodeGetBlocks', () => {
+  it('a GetHeaders body decodes under decodeGetBlocks', () => {
     const body = hashListBody([H32_A, H32_B]);
     const asHeaders = decodeGetHeaders(body);
     const asBlocks = decodeGetBlocks(body);
@@ -304,7 +304,7 @@ describe('request bodies share one layout, the frame code discriminates', () => 
     expect((req as unknown as { locator: string[] }).locator).toEqual([H32_A]);
   });
 
-  it.fails('a GetBlocks frame carries code 16 over an ids body', () => {
+  it('a GetBlocks frame carries code 16 over an ids body', () => {
     const frame = encodeFrame(MAGIC, MSG_GET_BLOCKS, hashListBody([H32_A]));
     const decoded = decodeFrame(MAGIC, frame);
     expect(decoded.code).toBe(MSG_GET_BLOCKS);

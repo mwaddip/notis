@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
+  blockHash,
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
   verifyTxProtocolVersion,
@@ -116,6 +117,12 @@ describe("a peer's sync streams are served one at a time", () => {
     nodeA.setHeadersHandler((h) => (h >= 1 && h <= 100 ? makeBigBlock(h) : null));
     nodeA.setHeaderProvider((h) => h === 1 ? makeHeader(1) : null);
     nodeA.setChainHeightProvider(() => 100);
+    nodeA.setHeightByBlockIdProvider((id) => {
+      for (let h = 1; h <= 100; h++) {
+        if (blockHash(makeBigBlock(h).header) === id) return h;
+      }
+      return null;
+    });
     await nodeA.start();
     const addr = nodeA.libp2pNode!.getMultiaddrs()[0]!.toString();
 
@@ -133,7 +140,11 @@ describe("a peer's sync streams are served one at a time", () => {
     const held = await nodeB.libp2pNode!.dialProtocol(peer, SYNC_PROTOCOL, {
       signal: AbortSignal.timeout(2_000),
     });
-    await held.sink([encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 100 })]);
+    // Twenty block ids that A's chain holds — enough to park A's write
+    // against the receive window.
+    const heavyIds: string[] = [];
+    for (let h = 1; h <= 20; h++) heavyIds.push(blockHash(makeBigBlock(h).header)!);
+    await held.sink([encodeGetBlocks(MAGIC, { ids: heavyIds })]);
 
     // Let A begin writing before the second stream arrives.
     await new Promise((r) => setTimeout(r, 300));
@@ -156,6 +167,12 @@ describe("a peer's sync streams are served one at a time", () => {
     nodeA = new NetNode(makeConfig({ syncRequestTimeoutMs: 1_000 }), validators);
     nodeA.setHeadersHandler((h) => (h >= 1 && h <= 100 ? makeBigBlock(h) : null));
     nodeA.setChainHeightProvider(() => 100);
+    nodeA.setHeightByBlockIdProvider((id) => {
+      for (let h = 1; h <= 100; h++) {
+        if (blockHash(makeBigBlock(h).header) === id) return h;
+      }
+      return null;
+    });
     await nodeA.start();
     const addr = nodeA.libp2pNode!.getMultiaddrs()[0]!.toString();
 
@@ -175,7 +192,9 @@ describe("a peer's sync streams are served one at a time", () => {
     const held = await nodeB.libp2pNode!.dialProtocol(peer, SYNC_PROTOCOL, {
       signal: AbortSignal.timeout(2_000),
     });
-    await held.sink([encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 100 })]);
+    const heavyIds: string[] = [];
+    for (let h = 1; h <= 20; h++) heavyIds.push(blockHash(makeBigBlock(h).header)!);
+    await held.sink([encodeGetBlocks(MAGIC, { ids: heavyIds })]);
     await new Promise((r) => setTimeout(r, 300));
 
     // The second stream is a one-way `SyncInfo` push with a distinct
