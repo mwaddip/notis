@@ -509,4 +509,42 @@ describe('sync stream handler — post body serve (code 103)', () => {
     expect(dispatched).toEqual([]);
     expect(isEmptyReply(written)).toBe(true);
   });
+
+  it('bans the sender on a truncated ModifierRequest body', async () => {
+    // NET_INTERFACE → ModifierRequest — the body's count is read before
+    // the first element; a truncated / malformed body is a permanent ban.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, peerMgr, peerId } = makeHandlerHarness({
+      postBodyProvider: () => null,
+    });
+    // `0xff` opens a VLQ that never closes — the decoder refuses the body.
+    const written = await send(encodeFrame(MAGIC, 4 /* MSG_MODIFIER_REQUEST */, new Uint8Array([0xff])));
+    expect(isEmptyReply(written)).toBe(true);
+    expect(peerMgr.getPeerMetadata(peerId)).toBeNull();
+    expect(peerMgr.isPeerActive(peerId)).toBe(false);
+    warnSpy.mockRestore();
+  });
+
+  it('bans the sender on a ModifierRequest whose id count exceeds the cap', async () => {
+    // NET_INTERFACE → ModifierRequest — "1–MAX_INV_IDS (400) ids, the
+    // count read and refused BEFORE the first element": an over-cap body
+    // is malformed and the sender is permanently banned.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, peerMgr, peerId } = makeHandlerHarness({
+      postBodyProvider: () => null,
+    });
+    // Build a body declaring 401 ids — the codec will refuse the count.
+    // Using encodeModifierRequest with 401 ids would already throw on the
+    // send side; build the body by hand.
+    const body = new Uint8Array(1 + 2);
+    body[0] = MODIFIER_POST_BODY;
+    // vlqU(401) = [0x91, 0x03]
+    body[1] = 0x91;
+    body[2] = 0x03;
+    const written = await send(encodeFrame(MAGIC, 4 /* MSG_MODIFIER_REQUEST */, body));
+    expect(isEmptyReply(written)).toBe(true);
+    expect(peerMgr.getPeerMetadata(peerId)).toBeNull();
+    warnSpy.mockRestore();
+  });
+
 });
