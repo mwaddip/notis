@@ -154,6 +154,47 @@ describe('pipeline wired to net — registrations', () => {
     expect(() => cap.onPeerDisconnected!('peerX', '')).not.toThrow();
   });
 
+  it('a gossiped block pending for a relayer is dropped when onPeerDisconnected fires for that relayer', async () => {
+    // The gossip entry (`net.onOrderingBlock`) routes to the intake, which
+    // stores the block as pending when its header's parent is not in the
+    // tree. The wire-level `onPeerDisconnected` handler the wiring installs
+    // then clears every pending entry for the departed peer (NODE_INTERFACE →
+    // Fork choice decides on verified headers → "One intake, one at a time").
+    const cap = freshCap();
+    const { wireNet } = await import('../../src/services/net-wiring.js');
+    wireNet(makeFakeNet(cap) as never);
+
+    const block: OrderingBlock = {
+      header: {
+        protocolVersion: 1,
+        height: 2,
+        prevBlockHash: 'ee'.repeat(32),
+        utxoTxRoot: '00'.repeat(32),
+        stateRoot: '00'.repeat(33),
+        validatorId: new Uint8Array(32),
+        powNonce: 0,
+        powTargetBits: 3072,
+        createdAt: 2,
+        interlinkRoot: '00'.repeat(32),
+        adProofsRoot: '00'.repeat(32),
+      },
+      utxoTxTree: { utxoTxIds: ['ff'.repeat(32)], utxoTxs: [new Uint8Array(0)] },
+      validatorSignature: new Uint8Array(64),
+    };
+    cap.onOrderingBlock!(block, 'peerR');
+    // Microtasks the intake schedules settle.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const intake = await import('../../src/services/intake.js');
+    expect(intake.getPendingBlockForTests('peerR')?.header.height).toBe(2);
+
+    cap.onPeerDisconnected!('peerR', '');
+    // The last assertion names the rule: the pending block is dropped by the
+    // wire-level disconnect handler.
+    expect(intake.getPendingBlockForTests('peerR')).toBeUndefined();
+  });
+
   it('a chain view read over a poisoned block_headers row reaches the fail-stop seam', async () => {
     // The row's `header_bytes` is bytes a decoder refuses — a stored row that
     // will not decode is local corruption, and the chain view's wrapper hands
