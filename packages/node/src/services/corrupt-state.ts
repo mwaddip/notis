@@ -167,16 +167,6 @@ export class MissingStagedBlockError extends CorruptChainStateError {
 }
 
 /**
- * The switch's fork-point walk reached the reach floor without finding a
- * matching hash. Admission's age rule holds every stored header's parent at
- * or above the floor (NODE_INTERFACE → Fork choice decides on verified
- * headers → "The reach floor is the horizon, one rule for every fork point."),
- * so the best chain's fork with the applied chain is reachable; a walk that
- * reaches the floor without a match says a header below it was stored, or
- * the stored rows the walk reads disagree with the applied chain —
- * corruption, never a peer's input.
- */
-/**
  * The header tree contradicts itself where the switch reads it: an applied
  * header with no `block_headers` row, a gap in `best_chain` below its tip,
  * or a `best_chain` hash with no row — the pipeline is the tables' one
@@ -189,6 +179,16 @@ export class InconsistentHeaderTreeError extends CorruptChainStateError {
   }
 }
 
+/**
+ * The switch's fork-point walk reached the reach floor without finding a
+ * matching hash. Admission's age rule holds every stored header's parent at
+ * or above the floor (NODE_INTERFACE → Fork choice decides on verified
+ * headers → "The reach floor is the horizon, one rule for every fork point."),
+ * so the best chain's fork with the applied chain is reachable; a walk that
+ * reaches the floor without a match says a header below it was stored, or
+ * the stored rows the walk reads disagree with the applied chain —
+ * corruption, never a peer's input.
+ */
 export class UnreachableForkPointError extends CorruptChainStateError {
   constructor(site: string, appliedTip: number, floor: number) {
     super(
